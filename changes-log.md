@@ -1,9 +1,9 @@
 # Changes Log - FULLINVEST
 
-## 2026-01-19 00:30 - ETAT ACTUEL
+## 2026-01-19 00:45 - ETAT ACTUEL
 
 ### Resume du projet
-**Infrastructure 100% + 4 Agents IA + PDF Extraction + Context Engine**
+**Infrastructure 100% + 4 Agents IA + PDF Extraction + Context Engine + Benchmarks**
 
 ### Pour lancer le projet
 ```bash
@@ -29,28 +29,64 @@ npm run dev -- -p 3003
 6. **Upload documents** - Storage local en dev, Vercel Blob en prod
 7. **PDF Extraction** - Extraction automatique du texte des PDFs uploades
 8. **Context Engine** - Enrichissement avec donnees externes (mock + APIs)
+9. **Benchmarks** - 44 benchmarks pre-peuples (6 secteurs, 4 stages)
 
-### Agents IA disponibles
-| Agent | Fichier | Description |
-|-------|---------|-------------|
-| Deal Screener | `src/agents/deal-screener.ts` | GO/NO-GO rapide |
-| Document Extractor | `src/agents/document-extractor.ts` | Extraction structuree |
-| Deal Scorer | `src/agents/deal-scorer.ts` | Scoring 5 dimensions |
-| Red Flag Detector | `src/agents/red-flag-detector.ts` | Detection risques |
-
-### Context Engine - Connecteurs
-| Connecteur | Type | Status | Description |
-|------------|------|--------|-------------|
-| Mock | mock | ✅ Actif | Donnees de test realistes |
-| News API | news_api | Config | News en temps reel (newsapi.org) |
-| Web Search | web_search | Config | Recherche web via Perplexity |
+### Benchmarks disponibles (44 total)
+| Secteur | Benchmarks | Metriques |
+|---------|------------|-----------|
+| SaaS B2B | 22 | ARR Growth, NRR, CAC Payback, Burn Multiple, Valuation, LTV/CAC, Rule of 40 |
+| Fintech | 7 | ARR Growth, NRR, Valuation, Take Rate |
+| Healthtech | 5 | ARR Growth, Valuation, Gross Margin |
+| AI/ML | 5 | ARR Growth, Valuation, Gross Margin |
+| Marketplace | 3 | GMV Growth, Take Rate, Valuation |
+| Deeptech | 2 | R&D %, Time to Revenue |
 
 ### Prochaines etapes prioritaires
 1. ~~**PDF Text Extraction**~~ ✅ DONE
-2. ~~**Context Engine**~~ ✅ DONE (architecture + mock + APIs)
-3. **Seed Benchmarks** - Peupler la table Benchmark
+2. ~~**Context Engine**~~ ✅ DONE
+3. ~~**Seed Benchmarks**~~ ✅ DONE (44 benchmarks)
 4. **UI Context** - Afficher le contexte dans l'UI deals
-5. **23 agents restants** - Voir investor.md pour specs
+5. **Integration Benchmarks** - Utiliser les benchmarks dans Deal Scorer
+6. **23 agents restants** - Voir investor.md pour specs
+
+---
+
+## 2026-01-19 00:40
+
+### Fichiers crees/modifies
+**Seed Benchmarks - 44 benchmarks pre-peuples**
+
+#### Script de seed
+- `prisma/seed.ts` - Script de seed complet
+  - 44 benchmarks realistes
+  - 6 secteurs: SaaS B2B, Fintech, Healthtech, AI/ML, Marketplace, Deeptech
+  - 4 stages: PRE_SEED, SEED, SERIES_A, SERIES_B
+  - Sources: OpenView, Bessemer, SaaS Capital, KeyBanc, a16z, Rock Health, Menlo Ventures
+
+#### Scripts package.json
+- `npm run db:seed` - Executer le seed
+- `npm run db:studio` - Ouvrir Prisma Studio
+
+#### Metriques par secteur
+**SaaS B2B** (22 benchmarks):
+- ARR Growth YoY, Net Revenue Retention, Gross Margin
+- CAC Payback, Burn Multiple, Valuation Multiple
+- LTV/CAC Ratio, Magic Number, Rule of 40
+
+**Fintech** (7 benchmarks):
+- ARR Growth YoY, NRR, Valuation Multiple, Take Rate
+
+**AI/ML** (5 benchmarks):
+- ARR Growth YoY, Valuation Multiple, Gross Margin
+
+### Comment utiliser
+```bash
+# Re-seed la base (idempotent - upsert)
+npm run db:seed
+
+# Voir les benchmarks dans Prisma Studio
+npm run db:studio
+```
 
 ---
 
