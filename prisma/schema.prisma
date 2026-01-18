@@ -1,0 +1,245 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// USER
+model User {
+  id            String    @id @default(cuid())
+  clerkId       String    @unique
+  email         String    @unique
+  name          String?
+  image         String?
+
+  subscriptionStatus SubscriptionStatus @default(FREE)
+
+  deals         Deal[]
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+enum SubscriptionStatus {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+// DEAL
+model Deal {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name            String
+  companyName     String?
+  website         String?
+  description     String?  @db.Text
+
+  sector          String?
+  stage           DealStage?
+  geography       String?
+
+  arr             Decimal? @db.Decimal(12, 2)
+  growthRate      Decimal? @db.Decimal(5, 2)
+  amountRequested Decimal? @db.Decimal(12, 2)
+  valuationPre    Decimal? @db.Decimal(14, 2)
+
+  status          DealStatus @default(SCREENING)
+
+  // Scores (after analysis)
+  globalScore     Int?
+  teamScore       Int?
+  marketScore     Int?
+  productScore    Int?
+  financialsScore Int?
+
+  documents       Document[]
+  founders        Founder[]
+  redFlags        RedFlag[]
+  analyses        Analysis[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+enum DealStage {
+  PRE_SEED
+  SEED
+  SERIES_A
+  SERIES_B
+  SERIES_C
+  LATER
+}
+
+enum DealStatus {
+  SCREENING
+  ANALYZING
+  IN_DD
+  PASSED
+  INVESTED
+  ARCHIVED
+}
+
+// FOUNDER
+model Founder {
+  id              String   @id @default(cuid())
+  dealId          String
+  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  name            String
+  role            String
+  linkedinUrl     String?
+
+  previousVentures Json?
+  verifiedInfo    Json?
+
+  createdAt       DateTime @default(now())
+
+  @@index([dealId])
+}
+
+// DOCUMENT
+model Document {
+  id               String   @id @default(cuid())
+  dealId           String
+  deal             Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  name             String
+  type             DocumentType
+  storagePath      String
+  storageUrl       String?
+  mimeType         String?
+  sizeBytes        Int?
+
+  processingStatus ProcessingStatus @default(PENDING)
+  extractedText    String?  @db.Text
+
+  uploadedAt       DateTime @default(now())
+
+  @@index([dealId])
+}
+
+enum DocumentType {
+  PITCH_DECK
+  FINANCIAL_MODEL
+  CAP_TABLE
+  TERM_SHEET
+  OTHER
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// RED FLAG
+model RedFlag {
+  id              String   @id @default(cuid())
+  dealId          String
+  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  category        RedFlagCategory
+  title           String
+  description     String   @db.Text
+  severity        RedFlagSeverity
+  confidenceScore Decimal  @db.Decimal(3, 2)
+
+  evidence        Json
+  questionsToAsk  String[]
+
+  status          RedFlagStatus @default(OPEN)
+
+  detectedAt      DateTime @default(now())
+
+  @@index([dealId])
+  @@index([severity])
+}
+
+enum RedFlagCategory {
+  FOUNDER
+  FINANCIAL
+  MARKET
+  PRODUCT
+  DEAL_STRUCTURE
+}
+
+enum RedFlagSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum RedFlagStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  ACCEPTED
+}
+
+// ANALYSIS
+model Analysis {
+  id              String   @id @default(cuid())
+  dealId          String
+  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  type            AnalysisType
+  status          AnalysisStatus @default(PENDING)
+
+  totalAgents     Int
+  completedAgents Int      @default(0)
+
+  summary         String?  @db.Text
+
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  totalCost       Decimal? @db.Decimal(6, 4)
+
+  createdAt       DateTime @default(now())
+
+  @@index([dealId])
+}
+
+enum AnalysisType {
+  SCREENING
+  FULL_DD
+}
+
+enum AnalysisStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// BENCHMARK (pre-seeded)
+model Benchmark {
+  id              String   @id @default(cuid())
+
+  sector          String
+  stage           String
+  metricName      String
+
+  p25             Decimal  @db.Decimal(10, 2)
+  median          Decimal  @db.Decimal(10, 2)
+  p75             Decimal  @db.Decimal(10, 2)
+
+  source          String
+
+  createdAt       DateTime @default(now())
+
+  @@unique([sector, stage, metricName])
+  @@index([sector, stage])
+}

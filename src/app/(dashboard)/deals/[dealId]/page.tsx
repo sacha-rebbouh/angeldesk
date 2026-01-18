@@ -1,0 +1,578 @@
+export const dynamic = "force-dynamic";
+
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  ArrowLeft,
+  ExternalLink,
+  FileText,
+  Users,
+  AlertTriangle,
+  TrendingUp,
+  Upload,
+  Brain,
+} from "lucide-react";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
+import { AnalysisPanel } from "@/components/deals/analysis-panel";
+import { ScoreGrid } from "@/components/deals/score-display";
+
+async function getDeal(dealId: string, userId: string) {
+  return prisma.deal.findFirst({
+    where: {
+      id: dealId,
+      userId,
+    },
+    include: {
+      founders: true,
+      documents: {
+        orderBy: { uploadedAt: "desc" },
+      },
+      redFlags: {
+        orderBy: [{ severity: "asc" }, { detectedAt: "desc" }],
+      },
+      analyses: {
+        orderBy: { createdAt: "desc" },
+      },
+    },
+  });
+}
+
+function getStatusColor(status: string) {
+  const colors: Record<string, string> = {
+    SCREENING: "bg-blue-100 text-blue-800",
+    ANALYZING: "bg-yellow-100 text-yellow-800",
+    IN_DD: "bg-purple-100 text-purple-800",
+    PASSED: "bg-gray-100 text-gray-800",
+    INVESTED: "bg-green-100 text-green-800",
+    ARCHIVED: "bg-gray-100 text-gray-800",
+  };
+  return colors[status] ?? "bg-gray-100 text-gray-800";
+}
+
+function getStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    SCREENING: "Screening",
+    ANALYZING: "En analyse",
+    IN_DD: "Due Diligence",
+    PASSED: "Passe",
+    INVESTED: "Investi",
+    ARCHIVED: "Archive",
+  };
+  return labels[status] ?? status;
+}
+
+function getStageLabel(stage: string | null) {
+  if (!stage) return "Non defini";
+  const labels: Record<string, string> = {
+    PRE_SEED: "Pre-seed",
+    SEED: "Seed",
+    SERIES_A: "Serie A",
+    SERIES_B: "Serie B",
+    SERIES_C: "Serie C",
+    LATER: "Later Stage",
+  };
+  return labels[stage] ?? stage;
+}
+
+function getSeverityColor(severity: string) {
+  const colors: Record<string, string> = {
+    CRITICAL: "bg-red-500 text-white",
+    HIGH: "bg-orange-500 text-white",
+    MEDIUM: "bg-yellow-500 text-black",
+    LOW: "bg-blue-100 text-blue-800",
+  };
+  return colors[severity] ?? "bg-gray-100 text-gray-800";
+}
+
+function formatCurrency(value: number | null | undefined) {
+  if (value == null) return "-";
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+interface PageProps {
+  params: Promise<{ dealId: string }>;
+}
+
+export default async function DealDetailPage({ params }: PageProps) {
+  const user = await requireAuth();
+  const { dealId } = await params;
+  const deal = await getDeal(dealId, user.id);
+
+  if (!deal) {
+    notFound();
+  }
+
+  const openRedFlags = deal.redFlags.filter((f) => f.status === "OPEN");
+  const criticalFlags = openRedFlags.filter(
+    (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/deals">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold tracking-tight">{deal.name}</h1>
+              <Badge
+                variant="secondary"
+                className={getStatusColor(deal.status)}
+              >
+                {getStatusLabel(deal.status)}
+              </Badge>
+            </div>
+            <p className="text-muted-foreground">
+              {deal.companyName ?? deal.name}
+              {deal.website && (
+                <a
+                  href={deal.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-2 inline-flex items-center text-primary hover:underline"
+                >
+                  <ExternalLink className="mr-1 h-3 w-3" />
+                  Site web
+                </a>
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Valorisation</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(
+                deal.valuationPre ? Number(deal.valuationPre) : null
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Pre-money • {getStageLabel(deal.stage)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">ARR</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatCurrency(deal.arr ? Number(deal.arr) : null)}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {deal.growthRate
+                ? `+${Number(deal.growthRate)}% YoY`
+                : "Croissance non definie"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Documents</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{deal.documents.length}</div>
+            <p className="text-xs text-muted-foreground">Fichiers uploades</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Red Flags</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{openRedFlags.length}</div>
+            <p className="text-xs text-muted-foreground">
+              {criticalFlags.length > 0
+                ? `${criticalFlags.length} critique${criticalFlags.length > 1 ? "s" : ""}`
+                : "Aucun critique"}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Tabs */}
+      <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="overview">Vue d&apos;ensemble</TabsTrigger>
+          <TabsTrigger value="analysis">
+            <Brain className="mr-1 h-4 w-4" />
+            Analyse IA
+          </TabsTrigger>
+          <TabsTrigger value="documents">
+            Documents ({deal.documents.length})
+          </TabsTrigger>
+          <TabsTrigger value="founders">
+            Fondateurs ({deal.founders.length})
+          </TabsTrigger>
+          <TabsTrigger value="redflags">
+            Red Flags ({openRedFlags.length})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Informations</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Secteur
+                    </p>
+                    <p>{deal.sector ?? "Non defini"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Stade
+                    </p>
+                    <p>{getStageLabel(deal.stage)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Geographie
+                    </p>
+                    <p>{deal.geography ?? "Non defini"}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Montant demande
+                    </p>
+                    <p>
+                      {formatCurrency(
+                        deal.amountRequested
+                          ? Number(deal.amountRequested)
+                          : null
+                      )}
+                    </p>
+                  </div>
+                </div>
+                {deal.description && (
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Description
+                    </p>
+                    <p className="mt-1 text-sm">{deal.description}</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Scores</CardTitle>
+                <CardDescription>
+                  {deal.globalScore
+                    ? "Scores calcules par l'analyse IA"
+                    : "Lancez une analyse pour obtenir les scores"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {deal.globalScore ? (
+                  <ScoreGrid
+                    scores={{
+                      global: deal.globalScore,
+                      team: deal.teamScore,
+                      market: deal.marketScore,
+                      product: deal.productScore,
+                      financials: deal.financialsScore,
+                    }}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <Brain className="h-12 w-12 text-muted-foreground/50" />
+                    <p className="mt-4 text-sm text-muted-foreground">
+                      Aucune analyse effectuee
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Allez dans l&apos;onglet &quot;Analyse IA&quot; pour lancer une analyse
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="analysis" className="space-y-4">
+          <AnalysisPanel dealId={deal.id} currentStatus={deal.status} />
+
+          {/* Previous analyses */}
+          {deal.analyses.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Historique des analyses</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {deal.analyses.map((analysis) => (
+                    <div
+                      key={analysis.id}
+                      className="flex items-center justify-between rounded-lg border p-3"
+                    >
+                      <div>
+                        <p className="font-medium">
+                          {analysis.type === "SCREENING" ? "Screening" : "Due Diligence"}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {format(new Date(analysis.createdAt), "d MMM yyyy HH:mm", {
+                            locale: fr,
+                          })}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={
+                            analysis.status === "COMPLETED"
+                              ? "default"
+                              : analysis.status === "FAILED"
+                                ? "destructive"
+                                : "secondary"
+                          }
+                        >
+                          {analysis.status}
+                        </Badge>
+                        {analysis.totalCost && (
+                          <span className="text-sm text-muted-foreground">
+                            ${Number(analysis.totalCost).toFixed(4)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="documents">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Documents</CardTitle>
+                  <CardDescription>
+                    Fichiers uploades pour ce deal
+                  </CardDescription>
+                </div>
+                <Button>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {deal.documents.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                  <FileText className="h-12 w-12 text-muted-foreground/50" />
+                  <h3 className="mt-4 text-lg font-semibold">Aucun document</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Uploadez un pitch deck, financial model ou autre document.
+                  </p>
+                  <Button className="mt-4">
+                    <Upload className="mr-2 h-4 w-4" />
+                    Upload un document
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {deal.documents.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between rounded-lg border p-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <FileText className="h-8 w-8 text-muted-foreground" />
+                        <div>
+                          <p className="font-medium">{doc.name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {doc.type} •{" "}
+                            {format(new Date(doc.uploadedAt), "d MMM yyyy", {
+                              locale: fr,
+                            })}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={
+                          doc.processingStatus === "COMPLETED"
+                            ? "default"
+                            : "secondary"
+                        }
+                      >
+                        {doc.processingStatus}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="founders">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Fondateurs</CardTitle>
+                  <CardDescription>Equipe fondatrice du projet</CardDescription>
+                </div>
+                <Button variant="outline">Ajouter un fondateur</Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {deal.founders.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                  <Users className="h-12 w-12 text-muted-foreground/50" />
+                  <h3 className="mt-4 text-lg font-semibold">Aucun fondateur</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Ajoutez les fondateurs pour enrichir l&apos;analyse.
+                  </p>
+                  <Button className="mt-4" variant="outline">
+                    Ajouter un fondateur
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {deal.founders.map((founder) => (
+                    <div
+                      key={founder.id}
+                      className="flex items-center justify-between rounded-lg border p-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                          {founder.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="font-medium">{founder.name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {founder.role}
+                          </p>
+                        </div>
+                      </div>
+                      {founder.linkedinUrl && (
+                        <Button variant="ghost" size="sm" asChild>
+                          <a
+                            href={founder.linkedinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            LinkedIn
+                            <ExternalLink className="ml-2 h-3 w-3" />
+                          </a>
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="redflags">
+          <Card>
+            <CardHeader>
+              <CardTitle>Red Flags</CardTitle>
+              <CardDescription>
+                Points d&apos;attention detectes par l&apos;analyse
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {openRedFlags.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                  <AlertTriangle className="h-12 w-12 text-muted-foreground/50" />
+                  <h3 className="mt-4 text-lg font-semibold">Aucun red flag</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Lancez une analyse pour detecter les points d&apos;attention.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {openRedFlags.map((flag) => (
+                    <div key={flag.id} className="rounded-lg border p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <AlertTriangle
+                            className={`h-5 w-5 ${
+                              flag.severity === "CRITICAL"
+                                ? "text-red-500"
+                                : flag.severity === "HIGH"
+                                  ? "text-orange-500"
+                                  : "text-yellow-500"
+                            }`}
+                          />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium">{flag.title}</p>
+                              <Badge className={getSeverityColor(flag.severity)}>
+                                {flag.severity}
+                              </Badge>
+                            </div>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              {flag.description}
+                            </p>
+                            {flag.questionsToAsk.length > 0 && (
+                              <div className="mt-3">
+                                <p className="text-sm font-medium">
+                                  Questions a poser:
+                                </p>
+                                <ul className="mt-1 list-inside list-disc text-sm text-muted-foreground">
+                                  {flag.questionsToAsk.map((q, i) => (
+                                    <li key={i}>{q}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <Badge variant="outline">
+                          {Math.round(Number(flag.confidenceScore) * 100)}%
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
