@@ -1,9 +1,9 @@
 # Changes Log - FULLINVEST
 
-## 2026-01-18 23:55 - ETAT ACTUEL
+## 2026-01-19 00:30 - ETAT ACTUEL
 
 ### Resume du projet
-**Infrastructure 100% complete + 4 Agents IA + PDF Extraction + Storage Local**
+**Infrastructure 100% + 4 Agents IA + PDF Extraction + Context Engine**
 
 ### Pour lancer le projet
 ```bash
@@ -18,15 +18,17 @@ npm run dev -- -p 3003
 - OpenRouter: ✅ (sk-or-v1-...)
 - BYPASS_AUTH=true (mode dev sans login)
 - BLOB_READ_WRITE_TOKEN: (vide - storage local en dev)
+- NEWS_API_KEY: (optionnel - pour news en temps reel)
 
 ### Ce qui fonctionne
 1. **Dashboard** - http://localhost:3003/dashboard
 2. **Creer un deal** - http://localhost:3003/deals/new
 3. **Voir un deal** - http://localhost:3003/deals/[id]
 4. **Lancer une analyse IA** - Onglet "Analyse IA" dans un deal
-5. **API REST** - /api/deals, /api/analyze, /api/llm
+5. **API REST** - /api/deals, /api/analyze, /api/llm, /api/context
 6. **Upload documents** - Storage local en dev, Vercel Blob en prod
-7. **PDF Extraction** - Extraction automatique du texte des PDFs uploades (TESTE)
+7. **PDF Extraction** - Extraction automatique du texte des PDFs uploades
+8. **Context Engine** - Enrichissement avec donnees externes (mock + APIs)
 
 ### Agents IA disponibles
 | Agent | Fichier | Description |
@@ -36,11 +38,71 @@ npm run dev -- -p 3003
 | Deal Scorer | `src/agents/deal-scorer.ts` | Scoring 5 dimensions |
 | Red Flag Detector | `src/agents/red-flag-detector.ts` | Detection risques |
 
+### Context Engine - Connecteurs
+| Connecteur | Type | Status | Description |
+|------------|------|--------|-------------|
+| Mock | mock | ✅ Actif | Donnees de test realistes |
+| News API | news_api | Config | News en temps reel (newsapi.org) |
+| Web Search | web_search | Config | Recherche web via Perplexity |
+
 ### Prochaines etapes prioritaires
 1. ~~**PDF Text Extraction**~~ ✅ DONE
-2. **Context Engine** - Integration APIs externes (Crunchbase, Dealroom)
-3. **Seed Benchmarks** - Donnees de comparaison
-4. **23 agents restants** - Voir investor.md pour specs
+2. ~~**Context Engine**~~ ✅ DONE (architecture + mock + APIs)
+3. **Seed Benchmarks** - Peupler la table Benchmark
+4. **UI Context** - Afficher le contexte dans l'UI deals
+5. **23 agents restants** - Voir investor.md pour specs
+
+---
+
+## 2026-01-19 00:25
+
+### Fichiers crees
+**Context Engine - Enrichissement des deals avec donnees externes**
+
+#### Architecture
+- `src/services/context-engine/types.ts` - Types complets du Context Engine
+  - DealIntelligence (similar deals, funding context)
+  - MarketData (benchmarks, trends)
+  - PeopleGraph (founder backgrounds)
+  - CompetitiveLandscape
+  - NewsSentiment
+  - Connector interface
+
+- `src/services/context-engine/index.ts` - Service principal
+  - `enrichDeal(query)` - Enrichit un deal avec contexte externe
+  - `getFounderContext(name)` - Background d'un fondateur
+  - Aggregation multi-sources
+
+#### Connecteurs
+- `src/services/context-engine/connectors/mock.ts` - **Mock Connector**
+  - Donnees de test realistes (8 deals, benchmarks SaaS/Fintech/Healthtech)
+  - Fonctionne sans config
+
+- `src/services/context-engine/connectors/news-api.ts` - **News API Connector**
+  - Integration NewsAPI.org (100 req/jour gratuit)
+  - Analyse de sentiment
+  - Config: `NEWS_API_KEY`
+
+- `src/services/context-engine/connectors/web-search.ts` - **Web Search Connector**
+  - Recherche web via Perplexity (OpenRouter)
+  - Recherche competitors, founder background
+  - Utilise `OPENROUTER_API_KEY` existant
+
+#### API
+- `src/app/api/context/route.ts` - **API d'enrichissement**
+  - GET /api/context - Liste des connecteurs configures
+  - POST /api/context - Enrichir un deal
+
+### Comment tester
+```bash
+# Voir les connecteurs configures
+curl http://localhost:3003/api/context
+
+# Enrichir un deal
+curl -X POST http://localhost:3003/api/context \
+  -H "Content-Type: application/json" \
+  -d '{"sector":"SaaS B2B","stage":"SEED","geography":"France"}'
+```
 
 ---
 

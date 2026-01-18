@@ -12,6 +12,13 @@ export interface PDFExtractionResult {
   error?: string;
 }
 
+interface PDFMetadataInfo {
+  Title?: string;
+  Author?: string;
+  CreationDate?: string;
+  [key: string]: unknown;
+}
+
 /**
  * Extract text content from a PDF buffer
  */
@@ -20,23 +27,32 @@ export async function extractTextFromPDF(
 ): Promise<PDFExtractionResult> {
   try {
     const pdf = await getDocumentProxy(new Uint8Array(buffer));
-    const { text, totalPages } = await extractText(pdf, { mergePages: true });
+    const result = await extractText(pdf, { mergePages: true });
 
     // Get metadata if available
     const metadata = await pdf.getMetadata().catch(() => null);
+    const info = metadata?.info as PDFMetadataInfo | undefined;
+
+    // Handle text - can be string or array
+    let textContent: string;
+    if (typeof result.text === "string") {
+      textContent = result.text;
+    } else if (Array.isArray(result.text)) {
+      textContent = (result.text as string[]).join("\n");
+    } else {
+      textContent = String(result.text);
+    }
 
     // Clean up extracted text
-    const cleanedText = cleanExtractedText(
-      typeof text === "string" ? text : text.join("\n")
-    );
+    const cleanedText = cleanExtractedText(textContent);
 
     return {
       text: cleanedText,
-      pageCount: totalPages,
+      pageCount: result.totalPages,
       info: {
-        title: metadata?.info?.Title as string | undefined,
-        author: metadata?.info?.Author as string | undefined,
-        creationDate: metadata?.info?.CreationDate as string | undefined,
+        title: info?.Title,
+        author: info?.Author,
+        creationDate: info?.CreationDate,
       },
       success: true,
     };
