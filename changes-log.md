@@ -1,6 +1,187 @@
 # Changes Log - FULLINVEST
 
-## 2026-01-19 00:45 - ETAT ACTUEL
+## 2026-01-19 03:00 - UI TIER 1 IMPLEMENTEE
+
+### Fichiers crees
+- `src/components/deals/tier1-results.tsx` - **Composant complet d'affichage Tier 1** (~800 lignes)
+  - 12 cards specialisees (une par agent)
+  - ScoreBadge, StatusBadge, ExpandableSection reusables
+  - Synthese avec score moyen et grille visuelle
+  - Navigation par tabs: Vue d'ensemble, Business, Technique, Strategique
+
+### Fichiers modifies
+- `src/components/deals/analysis-panel.tsx`
+  - Ajout `tier1_complete` dans ANALYSIS_TYPES
+  - Ajout des 12 agents Tier 1 dans formatAgentName
+  - Integration du composant Tier1Results
+  - Details des agents collapsibles pour Tier 1
+
+### Cards Tier 1 implementees
+| Agent | Card | Score affiche |
+|-------|------|---------------|
+| financial-auditor | FinancialAuditCard | overallScore |
+| team-investigator | TeamInvestigatorCard | overallTeamScore |
+| competitive-intel | CompetitiveIntelCard | competitiveScore |
+| deck-forensics | DeckForensicsCard | - |
+| market-intelligence | MarketIntelCard | marketScore |
+| technical-dd | TechnicalDDCard | technicalScore |
+| legal-regulatory | LegalRegulatoryCard | legalScore |
+| cap-table-auditor | CapTableAuditCard | capTableScore |
+| gtm-analyst | GTMAnalystCard | gtmScore |
+| customer-intel | CustomerIntelCard | customerScore |
+| exit-strategist | ExitStrategistCard | exitScore |
+| question-master | QuestionMasterCard | - |
+
+### Organisation des tabs
+- **Vue d'ensemble**: Financial, Team, Competitive, Market
+- **Business**: GTM, Customer, Cap Table, Exit
+- **Technique**: Technical, Legal, Deck Forensics
+- **Strategique**: Question Master (full width)
+
+### Comment tester
+```bash
+npm run dev -- -p 3003
+# 1. Ouvrir http://localhost:3003/deals/[id]
+# 2. Onglet "Analyse IA"
+# 3. Selectionner "Investigation Tier 1"
+# 4. Lancer l'analyse
+```
+
+---
+
+## 2026-01-19 02:15 - ETAT PRECEDENT
+
+### Resume du projet
+**Infrastructure 100% + 16 Agents IA (4 base + 12 Tier 1) + PDF Extraction + Context Engine + Benchmarks + UI Tier 1**
+
+### Pour lancer le projet
+```bash
+cd /Users/sacharebbouh/Desktop/fullinvest
+npm run dev -- -p 3003
+# Ouvrir http://localhost:3003/dashboard
+```
+
+### Credentials configures (.env.local)
+- Clerk: ✅ (pk_test_... / sk_test_...)
+- Neon PostgreSQL: ✅ (eu-central-1)
+- OpenRouter: ✅ (sk-or-v1-...)
+- BYPASS_AUTH=true (mode dev sans login)
+- BLOB_READ_WRITE_TOKEN: (vide - storage local en dev)
+- NEWS_API_KEY: (optionnel - pour news en temps reel)
+
+### Ce qui fonctionne
+1. **Dashboard** - http://localhost:3003/dashboard
+2. **Creer un deal** - http://localhost:3003/deals/new
+3. **Voir un deal** - http://localhost:3003/deals/[id]
+4. **Lancer une analyse IA** - Onglet "Analyse IA" dans un deal
+5. **API REST** - /api/deals, /api/analyze, /api/llm, /api/context
+6. **Upload documents** - Storage local en dev, Vercel Blob en prod
+7. **PDF Extraction** - Extraction automatique du texte des PDFs uploades
+8. **Context Engine** - Enrichissement avec donnees externes (mock + APIs)
+9. **Benchmarks** - 44 benchmarks pre-peuples (6 secteurs, 4 stages)
+10. **Tier 1 Agents** - 12 agents d'investigation en parallele
+11. **UI Tier 1** - Affichage detaille des 12 resultats avec scores et tabs
+
+### Agents IA disponibles (16 total)
+
+#### Base Agents (4)
+| Agent | Description |
+|-------|-------------|
+| deal-screener | Screening GO/NO-GO rapide |
+| document-extractor | Extraction structuree des pitch decks |
+| deal-scorer | Scoring multi-dimensionnel |
+| red-flag-detector | Detection des risques |
+
+#### Tier 1 Agents - Investigation (12)
+| Agent | Description | Score Output |
+|-------|-------------|--------------|
+| financial-auditor | Audit metriques vs benchmarks | overallScore |
+| team-investigator | Background check equipe | overallTeamScore |
+| competitive-intel | Paysage concurrentiel | competitiveScore |
+| deck-forensics | Analyse forensique du deck | - |
+| market-intelligence | Verification claims marche | marketScore |
+| technical-dd | Evaluation technique | technicalScore |
+| legal-regulatory | Risques juridiques | legalScore |
+| cap-table-auditor | Audit cap table | capTableScore |
+| gtm-analyst | Go-to-market | gtmScore |
+| customer-intel | Analyse clients | customerScore |
+| exit-strategist | Scenarios de sortie | exitScore |
+| question-master | Questions killer | - |
+
+### Types d'analyse disponibles
+| Type | Agents | Description | UI |
+|------|--------|-------------|-----|
+| `screening` | 1 | Screening rapide (~30s) | Liste basique |
+| `extraction` | 1 | Extraction documents (~1min) | Liste basique |
+| `full_dd` | 4 | DD complete sequentielle (~2min) | Liste basique |
+| `tier1_complete` | 13 | Investigation parallele complete (~30-45s) | **Cards + Tabs** |
+
+### Prochaines etapes prioritaires
+1. ~~**PDF Text Extraction**~~ ✅ DONE
+2. ~~**Context Engine**~~ ✅ DONE
+3. ~~**Seed Benchmarks**~~ ✅ DONE (44 benchmarks)
+4. ~~**12 Agents Tier 1**~~ ✅ DONE
+5. ~~**UI Tier 1**~~ ✅ DONE (12 cards, tabs, synthese)
+6. **Tier 2 Agents** - Agents de synthese (Thesis Builder, Investment Memo, etc.)
+7. **Tier 3 Agents** - Output generation (PDF, Presentation)
+
+---
+
+## 2026-01-19 02:00
+
+### Fichiers crees/modifies
+**Implementation Tier 1 - 12 Agents Investigation**
+
+#### Modifications de base
+- `src/agents/types.ts` - Ajout EnrichedAgentContext + 12 Result types (~400 lignes)
+- `src/agents/base-agent.ts` - Ajout formatContextEngineData() helper (~140 lignes)
+- `src/agents/orchestrator.ts` - Support execution parallele avec tier1_complete (~200 lignes)
+- `src/agents/index.ts` - Export des 12 nouveaux agents
+
+#### Nouveaux agents (src/agents/tier1/)
+- `financial-auditor.ts` - Audit metriques vs benchmarks sectoriels
+- `team-investigator.ts` - Background check equipe, complementarite
+- `competitive-intel.ts` - Map concurrents, moat assessment
+- `deck-forensics.ts` - Analyse narrative, verification claims
+- `market-intelligence.ts` - Validation TAM/SAM/SOM, timing
+- `technical-dd.ts` - Stack, dette technique, risques
+- `legal-regulatory.ts` - Structure juridique, compliance
+- `cap-table-auditor.ts` - Dilution, terms, investisseurs
+- `gtm-analyst.ts` - Strategie GTM, efficacite commerciale
+- `customer-intel.ts` - Base clients, PMF signals
+- `exit-strategist.ts` - Scenarios exit, ROI projection
+- `question-master.ts` - Questions killer, points de negociation
+- `index.ts` - Exports centralises
+
+### Architecture execution parallele
+```
+                    document-extractor (si docs)
+                            ↓
+                    Context Engine (enrichissement)
+                            ↓
+            ┌───────────────┼───────────────┐
+            ↓               ↓               ↓
+     financial-     team-          market-
+     auditor       investigator   intelligence
+            ↓               ↓               ↓
+    ... (tous les 12 agents en Promise.all) ...
+            ↓               ↓               ↓
+            └───────────────┼───────────────┘
+                            ↓
+                    Results aggreges
+```
+
+### Comment tester
+```bash
+# Lancer une analyse Tier 1 complete
+curl -X POST http://localhost:3003/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"dealId":"<deal_id>","type":"tier1_complete"}'
+```
+
+---
+
+## 2026-01-19 00:45 - ANCIEN ETAT
 
 ### Resume du projet
 **Infrastructure 100% + 4 Agents IA + PDF Extraction + Context Engine + Benchmarks**

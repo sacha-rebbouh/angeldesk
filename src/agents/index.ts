@@ -1,11 +1,27 @@
 // Types
 export * from "./types";
 
-// Agents
+// Base Agents
 export { dealScreener } from "./deal-screener";
 export { redFlagDetector } from "./red-flag-detector";
 export { documentExtractor } from "./document-extractor";
 export { dealScorer } from "./deal-scorer";
+
+// Tier 1 Agents (Investigation)
+export {
+  financialAuditor,
+  deckForensics,
+  capTableAuditor,
+  technicalDD,
+  teamInvestigator,
+  competitiveIntel,
+  marketIntelligence,
+  legalRegulatory,
+  gtmAnalyst,
+  customerIntel,
+  exitStrategist,
+  questionMaster,
+} from "./tier1";
 
 // Orchestrator
 export { orchestrator, type AnalysisType, type AnalysisResult } from "./orchestrator";
