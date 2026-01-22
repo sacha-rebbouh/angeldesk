@@ -69,9 +69,9 @@ function getStatusLabel(status: string) {
     SCREENING: "Screening",
     ANALYZING: "En analyse",
     IN_DD: "Due Diligence",
-    PASSED: "Passe",
+    PASSED: "Passé",
     INVESTED: "Investi",
-    ARCHIVED: "Archive",
+    ARCHIVED: "Archivé",
   };
   return labels[status] ?? status;
 }
@@ -119,7 +119,7 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{redFlagsCount}</div>
-            <p className="text-xs text-muted-foreground">A investiguer</p>
+            <p className="text-xs text-muted-foreground">À investiguer</p>
           </CardContent>
         </Card>
         <Card>
@@ -134,7 +134,7 @@ export default async function DashboardPage() {
             <p className="text-xs text-muted-foreground">
               {user.subscriptionStatus === "FREE"
                 ? "3 deals/mois"
-                : "Illimite"}
+                : "Illimité"}
             </p>
           </CardContent>
         </Card>
@@ -143,9 +143,9 @@ export default async function DashboardPage() {
       {/* Recent Deals */}
       <Card>
         <CardHeader>
-          <CardTitle>Deals recents</CardTitle>
+          <CardTitle>Deals récents</CardTitle>
           <CardDescription>
-            Vos derniers deals analyses ou en cours
+            Vos derniers deals analysés ou en cours
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -154,7 +154,7 @@ export default async function DashboardPage() {
               <FolderKanban className="h-12 w-12 text-muted-foreground/50" />
               <h3 className="mt-4 text-lg font-semibold">Aucun deal</h3>
               <p className="mt-2 text-sm text-muted-foreground">
-                Commencez par ajouter votre premier deal a analyser.
+                Commencez par ajouter votre premier deal à analyser.
               </p>
               <Button className="mt-4" asChild>
                 <Link href="/deals/new">
@@ -192,8 +192,8 @@ export default async function DashboardPage() {
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        {deal.sector ?? "Secteur non defini"} •{" "}
-                        {deal.stage ?? "Stade non defini"}
+                        {deal.sector ?? "Secteur non défini"} •{" "}
+                        {deal.stage ?? "Stade non défini"}
                       </p>
                     </div>
                     <Button variant="ghost" size="sm" asChild>

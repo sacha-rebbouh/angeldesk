@@ -57,9 +57,9 @@ function getStatusLabel(status: string) {
     SCREENING: "Screening",
     ANALYZING: "En analyse",
     IN_DD: "Due Diligence",
-    PASSED: "Passe",
+    PASSED: "Passé",
     INVESTED: "Investi",
-    ARCHIVED: "Archive",
+    ARCHIVED: "Archivé",
   };
   return labels[status] ?? status;
 }
@@ -69,9 +69,9 @@ function getStageLabel(stage: string | null) {
   const labels: Record<string, string> = {
     PRE_SEED: "Pre-seed",
     SEED: "Seed",
-    SERIES_A: "Serie A",
-    SERIES_B: "Serie B",
-    SERIES_C: "Serie C",
+    SERIES_A: "Série A",
+    SERIES_B: "Série B",
+    SERIES_C: "Série C",
     LATER: "Later Stage",
   };
   return labels[stage] ?? stage;
@@ -96,7 +96,7 @@ export default async function DealsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Deals</h1>
           <p className="text-muted-foreground">
-            Gerez et analysez vos opportunites d&apos;investissement
+            Gérez et analysez vos opportunités d&apos;investissement
           </p>
         </div>
         <Button asChild>
@@ -119,7 +119,7 @@ export default async function DealsPage() {
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <h3 className="mt-4 text-lg font-semibold">Aucun deal</h3>
               <p className="mt-2 text-sm text-muted-foreground">
-                Commencez par ajouter votre premier deal a analyser.
+                Commencez par ajouter votre premier deal à analyser.
               </p>
               <Button className="mt-4" asChild>
                 <Link href="/deals/new">
@@ -138,7 +138,7 @@ export default async function DealsPage() {
                   <TableHead>Valorisation</TableHead>
                   <TableHead>Statut</TableHead>
                   <TableHead>Alerts</TableHead>
-                  <TableHead>Mis a jour</TableHead>
+                  <TableHead>Mis à jour</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>

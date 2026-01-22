@@ -207,6 +207,83 @@ Une plateforme de Due Diligence IA **pour Business Angels** qui :
 
 ---
 
+## BUSINESS MODEL - FREE vs PRO
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         MODELE FREEMIUM                                         │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   ┌─────────────────────────────────────────────────────────────────────────┐   │
+│   │                                                                          │   │
+│   │   FREE (0EUR)                                                            │   │
+│   │   ━━━━━━━━━━━                                                            │   │
+│   │                                                                          │   │
+│   │   • 5 analyses de deals par mois                                        │   │
+│   │   • Tier 1 uniquement (screening rapide)                                │   │
+│   │   • Extraction docs + GO/NO-GO + premiers red flags                     │   │
+│   │   • AI Board: Teaser uniquement ("Voici ce que le Board analyserait")   │   │
+│   │                                                                          │   │
+│   │   → Objectif: Montrer la valeur, creer l'envie                          │   │
+│   │   → Cout plateforme: ~$0.50/analyse (modeles rapides)                   │   │
+│   │                                                                          │   │
+│   └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+│   ┌─────────────────────────────────────────────────────────────────────────┐   │
+│   │                                                                          │   │
+│   │   PRO (249EUR/mois)                                                      │   │
+│   │   ━━━━━━━━━━━━━━━━━                                                      │   │
+│   │                                                                          │   │
+│   │   • Analyses illimitees                                                  │   │
+│   │   • Tiers 1, 2 et 3 complets                                            │   │
+│   │     - Tier 1: Screening (30 sec)                                        │   │
+│   │     - Tier 2: Analyse approfondie par 13 agents (2-3 min)               │   │
+│   │     - Tier 3: Synthese par 5 experts + 9 experts sectoriels             │   │
+│   │   • 5 AI Board inclus par mois                                          │   │
+│   │     - 4 LLMs TOP deliberent sur le deal                                 │   │
+│   │     - Claude Opus 4.5, GPT-4 Turbo, Gemini Ultra, Mistral Large         │   │
+│   │   • Boards supplementaires: 79EUR/board                                 │   │
+│   │                                                                          │   │
+│   │   → Objectif: Experience complete, valeur maximale                      │   │
+│   │   → Marge: ~63% apres couts LLM                                         │   │
+│   │                                                                          │   │
+│   └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Pourquoi ce modele ?
+
+| Decision | Justification |
+|----------|---------------|
+| **5 deals FREE** | Assez pour essayer, pas assez pour rester indefiniment |
+| **Tier 1 seul FREE** | Valeur visible mais incomplete - pousse vers PRO |
+| **249EUR/mois** | Premium justifie: 1 erreur evitee = 25K+ sauves |
+| **5 boards inclus** | BA voit ~10-15 deals/mois, utilise board sur les 3-5 ambigus |
+| **79EUR/board extra** | 3 boards a 79 = 237EUR → autant prendre PRO (249EUR) |
+
+### Comparaison marche
+
+| Service | Prix | Ce qu'il offre |
+|---------|------|----------------|
+| 1h avocat | 200-500EUR | Conseils legaux ponctuels |
+| 1 jour consultant DD | 800-1500EUR | Analyse manuelle d'un deal |
+| Analyste junior/mois | 3-4K EUR | Ressource humaine temps partiel |
+| PitchBook/mois | ~1700EUR | Donnees marche uniquement |
+| **Fullinvest PRO** | **249EUR** | DD complete + AI Board + illimite |
+
+### Implementation technique
+
+| Fichier | Role |
+|---------|------|
+| `src/services/deal-limits/index.ts` | Gestion des limites FREE/PRO |
+| `src/services/board-credits/index.ts` | Gestion des credits AI Board |
+| `prisma/schema.prisma` (UserDealUsage) | Tracking usage mensuel |
+| `src/app/api/analyze/route.ts` | Verification des permissions avant analyse |
+| `src/app/(dashboard)/pricing/page.tsx` | Page pricing publique |
+
+---
+
 # KILLER FEATURES
 
 > **Ce qui fait que les utilisateurs ne peuvent plus s'en passer.**
@@ -4778,10 +4855,10 @@ WEEK 5-6: Tier 1 Agents
 
 WEEK 7-8: Tier 2 & 3 Agents
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[ ] Implement 5 Tier 2 synthesis agents
-[ ] Implement 9 Tier 3 sector experts
-[ ] Agent orchestration
-[ ] Basic scoring system
+[x] Implement 5 Tier 2 synthesis agents
+[x] Implement 9 Tier 3 sector experts
+[x] Agent orchestration
+[x] Basic scoring system
 ```
 
 ## Phase 3: Multi-Model (Weeks 9-12)

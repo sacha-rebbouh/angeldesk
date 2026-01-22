@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import { DocumentType } from "@prisma/client";
-import { extractTextFromPDF } from "@/services/pdf/extractor";
+import { DocumentType, Prisma } from "@prisma/client";
+import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { uploadFile } from "@/services/storage";
 
 // POST /api/documents/upload - Upload a document
@@ -86,7 +86,14 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Extract text for PDFs
+    // Extract text for PDFs with smart extraction (auto-OCR if needed)
+    let extractionWarnings: ExtractionWarning[] = [];
+    let extractionQuality: number | null = null;
+    let requiresOCR = false;
+    let ocrProcessed = false;
+    let pagesOCRd = 0;
+    let ocrCost = 0;
+
     if (file.type === "application/pdf") {
       await prisma.document.update({
         where: { id: document.id },
@@ -94,28 +101,97 @@ export async function POST(request: NextRequest) {
       });
 
       try {
-        const extraction = await extractTextFromPDF(buffer);
+        // Smart extraction: regular + auto OCR for low-quality pages
+        const result = await smartExtract(buffer, {
+          qualityThreshold: 40,
+          maxOCRPages: 20,
+          autoOCR: true,
+        });
 
-        if (extraction.success && extraction.text) {
-          await prisma.document.update({
-            where: { id: document.id },
-            data: {
-              extractedText: extraction.text,
-              processingStatus: "COMPLETED",
-            },
+        extractionQuality = result.quality;
+        pagesOCRd = result.pagesOCRd;
+        ocrCost = result.estimatedCost;
+        ocrProcessed = result.method === 'ocr' || result.method === 'hybrid';
+
+        // Get warnings from OCR result if available
+        if (result.ocrResult?.pageResults) {
+          const lowConfidencePages = result.ocrResult.pageResults
+            .filter(p => p.confidence === 'low')
+            .map(p => p.pageNumber);
+
+          if (lowConfidencePages.length > 0) {
+            extractionWarnings.push({
+              code: 'LOW_OCR_CONFIDENCE',
+              severity: 'medium',
+              message: `OCR had low confidence on pages: ${lowConfidencePages.join(', ')}`,
+              suggestion: 'Some text may not be accurately extracted from these pages.'
+            });
+          }
+        }
+
+        // Add method info
+        if (result.method === 'hybrid') {
+          extractionWarnings.push({
+            code: 'OCR_APPLIED',
+            severity: 'low',
+            message: `OCR applied to ${pagesOCRd} pages with low text content`,
+            suggestion: `Extraction enhanced with OCR. Cost: $${ocrCost.toFixed(4)}`
           });
-        } else {
-          await prisma.document.update({
-            where: { id: document.id },
-            data: { processingStatus: "FAILED" },
+        } else if (result.method === 'ocr') {
+          extractionWarnings.push({
+            code: 'FULL_OCR',
+            severity: 'medium',
+            message: 'Full OCR was required - PDF appears to be image-based',
+            suggestion: `All text extracted via OCR. Cost: $${ocrCost.toFixed(4)}`
           });
         }
-      } catch (extractionError) {
-        console.error("PDF extraction error:", extractionError);
+
+        // Check if quality is still low after OCR
+        requiresOCR = extractionQuality < 40 && !ocrProcessed;
+
         await prisma.document.update({
           where: { id: document.id },
-          data: { processingStatus: "FAILED" },
+          data: {
+            extractedText: result.text,
+            processingStatus: "COMPLETED",
+            extractionQuality,
+            extractionMetrics: {
+              quality: extractionQuality,
+              method: result.method,
+              pagesOCRd,
+              ocrCost
+            },
+            extractionWarnings: extractionWarnings.length > 0
+              ? JSON.parse(JSON.stringify(extractionWarnings))
+              : Prisma.DbNull,
+            requiresOCR,
+            ocrProcessed,
+          },
         });
+      } catch (extractionError) {
+        console.error("PDF extraction error:", extractionError);
+        const errorMessage = extractionError instanceof Error
+          ? extractionError.message
+          : "Unknown error";
+
+        await prisma.document.update({
+          where: { id: document.id },
+          data: {
+            processingStatus: "FAILED",
+            extractionWarnings: [{
+              code: "EXTRACTION_ERROR",
+              severity: "critical",
+              message: `Extraction failed: ${errorMessage}`,
+              suggestion: "The PDF may be corrupted or password-protected."
+            }] as Prisma.InputJsonValue,
+          },
+        });
+        extractionWarnings = [{
+          code: "EXTRACTION_ERROR",
+          severity: "critical",
+          message: `Extraction failed: ${errorMessage}`,
+          suggestion: "The PDF may be corrupted or password-protected."
+        }];
       }
     }
 
@@ -124,7 +200,34 @@ export async function POST(request: NextRequest) {
       where: { id: document.id },
     });
 
-    return NextResponse.json({ data: updatedDocument }, { status: 201 });
+    // Build response with extraction health info
+    const response: {
+      data: typeof updatedDocument;
+      extraction?: {
+        quality: number | null;
+        warnings: ExtractionWarning[];
+        requiresOCR: boolean;
+        isUsable: boolean;
+        ocrApplied: boolean;
+        pagesOCRd: number;
+        ocrCost: number;
+      };
+    } = { data: updatedDocument };
+
+    // Include extraction info for PDFs
+    if (file.type === "application/pdf") {
+      response.extraction = {
+        quality: extractionQuality,
+        warnings: extractionWarnings,
+        requiresOCR,
+        isUsable: (extractionQuality ?? 0) >= 40,
+        ocrApplied: ocrProcessed,
+        pagesOCRd,
+        ocrCost,
+      };
+    }
+
+    return NextResponse.json(response, { status: 201 });
   } catch (error) {
     console.error("Error uploading document:", error);
     return NextResponse.json(

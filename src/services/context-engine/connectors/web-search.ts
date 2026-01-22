@@ -19,7 +19,8 @@ import type {
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 // Perplexity models via OpenRouter for web search
-const SEARCH_MODEL = "perplexity/llama-3.1-sonar-small-128k-online";
+// Updated to new model naming (2025): sonar replaces llama-3.1-sonar-*
+const SEARCH_MODEL = "perplexity/sonar";
 
 function getApiKey(): string | undefined {
   return process.env.OPENROUTER_API_KEY;

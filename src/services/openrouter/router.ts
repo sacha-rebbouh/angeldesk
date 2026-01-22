@@ -1,8 +1,93 @@
 import { openrouter, MODELS, type ModelKey } from "./client";
+import { getCircuitBreaker, CircuitOpenError } from "./circuit-breaker";
+import { costMonitor } from "@/services/cost-monitor";
 
 export type TaskComplexity = "simple" | "medium" | "complex" | "critical";
 
+// Current agent context for cost tracking
+let currentAgentContext: string | null = null;
+
+/**
+ * Set the current agent context for cost tracking
+ */
+export function setAgentContext(agentName: string | null): void {
+  currentAgentContext = agentName;
+}
+
+/**
+ * Get current agent context
+ */
+export function getAgentContext(): string | null {
+  return currentAgentContext;
+}
+
+// ============================================================================
+// RATE LIMITING & RETRY CONFIGURATION
+// ============================================================================
+
+const RATE_LIMIT_CONFIG = {
+  maxRetries: 3,
+  baseDelayMs: 1000, // 1 second
+  maxDelayMs: 30000, // 30 seconds
+  requestsPerMinute: 60, // Conservative limit
+};
+
+// Simple in-memory rate limiter
+class RateLimiter {
+  private timestamps: number[] = [];
+  private readonly windowMs = 60000; // 1 minute
+
+  canMakeRequest(): boolean {
+    const now = Date.now();
+    // Remove old timestamps
+    this.timestamps = this.timestamps.filter((t) => now - t < this.windowMs);
+    return this.timestamps.length < RATE_LIMIT_CONFIG.requestsPerMinute;
+  }
+
+  recordRequest(): void {
+    this.timestamps.push(Date.now());
+  }
+
+  async waitForSlot(): Promise<void> {
+    while (!this.canMakeRequest()) {
+      const waitTime = Math.min(1000, this.windowMs - (Date.now() - this.timestamps[0]));
+      await new Promise((r) => setTimeout(r, waitTime));
+    }
+  }
+}
+
+const rateLimiter = new RateLimiter();
+
+/**
+ * Check if an error is retryable
+ */
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("429") ||
+      message.includes("rate limit") ||
+      message.includes("timeout") ||
+      message.includes("503") ||
+      message.includes("service unavailable") ||
+      message.includes("500") ||
+      message.includes("internal server")
+    );
+  }
+  return false;
+}
+
+/**
+ * Calculate exponential backoff delay
+ */
+function calculateBackoff(attempt: number): number {
+  const delay = RATE_LIMIT_CONFIG.baseDelayMs * Math.pow(2, attempt);
+  return Math.min(delay, RATE_LIMIT_CONFIG.maxDelayMs);
+}
+
 // Model selection based on task complexity
+// NOTE: Using GPT4O_MINI for "complex" during testing to save costs
+// TODO: Revert to GPT4O for production
 export function selectModel(complexity: TaskComplexity): ModelKey {
   switch (complexity) {
     case "simple":
@@ -10,7 +95,7 @@ export function selectModel(complexity: TaskComplexity): ModelKey {
     case "medium":
       return "SONNET";
     case "complex":
-      return "GPT4O";
+      return "SONNET"; // Testing Sonnet for consistency
     case "critical":
       return "OPUS";
     default:
@@ -51,6 +136,7 @@ export async function complete(
 
   const selectedModelKey = modelKey ?? selectModel(complexity);
   const model = MODELS[selectedModelKey];
+  const circuitBreaker = getCircuitBreaker();
 
   const messages: Array<{ role: "system" | "user"; content: string }> = [];
 
@@ -60,30 +146,83 @@ export async function complete(
 
   messages.push({ role: "user", content: prompt });
 
-  const response = await openrouter.chat.completions.create({
-    model: model.id,
-    messages,
-    max_tokens: maxTokens,
-    temperature,
-  });
+  // Check circuit breaker before attempting
+  if (!circuitBreaker.canExecute()) {
+    const stats = circuitBreaker.getStats();
+    throw new CircuitOpenError(
+      `Circuit breaker is OPEN. Too many failures. Recovery in progress.`,
+      stats
+    );
+  }
 
-  const content = response.choices[0]?.message?.content ?? "";
-  const usage = response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  // Retry loop with exponential backoff
+  let lastError: Error | null = null;
 
-  const cost =
-    (usage.prompt_tokens / 1000) * model.inputCost +
-    (usage.completion_tokens / 1000) * model.outputCost;
+  for (let attempt = 0; attempt <= RATE_LIMIT_CONFIG.maxRetries; attempt++) {
+    try {
+      // Wait for rate limit slot
+      await rateLimiter.waitForSlot();
+      rateLimiter.recordRequest();
 
-  return {
-    content,
-    model: model.id,
-    usage: {
-      inputTokens: usage.prompt_tokens,
-      outputTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens,
-    },
-    cost,
-  };
+      // Execute through circuit breaker
+      const response = await circuitBreaker.execute(() =>
+        openrouter.chat.completions.create({
+          model: model.id,
+          messages,
+          max_tokens: maxTokens,
+          temperature,
+        })
+      );
+
+      const content = response.choices[0]?.message?.content ?? "";
+      const usage = response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
+      const cost =
+        (usage.prompt_tokens / 1000) * model.inputCost +
+        (usage.completion_tokens / 1000) * model.outputCost;
+
+      // Record cost for monitoring
+      costMonitor.recordCall({
+        model: model.id,
+        agent: currentAgentContext ?? "unknown",
+        inputTokens: usage.prompt_tokens,
+        outputTokens: usage.completion_tokens,
+        cost,
+      });
+
+      return {
+        content,
+        model: model.id,
+        usage: {
+          inputTokens: usage.prompt_tokens,
+          outputTokens: usage.completion_tokens,
+          totalTokens: usage.total_tokens,
+        },
+        cost,
+      };
+    } catch (error) {
+      // Don't retry circuit breaker errors
+      if (error instanceof CircuitOpenError) {
+        throw error;
+      }
+
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (!isRetryableError(error) || attempt === RATE_LIMIT_CONFIG.maxRetries) {
+        throw lastError;
+      }
+
+      // Calculate backoff and retry
+      const delay = calculateBackoff(attempt);
+      console.log(
+        `[OpenRouter] Retryable error on attempt ${attempt + 1}/${RATE_LIMIT_CONFIG.maxRetries + 1}. Waiting ${delay}ms...`
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  // This should never be reached, but TypeScript needs it
+  throw lastError ?? new Error("Unknown error in completion");
 }
 
 // Structured output completion with JSON parsing

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback, useState } from "react";
+import { useMemo, useCallback, useState, memo } from "react";
 import {
   Card,
   CardContent,
@@ -11,6 +11,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { formatAgentName } from "@/lib/format-utils";
+import { ScoreBadge } from "@/components/shared/score-badge";
+import { ExpandableSection } from "@/components/shared/expandable-section";
+import { StatusBadge } from "@/components/shared/status-badge";
 import {
   DollarSign,
   Users,
@@ -24,12 +28,11 @@ import {
   UserCheck,
   TrendingUp,
   HelpCircle,
-  ChevronDown,
-  ChevronUp,
   AlertTriangle,
   CheckCircle,
   XCircle,
-  Info,
+  Brain,
+  X,
 } from "lucide-react";
 import type {
   FinancialAuditData,
@@ -45,75 +48,129 @@ import type {
   ExitStrategistData,
   QuestionMasterData,
 } from "@/agents/types";
+import type { ReasoningTrace } from "@/agents/react/types";
+import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
+import { ReActTraceViewer } from "./react-trace-viewer";
+
+interface ReActMetadata {
+  reasoningTrace: ReasoningTrace;
+  findings: ScoredFinding[];
+  confidence: ConfidenceScore;
+  expectedVariance?: number;
+}
+
+interface AgentResultWithReAct {
+  agentName: string;
+  success: boolean;
+  executionTimeMs: number;
+  cost: number;
+  error?: string;
+  data?: unknown;
+  _react?: ReActMetadata;
+}
 
 interface Tier1ResultsProps {
-  results: Record<string, {
-    agentName: string;
-    success: boolean;
-    executionTimeMs: number;
-    cost: number;
-    error?: string;
-    data?: unknown;
-  }>;
+  results: Record<string, AgentResultWithReAct>;
 }
 
-function ScoreBadge({ score, size = "md" }: { score: number; size?: "sm" | "md" | "lg" }) {
-  const getColor = useCallback((s: number) => {
-    if (s >= 80) return "bg-green-100 text-green-800 border-green-200";
-    if (s >= 60) return "bg-blue-100 text-blue-800 border-blue-200";
-    if (s >= 40) return "bg-yellow-100 text-yellow-800 border-yellow-200";
-    if (s >= 20) return "bg-orange-100 text-orange-800 border-orange-200";
-    return "bg-red-100 text-red-800 border-red-200";
-  }, []);
+// ReAct Badge Component - Shows when agent has ReAct metadata
+const ReActIndicator = memo(function ReActIndicator({
+  reactData,
+  onShowTrace
+}: {
+  reactData: ReActMetadata;
+  onShowTrace: () => void;
+}) {
+  const confidenceColor = useMemo(() => {
+    const level = reactData.confidence.level;
+    if (level === "high") return "bg-green-100 text-green-800 border-green-300";
+    if (level === "medium") return "bg-yellow-100 text-yellow-800 border-yellow-300";
+    return "bg-red-100 text-red-800 border-red-300";
+  }, [reactData.confidence.level]);
 
-  const sizeClasses = {
-    sm: "text-xs px-2 py-0.5",
-    md: "text-sm px-2.5 py-1",
-    lg: "text-lg px-3 py-1.5 font-bold",
-  };
-
-  return (
-    <span className={cn("rounded-full border font-medium", getColor(score), sizeClasses[size])}>
-      {score}/100
-    </span>
+  const benchmarkedFindings = useMemo(
+    () => reactData.findings.filter(f => f.benchmarkData).length,
+    [reactData.findings]
   );
-}
 
-function StatusBadge({ status, variant }: { status: string; variant?: "success" | "warning" | "danger" | "info" }) {
-  const colors = {
-    success: "bg-green-100 text-green-800",
-    warning: "bg-yellow-100 text-yellow-800",
-    danger: "bg-red-100 text-red-800",
-    info: "bg-blue-100 text-blue-800",
-  };
   return (
-    <Badge variant="outline" className={cn(variant ? colors[variant] : "")}>
-      {status}
-    </Badge>
+    <button
+      onClick={onShowTrace}
+      className="flex items-center gap-2 px-2 py-1 rounded-lg bg-primary/5 hover:bg-primary/10 border border-primary/20 transition-colors"
+    >
+      <Brain className="h-4 w-4 text-primary" />
+      <div className="flex items-center gap-1.5">
+        <Badge variant="outline" className={cn("text-xs", confidenceColor)}>
+          {reactData.confidence.score}%
+        </Badge>
+        {benchmarkedFindings > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {benchmarkedFindings} benchmarks
+          </span>
+        )}
+      </div>
+    </button>
   );
-}
+});
 
-function ExpandableSection({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-
-  const toggleOpen = useCallback(() => setIsOpen(prev => !prev), []);
-
+// Slide-over panel for ReAct trace
+const ReActTracePanel = memo(function ReActTracePanel({
+  agentName,
+  reactData,
+  onClose
+}: {
+  agentName: string;
+  reactData: ReActMetadata;
+  onClose: () => void;
+}) {
   return (
-    <div className="border rounded-lg">
-      <button
-        onClick={toggleOpen}
-        className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
-      >
-        <span className="font-medium text-sm">{title}</span>
-        {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-      </button>
-      {isOpen && <div className="p-3 pt-0 border-t">{children}</div>}
+    <div className="fixed inset-0 z-50 flex justify-end">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/50"
+        onClick={onClose}
+      />
+
+      {/* Panel */}
+      <div className="relative w-full max-w-2xl bg-background shadow-xl overflow-hidden">
+        {/* Header */}
+        <div className="sticky top-0 z-10 flex items-center justify-between p-4 border-b bg-background">
+          <div className="flex items-center gap-2">
+            <Brain className="h-5 w-5 text-primary" />
+            <h2 className="font-semibold">Trace ReAct - {formatAgentName(agentName)}</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg hover:bg-muted transition-colors"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="overflow-y-auto h-[calc(100vh-64px)] p-4">
+          <ReActTraceViewer
+            agentName={agentName}
+            data={reactData}
+            defaultExpanded={true}
+          />
+        </div>
+      </div>
     </div>
   );
-}
+});
+
 
 // Financial Auditor Card
-function FinancialAuditCard({ data }: { data: FinancialAuditData }) {
+const FinancialAuditCard = memo(function FinancialAuditCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: FinancialAuditData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -121,10 +178,13 @@ function FinancialAuditCard({ data }: { data: FinancialAuditData }) {
           <div className="flex items-center gap-2">
             <DollarSign className="h-5 w-5 text-green-600" />
             <CardTitle className="text-lg">Financial Audit</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.overallScore} size="lg" />
         </div>
-        <CardDescription>Metriques vs benchmarks sectoriels</CardDescription>
+        <CardDescription>Métriques vs benchmarks sectoriels</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Valuation Analysis */}
@@ -186,10 +246,18 @@ function FinancialAuditCard({ data }: { data: FinancialAuditData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Team Investigator Card
-function TeamInvestigatorCard({ data }: { data: TeamInvestigatorData }) {
+const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: TeamInvestigatorData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -197,10 +265,13 @@ function TeamInvestigatorCard({ data }: { data: TeamInvestigatorData }) {
           <div className="flex items-center gap-2">
             <Users className="h-5 w-5 text-blue-600" />
             <CardTitle className="text-lg">Team Investigation</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.overallTeamScore} size="lg" />
         </div>
-        <CardDescription>Background check et complementarite</CardDescription>
+        <CardDescription>Background check et complémentarité</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Team Composition */}
@@ -215,7 +286,7 @@ function TeamInvestigatorCard({ data }: { data: TeamInvestigatorData }) {
           </div>
           <div className="p-2 rounded-lg bg-muted">
             <div className="text-lg font-bold">{data.teamComposition.complementarity}</div>
-            <div className="text-xs text-muted-foreground">Complementarite</div>
+            <div className="text-xs text-muted-foreground">Complémentarité</div>
           </div>
         </div>
 
@@ -250,7 +321,7 @@ function TeamInvestigatorCard({ data }: { data: TeamInvestigatorData }) {
         {/* Gaps */}
         {data.teamComposition.gaps.length > 0 && (
           <div className="pt-2 border-t">
-            <p className="text-sm font-medium text-orange-600 mb-1">Gaps identifies</p>
+            <p className="text-sm font-medium text-orange-600 mb-1">Gaps identifiés</p>
             <ul className="text-sm text-muted-foreground list-disc list-inside">
               {data.teamComposition.gaps.map((g, i) => <li key={i}>{g}</li>)}
             </ul>
@@ -259,10 +330,18 @@ function TeamInvestigatorCard({ data }: { data: TeamInvestigatorData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Competitive Intel Card
-function CompetitiveIntelCard({ data }: { data: CompetitiveIntelData }) {
+const CompetitiveIntelCard = memo(function CompetitiveIntelCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: CompetitiveIntelData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -270,6 +349,9 @@ function CompetitiveIntelCard({ data }: { data: CompetitiveIntelData }) {
           <div className="flex items-center gap-2">
             <Target className="h-5 w-5 text-purple-600" />
             <CardTitle className="text-lg">Competitive Intel</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.competitiveScore} size="lg" />
         </div>
@@ -336,18 +418,29 @@ function CompetitiveIntelCard({ data }: { data: CompetitiveIntelData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Deck Forensics Card
-function DeckForensicsCard({ data }: { data: DeckForensicsData }) {
+const DeckForensicsCard = memo(function DeckForensicsCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: DeckForensicsData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2">
           <FileSearch className="h-5 w-5 text-indigo-600" />
           <CardTitle className="text-lg">Deck Forensics</CardTitle>
+          {reactData && onShowTrace && (
+            <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+          )}
         </div>
-        <CardDescription>Analyse narrative et verification claims</CardDescription>
+        <CardDescription>Analyse narrative et vérification claims</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Narrative Scores */}
@@ -367,7 +460,7 @@ function DeckForensicsCard({ data }: { data: DeckForensicsData }) {
         </div>
 
         {/* Claim Verification */}
-        <ExpandableSection title={`Claims verifies (${data.claimVerification.length})`}>
+        <ExpandableSection title={`Claims vérifiés (${data.claimVerification.length})`}>
           <div className="space-y-2 mt-2">
             {data.claimVerification.map((c, i) => (
               <div key={i} className="flex items-start justify-between p-2 border rounded">
@@ -392,7 +485,7 @@ function DeckForensicsCard({ data }: { data: DeckForensicsData }) {
         {/* Inconsistencies */}
         {data.narrativeAnalysis.inconsistencies.length > 0 && (
           <div className="pt-2 border-t">
-            <p className="text-sm font-medium text-orange-600 mb-1">Inconsistances</p>
+            <p className="text-sm font-medium text-orange-600 mb-1">Incohérences</p>
             <ul className="text-sm text-muted-foreground list-disc list-inside">
               {data.narrativeAnalysis.inconsistencies.map((inc, i) => (
                 <li key={i}>{inc}</li>
@@ -403,10 +496,18 @@ function DeckForensicsCard({ data }: { data: DeckForensicsData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Market Intelligence Card
-function MarketIntelCard({ data }: { data: MarketIntelData }) {
+const MarketIntelCard = memo(function MarketIntelCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: MarketIntelData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -414,10 +515,13 @@ function MarketIntelCard({ data }: { data: MarketIntelData }) {
           <div className="flex items-center gap-2">
             <Globe className="h-5 w-5 text-cyan-600" />
             <CardTitle className="text-lg">Market Intelligence</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.marketScore} size="lg" />
         </div>
-        <CardDescription>Validation TAM/SAM/SOM et timing</CardDescription>
+        <CardDescription>Validation TAM / SAM / SOM et timing</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Market Size */}
@@ -440,11 +544,11 @@ function MarketIntelCard({ data }: { data: MarketIntelData }) {
         <div className="p-3 rounded-lg bg-muted">
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div>
-              <span className="text-muted-foreground">Maturite:</span>{" "}
+              <span className="text-muted-foreground">Maturité :</span>{" "}
               <span className="font-medium">{data.timingAnalysis.marketMaturity}</span>
             </div>
             <div>
-              <span className="text-muted-foreground">Timing:</span>{" "}
+              <span className="text-muted-foreground">Timing :</span>{" "}
               <span className={cn(
                 "font-medium",
                 data.timingAnalysis.timing === "optimal" ? "text-green-600" :
@@ -478,10 +582,18 @@ function MarketIntelCard({ data }: { data: MarketIntelData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Technical DD Card
-function TechnicalDDCard({ data }: { data: TechnicalDDData }) {
+const TechnicalDDCard = memo(function TechnicalDDCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: TechnicalDDData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -489,6 +601,9 @@ function TechnicalDDCard({ data }: { data: TechnicalDDData }) {
           <div className="flex items-center gap-2">
             <Code className="h-5 w-5 text-emerald-600" />
             <CardTitle className="text-lg">Technical DD</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.technicalScore} size="lg" />
         </div>
@@ -518,7 +633,7 @@ function TechnicalDDCard({ data }: { data: TechnicalDDData }) {
         {/* Product Maturity */}
         <div className="grid grid-cols-2 gap-3">
           <div className="p-2 rounded-lg bg-muted">
-            <div className="text-xs text-muted-foreground">Maturite</div>
+            <div className="text-xs text-muted-foreground">Maturité</div>
             <div className="font-medium">{data.productMaturity.stage}</div>
           </div>
           <div className="p-2 rounded-lg bg-muted">
@@ -556,10 +671,18 @@ function TechnicalDDCard({ data }: { data: TechnicalDDData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Legal & Regulatory Card
-function LegalRegulatoryCard({ data }: { data: LegalRegulatoryData }) {
+const LegalRegulatoryCard = memo(function LegalRegulatoryCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: LegalRegulatoryData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -567,6 +690,9 @@ function LegalRegulatoryCard({ data }: { data: LegalRegulatoryData }) {
           <div className="flex items-center gap-2">
             <Scale className="h-5 w-5 text-amber-600" />
             <CardTitle className="text-lg">Legal & Regulatory</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.legalScore} size="lg" />
         </div>
@@ -623,10 +749,18 @@ function LegalRegulatoryCard({ data }: { data: LegalRegulatoryData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Cap Table Auditor Card
-function CapTableAuditCard({ data }: { data: CapTableAuditData }) {
+const CapTableAuditCard = memo(function CapTableAuditCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: CapTableAuditData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -634,6 +768,9 @@ function CapTableAuditCard({ data }: { data: CapTableAuditData }) {
           <div className="flex items-center gap-2">
             <PieChart className="h-5 w-5 text-pink-600" />
             <CardTitle className="text-lg">Cap Table Audit</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.capTableScore} size="lg" />
         </div>
@@ -690,10 +827,18 @@ function CapTableAuditCard({ data }: { data: CapTableAuditData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // GTM Analyst Card
-function GTMAnalystCard({ data }: { data: GTMAnalystData }) {
+const GTMAnalystCard = memo(function GTMAnalystCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: GTMAnalystData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -701,10 +846,13 @@ function GTMAnalystCard({ data }: { data: GTMAnalystData }) {
           <div className="flex items-center gap-2">
             <Rocket className="h-5 w-5 text-orange-600" />
             <CardTitle className="text-lg">GTM Strategy</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.gtmScore} size="lg" />
         </div>
-        <CardDescription>Go-to-market et efficacite commerciale</CardDescription>
+        <CardDescription>Go-to-market et efficacité commerciale</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Strategy */}
@@ -727,7 +875,7 @@ function GTMAnalystCard({ data }: { data: GTMAnalystData }) {
             <div className="text-lg font-bold">{data.growthPotential.currentGrowthRate}%</div>
           </div>
           <div className="p-2 rounded-lg bg-muted">
-            <div className="text-xs text-muted-foreground">Durabilite</div>
+            <div className="text-xs text-muted-foreground">Durabilité</div>
             <div className="text-lg font-bold">{data.growthPotential.sustainabilityScore}/100</div>
           </div>
         </div>
@@ -748,10 +896,18 @@ function GTMAnalystCard({ data }: { data: GTMAnalystData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Customer Intel Card
-function CustomerIntelCard({ data }: { data: CustomerIntelData }) {
+const CustomerIntelCard = memo(function CustomerIntelCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: CustomerIntelData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -759,6 +915,9 @@ function CustomerIntelCard({ data }: { data: CustomerIntelData }) {
           <div className="flex items-center gap-2">
             <UserCheck className="h-5 w-5 text-teal-600" />
             <CardTitle className="text-lg">Customer Intel</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.customerScore} size="lg" />
         </div>
@@ -827,10 +986,18 @@ function CustomerIntelCard({ data }: { data: CustomerIntelData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Exit Strategist Card
-function ExitStrategistCard({ data }: { data: ExitStrategistData }) {
+const ExitStrategistCard = memo(function ExitStrategistCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: ExitStrategistData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -838,10 +1005,13 @@ function ExitStrategistCard({ data }: { data: ExitStrategistData }) {
           <div className="flex items-center gap-2">
             <TrendingUp className="h-5 w-5 text-lime-600" />
             <CardTitle className="text-lg">Exit Strategy</CardTitle>
+            {reactData && onShowTrace && (
+              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+            )}
           </div>
           <ScoreBadge score={data.exitScore} size="lg" />
         </div>
-        <CardDescription>Scenarios de sortie et ROI</CardDescription>
+        <CardDescription>Scénarios de sortie et ROI</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Exit Scenarios */}
@@ -872,7 +1042,7 @@ function ExitStrategistCard({ data }: { data: ExitStrategistData }) {
 
         {/* Strategic Buyers */}
         {data.acquirerAnalysis.strategicBuyers.length > 0 && (
-          <ExpandableSection title={`Acquereurs potentiels (${data.acquirerAnalysis.strategicBuyers.length})`}>
+          <ExpandableSection title={`Acquéreurs potentiels (${data.acquirerAnalysis.strategicBuyers.length})`}>
             <div className="flex flex-wrap gap-1 mt-2">
               {data.acquirerAnalysis.strategicBuyers.map((b, i) => (
                 <Badge key={i} variant="secondary" className="text-xs">{b}</Badge>
@@ -884,7 +1054,7 @@ function ExitStrategistCard({ data }: { data: ExitStrategistData }) {
         {/* Risks */}
         {data.liquidityRisks.length > 0 && (
           <div className="pt-2 border-t">
-            <p className="text-sm font-medium text-orange-600 mb-1">Risques liquidite</p>
+            <p className="text-sm font-medium text-orange-600 mb-1">Risques liquidité</p>
             <ul className="text-sm text-muted-foreground list-disc list-inside">
               {data.liquidityRisks.slice(0, 3).map((r, i) => <li key={i}>{r}</li>)}
             </ul>
@@ -893,10 +1063,18 @@ function ExitStrategistCard({ data }: { data: ExitStrategistData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Question Master Card
-function QuestionMasterCard({ data }: { data: QuestionMasterData }) {
+const QuestionMasterCard = memo(function QuestionMasterCard({
+  data,
+  reactData,
+  onShowTrace
+}: {
+  data: QuestionMasterData;
+  reactData?: ReActMetadata;
+  onShowTrace?: () => void;
+}) {
   const mustAskQuestions = useMemo(
     () => data.founderQuestions.filter(q => q.priority === "must_ask"),
     [data.founderQuestions]
@@ -908,14 +1086,17 @@ function QuestionMasterCard({ data }: { data: QuestionMasterData }) {
         <div className="flex items-center gap-2">
           <HelpCircle className="h-5 w-5 text-violet-600" />
           <CardTitle className="text-lg">Questions Strategiques</CardTitle>
+          {reactData && onShowTrace && (
+            <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
+          )}
         </div>
-        <CardDescription>Questions killer et points de negociation</CardDescription>
+        <CardDescription>Questions killer et points de négociation</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Top Priorities */}
         {data.topPriorities.length > 0 && (
           <div className="p-3 rounded-lg bg-violet-50 border border-violet-200">
-            <p className="text-sm font-medium text-violet-800 mb-2">Priorites</p>
+            <p className="text-sm font-medium text-violet-800 mb-2">Priorités</p>
             <ul className="space-y-1">
               {data.topPriorities.map((p, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-violet-700">
@@ -948,7 +1129,7 @@ function QuestionMasterCard({ data }: { data: QuestionMasterData }) {
 
         {/* Negotiation Points */}
         {data.negotiationPoints.length > 0 && (
-          <ExpandableSection title={`Points de negociation (${data.negotiationPoints.length})`}>
+          <ExpandableSection title={`Points de négociation (${data.negotiationPoints.length})`}>
             <div className="space-y-2 mt-2">
               {data.negotiationPoints.map((n, i) => (
                 <div key={i} className="p-2 border rounded">
@@ -979,14 +1160,23 @@ function QuestionMasterCard({ data }: { data: QuestionMasterData }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // Main Tier 1 Results Component
 export function Tier1Results({ results }: Tier1ResultsProps) {
+  // State for tracking which agent's trace panel is open
+  const [openTraceAgent, setOpenTraceAgent] = useState<string | null>(null);
+
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
     if (!result?.success || !result.data) return null;
     return result.data as T;
+  }, [results]);
+
+  const getReactData = useCallback((agentName: string): ReActMetadata | undefined => {
+    const result = results[agentName];
+    if (!result?.success || !result._react) return undefined;
+    return result._react;
   }, [results]);
 
   const financialData = getAgentData<FinancialAuditData>("financial-auditor");
@@ -1001,6 +1191,11 @@ export function Tier1Results({ results }: Tier1ResultsProps) {
   const customerData = getAgentData<CustomerIntelData>("customer-intel");
   const exitData = getAgentData<ExitStrategistData>("exit-strategist");
   const questionData = getAgentData<QuestionMasterData>("question-master");
+
+  // Count agents with ReAct data
+  const reactAgentsCount = useMemo(() => {
+    return Object.values(results).filter(r => r._react).length;
+  }, [results]);
 
   // Calculate summary scores
   const scores = useMemo(() => {
@@ -1023,17 +1218,49 @@ export function Tier1Results({ results }: Tier1ResultsProps) {
     return Math.round(scores.reduce((sum, s) => sum + s.score, 0) / scores.length);
   }, [scores]);
 
+  const handleCloseTrace = useCallback(() => {
+    setOpenTraceAgent(null);
+  }, []);
+
+  // Memoized callbacks for each agent to avoid inline arrow functions
+  const traceHandlers = useMemo(() => ({
+    "financial-auditor": () => setOpenTraceAgent("financial-auditor"),
+    "team-investigator": () => setOpenTraceAgent("team-investigator"),
+    "competitive-intel": () => setOpenTraceAgent("competitive-intel"),
+    "deck-forensics": () => setOpenTraceAgent("deck-forensics"),
+    "market-intelligence": () => setOpenTraceAgent("market-intelligence"),
+    "technical-dd": () => setOpenTraceAgent("technical-dd"),
+    "legal-regulatory": () => setOpenTraceAgent("legal-regulatory"),
+    "cap-table-auditor": () => setOpenTraceAgent("cap-table-auditor"),
+    "gtm-analyst": () => setOpenTraceAgent("gtm-analyst"),
+    "customer-intel": () => setOpenTraceAgent("customer-intel"),
+    "exit-strategist": () => setOpenTraceAgent("exit-strategist"),
+    "question-master": () => setOpenTraceAgent("question-master"),
+  }), []);
+
+  // Get the react data for the currently open panel
+  const openReactData = openTraceAgent ? getReactData(openTraceAgent) : undefined;
+
   return (
     <div className="space-y-6">
       {/* Summary Header */}
       <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
-            <CardTitle>Synthese Investigation Tier 1</CardTitle>
+            <div className="flex items-center gap-3">
+              <CardTitle>Synthèse Investigation Tier 1</CardTitle>
+              {reactAgentsCount > 0 && (
+                <Badge variant="outline" className="bg-primary/10 text-primary">
+                  <Brain className="h-3 w-3 mr-1" />
+                  {reactAgentsCount} agents ReAct
+                </Badge>
+              )}
+            </div>
             <ScoreBadge score={avgScore} size="lg" />
           </div>
           <CardDescription>
-            {scores.length} agents executes avec succes
+            {scores.length} agents exécutés avec succès
+            {reactAgentsCount > 0 && " - Cliquez sur les badges ReAct pour voir les traces"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1061,41 +1288,122 @@ export function Tier1Results({ results }: Tier1ResultsProps) {
           <TabsTrigger value="overview">Vue d&apos;ensemble</TabsTrigger>
           <TabsTrigger value="business">Business</TabsTrigger>
           <TabsTrigger value="technical">Technique</TabsTrigger>
-          <TabsTrigger value="strategic">Strategique</TabsTrigger>
+          <TabsTrigger value="strategic">Stratégique</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4 mt-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {financialData && <FinancialAuditCard data={financialData} />}
-            {teamData && <TeamInvestigatorCard data={teamData} />}
-            {competitiveData && <CompetitiveIntelCard data={competitiveData} />}
-            {marketData && <MarketIntelCard data={marketData} />}
+            {financialData && (
+              <FinancialAuditCard
+                data={financialData}
+                reactData={getReactData("financial-auditor")}
+                onShowTrace={traceHandlers["financial-auditor"]}
+              />
+            )}
+            {teamData && (
+              <TeamInvestigatorCard
+                data={teamData}
+                reactData={getReactData("team-investigator")}
+                onShowTrace={traceHandlers["team-investigator"]}
+              />
+            )}
+            {competitiveData && (
+              <CompetitiveIntelCard
+                data={competitiveData}
+                reactData={getReactData("competitive-intel")}
+                onShowTrace={traceHandlers["competitive-intel"]}
+              />
+            )}
+            {marketData && (
+              <MarketIntelCard
+                data={marketData}
+                reactData={getReactData("market-intelligence")}
+                onShowTrace={traceHandlers["market-intelligence"]}
+              />
+            )}
           </div>
         </TabsContent>
 
         <TabsContent value="business" className="space-y-4 mt-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {gtmData && <GTMAnalystCard data={gtmData} />}
-            {customerData && <CustomerIntelCard data={customerData} />}
-            {capTableData && <CapTableAuditCard data={capTableData} />}
-            {exitData && <ExitStrategistCard data={exitData} />}
+            {gtmData && (
+              <GTMAnalystCard
+                data={gtmData}
+                reactData={getReactData("gtm-analyst")}
+                onShowTrace={traceHandlers["gtm-analyst"]}
+              />
+            )}
+            {customerData && (
+              <CustomerIntelCard
+                data={customerData}
+                reactData={getReactData("customer-intel")}
+                onShowTrace={traceHandlers["customer-intel"]}
+              />
+            )}
+            {capTableData && (
+              <CapTableAuditCard
+                data={capTableData}
+                reactData={getReactData("cap-table-auditor")}
+                onShowTrace={traceHandlers["cap-table-auditor"]}
+              />
+            )}
+            {exitData && (
+              <ExitStrategistCard
+                data={exitData}
+                reactData={getReactData("exit-strategist")}
+                onShowTrace={traceHandlers["exit-strategist"]}
+              />
+            )}
           </div>
         </TabsContent>
 
         <TabsContent value="technical" className="space-y-4 mt-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {technicalData && <TechnicalDDCard data={technicalData} />}
-            {legalData && <LegalRegulatoryCard data={legalData} />}
-            {deckData && <DeckForensicsCard data={deckData} />}
+            {technicalData && (
+              <TechnicalDDCard
+                data={technicalData}
+                reactData={getReactData("technical-dd")}
+                onShowTrace={traceHandlers["technical-dd"]}
+              />
+            )}
+            {legalData && (
+              <LegalRegulatoryCard
+                data={legalData}
+                reactData={getReactData("legal-regulatory")}
+                onShowTrace={traceHandlers["legal-regulatory"]}
+              />
+            )}
+            {deckData && (
+              <DeckForensicsCard
+                data={deckData}
+                reactData={getReactData("deck-forensics")}
+                onShowTrace={traceHandlers["deck-forensics"]}
+              />
+            )}
           </div>
         </TabsContent>
 
         <TabsContent value="strategic" className="space-y-4 mt-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {questionData && <QuestionMasterCard data={questionData} />}
+            {questionData && (
+              <QuestionMasterCard
+                data={questionData}
+                reactData={getReactData("question-master")}
+                onShowTrace={traceHandlers["question-master"]}
+              />
+            )}
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* ReAct Trace Panel */}
+      {openTraceAgent && openReactData && (
+        <ReActTracePanel
+          agentName={openTraceAgent}
+          reactData={openReactData}
+          onClose={handleCloseTrace}
+        />
+      )}
     </div>
   );
 }

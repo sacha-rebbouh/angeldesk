@@ -23,11 +23,15 @@ import {
   TrendingUp,
   Upload,
   Brain,
+  Crown,
 } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AnalysisPanel } from "@/components/deals/analysis-panel";
+import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
 import { ScoreGrid } from "@/components/deals/score-display";
+import { BoardPanelWrapper } from "@/components/deals/board-panel-wrapper";
+import { ExtractionQualityBadge, ExtractionWarningBanner } from "@/components/deals/extraction-quality-badge";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 async function getDeal(dealId: string, userId: string) {
   return prisma.deal.findFirst({
@@ -67,21 +71,21 @@ function getStatusLabel(status: string) {
     SCREENING: "Screening",
     ANALYZING: "En analyse",
     IN_DD: "Due Diligence",
-    PASSED: "Passe",
+    PASSED: "Passé",
     INVESTED: "Investi",
-    ARCHIVED: "Archive",
+    ARCHIVED: "Archivé",
   };
   return labels[status] ?? status;
 }
 
 function getStageLabel(stage: string | null) {
-  if (!stage) return "Non defini";
+  if (!stage) return "Non défini";
   const labels: Record<string, string> = {
     PRE_SEED: "Pre-seed",
     SEED: "Seed",
-    SERIES_A: "Serie A",
-    SERIES_B: "Serie B",
-    SERIES_C: "Serie C",
+    SERIES_A: "Série A",
+    SERIES_B: "Série B",
+    SERIES_C: "Série C",
     LATER: "Later Stage",
   };
   return labels[stage] ?? stage;
@@ -192,7 +196,7 @@ export default async function DealDetailPage({ params }: PageProps) {
             <p className="text-xs text-muted-foreground">
               {deal.growthRate
                 ? `+${Number(deal.growthRate)}% YoY`
-                : "Croissance non definie"}
+                : "Croissance non définie"}
             </p>
           </CardContent>
         </Card>
@@ -203,7 +207,7 @@ export default async function DealDetailPage({ params }: PageProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{deal.documents.length}</div>
-            <p className="text-xs text-muted-foreground">Fichiers uploades</p>
+            <p className="text-xs text-muted-foreground">Fichiers uploadés</p>
           </CardContent>
         </Card>
         <Card>
@@ -239,6 +243,14 @@ export default async function DealDetailPage({ params }: PageProps) {
           <TabsTrigger value="redflags">
             Red Flags ({openRedFlags.length})
           </TabsTrigger>
+          <TabsTrigger value="ai-board">
+            <Users className="mr-1 h-4 w-4" />
+            AI Board
+            <Badge variant="secondary" className="ml-1 bg-gradient-to-r from-amber-100 to-orange-100 text-amber-800 text-[10px] px-1.5 py-0">
+              <Crown className="mr-0.5 h-2.5 w-2.5" />
+              PRO
+            </Badge>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
@@ -253,7 +265,7 @@ export default async function DealDetailPage({ params }: PageProps) {
                     <p className="text-sm font-medium text-muted-foreground">
                       Secteur
                     </p>
-                    <p>{deal.sector ?? "Non defini"}</p>
+                    <p>{deal.sector ?? "Non défini"}</p>
                   </div>
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">
@@ -263,9 +275,9 @@ export default async function DealDetailPage({ params }: PageProps) {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">
-                      Geographie
+                      Géographie
                     </p>
-                    <p>{deal.geography ?? "Non defini"}</p>
+                    <p>{deal.geography ?? "Non défini"}</p>
                   </div>
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">
@@ -296,7 +308,7 @@ export default async function DealDetailPage({ params }: PageProps) {
                 <CardTitle>Scores</CardTitle>
                 <CardDescription>
                   {deal.globalScore
-                    ? "Scores calcules par l'analyse IA"
+                    ? "Scores calculés par l'analyse IA"
                     : "Lancez une analyse pour obtenir les scores"}
                 </CardDescription>
               </CardHeader>
@@ -315,7 +327,7 @@ export default async function DealDetailPage({ params }: PageProps) {
                   <div className="flex flex-col items-center justify-center py-8 text-center">
                     <Brain className="h-12 w-12 text-muted-foreground/50" />
                     <p className="mt-4 text-sm text-muted-foreground">
-                      Aucune analyse effectuee
+                      Aucune analyse effectuée
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Allez dans l&apos;onglet &quot;Analyse IA&quot; pour lancer une analyse
@@ -328,55 +340,25 @@ export default async function DealDetailPage({ params }: PageProps) {
         </TabsContent>
 
         <TabsContent value="analysis" className="space-y-4">
-          <AnalysisPanel dealId={deal.id} currentStatus={deal.status} />
-
-          {/* Previous analyses */}
-          {deal.analyses.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Historique des analyses</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {deal.analyses.map((analysis) => (
-                    <div
-                      key={analysis.id}
-                      className="flex items-center justify-between rounded-lg border p-3"
-                    >
-                      <div>
-                        <p className="font-medium">
-                          {analysis.type === "SCREENING" ? "Screening" : "Due Diligence"}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {format(new Date(analysis.createdAt), "d MMM yyyy HH:mm", {
-                            locale: fr,
-                          })}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={
-                            analysis.status === "COMPLETED"
-                              ? "default"
-                              : analysis.status === "FAILED"
-                                ? "destructive"
-                                : "secondary"
-                          }
-                        >
-                          {analysis.status}
-                        </Badge>
-                        {analysis.totalCost && (
-                          <span className="text-sm text-muted-foreground">
-                            ${Number(analysis.totalCost).toFixed(4)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          <AnalysisPanelWrapper
+            dealId={deal.id}
+            currentStatus={deal.status}
+            analyses={deal.analyses.map(a => ({
+              ...a,
+              results: a.results as Record<string, {
+                agentName: string;
+                success: boolean;
+                executionTimeMs: number;
+                cost: number;
+                error?: string;
+                data?: unknown;
+              }> | null,
+              startedAt: a.startedAt?.toISOString() ?? null,
+              completedAt: a.completedAt?.toISOString() ?? null,
+              totalCost: a.totalCost?.toString() ?? null,
+              createdAt: a.createdAt.toISOString(),
+            }))}
+          />
         </TabsContent>
 
         <TabsContent value="documents">
@@ -386,7 +368,7 @@ export default async function DealDetailPage({ params }: PageProps) {
                 <div>
                   <CardTitle>Documents</CardTitle>
                   <CardDescription>
-                    Fichiers uploades pour ce deal
+                    Fichiers uploadés pour ce deal
                   </CardDescription>
                 </div>
                 <Button>
@@ -396,6 +378,7 @@ export default async function DealDetailPage({ params }: PageProps) {
               </div>
             </CardHeader>
             <CardContent>
+              <TooltipProvider>
               {deal.documents.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center">
                   <FileText className="h-12 w-12 text-muted-foreground/50" />
@@ -410,6 +393,18 @@ export default async function DealDetailPage({ params }: PageProps) {
                 </div>
               ) : (
                 <div className="space-y-2">
+                  {/* Show warning banner for low quality extractions */}
+                  {deal.documents
+                    .filter((doc) => doc.extractionQuality !== null && doc.extractionQuality < 40)
+                    .slice(0, 1)
+                    .map((doc) => (
+                      <ExtractionWarningBanner
+                        key={`warning-${doc.id}`}
+                        quality={doc.extractionQuality}
+                        warnings={doc.extractionWarnings as { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null}
+                        documentName={doc.name}
+                      />
+                    ))}
                   {deal.documents.map((doc) => (
                     <div
                       key={doc.id}
@@ -427,19 +422,32 @@ export default async function DealDetailPage({ params }: PageProps) {
                           </p>
                         </div>
                       </div>
-                      <Badge
-                        variant={
-                          doc.processingStatus === "COMPLETED"
-                            ? "default"
-                            : "secondary"
-                        }
-                      >
-                        {doc.processingStatus}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        {doc.mimeType === "application/pdf" && (
+                          <ExtractionQualityBadge
+                            quality={doc.extractionQuality}
+                            warnings={doc.extractionWarnings as { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null}
+                            requiresOCR={doc.requiresOCR}
+                            processingStatus={doc.processingStatus}
+                          />
+                        )}
+                        {doc.mimeType !== "application/pdf" && (
+                          <Badge
+                            variant={
+                              doc.processingStatus === "COMPLETED"
+                                ? "default"
+                                : "secondary"
+                            }
+                          >
+                            {doc.processingStatus}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
+              </TooltipProvider>
             </CardContent>
           </Card>
         </TabsContent>
@@ -450,7 +458,7 @@ export default async function DealDetailPage({ params }: PageProps) {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Fondateurs</CardTitle>
-                  <CardDescription>Equipe fondatrice du projet</CardDescription>
+                  <CardDescription>Équipe fondatrice du projet</CardDescription>
                 </div>
                 <Button variant="outline">Ajouter un fondateur</Button>
               </div>
@@ -550,7 +558,7 @@ export default async function DealDetailPage({ params }: PageProps) {
                             {flag.questionsToAsk.length > 0 && (
                               <div className="mt-3">
                                 <p className="text-sm font-medium">
-                                  Questions a poser:
+                                  Questions à poser :
                                 </p>
                                 <ul className="mt-1 list-inside list-disc text-sm text-muted-foreground">
                                   {flag.questionsToAsk.map((q, i) => (
@@ -571,6 +579,10 @@ export default async function DealDetailPage({ params }: PageProps) {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="ai-board">
+          <BoardPanelWrapper dealId={deal.id} dealName={deal.name} />
         </TabsContent>
       </Tabs>
     </div>

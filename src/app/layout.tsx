@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "FullInvest - Due Diligence IA pour Business Angels",
   description:
-    "La DD d'un fonds VC, accessible a un Business Angel solo. Analysez vos deals en 5 minutes.",
+    "La DD d'un fonds VC, accessible à un Business Angel solo. Analysez vos deals en 5 minutes.",
 };
 
 export default function RootLayout({
@@ -27,7 +27,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
+    <ClerkProvider
+      appearance={{
+        baseTheme: undefined,
+        variables: { colorBackground: "#fafafa" },
+      }}
+    >
       <html lang="fr" suppressHydrationWarning>
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}

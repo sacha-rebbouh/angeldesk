@@ -30,9 +30,9 @@ import { queryKeys } from "@/lib/query-keys";
 const STAGES = [
   { value: "PRE_SEED", label: "Pre-seed" },
   { value: "SEED", label: "Seed" },
-  { value: "SERIES_A", label: "Serie A" },
-  { value: "SERIES_B", label: "Serie B" },
-  { value: "SERIES_C", label: "Serie C" },
+  { value: "SERIES_A", label: "Série A" },
+  { value: "SERIES_B", label: "Série B" },
+  { value: "SERIES_C", label: "Série C" },
   { value: "LATER", label: "Later Stage" },
 ];
 
@@ -120,8 +120,9 @@ export default function NewDealPage() {
   const mutation = useMutation({
     mutationFn: createDeal,
     onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.deals.all });
-      toast.success("Deal cree avec succes");
+      // Granular invalidation: only invalidate deal lists, not all deal-related queries
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.lists() });
+      toast.success("Deal créé avec succès");
       router.push(`/deals/${response.data.id}`);
     },
     onError: (error: Error) => {
@@ -194,7 +195,7 @@ export default function NewDealPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="companyName">Nom de la societe</Label>
+                <Label htmlFor="companyName">Nom de la société</Label>
                 <Input
                   id="companyName"
                   placeholder="Ex: TechStartup SAS"
@@ -217,7 +218,7 @@ export default function NewDealPage() {
                 <textarea
                   id="description"
                   className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                  placeholder="Decrivez brievement l'activite de la startup..."
+                  placeholder="Décrivez brièvement l'activité de la startup..."
                   value={formData.description}
                   onChange={handleChange("description")}
                 />
@@ -241,7 +242,7 @@ export default function NewDealPage() {
                   onValueChange={handleSelectChange("sector")}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Selectionnez un secteur" />
+                    <SelectValue placeholder="Sélectionnez un secteur" />
                   </SelectTrigger>
                   <SelectContent>
                     {SECTORS.map((sector) => (
@@ -259,7 +260,7 @@ export default function NewDealPage() {
                   onValueChange={handleSelectChange("stage")}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Selectionnez un stade" />
+                    <SelectValue placeholder="Sélectionnez un stade" />
                   </SelectTrigger>
                   <SelectContent>
                     {STAGES.map((stage) => (
@@ -271,7 +272,7 @@ export default function NewDealPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="geography">Geographie</Label>
+                <Label htmlFor="geography">Géographie</Label>
                 <Input
                   id="geography"
                   placeholder="Ex: France, Europe"
@@ -285,9 +286,9 @@ export default function NewDealPage() {
           {/* Financial Information */}
           <Card className="lg:col-span-2">
             <CardHeader>
-              <CardTitle>Informations financieres</CardTitle>
+              <CardTitle>Informations financières</CardTitle>
               <CardDescription>
-                Metriques cles et details de la levee
+                Métriques clés et détails de la levée
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -313,7 +314,7 @@ export default function NewDealPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="amountRequested">Montant demande (EUR)</Label>
+                  <Label htmlFor="amountRequested">Montant demandé (EUR)</Label>
                   <Input
                     id="amountRequested"
                     type="number"
@@ -345,7 +346,7 @@ export default function NewDealPage() {
             {mutation.isPending && (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             )}
-            Creer le deal
+            Créer le deal
           </Button>
         </div>
       </form>

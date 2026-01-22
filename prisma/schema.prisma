@@ -123,6 +123,14 @@ model Document {
   processingStatus ProcessingStatus @default(PENDING)
   extractedText    String?  @db.Text
 
+  // Extraction quality tracking
+  extractionQuality   Int?      // 0-100 quality score
+  extractionMetrics   Json?     // Full quality metrics
+  extractionWarnings  Json?     // Array of warnings
+  requiresOCR         Boolean   @default(false)
+  ocrProcessed        Boolean   @default(false)
+  ocrText             String?   @db.Text  // Text from OCR if processed
+
   uploadedAt       DateTime @default(now())
 
   @@index([dealId])
@@ -195,21 +203,30 @@ model Analysis {
   deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   type            AnalysisType
+  mode            String?  // tier1_complete, tier2_synthesis, full_analysis, etc.
   status          AnalysisStatus @default(PENDING)
 
   totalAgents     Int
   completedAgents Int      @default(0)
 
   summary         String?  @db.Text
+  results         Json?    // Full agent results stored as JSON
 
   startedAt       DateTime?
   completedAt     DateTime?
 
   totalCost       Decimal? @db.Decimal(6, 4)
+  totalTimeMs     Int?
+
+  // Cache invalidation: fingerprint of deal state at analysis time
+  // If deal changes, fingerprint changes, cache is invalid
+  dealFingerprint String?
+  useReAct        Boolean  @default(false)
 
   createdAt       DateTime @default(now())
 
   @@index([dealId])
+  @@index([dealId, mode, dealFingerprint]) // For cache lookup
 }
 
 enum AnalysisType {
@@ -224,7 +241,7 @@ enum AnalysisStatus {
   FAILED
 }
 
-// BENCHMARK (pre-seeded)
+// BENCHMARK (pre-seeded) - Generic metrics
 model Benchmark {
   id              String   @id @default(cuid())
 
@@ -242,4 +259,580 @@ model Benchmark {
 
   @@unique([sector, stage, metricName])
   @@index([sector, stage])
+}
+
+// SECTOR BENCHMARK - Rich sector-specific benchmarks (Tier 3 experts)
+// Stored as JSON for flexibility - can be updated without schema changes
+model SectorBenchmark {
+  id              String   @id @default(cuid())
+
+  sector          String   @unique // e.g., "SaaS B2B", "FinTech", "Marketplace"
+
+  // Full benchmark data as JSON (primaryMetrics, secondaryMetrics, exitMultiples, etc.)
+  data            Json
+
+  // Versioning for cache invalidation and audit
+  version         Int      @default(1)
+  source          String?  // e.g., "OpenVC 2024", "First Round State of Startups"
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([sector])
+}
+
+// ============================================================================
+// PRODUCTION ARCHITECTURE MODELS
+// ============================================================================
+
+// SCORED FINDING - Individual metric with benchmark comparison
+model ScoredFinding {
+  id              String   @id @default(cuid())
+  analysisId      String
+  agentName       String
+
+  metric          String
+  category        String   // financial, team, market, product, etc.
+  value           String?  // Stored as string for flexibility
+  unit            String
+  normalizedValue Float?   // 0-100 normalized score
+
+  percentile      Int?     // 0-100 percentile vs benchmark
+  assessment      String   // below_average, average, above_average, etc.
+
+  // Benchmark comparison
+  benchmarkData   Json?    // { sector, stage, p25, median, p75, source }
+
+  // Confidence breakdown
+  confidenceLevel String   // high, medium, low, insufficient
+  confidenceScore Int      // 0-100
+  confidenceFactors Json?  // Array of { name, weight, score, reason }
+
+  // Evidence chain
+  evidence        Json?    // Array of { type, content, source, confidence }
+
+  // Link to reasoning trace
+  reasoningTraceId String?
+
+  createdAt       DateTime @default(now())
+
+  @@index([analysisId])
+  @@index([agentName])
+  @@index([metric])
+}
+
+// REASONING TRACE - Full ReAct trace for an agent run
+model ReasoningTrace {
+  id              String   @id @default(cuid())
+  analysisId      String
+  agentName       String
+
+  taskDescription String   @db.Text
+
+  // ReAct steps as JSON array
+  // Each step: { stepNumber, thought, action?, observation?, confidenceAfterStep }
+  steps           Json
+
+  totalIterations Int
+  finalConfidence Float
+  executionTimeMs Int
+
+  // Self-critique results if any
+  selfCritique    Json?    // { critiques, overallAssessment, suggestedImprovements }
+
+  createdAt       DateTime @default(now())
+
+  @@index([analysisId])
+  @@index([agentName])
+}
+
+// DEBATE RECORD - Structured debate between agents
+model DebateRecord {
+  id              String   @id @default(cuid())
+  analysisId      String
+
+  contradictionId String   @unique
+  topic           String
+  severity        String   // minor, moderate, major, critical
+
+  // Participating agents
+  participants    String[] // Array of agent names
+
+  // Claims being debated
+  claims          Json     // Array of { agentName, findingId, claim, value, confidence }
+
+  // Debate rounds
+  // Each round: { roundNumber, positions: [{ agentName, position, evidence, counterArgs }] }
+  rounds          Json
+
+  // Resolution
+  resolvedBy      String?  // consensus, arbitration, accepted
+  winner          String?  // Winning agent name
+  resolution      String?  @db.Text
+  finalValue      String?
+
+  // Resolution confidence
+  resolutionConfidence Int?
+
+  status          String   @default("detected") // detected, debating, resolved, accepted
+
+  createdAt       DateTime @default(now())
+  resolvedAt      DateTime?
+
+  @@index([analysisId])
+  @@index([status])
+}
+
+// AGENT MESSAGE - Inter-agent communication log
+model AgentMessage {
+  id              String   @id @default(cuid())
+  analysisId      String
+
+  messageType     String   // finding, question, contradiction, request, response, etc.
+  topic           String   // financial, team, market, etc.
+  priority        String   // low, normal, high, critical
+
+  fromAgent       String
+  toAgent         String   // Can be "*" for broadcast
+
+  subject         String
+  payload         Json
+
+  correlationId   String?  // For request/response pairs
+  replyTo         String?  // Message ID this is replying to
+
+  acknowledged    Boolean  @default(false)
+  processedBy     String[] // Array of agent names that processed this
+
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime?
+
+  @@index([analysisId])
+  @@index([fromAgent])
+  @@index([toAgent])
+  @@index([messageType])
+}
+
+// STATE TRANSITION - Analysis state machine history
+model StateTransition {
+  id              String   @id @default(cuid())
+  analysisId      String
+
+  fromState       String
+  toState         String
+  trigger         String
+
+  metadata        Json?
+
+  createdAt       DateTime @default(now())
+
+  @@index([analysisId])
+}
+
+// ANALYSIS CHECKPOINT - Recovery points
+model AnalysisCheckpoint {
+  id              String   @id @default(cuid())
+  analysisId      String
+
+  state           String
+
+  completedAgents String[]
+  pendingAgents   String[]
+  failedAgents    Json?    // Array of { agent, error, retries }
+
+  findings        Json?    // Snapshot of findings at this point
+  results         Json?    // Snapshot of results
+
+  createdAt       DateTime @default(now())
+
+  @@index([analysisId])
+}
+
+// ============================================================================
+// AI BOARD - Multi-LLM Deliberation Feature
+// ============================================================================
+
+// AI BOARD SESSION - A deliberation session on a deal
+model AIBoardSession {
+  id              String   @id @default(cuid())
+  dealId          String
+  userId          String
+
+  status          BoardStatus @default(INITIALIZING)
+
+  // Verdict outcome
+  verdict         BoardVerdict?
+  consensusLevel  ConsensusLevel?
+  stoppingReason  String?  // consensus, majority_stable, max_rounds, stagnation
+
+  // Summary outputs
+  consensusPoints Json?    // Array of agreed points
+  frictionPoints  Json?    // Array of disagreed points
+  questionsForFounder Json? // Array of follow-up questions
+
+  // Execution details
+  totalRounds     Int      @default(0)
+  totalCost       Decimal? @db.Decimal(8, 4)
+  totalTimeMs     Int?
+
+  members         AIBoardMember[]
+  rounds          AIBoardRound[]
+
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([dealId])
+  @@index([userId])
+  @@index([status])
+}
+
+enum BoardStatus {
+  INITIALIZING
+  ANALYZING
+  DEBATING
+  VOTING
+  COMPLETED
+  FAILED
+  STOPPED
+}
+
+enum BoardVerdict {
+  GO
+  NO_GO
+  NEED_MORE_INFO
+}
+
+enum ConsensusLevel {
+  UNANIMOUS      // 4/4
+  STRONG         // 3/4
+  SPLIT          // 2/2
+  MINORITY       // 1/3
+}
+
+// AI BOARD MEMBER - A participating LLM in the board
+model AIBoardMember {
+  id              String   @id @default(cuid())
+  sessionId       String
+  session         AIBoardSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  modelId         String   // e.g., "CLAUDE_OPUS_45", "GPT4_TURBO"
+  modelName       String   // Human-readable name
+  color           String   // Color for UI display
+
+  // Initial analysis
+  initialAnalysis Json?    // { verdict, arguments, concerns, confidence }
+
+  // Final vote
+  finalVote       BoardVerdict?
+  finalConfidence Int?     // 0-100
+  voteJustification String? @db.Text
+
+  // Execution details
+  analysisCost    Decimal? @db.Decimal(6, 4)
+  debateCost      Decimal? @db.Decimal(6, 4)
+  voteCost        Decimal? @db.Decimal(6, 4)
+  totalCost       Decimal? @db.Decimal(6, 4)
+
+  // Error tracking
+  failedAt        String?  // Phase where it failed
+  errorMessage    String?
+
+  createdAt       DateTime @default(now())
+
+  @@index([sessionId])
+}
+
+// AI BOARD ROUND - A debate round
+model AIBoardRound {
+  id              String   @id @default(cuid())
+  sessionId       String
+  session         AIBoardSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  roundNumber     Int
+  roundType       RoundType
+
+  // Responses from each member
+  // Array of { memberId, modelId, response, positionChanged, respondingTo, timestamp }
+  responses       Json
+
+  // Consensus check after this round
+  currentVerdicts Json?    // { memberId: verdict }
+  consensusReached Boolean @default(false)
+  majorityStable  Boolean  @default(false)
+
+  totalCost       Decimal? @db.Decimal(6, 4)
+  durationMs      Int?
+
+  createdAt       DateTime @default(now())
+
+  @@index([sessionId])
+  @@unique([sessionId, roundNumber])
+}
+
+enum RoundType {
+  INITIAL_ANALYSIS
+  DEBATE
+  FINAL_VOTE
+}
+
+// USER BOARD CREDITS - Credits for AI Board usage
+model UserBoardCredits {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+
+  // Monthly allocation based on subscription
+  monthlyAllocation Int    @default(0)  // 0 for FREE, 5 for PRO
+  usedThisMonth   Int      @default(0)
+
+  // Extra purchased credits (never expire)
+  extraCredits    Int      @default(0)
+
+  // Reset tracking
+  lastResetAt     DateTime @default(now())
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// USER DEAL USAGE - Track monthly deal analysis usage
+model UserDealUsage {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+
+  // Monthly limits based on subscription
+  // FREE = 5 deals/month (Tier 1 only)
+  // PRO = unlimited
+  monthlyLimit    Int      @default(5)
+  usedThisMonth   Int      @default(0)
+
+  // Track highest tier used this month (for analytics)
+  tier1Count      Int      @default(0)
+  tier2Count      Int      @default(0)
+  tier3Count      Int      @default(0)
+
+  // Reset tracking
+  lastResetAt     DateTime @default(now())
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ============================================================================
+// FUNDING ROUNDS DATABASE - Historical deals for comparisons
+// ============================================================================
+
+// FUNDING ROUND - Individual funding event
+model FundingRound {
+  id              String   @id @default(cuid())
+
+  // Company info
+  companyName     String
+  companySlug     String?  // Normalized name for deduplication
+  description     String?  @db.Text
+  website         String?
+
+  // Funding details
+  amount          Decimal? @db.Decimal(14, 2) // In original currency
+  amountUsd       Decimal? @db.Decimal(14, 2) // Converted to USD for comparison
+  currency        String   @default("USD")
+
+  // Round info
+  stage           String?  // seed, series_a, series_b, etc.
+  stageNormalized String?  // Normalized stage for filtering
+
+  // Location
+  geography       String?  // Country
+  city            String?
+  region          String?  // e.g., "Europe", "North America"
+
+  // Sector
+  sector          String?
+  sectorNormalized String? // Normalized sector for filtering
+  subSector       String?
+
+  // Investors
+  investors       String[] // Array of investor names
+  leadInvestor    String?
+
+  // Valuation (if known)
+  valuationPre    Decimal? @db.Decimal(14, 2)
+  valuationPost   Decimal? @db.Decimal(14, 2)
+
+  // Dates
+  fundingDate     DateTime?
+  announcedDate   DateTime?
+
+  // Source tracking
+  source          String   // "kaggle_crunchbase", "frenchweb", "techcrunch", etc.
+  sourceUrl       String?
+  sourceId        String?  // Original ID from source (for deduplication)
+
+  // Metadata
+  employeeCount   Int?
+  foundedYear     Int?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([source, sourceId]) // Prevent duplicate imports
+  @@index([companyName])
+  @@index([companySlug])
+  @@index([stageNormalized])
+  @@index([sectorNormalized])
+  @@index([geography])
+  @@index([region])
+  @@index([fundingDate])
+  @@index([amountUsd])
+}
+
+// FUNDING SOURCE - Track data sources and their freshness
+model FundingSource {
+  id              String   @id @default(cuid())
+
+  name            String   @unique // "kaggle_crunchbase", "frenchweb", etc.
+  displayName     String
+  description     String?
+
+  // Stats
+  totalRounds     Int      @default(0)
+  lastImportAt    DateTime?
+  lastImportCount Int?
+
+  // Config
+  isActive        Boolean  @default(true)
+  autoRefresh     Boolean  @default(false)
+  refreshIntervalHours Int?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ============================================================================
+// COST MONITORING - Granular cost tracking for admin dashboard
+// ============================================================================
+
+// COST EVENT - Individual API call for detailed tracking
+model CostEvent {
+  id              String   @id @default(cuid())
+
+  // Linking
+  userId          String   // Owner of the deal
+  dealId          String
+  analysisId      String?  // Optional: linked analysis
+  boardSessionId  String?  // Optional: linked board session
+
+  // Call details
+  model           String   // e.g., "claude-3-5-sonnet", "gpt-4o"
+  agent           String   // e.g., "deal-screener", "market-expert", "board-opus"
+  operation       String   // e.g., "screening", "extraction", "board-analysis", "board-debate"
+
+  // Tokens
+  inputTokens     Int
+  outputTokens    Int
+
+  // Cost (in USD)
+  cost            Decimal  @db.Decimal(8, 6)
+
+  // Execution time
+  durationMs      Int?
+
+  // Additional context
+  metadata        Json?    // Any extra context for debugging
+
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([dealId])
+  @@index([analysisId])
+  @@index([boardSessionId])
+  @@index([model])
+  @@index([agent])
+  @@index([createdAt])
+  @@index([userId, createdAt]) // For user cost queries
+}
+
+// COST ALERT - Persisted alerts for threshold violations
+model CostAlert {
+  id              String   @id @default(cuid())
+
+  // Alert details
+  type            CostAlertType
+  severity        CostAlertSeverity
+
+  message         String   @db.Text
+
+  // Context
+  userId          String?
+  dealId          String?
+  dealName        String?
+  analysisId      String?
+
+  // Values
+  currentCost     Decimal  @db.Decimal(10, 4)
+  threshold       Decimal  @db.Decimal(10, 4)
+
+  // Status
+  acknowledged    Boolean  @default(false)
+  acknowledgedAt  DateTime?
+  acknowledgedBy  String?  // Admin user ID
+
+  // Notification tracking
+  notificationSent Boolean @default(false)
+  notificationSentAt DateTime?
+  notificationChannel String? // "email", "in-app"
+
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([dealId])
+  @@index([type])
+  @@index([severity])
+  @@index([acknowledged])
+  @@index([createdAt])
+}
+
+enum CostAlertType {
+  DEAL_THRESHOLD      // Deal total cost exceeded
+  USER_DAILY          // User daily cost exceeded
+  ANALYSIS_ANOMALY    // Single analysis cost anomaly
+  BOARD_COST          // Board session cost exceeded
+  MONTHLY_BUDGET      // Monthly budget threshold
+}
+
+enum CostAlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// COST THRESHOLD CONFIG - Configurable thresholds per user/global
+model CostThreshold {
+  id              String   @id @default(cuid())
+
+  // Scope: null = global, userId = user-specific
+  userId          String?  @unique
+
+  // Thresholds (in USD)
+  dealWarning     Decimal  @db.Decimal(8, 2) @default(5.00)
+  dealCritical    Decimal  @db.Decimal(8, 2) @default(15.00)
+  userDailyWarning Decimal @db.Decimal(8, 2) @default(10.00)
+  userDailyCritical Decimal @db.Decimal(8, 2) @default(25.00)
+  analysisMax     Decimal  @db.Decimal(8, 2) @default(5.00)
+  boardMax        Decimal  @db.Decimal(8, 2) @default(2.00)
+  monthlyBudget   Decimal? @db.Decimal(10, 2) // Optional monthly cap
+
+  // Notification preferences
+  notifyOnWarning Boolean  @default(true)
+  notifyOnCritical Boolean @default(true)
+  notificationEmail String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
 }

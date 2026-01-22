@@ -4,6 +4,7 @@ export default function RegisterPage() {
   return (
     <div className="flex min-h-screen items-center justify-center">
       <SignUp
+        forceRedirectUrl="/dashboard"
         appearance={{
           elements: {
             rootBox: "mx-auto",

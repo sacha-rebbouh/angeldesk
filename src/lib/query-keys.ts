@@ -49,6 +49,37 @@ export const queryKeys = {
     bySectorStage: (sector: string, stage: string) =>
       [...queryKeys.benchmarks.all, sector, stage] as const,
   },
+
+  // Usage queries (for analyze usage limits)
+  usage: {
+    all: ["usage"] as const,
+    analyze: () => ["analyze", "usage"] as const,
+  },
+
+  // Costs queries (admin dashboard)
+  costs: {
+    all: ["costs"] as const,
+    stats: (days: number, startDate?: string, endDate?: string) =>
+      [...queryKeys.costs.all, "stats", days, startDate, endDate] as const,
+    users: (days: number, params?: { sortBy?: string; sortOrder?: string }) =>
+      [...queryKeys.costs.all, "users", days, params] as const,
+    userDetail: (userId: string, days: number) =>
+      [...queryKeys.costs.all, "user", userId, days] as const,
+    dealDetail: (dealId: string) =>
+      [...queryKeys.costs.all, "deal", dealId] as const,
+    alerts: (params?: { acknowledged?: boolean; type?: string }) =>
+      [...queryKeys.costs.all, "alerts", params] as const,
+    boards: (days: number) =>
+      [...queryKeys.costs.all, "boards", days] as const,
+  },
+
+  // Admin queries
+  admin: {
+    all: ["admin"] as const,
+    users: () => [...queryKeys.admin.all, "users"] as const,
+    usersList: (params?: { limit?: number; offset?: number }) =>
+      [...queryKeys.admin.users(), "list", params] as const,
+  },
 } as const;
 
 // Type helper for extracting query key types

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
-import { extractTextFromPDFUrl } from "@/services/pdf/extractor";
+import { extractTextFromPDFUrl, type ExtractionWarning } from "@/services/pdf/extractor";
 
 interface RouteParams {
   params: Promise<{ documentId: string }>;
@@ -58,12 +59,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Extract text from the stored PDF
     const extraction = await extractTextFromPDFUrl(document.storageUrl);
 
-    if (extraction.success && extraction.text) {
+    if (extraction.success) {
+      // Extract quality metrics
+      const quality = extraction.quality;
+      const extractionQuality = quality?.metrics.qualityScore ?? null;
+      const extractionWarnings: ExtractionWarning[] = quality?.warnings ?? [];
+      const requiresOCR = quality?.requiresOCR ?? false;
+
       const updated = await prisma.document.update({
         where: { id: documentId },
         data: {
           extractedText: extraction.text,
           processingStatus: "COMPLETED",
+          extractionQuality,
+          extractionMetrics: quality?.metrics ? JSON.parse(JSON.stringify(quality.metrics)) : Prisma.DbNull,
+          extractionWarnings: extractionWarnings.length > 0 ? JSON.parse(JSON.stringify(extractionWarnings)) : Prisma.DbNull,
+          requiresOCR,
         },
       });
 
@@ -73,16 +84,33 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           pageCount: extraction.pageCount,
           textLength: extraction.text.length,
           info: extraction.info,
+          quality: extractionQuality,
+          warnings: extractionWarnings,
+          requiresOCR,
+          isUsable: (extractionQuality ?? 0) >= 40,
         },
       });
     } else {
+      const errorWarning: ExtractionWarning = {
+        code: "EXTRACTION_FAILED",
+        severity: "critical",
+        message: extraction.error ?? "Failed to extract text from PDF",
+        suggestion: "Try re-exporting the PDF from the original source."
+      };
+
       await prisma.document.update({
         where: { id: documentId },
-        data: { processingStatus: "FAILED" },
+        data: {
+          processingStatus: "FAILED",
+          extractionWarnings: JSON.parse(JSON.stringify([errorWarning])),
+        },
       });
 
       return NextResponse.json(
-        { error: extraction.error ?? "Failed to extract text from PDF" },
+        {
+          error: extraction.error ?? "Failed to extract text from PDF",
+          warnings: [errorWarning]
+        },
         { status: 500 }
       );
     }

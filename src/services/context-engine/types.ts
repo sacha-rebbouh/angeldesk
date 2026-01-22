@@ -235,8 +235,8 @@ export type DataSourceType =
   | "linkedin"
   | "news_api"
   | "web_search"
-  | "manual"
-  | "mock";
+  | "database"
+  | "manual";
 
 export interface DataSource {
   type: DataSourceType;

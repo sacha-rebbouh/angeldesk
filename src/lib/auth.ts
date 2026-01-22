@@ -91,3 +91,61 @@ export async function requireAuth() {
   const user = await getOrCreateUser();
   return user;
 }
+
+// Admin/Owner role types from Clerk publicMetadata
+export type UserRole = "admin" | "user";
+
+export interface UserMetadata {
+  role?: UserRole;
+  isOwner?: boolean;
+}
+
+export async function getUserMetadata(): Promise<UserMetadata> {
+  if (DEV_MODE) {
+    // Dev user is always admin + owner
+    return { role: "admin", isOwner: true };
+  }
+
+  const clerkUser = await currentUser();
+  if (!clerkUser) {
+    return { role: "user", isOwner: false };
+  }
+
+  const metadata = clerkUser.publicMetadata as UserMetadata;
+  return {
+    role: metadata?.role ?? "user",
+    isOwner: metadata?.isOwner ?? false,
+  };
+}
+
+export async function isAdmin(): Promise<boolean> {
+  const metadata = await getUserMetadata();
+  return metadata.role === "admin";
+}
+
+export async function isOwner(): Promise<boolean> {
+  const metadata = await getUserMetadata();
+  return metadata.isOwner === true;
+}
+
+export async function requireAdmin() {
+  const user = await requireAuth();
+  const admin = await isAdmin();
+
+  if (!admin) {
+    throw new Error("Admin access required");
+  }
+
+  return user;
+}
+
+export async function requireOwner() {
+  const user = await requireAuth();
+  const owner = await isOwner();
+
+  if (!owner) {
+    throw new Error("Owner access required");
+  }
+
+  return user;
+}

@@ -1,4 +1,10 @@
 import { extractText, getDocumentProxy } from "unpdf";
+import {
+  analyzeExtractionQuality,
+  QualityAnalysisResult,
+  ExtractionQualityMetrics,
+  ExtractionWarning
+} from "./quality-analyzer";
 
 export interface PDFExtractionResult {
   text: string;
@@ -10,7 +16,12 @@ export interface PDFExtractionResult {
   };
   success: boolean;
   error?: string;
+
+  // Quality analysis (new)
+  quality?: QualityAnalysisResult;
 }
+
+export type { ExtractionQualityMetrics, ExtractionWarning };
 
 interface PDFMetadataInfo {
   Title?: string;
@@ -46,6 +57,16 @@ export async function extractTextFromPDF(
     // Clean up extracted text
     const cleanedText = cleanExtractedText(textContent);
 
+    // Analyze extraction quality
+    const quality = analyzeExtractionQuality(cleanedText, result.totalPages);
+
+    // Log quality issues for debugging
+    if (quality.warnings.length > 0) {
+      console.warn(`PDF extraction quality issues (${quality.metrics.qualityScore}%):`,
+        quality.warnings.map(w => w.message).join('; ')
+      );
+    }
+
     return {
       text: cleanedText,
       pageCount: result.totalPages,
@@ -55,6 +76,7 @@ export async function extractTextFromPDF(
         creationDate: info?.CreationDate,
       },
       success: true,
+      quality,
     };
   } catch (error) {
     console.error("PDF extraction error:", error);

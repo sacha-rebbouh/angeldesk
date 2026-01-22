@@ -23,5 +23,14 @@ export {
   questionMaster,
 } from "./tier1";
 
+// Tier 2 Agents (Synthesis)
+export {
+  contradictionDetector,
+  scenarioModeler,
+  synthesisDealScorer,
+  devilsAdvocate,
+  memoGenerator,
+} from "./tier2";
+
 // Orchestrator
 export { orchestrator, type AnalysisType, type AnalysisResult } from "./orchestrator";

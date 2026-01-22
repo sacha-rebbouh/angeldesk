@@ -664,6 +664,237 @@ export interface QuestionMasterResult extends AgentResult {
   data: QuestionMasterData;
 }
 
+// ============================================================================
+// TIER 2 AGENT RESULT TYPES - Synthesis Agents
+// ============================================================================
+
+// Contradiction Detector Agent
+export interface ContradictionDetectorData {
+  contradictions: {
+    id: string;
+    sources: string[]; // Agent names that have conflicting info
+    topic: string;
+    claim1: { agent: string; statement: string };
+    claim2: { agent: string; statement: string };
+    severity: "minor" | "moderate" | "major" | "critical";
+    impact: string;
+    resolution?: string;
+    needsVerification: boolean;
+  }[];
+  dataGaps: {
+    area: string;
+    missingFrom: string[];
+    importance: "low" | "medium" | "high";
+    recommendation: string;
+  }[];
+  consistencyScore: number; // 0-100, higher = more consistent
+  summaryAssessment: string;
+}
+
+export interface ContradictionDetectorResult extends AgentResult {
+  agentName: "contradiction-detector";
+  data: ContradictionDetectorData;
+}
+
+// Scenario Modeler Agent
+export interface ScenarioModelerData {
+  scenarios: {
+    name: "bull" | "base" | "bear";
+    probability: number; // 0-100
+    description: string;
+    keyAssumptions: string[];
+    financialProjections: {
+      year1: { revenue: number; growth: number };
+      year3: { revenue: number; growth: number };
+      year5: { revenue: number; growth: number };
+    };
+    exitScenario: {
+      type: "acquisition" | "ipo" | "secondary" | "none";
+      timing: string;
+      valuation: number;
+      multiple: number;
+    };
+    returnAnalysis: {
+      investmentAmount: number;
+      ownership: number;
+      exitProceeds: number;
+      multiple: number;
+      irr: number;
+    };
+    keyRisks: string[];
+    keyDrivers: string[];
+  }[];
+  sensitivityAnalysis: {
+    variable: string;
+    impact: "low" | "medium" | "high";
+    bullValue: number | string;
+    baseValue: number | string;
+    bearValue: number | string;
+  }[];
+  breakEvenAnalysis: {
+    monthsToBreakeven: number;
+    requiredGrowthRate: number;
+    burnUntilBreakeven: number;
+  };
+  recommendedScenario: "bull" | "base" | "bear";
+  confidenceLevel: number; // 0-100
+}
+
+export interface ScenarioModelerResult extends AgentResult {
+  agentName: "scenario-modeler";
+  data: ScenarioModelerData;
+}
+
+// Synthesis Deal Scorer Agent
+export interface SynthesisDealScorerData {
+  overallScore: number; // 0-100
+  verdict: "strong_pass" | "pass" | "conditional_pass" | "weak_pass" | "no_go";
+  confidence: number; // 0-100
+  dimensionScores: {
+    dimension: string;
+    score: number;
+    weight: number;
+    weightedScore: number;
+    sourceAgents: string[];
+    keyFactors: string[];
+  }[];
+  scoreBreakdown: {
+    strengthsContribution: number;
+    weaknessesDeduction: number;
+    riskAdjustment: number;
+    opportunityBonus: number;
+  };
+  comparativeRanking: {
+    percentileOverall: number;
+    percentileSector: number;
+    percentileStage: number;
+    similarDealsAnalyzed: number;
+  };
+  investmentRecommendation: {
+    action: "invest" | "pass" | "wait" | "negotiate";
+    rationale: string;
+    conditions?: string[];
+    suggestedTerms?: string;
+  };
+  keyStrengths: string[];
+  keyWeaknesses: string[];
+  criticalRisks: string[];
+}
+
+export interface SynthesisDealScorerResult extends AgentResult {
+  agentName: "synthesis-deal-scorer";
+  data: SynthesisDealScorerData;
+}
+
+// Devil's Advocate Agent
+export interface DevilsAdvocateData {
+  challengedAssumptions: {
+    assumption: string;
+    challenge: string;
+    worstCaseScenario: string;
+    probability: "unlikely" | "possible" | "likely";
+    impact: "low" | "medium" | "high" | "critical";
+    mitigationPossible: boolean;
+    mitigation?: string;
+  }[];
+  blindSpots: {
+    area: string;
+    description: string;
+    whatCouldGoWrong: string;
+    historicalPrecedent?: string;
+    recommendation: string;
+  }[];
+  alternativeNarratives: {
+    narrative: string;
+    plausibility: number; // 0-100
+    implications: string;
+  }[];
+  marketRisks: {
+    risk: string;
+    trigger: string;
+    timeline: string;
+    severity: "manageable" | "serious" | "existential";
+  }[];
+  competitiveThreats: {
+    threat: string;
+    source: string;
+    likelihood: number;
+    defensibility: string;
+  }[];
+  executionChallenges: {
+    challenge: string;
+    difficulty: "moderate" | "hard" | "very_hard";
+    prerequisite: string;
+    failureMode: string;
+  }[];
+  overallSkepticism: number; // 0-100, higher = more skeptical
+  topConcerns: string[];
+  dealbreakers: string[];
+  questionsRequiringAnswers: string[];
+}
+
+export interface DevilsAdvocateResult extends AgentResult {
+  agentName: "devils-advocate";
+  data: DevilsAdvocateData;
+}
+
+// Memo Generator Agent
+export interface MemoGeneratorData {
+  executiveSummary: {
+    oneLiner: string;
+    recommendation: "invest" | "pass" | "more_dd_needed";
+    keyPoints: string[];
+  };
+  companyOverview: {
+    description: string;
+    problem: string;
+    solution: string;
+    businessModel: string;
+    traction: string;
+  };
+  investmentHighlights: {
+    highlight: string;
+    evidence: string;
+  }[];
+  keyRisks: {
+    risk: string;
+    mitigation: string;
+    residualRisk: "low" | "medium" | "high";
+  }[];
+  financialSummary: {
+    currentMetrics: Record<string, string | number>;
+    projections: string;
+    valuationAssessment: string;
+  };
+  teamAssessment: string;
+  marketOpportunity: string;
+  competitiveLandscape: string;
+  dealTerms: {
+    valuation: string;
+    roundSize: string;
+    keyTerms: string[];
+    negotiationPoints: string[];
+  };
+  dueDiligenceFindings: {
+    completed: string[];
+    outstanding: string[];
+    redFlags: string[];
+  };
+  investmentThesis: string;
+  exitStrategy: string;
+  nextSteps: string[];
+  appendix: {
+    financialModel?: string;
+    comparableDeals?: string;
+    referencesChecked?: string[];
+  };
+}
+
+export interface MemoGeneratorResult extends AgentResult {
+  agentName: "memo-generator";
+  data: MemoGeneratorData;
+}
+
 // Analysis session types
 export type AnalysisAgentResult =
   | ScreeningResult
@@ -681,7 +912,12 @@ export type AnalysisAgentResult =
   | GTMAnalystResult
   | CustomerIntelResult
   | ExitStrategistResult
-  | QuestionMasterResult;
+  | QuestionMasterResult
+  | ContradictionDetectorResult
+  | ScenarioModelerResult
+  | SynthesisDealScorerResult
+  | DevilsAdvocateResult
+  | MemoGeneratorResult;
 
 // Tier 1 agent names
 export type Tier1AgentName =
@@ -697,6 +933,14 @@ export type Tier1AgentName =
   | "customer-intel"
   | "exit-strategist"
   | "question-master";
+
+// Tier 2 agent names
+export type Tier2AgentName =
+  | "contradiction-detector"
+  | "scenario-modeler"
+  | "synthesis-deal-scorer"
+  | "devils-advocate"
+  | "memo-generator";
 
 export interface AnalysisSession {
   id: string;
