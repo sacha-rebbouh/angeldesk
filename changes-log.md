@@ -2,23 +2,25 @@
 
 ---
 
-## 2026-01-25 20:20 - Fix Telegram bot + Vercel maxDuration
+## 2026-01-25 20:30 - Fix Telegram bot + Middleware + Vercel maxDuration
 
 ### Problème
-1. Le bot Telegram ne répondait pas aux messages
-2. Le déploiement Vercel échouait: `maxDuration value for "api/cron/maintenance/completer"` dépassait la limite Hobby (300s)
+1. Le bot Telegram ne répondait pas aux messages (404 sur toutes les routes API)
+2. Le middleware Clerk bloquait `/api/telegram/*` et `/api/cron/*` car non listées en routes publiques
+3. Le déploiement Vercel échouait: `maxDuration` dépassait la limite Hobby (300s)
 
 ### Solution
-1. Créé `/api/telegram/setup` pour faciliter la configuration du webhook
-2. Réduit `maxDuration` de 600s à 300s pour `completer/route.ts`
+1. Ajouté `/api/telegram(.*)` et `/api/cron(.*)` aux routes publiques dans le middleware
+2. Créé `/api/telegram/setup` pour faciliter la configuration du webhook
+3. Réduit `maxDuration` de 600s à 300s pour `completer/route.ts`
 
 ### Fichiers modifiés
+- `src/middleware.ts` - Ajout routes publiques: `/api/telegram(.*)`, `/api/cron(.*)`
 - `src/app/api/telegram/setup/route.ts` - NOUVEAU: route pour configurer le webhook Telegram
 - `src/app/api/cron/maintenance/completer/route.ts` - maxDuration: 600 → 300
 
 ### Note
-Le webhook Telegram était déjà configuré mais pointait vers une version non déployée.
-L'URL actuelle du webhook: `https://angeldesk.vercel.app/api/telegram/webhook`
+L'URL du webhook Telegram: `https://angeldesk.vercel.app/api/telegram/webhook`
 
 ---
 

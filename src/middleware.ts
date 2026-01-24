@@ -8,6 +8,8 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/webhook(.*)",
+  "/api/telegram(.*)",
+  "/api/cron(.*)",
 ]);
 
 // Dev mode bypass
