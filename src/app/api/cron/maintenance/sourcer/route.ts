@@ -2,15 +2,11 @@
  * API Route - DB_SOURCER Cron
  *
  * Déclenché par Vercel Cron tous les jours à 6h
- * Scrappe les sources et importe les nouveaux deals
+ * Trigger Inngest pour exécuter le sourcer (pas de limite de temps)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { runSourcer } from '@/agents/maintenance/db-sourcer'
-
-export const runtime = 'nodejs'
-export const maxDuration = 300 // 5 minutes max
+import { inngest } from '@/lib/inngest'
 
 /**
  * Vérifie le secret cron pour sécuriser l'endpoint
@@ -28,43 +24,32 @@ function verifyCronSecret(request: NextRequest): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  // Verify cron secret
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   try {
-    // Create run record
-    const run = await prisma.maintenanceRun.create({
-      data: {
-        agent: 'DB_SOURCER',
-        status: 'PENDING',
-        triggeredBy: 'CRON',
-        scheduledAt: new Date(),
-      },
+    // Trigger Inngest function (runs in background, no time limit)
+    await inngest.send({
+      name: 'maintenance/sourcer.run',
+      data: {},
     })
-
-    // Run the agent and wait for completion (max 5 min on Vercel)
-    const result = await runSourcer(run.id)
 
     return NextResponse.json({
       success: true,
-      runId: run.id,
-      message: 'DB_SOURCER completed',
-      result,
+      message: 'DB_SOURCER triggered via Inngest',
     })
   } catch (error) {
-    console.error('Failed to start DB_SOURCER:', error)
+    console.error('Failed to trigger DB_SOURCER:', error)
     return NextResponse.json(
-      { error: 'Failed to start sourcer' },
+      { error: 'Failed to trigger sourcer' },
       { status: 500 }
     )
   }
 }
 
-// POST for manual triggers (from Telegram or retry)
+// POST for manual triggers (from Telegram)
 export async function POST(request: NextRequest) {
-  // Verify cron secret
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -73,40 +58,21 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}))
     const runId = body.runId as string | undefined
 
-    let run
-    if (runId) {
-      // Use existing run (retry scenario)
-      run = await prisma.maintenanceRun.findUnique({
-        where: { id: runId },
-      })
-      if (!run) {
-        return NextResponse.json({ error: 'Run not found' }, { status: 404 })
-      }
-    } else {
-      // Create new run
-      run = await prisma.maintenanceRun.create({
-        data: {
-          agent: 'DB_SOURCER',
-          status: 'PENDING',
-          triggeredBy: 'MANUAL',
-          scheduledAt: new Date(),
-        },
-      })
-    }
-
-    // Run the agent and wait for completion
-    const result = await runSourcer(run.id)
+    // Trigger Inngest function with optional runId
+    await inngest.send({
+      name: 'maintenance/sourcer.run',
+      data: { runId },
+    })
 
     return NextResponse.json({
       success: true,
-      runId: run.id,
-      message: 'DB_SOURCER completed',
-      result,
+      message: 'DB_SOURCER triggered via Inngest',
+      runId,
     })
   } catch (error) {
-    console.error('Failed to start DB_SOURCER:', error)
+    console.error('Failed to trigger DB_SOURCER:', error)
     return NextResponse.json(
-      { error: 'Failed to start sourcer' },
+      { error: 'Failed to trigger sourcer' },
       { status: 500 }
     )
   }

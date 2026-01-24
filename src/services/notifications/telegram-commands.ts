@@ -5,6 +5,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { inngest } from '@/lib/inngest'
 import type { TelegramCommandContext, TelegramCommand } from '@/agents/maintenance/types'
 import {
   sendToAdmin,
@@ -167,38 +168,20 @@ async function handleRun(ctx: TelegramCommandContext): Promise<string> {
     return `⚠️ ${agent} est déjà en cours d'exécution.\n\nDémarré: ${running.startedAt?.toLocaleString('fr-FR')}`
   }
 
-  // Create a manual run record
-  const run = await prisma.maintenanceRun.create({
-    data: {
-      agent: agent as 'DB_CLEANER' | 'DB_SOURCER' | 'DB_COMPLETER',
-      status: 'PENDING',
-      triggeredBy: 'MANUAL',
-      scheduledAt: new Date(),
-    },
+  // Trigger via Inngest (no time limit, runs in background)
+  const eventName = `maintenance/${agent.replace('DB_', '').toLowerCase()}.run` as
+    | 'maintenance/cleaner.run'
+    | 'maintenance/sourcer.run'
+    | 'maintenance/completer.run'
+
+  await inngest.send({
+    name: eventName,
+    data: {},
   })
 
-  // Trigger the agent via internal API
-  const baseUrl = process.env.APP_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
-    || process.env.NEXT_PUBLIC_APP_URL
-    || 'http://localhost:3003'
+  return `🔄 *${agent} lancé via Inngest*
 
-  const endpoint = `/api/cron/maintenance/${agent.replace('DB_', '').toLowerCase()}`
-
-  // Fire and forget - don't await
-  fetch(`${baseUrl}${endpoint}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.CRON_SECRET || ''}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ runId: run.id }),
-  }).catch((err) => console.error('[Telegram] Failed to trigger agent:', err))
-
-  return `🔄 *${agent} lancé manuellement*
-
-Je te notifierai quand ce sera terminé.
-(vérification automatique dans 2h)`
+Je te notifierai quand ce sera terminé.`
 }
 
 /**
@@ -371,22 +354,18 @@ async function handleRetry(ctx: TelegramCommandContext): Promise<string> {
     },
   })
 
-  // Trigger the agent
-  const baseUrl = process.env.APP_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
-    || process.env.NEXT_PUBLIC_APP_URL
-    || 'http://localhost:3003'
+  // Trigger via Inngest with existing runId
+  const eventName = `maintenance/${agent.replace('DB_', '').toLowerCase()}.run` as
+    | 'maintenance/cleaner.run'
+    | 'maintenance/sourcer.run'
+    | 'maintenance/completer.run'
 
-  fetch(`${baseUrl}/api/cron/maintenance/${agent.replace('DB_', '').toLowerCase()}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.CRON_SECRET || ''}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ runId: run.id }),
-  }).catch(console.error)
+  await inngest.send({
+    name: eventName,
+    data: { runId: run.id },
+  })
 
-  return `🔄 Retry de ${agent} lancé.\n\nTentative #${run.retryAttempt}`
+  return `🔄 Retry de ${agent} lancé via Inngest.\n\nTentative #${run.retryAttempt}`
 }
 
 /**

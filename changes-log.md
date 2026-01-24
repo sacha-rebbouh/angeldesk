@@ -2,6 +2,66 @@
 
 ---
 
+## 2026-01-26 01:30 - Intégration Inngest pour agents de maintenance
+
+### Problème
+Les agents de maintenance (cleaner, sourcer, completer) ne pouvaient pas s'exécuter car Vercel Hobby limite à 5 minutes max. Les agents ont besoin de plus de temps.
+
+### Solution
+Intégration d'**Inngest** - service de background jobs gratuit (50k runs/mois) sans limite de temps.
+
+### Fichiers créés
+- `src/lib/inngest.ts` - Client Inngest + 3 fonctions (cleaner, sourcer, completer)
+- `src/app/api/inngest/route.ts` - Route API pour Inngest
+
+### Fichiers modifiés
+- `src/middleware.ts` - Ajout `/api/inngest(.*)` aux routes publiques
+- `src/app/api/cron/maintenance/cleaner/route.ts` - Trigger Inngest au lieu d'exécuter directement
+- `src/app/api/cron/maintenance/sourcer/route.ts` - Idem
+- `src/app/api/cron/maintenance/completer/route.ts` - Idem
+- `src/services/notifications/telegram-commands.ts` - /run et /retry utilisent Inngest directement
+
+### Configuration requise
+1. Créer compte sur https://app.inngest.com
+2. Ajouter `INNGEST_EVENT_KEY` et `INNGEST_SIGNING_KEY` sur Vercel
+3. Synchroniser l'app dans le dashboard Inngest
+
+### Avantages
+- Pas de limite de temps (vs 5 min Vercel)
+- Retries automatiques
+- Dashboard pour voir les runs
+- Notifications Telegram à la fin de chaque agent
+
+---
+
+## 2026-01-25 23:15 - CRITICAL FIX: Context Engine APRÈS document-extractor
+
+### Problème
+Le Context Engine tournait EN PARALLÈLE avec document-extractor, donc il ne bénéficiait pas des données extraites du deck (tagline, concurrents cités, fondateurs avec LinkedIn).
+
+### Solution
+Nouveau flow d'exécution SÉQUENTIEL :
+1. **Document Extractor** → Extrait tagline, competitors, founders, etc.
+2. **Context Engine** → Utilise ces données pour enrichir le contexte
+3. **Tier 1** → Reçoit le contexte enrichi complet
+
+### Fichiers modifiés
+- `src/services/context-engine/types.ts` - Ajout champs `tagline`, `mentionedCompetitors`, `productDescription`, `businessModel` dans `ConnectorQuery`
+- `src/services/context-engine/index.ts` - `EnrichDealOptions` accepte les données extraites, cache key inclut ces données
+- `src/agents/orchestrator/index.ts` :
+  - `runFullAnalysis()` - Extractor PUIS Context Engine (séquentiel)
+  - `runTier1Complete()` - Idem
+  - `runTier3Sector()` - Utilise données extraites des previousResults
+  - `enrichContext()` - Accepte et utilise les données extraites
+
+### Impact
+- Recherche de concurrents utilise la tagline du deck
+- Enrichissement des concurrents cités dans le deck
+- LinkedIn lookup des fondateurs mentionnés
+- Meilleur contexte = meilleure analyse
+
+---
+
 ## 2026-01-25 22:30 - Système d'affichage FREE vs PRO avec teasers
 
 ### Objectif

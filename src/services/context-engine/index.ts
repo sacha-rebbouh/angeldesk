@@ -120,11 +120,15 @@ export function getConfiguredConnectors(): Connector[] {
  */
 function getQueryCacheKey(query: ConnectorQuery): string {
   // Normalize and create deterministic key
+  // Include extracted data fields so different extractions get fresh context
   const normalized = {
     sector: (query.sector || "").toLowerCase().trim(),
     stage: (query.stage || "").toLowerCase().trim(),
     companyName: (query.companyName || "").toLowerCase().trim(),
     geography: (query.geography || "").toLowerCase().trim(),
+    // Include extracted data in cache key
+    tagline: (query.tagline || "").toLowerCase().trim().slice(0, 50),
+    competitors: (query.mentionedCompetitors || []).sort().join(",").toLowerCase(),
   };
   return JSON.stringify(normalized);
 }
@@ -141,6 +145,19 @@ export interface EnrichDealOptions {
   founders?: FounderInput[];
   /** Startup sector for founder fit analysis */
   startupSector?: string;
+
+  // ============================================================================
+  // EXTRACTED DATA (from document-extractor)
+  // Pass these after running document extraction for richer context
+  // ============================================================================
+  /** Tagline extracted from deck - helps find similar competitors */
+  extractedTagline?: string;
+  /** Competitors mentioned in the deck - will be enriched */
+  extractedCompetitors?: string[];
+  /** Product description from deck */
+  extractedProductDescription?: string;
+  /** Business model from deck */
+  extractedBusinessModel?: string;
 }
 
 /**
@@ -149,19 +166,34 @@ export interface EnrichDealOptions {
  * Results are cached for 10 minutes to avoid redundant API calls
  * when the same deal is analyzed multiple times or by multiple agents.
  *
+ * IMPORTANT: For best results, run AFTER document-extractor and pass
+ * extracted data (tagline, competitors, etc.) via options.
+ *
  * @param query - Search criteria (company, sector, geography, etc.)
  * @param options.forceRefresh - Skip cache
  * @param options.dealId - Deal ID for cache tagging
  * @param options.includeFounders - Whether to fetch LinkedIn data for founders
  * @param options.founders - List of founders with LinkedIn URLs
  * @param options.startupSector - Sector for founder fit analysis
+ * @param options.extractedTagline - Tagline from document extraction
+ * @param options.extractedCompetitors - Competitors mentioned in deck
  */
 export async function enrichDeal(
   query: ConnectorQuery,
   options: EnrichDealOptions = {}
 ): Promise<DealContext> {
   const cache = getCacheManager();
-  const cacheKey = getQueryCacheKey(query);
+
+  // Merge extracted data into query for better search results
+  const enrichedQuery: ConnectorQuery = {
+    ...query,
+    tagline: options.extractedTagline || query.tagline,
+    mentionedCompetitors: options.extractedCompetitors || query.mentionedCompetitors,
+    productDescription: options.extractedProductDescription || query.productDescription,
+    businessModel: options.extractedBusinessModel || query.businessModel,
+  };
+
+  const cacheKey = getQueryCacheKey(enrichedQuery);
   const tags = options.dealId ? [`deal:${options.dealId}`] : [];
 
   // Use getOrCompute for atomic cache check + compute
@@ -170,7 +202,7 @@ export async function enrichDeal(
     cacheKey,
     async () => {
       // This only runs on cache miss
-      return computeDealContext(query);
+      return computeDealContext(enrichedQuery);
     },
     {
       ttlMs: CONTEXT_CACHE_TTL_MS,
@@ -180,9 +212,9 @@ export async function enrichDeal(
   );
 
   if (fromCache) {
-    console.log(`[ContextEngine] Cache HIT for query: ${query.companyName || query.sector}`);
+    console.log(`[ContextEngine] Cache HIT for query: ${enrichedQuery.companyName || enrichedQuery.sector}`);
   } else {
-    console.log(`[ContextEngine] Cache MISS - computed fresh context for: ${query.companyName || query.sector}`);
+    console.log(`[ContextEngine] Cache MISS - computed fresh context for: ${enrichedQuery.companyName || enrichedQuery.sector}${options.extractedTagline ? " (with extracted data)" : ""}`);
   }
 
   // Optionally fetch founder LinkedIn data (separate from main context cache)

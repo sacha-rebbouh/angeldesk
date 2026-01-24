@@ -10,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   "/api/webhook(.*)",
   "/api/telegram(.*)",
   "/api/cron(.*)",
+  "/api/inngest(.*)",
 ]);
 
 // Dev mode bypass

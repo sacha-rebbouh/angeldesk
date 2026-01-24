@@ -258,6 +258,19 @@ export interface ConnectorQuery {
   geography?: string;
   founderNames?: string[];
   keywords?: string[];
+
+  // ============================================================================
+  // EXTRACTED DATA (from document-extractor)
+  // These fields are populated after document extraction for richer context
+  // ============================================================================
+  /** Company tagline extracted from deck - used for competitor search */
+  tagline?: string;
+  /** Competitors mentioned in the deck - used to enrich competitive landscape */
+  mentionedCompetitors?: string[];
+  /** Product/service description extracted from deck */
+  productDescription?: string;
+  /** Business model extracted from deck */
+  businessModel?: string;
 }
 
 export interface Connector {

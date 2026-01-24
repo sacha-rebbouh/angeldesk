@@ -434,6 +434,15 @@ export class AgentOrchestrator {
     };
 
     // STEP 1: Run document-extractor first (if documents exist)
+    // Extract data needed for Context Engine (tagline, competitors, founders)
+    let extractedData: {
+      tagline?: string;
+      competitors?: string[];
+      founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+      productDescription?: string;
+      businessModel?: string;
+    } = {};
+
     if (deal.documents.length > 0) {
       onProgress?.({
         currentAgent: "document-extractor",
@@ -448,6 +457,19 @@ export class AgentOrchestrator {
         baseContext.previousResults!["document-extractor"] = extractorResult;
 
         await updateAnalysisProgress(analysis.id, 1, totalCost);
+
+        // Extract data for Context Engine
+        if (extractorResult.success && "data" in extractorResult) {
+          const data = (extractorResult as { data: Record<string, unknown> }).data;
+          extractedData = {
+            tagline: data.tagline as string | undefined,
+            competitors: data.competitors as string[] | undefined,
+            founders: data.founders as Array<{ name: string; role?: string; linkedinUrl?: string }> | undefined,
+            productDescription: data.productDescription as string | undefined,
+            businessModel: data.businessModel as string | undefined,
+          };
+          console.log(`[Orchestrator] tier1_complete: Extracted data for Context Engine: tagline=${!!extractedData.tagline}, competitors=${extractedData.competitors?.length ?? 0}`);
+        }
 
         // Check for early warnings from extractor
         this.checkAndEmitWarnings("document-extractor", extractorResult, collectedWarnings, onEarlyWarning);
@@ -469,8 +491,8 @@ export class AgentOrchestrator {
       }
     }
 
-    // STEP 2: Enrich with Context Engine
-    const contextEngineData = await this.enrichContext(deal);
+    // STEP 2: Enrich with Context Engine (using extracted data)
+    const contextEngineData = await this.enrichContext(deal, extractedData);
 
     // Build enriched context for Tier 1 agents
     const enrichedContext: EnrichedAgentContext = {
@@ -757,7 +779,28 @@ export class AgentOrchestrator {
     const results: Record<string, AgentResult> = {};
     let totalCost = 0;
 
-    const contextEngineData = await this.enrichContext(deal);
+    // Extract data from previous document-extractor result (from Tier 1)
+    let extractedData: {
+      tagline?: string;
+      competitors?: string[];
+      founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+      productDescription?: string;
+      businessModel?: string;
+    } = {};
+
+    const extractorResult = previousResults?.["document-extractor"];
+    if (extractorResult?.success && extractorResult && "data" in extractorResult) {
+      const data = (extractorResult as { data: Record<string, unknown> }).data;
+      extractedData = {
+        tagline: data.tagline as string | undefined,
+        competitors: data.competitors as string[] | undefined,
+        founders: data.founders as Array<{ name: string; role?: string; linkedinUrl?: string }> | undefined,
+        productDescription: data.productDescription as string | undefined,
+        businessModel: data.businessModel as string | undefined,
+      };
+    }
+
+    const contextEngineData = await this.enrichContext(deal, extractedData);
 
     const context: EnrichedAgentContext = {
       dealId,
@@ -888,39 +931,28 @@ export class AgentOrchestrator {
         previousResults: {},
       };
 
-      // STEP 1 & 2: EXTRACTION + CONTEXT ENGINE IN PARALLEL
-      // Run document extraction AND context engine enrichment simultaneously
-      // This saves significant time as they are independent operations
+      // STEP 1: DOCUMENT EXTRACTION (must run first)
+      // We need extracted data (tagline, competitors, founders) for Context Engine
       await stateMachine.startExtraction();
 
       onProgress?.({
-        currentAgent: "document-extractor + context-engine (parallel)",
+        currentAgent: "document-extractor",
         completedAgents: 0,
         totalAgents: TOTAL_AGENTS,
       });
 
-      // Start both operations in parallel
-      const extractorPromise = deal.documents.length > 0
-        ? BASE_AGENTS["document-extractor"].run(baseContext)
-          .then(result => ({ success: true as const, result }))
-          .catch(error => ({
-            success: false as const,
-            error: error instanceof Error ? error.message : "Unknown error",
-          }))
-        : Promise.resolve(null);
+      // Extract data from documents first
+      let extractedData: {
+        tagline?: string;
+        competitors?: string[];
+        founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+        productDescription?: string;
+        businessModel?: string;
+      } = {};
 
-      const contextEnginePromise = this.enrichContext(deal);
-
-      // Wait for both to complete
-      const [extractorOutcome, contextEngineData] = await Promise.all([
-        extractorPromise,
-        contextEnginePromise,
-      ]);
-
-      // Process document extractor result
-      if (extractorOutcome) {
-        if (extractorOutcome.success) {
-          const extractorResult = extractorOutcome.result;
+      if (deal.documents.length > 0) {
+        try {
+          const extractorResult = await BASE_AGENTS["document-extractor"].run(baseContext);
           allResults["document-extractor"] = extractorResult;
           totalCost += extractorResult.cost;
           baseContext.previousResults!["document-extractor"] = extractorResult;
@@ -931,13 +963,26 @@ export class AgentOrchestrator {
             extractorResult as AnalysisAgentResult
           );
           await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-        } else {
+
+          // Extract data for Context Engine
+          if (extractorResult.success && "data" in extractorResult) {
+            const data = (extractorResult as { data: Record<string, unknown> }).data;
+            extractedData = {
+              tagline: data.tagline as string | undefined,
+              competitors: data.competitors as string[] | undefined,
+              founders: data.founders as Array<{ name: string; role?: string; linkedinUrl?: string }> | undefined,
+              productDescription: data.productDescription as string | undefined,
+              businessModel: data.businessModel as string | undefined,
+            };
+            console.log(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
+          }
+        } catch (error) {
           const errorResult: AgentResult = {
             agentName: "document-extractor",
             success: false,
             executionTimeMs: 0,
             cost: 0,
-            error: extractorOutcome.error,
+            error: error instanceof Error ? error.message : "Unknown error",
           };
           allResults["document-extractor"] = errorResult;
           stateMachine.recordAgentFailed("document-extractor", errorResult.error ?? "Unknown");
@@ -945,8 +990,16 @@ export class AgentOrchestrator {
         }
       }
 
-      // Context Engine already completed in parallel
+      // STEP 2: CONTEXT ENGINE (runs AFTER extraction to use extracted data)
       await stateMachine.startGathering();
+
+      onProgress?.({
+        currentAgent: "context-engine",
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+      });
+
+      const contextEngineData = await this.enrichContext(deal, extractedData);
 
       const enrichedContext: EnrichedAgentContext = {
         ...baseContext,
@@ -1360,25 +1413,52 @@ export class AgentOrchestrator {
   /**
    * Enrich deal context with Context Engine
    *
+   * IMPORTANT: Call this AFTER document-extractor to use extracted data
+   * for better search results (tagline for competitors, founders for LinkedIn, etc.)
+   *
    * Results are cached by the Context Engine for 10 minutes.
-   * Cache key is based on deal attributes (companyName, sector, stage, geography).
-   * Pass dealId for targeted cache invalidation when deal is updated.
+   * Cache key includes extracted data so different extractions get fresh context.
    *
    * Founder LinkedIn data is fetched via Proxycurl (~$0.01/founder).
-   * Only fetched if deal has founders with LinkedIn URLs.
+   * Priority: extracted founders > deal.founders from DB
    */
   private async enrichContext(
-    deal: DealWithDocs
+    deal: DealWithDocs,
+    extractedData?: {
+      tagline?: string;
+      competitors?: string[];
+      founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+      productDescription?: string;
+      businessModel?: string;
+    }
   ): Promise<EnrichedAgentContext["contextEngine"]> {
     try {
-      // Prepare founder list for LinkedIn enrichment
-      const founders: FounderInput[] = (deal.founders || []).map((f) => ({
+      // Merge founders: extracted founders (from deck) take priority over DB founders
+      const extractedFounders = extractedData?.founders || [];
+      const dbFounders = (deal.founders || []).map((f) => ({
         name: f.name,
         role: f.role,
         linkedinUrl: f.linkedinUrl ?? undefined,
       }));
 
-      const hasFoundersToEnrich = founders.length > 0;
+      // Merge: add extracted founders not already in DB
+      const mergedFounders: FounderInput[] = [...dbFounders];
+      for (const ef of extractedFounders) {
+        const exists = dbFounders.some(
+          df => df.name.toLowerCase() === ef.name.toLowerCase()
+        );
+        if (!exists) {
+          mergedFounders.push({
+            name: ef.name,
+            role: ef.role,
+            linkedinUrl: ef.linkedinUrl,
+          });
+        }
+      }
+
+      const hasFoundersToEnrich = mergedFounders.length > 0;
+
+      console.log(`[Orchestrator] Context Engine enrichment with: tagline=${!!extractedData?.tagline}, competitors=${extractedData?.competitors?.length ?? 0}, founders=${mergedFounders.length}`);
 
       const contextResult = await enrichDeal(
         {
@@ -1388,10 +1468,15 @@ export class AgentOrchestrator {
           geography: deal.geography ?? undefined,
         },
         {
-          dealId: deal.id, // For cache invalidation by deal
+          dealId: deal.id,
           includeFounders: hasFoundersToEnrich,
-          founders: hasFoundersToEnrich ? founders : undefined,
+          founders: hasFoundersToEnrich ? mergedFounders : undefined,
           startupSector: deal.sector ?? undefined,
+          // Pass extracted data for richer context
+          extractedTagline: extractedData?.tagline,
+          extractedCompetitors: extractedData?.competitors,
+          extractedProductDescription: extractedData?.productDescription,
+          extractedBusinessModel: extractedData?.businessModel,
         }
       );
 

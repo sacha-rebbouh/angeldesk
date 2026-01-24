@@ -2,15 +2,11 @@
  * API Route - DB_COMPLETER Cron
  *
  * Déclenché par Vercel Cron tous les jours à 8h
- * Enrichit les entreprises avec des données web + LLM
+ * Trigger Inngest pour exécuter le completer (pas de limite de temps)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { runCompleter } from '@/agents/maintenance/db-completer'
-
-export const runtime = 'nodejs'
-export const maxDuration = 300 // 5 minutes max (Vercel Hobby limit)
+import { inngest } from '@/lib/inngest'
 
 /**
  * Vérifie le secret cron pour sécuriser l'endpoint
@@ -28,43 +24,32 @@ function verifyCronSecret(request: NextRequest): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  // Verify cron secret
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   try {
-    // Create run record
-    const run = await prisma.maintenanceRun.create({
-      data: {
-        agent: 'DB_COMPLETER',
-        status: 'PENDING',
-        triggeredBy: 'CRON',
-        scheduledAt: new Date(),
-      },
+    // Trigger Inngest function (runs in background, no time limit)
+    await inngest.send({
+      name: 'maintenance/completer.run',
+      data: {},
     })
-
-    // Run the agent and wait for completion (max 5 min on Vercel)
-    const result = await runCompleter(run.id)
 
     return NextResponse.json({
       success: true,
-      runId: run.id,
-      message: 'DB_COMPLETER completed',
-      result,
+      message: 'DB_COMPLETER triggered via Inngest',
     })
   } catch (error) {
-    console.error('Failed to start DB_COMPLETER:', error)
+    console.error('Failed to trigger DB_COMPLETER:', error)
     return NextResponse.json(
-      { error: 'Failed to start completer' },
+      { error: 'Failed to trigger completer' },
       { status: 500 }
     )
   }
 }
 
-// POST for manual triggers (from Telegram or retry)
+// POST for manual triggers (from Telegram)
 export async function POST(request: NextRequest) {
-  // Verify cron secret
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -73,40 +58,21 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}))
     const runId = body.runId as string | undefined
 
-    let run
-    if (runId) {
-      // Use existing run (retry scenario)
-      run = await prisma.maintenanceRun.findUnique({
-        where: { id: runId },
-      })
-      if (!run) {
-        return NextResponse.json({ error: 'Run not found' }, { status: 404 })
-      }
-    } else {
-      // Create new run
-      run = await prisma.maintenanceRun.create({
-        data: {
-          agent: 'DB_COMPLETER',
-          status: 'PENDING',
-          triggeredBy: 'MANUAL',
-          scheduledAt: new Date(),
-        },
-      })
-    }
-
-    // Run the agent and wait for completion
-    const result = await runCompleter(run.id)
+    // Trigger Inngest function with optional runId
+    await inngest.send({
+      name: 'maintenance/completer.run',
+      data: { runId },
+    })
 
     return NextResponse.json({
       success: true,
-      runId: run.id,
-      message: 'DB_COMPLETER completed',
-      result,
+      message: 'DB_COMPLETER triggered via Inngest',
+      runId,
     })
   } catch (error) {
-    console.error('Failed to start DB_COMPLETER:', error)
+    console.error('Failed to trigger DB_COMPLETER:', error)
     return NextResponse.json(
-      { error: 'Failed to start completer' },
+      { error: 'Failed to trigger completer' },
       { status: 500 }
     )
   }
