@@ -663,7 +663,6 @@ async function removeOrphansWithTx(tx: TransactionClient) {
 
   // Find orphaned enrichments
   const allEnrichmentsWithCompany = await tx.companyEnrichment.findMany({
-    where: { companyId: { not: null } },
     select: { id: true, companyId: true },
   })
 

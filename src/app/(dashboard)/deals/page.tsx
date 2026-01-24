@@ -15,7 +15,7 @@ import { Plus } from "lucide-react";
 import { DealsTable } from "@/components/deals/deals-table";
 
 async function getDeals(userId: string) {
-  return prisma.deal.findMany({
+  const deals = await prisma.deal.findMany({
     where: { userId },
     orderBy: { updatedAt: "desc" },
     include: {
@@ -28,6 +28,12 @@ async function getDeals(userId: string) {
       },
     },
   });
+
+  // Serialize Decimal fields for client component
+  return deals.map((deal) => ({
+    ...deal,
+    valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
+  }));
 }
 
 export default async function DealsPage() {

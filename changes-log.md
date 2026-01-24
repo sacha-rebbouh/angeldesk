@@ -2,6 +2,22 @@
 
 ---
 
+## 2026-01-24 17:45 - UX: Menu actions deals + indicateur visuel
+
+### Fichiers modifiés
+- `src/components/deals/deals-table.tsx` - Ajout menu "..." et ChevronRight
+- `src/components/deals/recent-deals-list.tsx` - Ajout menu "..." et ChevronRight
+
+### Fonctionnalités
+1. **Menu dropdown** - Bouton "..." sur chaque deal avec:
+   - Renommer (Dialog avec input)
+   - Supprimer (AlertDialog de confirmation)
+2. **Indicateur visuel** - ChevronRight à droite de chaque ligne
+3. **API calls** - PATCH et DELETE vers `/api/deals/[dealId]`
+4. **UX** - stopPropagation pour éviter la navigation au clic sur le menu
+
+---
+
 ## 2026-01-24 17:30 - UX: Ligne de deal cliquable
 
 ### Fichiers créés
