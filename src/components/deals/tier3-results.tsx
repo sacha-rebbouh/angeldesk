@@ -33,7 +33,9 @@ import {
   ASSESSMENT_CONFIG,
   SEVERITY_CONFIG,
   type SectorExpertType,
+  type SubscriptionPlan,
 } from "@/lib/analysis-constants";
+import { ProTeaserSection } from "@/components/shared/pro-teaser";
 
 // =============================================================================
 // HOISTED CONFIGS - Prevent recreation on every render
@@ -82,6 +84,7 @@ interface Tier3ResultsProps {
     error?: string;
     data?: unknown;
   }>;
+  subscriptionPlan?: SubscriptionPlan;
 }
 
 const MaturityBadge = memo(function MaturityBadge({ maturity }: { maturity: SectorExpertData["sectorMaturity"] }) {
@@ -335,11 +338,43 @@ const SectorFitSection = memo(function SectorFitSection({ fit }: { fit: SectorEx
   );
 });
 
-export function Tier3Results({ results }: Tier3ResultsProps) {
+export function Tier3Results({ results, subscriptionPlan = "FREE" }: Tier3ResultsProps) {
+  const isFree = subscriptionPlan === "FREE";
+
   // Find the sector expert result (there should only be one)
   const sectorExpertEntry = Object.entries(results).find(([name]) =>
     name.endsWith("-expert") && name !== "document-extractor"
   );
+
+  // For FREE users, show a teaser instead of the full analysis
+  if (isFree) {
+    const [agentName] = sectorExpertEntry ?? ["unknown-expert"];
+    const expertType = agentName as SectorExpertType;
+    const config = SECTOR_CONFIG[expertType];
+    const data = sectorExpertEntry?.[1]?.data as SectorExpertData | undefined;
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <span className="text-xl">{config?.emoji ?? "🔍"}</span>
+            {config?.displayName ?? "Expert Sectoriel"}
+          </CardTitle>
+          <CardDescription>Analyse sectorielle specialisee</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ProTeaserSection
+            title={`Analyse ${config?.displayName ?? "Expert Sectoriel"}`}
+            description={data
+              ? `Score secteur: ${data.sectorScore}/100 - ${data.keyMetrics.length} metriques sectorielles analysees, ${data.sectorQuestions.length} questions DD specifiques`
+              : "Analyse approfondie par un expert sectoriel avec benchmarks et recommandations"}
+            icon={Compass}
+            previewText={data?.executiveSummary?.slice(0, 100) + "..."}
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!sectorExpertEntry) {
     return (

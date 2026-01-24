@@ -37,6 +37,8 @@ import type {
   DevilsAdvocateData,
   MemoGeneratorData,
 } from "@/agents/types";
+import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-teaser";
+import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
 
 interface Tier2ResultsProps {
   results: Record<string, {
@@ -47,6 +49,7 @@ interface Tier2ResultsProps {
     error?: string;
     data?: unknown;
   }>;
+  subscriptionPlan?: SubscriptionPlan;
 }
 
 // Hoisted color function - pure, no need for useCallback
@@ -107,7 +110,22 @@ const RecommendationBadge = memo(function RecommendationBadge({ action }: { acti
 });
 
 // Synthesis Deal Scorer Card - Main scoring synthesis
-const SynthesisScorerCard = memo(function SynthesisScorerCard({ data }: { data: SynthesisDealScorerData }) {
+const SynthesisScorerCard = memo(function SynthesisScorerCard({
+  data,
+  strengthsLimit = Infinity,
+  weaknessesLimit = Infinity,
+  showFullScore = true,
+}: {
+  data: SynthesisDealScorerData;
+  strengthsLimit?: number;
+  weaknessesLimit?: number;
+  showFullScore?: boolean;
+}) {
+  const visibleStrengths = data.keyStrengths.slice(0, strengthsLimit);
+  const hiddenStrengthsCount = Math.max(0, data.keyStrengths.length - strengthsLimit);
+  const visibleWeaknesses = data.keyWeaknesses.slice(0, weaknessesLimit);
+  const hiddenWeaknessesCount = Math.max(0, data.keyWeaknesses.length - weaknessesLimit);
+
   return (
     <Card className="md:col-span-2 border-2 border-primary/20">
       <CardHeader className="pb-2">
@@ -133,75 +151,92 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({ data }: { data: 
           <RecommendationBadge action={data.investmentRecommendation.action} />
         </div>
 
-        {/* Dimension Scores */}
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Scores par dimension</p>
-          <div className="grid gap-2">
-            {data.dimensionScores.map((dim, i) => (
-              <div key={i} className="flex items-center justify-between p-2 border rounded">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-sm">{dim.dimension}</span>
-                  <Badge variant="outline" className="text-xs">{dim.weight}%</Badge>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-24 h-2 rounded-full bg-muted">
-                    <div
-                      className={cn(
-                        "h-full rounded-full",
-                        dim.score >= 70 ? "bg-green-500" :
-                        dim.score >= 50 ? "bg-yellow-500" : "bg-red-500"
-                      )}
-                      style={{ width: `${dim.score}%` }}
-                    />
+        {/* Dimension Scores - Only for PRO */}
+        {showFullScore ? (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Scores par dimension</p>
+            <div className="grid gap-2">
+              {data.dimensionScores.map((dim, i) => (
+                <div key={i} className="flex items-center justify-between p-2 border rounded">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm">{dim.dimension}</span>
+                    <Badge variant="outline" className="text-xs">{dim.weight}%</Badge>
                   </div>
-                  <span className="text-sm font-medium w-12 text-right">{dim.score}/100</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 rounded-full bg-muted">
+                      <div
+                        className={cn(
+                          "h-full rounded-full",
+                          dim.score >= 70 ? "bg-green-500" :
+                          dim.score >= 50 ? "bg-yellow-500" : "bg-red-500"
+                        )}
+                        style={{ width: `${dim.score}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-medium w-12 text-right">{dim.score}/100</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <ProTeaserSection
+            title="Score detaille par dimension"
+            description={`${data.dimensionScores.length} dimensions analysees avec benchmarks`}
+            icon={Target}
+            previewText={`Score global: ${data.overallScore}/100 - Top ${data.comparativeRanking.percentileSector}% du secteur`}
+          />
+        )}
 
-        {/* Comparative Ranking */}
-        <div className="grid grid-cols-3 gap-3">
-          <div className="p-3 rounded-lg bg-muted text-center">
-            <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
-            <p className="text-xs text-muted-foreground">Percentile Global</p>
+        {/* Comparative Ranking - Only for PRO */}
+        {showFullScore && (
+          <div className="grid grid-cols-3 gap-3">
+            <div className="p-3 rounded-lg bg-muted text-center">
+              <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
+              <p className="text-xs text-muted-foreground">Percentile Global</p>
+            </div>
+            <div className="p-3 rounded-lg bg-muted text-center">
+              <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
+              <p className="text-xs text-muted-foreground">Percentile Secteur</p>
+            </div>
+            <div className="p-3 rounded-lg bg-muted text-center">
+              <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
+              <p className="text-xs text-muted-foreground">Deals Compares</p>
+            </div>
           </div>
-          <div className="p-3 rounded-lg bg-muted text-center">
-            <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
-            <p className="text-xs text-muted-foreground">Percentile Secteur</p>
-          </div>
-          <div className="p-3 rounded-lg bg-muted text-center">
-            <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
-            <p className="text-xs text-muted-foreground">Deals Compares</p>
-          </div>
-        </div>
+        )}
 
-        {/* Strengths & Weaknesses */}
+        {/* Strengths & Weaknesses - Limited for FREE */}
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <p className="text-sm font-medium text-green-600 flex items-center gap-1">
               <CheckCircle className="h-4 w-4" /> Points forts
             </p>
             <ul className="space-y-1">
-              {data.keyStrengths.map((s, i) => (
+              {visibleStrengths.map((s, i) => (
                 <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
                   <span className="text-green-500 mt-1">+</span> {s}
                 </li>
               ))}
             </ul>
+            {hiddenStrengthsCount > 0 && (
+              <ProTeaserInline hiddenCount={hiddenStrengthsCount} itemLabel="points forts" />
+            )}
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium text-red-600 flex items-center gap-1">
               <XCircle className="h-4 w-4" /> Points faibles
             </p>
             <ul className="space-y-1">
-              {data.keyWeaknesses.map((w, i) => (
+              {visibleWeaknesses.map((w, i) => (
                 <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
                   <span className="text-red-500 mt-1">-</span> {w}
                 </li>
               ))}
             </ul>
+            {hiddenWeaknessesCount > 0 && (
+              <ProTeaserInline hiddenCount={hiddenWeaknessesCount} itemLabel="faiblesses" />
+            )}
           </div>
         </div>
 
@@ -355,7 +390,17 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: 
 });
 
 // Devil's Advocate Card
-const DevilsAdvocateCard = memo(function DevilsAdvocateCard({ data }: { data: DevilsAdvocateData }) {
+const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
+  data,
+  objectionsLimit = Infinity,
+}: {
+  data: DevilsAdvocateData;
+  objectionsLimit?: number;
+}) {
+  const visibleConcerns = data.topConcerns.slice(0, objectionsLimit);
+  const hiddenConcernsCount = Math.max(0, data.topConcerns.length - objectionsLimit);
+  const isFree = objectionsLimit !== Infinity;
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -372,19 +417,24 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({ data }: { data: De
         <CardDescription>Challenge de la these d&apos;investissement</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Top Concerns */}
+        {/* Top Concerns - Limited for FREE */}
         {data.topConcerns.length > 0 && (
           <div className="p-3 rounded-lg bg-orange-50 border border-orange-200">
             <p className="text-sm font-medium text-orange-800 mb-2 flex items-center gap-1">
               <ShieldAlert className="h-4 w-4" /> Top Concerns
             </p>
             <ul className="space-y-1">
-              {data.topConcerns.map((c, i) => (
+              {visibleConcerns.map((c, i) => (
                 <li key={i} className="text-sm text-orange-700 flex items-start gap-2">
                   <span className="font-bold">{i + 1}.</span> {c}
                 </li>
               ))}
             </ul>
+            {hiddenConcernsCount > 0 && (
+              <div className="mt-2">
+                <ProTeaserInline hiddenCount={hiddenConcernsCount} itemLabel="objections" />
+              </div>
+            )}
           </div>
         )}
 
@@ -402,49 +452,59 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({ data }: { data: De
           </div>
         )}
 
-        {/* Challenged Assumptions */}
-        <ExpandableSection title="Hypotheses challengees" count={data.challengedAssumptions.length} defaultOpen>
-          <div className="space-y-2 mt-2">
-            {data.challengedAssumptions.slice(0, 5).map((a, i) => (
-              <div key={i} className="p-2 border rounded">
-                <div className="flex items-start justify-between">
-                  <p className="text-sm font-medium">{a.assumption}</p>
-                  <Badge variant="outline" className={cn(
-                    "text-xs shrink-0 ml-2",
-                    a.impact === "critical" ? "bg-red-100 text-red-800" :
-                    a.impact === "high" ? "bg-orange-100 text-orange-800" :
-                    a.impact === "medium" ? "bg-yellow-100 text-yellow-800" :
-                    "bg-green-100 text-green-800"
-                  )}>
-                    {a.impact}
-                  </Badge>
+        {/* Challenged Assumptions - PRO only */}
+        {isFree ? (
+          <ProTeaserSection
+            title="Hypotheses challengees"
+            description={`${data.challengedAssumptions.length} hypotheses analysees et challengees`}
+            icon={Brain}
+          />
+        ) : (
+          <ExpandableSection title="Hypotheses challengees" count={data.challengedAssumptions.length} defaultOpen>
+            <div className="space-y-2 mt-2">
+              {data.challengedAssumptions.slice(0, 5).map((a, i) => (
+                <div key={i} className="p-2 border rounded">
+                  <div className="flex items-start justify-between">
+                    <p className="text-sm font-medium">{a.assumption}</p>
+                    <Badge variant="outline" className={cn(
+                      "text-xs shrink-0 ml-2",
+                      a.impact === "critical" ? "bg-red-100 text-red-800" :
+                      a.impact === "high" ? "bg-orange-100 text-orange-800" :
+                      a.impact === "medium" ? "bg-yellow-100 text-yellow-800" :
+                      "bg-green-100 text-green-800"
+                    )}>
+                      {a.impact}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{a.challenge}</p>
+                  {a.mitigation && (
+                    <p className="text-xs text-green-600 mt-1">Mitigation: {a.mitigation}</p>
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">{a.challenge}</p>
-                {a.mitigation && (
-                  <p className="text-xs text-green-600 mt-1">Mitigation: {a.mitigation}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </ExpandableSection>
+              ))}
+            </div>
+          </ExpandableSection>
+        )}
 
-        {/* Blind Spots */}
-        <ExpandableSection title="Blind Spots identifies" count={data.blindSpots.length}>
-          <div className="space-y-2 mt-2">
-            {data.blindSpots.map((b, i) => (
-              <div key={i} className="p-2 border rounded">
-                <p className="text-sm font-medium flex items-center gap-1">
-                  <Eye className="h-3 w-3 text-purple-500" /> {b.area}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{b.description}</p>
-                <p className="text-xs text-blue-600 mt-1">Recommandation: {b.recommendation}</p>
-              </div>
-            ))}
-          </div>
-        </ExpandableSection>
+        {/* Blind Spots - PRO only */}
+        {!isFree && (
+          <ExpandableSection title="Blind Spots identifies" count={data.blindSpots.length}>
+            <div className="space-y-2 mt-2">
+              {data.blindSpots.map((b, i) => (
+                <div key={i} className="p-2 border rounded">
+                  <p className="text-sm font-medium flex items-center gap-1">
+                    <Eye className="h-3 w-3 text-purple-500" /> {b.area}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">{b.description}</p>
+                  <p className="text-xs text-blue-600 mt-1">Recommandation: {b.recommendation}</p>
+                </div>
+              ))}
+            </div>
+          </ExpandableSection>
+        )}
 
-        {/* Questions Requiring Answers */}
-        {data.questionsRequiringAnswers.length > 0 && (
+        {/* Questions Requiring Answers - PRO only */}
+        {!isFree && data.questionsRequiringAnswers.length > 0 && (
           <ExpandableSection title="Questions critiques" count={data.questionsRequiringAnswers.length}>
             <ul className="space-y-1 mt-2">
               {data.questionsRequiringAnswers.map((q, i) => (
@@ -708,7 +768,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
 });
 
 // Main Tier 2 Results Component
-export function Tier2Results({ results }: Tier2ResultsProps) {
+export function Tier2Results({ results, subscriptionPlan = "FREE" }: Tier2ResultsProps) {
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
     if (!result?.success || !result.data) return null;
@@ -720,6 +780,10 @@ export function Tier2Results({ results }: Tier2ResultsProps) {
   const devilsData = getAgentData<DevilsAdvocateData>("devils-advocate");
   const contradictionData = getAgentData<ContradictionDetectorData>("contradiction-detector");
   const memoData = getAgentData<MemoGeneratorData>("memo-generator");
+
+  // Get display limits based on plan
+  const displayLimits = useMemo(() => getDisplayLimits(subscriptionPlan), [subscriptionPlan]);
+  const isFree = subscriptionPlan === "FREE";
 
   const successfulAgents = useMemo(() => {
     return Object.values(results).filter(r => r.success).length;
@@ -761,23 +825,68 @@ export function Tier2Results({ results }: Tier2ResultsProps) {
 
         <TabsContent value="synthesis" className="space-y-4 mt-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {scorerData && <SynthesisScorerCard data={scorerData} />}
+            {scorerData && (
+              <SynthesisScorerCard
+                data={scorerData}
+                strengthsLimit={displayLimits.strengths}
+                weaknessesLimit={displayLimits.weaknesses}
+                showFullScore={displayLimits.score}
+              />
+            )}
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            {scenarioData && <ScenarioModelerCard data={scenarioData} />}
-            {contradictionData && <ContradictionDetectorCard data={contradictionData} />}
+            {/* Scenarios - PRO only */}
+            {isFree ? (
+              <ProTeaserSection
+                title="Scenarios modelises"
+                description="3 scenarios Bull/Base/Bear avec projections ROI et IRR"
+                icon={BarChart3}
+                previewText={scenarioData ? `Confiance: ${scenarioData.confidenceLevel}%` : undefined}
+              />
+            ) : (
+              scenarioData && <ScenarioModelerCard data={scenarioData} />
+            )}
+
+            {/* Contradictions - PRO only (FREE sees count teaser) */}
+            {isFree ? (
+              <ProTeaserSection
+                title="Contradictions detectees"
+                description={contradictionData
+                  ? `${contradictionData.contradictions.length} contradiction(s) identifiee(s) entre les analyses`
+                  : "Detection automatique des incoherences"}
+                icon={Zap}
+                previewText={contradictionData ? `Score coherence: ${contradictionData.consistencyScore}/100` : undefined}
+              />
+            ) : (
+              contradictionData && <ContradictionDetectorCard data={contradictionData} />
+            )}
           </div>
         </TabsContent>
 
         <TabsContent value="challenge" className="space-y-4 mt-4">
           <div className="grid gap-4 md:grid-cols-1">
-            {devilsData && <DevilsAdvocateCard data={devilsData} />}
+            {devilsData && (
+              <DevilsAdvocateCard
+                data={devilsData}
+                objectionsLimit={displayLimits.devilsAdvocate}
+              />
+            )}
           </div>
         </TabsContent>
 
         <TabsContent value="memo" className="space-y-4 mt-4">
           <div className="grid gap-4 md:grid-cols-1">
-            {memoData && <MemoGeneratorCard data={memoData} />}
+            {/* Memo - PRO only */}
+            {isFree ? (
+              <ProTeaserSection
+                title="Investment Memo"
+                description="Memo d'investissement complet et exportable en PDF"
+                icon={FileText}
+                previewText={memoData ? memoData.executiveSummary.oneLiner : undefined}
+              />
+            ) : (
+              memoData && <MemoGeneratorCard data={memoData} />
+            )}
           </div>
         </TabsContent>
       </Tabs>

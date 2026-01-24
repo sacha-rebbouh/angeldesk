@@ -51,6 +51,9 @@ import type {
 import type { ReasoningTrace } from "@/agents/react/types";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { ReActTraceViewer } from "./react-trace-viewer";
+import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-teaser";
+import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
+import { BarChart3, FileText, Lightbulb } from "lucide-react";
 
 interface ReActMetadata {
   reasoningTrace: ReasoningTrace;
@@ -71,6 +74,7 @@ interface AgentResultWithReAct {
 
 interface Tier1ResultsProps {
   results: Record<string, AgentResultWithReAct>;
+  subscriptionPlan?: SubscriptionPlan;
 }
 
 // ReAct Badge Component - Shows when agent has ReAct metadata
@@ -1069,16 +1073,21 @@ const ExitStrategistCard = memo(function ExitStrategistCard({
 const QuestionMasterCard = memo(function QuestionMasterCard({
   data,
   reactData,
-  onShowTrace
+  onShowTrace,
+  questionLimit = Infinity,
 }: {
   data: QuestionMasterData;
   reactData?: ReActMetadata;
   onShowTrace?: () => void;
+  questionLimit?: number;
 }) {
   const mustAskQuestions = useMemo(
     () => data.founderQuestions.filter(q => q.priority === "must_ask"),
     [data.founderQuestions]
   );
+
+  const visibleQuestions = mustAskQuestions.slice(0, questionLimit);
+  const hiddenQuestionsCount = Math.max(0, mustAskQuestions.length - questionLimit);
 
   return (
     <Card className="md:col-span-2">
@@ -1108,10 +1117,10 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
           </div>
         )}
 
-        {/* Must Ask Questions */}
+        {/* Must Ask Questions - Limited for FREE */}
         <ExpandableSection title={`Questions essentielles (${mustAskQuestions.length})`} defaultOpen>
           <div className="space-y-2 mt-2">
-            {mustAskQuestions.map((q, i) => (
+            {visibleQuestions.map((q, i) => (
               <div key={i} className="p-2 border rounded">
                 <div className="flex items-start gap-2">
                   <Badge variant="outline" className="shrink-0 text-xs">{q.category}</Badge>
@@ -1124,11 +1133,21 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                 )}
               </div>
             ))}
+            {/* PRO Teaser for hidden questions */}
+            {hiddenQuestionsCount > 0 && (
+              <ProTeaserInline hiddenCount={hiddenQuestionsCount} itemLabel="questions" />
+            )}
           </div>
         </ExpandableSection>
 
-        {/* Negotiation Points */}
-        {data.negotiationPoints.length > 0 && (
+        {/* Negotiation Points - PRO only shows details */}
+        {data.negotiationPoints.length > 0 && questionLimit !== Infinity ? (
+          <ProTeaserSection
+            title="Points de negociation"
+            description={`${data.negotiationPoints.length} points de negociation identifies`}
+            icon={Lightbulb}
+          />
+        ) : data.negotiationPoints.length > 0 && (
           <ExpandableSection title={`Points de négociation (${data.negotiationPoints.length})`}>
             <div className="space-y-2 mt-2">
               {data.negotiationPoints.map((n, i) => (
@@ -1163,9 +1182,13 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
 });
 
 // Main Tier 1 Results Component
-export function Tier1Results({ results }: Tier1ResultsProps) {
+export function Tier1Results({ results, subscriptionPlan = "FREE" }: Tier1ResultsProps) {
   // State for tracking which agent's trace panel is open
   const [openTraceAgent, setOpenTraceAgent] = useState<string | null>(null);
+
+  // Get display limits based on plan
+  const displayLimits = useMemo(() => getDisplayLimits(subscriptionPlan), [subscriptionPlan]);
+  const isFree = subscriptionPlan === "FREE";
 
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
@@ -1390,6 +1413,7 @@ export function Tier1Results({ results }: Tier1ResultsProps) {
                 data={questionData}
                 reactData={getReactData("question-master")}
                 onShowTrace={traceHandlers["question-master"]}
+                questionLimit={displayLimits.criticalQuestions}
               />
             )}
           </div>

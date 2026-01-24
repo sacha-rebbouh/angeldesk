@@ -44,15 +44,14 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // Run the agent (don't await to avoid timeout)
-    runCleaner({ runId: run.id }).catch((error) => {
-      console.error('DB_CLEANER error:', error)
-    })
+    // Run the agent and wait for completion (max 5 min on Vercel)
+    const result = await runCleaner({ runId: run.id })
 
     return NextResponse.json({
       success: true,
       runId: run.id,
-      message: 'DB_CLEANER started',
+      message: 'DB_CLEANER completed',
+      result,
     })
   } catch (error) {
     console.error('Failed to start DB_CLEANER:', error)
@@ -95,15 +94,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Run the agent
-    runCleaner({ runId: run.id }).catch((error) => {
-      console.error('DB_CLEANER error:', error)
-    })
+    // Run the agent and wait for completion
+    const result = await runCleaner({ runId: run.id })
 
     return NextResponse.json({
       success: true,
       runId: run.id,
-      message: 'DB_CLEANER started',
+      message: 'DB_CLEANER completed',
+      result,
     })
   } catch (error) {
     console.error('Failed to start DB_CLEANER:', error)

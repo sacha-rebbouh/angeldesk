@@ -44,15 +44,14 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // Run the agent (don't await to avoid timeout)
-    runSourcer(run.id).catch((error) => {
-      console.error('DB_SOURCER error:', error)
-    })
+    // Run the agent and wait for completion (max 5 min on Vercel)
+    const result = await runSourcer(run.id)
 
     return NextResponse.json({
       success: true,
       runId: run.id,
-      message: 'DB_SOURCER started',
+      message: 'DB_SOURCER completed',
+      result,
     })
   } catch (error) {
     console.error('Failed to start DB_SOURCER:', error)
@@ -95,15 +94,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Run the agent
-    runSourcer(run.id).catch((error) => {
-      console.error('DB_SOURCER error:', error)
-    })
+    // Run the agent and wait for completion
+    const result = await runSourcer(run.id)
 
     return NextResponse.json({
       success: true,
       runId: run.id,
-      message: 'DB_SOURCER started',
+      message: 'DB_SOURCER completed',
+      result,
     })
   } catch (error) {
     console.error('Failed to start DB_SOURCER:', error)

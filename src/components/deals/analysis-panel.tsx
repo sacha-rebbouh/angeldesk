@@ -33,6 +33,7 @@ import {
   Tier3ResultsSkeleton,
 } from "./loading-skeletons";
 import { EarlyWarningsPanel } from "./early-warnings-panel";
+import { ProTeaserBanner } from "@/components/shared/pro-teaser";
 
 // Dynamic imports for heavy Tier components - reduces initial bundle by ~50KB
 const Tier1Results = dynamic(
@@ -465,19 +466,19 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               />
             )}
 
-            {/* Tier 2 Results - Detailed View */}
+            {/* Tier 2 Results - Detailed View (PRO only shows full, FREE shows teasers) */}
             {isTier2Analysis && displayedResult.success && Object.keys(tier2Results).length > 0 && (
-              <Tier2Results results={tier2Results} />
+              <Tier2Results results={tier2Results} subscriptionPlan={subscriptionPlan} />
             )}
 
-            {/* Tier 1 Results - Detailed View */}
+            {/* Tier 1 Results - Detailed View (FREE sees limited items + teasers) */}
             {isTier1Analysis && displayedResult.success && Object.keys(tier1Results).length > 0 && (
-              <Tier1Results results={tier1Results} />
+              <Tier1Results results={tier1Results} subscriptionPlan={subscriptionPlan} />
             )}
 
-            {/* Tier 3 Results - Sector Expert */}
+            {/* Tier 3 Results - Sector Expert (PRO only) */}
             {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
-              <Tier3Results results={tier3Results} />
+              <Tier3Results results={tier3Results} subscriptionPlan={subscriptionPlan} />
             )}
 
             {/* Agent Results - Collapsible for Tier 1/2/3 */}
@@ -558,6 +559,11 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                 <h4 className="font-medium mb-2">Resume</h4>
                 <div className="text-sm whitespace-pre-wrap">{displayedResult.summary}</div>
               </div>
+            )}
+
+            {/* PRO Upsell Banner for FREE users */}
+            {subscriptionPlan === "FREE" && displayedResult.success && (
+              <ProTeaserBanner />
             )}
           </CardContent>
         </Card>

@@ -2,6 +2,65 @@
 
 ---
 
+## 2026-01-25 22:30 - Système d'affichage FREE vs PRO avec teasers
+
+### Objectif
+Implémenter le système de "carotte" pour inciter les utilisateurs FREE à passer PRO en montrant partiellement les résultats avec effet blur et teasers.
+
+### Règles d'affichage FREE vs PRO
+
+| Élément | FREE | PRO |
+|---------|------|-----|
+| Points forts | 2 visibles + blur | Tous |
+| Faiblesses | 2 visibles + blur | Tous |
+| Red flags | 2 visibles + blur | Tous |
+| Devil's Advocate | 2 objections + blur | Tous |
+| Questions critiques | 3 visibles + blur | Toutes |
+| Score détaillé | Teaser only | Complet |
+| Contradictions | Count only | Détails |
+| Scénarios | Aucun | Bull/Base/Bear |
+| Expert sectoriel | Teaser | Complet |
+| Memo PDF | Non | Oui |
+
+### Fichiers créés
+- `src/components/shared/pro-teaser.tsx` - Composants ProTeaser, ProTeaserInline, ProTeaserSection, ProTeaserBanner
+
+### Fichiers modifiés
+- `src/lib/analysis-constants.ts` - Ajout `FREE_DISPLAY_LIMITS`, `PRO_DISPLAY_LIMITS`, `getDisplayLimits()`
+- `src/components/deals/analysis-panel.tsx` - Passage du subscriptionPlan aux composants Tier + ProTeaserBanner
+- `src/components/deals/tier1-results.tsx` - QuestionMasterCard avec limite questions
+- `src/components/deals/tier2-results.tsx` - SynthesisScorerCard, DevilsAdvocateCard avec limites + teasers scenarios/contradictions/memo
+- `src/components/deals/tier3-results.tsx` - Teaser complet pour FREE (Tier 3 = PRO only)
+
+### Pricing confirmé (de investor.md)
+- **FREE**: 0€, 5 deals/mois, Tier 1 uniquement
+- **PRO**: 249€/mois, illimité, Tier 1+2+3, 5 AI Boards inclus
+- **Board extra**: 79€/board
+
+### Message clé
+"1 mauvaise décision évitée = 25K€ sauvés" (ticket moyen BA)
+
+---
+
+## 2026-01-25 21:00 - Fix maintenance agents - await execution
+
+### Problème
+Les agents de maintenance (cleaner, sourcer, completer) ne s'exécutaient pas vraiment.
+Le code faisait `runAgent().catch()` sans `await`, donc Vercel terminait la fonction avant que l'agent puisse s'exécuter.
+
+### Solution
+Ajout de `await` pour attendre la fin de l'exécution (max 5 min sur Vercel Hobby).
+
+### Fichiers modifiés
+- `src/app/api/cron/maintenance/cleaner/route.ts` - await runCleaner()
+- `src/app/api/cron/maintenance/sourcer/route.ts` - await runSourcer()
+- `src/app/api/cron/maintenance/completer/route.ts` - await runCompleter()
+
+### Note
+L'appel HTTP prendra maintenant jusqu'à 5 minutes car il attend la fin de l'agent.
+
+---
+
 ## 2026-01-25 20:45 - Fix Telegram /run command - APP_URL
 
 ### Problème

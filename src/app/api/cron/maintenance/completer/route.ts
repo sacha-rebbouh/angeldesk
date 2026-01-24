@@ -44,15 +44,14 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // Run the agent (don't await to avoid timeout)
-    runCompleter(run.id).catch((error) => {
-      console.error('DB_COMPLETER error:', error)
-    })
+    // Run the agent and wait for completion (max 5 min on Vercel)
+    const result = await runCompleter(run.id)
 
     return NextResponse.json({
       success: true,
       runId: run.id,
-      message: 'DB_COMPLETER started',
+      message: 'DB_COMPLETER completed',
+      result,
     })
   } catch (error) {
     console.error('Failed to start DB_COMPLETER:', error)
@@ -95,15 +94,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Run the agent
-    runCompleter(run.id).catch((error) => {
-      console.error('DB_COMPLETER error:', error)
-    })
+    // Run the agent and wait for completion
+    const result = await runCompleter(run.id)
 
     return NextResponse.json({
       success: true,
       runId: run.id,
-      message: 'DB_COMPLETER started',
+      message: 'DB_COMPLETER completed',
+      result,
     })
   } catch (error) {
     console.error('Failed to start DB_COMPLETER:', error)
