@@ -245,7 +245,7 @@ async function fetchRSS(): Promise<RSSItem[]> {
   try {
     const response = await fetch(RSS_URL, {
       headers: {
-        "User-Agent": "FullInvest/1.0",
+        "User-Agent": "AngelDesk/1.0",
         Accept: "application/rss+xml, application/xml, text/xml",
       },
     });

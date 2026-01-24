@@ -346,7 +346,7 @@ async function fetchRSS(url: string, sourceName: string): Promise<RSSItem[]> {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "FullInvest/1.0",
+        "User-Agent": "AngelDesk/1.0",
         Accept: "application/rss+xml, application/xml, text/xml",
       },
     });

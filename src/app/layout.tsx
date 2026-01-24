@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FullInvest - Due Diligence IA pour Business Angels",
+  title: "Angel Desk - Due Diligence IA pour Business Angels",
   description:
     "La DD d'un fonds VC, accessible à un Business Angel solo. Analysez vos deals en 5 minutes.",
 };

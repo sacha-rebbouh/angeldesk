@@ -3,7 +3,7 @@
 // Hoisted outside components to prevent recreation on every render
 // =============================================================================
 
-// Analysis type options for the selector
+// Analysis type options (kept for internal use / API compatibility)
 export const ANALYSIS_TYPES = [
   { value: "screening", label: "Screening rapide", description: "~30s", tier: 1 },
   { value: "extraction", label: "Extraction documents", description: "~1min", tier: 1 },
@@ -15,6 +15,38 @@ export const ANALYSIS_TYPES = [
 ] as const;
 
 export type AnalysisTypeValue = typeof ANALYSIS_TYPES[number]["value"];
+
+// =============================================================================
+// PLAN-BASED ANALYSIS CONFIGURATION
+// Determines what analysis runs when user clicks "Analyser"
+// =============================================================================
+
+export const PLAN_ANALYSIS_CONFIG = {
+  FREE: {
+    analysisType: "tier1_complete" as AnalysisTypeValue,
+    label: "Analyse",
+    description: "Extraction + 12 agents d'investigation",
+    includes: ["extraction", "tier1_complete"],
+  },
+  PRO: {
+    analysisType: "full_analysis" as AnalysisTypeValue,
+    label: "Analyse complete",
+    description: "Due Diligence complete + Expert sectoriel",
+    includes: ["extraction", "tier1_complete", "tier2_synthesis", "tier3_sector", "full_analysis"],
+  },
+  ENTERPRISE: {
+    analysisType: "full_analysis" as AnalysisTypeValue,
+    label: "Analyse complete",
+    description: "Due Diligence complete + Expert sectoriel",
+    includes: ["extraction", "tier1_complete", "tier2_synthesis", "tier3_sector", "full_analysis"],
+  },
+} as const;
+
+export type SubscriptionPlan = keyof typeof PLAN_ANALYSIS_CONFIG;
+
+export function getAnalysisTypeForPlan(plan: SubscriptionPlan): AnalysisTypeValue {
+  return PLAN_ANALYSIS_CONFIG[plan].analysisType;
+}
 
 // Agent lists for categorizing results
 export const TIER1_AGENTS = [

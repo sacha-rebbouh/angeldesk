@@ -38,6 +38,8 @@ import {
   TIER2_AGENT_NAMES,
   TIER2_DEPENDENCIES,
   TIER2_EXECUTION_BATCHES,
+  TIER2_BATCHES_BEFORE_TIER3,
+  TIER2_BATCHES_AFTER_TIER3,
   resolveAgentDependencies,
 } from "./types";
 import {
@@ -1113,116 +1115,70 @@ export class AgentOrchestrator {
         }, collectedWarnings);
       }
 
-      // STEP 5: SYNTHESIS PHASE - Tier 2 Agents with PARALLEL BATCHING
-      // Uses dependency graph: batch 1 (parallel), batch 2 (needs 1), batch 3 (needs all)
+      // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
+      // Run contradiction-detector, scenario-modeler, devils-advocate in PARALLEL
       await stateMachine.startSynthesis();
 
       const tier2AgentMap = await getTier2Agents();
 
-      for (const batch of TIER2_EXECUTION_BATCHES) {
-        // REAL-TIME COST CHECK: Before each batch
-        if (maxCostUsd && totalCost >= maxCostUsd) {
-          console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during Tier 2`);
-          break;
-        }
+      // Cost check before Tier 2
+      if (!(maxCostUsd && totalCost >= maxCostUsd)) {
+        const tier2BeforeAgents = TIER2_BATCHES_BEFORE_TIER3[0]; // Single batch with 3 agents
 
-        if (batch.length === 1) {
-          // Single agent - run directly
-          const agentName = batch[0];
-          const agent = tier2AgentMap[agentName];
+        onProgress?.({
+          currentAgent: `tier2-parallel (${tier2BeforeAgents.join(", ")})`,
+          completedAgents: completedCount,
+          totalAgents: TOTAL_AGENTS,
+          estimatedCostSoFar: totalCost,
+        });
 
-          onProgress?.({
-            currentAgent: agentName,
-            completedAgents: completedCount,
-            totalAgents: TOTAL_AGENTS,
-            estimatedCostSoFar: totalCost,
-          });
-
-          try {
-            const result = await agent.run(enrichedContext);
-            allResults[agentName] = result;
-            totalCost += result.cost;
-            completedCount++;
-            enrichedContext.previousResults![agentName] = result;
-
-            stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-            await processAgentResult(dealId, agentName, result);
-            await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-            onProgress?.({
-              currentAgent: agentName,
-              completedAgents: completedCount,
-              totalAgents: TOTAL_AGENTS,
-              latestResult: result,
-              estimatedCostSoFar: totalCost,
-            });
-          } catch (error) {
-            const errorResult: AgentResult = {
-              agentName,
-              success: false,
-              executionTimeMs: 0,
-              cost: 0,
-              error: error instanceof Error ? error.message : "Unknown error",
-            };
-            allResults[agentName] = errorResult;
-            stateMachine.recordAgentFailed(agentName, errorResult.error ?? "Unknown");
-            completedCount++;
-          }
-        } else {
-          // Multiple agents - run in PARALLEL
-          onProgress?.({
-            currentAgent: `tier2-parallel (${batch.join(", ")})`,
-            completedAgents: completedCount,
-            totalAgents: TOTAL_AGENTS,
-            estimatedCostSoFar: totalCost,
-          });
-
-          const batchResults = await Promise.all(
-            batch.map(async (agentName) => {
-              const agent = tier2AgentMap[agentName];
-              try {
-                const result = await agent.run(enrichedContext);
-                return { agentName, result };
-              } catch (error) {
-                return {
+        const batchResults = await Promise.all(
+          tier2BeforeAgents.map(async (agentName) => {
+            const agent = tier2AgentMap[agentName];
+            try {
+              const result = await agent.run(enrichedContext);
+              return { agentName, result };
+            } catch (error) {
+              return {
+                agentName,
+                result: {
                   agentName,
-                  result: {
-                    agentName,
-                    success: false,
-                    executionTimeMs: 0,
-                    cost: 0,
-                    error: error instanceof Error ? error.message : "Unknown error",
-                  } as AgentResult,
-                };
-              }
-            })
-          );
-
-          // Collect batch results
-          for (const { agentName, result } of batchResults) {
-            allResults[agentName] = result;
-            totalCost += result.cost;
-            completedCount++;
-            enrichedContext.previousResults![agentName] = result;
-
-            if (result.success) {
-              stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-            } else {
-              stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
+                  success: false,
+                  executionTimeMs: 0,
+                  cost: 0,
+                  error: error instanceof Error ? error.message : "Unknown error",
+                } as AgentResult,
+              };
             }
+          })
+        );
 
-            await processAgentResult(dealId, agentName, result);
+        // Collect batch results
+        for (const { agentName, result } of batchResults) {
+          allResults[agentName] = result;
+          totalCost += result.cost;
+          completedCount++;
+          enrichedContext.previousResults![agentName] = result;
+
+          if (result.success) {
+            stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
+          } else {
+            stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
           }
 
-          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-          onProgress?.({
-            currentAgent: `tier2-parallel (${batch.join(", ")}) completed`,
-            completedAgents: completedCount,
-            totalAgents: TOTAL_AGENTS,
-            estimatedCostSoFar: totalCost,
-          });
+          await processAgentResult(dealId, agentName, result);
         }
+
+        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+        onProgress?.({
+          currentAgent: `tier2-parallel completed`,
+          completedAgents: completedCount,
+          totalAgents: TOTAL_AGENTS,
+          estimatedCostSoFar: totalCost,
+        });
+      } else {
+        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 2`);
       }
 
       // STEP 6: SECTOR EXPERT PHASE - Tier 3 (if available)
@@ -1238,6 +1194,7 @@ export class AgentOrchestrator {
           allResults[sectorExpert.name] = sectorResult;
           totalCost += sectorResult.cost;
           completedCount++;
+          enrichedContext.previousResults![sectorExpert.name] = sectorResult;
 
           if (sectorResult.success) {
             stateMachine.recordAgentComplete(
@@ -1267,6 +1224,58 @@ export class AgentOrchestrator {
           };
           allResults[sectorExpert.name] = errorResult;
           stateMachine.recordAgentFailed(sectorExpert.name, errorResult.error ?? "Unknown");
+          completedCount++;
+        }
+      }
+
+      // STEP 7: FINAL SYNTHESIS - Tier 2 AFTER Tier 3
+      // synthesis-deal-scorer and memo-generator run last with ALL insights
+      for (const batch of TIER2_BATCHES_AFTER_TIER3) {
+        // REAL-TIME COST CHECK: Before each batch
+        if (maxCostUsd && totalCost >= maxCostUsd) {
+          console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
+          break;
+        }
+
+        // These are single-agent batches, run sequentially
+        const agentName = batch[0];
+        const agent = tier2AgentMap[agentName];
+
+        onProgress?.({
+          currentAgent: agentName,
+          completedAgents: completedCount,
+          totalAgents: TOTAL_AGENTS,
+          estimatedCostSoFar: totalCost,
+        });
+
+        try {
+          const result = await agent.run(enrichedContext);
+          allResults[agentName] = result;
+          totalCost += result.cost;
+          completedCount++;
+          enrichedContext.previousResults![agentName] = result;
+
+          stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
+          await processAgentResult(dealId, agentName, result);
+          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+          onProgress?.({
+            currentAgent: agentName,
+            completedAgents: completedCount,
+            totalAgents: TOTAL_AGENTS,
+            latestResult: result,
+            estimatedCostSoFar: totalCost,
+          });
+        } catch (error) {
+          const errorResult: AgentResult = {
+            agentName,
+            success: false,
+            executionTimeMs: 0,
+            cost: 0,
+            error: error instanceof Error ? error.message : "Unknown error",
+          };
+          allResults[agentName] = errorResult;
+          stateMachine.recordAgentFailed(agentName, errorResult.error ?? "Unknown");
           completedCount++;
         }
       }

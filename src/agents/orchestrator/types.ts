@@ -198,6 +198,9 @@ export const TIER2_DEPENDENCIES: Record<typeof TIER2_AGENT_NAMES[number], string
 /**
  * Execution batches for Tier 2 (computed from dependencies)
  * Agents in same batch can run in parallel
+ *
+ * IMPORTANT: synthesis-deal-scorer runs AFTER Tier 3 to include sector expert insights
+ * See TIER2_BATCHES_BEFORE_TIER3 and TIER2_BATCHES_AFTER_TIER3
  */
 export const TIER2_EXECUTION_BATCHES = [
   // Batch 1: All independent agents (parallel)
@@ -205,6 +208,26 @@ export const TIER2_EXECUTION_BATCHES = [
   // Batch 2: Depends on contradiction-detector + scenario-modeler
   ["synthesis-deal-scorer"],
   // Batch 3: Depends on all above
+  ["memo-generator"],
+] as const;
+
+/**
+ * NEW: Tier 2 batches BEFORE Tier 3 sector expert
+ * These agents don't need sector expert insights
+ */
+export const TIER2_BATCHES_BEFORE_TIER3 = [
+  // Batch 1: All independent agents (parallel)
+  ["contradiction-detector", "scenario-modeler", "devils-advocate"],
+] as const;
+
+/**
+ * NEW: Tier 2 batches AFTER Tier 3 sector expert
+ * These agents benefit from sector expert insights for final scoring
+ */
+export const TIER2_BATCHES_AFTER_TIER3 = [
+  // synthesis-deal-scorer: Final scoring with ALL insights including Tier 3
+  ["synthesis-deal-scorer"],
+  // memo-generator: Investment memo with complete analysis
   ["memo-generator"],
 ] as const;
 

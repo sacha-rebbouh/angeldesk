@@ -1,17 +1,20 @@
 import { prisma } from "@/lib/prisma";
 
 // Limits configuration
+// Use -1 to represent unlimited (Infinity is not a valid DB integer)
+const UNLIMITED = -1;
+
 const LIMITS_CONFIG = {
   FREE: {
     monthlyDeals: 5,
     maxTier: 1, // Only Tier 1
   },
   PRO: {
-    monthlyDeals: Infinity,
+    monthlyDeals: UNLIMITED,
     maxTier: 3, // All tiers
   },
   ENTERPRISE: {
-    monthlyDeals: Infinity,
+    monthlyDeals: UNLIMITED,
     maxTier: 3,
   },
 } as const;
@@ -119,7 +122,8 @@ export async function getUsageStatus(userId: string): Promise<DealUsageStatus> {
   const config = LIMITS_CONFIG[subscriptionStatus];
 
   // PRO/ENTERPRISE = unlimited
-  if (subscriptionStatus !== "FREE") {
+  const isUnlimited = config.monthlyDeals === UNLIMITED;
+  if (isUnlimited) {
     // Still get/create usage for analytics
     const usage = await getOrCreateUsage(userId, config.monthlyDeals);
 

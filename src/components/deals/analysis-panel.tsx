@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
-import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Brain, Lock, Crown, AlertCircle } from "lucide-react";
+import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Brain, Crown, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,25 +12,20 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { queryKeys } from "@/lib/query-keys";
 import {
-  ANALYSIS_TYPES,
   formatAgentName,
   formatAnalysisMode,
   formatDate,
   formatErrorMessage,
   categorizeResults,
+  PLAN_ANALYSIS_CONFIG,
+  getAnalysisTypeForPlan,
+  type SubscriptionPlan,
 } from "@/lib/analysis-constants";
 import {
   Tier1ResultsSkeleton,
@@ -160,7 +155,6 @@ async function fetchUsageStatus(): Promise<{ usage: UsageStatus }> {
 
 export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: AnalysisPanelProps) {
   const queryClient = useQueryClient();
-  const [analysisType, setAnalysisType] = useState("tier1_complete");
   const [useReAct, setUseReAct] = useState(false);
   const [liveResult, setLiveResult] = useState<AnalysisResult | null>(null);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
@@ -174,6 +168,11 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   });
 
   const usage = usageData?.usage;
+
+  // Determine analysis type based on subscription plan
+  const subscriptionPlan: SubscriptionPlan = (usage?.subscriptionStatus as SubscriptionPlan) ?? "FREE";
+  const planConfig = PLAN_ANALYSIS_CONFIG[subscriptionPlan];
+  const analysisType = getAnalysisTypeForPlan(subscriptionPlan);
 
   // Get the currently displayed result (either live or from saved)
   const displayedResult = useMemo(() => {
@@ -298,10 +297,8 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     return analyses.filter(a => a.status === "COMPLETED" && a.results);
   }, [analyses]);
 
-  // Check if selected tier is allowed
-  const selectedTier = ANALYSIS_TYPES.find(t => t.value === analysisType)?.tier ?? 1;
-  const isTierAllowed = usage ? selectedTier <= usage.maxTier : true;
-  const canRunAnalysis = usage ? usage.canAnalyze && isTierAllowed : true;
+  // Can run analysis if user has remaining deals
+  const canRunAnalysis = usage ? usage.canAnalyze : true;
 
   return (
     <div className="space-y-4">
@@ -323,7 +320,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                       : `${usage.remainingDeals} analyse${usage.remainingDeals > 1 ? "s" : ""} restante${usage.remainingDeals > 1 ? "s" : ""} ce mois`}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    Plan FREE: {usage.monthlyLimit} deals/mois, Tier 1 uniquement
+                    Plan FREE : {usage.monthlyLimit} deals/mois. PRO = analyses illimitees + synthese + expert sectoriel
                   </p>
                 </div>
               </div>
@@ -345,65 +342,36 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         <CardHeader>
           <CardTitle>Analyse IA</CardTitle>
           <CardDescription>
-            Lancez une analyse automatisee du deal
+            {planConfig.description}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-4 items-center">
-            <Select value={analysisType} onValueChange={setAnalysisType} disabled={isRunning}>
-              <SelectTrigger className="w-[320px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ANALYSIS_TYPES.map((type) => {
-                  const isLocked = usage && type.tier > usage.maxTier;
-                  return (
-                    <SelectItem
-                      key={type.value}
-                      value={type.value}
-                      disabled={isLocked}
-                      className={isLocked ? "opacity-50" : ""}
-                    >
-                      <span className="flex items-center gap-2">
-                        {isLocked && <Lock className="h-3 w-3" />}
-                        {type.label} ({type.description})
-                        {isLocked && (
-                          <Badge variant="secondary" className="ml-1 text-[10px] px-1 py-0">
-                            PRO
-                          </Badge>
-                        )}
-                      </span>
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
+          <Button
+            onClick={handleRunAnalysis}
+            disabled={isRunning || !canRunAnalysis}
+            size="lg"
+            className="w-full"
+          >
+            {isRunning ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Analyse en cours...
+              </>
+            ) : !canRunAnalysis ? (
+              <>
+                <AlertCircle className="mr-2 h-4 w-4" />
+                Limite atteinte
+              </>
+            ) : (
+              <>
+                <Play className="mr-2 h-4 w-4" />
+                Analyser ce deal
+              </>
+            )}
+          </Button>
 
-            <Button
-              onClick={handleRunAnalysis}
-              disabled={isRunning || !canRunAnalysis}
-            >
-              {isRunning ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Analyse en cours...
-                </>
-              ) : !canRunAnalysis ? (
-                <>
-                  <Lock className="mr-2 h-4 w-4" />
-                  {!isTierAllowed ? "Tier PRO requis" : "Limite atteinte"}
-                </>
-              ) : (
-                <>
-                  <Play className="mr-2 h-4 w-4" />
-                  Lancer l&apos;analyse
-                </>
-              )}
-            </Button>
-          </div>
-
-          {/* ReAct Mode Toggle */}
-          {(analysisType === "tier1_complete" || analysisType === "full_analysis") && (
+          {/* ReAct Mode Toggle - for PRO users */}
+          {subscriptionPlan !== "FREE" && (
             <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
               <Brain className="h-5 w-5 text-primary" />
               <div className="flex-1">

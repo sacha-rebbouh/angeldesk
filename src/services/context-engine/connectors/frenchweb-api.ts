@@ -497,7 +497,7 @@ async function fetchFundingPage(page: number): Promise<{ posts: WPPost[]; totalP
   try {
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "FullInvest/1.0",
+        "User-Agent": "AngelDesk/1.0",
         "Accept": "application/json",
       },
     });

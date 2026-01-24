@@ -33,7 +33,7 @@ export default async function Home() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 shadow-sm transition-transform group-hover:scale-105">
               <BarChart3 className="h-5 w-5 text-white" />
             </div>
-            <span className="text-xl font-bold tracking-tight">FullInvest</span>
+            <span className="text-xl font-bold tracking-tight">Angel Desk</span>
           </Link>
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
@@ -286,10 +286,10 @@ export default async function Home() {
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600">
                 <BarChart3 className="h-4 w-4 text-white" />
               </div>
-              <span className="font-semibold">FullInvest</span>
+              <span className="font-semibold">Angel Desk</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              &copy; {new Date().getFullYear()} FullInvest. Tous droits réservés.
+              &copy; {new Date().getFullYear()} Angel Desk. Tous droits réservés.
             </p>
           </div>
         </div>

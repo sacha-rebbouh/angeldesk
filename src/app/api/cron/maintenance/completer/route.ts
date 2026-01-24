@@ -10,7 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { runCompleter } from '@/agents/maintenance/db-completer'
 
 export const runtime = 'nodejs'
-export const maxDuration = 600 // 10 minutes max (200 companies × web search + LLM can exceed 5min)
+export const maxDuration = 300 // 5 minutes max (Vercel Hobby limit)
 
 /**
  * Vérifie le secret cron pour sécuriser l'endpoint

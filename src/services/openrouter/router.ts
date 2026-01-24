@@ -85,17 +85,44 @@ function calculateBackoff(attempt: number): number {
   return Math.min(delay, RATE_LIMIT_CONFIG.maxDelayMs);
 }
 
-// Model selection based on task complexity
-// NOTE: Using GPT4O_MINI for "complex" during testing to save costs
-// TODO: Revert to GPT4O for production
-export function selectModel(complexity: TaskComplexity): ModelKey {
+// =============================================================================
+// MODEL SELECTION
+// =============================================================================
+// TODO [PROD]: Remettre les bons modèles avant la production !
+// Configuration actuelle = TEST MODE (GPT-4o Mini partout pour économiser)
+//
+// CONFIGURATION PRODUCTION (à restaurer) :
+//   simple   → HAIKU      (Claude 3 Haiku)
+//   medium   → SONNET     (Claude 3.5 Sonnet)
+//   complex  → SONNET     (Claude 3.5 Sonnet)
+//   critical → OPUS       (Claude 3 Opus)
+//
+// EXCEPTION: document-extractor utilise TOUJOURS Sonnet (fondation critique)
+// =============================================================================
+const TEST_MODE = true; // TODO [PROD]: Mettre à false pour la production
+
+// Agents qui utilisent toujours leur modèle optimal, même en test mode
+const ALWAYS_OPTIMAL_AGENTS = new Set(["document-extractor"]);
+
+export function selectModel(complexity: TaskComplexity, agentName?: string): ModelKey {
+  // Exception: certains agents critiques gardent leur modèle optimal
+  if (agentName && ALWAYS_OPTIMAL_AGENTS.has(agentName)) {
+    return "SONNET"; // Document extraction = fondation, doit être précis
+  }
+
+  // TEST MODE: Autres agents utilisent GPT-4o Mini (le moins cher)
+  if (TEST_MODE) {
+    return "GPT4O_MINI";
+  }
+
+  // PRODUCTION MODE: Modèles adaptés à la complexité
   switch (complexity) {
     case "simple":
       return "HAIKU";
     case "medium":
       return "SONNET";
     case "complex":
-      return "SONNET"; // Testing Sonnet for consistency
+      return "SONNET";
     case "critical":
       return "OPUS";
     default:
@@ -134,7 +161,7 @@ export async function complete(
     systemPrompt,
   } = options;
 
-  const selectedModelKey = modelKey ?? selectModel(complexity);
+  const selectedModelKey = modelKey ?? selectModel(complexity, currentAgentContext ?? undefined);
   const model = MODELS[selectedModelKey];
   const circuitBreaker = getCircuitBreaker();
 
@@ -285,7 +312,7 @@ export async function stream(
     systemPrompt,
   } = options;
 
-  const selectedModelKey = modelKey ?? selectModel(complexity);
+  const selectedModelKey = modelKey ?? selectModel(complexity, currentAgentContext ?? undefined);
   const model = MODELS[selectedModelKey];
   const circuitBreaker = getCircuitBreaker();
 

@@ -2,6 +2,191 @@
 
 ---
 
+## 2026-01-25 20:20 - Fix Telegram bot + Vercel maxDuration
+
+### Problème
+1. Le bot Telegram ne répondait pas aux messages
+2. Le déploiement Vercel échouait: `maxDuration value for "api/cron/maintenance/completer"` dépassait la limite Hobby (300s)
+
+### Solution
+1. Créé `/api/telegram/setup` pour faciliter la configuration du webhook
+2. Réduit `maxDuration` de 600s à 300s pour `completer/route.ts`
+
+### Fichiers modifiés
+- `src/app/api/telegram/setup/route.ts` - NOUVEAU: route pour configurer le webhook Telegram
+- `src/app/api/cron/maintenance/completer/route.ts` - maxDuration: 600 → 300
+
+### Note
+Le webhook Telegram était déjà configuré mais pointait vers une version non déployée.
+L'URL actuelle du webhook: `https://angeldesk.vercel.app/api/telegram/webhook`
+
+---
+
+## 2026-01-25 19:00 - Réordonnancement: synthesis-deal-scorer après Tier 3
+
+### Problème
+Le `synthesis-deal-scorer` s'exécutait avant l'expert sectoriel (Tier 3), donc le score final ne prenait pas en compte les insights sectoriels.
+
+### Solution
+Nouvel ordre d'exécution pour `full_analysis` :
+1. Tier 1 (12 agents en parallèle)
+2. Tier 2 partiel (contradiction-detector, scenario-modeler, devils-advocate en parallèle)
+3. **Tier 3** (expert sectoriel)
+4. **synthesis-deal-scorer** (scoring final avec TOUTES les données)
+5. **memo-generator** (mémo d'investissement complet)
+
+### Fichiers modifiés
+- `src/agents/orchestrator/types.ts` - Ajout `TIER2_BATCHES_BEFORE_TIER3` et `TIER2_BATCHES_AFTER_TIER3`
+- `src/agents/orchestrator/index.ts` - Modification de `runFullAnalysis()` pour le nouvel ordre
+
+### Impact
+Le score final inclut maintenant les insights de l'expert sectoriel (SaaS, Fintech, etc.)
+
+---
+
+## 2026-01-25 18:30 - Script de test individuel des agents
+
+### Fichier créé
+- `scripts/test-agent.ts` - Test CLI pour tester les agents un par un
+
+### Usage
+```bash
+# Lister les agents
+npx dotenv -e .env.local -- npx ts-node scripts/test-agent.ts --list
+
+# Tester un agent
+npx dotenv -e .env.local -- npx ts-node scripts/test-agent.ts --agent=financial-auditor --dealId=xxx
+
+# Tester tous les agents d'un tier
+npx dotenv -e .env.local -- npx ts-node scripts/test-agent.ts --tier=1 --dealId=xxx
+
+# Tester tous les agents
+npx dotenv -e .env.local -- npx ts-node scripts/test-agent.ts --all --dealId=xxx --verbose
+```
+
+---
+
+## 2026-01-25 18:00 - TEST MODE: Modèles économiques + exception document-extractor
+
+### Objectif
+Économiser les coûts pendant les tests tout en gardant une extraction de qualité.
+
+### Modification
+- `src/services/openrouter/router.ts` - Ajout flag `TEST_MODE = true`
+- Ajout `ALWAYS_OPTIMAL_AGENTS` pour les agents critiques
+- `selectModel()` prend maintenant le nom de l'agent en paramètre
+
+### Configuration actuelle
+| Agent | Modèle | Raison |
+|-------|--------|--------|
+| **document-extractor** | **Sonnet** | Fondation critique, doit être précis |
+| Tous les autres | GPT-4o Mini | Économie pendant les tests |
+
+### TODO PRODUCTION
+**Avant la mise en prod, mettre `TEST_MODE = false` dans `router.ts`**
+
+### Coûts comparatifs (par 1K tokens)
+| Modèle | Input | Output |
+|--------|-------|--------|
+| GPT-4o Mini | $0.00015 | $0.0006 |
+| Haiku | $0.00025 | $0.00125 |
+| Sonnet | $0.003 | $0.015 |
+| Opus | $0.015 | $0.075 |
+
+---
+
+## 2026-01-25 17:30 - Fix: Erreur Prisma Infinity pour monthlyLimit
+
+### Problème
+`prisma.userDealUsage.create()` échouait avec "Argument monthlyLimit is missing" car on passait `Infinity` (JavaScript) à un champ `Int` (DB).
+
+### Solution
+Utiliser `-1` comme constante `UNLIMITED` au lieu de `Infinity` pour représenter les plans illimités en DB.
+
+### Fichiers modifiés
+- `src/services/deal-limits/index.ts` - Ajout constante `UNLIMITED = -1`, correction logique
+
+---
+
+## 2026-01-25 17:15 - UX: Simplification interface analyse IA
+
+### Problème
+7 options d'analyse dans un dropdown = surcharge cognitive inutile pour un Business Angel.
+
+### Solution
+Un seul bouton "Analyser ce deal" - le type d'analyse est déterminé automatiquement par le plan :
+- **FREE** : `tier1_complete` (extraction + 12 agents d'investigation)
+- **PRO** : `full_analysis` (DD complète + expert sectoriel auto-détecté)
+
+### Fichiers modifiés
+- `src/lib/analysis-constants.ts` - Ajout `PLAN_ANALYSIS_CONFIG` et `getAnalysisTypeForPlan()`
+- `src/components/deals/analysis-panel.tsx` - Suppression Select, un seul bouton, description dynamique
+
+### Impact
+- Zero choix pour l'utilisateur = zero friction
+- FREE voit ce qu'il a et ce que PRO débloque (incitation naturelle)
+- Mode ReAct visible uniquement pour PRO
+
+---
+
+## 2026-01-25 16:00 - REBRAND: Correction occurrences manquées
+
+### Fichiers modifiés (UI - affichage utilisateur)
+- `src/components/layout/sidebar.tsx` - Logo "Angel Desk" (ligne 73)
+- `src/components/layout/header.tsx` - Header desktop + mobile
+- `src/app/page.tsx` - Landing page (header, footer, copyright)
+- `src/app/layout.tsx` - Metadata title
+
+### Fichiers modifiés (services)
+- `src/services/openrouter/client.ts` - X-Title header
+- `src/services/context-engine/connectors/maddyness-api.ts` - User-Agent
+- `src/services/context-engine/connectors/frenchweb-api.ts` - User-Agent
+- `src/services/context-engine/connectors/eu-startups-api.ts` - User-Agent
+- `src/services/context-engine/connectors/tech-eu-api.ts` - User-Agent
+- `src/services/context-engine/connectors/github.ts` - User-Agent
+- `src/services/context-engine/connectors/us-funding.ts` - User-Agent
+- `src/services/context-engine/connectors/frenchweb-rss.ts` - User-Agent
+
+### Cause
+Le grep initial utilisait "Fullinvest|FULLINVEST" mais pas "FullInvest" (camelCase).
+
+---
+
+## 2026-01-25 15:45 - Data: Suppression des doublons Funding Rounds
+
+### Analyse DB effectuée
+- Total Companies: 3,852 (68.1% complètes)
+- Total Funding Rounds: 7,832 → 6,116 après nettoyage
+
+### Doublons supprimés
+- **1,188 funding rounds** en doublon exact (même company + date + montant)
+- Exemples: Agicap 3x, Alan 4x, Ankorstore 4x, Doctolib 3x, DoorDash 5x
+
+### Scripts créés
+- `scripts/analyze-db-quality.ts` - Analyse qualité des données
+- `scripts/analyze-duplicates.ts` - Détection des doublons
+
+### Problèmes de qualité restants (non-bloquants)
+- 1,227 companies sans industrie (32%)
+- 2,792 companies sans année de création (72%)
+- 3,775 funding rounds sans stage (48%)
+- 1,729 funding rounds sans montant (22%)
+
+---
+
+## 2026-01-25 11:30 - Fix: Prisma generate on Vercel build
+
+### Fichiers modifiés
+- `package.json` - Ajout script `postinstall: prisma generate`
+
+### Problème résolu
+Build Vercel échouait car le client Prisma n'était pas généré. Le modèle `Company` et autres n'existaient pas dans `@prisma/client`.
+
+### Solution
+Script `postinstall` qui exécute `prisma generate` automatiquement après `npm install` sur Vercel.
+
+---
+
 ## 2026-01-25 10:00 - REBRAND: Fullinvest → Angel Desk
 
 ### Fichiers modifiés (code)

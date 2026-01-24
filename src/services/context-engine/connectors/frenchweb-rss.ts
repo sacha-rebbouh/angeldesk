@@ -67,7 +67,7 @@ async function fetchRSSFeed(feedUrl: string): Promise<string | null> {
   try {
     const response = await fetch(feedUrl, {
       headers: {
-        "User-Agent": "FullInvestBot/1.0",
+        "User-Agent": "AngelDeskBot/1.0",
         "Accept": "application/rss+xml, application/xml, text/xml",
       },
     });

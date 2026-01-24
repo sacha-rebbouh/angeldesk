@@ -93,7 +93,7 @@ function getAuthHeaders(): Record<string, string> {
   const token = process.env.GITHUB_TOKEN;
   const headers: Record<string, string> = {
     "Accept": "application/vnd.github.v3+json",
-    "User-Agent": "FullInvest-Bot/1.0",
+    "User-Agent": "AngelDesk-Bot/1.0",
   };
 
   if (token) {

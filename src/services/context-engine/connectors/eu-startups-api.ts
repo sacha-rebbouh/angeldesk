@@ -309,7 +309,7 @@ async function fetchPage(page: number): Promise<{ posts: WPPost[]; totalPages: n
   try {
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "FullInvest/1.0",
+        "User-Agent": "AngelDesk/1.0",
         Accept: "application/json",
       },
     });
