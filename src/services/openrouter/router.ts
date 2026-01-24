@@ -246,3 +246,139 @@ export async function completeJSON<T>(
     cost: result.cost,
   };
 }
+
+// ============================================================================
+// STREAMING COMPLETION
+// ============================================================================
+
+export interface StreamCallbacks {
+  onToken?: (token: string) => void;
+  onComplete?: (content: string) => void;
+  onError?: (error: Error) => void;
+}
+
+export interface StreamResult {
+  content: string;
+  model: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  cost: number;
+}
+
+/**
+ * Streaming completion with callbacks for real-time token delivery
+ * Useful for long analyses where you want to show progress to the user
+ */
+export async function stream(
+  prompt: string,
+  options: CompletionOptions = {},
+  callbacks: StreamCallbacks = {}
+): Promise<StreamResult> {
+  const {
+    model: modelKey,
+    complexity = "medium",
+    maxTokens = 4096,
+    temperature = 0.7,
+    systemPrompt,
+  } = options;
+
+  const selectedModelKey = modelKey ?? selectModel(complexity);
+  const model = MODELS[selectedModelKey];
+  const circuitBreaker = getCircuitBreaker();
+
+  const messages: Array<{ role: "system" | "user"; content: string }> = [];
+
+  if (systemPrompt) {
+    messages.push({ role: "system", content: systemPrompt });
+  }
+
+  messages.push({ role: "user", content: prompt });
+
+  // Check circuit breaker before attempting
+  if (!circuitBreaker.canExecute()) {
+    const stats = circuitBreaker.getStats();
+    const error = new CircuitOpenError(
+      `Circuit breaker is OPEN. Too many failures. Recovery in progress.`,
+      stats
+    );
+    callbacks.onError?.(error);
+    throw error;
+  }
+
+  // Wait for rate limit slot
+  await rateLimiter.waitForSlot();
+  rateLimiter.recordRequest();
+
+  let content = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
+
+  try {
+    // Execute through circuit breaker with streaming
+    const streamResponse = await circuitBreaker.execute(() =>
+      openrouter.chat.completions.create({
+        model: model.id,
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+        stream: true,
+      })
+    );
+
+    // Process stream
+    for await (const chunk of streamResponse) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        content += delta;
+        callbacks.onToken?.(delta);
+      }
+
+      // Capture usage from final chunk if available
+      if (chunk.usage) {
+        inputTokens = chunk.usage.prompt_tokens;
+        outputTokens = chunk.usage.completion_tokens;
+      }
+    }
+
+    // If no usage in stream, estimate tokens
+    if (inputTokens === 0) {
+      // Rough estimation: ~4 chars per token
+      const promptLength = messages.reduce((sum, m) => sum + m.content.length, 0);
+      inputTokens = Math.ceil(promptLength / 4);
+      outputTokens = Math.ceil(content.length / 4);
+    }
+
+    const cost =
+      (inputTokens / 1000) * model.inputCost +
+      (outputTokens / 1000) * model.outputCost;
+
+    // Record cost for monitoring
+    costMonitor.recordCall({
+      model: model.id,
+      agent: currentAgentContext ?? "unknown",
+      inputTokens,
+      outputTokens,
+      cost,
+    });
+
+    callbacks.onComplete?.(content);
+
+    return {
+      content,
+      model: model.id,
+      usage: {
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+      },
+      cost,
+    };
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    callbacks.onError?.(err);
+    throw err;
+  }
+}

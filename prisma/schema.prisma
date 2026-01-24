@@ -115,6 +115,8 @@ model Document {
 
   name             String
   type             DocumentType
+  customType       String?   // For OTHER type - user-specified description
+  comments         String?   @db.Text  // Additional context/notes
   storagePath      String
   storageUrl       String?
   mimeType         String?
@@ -141,6 +143,11 @@ enum DocumentType {
   FINANCIAL_MODEL
   CAP_TABLE
   TERM_SHEET
+  INVESTOR_MEMO
+  FINANCIAL_STATEMENTS
+  LEGAL_DOCS
+  MARKET_STUDY
+  PRODUCT_DEMO
   OTHER
 }
 
@@ -623,6 +630,138 @@ model UserDealUsage {
 }
 
 // ============================================================================
+// COMPANY DATABASE - Central registry of startups/companies
+// ============================================================================
+
+// COMPANY - Master record for each startup
+model Company {
+  id              String   @id @default(cuid())
+
+  // Identity
+  name            String   // Official company name
+  slug            String   @unique // Normalized for deduplication (lowercase, no special chars)
+  aliases         String[] // Alternative names, previous names
+
+  // Description
+  description     String?  @db.Text
+  shortDescription String? // One-liner
+  website         String?
+  linkedinUrl     String?
+  crunchbaseUrl   String?
+
+  // Classification
+  industry        String?  // Primary industry from taxonomy
+  subIndustry     String?  // More specific classification
+  businessModel   String?  // SaaS, Marketplace, Transactional, Hardware, Services
+  targetMarket    String?  // B2B, B2C, B2B2C
+
+  // Location
+  headquarters    String?  // Country
+  city            String?
+  region          String?  // europe, north_america, asia, etc.
+
+  // Company details
+  foundedYear     Int?
+  founders        Json?    // Array of {name, role, background, linkedinUrl}
+  employeeCount   Int?
+  employeeRange   String?  // "1-10", "11-50", "51-200", etc.
+
+  // Status
+  status          CompanyStatus @default(ACTIVE)
+  statusDetails   String?  // e.g., "Acquis par Google en 2024", "Liquidation judiciaire"
+  statusUpdatedAt DateTime? // Last time status was verified
+  acquiredBy      String?  // If acquired, by whom
+  acquiredDate    DateTime?
+  shutdownDate    DateTime?
+
+  // Financials (latest known)
+  totalRaised     Decimal? @db.Decimal(14, 2)
+  lastValuation   Decimal? @db.Decimal(14, 2)
+  lastRoundStage  String?
+  lastRoundDate   DateTime?
+
+  // Metrics (latest known)
+  arr             Decimal? @db.Decimal(14, 2)
+  mrr             Decimal? @db.Decimal(14, 2)
+  revenue         Decimal? @db.Decimal(14, 2)
+  growthRate      Int?     // YoY growth %
+  customers       Int?
+  nrr             Int?     // Net Revenue Retention %
+  isProfitable    Boolean?
+  isEbitdaPositive Boolean?
+
+  // Competitive landscape
+  competitors     String[] // Slugs of competitor companies
+  notableClients  String[]
+
+  // Relations
+  fundingRounds   FundingRound[]
+  enrichments     CompanyEnrichment[]
+
+  // Metadata
+  dataQuality     Int?     @default(0) // 0-100 score
+  lastEnrichedAt  DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Enrichment locking (prevent concurrent processing)
+  enrichmentLockedAt DateTime? // When the lock was acquired
+  enrichmentLockedBy String?   // Run ID that holds the lock
+
+  @@index([name])
+  @@index([industry])
+  @@index([headquarters])
+  @@index([status])
+  @@index([totalRaised])
+  @@index([lastRoundDate])
+  @@index([enrichmentLockedAt])
+}
+
+enum CompanyStatus {
+  ACTIVE
+  ACQUIRED
+  SHUTDOWN
+  INACTIVE
+  UNKNOWN
+}
+
+// COMPANY ENRICHMENT - History of data additions/updates
+model CompanyEnrichment {
+  id              String   @id @default(cuid())
+  companyId       String
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // What was added/updated
+  source          EnrichmentSource
+  sourceUrl       String?  // Article URL, search result, etc.
+  sourceDate      DateTime? // Date of the source
+
+  // Data changes
+  fieldsUpdated   String[] // List of fields that were updated
+  previousData    Json?    // Previous values (for audit)
+  newData         Json     // New values added
+
+  // Quality
+  confidence      Int?     // 0-100
+  verifiedBy      String?  // If manually verified
+
+  createdAt       DateTime @default(now())
+
+  @@index([companyId])
+  @@index([source])
+  @@index([createdAt])
+}
+
+enum EnrichmentSource {
+  ARTICLE_IMPORT    // From FrenchWeb, Maddyness, etc.
+  WEB_SEARCH        // From searching for competitors/info
+  PITCH_DECK        // From analyzing a deal's pitch deck
+  MANUAL            // Manual data entry
+  API               // From external API (Crunchbase, etc.)
+  LLM_EXTRACTION    // From LLM analysis
+}
+
+// ============================================================================
 // FUNDING ROUNDS DATABASE - Historical deals for comparisons
 // ============================================================================
 
@@ -630,7 +769,11 @@ model UserDealUsage {
 model FundingRound {
   id              String   @id @default(cuid())
 
-  // Company info
+  // Link to Company (optional for migration, will become required)
+  companyId       String?
+  company         Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  // Company info (legacy - will be deprecated after migration)
   companyName     String
   companySlug     String?  // Normalized name for deduplication
   description     String?  @db.Text
@@ -645,21 +788,24 @@ model FundingRound {
   stage           String?  // seed, series_a, series_b, etc.
   stageNormalized String?  // Normalized stage for filtering
 
-  // Location
+  // Location (legacy - prefer Company.headquarters)
   geography       String?  // Country
   city            String?
   region          String?  // e.g., "Europe", "North America"
 
-  // Sector
+  // Sector (legacy - prefer Company.industry)
   sector          String?
   sectorNormalized String? // Normalized sector for filtering
   subSector       String?
 
-  // Investors
+  // Investors for THIS round
   investors       String[] // Array of investor names
+  investorsFunds  String[] // VC/PE funds
+  investorsAngels String[] // Business angels (individuals)
+  investorsCorporates String[] // Corporate investors
   leadInvestor    String?
 
-  // Valuation (if known)
+  // Valuation at this round
   valuationPre    Decimal? @db.Decimal(14, 2)
   valuationPost   Decimal? @db.Decimal(14, 2)
 
@@ -672,14 +818,28 @@ model FundingRound {
   sourceUrl       String?
   sourceId        String?  // Original ID from source (for deduplication)
 
-  // Metadata
+  // Metadata (legacy - prefer Company fields)
   employeeCount   Int?
   foundedYear     Int?
+
+  // Use of funds for this round
+  useOfFunds      String?  @db.Text
+  hiringPlans     String?
+  expansionPlans  String?
+
+  // Enriched data (from LLM extraction)
+  enrichedData    Json?    // Full extracted data
+  confidenceScore Int?     // 0-100 extraction confidence
+  isEnriched      Boolean  @default(false)
+  isMigrated      Boolean  @default(false) // True when linked to Company
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@unique([source, sourceId]) // Prevent duplicate imports
+  // Note: Duplicate round prevention handled in application logic
+  // Can't use DB constraint due to nullable fields
+  @@index([companyId])
   @@index([companyName])
   @@index([companySlug])
   @@index([stageNormalized])
@@ -688,6 +848,7 @@ model FundingRound {
   @@index([region])
   @@index([fundingDate])
   @@index([amountUsd])
+  @@index([isMigrated])
 }
 
 // FUNDING SOURCE - Track data sources and their freshness
@@ -835,4 +996,278 @@ model CostThreshold {
   updatedAt       DateTime @updatedAt
 
   @@index([userId])
+}
+
+// ============================================================================
+// DATABASE MAINTENANCE SYSTEM - Automated Data Quality Agents
+// ============================================================================
+
+// MAINTENANCE RUN - Individual execution of a maintenance agent
+model MaintenanceRun {
+  id              String            @id @default(cuid())
+
+  agent           MaintenanceAgent
+  status          MaintenanceStatus @default(PENDING)
+
+  // Trigger info
+  triggeredBy     TriggerSource     @default(CRON)
+  parentRunId     String?           // If retry, link to original run
+  retryAttempt    Int               @default(0)  // 0 = original, 1 = 1st retry, etc.
+
+  // Execution timing
+  scheduledAt     DateTime?         // When it was supposed to run
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMs      Int?
+
+  // Stats
+  itemsProcessed  Int               @default(0)
+  itemsUpdated    Int               @default(0)
+  itemsCreated    Int               @default(0)
+  itemsFailed     Int               @default(0)
+  itemsSkipped    Int               @default(0)
+
+  // Details (agent-specific)
+  details         Json?             // { duplicatesMerged, sourcesScraped, companiesEnriched, ... }
+  errors          Json?             // Array of { message, stack, itemId? }
+
+  // Cost tracking
+  totalCost       Decimal?          @db.Decimal(8, 4)
+  llmCalls        Int               @default(0)
+  webSearches     Int               @default(0)
+
+  // Supervisor tracking
+  supervisorCheck SupervisorCheck?
+
+  createdAt       DateTime          @default(now())
+
+  @@index([agent])
+  @@index([status])
+  @@index([startedAt])
+  @@index([triggeredBy])
+  @@index([agent, startedAt])
+}
+
+// SUPERVISOR CHECK - Verification of a maintenance run
+model SupervisorCheck {
+  id              String            @id @default(cuid())
+
+  // Link to the run being checked
+  runId           String            @unique
+  run             MaintenanceRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  // Check result
+  checkStatus     CheckStatus
+  checkDetails    Json?             // { expectedMinItems, actualItems, qualityBefore, qualityAfter, ... }
+
+  // Action taken
+  actionTaken     SupervisorAction  @default(NONE)
+  retryRunId      String?           // ID of the retry run if triggered
+
+  // Notifications sent
+  telegramSent    Boolean           @default(false)
+  telegramMsgId   String?           // Message ID for potential updates
+  emailSent       Boolean           @default(false)
+
+  // For retry verification
+  isRetryCheck    Boolean           @default(false)
+  retryCheckAt    DateTime?         // When to check the retry result
+
+  checkedAt       DateTime          @default(now())
+
+  @@index([checkStatus])
+  @@index([checkedAt])
+  @@index([actionTaken])
+}
+
+// WEEKLY REPORT - Generated summary of maintenance activity
+model WeeklyReport {
+  id              String            @id @default(cuid())
+
+  // Period covered
+  weekStart       DateTime
+  weekEnd         DateTime
+
+  // Overall health assessment
+  overallStatus   HealthStatus
+
+  // Agent summaries (JSON for flexibility)
+  cleanerSummary  Json              // { runs, successful, failed, itemsProcessed, ... }
+  sourcerSummary  Json
+  completerSummary Json
+
+  // Data quality metrics comparison
+  dataQualityStart Json             // Snapshot at week start
+  dataQualityEnd   Json             // Snapshot at week end
+  qualityDelta     Json             // Computed changes
+
+  // Issues & recovery stats
+  issuesDetected  Int               @default(0)
+  retriesTriggered Int              @default(0)
+  retriesSuccessful Int             @default(0)
+  retriesFailed    Int              @default(0)
+
+  // Cost summary
+  totalCost       Decimal           @db.Decimal(8, 4) @default(0)
+  costByAgent     Json?             // { cleaner: 0, sourcer: 0.12, completer: 1.87 }
+
+  // Delivery tracking
+  emailSent       Boolean           @default(false)
+  emailSentAt     DateTime?
+  telegramSent    Boolean           @default(false)
+  telegramSentAt  DateTime?
+
+  // Raw report content (for re-sending)
+  reportHtml      String?           @db.Text
+  reportText      String?           @db.Text
+
+  generatedAt     DateTime          @default(now())
+
+  @@unique([weekStart])
+  @@index([overallStatus])
+  @@index([generatedAt])
+}
+
+// DATA QUALITY SNAPSHOT - Point-in-time DB health metrics
+model DataQualitySnapshot {
+  id              String            @id @default(cuid())
+
+  // Counts
+  totalCompanies  Int
+  totalFundingRounds Int
+
+  // Quality metrics
+  avgDataQuality  Float             // 0-100 average
+  companiesWithIndustry Int
+  companiesWithDescription Int
+  companiesWithFounders Int
+  companiesWithWebsite Int
+  companiesWithInvestors Int
+
+  // Activity Status metrics
+  companiesActive    Int            @default(0)
+  companiesShutdown  Int            @default(0)
+  companiesAcquired  Int            @default(0)
+  companiesInactive  Int            @default(0)
+  companiesStatusUnknown Int        @default(0)
+
+  // Issues
+  duplicateCompanies Int            @default(0)
+  orphanedRounds     Int            @default(0)
+  staleCompanies     Int            @default(0)  // Not enriched in 30+ days
+
+  // Percentages (computed)
+  withIndustryPct    Float
+  withDescriptionPct Float
+  withFoundersPct    Float
+  withInvestorsPct   Float
+  withStatusPct      Float          // Companies with known status
+  stalePct           Float
+
+  // Trigger (what caused this snapshot)
+  trigger         String            @default("scheduled") // scheduled, before_agent, after_agent, manual
+  relatedRunId    String?           // If triggered by agent run
+
+  capturedAt      DateTime          @default(now())
+
+  @@index([capturedAt])
+  @@index([trigger])
+}
+
+// Enums for Maintenance System
+enum MaintenanceAgent {
+  DB_CLEANER
+  DB_SOURCER
+  DB_COMPLETER
+}
+
+enum MaintenanceStatus {
+  PENDING      // Created, not yet started
+  RUNNING      // Currently executing
+  COMPLETED    // Finished successfully
+  PARTIAL      // Finished but with some failures
+  FAILED       // Total failure
+  TIMEOUT      // Exceeded max duration (2h)
+  CANCELLED    // Cancelled by supervisor or manual
+}
+
+enum TriggerSource {
+  CRON         // Scheduled cron job
+  SUPERVISOR   // Retry triggered by supervisor
+  MANUAL       // Manual trigger via admin/telegram
+  WEBHOOK      // External webhook
+}
+
+enum CheckStatus {
+  PASSED       // All OK
+  WARNING      // OK but degraded metrics
+  FAILED       // The run failed
+  MISSED       // The run didn't happen
+  TIMEOUT      // The run timed out
+  PENDING      // Check scheduled but not yet performed
+}
+
+enum SupervisorAction {
+  NONE         // No action needed
+  RETRY        // Triggered a retry
+  ALERT_ONLY   // Alert sent (max retries reached)
+  ESCALATE     // Critical escalation
+}
+
+enum HealthStatus {
+  HEALTHY      // Everything OK
+  DEGRADED     // Functional but minor issues
+  CRITICAL     // Major problems
+}
+
+// COMPANY MERGE LOG - Audit trail for company deduplication
+model CompanyMergeLog {
+  id                  String   @id @default(cuid())
+
+  // Companies involved
+  mergedFromId        String   // Company that was deleted
+  mergedIntoId        String   // Company that was kept
+  mergedFromName      String
+  mergedIntoName      String
+
+  // Full state snapshots for audit/recovery
+  beforeState         Json     // Complete state of both companies before merge
+  afterState          Json     // State of kept company after merge
+
+  // What was transferred
+  fieldsTransferred   String[] // List of fields that were copied
+  fundingRoundsTransferred Int @default(0)
+  enrichmentsTransferred   Int @default(0)
+
+  // Matching details
+  similarityScore     Float    // Combined similarity score (0-1)
+  similarityDetails   Json?    // { levenshtein, jaroWinkler, phonetic, normalized }
+  matchReason         String?  // Why these were considered duplicates
+
+  // Execution context
+  mergedBy            String   @default("DB_CLEANER") // Agent or user who performed merge
+  dryRun              Boolean  @default(false) // Was this a dry-run preview?
+  maintenanceRunId    String?  // Link to the maintenance run if applicable
+
+  createdAt           DateTime @default(now())
+
+  @@index([mergedFromId])
+  @@index([mergedIntoId])
+  @@index([createdAt])
+  @@index([maintenanceRunId])
+}
+
+// CACHE ENTRY - Persistent cache for expensive operations
+model CacheEntry {
+  id              String   @id @default(cuid())
+
+  key             String   @unique
+  value           Json
+
+  expiresAt       DateTime
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([expiresAt])
 }

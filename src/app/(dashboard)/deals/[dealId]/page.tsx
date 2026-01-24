@@ -21,17 +21,13 @@ import {
   Users,
   AlertTriangle,
   TrendingUp,
-  Upload,
   Brain,
   Crown,
 } from "lucide-react";
-import { format } from "date-fns";
-import { fr } from "date-fns/locale";
 import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
 import { ScoreGrid } from "@/components/deals/score-display";
 import { BoardPanelWrapper } from "@/components/deals/board-panel-wrapper";
-import { ExtractionQualityBadge, ExtractionWarningBanner } from "@/components/deals/extraction-quality-badge";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { DocumentsTab } from "@/components/deals/documents-tab";
 
 async function getDeal(dealId: string, userId: string) {
   return prisma.deal.findFirst({
@@ -362,94 +358,13 @@ export default async function DealDetailPage({ params }: PageProps) {
         </TabsContent>
 
         <TabsContent value="documents">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Documents</CardTitle>
-                  <CardDescription>
-                    Fichiers uploadés pour ce deal
-                  </CardDescription>
-                </div>
-                <Button>
-                  <Upload className="mr-2 h-4 w-4" />
-                  Upload
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <TooltipProvider>
-              {deal.documents.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-center">
-                  <FileText className="h-12 w-12 text-muted-foreground/50" />
-                  <h3 className="mt-4 text-lg font-semibold">Aucun document</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Uploadez un pitch deck, financial model ou autre document.
-                  </p>
-                  <Button className="mt-4">
-                    <Upload className="mr-2 h-4 w-4" />
-                    Upload un document
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {/* Show warning banner for low quality extractions */}
-                  {deal.documents
-                    .filter((doc) => doc.extractionQuality !== null && doc.extractionQuality < 40)
-                    .slice(0, 1)
-                    .map((doc) => (
-                      <ExtractionWarningBanner
-                        key={`warning-${doc.id}`}
-                        quality={doc.extractionQuality}
-                        warnings={doc.extractionWarnings as { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null}
-                        documentName={doc.name}
-                      />
-                    ))}
-                  {deal.documents.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="flex items-center justify-between rounded-lg border p-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <FileText className="h-8 w-8 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium">{doc.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {doc.type} •{" "}
-                            {format(new Date(doc.uploadedAt), "d MMM yyyy", {
-                              locale: fr,
-                            })}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {doc.mimeType === "application/pdf" && (
-                          <ExtractionQualityBadge
-                            quality={doc.extractionQuality}
-                            warnings={doc.extractionWarnings as { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null}
-                            requiresOCR={doc.requiresOCR}
-                            processingStatus={doc.processingStatus}
-                          />
-                        )}
-                        {doc.mimeType !== "application/pdf" && (
-                          <Badge
-                            variant={
-                              doc.processingStatus === "COMPLETED"
-                                ? "default"
-                                : "secondary"
-                            }
-                          >
-                            {doc.processingStatus}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              </TooltipProvider>
-            </CardContent>
-          </Card>
+          <DocumentsTab
+            dealId={deal.id}
+            documents={deal.documents.map((doc) => ({
+              ...doc,
+              extractionWarnings: doc.extractionWarnings as { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null,
+            }))}
+          />
         </TabsContent>
 
         <TabsContent value="founders">

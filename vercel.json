@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/maintenance/cleaner",
+      "schedule": "0 3 * * 1"
+    },
+    {
+      "path": "/api/cron/maintenance/sourcer",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/maintenance/completer",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/maintenance/supervisor/check",
+      "schedule": "0 5,8,10 * * *"
+    },
+    {
+      "path": "/api/cron/maintenance/supervisor/weekly-report",
+      "schedule": "0 9 * * 1"
+    }
+  ]
+}

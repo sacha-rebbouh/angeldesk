@@ -1,5 +1,6 @@
 import { BaseAgent } from "../base-agent";
 import type { EnrichedAgentContext, FinancialAuditResult, FinancialAuditData } from "../types";
+import { benchmarkService, type BenchmarkData } from "@/scoring";
 
 /**
  * Financial Auditor Agent
@@ -19,6 +20,159 @@ import type { EnrichedAgentContext, FinancialAuditResult, FinancialAuditData } f
  * - Verdict sur la valorisation demandee
  * - Red flags financiers detectes
  */
+
+// ============================================================================
+// DETERMINISTIC SCORING WEIGHTS
+// ============================================================================
+
+/** Weights for overall score calculation (must sum to 1.0) */
+const SCORING_WEIGHTS = {
+  growth: 0.25,        // ARR/MRR growth importance
+  unitEconomics: 0.25, // LTV/CAC, CAC payback
+  retention: 0.20,     // NRR, churn
+  burn: 0.15,          // Burn multiple, runway
+  valuation: 0.15,     // Valuation vs benchmarks
+} as const;
+
+/** Percentile to score mapping (deterministic) */
+const PERCENTILE_TO_SCORE: Array<{ min: number; max: number; score: number }> = [
+  { min: 90, max: 100, score: 95 },  // Exceptional
+  { min: 75, max: 89, score: 80 },   // Above average
+  { min: 50, max: 74, score: 65 },   // Average
+  { min: 25, max: 49, score: 45 },   // Below average
+  { min: 0, max: 24, score: 25 },    // Poor
+];
+
+/** Get score from percentile (deterministic) */
+function percentileToScore(percentile: number): number {
+  for (const range of PERCENTILE_TO_SCORE) {
+    if (percentile >= range.min && percentile <= range.max) {
+      return range.score;
+    }
+  }
+  return 50; // Default fallback
+}
+
+/** Calculate deterministic overall score */
+function calculateDeterministicScore(metrics: {
+  growthPercentile?: number;
+  ltvCacRatio?: number;
+  cacPayback?: number;
+  nrrPercentile?: number;
+  burnMultiple?: number;
+  valuationVerdict?: string;
+}): number {
+  let totalWeight = 0;
+  let weightedScore = 0;
+
+  // Growth component
+  if (metrics.growthPercentile !== undefined) {
+    weightedScore += SCORING_WEIGHTS.growth * percentileToScore(metrics.growthPercentile);
+    totalWeight += SCORING_WEIGHTS.growth;
+  }
+
+  // Unit Economics component (LTV/CAC ratio)
+  if (metrics.ltvCacRatio !== undefined) {
+    let ueScore: number;
+    if (metrics.ltvCacRatio >= 5) ueScore = 95;
+    else if (metrics.ltvCacRatio >= 3) ueScore = 80;
+    else if (metrics.ltvCacRatio >= 2) ueScore = 60;
+    else if (metrics.ltvCacRatio >= 1) ueScore = 40;
+    else ueScore = 20;
+
+    // Adjust for CAC payback if available
+    if (metrics.cacPayback !== undefined) {
+      let paybackScore: number;
+      if (metrics.cacPayback <= 12) paybackScore = 90;
+      else if (metrics.cacPayback <= 18) paybackScore = 70;
+      else if (metrics.cacPayback <= 24) paybackScore = 50;
+      else paybackScore = 30;
+      ueScore = (ueScore + paybackScore) / 2;
+    }
+
+    weightedScore += SCORING_WEIGHTS.unitEconomics * ueScore;
+    totalWeight += SCORING_WEIGHTS.unitEconomics;
+  }
+
+  // Retention component
+  if (metrics.nrrPercentile !== undefined) {
+    weightedScore += SCORING_WEIGHTS.retention * percentileToScore(metrics.nrrPercentile);
+    totalWeight += SCORING_WEIGHTS.retention;
+  }
+
+  // Burn component
+  if (metrics.burnMultiple !== undefined) {
+    let burnScore: number;
+    if (metrics.burnMultiple < 1) burnScore = 95;
+    else if (metrics.burnMultiple <= 1.5) burnScore = 80;
+    else if (metrics.burnMultiple <= 2) burnScore = 60;
+    else if (metrics.burnMultiple <= 3) burnScore = 40;
+    else burnScore = 20;
+
+    weightedScore += SCORING_WEIGHTS.burn * burnScore;
+    totalWeight += SCORING_WEIGHTS.burn;
+  }
+
+  // Valuation component
+  if (metrics.valuationVerdict) {
+    const valuationScores: Record<string, number> = {
+      undervalued: 95,
+      fair: 75,
+      aggressive: 45,
+      very_aggressive: 25,
+    };
+    const valScore = valuationScores[metrics.valuationVerdict] ?? 50;
+    weightedScore += SCORING_WEIGHTS.valuation * valScore;
+    totalWeight += SCORING_WEIGHTS.valuation;
+  }
+
+  // Normalize if we have partial data
+  if (totalWeight === 0) return 50;
+  return Math.round(weightedScore / totalWeight);
+}
+
+// ============================================================================
+// FALLBACK BENCHMARKS (when DB is empty)
+// ============================================================================
+
+const FALLBACK_BENCHMARKS: Record<string, Record<string, { p25: number; median: number; p75: number }>> = {
+  "ARR Growth YoY": {
+    PRE_SEED: { p25: 80, median: 150, p75: 250 },
+    SEED: { p25: 70, median: 120, p75: 200 },
+    SERIES_A: { p25: 50, median: 80, p75: 120 },
+    SERIES_B: { p25: 40, median: 60, p75: 90 },
+  },
+  "Net Revenue Retention": {
+    PRE_SEED: { p25: 90, median: 105, p75: 120 },
+    SEED: { p25: 95, median: 110, p75: 130 },
+    SERIES_A: { p25: 100, median: 115, p75: 140 },
+    SERIES_B: { p25: 105, median: 120, p75: 150 },
+  },
+  "Gross Margin": {
+    "SaaS B2B": { p25: 65, median: 75, p75: 85 },
+    Fintech: { p25: 35, median: 50, p75: 65 },
+    Marketplace: { p25: 15, median: 25, p75: 40 },
+    default: { p25: 50, median: 65, p75: 80 },
+  },
+  "Burn Multiple": {
+    PRE_SEED: { p25: 1.5, median: 2.5, p75: 4 },
+    SEED: { p25: 1.2, median: 2, p75: 3 },
+    SERIES_A: { p25: 1, median: 1.5, p75: 2.5 },
+    SERIES_B: { p25: 0.8, median: 1.2, p75: 2 },
+  },
+  "Valuation Multiple": {
+    PRE_SEED: { p25: 20, median: 35, p75: 60 },
+    SEED: { p25: 15, median: 25, p75: 40 },
+    SERIES_A: { p25: 10, median: 18, p75: 30 },
+    SERIES_B: { p25: 8, median: 14, p75: 22 },
+  },
+  "LTV/CAC Ratio": {
+    default: { p25: 2, median: 3, p75: 5 },
+  },
+  "CAC Payback": {
+    default: { p25: 18, median: 14, p75: 10 }, // Note: lower is better
+  },
+};
 
 interface LLMFinancialAuditResponse {
   metricsValidation: {
@@ -59,7 +213,8 @@ interface LLMFinancialAuditResponse {
     efficiency: string;
   };
   financialRedFlags: string[];
-  overallScore: number;
+  crossValidationIssues?: string[]; // Issues detected during cross-validation
+  overallScore?: number; // Optional - we calculate deterministically
 }
 
 export class FinancialAuditorAgent extends BaseAgent<FinancialAuditData, FinancialAuditResult> {
@@ -83,40 +238,19 @@ TON ROLE:
 - Determiner si la valorisation demandee est justifiee
 - Identifier les red flags financiers
 
-METRIQUES CLES A ANALYSER:
-1. CROISSANCE
-   - ARR Growth YoY: Seed >100%, Series A >70%, Series B >50%
-   - MRR Growth MoM: >10% excellent, 5-10% bon, <5% faible
-
-2. RETENTION & UNIT ECONOMICS
-   - Net Revenue Retention (NRR): >120% excellent, 100-120% bon, <100% churn net
-   - Gross Margin: SaaS >70%, Fintech >40%, Marketplace >20%
-   - LTV/CAC Ratio: >3x sain, <3x attention, <1x critique
-   - CAC Payback: <12 mois excellent, 12-18 bon, >18 inquietant
-
-3. BURN & EFFICIENCE
-   - Burn Multiple: <1x excellent, 1-2x bon, >2x inefficace
-   - Rule of 40: Growth% + Margin% > 40% = sain
-   - Runway: >18 mois = OK, 12-18 = attention, <12 = urgent
-
-4. VALORISATION
-   - Multiple ARR: Seed 15-25x, Series A 10-20x, Series B 8-15x (marche 2024-2025)
-   - Comparer aux deals recents du meme secteur/stade
-
 REGLES D'AUDIT:
-- Chaque metrique doit etre positionnee en percentile vs le benchmark
+- Positionne chaque metrique en percentile vs le benchmark fourni
 - Une metrique "suspicious" = ecart >2 ecarts-types vs median OU incoherence interne
 - Les red flags doivent etre factuels et chiffres
-- Le score global = moyenne ponderee de la sante financiere
+- Verifie la coherence entre les metriques (ex: ARR vs MRR x12)
 
-SCORING:
-- 80-100: Metriques exceptionnelles, top tier
-- 60-79: Solide, au-dessus de la moyenne
-- 40-59: Dans la moyenne, quelques concerns
-- 20-39: Sous la moyenne, plusieurs red flags
-- 0-19: Metriques critiques, dealbreaker potentiel
+INCOHERENCES A DETECTER:
+- ARR != MRR * 12 (tolerance 5%)
+- Runway calcule vs declare
+- Growth implique par ARR historique vs growth declare
+- Unit economics vs cohorts
 
-OUTPUT: JSON structure uniquement.`;
+OUTPUT: JSON structure uniquement. Ne calcule PAS le overallScore, il sera calcule de maniere deterministe.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<FinancialAuditData> {
@@ -133,6 +267,9 @@ OUTPUT: JSON structure uniquement.`;
 
     // Build metrics from deal + extracted info
     const deal = context.deal;
+    const sector = deal.sector || "SaaS B2B";
+    const stage = deal.stage || "SEED";
+
     const metrics = {
       arr: extractedInfo?.arr ?? (deal.arr ? Number(deal.arr) : null),
       mrr: extractedInfo?.mrr ?? null,
@@ -148,6 +285,20 @@ OUTPUT: JSON structure uniquement.`;
       amountRaising: extractedInfo?.amountRaising ?? (deal.amountRequested ? Number(deal.amountRequested) : null),
     };
 
+    // Fetch real benchmarks from database with fallbacks
+    const benchmarks = await this.fetchBenchmarks(sector, stage);
+
+    // Build cross-validation checks (cast to expected types)
+    const crossValidation = this.buildCrossValidationChecks({
+      arr: typeof metrics.arr === 'number' ? metrics.arr : null,
+      mrr: typeof metrics.mrr === 'number' ? metrics.mrr : null,
+      growthRate: typeof metrics.growthRate === 'number' ? metrics.growthRate : null,
+      burnRate: typeof metrics.burnRate === 'number' ? metrics.burnRate : null,
+      runway: typeof metrics.runway === 'number' ? metrics.runway : null,
+      ltv: typeof metrics.ltv === 'number' ? metrics.ltv : null,
+      cac: typeof metrics.cac === 'number' ? metrics.cac : null,
+    });
+
     const prompt = `Realise un audit financier complet de ce deal:
 
 ${dealContext}
@@ -157,7 +308,13 @@ ${contextEngineData}
 ## Metriques Disponibles
 ${JSON.stringify(metrics, null, 2)}
 
-Analyse les metriques et compare-les aux benchmarks du secteur (${deal.sector || "SaaS B2B"}) et du stade (${deal.stage || "SEED"}).
+## Benchmarks du Secteur (${sector}) et Stage (${stage})
+${JSON.stringify(benchmarks, null, 2)}
+
+## Verifications de Coherence a Effectuer
+${crossValidation}
+
+Analyse les metriques et compare-les aux benchmarks fournis ci-dessus.
 
 Reponds en JSON avec cette structure exacte:
 \`\`\`json
@@ -166,12 +323,12 @@ Reponds en JSON avec cette structure exacte:
     {
       "metric": "string (ex: ARR Growth YoY)",
       "reportedValue": number | "N/A",
-      "benchmarkP25": number,
+      "benchmarkP25": number (from benchmarks above),
       "benchmarkMedian": number,
       "benchmarkP75": number,
-      "percentile": number (0-100),
+      "percentile": number (0-100, calculated from position vs benchmarks),
       "assessment": "below_average|average|above_average|exceptional|suspicious",
-      "notes": "string (optionnel, si suspicious ou notable)"
+      "notes": "string (optionnel, si suspicious ou incoherence detectee)"
     }
   ],
   "unitEconomicsHealth": {
@@ -185,7 +342,7 @@ Reponds en JSON avec cette structure exacte:
   "valuationAnalysis": {
     "requestedValuation": number,
     "impliedMultiple": number (valorisation / ARR),
-    "benchmarkMultipleP25": number,
+    "benchmarkMultipleP25": number (from benchmarks),
     "benchmarkMultipleMedian": number,
     "benchmarkMultipleP75": number,
     "verdict": "undervalued|fair|aggressive|very_aggressive",
@@ -200,15 +357,15 @@ Reponds en JSON avec cette structure exacte:
     "efficiency": "efficient|moderate|inefficient"
   },
   "financialRedFlags": ["string (red flag specifique avec chiffres)"],
-  "overallScore": number (0-100)
+  "crossValidationIssues": ["string (incoherences detectees entre metriques)"]
 }
 \`\`\`
 
 IMPORTANT:
-- Si une metrique n'est pas disponible, indique "N/A" ou null
-- Utilise les benchmarks du Context Engine si disponibles
-- Le verdict valorisation doit etre base sur des comparables reels
-- Les red flags doivent etre factuels (ex: "Burn multiple de 3.5x, bien au-dessus du 2x maximum recommande")`;
+- Utilise UNIQUEMENT les benchmarks fournis ci-dessus, ne les invente pas
+- Verifie les coherences indiquees et signale toute incoherence
+- Les red flags doivent etre factuels (ex: "Burn multiple de 3.5x, bien au-dessus du 2x maximum recommande")
+- NE PAS calculer overallScore, il sera calcule de maniere deterministe`;
 
     const { data } = await this.llmCompleteJSON<LLMFinancialAuditResponse>(prompt);
 
@@ -235,9 +392,9 @@ IMPORTANT:
     const valuationAnalysis = {
       requestedValuation: data.valuationAnalysis?.requestedValuation ?? metrics.valuationPre ?? 0,
       impliedMultiple: data.valuationAnalysis?.impliedMultiple ?? 0,
-      benchmarkMultipleP25: data.valuationAnalysis?.benchmarkMultipleP25 ?? 10,
-      benchmarkMultipleMedian: data.valuationAnalysis?.benchmarkMultipleMedian ?? 15,
-      benchmarkMultipleP75: data.valuationAnalysis?.benchmarkMultipleP75 ?? 25,
+      benchmarkMultipleP25: data.valuationAnalysis?.benchmarkMultipleP25 ?? benchmarks["Valuation Multiple"]?.p25 ?? 10,
+      benchmarkMultipleMedian: data.valuationAnalysis?.benchmarkMultipleMedian ?? benchmarks["Valuation Multiple"]?.median ?? 15,
+      benchmarkMultipleP75: data.valuationAnalysis?.benchmarkMultipleP75 ?? benchmarks["Valuation Multiple"]?.p75 ?? 25,
       verdict: validVerdicts.includes(data.valuationAnalysis?.verdict)
         ? (data.valuationAnalysis.verdict as FinancialAuditData["valuationAnalysis"]["verdict"])
         : "fair",
@@ -257,6 +414,33 @@ IMPORTANT:
         }
       : undefined;
 
+    // Find growth percentile from metricsValidation
+    const growthMetric = metricsValidation.find(m =>
+      m.metric.toLowerCase().includes("growth") || m.metric.toLowerCase().includes("arr")
+    );
+    const nrrMetric = metricsValidation.find(m =>
+      m.metric.toLowerCase().includes("retention") || m.metric.toLowerCase().includes("nrr")
+    );
+
+    // Calculate DETERMINISTIC overall score (not from LLM)
+    const deterministicScore = calculateDeterministicScore({
+      growthPercentile: growthMetric?.percentile,
+      ltvCacRatio: data.unitEconomicsHealth?.ltvCacRatio ?? undefined,
+      cacPayback: data.unitEconomicsHealth?.cacPayback ?? undefined,
+      nrrPercentile: nrrMetric?.percentile,
+      burnMultiple: data.burnAnalysis?.burnMultiple ?? undefined,
+      valuationVerdict: valuationAnalysis.verdict,
+    });
+
+    // Merge cross-validation issues into red flags if any
+    const allRedFlags = Array.isArray(data.financialRedFlags) ? [...data.financialRedFlags] : [];
+    const crossValidationIssues = (data as { crossValidationIssues?: string[] }).crossValidationIssues;
+    if (Array.isArray(crossValidationIssues)) {
+      for (const issue of crossValidationIssues) {
+        allRedFlags.push(`[Cross-validation] ${issue}`);
+      }
+    }
+
     return {
       metricsValidation,
       unitEconomicsHealth: {
@@ -271,9 +455,134 @@ IMPORTANT:
       },
       valuationAnalysis,
       burnAnalysis,
-      financialRedFlags: Array.isArray(data.financialRedFlags) ? data.financialRedFlags : [],
-      overallScore: Math.min(100, Math.max(0, data.overallScore ?? 50)),
+      financialRedFlags: allRedFlags,
+      overallScore: deterministicScore, // Deterministic, not from LLM
     };
+  }
+
+  /**
+   * Fetch benchmarks from database with fallbacks
+   */
+  private async fetchBenchmarks(
+    sector: string,
+    stage: string
+  ): Promise<Record<string, { p25: number; median: number; p75: number; source: string }>> {
+    const metricsToFetch = [
+      "ARR Growth YoY",
+      "Net Revenue Retention",
+      "Gross Margin",
+      "Burn Multiple",
+      "Valuation Multiple",
+      "LTV/CAC Ratio",
+      "CAC Payback",
+    ];
+
+    const benchmarks: Record<string, { p25: number; median: number; p75: number; source: string }> = {};
+
+    for (const metric of metricsToFetch) {
+      const result = await benchmarkService.lookup(sector, stage, metric);
+
+      if (result.found && result.benchmark) {
+        benchmarks[metric] = {
+          p25: result.benchmark.p25,
+          median: result.benchmark.median,
+          p75: result.benchmark.p75,
+          source: result.exact ? "database" : `fallback:${result.fallbackUsed}`,
+        };
+      } else {
+        // Use hardcoded fallback
+        const fallback = this.getFallbackBenchmark(metric, sector, stage);
+        if (fallback) {
+          benchmarks[metric] = {
+            ...fallback,
+            source: "hardcoded_fallback",
+          };
+        }
+      }
+    }
+
+    return benchmarks;
+  }
+
+  /**
+   * Get fallback benchmark from hardcoded values
+   */
+  private getFallbackBenchmark(
+    metric: string,
+    sector: string,
+    stage: string
+  ): { p25: number; median: number; p75: number } | null {
+    const metricFallbacks = FALLBACK_BENCHMARKS[metric];
+    if (!metricFallbacks) return null;
+
+    // Try stage-specific
+    if (metricFallbacks[stage]) {
+      return metricFallbacks[stage];
+    }
+
+    // Try sector-specific
+    if (metricFallbacks[sector]) {
+      return metricFallbacks[sector];
+    }
+
+    // Try default
+    if (metricFallbacks.default) {
+      return metricFallbacks.default;
+    }
+
+    // Try SEED as generic fallback
+    if (metricFallbacks.SEED) {
+      return metricFallbacks.SEED;
+    }
+
+    return null;
+  }
+
+  /**
+   * Build cross-validation checks based on available metrics
+   */
+  private buildCrossValidationChecks(metrics: {
+    arr: number | null;
+    mrr: number | null;
+    growthRate: number | null;
+    burnRate: number | null;
+    runway: number | null;
+    ltv: number | null;
+    cac: number | null;
+  }): string {
+    const checks: string[] = [];
+
+    // ARR vs MRR consistency
+    if (metrics.arr && metrics.mrr) {
+      const expectedArr = metrics.mrr * 12;
+      const tolerance = expectedArr * 0.05;
+      checks.push(`- ARR (${metrics.arr}) devrait etre proche de MRR * 12 (${expectedArr}). Tolerance: ±5% (${tolerance})`);
+    }
+
+    // Runway consistency
+    if (metrics.burnRate && metrics.runway) {
+      // If we have cash info from context, we could validate runway
+      checks.push(`- Runway declare (${metrics.runway} mois) doit etre coherent avec burn rate (${metrics.burnRate}/mois)`);
+    }
+
+    // LTV/CAC consistency
+    if (metrics.ltv && metrics.cac) {
+      const calculatedRatio = metrics.ltv / metrics.cac;
+      checks.push(`- LTV/CAC calcule: ${calculatedRatio.toFixed(2)}x (LTV=${metrics.ltv}, CAC=${metrics.cac})`);
+    }
+
+    // Growth rate sanity check
+    if (metrics.growthRate !== null) {
+      if (metrics.growthRate > 500) {
+        checks.push(`- Growth rate de ${metrics.growthRate}% est exceptionnellement eleve - verifier les donnees`);
+      }
+    }
+
+    if (checks.length === 0) {
+      return "Pas assez de metriques pour validation croisee.";
+    }
+
+    return checks.join("\n");
   }
 }
 

@@ -225,14 +225,18 @@ export class FinancialAuditorReAct {
     const prompts = buildPrompts(context, extractedInfo);
 
     // Create ReAct engine
+    // minIterations: 1 allows early exit if confident (was 3, forcing unnecessary iterations)
+    // earlyStopConfidence: 85 allows stopping early when confident
     const engine = createReActEngine<FinancialAuditOutput>(
       prompts,
       FinancialAuditOutputSchema,
       {
         maxIterations: 5,
-        minIterations: 3,
+        minIterations: 1,  // Changed from 3 - allow early exit if confident
         confidenceThreshold: 80,
+        earlyStopConfidence: 85, // Can stop early if very confident
         enableSelfCritique: true,
+        selfCritiqueThreshold: 75,
         modelComplexity: "complex",
       }
     );

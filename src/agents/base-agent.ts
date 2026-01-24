@@ -1,4 +1,11 @@
-import { complete, completeJSON, type TaskComplexity } from "@/services/openrouter/router";
+import {
+  complete,
+  completeJSON,
+  stream,
+  setAgentContext,
+  type TaskComplexity,
+  type StreamCallbacks,
+} from "@/services/openrouter/router";
 import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext } from "./types";
 
 // Generic type for agent results with data
@@ -6,8 +13,35 @@ export interface AgentResultWithData<T> extends AgentResult {
   data: T;
 }
 
+// ============================================================================
+// LLM CALL OPTIONS
+// ============================================================================
+
+export interface LLMCallOptions {
+  systemPrompt?: string;
+  temperature?: number;
+  timeoutMs?: number; // Per-step timeout (default: config.timeoutMs)
+  maxTokens?: number;
+}
+
+export interface LLMStreamOptions extends LLMCallOptions {
+  onToken?: (token: string) => void;
+  onComplete?: (content: string) => void;
+  onError?: (error: Error) => void;
+}
+
+// ============================================================================
+// BASE AGENT
+// ============================================================================
+
 export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResultWithData<TData>> {
   protected config: AgentConfig;
+
+  // Cost tracking - accumulated across all LLM calls
+  private _totalCost = 0;
+  private _llmCalls = 0;
+  private _totalInputTokens = 0;
+  private _totalOutputTokens = 0;
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -21,26 +55,68 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     return this.config.dependencies ?? [];
   }
 
+  // Get accumulated cost (for monitoring during execution)
+  get currentCost(): number {
+    return this._totalCost;
+  }
+
+  // Get LLM call stats
+  get llmStats(): { calls: number; inputTokens: number; outputTokens: number; cost: number } {
+    return {
+      calls: this._llmCalls,
+      inputTokens: this._totalInputTokens,
+      outputTokens: this._totalOutputTokens,
+      cost: this._totalCost,
+    };
+  }
+
   // Abstract method - each agent implements its own logic
   protected abstract execute(context: AgentContext): Promise<TData>;
 
   // Build the system prompt for the agent
   protected abstract buildSystemPrompt(): string;
 
-  // Run the agent with error handling and timing
+  // Reset cost tracking (called at start of run)
+  private resetCostTracking(): void {
+    this._totalCost = 0;
+    this._llmCalls = 0;
+    this._totalInputTokens = 0;
+    this._totalOutputTokens = 0;
+  }
+
+  // Record cost from an LLM call
+  private recordLLMCost(cost: number, inputTokens?: number, outputTokens?: number): void {
+    this._totalCost += cost;
+    this._llmCalls++;
+    if (inputTokens) this._totalInputTokens += inputTokens;
+    if (outputTokens) this._totalOutputTokens += outputTokens;
+  }
+
+  // Run the agent with error handling, timing, and cost tracking
   async run(context: AgentContext): Promise<TResult> {
     const startTime = Date.now();
-    const cost = 0;
+
+    // Reset cost tracking for this run
+    this.resetCostTracking();
+
+    // Set agent context for cost monitoring in router
+    setAgentContext(this.config.name);
 
     try {
-      const data = await this.execute(context);
+      // Execute with global timeout
+      const data = await this.withTimeout(
+        this.execute(context),
+        this.config.timeoutMs,
+        `Agent ${this.config.name} timed out after ${this.config.timeoutMs}ms`
+      );
+
       const executionTimeMs = Date.now() - startTime;
 
       return {
         agentName: this.config.name,
         success: true,
         executionTimeMs,
-        cost,
+        cost: this._totalCost, // Actual accumulated cost
         data,
       } as unknown as TResult;
     } catch (error) {
@@ -50,22 +126,39 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         agentName: this.config.name,
         success: false,
         executionTimeMs,
-        cost,
+        cost: this._totalCost, // Include cost even on failure
         error: error instanceof Error ? error.message : "Unknown error",
       } as unknown as TResult;
+    } finally {
+      // Clear agent context
+      setAgentContext(null);
     }
   }
+
+  // ============================================================================
+  // LLM HELPERS WITH COST TRACKING
+  // ============================================================================
 
   // Helper to call LLM with text response
   protected async llmComplete(
     prompt: string,
-    options: { systemPrompt?: string; temperature?: number } = {}
+    options: LLMCallOptions = {}
   ): Promise<{ content: string; cost: number }> {
-    const result = await complete(prompt, {
-      complexity: this.config.modelComplexity as TaskComplexity,
-      systemPrompt: options.systemPrompt ?? this.buildSystemPrompt(),
-      temperature: options.temperature ?? 0.3,
-    });
+    const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
+
+    const result = await this.withTimeout(
+      complete(prompt, {
+        complexity: this.config.modelComplexity as TaskComplexity,
+        systemPrompt: options.systemPrompt ?? this.buildSystemPrompt(),
+        temperature: options.temperature ?? 0.3,
+        maxTokens: options.maxTokens,
+      }),
+      timeoutMs,
+      `LLM call timed out after ${timeoutMs}ms`
+    );
+
+    // Accumulate cost
+    this.recordLLMCost(result.cost, result.usage.inputTokens, result.usage.outputTokens);
 
     return {
       content: result.content,
@@ -76,16 +169,91 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   // Helper to call LLM with JSON response
   protected async llmCompleteJSON<T>(
     prompt: string,
-    options: { systemPrompt?: string; temperature?: number } = {}
+    options: LLMCallOptions = {}
   ): Promise<{ data: T; cost: number }> {
-    const result = await completeJSON<T>(prompt, {
-      complexity: this.config.modelComplexity as TaskComplexity,
-      systemPrompt: options.systemPrompt ?? this.buildSystemPrompt(),
-      temperature: options.temperature ?? 0.2,
-    });
+    const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
+
+    const result = await this.withTimeout(
+      completeJSON<T>(prompt, {
+        complexity: this.config.modelComplexity as TaskComplexity,
+        systemPrompt: options.systemPrompt ?? this.buildSystemPrompt(),
+        temperature: options.temperature ?? 0.2,
+        maxTokens: options.maxTokens,
+      }),
+      timeoutMs,
+      `LLM JSON call timed out after ${timeoutMs}ms`
+    );
+
+    // Accumulate cost
+    this.recordLLMCost(result.cost);
 
     return result;
   }
+
+  // Helper to call LLM with streaming response
+  protected async llmStream(
+    prompt: string,
+    options: LLMStreamOptions = {}
+  ): Promise<{ content: string; cost: number }> {
+    const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
+
+    const callbacks: StreamCallbacks = {
+      onToken: options.onToken,
+      onComplete: options.onComplete,
+      onError: options.onError,
+    };
+
+    const result = await this.withTimeout(
+      stream(prompt, {
+        complexity: this.config.modelComplexity as TaskComplexity,
+        systemPrompt: options.systemPrompt ?? this.buildSystemPrompt(),
+        temperature: options.temperature ?? 0.3,
+        maxTokens: options.maxTokens,
+      }, callbacks),
+      timeoutMs,
+      `LLM stream timed out after ${timeoutMs}ms`
+    );
+
+    // Accumulate cost
+    this.recordLLMCost(result.cost, result.usage?.inputTokens, result.usage?.outputTokens);
+
+    return {
+      content: result.content,
+      cost: result.cost,
+    };
+  }
+
+  // ============================================================================
+  // TIMEOUT UTILITY
+  // ============================================================================
+
+  // Wrapper to execute a promise with timeout
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    errorMessage: string
+  ): Promise<T> {
+    let timeoutId: NodeJS.Timeout;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(errorMessage));
+      }, timeoutMs);
+    });
+
+    try {
+      const result = await Promise.race([promise, timeoutPromise]);
+      clearTimeout(timeoutId!);
+      return result;
+    } catch (error) {
+      clearTimeout(timeoutId!);
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // CONTEXT FORMATTERS
+  // ============================================================================
 
   // Format deal info for prompts
   protected formatDealContext(context: AgentContext): string {

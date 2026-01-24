@@ -14,6 +14,8 @@ export async function POST(request: NextRequest) {
     const file = formData.get("file") as File | null;
     const dealId = formData.get("dealId") as string | null;
     const documentType = formData.get("type") as DocumentType | null;
+    const customType = formData.get("customType") as string | null;
+    const comments = formData.get("comments") as string | null;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -45,11 +47,13 @@ export async function POST(request: NextRequest) {
       "application/vnd.ms-excel",
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
       "application/vnd.ms-powerpoint",
+      "image/png",
+      "image/jpeg",
     ];
 
     if (!allowedMimeTypes.includes(file.type)) {
       return NextResponse.json(
-        { error: "Invalid file type. Allowed: PDF, Excel, PowerPoint" },
+        { error: "Invalid file type. Allowed: PDF, Excel, PowerPoint, Images (PNG, JPG)" },
         { status: 400 }
       );
     }
@@ -78,6 +82,8 @@ export async function POST(request: NextRequest) {
         dealId,
         name: file.name,
         type: documentType ?? "OTHER",
+        customType: customType ?? undefined,
+        comments: comments ?? undefined,
         storagePath: uploaded.pathname,
         storageUrl: uploaded.url,
         mimeType: file.type,

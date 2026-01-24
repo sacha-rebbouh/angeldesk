@@ -169,14 +169,88 @@ export const TIER1_AGENT_NAMES = [
   "question-master",
 ] as const;
 
-// Tier 2 agent names (5 agents) - in execution order
+// Tier 2 agent names (5 agents)
 export const TIER2_AGENT_NAMES = [
-  "contradiction-detector",  // First: find inconsistencies
-  "scenario-modeler",        // Second: build scenarios
-  "synthesis-deal-scorer",   // Third: calculate final score
-  "devils-advocate",         // Fourth: challenge the thesis
-  "memo-generator",          // Fifth: generate memo (needs all above)
+  "contradiction-detector",
+  "scenario-modeler",
+  "synthesis-deal-scorer",
+  "devils-advocate",
+  "memo-generator",
 ] as const;
+
+// ============================================================================
+// DYNAMIC DEPENDENCY GRAPH
+// ============================================================================
+
+/**
+ * Agent dependencies for Tier 2
+ * - Empty array = can run in parallel with other independent agents
+ * - Array with names = must wait for those agents to complete
+ */
+export const TIER2_DEPENDENCIES: Record<typeof TIER2_AGENT_NAMES[number], string[]> = {
+  "contradiction-detector": [], // No deps - runs immediately
+  "scenario-modeler": [],       // No deps - runs immediately
+  "devils-advocate": [],        // No deps - runs immediately
+  "synthesis-deal-scorer": ["contradiction-detector", "scenario-modeler"], // Needs insights from both
+  "memo-generator": ["contradiction-detector", "scenario-modeler", "synthesis-deal-scorer", "devils-advocate"], // Needs all
+};
+
+/**
+ * Execution batches for Tier 2 (computed from dependencies)
+ * Agents in same batch can run in parallel
+ */
+export const TIER2_EXECUTION_BATCHES = [
+  // Batch 1: All independent agents (parallel)
+  ["contradiction-detector", "scenario-modeler", "devils-advocate"],
+  // Batch 2: Depends on contradiction-detector + scenario-modeler
+  ["synthesis-deal-scorer"],
+  // Batch 3: Depends on all above
+  ["memo-generator"],
+] as const;
+
+/**
+ * Resolve agent execution order respecting dependencies
+ * Returns agents grouped by execution batch (parallel within batch, sequential across batches)
+ */
+export function resolveAgentDependencies(
+  agents: string[],
+  dependencies: Record<string, string[]>
+): string[][] {
+  const batches: string[][] = [];
+  const completed = new Set<string>();
+  const remaining = new Set(agents);
+
+  while (remaining.size > 0) {
+    // Find all agents whose dependencies are satisfied
+    const batch: string[] = [];
+
+    for (const agent of remaining) {
+      const deps = dependencies[agent] ?? [];
+      const allDepsSatisfied = deps.every(dep => completed.has(dep));
+
+      if (allDepsSatisfied) {
+        batch.push(agent);
+      }
+    }
+
+    if (batch.length === 0) {
+      // Circular dependency or missing dependency - run remaining sequentially
+      console.warn('[DependencyResolver] Circular or missing dependency detected, running remaining sequentially');
+      batches.push([...remaining]);
+      break;
+    }
+
+    batches.push(batch);
+
+    // Mark batch as completed
+    for (const agent of batch) {
+      completed.add(agent);
+      remaining.delete(agent);
+    }
+  }
+
+  return batches;
+}
 
 // Tier 3 sector expert names
 export const TIER3_EXPERT_NAMES = [

@@ -120,10 +120,11 @@ export default function NewDealPage() {
   const mutation = useMutation({
     mutationFn: createDeal,
     onSuccess: (response) => {
-      // Granular invalidation: only invalidate deal lists, not all deal-related queries
-      queryClient.invalidateQueries({ queryKey: queryKeys.deals.lists() });
       toast.success("Deal créé avec succès");
+      // Navigate immediately, invalidate in background
       router.push(`/deals/${response.data.id}`);
+      // Invalidate after navigation starts (non-blocking)
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.lists() });
     },
     onError: (error: Error) => {
       toast.error(error.message);

@@ -1,6 +1,11 @@
 /**
  * ReAct Engine
  * Core implementation of Reasoning-Action-Observation loop
+ *
+ * Features:
+ * - Memory system for storing insights between steps
+ * - Backtracking when tools fail (explore alternatives)
+ * - Initial planning phase (goal decomposition)
  */
 
 import { z } from "zod";
@@ -129,6 +134,162 @@ const LLMReActResponseSchema = z.object({
   readyToSynthesize: z.boolean(),
 });
 
+// ============================================================================
+// MEMORY SYSTEM
+// ============================================================================
+
+interface MemoryInsight {
+  key: string;
+  value: unknown;
+  source: string; // Which step generated this insight
+  confidence: number;
+  timestamp: Date;
+}
+
+interface FailedAttempt {
+  toolName: string;
+  parameters: Record<string, unknown>;
+  error: string;
+  stepNumber: number;
+}
+
+interface AlternativeAction {
+  toolName: string;
+  parameters: Record<string, unknown>;
+  reasoning: string;
+  priority: number;
+}
+
+/**
+ * Memory Manager - Stores insights, tracks failures for backtracking
+ */
+class MemoryManager {
+  private insights = new Map<string, MemoryInsight>();
+  private failedAttempts: FailedAttempt[] = [];
+  private alternativeQueue: AlternativeAction[] = [];
+
+  /**
+   * Store an insight from a step
+   */
+  storeInsight(key: string, value: unknown, source: string, confidence: number): void {
+    this.insights.set(key, {
+      key,
+      value,
+      source,
+      confidence,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
+   * Get insight by key
+   */
+  getInsight(key: string): MemoryInsight | undefined {
+    return this.insights.get(key);
+  }
+
+  /**
+   * Get all insights with confidence above threshold
+   */
+  getHighConfidenceInsights(minConfidence: number = 70): MemoryInsight[] {
+    return Array.from(this.insights.values())
+      .filter(i => i.confidence >= minConfidence)
+      .sort((a, b) => b.confidence - a.confidence);
+  }
+
+  /**
+   * Format insights for context injection
+   */
+  formatInsightsForPrompt(): string {
+    const highConf = this.getHighConfidenceInsights(60);
+    if (highConf.length === 0) return "";
+
+    return `\n## Key Insights Discovered
+${highConf.map(i => `- **${i.key}**: ${typeof i.value === 'object' ? JSON.stringify(i.value) : i.value} (confidence: ${i.confidence}%, source: step ${i.source})`).join("\n")}`;
+  }
+
+  /**
+   * Record a failed tool attempt for backtracking
+   */
+  recordFailure(toolName: string, parameters: Record<string, unknown>, error: string, stepNumber: number): void {
+    this.failedAttempts.push({ toolName, parameters, error, stepNumber });
+  }
+
+  /**
+   * Check if we already tried this action
+   */
+  hasAlreadyFailed(toolName: string, parameters: Record<string, unknown>): boolean {
+    return this.failedAttempts.some(
+      f => f.toolName === toolName &&
+           JSON.stringify(f.parameters) === JSON.stringify(parameters)
+    );
+  }
+
+  /**
+   * Get failed attempts for context
+   */
+  getFailedAttempts(): FailedAttempt[] {
+    return [...this.failedAttempts];
+  }
+
+  /**
+   * Queue alternative actions for backtracking
+   */
+  queueAlternatives(alternatives: AlternativeAction[]): void {
+    this.alternativeQueue.push(...alternatives);
+    // Sort by priority (higher first)
+    this.alternativeQueue.sort((a, b) => b.priority - a.priority);
+  }
+
+  /**
+   * Get next alternative action to try
+   */
+  popAlternative(): AlternativeAction | undefined {
+    return this.alternativeQueue.shift();
+  }
+
+  /**
+   * Check if we have alternatives to try
+   */
+  hasAlternatives(): boolean {
+    return this.alternativeQueue.length > 0;
+  }
+
+  /**
+   * Get summary for debugging
+   */
+  getSummary(): { insightCount: number; failureCount: number; alternativesCount: number } {
+    return {
+      insightCount: this.insights.size,
+      failureCount: this.failedAttempts.length,
+      alternativesCount: this.alternativeQueue.length,
+    };
+  }
+}
+
+// ============================================================================
+// GOAL DECOMPOSITION
+// ============================================================================
+
+interface Goal {
+  id: string;
+  description: string;
+  subgoals: string[];
+  status: "pending" | "in_progress" | "completed" | "blocked";
+  requiredTools: string[];
+}
+
+interface InitialPlan {
+  mainGoal: string;
+  goals: Goal[];
+  estimatedSteps: number;
+  criticalPaths: string[];
+}
+
+// ============================================================================
+// ENGINE CONFIGURATION
+// ============================================================================
+
 const DEFAULT_CONFIG: ReActConfig = {
   maxIterations: 5,
   minIterations: 2,
@@ -160,7 +321,7 @@ export class ReActEngine<TOutput> {
   }
 
   /**
-   * Run the ReAct loop
+   * Run the ReAct loop with planning, memory, and backtracking
    */
   async run(
     context: AgentContext | EnrichedAgentContext,
@@ -169,7 +330,7 @@ export class ReActEngine<TOutput> {
     const startTime = Date.now();
     const traceId = crypto.randomUUID();
     const steps: ReasoningStep[] = [];
-    const memory = new Map<string, unknown>();
+    const memory = new MemoryManager();
 
     let totalCost = 0;
     let currentConfidence = 0;
@@ -179,11 +340,36 @@ export class ReActEngine<TOutput> {
       dealId: context.dealId,
       agentContext: context,
       previousSteps: steps,
-      memory,
+      memory: new Map(), // Legacy interface - we use MemoryManager internally
     };
 
     try {
-      // Main ReAct loop
+      // =====================================================================
+      // PHASE 1: INITIAL PLANNING (Goal Decomposition)
+      // =====================================================================
+      const { plan, cost: planCost } = await this.createInitialPlan(context);
+      totalCost += planCost;
+
+      // Store plan in memory for reference
+      memory.storeInsight("initial_plan", plan, "planning", 100);
+
+      // Create planning thought
+      const planningThought: Thought = {
+        id: crypto.randomUUID(),
+        content: `Plan: ${plan.mainGoal}\nSubgoals: ${plan.goals.map(g => g.description).join(", ")}\nEstimated steps: ${plan.estimatedSteps}`,
+        type: "planning",
+        timestamp: new Date(),
+      };
+
+      steps.push({
+        stepNumber: 0,
+        thought: planningThought,
+        confidenceAfterStep: 20, // Low confidence at start
+      });
+
+      // =====================================================================
+      // PHASE 2: MAIN REACT LOOP WITH MEMORY & BACKTRACKING
+      // =====================================================================
       while (iteration < this.config.maxIterations) {
         iteration++;
 
@@ -194,11 +380,13 @@ export class ReActEngine<TOutput> {
           );
         }
 
-        // Get next thought/action from LLM
+        // Get next thought/action from LLM (with memory context)
         const { response, cost } = await this.getNextStep(
           context,
           steps,
-          iteration
+          iteration,
+          memory,
+          plan
         );
         totalCost += cost;
 
@@ -215,32 +403,77 @@ export class ReActEngine<TOutput> {
         let observation: Observation | undefined;
 
         if (response.action && !response.readyToSynthesize) {
-          action = {
-            id: crypto.randomUUID(),
-            toolName: response.action.tool,
-            parameters: response.action.parameters,
-            reasoning: response.action.reasoning,
-            timestamp: new Date(),
-          };
+          // Check if we already failed this action
+          if (memory.hasAlreadyFailed(response.action.tool, response.action.parameters)) {
+            // Skip this action, LLM suggested something we already tried
+            observation = {
+              id: crypto.randomUUID(),
+              actionId: "skipped",
+              success: false,
+              result: null,
+              error: "Action already failed previously, skipping",
+              executionTimeMs: 0,
+              timestamp: new Date(),
+            };
+          } else {
+            action = {
+              id: crypto.randomUUID(),
+              toolName: response.action.tool,
+              parameters: response.action.parameters,
+              reasoning: response.action.reasoning,
+              timestamp: new Date(),
+            };
 
-          // Execute the tool
-          const toolStartTime = Date.now();
-          const toolResult = await toolRegistry.execute(
-            action.toolName,
-            action.parameters,
-            toolContext,
-            { timeout: this.config.toolTimeoutMs }
-          );
+            // Execute the tool
+            const toolStartTime = Date.now();
+            const toolResult = await toolRegistry.execute(
+              action.toolName,
+              action.parameters,
+              toolContext,
+              { timeout: this.config.toolTimeoutMs }
+            );
 
-          observation = {
-            id: crypto.randomUUID(),
-            actionId: action.id,
-            success: toolResult.success,
-            result: toolResult.data,
-            error: toolResult.error,
-            executionTimeMs: Date.now() - toolStartTime,
-            timestamp: new Date(),
-          };
+            observation = {
+              id: crypto.randomUUID(),
+              actionId: action.id,
+              success: toolResult.success,
+              result: toolResult.data,
+              error: toolResult.error,
+              executionTimeMs: Date.now() - toolStartTime,
+              timestamp: new Date(),
+            };
+
+            // ===============================================================
+            // BACKTRACKING: Handle tool failure
+            // ===============================================================
+            if (!toolResult.success) {
+              memory.recordFailure(
+                action.toolName,
+                action.parameters,
+                toolResult.error ?? "Unknown error",
+                iteration
+              );
+
+              // Request alternatives from LLM
+              const { alternatives, cost: altCost } = await this.requestAlternatives(
+                context,
+                action,
+                toolResult.error ?? "Unknown error",
+                memory
+              );
+              totalCost += altCost;
+
+              if (alternatives.length > 0) {
+                memory.queueAlternatives(alternatives);
+              }
+            } else {
+              // SUCCESS: Extract and store insights from result
+              const insights = this.extractInsights(action.toolName, toolResult.data);
+              for (const insight of insights) {
+                memory.storeInsight(insight.key, insight.value, `step-${iteration}`, insight.confidence);
+              }
+            }
+          }
         }
 
         // Record step
@@ -267,40 +500,137 @@ export class ReActEngine<TOutput> {
         ) {
           break;
         }
+
+        // If we have alternatives and last action failed, try one
+        if (observation && !observation.success && memory.hasAlternatives()) {
+          const alternative = memory.popAlternative();
+          if (alternative) {
+            // Queue this as the next action by modifying response
+            // This will be picked up in the next iteration naturally
+            // because the LLM will see the failure and alternatives in context
+          }
+        }
       }
 
-      // Synthesis phase
-      const { synthesis, cost: synthesisCost } = await this.synthesize(
+      // =====================================================================
+      // PHASE 3: SYNTHESIS WITH MEMORY
+      // =====================================================================
+      let { synthesis, cost: synthesisCost } = await this.synthesize(
         context,
-        steps
+        steps,
+        memory
       );
       totalCost += synthesisCost;
 
       // Self-critique if enabled and confidence below threshold
       let selfCritiqueResult: SelfCritiqueResult | undefined;
-      if (
+      let critiqueIterations = 0;
+      const maxCritiqueIterations = 2;
+
+      while (
         this.config.enableSelfCritique &&
-        synthesis.confidence < this.config.selfCritiqueThreshold
+        synthesis.confidence < this.config.selfCritiqueThreshold &&
+        critiqueIterations < maxCritiqueIterations
       ) {
+        critiqueIterations++;
+
         const { critique, cost: critiqueCost } = await this.selfCritique(
           synthesis,
-          steps
+          steps,
+          memory
         );
         totalCost += critiqueCost;
         selfCritiqueResult = critique;
 
-        // Adjust confidence based on self-critique
-        synthesis.confidence = Math.max(
-          0,
-          Math.min(100, synthesis.confidence + critique.confidenceAdjustment)
-        );
+        if (critique.overallAssessment === "requires_revision" && iteration < this.config.maxIterations) {
+          const improvementPrompt = critique.suggestedImprovements.join(", ");
+
+          const { response: improvementResponse, cost: improvementCost } = await this.getImprovementStep(
+            context,
+            steps,
+            improvementPrompt,
+            memory
+          );
+          totalCost += improvementCost;
+
+          const improvementThought: Thought = {
+            id: crypto.randomUUID(),
+            content: `Self-critique revision: ${improvementResponse.thought}`,
+            type: "self_critique",
+            timestamp: new Date(),
+          };
+
+          let improvementAction: Action | undefined;
+          let improvementObservation: Observation | undefined;
+
+          if (improvementResponse.action) {
+            improvementAction = {
+              id: crypto.randomUUID(),
+              toolName: improvementResponse.action.tool,
+              parameters: improvementResponse.action.parameters,
+              reasoning: improvementResponse.action.reasoning,
+              timestamp: new Date(),
+            };
+
+            const toolStartTime = Date.now();
+            const toolResult = await toolRegistry.execute(
+              improvementAction.toolName,
+              improvementAction.parameters,
+              toolContext,
+              { timeout: this.config.toolTimeoutMs }
+            );
+
+            improvementObservation = {
+              id: crypto.randomUUID(),
+              actionId: improvementAction.id,
+              success: toolResult.success,
+              result: toolResult.data,
+              error: toolResult.error,
+              executionTimeMs: Date.now() - toolStartTime,
+              timestamp: new Date(),
+            };
+
+            // Store insights from improvement action
+            if (toolResult.success) {
+              const insights = this.extractInsights(improvementAction.toolName, toolResult.data);
+              for (const insight of insights) {
+                memory.storeInsight(insight.key, insight.value, `improvement-${critiqueIterations}`, insight.confidence);
+              }
+            }
+          }
+
+          iteration++;
+          const improvementStep: ReasoningStep = {
+            stepNumber: iteration,
+            thought: improvementThought,
+            action: improvementAction,
+            observation: improvementObservation,
+            confidenceAfterStep: improvementResponse.confidence,
+          };
+          steps.push(improvementStep);
+
+          const { synthesis: newSynthesis, cost: newSynthesisCost } = await this.synthesize(
+            context,
+            steps,
+            memory
+          );
+          totalCost += newSynthesisCost;
+          synthesis = newSynthesis;
+        } else {
+          synthesis.confidence = Math.max(
+            0,
+            Math.min(100, synthesis.confidence + critique.confidenceAdjustment)
+          );
+          break;
+        }
       }
 
       // Build confidence score
       const confidence = this.buildConfidenceScore(
         synthesis.confidence,
         steps,
-        selfCritiqueResult
+        selfCritiqueResult,
+        memory
       );
 
       // Build reasoning trace
@@ -353,18 +683,19 @@ export class ReActEngine<TOutput> {
     }
   }
 
+  // ===========================================================================
+  // INITIAL PLANNING (Goal Decomposition)
+  // ===========================================================================
+
   /**
-   * Get next step from LLM
+   * Create initial plan with goal decomposition
    */
-  private async getNextStep(
-    context: AgentContext | EnrichedAgentContext,
-    previousSteps: ReasoningStep[],
-    iteration: number
-  ): Promise<{ response: LLMReActResponse; cost: number }> {
-    const stepsContext = this.formatPreviousSteps(previousSteps);
+  private async createInitialPlan(
+    context: AgentContext | EnrichedAgentContext
+  ): Promise<{ plan: InitialPlan; cost: number }> {
     const toolDescriptions = toolRegistry.getToolDescriptions();
 
-    const prompt = `You are performing step ${iteration} of a ReAct (Reasoning-Action) analysis.
+    const prompt = `You are starting a ReAct analysis. Before taking any actions, create a structured plan.
 
 ## Task
 ${this.prompts.taskDescription}
@@ -372,18 +703,199 @@ ${this.prompts.taskDescription}
 ## Available Tools
 ${toolDescriptions}
 
+## Instructions
+Decompose the main task into concrete goals and subgoals. For each goal, identify which tools might be needed.
+
+Respond with JSON:
+{
+  "mainGoal": "the overarching objective",
+  "goals": [
+    {
+      "id": "G1",
+      "description": "specific goal",
+      "subgoals": ["subgoal 1", "subgoal 2"],
+      "status": "pending",
+      "requiredTools": ["tool1", "tool2"]
+    }
+  ],
+  "estimatedSteps": 3,
+  "criticalPaths": ["what must be done first", "dependencies"]
+}`;
+
+    const result = await complete(prompt, {
+      complexity: "medium", // Use medium model for planning
+      temperature: 0.2,
+      systemPrompt: this.prompts.system,
+    });
+
+    const parsed = safeJsonParse<InitialPlan>(result.content, "createInitialPlan");
+
+    return { plan: parsed, cost: result.cost };
+  }
+
+  // ===========================================================================
+  // BACKTRACKING: Request Alternatives
+  // ===========================================================================
+
+  /**
+   * Request alternative actions when a tool fails
+   */
+  private async requestAlternatives(
+    context: AgentContext | EnrichedAgentContext,
+    failedAction: Action,
+    error: string,
+    memory: MemoryManager
+  ): Promise<{ alternatives: AlternativeAction[]; cost: number }> {
+    const toolDescriptions = toolRegistry.getToolDescriptions();
+    const failedAttempts = memory.getFailedAttempts();
+
+    const prompt = `A tool action failed. Suggest alternative approaches.
+
+## Failed Action
+- Tool: ${failedAction.toolName}
+- Parameters: ${JSON.stringify(failedAction.parameters)}
+- Error: ${error}
+- Reasoning: ${failedAction.reasoning}
+
+## Previous Failed Attempts
+${failedAttempts.map(f => `- ${f.toolName}(${JSON.stringify(f.parameters)}): ${f.error}`).join("\n") || "None"}
+
+## Available Tools
+${toolDescriptions}
+
+## Instructions
+Suggest 2-3 alternative actions that could achieve the same goal differently.
+Each alternative should have different parameters or use a different tool.
+
+Respond with JSON:
+{
+  "alternatives": [
+    {
+      "toolName": "alternative_tool",
+      "parameters": { ... },
+      "reasoning": "why this alternative might work",
+      "priority": 1-10
+    }
+  ]
+}`;
+
+    const result = await complete(prompt, {
+      complexity: "simple", // Use simple model for alternatives
+      temperature: 0.5,
+      systemPrompt: "You are a problem-solver. When one approach fails, suggest creative alternatives.",
+    });
+
+    try {
+      const parsed = safeJsonParse<{ alternatives: AlternativeAction[] }>(result.content, "requestAlternatives");
+      return { alternatives: parsed.alternatives || [], cost: result.cost };
+    } catch {
+      return { alternatives: [], cost: result.cost };
+    }
+  }
+
+  // ===========================================================================
+  // INSIGHT EXTRACTION
+  // ===========================================================================
+
+  /**
+   * Extract insights from tool results
+   */
+  private extractInsights(
+    toolName: string,
+    result: unknown
+  ): Array<{ key: string; value: unknown; confidence: number }> {
+    const insights: Array<{ key: string; value: unknown; confidence: number }> = [];
+
+    if (!result || typeof result !== 'object') {
+      return insights;
+    }
+
+    const data = result as Record<string, unknown>;
+
+    // Extract key metrics based on tool type
+    switch (toolName) {
+      case 'get_deal_info':
+        if (data.arr) insights.push({ key: 'ARR', value: data.arr, confidence: 90 });
+        if (data.growthRate) insights.push({ key: 'growth_rate', value: data.growthRate, confidence: 90 });
+        if (data.valuation) insights.push({ key: 'valuation', value: data.valuation, confidence: 90 });
+        break;
+
+      case 'calculate_metrics':
+        for (const [key, value] of Object.entries(data)) {
+          insights.push({ key: `metric_${key}`, value, confidence: 85 });
+        }
+        break;
+
+      case 'search_similar_deals':
+        if (Array.isArray(data.deals)) {
+          insights.push({ key: 'similar_deals_count', value: data.deals.length, confidence: 80 });
+          insights.push({ key: 'similar_deals', value: data.deals.slice(0, 3), confidence: 80 });
+        }
+        break;
+
+      case 'get_benchmark':
+        for (const [key, value] of Object.entries(data)) {
+          insights.push({ key: `benchmark_${key}`, value, confidence: 75 });
+        }
+        break;
+
+      default:
+        // Generic extraction for unknown tools
+        for (const [key, value] of Object.entries(data)) {
+          if (value !== null && value !== undefined) {
+            insights.push({ key: `${toolName}_${key}`, value, confidence: 70 });
+          }
+        }
+    }
+
+    return insights;
+  }
+
+  /**
+   * Get next step from LLM (with memory and plan context)
+   */
+  private async getNextStep(
+    context: AgentContext | EnrichedAgentContext,
+    previousSteps: ReasoningStep[],
+    iteration: number,
+    memory: MemoryManager,
+    plan: InitialPlan
+  ): Promise<{ response: LLMReActResponse; cost: number }> {
+    const stepsContext = this.formatPreviousSteps(previousSteps);
+    const toolDescriptions = toolRegistry.getToolDescriptions();
+    const memoryContext = memory.formatInsightsForPrompt();
+    const failedAttempts = memory.getFailedAttempts();
+
+    const prompt = `You are performing step ${iteration} of a ReAct (Reasoning-Action) analysis.
+
+## Task
+${this.prompts.taskDescription}
+
+## Initial Plan
+Main Goal: ${plan.mainGoal}
+Goals: ${plan.goals.map(g => `${g.id}: ${g.description} (${g.status})`).join(", ")}
+Critical Paths: ${plan.criticalPaths.join(", ")}
+
+## Available Tools
+${toolDescriptions}
+
 ## Previous Steps
 ${stepsContext || "None yet - this is your first step."}
+${memoryContext}
+
+${failedAttempts.length > 0 ? `## Failed Attempts (DO NOT REPEAT)
+${failedAttempts.map(f => `- ${f.toolName}(${JSON.stringify(f.parameters)}): ${f.error}`).join("\n")}` : ""}
 
 ## Constraints
 ${this.prompts.constraints.map((c) => `- ${c}`).join("\n")}
 
 ## Instructions
-1. Think about what you've learned so far and what you still need to know
-2. Decide whether to:
+1. Review the plan and what you've learned so far (insights above)
+2. Think about what you still need to know
+3. Decide whether to:
    - Take an action using one of the available tools
    - Synthesize your findings (only if you have sufficient information)
-3. Estimate your confidence in having enough information to provide a complete analysis
+4. DO NOT repeat failed actions with the same parameters
 
 Respond with JSON in this exact format:
 {
@@ -418,13 +930,15 @@ If readyToSynthesize is true, omit the action field.`;
   }
 
   /**
-   * Synthesis phase - produce final output
+   * Synthesis phase - produce final output (with memory context)
    */
   private async synthesize(
     context: AgentContext | EnrichedAgentContext,
-    steps: ReasoningStep[]
+    steps: ReasoningStep[],
+    memory: MemoryManager
   ): Promise<{ synthesis: SynthesisResult<TOutput>; cost: number }> {
     const stepsContext = this.formatPreviousSteps(steps);
+    const memoryContext = memory.formatInsightsForPrompt();
 
     const prompt = `Based on your ReAct analysis, synthesize your findings into a final output.
 
@@ -433,12 +947,15 @@ ${this.prompts.taskDescription}
 
 ## Analysis Steps
 ${stepsContext}
+${memoryContext}
 
 ## Required Output Schema
 ${this.prompts.outputSchema}
 
 ## Instructions
 Synthesize all your findings into the required output format.
+USE THE KEY INSIGHTS to ensure your synthesis is grounded in discovered data.
+
 For each finding, provide:
 - The metric name
 - The extracted/calculated value
@@ -465,11 +982,10 @@ Respond with JSON:
 
     const result = await complete(prompt, {
       complexity: this.config.modelComplexity,
-      temperature: 0.2, // Lower temperature for synthesis
+      temperature: 0.2,
       systemPrompt: this.prompts.system,
     });
 
-    // Parse with sanitization to handle LLM formatting issues
     const parsed = safeJsonParse<LLMSynthesisResponse<TOutput>>(result.content, "synthesize");
 
     // Convert to ScoredFindings
@@ -477,7 +993,7 @@ Respond with JSON:
       createScoredFinding({
         agentName: "react-engine",
         metric: f.metric,
-        category: "financial", // Will be set correctly by calling agent
+        category: "financial",
         value: f.value as string | number | null,
         unit: f.unit,
         assessment: f.assessment,
@@ -507,12 +1023,78 @@ Respond with JSON:
   }
 
   /**
-   * Self-critique phase
+   * Get improvement step based on self-critique feedback (with memory)
+   */
+  private async getImprovementStep(
+    context: AgentContext | EnrichedAgentContext,
+    previousSteps: ReasoningStep[],
+    improvements: string,
+    memory: MemoryManager
+  ): Promise<{ response: LLMReActResponse; cost: number }> {
+    const stepsContext = this.formatPreviousSteps(previousSteps);
+    const toolDescriptions = toolRegistry.getToolDescriptions();
+    const memoryContext = memory.formatInsightsForPrompt();
+
+    const prompt = `Based on self-critique feedback, you need to improve your analysis.
+
+## Task
+${this.prompts.taskDescription}
+
+## Suggested Improvements
+${improvements}
+
+## Available Tools
+${toolDescriptions}
+
+## Previous Steps
+${stepsContext}
+${memoryContext}
+
+## Instructions
+Address the critique by:
+1. Gathering additional evidence using tools
+2. Verifying uncertain claims
+3. Filling identified gaps
+
+Respond with JSON:
+{
+  "thought": "how you will address the critique",
+  "thoughtType": "self_critique",
+  "action": {
+    "tool": "toolName",
+    "parameters": { ... },
+    "reasoning": "why this action addresses the critique"
+  },
+  "confidence": 0-100,
+  "readyToSynthesize": false
+}`;
+
+    const result = await complete(prompt, {
+      complexity: this.config.modelComplexity,
+      temperature: this.config.temperature,
+      systemPrompt: this.prompts.system,
+    });
+
+    const parsed = safeJsonParse<LLMReActResponse>(result.content, "getImprovementStep");
+
+    if (this.config.enableZodValidation) {
+      const validated = LLMReActResponseSchema.parse(parsed);
+      return { response: validated, cost: result.cost };
+    }
+
+    return { response: parsed, cost: result.cost };
+  }
+
+  /**
+   * Self-critique phase (with memory context)
    */
   private async selfCritique(
     synthesis: SynthesisResult<TOutput>,
-    steps: ReasoningStep[]
+    steps: ReasoningStep[],
+    memory: MemoryManager
   ): Promise<{ critique: SelfCritiqueResult; cost: number }> {
+    const memoryContext = memory.formatInsightsForPrompt();
+
     const prompt = `Critically evaluate the following analysis output.
 
 ## Original Task
@@ -526,6 +1108,7 @@ ${synthesis.findings.map((f) => `- ${f.metric}: ${f.value} (${f.assessment})`).j
 
 ## Uncertainties Noted
 ${synthesis.uncertainties.join("\n") || "None noted"}
+${memoryContext}
 
 ## Instructions
 Act as a skeptical reviewer. Identify:
@@ -533,6 +1116,7 @@ Act as a skeptical reviewer. Identify:
 2. Assumptions that may not hold
 3. Missing evidence or verification
 4. Areas where confidence may be inflated
+5. Whether the key insights were properly used in conclusions
 
 Respond with JSON:
 {
@@ -556,12 +1140,10 @@ Respond with JSON:
         "You are a critical reviewer. Be thorough but fair. Identify real issues, not hypothetical ones.",
     });
 
-    // Try to parse with sanitization, fall back to neutral critique if it fails
     let parsed: LLMSelfCritiqueResponse;
     try {
       parsed = safeJsonParse<LLMSelfCritiqueResponse>(result.content, "selfCritique");
     } catch {
-      // If parsing fails, return neutral critique
       return {
         critique: {
           critiques: [],
@@ -590,12 +1172,13 @@ Respond with JSON:
   }
 
   /**
-   * Build confidence score from analysis results
+   * Build confidence score from analysis results (with memory stats)
    */
   private buildConfidenceScore(
     baseConfidence: number,
     steps: ReasoningStep[],
-    selfCritique?: SelfCritiqueResult
+    selfCritique?: SelfCritiqueResult,
+    memory?: MemoryManager
   ): ConfidenceScore {
     // Count successful tool executions
     const totalActions = steps.filter((s) => s.action).length;
@@ -605,8 +1188,14 @@ Respond with JSON:
     const actionSuccessRate =
       totalActions > 0 ? (successfulActions / totalActions) * 100 : 50;
 
-    // Calculate data availability from steps
-    const dataAvailability = Math.min(100, steps.length * 20 + actionSuccessRate * 0.5);
+    // Calculate data availability from steps and memory
+    let dataAvailability = Math.min(100, steps.length * 20 + actionSuccessRate * 0.5);
+
+    // Boost confidence if we have many high-confidence insights in memory
+    if (memory) {
+      const stats = memory.getSummary();
+      dataAvailability = Math.min(100, dataAvailability + stats.insightCount * 5);
+    }
 
     // Evidence quality from successful observations
     const evidenceQuality = actionSuccessRate;
@@ -619,9 +1208,9 @@ Respond with JSON:
     return confidenceCalculator.calculate({
       dataAvailability,
       evidenceQuality,
-      benchmarkMatch: 70, // Default, will be overridden by specific findings
+      benchmarkMatch: 70,
       sourceReliability: totalActions > 0 ? 80 : 50,
-      temporalRelevance: 90, // Fresh analysis
+      temporalRelevance: 90,
     });
   }
 

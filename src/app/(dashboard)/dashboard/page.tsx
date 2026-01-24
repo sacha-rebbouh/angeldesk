@@ -11,14 +11,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   FolderKanban,
   AlertTriangle,
   TrendingUp,
   Plus,
-  ArrowRight,
 } from "lucide-react";
+import { RecentDealsList } from "@/components/deals/recent-deals-list";
 
 async function getDashboardStats(userId: string) {
   const [totalDeals, activeDeals, recentDeals, redFlagsCount] =
@@ -50,30 +49,6 @@ async function getDashboardStats(userId: string) {
     ]);
 
   return { totalDeals, activeDeals, recentDeals, redFlagsCount };
-}
-
-function getStatusColor(status: string) {
-  const colors: Record<string, string> = {
-    SCREENING: "bg-blue-100 text-blue-800",
-    ANALYZING: "bg-yellow-100 text-yellow-800",
-    IN_DD: "bg-purple-100 text-purple-800",
-    PASSED: "bg-gray-100 text-gray-800",
-    INVESTED: "bg-green-100 text-green-800",
-    ARCHIVED: "bg-gray-100 text-gray-800",
-  };
-  return colors[status] ?? "bg-gray-100 text-gray-800";
-}
-
-function getStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    SCREENING: "Screening",
-    ANALYZING: "En analyse",
-    IN_DD: "Due Diligence",
-    PASSED: "Passé",
-    INVESTED: "Investi",
-    ARCHIVED: "Archivé",
-  };
-  return labels[status] ?? status;
 }
 
 export default async function DashboardPage() {
@@ -165,53 +140,12 @@ export default async function DashboardPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {recentDeals.map((deal) => {
-                const criticalFlags = deal.redFlags.filter(
-                  (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
-                ).length;
-
-                return (
-                  <div
-                    key={deal.id}
-                    className="flex items-center justify-between rounded-lg border p-4"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{deal.name}</span>
-                        <Badge
-                          variant="secondary"
-                          className={getStatusColor(deal.status)}
-                        >
-                          {getStatusLabel(deal.status)}
-                        </Badge>
-                        {criticalFlags > 0 && (
-                          <Badge variant="destructive">
-                            {criticalFlags} red flag
-                            {criticalFlags > 1 ? "s" : ""}
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {deal.sector ?? "Secteur non défini"} •{" "}
-                        {deal.stage ?? "Stade non défini"}
-                      </p>
-                    </div>
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link href={`/deals/${deal.id}`}>
-                        Voir
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Link>
-                    </Button>
-                  </div>
-                );
-              })}
-              {recentDeals.length > 0 && (
-                <div className="text-center">
-                  <Button variant="outline" asChild>
-                    <Link href="/deals">Voir tous les deals</Link>
-                  </Button>
-                </div>
-              )}
+              <RecentDealsList deals={recentDeals} />
+              <div className="text-center">
+                <Button variant="outline" asChild>
+                  <Link href="/deals">Voir tous les deals</Link>
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

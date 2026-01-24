@@ -9,6 +9,112 @@ import type { ToolDefinition, ToolContext, ToolResult } from "../types";
 import { toolRegistry } from "./registry";
 
 // ============================================================================
+// FALLBACK BENCHMARKS (when database is empty)
+// ============================================================================
+
+const FALLBACK_BENCHMARKS: Record<string, Record<string, Record<string, { p25: number; median: number; p75: number }>>> = {
+  "SaaS B2B": {
+    "PRE_SEED": {
+      "ARR Growth YoY": { p25: 80, median: 150, p75: 250 },
+      "Net Revenue Retention": { p25: 90, median: 105, p75: 120 },
+      "Gross Margin": { p25: 65, median: 75, p75: 85 },
+      "Burn Multiple": { p25: 1.5, median: 2.5, p75: 4 },
+      "Valuation Multiple": { p25: 20, median: 35, p75: 60 },
+      "LTV/CAC Ratio": { p25: 2, median: 3, p75: 5 },
+      "CAC Payback": { p25: 18, median: 14, p75: 10 },
+    },
+    "SEED": {
+      "ARR Growth YoY": { p25: 70, median: 120, p75: 200 },
+      "Net Revenue Retention": { p25: 95, median: 110, p75: 130 },
+      "Gross Margin": { p25: 65, median: 75, p75: 85 },
+      "Burn Multiple": { p25: 1.2, median: 2, p75: 3 },
+      "Valuation Multiple": { p25: 15, median: 25, p75: 40 },
+      "LTV/CAC Ratio": { p25: 2, median: 3, p75: 5 },
+      "CAC Payback": { p25: 18, median: 14, p75: 10 },
+    },
+    "SERIES_A": {
+      "ARR Growth YoY": { p25: 50, median: 80, p75: 120 },
+      "Net Revenue Retention": { p25: 100, median: 115, p75: 140 },
+      "Gross Margin": { p25: 65, median: 75, p75: 85 },
+      "Burn Multiple": { p25: 1, median: 1.5, p75: 2.5 },
+      "Valuation Multiple": { p25: 10, median: 18, p75: 30 },
+      "LTV/CAC Ratio": { p25: 2.5, median: 3.5, p75: 6 },
+      "CAC Payback": { p25: 16, median: 12, p75: 8 },
+    },
+    "SERIES_B": {
+      "ARR Growth YoY": { p25: 40, median: 60, p75: 90 },
+      "Net Revenue Retention": { p25: 105, median: 120, p75: 150 },
+      "Gross Margin": { p25: 70, median: 78, p75: 85 },
+      "Burn Multiple": { p25: 0.8, median: 1.2, p75: 2 },
+      "Valuation Multiple": { p25: 8, median: 14, p75: 22 },
+      "LTV/CAC Ratio": { p25: 3, median: 4, p75: 7 },
+      "CAC Payback": { p25: 14, median: 10, p75: 6 },
+    },
+  },
+  "Fintech": {
+    "SEED": {
+      "ARR Growth YoY": { p25: 80, median: 130, p75: 200 },
+      "Net Revenue Retention": { p25: 95, median: 110, p75: 125 },
+      "Gross Margin": { p25: 35, median: 50, p75: 65 },
+      "Burn Multiple": { p25: 1.5, median: 2.5, p75: 4 },
+      "Valuation Multiple": { p25: 12, median: 20, p75: 35 },
+    },
+    "SERIES_A": {
+      "ARR Growth YoY": { p25: 60, median: 100, p75: 150 },
+      "Net Revenue Retention": { p25: 100, median: 115, p75: 135 },
+      "Gross Margin": { p25: 40, median: 55, p75: 70 },
+      "Burn Multiple": { p25: 1.2, median: 2, p75: 3 },
+      "Valuation Multiple": { p25: 8, median: 15, p75: 25 },
+    },
+  },
+  "Marketplace": {
+    "SEED": {
+      "ARR Growth YoY": { p25: 100, median: 180, p75: 300 },
+      "Take Rate": { p25: 8, median: 15, p75: 25 },
+      "Gross Margin": { p25: 15, median: 25, p75: 40 },
+      "Burn Multiple": { p25: 2, median: 3.5, p75: 6 },
+      "Valuation Multiple": { p25: 3, median: 5, p75: 10 },
+    },
+  },
+};
+
+/**
+ * Get fallback benchmark from hardcoded values
+ */
+function getFallbackBenchmark(
+  sector: string,
+  stage: string,
+  metric: string
+): { p25: number; median: number; p75: number; source: string } | null {
+  // Try exact match
+  const sectorData = FALLBACK_BENCHMARKS[sector];
+  if (sectorData) {
+    const stageData = sectorData[stage];
+    if (stageData && stageData[metric]) {
+      return { ...stageData[metric], source: "hardcoded_fallback" };
+    }
+    // Try SEED as fallback stage
+    if (sectorData["SEED"] && sectorData["SEED"][metric]) {
+      return { ...sectorData["SEED"][metric], source: "hardcoded_fallback:stage_SEED" };
+    }
+  }
+
+  // Try SaaS B2B as fallback sector
+  const saasData = FALLBACK_BENCHMARKS["SaaS B2B"];
+  if (saasData) {
+    const stageData = saasData[stage];
+    if (stageData && stageData[metric]) {
+      return { ...stageData[metric], source: "hardcoded_fallback:sector_SaaS" };
+    }
+    if (saasData["SEED"] && saasData["SEED"][metric]) {
+      return { ...saasData["SEED"][metric], source: "hardcoded_fallback:generic" };
+    }
+  }
+
+  return null;
+}
+
+// ============================================================================
 // SEARCH BENCHMARKS TOOL
 // ============================================================================
 
@@ -50,34 +156,87 @@ const searchBenchmarks: ToolDefinition = {
     try {
       const result = await benchmarkService.lookup(sector, stage, metric);
 
-      if (!result.found) {
+      if (result.found && result.benchmark) {
         return {
           success: true,
           data: {
-            found: false,
-            message: `No benchmark found for ${metric} in ${sector} at ${stage}`,
+            found: true,
+            exact: result.exact,
+            benchmark: result.benchmark,
+            fallbackUsed: result.fallbackUsed,
           },
           metadata: {
-            source: "benchmark_database",
-            confidence: 0,
+            source: result.benchmark.source ?? "benchmark_database",
+            confidence: result.exact ? 100 : 70,
           },
         };
       }
 
+      // Database didn't have it - try hardcoded fallback
+      const fallback = getFallbackBenchmark(sector, stage, metric);
+      if (fallback) {
+        return {
+          success: true,
+          data: {
+            found: true,
+            exact: false,
+            benchmark: {
+              sector,
+              stage,
+              metric,
+              p25: fallback.p25,
+              median: fallback.median,
+              p75: fallback.p75,
+              source: fallback.source,
+            },
+            fallbackUsed: fallback.source,
+          },
+          metadata: {
+            source: fallback.source,
+            confidence: 60, // Lower confidence for hardcoded fallbacks
+          },
+        };
+      }
+
+      // No fallback available
       return {
         success: true,
         data: {
-          found: true,
-          exact: result.exact,
-          benchmark: result.benchmark,
-          fallbackUsed: result.fallbackUsed,
+          found: false,
+          message: `No benchmark found for ${metric} in ${sector} at ${stage} (checked database and fallbacks)`,
         },
         metadata: {
-          source: result.benchmark?.source ?? "benchmark_database",
-          confidence: result.exact ? 100 : 70,
+          source: "benchmark_database",
+          confidence: 0,
         },
       };
     } catch (error) {
+      // On error, still try fallback
+      const fallback = getFallbackBenchmark(sector, stage, metric);
+      if (fallback) {
+        return {
+          success: true,
+          data: {
+            found: true,
+            exact: false,
+            benchmark: {
+              sector,
+              stage,
+              metric,
+              p25: fallback.p25,
+              median: fallback.median,
+              p75: fallback.p75,
+              source: fallback.source,
+            },
+            fallbackUsed: `error_fallback:${fallback.source}`,
+          },
+          metadata: {
+            source: fallback.source,
+            confidence: 50, // Even lower confidence when DB errored
+          },
+        };
+      }
+
       return {
         success: false,
         error: error instanceof Error ? error.message : "Benchmark lookup failed",
