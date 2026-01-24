@@ -48,6 +48,45 @@ export function getAnalysisTypeForPlan(plan: SubscriptionPlan): AnalysisTypeValu
   return PLAN_ANALYSIS_CONFIG[plan].analysisType;
 }
 
+// =============================================================================
+// FREE vs PRO DISPLAY LIMITS
+// Controls what FREE users see vs PRO users (with blur/teaser for rest)
+// =============================================================================
+
+export const FREE_DISPLAY_LIMITS = {
+  // Items shown before blur
+  strengths: 2,           // Points forts visibles
+  weaknesses: 2,          // Faiblesses visibles
+  redFlags: 2,            // Red flags visibles
+  devilsAdvocate: 2,      // Objections Devil's Advocate visibles
+  criticalQuestions: 3,   // Questions critiques visibles
+
+  // Items completely hidden (teaser only)
+  score: false,           // Score détaillé masqué
+  contradictions: false,  // Détails contradictions masqués (count only)
+  scenarios: false,       // Aucun scénario affiché
+  sectorExpert: false,    // Expert sectoriel masqué
+  memo: false,            // Memo masqué
+} as const;
+
+// PRO has unlimited access
+export const PRO_DISPLAY_LIMITS = {
+  strengths: Infinity,
+  weaknesses: Infinity,
+  redFlags: Infinity,
+  devilsAdvocate: Infinity,
+  criticalQuestions: Infinity,
+  score: true,
+  contradictions: true,
+  scenarios: true,
+  sectorExpert: true,
+  memo: true,
+} as const;
+
+export function getDisplayLimits(plan: SubscriptionPlan) {
+  return plan === "FREE" ? FREE_DISPLAY_LIMITS : PRO_DISPLAY_LIMITS;
+}
+
 // Agent lists for categorizing results
 export const TIER1_AGENTS = [
   "financial-auditor",

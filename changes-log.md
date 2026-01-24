@@ -2,6 +2,23 @@
 
 ---
 
+## 2026-01-25 20:45 - Fix Telegram /run command - APP_URL
+
+### Problème
+La commande `/run cleaner` créait le run en DB mais l'agent ne démarrait pas.
+`VERCEL_URL` retourne l'URL de preview, pas l'URL de production.
+
+### Solution
+Utiliser `APP_URL` (nouvelle variable) en priorité pour les appels internes.
+
+### Fichiers modifiés
+- `src/services/notifications/telegram-commands.ts` - Priorité à APP_URL pour baseUrl (3 endroits)
+
+### Action requise
+Ajouter sur Vercel: `APP_URL = https://angeldesk.vercel.app`
+
+---
+
 ## 2026-01-25 20:30 - Fix Telegram bot + Middleware + Vercel maxDuration
 
 ### Problème

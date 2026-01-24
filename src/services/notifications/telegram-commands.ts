@@ -178,9 +178,10 @@ async function handleRun(ctx: TelegramCommandContext): Promise<string> {
   })
 
   // Trigger the agent via internal API
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003'
+  const baseUrl = process.env.APP_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || process.env.NEXT_PUBLIC_APP_URL
+    || 'http://localhost:3003'
 
   const endpoint = `/api/cron/maintenance/${agent.replace('DB_', '').toLowerCase()}`
 
@@ -205,9 +206,10 @@ Je te notifierai quand ce sera terminé.
  */
 async function handleReport(_ctx: TelegramCommandContext): Promise<string> {
   // Trigger weekly report generation
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003'
+  const baseUrl = process.env.APP_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || process.env.NEXT_PUBLIC_APP_URL
+    || 'http://localhost:3003'
 
   try {
     const response = await fetch(`${baseUrl}/api/cron/maintenance/supervisor/weekly-report`, {
@@ -370,9 +372,10 @@ async function handleRetry(ctx: TelegramCommandContext): Promise<string> {
   })
 
   // Trigger the agent
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3003'
+  const baseUrl = process.env.APP_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || process.env.NEXT_PUBLIC_APP_URL
+    || 'http://localhost:3003'
 
   fetch(`${baseUrl}/api/cron/maintenance/${agent.replace('DB_', '').toLowerCase()}`, {
     method: 'POST',
