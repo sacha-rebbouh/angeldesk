@@ -15,7 +15,7 @@
     },
     {
       "path": "/api/cron/maintenance/supervisor/check",
-      "schedule": "0 5,8,10 * * *"
+      "schedule": "0 10 * * *"
     },
     {
       "path": "/api/cron/maintenance/supervisor/weekly-report",
