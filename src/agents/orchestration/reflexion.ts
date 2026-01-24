@@ -88,7 +88,7 @@ export class ReflexionEngine {
     const critiques: Critique[] = [];
     const improvements: Improvement[] = [];
     const dataRequests: DataRequest[] = [];
-    let currentResult = input.result;
+    const currentResult = input.result;
     let totalConfidenceChange = 0;
     let iteration = 0;
 

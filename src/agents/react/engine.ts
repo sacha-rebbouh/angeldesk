@@ -515,12 +515,13 @@ export class ReActEngine<TOutput> {
       // =====================================================================
       // PHASE 3: SYNTHESIS WITH MEMORY
       // =====================================================================
-      let { synthesis, cost: synthesisCost } = await this.synthesize(
+      const synthesisResult = await this.synthesize(
         context,
         steps,
         memory
       );
-      totalCost += synthesisCost;
+      let synthesis = synthesisResult.synthesis;
+      totalCost += synthesisResult.cost;
 
       // Self-critique if enabled and confidence below threshold
       let selfCritiqueResult: SelfCritiqueResult | undefined;

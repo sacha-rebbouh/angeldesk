@@ -327,7 +327,7 @@ export async function bulkInsertFundingRounds(
   options: { skipDuplicates?: boolean } = {}
 ): Promise<{ inserted: number; skipped: number; errors: number }> {
   let inserted = 0;
-  let skipped = 0;
+  const skipped = 0;
   let errors = 0;
 
   // Process in batches of 100

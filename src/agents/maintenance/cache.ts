@@ -307,7 +307,7 @@ export async function invalidateCache(
  */
 export async function invalidateCachePattern(pattern: string): Promise<number> {
   // This only clears memory cache - DB cache will expire naturally
-  let count = 0
+  const count = 0
 
   // Note: Map doesn't support pattern matching, so we iterate
   // In a real implementation, you might want to track keys by pattern

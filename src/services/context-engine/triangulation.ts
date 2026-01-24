@@ -311,7 +311,7 @@ function getMedian(values: number[]): number {
  */
 function calculateDataCoverage(input: TriangulationInput): number {
   let coverage = 0;
-  let total = 4;
+  const total = 4;
 
   if (input.deals && input.deals.length > 0) coverage += 1;
   if (input.competitors && input.competitors.length > 0) coverage += 1;

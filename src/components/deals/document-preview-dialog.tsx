@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback } from "react";
 import { Download, ExternalLink, FileSpreadsheet, X } from "lucide-react";
 import {
   Dialog,
@@ -27,19 +26,19 @@ export function DocumentPreviewDialog({
   onOpenChange,
   document,
 }: DocumentPreviewDialogProps) {
-  const handleDownload = useCallback(() => {
-    if (document?.storageUrl) {
-      window.open(document.storageUrl, "_blank");
-    }
-  }, [document?.storageUrl]);
-
-  const handleOpenNewTab = useCallback(() => {
-    if (document?.storageUrl) {
-      window.open(document.storageUrl, "_blank");
-    }
-  }, [document?.storageUrl]);
-
   if (!document) return null;
+
+  const handleDownload = () => {
+    if (document.storageUrl) {
+      window.open(document.storageUrl, "_blank");
+    }
+  };
+
+  const handleOpenNewTab = () => {
+    if (document.storageUrl) {
+      window.open(document.storageUrl, "_blank");
+    }
+  };
 
   const isPdf = document.mimeType === "application/pdf";
   const isImage = document.mimeType?.startsWith("image/");

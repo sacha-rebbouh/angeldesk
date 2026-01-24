@@ -365,7 +365,7 @@ function extractCompanyName(title: string): string | null {
   // Pattern 14: "Levée de fonds pour COMPANY" or "Tour de table pour COMPANY"
   const leveePourMatch = cleanTitle.match(/(?:levée|tour|round)[^]*?pour\s+([A-ZÀ-Ÿ][A-Za-zÀ-ÿ0-9\s\-&]+?)(?:,|\s+qui|\s*$)/i);
   if (leveePourMatch && leveePourMatch[1].length > 1 && leveePourMatch[1].length < 45) {
-    let company = leveePourMatch[1].trim();
+    const company = leveePourMatch[1].trim();
     if (!/^(les|des|le|la|une?|son|sa|ses|l')\s/i.test(company)) {
       return company;
     }

@@ -582,7 +582,7 @@ export function getMarketTrends(sector?: string): {
   byYear: Record<string, { count: number; totalAmount: number }>;
   topInvestors: { name: string; dealCount: number }[];
 } {
-  let deals = sector
+  const deals = sector
     ? RECENT_DEALS.filter(d => matchesSector(d.sector, sector))
     : RECENT_DEALS;
 

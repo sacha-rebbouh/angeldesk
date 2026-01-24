@@ -260,7 +260,7 @@ class BenchmarkService implements IBenchmarkService {
     const { p25, median, p75 } = benchmark;
 
     let percentile: number;
-    let interpolated = true;
+    const interpolated = true;
 
     // Handle edge cases
     if (value <= p25) {

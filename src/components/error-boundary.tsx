@@ -1,6 +1,7 @@
 "use client";
 
 import { Component, type ReactNode } from "react";
+import Link from "next/link";
 import { AlertTriangle, RefreshCw, Home, Bug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -139,10 +140,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                 asChild
                 className="flex items-center gap-1"
               >
-                <a href="/deals">
+                <Link href="/deals">
                   <Home className="h-3 w-3" />
                   Retour aux deals
-                </a>
+                </Link>
               </Button>
             )}
           </div>

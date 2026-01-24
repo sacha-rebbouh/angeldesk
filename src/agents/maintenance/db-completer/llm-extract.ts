@@ -161,7 +161,7 @@ async function extractWithChunking(
 
   logger.debug(`Processing ${chunks.length} chunks for "${companyName}"`)
 
-  let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+  const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
   const partialResults: LLMExtractionResult[] = []
 
   // Extraire de chaque chunk

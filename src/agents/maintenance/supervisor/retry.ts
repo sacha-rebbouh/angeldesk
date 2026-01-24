@@ -295,7 +295,6 @@ export async function triggerRetry(
   // Get parent run details
   let retryAttempt = 0
   let errors: AgentError[] = []
-  let strategy: RetryStrategy
 
   if (parentRunId) {
     const parentRun = await prisma.maintenanceRun.findUnique({
@@ -309,7 +308,7 @@ export async function triggerRetry(
   }
 
   // Analyze errors and get retry strategy
-  strategy = analyzeErrorsAndGetStrategy(errors, retryAttempt)
+  const strategy = analyzeErrorsAndGetStrategy(errors, retryAttempt)
 
   logger.info(`Retry strategy for ${agent}`, {
     attempt: retryAttempt,

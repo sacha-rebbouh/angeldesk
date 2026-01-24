@@ -435,7 +435,7 @@ export default function AdminUsersPage() {
       <Dialog open={!!editDialogUser} onOpenChange={() => setEditDialogUser(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Modifier l'utilisateur</DialogTitle>
+            <DialogTitle>Modifier l&apos;utilisateur</DialogTitle>
             <DialogDescription>
               {editDialogUser?.email}
             </DialogDescription>
@@ -517,7 +517,7 @@ export default function AdminUsersPage() {
       <Dialog open={!!deleteDialogUser} onOpenChange={() => setDeleteDialogUser(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Supprimer l'utilisateur</DialogTitle>
+            <DialogTitle>Supprimer l&apos;utilisateur</DialogTitle>
             <DialogDescription>
               Êtes-vous sûr de vouloir supprimer {deleteDialogUser?.email} ?
               Cette action est irréversible et supprimera également tous ses deals.

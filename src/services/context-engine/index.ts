@@ -879,7 +879,7 @@ function calculateCompleteness(data: {
   news: NewsArticle[];
 }): number {
   let score = 0;
-  let total = 4;
+  const total = 4;
 
   if (data.similarDeals.length > 0) score += 1;
   if (data.marketData) score += 1;
