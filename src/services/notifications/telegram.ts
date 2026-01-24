@@ -156,7 +156,7 @@ export async function notifyAgentStarted(
     ? scheduledTime.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
     : new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
 
-  const text = `ℹ️ *FULLINVEST Maintenance*
+  const text = `ℹ️ *Angel Desk Maintenance*
 
 🔄 ${agent} démarré
 📅 ${time}`
@@ -171,7 +171,7 @@ export async function notifyAgentCompleted(
   agent: string,
   stats: { itemsProcessed?: number; itemsCreated?: number; durationMs?: number; cost?: number }
 ): Promise<{ success: boolean; messageId?: number }> {
-  const parts = [`✅ *FULLINVEST Maintenance*`, '', `${agent} terminé`]
+  const parts = [`✅ *Angel Desk Maintenance*`, '', `${agent} terminé`]
 
   if (stats.itemsProcessed !== undefined) {
     parts.push(`📊 ${stats.itemsProcessed} items traités`)
@@ -201,7 +201,7 @@ export async function notifyAgentFailed(
   details?: SupervisorCheckDetails,
   retryDelayMs?: number
 ): Promise<{ success: boolean; messageId?: number }> {
-  const parts = [`⚠️ *FULLINVEST Maintenance*`, '', `${agent} a échoué`]
+  const parts = [`⚠️ *Angel Desk Maintenance*`, '', `${agent} a échoué`]
 
   // Add run info if available
   if (details?.runDurationMs) {
@@ -257,7 +257,7 @@ export async function notifyRetrySuccess(
   agent: string,
   stats: { itemsProcessed?: number; durationMs?: number }
 ): Promise<{ success: boolean; messageId?: number }> {
-  const parts = [`✅ *FULLINVEST Maintenance*`, '', `${agent} récupéré avec succès!`]
+  const parts = [`✅ *Angel Desk Maintenance*`, '', `${agent} récupéré avec succès!`]
 
   if (stats.itemsProcessed !== undefined) {
     parts.push(`📊 ${stats.itemsProcessed} items traités`)
@@ -402,7 +402,7 @@ export async function notifyWeeklyReport(report: {
       report.incidentDetails.map((i) => `• ${i.day}: ${i.agent} → ${i.result}`).join('\n')
   }
 
-  const text = `📊 *FULLINVEST - Rapport Hebdo*
+  const text = `📊 *Angel Desk - Rapport Hebdo*
 _Semaine du ${weekRange}_
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━

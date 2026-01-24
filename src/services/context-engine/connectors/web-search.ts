@@ -48,8 +48,8 @@ async function webSearch(query: string): Promise<string> {
     headers: {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://fullinvest.app",
-      "X-Title": "Fullinvest Context Engine",
+      "HTTP-Referer": "https://angeldesk.app",
+      "X-Title": "Angel Desk Context Engine",
     },
     body: JSON.stringify({
       model: SEARCH_MODEL,

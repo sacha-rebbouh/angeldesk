@@ -12,7 +12,6 @@
  * - Statistiques de hit/miss
  */
 
-import { prisma } from '@/lib/prisma'
 import { createLogger } from './utils'
 
 const logger = createLogger('CACHE')
@@ -341,54 +340,20 @@ function isPersistentType(keyType: CacheKeyType): boolean {
   return ['company_enrichment', 'article_parse', 'benchmark'].includes(keyType)
 }
 
-async function getFromDbCache<T>(key: string, ttlMs: number): Promise<T | null> {
-  try {
-    const cached = await prisma.cacheEntry.findUnique({
-      where: { key },
-    })
-
-    if (!cached) return null
-
-    // Check expiration
-    const age = Date.now() - cached.createdAt.getTime()
-    if (age > ttlMs) {
-      // Expired - delete and return null
-      await prisma.cacheEntry.delete({ where: { key } }).catch(() => {})
-      return null
-    }
-
-    return cached.value as T
-  } catch {
-    return null
-  }
+async function getFromDbCache<T>(_key: string, _ttlMs: number): Promise<T | null> {
+  // DB cache disabled - CacheEntry model not in schema
+  // Using memory cache only for now
+  return null
 }
 
-async function setToDbCache<T>(key: string, data: T, ttlMs: number): Promise<void> {
-  try {
-    await prisma.cacheEntry.upsert({
-      where: { key },
-      update: {
-        value: data as object,
-        expiresAt: new Date(Date.now() + ttlMs),
-      },
-      create: {
-        key,
-        value: data as object,
-        expiresAt: new Date(Date.now() + ttlMs),
-      },
-    })
-  } catch (error) {
-    // CacheEntry table might not exist yet
-    logger.debug(`DB cache write failed (table may not exist): ${key}`)
-  }
+async function setToDbCache<T>(_key: string, _data: T, _ttlMs: number): Promise<void> {
+  // DB cache disabled - CacheEntry model not in schema
+  // Using memory cache only for now
 }
 
-async function deleteFromDbCache(key: string): Promise<void> {
-  try {
-    await prisma.cacheEntry.delete({ where: { key } })
-  } catch {
-    // Ignore if not found
-  }
+async function deleteFromDbCache(_key: string): Promise<void> {
+  // DB cache disabled - CacheEntry model not in schema
+  // Using memory cache only for now
 }
 
 // ============================================================================

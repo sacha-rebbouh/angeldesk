@@ -52,7 +52,7 @@ export async function sendEmail(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'FULLINVEST <maintenance@fullinvest.io>',
+        from: 'Angel Desk <maintenance@angeldesk.app>',
         to: message.to,
         subject: message.subject,
         html: message.html,
@@ -269,7 +269,7 @@ export async function sendWeeklyReportEmail(report: {
     </div>
 
     <div class="footer">
-      <p>FULLINVEST - Système de Maintenance Automatisée</p>
+      <p>Angel Desk - Système de Maintenance Automatisée</p>
       <p style="font-size: 12px;">Ce rapport est généré automatiquement chaque lundi à 08:00</p>
     </div>
   </div>
@@ -278,7 +278,7 @@ export async function sendWeeklyReportEmail(report: {
 `
 
   const text = `
-FULLINVEST - Rapport Hebdomadaire
+Angel Desk - Rapport Hebdomadaire
 Semaine du ${weekRange}
 
 STATUT: ${report.overallStatus}
@@ -296,7 +296,7 @@ ${report.incidents.map((i) => `- ${formatDate(i.date)}: ${i.agent} - ${i.error}`
 COÛT: $${report.totalCost.toFixed(2)}
 `
 
-  return sendToAdmin(`[FULLINVEST] Rapport Hebdo - ${report.overallStatus}`, html, text)
+  return sendToAdmin(`[Angel Desk] Rapport Hebdo - ${report.overallStatus}`, html, text)
 }
 
 /**
@@ -339,7 +339,7 @@ export async function sendCriticalAlertEmail(alert: {
     </div>
 
     <p style="text-align: center; color: #6b7280; margin-top: 24px;">
-      FULLINVEST - Système de Maintenance Automatisée
+      Angel Desk - Système de Maintenance Automatisée
     </p>
   </div>
 </body>
@@ -347,7 +347,7 @@ export async function sendCriticalAlertEmail(alert: {
 `
 
   const text = `
-🚨 ALERTE CRITIQUE - FULLINVEST
+🚨 ALERTE CRITIQUE - Angel Desk
 
 ${alert.agent} a échoué après ${alert.attempts} tentatives.
 

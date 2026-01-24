@@ -1,4 +1,33 @@
-# Changes Log - FULLINVEST
+# Changes Log - Angel Desk
+
+---
+
+## 2026-01-25 10:00 - REBRAND: Fullinvest → Angel Desk
+
+### Fichiers modifiés (code)
+- `package.json` - name: "angeldesk"
+- `CLAUDE.md` - Titre projet
+- `src/app/globals.css` - Commentaire header
+- `src/lib/auth.ts` - Email dev local
+- `src/services/cache/index.ts` - Commentaire
+- `src/services/notifications/telegram.ts` - Messages bot
+- `src/services/notifications/telegram-commands.ts` - Aide bot
+- `src/services/notifications/email.ts` - From email + signatures
+- `src/services/context-engine/connectors/rss-funding.ts` - User-Agent
+- `src/services/context-engine/connectors/web-search.ts` - HTTP-Referer, X-Title
+- `src/services/context-engine/connectors/societe-com.ts` - User-Agent
+- `src/agents/maintenance/db-sourcer/llm-parser.ts` - HTTP-Referer, X-Title
+- `src/agents/maintenance/db-sourcer/sources/*.ts` - User-Agent (6 fichiers)
+- `src/agents/maintenance/db-completer/llm-extract.ts` - HTTP-Referer, X-Title
+
+### Fichiers modifiés (documentation)
+- `investor.md` - Titre, références produit
+- `ai-board.md` - Pricing section
+
+### Convention de nommage
+- Display: "Angel Desk" (avec espace)
+- Technique: "AngelDesk" ou "angeldesk" (sans espace)
+- URLs: angeldesk.app
 
 ---
 

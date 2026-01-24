@@ -1,5 +1,5 @@
 /**
- * Centralized Cache Manager for Fullinvest
+ * Centralized Cache Manager for Angel Desk
  *
  * Provides unified caching for:
  * - Context Engine enrichment data

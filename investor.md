@@ -1,4 +1,4 @@
-# FULLINVEST v5.0 - The Context-Aware AI Due Diligence Platform
+# Angel Desk v5.0 - The Context-Aware AI Due Diligence Platform
 
 > **La DD d'un fonds VC, accessible a un Business Angel solo.**
 > Pas d'equipe ? Pas de probleme. L'IA fait le travail d'un analyste senior.
@@ -33,7 +33,7 @@
 │                                                                                  │
 │   ─────────────────────────────────────────────────────────────────────────    │
 │                                                                                  │
-│   CE QUE FULLINVEST LEUR APPORTE                                               │
+│   CE QUE ANGEL DESK LEUR APPORTE                                               │
 │   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━                                                │
 │                                                                                  │
 │   ┌─────────────────────────────────────────────────────────────────────┐      │
@@ -117,11 +117,11 @@ Une plateforme de Due Diligence IA **pour Business Angels** qui :
 | **Temps pour DD** | 2-3h max | Plusieurs jours |
 | **Acces donnees** | Zero | PitchBook, Dealroom (20K€+/an) |
 | **Process** | Informel | Structure |
-| **Besoin de Fullinvest** | CRITIQUE | Nice-to-have |
+| **Besoin d'Angel Desk** | CRITIQUE | Nice-to-have |
 
 ## Pourquoi c'est different
 
-| BA sans Fullinvest | BA avec Fullinvest |
+| BA sans Angel Desk | BA avec Angel Desk |
 |-------------------|----------------|
 | "Ca a l'air bien, j'investis" | "Score 78/100, top 15% des deals similaires" |
 | Aucune idee si la valo est bonne | "85e percentile, 30% au-dessus du median" |
@@ -270,7 +270,7 @@ Une plateforme de Due Diligence IA **pour Business Angels** qui :
 | 1 jour consultant DD | 800-1500EUR | Analyse manuelle d'un deal |
 | Analyste junior/mois | 3-4K EUR | Ressource humaine temps partiel |
 | PitchBook/mois | ~1700EUR | Donnees marche uniquement |
-| **Fullinvest PRO** | **249EUR** | DD complete + AI Board + illimite |
+| **Angel Desk PRO** | **249EUR** | DD complete + AI Board + illimite |
 
 ### Implementation technique
 
@@ -1987,7 +1987,7 @@ interface PortfolioSynergies {
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           FULLINVEST ARCHITECTURE                                │
+│                           ANGEL DESK ARCHITECTURE                                │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                  │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
@@ -4249,7 +4249,7 @@ ONGOING ────────────────────────
 
 ```sql
 -- ═══════════════════════════════════════════════════════════════════════════
--- FULLINVEST v4.0 - COMPLETE SCHEMA
+-- ANGEL DESK v4.0 - COMPLETE SCHEMA
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- Extensions

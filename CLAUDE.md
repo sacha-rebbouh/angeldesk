@@ -1,4 +1,4 @@
-# FULLINVEST - Project Context
+# Angel Desk - Project Context
 
 ## Description
 Plateforme de Due Diligence IA **pour Business Angels** (95% de la cible).

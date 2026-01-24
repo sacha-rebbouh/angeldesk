@@ -173,8 +173,8 @@ async function extractWithLLM(content: string): Promise<{ result: ExtractionResu
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://fullinvest.app",
-        "X-Title": "FullInvest Test",
+        "HTTP-Referer": "https://angeldesk.app",
+        "X-Title": "Angel Desk Test",
       },
       body: JSON.stringify({
         model: CHEAP_MODEL,

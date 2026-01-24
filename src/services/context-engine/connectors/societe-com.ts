@@ -49,7 +49,7 @@ export interface SocieteComCompany {
 // ============================================================================
 
 const BASE_URL = "https://www.societe.com";
-const USER_AGENT = "Mozilla/5.0 (compatible; FullInvestBot/1.0; +https://fullinvest.com)";
+const USER_AGENT = "Mozilla/5.0 (compatible; AngelDeskBot/1.0; +https://angeldesk.app)";
 
 // Rate limiting: max 1 request per second
 let lastRequestTime = 0;

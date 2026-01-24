@@ -28,7 +28,7 @@ export async function fetchFrenchWeb(): Promise<ParsedFunding[]> {
         withTimeout(
           fetch(RSS_URL, {
             headers: {
-              'User-Agent': 'FULLINVEST Bot/1.0 (Funding Tracker)',
+              'User-Agent': 'AngelDesk Bot/1.0 (Funding Tracker)',
             },
           }).then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -117,7 +117,7 @@ async function fetchArticlePage(url: string): Promise<string | null> {
     const response = await withTimeout(
       fetch(url, {
         headers: {
-          'User-Agent': 'FULLINVEST Bot/1.0 (Funding Tracker)',
+          'User-Agent': 'AngelDesk Bot/1.0 (Funding Tracker)',
         },
       }),
       MAINTENANCE_CONSTANTS.SCRAPE_TIMEOUT_MS

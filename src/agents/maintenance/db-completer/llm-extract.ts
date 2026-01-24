@@ -317,8 +317,8 @@ async function callLLM(apiKey: string, userPrompt: string): Promise<LLMExtractio
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://fullinvest.io',
-      'X-Title': 'FULLINVEST DB Enrichment',
+      'HTTP-Referer': 'https://angeldesk.app',
+      'X-Title': 'Angel Desk DB Enrichment',
     },
     body: JSON.stringify({
       model: MODEL,
@@ -476,8 +476,8 @@ Return the fixed JSON:`
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://fullinvest.io',
-      'X-Title': 'FULLINVEST JSON Fix',
+      'HTTP-Referer': 'https://angeldesk.app',
+      'X-Title': 'Angel Desk JSON Fix',
     },
     body: JSON.stringify({
       model: MODEL,

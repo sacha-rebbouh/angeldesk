@@ -424,7 +424,7 @@ async function handleCancel(ctx: TelegramCommandContext): Promise<string> {
  * /help - Liste des commandes
  */
 async function handleHelp(_ctx: TelegramCommandContext): Promise<string> {
-  return `🤖 *FULLINVEST Maintenance Bot*
+  return `🤖 *Angel Desk Maintenance Bot*
 
 Commandes disponibles:
 

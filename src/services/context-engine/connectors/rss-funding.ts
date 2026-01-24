@@ -246,7 +246,7 @@ async function fetchRSS(url: string, timeoutMs: number = 5000): Promise<string |
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Fullinvest/1.0 (https://fullinvest.com; contact@fullinvest.com)",
+        "User-Agent": "AngelDesk/1.0 (https://angeldesk.app; contact@angeldesk.app)",
         Accept: "application/rss+xml, application/xml, text/xml",
       },
     });

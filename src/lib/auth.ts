@@ -7,7 +7,7 @@ const DEV_MODE = process.env.NODE_ENV === "development" && process.env.BYPASS_AU
 const DEV_USER = {
   id: "dev-user-001",
   clerkId: "dev-clerk-001",
-  email: "dev@fullinvest.local",
+  email: "dev@angeldesk.local",
   name: "Dev User",
   image: null,
   subscriptionStatus: "PRO" as const,

@@ -169,8 +169,8 @@ async function callLLM(apiKey: string, userPrompt: string): Promise<LLMFundingEx
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://fullinvest.io',
-      'X-Title': 'FULLINVEST DB Sourcer',
+      'HTTP-Referer': 'https://angeldesk.app',
+      'X-Title': 'Angel Desk DB Sourcer',
     },
     body: JSON.stringify({
       model: MODEL,
