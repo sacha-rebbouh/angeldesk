@@ -182,99 +182,92 @@ export async function runCleaner(options: CleanerOptions = {}): Promise<CleanerR
       }
     }
 
-    // Phase 3-8: Non-critical operations (can be batched in transaction)
-    // These are safe to run together as they don't have complex interdependencies
-    await prisma.$transaction(
-      async (tx) => {
-        // Step 3: Remove invalid entries
-        if (!skipPhases.includes('remove_invalid')) {
-          logger.info('Step 3: Removing invalid entries...')
-          try {
-            const invalidResult = await removeInvalidEntriesWithTx(tx)
-            details.invalidEntriesRemoved = invalidResult.removed
-            logger.info(`Removed ${invalidResult.removed} invalid entries`)
-          } catch (error) {
-            const err = createAgentError(error, { phase: 'remove_invalid' })
-            errors.push(err)
-            logger.error('Failed to remove invalid entries', { error: err.message })
-          }
-        }
+    // Phase 3-8: Non-critical operations (executed separately to avoid transaction timeout)
+    // Each step runs in its own short transaction for reliability with large datasets
 
-        // Step 4: Normalize countries
-        if (!skipPhases.includes('normalize_countries')) {
-          logger.info('Step 4: Normalizing countries...')
-          try {
-            const countryResult = await normalizeCountriesWithTx(tx)
-            details.countriesNormalized = countryResult.normalized
-            logger.info(`Normalized ${countryResult.normalized} countries`)
-          } catch (error) {
-            const err = createAgentError(error, { phase: 'normalize_countries' })
-            errors.push(err)
-            logger.error('Failed to normalize countries', { error: err.message })
-          }
-        }
-
-        // Step 5: Normalize stages
-        if (!skipPhases.includes('normalize_stages')) {
-          logger.info('Step 5: Normalizing funding stages...')
-          try {
-            const stageResult = await normalizeStagesWithTx(tx)
-            details.stagesNormalized = stageResult.normalized
-            logger.info(`Normalized ${stageResult.normalized} stages`)
-          } catch (error) {
-            const err = createAgentError(error, { phase: 'normalize_stages' })
-            errors.push(err)
-            logger.error('Failed to normalize stages', { error: err.message })
-          }
-        }
-
-        // Step 6: Normalize industries
-        if (!skipPhases.includes('normalize_industries')) {
-          logger.info('Step 6: Normalizing industries...')
-          try {
-            const industryResult = await normalizeIndustriesWithTx(tx)
-            details.industriesNormalized = industryResult.normalized
-            logger.info(`Normalized ${industryResult.normalized} industries`)
-          } catch (error) {
-            const err = createAgentError(error, { phase: 'normalize_industries' })
-            errors.push(err)
-            logger.error('Failed to normalize industries', { error: err.message })
-          }
-        }
-
-        // Step 7: Remove orphans
-        if (!skipPhases.includes('remove_orphans')) {
-          logger.info('Step 7: Removing orphaned records...')
-          try {
-            const orphanResult = await removeOrphansWithTx(tx)
-            details.orphansRemoved = orphanResult.removed
-            logger.info(`Removed ${orphanResult.removed} orphaned records`)
-          } catch (error) {
-            const err = createAgentError(error, { phase: 'remove_orphans' })
-            errors.push(err)
-            logger.error('Failed to remove orphans', { error: err.message })
-          }
-        }
-
-        // Step 8: Fix aberrant values
-        if (!skipPhases.includes('fix_aberrant')) {
-          logger.info('Step 8: Fixing aberrant values...')
-          try {
-            const aberrantResult = await fixAberrantValuesWithTx(tx)
-            details.aberrantValuesFixed = aberrantResult.fixed || 0
-            logger.info(`Fixed ${aberrantResult.fixed || 0} aberrant values`)
-          } catch (error) {
-            const err = createAgentError(error, { phase: 'fix_aberrant' })
-            errors.push(err)
-            logger.error('Failed to fix aberrant values', { error: err.message })
-          }
-        }
-      },
-      {
-        maxWait: TRANSACTION_TIMEOUT_MS,
-        timeout: TRANSACTION_TIMEOUT_MS,
+    // Step 3: Remove invalid entries
+    if (!skipPhases.includes('remove_invalid')) {
+      logger.info('Step 3: Removing invalid entries...')
+      try {
+        const invalidResult = await removeInvalidEntries()
+        details.invalidEntriesRemoved = invalidResult.removed
+        logger.info(`Removed ${invalidResult.removed} invalid entries`)
+      } catch (error) {
+        const err = createAgentError(error, { phase: 'remove_invalid' })
+        errors.push(err)
+        logger.error('Failed to remove invalid entries', { error: err.message })
       }
-    )
+    }
+
+    // Step 4: Normalize countries
+    if (!skipPhases.includes('normalize_countries')) {
+      logger.info('Step 4: Normalizing countries...')
+      try {
+        const countryResult = await normalizeAllCountries()
+        details.countriesNormalized = countryResult.normalized
+        logger.info(`Normalized ${countryResult.normalized} countries`)
+      } catch (error) {
+        const err = createAgentError(error, { phase: 'normalize_countries' })
+        errors.push(err)
+        logger.error('Failed to normalize countries', { error: err.message })
+      }
+    }
+
+    // Step 5: Normalize stages
+    if (!skipPhases.includes('normalize_stages')) {
+      logger.info('Step 5: Normalizing funding stages...')
+      try {
+        const stageResult = await normalizeAllStages()
+        details.stagesNormalized = stageResult.normalized
+        logger.info(`Normalized ${stageResult.normalized} stages`)
+      } catch (error) {
+        const err = createAgentError(error, { phase: 'normalize_stages' })
+        errors.push(err)
+        logger.error('Failed to normalize stages', { error: err.message })
+      }
+    }
+
+    // Step 6: Normalize industries
+    if (!skipPhases.includes('normalize_industries')) {
+      logger.info('Step 6: Normalizing industries...')
+      try {
+        const industryResult = await normalizeAllIndustries()
+        details.industriesNormalized = industryResult.normalized
+        logger.info(`Normalized ${industryResult.normalized} industries`)
+      } catch (error) {
+        const err = createAgentError(error, { phase: 'normalize_industries' })
+        errors.push(err)
+        logger.error('Failed to normalize industries', { error: err.message })
+      }
+    }
+
+    // Step 7: Remove orphans
+    if (!skipPhases.includes('remove_orphans')) {
+      logger.info('Step 7: Removing orphaned records...')
+      try {
+        const orphanResult = await removeOrphans()
+        details.orphansRemoved = orphanResult.removed
+        logger.info(`Removed ${orphanResult.removed} orphaned records`)
+      } catch (error) {
+        const err = createAgentError(error, { phase: 'remove_orphans' })
+        errors.push(err)
+        logger.error('Failed to remove orphans', { error: err.message })
+      }
+    }
+
+    // Step 8: Fix aberrant values
+    if (!skipPhases.includes('fix_aberrant')) {
+      logger.info('Step 8: Fixing aberrant values...')
+      try {
+        const aberrantResult = await fixAberrantValues()
+        details.aberrantValuesFixed = aberrantResult.fixed || 0
+        logger.info(`Fixed ${aberrantResult.fixed || 0} aberrant values`)
+      } catch (error) {
+        const err = createAgentError(error, { phase: 'fix_aberrant' })
+        errors.push(err)
+        logger.error('Failed to fix aberrant values', { error: err.message })
+      }
+    }
 
     // =========================================================================
     // FINALIZE
