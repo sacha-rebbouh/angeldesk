@@ -2,6 +2,39 @@
 
 ---
 
+## 2026-01-25 18:15 - REFACTOR: Inngest Multi-Step pour DB Sourcer
+
+### Problème
+Le DB Sourcer avec 17 sources (6 RSS + 11 paginées) timeout sur Vercel (60s max).
+
+### Solution: Multi-step Inngest
+Chaque source s'exécute dans son propre step Inngest, permettant:
+- Pas de timeout global (chaque step a sa propre limite)
+- Retry par source (si une source fail, les autres continuent)
+- Monitoring granulaire dans le dashboard Inngest
+
+### Fichiers modifiés
+- `src/agents/maintenance/db-sourcer/index.ts`:
+  - Export de `processLegacySource(sourceName)` et `processPaginatedSource(sourceName)`
+  - Export de `LEGACY_SOURCES` et `PAGINATED_SOURCES` pour Inngest
+  - Export de `finalizeSourcerRun()` pour agrégation finale
+  - Toutes les 11 sources paginées réactivées
+
+- `src/lib/inngest.ts`:
+  - `sourcerFunction` refactoré en multi-step:
+    - 1 step `create-run` pour créer l'enregistrement
+    - 1 step `mark-running` pour marquer le run
+    - 6 steps `legacy-*` pour les sources RSS
+    - 11 steps `paginated-*` pour les sources paginées
+    - 1 step `finalize` pour agréger les résultats
+    - 1 step `notify` pour Telegram
+
+### Sources actives (17 total)
+**Legacy RSS (6):** FrenchWeb, Maddyness, TechCrunch, EU-Startups, Sifted, Tech.eu
+**Paginées (11):** HackerNews, YCombinator, ProductHunt, Crunchbase, BPI France, GitHub Trending, Companies House UK, + 4 archives
+
+---
+
 ## 2026-01-25 17:30 - FEATURE: Massive Source Expansion + DeepSeek Router
 
 ### Sources ajoutées au DB Sourcer (11 nouvelles)

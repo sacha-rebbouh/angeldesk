@@ -6,10 +6,18 @@
 
 import { Inngest } from 'inngest'
 import { runCleaner } from '@/agents/maintenance/db-cleaner'
-import { runSourcer } from '@/agents/maintenance/db-sourcer'
+import {
+  LEGACY_SOURCES,
+  PAGINATED_SOURCES,
+  processLegacySource,
+  processPaginatedSource,
+  finalizeSourcerRun,
+  type SourceResult,
+} from '@/agents/maintenance/db-sourcer'
 import { runCompleter } from '@/agents/maintenance/db-completer'
 import { prisma } from '@/lib/prisma'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
+import type { SourceStats } from '@/agents/maintenance/types'
 
 // Create the Inngest client
 export const inngest = new Inngest({
@@ -78,16 +86,19 @@ export const cleanerFunction = inngest.createFunction(
 
 /**
  * DB_SOURCER - Scrappe les sources et importe les nouveaux deals
+ *
+ * MULTI-STEP: Chaque source est un step séparé pour éviter les timeouts
  */
 export const sourcerFunction = inngest.createFunction(
   {
     id: 'db-sourcer',
     name: 'DB Sourcer',
-    retries: 2,
+    retries: 1, // Don't retry the whole thing, individual steps will handle errors
   },
   { event: 'maintenance/sourcer.run' },
   async ({ event, step }) => {
     const { runId: existingRunId } = event.data as { runId?: string }
+    const startTime = Date.now()
 
     // Step 1: Create or get run record
     const runId = await step.run('create-run', async () => {
@@ -105,26 +116,81 @@ export const sourcerFunction = inngest.createFunction(
       return run.id
     })
 
-    // Step 2: Run the sourcer
-    const result = await step.run('run-sourcer', async () => {
-      return await runSourcer(runId)
+    // Mark as running
+    await step.run('mark-running', async () => {
+      await prisma.maintenanceRun.update({
+        where: { id: runId },
+        data: { status: 'RUNNING', startedAt: new Date() },
+      })
     })
 
-    // Step 3: Notify via Telegram
+    // Collect results from all sources
+    const results: SourceResult[] = []
+
+    // =========================================================================
+    // LEGACY RSS SOURCES (one step each)
+    // =========================================================================
+    for (const source of LEGACY_SOURCES.filter((s) => s.enabled)) {
+      const stats = await step.run(`legacy-${source.name}`, async () => {
+        try {
+          return await processLegacySource(source.name)
+        } catch (error) {
+          console.error(`[Inngest] Error processing ${source.name}:`, error)
+          return {
+            articlesFound: 0,
+            articlesParsed: 0,
+            newCompanies: 0,
+            newRounds: 0,
+            errors: 1,
+          } as SourceStats
+        }
+      })
+      results.push({ sourceName: source.name, stats })
+    }
+
+    // =========================================================================
+    // PAGINATED SOURCES (one step each)
+    // =========================================================================
+    for (const connector of PAGINATED_SOURCES) {
+      const stats = await step.run(`paginated-${connector.name}`, async () => {
+        try {
+          return await processPaginatedSource(connector.name)
+        } catch (error) {
+          console.error(`[Inngest] Error processing ${connector.name}:`, error)
+          return {
+            articlesFound: 0,
+            articlesParsed: 0,
+            newCompanies: 0,
+            newRounds: 0,
+            errors: 1,
+          } as SourceStats
+        }
+      })
+      results.push({ sourceName: connector.name, stats })
+    }
+
+    // =========================================================================
+    // FINALIZE
+    // =========================================================================
+    const finalResult = await step.run('finalize', async () => {
+      return await finalizeSourcerRun(runId, results, startTime)
+    })
+
+    // Notify via Telegram
     await step.run('notify', async () => {
-      if (result.status === 'COMPLETED' || result.status === 'PARTIAL') {
+      if (finalResult.status === 'COMPLETED' || finalResult.status === 'PARTIAL') {
         await notifyAgentCompleted('DB_SOURCER', {
-          itemsProcessed: result.itemsProcessed,
-          itemsCreated: result.itemsCreated,
-          durationMs: result.durationMs,
+          itemsProcessed: finalResult.itemsProcessed,
+          itemsCreated: finalResult.itemsCreated,
+          durationMs: finalResult.durationMs,
         })
       } else {
-        const errorMsg = result.errors?.[0]?.message || 'Unknown error'
+        const errorMsg = finalResult.errors?.[0]?.message || 'Unknown error'
         await notifyAgentFailed('DB_SOURCER', errorMsg, false)
       }
     })
 
-    return result
+    return finalResult
   }
 )
 
