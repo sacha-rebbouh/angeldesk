@@ -2,6 +2,76 @@
 
 ---
 
+## 2026-01-25 xx:xx - MAJOR: Context Engine BLINDÉ (Circuit Breaker + Parallel Fetch)
+
+### Problème
+Le Context Engine avait plusieurs faiblesses critiques:
+1. Appels SÉQUENTIELS aux connecteurs (lent)
+2. Pas de timeout par connecteur (un connecteur lent bloque tout)
+3. Pas de retry en cas d'échec transient
+4. Pas de circuit breaker (connecteurs défaillants appelés en boucle)
+5. `gatherMarketData` retournait seulement le PREMIER résultat (pas d'agrégation)
+6. Pas de tracking détaillé des sources
+
+### Solution
+Refactoring complet avec architecture robuste:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  TIER 1: INTERNAL DB (toujours dispo, 2s timeout)          │
+│  TIER 2: FAST APIs (5s timeout, 1 retry, circuit breaker)  │
+│  TIER 3: SLOW APIs (10s timeout, 2 retries, circuit breaker)│
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Fichiers créés
+- `src/services/context-engine/circuit-breaker.ts`
+  - Pattern circuit breaker (closed → open → half-open)
+  - 3 failures → circuit open pendant 60s
+  - Auto-recovery avec test requests
+
+- `src/services/context-engine/parallel-fetcher.ts`
+  - `fetchSimilarDealsParallel()` - timeout individuel par connecteur
+  - `fetchMarketDataParallel()` - AGRÈGE données de toutes les sources
+  - `fetchCompetitorsParallel()` - dedup + merge
+  - `fetchNewsParallel()` - sort par date
+  - Retry avec exponential backoff
+
+### Fichiers modifiés
+- `src/services/context-engine/index.ts`
+  - `computeDealContext()` utilise les nouveaux fetchers
+  - Logging détaillé: latence, succès/échecs, circuits ouverts
+  - Export `getConnectorHealthStatus()` pour monitoring
+  - Suppression des anciennes fonctions `gatherXxx()`
+
+### Configuration des connecteurs
+
+| Tier | Timeout | Retries | Circuit Breaker |
+|------|---------|---------|-----------------|
+| Internal (funding_db) | 2s | 0 | Non |
+| Fast (APIs, RSS) | 5s | 1 | Oui |
+| Slow (LinkedIn, Web Search) | 10s | 2 | Oui |
+
+### Comportement
+- Si un connecteur fail 3x → circuit OPEN pendant 60s
+- Après cooldown → circuit HALF-OPEN (test request)
+- 2 succès consécutifs → circuit CLOSED (récupéré)
+- Logs: `[CircuitBreaker] frenchweb_api: CLOSED → OPEN (3 failures)`
+
+### Métriques disponibles
+```typescript
+const health = getConnectorHealthStatus();
+// { frenchweb_api: { state: "open", failures: 3, ... } }
+```
+
+### Impact
+- Context Engine ne bloque plus sur un connecteur lent
+- Connecteurs défaillants isolés automatiquement
+- Agrégation market data = plus de benchmarks
+- Reliability tracking = on sait exactement ce qui a marché
+
+---
+
 ## 2026-01-26 01:30 - Intégration Inngest pour agents de maintenance
 
 ### Problème

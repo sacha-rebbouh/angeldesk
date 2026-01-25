@@ -57,14 +57,18 @@ export const cleanerFunction = inngest.createFunction(
 
     // Step 3: Notify via Telegram
     await step.run('notify', async () => {
+      console.log('[Inngest] Notify step - status:', result.status)
       if (result.status === 'COMPLETED' || result.status === 'PARTIAL') {
-        await notifyAgentCompleted('DB_CLEANER', {
+        const notifResult = await notifyAgentCompleted('DB_CLEANER', {
           itemsProcessed: result.itemsProcessed,
           durationMs: result.durationMs,
         })
+        console.log('[Inngest] Notification result:', notifResult)
+        return notifResult
       } else {
         const errorMsg = result.errors?.[0]?.message || 'Unknown error'
-        await notifyAgentFailed('DB_CLEANER', errorMsg, false)
+        const notifResult = await notifyAgentFailed('DB_CLEANER', errorMsg, false)
+        return notifResult
       }
     })
 

@@ -54,6 +54,17 @@ import { indeedConnector } from "./connectors/indeed";
 // Internal funding database (1,500+ deals)
 import { fundingDbConnector } from "./connectors/funding-db";
 import { getCacheManager } from "../cache";
+// Robust parallel fetching with circuit breaker and retry
+import {
+  fetchSimilarDealsParallel,
+  fetchMarketDataParallel,
+  fetchCompetitorsParallel,
+  fetchNewsParallel,
+  aggregateMetrics,
+  type FetchMetrics,
+  type ConnectorResult,
+} from "./parallel-fetcher";
+import { getCircuitStates } from "./circuit-breaker";
 
 // Cache TTLs
 const CONTEXT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes for deal context
@@ -239,30 +250,67 @@ export async function enrichDeal(
 
 /**
  * Internal: Actually compute the deal context (called on cache miss)
+ *
+ * ROBUST IMPLEMENTATION:
+ * - Parallel fetching with individual timeouts per connector
+ * - Circuit breaker prevents cascading failures
+ * - Retry with exponential backoff for transient errors
+ * - Detailed tracking of which sources succeeded/failed
  */
 async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
   const configuredConnectors = getConfiguredConnectors();
-  const sources: DataSource[] = [];
+  const startTime = Date.now();
 
-  // Gather data from all connectors in parallel
-  const [similarDeals, marketData, competitors, news] = await Promise.all([
-    gatherSimilarDeals(query, configuredConnectors),
-    gatherMarketData(query, configuredConnectors),
-    gatherCompetitors(query, configuredConnectors),
-    gatherNews(query, configuredConnectors),
+  console.log(`[ContextEngine] Computing context for: ${query.companyName || query.sector} (${configuredConnectors.length} connectors)`);
+
+  // =========================================================================
+  // PARALLEL FETCH WITH CIRCUIT BREAKER + RETRY + TIMEOUT
+  // =========================================================================
+  const [
+    { deals: similarDeals, results: dealsResults },
+    { marketData, results: marketResults },
+    { competitors, results: competitorResults },
+    { news, results: newsResults },
+  ] = await Promise.all([
+    fetchSimilarDealsParallel(query, configuredConnectors),
+    fetchMarketDataParallel(query, configuredConnectors),
+    fetchCompetitorsParallel(query, configuredConnectors),
+    fetchNewsParallel(query, configuredConnectors),
   ]);
 
-  // Track sources
-  for (const connector of configuredConnectors) {
-    sources.push({
-      type: connector.type,
-      name: connector.name,
-      retrievedAt: new Date().toISOString(),
-      confidence: 0.8,
-    });
+  // =========================================================================
+  // AGGREGATE METRICS
+  // =========================================================================
+  const allResults = [...dealsResults, ...marketResults, ...competitorResults, ...newsResults];
+  const metrics = aggregateMetrics(allResults);
+
+  // Build detailed sources tracking
+  const sources: DataSource[] = [];
+  const sourceResults: Record<string, { success: boolean; latencyMs: number; error?: string }> = {};
+
+  for (const result of allResults) {
+    sourceResults[result.connectorName] = {
+      success: result.success,
+      latencyMs: result.latencyMs,
+      error: result.error,
+    };
+
+    if (result.success) {
+      const connector = configuredConnectors.find((c) => c.name === result.connectorName);
+      if (connector) {
+        sources.push({
+          type: connector.type,
+          name: connector.name,
+          retrievedAt: new Date().toISOString(),
+          confidence: 0.85,
+        });
+      }
+    }
   }
 
-  // Calculate completeness
+  // =========================================================================
+  // CALCULATE COMPLETENESS (weighted by importance)
+  // =========================================================================
   const completeness = calculateCompleteness({
     similarDeals,
     marketData,
@@ -270,15 +318,48 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
     news,
   });
 
-  // Build deal intelligence from similar deals
+  // Calculate reliability (% of connectors that responded)
+  const reliability = metrics.totalConnectors > 0
+    ? metrics.successfulConnectors / metrics.totalConnectors
+    : 0;
+
+  // =========================================================================
+  // BUILD ENRICHED CONTEXT
+  // =========================================================================
   const dealIntelligence = similarDeals.length > 0
     ? buildDealIntelligence(similarDeals, query)
     : undefined;
 
-  // Build news sentiment
   const newsSentiment = news.length > 0
     ? buildNewsSentiment(news)
     : undefined;
+
+  const totalLatency = Date.now() - startTime;
+
+  // Log summary
+  console.log(
+    `[ContextEngine] DONE in ${totalLatency}ms | ` +
+    `Deals: ${similarDeals.length} | Competitors: ${competitors.length} | News: ${news.length} | ` +
+    `Connectors: ${metrics.successfulConnectors}/${metrics.totalConnectors} OK | ` +
+    `Completeness: ${(completeness * 100).toFixed(0)}% | Reliability: ${(reliability * 100).toFixed(0)}%`
+  );
+
+  // Log failed connectors for debugging
+  const failed = allResults.filter((r) => !r.success && !r.skipped);
+  if (failed.length > 0) {
+    console.log(
+      `[ContextEngine] Failed connectors: ${failed.map((r) => `${r.connectorName} (${r.error})`).join(", ")}`
+    );
+  }
+
+  // Log circuit breaker states
+  const circuits = getCircuitStates();
+  const openCircuits = Object.entries(circuits).filter(([, s]) => s.state === "open");
+  if (openCircuits.length > 0) {
+    console.log(
+      `[ContextEngine] Open circuits: ${openCircuits.map(([name]) => name).join(", ")}`
+    );
+  }
 
   return {
     dealIntelligence,
@@ -728,105 +809,25 @@ export function getContextEngineCacheStats() {
   return cache.getStats();
 }
 
+/**
+ * Get circuit breaker status for all connectors
+ * Useful for monitoring which connectors are healthy/failing
+ */
+export function getConnectorHealthStatus() {
+  return getCircuitStates();
+}
+
+/**
+ * Export circuit breaker controls for manual intervention
+ */
+export { resetCircuit, resetAllCircuits } from "./circuit-breaker";
+
 // ============================================================================
 // INTERNAL HELPERS
 // ============================================================================
 
-async function gatherSimilarDeals(
-  query: ConnectorQuery,
-  connectors: Connector[]
-): Promise<SimilarDeal[]> {
-  const results: SimilarDeal[] = [];
-
-  for (const connector of connectors) {
-    if (connector.searchSimilarDeals) {
-      try {
-        const deals = await connector.searchSimilarDeals(query);
-        results.push(...deals);
-      } catch (error) {
-        console.error(`Error fetching similar deals from ${connector.name}:`, error);
-      }
-    }
-  }
-
-  // Deduplicate by company name
-  const seen = new Set<string>();
-  return results.filter((deal) => {
-    const key = deal.companyName.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-async function gatherMarketData(
-  query: ConnectorQuery,
-  connectors: Connector[]
-): Promise<MarketData | null> {
-  for (const connector of connectors) {
-    if (connector.getMarketData) {
-      try {
-        const data = await connector.getMarketData(query);
-        if (data && (data.benchmarks.length > 0 || data.marketSize)) {
-          return data;
-        }
-      } catch (error) {
-        console.error(`Error fetching market data from ${connector.name}:`, error);
-      }
-    }
-  }
-  return null;
-}
-
-async function gatherCompetitors(
-  query: ConnectorQuery,
-  connectors: Connector[]
-): Promise<Competitor[]> {
-  const results: Competitor[] = [];
-
-  for (const connector of connectors) {
-    if (connector.getCompetitors) {
-      try {
-        const competitors = await connector.getCompetitors(query);
-        results.push(...competitors);
-      } catch (error) {
-        console.error(`Error fetching competitors from ${connector.name}:`, error);
-      }
-    }
-  }
-
-  // Deduplicate
-  const seen = new Set<string>();
-  return results.filter((c) => {
-    const key = c.name.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-async function gatherNews(
-  query: ConnectorQuery,
-  connectors: Connector[]
-): Promise<NewsArticle[]> {
-  const results: NewsArticle[] = [];
-
-  for (const connector of connectors) {
-    if (connector.getNews) {
-      try {
-        const news = await connector.getNews(query);
-        results.push(...news);
-      } catch (error) {
-        console.error(`Error fetching news from ${connector.name}:`, error);
-      }
-    }
-  }
-
-  // Sort by date, most recent first
-  return results.sort(
-    (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-  );
-}
+// NOTE: Old sequential gather functions removed in favor of parallel-fetcher.ts
+// which provides: circuit breaker, retry with backoff, individual timeouts
 
 function buildDealIntelligence(
   deals: SimilarDeal[],
