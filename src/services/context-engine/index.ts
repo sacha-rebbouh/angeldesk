@@ -660,7 +660,18 @@ async function fetchAndAnalyzeFounder(
     verificationStatus: profile.verificationStatus,
     // Extended data from analysis
     expertiseProfile: analysis?.expertise ? {
-      rawExperiences: analysis.expertise.rawExperiences,
+      rawExperiences: analysis.expertise.rawExperiences.map((exp: any) => ({
+        company: exp.company,
+        title: exp.title,
+        description: null,
+        durationMonths: exp.months,
+        startYear: exp.startYear ?? null,
+        endYear: exp.endYear ?? null,
+        isCurrent: exp.endYear === undefined,
+        detectedIndustries: exp.matchedIndustries,
+        detectedRoles: exp.matchedRoles,
+        detectedEcosystems: exp.matchedEcosystems,
+      })),
       totalCareerMonths: analysis.expertise.totalCareerMonths,
       industries: analysis.expertise.industries.map((i) => ({
         name: i.name,
@@ -697,14 +708,14 @@ async function fetchAndAnalyzeFounder(
         .map((c) => c.company),
       hasPreviousFounderExperience: profile.previousVentures.length > 0,
       previousVenturesCount: profile.previousVentures.length,
-      educationLevel: profile.education.length > 0 ? "degree" : "unknown",
+      educationLevel: profile.education.length > 0 ? "good" : "unknown",
       networkStrength: rawProfile.connections
         ? rawProfile.connections > 500
           ? "strong"
           : rawProfile.connections > 200
             ? "moderate"
             : "weak"
-        : "unknown",
+        : "weak",  // Default to weak if unknown
     },
   };
 
