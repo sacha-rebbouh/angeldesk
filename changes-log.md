@@ -2,6 +2,61 @@
 
 ---
 
+## 2026-01-25 18:45 - FIX: Telegram webhook désactivé après erreurs 405
+
+### Problème
+Le bot Telegram ne répondait plus aux commandes de l'utilisateur, mais répondait aux tests curl.
+
+### Cause
+Après les erreurs 405 (avant le fix du middleware), Telegram avait partiellement désactivé le webhook.
+
+### Solution
+Réenregistrement du webhook:
+```bash
+curl "https://api.telegram.org/bot${TOKEN}/deleteWebhook"
+curl "https://api.telegram.org/bot${TOKEN}/setWebhook?url=https://angeldesk.vercel.app/api/telegram/webhook"
+```
+
+### Fichiers modifiés
+- `src/app/api/telegram/webhook/route.ts` - Ajout de logging pour debug
+- `src/services/notifications/telegram-commands.ts` - Try-catch autour de inngest.send()
+
+---
+
+## 2026-01-25 22:30 - TOOL: Script de test complet pour tous les agents
+
+### Contexte
+Besoin de tester l'output de chaque agent individuellement pour évaluer leur qualité.
+
+### Fichier créé
+- `scripts/test-agent-workflow.ts`
+
+### Fonctionnalités
+- Test d'un agent spécifique: `--agent <name>`
+- Test d'un tier complet: `--tier <0|1|2|3>`
+- Analyse complète PRO: `--full`
+- AI Board en fin: `--board`
+- Mode ReAct: `--react`
+- Liste des agents: `--list`
+
+### Usage
+```bash
+npx tsx scripts/test-agent-workflow.ts --deal "NOM_DEAL" --list
+npx tsx scripts/test-agent-workflow.ts --deal "NOM_DEAL" --agent document-extractor
+npx tsx scripts/test-agent-workflow.ts --deal "NOM_DEAL" --tier 1
+npx tsx scripts/test-agent-workflow.ts --deal "NOM_DEAL" --full
+npx tsx scripts/test-agent-workflow.ts --deal "NOM_DEAL" --full --board
+```
+
+### Output
+- Affichage coloré dans le terminal
+- Temps d'exécution et coût par agent
+- Résumé des données extraites
+- Early warnings en temps réel
+- Détails JSON pour analyse approfondie
+
+---
+
 ## 2026-01-25 18:15 - REFACTOR: Inngest Multi-Step pour DB Sourcer
 
 ### Problème
