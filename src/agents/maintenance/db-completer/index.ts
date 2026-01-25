@@ -19,7 +19,7 @@ import type {
 import { MAINTENANCE_CONSTANTS } from '../types'
 import { createLogger, createAgentError, processBatch } from '../utils'
 import { selectCompaniesToEnrich, releaseEnrichmentLock, releaseAllLocksForRun } from './selector'
-import { searchCompany, getBraveCircuitStatus, getSearchMetrics, resetSearchMetrics } from './web-search'
+import { searchWithFallback, getBraveCircuitStatus, getSearchMetrics, resetSearchMetrics } from './web-search'
 import { scrapeUrls } from './scraper'
 import { extractWithLLM, type LLMExtractionResponse, getLLMCircuitStatus } from './llm-extract'
 import { validateAndUpdate } from './validator'
@@ -144,7 +144,7 @@ export async function runCompleter(runId?: string): Promise<CompleterResult> {
           logger.debug(`Processing ${index + 1}/${companies.length}: ${company.name}`)
 
           // 2a. Search for information
-          const searchResults = await searchCompany(company.name)
+          const searchResults = await searchWithFallback(company.name)
           webSearches++
 
           if (searchResults.length === 0) {
