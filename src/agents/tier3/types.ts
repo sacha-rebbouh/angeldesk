@@ -6,16 +6,17 @@
 import type { AgentResult } from "../types";
 
 // Sector categories and their matching patterns
+// Extended to cover more industries with intelligent mapping
 export const SECTOR_MAPPINGS: Record<SectorExpertType, string[]> = {
-  "saas-expert": ["SaaS", "B2B Software", "Enterprise Software", "Software"],
-  "marketplace-expert": ["Marketplace", "Platform", "Two-sided"],
-  "fintech-expert": ["Fintech", "Payments", "Banking", "Insurance", "Insurtech", "Lending"],
-  "healthtech-expert": ["HealthTech", "MedTech", "BioTech", "Healthcare", "Digital Health"],
-  "deeptech-expert": ["DeepTech", "AI/ML", "AI", "ML", "Quantum", "Blockchain", "Web3"],
-  "climate-expert": ["CleanTech", "Climate", "Energy", "Sustainability", "GreenTech"],
-  "hardware-expert": ["Hardware", "IoT", "Robotics", "Manufacturing", "Industrial"],
-  "gaming-expert": ["Gaming", "Esports", "Metaverse", "VR", "AR"],
-  "consumer-expert": ["Consumer", "D2C", "Social", "E-commerce", "Retail", "Food"],
+  "saas-expert": ["SaaS", "SaaS B2B", "SaaS B2C", "B2B Software", "Enterprise Software", "Software", "HRTech", "HR Tech", "LegalTech", "Legal Tech", "RegTech"],
+  "marketplace-expert": ["Marketplace", "Platform", "Two-sided", "PropTech", "Prop Tech", "Real Estate Tech"],
+  "fintech-expert": ["FinTech", "Payments", "Banking", "Insurance", "InsurTech", "Lending", "WealthTech", "Neobank"],
+  "healthtech-expert": ["HealthTech", "MedTech", "BioTech", "Healthcare", "Digital Health", "FemTech", "Mental Health"],
+  "deeptech-expert": ["DeepTech", "AI / Machine Learning", "AI/ML", "AI", "ML", "Machine Learning", "Quantum", "Blockchain / Web3", "Blockchain", "Web3", "Cybersecurity", "Cyber"],
+  "climate-expert": ["CleanTech", "Climate", "Energy", "Sustainability", "GreenTech", "AgriTech", "AgTech", "FoodTech", "Food Tech"],
+  "hardware-expert": ["Hardware", "Hardware / IoT", "IoT", "Robotics", "Manufacturing", "Industrial", "SpaceTech", "Space Tech", "Drones"],
+  "gaming-expert": ["Gaming", "Gaming / Esports", "Esports", "Metaverse", "VR", "AR", "Entertainment", "Media Tech"],
+  "consumer-expert": ["Consumer", "D2C", "Social", "E-commerce", "Retail", "Food", "EdTech", "Ed Tech", "Education", "Lifestyle"],
 };
 
 export type SectorExpertType =

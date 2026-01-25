@@ -224,6 +224,111 @@ export async function processAgentResult(
   if (!result.success) return;
 
   switch (agentName) {
+    case "document-extractor": {
+      // Update deal with extracted info (sector, company name, etc.)
+      const extractionData = result as AgentResult & {
+        data?: {
+          extractedInfo?: {
+            companyName?: string;
+            sector?: string;
+            stage?: string;
+            geography?: string;
+            tagline?: string;
+            arr?: number;
+            mrr?: number;
+            growthRateYoY?: number;
+            amountRaising?: number;
+            valuationPre?: number;
+            valuationPost?: number;
+            teamSize?: number;
+            productDescription?: string;
+          };
+        };
+      };
+
+      const info = extractionData.data?.extractedInfo;
+      if (info) {
+        const updateData: Record<string, unknown> = {};
+
+        // Only update fields that were extracted and are not already set
+        const deal = await prisma.deal.findUnique({
+          where: { id: dealId },
+          select: {
+            companyName: true,
+            sector: true,
+            stage: true,
+            geography: true,
+            description: true,
+            arr: true,
+            growthRate: true,
+            amountRequested: true,
+            valuationPre: true,
+          },
+        });
+
+        if (!deal) break;
+
+        // Update sector if extracted and current is "Autre" or empty
+        if (info.sector && (!deal.sector || deal.sector === "Autre")) {
+          updateData.sector = info.sector;
+        }
+
+        // Update company name if not set
+        if (info.companyName && !deal.companyName) {
+          updateData.companyName = info.companyName;
+        }
+
+        // Update stage if extracted (map to valid enum)
+        if (info.stage && !deal.stage) {
+          const stageMap: Record<string, string> = {
+            PRE_SEED: "PRE_SEED",
+            SEED: "SEED",
+            SERIES_A: "SERIES_A",
+            SERIES_B: "SERIES_B",
+            SERIES_C: "SERIES_C",
+            LATER: "LATER",
+          };
+          if (stageMap[info.stage]) {
+            updateData.stage = stageMap[info.stage];
+          }
+        }
+
+        // Update geography if not set
+        if (info.geography && !deal.geography) {
+          updateData.geography = info.geography;
+        }
+
+        // Update description/tagline if not set
+        if (info.tagline && !deal.description) {
+          updateData.description = info.tagline;
+        }
+
+        // Update financial metrics if not set
+        if (info.arr && !deal.arr) {
+          updateData.arr = info.arr;
+        }
+        if (info.growthRateYoY && !deal.growthRate) {
+          updateData.growthRate = info.growthRateYoY;
+        }
+        if (info.amountRaising && !deal.amountRequested) {
+          updateData.amountRequested = info.amountRaising;
+        }
+        if (info.valuationPre && !deal.valuationPre) {
+          updateData.valuationPre = info.valuationPre;
+        }
+
+        // Apply updates if any
+        if (Object.keys(updateData).length > 0) {
+          await prisma.deal.update({
+            where: { id: dealId },
+            data: updateData,
+          });
+          console.log(`[Persistence] Updated deal ${dealId} with extracted info:`, Object.keys(updateData));
+        }
+      }
+      break;
+    }
+
     case "red-flag-detector": {
       const rfResult = result as RedFlagResult;
       const redFlags = rfResult.data?.redFlags ?? [];

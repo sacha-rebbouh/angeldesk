@@ -37,6 +37,9 @@ const STAGES = [
 ];
 
 const SECTORS = [
+  "AI / Machine Learning",
+  "Blockchain / Web3",
+  "Cybersecurity",
   "FinTech",
   "HealthTech",
   "EdTech",
@@ -51,6 +54,9 @@ const SECTORS = [
   "InsurTech",
   "HRTech",
   "LegalTech",
+  "Gaming / Esports",
+  "Hardware / IoT",
+  "Consumer",
   "Autre",
 ];
 
@@ -60,6 +66,7 @@ interface CreateDealFormData {
   website: string;
   description: string;
   sector: string;
+  customSector: string;
   stage: string;
   geography: string;
   arr: string;
@@ -68,16 +75,32 @@ interface CreateDealFormData {
   valuationPre: string;
 }
 
+// Normalize website URL: add https:// if missing
+function normalizeWebsite(url: string): string {
+  if (!url) return url;
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  // If already has protocol, return as-is
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  // Add https:// prefix
+  return `https://${trimmed}`;
+}
+
 async function createDeal(data: CreateDealFormData) {
+  // Use customSector if "Autre" was selected
+  const effectiveSector = data.sector === "Autre" && data.customSector.trim()
+    ? data.customSector.trim()
+    : data.sector || undefined;
+
   const response = await fetch("/api/deals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name: data.name,
       companyName: data.companyName || undefined,
-      website: data.website || undefined,
+      website: normalizeWebsite(data.website) || undefined,
       description: data.description || undefined,
-      sector: data.sector || undefined,
+      sector: effectiveSector,
       stage: data.stage || undefined,
       geography: data.geography || undefined,
       arr: data.arr ? parseFloat(data.arr) : undefined,
@@ -109,6 +132,7 @@ export default function NewDealPage() {
     website: "",
     description: "",
     sector: "",
+    customSector: "",
     stage: "",
     geography: "",
     arr: "",
@@ -208,8 +232,8 @@ export default function NewDealPage() {
                 <Label htmlFor="website">Site web</Label>
                 <Input
                   id="website"
-                  type="url"
-                  placeholder="https://example.com"
+                  type="text"
+                  placeholder="example.com"
                   value={formData.website}
                   onChange={handleChange("website")}
                 />
@@ -253,6 +277,15 @@ export default function NewDealPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {formData.sector === "Autre" && (
+                  <Input
+                    id="customSector"
+                    placeholder="Précisez le secteur..."
+                    value={formData.customSector}
+                    onChange={handleChange("customSector")}
+                    className="mt-2"
+                  />
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="stage">Stade</Label>

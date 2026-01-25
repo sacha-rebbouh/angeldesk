@@ -244,6 +244,7 @@ function mergePartialResults(results: LLMExtractionResult[]): LLMExtractionResul
     }
     if (!base.founded_year && result.founded_year) base.founded_year = result.founded_year
     if (!base.website && result.website) base.website = result.website
+    if (!base.linkedin_url && result.linkedin_url) base.linkedin_url = result.linkedin_url
     if (!base.business_model && result.business_model) base.business_model = result.business_model
     if (!base.target_market && result.target_market) base.target_market = result.target_market
     if (!base.employees && result.employees) base.employees = result.employees
@@ -294,6 +295,7 @@ function calculateCompleteness(result: LLMExtractionResult): number {
     result.headquarters_country,
     result.founded_year,
     result.website,
+    result.linkedin_url,
     result.founders.length > 0,
     result.investors.length > 0,
     result.business_model,
@@ -527,6 +529,7 @@ function extractCriticalFieldsViaRegex(content: string): LLMExtractionResult | n
     competitors: [],
     notable_clients: [],
     website: null,
+    linkedin_url: null,
     is_profitable: null,
     confidence: 30, // Basse confidence pour extraction regex
     data_completeness: 0,
@@ -556,6 +559,12 @@ function extractCriticalFieldsViaRegex(content: string): LLMExtractionResult | n
     result.website = websiteMatch[1]
   }
 
+  // Extraire linkedin_url
+  const linkedinMatch = content.match(/"linkedin_url"\s*:\s*"(https?:\/\/(?:www\.)?linkedin\.com\/company\/[^"]+)"/i)
+  if (linkedinMatch) {
+    result.linkedin_url = linkedinMatch[1]
+  }
+
   // Extraire founded_year
   const yearMatch = content.match(/"founded_year"\s*:\s*(\d{4})/i)
   if (yearMatch) {
@@ -572,9 +581,9 @@ function extractCriticalFieldsViaRegex(content: string): LLMExtractionResult | n
   }
 
   // Calculer completeness
-  const filled = [result.industry, result.activity_status, result.description, result.website, result.founded_year]
+  const filled = [result.industry, result.activity_status, result.description, result.website, result.linkedin_url, result.founded_year]
     .filter(Boolean).length
-  result.data_completeness = Math.round((filled / 10) * 100)
+  result.data_completeness = Math.round((filled / 11) * 100)
 
   // Retourner seulement si on a extrait quelque chose d'utile
   if (result.industry || result.activity_status || result.description) {

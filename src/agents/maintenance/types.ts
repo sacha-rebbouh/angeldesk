@@ -302,6 +302,7 @@ export interface FieldUpdateStats {
   headquarters: number
   foundedYear: number
   website: number
+  linkedin: number
   competitors: number
   status: number
   employees: number
@@ -337,6 +338,7 @@ export interface LLMExtractionResult {
   competitors: string[]
   notable_clients: string[]
   website: string | null
+  linkedin_url: string | null
   is_profitable: boolean | null
   confidence: number // 0-100
   data_completeness: number // 0-100

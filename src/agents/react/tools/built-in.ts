@@ -9,6 +9,15 @@ import type { ToolDefinition, ToolContext, ToolResult } from "../types";
 import { toolRegistry } from "./registry";
 
 // ============================================================================
+// WEB SEARCH CONSTANTS
+// ============================================================================
+
+const SERPER_API_BASE = "https://google.serper.dev/search";
+const BRAVE_API_BASE = "https://api.search.brave.com/res/v1/web/search";
+const PERPLEXITY_MODEL = "perplexity/sonar";
+const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+
+// ============================================================================
 // FALLBACK BENCHMARKS (when database is empty)
 // ============================================================================
 
@@ -681,6 +690,259 @@ const calculateMetric: ToolDefinition = {
 };
 
 // ============================================================================
+// WEB SEARCH TOOL
+// ============================================================================
+
+interface SerperResult {
+  title: string;
+  snippet: string;
+  link: string;
+}
+
+interface BraveResult {
+  title: string;
+  description: string;
+  url: string;
+}
+
+/**
+ * Search using Serper.dev (Google results) - Primary
+ */
+async function searchSerper(query: string): Promise<{ title: string; snippet: string; url: string }[]> {
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const response = await fetch(SERPER_API_BASE, {
+      method: "POST",
+      headers: {
+        "X-API-KEY": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        q: query,
+        num: 8,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[webSearch] Serper error: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json() as { organic?: SerperResult[] };
+
+    if (!data.organic?.length) return [];
+
+    return data.organic.map((r) => ({
+      title: r.title,
+      snippet: r.snippet,
+      url: r.link,
+    }));
+  } catch (error) {
+    console.error("[webSearch] Serper failed:", error);
+    return [];
+  }
+}
+
+/**
+ * Search using Brave Search API - Fallback
+ */
+async function searchBrave(query: string): Promise<{ title: string; snippet: string; url: string }[]> {
+  const apiKey = process.env.BRAVE_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      count: "8",
+      safesearch: "moderate",
+    });
+
+    const response = await fetch(`${BRAVE_API_BASE}?${params}`, {
+      headers: {
+        Accept: "application/json",
+        "X-Subscription-Token": apiKey,
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`[webSearch] Brave error: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json() as { web?: { results: BraveResult[] } };
+
+    if (!data.web?.results) return [];
+
+    return data.web.results.map((r) => ({
+      title: r.title,
+      snippet: r.description,
+      url: r.url,
+    }));
+  } catch (error) {
+    console.error("[webSearch] Brave failed:", error);
+    return [];
+  }
+}
+
+/**
+ * Search using Perplexity via OpenRouter - For complex queries needing AI synthesis
+ */
+async function searchPerplexity(query: string): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) return "";
+
+  try {
+    const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://angeldesk.app",
+        "X-Title": "Angel Desk ReAct Agent",
+      },
+      body: JSON.stringify({
+        model: PERPLEXITY_MODEL,
+        messages: [{ role: "user", content: query }],
+        temperature: 0.1,
+        max_tokens: 2000,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[webSearch] Perplexity error: ${response.status}`);
+      return "";
+    }
+
+    const data = await response.json() as { choices?: { message: { content: string } }[] };
+    return data.choices?.[0]?.message?.content || "";
+  } catch (error) {
+    console.error("[webSearch] Perplexity failed:", error);
+    return "";
+  }
+}
+
+const webSearch: ToolDefinition = {
+  name: "webSearch",
+  description: `Search the web for real-time information. Use this to:
+- Verify claims made in pitch decks (market size, competitor info, founder backgrounds)
+- Find current information about companies, funding rounds, valuations
+- Research market trends and industry data
+- Validate founder credentials and previous experience
+- Find news and press about companies
+
+This tool uses Google (via Serper) as primary source, with Brave as fallback.
+For complex queries requiring AI synthesis, use mode: "perplexity".`,
+  parameters: [
+    {
+      name: "query",
+      type: "string",
+      description: "The search query. Be specific and include relevant keywords.",
+      required: true,
+    },
+    {
+      name: "mode",
+      type: "string",
+      description: "Search mode: 'fast' for quick Google/Brave results, 'perplexity' for AI-synthesized answers with citations",
+      required: false,
+      default: "fast",
+      enum: ["fast", "perplexity"],
+    },
+  ],
+  execute: async (
+    params: Record<string, unknown>,
+    _context: ToolContext
+  ): Promise<ToolResult> => {
+    const query = params.query as string;
+    const mode = (params.mode as string) ?? "fast";
+
+    if (!query || query.trim().length < 3) {
+      return {
+        success: false,
+        error: "Query must be at least 3 characters",
+      };
+    }
+
+    console.log(`[webSearch] Searching: "${query}" (mode: ${mode})`);
+
+    try {
+      if (mode === "perplexity") {
+        // Use Perplexity for AI-synthesized answers
+        const answer = await searchPerplexity(query);
+
+        if (!answer) {
+          return {
+            success: false,
+            error: "Perplexity search returned no results",
+          };
+        }
+
+        return {
+          success: true,
+          data: {
+            mode: "perplexity",
+            query,
+            answer,
+            resultCount: 1,
+          },
+          metadata: {
+            source: "perplexity",
+            confidence: 75,
+          },
+        };
+      }
+
+      // Fast mode: Serper → Brave fallback
+      let results = await searchSerper(query);
+      let source = "serper";
+
+      if (results.length === 0) {
+        console.log("[webSearch] Serper returned no results, trying Brave...");
+        results = await searchBrave(query);
+        source = "brave";
+      }
+
+      if (results.length === 0) {
+        return {
+          success: true,
+          data: {
+            mode: "fast",
+            query,
+            results: [],
+            resultCount: 0,
+            message: "No results found",
+          },
+          metadata: {
+            source: "none",
+            confidence: 0,
+          },
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          mode: "fast",
+          query,
+          results,
+          resultCount: results.length,
+        },
+        metadata: {
+          source,
+          confidence: 80,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Web search failed",
+      };
+    }
+  },
+};
+
+// ============================================================================
 // MEMORY TOOLS
 // ============================================================================
 
@@ -765,6 +1027,7 @@ export function registerBuiltInTools(): void {
   toolRegistry.register(analyzeSection);
   toolRegistry.register(crossReference);
   toolRegistry.register(calculateMetric);
+  toolRegistry.register(webSearch);
   toolRegistry.register(writeMemory);
   toolRegistry.register(readMemory);
 }
@@ -778,6 +1041,7 @@ export {
   analyzeSection,
   crossReference,
   calculateMetric,
+  webSearch,
   writeMemory,
   readMemory,
 };

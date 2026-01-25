@@ -271,6 +271,19 @@ export interface ConnectorQuery {
   productDescription?: string;
   /** Business model extracted from deck */
   businessModel?: string;
+
+  // ============================================================================
+  // USE CASE DATA (CRITICAL for competitor search)
+  // Competitors are found by WHAT the product does, not its tech stack
+  // ============================================================================
+  /** Product name (e.g., "Axiom", "Notion") */
+  productName?: string;
+  /** Core value proposition - the central concept */
+  coreValueProposition?: string;
+  /** Use cases addressed by the product - MOST IMPORTANT for finding real competitors */
+  useCases?: string[];
+  /** Key differentiators - unique competitive advantages */
+  keyDifferentiators?: string[];
 }
 
 export interface Connector {

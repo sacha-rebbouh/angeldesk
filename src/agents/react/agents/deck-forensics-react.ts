@@ -2,9 +2,9 @@
  * Deck Forensics Agent - ReAct Version
  *
  * Production-grade implementation using ReAct pattern for:
- * - Traceable narrative analysis
+ * - BA-focused forensic analysis (NOT deck improvement suggestions)
  * - Claim verification with evidence
- * - Reproducible quality scores (< 5 points variance)
+ * - Red flag detection for investment decisions
  */
 
 import { z } from "zod";
@@ -16,31 +16,63 @@ import { registerBuiltInTools } from "../tools/built-in";
 // Ensure built-in tools are registered
 registerBuiltInTools();
 
-// Output schema for Zod validation
+// Output schema for Zod validation - matches new BA-focused DeckForensicsData
 const DeckForensicsOutputSchema = z.object({
   narrativeAnalysis: z.object({
-    storyStrength: z.number().min(0).max(100),
-    logicalFlow: z.boolean(),
-    emotionalAppeal: z.number().min(0).max(100),
-    credibilitySignals: z.array(z.string()),
-    inconsistencies: z.array(z.string()),
+    storyCoherence: z.number().min(0).max(100),
+    credibilityAssessment: z.string(),
+    narrativeStrengths: z.array(z.string()),
+    narrativeWeaknesses: z.array(z.string()),
+    missingPieces: z.array(z.string()),
   }),
   claimVerification: z.array(
     z.object({
+      category: z.enum(["team", "market", "traction", "financials", "tech", "timing", "competition"]),
       claim: z.string(),
+      location: z.string(),
       status: z.enum(["verified", "unverified", "contradicted", "exaggerated"]),
-      evidence: z.string().optional(),
-      confidenceScore: z.number().min(0).max(100),
+      evidence: z.string(),
+      sourceUsed: z.string(),
+      investorConcern: z.string(),
     })
   ),
-  presentationQuality: z.object({
-    designScore: z.number().min(0).max(100),
-    clarityScore: z.number().min(0).max(100),
-    professionalismScore: z.number().min(0).max(100),
-    issues: z.array(z.string()),
+  inconsistencies: z.array(
+    z.object({
+      issue: z.string(),
+      location1: z.string(),
+      location2: z.string(),
+      quote1: z.string(),
+      quote2: z.string(),
+      severity: z.enum(["critical", "major", "minor"]),
+      investorImplication: z.string(),
+    })
+  ),
+  redFlags: z.array(
+    z.object({
+      category: z.enum(["credibility", "financials", "team", "market", "legal", "execution"]),
+      flag: z.string(),
+      location: z.string(),
+      quote: z.string().optional(),
+      externalData: z.string().optional(),
+      severity: z.enum(["critical", "high", "medium"]),
+      investorConcern: z.string(),
+    })
+  ),
+  questionsForFounder: z.array(
+    z.object({
+      category: z.enum(["story_gaps", "claims", "omissions", "contradictions", "verification"]),
+      question: z.string(),
+      context: z.string(),
+      expectedAnswer: z.string().optional(),
+      redFlagIfNo: z.string().optional(),
+    })
+  ),
+  overallAssessment: z.object({
+    credibilityScore: z.number().min(0).max(100),
+    summary: z.string(),
+    trustLevel: z.enum(["high", "moderate", "low", "very_low"]),
+    keyTakeaways: z.array(z.string()),
   }),
-  redFlags: z.array(z.string()),
-  overallAssessment: z.string(),
 });
 
 type DeckForensicsOutput = z.infer<typeof DeckForensicsOutputSchema>;
@@ -61,30 +93,81 @@ function buildPrompts(
   );
 
   return {
-    system: `You are a senior VC analyst specializing in pitch deck forensics and narrative analysis.
+    system: `Tu es un analyste forensique de pitch decks avec 20+ ans d'experience VC.
 
-Your role is to:
-1. Analyze the narrative structure and story strength
-2. Verify specific claims against available data
-3. Assess presentation quality and professionalism
-4. Identify logical inconsistencies and red flags
-5. Evaluate emotional appeal and investor readiness
+TON ROLE: Produire une analyse EXHAUSTIVE pour aider un Business Angel a evaluer ce deal.
+Tu dois etre METHODIQUE et COMPLET - pas de survol superficiel.
 
-CRITICAL RULES:
-- ALWAYS use analyzeSection to examine specific sections of the deck
-- ALWAYS use crossReference to verify claims against Context Engine data
-- NEVER accept claims without attempting verification
-- Red flags must be specific with evidence
-- Scores must be deterministic and reproducible
+IMPORTANT: Tu analyses pour un INVESTISSEUR qui doit decider d'investir ou non.
+PAS de conseils pour ameliorer le deck - uniquement de l'investigation.
 
-SCORING CRITERIA:
-- 80-100: Exceptional deck - compelling story, verified claims, professional
-- 60-79: Strong deck - good narrative, some gaps in verification
-- 40-59: Average deck - mediocre story, several unverified claims
-- 20-39: Weak deck - poor narrative, many red flags
-- 0-19: Critical issues - misleading claims, unprofessional`,
+═══════════════════════════════════════════════════════════════
+TOOLS DISPONIBLES - UTILISE-LES SYSTEMATIQUEMENT
+═══════════════════════════════════════════════════════════════
 
-    taskDescription: `Perform a comprehensive forensic analysis of this pitch deck:
+1. **webSearch** - CRITIQUE pour verifier les claims:
+   - Fondateur dit "ex-Google 5 ans"? → webSearch("Jean Dupont LinkedIn Google")
+   - TAM de 50Md€? → webSearch("cybersecurity market size 2024 TAM Gartner")
+   - Concurrent XYZ? → webSearch("XYZ startup funding valuation")
+   - News sur la startup? → webSearch("Antiopea startup news funding")
+
+2. **searchBenchmarks** - Pour les metriques:
+   - ARR Growth, NRR, Burn Multiple, LTV/CAC par secteur/stage
+
+3. **crossReference** - Pour comparer sources:
+   - Le deck dit X, le Context Engine dit Y → contradiction?
+
+4. **calculateMetric** - Pour les calculs:
+   - LTV/CAC, Burn Multiple, Runway, etc.
+
+═══════════════════════════════════════════════════════════════
+METHODOLOGIE D'ANALYSE
+═══════════════════════════════════════════════════════════════
+
+1. CLAIMS A VERIFIER (minimum 8, couvrir TOUTES les categories):
+   Pour CHAQUE claim, utilise webSearch pour verifier:
+   - TEAM: webSearch("[nom fondateur] LinkedIn experience")
+   - MARKET: webSearch("[secteur] market size TAM 2024")
+   - TRACTION: webSearch("[nom startup] clients customers")
+   - FINANCIALS: Compare aux benchmarks avec searchBenchmarks
+   - TECH: webSearch("[technologie] patents [startup]")
+   - TIMING: webSearch("[secteur] market trends 2024")
+   - COMPETITION: webSearch("[concurrent mentionne] funding revenue")
+
+2. RED FLAGS A CHERCHER (minimum 5):
+   - Chiffres trop ronds (10M€, 50%, 100K users)
+   - Projections hockey stick sans base
+   - Experience team non verifiable (webSearch pour confirmer!)
+   - Marche gonfle ou mal defini (webSearch pour valider TAM!)
+   - Traction vague ("plusieurs clients", "croissance forte")
+   - Absence totale de certaines infos critiques
+   - Comparaisons flatteuses mais biaisees ("le Uber de...")
+   - Claims sans source
+   - Incoherences entre slides
+
+3. INCONSISTANCES (chercher activement):
+   - Slide X dit Y, mais slide Z dit le contraire
+   - Chiffres qui ne s'additionnent pas
+   - Timeline incoherente
+   - Claims contradictoires
+
+4. QUESTIONS POUR LE FONDATEUR (minimum 8):
+   Pour chaque trou dans l'histoire, claim suspect, ou zone d'ombre:
+   - Formuler une question precise
+   - Expliquer pourquoi elle est importante
+   - Decrire ce qu'un bon fondateur devrait repondre
+   - Identifier le red flag si mauvaise reponse
+
+═══════════════════════════════════════════════════════════════
+REGLES CRITIQUES
+═══════════════════════════════════════════════════════════════
+- Tu DOIS utiliser webSearch pour AU MOINS 5 claims
+- Tu DOIS citer les sources de tes verifications
+- Une analyse sans recherche web est INACCEPTABLE
+- Cite les LOCATIONS exactes (Slide X, Document Y)
+- Sois SPECIFIQUE, pas generique`,
+
+    taskDescription: `ANALYSE FORENSIQUE APPROFONDIE de ce pitch deck:
 
 ## Deal Information
 - Company: ${deal.companyName ?? deal.name}
@@ -103,47 +186,84 @@ ${JSON.stringify(extractedInfo, null, 2)}
 - Competitive Landscape: ${context.contextEngine?.competitiveLandscape ? "Yes" : "No"}
 
 ## Your Tasks
-1. Use analyzeSection to evaluate narrative structure and flow
-2. Use crossReference to verify specific claims (e.g., market size, traction, team)
-3. Identify all inconsistencies between sections
-4. Assess presentation quality
-5. Generate specific red flags with evidence
+1. Use webSearch to verify at least 8 claims across all categories:
+   - webSearch founder backgrounds, market size claims, competitor info
+   - Document what you found vs what the deck claims
+2. Identify at least 5 red flags with specific evidence from your searches
+3. Find inconsistencies between different parts of the deck
+4. Generate at least 8 questions for the founder
 
-Produce a complete deck forensics report.`,
+PROCESSUS OBLIGATOIRE:
+1. Lis le deck et identifie les claims verifiables
+2. Pour CHAQUE claim important, fais une webSearch pour verifier
+3. Compare le resultat de la recherche avec le claim du deck
+4. Si discrepance → RED FLAG
+5. Genere des questions sur les points non verifiables
+
+RAPPEL: Une analyse SANS recherche web est INACCEPTABLE. Tu DOIS faire des webSearch.`,
 
     availableTools: "",
 
     outputSchema: `{
   "narrativeAnalysis": {
-    "storyStrength": 0-100 (how compelling is the story),
-    "logicalFlow": boolean (does the narrative flow logically),
-    "emotionalAppeal": 0-100 (investor engagement level),
-    "credibilitySignals": ["specific signal like 'Named customers'"],
-    "inconsistencies": ["specific inconsistency with evidence"]
+    "storyCoherence": 0-100,
+    "credibilityAssessment": "Evaluation DETAILLEE en 4-5 phrases",
+    "narrativeStrengths": ["Points forts SPECIFIQUES avec references"],
+    "narrativeWeaknesses": ["Faiblesses SPECIFIQUES avec references"],
+    "missingPieces": ["Info CRITIQUE absente - etre precis"]
   },
   "claimVerification": [{
-    "claim": "Specific claim from deck",
+    "category": "team|market|traction|financials|tech|timing|competition",
+    "claim": "Citation EXACTE du deck",
+    "location": "Slide X ou Document Y",
     "status": "verified|unverified|contradicted|exaggerated",
-    "evidence": "Evidence for verification status",
-    "confidenceScore": 0-100
+    "evidence": "POURQUOI ce status - etre precis",
+    "sourceUsed": "Context Engine, Statista, calcul, etc.",
+    "investorConcern": "Impact sur la decision d'investissement"
   }],
-  "presentationQuality": {
-    "designScore": 0-100,
-    "clarityScore": 0-100,
-    "professionalismScore": 0-100,
-    "issues": ["specific issue like 'Typos on slide 3'"]
-  },
-  "redFlags": ["Specific red flag with evidence"],
-  "overallAssessment": "Summary assessment of deck quality"
+  "inconsistencies": [{
+    "issue": "Description PRECISE de l'inconsistance",
+    "location1": "Slide X",
+    "location2": "Slide Y",
+    "quote1": "Citation EXACTE 1",
+    "quote2": "Citation EXACTE 2 (contradictoire)",
+    "severity": "critical|major|minor",
+    "investorImplication": "Ce que ca signifie pour le BA"
+  }],
+  "redFlags": [{
+    "category": "credibility|financials|team|market|legal|execution",
+    "flag": "Nom du red flag",
+    "location": "Slide X",
+    "quote": "Citation EXACTE du deck",
+    "externalData": "Donnee Context Engine qui contredit (si dispo)",
+    "severity": "critical|high|medium",
+    "investorConcern": "Pourquoi c'est un probleme"
+  }],
+  "questionsForFounder": [{
+    "category": "story_gaps|claims|omissions|contradictions|verification",
+    "question": "Question PRECISE a poser",
+    "context": "Pourquoi cette question est critique",
+    "expectedAnswer": "Ce qu'un bon fondateur devrait repondre",
+    "redFlagIfNo": "Signal d'alarme si mauvaise reponse"
+  }],
+  "overallAssessment": {
+    "credibilityScore": 0-100,
+    "summary": "Resume en 5-6 phrases: verdict global pour le BA",
+    "trustLevel": "high|moderate|low|very_low",
+    "keyTakeaways": ["5-7 points essentiels pour la decision"]
+  }
 }`,
 
     constraints: [
-      "MUST analyze each major claim for verification",
-      "MUST use crossReference for any verifiable claim",
+      "MUST use webSearch for AT LEAST 5 different verifications (founders, market, competitors, etc.)",
+      "MUST verify at least 8 claims across all categories",
+      "MUST identify at least 5 red flags with evidence from webSearch",
+      "MUST generate at least 8 questions for founder",
+      "MUST cite the source of each verification (webSearch result, Context Engine, etc.)",
       "Inconsistencies must cite specific conflicting statements",
-      "Red flags must include specific evidence",
-      "Design score based on clarity, not aesthetics alone",
-      "Unverifiable claims should be flagged, not assumed true",
+      "Focus on investor decision-making, NOT deck improvement",
+      "Every finding must include investorConcern or investorImplication",
+      "An analysis without webSearch calls is INCOMPLETE and UNACCEPTABLE",
     ],
   };
 }
@@ -168,13 +288,14 @@ export class DeckForensicsReAct {
     const prompts = buildPrompts(context, extractedInfo);
 
     // Create ReAct engine
+    // More iterations = more webSearch calls = better verification
     const engine = createReActEngine<DeckForensicsOutput>(
       prompts,
       DeckForensicsOutputSchema,
       {
-        maxIterations: 4,
-        minIterations: 2,
-        confidenceThreshold: 75,
+        maxIterations: 8,  // Allow up to 8 iterations for thorough verification
+        minIterations: 5,  // Force at least 5 iterations (5+ webSearch calls)
+        confidenceThreshold: 85,  // Higher threshold = more thorough analysis
         enableSelfCritique: true,
         modelComplexity: "complex",
       }
@@ -255,21 +376,28 @@ export class DeckForensicsReAct {
   private getDefaultData(): DeckForensicsData {
     return {
       narrativeAnalysis: {
-        storyStrength: 0,
-        logicalFlow: false,
-        emotionalAppeal: 0,
-        credibilitySignals: [],
-        inconsistencies: ["Analysis failed"],
+        storyCoherence: 0,
+        credibilityAssessment: "Analysis failed",
+        narrativeStrengths: [],
+        narrativeWeaknesses: [],
+        missingPieces: ["Analysis could not be completed"],
       },
       claimVerification: [],
-      presentationQuality: {
-        designScore: 0,
-        clarityScore: 0,
-        professionalismScore: 0,
-        issues: ["Analysis failed"],
+      inconsistencies: [],
+      redFlags: [{
+        category: "credibility",
+        flag: "Deck forensics could not be completed",
+        location: "N/A",
+        severity: "critical",
+        investorConcern: "Unable to verify any claims",
+      }],
+      questionsForFounder: [],
+      overallAssessment: {
+        credibilityScore: 0,
+        summary: "Analysis failed - unable to complete forensic review",
+        trustLevel: "very_low",
+        keyTakeaways: ["Analysis could not be completed"],
       },
-      redFlags: ["Deck forensics could not be completed"],
-      overallAssessment: "Analysis failed",
     };
   }
 }

@@ -108,6 +108,7 @@ RÈGLES:
 2. INDUSTRIE - Catégories: Software/Tech, FinTech, Health, Commerce, Marketing/Sales, HR/Work, Real Estate, Transport/Logistics, Sustainability, Other
 3. IA comme outil ≠ "AI Pure-Play" - Classer dans le secteur du produit
 4. STATUT - Chercher indices: shutdown, acquisition, pivot
+5. URLs - Extraire le site officiel (pas les articles) et le profil LinkedIn company
 
 FORMAT JSON (pas de markdown):
 {
@@ -130,7 +131,8 @@ FORMAT JSON (pas de markdown):
   "investors": ["string"],
   "competitors": ["string"],
   "notable_clients": ["string"],
-  "website": "string|null",
+  "website": "string|null (site officiel, ex: https://company.com)",
+  "linkedin_url": "string|null (https://linkedin.com/company/xxx)",
   "is_profitable": boolean|null,
   "confidence": 0-100,
   "data_completeness": 0-100

@@ -63,7 +63,7 @@ export function emptyBatchStats(): CompleterBatchStats {
     totalCompleteness: 0,
     fieldsUpdated: {
       industry: 0, description: 0, founders: 0, investors: 0,
-      headquarters: 0, foundedYear: 0, website: 0, competitors: 0,
+      headquarters: 0, foundedYear: 0, website: 0, linkedin: 0, competitors: 0,
       status: 0, employees: 0,
     },
     activityStatusBreakdown: {
@@ -91,7 +91,7 @@ export async function processCompleterBatch(batchNumber: number): Promise<Comple
     totalCompleteness: 0,
     fieldsUpdated: {
       industry: 0, description: 0, founders: 0, investors: 0,
-      headquarters: 0, foundedYear: 0, website: 0, competitors: 0,
+      headquarters: 0, foundedYear: 0, website: 0, linkedin: 0, competitors: 0,
       status: 0, employees: 0,
     },
     activityStatusBreakdown: {
@@ -255,6 +255,7 @@ export async function finalizeCompleterRun(
         headquarters: acc.fieldsUpdated.headquarters + batch.fieldsUpdated.headquarters,
         foundedYear: acc.fieldsUpdated.foundedYear + batch.fieldsUpdated.foundedYear,
         website: acc.fieldsUpdated.website + batch.fieldsUpdated.website,
+        linkedin: acc.fieldsUpdated.linkedin + batch.fieldsUpdated.linkedin,
         competitors: acc.fieldsUpdated.competitors + batch.fieldsUpdated.competitors,
         status: acc.fieldsUpdated.status + batch.fieldsUpdated.status,
         employees: acc.fieldsUpdated.employees + batch.fieldsUpdated.employees,
@@ -281,7 +282,7 @@ export async function finalizeCompleterRun(
       totalCompleteness: 0,
       fieldsUpdated: {
         industry: 0, description: 0, founders: 0, investors: 0,
-        headquarters: 0, foundedYear: 0, website: 0, competitors: 0,
+        headquarters: 0, foundedYear: 0, website: 0, linkedin: 0, competitors: 0,
         status: 0, employees: 0,
       },
       activityStatusBreakdown: {
@@ -383,6 +384,7 @@ export async function runCompleter(runId?: string): Promise<CompleterResult> {
     headquarters: 0,
     foundedYear: 0,
     website: 0,
+    linkedin: 0,
     competitors: 0,
     status: 0,
     employees: 0,

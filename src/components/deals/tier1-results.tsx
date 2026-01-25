@@ -165,7 +165,15 @@ const ReActTracePanel = memo(function ReActTracePanel({
 });
 
 
-// Financial Auditor Card
+// Format number with K/M suffix
+function formatAmount(value: number | undefined | null): string {
+  if (value == null) return "N/A";
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M€`;
+  if (value >= 1000) return `${(value / 1000).toFixed(0)}K€`;
+  return `${value.toFixed(0)}€`;
+}
+
+// Financial Auditor Card - Rich display
 const FinancialAuditCard = memo(function FinancialAuditCard({
   data,
   reactData,
@@ -175,78 +183,272 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
   reactData?: ReActMetadata;
   onShowTrace?: () => void;
 }) {
+  // Separate metrics by status
+  const availableMetrics = data.metricsAnalysis.filter(m => m.status === "available");
+  const missingMetrics = data.metricsAnalysis.filter(m => m.status === "missing");
+  const criticalFlags = data.financialRedFlags.filter(f => f.severity === "critical");
+  const otherFlags = data.financialRedFlags.filter(f => f.severity !== "critical");
+
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="md:col-span-2">
+      <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <DollarSign className="h-5 w-5 text-green-600" />
-            <CardTitle className="text-lg">Financial Audit</CardTitle>
+            <CardTitle className="text-lg">Audit Financier</CardTitle>
             {reactData && onShowTrace && (
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.overallScore} size="lg" />
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className={cn(
+              "text-xs",
+              data.overallAssessment.dataCompleteness === "complete" ? "bg-green-100 text-green-800" :
+              data.overallAssessment.dataCompleteness === "partial" ? "bg-yellow-100 text-yellow-800" :
+              "bg-red-100 text-red-800"
+            )}>
+              {data.overallAssessment.dataCompleteness === "complete" ? "Données complètes" :
+               data.overallAssessment.dataCompleteness === "partial" ? "Données partielles" :
+               "Données minimales"}
+            </Badge>
+            <ScoreBadge score={data.overallAssessment.score} size="lg" />
+          </div>
         </div>
-        <CardDescription>Métriques vs benchmarks sectoriels</CardDescription>
+        {/* Summary */}
+        <p className="text-sm text-muted-foreground mt-2">{data.overallAssessment.summary}</p>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Valuation Analysis */}
+
+      <CardContent className="space-y-5">
+        {/* Key Metrics Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {availableMetrics.slice(0, 4).map((m, i) => (
+            <div key={i} className="p-3 rounded-lg bg-muted">
+              <div className="text-xs text-muted-foreground truncate">{m.metric}</div>
+              <div className="text-lg font-bold mt-1">
+                {typeof m.reportedValue === "number"
+                  ? formatAmount(m.reportedValue)
+                  : m.reportedValue ?? "N/A"}
+              </div>
+              {m.percentile != null && (
+                <div className="text-xs text-muted-foreground">P{m.percentile}</div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Burn & Runway */}
+        {(data.burnAnalysis.monthlyBurn || data.burnAnalysis.runway) && (
+          <div className="p-3 rounded-lg border bg-card">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium">Burn & Runway</span>
+              <Badge variant="outline" className={cn(
+                "text-xs",
+                data.burnAnalysis.efficiency === "efficient" ? "bg-green-100 text-green-800" :
+                data.burnAnalysis.efficiency === "moderate" ? "bg-yellow-100 text-yellow-800" :
+                data.burnAnalysis.efficiency === "inefficient" ? "bg-red-100 text-red-800" :
+                "bg-gray-100 text-gray-800"
+              )}>
+                {data.burnAnalysis.efficiency}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div>
+                <div className="text-xs text-muted-foreground">Burn mensuel</div>
+                <div className="font-semibold">{formatAmount(data.burnAnalysis.monthlyBurn)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Runway</div>
+                <div className="font-semibold">
+                  {data.burnAnalysis.runway ? `${data.burnAnalysis.runway} mois` : "N/A"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Burn Multiple</div>
+                <div className="font-semibold">
+                  {data.burnAnalysis.burnMultiple?.toFixed(2) ?? "N/A"}
+                </div>
+              </div>
+            </div>
+            {data.burnAnalysis.analysisNote && (
+              <p className="text-xs text-muted-foreground mt-2">{data.burnAnalysis.analysisNote}</p>
+            )}
+          </div>
+        )}
+
+        {/* Valuation */}
         {data.valuationAnalysis && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
+          <div className="p-3 rounded-lg border bg-card">
+            <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium">Valorisation</span>
               <StatusBadge
                 status={data.valuationAnalysis.verdict.replace("_", " ")}
                 variant={
-                  data.valuationAnalysis.verdict === "fair" ? "success" :
-                  data.valuationAnalysis.verdict === "aggressive" ? "warning" : "danger"
+                  data.valuationAnalysis.verdict === "fair" || data.valuationAnalysis.verdict === "undervalued" ? "success" :
+                  data.valuationAnalysis.verdict === "aggressive" ? "warning" :
+                  data.valuationAnalysis.verdict === "very_aggressive" ? "danger" : "info"
                 }
               />
             </div>
-            <div className="text-xs text-muted-foreground">
-              Multiple implicite: {data.valuationAnalysis.impliedMultiple.toFixed(1)}x
-              (median: {data.valuationAnalysis.benchmarkMultipleMedian.toFixed(1)}x)
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <span className="text-muted-foreground">Revenue actuel:</span>{" "}
+                <span className="font-medium">{formatAmount(data.valuationAnalysis.currentRevenue)}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Multiple implicite:</span>{" "}
+                <span className="font-medium">
+                  {data.valuationAnalysis.impliedMultiple?.toFixed(1) ?? "N/A"}x
+                </span>
+                <span className="text-xs text-muted-foreground ml-1">
+                  (bench: {data.valuationAnalysis.benchmarkMultipleP25}-{data.valuationAnalysis.benchmarkMultipleP75}x)
+                </span>
+              </div>
             </div>
+            {data.valuationAnalysis.justification && (
+              <p className="text-xs text-muted-foreground mt-2">{data.valuationAnalysis.justification}</p>
+            )}
           </div>
         )}
 
-        {/* Metrics Validation */}
-        <ExpandableSection title={`Metriques (${data.metricsValidation.length})`}>
-          <div className="space-y-2 mt-2">
-            {data.metricsValidation.map((m, i) => (
-              <div key={i} className="flex items-center justify-between text-sm">
-                <span>{m.metric}</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">P{m.percentile}</span>
-                  <StatusBadge
-                    status={m.assessment.replace("_", " ")}
-                    variant={
-                      m.assessment === "exceptional" || m.assessment === "above_average" ? "success" :
-                      m.assessment === "average" ? "info" :
-                      m.assessment === "suspicious" ? "danger" : "warning"
-                    }
-                  />
+        {/* Projections Analysis */}
+        {data.projectionsAnalysis.hasProjections && (
+          <div className="p-3 rounded-lg border bg-card">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium">Projections</span>
+              <Badge variant="outline" className={cn(
+                "text-xs",
+                data.projectionsAnalysis.projectionsRealistic === "yes" ? "bg-green-100 text-green-800" :
+                data.projectionsAnalysis.projectionsRealistic === "questionable" ? "bg-yellow-100 text-yellow-800" :
+                data.projectionsAnalysis.projectionsRealistic === "unrealistic" ? "bg-red-100 text-red-800" :
+                "bg-gray-100 text-gray-800"
+              )}>
+                {data.projectionsAnalysis.projectionsRealistic === "yes" ? "Réalistes" :
+                 data.projectionsAnalysis.projectionsRealistic === "questionable" ? "Questionnables" :
+                 data.projectionsAnalysis.projectionsRealistic === "unrealistic" ? "Irréalistes" : "N/A"}
+              </Badge>
+            </div>
+            {data.projectionsAnalysis.growthAssumptions.length > 0 && (
+              <div className="text-xs text-muted-foreground">
+                <span className="font-medium">Hypothèses:</span>{" "}
+                {data.projectionsAnalysis.growthAssumptions.slice(0, 2).join(", ")}
+              </div>
+            )}
+            {data.projectionsAnalysis.redFlags.length > 0 && (
+              <div className="text-xs text-orange-600 mt-1">
+                ⚠️ {data.projectionsAnalysis.redFlags.slice(0, 2).join(" | ")}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Detailed Metrics */}
+        <ExpandableSection title={`Détail des métriques (${data.metricsAnalysis.length})`}>
+          <div className="space-y-3 mt-2">
+            {data.metricsAnalysis.map((m, i) => (
+              <div key={i} className="p-2 rounded border bg-card">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-sm">{m.metric}</span>
+                  <div className="flex items-center gap-2">
+                    {m.reportedValue != null && (
+                      <span className="text-sm font-semibold">
+                        {typeof m.reportedValue === "number" ? formatAmount(m.reportedValue) : m.reportedValue}
+                      </span>
+                    )}
+                    <StatusBadge
+                      status={m.status}
+                      variant={
+                        m.status === "available" ? "success" :
+                        m.status === "suspicious" ? "danger" : "warning"
+                      }
+                    />
+                  </div>
                 </div>
+                {m.assessment && (
+                  <p className="text-xs text-muted-foreground mt-1">{m.assessment}</p>
+                )}
+                {m.investorConcern && (
+                  <p className="text-xs text-orange-600 mt-1">⚠️ {m.investorConcern}</p>
+                )}
               </div>
             ))}
           </div>
         </ExpandableSection>
 
-        {/* Red Flags */}
+        {/* Red Flags - Critical first */}
         {data.financialRedFlags.length > 0 && (
-          <div className="pt-2 border-t">
-            <p className="text-sm font-medium text-red-600 mb-2">Red Flags</p>
-            <ul className="space-y-1">
-              {data.financialRedFlags.map((flag, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                  <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-                  {flag}
+          <div className="pt-3 border-t">
+            <p className="text-sm font-medium text-red-600 mb-2">
+              Red Flags ({data.financialRedFlags.length})
+            </p>
+            <div className="space-y-2">
+              {criticalFlags.map((flag, i) => (
+                <div key={`critical-${i}`} className="p-2 rounded bg-red-50 border border-red-200">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="text-sm font-medium text-red-800">{flag.flag}</span>
+                      <Badge variant="outline" className="ml-2 text-xs bg-red-100 text-red-800">CRITIQUE</Badge>
+                      <p className="text-xs text-red-700 mt-1">{flag.evidence}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {otherFlags.map((flag, i) => (
+                <div key={`other-${i}`} className="flex items-start gap-2 text-sm">
+                  <AlertTriangle className={cn(
+                    "h-4 w-4 shrink-0 mt-0.5",
+                    flag.severity === "high" ? "text-orange-500" : "text-yellow-500"
+                  )} />
+                  <div>
+                    <span className="font-medium">{flag.flag}</span>
+                    <span className="text-muted-foreground ml-1">- {flag.evidence}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Questions for Founder */}
+        {data.financialQuestions.length > 0 && (
+          <ExpandableSection title={`Questions à poser (${data.financialQuestions.length})`}>
+            <div className="space-y-2 mt-2">
+              {data.financialQuestions.map((q, i) => (
+                <div key={i} className="p-2 rounded border bg-card">
+                  <p className="text-sm font-medium">{q.question}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{q.context}</p>
+                  {q.redFlagIfNo && (
+                    <p className="text-xs text-red-600 mt-1">🚩 Si non: {q.redFlagIfNo}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </ExpandableSection>
+        )}
+
+        {/* Key Risks & Strengths */}
+        <div className="grid grid-cols-2 gap-3 pt-3 border-t">
+          <div>
+            <p className="text-sm font-medium text-red-600 mb-1">Risques clés</p>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              {data.overallAssessment.keyRisks.slice(0, 3).map((r, i) => (
+                <li key={i} className="flex items-start gap-1">
+                  <span className="text-red-500">•</span> {r}
                 </li>
               ))}
             </ul>
           </div>
-        )}
+          <div>
+            <p className="text-sm font-medium text-green-600 mb-1">Points forts</p>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              {data.overallAssessment.keyStrengths.slice(0, 3).map((s, i) => (
+                <li key={i} className="flex items-start gap-1">
+                  <span className="text-green-500">•</span> {s}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
@@ -447,19 +649,20 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
         <CardDescription>Analyse narrative et vérification claims</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Narrative Scores */}
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="p-2 rounded-lg bg-muted">
-            <div className="text-lg font-bold">{data.narrativeAnalysis.storyStrength}</div>
-            <div className="text-xs text-muted-foreground">Story</div>
+        {/* Overall Assessment */}
+        <div className="p-3 rounded-lg bg-muted">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium">Crédibilité</span>
+            <ScoreBadge score={data.overallAssessment.credibilityScore} />
           </div>
+          <p className="text-sm text-muted-foreground">{data.overallAssessment.summary}</p>
+        </div>
+
+        {/* Narrative Analysis */}
+        <div className="grid grid-cols-1 gap-2 text-center">
           <div className="p-2 rounded-lg bg-muted">
-            <div className="text-lg font-bold">{data.narrativeAnalysis.emotionalAppeal}</div>
-            <div className="text-xs text-muted-foreground">Emotion</div>
-          </div>
-          <div className="p-2 rounded-lg bg-muted">
-            <div className="text-lg font-bold">{data.presentationQuality.professionalismScore}</div>
-            <div className="text-xs text-muted-foreground">Pro</div>
+            <div className="text-lg font-bold">{data.narrativeAnalysis.storyCoherence}</div>
+            <div className="text-xs text-muted-foreground">Cohérence du Story</div>
           </div>
         </div>
 
@@ -467,35 +670,56 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
         <ExpandableSection title={`Claims vérifiés (${data.claimVerification.length})`}>
           <div className="space-y-2 mt-2">
             {data.claimVerification.map((c, i) => (
-              <div key={i} className="flex items-start justify-between p-2 border rounded">
-                <span className="text-sm flex-1">{c.claim}</span>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "ml-2 shrink-0",
-                    c.status === "verified" ? "bg-green-100 text-green-800" :
-                    c.status === "contradicted" ? "bg-red-100 text-red-800" :
-                    c.status === "exaggerated" ? "bg-orange-100 text-orange-800" :
-                    "bg-gray-100 text-gray-800"
-                  )}
-                >
-                  {c.status}
-                </Badge>
+              <div key={i} className="p-2 border rounded">
+                <div className="flex items-start justify-between">
+                  <span className="text-sm flex-1">{c.claim}</span>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "ml-2 shrink-0",
+                      c.status === "verified" ? "bg-green-100 text-green-800" :
+                      c.status === "contradicted" ? "bg-red-100 text-red-800" :
+                      c.status === "exaggerated" ? "bg-orange-100 text-orange-800" :
+                      "bg-gray-100 text-gray-800"
+                    )}
+                  >
+                    {c.status}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">{c.investorConcern}</p>
               </div>
             ))}
           </div>
         </ExpandableSection>
 
         {/* Inconsistencies */}
-        {data.narrativeAnalysis.inconsistencies.length > 0 && (
+        {data.inconsistencies.length > 0 && (
           <div className="pt-2 border-t">
             <p className="text-sm font-medium text-orange-600 mb-1">Incohérences</p>
             <ul className="text-sm text-muted-foreground list-disc list-inside">
-              {data.narrativeAnalysis.inconsistencies.map((inc, i) => (
-                <li key={i}>{inc}</li>
+              {data.inconsistencies.map((inc, i) => (
+                <li key={i}>{inc.issue}</li>
               ))}
             </ul>
           </div>
+        )}
+
+        {/* Red Flags */}
+        {data.redFlags.length > 0 && (
+          <ExpandableSection title={`Red Flags (${data.redFlags.length})`}>
+            <ul className="space-y-1 mt-2">
+              {data.redFlags.map((rf, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <AlertTriangle className={cn(
+                    "h-4 w-4 shrink-0 mt-0.5",
+                    rf.severity === "critical" ? "text-red-600" :
+                    rf.severity === "high" ? "text-orange-500" : "text-yellow-500"
+                  )} />
+                  <span>{rf.flag}</span>
+                </li>
+              ))}
+            </ul>
+          </ExpandableSection>
         )}
       </CardContent>
     </Card>
@@ -1223,7 +1447,7 @@ export function Tier1Results({ results, subscriptionPlan = "FREE" }: Tier1Result
   // Calculate summary scores
   const scores = useMemo(() => {
     const scoreList: { name: string; score: number; icon: React.ReactNode }[] = [];
-    if (financialData) scoreList.push({ name: "Financial", score: financialData.overallScore, icon: <DollarSign className="h-4 w-4" /> });
+    if (financialData) scoreList.push({ name: "Financial", score: financialData.overallAssessment.score, icon: <DollarSign className="h-4 w-4" /> });
     if (teamData) scoreList.push({ name: "Team", score: teamData.overallTeamScore, icon: <Users className="h-4 w-4" /> });
     if (competitiveData) scoreList.push({ name: "Competitive", score: competitiveData.competitiveScore, icon: <Target className="h-4 w-4" /> });
     if (marketData) scoreList.push({ name: "Market", score: marketData.marketScore, icon: <Globe className="h-4 w-4" /> });

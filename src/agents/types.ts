@@ -75,6 +75,12 @@ export interface ExtractedDealInfo {
   burnRate?: number;
   runway?: number;
 
+  // Financial Data Context (CRITICAL for early-stage)
+  financialDataType?: "historical" | "projected" | "mixed" | "none";
+  financialDataAsOf?: string; // Date of the most recent REAL data (not projections)
+  projectionReliability?: "very_low" | "low" | "medium" | "high";
+  financialRedFlags?: string[]; // Detected issues: absurd growth, inconsistencies, etc.
+
   // Fundraising
   amountRaising?: number;
   valuationPre?: number;
@@ -104,15 +110,40 @@ export interface ExtractedDealInfo {
 
   // Product
   productDescription?: string;
+  productName?: string; // Nom du produit principal (ex: Axiom)
   techStack?: string[];
   competitiveAdvantage?: string;
 
-  // Market
+  // Value Proposition
+  coreValueProposition?: string; // Concept clé / proposition de valeur centrale
+  keyDifferentiators?: string[]; // Avantages compétitifs uniques
+  useCases?: string[]; // Cas d'usage adressés
+
+  // Market - Support pour marchés multiples
   targetMarket?: string;
-  tam?: number;
-  sam?: number;
-  som?: number;
+  tam?: number; // TAM global (deprecated, use markets[])
+  sam?: number; // SAM Europe (deprecated, use markets[])
+  som?: number; // SOM France (deprecated, use markets[])
+  markets?: {
+    name: string; // Ex: "Cyber-sécurité", "Blockchain", "Data Room"
+    tamGlobal?: number;
+    samEurope?: number;
+    somFrance?: number;
+    cagr?: number;
+    year?: number;
+  }[];
+
+  // Competitors - ONLY explicit competitors mentioned
+  // DO NOT include: advisors, partners, previous employers, investors
   competitors?: string[];
+
+  // Advisors & Partners - Separate from competitors
+  advisors?: {
+    name: string;
+    role?: string;
+    company?: string;
+  }[];
+  partners?: string[];
 }
 
 export interface ExtractionResult extends AgentResult {
@@ -197,29 +228,56 @@ export interface ScoringResult extends AgentResult {
 // TIER 1 AGENT RESULT TYPES
 // ============================================================================
 
-// Deck Forensics Agent
+// Deck Forensics Agent - Analyse APPROFONDIE pour le BA
+// Minimums attendus: 8+ claims, 5+ red flags, 8+ questions
 export interface DeckForensicsData {
   narrativeAnalysis: {
-    storyStrength: number; // 0-100
-    logicalFlow: boolean;
-    emotionalAppeal: number;
-    credibilitySignals: string[];
-    inconsistencies: string[];
+    storyCoherence: number; // 0-100
+    credibilityAssessment: string; // Evaluation detaillee 4-5 phrases
+    narrativeStrengths: string[]; // Points forts SPECIFIQUES
+    narrativeWeaknesses: string[]; // Faiblesses SPECIFIQUES
+    missingPieces: string[]; // Info CRITIQUE absente
   };
   claimVerification: {
+    category: "team" | "market" | "traction" | "financials" | "tech" | "timing" | "competition";
     claim: string;
+    location: string;
     status: "verified" | "unverified" | "contradicted" | "exaggerated";
-    evidence?: string;
-    confidenceScore: number;
+    evidence: string;
+    sourceUsed: string;
+    investorConcern: string;
   }[];
-  presentationQuality: {
-    designScore: number;
-    clarityScore: number;
-    professionalismScore: number;
-    issues: string[];
+  inconsistencies: {
+    issue: string;
+    location1: string;
+    location2: string;
+    quote1: string;
+    quote2: string;
+    severity: "critical" | "major" | "minor";
+    investorImplication: string;
+  }[];
+  redFlags: {
+    category: "credibility" | "financials" | "team" | "market" | "legal" | "execution";
+    flag: string;
+    location: string;
+    quote?: string;
+    externalData?: string;
+    severity: "critical" | "high" | "medium";
+    investorConcern: string;
+  }[];
+  questionsForFounder: {
+    category: "story_gaps" | "claims" | "omissions" | "contradictions" | "verification";
+    question: string;
+    context: string;
+    expectedAnswer?: string;
+    redFlagIfNo?: string;
+  }[];
+  overallAssessment: {
+    credibilityScore: number; // 0-100
+    summary: string;
+    trustLevel: "high" | "moderate" | "low" | "very_low";
+    keyTakeaways: string[]; // 5-7 points essentiels
   };
-  redFlags: string[];
-  overallAssessment: string;
 }
 
 export interface DeckForensicsResult extends AgentResult {
@@ -227,47 +285,88 @@ export interface DeckForensicsResult extends AgentResult {
   data: DeckForensicsData;
 }
 
-// Financial Auditor Agent
+// Financial Auditor Agent - Audit COMPLET pour le BA
+// Minimum: 5+ métriques analysées, 5+ red flags, 5+ questions
 export interface FinancialAuditData {
-  metricsValidation: {
+  // Métriques analysées (présentes OU manquantes)
+  metricsAnalysis: {
     metric: string;
-    reportedValue: number | string;
-    benchmarkP25: number;
-    benchmarkMedian: number;
-    benchmarkP75: number;
-    percentile: number;
-    assessment: "below_average" | "average" | "above_average" | "exceptional" | "suspicious";
-    notes?: string;
+    category: "revenue" | "growth" | "unit_economics" | "burn" | "retention";
+    status: "available" | "missing" | "suspicious";
+    reportedValue?: number | string;
+    benchmarkP25?: number;
+    benchmarkMedian?: number;
+    benchmarkP75?: number;
+    percentile?: number;
+    assessment: string; // Analyse détaillée
+    investorConcern?: string;
   }[];
+  // Analyse des projections (CRITIQUE pour early-stage)
+  projectionsAnalysis: {
+    hasProjections: boolean;
+    projectionsRealistic: "yes" | "questionable" | "unrealistic" | "no_data";
+    growthAssumptions: string[];
+    redFlags: string[];
+    keyQuestions: string[];
+  };
+  // Unit economics
   unitEconomicsHealth: {
     ltv?: number;
     cac?: number;
     ltvCacRatio?: number;
     cacPayback?: number;
+    dataQuality: "complete" | "partial" | "missing";
     assessment: string;
     concerns: string[];
   };
+  // Valorisation
   valuationAnalysis: {
-    requestedValuation: number;
-    impliedMultiple: number;
+    requestedValuation?: number;
+    currentRevenue?: number;
+    impliedMultiple?: number;
     benchmarkMultipleP25: number;
     benchmarkMultipleMedian: number;
     benchmarkMultipleP75: number;
-    verdict: "undervalued" | "fair" | "aggressive" | "very_aggressive";
+    verdict: "undervalued" | "fair" | "aggressive" | "very_aggressive" | "cannot_assess";
+    justification: string;
     comparables: {
       name: string;
       multiple: number;
       stage: string;
+      source?: string;
     }[];
   };
-  burnAnalysis?: {
-    monthlyBurn: number;
-    runway: number;
+  // Burn
+  burnAnalysis: {
+    monthlyBurn?: number;
+    runway?: number;
     burnMultiple?: number;
-    efficiency: "efficient" | "moderate" | "inefficient";
+    efficiency: "efficient" | "moderate" | "inefficient" | "unknown";
+    analysisNote: string;
   };
-  financialRedFlags: string[];
-  overallScore: number; // 0-100
+  // Red flags structurés
+  financialRedFlags: {
+    category: "projections" | "metrics" | "valuation" | "unit_economics" | "burn" | "missing_data" | "inconsistency";
+    flag: string;
+    evidence: string;
+    severity: "critical" | "high" | "medium";
+    investorConcern: string;
+  }[];
+  // Questions financières pour le fondateur
+  financialQuestions: {
+    question: string;
+    context: string;
+    expectedAnswer: string;
+    redFlagIfNo: string;
+  }[];
+  // Évaluation globale
+  overallAssessment: {
+    score: number; // 0-100
+    dataCompleteness: "complete" | "partial" | "minimal";
+    summary: string;
+    keyRisks: string[];
+    keyStrengths: string[];
+  };
 }
 
 export interface FinancialAuditResult extends AgentResult {

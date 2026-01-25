@@ -374,6 +374,7 @@ function createEmptyResult(companyName: string): CrossValidationResult {
       competitors: [],
       notable_clients: [],
       website: null,
+      linkedin_url: null,
       is_profitable: null,
       confidence: 0,
       data_completeness: 0,

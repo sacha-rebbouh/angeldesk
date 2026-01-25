@@ -155,7 +155,7 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
             </div>
             <Button onClick={openUploadDialog}>
               <Upload className="mr-2 h-4 w-4" />
-              Upload
+              Importer
             </Button>
           </div>
         </CardHeader>
@@ -171,7 +171,7 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
                 </p>
                 <Button className="mt-4" onClick={openUploadDialog}>
                   <Upload className="mr-2 h-4 w-4" />
-                  Upload un document
+                  Importer un document
                 </Button>
               </div>
             ) : (
@@ -217,10 +217,29 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
                           variant={
                             doc.processingStatus === "COMPLETED"
                               ? "default"
+                              : doc.processingStatus === "FAILED"
+                              ? "destructive"
                               : "secondary"
                           }
+                          className={
+                            doc.processingStatus === "COMPLETED"
+                              ? "bg-green-100 text-green-700"
+                              : doc.processingStatus === "PROCESSING"
+                              ? "bg-blue-100 text-blue-700"
+                              : doc.processingStatus === "PENDING"
+                              ? "bg-gray-100 text-gray-600"
+                              : undefined
+                          }
                         >
-                          {doc.processingStatus}
+                          {doc.processingStatus === "COMPLETED"
+                            ? "Extrait"
+                            : doc.processingStatus === "PROCESSING"
+                            ? "Traitement..."
+                            : doc.processingStatus === "PENDING"
+                            ? "En attente"
+                            : doc.processingStatus === "FAILED"
+                            ? "Echec"
+                            : doc.processingStatus}
                         </Badge>
                       )}
                       <Button

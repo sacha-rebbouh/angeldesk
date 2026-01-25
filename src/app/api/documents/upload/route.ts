@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { DocumentType, Prisma } from "@prisma/client";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
+import { extractFromExcel, summarizeForLLM } from "@/services/excel";
 import { uploadFile } from "@/services/storage";
 
 // POST /api/documents/upload - Upload a document
@@ -197,6 +198,90 @@ export async function POST(request: NextRequest) {
           severity: "critical",
           message: `Extraction failed: ${errorMessage}`,
           suggestion: "The PDF may be corrupted or password-protected."
+        }];
+      }
+    }
+
+    // Extract text for Excel files (.xlsx, .xls)
+    const excelMimeTypes = [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+    ];
+
+    if (excelMimeTypes.includes(file.type)) {
+      await prisma.document.update({
+        where: { id: document.id },
+        data: { processingStatus: "PROCESSING" },
+      });
+
+      try {
+        const result = extractFromExcel(buffer);
+
+        if (result.success) {
+          // For financial models, use the LLM-optimized summary with large limit
+          // to ensure ALL sheets are included (50K chars to cover multiple sheets)
+          const textContent = documentType === "FINANCIAL_MODEL"
+            ? summarizeForLLM(result, 50000)
+            : result.text;
+
+          extractionQuality = result.metadata.totalCells > 0 ? 80 : 50;
+
+          // Add info about the extraction
+          if (result.metadata.hasFormulas) {
+            extractionWarnings.push({
+              code: "EXCEL_HAS_FORMULAS",
+              severity: "low",
+              message: `Excel contient des formules (${result.metadata.sheetCount} feuilles, ${result.metadata.totalCells} cellules)`,
+              suggestion: "Les valeurs calculées ont été extraites."
+            });
+          }
+
+          await prisma.document.update({
+            where: { id: document.id },
+            data: {
+              extractedText: textContent,
+              processingStatus: "COMPLETED",
+              extractionQuality,
+              extractionMetrics: {
+                sheetCount: result.metadata.sheetCount,
+                totalRows: result.metadata.totalRows,
+                totalCells: result.metadata.totalCells,
+                hasFormulas: result.metadata.hasFormulas,
+              },
+              extractionWarnings: extractionWarnings.length > 0
+                ? JSON.parse(JSON.stringify(extractionWarnings))
+                : Prisma.DbNull,
+            },
+          });
+
+          console.log(`[Excel] Extracted ${result.metadata.totalCells} cells from ${result.metadata.sheetCount} sheets`);
+        } else {
+          throw new Error(result.error || "Failed to parse Excel file");
+        }
+      } catch (extractionError) {
+        console.error("Excel extraction error:", extractionError);
+        const errorMessage = extractionError instanceof Error
+          ? extractionError.message
+          : "Unknown error";
+
+        await prisma.document.update({
+          where: { id: document.id },
+          data: {
+            processingStatus: "FAILED",
+            extractionWarnings: [{
+              code: "EXCEL_EXTRACTION_ERROR",
+              severity: "critical",
+              message: `Excel extraction failed: ${errorMessage}`,
+              suggestion: "The file may be corrupted or password-protected."
+            }] as Prisma.InputJsonValue,
+          },
+        });
+
+        extractionWarnings = [{
+          code: "EXCEL_EXTRACTION_ERROR",
+          severity: "critical",
+          message: `Excel extraction failed: ${errorMessage}`,
+          suggestion: "The file may be corrupted or password-protected."
         }];
       }
     }

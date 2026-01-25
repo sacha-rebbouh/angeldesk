@@ -282,7 +282,12 @@ ${deal.description ?? "No description provided"}
       for (const doc of documents) {
         text += `\n### ${doc.name} (${doc.type})\n`;
         if (doc.extractedText) {
-          text += doc.extractedText.substring(0, 10000); // Limit text length
+          // Financial models need more content (multiple sheets)
+          const limit = doc.type === "FINANCIAL_MODEL" ? 50000 : 10000;
+          text += doc.extractedText.substring(0, limit);
+          if (doc.extractedText.length > limit) {
+            text += `\n[... truncated, ${doc.extractedText.length - limit} chars remaining ...]`;
+          }
         } else {
           text += "(Content not yet extracted)";
         }
@@ -290,6 +295,17 @@ ${deal.description ?? "No description provided"}
     }
 
     return text;
+  }
+
+  // Get financial model document content specifically (for financial-auditor)
+  protected getFinancialModelContent(context: AgentContext): string | null {
+    const { documents } = context;
+    if (!documents) return null;
+
+    const financialModel = documents.find(d => d.type === "FINANCIAL_MODEL");
+    if (!financialModel?.extractedText) return null;
+
+    return financialModel.extractedText;
   }
 
   // Format Context Engine data for prompts (Tier 1 agents)

@@ -2,6 +2,424 @@
 
 ---
 
+## 2026-01-25 12:30 - FEAT: Extraction LinkedIn URL dans DB_COMPLETER
+
+### Fichiers modifiés
+- `src/agents/maintenance/types.ts`: Ajout `linkedin_url` dans `LLMExtractionResult` et `linkedin` dans `FieldUpdateStats`
+- `src/agents/maintenance/db-completer/prompt-cache.ts`: Prompt mis à jour pour demander website et linkedin_url
+- `src/agents/maintenance/db-completer/llm-extract.ts`: Gestion merge et regex pour linkedin_url
+- `src/agents/maintenance/db-completer/validator.ts`: Sauvegarde linkedin_url dans la DB avec validation
+- `src/agents/maintenance/db-completer/index.ts`: Tracking du champ linkedin dans les stats
+- `src/agents/maintenance/db-completer/cross-validator.ts`: Ajout linkedin_url au résultat vide
+
+### Changements
+- Le prompt LLM demande maintenant explicitement le site officiel et le profil LinkedIn company
+- Validation spécifique pour les URLs LinkedIn (`linkedin.com/company/xxx`)
+- Le score de qualité des données inclut maintenant LinkedIn (+3 points)
+- Tracking des updates LinkedIn dans les stats du completer
+
+---
+
+## 2026-01-26 04:00 - FEAT: Rich UI pour FinancialAuditCard
+
+### Fichiers modifiés
+- `src/components/deals/tier1-results.tsx`: Refonte complète du composant FinancialAuditCard
+
+### Améliorations UI
+- **Grille métriques clés**: ARR, MRR, Burn Rate, Runway formatés (K€, M€)
+- **Section Burn & Runway**: Affichage clair avec warning si runway < 6 mois
+- **Analyse Valorisation**: Benchmarks sectoriels vs valorisation proposée
+- **Projections**: Badge réaliste/ambitieux, key assumptions
+- **Métriques détaillées**: Liste avec assessment badges (available/missing/estimated)
+- **Red Flags groupés par sévérité**: Critiques en rouge, majeurs en orange, mineurs en jaune
+- **Questions pour le fondateur**: Listées avec contexte
+- **Risques & Forces clés**: Synthèse visuelle
+
+### Helper function
+```typescript
+function formatAmount(value: number | undefined | null): string {
+  if (value == null) return "N/A";
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M€`;
+  if (value >= 1000) return `${(value / 1000).toFixed(0)}K€`;
+  return `${value.toFixed(0)}€`;
+}
+```
+
+---
+
+## 2026-01-26 03:30 - FIX: Financial-auditor extrait maintenant les VRAIS chiffres
+
+### Problème
+L'agent disait "missing" pour toutes les métriques sans regarder le contenu des documents.
+Il y avait 62K€/mois de revenue dans l'Excel mais l'agent disait "ARR manquant".
+
+### Solution
+Refonte du prompt pour FORCER l'extraction des chiffres réels.
+
+**`src/agents/tier1/financial-auditor.ts`**
+- System prompt réécrit: "NE DIS PAS missing SI UN CHIFFRE EST DANS UN DOCUMENT"
+- Instructions explicites: EXTRAIRE, CALCULER, CITER les sources
+- Exemples concrets dans le format JSON attendu
+
+### Résultat (Antiopea)
+Avant: "ARR: missing, Burn: missing, Score: 30"
+Après:
+- Revenue Mensuel: 62,842.70€ (onglet CF)
+- Burn Rate: 16,581.67€ (198,980€ / 12)
+- ARR calculé: 754,112€
+- Burn Multiple: 0.02
+- Score: 50 (partial data)
+
+---
+
+## 2026-01-26 02:15 - FIX: Excel multi-onglets + agents React + UI
+
+### Fichiers modifiés
+- `src/services/excel/extractor.ts`: 20K → 50K chars, table des matières
+- `src/agents/base-agent.ts`: 50K chars pour FINANCIAL_MODEL
+- `src/agents/document-extractor.ts`: instruction Excel multi-onglets
+- `src/agents/react/agents/deck-forensics-react.ts`: nouvelle structure
+- `src/agents/react/agents/financial-auditor-react.ts`: nouvelle structure
+- `src/components/deals/tier1-results.tsx`: nouveaux champs
+- `src/agents/orchestrator/persistence.ts`: suppression teamSize
+
+---
+
+## 2026-01-25 19:30 - FEAT: Améliorations UX et experts sectoriels intelligents
+
+### Changements
+
+**`src/app/(dashboard)/deals/new/page.tsx`**
+- Ajout de nouveaux secteurs: AI / Machine Learning, Blockchain / Web3, Cybersecurity, Gaming / Esports, Hardware / IoT, Consumer
+- Ajout d'un champ texte libre quand "Autre" est sélectionné pour le secteur (customSector)
+- Correction du champ site web: accepte maintenant "nom.com" (ajoute automatiquement https://)
+- Changement du placeholder de "https://example.com" à "example.com"
+
+**`src/components/deals/documents-tab.tsx`**
+- "Upload un document" → "Importer un document"
+- "Upload" → "Importer" (bouton header)
+- Amélioration de l'affichage des statuts pour les fichiers non-PDF (Excel, etc.):
+  - PENDING → "En attente" (badge gris)
+  - PROCESSING → "Traitement..." (badge bleu)
+  - COMPLETED → "Extrait" (badge vert)
+  - FAILED → "Echec" (badge rouge)
+
+**`src/agents/tier3/index.ts`**
+- Extension des patterns de matching pour couvrir plus de secteurs:
+  - saas-expert: +hrtech, legaltech, regtech
+  - marketplace-expert: +proptech, real estate tech
+  - fintech-expert: +wealthtech, neobank
+  - healthtech-expert: +femtech, mental health
+  - deeptech-expert: +cybersecurity, cyber, security, machine learning
+  - climate-expert: +agritech, foodtech
+  - hardware-expert: +spacetech, drones
+  - gaming-expert: +entertainment, media tech
+  - consumer-expert: +edtech, education, lifestyle
+- Import et utilisation du dynamic-expert comme fallback
+- Nouvelles fonctions avec paramètre `useDynamicFallback`
+
+**`src/agents/tier3/types.ts`**
+- Mise à jour des SECTOR_MAPPINGS pour correspondre aux secteurs du form
+
+**`src/agents/tier3/dynamic-expert.ts`** (NOUVEAU)
+- Expert sectoriel dynamique pour les secteurs non couverts par un expert spécialisé
+- Utilise le contexte du deal + données d'enrichissement
+- Génère des benchmarks estimés basés sur le modèle business (B2B, B2C, marketplace)
+- Analyse adaptative avec scoring conservateur
+
+### Prochaines étapes
+- Tester l'upload Excel pour confirmer que le statut est correct
+- Valider le fonctionnement du dynamic-expert sur des secteurs exotiques
+
+---
+
+## 2026-01-26 02:45 - FIX: Mise à jour des agents React et composants UI
+
+### Problème
+Les agents React (deck-forensics-react, financial-auditor-react) et le composant UI (tier1-results.tsx) utilisaient les anciennes structures de données après la refonte des agents Tier 1.
+
+### Fichiers modifiés
+
+**`src/agents/react/agents/deck-forensics-react.ts`**
+- Schema Zod mis à jour pour correspondre à DeckForensicsData
+- Prompts mis à jour pour analyse BA-focused (8+ claims, 5+ red flags, 8+ questions)
+- getDefaultData retourne la nouvelle structure
+
+**`src/agents/react/agents/financial-auditor-react.ts`**
+- Schema Zod mis à jour pour correspondre à FinancialAuditData
+- Inclut projectionsAnalysis, financialQuestions, overallAssessment
+- applyScoreCapping pour pénaliser les données incomplètes
+- getDefaultData retourne la nouvelle structure
+
+**`src/components/deals/tier1-results.tsx`**
+- FinancialAuditCard: `overallScore` → `overallAssessment.score`
+- FinancialAuditCard: `metricsValidation` → `metricsAnalysis`
+- FinancialAuditCard: financialRedFlags maintenant objets (flag + evidence)
+- DeckForensicsCard: Nouvelle structure avec credibilityScore, inconsistencies, redFlags
+- Score calculation mis à jour
+
+**`src/agents/orchestrator/persistence.ts`**
+- Suppression des références à `teamSize` (champ inexistant dans le modèle Deal)
+
+---
+
+## 2026-01-26 02:15 - FIX: Excel multi-onglets - TOUS les onglets analysés
+
+### Problème
+L'extraction Excel tronquait le contenu à 20K chars, coupant les onglets tardifs.
+Les agents n'étaient pas instruits d'analyser CHAQUE onglet.
+
+### Fichiers modifiés
+
+**`src/services/excel/extractor.ts`**
+- `summarizeForLLM`: limite augmentée de 20K → 50K chars
+- Nouveau: TABLE DES MATIÈRES avec tous les noms d'onglets + preview
+- Distribution équitable des chars entre onglets
+- Message explicite: "Tu DOIS analyser CHAQUE onglet"
+- `formatSheetForLLM`: accepte un `maxChars` par onglet
+- `getSheetPreview`: résumé rapide du contenu (Données financières, Projections, etc.)
+
+**`src/agents/document-extractor.ts`**
+- Nouvelle règle "FICHIERS EXCEL (CRITIQUE)" dans le system prompt
+- Instructions explicites: analyser chaque onglet, citer l'onglet source
+
+**`src/agents/base-agent.ts`**
+- `formatDealContext`: limite 50K chars pour FINANCIAL_MODEL (vs 10K pour autres)
+- Nouvelle méthode `getFinancialModelContent`: récupère le contenu Excel brut
+
+**`src/agents/tier1/financial-auditor.ts`**
+- Récupère le financial model content séparément
+- Nouvelle section "FICHIERS EXCEL (CRITIQUE)" dans le prompt
+- Instructions: analyser P&L, Cash Flow, Hypothèses, KPIs, etc.
+
+**`src/app/api/documents/upload/route.ts`**
+- `summarizeForLLM(result, 50000)` au lieu de 20000
+
+**`scripts/reprocess-excel.ts` et `scripts/reprocess-excel-force.ts`**
+- Limite mise à jour pour cohérence
+
+### Résultat attendu
+- TOUS les onglets Excel sont inclus dans l'extraction
+- Les agents voient la table des matières des onglets
+- Chaque onglet reçoit sa part équitable de contenu
+- Les agents sont explicitement instruits d'analyser chaque onglet
+
+---
+
+## 2026-01-26 01:30 - REFONTE: deck-forensics orienté BA (pas amélioration deck)
+
+### Problème initial
+L'agent produisait des conseils pour améliorer le deck (suggestions, estimatedFixTime).
+CE N'EST PAS le but. Le BA veut analyser le deck pour DÉCIDER D'INVESTIR, pas aider le fondateur.
+
+### Nouvelle vision
+**Outil d'investigation pour l'investisseur**, pas coach de pitch.
+
+### Fichiers modifiés
+
+**`src/agents/tier1/deck-forensics.ts`**
+- Nouveau system prompt: "Tu lis ce deck comme un investisseur sceptique mais juste"
+- Focus: incohérences, exagérations, trous dans l'histoire, signaux de crédibilité
+- Output orienté décision d'investissement
+
+**`src/agents/types.ts`** - `DeckForensicsData` refait:
+```typescript
+narrativeAnalysis: {
+  storyCoherence: number;
+  credibilityAssessment: string;
+  narrativeStrengths: string[];
+  narrativeWeaknesses: string[];
+  missingPieces: string[]; // Ce que le BA doit demander
+};
+claimVerification: {
+  claim, location, status, evidence, sourceUsed, investorConcern
+}[];
+inconsistencies: {
+  issue, location1, location2, quote1, quote2, severity, investorImplication
+}[];
+redFlags: {
+  flag, location, quote?, externalData?, severity, investorConcern
+}[];
+questionsForFounder: {
+  question, context, expectedAnswer?, redFlagIfNo?
+}[];
+overallAssessment: {
+  credibilityScore, summary, trustLevel, keyTakeaways
+};
+```
+
+### Output exemple (Antiopea)
+- storyCoherence: 70
+- trustLevel: "moderate"
+- 3 red flags avec investorConcern
+- 3 questions pour fondateur avec expectedAnswer et redFlagIfNo
+- keyTakeaways: points essentiels pour la décision du BA
+
+### Ce qui a été SUPPRIMÉ
+- hookScore/flowScore/tensionScore (notation de pitch coach)
+- structureSuggestion (conseil d'amélioration)
+- slideIssues avec suggestion (amélioration)
+- estimatedFixTime (pas notre job)
+- presentationQuality (design/clarté - pas pertinent pour DD)
+
+---
+
+## 2026-01-26 00:45 - IMPROVE: Recherche parallèle intelligente (max 5)
+
+### Amélioration
+- Max 5 recherches parallèles (au lieu de 3)
+- Si >5 use cases: regroupement intelligent via GPT-4o-mini avant recherche
+
+### Modification
+**`src/services/context-engine/connectors/web-search.ts`**
+- `groupSimilarUseCases()`: nouvelle fonction qui regroupe N use cases en 5 catégories
+- Si `useCases.length <= 5`: 1 recherche par use case
+- Si `useCases.length > 5`: LLM regroupe en 5 catégories puis 5 recherches
+- Déduplication et retour de max 20 concurrents uniques
+
+### Exemple avec 8 use cases
+Input: ["Whistleblowing", "Compliance reporting", "KYC", "AML", "Data room", "Document sharing", "Due diligence", "Secure storage"]
+
+Groupement LLM:
+1. "Whistleblowing and compliance reporting"
+2. "KYC/AML identity verification"
+3. "Virtual data rooms and secure document sharing"
+4. "Due diligence automation"
+5. "Secure document storage"
+
+→ 5 recherches parallèles → ~20 concurrents pertinents
+
+---
+
+## 2026-01-26 00:30 - FIX: Recherche concurrents par USE CASES (pas tech stack)
+
+### Problème
+La recherche de concurrents via Perplexity cherchait par "blockchain + cybersécurité" (tech stack) au lieu de chercher par use cases (data rooms, whistleblowing, KYC). Résultat: concurrents non pertinents (Cryptio, TOZEX, Ternoa au lieu de Intralinks, Datasite).
+
+### Solution
+Refonte complète de la logique de recherche:
+- **PRIORITÉ**: useCases > coreValueProposition > productDescription > tagline > sector
+- Recherche par ce que le produit FAIT, pas sa technologie
+- Prompt explicite: "NOT companies using the same technology"
+
+### Fichiers modifiés
+
+**`src/services/context-engine/connectors/web-search.ts`**
+- Nouvelle logique `getCompetitors()` basée sur use cases
+- Si `useCases` présent, recherche: "Find startups that offer solutions for: [use cases]"
+- Instructions explicites à Perplexity: "FUNCTIONAL competitors, not TECHNICAL similarities"
+
+**`src/services/context-engine/types.ts`**
+- Nouveaux champs `ConnectorQuery`:
+  - `productName?: string`
+  - `coreValueProposition?: string`
+  - `useCases?: string[]`
+  - `keyDifferentiators?: string[]`
+
+**`src/services/context-engine/index.ts`**
+- `EnrichDealOptions` étendu avec:
+  - `extractedProductName`
+  - `extractedCoreValueProposition`
+  - `extractedUseCases`
+  - `extractedKeyDifferentiators`
+- `enrichDeal()` merge ces champs dans la query
+
+**`scripts/test-agent-workflow.ts`**
+- Extraction et passage des nouveaux champs use case au context-engine
+
+### Impact
+Pour Antiopea avec useCases = ["Lancement d'alerte", "Due Diligences KYC - KYS", "Data room virtuelles"], la recherche trouvera maintenant:
+- Intralinks, Datasite, iDeals (data rooms)
+- EthiCall, Signalement.net (whistleblowing)
+- Au lieu de: Cryptio, TOZEX, Ternoa (blockchain générique)
+
+---
+
+## 2026-01-26 00:15 - CRITICAL: Distinction données historiques vs projections
+
+### Contexte
+Les startups early-stage (pre-seed, seed) n'ont quasi jamais de vraies données financières. Ce sont des projections optimistes souvent délirantes. Le LLM doit TOUJOURS savoir la date d'aujourd'hui pour distinguer passé/futur.
+
+### Modifications
+
+**`src/agents/types.ts`**
+- Nouveaux champs dans `ExtractedDealInfo`:
+  - `financialDataType`: "historical" | "projected" | "mixed" | "none"
+  - `financialDataAsOf`: date du dernier chiffre RÉEL
+  - `projectionReliability`: "very_low" | "low" | "medium" | "high"
+  - `financialRedFlags`: string[] - problèmes détectés
+
+**`src/agents/document-extractor.ts`**
+- Date d'aujourd'hui injectée dynamiquement dans le système prompt
+- Nouvelle règle critique #1: DONNÉES FINANCIÈRES vs PROJECTIONS
+- Guidelines de scepticisme par stage:
+  - Pre-seed/Seed: 95% projections sans fondement → projectionReliability = "very_low"
+  - Series A: quelques données réelles → "medium"
+  - Series B+: plus fiable → "high"
+- Détection automatique des red flags:
+  - Croissance >100% YoY en early-stage
+  - Chiffres trop ronds (100K, 500K, 1M exact)
+  - Incohérences temporelles (deck vieux de 2 mois)
+  - Projections délirantes vs réalité passée
+
+### Impact
+Le document-extractor ne remplira arr/mrr/revenue QUE avec des données HISTORIQUES vérifiées. Les projections seront signalées dans `financialRedFlags`.
+
+---
+
+## 2026-01-25 23:45 - MAJOR: Refonte Document-Extractor + Excel Parser
+
+### Problème initial
+- Document-extractor timeout (90s) avec DeepSeek
+- Confondait concurrents et advisors (IBM, Oracle, Wavestone identifiés comme concurrents)
+- Marché France manquant (seulement TAM global)
+- Value proposition non capturée
+- Excel files avaient extractedText = NULL (pas de parser)
+
+### Solutions implémentées
+
+**1. Excel Parser (nouveau service)**
+- `src/services/excel/extractor.ts` - Parser SheetJS complet
+- `src/services/excel/index.ts` - Export module
+- `src/app/api/documents/upload/route.ts` - Intégration upload
+
+**2. Format Excel LLM-readable**
+- Réécriture de `summarizeForLLM()` pour format vertical
+- Détection intelligente des colonnes date
+- Mise en avant des métriques financières (Revenue, EBITDA, etc.)
+- Script `scripts/reprocess-excel-force.ts` pour reprocess existants
+
+**3. Document-extractor amélioré**
+- Modèle: DeepSeek → GPT-4o Mini (plus rapide, plus fiable)
+- Timeout: 90s → 120s
+- Limite: 15K → 30K chars/doc
+- Prompt entièrement réécrit pour:
+  - Distinction stricte concurrents vs advisors vs partenaires
+  - Marchés multi-niveaux (TAM mondial, SAM Europe, SOM France)
+  - Capture de la value proposition centrale
+  - Nouveaux champs: `productName`, `coreValueProposition`, `keyDifferentiators`, `useCases`, `markets[]`, `advisors[]`, `partners[]`
+
+**4. Types mis à jour**
+- `src/agents/types.ts` - ExtractedDealInfo étendu avec nouveaux champs
+
+### Résultats sur Antiopea
+- Competitors: `[]` (correct - avant: IBM, Oracle, Wavestone)
+- Advisors: 9 personnes correctement identifiées
+- Markets: 3 marchés avec TAM/SAM/SOM et CAGR
+- Value proposition: capturée correctement
+- Exécution: 37s, $0.0025
+
+### Fichiers modifiés
+- `src/services/excel/extractor.ts` (créé + modifié)
+- `src/services/excel/index.ts` (créé)
+- `src/app/api/documents/upload/route.ts`
+- `src/agents/document-extractor.ts`
+- `src/agents/types.ts`
+- `src/services/openrouter/router.ts`
+- `scripts/reprocess-excel-force.ts` (créé)
+
+---
+
 ## 2026-01-25 18:45 - FIX: Telegram webhook désactivé après erreurs 405
 
 ### Problème

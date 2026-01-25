@@ -427,6 +427,13 @@ export async function validateAndUpdate(
     fieldsUpdated.push('website')
   }
 
+  // LinkedIn URL
+  if (extraction.linkedin_url && isValidLinkedInUrl(extraction.linkedin_url) && !company.linkedinUrl) {
+    previousData.linkedinUrl = company.linkedinUrl
+    updateData.linkedinUrl = extraction.linkedin_url
+    fieldsUpdated.push('linkedin')
+  }
+
   // Competitors
   if (extraction.competitors && extraction.competitors.length > 0) {
     const currentCompetitors = company.competitors || []
@@ -589,11 +596,12 @@ function calculateDataQuality(company: Record<string, unknown>): number {
 
   // Important fields (25 points)
   if (company.website) score += 5
+  if (company.linkedinUrl) score += 3
   if (company.foundedYear) score += 5
   if (company.founders && Array.isArray(company.founders) && company.founders.length > 0) {
-    score += 10
+    score += 8
   }
-  if (company.status && company.status !== 'UNKNOWN') score += 5
+  if (company.status && company.status !== 'UNKNOWN') score += 4
 
   // Bonus fields (15 points)
   if (company.employeeCount) score += 3
@@ -614,6 +622,22 @@ function isValidUrl(url: string): boolean {
   try {
     const parsed = new URL(url)
     return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Vérifie si une URL LinkedIn company est valide
+ */
+function isValidLinkedInUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      (parsed.hostname === 'linkedin.com' || parsed.hostname === 'www.linkedin.com') &&
+      parsed.pathname.startsWith('/company/')
+    )
   } catch {
     return false
   }

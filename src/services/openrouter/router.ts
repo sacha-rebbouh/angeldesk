@@ -101,12 +101,18 @@ function calculateBackoff(attempt: number): number {
 // =============================================================================
 const TEST_MODE = true; // TODO [PROD]: Mettre à false pour la production
 
-// Agents qui utilisent toujours leur modèle optimal, même en test mode
-// DISABLED - Tout passe par DeepSeek maintenant pour économiser
-// const ALWAYS_OPTIMAL_AGENTS = new Set(["document-extractor"]);
+// Agents qui utilisent toujours leur modèle optimal (fiabilité critique)
+// Document-extractor = fondation de l'analyse, doit être précis et rapide
+const ALWAYS_OPTIMAL_AGENTS = new Set(["document-extractor"]);
 
 export function selectModel(complexity: TaskComplexity, agentName?: string): ModelKey {
-  // COST SAVING MODE: Tout utilise DeepSeek (~$0.14-0.28/MTok)
+  // Exception: document-extractor utilise GPT-4o Mini (rapide, fiable, bon pour extraction)
+  // DeepSeek est trop lent/instable pour les gros prompts d'extraction
+  if (agentName && ALWAYS_OPTIMAL_AGENTS.has(agentName)) {
+    return "GPT4O_MINI";
+  }
+
+  // COST SAVING MODE: Tout le reste utilise DeepSeek (~$0.14-0.28/MTok)
   // DeepSeek est ~10x moins cher que GPT-4o Mini et ~100x moins cher que Sonnet
   return "DEEPSEEK";
 

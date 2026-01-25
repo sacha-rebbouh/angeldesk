@@ -175,6 +175,19 @@ export interface EnrichDealOptions {
   extractedProductDescription?: string;
   /** Business model from deck */
   extractedBusinessModel?: string;
+
+  // ============================================================================
+  // USE CASE DATA (CRITICAL for competitor search)
+  // Competitors are found by WHAT the product does, not its tech stack
+  // ============================================================================
+  /** Product name (e.g., "Axiom") */
+  extractedProductName?: string;
+  /** Core value proposition - THE central concept */
+  extractedCoreValueProposition?: string;
+  /** Use cases addressed by the product - MOST IMPORTANT for finding real competitors */
+  extractedUseCases?: string[];
+  /** Key differentiators - unique competitive advantages */
+  extractedKeyDifferentiators?: string[];
 }
 
 /**
@@ -202,12 +215,18 @@ export async function enrichDeal(
   const cache = getCacheManager();
 
   // Merge extracted data into query for better search results
+  // PRIORITY: Use cases > product description > tagline (for competitor search)
   const enrichedQuery: ConnectorQuery = {
     ...query,
     tagline: options.extractedTagline || query.tagline,
     mentionedCompetitors: options.extractedCompetitors || query.mentionedCompetitors,
     productDescription: options.extractedProductDescription || query.productDescription,
     businessModel: options.extractedBusinessModel || query.businessModel,
+    // USE CASE DATA (CRITICAL for finding real competitors)
+    productName: options.extractedProductName || query.productName,
+    coreValueProposition: options.extractedCoreValueProposition || query.coreValueProposition,
+    useCases: options.extractedUseCases || query.useCases,
+    keyDifferentiators: options.extractedKeyDifferentiators || query.keyDifferentiators,
   };
 
   const cacheKey = getQueryCacheKey(enrichedQuery);
