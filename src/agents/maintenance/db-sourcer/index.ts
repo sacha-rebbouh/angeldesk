@@ -76,21 +76,21 @@ const LEGACY_SOURCES: LegacySourceConnector[] = [
 ]
 
 // Paginated sources (support historical import with cursor)
+// TEMPORARILY DISABLED - Enable one at a time to avoid Vercel timeout
 const PAGINATED_SOURCES: PaginatedSourceConnector[] = [
-  // Archives (highest priority - get historical data from existing sources)
-  frenchwebArchiveConnector,
-  maddynessArchiveConnector,
-  euStartupsArchiveConnector,
-  siftedArchiveConnector,
-  // High-value sources
-  ycombinatorConnector,
-  producthuntConnector,
-  crunchbaseConnector,
-  // Additional sources
-  bpifranceConnector,
-  githubTrendingConnector,
+  // Only HackerNews for now (tested and working)
   hackernewsConnector,
-  companiesHouseConnector,
+  // TODO: Enable these gradually
+  // frenchwebArchiveConnector,
+  // maddynessArchiveConnector,
+  // euStartupsArchiveConnector,
+  // siftedArchiveConnector,
+  // ycombinatorConnector,
+  // producthuntConnector,
+  // crunchbaseConnector,
+  // bpifranceConnector,
+  // githubTrendingConnector,
+  // companiesHouseConnector,
 ]
 
 // ============================================================================

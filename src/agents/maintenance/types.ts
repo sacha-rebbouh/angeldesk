@@ -782,8 +782,8 @@ export const MAINTENANCE_CONSTANTS = {
 
   // Historical import settings
   HISTORICAL_MIN_DATE: new Date('2021-01-01'),
-  HISTORICAL_ITEMS_PER_BATCH: 25, // Items per batch for paginated sources
-  HISTORICAL_MAX_BATCHES_PER_RUN: 5, // Max batches per source per run (avoid timeout)
+  HISTORICAL_ITEMS_PER_BATCH: 20, // Items per batch for paginated sources
+  HISTORICAL_MAX_BATCHES_PER_RUN: 2, // Max batches per source per run (avoid Vercel timeout)
 
   // Thresholds
   MIN_CONFIDENCE_THRESHOLD: 70,
