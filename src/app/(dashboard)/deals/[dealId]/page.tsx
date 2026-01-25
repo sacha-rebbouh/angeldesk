@@ -28,6 +28,7 @@ import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper"
 import { ScoreGrid } from "@/components/deals/score-display";
 import { BoardPanelWrapper } from "@/components/deals/board-panel-wrapper";
 import { DocumentsTab } from "@/components/deals/documents-tab";
+import { TeamManagement } from "@/components/deals/team-management";
 
 async function getDeal(dealId: string, userId: string) {
   return prisma.deal.findFirst({
@@ -368,64 +369,15 @@ export default async function DealDetailPage({ params }: PageProps) {
         </TabsContent>
 
         <TabsContent value="founders">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Fondateurs</CardTitle>
-                  <CardDescription>Équipe fondatrice du projet</CardDescription>
-                </div>
-                <Button variant="outline">Ajouter un fondateur</Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {deal.founders.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-center">
-                  <Users className="h-12 w-12 text-muted-foreground/50" />
-                  <h3 className="mt-4 text-lg font-semibold">Aucun fondateur</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Ajoutez les fondateurs pour enrichir l&apos;analyse.
-                  </p>
-                  <Button className="mt-4" variant="outline">
-                    Ajouter un fondateur
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {deal.founders.map((founder) => (
-                    <div
-                      key={founder.id}
-                      className="flex items-center justify-between rounded-lg border p-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                          {founder.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                          <p className="font-medium">{founder.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {founder.role}
-                          </p>
-                        </div>
-                      </div>
-                      {founder.linkedinUrl && (
-                        <Button variant="ghost" size="sm" asChild>
-                          <a
-                            href={founder.linkedinUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            LinkedIn
-                            <ExternalLink className="ml-2 h-3 w-3" />
-                          </a>
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <TeamManagement
+            dealId={deal.id}
+            founders={deal.founders.map((f) => ({
+              ...f,
+              verifiedInfo: f.verifiedInfo as Record<string, unknown> | null,
+              previousVentures: f.previousVentures,
+              createdAt: f.createdAt.toISOString(),
+            }))}
+          />
         </TabsContent>
 
         <TabsContent value="redflags">

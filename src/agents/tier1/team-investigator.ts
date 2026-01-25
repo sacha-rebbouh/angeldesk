@@ -112,6 +112,20 @@ REGLES:
 - Les ventures precedentes comptent enormement (pattern matching)
 - Le vesting non en place = red flag structurel
 
+DONNEES LINKEDIN ENRICHIES:
+- Si un fondateur a "linkedinEnriched: true", ses donnees LinkedIn ont ete verifiees
+- "yearsExperience" = nombre d'annees d'experience professionnelle
+- "isSerialFounder" = a fonde 2+ entreprises precedemment
+- "hasTechBackground" = background technique (ingenieur, dev, CTO)
+- "hasFounderExperience" = a deja ete fondateur/CEO
+- "expertise" = description synthetique de son parcours
+- "sectorFit" = adequation avec le secteur de la startup
+- "redFlagsFromLinkedIn" = red flags detectes automatiquement (gaps, job hopping, etc.)
+- "questionsFromLinkedIn" = questions suggerees basees sur le parcours
+
+IMPORTANT: Les donnees LinkedIn enrichies sont les plus fiables car verifiees.
+backgroundVerified = true si linkedinEnriched = true.
+
 OUTPUT: JSON structure uniquement.`;
   }
 
@@ -126,10 +140,60 @@ OUTPUT: JSON structure uniquement.`;
       foundersSection = `\n## Fondateurs (du Pitch Deck)\n${JSON.stringify(extractedInfo.founders, null, 2)}`;
     }
 
-    // Get founders from DB
-    const deal = context.deal as unknown as { founders?: { name: string; role: string; background?: string; linkedinUrl?: string }[] };
+    // Get founders from DB with their LinkedIn-enriched data
+    const deal = context.deal as unknown as {
+      founders?: {
+        name: string;
+        role: string;
+        background?: string;
+        linkedinUrl?: string;
+        verifiedInfo?: {
+          linkedinScrapedAt?: string;
+          highlights?: {
+            yearsExperience?: number;
+            educationLevel?: string;
+            hasRelevantIndustryExp?: boolean;
+            hasFounderExperience?: boolean;
+            hasTechBackground?: boolean;
+            isSerialFounder?: boolean;
+          };
+          expertise?: {
+            primaryIndustry?: string;
+            primaryRole?: string;
+            description?: string;
+            isDiversified?: boolean;
+            hasDeepExpertise?: boolean;
+          };
+          sectorFit?: { fits: boolean; explanation: string };
+          redFlags?: { type: string; severity: string; message: string }[];
+          questionsToAsk?: { question: string; context: string; priority: string }[];
+        };
+        previousVentures?: unknown;
+      }[];
+    };
     if (deal.founders && deal.founders.length > 0) {
-      foundersSection += `\n## Fondateurs (de la DB)\n${JSON.stringify(deal.founders, null, 2)}`;
+      // Include enriched data when available
+      const foundersWithEnrichment = deal.founders.map(f => ({
+        name: f.name,
+        role: f.role,
+        linkedinUrl: f.linkedinUrl,
+        // Include enriched highlights if the founder was scraped
+        ...(f.verifiedInfo?.linkedinScrapedAt && {
+          linkedinEnriched: true,
+          yearsExperience: f.verifiedInfo.highlights?.yearsExperience,
+          educationLevel: f.verifiedInfo.highlights?.educationLevel,
+          isSerialFounder: f.verifiedInfo.highlights?.isSerialFounder,
+          hasTechBackground: f.verifiedInfo.highlights?.hasTechBackground,
+          hasFounderExperience: f.verifiedInfo.highlights?.hasFounderExperience,
+          hasRelevantIndustryExp: f.verifiedInfo.highlights?.hasRelevantIndustryExp,
+          expertise: f.verifiedInfo.expertise?.description,
+          sectorFit: f.verifiedInfo.sectorFit,
+          redFlagsFromLinkedIn: f.verifiedInfo.redFlags,
+          questionsFromLinkedIn: f.verifiedInfo.questionsToAsk,
+        }),
+        previousVentures: f.previousVentures,
+      }));
+      foundersSection += `\n## Fondateurs (de la DB avec enrichissement LinkedIn)\n${JSON.stringify(foundersWithEnrichment, null, 2)}`;
     }
 
     // Get People Graph from Context Engine

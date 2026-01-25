@@ -20,7 +20,7 @@ import {
 const logger = createLogger('DB_SOURCER:llm-parser')
 
 const OPENROUTER_API = 'https://openrouter.ai/api/v1/chat/completions'
-const MODEL = 'deepseek/deepseek-chat' // Low cost model
+const MODEL = 'deepseek/deepseek-chat' // ~$0.14-0.28/MTok - le moins cher avec qualité
 
 const LLM_CIRCUIT_NAME = 'sourcer-llm'
 const LLM_CIRCUIT_CONFIG = {

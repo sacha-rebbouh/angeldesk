@@ -2,6 +2,233 @@
 
 ---
 
+## 2026-01-25 17:30 - FEATURE: Massive Source Expansion + DeepSeek Router
+
+### Sources ajoutées au DB Sourcer (11 nouvelles)
+**Archives paginées:**
+- `frenchweb-archive.ts`, `maddyness-archive.ts`, `eu-startups-archive.ts`, `sifted-archive.ts`
+
+**APIs & Scraping:**
+- `ycombinator.ts` - Batches YC depuis W21
+- `producthunt.ts` - Launches via GraphQL API
+- `crunchbase-basic.ts` - API gratuite
+- `bpifrance.ts` - News BPI France
+- `github-trending.ts` - Repos trending
+- `hackernews.ts` - Show HN via Algolia (FONCTIONNE: 90 companies créées en test)
+- `companies-house.ts` - UK registrations
+
+### Router forcé sur DeepSeek
+- `src/services/openrouter/router.ts` - selectModel() retourne TOUJOURS "DEEPSEEK"
+- Même document-extractor (avant: Sonnet à $15/MTok output)
+
+### Schema Prisma
+- Ajout champs pagination: `cursor`, `cursorType`, `historicalImportComplete`
+
+### TODO
+- Fixer URLs archives (FrenchWeb, Maddyness redirectent)
+- Fixer parsing YC (site changé)
+- Déployer sur Vercel
+
+---
+
+## 2025-01-25 21:45 - FIX CRITIQUE: Remplacement Haiku par DeepSeek (10x moins cher)
+
+### Problème identifié
+Le compte OpenRouter a consommé ~$20 en une nuit (12M tokens Haiku 3.5 entre 2h et 3h du matin).
+Cause: Le script `enrich-frenchweb-full.ts` utilisait Claude 3.5 Haiku ($0.25-1.25/MTok) en direct.
+
+### Solution: DeepSeek + GPT-4o Mini
+| Usage | Modèle | Coût/MTok |
+|-------|--------|-----------|
+| Parsing texte | `deepseek/deepseek-chat` | $0.14 / $0.28 |
+| OCR/Vision | `openai/gpt-4o-mini` | $0.15 / $0.60 |
+
+### Estimation coût 6000 articles FrenchWeb
+- Avant (Haiku): ~$20
+- Après (DeepSeek): **~$1.70**
+
+### Fichiers modifiés
+- `scripts/enrich-frenchweb-full.ts`: Haiku → DeepSeek
+- `scripts/enrich-companies-batch.ts`: Haiku → DeepSeek
+- `scripts/test-one-article.ts`: Haiku → DeepSeek
+- `src/agents/maintenance/db-sourcer/llm-parser.ts`: → DeepSeek
+- `src/agents/maintenance/db-completer/llm-extract.ts`: → DeepSeek
+- `src/services/pdf/ocr-service.ts`: Haiku → GPT-4o Mini
+- `src/services/openrouter/client.ts`: Ajout modèle DEEPSEEK
+
+---
+
+## 2025-01-25 20:45 - FIX: Apify LinkedIn field mapping for actual response format
+
+### Fichiers modifiés
+- `src/services/context-engine/connectors/apify-linkedin.ts`
+
+### Changements
+- Ajout parsing dates textuelles ("Oct 2021", "January 2020") depuis Apify
+- Ajout parsing période éducation ("2018 - 2023")
+- Mapping corrigé pour les champs Apify:
+  - `about` → `summary`
+  - `experiences[].jobDescription` → `description`
+  - `experiences[].jobStartedOn/jobEndedOn` → dates
+  - `experiences[].jobLocation` → `location`
+  - `educations[].title` → school name
+  - `educations[].subtitle` → degree
+  - `educations[].period` → dates parsed
+  - `skills[]` et `languages[]` → extraction des `title` (objets, pas strings)
+  - `connections` et `followers` → nombres
+
+### Contexte
+Test via UI Apify a révélé le format exact des champs. Le connector échouait car les noms de champs ne correspondaient pas.
+
+---
+
+## 2026-01-25 16:30 - FEATURE: Massive Source Expansion for DB Sourcer
+
+### Contexte
+Le sourcer ne trouvait que ~50 articles par run car il utilisait seulement 6 flux RSS. Ajout de 11 nouvelles sources paginées pour importer l'historique depuis 2021.
+
+### Schema Prisma
+- Ajout champs dans `FundingSource`:
+  - `sourceType` (rss, api, scrape, archive)
+  - `cursor` (état pagination)
+  - `cursorType` (page, date, offset, token)
+  - `historicalImportComplete` (flag fin d'import)
+  - `oldestDateImported`
+
+### Nouvelles sources créées
+
+**Archives (scraping historique)**
+- `src/agents/maintenance/db-sourcer/sources/archives/frenchweb-archive.ts`
+- `src/agents/maintenance/db-sourcer/sources/archives/maddyness-archive.ts`
+- `src/agents/maintenance/db-sourcer/sources/archives/eu-startups-archive.ts`
+- `src/agents/maintenance/db-sourcer/sources/archives/sifted-archive.ts`
+
+**APIs & Scraping**
+- `src/agents/maintenance/db-sourcer/sources/ycombinator.ts` - Batches YC depuis W21
+- `src/agents/maintenance/db-sourcer/sources/producthunt.ts` - Launches via GraphQL API
+- `src/agents/maintenance/db-sourcer/sources/crunchbase-basic.ts` - API gratuite (50 calls/jour)
+- `src/agents/maintenance/db-sourcer/sources/bpifrance.ts` - News BPI France
+- `src/agents/maintenance/db-sourcer/sources/github-trending.ts` - Repos trending tech
+- `src/agents/maintenance/db-sourcer/sources/hackernews.ts` - Show HN & funding news via Algolia
+- `src/agents/maintenance/db-sourcer/sources/companies-house.ts` - UK company registrations
+
+### Types ajoutés (`src/agents/maintenance/types.ts`)
+- `PaginatedSourceResult` - Résultat avec cursor
+- `PaginatedSourceConnector` - Interface pour sources paginées
+- `MAINTENANCE_CONSTANTS.HISTORICAL_*` - Config import historique
+
+### Main sourcer refactorisé (`src/agents/maintenance/db-sourcer/index.ts`)
+- Support sources legacy (RSS) + paginées
+- Gestion état pagination en DB
+- Options: `legacyOnly`, `paginatedOnly`, `sources[]`
+- Import progressif par batches (évite timeout)
+
+### Volume estimé des nouvelles sources
+| Source | Volume estimé |
+|--------|---------------|
+| Archives FrenchWeb | ~5000 deals |
+| Archives Maddyness | ~3000 deals |
+| Y Combinator | ~2000 startups |
+| ProductHunt | ~10000 launches |
+| Hacker News | ~5000 Show HN |
+| GitHub Trending | Signal continu |
+| BPI France | ~2000 deals FR |
+| Companies House UK | ~10000 startups UK |
+
+### Prochaines étapes
+1. Lancer `/run sourcer` plusieurs fois pour importer l'historique
+2. Monitorer progression via `FundingSource.cursor`
+3. Ajouter API keys optionnelles (Crunchbase, GitHub, Companies House)
+
+---
+
+## 2026-01-25 xx:xx - FEATURE: LinkedIn Enrichment via Apify + Team Management UI
+
+### Contexte
+Proxycurl a ferme en janvier 2025. Besoin de remplacer par Apify pour scraper les profils LinkedIn des fondateurs et analyser leur parcours.
+
+### Fichiers crees
+
+**API Routes**
+- `src/app/api/deals/[dealId]/founders/route.ts`
+  - GET: Liste tous les fondateurs d'un deal
+  - POST: Cree un nouveau fondateur (name, role, linkedinUrl)
+
+- `src/app/api/deals/[dealId]/founders/[founderId]/route.ts`
+  - GET: Recupere un fondateur
+  - PUT: Met a jour un fondateur
+  - DELETE: Supprime un fondateur
+
+- `src/app/api/deals/[dealId]/founders/[founderId]/enrich/route.ts`
+  - POST: Enrichit le profil via Apify LinkedIn scraping
+  - Stocke: highlights, expertise, redFlags, questionsToAsk
+
+**Composant UI**
+- `src/components/deals/team-management.tsx`
+  - Composant complet pour gerer l'equipe fondatrice
+  - Dialog add/edit avec champs: nom, role, LinkedIn URL
+  - Bouton enrichissement (scrape LinkedIn)
+  - Affichage highlights: annees d'exp, education, serial founder, etc.
+  - Affichage red flags detectes
+  - Mutations React Query pour CRUD
+
+### Fichiers modifies
+- `src/app/(dashboard)/deals/[dealId]/page.tsx`
+  - Import TeamManagement
+  - Tab "Fondateurs" utilise le nouveau composant
+
+- `src/services/context-engine/connectors/apify-linkedin.ts` (cree session precedente)
+  - Connecteur Apify pour LinkedIn Profile Scraper
+  - Analyse expertise (industries, roles, ecosystems)
+  - Detection red flags automatique
+  - Questions a poser generees
+
+### Donnees enrichies stockees
+
+```typescript
+verifiedInfo = {
+  linkedinScrapedAt: string,
+  highlights: {
+    yearsExperience: number,
+    educationLevel: "phd" | "masters" | "bachelors" | "other",
+    hasRelevantIndustryExp: boolean,
+    hasFounderExperience: boolean,
+    hasTechBackground: boolean,
+    isSerialFounder: boolean,
+  },
+  expertise: {
+    primaryIndustry: string,
+    primaryRole: string,
+    description: string,
+    isDiversified: boolean,
+    hasDeepExpertise: boolean,
+  },
+  sectorFit: { fits: boolean, explanation: string },
+  redFlags: [{ type, severity, message }],
+  questionsToAsk: [{ question, context, priority }],
+}
+```
+
+### Variables d'environnement requises
+- `APIFY_API_KEY` - Cle API Apify (~$3/1000 profils)
+
+### Integration dans le flow d'analyse
+- `src/agents/tier1/team-investigator.ts` mis a jour pour:
+  - Utiliser les donnees `verifiedInfo` stockees en DB
+  - Afficher les highlights LinkedIn (yearsExperience, isSerialFounder, etc.)
+  - Integrer les red flags detectes automatiquement
+  - Utiliser les questions suggerees par l'analyse LinkedIn
+  - Le prompt systeme documente les nouvelles donnees enrichies
+
+### Flow complet
+1. User ajoute un fondateur via l'UI avec son LinkedIn URL
+2. User clique "Enrichir" pour scraper le profil
+3. Les donnees sont stockees dans `Founder.verifiedInfo`
+4. Lors de l'analyse, team-investigator utilise ces donnees
+5. Les red flags LinkedIn sont integres dans l'evaluation
+
+---
+
 ## 2026-01-25 xx:xx - MAJOR: Context Engine BLINDÉ (Circuit Breaker + Parallel Fetch)
 
 ### Problème

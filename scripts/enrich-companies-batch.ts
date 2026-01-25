@@ -113,7 +113,7 @@ async function enrichWithLLM(content: string): Promise<EnrichmentResult | null> 
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "deepseek/deepseek-chat",
+        model: "deepseek/deepseek-chat", // ~$0.14-0.28/MTok
         max_tokens: 1000,
         temperature: 0.1,
         messages: [{ role: "user", content: `${ENRICHMENT_PROMPT}\n\nARTICLE:\n${content}` }],

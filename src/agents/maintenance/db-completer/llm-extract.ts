@@ -34,7 +34,7 @@ import {
 const logger = createLogger('DB_COMPLETER:llm-extract')
 
 const OPENROUTER_API = 'https://openrouter.ai/api/v1/chat/completions'
-const MODEL = 'deepseek/deepseek-chat' // DeepSeek V3 - très low cost
+const MODEL = 'deepseek/deepseek-chat' // ~$0.14-0.28/MTok - le moins cher avec qualité
 const LLM_CIRCUIT_NAME = 'deepseek-llm'
 
 // Circuit breaker config pour LLM: 3 fails → pause 5min

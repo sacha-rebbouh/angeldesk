@@ -424,9 +424,9 @@ export function getPagesNeedingOCR(
  * Returns cost in USD
  */
 export function estimateOCRCost(pagesNeedingOCR: number): number {
-  // Using Haiku: ~$0.00025/1K input + $0.00125/1K output
+  // Using GPT-4o Mini: $0.15/MTok input, $0.60/MTok output
   // Estimate ~800 input tokens (image) + 300 output tokens per page
-  const inputCostPerPage = (800 / 1000) * 0.00025;
-  const outputCostPerPage = (300 / 1000) * 0.00125;
+  const inputCostPerPage = (800 / 1000) * 0.00015;
+  const outputCostPerPage = (300 / 1000) * 0.0006;
   return pagesNeedingOCR * (inputCostPerPage + outputCostPerPage);
 }

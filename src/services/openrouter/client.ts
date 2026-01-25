@@ -37,7 +37,17 @@ export const MODELS = {
     inputCost: 0.00015,
     outputCost: 0.0006,
     contextWindow: 128000,
-    capabilities: ["fast", "cheap", "general"],
+    capabilities: ["fast", "cheap", "general", "vision"],
+  },
+
+  // DeepSeek - cheapest for text parsing (no vision)
+  DEEPSEEK: {
+    id: "deepseek/deepseek-chat",
+    name: "DeepSeek Chat",
+    inputCost: 0.00014,
+    outputCost: 0.00028,
+    contextWindow: 64000,
+    capabilities: ["fast", "cheapest", "general"],
   },
 
   // Powerful models for complex reasoning

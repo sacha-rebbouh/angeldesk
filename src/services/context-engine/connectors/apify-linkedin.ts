@@ -214,11 +214,43 @@ function getApiKey(): string | null {
 function parseApifyDate(dateStr: string | undefined | null): NormalizedDate | undefined {
   if (!dateStr) return undefined;
 
-  // Handle "YYYY-MM" or "YYYY" format
+  // Handle "Oct 2021" or "January 2020" format (from Apify jobStartedOn/jobEndedOn)
+  const monthNames: Record<string, number> = {
+    jan: 1, january: 1,
+    feb: 2, february: 2,
+    mar: 3, march: 3,
+    apr: 4, april: 4,
+    may: 5,
+    jun: 6, june: 6,
+    jul: 7, july: 7,
+    aug: 8, august: 8,
+    sep: 9, september: 9,
+    oct: 10, october: 10,
+    nov: 11, november: 11,
+    dec: 12, december: 12,
+  };
+
+  const monthYearMatch = dateStr.match(/^(\w+)\s+(\d{4})$/i);
+  if (monthYearMatch) {
+    const monthStr = monthYearMatch[1].toLowerCase();
+    const year = parseInt(monthYearMatch[2], 10);
+    const month = monthNames[monthStr];
+    if (month && !isNaN(year)) {
+      return { year, month };
+    }
+  }
+
+  // Handle just year "2021"
+  const yearOnlyMatch = dateStr.match(/^(\d{4})$/);
+  if (yearOnlyMatch) {
+    return { year: parseInt(yearOnlyMatch[1], 10) };
+  }
+
+  // Handle "YYYY-MM" or "YYYY-MM-DD" format
   const parts = dateStr.split("-");
   if (parts.length >= 1) {
     const year = parseInt(parts[0], 10);
-    if (!isNaN(year)) {
+    if (!isNaN(year) && year > 1900 && year < 2100) {
       return {
         year,
         month: parts.length >= 2 ? parseInt(parts[1], 10) : undefined,
@@ -229,47 +261,101 @@ function parseApifyDate(dateStr: string | undefined | null): NormalizedDate | un
   return undefined;
 }
 
-function normalizeApifyProfile(apify: ApifyProfile): NormalizedProfile {
+/**
+ * Parse education period like "2018 - 2023" or "2018 - Present"
+ */
+function parseEducationPeriod(period: string | undefined | null): { start?: NormalizedDate; end?: NormalizedDate } {
+  if (!period) return {};
+
+  const match = period.match(/(\d{4})\s*[-–]\s*(\d{4}|Present)?/i);
+  if (match) {
+    const startYear = parseInt(match[1], 10);
+    const endPart = match[2];
+
+    return {
+      start: { year: startYear },
+      end: endPart && endPart.toLowerCase() !== "present" ? { year: parseInt(endPart, 10) } : undefined,
+    };
+  }
+  return {};
+}
+
+function normalizeApifyProfile(apify: Record<string, unknown>, originalUrl: string): NormalizedProfile {
+  // Handle various field name formats from different Apify actors
+  const linkedinUrl = (apify.linkedinUrl || apify.url || apify.profileUrl || originalUrl) as string;
+  const firstName = (apify.firstName || apify.first_name || "") as string;
+  const lastName = (apify.lastName || apify.last_name || "") as string;
+  const fullName = (apify.fullName || apify.full_name || apify.name || `${firstName} ${lastName}`.trim()) as string;
+
+  // Extract experiences - handle different field names
+  const rawExperiences = (apify.experiences || apify.experience || apify.positions || []) as Array<Record<string, unknown>>;
+
+  // Extract education - handle different field names (Apify uses "educations")
+  const rawEducation = (apify.educations || apify.education || []) as Array<Record<string, unknown>>;
+
+  // Extract skills - Apify returns array of {title: string} objects
+  const rawSkills = (apify.skills || []) as Array<string | { title?: string }>;
+  const skills = rawSkills.map(s => typeof s === "string" ? s : (s.title ?? "")).filter(Boolean);
+
+  // Extract languages - Apify returns array of {title: string} objects
+  const rawLanguages = (apify.languages || []) as Array<string | { title?: string }>;
+  const languages = rawLanguages.map(l => typeof l === "string" ? l : (l.title ?? "")).filter(Boolean);
+
+  // Extract location
+  const location = apify.location as Record<string, unknown> | undefined;
+
   return {
-    public_identifier: apify.linkedinUrl.split("/in/")[1]?.replace(/\/$/, "") || "",
-    profile_pic_url: apify.profilePicture,
-    first_name: apify.firstName,
-    last_name: apify.lastName,
-    full_name: apify.fullName,
-    headline: apify.headline,
-    summary: apify.summary,
-    country: apify.country,
-    city: apify.city,
-    experiences: apify.experiences.map((exp) => ({
-      company: exp.companyName,
-      company_linkedin_profile_url: exp.companyUrl,
-      title: exp.title,
-      description: exp.description,
-      location: exp.location,
-      starts_at: parseApifyDate(exp.startDate),
-      ends_at: exp.endDate ? parseApifyDate(exp.endDate) : null,
-      logo_url: exp.companyLogo,
+    public_identifier: linkedinUrl?.split("/in/")?.[1]?.replace(/\/$/, "") || "",
+    profile_pic_url: (apify.profilePicture || apify.profilePic || apify.avatar || apify.image) as string | undefined,
+    first_name: firstName,
+    last_name: lastName,
+    full_name: fullName,
+    headline: (apify.headline || apify.title) as string | undefined,
+    // Apify uses "about" field for the summary
+    summary: (apify.about || apify.summary || apify.description) as string | undefined,
+    country: (apify.country || location?.country) as string | undefined,
+    city: (apify.city || location?.city) as string | undefined,
+    experiences: rawExperiences.map((exp) => ({
+      company: (exp.companyName || exp.company || exp.companyname || "") as string,
+      company_linkedin_profile_url: (exp.companyUrl || exp.companyLinkedinUrl) as string | undefined,
+      title: (exp.title || exp.role || exp.position || "") as string,
+      // Apify uses "jobDescription" for experience description
+      description: (exp.jobDescription || exp.description || exp.summary) as string | undefined,
+      // Apify uses "jobLocation" for experience location
+      location: (exp.jobLocation || exp.location) as string | undefined,
+      // Apify uses "jobStartedOn" / "jobEndedOn" with format "Oct 2021"
+      starts_at: parseApifyDate((exp.jobStartedOn || exp.startDate || exp.start_date || exp.from) as string),
+      ends_at: (exp.jobEndedOn || exp.endDate || exp.end_date || exp.to)
+        ? parseApifyDate((exp.jobEndedOn || exp.endDate || exp.end_date || exp.to) as string)
+        : null,
+      logo_url: (exp.logo || exp.companyLogo) as string | undefined,
     })),
-    education: apify.education.map((edu) => ({
-      school: edu.schoolName,
-      school_linkedin_profile_url: edu.schoolUrl,
-      degree_name: edu.degree,
-      field_of_study: edu.fieldOfStudy,
-      starts_at: parseApifyDate(edu.startDate),
-      ends_at: parseApifyDate(edu.endDate),
-      description: edu.description,
-      logo_url: edu.schoolLogo,
+    education: rawEducation.map((edu) => {
+      // Apify uses "title" for school name and "subtitle" for degree
+      const period = parseEducationPeriod(edu.period as string);
+      return {
+        school: (edu.title || edu.schoolName || edu.school || edu.institution || "") as string,
+        school_linkedin_profile_url: (edu.schoolUrl || edu.schoolLinkedinUrl) as string | undefined,
+        // Apify uses "subtitle" for degree info
+        degree_name: (edu.subtitle || edu.degree || edu.degreeName || edu.degree_name) as string | undefined,
+        field_of_study: (edu.fieldOfStudy || edu.field || edu.major) as string | undefined,
+        // Parse period string like "2018 - 2023"
+        starts_at: period.start || parseApifyDate((edu.startDate || edu.start_date || edu.from) as string),
+        ends_at: period.end || parseApifyDate((edu.endDate || edu.end_date || edu.to) as string),
+        description: edu.description as string | undefined,
+        logo_url: (edu.logo || edu.schoolLogo) as string | undefined,
+      };
+    }),
+    languages,
+    skills,
+    certifications: ((apify.certifications || []) as Array<Record<string, unknown>>).map((cert) => ({
+      name: (cert.name || cert.title || "") as string,
+      authority: cert.authority as string | undefined,
+      starts_at: parseApifyDate((cert.startDate || cert.start_date) as string),
+      ends_at: parseApifyDate((cert.endDate || cert.end_date) as string),
     })),
-    languages: apify.languages,
-    skills: apify.skills,
-    certifications: apify.certifications?.map((cert) => ({
-      name: cert.name,
-      authority: cert.authority,
-      starts_at: parseApifyDate(cert.startDate),
-      ends_at: parseApifyDate(cert.endDate),
-    })),
-    connections: apify.connectionCount,
-    follower_count: apify.followerCount,
+    connections: (apify.connections || apify.connectionCount || apify.connectionsCount) as number | undefined,
+    follower_count: (apify.followers || apify.followerCount) as number | undefined,
   };
 }
 
@@ -705,19 +791,26 @@ async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProf
     }
 
     console.log(`[Apify LinkedIn] Fetching profile: ${normalizedUrl}`);
+    console.log(`[Apify LinkedIn] API Key present: ${!!apiKey}, length: ${apiKey.length}`);
 
     // Run the actor synchronously
     const runUrl = `${APIFY_API_BASE}/acts/${LINKEDIN_SCRAPER_ACTOR_ID}/run-sync-get-dataset-items?token=${apiKey}`;
+
+    // Input format for supreme_coder/linkedin-profile-scraper
+    const inputPayload = {
+      profileUrls: [normalizedUrl],
+    };
+    console.log(`[Apify LinkedIn] Request payload:`, JSON.stringify(inputPayload));
 
     const response = await fetch(runUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        profileUrls: [normalizedUrl],
-      }),
+      body: JSON.stringify(inputPayload),
     });
+
+    console.log(`[Apify LinkedIn] Response status: ${response.status}`);
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -734,15 +827,20 @@ async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProf
       return null;
     }
 
-    const results: ApifyProfile[] = await response.json();
+    const results = await response.json();
+    console.log(`[Apify LinkedIn] Raw response:`, JSON.stringify(results, null, 2).slice(0, 2000));
 
     if (!results || results.length === 0) {
       console.warn(`[Apify LinkedIn] No profile found for: ${normalizedUrl}`);
       return null;
     }
 
+    // The response structure may vary - log the first result's keys
+    const firstResult = results[0];
+    console.log(`[Apify LinkedIn] Response keys:`, Object.keys(firstResult || {}));
+
     // Normalize to our internal format
-    const normalized = normalizeApifyProfile(results[0]);
+    const normalized = normalizeApifyProfile(firstResult, normalizedUrl);
     console.log(`[Apify LinkedIn] Successfully fetched profile for: ${normalized.full_name}`);
 
     return normalized;

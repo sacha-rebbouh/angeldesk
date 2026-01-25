@@ -56,8 +56,8 @@ export interface PageOCRResult {
   cost: number;
 }
 
-// Use Haiku for OCR - cheapest vision model with good quality
-const OCR_MODEL = MODELS.HAIKU;
+// Use GPT-4o Mini for OCR - cheapest with vision + data privacy
+const OCR_MODEL = MODELS.GPT4O_MINI;
 
 // Maximum pages to OCR (cost control)
 const MAX_PAGES_TO_OCR = 20;
@@ -65,9 +65,10 @@ const MAX_PAGES_TO_OCR = 20;
 // Batch size for parallel processing
 const BATCH_SIZE = 3;
 
-// Cost per page estimate (Haiku vision)
+// Cost per page estimate (GPT-4o Mini vision)
 const ESTIMATED_INPUT_TOKENS = 800;  // Image ~800 tokens
 const ESTIMATED_OUTPUT_TOKENS = 300; // Text output ~300 tokens
+// GPT-4o Mini: $0.15/MTok input, $0.60/MTok output
 
 /**
  * Selective OCR - only process specific pages

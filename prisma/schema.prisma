@@ -858,11 +858,19 @@ model FundingSource {
   name            String   @unique // "kaggle_crunchbase", "frenchweb", etc.
   displayName     String
   description     String?
+  sourceType      String   @default("rss") // "rss", "api", "scrape", "archive"
+  sourceUrl       String?  // Base URL for the source
 
   // Stats
   totalRounds     Int      @default(0)
   lastImportAt    DateTime?
   lastImportCount Int?
+
+  // Pagination state for historical imports
+  cursor          String?  // Current position (page number, date, offset, etc.)
+  cursorType      String?  // "page", "date", "offset", "token"
+  historicalImportComplete Boolean @default(false)
+  oldestDateImported DateTime? // Track how far back we've gone
 
   // Config
   isActive        Boolean  @default(true)

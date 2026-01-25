@@ -245,11 +245,33 @@ export interface ParsedFunding {
   description: string | null
 }
 
-/** Source connector interface */
+/** Source connector interface (legacy RSS) */
 export interface SourceConnector {
   name: string
   displayName: string
   fetch(): Promise<ParsedFunding[]>
+}
+
+/** Paginated source result */
+export interface PaginatedSourceResult {
+  items: ParsedFunding[]
+  nextCursor: string | null // null = no more pages
+  hasMore: boolean
+  totalEstimated?: number // Estimated total items if known
+}
+
+/** Paginated source connector interface */
+export interface PaginatedSourceConnector {
+  name: string
+  displayName: string
+  sourceType: 'archive' | 'api' | 'scrape'
+  cursorType: 'page' | 'date' | 'offset' | 'token'
+  /** Minimum date to import (2021-01-01) */
+  minDate: Date
+  /** Fetch a batch of items starting from cursor */
+  fetch(cursor: string | null): Promise<PaginatedSourceResult>
+  /** Get initial cursor for new imports */
+  getInitialCursor(): string
 }
 
 // ============================================================================
@@ -757,6 +779,11 @@ export const MAINTENANCE_CONSTANTS = {
   COMPLETER_BATCH_SIZE: 200,
   SOURCER_MAX_ARTICLES_PER_SOURCE: 50,
   MAX_RETRY_ATTEMPTS: 2,
+
+  // Historical import settings
+  HISTORICAL_MIN_DATE: new Date('2021-01-01'),
+  HISTORICAL_ITEMS_PER_BATCH: 25, // Items per batch for paginated sources
+  HISTORICAL_MAX_BATCHES_PER_RUN: 5, // Max batches per source per run (avoid timeout)
 
   // Thresholds
   MIN_CONFIDENCE_THRESHOLD: 70,

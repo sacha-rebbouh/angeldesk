@@ -203,7 +203,7 @@ async function extractWithLLM(content: string, url: string): Promise<EnrichedDea
         "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "anthropic/claude-3-5-haiku",
+        model: "deepseek/deepseek-chat", // ~$0.14-0.28/MTok - le moins cher avec qualité
         max_tokens: 1000,
         messages: [
           {
@@ -448,7 +448,7 @@ async function main() {
   console.log("\n╔════════════════════════════════════════════════════════════════╗");
   console.log("║       FRENCHWEB FULL ENRICHMENT - LLM EXTRACTION               ║");
   console.log("║                                                                 ║");
-  console.log("║  Using: Claude 3.5 Haiku via OpenRouter                         ║");
+  console.log("║  Using: DeepSeek Chat via OpenRouter (low cost)                 ║");
   console.log("║  Categories: 11276 (Levées) + 12024 (Investissements)           ║");
   console.log("║  Expected: ~6,000 articles                                      ║");
   console.log("╚════════════════════════════════════════════════════════════════╝\n");
@@ -514,10 +514,10 @@ async function main() {
         const deal = await extractWithLLM(content, post.link);
         const duration = Date.now() - startTime;
 
-        // Estimate cost
+        // Estimate cost (DeepSeek: $0.14/MTok input, $0.28/MTok output)
         const inputTokens = content.length / 4;
         const outputTokens = 500;
-        const cost = (inputTokens * 0.25 + outputTokens * 1.25) / 1_000_000;
+        const cost = (inputTokens * 0.14 + outputTokens * 0.28) / 1_000_000;
         totalCost += cost;
 
         if (!deal || !deal.companyName) {

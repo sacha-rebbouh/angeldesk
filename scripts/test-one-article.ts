@@ -70,7 +70,7 @@ async function test() {
       Authorization: `Bearer ${OPENROUTER_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "anthropic/claude-3-5-haiku",
+      model: "deepseek/deepseek-chat", // ~$0.14-0.28/MTok
       max_tokens: 1000,
       messages: [{ role: "user", content: `${EXTRACTION_PROMPT}\n\nARTICLE:\n${content}` }],
     }),
