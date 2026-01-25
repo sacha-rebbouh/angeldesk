@@ -27,7 +27,340 @@ import { validateAndUpdate } from './validator'
 const logger = createLogger('DB_COMPLETER')
 
 // ============================================================================
-// MAIN AGENT
+// BATCH STATS (for multi-step Inngest)
+// ============================================================================
+
+export interface CompleterBatchStats {
+  companiesProcessed: number
+  companiesEnriched: number
+  companiesSkipped: number
+  companiesFailed: number
+  totalCost: number
+  llmCalls: number
+  webSearches: number
+  totalSources: number
+  totalConfidence: number
+  totalCompleteness: number
+  fieldsUpdated: FieldUpdateStats
+  activityStatusBreakdown: ActivityStatusBreakdown
+  errors: AgentError[]
+}
+
+/**
+ * Returns empty batch stats (for error handling in Inngest)
+ */
+export function emptyBatchStats(): CompleterBatchStats {
+  return {
+    companiesProcessed: 0,
+    companiesEnriched: 0,
+    companiesSkipped: 0,
+    companiesFailed: 0,
+    totalCost: 0,
+    llmCalls: 0,
+    webSearches: 0,
+    totalSources: 0,
+    totalConfidence: 0,
+    totalCompleteness: 0,
+    fieldsUpdated: {
+      industry: 0, description: 0, founders: 0, investors: 0,
+      headquarters: 0, foundedYear: 0, website: 0, competitors: 0,
+      status: 0, employees: 0,
+    },
+    activityStatusBreakdown: {
+      active: 0, shutdown: 0, acquired: 0, inactive: 0, unknown: 0,
+    },
+    errors: [],
+  }
+}
+
+/**
+ * Process a single batch of companies (for Inngest multi-step)
+ * Returns stats that can be aggregated across batches
+ */
+export async function processCompleterBatch(batchNumber: number): Promise<CompleterBatchStats> {
+  const stats: CompleterBatchStats = {
+    companiesProcessed: 0,
+    companiesEnriched: 0,
+    companiesSkipped: 0,
+    companiesFailed: 0,
+    totalCost: 0,
+    llmCalls: 0,
+    webSearches: 0,
+    totalSources: 0,
+    totalConfidence: 0,
+    totalCompleteness: 0,
+    fieldsUpdated: {
+      industry: 0, description: 0, founders: 0, investors: 0,
+      headquarters: 0, foundedYear: 0, website: 0, competitors: 0,
+      status: 0, employees: 0,
+    },
+    activityStatusBreakdown: {
+      active: 0, shutdown: 0, acquired: 0, inactive: 0, unknown: 0,
+    },
+    errors: [],
+  }
+
+  logger.info(`Processing batch ${batchNumber}`)
+
+  // Select companies for this batch
+  const companies = await selectCompaniesToEnrich(MAINTENANCE_CONSTANTS.COMPLETER_BATCH_SIZE)
+
+  if (companies.length === 0) {
+    logger.info(`Batch ${batchNumber}: No companies to process`)
+    return stats
+  }
+
+  logger.info(`Batch ${batchNumber}: Processing ${companies.length} companies`)
+
+  // Process each company
+  await processBatch(
+    companies,
+    async (company) => {
+      stats.companiesProcessed++
+
+      try {
+        // Search for information
+        const searchResults = await searchWithFallback(company.name)
+        stats.webSearches++
+
+        if (searchResults.length === 0) {
+          stats.companiesSkipped++
+          return
+        }
+
+        // Scrape URLs
+        const urlsToScrape = [
+          ...(company.fundingRounds?.[0]?.sourceUrl ? [company.fundingRounds[0].sourceUrl] : []),
+          ...searchResults.slice(0, 3).map((r) => r.url),
+        ]
+
+        const scrapedContent = await scrapeUrls(urlsToScrape)
+        const successfulScrapes = scrapedContent.filter((s) => s.success)
+
+        if (successfulScrapes.length === 0) {
+          stats.companiesSkipped++
+          return
+        }
+
+        stats.totalSources += successfulScrapes.length
+
+        // Combine content for LLM
+        const combinedContent = [
+          ...searchResults.map((r) => `Source: ${r.title}\n${r.description}`),
+          ...successfulScrapes.map((s) => `Source: ${s.title}\n${s.text}`),
+        ].join('\n\n---\n\n')
+
+        // Extract with LLM
+        const extractionResponse = await extractWithLLM(company.name, combinedContent)
+        stats.llmCalls++
+
+        if (extractionResponse.usage) {
+          stats.totalCost +=
+            (extractionResponse.usage.promptTokens / 1000) * MAINTENANCE_CONSTANTS.DEEPSEEK_COST_PER_1K_INPUT +
+            (extractionResponse.usage.completionTokens / 1000) * MAINTENANCE_CONSTANTS.DEEPSEEK_COST_PER_1K_OUTPUT
+        }
+
+        if (!extractionResponse.result) {
+          stats.companiesFailed++
+          return
+        }
+
+        const extractionResult = extractionResponse.result
+        stats.totalConfidence += extractionResult.confidence
+        stats.totalCompleteness += extractionResult.data_completeness
+
+        // Validate and update
+        const updateResult = await validateAndUpdate(company.id, extractionResult, combinedContent)
+
+        if (updateResult.success) {
+          stats.companiesEnriched++
+
+          for (const field of updateResult.fieldsUpdated) {
+            if (field in stats.fieldsUpdated) {
+              stats.fieldsUpdated[field as keyof FieldUpdateStats]++
+            }
+          }
+
+          const status = extractionResult.activity_status || 'unknown'
+          if (status in stats.activityStatusBreakdown) {
+            stats.activityStatusBreakdown[status as keyof ActivityStatusBreakdown]++
+          } else {
+            stats.activityStatusBreakdown.unknown++
+          }
+
+          await releaseEnrichmentLock(company.id)
+        } else {
+          stats.companiesFailed++
+          await releaseEnrichmentLock(company.id)
+        }
+      } catch (error) {
+        stats.companiesFailed++
+        const err = createAgentError(error, {
+          phase: 'enrich_company',
+          itemId: company.id,
+          itemName: company.name,
+        })
+        stats.errors.push(err)
+        logger.error(`Failed to enrich ${company.name}`, { error: err.message })
+
+        try {
+          await releaseEnrichmentLock(company.id)
+        } catch {
+          // Ignore
+        }
+      }
+    },
+    { batchSize: 5 }
+  )
+
+  logger.info(`Batch ${batchNumber} completed`, {
+    processed: stats.companiesProcessed,
+    enriched: stats.companiesEnriched,
+    skipped: stats.companiesSkipped,
+    failed: stats.companiesFailed,
+    cost: stats.totalCost.toFixed(4),
+  })
+
+  return stats
+}
+
+/**
+ * Aggregate batch stats and finalize run
+ */
+export async function finalizeCompleterRun(
+  runId: string,
+  batchStats: CompleterBatchStats[],
+  startTime: number
+): Promise<CompleterResult> {
+  const durationMs = Date.now() - startTime
+
+  // Aggregate all stats
+  const aggregated = batchStats.reduce(
+    (acc, batch) => ({
+      companiesProcessed: acc.companiesProcessed + batch.companiesProcessed,
+      companiesEnriched: acc.companiesEnriched + batch.companiesEnriched,
+      companiesSkipped: acc.companiesSkipped + batch.companiesSkipped,
+      companiesFailed: acc.companiesFailed + batch.companiesFailed,
+      totalCost: acc.totalCost + batch.totalCost,
+      llmCalls: acc.llmCalls + batch.llmCalls,
+      webSearches: acc.webSearches + batch.webSearches,
+      totalSources: acc.totalSources + batch.totalSources,
+      totalConfidence: acc.totalConfidence + batch.totalConfidence,
+      totalCompleteness: acc.totalCompleteness + batch.totalCompleteness,
+      fieldsUpdated: {
+        industry: acc.fieldsUpdated.industry + batch.fieldsUpdated.industry,
+        description: acc.fieldsUpdated.description + batch.fieldsUpdated.description,
+        founders: acc.fieldsUpdated.founders + batch.fieldsUpdated.founders,
+        investors: acc.fieldsUpdated.investors + batch.fieldsUpdated.investors,
+        headquarters: acc.fieldsUpdated.headquarters + batch.fieldsUpdated.headquarters,
+        foundedYear: acc.fieldsUpdated.foundedYear + batch.fieldsUpdated.foundedYear,
+        website: acc.fieldsUpdated.website + batch.fieldsUpdated.website,
+        competitors: acc.fieldsUpdated.competitors + batch.fieldsUpdated.competitors,
+        status: acc.fieldsUpdated.status + batch.fieldsUpdated.status,
+        employees: acc.fieldsUpdated.employees + batch.fieldsUpdated.employees,
+      },
+      activityStatusBreakdown: {
+        active: acc.activityStatusBreakdown.active + batch.activityStatusBreakdown.active,
+        shutdown: acc.activityStatusBreakdown.shutdown + batch.activityStatusBreakdown.shutdown,
+        acquired: acc.activityStatusBreakdown.acquired + batch.activityStatusBreakdown.acquired,
+        inactive: acc.activityStatusBreakdown.inactive + batch.activityStatusBreakdown.inactive,
+        unknown: acc.activityStatusBreakdown.unknown + batch.activityStatusBreakdown.unknown,
+      },
+      errors: [...acc.errors, ...batch.errors],
+    }),
+    {
+      companiesProcessed: 0,
+      companiesEnriched: 0,
+      companiesSkipped: 0,
+      companiesFailed: 0,
+      totalCost: 0,
+      llmCalls: 0,
+      webSearches: 0,
+      totalSources: 0,
+      totalConfidence: 0,
+      totalCompleteness: 0,
+      fieldsUpdated: {
+        industry: 0, description: 0, founders: 0, investors: 0,
+        headquarters: 0, foundedYear: 0, website: 0, competitors: 0,
+        status: 0, employees: 0,
+      },
+      activityStatusBreakdown: {
+        active: 0, shutdown: 0, acquired: 0, inactive: 0, unknown: 0,
+      },
+      errors: [] as AgentError[],
+    }
+  )
+
+  const status =
+    aggregated.companiesFailed === 0
+      ? 'COMPLETED'
+      : aggregated.companiesFailed < aggregated.companiesProcessed / 2
+        ? 'PARTIAL'
+        : 'FAILED'
+
+  const details: CompleterDetails = {
+    companiesProcessed: aggregated.companiesProcessed,
+    companiesEnriched: aggregated.companiesEnriched,
+    companiesSkipped: aggregated.companiesSkipped,
+    companiesFailed: aggregated.companiesFailed,
+    fieldsUpdated: aggregated.fieldsUpdated,
+    activityStatusBreakdown: aggregated.activityStatusBreakdown,
+    avgConfidence: aggregated.companiesEnriched > 0
+      ? Math.round(aggregated.totalConfidence / aggregated.companiesEnriched)
+      : 0,
+    avgDataCompleteness: aggregated.companiesEnriched > 0
+      ? Math.round(aggregated.totalCompleteness / aggregated.companiesEnriched)
+      : 0,
+    avgSourcesPerCompany: aggregated.companiesEnriched > 0
+      ? Math.round((aggregated.totalSources / aggregated.companiesEnriched) * 10) / 10
+      : 0,
+  }
+
+  // Update run record
+  await prisma.maintenanceRun.update({
+    where: { id: runId },
+    data: {
+      status,
+      completedAt: new Date(),
+      durationMs,
+      itemsProcessed: aggregated.companiesProcessed,
+      itemsUpdated: aggregated.companiesEnriched,
+      itemsSkipped: aggregated.companiesSkipped,
+      itemsFailed: aggregated.companiesFailed,
+      totalCost: aggregated.totalCost,
+      llmCalls: aggregated.llmCalls,
+      webSearches: aggregated.webSearches,
+      details: details as object,
+      errors: aggregated.errors.length > 0 ? (aggregated.errors as object[]) : undefined,
+    },
+  })
+
+  logger.info('DB_COMPLETER multi-step completed', {
+    status,
+    durationMs,
+    enriched: aggregated.companiesEnriched,
+    cost: aggregated.totalCost.toFixed(4),
+  })
+
+  return {
+    success: status !== 'FAILED',
+    status,
+    itemsProcessed: aggregated.companiesProcessed,
+    itemsUpdated: aggregated.companiesEnriched,
+    itemsCreated: 0,
+    itemsFailed: aggregated.companiesFailed,
+    itemsSkipped: aggregated.companiesSkipped,
+    durationMs,
+    totalCost: aggregated.totalCost,
+    llmCalls: aggregated.llmCalls,
+    webSearches: aggregated.webSearches,
+    errors: aggregated.errors.length > 0 ? aggregated.errors : undefined,
+    details,
+  }
+}
+
+// ============================================================================
+// MAIN AGENT (legacy, still works for single-step)
 // ============================================================================
 
 /**

@@ -14,7 +14,12 @@ import {
   finalizeSourcerRun,
   type SourceResult,
 } from '@/agents/maintenance/db-sourcer'
-import { runCompleter } from '@/agents/maintenance/db-completer'
+import {
+  processCompleterBatch,
+  finalizeCompleterRun,
+  emptyBatchStats,
+  type CompleterBatchStats,
+} from '@/agents/maintenance/db-completer'
 import { prisma } from '@/lib/prisma'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
 import type { SourceStats } from '@/agents/maintenance/types'
@@ -196,16 +201,20 @@ export const sourcerFunction = inngest.createFunction(
 
 /**
  * DB_COMPLETER - Enrichit les entreprises avec des données web + LLM
+ *
+ * MULTI-STEP: 10 batches de 50 companies = 500 companies par run
  */
 export const completerFunction = inngest.createFunction(
   {
     id: 'db-completer',
     name: 'DB Completer',
-    retries: 1, // Less retries because it uses LLM credits
+    retries: 1,
   },
   { event: 'maintenance/completer.run' },
   async ({ event, step }) => {
     const { runId: existingRunId } = event.data as { runId?: string }
+    const startTime = Date.now()
+    const BATCH_COUNT = 10 // 10 batches × 50 companies = 500 per run
 
     // Step 1: Create or get run record
     const runId = await step.run('create-run', async () => {
@@ -223,12 +232,41 @@ export const completerFunction = inngest.createFunction(
       return run.id
     })
 
-    // Step 2: Run the completer
-    const result = await step.run('run-completer', async () => {
-      return await runCompleter(runId)
+    // Mark as running
+    await step.run('mark-running', async () => {
+      await prisma.maintenanceRun.update({
+        where: { id: runId },
+        data: { status: 'RUNNING', startedAt: new Date() },
+      })
     })
 
-    // Step 3: Notify via Telegram
+    // Process 10 batches (one step each)
+    const batchStats: CompleterBatchStats[] = []
+
+    for (let i = 1; i <= BATCH_COUNT; i++) {
+      const stats = await step.run(`batch-${i}`, async () => {
+        try {
+          return await processCompleterBatch(i)
+        } catch (error) {
+          console.error(`[Inngest] Error processing batch ${i}:`, error)
+          return emptyBatchStats()
+        }
+      }) as unknown as CompleterBatchStats
+      batchStats.push(stats)
+
+      // Stop early if no companies were found in this batch
+      if (stats.companiesProcessed === 0) {
+        console.log(`[Inngest] Batch ${i} found no companies, stopping early`)
+        break
+      }
+    }
+
+    // Finalize
+    const result = await step.run('finalize', async () => {
+      return await finalizeCompleterRun(runId, batchStats, startTime)
+    })
+
+    // Notify via Telegram
     await step.run('notify', async () => {
       if (result.status === 'COMPLETED' || result.status === 'PARTIAL') {
         await notifyAgentCompleted('DB_COMPLETER', {
