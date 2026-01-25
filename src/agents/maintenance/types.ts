@@ -776,7 +776,7 @@ export const MAINTENANCE_CONSTANTS = {
   LLM_TIMEOUT_MS: 60 * 1000, // 60 seconds
 
   // Limits
-  COMPLETER_BATCH_SIZE: 200,
+  COMPLETER_BATCH_SIZE: 1000, // Inngest permet des runs plus longs
   SOURCER_MAX_ARTICLES_PER_SOURCE: 50,
   MAX_RETRY_ATTEMPTS: 2,
 
