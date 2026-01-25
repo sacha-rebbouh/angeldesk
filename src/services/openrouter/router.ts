@@ -106,10 +106,11 @@ const TEST_MODE = true; // TODO [PROD]: Mettre à false pour la production
 const ALWAYS_OPTIMAL_AGENTS = new Set(["document-extractor"]);
 
 export function selectModel(complexity: TaskComplexity, agentName?: string): ModelKey {
-  // Exception: document-extractor utilise GPT-4o Mini (rapide, fiable, bon pour extraction)
-  // DeepSeek est trop lent/instable pour les gros prompts d'extraction
+  // Exception: document-extractor utilise Claude 3.5 Sonnet (PREMIUM)
+  // C'est la fondation de toute l'analyse - doit être 100% précis
+  // Le parsing de slides Team mal formatées nécessite un modèle puissant
   if (agentName && ALWAYS_OPTIMAL_AGENTS.has(agentName)) {
-    return "GPT4O_MINI";
+    return "SONNET"; // Claude 3.5 Sonnet - meilleur pour l'analyse complexe
   }
 
   // COST SAVING MODE: Tout le reste utilise DeepSeek (~$0.14-0.28/MTok)

@@ -17,7 +17,6 @@ export { climateExpert } from "./climate-expert";
 export { hardwareExpert } from "./hardware-expert";
 export { gamingExpert } from "./gaming-expert";
 export { consumerExpert } from "./consumer-expert";
-export { dynamicExpert } from "./dynamic-expert";
 
 // Registry of all sector experts
 import { saasExpert } from "./saas-expert";
@@ -29,13 +28,12 @@ import { climateExpert } from "./climate-expert";
 import { hardwareExpert } from "./hardware-expert";
 import { gamingExpert } from "./gaming-expert";
 import { consumerExpert } from "./consumer-expert";
-import { dynamicExpert } from "./dynamic-expert";
 import type { SectorExpertType, SectorExpertResult } from "./types";
 import type { EnrichedAgentContext } from "../types";
 
-// Type for any sector expert (including dynamic)
+// Type for any sector expert
 export type AnySectorExpert = {
-  name: SectorExpertType | "dynamic-expert";
+  name: SectorExpertType;
   run: (context: EnrichedAgentContext) => Promise<SectorExpertResult>
 };
 
@@ -87,11 +85,7 @@ export function getSectorExpertForDeal(
     }
   }
 
-  // Use dynamic expert as fallback for unknown sectors
-  if (useDynamicFallback && sector.trim()) {
-    return dynamicExpert;
-  }
-
+  // No fallback - return null if no matching expert found
   return null;
 }
 
@@ -113,11 +107,6 @@ export function getAllSectorExpertsForDeal(
         break; // Only add each expert once
       }
     }
-  }
-
-  // Use dynamic expert as fallback if no specialized experts matched
-  if (matches.length === 0 && useDynamicFallback && sector.trim()) {
-    matches.push(dynamicExpert);
   }
 
   return matches;

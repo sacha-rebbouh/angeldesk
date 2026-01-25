@@ -49,29 +49,41 @@ EXEMPLE DE FORMAT CONFUS (typique):
 
 PROBLEME: On ne sait pas qui a travaille chez Oracle, Wavestone, IBM.
 
-REGLES ABSOLUES:
-1. UNIQUEMENT attribuer un background si l'association nom-background est EXPLICITE
-   - EXPLICITE: "Kevin Cohen, ex-Google" ou "Kevin Cohen (ancien Oracle)"
-   - NON EXPLICITE: Liste de noms suivie d'une liste d'entreprises sans lien clair
+REGLE ABSOLUE - FORMAT STRICT POUR BACKGROUNDS:
 
-2. SI LE FORMAT EST AMBIGU:
-   - Mettre background: null pour TOUS les fondateurs
-   - NE JAMAIS deviner ou supposer l'attribution
-   - Mieux vaut null que faux
+⚠️ DEFAUT = null. Tu NE PEUX attribuer un background QUE si tu trouves dans le texte source
+une des formes EXACTES suivantes (à citer dans sourceReferences) :
 
-3. VERIFIER AVANT D'ECRIRE:
-   - Pour chaque background attribue, tu DOIS pouvoir citer le texte exact qui fait le lien
-   - Si tu ne peux pas citer "Nom + entreprise" ensemble dans le texte, ne pas attribuer
+FORMES ACCEPTEES (tu dois trouver le texte EXACTEMENT):
+- "Jean Dupont, ex-Google" ou "Jean Dupont (ex-Google)"
+- "CEO: Jean Dupont - ancien McKinsey"
+- "Jean Dupont CEO | Background: Google, HEC"
+- Table avec colonnes: | Nom | Role | Background |
 
-4. CAS TYPIQUES A GERER:
-   - "CEO: Jean Dupont (ex-Google, HEC)" → background: "ex-Google, HEC" ✓
-   - "Jean Dupont CEO | Pierre Martin COO | Google, McKinsey, HEC" → background: null pour tous ✗
-   - "Fondateurs: Jean (Google), Pierre (McKinsey)" → Jean: "Google", Pierre: "McKinsey" ✓
+FORMES NON ACCEPTEES (= background: null) :
+- Liste de noms PUIS liste d'entreprises sans lien visible
+  Ex: "Jean CEO Pierre COO ... Oracle Wavestone McKinsey" → null pour TOUS
+- Noms et entreprises sur des lignes différentes sans association claire
+- Tout format ambigu où tu dois "deviner" qui va avec quoi
 
-5. ADVISORS vs FONDATEURS:
-   - Les advisors sont SEPARES des fondateurs (souvent slide differente)
-   - Un advisor "Franck Hourdin VP Oracle" = advisor, PAS fondateur
-   - Ne jamais melanger les backgrounds des advisors avec ceux des fondateurs
+PROCESSUS OBLIGATOIRE:
+1. Lire le texte de la slide Team
+2. Pour CHAQUE fondateur, chercher son nom ASSOCIE à une entreprise dans le MEME segment
+3. Si tu trouves → background = l'entreprise, sourceReference = la citation exacte
+4. Si tu NE trouves PAS → background = null, confidence = 1.0 (tu es SÛR que c'est null)
+
+EXEMPLE DE SLIDE MAL FORMATEE (typique des pitch decks):
+"Kevin Cohen CEO Sacha Rebbouh COO Oracle (sécurité) Wavestone IBM"
+→ AUCUN lien explicite nom-entreprise visible
+→ background = null pour TOUS les fondateurs
+→ confidence = 1.0
+
+UN FAUX BACKGROUND VAUT 0 POINTS. NULL VAUT 100 POINTS.
+
+ADVISORS vs FONDATEURS:
+- Les advisors sont sur une slide SEPAREE (slide 21 dans Antiopea)
+- Un advisor "Franck Hourdin VP Oracle" = advisor avec company "Oracle"
+- Les entreprises des advisors NE DOIVENT JAMAIS être attribuées aux fondateurs
 
 ═══════════════════════════════════════════════════════════════
 REGLE #2: DONNEES FINANCIERES vs PROJECTIONS
@@ -269,10 +281,15 @@ Reponds en JSON avec cette structure exacte:
   "sourceReferences": [
     {
       "field": "nom du champ",
-      "quote": "citation exacte du document",
+      "quote": "citation EXACTE du document (copier-coller, pas reformuler)",
       "documentName": "nom du document source"
     }
   ]
+
+  IMPORTANT pour sourceReferences:
+  - Pour chaque founder.background NON NULL, tu DOIS ajouter une sourceReference
+  - La quote DOIT montrer le NOM et l'ENTREPRISE ensemble dans le même segment de texte
+  - Si tu ne peux pas fournir cette citation → le background doit être null
 }
 \`\`\`
 

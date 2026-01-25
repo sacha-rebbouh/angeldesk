@@ -106,10 +106,19 @@ TOOLS DISPONIBLES - UTILISE-LES SYSTEMATIQUEMENT
 ═══════════════════════════════════════════════════════════════
 
 1. **webSearch** - CRITIQUE pour verifier les claims:
-   - Fondateur dit "ex-Google 5 ans"? → webSearch("Jean Dupont LinkedIn Google")
-   - TAM de 50Md€? → webSearch("cybersecurity market size 2024 TAM Gartner")
-   - Concurrent XYZ? → webSearch("XYZ startup funding valuation")
-   - News sur la startup? → webSearch("Antiopea startup news funding")
+
+   POUR LES FONDATEURS - FORMAT OPTIMAL:
+   - BONNE requête: webSearch("Prénom Nom NomEntreprise") → ex: "Sacha Rebbouh Antiopea"
+   - Inclure le nom de l'entreprise pour éviter les homonymes
+   - NE PAS ajouter: "LinkedIn CEO COO founder experience background"
+   - Le nom + entreprise suffit pour trouver le bon profil LinkedIn
+
+   POUR LES CLAIMS MARCHE:
+   - webSearch("cybersecurity market size 2024 Gartner")
+   - webSearch("blockchain market TAM Europe 2024")
+
+   POUR LES CONCURRENTS/PARTENAIRES:
+   - webSearch("NomEntreprise startup funding")
 
 2. **searchBenchmarks** - Pour les metriques:
    - ARR Growth, NRR, Burn Multiple, LTV/CAC par secteur/stage
@@ -193,14 +202,22 @@ ${JSON.stringify(extractedInfo, null, 2)}
 3. Find inconsistencies between different parts of the deck
 4. Generate at least 8 questions for the founder
 
-PROCESSUS OBLIGATOIRE:
-1. Lis le deck et identifie les claims verifiables
-2. Pour CHAQUE claim important, fais une webSearch pour verifier
-3. Compare le resultat de la recherche avec le claim du deck
-4. Si discrepance → RED FLAG
-5. Genere des questions sur les points non verifiables
+PROCESSUS OBLIGATOIRE POUR LES FONDATEURS:
+1. Pour CHAQUE fondateur, fais une recherche avec nom + entreprise:
+   - webSearch("Kevin Cohen Antiopea") → trouve son profil LinkedIn/Crunchbase
+   - webSearch("Sacha Rebbouh Antiopea") → trouve son profil LinkedIn/Crunchbase
+   - PAS de mots inutiles: LinkedIn, CEO, COO, founder, etc.
+2. Lis les résultats pour extraire leur VRAI background (expérience, études, etc.)
+3. Compare avec ce que dit le deck (ou l'absence d'info)
+4. Si le profil montre "ex-Google 5 ans" mais le deck ne mentionne pas → info enrichie
+5. Si le profil n'existe pas → RED FLAG potentiel
 
-RAPPEL: Une analyse SANS recherche web est INACCEPTABLE. Tu DOIS faire des webSearch.`,
+PROCESSUS POUR LES AUTRES CLAIMS:
+1. Market size → webSearch("[secteur] market size 2024 Gartner")
+2. Concurrents → webSearch("[nom concurrent] startup funding")
+3. Partenariats → webSearch("[nom partenaire] partnership")
+
+RAPPEL: Requêtes SIMPLES = meilleurs résultats. Une recherche avec trop de mots-clés RATE les résultats.`,
 
     availableTools: "",
 
