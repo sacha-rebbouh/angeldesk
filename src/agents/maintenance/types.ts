@@ -776,7 +776,7 @@ export const MAINTENANCE_CONSTANTS = {
   LLM_TIMEOUT_MS: 60 * 1000, // 60 seconds
 
   // Limits
-  COMPLETER_BATCH_SIZE: 300, // Limité pour éviter timeout avec Serper
+  COMPLETER_BATCH_SIZE: 50, // Petit batch pour éviter timeout (search + scrape + LLM)
   SOURCER_MAX_ARTICLES_PER_SOURCE: 50,
   MAX_RETRY_ATTEMPTS: 2,
 
