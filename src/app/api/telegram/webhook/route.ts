@@ -106,3 +106,4 @@ export async function GET() {
     endpoint: '/api/telegram/webhook',
   })
 }
+// Deployment trigger: 1769329451
