@@ -29,7 +29,13 @@ import { ycCompaniesConnector } from "./connectors/yc-companies";
 import { companiesHouseConnector } from "./connectors/companies-house";
 import { pappersConnector } from "./connectors/pappers";
 import { productHuntConnector } from "./connectors/product-hunt";
-import { proxycurlConnector, analyzeFounderLinkedIn, findLinkedInProfile } from "./connectors/proxycurl";
+// LinkedIn data - Apify replaces Proxycurl (which shut down in Jan 2025)
+import {
+  apifyLinkedInConnector,
+  analyzeFounderLinkedIn,
+  analyzeTeamLinkedIn,
+  isApifyLinkedInConfigured,
+} from "./connectors/apify-linkedin";
 // French ecosystem connectors
 import { societeComConnector } from "./connectors/societe-com";
 import { bpiFranceConnector } from "./connectors/bpi-france";
@@ -85,7 +91,7 @@ const connectors: Connector[] = [
   seedtableConnector,       // Seedtable - curated European startup database (40+ deals)
 
   // === FOUNDER DATA ===
-  proxycurlConnector,       // LinkedIn data - KEY for founder DD (~$0.01/profile)
+  apifyLinkedInConnector,   // LinkedIn data via Apify (~$0.003/profile) - replaces Proxycurl
 
   // === COMPANY DATA (REAL - scraping/APIs) ===
   societeComConnector,      // French company data (scraping)
@@ -613,129 +619,112 @@ export async function buildPeopleGraph(
 
 /**
  * Internal: Fetch and analyze a single founder
+ * Uses Apify LinkedIn connector (replaced Proxycurl which shut down Jan 2025)
  */
 async function fetchAndAnalyzeFounder(
   founder: FounderInput,
   startupSector?: string
 ): Promise<EnrichedFounderData | null> {
-  let linkedinUrl = founder.linkedinUrl;
+  const linkedinUrl = founder.linkedinUrl;
 
-  // Try to find LinkedIn URL if not provided
-  if (!linkedinUrl && founder.name) {
-    const nameParts = founder.name.trim().split(/\s+/);
-    if (nameParts.length >= 2) {
-      const firstName = nameParts[0];
-      const lastName = nameParts.slice(1).join(" ");
-      linkedinUrl = await findLinkedInProfile(firstName, lastName) ?? undefined;
-    }
-  }
-
+  // LinkedIn URL is required - we can't search by name anymore
   if (!linkedinUrl) {
     console.log(`[ContextEngine] No LinkedIn URL for founder: ${founder.name}`);
     return null;
   }
 
-  // Fetch full analysis via Proxycurl
-  const analysis = await analyzeFounderLinkedIn(linkedinUrl, { startupSector });
+  // Fetch full analysis via Apify
+  const result = await analyzeFounderLinkedIn(
+    linkedinUrl,
+    founder.role || "Founder",
+    startupSector
+  );
 
-  if (!analysis || !analysis.profile) {
+  if (!result.success || !result.profile || !result.rawProfile) {
+    console.log(`[ContextEngine] Failed to fetch LinkedIn for ${founder.name}: ${result.error}`);
     return null;
   }
 
-  const { profile, insights } = analysis;
-
-  // Map to FounderBackground + enriched data
-  const previousCompanies = (profile.experiences || []).map((exp) => ({
-    company: exp.company,
-    role: exp.title,
-    startYear: exp.starts_at?.year,
-    endYear: exp.ends_at?.year ?? undefined,
-    verified: true,
-  }));
-
-  const founderRoles = ["founder", "co-founder", "cofounder", "ceo"];
-  const previousVentures = (profile.experiences || [])
-    .filter((exp) => {
-      const title = exp.title.toLowerCase();
-      return founderRoles.some((role) => title.includes(role));
-    })
-    .filter((exp) => exp.ends_at !== null)
-    .map((exp) => ({
-      companyName: exp.company,
-      outcome: "unknown" as const,
-      exitYear: exp.ends_at?.year,
-    }));
-
-  const education = (profile.education || []).map((edu) => ({
-    institution: edu.school,
-    degree: edu.degree_name,
-    year: edu.ends_at?.year,
-  }));
+  const { profile, analysis, rawProfile } = result;
 
   // Build enriched founder data
   const enrichedFounder: EnrichedFounderData = {
-    name: profile.full_name,
-    role: founder.role || profile.headline || "Founder",
+    name: profile.name,
+    role: founder.role || profile.role,
     linkedinUrl,
-    previousCompanies,
-    previousVentures,
-    education,
-    redFlags: insights?.redFlags.map((f) => ({
-      type: f.type,
-      description: f.description,
-      severity: f.severity,
-      source: {
-        type: "linkedin" as const,
-        name: "Proxycurl",
-        retrievedAt: new Date().toISOString(),
-        confidence: 0.9,
-      },
-    })) || [],
-    investorConnections: [],
-    verificationStatus: insights?.redFlags.some((f) => f.type === "no_experience")
-      ? "unverified"
-      : "verified",
-    // Extended data
-    expertiseProfile: insights?.expertise ? {
-      rawExperiences: insights.expertise.rawExperiences,
-      totalCareerMonths: insights.expertise.totalCareerMonths,
-      industries: insights.expertise.industries.map((i) => ({
+    previousCompanies: profile.previousCompanies,
+    previousVentures: profile.previousVentures,
+    education: profile.education,
+    redFlags: profile.redFlags,
+    investorConnections: profile.investorConnections,
+    verificationStatus: profile.verificationStatus,
+    // Extended data from analysis
+    expertiseProfile: analysis?.expertise ? {
+      rawExperiences: analysis.expertise.rawExperiences,
+      totalCareerMonths: analysis.expertise.totalCareerMonths,
+      industries: analysis.expertise.industries.map((i) => ({
         name: i.name,
-        totalMonths: i.totalMonths,
+        totalMonths: i.months,
         percentage: i.percentage,
       })),
-      roles: insights.expertise.roles.map((r) => ({
+      roles: analysis.expertise.roles.map((r) => ({
         name: r.name,
-        totalMonths: r.totalMonths,
+        totalMonths: r.months,
         percentage: r.percentage,
       })),
-      ecosystems: insights.expertise.ecosystems.map((e) => ({
+      ecosystems: analysis.expertise.ecosystems.map((e) => ({
         name: e.name,
-        totalMonths: e.totalMonths,
+        totalMonths: e.months,
         percentage: e.percentage,
       })),
-      unclassifiedPercentage: insights.expertise.unclassifiedPercentage,
-      primaryIndustry: insights.expertise.primaryIndustry,
-      primaryRole: insights.expertise.primaryRole,
-      primaryEcosystem: insights.expertise.primaryEcosystem,
-      isDiversified: insights.expertise.isDiversified,
-      hasDeepExpertise: insights.expertise.hasDeepExpertise,
-      expertiseDescription: insights.expertise.expertiseDescription,
+      unclassifiedPercentage: analysis.expertise.unclassifiedPercentage,
+      primaryIndustry: analysis.expertise.primaryIndustry,
+      primaryRole: analysis.expertise.primaryRole,
+      primaryEcosystem: analysis.expertise.primaryEcosystem,
+      isDiversified: analysis.expertise.isDiversified,
+      hasDeepExpertise: analysis.expertise.hasDeepExpertise,
+      expertiseDescription: analysis.expertise.expertiseDescription,
     } : undefined,
-    sectorFit: insights?.sectorFit,
-    questionsToAsk: insights?.questionsToAsk,
-    insights: insights ? {
-      totalExperienceYears: insights.totalExperienceYears,
-      hasNotableCompanyExperience: insights.hasNotableCompanyExperience,
-      notableCompanies: insights.notableCompanies,
-      hasPreviousFounderExperience: insights.hasPreviousFounderExperience,
-      previousVenturesCount: insights.previousVenturesCount,
-      educationLevel: insights.educationLevel,
-      networkStrength: insights.networkStrength,
-    } : undefined,
+    sectorFit: analysis?.sectorFit,
+    questionsToAsk: analysis?.questionsToAsk,
+    insights: {
+      totalExperienceYears: Math.round((analysis?.expertise?.totalCareerMonths ?? 0) / 12),
+      hasNotableCompanyExperience: profile.previousCompanies.some(
+        (c) => isNotableCompany(c.company)
+      ),
+      notableCompanies: profile.previousCompanies
+        .filter((c) => isNotableCompany(c.company))
+        .map((c) => c.company),
+      hasPreviousFounderExperience: profile.previousVentures.length > 0,
+      previousVenturesCount: profile.previousVentures.length,
+      educationLevel: profile.education.length > 0 ? "degree" : "unknown",
+      networkStrength: rawProfile.connections
+        ? rawProfile.connections > 500
+          ? "strong"
+          : rawProfile.connections > 200
+            ? "moderate"
+            : "weak"
+        : "unknown",
+    },
   };
 
   return enrichedFounder;
+}
+
+// Helper function to check notable companies
+function isNotableCompany(companyName: string): boolean {
+  const notableCompanies = new Set([
+    "google", "meta", "facebook", "apple", "amazon", "microsoft", "netflix",
+    "stripe", "airbnb", "uber", "lyft", "spotify", "slack", "salesforce",
+    "twitter", "linkedin", "palantir", "snowflake", "datadog", "mongodb",
+    "notion", "figma", "canva", "airtable", "asana", "monday", "miro",
+    "revolut", "wise", "n26", "klarna", "adyen", "checkout", "plaid",
+    "mckinsey", "bcg", "bain", "goldman sachs", "morgan stanley", "jp morgan",
+    "sequoia", "a16z", "benchmark", "accel", "index ventures", "balderton",
+  ]);
+  const normalized = companyName.toLowerCase().trim();
+  return notableCompanies.has(normalized) ||
+    Array.from(notableCompanies).some(notable => normalized.includes(notable));
 }
 
 /**
@@ -821,6 +810,16 @@ export function getConnectorHealthStatus() {
  * Export circuit breaker controls for manual intervention
  */
 export { resetCircuit, resetAllCircuits } from "./circuit-breaker";
+
+/**
+ * Export LinkedIn analysis functions (Apify)
+ * Use these for founder/team due diligence
+ */
+export {
+  analyzeFounderLinkedIn,
+  analyzeTeamLinkedIn,
+  isApifyLinkedInConfigured,
+} from "./connectors/apify-linkedin";
 
 // ============================================================================
 // INTERNAL HELPERS

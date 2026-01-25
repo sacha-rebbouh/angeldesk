@@ -158,7 +158,7 @@ export async function notifyAgentStarted(
 
   const text = `ℹ️ *Angel Desk Maintenance*
 
-🔄 ${agent} démarré
+🔄 ${escapeAgentName(agent)} démarré
 📅 ${time}`
 
   return sendToAdmin(text, { silent: true })
@@ -171,7 +171,7 @@ export async function notifyAgentCompleted(
   agent: string,
   stats: { itemsProcessed?: number; itemsCreated?: number; durationMs?: number; cost?: number }
 ): Promise<{ success: boolean; messageId?: number }> {
-  const parts = [`✅ *Angel Desk Maintenance*`, '', `${agent} terminé`]
+  const parts = [`✅ *Angel Desk Maintenance*`, '', `${escapeAgentName(agent)} terminé`]
 
   if (stats.itemsProcessed !== undefined) {
     parts.push(`📊 ${stats.itemsProcessed} items traités`)
@@ -201,7 +201,7 @@ export async function notifyAgentFailed(
   details?: SupervisorCheckDetails,
   retryDelayMs?: number
 ): Promise<{ success: boolean; messageId?: number }> {
-  const parts = [`⚠️ *Angel Desk Maintenance*`, '', `${agent} a échoué`]
+  const parts = [`⚠️ *Angel Desk Maintenance*`, '', `${escapeAgentName(agent)} a échoué`]
 
   // Add run info if available
   if (details?.runDurationMs) {
@@ -257,7 +257,7 @@ export async function notifyRetrySuccess(
   agent: string,
   stats: { itemsProcessed?: number; durationMs?: number }
 ): Promise<{ success: boolean; messageId?: number }> {
-  const parts = [`✅ *Angel Desk Maintenance*`, '', `${agent} récupéré avec succès!`]
+  const parts = [`✅ *Angel Desk Maintenance*`, '', `${escapeAgentName(agent)} récupéré avec succès!`]
 
   if (stats.itemsProcessed !== undefined) {
     parts.push(`📊 ${stats.itemsProcessed} items traités`)
@@ -279,7 +279,7 @@ export async function notifyCriticalAlert(
   details?: SupervisorCheckDetails
 ): Promise<{ success: boolean; messageId?: number }> {
   const parts = [
-    `🚨 *${agent} FAILED*`,
+    `🚨 *${escapeAgentName(agent)} FAILED*`,
     '━━━━━━━━━━━━━━━━━━━━━━',
   ]
 
@@ -512,14 +512,14 @@ export function formatLastRunMessage(
   } | null
 ): string {
   if (!run) {
-    return `📋 *Dernier run ${agent}*\n\nAucun run trouvé.`
+    return `📋 *Dernier run ${escapeAgentName(agent)}*\n\nAucun run trouvé.`
   }
 
   const statusEmoji =
     run.status === 'COMPLETED' ? '✅' : run.status === 'PARTIAL' ? '⚠️' : run.status === 'RUNNING' ? '🔄' : '❌'
 
   const parts = [
-    `📋 *Dernier run ${agent}*`,
+    `📋 *Dernier run ${escapeAgentName(agent)}*`,
     '',
     `Status: ${statusEmoji} ${run.status}`,
     `Démarré: ${formatDateTime(run.startedAt)}`,
@@ -549,6 +549,13 @@ export function formatLastRunMessage(
 // ============================================================================
 // HELPERS
 // ============================================================================
+
+/**
+ * Échappe les underscores pour les noms d'agents (DB_CLEANER -> DB\_CLEANER)
+ */
+function escapeAgentName(agent: string): string {
+  return agent.replace(/_/g, '\\_')
+}
 
 /**
  * Échappe les caractères spéciaux Markdown
