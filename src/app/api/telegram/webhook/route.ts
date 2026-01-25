@@ -74,9 +74,13 @@ export async function POST(request: NextRequest) {
 
     // Send response
     if (result.success && result.response) {
-      await sendToAdmin(result.response)
+      const sendResult = await sendToAdmin(result.response)
+      console.log(`[Telegram] Response sent:`, sendResult)
     } else if (!result.success && result.error) {
-      await sendToAdmin(`❌ Erreur: ${result.error}`)
+      const sendResult = await sendToAdmin(`❌ Erreur: ${result.error}`)
+      console.log(`[Telegram] Error sent:`, sendResult)
+    } else {
+      console.log(`[Telegram] No response to send. Result:`, result)
     }
 
     return NextResponse.json({ ok: true })

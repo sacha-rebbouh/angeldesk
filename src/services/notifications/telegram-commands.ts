@@ -174,12 +174,17 @@ async function handleRun(ctx: TelegramCommandContext): Promise<string> {
     | 'maintenance/sourcer.run'
     | 'maintenance/completer.run'
 
-  await inngest.send({
-    name: eventName,
-    data: {},
-  })
+  try {
+    await inngest.send({
+      name: eventName,
+      data: {},
+    })
+  } catch (error) {
+    console.error(`[Telegram] Failed to send Inngest event:`, error)
+    return `❌ Erreur Inngest: ${error instanceof Error ? error.message : 'Unknown error'}`
+  }
 
-  return `🔄 *${agent} lancé via Inngest*
+  return `🔄 ${agent} lancé via Inngest
 
 Je te notifierai quand ce sera terminé.`
 }
