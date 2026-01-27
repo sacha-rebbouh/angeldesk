@@ -12,10 +12,10 @@
 
 import { prisma } from "@/lib/prisma";
 import { getCacheManager } from "@/services/cache";
-import type { SectorBenchmarkData } from "@/agents/tier3/sector-benchmarks";
+import type { SectorBenchmarkData } from "@/agents/tier2/sector-benchmarks";
 
 // Re-export types for consumers
-export type { SectorBenchmarkData, SectorMetricBenchmark, MetricPercentiles } from "@/agents/tier3/sector-benchmarks";
+export type { SectorBenchmarkData, SectorMetricBenchmark, MetricPercentiles } from "@/agents/tier2/sector-benchmarks";
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const CACHE_NAMESPACE = "benchmarks" as const;
@@ -256,7 +256,7 @@ async function loadFallbackBenchmarks(
     HARDWARE_BENCHMARKS,
     GAMING_BENCHMARKS,
     CONSUMER_BENCHMARKS,
-  } = await import("@/agents/tier3/sector-benchmarks");
+  } = await import("@/agents/tier2/sector-benchmarks");
 
   const fallbackMap: Record<string, SectorBenchmarkData> = {
     "SaaS B2B": SAAS_BENCHMARKS,
@@ -284,7 +284,7 @@ async function loadAllFallbackBenchmarks(): Promise<SectorBenchmarkData[]> {
     HARDWARE_BENCHMARKS,
     GAMING_BENCHMARKS,
     CONSUMER_BENCHMARKS,
-  } = await import("@/agents/tier3/sector-benchmarks");
+  } = await import("@/agents/tier2/sector-benchmarks");
 
   return [
     SAAS_BENCHMARKS,

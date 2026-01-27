@@ -21,7 +21,10 @@ import type {
   NewsArticle,
   DataSource,
   PeopleGraph,
+  WebsiteContent,
 } from "./types";
+import { crawlWebsite, type CrawlOptions } from "./connectors/website-crawler";
+import { resolveWebsiteUrl, type WebsiteResolutionInput } from "./website-resolver";
 import { newsApiConnector } from "./connectors/news-api";
 import { webSearchConnector } from "./connectors/web-search";
 import { rssFundingConnector } from "./connectors/rss-funding";
@@ -71,6 +74,12 @@ import {
   type ConnectorResult,
 } from "./parallel-fetcher";
 import { getCircuitStates } from "./circuit-breaker";
+// Persistent storage for Context Engine snapshots
+import {
+  saveContextSnapshot,
+  loadContextSnapshot,
+  getSnapshotStats,
+} from "./persistence";
 
 // Cache TTLs
 const CONTEXT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes for deal context
@@ -188,6 +197,24 @@ export interface EnrichDealOptions {
   extractedUseCases?: string[];
   /** Key differentiators - unique competitive advantages */
   extractedKeyDifferentiators?: string[];
+
+  // ============================================================================
+  // WEBSITE CRAWLING
+  // Crawl the startup's website for comprehensive context
+  // ============================================================================
+  /** Enable website crawling */
+  includeWebsite?: boolean;
+  /** Website URL from form (will be validated, fallback to other sources if invalid) */
+  formWebsiteUrl?: string;
+  /** Website URL extracted from deck/documents (direct, no validation) */
+  extractedWebsiteUrl?: string;
+  /** Max pages to crawl (default: 100) */
+  websiteMaxPages?: number;
+  /** Document texts for URL extraction fallback (deck first, then others) */
+  documentTexts?: {
+    type: "pitch_deck" | "financials" | "other";
+    text: string;
+  }[];
 }
 
 /**
@@ -232,7 +259,40 @@ export async function enrichDeal(
   const cacheKey = getQueryCacheKey(enrichedQuery);
   const tags = options.dealId ? [`deal:${options.dealId}`] : [];
 
-  // Use getOrCompute for atomic cache check + compute
+  // Input data for snapshot comparison
+  const inputData = {
+    companyName: enrichedQuery.companyName,
+    sector: enrichedQuery.sector,
+    stage: enrichedQuery.stage,
+    tagline: enrichedQuery.tagline,
+    competitors: enrichedQuery.mentionedCompetitors,
+  };
+
+  // =========================================================================
+  // LEVEL 1: Check persistent DB snapshot (survives server restarts)
+  // =========================================================================
+  if (options.dealId && !options.forceRefresh) {
+    const dbSnapshot = await loadContextSnapshot(options.dealId, inputData);
+    if (dbSnapshot) {
+      console.log(`[ContextEngine] DB SNAPSHOT HIT for deal ${options.dealId}`);
+      // Still need to handle website and founders below, but base context is from DB
+      let result = { ...dbSnapshot };
+
+      // Handle website crawling (separate from main context)
+      result = await maybeAddWebsiteContent(result, enrichedQuery, options, tags);
+
+      // Handle founder LinkedIn data
+      if (options.includeFounders) {
+        result = await maybeAddPeopleGraph(result, enrichedQuery, options);
+      }
+
+      return result;
+    }
+  }
+
+  // =========================================================================
+  // LEVEL 2: Check in-memory cache (fast, short-lived)
+  // =========================================================================
   const { data, fromCache } = await cache.getOrCompute<DealContext>(
     "context-engine",
     cacheKey,
@@ -248,29 +308,147 @@ export async function enrichDeal(
   );
 
   if (fromCache) {
-    console.log(`[ContextEngine] Cache HIT for query: ${enrichedQuery.companyName || enrichedQuery.sector}`);
+    console.log(`[ContextEngine] Memory cache HIT for query: ${enrichedQuery.companyName || enrichedQuery.sector}`);
   } else {
     console.log(`[ContextEngine] Cache MISS - computed fresh context for: ${enrichedQuery.companyName || enrichedQuery.sector}${options.extractedTagline ? " (with extracted data)" : ""}`);
-  }
 
-  // Optionally fetch founder LinkedIn data (separate from main context cache)
-  if (options.includeFounders) {
-    const founderList = options.founders || (query.founderNames?.map(name => ({ name })) ?? []);
-
-    if (founderList.length > 0) {
-      const peopleGraph = await buildPeopleGraph(founderList, {
-        startupSector: options.startupSector || query.sector,
-        forceRefresh: options.forceRefresh,
+    // =========================================================================
+    // PERSIST TO DB for cross-session reuse
+    // =========================================================================
+    if (options.dealId) {
+      // Fire and forget - don't block the response
+      saveContextSnapshot(options.dealId, data, inputData).catch((err) => {
+        console.error("[ContextEngine] Failed to save snapshot:", err);
       });
-
-      return {
-        ...data,
-        peopleGraph,
-      };
     }
   }
 
-  return data;
+  // Build enriched result with optional additional data
+  let result = { ...data };
+
+  // Optionally crawl website (separate cache, can be expensive)
+  result = await maybeAddWebsiteContent(result, enrichedQuery, options, tags);
+
+  // Optionally fetch founder LinkedIn data (separate from main context cache)
+  if (options.includeFounders) {
+    result = await maybeAddPeopleGraph(result, enrichedQuery, options);
+  }
+
+  return result;
+}
+
+/**
+ * Helper: Add website content to context if requested
+ */
+async function maybeAddWebsiteContent(
+  result: DealContext,
+  query: ConnectorQuery,
+  options: EnrichDealOptions,
+  tags: string[]
+): Promise<DealContext> {
+  if (!options.includeWebsite) {
+    return result;
+  }
+
+  const cache = getCacheManager();
+
+  // Résoudre l'URL avec fallbacks: form → deck → docs → web search
+  let websiteUrl = options.extractedWebsiteUrl || query.websiteUrl;
+  let urlSource: "form" | "deck" | "document" | "web_search" | "direct" = "direct";
+
+  // Si pas d'URL directe, utiliser le resolver
+  if (!websiteUrl && query.companyName) {
+    const resolution = await resolveWebsiteUrl({
+      formUrl: options.formWebsiteUrl,
+      companyName: query.companyName,
+      sector: query.sector,
+      documentTexts: options.documentTexts,
+    });
+
+    if (resolution.url) {
+      websiteUrl = resolution.url;
+      urlSource = resolution.source || "direct";
+      console.log(`[ContextEngine] Website URL resolved via ${urlSource}: ${websiteUrl}`);
+    } else {
+      console.log(`[ContextEngine] No website URL found for ${query.companyName}`);
+    }
+  }
+
+  if (!websiteUrl) {
+    return result;
+  }
+
+  const websiteCacheKey = `website:${websiteUrl.toLowerCase().replace(/https?:\/\//, "")}`;
+
+  const { data: websiteContent, fromCache: websiteFromCache } = await cache.getOrCompute<WebsiteContent | null>(
+    "context-engine",
+    websiteCacheKey,
+    async () => {
+      try {
+        console.log(`[ContextEngine] Crawling website: ${websiteUrl}`);
+        return await crawlWebsite(websiteUrl!, {
+          maxPages: options.websiteMaxPages || 100,
+        });
+      } catch (error) {
+        console.error(`[ContextEngine] Website crawl failed: ${error}`);
+        return null;
+      }
+    },
+    {
+      ttlMs: CONTEXT_CACHE_TTL_MS * 6, // 1 hour cache for website (doesn't change often)
+      tags,
+      forceRefresh: options.forceRefresh,
+    }
+  );
+
+  if (websiteFromCache) {
+    console.log(`[ContextEngine] Website cache HIT: ${websiteUrl}`);
+  }
+
+  if (websiteContent) {
+    return {
+      ...result,
+      websiteContent,
+      // Add website source
+      sources: [
+        ...result.sources,
+        {
+          type: "web_search" as const,
+          name: `Website Crawler (via ${urlSource})`,
+          url: websiteUrl,
+          retrievedAt: new Date().toISOString(),
+          confidence: urlSource === "form" || urlSource === "direct" ? 0.95 : 0.85,
+        },
+      ],
+    };
+  }
+
+  return result;
+}
+
+/**
+ * Helper: Add people graph to context if requested
+ */
+async function maybeAddPeopleGraph(
+  result: DealContext,
+  query: ConnectorQuery,
+  options: EnrichDealOptions
+): Promise<DealContext> {
+  const founderList = options.founders || (query.founderNames?.map(name => ({ name })) ?? []);
+
+  if (founderList.length === 0) {
+    return result;
+  }
+
+  const peopleGraph = await buildPeopleGraph(founderList, {
+    startupSector: options.startupSector || query.sector,
+    forceRefresh: options.forceRefresh,
+  });
+
+  return {
+    ...result,
+    peopleGraph,
+  };
 }
 
 /**
@@ -953,3 +1131,9 @@ function calculateCompleteness(data: {
 
 // Re-export types
 export * from "./types";
+
+// Export website crawler for direct usage
+export { crawlWebsite, type CrawlOptions } from "./connectors/website-crawler";
+
+// Export website URL resolver
+export { resolveWebsiteUrl, type WebsiteResolutionInput, type WebsiteResolutionResult } from "./website-resolver";

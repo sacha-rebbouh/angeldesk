@@ -2,7 +2,6 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import type {
   AgentResult,
-  ScreeningResult,
   RedFlagResult,
   ScoringResult,
   SynthesisDealScorerResult,
@@ -12,22 +11,25 @@ import type { AnalysisType } from "./types";
 
 /**
  * Create a new analysis record
+ * @param documentIds - IDs of documents being analyzed (for versioning/staleness detection)
  */
 export async function createAnalysis(params: {
   dealId: string;
   type: AnalysisType;
   totalAgents: number;
   mode?: string;
+  documentIds?: string[];
 }) {
   return prisma.analysis.create({
     data: {
       dealId: params.dealId,
-      type: params.type === "screening" ? "SCREENING" : "FULL_DD",
+      type: params.type === "extraction" ? "SCREENING" : "FULL_DD",
       status: "RUNNING",
       totalAgents: params.totalAgents,
       completedAgents: 0,
       startedAt: new Date(),
       mode: params.mode,
+      documentIds: params.documentIds ?? [],
     },
   });
 }
@@ -352,27 +354,6 @@ export async function processAgentResult(
       break;
     }
 
-    case "deal-screener": {
-      const screenResult = result as ScreeningResult;
-      // Update deal with screening score if no scorer ran
-      if (screenResult.data?.confidenceScore) {
-        const existingDeal = await prisma.deal.findUnique({
-          where: { id: dealId },
-          select: { globalScore: true },
-        });
-        // Only update if no global score exists yet
-        if (!existingDeal?.globalScore) {
-          await prisma.deal.update({
-            where: { id: dealId },
-            data: {
-              globalScore: Math.round(screenResult.data.confidenceScore),
-            },
-          });
-        }
-      }
-      break;
-    }
-
     case "deal-scorer": {
       const scoreResult = result as ScoringResult;
       if (scoreResult.data?.scores) {
@@ -437,4 +418,273 @@ export async function getDealWithRelations(dealId: string) {
       founders: true,
     },
   });
+}
+
+// ============================================================================
+// CHECKPOINT PERSISTENCE (for crash recovery)
+// ============================================================================
+
+export interface CheckpointData {
+  state: string;
+  completedAgents: string[];
+  pendingAgents: string[];
+  failedAgents: { agent: string; error: string; retries: number }[];
+  findings: unknown[];
+  results: Record<string, unknown>;
+  totalCost: number;
+  startTime: string;
+}
+
+/**
+ * Save a checkpoint to database
+ * Called periodically during analysis to enable recovery
+ */
+export async function saveCheckpoint(
+  analysisId: string,
+  checkpoint: CheckpointData
+): Promise<string> {
+  try {
+    const saved = await prisma.analysisCheckpoint.create({
+      data: {
+        analysisId,
+        state: checkpoint.state,
+        completedAgents: checkpoint.completedAgents,
+        pendingAgents: checkpoint.pendingAgents,
+        failedAgents: checkpoint.failedAgents as Prisma.InputJsonValue,
+        findings: checkpoint.findings as Prisma.InputJsonValue,
+        results: checkpoint.results as Prisma.InputJsonValue,
+      },
+    });
+
+    // Also update the analysis record with partial results for visibility
+    await prisma.analysis.update({
+      where: { id: analysisId },
+      data: {
+        completedAgents: checkpoint.completedAgents.length,
+        totalCost: checkpoint.totalCost,
+        results: checkpoint.results as Prisma.InputJsonValue,
+      },
+    });
+
+    console.log(
+      `[Checkpoint] Saved checkpoint ${saved.id} for analysis ${analysisId}: ` +
+        `state=${checkpoint.state}, completed=${checkpoint.completedAgents.length}/${checkpoint.completedAgents.length + checkpoint.pendingAgents.length}`
+    );
+
+    return saved.id;
+  } catch (error) {
+    console.error("[Checkpoint] Failed to save checkpoint:", error);
+    throw error;
+  }
+}
+
+/**
+ * Load the latest checkpoint for an analysis
+ */
+export async function loadLatestCheckpoint(
+  analysisId: string
+): Promise<CheckpointData | null> {
+  try {
+    const checkpoint = await prisma.analysisCheckpoint.findFirst({
+      where: { analysisId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!checkpoint) {
+      return null;
+    }
+
+    return {
+      state: checkpoint.state,
+      completedAgents: checkpoint.completedAgents,
+      pendingAgents: checkpoint.pendingAgents,
+      failedAgents: (checkpoint.failedAgents as { agent: string; error: string; retries: number }[]) ?? [],
+      findings: (checkpoint.findings as unknown[]) ?? [],
+      results: (checkpoint.results as Record<string, unknown>) ?? {},
+      totalCost: 0, // Will be recalculated from results
+      startTime: checkpoint.createdAt.toISOString(),
+    };
+  } catch (error) {
+    console.error("[Checkpoint] Failed to load checkpoint:", error);
+    return null;
+  }
+}
+
+/**
+ * Find all interrupted analyses (status = RUNNING) for a user or globally
+ * These are analyses that crashed or were interrupted and can be resumed
+ */
+export async function findInterruptedAnalyses(userId?: string): Promise<
+  Array<{
+    id: string;
+    dealId: string;
+    dealName: string;
+    type: string;
+    mode: string | null;
+    startedAt: Date | null;
+    completedAgents: number;
+    totalAgents: number;
+    totalCost: number;
+    lastCheckpointAt: Date | null;
+  }>
+> {
+  try {
+    const analyses = await prisma.analysis.findMany({
+      where: {
+        status: "RUNNING",
+        ...(userId ? { deal: { userId } } : {}),
+      },
+      include: {
+        deal: {
+          select: {
+            name: true,
+          },
+        },
+      },
+      orderBy: { startedAt: "desc" },
+    });
+
+    // Get last checkpoint time for each analysis
+    const result = await Promise.all(
+      analyses.map(async (analysis) => {
+        const lastCheckpoint = await prisma.analysisCheckpoint.findFirst({
+          where: { analysisId: analysis.id },
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true },
+        });
+
+        return {
+          id: analysis.id,
+          dealId: analysis.dealId,
+          dealName: analysis.deal.name,
+          type: analysis.type,
+          mode: analysis.mode,
+          startedAt: analysis.startedAt,
+          completedAgents: analysis.completedAgents,
+          totalAgents: analysis.totalAgents,
+          totalCost: Number(analysis.totalCost ?? 0),
+          lastCheckpointAt: lastCheckpoint?.createdAt ?? null,
+        };
+      })
+    );
+
+    return result;
+  } catch (error) {
+    console.error("[Checkpoint] Failed to find interrupted analyses:", error);
+    return [];
+  }
+}
+
+/**
+ * Load full analysis data for recovery (including deal and checkpoint)
+ */
+export async function loadAnalysisForRecovery(analysisId: string): Promise<{
+  analysis: {
+    id: string;
+    dealId: string;
+    type: string;
+    mode: string | null;
+    totalAgents: number;
+    startedAt: Date | null;
+  };
+  deal: Awaited<ReturnType<typeof getDealWithRelations>>;
+  checkpoint: CheckpointData | null;
+} | null> {
+  try {
+    const analysis = await prisma.analysis.findUnique({
+      where: { id: analysisId },
+      select: {
+        id: true,
+        dealId: true,
+        type: true,
+        mode: true,
+        totalAgents: true,
+        startedAt: true,
+        status: true,
+      },
+    });
+
+    if (!analysis || analysis.status !== "RUNNING") {
+      return null;
+    }
+
+    const deal = await getDealWithRelations(analysis.dealId);
+    if (!deal) {
+      return null;
+    }
+
+    const checkpoint = await loadLatestCheckpoint(analysisId);
+
+    return {
+      analysis: {
+        id: analysis.id,
+        dealId: analysis.dealId,
+        type: analysis.type,
+        mode: analysis.mode,
+        totalAgents: analysis.totalAgents,
+        startedAt: analysis.startedAt,
+      },
+      deal,
+      checkpoint,
+    };
+  } catch (error) {
+    console.error("[Checkpoint] Failed to load analysis for recovery:", error);
+    return null;
+  }
+}
+
+/**
+ * Mark an interrupted analysis as failed (when recovery is not possible or user cancels)
+ */
+export async function markAnalysisAsFailed(
+  analysisId: string,
+  reason: string
+): Promise<void> {
+  try {
+    await prisma.analysis.update({
+      where: { id: analysisId },
+      data: {
+        status: "FAILED",
+        completedAt: new Date(),
+        summary: `Analysis interrupted: ${reason}`,
+      },
+    });
+
+    console.log(`[Checkpoint] Marked analysis ${analysisId} as FAILED: ${reason}`);
+  } catch (error) {
+    console.error("[Checkpoint] Failed to mark analysis as failed:", error);
+  }
+}
+
+/**
+ * Clean up old checkpoints (keep only last N per analysis)
+ * Call this periodically to prevent database bloat
+ */
+export async function cleanupOldCheckpoints(
+  analysisId: string,
+  keepCount: number = 5
+): Promise<number> {
+  try {
+    const checkpoints = await prisma.analysisCheckpoint.findMany({
+      where: { analysisId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (checkpoints.length <= keepCount) {
+      return 0;
+    }
+
+    const toDelete = checkpoints.slice(keepCount).map((c) => c.id);
+
+    await prisma.analysisCheckpoint.deleteMany({
+      where: { id: { in: toDelete } },
+    });
+
+    console.log(`[Checkpoint] Cleaned up ${toDelete.length} old checkpoints for analysis ${analysisId}`);
+    return toDelete.length;
+  } catch (error) {
+    console.error("[Checkpoint] Failed to cleanup checkpoints:", error);
+    return 0;
+  }
 }

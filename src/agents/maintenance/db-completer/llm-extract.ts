@@ -234,6 +234,7 @@ function mergePartialResults(results: LLMExtractionResult[]): LLMExtractionResul
     // Champs simples: prendre si manquant
     if (!base.industry && result.industry) base.industry = result.industry
     if (!base.description && result.description) base.description = result.description
+    if (!base.tagline && result.tagline) base.tagline = result.tagline
     if (!base.activity_status && result.activity_status) {
       base.activity_status = result.activity_status
       base.activity_status_details = result.activity_status_details
@@ -255,6 +256,7 @@ function mergePartialResults(results: LLMExtractionResult[]): LLMExtractionResul
     base.investors = [...new Set([...base.investors, ...result.investors])]
     base.competitors = [...new Set([...base.competitors, ...result.competitors])]
     base.notable_clients = [...new Set([...base.notable_clients, ...result.notable_clients])]
+    base.use_cases = [...new Set([...(base.use_cases || []), ...(result.use_cases || [])])]
   }
 
   // Recalculer confidence et completeness
@@ -291,13 +293,15 @@ function calculateCompleteness(result: LLMExtractionResult): number {
   const fields = [
     result.industry,
     result.description,
+    result.tagline,
+    result.use_cases?.length > 0,
     result.activity_status,
     result.headquarters_country,
     result.founded_year,
     result.website,
     result.linkedin_url,
-    result.founders.length > 0,
-    result.investors.length > 0,
+    result.founders?.length > 0,
+    result.investors?.length > 0,
     result.business_model,
     result.target_market,
   ]
@@ -515,6 +519,8 @@ function extractCriticalFieldsViaRegex(content: string): LLMExtractionResult | n
     industry: null,
     sub_industry: null,
     description: null,
+    tagline: null,
+    use_cases: [],
     business_model: null,
     target_market: null,
     headquarters_country: null,
@@ -615,6 +621,7 @@ function validateAndNormalize(parsed: LLMExtractionResult): LLMExtractionResult 
   if (!Array.isArray(parsed.investors)) parsed.investors = []
   if (!Array.isArray(parsed.competitors)) parsed.competitors = []
   if (!Array.isArray(parsed.notable_clients)) parsed.notable_clients = []
+  if (!Array.isArray(parsed.use_cases)) parsed.use_cases = []
 
   // Valider founded_year
   if (parsed.founded_year) {

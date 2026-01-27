@@ -360,6 +360,8 @@ function createEmptyResult(companyName: string): CrossValidationResult {
       industry: null,
       sub_industry: null,
       description: null,
+      tagline: null,
+      use_cases: [],
       business_model: null,
       target_market: null,
       headquarters_country: null,

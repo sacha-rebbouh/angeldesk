@@ -104,11 +104,13 @@ export function getTaxonomySet(): Set<string> {
 export const SYSTEM_PROMPT = `Tu es un expert en startups. Extrais les données en JSON.
 
 RÈGLES:
-1. JAMAIS INVENTER - Si info absente → null
+1. JAMAIS INVENTER - Si info absente → null ou []
 2. INDUSTRIE - Catégories: Software/Tech, FinTech, Health, Commerce, Marketing/Sales, HR/Work, Real Estate, Transport/Logistics, Sustainability, Other
 3. IA comme outil ≠ "AI Pure-Play" - Classer dans le secteur du produit
 4. STATUT - Chercher indices: shutdown, acquisition, pivot
 5. URLs - Extraire le site officiel (pas les articles) et le profil LinkedIn company
+6. USE_CASES - CRITIQUE: liste des problèmes résolus par le produit (ex: ["invoice management", "expense tracking", "tax filing"])
+7. TAGLINE - One-liner pitch si trouvé (ex: "Slack for healthcare", "Stripe for Africa")
 
 FORMAT JSON (pas de markdown):
 {
@@ -118,6 +120,8 @@ FORMAT JSON (pas de markdown):
   "industry": "string|null",
   "sub_industry": "string|null",
   "description": "string|null",
+  "tagline": "string|null (one-liner pitch, ex: 'Uber for X')",
+  "use_cases": ["string"] (problèmes résolus, IMPORTANT pour matching concurrents),
   "business_model": "SaaS|Marketplace|Transactional|Hardware|Services|null",
   "target_market": "B2B|B2C|B2B2C|null",
   "headquarters_country": "string|null",

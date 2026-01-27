@@ -358,6 +358,26 @@ export async function validateAndUpdate(
     }
   }
 
+  // Tagline/shortDescription - one-liner pitch
+  if (extraction.tagline && extraction.tagline.length > 5) {
+    if (!company.shortDescription) {
+      previousData.shortDescription = company.shortDescription
+      updateData.shortDescription = extraction.tagline
+      fieldsUpdated.push('tagline')  // Track as tagline in stats
+    }
+  }
+
+  // Use cases - CRITICAL for competitor matching
+  if (extraction.use_cases && extraction.use_cases.length > 0) {
+    const currentUseCases = company.useCases || []
+    const newUseCases = [...new Set([...currentUseCases, ...extraction.use_cases])]
+    if (newUseCases.length > currentUseCases.length) {
+      previousData.useCases = currentUseCases
+      updateData.useCases = newUseCases
+      fieldsUpdated.push('useCases')
+    }
+  }
+
   // Business model
   if (extraction.business_model && !company.businessModel) {
     previousData.businessModel = company.businessModel
@@ -564,6 +584,9 @@ export async function validateAndUpdate(
       newQuality: newDataQuality,
     })
 
+    // Also update related FundingRounds with tagline, useCases, businessModel, targetMarket
+    await updateRelatedFundingRounds(companyId, extraction)
+
     return {
       success: true,
       fieldsUpdated,
@@ -603,14 +626,18 @@ function calculateDataQuality(company: Record<string, unknown>): number {
   }
   if (company.status && company.status !== 'UNKNOWN') score += 4
 
-  // Bonus fields (15 points)
-  if (company.employeeCount) score += 3
-  if (company.businessModel) score += 3
-  if (company.targetMarket) score += 3
-  if (company.competitors && Array.isArray(company.competitors) && company.competitors.length > 0) {
-    score += 3
+  // Bonus fields (15 points) - updated to include tagline and useCases
+  if (company.employeeCount) score += 2
+  if (company.businessModel) score += 2
+  if (company.targetMarket) score += 2
+  if (company.shortDescription) score += 2  // One-liner pitch (mapped from tagline)
+  if (company.useCases && Array.isArray(company.useCases) && company.useCases.length > 0) {
+    score += 4  // CRITICAL for competitor matching
   }
-  if (company.isProfitable !== null) score += 3
+  if (company.competitors && Array.isArray(company.competitors) && company.competitors.length > 0) {
+    score += 2
+  }
+  if (company.isProfitable !== null) score += 1
 
   return Math.min(score, 100)
 }
@@ -653,4 +680,97 @@ function getEmployeeRange(count: number): string {
   if (count <= 500) return '201-500'
   if (count <= 1000) return '501-1000'
   return '1000+'
+}
+
+/**
+ * Met à jour les FundingRounds associés avec les nouvelles données
+ * (tagline, useCases, businessModel, targetMarket, linkedinUrl)
+ *
+ * Critique pour le matching de concurrents dans DB-EXPLOITATION-SPEC.md
+ */
+async function updateRelatedFundingRounds(
+  companyId: string,
+  extraction: LLMExtractionResult
+): Promise<void> {
+  try {
+    // Get company to find its funding rounds via companySlug
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { slug: true },
+    })
+
+    if (!company?.slug) return
+
+    // Find funding rounds for this company
+    const fundingRounds = await prisma.fundingRound.findMany({
+      where: { companySlug: company.slug },
+      select: { id: true, tagline: true, useCases: true, businessModel: true, targetMarket: true, linkedinUrl: true },
+    })
+
+    if (fundingRounds.length === 0) return
+
+    // Build update data for FundingRounds
+    const frUpdateData: Record<string, unknown> = {}
+
+    if (extraction.tagline && extraction.tagline.length > 5) {
+      frUpdateData.tagline = extraction.tagline
+    }
+
+    if (extraction.use_cases && extraction.use_cases.length > 0) {
+      frUpdateData.useCases = extraction.use_cases
+    }
+
+    if (extraction.business_model) {
+      frUpdateData.businessModel = extraction.business_model
+    }
+
+    if (extraction.target_market) {
+      frUpdateData.targetMarket = extraction.target_market
+    }
+
+    if (extraction.linkedin_url && isValidLinkedInUrl(extraction.linkedin_url)) {
+      frUpdateData.linkedinUrl = extraction.linkedin_url
+    }
+
+    // Skip if nothing to update
+    if (Object.keys(frUpdateData).length === 0) return
+
+    // Update all funding rounds for this company
+    for (const fr of fundingRounds) {
+      // Only update if the field is currently empty
+      const actualUpdate: Record<string, unknown> = {}
+
+      if (frUpdateData.tagline && !fr.tagline) {
+        actualUpdate.tagline = frUpdateData.tagline
+      }
+      if (frUpdateData.useCases && (!fr.useCases || fr.useCases.length === 0)) {
+        actualUpdate.useCases = frUpdateData.useCases
+      }
+      if (frUpdateData.businessModel && !fr.businessModel) {
+        actualUpdate.businessModel = frUpdateData.businessModel
+      }
+      if (frUpdateData.targetMarket && !fr.targetMarket) {
+        actualUpdate.targetMarket = frUpdateData.targetMarket
+      }
+      if (frUpdateData.linkedinUrl && !fr.linkedinUrl) {
+        actualUpdate.linkedinUrl = frUpdateData.linkedinUrl
+      }
+
+      if (Object.keys(actualUpdate).length > 0) {
+        await prisma.fundingRound.update({
+          where: { id: fr.id },
+          data: actualUpdate,
+        })
+      }
+    }
+
+    logger.debug(`Updated ${fundingRounds.length} funding rounds for company ${companyId}`, {
+      fields: Object.keys(frUpdateData),
+    })
+  } catch (error) {
+    // Don't fail the whole enrichment if FundingRound update fails
+    logger.warn(`Failed to update funding rounds for company ${companyId}`, {
+      error: error instanceof Error ? error.message : 'Unknown',
+    })
+  }
 }

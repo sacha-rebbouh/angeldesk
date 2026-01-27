@@ -1,310 +1,1132 @@
 import { BaseAgent } from "../base-agent";
-import type { EnrichedAgentContext, TeamInvestigatorResult, TeamInvestigatorData } from "../types";
+import type {
+  EnrichedAgentContext,
+  TeamInvestigatorResult,
+  TeamInvestigatorData,
+  TeamInvestigatorFindings,
+  AgentMeta,
+  AgentScore,
+  AgentRedFlag,
+  AgentQuestion,
+  AgentAlertSignal,
+  AgentNarrative,
+  DbCrossReference,
+  LinkedInEnrichedProfile,
+} from "../types";
 
 /**
- * Team Investigator Agent
+ * Team Investigator Agent - REFONTE v2.0
  *
- * Mission: Analyser le background et la composition de l'equipe fondatrice.
- * Pour un BA, la qualite de l'equipe est souvent LE facteur decisif.
+ * Mission: Investigation EXHAUSTIVE de l'équipe fondatrice pour un Business Angel
+ * Persona: Ex-Head of Talent d'un fonds VC + Investigateur private equity
+ * Standard: LinkedIn vérifié, cross-reference DB, détection red flags
  *
- * Input:
- * - Infos fondateurs du pitch deck
- * - People Graph du Context Engine (LinkedIn, ventures precedentes)
- * - Background verification data
+ * Inputs:
+ * - Documents: Pitch deck (section team)
+ * - Context Engine: People Graph (LinkedIn enrichi, ventures précédentes)
+ * - Deal: Fondateurs avec données LinkedIn scrapées via Apify
+ * - Dependencies: document-extractor
  *
- * Output:
- * - Profil detaille de chaque fondateur
- * - Evaluation de la complementarite
- * - Red flags (turnover, conflits, manque d'experience)
- * - Questions critiques a poser
+ * Outputs:
+ * - Score: 0-100 avec breakdown par critère
+ * - Findings: founderProfiles, teamComposition, cofounderDynamics, networkAnalysis
+ * - Red Flags: avec 5 composants obligatoires
+ * - Questions: priorité + contexte + whatToLookFor
+ *
+ * Intégration LinkedIn (via Apify):
+ * - Actor: curious_coder/linkedin-profile-scraper
+ * - Champs: experiences, education, skills, headline, about
+ * - Contact enrichi: email, phone (payant)
  */
 
+// ============================================================================
+// SCORING FRAMEWORK
+// ============================================================================
+
+const SCORING_CRITERIA = {
+  founderQuality: { weight: 30, description: "Qualité individuelle des fondateurs (track record, expertise)" },
+  teamComplementarity: { weight: 25, description: "Complémentarité et couverture des compétences clés" },
+  entrepreneurialExperience: { weight: 20, description: "Expérience entrepreneuriale et exits" },
+  cofounderDynamics: { weight: 15, description: "Dynamique cofondateurs (equity, vesting, historique)" },
+  networkStrength: { weight: 10, description: "Qualité du réseau (advisors, investisseurs, industry)" },
+} as const;
+
+// ============================================================================
+// LLM RESPONSE INTERFACE
+// ============================================================================
+
 interface LLMTeamInvestigatorResponse {
-  founderProfiles: {
-    name: string;
-    role: string;
-    backgroundVerified: boolean;
-    keyExperience: string[];
-    previousVentures: {
-      name: string;
-      outcome: string;
-      relevance: string;
+  meta: {
+    dataCompleteness: "complete" | "partial" | "minimal";
+    confidenceLevel: number;
+    limitations: string[];
+  };
+  score: {
+    value: number;
+    breakdown: {
+      criterion: string;
+      weight: number;
+      score: number;
+      justification: string;
     }[];
-    domainExpertise: number;
-    entrepreneurialExperience: number;
-    redFlags: string[];
-    networkStrength: string;
+  };
+  findings: {
+    founderProfiles: {
+      name: string;
+      role: string;
+      linkedinUrl?: string;
+      linkedinVerified: boolean;
+      linkedinScrapedAt?: string;
+      background: {
+        yearsExperience: number;
+        headline?: string;
+        currentTitle?: string;
+        educationHighlight?: string;
+        topPreviousCompanies: string[];
+        domainExpertiseYears: number;
+        relevantRoles: string[];
+        keySkills: string[];
+      };
+      entrepreneurialTrack: {
+        isFirstTimeFounder: boolean;
+        previousVentures: {
+          name: string;
+          role: string;
+          outcome: "big_success" | "success" | "acquihire" | "pivot" | "failure" | "ongoing" | "unknown";
+          exitValue?: number;
+          duration?: string;
+          relevance: string;
+          source: string;
+        }[];
+        totalVentures: number;
+        successfulExits: number;
+      };
+      scores: {
+        domainExpertise: number;
+        entrepreneurialExperience: number;
+        executionCapability: number;
+        networkStrength: number;
+        overallFounderScore: number;
+      };
+      redFlags: {
+        type: string;
+        severity: "CRITICAL" | "HIGH" | "MEDIUM";
+        description: string;
+        evidence: string;
+      }[];
+      strengths: string[];
+      concerns: string[];
+    }[];
+    teamComposition: {
+      size: number;
+      rolesPresent: string[];
+      rolesMissing: string[];
+      technicalStrength: number;
+      businessStrength: number;
+      complementarityScore: number;
+      gaps: {
+        gap: string;
+        severity: "CRITICAL" | "HIGH" | "MEDIUM";
+        impact: string;
+        recommendation: string;
+      }[];
+      keyHiresToMake: {
+        role: string;
+        priority: "IMMEDIATE" | "NEXT_6M" | "NEXT_12M";
+        rationale: string;
+      }[];
+    };
+    cofounderDynamics: {
+      foundersCount: number;
+      equitySplit: string;
+      equitySplitAssessment: "healthy" | "concerning" | "red_flag" | "unknown";
+      vestingInPlace: boolean;
+      workingHistoryTogether: {
+        duration: string;
+        context: string;
+        assessment: string;
+      };
+      relationshipStrength: "strong" | "moderate" | "weak" | "unknown";
+      potentialConflicts: string[];
+      soloFounderRisk?: string;
+    };
+    networkAnalysis: {
+      overallNetworkStrength: "strong" | "moderate" | "weak";
+      notableConnections: {
+        name: string;
+        relevance: string;
+        type: "investor" | "advisor" | "industry_expert" | "potential_customer" | "other";
+      }[];
+      advisors: {
+        name: string;
+        role: string;
+        relevance: string;
+        credibilityScore: number;
+      }[];
+      investorRelationships: string[];
+      industryConnections: string[];
+    };
+    benchmarkComparison: {
+      vsSuccessfulFounders: string;
+      percentileInSector: number;
+      similarSuccessfulTeams: {
+        company: string;
+        similarity: string;
+        outcome: string;
+      }[];
+    };
+  };
+  dbCrossReference: {
+    claims: {
+      claim: string;
+      location: string;
+      dbVerdict: "VERIFIED" | "CONTRADICTED" | "PARTIAL" | "NOT_VERIFIABLE";
+      evidence: string;
+      severity?: "CRITICAL" | "HIGH" | "MEDIUM";
+    }[];
+    uncheckedClaims: string[];
+  };
+  redFlags: {
+    id: string;
+    category: string;
+    severity: "CRITICAL" | "HIGH" | "MEDIUM";
+    title: string;
+    description: string;
+    location: string;
+    evidence: string;
+    contextEngineData?: string;
+    impact: string;
+    question: string;
+    redFlagIfBadAnswer: string;
   }[];
-  teamComposition: {
-    technicalStrength: number;
-    businessStrength: number;
-    complementarity: number;
-    gaps: string[];
-    keyHiresToMake: string[];
+  questions: {
+    priority: "CRITICAL" | "HIGH" | "MEDIUM";
+    category: string;
+    question: string;
+    context: string;
+    whatToLookFor: string;
+  }[];
+  alertSignal: {
+    hasBlocker: boolean;
+    blockerReason?: string;
+    recommendation: "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP";
+    justification: string;
   };
-  cofounderDynamics: {
-    equitySplit: string;
-    vestingInPlace: boolean;
-    workingHistory: string;
-    potentialConflicts: string[];
+  narrative: {
+    oneLiner: string;
+    summary: string;
+    keyInsights: string[];
+    forNegotiation: string[];
   };
-  overallTeamScore: number;
-  criticalQuestions: string[];
 }
+
+// ============================================================================
+// AGENT CLASS
+// ============================================================================
 
 export class TeamInvestigatorAgent extends BaseAgent<TeamInvestigatorData, TeamInvestigatorResult> {
   constructor() {
     super({
       name: "team-investigator",
-      description: "Analyse le background et la composition de l'equipe fondatrice",
+      description: "Investigation exhaustive de l'équipe fondatrice standard VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 90000,
+      timeoutMs: 120000,
+      dependencies: ["document-extractor"],
     });
   }
 
   protected buildSystemPrompt(): string {
-    return `Tu es un expert en due diligence specialise dans l'evaluation des equipes fondatrices.
+    return `# ROLE ET EXPERTISE
 
-TON ROLE:
-- Verifier le background des fondateurs
-- Evaluer l'expertise domaine et entrepreneuriale
-- Analyser la complementarite de l'equipe
-- Identifier les red flags potentiels
-- Suggerer des questions de reference check
+Tu es un expert en due diligence d'équipes fondatrices combinant:
+- 15+ ans comme Head of Talent dans des fonds VC tier 1 (Sequoia, a]6z, Accel)
+- Background en investigation private equity (vérification de backgrounds)
+- Pattern matching de 1000+ équipes fondatrices analysées
 
-CRITERES D'EVALUATION DES FONDATEURS:
+Tu as vu les patterns de succès et d'échec. Tu sais que "team first" n'est pas un cliché.
 
-1. EXPERIENCE ENTREPRENEURIALE (25% du score equipe)
-   - Exit precedent: +30 points
-   - Startup precedente (3+ ans): +20 points
-   - Role C-level en startup: +15 points
-   - Premier entrepreneur: 0 points (neutre)
-   - Echec recent non explique: -10 points
+# MISSION POUR CE DEAL
 
-2. EXPERTISE DOMAINE (25%)
-   - Expert reconnu du secteur: +30 points
-   - 5+ ans dans le domaine: +20 points
-   - Experience pertinente: +10 points
-   - Hors domaine: -10 points
+Produire une investigation EXHAUSTIVE de l'équipe fondatrice pour un Business Angel.
+Objectif: Permettre au BA de savoir si l'équipe a la crédibilité et la capacité d'exécution.
+Le BA doit pouvoir évaluer le risque "people" et avoir des questions pour les references.
 
-3. COMPLEMENTARITE EQUIPE (20%)
-   - CEO/CTO bien definis: +20 points
-   - Skills non-overlapping: +15 points
-   - Gaps critiques non couverts: -15 points
-   - Solo founder sans plan de recrutement: -10 points
+# PHILOSOPHIE D'ANALYSE
 
-4. NETWORK & CREDIBILITE (15%)
-   - Investisseurs de renom dans le reseau: +15 points
-   - Advisors pertinents: +10 points
-   - Endorsements verifiables: +5 points
-   - Reseau faible: -5 points
+## Ce qui fait une équipe gagnante (pattern des licornes)
+1. **Founder-Market Fit**: Expertise PROFONDE du domaine (pas surface level)
+2. **Complémentarité**: CEO/CTO ou Business/Tech bien définis
+3. **Track record**: Pas nécessairement un exit, mais exécution prouvée
+4. **Résilience**: Ont déjà surmonté des difficultés ensemble
+5. **Network**: Accès à talent, clients, investisseurs
 
-5. RED FLAGS POTENTIELS (15%)
-   - Turnover recent dans l'equipe: -15 points
-   - Litiges avec anciens cofondateurs: -20 points
-   - CV embellis/non verifiables: -25 points
-   - Conflits d'interets: -15 points
+## Ce qui tue les startups (patterns d'échec)
+1. **Solo founder sans support**: 90% échouent plus vite
+2. **Equity mal répartie**: Conflits garantis
+3. **Pas de vesting**: Risque de départ catastrophique
+4. **CV embellis**: Si on ment là-dessus, on ment partout
+5. **Conflits cofondateurs non résolus**: La startup meurt
 
-REGLES:
-- Tout claim non verifiable = red flag potentiel
-- Une equipe solo < equipe complementaire (sauf si track record exceptional)
-- Les ventures precedentes comptent enormement (pattern matching)
-- Le vesting non en place = red flag structurel
+# METHODOLOGIE D'ANALYSE
 
-DONNEES LINKEDIN ENRICHIES:
-- Si un fondateur a "linkedinEnriched: true", ses donnees LinkedIn ont ete verifiees
-- "yearsExperience" = nombre d'annees d'experience professionnelle
-- "isSerialFounder" = a fonde 2+ entreprises precedemment
-- "hasTechBackground" = background technique (ingenieur, dev, CTO)
-- "hasFounderExperience" = a deja ete fondateur/CEO
-- "expertise" = description synthetique de son parcours
-- "sectorFit" = adequation avec le secteur de la startup
-- "redFlagsFromLinkedIn" = red flags detectes automatiquement (gaps, job hopping, etc.)
-- "questionsFromLinkedIn" = questions suggerees basees sur le parcours
+## Etape 1: Vérification LinkedIn
+- Si données LinkedIn disponibles (scrapées via Apify), les utiliser comme source de vérité
+- Croiser avec ce qui est dit dans le deck
+- Identifier les embellissements (titres gonflés, dates modifiées)
+- Calculer les métriques: années d'expérience, tenure moyenne, job hopping
 
-IMPORTANT: Les donnees LinkedIn enrichies sont les plus fiables car verifiees.
-backgroundVerified = true si linkedinEnriched = true.
+## Etape 2: Track Record Entrepreneurial
+- Chercher TOUTES les ventures précédentes
+- Pour chaque venture: outcome réel, pas le spin du fondateur
+- Identifier les patterns (serial entrepreneur, pivot master, échecs répétés)
+- Valuer l'expérience: un échec bien géré > pas d'expérience
 
-OUTPUT: JSON structure uniquement.`;
+## Etape 3: Analyse de Complémentarité
+- Mapper les compétences de chaque fondateur
+- Identifier les overlaps (mauvais) et les gaps (critique)
+- Évaluer qui fait quoi: rôles clairs = équipe mature
+- Lister les recrutements critiques à faire
+
+## Etape 4: Dynamique Cofondateurs
+- Equity split: 50/50 acceptable, 80/20 = red flag
+- Vesting: OBLIGATOIRE. Pas de vesting = deal breaker structurel
+- Historique commun: ont-ils travaillé ensemble avant?
+- Signaux de conflit: qui répond aux questions? Tension visible?
+
+## Etape 5: Network & Credibilité
+- Qualité des advisors (vrais ou "advisory board" fantoche)
+- Connections investisseurs (ont-ils accès au tier 1?)
+- Réputation dans l'industrie (que disent les gens?)
+
+## Etape 6: Cross-reference avec Context Engine
+- Croiser les claims du deck avec les données LinkedIn/DB
+- Identifier les contradictions
+- Générer un dbCrossReference complet
+
+# FRAMEWORK D'EVALUATION
+
+| Critère | Poids | Score 0-25 | Score 25-50 | Score 50-75 | Score 75-100 |
+|---------|-------|------------|-------------|-------------|--------------|
+| Founder Quality | 30% | CV non vérifiable, pas d'expertise | Expertise partielle, 1er venture | Expertise solide, 1+ venture | Track record exceptionnel, exit |
+| Team Complementarity | 25% | Gaps critiques, overlaps | Gaps majeurs | Bonne couverture | Complémentarité parfaite |
+| Entrepreneurial Exp | 20% | 1er time founders sans support | 1er time avec bons advisors | Serial avec mixed outcomes | Serial avec succès |
+| Cofounder Dynamics | 15% | Pas de vesting, split déséquilibré | Vesting partiel, historique court | Vesting ok, historique moyen | Vesting + historique long |
+| Network Strength | 10% | Pas de network notable | Network local | Bon network industrie | Network tier 1 |
+
+## PENALITES
+- Solo founder sans plan = score max 60
+- Pas de vesting = score max 50
+- CV non vérifiable = score max 55
+- Red flag CRITICAL sur fondateur = score max 40
+
+# RED FLAGS A DETECTER
+
+## 1. CV EMBELLIS / NON VERIFIABLES - Sévérité: CRITICAL
+- Titre gonflé vs LinkedIn (ex: "VP" dans le deck, "Manager" sur LinkedIn)
+- Durées modifiées (gaps cachés)
+- Diplômes non vérifiables
+- "Co-founder" de projets qui n'existent pas
+
+## 2. DYNAMIQUE TOXIQUE - Sévérité: CRITICAL
+- Equity split très déséquilibré sans justification
+- Pas de vesting en place
+- Conflit visible entre cofondateurs
+- Fondateur qui a quitté récemment
+
+## 3. JOB HOPPING EXCESSIF - Sévérité: HIGH
+- Tenure moyenne < 18 mois
+- Pattern de départs rapides
+- Jamais de progression dans une même entreprise
+
+## 4. GAPS CRITIQUES - Sévérité: HIGH
+- Pas de profil technique dans une startup tech
+- Pas d'expérience commerciale dans un deal B2B
+- Pas d'expérience secteur
+
+## 5. FIRST-TIME FOUNDERS SANS FILET - Sévérité: MEDIUM
+- Pas d'expérience startup
+- Pas d'advisors crédibles
+- Pas de network investisseurs
+
+## 6. TURNOVER RECENT - Sévérité: HIGH
+- Départ d'un cofondateur dans les 12 derniers mois
+- Turnover élevé dans l'équipe early
+
+# FORMAT DE SORTIE
+
+Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
+
+# REGLES ABSOLUES
+
+1. JAMAIS inventer des données LinkedIn - utiliser "Non vérifié" si absent
+2. TOUJOURS citer la source (LinkedIn scrapé, Deck Slide X, Context Engine)
+3. TOUJOURS cross-référencer deck vs LinkedIn si les deux sont disponibles
+4. QUANTIFIER chaque fois que possible (années, %, nombre de ventures)
+5. Chaque red flag = id + severity + location + evidence + impact + question + redFlagIfBadAnswer
+6. Les questions doivent être des questions de REFERENCE CHECK (à poser à des anciens collègues)
+7. Le BA doit pouvoir utiliser cette analyse pour des appels de référence
+
+# EXEMPLES
+
+## Exemple de BON output (founder profile):
+{
+  "name": "Jean Dupont",
+  "role": "CEO",
+  "linkedinUrl": "linkedin.com/in/jeandupont",
+  "linkedinVerified": true,
+  "linkedinScrapedAt": "2024-01-15",
+  "background": {
+    "yearsExperience": 12,
+    "headline": "CEO @ TechStartup | Ex-Google | HEC Paris",
+    "currentTitle": "CEO",
+    "educationHighlight": "HEC Paris MBA",
+    "topPreviousCompanies": ["Google", "McKinsey"],
+    "domainExpertiseYears": 8,
+    "relevantRoles": ["Product Manager @ Google (4 ans)", "Associate @ McKinsey (3 ans)"],
+    "keySkills": ["Product Management", "Strategy", "Go-to-Market"]
+  },
+  "entrepreneurialTrack": {
+    "isFirstTimeFounder": false,
+    "previousVentures": [
+      {
+        "name": "PreviousStartup",
+        "role": "Co-founder & CEO",
+        "outcome": "acquihire",
+        "exitValue": 2000000,
+        "duration": "3 ans",
+        "relevance": "Même secteur, a appris les erreurs à éviter",
+        "source": "LinkedIn + Crunchbase"
+      }
+    ],
+    "totalVentures": 1,
+    "successfulExits": 1
+  },
+  "scores": {
+    "domainExpertise": 85,
+    "entrepreneurialExperience": 70,
+    "executionCapability": 80,
+    "networkStrength": 75,
+    "overallFounderScore": 78
+  },
+  "redFlags": [],
+  "strengths": [
+    "Track record vérifié: 4 ans chez Google en tant que PM",
+    "Exit précédent (acquihire 2M€) - a déjà navigué un processus de vente",
+    "Formation top-tier (HEC) avec réseau associé"
+  ],
+  "concerns": [
+    "Premier rôle de CEO dans une startup VC-backed",
+    "Acquihire ≠ vrai succès - valider les learnings"
+  ]
+}
+
+## Exemple de MAUVAIS output (à éviter):
+{
+  "name": "Jean Dupont",
+  "role": "CEO",
+  "backgroundVerified": true,
+  "keyExperience": ["Google", "McKinsey"],
+  "domainExpertise": 85,
+  "redFlags": ["RAS"]
+}
+→ Pas de LinkedIn, pas de scores détaillés, pas de source, pas de calcul, "RAS" n'est pas un red flag.
+
+## Exemple de BON red flag:
+{
+  "id": "RF-001",
+  "category": "cv_embellishment",
+  "severity": "CRITICAL",
+  "title": "Titre gonflé: VP dans le deck, Manager sur LinkedIn",
+  "description": "Le deck présente Jean Dupont comme 'VP Product @ Google' mais son LinkedIn indique 'Product Manager'. Écart de 2 niveaux hiérarchiques.",
+  "location": "Deck Slide 14 vs LinkedIn scrapé le 2024-01-15",
+  "evidence": "Deck: 'VP Product @ Google (2019-2023)' | LinkedIn: 'Product Manager @ Google (2019-2023)'",
+  "contextEngineData": "Hiérarchie Google: APM → PM → Senior PM → Group PM → Director → VP",
+  "impact": "Si le fondateur embellit son CV, quelle confiance avoir sur les autres claims?",
+  "question": "Pouvez-vous clarifier votre titre exact chez Google et vos responsabilités?",
+  "redFlagIfBadAnswer": "Si le fondateur maintient le titre VP sans preuves = red flag majeur sur l'intégrité"
+}`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TeamInvestigatorData> {
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
-
-    // Get extracted founder info
     const extractedInfo = this.getExtractedInfo(context);
-    let foundersSection = "";
-    if (extractedInfo?.founders) {
-      foundersSection = `\n## Fondateurs (du Pitch Deck)\n${JSON.stringify(extractedInfo.founders, null, 2)}`;
+
+    let extractedSection = "";
+    if (extractedInfo) {
+      extractedSection = `\n## Données Extraites du Pitch Deck (Document Extractor)\n${JSON.stringify(extractedInfo, null, 2)}`;
     }
 
-    // Get founders from DB with their LinkedIn-enriched data
-    const deal = context.deal as unknown as {
-      founders?: {
-        name: string;
-        role: string;
-        background?: string;
-        linkedinUrl?: string;
-        verifiedInfo?: {
-          linkedinScrapedAt?: string;
-          highlights?: {
-            yearsExperience?: number;
-            educationLevel?: string;
-            hasRelevantIndustryExp?: boolean;
-            hasFounderExperience?: boolean;
-            hasTechBackground?: boolean;
-            isSerialFounder?: boolean;
-          };
-          expertise?: {
-            primaryIndustry?: string;
-            primaryRole?: string;
-            description?: string;
-            isDiversified?: boolean;
-            hasDeepExpertise?: boolean;
-          };
-          sectorFit?: { fits: boolean; explanation: string };
-          redFlags?: { type: string; severity: string; message: string }[];
-          questionsToAsk?: { question: string; context: string; priority: string }[];
-        };
-        previousVentures?: unknown;
-      }[];
-    };
-    if (deal.founders && deal.founders.length > 0) {
-      // Include enriched data when available
-      const foundersWithEnrichment = deal.founders.map(f => ({
-        name: f.name,
-        role: f.role,
-        linkedinUrl: f.linkedinUrl,
-        // Include enriched highlights if the founder was scraped
-        ...(f.verifiedInfo?.linkedinScrapedAt && {
-          linkedinEnriched: true,
-          yearsExperience: f.verifiedInfo.highlights?.yearsExperience,
-          educationLevel: f.verifiedInfo.highlights?.educationLevel,
-          isSerialFounder: f.verifiedInfo.highlights?.isSerialFounder,
-          hasTechBackground: f.verifiedInfo.highlights?.hasTechBackground,
-          hasFounderExperience: f.verifiedInfo.highlights?.hasFounderExperience,
-          hasRelevantIndustryExp: f.verifiedInfo.highlights?.hasRelevantIndustryExp,
-          expertise: f.verifiedInfo.expertise?.description,
-          sectorFit: f.verifiedInfo.sectorFit,
-          redFlagsFromLinkedIn: f.verifiedInfo.redFlags,
-          questionsFromLinkedIn: f.verifiedInfo.questionsToAsk,
-        }),
-        previousVentures: f.previousVentures,
-      }));
-      foundersSection += `\n## Fondateurs (de la DB avec enrichissement LinkedIn)\n${JSON.stringify(foundersWithEnrichment, null, 2)}`;
+    // Get founders data with LinkedIn enrichment
+    const foundersData = this.getFoundersData(context);
+    let foundersSection = "";
+    if (foundersData) {
+      foundersSection = `\n## FONDATEURS AVEC DONNEES LINKEDIN\n${foundersData}`;
     }
 
     // Get People Graph from Context Engine
     let peopleGraphSection = "";
     if (context.contextEngine?.peopleGraph) {
-      peopleGraphSection = `\n## Background Verifie (Context Engine)\n${JSON.stringify(context.contextEngine.peopleGraph, null, 2)}`;
+      peopleGraphSection = `\n## PEOPLE GRAPH (Context Engine)\n${JSON.stringify(context.contextEngine.peopleGraph, null, 2)}`;
     }
 
-    const prompt = `Analyse l'equipe fondatrice de cette startup:
+    const deal = context.deal;
+    const sector = deal.sector || "Tech";
 
+    // Build user prompt
+    const prompt = `# ANALYSE TEAM INVESTIGATOR - ${deal.companyName || deal.name}
+
+## DOCUMENTS FOURNIS
 ${dealContext}
+${extractedSection}
 ${foundersSection}
 ${peopleGraphSection}
-${contextEngineData}
 
-Realise une investigation complete de l'equipe.
+## CONTEXTE EXTERNE (Context Engine)
+${contextEngineData || "Aucune donnée Context Engine disponible pour ce deal."}
 
-Reponds en JSON avec cette structure exacte:
+## SECTEUR
+${sector}
+
+## INSTRUCTIONS SPECIFIQUES
+
+1. ANALYSE chaque fondateur individuellement avec toutes les données disponibles
+2. CROISE le deck avec LinkedIn: identifier les embellissements ou contradictions
+3. CALCULE les métriques: années d'expérience, tenure moyenne, job hopping risk
+4. EVALUE la complémentarité de l'équipe: gaps critiques, overlaps
+5. VERIFIE la dynamique cofondateurs: equity split, vesting, historique commun
+6. ANALYSE le network: advisors, investisseurs, industry connections
+7. GENERE des red flags COMPLETS (5 composants obligatoires)
+8. FORMULE des questions de REFERENCE CHECK (pour appeler des anciens collègues)
+
+## OUTPUT ATTENDU
+
+Produis une investigation complète au format JSON.
+Standard: Head of Talent VC + Investigateur PE.
+Chaque affirmation doit être sourcée ou marquée comme non vérifiable.
+MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
+
 \`\`\`json
 {
-  "founderProfiles": [
-    {
-      "name": "string",
-      "role": "string (CEO, CTO, COO, etc.)",
-      "backgroundVerified": boolean,
-      "keyExperience": ["string (experiences cles verifiees)"],
-      "previousVentures": [
+  "meta": {
+    "dataCompleteness": "complete|partial|minimal",
+    "confidenceLevel": 0-100,
+    "limitations": ["Ce qui n'a pas pu être analysé (ex: LinkedIn non disponible)"]
+  },
+  "score": {
+    "value": 0-100,
+    "breakdown": [
+      {
+        "criterion": "Founder Quality",
+        "weight": 30,
+        "score": 0-100,
+        "justification": "Pourquoi ce score - avec preuves"
+      },
+      {
+        "criterion": "Team Complementarity",
+        "weight": 25,
+        "score": 0-100,
+        "justification": "Pourquoi ce score - avec preuves"
+      },
+      {
+        "criterion": "Entrepreneurial Experience",
+        "weight": 20,
+        "score": 0-100,
+        "justification": "Pourquoi ce score - avec preuves"
+      },
+      {
+        "criterion": "Cofounder Dynamics",
+        "weight": 15,
+        "score": 0-100,
+        "justification": "Pourquoi ce score - avec preuves"
+      },
+      {
+        "criterion": "Network Strength",
+        "weight": 10,
+        "score": 0-100,
+        "justification": "Pourquoi ce score - avec preuves"
+      }
+    ]
+  },
+  "findings": {
+    "founderProfiles": [
+      {
+        "name": "Nom complet",
+        "role": "CEO|CTO|COO|CPO|etc",
+        "linkedinUrl": "URL LinkedIn si disponible",
+        "linkedinVerified": true|false,
+        "linkedinScrapedAt": "Date du scrape si disponible",
+        "background": {
+          "yearsExperience": number,
+          "headline": "Headline LinkedIn",
+          "currentTitle": "Titre actuel",
+          "educationHighlight": "Meilleur diplôme",
+          "topPreviousCompanies": ["Liste des entreprises notables"],
+          "domainExpertiseYears": number,
+          "relevantRoles": ["Rôles pertinents avec durée"],
+          "keySkills": ["Compétences clés"]
+        },
+        "entrepreneurialTrack": {
+          "isFirstTimeFounder": true|false,
+          "previousVentures": [
+            {
+              "name": "Nom de la venture",
+              "role": "Rôle",
+              "outcome": "big_success|success|acquihire|pivot|failure|ongoing|unknown",
+              "exitValue": number si connu,
+              "duration": "Durée",
+              "relevance": "Pertinence pour ce projet",
+              "source": "D'où vient cette info"
+            }
+          ],
+          "totalVentures": number,
+          "successfulExits": number
+        },
+        "scores": {
+          "domainExpertise": 0-100,
+          "entrepreneurialExperience": 0-100,
+          "executionCapability": 0-100,
+          "networkStrength": 0-100,
+          "overallFounderScore": 0-100
+        },
+        "redFlags": [
+          {
+            "type": "cv_embellishment|job_hopping|gap|conflict|etc",
+            "severity": "CRITICAL|HIGH|MEDIUM",
+            "description": "Description",
+            "evidence": "Preuve"
+          }
+        ],
+        "strengths": ["Forces spécifiques avec preuves"],
+        "concerns": ["Points d'attention spécifiques"]
+      }
+    ],
+    "teamComposition": {
+      "size": number,
+      "rolesPresent": ["Rôles couverts"],
+      "rolesMissing": ["Rôles manquants critiques"],
+      "technicalStrength": 0-100,
+      "businessStrength": 0-100,
+      "complementarityScore": 0-100,
+      "gaps": [
         {
-          "name": "string",
-          "outcome": "success|acquihire|failure|ongoing|unknown",
-          "relevance": "string (pertinence pour ce projet)"
+          "gap": "Description du gap",
+          "severity": "CRITICAL|HIGH|MEDIUM",
+          "impact": "Impact sur l'exécution",
+          "recommendation": "Comment le combler"
         }
       ],
-      "domainExpertise": number (0-100),
-      "entrepreneurialExperience": number (0-100),
-      "redFlags": ["string"],
-      "networkStrength": "weak|moderate|strong"
+      "keyHiresToMake": [
+        {
+          "role": "Rôle à recruter",
+          "priority": "IMMEDIATE|NEXT_6M|NEXT_12M",
+          "rationale": "Pourquoi ce recrutement"
+        }
+      ]
+    },
+    "cofounderDynamics": {
+      "foundersCount": number,
+      "equitySplit": "ex: 50/50, 60/40, solo",
+      "equitySplitAssessment": "healthy|concerning|red_flag|unknown",
+      "vestingInPlace": true|false,
+      "workingHistoryTogether": {
+        "duration": "Durée de collaboration",
+        "context": "Dans quel contexte",
+        "assessment": "Évaluation de la relation"
+      },
+      "relationshipStrength": "strong|moderate|weak|unknown",
+      "potentialConflicts": ["Conflits potentiels identifiés"],
+      "soloFounderRisk": "Si solo founder, évaluer le risque"
+    },
+    "networkAnalysis": {
+      "overallNetworkStrength": "strong|moderate|weak",
+      "notableConnections": [
+        {
+          "name": "Nom",
+          "relevance": "Pourquoi important",
+          "type": "investor|advisor|industry_expert|potential_customer|other"
+        }
+      ],
+      "advisors": [
+        {
+          "name": "Nom",
+          "role": "Rôle",
+          "relevance": "Pertinence",
+          "credibilityScore": 0-100
+        }
+      ],
+      "investorRelationships": ["Relations investisseurs existantes"],
+      "industryConnections": ["Connexions industrie"]
+    },
+    "benchmarkComparison": {
+      "vsSuccessfulFounders": "Comparaison avec fondateurs qui ont réussi dans ce secteur",
+      "percentileInSector": 0-100,
+      "similarSuccessfulTeams": [
+        {
+          "company": "Nom de la startup",
+          "similarity": "Pourquoi comparable",
+          "outcome": "Ce qui s'est passé"
+        }
+      ]
+    }
+  },
+  "dbCrossReference": {
+    "claims": [
+      {
+        "claim": "Ce que dit le deck",
+        "location": "Slide X",
+        "dbVerdict": "VERIFIED|CONTRADICTED|PARTIAL|NOT_VERIFIABLE",
+        "evidence": "Donnée qui confirme/infirme",
+        "severity": "CRITICAL|HIGH|MEDIUM si problème"
+      }
+    ],
+    "uncheckedClaims": ["Claims non vérifiables"]
+  },
+  "redFlags": [
+    {
+      "id": "RF-001",
+      "category": "cv_embellishment|equity|vesting|turnover|gap|conflict|job_hopping|verification",
+      "severity": "CRITICAL|HIGH|MEDIUM",
+      "title": "Titre court et percutant",
+      "description": "Description détaillée",
+      "location": "Où dans les documents",
+      "evidence": "Citation exacte ou donnée",
+      "contextEngineData": "Cross-reference si disponible",
+      "impact": "Impact pour le BA",
+      "question": "Question de reference check à poser",
+      "redFlagIfBadAnswer": "Ce que ça révèle si mauvaise réponse"
     }
   ],
-  "teamComposition": {
-    "technicalStrength": number (0-100),
-    "businessStrength": number (0-100),
-    "complementarity": number (0-100),
-    "gaps": ["string (competences manquantes critiques)"],
-    "keyHiresToMake": ["string (recrutements prioritaires)"]
+  "questions": [
+    {
+      "priority": "CRITICAL|HIGH|MEDIUM",
+      "category": "founder_background|team_dynamics|execution|references|verification",
+      "question": "Question précise pour reference check",
+      "context": "Pourquoi on pose cette question",
+      "whatToLookFor": "Ce qui révèlerait un problème"
+    }
+  ],
+  "alertSignal": {
+    "hasBlocker": true|false,
+    "blockerReason": "Si hasBlocker, pourquoi",
+    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
+    "justification": "Pourquoi cette recommandation"
   },
-  "cofounderDynamics": {
-    "equitySplit": "string (ex: 50/50, 60/40, solo)",
-    "vestingInPlace": boolean,
-    "workingHistory": "string (ont-ils deja travaille ensemble?)",
-    "potentialConflicts": ["string"]
-  },
-  "overallTeamScore": number (0-100),
-  "criticalQuestions": [
-    "string (questions a poser pour valider/invalider les concerns)"
-  ]
+  "narrative": {
+    "oneLiner": "Résumé en 1 phrase pour le BA",
+    "summary": "3-4 phrases de synthèse sur l'équipe",
+    "keyInsights": ["3-5 insights majeurs sur l'équipe"],
+    "forNegotiation": ["Arguments de négociation liés à l'équipe"]
+  }
 }
-\`\`\`
-
-IMPORTANT:
-- backgroundVerified = true uniquement si les donnees Context Engine confirment
-- Les red flags doivent etre specifiques et justifies
-- Les questions critiques doivent cibler les zones d'ombre
-- Score < 50 si fondateur solo sans track record OU gaps critiques non adresses`;
+\`\`\``;
 
     const { data } = await this.llmCompleteJSON<LLMTeamInvestigatorResponse>(prompt);
 
-    // Validate and normalize
-    const validOutcomes = ["success", "acquihire", "failure", "ongoing", "unknown"];
-    const validNetworkStrength = ["weak", "moderate", "strong"];
+    // Validate and normalize response
+    return this.normalizeResponse(data);
+  }
 
-    const founderProfiles = Array.isArray(data.founderProfiles)
-      ? data.founderProfiles.map((f) => ({
+  /**
+   * Extract founders data from deal with LinkedIn enrichment
+   */
+  private getFoundersData(context: EnrichedAgentContext): string | null {
+    // Type for founders with LinkedIn enrichment
+    interface FounderWithLinkedIn {
+      name: string;
+      role: string;
+      background?: string;
+      linkedinUrl?: string;
+      verifiedInfo?: {
+        linkedinScrapedAt?: string;
+        rawLinkedInData?: LinkedInEnrichedProfile;
+        highlights?: {
+          yearsExperience?: number;
+          educationLevel?: string;
+          hasRelevantIndustryExp?: boolean;
+          hasFounderExperience?: boolean;
+          hasTechBackground?: boolean;
+          isSerialFounder?: boolean;
+          topCompanies?: string[];
+          longestTenure?: number;
+          averageTenure?: number;
+          jobHoppingRisk?: boolean;
+        };
+        expertise?: {
+          primaryIndustry?: string;
+          primaryRole?: string;
+          description?: string;
+        };
+        sectorFit?: { fits: boolean; explanation: string };
+        redFlags?: { type: string; severity: string; message: string }[];
+        questionsToAsk?: { question: string; context: string; priority: string }[];
+      };
+      previousVentures?: unknown;
+    }
+
+    const deal = context.deal as unknown as { founders?: FounderWithLinkedIn[] };
+
+    if (!deal.founders || deal.founders.length === 0) {
+      return null;
+    }
+
+    const foundersFormatted = deal.founders.map(f => {
+      const base = {
+        name: f.name,
+        role: f.role,
+        linkedinUrl: f.linkedinUrl,
+        backgroundFromDeck: f.background,
+        previousVentures: f.previousVentures,
+      };
+
+      // Add LinkedIn enrichment if available
+      if (f.verifiedInfo?.linkedinScrapedAt) {
+        return {
+          ...base,
+          linkedinEnriched: true,
+          linkedinScrapedAt: f.verifiedInfo.linkedinScrapedAt,
+          highlights: f.verifiedInfo.highlights,
+          expertise: f.verifiedInfo.expertise,
+          sectorFit: f.verifiedInfo.sectorFit,
+          redFlagsFromLinkedIn: f.verifiedInfo.redFlags,
+          questionsFromLinkedIn: f.verifiedInfo.questionsToAsk,
+          // Include raw LinkedIn data if available (from Apify)
+          rawLinkedInData: f.verifiedInfo.rawLinkedInData,
+        };
+      }
+
+      return {
+        ...base,
+        linkedinEnriched: false,
+        note: "LinkedIn non scrapé - données à vérifier manuellement",
+      };
+    });
+
+    return JSON.stringify(foundersFormatted, null, 2);
+  }
+
+  /**
+   * Normalize LLM response to match TeamInvestigatorData type
+   */
+  private normalizeResponse(data: LLMTeamInvestigatorResponse): TeamInvestigatorData {
+    // Normalize meta
+    const validCompleteness = ["complete", "partial", "minimal"] as const;
+    const dataCompleteness = validCompleteness.includes(data.meta?.dataCompleteness as typeof validCompleteness[number])
+      ? data.meta.dataCompleteness
+      : "minimal";
+
+    const meta: AgentMeta = {
+      agentName: "team-investigator",
+      analysisDate: new Date().toISOString(),
+      dataCompleteness,
+      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
+    };
+
+    // Calculate grade from score
+    const scoreValue = Math.min(100, Math.max(0, data.score?.value ?? 50));
+    const getGrade = (score: number): "A" | "B" | "C" | "D" | "F" => {
+      if (score >= 80) return "A";
+      if (score >= 65) return "B";
+      if (score >= 50) return "C";
+      if (score >= 35) return "D";
+      return "F";
+    };
+
+    // Apply penalties
+    let cappedScore = scoreValue;
+    if (dataCompleteness === "minimal") {
+      cappedScore = Math.min(cappedScore, 50);
+    } else if (dataCompleteness === "partial") {
+      cappedScore = Math.min(cappedScore, 70);
+    }
+
+    // Check for critical blockers
+    const hasCriticalBlocker = data.redFlags?.some(rf => rf.severity === "CRITICAL") ?? false;
+    if (hasCriticalBlocker) {
+      cappedScore = Math.min(cappedScore, 40);
+    }
+
+    // Check for no vesting
+    const noVesting = data.findings?.cofounderDynamics?.vestingInPlace === false;
+    if (noVesting) {
+      cappedScore = Math.min(cappedScore, 50);
+    }
+
+    const score: AgentScore = {
+      value: cappedScore,
+      grade: getGrade(cappedScore),
+      breakdown: Array.isArray(data.score?.breakdown)
+        ? data.score.breakdown.map(b => ({
+            criterion: b.criterion ?? "Unknown",
+            weight: b.weight ?? 20,
+            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            justification: b.justification ?? "",
+          }))
+        : [],
+    };
+
+    // Normalize findings
+    const findings = this.normalizeFindings(data.findings);
+
+    // Normalize dbCrossReference
+    const validVerdicts = ["VERIFIED", "CONTRADICTED", "PARTIAL", "NOT_VERIFIABLE"] as const;
+    const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
+
+    const dbCrossReference: DbCrossReference = {
+      claims: Array.isArray(data.dbCrossReference?.claims)
+        ? data.dbCrossReference.claims.map(c => ({
+            claim: c.claim ?? "",
+            location: c.location ?? "",
+            dbVerdict: validVerdicts.includes(c.dbVerdict as typeof validVerdicts[number])
+              ? c.dbVerdict
+              : "NOT_VERIFIABLE",
+            evidence: c.evidence ?? "",
+            severity: c.severity && validSeverities.includes(c.severity) ? c.severity : undefined,
+          }))
+        : [],
+      uncheckedClaims: Array.isArray(data.dbCrossReference?.uncheckedClaims)
+        ? data.dbCrossReference.uncheckedClaims
+        : [],
+    };
+
+    // Normalize red flags
+    const redFlags: AgentRedFlag[] = Array.isArray(data.redFlags)
+      ? data.redFlags.map((rf, idx) => ({
+          id: rf.id ?? `RF-${String(idx + 1).padStart(3, "0")}`,
+          category: rf.category ?? "team",
+          severity: validSeverities.includes(rf.severity as typeof validSeverities[number])
+            ? rf.severity
+            : "MEDIUM",
+          title: rf.title ?? "Red flag détecté",
+          description: rf.description ?? "",
+          location: rf.location ?? "Non spécifié",
+          evidence: rf.evidence ?? "",
+          contextEngineData: rf.contextEngineData,
+          impact: rf.impact ?? "",
+          question: rf.question ?? "",
+          redFlagIfBadAnswer: rf.redFlagIfBadAnswer ?? "",
+        }))
+      : [];
+
+    // Normalize questions
+    const validPriorities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
+
+    const questions: AgentQuestion[] = Array.isArray(data.questions)
+      ? data.questions.map(q => ({
+          priority: validPriorities.includes(q.priority as typeof validPriorities[number])
+            ? q.priority
+            : "MEDIUM",
+          category: q.category ?? "team",
+          question: q.question ?? "",
+          context: q.context ?? "",
+          whatToLookFor: q.whatToLookFor ?? "",
+        }))
+      : [];
+
+    // Normalize alert signal
+    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
+
+    const alertSignal: AgentAlertSignal = {
+      hasBlocker: data.alertSignal?.hasBlocker ?? hasCriticalBlocker,
+      blockerReason: data.alertSignal?.blockerReason,
+      recommendation: validRecommendations.includes(data.alertSignal?.recommendation as typeof validRecommendations[number])
+        ? data.alertSignal.recommendation
+        : hasCriticalBlocker
+          ? "INVESTIGATE_FURTHER"
+          : "PROCEED_WITH_CAUTION",
+      justification: data.alertSignal?.justification ?? "",
+    };
+
+    // Normalize narrative
+    const narrative: AgentNarrative = {
+      oneLiner: data.narrative?.oneLiner ?? "Analyse de l'équipe fondatrice complète.",
+      summary: data.narrative?.summary ?? "",
+      keyInsights: Array.isArray(data.narrative?.keyInsights) ? data.narrative.keyInsights : [],
+      forNegotiation: Array.isArray(data.narrative?.forNegotiation) ? data.narrative.forNegotiation : [],
+    };
+
+    return {
+      meta,
+      score,
+      findings,
+      dbCrossReference,
+      redFlags,
+      questions,
+      alertSignal,
+      narrative,
+    };
+  }
+
+  /**
+   * Normalize findings section
+   */
+  private normalizeFindings(findings: LLMTeamInvestigatorResponse["findings"]): TeamInvestigatorFindings {
+    const validOutcomes = ["big_success", "success", "acquihire", "pivot", "failure", "ongoing", "unknown"] as const;
+    const validEquityAssessments = ["healthy", "concerning", "red_flag", "unknown"] as const;
+    const validRelationshipStrengths = ["strong", "moderate", "weak", "unknown"] as const;
+    const validNetworkStrengths = ["strong", "moderate", "weak"] as const;
+    const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
+    const validPriorities = ["IMMEDIATE", "NEXT_6M", "NEXT_12M"] as const;
+    const validConnectionTypes = ["investor", "advisor", "industry_expert", "potential_customer", "other"] as const;
+
+    const founderProfiles = Array.isArray(findings?.founderProfiles)
+      ? findings.founderProfiles.map(f => ({
           name: f.name ?? "Unknown",
           role: f.role ?? "Founder",
-          backgroundVerified: f.backgroundVerified ?? false,
-          keyExperience: Array.isArray(f.keyExperience) ? f.keyExperience : [],
-          previousVentures: Array.isArray(f.previousVentures)
-            ? f.previousVentures.map((v) => ({
-                name: v.name ?? "Unknown",
-                outcome: validOutcomes.includes(v.outcome)
-                  ? (v.outcome as "success" | "acquihire" | "failure" | "ongoing" | "unknown")
-                  : "unknown",
-                relevance: v.relevance ?? "",
+          linkedinUrl: f.linkedinUrl,
+          linkedinVerified: f.linkedinVerified ?? false,
+          linkedinScrapedAt: f.linkedinScrapedAt,
+          background: {
+            yearsExperience: f.background?.yearsExperience ?? 0,
+            headline: f.background?.headline,
+            currentTitle: f.background?.currentTitle,
+            educationHighlight: f.background?.educationHighlight,
+            topPreviousCompanies: Array.isArray(f.background?.topPreviousCompanies)
+              ? f.background.topPreviousCompanies
+              : [],
+            domainExpertiseYears: f.background?.domainExpertiseYears ?? 0,
+            relevantRoles: Array.isArray(f.background?.relevantRoles) ? f.background.relevantRoles : [],
+            keySkills: Array.isArray(f.background?.keySkills) ? f.background.keySkills : [],
+          },
+          entrepreneurialTrack: {
+            isFirstTimeFounder: f.entrepreneurialTrack?.isFirstTimeFounder ?? true,
+            previousVentures: Array.isArray(f.entrepreneurialTrack?.previousVentures)
+              ? f.entrepreneurialTrack.previousVentures.map(v => ({
+                  name: v.name ?? "Unknown",
+                  role: v.role ?? "Founder",
+                  outcome: validOutcomes.includes(v.outcome as typeof validOutcomes[number])
+                    ? v.outcome
+                    : "unknown",
+                  exitValue: v.exitValue,
+                  duration: v.duration,
+                  relevance: v.relevance ?? "",
+                  source: v.source ?? "Non spécifié",
+                }))
+              : [],
+            totalVentures: f.entrepreneurialTrack?.totalVentures ?? 0,
+            successfulExits: f.entrepreneurialTrack?.successfulExits ?? 0,
+          },
+          scores: {
+            domainExpertise: Math.min(100, Math.max(0, f.scores?.domainExpertise ?? 50)),
+            entrepreneurialExperience: Math.min(100, Math.max(0, f.scores?.entrepreneurialExperience ?? 30)),
+            executionCapability: Math.min(100, Math.max(0, f.scores?.executionCapability ?? 50)),
+            networkStrength: Math.min(100, Math.max(0, f.scores?.networkStrength ?? 40)),
+            overallFounderScore: Math.min(100, Math.max(0, f.scores?.overallFounderScore ?? 45)),
+          },
+          redFlags: Array.isArray(f.redFlags)
+            ? f.redFlags.map(rf => ({
+                type: rf.type ?? "unknown",
+                severity: validSeverities.includes(rf.severity as typeof validSeverities[number])
+                  ? rf.severity
+                  : "MEDIUM",
+                description: rf.description ?? "",
+                evidence: rf.evidence ?? "",
               }))
             : [],
-          domainExpertise: Math.min(100, Math.max(0, f.domainExpertise ?? 50)),
-          entrepreneurialExperience: Math.min(100, Math.max(0, f.entrepreneurialExperience ?? 30)),
-          redFlags: Array.isArray(f.redFlags) ? f.redFlags : [],
-          networkStrength: validNetworkStrength.includes(f.networkStrength)
-            ? (f.networkStrength as "weak" | "moderate" | "strong")
-            : "moderate",
+          strengths: Array.isArray(f.strengths) ? f.strengths : [],
+          concerns: Array.isArray(f.concerns) ? f.concerns : [],
         }))
       : [];
 
     const teamComposition = {
-      technicalStrength: Math.min(100, Math.max(0, data.teamComposition?.technicalStrength ?? 50)),
-      businessStrength: Math.min(100, Math.max(0, data.teamComposition?.businessStrength ?? 50)),
-      complementarity: Math.min(100, Math.max(0, data.teamComposition?.complementarity ?? 50)),
-      gaps: Array.isArray(data.teamComposition?.gaps) ? data.teamComposition.gaps : [],
-      keyHiresToMake: Array.isArray(data.teamComposition?.keyHiresToMake)
-        ? data.teamComposition.keyHiresToMake
+      size: findings?.teamComposition?.size ?? founderProfiles.length,
+      rolesPresent: Array.isArray(findings?.teamComposition?.rolesPresent)
+        ? findings.teamComposition.rolesPresent
+        : founderProfiles.map(f => f.role),
+      rolesMissing: Array.isArray(findings?.teamComposition?.rolesMissing)
+        ? findings.teamComposition.rolesMissing
+        : [],
+      technicalStrength: Math.min(100, Math.max(0, findings?.teamComposition?.technicalStrength ?? 50)),
+      businessStrength: Math.min(100, Math.max(0, findings?.teamComposition?.businessStrength ?? 50)),
+      complementarityScore: Math.min(100, Math.max(0, findings?.teamComposition?.complementarityScore ?? 50)),
+      gaps: Array.isArray(findings?.teamComposition?.gaps)
+        ? findings.teamComposition.gaps.map(g => ({
+            gap: g.gap ?? "",
+            severity: validSeverities.includes(g.severity as typeof validSeverities[number])
+              ? g.severity
+              : "MEDIUM",
+            impact: g.impact ?? "",
+            recommendation: g.recommendation ?? "",
+          }))
+        : [],
+      keyHiresToMake: Array.isArray(findings?.teamComposition?.keyHiresToMake)
+        ? findings.teamComposition.keyHiresToMake.map(h => ({
+            role: h.role ?? "",
+            priority: validPriorities.includes(h.priority as typeof validPriorities[number])
+              ? h.priority
+              : "NEXT_6M",
+            rationale: h.rationale ?? "",
+          }))
         : [],
     };
 
     const cofounderDynamics = {
-      equitySplit: data.cofounderDynamics?.equitySplit ?? "Unknown",
-      vestingInPlace: data.cofounderDynamics?.vestingInPlace ?? false,
-      workingHistory: data.cofounderDynamics?.workingHistory ?? "Unknown",
-      potentialConflicts: Array.isArray(data.cofounderDynamics?.potentialConflicts)
-        ? data.cofounderDynamics.potentialConflicts
+      foundersCount: findings?.cofounderDynamics?.foundersCount ?? founderProfiles.length,
+      equitySplit: findings?.cofounderDynamics?.equitySplit ?? "Unknown",
+      equitySplitAssessment: validEquityAssessments.includes(
+        findings?.cofounderDynamics?.equitySplitAssessment as typeof validEquityAssessments[number]
+      )
+        ? findings.cofounderDynamics.equitySplitAssessment
+        : "unknown",
+      vestingInPlace: findings?.cofounderDynamics?.vestingInPlace ?? false,
+      workingHistoryTogether: {
+        duration: findings?.cofounderDynamics?.workingHistoryTogether?.duration ?? "Unknown",
+        context: findings?.cofounderDynamics?.workingHistoryTogether?.context ?? "",
+        assessment: findings?.cofounderDynamics?.workingHistoryTogether?.assessment ?? "",
+      },
+      relationshipStrength: validRelationshipStrengths.includes(
+        findings?.cofounderDynamics?.relationshipStrength as typeof validRelationshipStrengths[number]
+      )
+        ? findings.cofounderDynamics.relationshipStrength
+        : "unknown",
+      potentialConflicts: Array.isArray(findings?.cofounderDynamics?.potentialConflicts)
+        ? findings.cofounderDynamics.potentialConflicts
+        : [],
+      soloFounderRisk: findings?.cofounderDynamics?.soloFounderRisk,
+    };
+
+    const networkAnalysis = {
+      overallNetworkStrength: validNetworkStrengths.includes(
+        findings?.networkAnalysis?.overallNetworkStrength as typeof validNetworkStrengths[number]
+      )
+        ? findings.networkAnalysis.overallNetworkStrength
+        : "weak",
+      notableConnections: Array.isArray(findings?.networkAnalysis?.notableConnections)
+        ? findings.networkAnalysis.notableConnections.map(c => ({
+            name: c.name ?? "",
+            relevance: c.relevance ?? "",
+            type: validConnectionTypes.includes(c.type as typeof validConnectionTypes[number])
+              ? c.type
+              : "other",
+          }))
+        : [],
+      advisors: Array.isArray(findings?.networkAnalysis?.advisors)
+        ? findings.networkAnalysis.advisors.map(a => ({
+            name: a.name ?? "",
+            role: a.role ?? "",
+            relevance: a.relevance ?? "",
+            credibilityScore: Math.min(100, Math.max(0, a.credibilityScore ?? 50)),
+          }))
+        : [],
+      investorRelationships: Array.isArray(findings?.networkAnalysis?.investorRelationships)
+        ? findings.networkAnalysis.investorRelationships
+        : [],
+      industryConnections: Array.isArray(findings?.networkAnalysis?.industryConnections)
+        ? findings.networkAnalysis.industryConnections
+        : [],
+    };
+
+    const benchmarkComparison = {
+      vsSuccessfulFounders: findings?.benchmarkComparison?.vsSuccessfulFounders ?? "",
+      percentileInSector: Math.min(100, Math.max(0, findings?.benchmarkComparison?.percentileInSector ?? 50)),
+      similarSuccessfulTeams: Array.isArray(findings?.benchmarkComparison?.similarSuccessfulTeams)
+        ? findings.benchmarkComparison.similarSuccessfulTeams.map(t => ({
+            company: t.company ?? "",
+            similarity: t.similarity ?? "",
+            outcome: t.outcome ?? "",
+          }))
         : [],
     };
 
@@ -312,8 +1134,8 @@ IMPORTANT:
       founderProfiles,
       teamComposition,
       cofounderDynamics,
-      overallTeamScore: Math.min(100, Math.max(0, data.overallTeamScore ?? 50)),
-      criticalQuestions: Array.isArray(data.criticalQuestions) ? data.criticalQuestions : [],
+      networkAnalysis,
+      benchmarkComparison,
     };
   }
 }

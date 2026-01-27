@@ -195,7 +195,7 @@ export async function recordDealAnalysis(
       where: { userId },
       create: {
         userId,
-        monthlyLimit: Infinity,
+        monthlyLimit: UNLIMITED,
         usedThisMonth: 1,
         tier1Count: tier >= 1 ? 1 : 0,
         tier2Count: tier >= 2 ? 1 : 0,

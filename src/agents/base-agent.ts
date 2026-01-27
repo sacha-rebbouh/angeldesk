@@ -1,12 +1,14 @@
 import {
   complete,
   completeJSON,
+  completeJSONWithFallback,
   stream,
   setAgentContext,
   type TaskComplexity,
   type StreamCallbacks,
 } from "@/services/openrouter/router";
-import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext } from "./types";
+import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed } from "./types";
+import { createHash } from "crypto";
 
 // Generic type for agent results with data
 export interface AgentResultWithData<T> extends AgentResult {
@@ -22,6 +24,7 @@ export interface LLMCallOptions {
   temperature?: number;
   timeoutMs?: number; // Per-step timeout (default: config.timeoutMs)
   maxTokens?: number;
+  model?: "HAIKU" | "SONNET" | "OPUS" | "GPT4O" | "GPT4O_MINI" | "DEEPSEEK" | "GEMINI_FLASH" | "GEMINI_PRO";
 }
 
 export interface LLMStreamOptions extends LLMCallOptions {
@@ -43,8 +46,21 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   private _totalInputTokens = 0;
   private _totalOutputTokens = 0;
 
+  // Trace tracking - enabled by default for transparency
+  private _enableTrace = true;
+  private _traceId = "";
+  private _traceStartedAt = "";
+  private _llmCallTraces: LLMCallTrace[] = [];
+  private _contextUsed: ContextUsed | null = null;
+  private _contextHash = "";
+
   constructor(config: AgentConfig) {
     this.config = config;
+  }
+
+  // Enable/disable trace capture
+  setTraceEnabled(enabled: boolean): void {
+    this._enableTrace = enabled;
   }
 
   get name(): string {
@@ -82,22 +98,136 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     this._llmCalls = 0;
     this._totalInputTokens = 0;
     this._totalOutputTokens = 0;
+    // Reset trace
+    this._traceId = crypto.randomUUID();
+    this._traceStartedAt = new Date().toISOString();
+    this._llmCallTraces = [];
+    this._contextUsed = null;
+    this._contextHash = "";
   }
 
-  // Record cost from an LLM call
-  private recordLLMCost(cost: number, inputTokens?: number, outputTokens?: number): void {
+  // Capture context used for trace
+  private captureContextUsed(context: AgentContext): void {
+    if (!this._enableTrace) return;
+
+    const documents = (context.documents ?? []).map(d => ({
+      name: d.name,
+      type: d.type,
+      charCount: d.extractedText?.length ?? 0,
+    }));
+
+    const enrichedContext = context as EnrichedAgentContext;
+    const contextEngine = enrichedContext.contextEngine ? {
+      similarDeals: enrichedContext.contextEngine.dealIntelligence?.similarDeals?.length ?? 0,
+      competitors: enrichedContext.contextEngine.competitiveLandscape?.competitors?.length ?? 0,
+      newsArticles: enrichedContext.contextEngine.newsSentiment?.articles?.length ?? 0,
+      completeness: enrichedContext.contextEngine.completeness ?? 0,
+    } : undefined;
+
+    // Get extracted data if available
+    const extractedInfo = this.getExtractedInfo(context);
+    const extractedData = extractedInfo ? {
+      fields: Object.keys(extractedInfo).filter(k => extractedInfo[k] !== null && extractedInfo[k] !== undefined),
+      confidence: {} as Record<string, number>,
+    } : undefined;
+
+    this._contextUsed = {
+      documents,
+      contextEngine,
+      extractedData,
+    };
+
+    // Hash context for reproducibility
+    const contextString = JSON.stringify({
+      documents: documents.map(d => ({ name: d.name, charCount: d.charCount })),
+      contextEngine,
+      extractedFields: extractedData?.fields,
+    });
+    this._contextHash = createHash("sha256").update(contextString).digest("hex").slice(0, 16);
+  }
+
+  // Build the complete trace
+  private buildTrace(): StandardTrace | undefined {
+    if (!this._enableTrace) return undefined;
+
+    return {
+      id: this._traceId,
+      agentName: this.config.name,
+      startedAt: this._traceStartedAt,
+      completedAt: new Date().toISOString(),
+      totalDurationMs: 0, // Will be set by caller
+      llmCalls: this._llmCallTraces,
+      contextUsed: this._contextUsed ?? { documents: [] },
+      metrics: {
+        totalInputTokens: this._totalInputTokens,
+        totalOutputTokens: this._totalOutputTokens,
+        totalCost: this._totalCost,
+        llmCallCount: this._llmCalls,
+      },
+      contextHash: this._contextHash,
+      promptVersion: "1.0", // Could be versioned per agent
+    };
+  }
+
+  // Record cost from an LLM call (with optional trace data)
+  private recordLLMCost(
+    cost: number,
+    inputTokens?: number,
+    outputTokens?: number,
+    traceData?: {
+      systemPrompt: string;
+      userPrompt: string;
+      response: string;
+      parsedResponse?: unknown;
+      model: string;
+      temperature: number;
+      latencyMs: number;
+    }
+  ): void {
     this._totalCost += cost;
     this._llmCalls++;
     if (inputTokens) this._totalInputTokens += inputTokens;
     if (outputTokens) this._totalOutputTokens += outputTokens;
+
+    // Capture trace if enabled
+    if (this._enableTrace && traceData) {
+      this._llmCallTraces.push({
+        id: `${this._traceId}-call-${this._llmCalls}`,
+        timestamp: new Date().toISOString(),
+        prompt: {
+          system: traceData.systemPrompt,
+          user: traceData.userPrompt,
+        },
+        response: {
+          raw: traceData.response,
+          parsed: traceData.parsedResponse,
+        },
+        metrics: {
+          inputTokens: inputTokens ?? 0,
+          outputTokens: outputTokens ?? 0,
+          cost,
+          latencyMs: traceData.latencyMs,
+        },
+        model: traceData.model,
+        temperature: traceData.temperature,
+      });
+    }
   }
 
   // Run the agent with error handling, timing, and cost tracking
-  async run(context: AgentContext): Promise<TResult> {
+  async run(context: AgentContext, options?: { enableTrace?: boolean }): Promise<TResult> {
     const startTime = Date.now();
+
+    // Enable trace if requested
+    if (options?.enableTrace !== undefined) {
+      this._enableTrace = options.enableTrace;
+    }
 
     // Reset cost tracking for this run
     this.resetCostTracking();
+
+    // Capture context for trace
+    this.captureContextUsed(context);
 
     // Set agent context for cost monitoring in router
     setAgentContext(this.config.name);
@@ -112,22 +242,36 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
       const executionTimeMs = Date.now() - startTime;
 
+      // Build trace if enabled
+      const trace = this.buildTrace();
+      if (trace) {
+        trace.totalDurationMs = executionTimeMs;
+      }
+
       return {
         agentName: this.config.name,
         success: true,
         executionTimeMs,
-        cost: this._totalCost, // Actual accumulated cost
+        cost: this._totalCost,
         data,
+        ...(trace && { _trace: trace }),
       } as unknown as TResult;
     } catch (error) {
       const executionTimeMs = Date.now() - startTime;
+
+      // Build trace even on failure
+      const trace = this.buildTrace();
+      if (trace) {
+        trace.totalDurationMs = executionTimeMs;
+      }
 
       return {
         agentName: this.config.name,
         success: false,
         executionTimeMs,
-        cost: this._totalCost, // Include cost even on failure
+        cost: this._totalCost,
         error: error instanceof Error ? error.message : "Unknown error",
+        ...(trace && { _trace: trace }),
       } as unknown as TResult;
     } finally {
       // Clear agent context
@@ -145,20 +289,37 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     options: LLMCallOptions = {}
   ): Promise<{ content: string; cost: number }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
+    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt();
+    const temperature = options.temperature ?? 0.3;
+    const callStartTime = Date.now();
 
     const result = await this.withTimeout(
       complete(prompt, {
         complexity: this.config.modelComplexity as TaskComplexity,
-        systemPrompt: options.systemPrompt ?? this.buildSystemPrompt(),
-        temperature: options.temperature ?? 0.3,
+        systemPrompt,
+        temperature,
         maxTokens: options.maxTokens,
       }),
       timeoutMs,
       `LLM call timed out after ${timeoutMs}ms`
     );
 
-    // Accumulate cost
-    this.recordLLMCost(result.cost, result.usage.inputTokens, result.usage.outputTokens);
+    const latencyMs = Date.now() - callStartTime;
+
+    // Accumulate cost with trace data
+    this.recordLLMCost(
+      result.cost,
+      result.usage.inputTokens,
+      result.usage.outputTokens,
+      this._enableTrace ? {
+        systemPrompt,
+        userPrompt: prompt,
+        response: result.content,
+        model: result.model ?? "unknown",
+        temperature,
+        latencyMs,
+      } : undefined
+    );
 
     return {
       content: result.content,
@@ -172,20 +333,82 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     options: LLMCallOptions = {}
   ): Promise<{ data: T; cost: number }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
+    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt();
+    const temperature = options.temperature ?? 0.2;
+    const callStartTime = Date.now();
 
     const result = await this.withTimeout(
       completeJSON<T>(prompt, {
         complexity: this.config.modelComplexity as TaskComplexity,
-        systemPrompt: options.systemPrompt ?? this.buildSystemPrompt(),
-        temperature: options.temperature ?? 0.2,
+        systemPrompt,
+        temperature,
         maxTokens: options.maxTokens,
+        model: options.model,
       }),
       timeoutMs,
       `LLM JSON call timed out after ${timeoutMs}ms`
     );
 
-    // Accumulate cost
-    this.recordLLMCost(result.cost);
+    const latencyMs = Date.now() - callStartTime;
+
+    // Accumulate cost with trace data
+    this.recordLLMCost(
+      result.cost,
+      result.usage?.inputTokens,
+      result.usage?.outputTokens,
+      this._enableTrace ? {
+        systemPrompt,
+        userPrompt: prompt,
+        response: result.raw ?? JSON.stringify(result.data),
+        parsedResponse: result.data,
+        model: result.model ?? "unknown",
+        temperature,
+        latencyMs,
+      } : undefined
+    );
+
+    return result;
+  }
+
+  // Helper to call LLM with JSON response + fallback (Haiku 4.5 -> Haiku 3.5)
+  // Used by agents that have issues with Haiku 4.5 via OpenRouter
+  protected async llmCompleteJSONWithFallback<T>(
+    prompt: string,
+    options: LLMCallOptions = {}
+  ): Promise<{ data: T; cost: number }> {
+    const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
+    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt();
+    const temperature = options.temperature ?? 0.2;
+    const callStartTime = Date.now();
+
+    const result = await this.withTimeout(
+      completeJSONWithFallback<T>(prompt, {
+        complexity: this.config.modelComplexity as TaskComplexity,
+        systemPrompt,
+        temperature,
+        maxTokens: options.maxTokens,
+      }),
+      timeoutMs, // Agents using fallback should set longer timeout (6 min)
+      `LLM JSON call timed out after ${timeoutMs}ms`
+    );
+
+    const latencyMs = Date.now() - callStartTime;
+
+    // Accumulate cost with trace data
+    this.recordLLMCost(
+      result.cost,
+      result.usage?.inputTokens,
+      result.usage?.outputTokens,
+      this._enableTrace ? {
+        systemPrompt,
+        userPrompt: prompt,
+        response: result.raw ?? JSON.stringify(result.data),
+        parsedResponse: result.data,
+        model: result.model ?? "unknown",
+        temperature,
+        latencyMs,
+      } : undefined
+    );
 
     return result;
   }
@@ -471,5 +694,35 @@ ${deal.description ?? "No description provided"}
       return data.extractedInfo ?? null;
     }
     return null;
+  }
+
+  // Standard guidance for confidence calculation - use in agent prompts
+  protected getConfidenceGuidance(): string {
+    return `
+============================================================================
+CALCUL DE LA CONFIDENCE (CRITIQUE)
+============================================================================
+
+La confidenceLevel mesure ta capacite a faire ton travail d'analyse, PAS la qualite des donnees du deal.
+
+CONFIDENCE 80-95%: Tu as pu faire ton analyse completement
+- Documents presents et lisibles
+- Tu as pu analyser les informations disponibles
+- Context Engine disponible pour enrichir l'analyse
+
+CONFIDENCE 60-80%: Analyse partielle
+- Certains documents manquants ou illisibles
+- Context Engine indisponible
+
+CONFIDENCE <60%: Analyse impossible
+- Documents critiques manquants ou illisibles
+- Impossible de produire une analyse fiable
+
+ATTENTION CRITIQUE: Les infos manquantes DANS LES DOCUMENTS (pas de cap table, pas de clients nommes,
+pas d'ARR, etc.) ne sont PAS des limitations de ton analyse - ce sont des FINDINGS a reporter.
+Ta confidence mesure si TU as pu faire ton travail d'analyse, pas si le deal a toutes les infos ideales.
+
+Un deal peut avoir 95% de confidence (analyse complete) ET un score de 30/100 (mauvais deal).
+`;
   }
 }

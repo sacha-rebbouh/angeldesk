@@ -24,18 +24,6 @@ export {
   readMemory,
 } from "./tools/built-in";
 
-// Export ReAct agents
-export { financialAuditorReAct, FinancialAuditorReAct } from "./agents/financial-auditor-react";
-export { teamInvestigatorReAct, TeamInvestigatorReAct } from "./agents/team-investigator-react";
-export { marketIntelligenceReAct, MarketIntelligenceReAct } from "./agents/market-intelligence-react";
-export { competitiveIntelReAct, CompetitiveIntelReAct } from "./agents/competitive-intel-react";
-
-// Export new ReAct agents (Phase 3 migration)
-export { deckForensicsReAct, DeckForensicsReAct } from "./agents/deck-forensics-react";
-export { technicalDDReAct, TechnicalDDReAct } from "./agents/technical-dd-react";
-export { capTableAuditorReAct, CapTableAuditorReAct } from "./agents/cap-table-auditor-react";
-export { legalRegulatoryReAct, LegalRegulatoryReAct } from "./agents/legal-regulatory-react";
-export { gtmAnalystReAct, GTMAnalystReAct } from "./agents/gtm-analyst-react";
-export { customerIntelReAct, CustomerIntelReAct } from "./agents/customer-intel-react";
-export { exitStrategistReAct, ExitStrategistReAct } from "./agents/exit-strategist-react";
-export { questionMasterReAct, QuestionMasterReAct } from "./agents/question-master-react";
+// Note: ReAct agents have been removed in favor of Standard agents
+// which provide better results at 20x lower cost.
+// The ReAct engine is still available for Tier 3 sector experts.

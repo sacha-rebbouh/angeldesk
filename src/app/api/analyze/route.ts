@@ -17,11 +17,15 @@ const analyzeSchema = z.object({
     "extraction",
     "full_dd",
     "tier1_complete",
-    "tier2_synthesis",
-    "tier3_sector",
+    "tier2_sector",
+    "tier3_synthesis",
     "full_analysis"
   ]).default("screening"),
-  useReAct: z.boolean().default(false),
+  // Legacy: useReAct is deprecated, traces are now always enabled on Standard agents
+  useReAct: z.boolean().optional(),
+  enableTrace: z.boolean().default(true),
+  // New: stream mode returns immediately with analysisId
+  stream: z.boolean().default(true),
 });
 
 // Map analysis types to tiers
@@ -31,10 +35,10 @@ function getAnalysisTier(type: string): AnalysisTier {
     case "extraction":
     case "tier1_complete":
       return 1;
-    case "tier2_synthesis":
+    case "tier2_sector":
     case "full_dd":
       return 2;
-    case "tier3_sector":
+    case "tier3_synthesis":
     case "full_analysis":
       return 3;
     default:
@@ -48,7 +52,7 @@ export async function POST(request: NextRequest) {
     const user = await requireAuth();
     const body = await request.json();
 
-    const { dealId, type, useReAct } = analyzeSchema.parse(body);
+    const { dealId, type, enableTrace } = analyzeSchema.parse(body);
 
     // Verify deal ownership
     const deal = await prisma.deal.findFirst({
@@ -112,11 +116,12 @@ export async function POST(request: NextRequest) {
       data: { status: "ANALYZING" },
     });
 
-    // Run the analysis
+    // Run the analysis (Standard agents with traces enabled)
     const result = await orchestrator.runAnalysis({
       dealId,
       type: type as AnalysisType,
-      useReAct,
+      useReAct: false, // Always use Standard agents (better results, lower cost)
+      enableTrace,
     });
 
     return NextResponse.json({
@@ -127,6 +132,8 @@ export async function POST(request: NextRequest) {
         totalCost: result.totalCost,
         totalTimeMs: result.totalTimeMs,
         results: result.results,
+        earlyWarnings: result.earlyWarnings,
+        hasCriticalWarnings: result.hasCriticalWarnings,
         remainingDeals: usageResult.remainingDeals,
       },
     });

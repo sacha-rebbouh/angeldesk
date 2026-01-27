@@ -62,7 +62,7 @@ export function emptyBatchStats(): CompleterBatchStats {
     totalConfidence: 0,
     totalCompleteness: 0,
     fieldsUpdated: {
-      industry: 0, description: 0, founders: 0, investors: 0,
+      industry: 0, description: 0, tagline: 0, useCases: 0, founders: 0, investors: 0,
       headquarters: 0, foundedYear: 0, website: 0, linkedin: 0, competitors: 0,
       status: 0, employees: 0,
     },
@@ -90,7 +90,7 @@ export async function processCompleterBatch(batchNumber: number): Promise<Comple
     totalConfidence: 0,
     totalCompleteness: 0,
     fieldsUpdated: {
-      industry: 0, description: 0, founders: 0, investors: 0,
+      industry: 0, description: 0, tagline: 0, useCases: 0, founders: 0, investors: 0,
       headquarters: 0, foundedYear: 0, website: 0, linkedin: 0, competitors: 0,
       status: 0, employees: 0,
     },
@@ -250,6 +250,8 @@ export async function finalizeCompleterRun(
       fieldsUpdated: {
         industry: acc.fieldsUpdated.industry + batch.fieldsUpdated.industry,
         description: acc.fieldsUpdated.description + batch.fieldsUpdated.description,
+        tagline: acc.fieldsUpdated.tagline + batch.fieldsUpdated.tagline,
+        useCases: acc.fieldsUpdated.useCases + batch.fieldsUpdated.useCases,
         founders: acc.fieldsUpdated.founders + batch.fieldsUpdated.founders,
         investors: acc.fieldsUpdated.investors + batch.fieldsUpdated.investors,
         headquarters: acc.fieldsUpdated.headquarters + batch.fieldsUpdated.headquarters,
@@ -281,7 +283,7 @@ export async function finalizeCompleterRun(
       totalConfidence: 0,
       totalCompleteness: 0,
       fieldsUpdated: {
-        industry: 0, description: 0, founders: 0, investors: 0,
+        industry: 0, description: 0, tagline: 0, useCases: 0, founders: 0, investors: 0,
         headquarters: 0, foundedYear: 0, website: 0, linkedin: 0, competitors: 0,
         status: 0, employees: 0,
       },
@@ -379,6 +381,8 @@ export async function runCompleter(runId?: string): Promise<CompleterResult> {
   const fieldsUpdated: FieldUpdateStats = {
     industry: 0,
     description: 0,
+    tagline: 0,
+    useCases: 0,
     founders: 0,
     investors: 0,
     headquarters: 0,

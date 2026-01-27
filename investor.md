@@ -236,9 +236,9 @@ Une plateforme de Due Diligence IA **pour Business Angels** qui :
 │   │                                                                          │   │
 │   │   • Analyses illimitees                                                  │   │
 │   │   • Tiers 1, 2 et 3 complets                                            │   │
-│   │     - Tier 1: Screening (30 sec)                                        │   │
-│   │     - Tier 2: Analyse approfondie par 13 agents (2-3 min)               │   │
-│   │     - Tier 3: Synthese par 5 experts + 9 experts sectoriels             │   │
+│   │     - Tier 1: Analyse approfondie par 13 agents (2-3 min)               │   │
+│   │     - Tier 2: Experts sectoriels (21 agents, selon secteur)             │   │
+│   │     - Tier 3: Synthese par 5 agents                                     │   │
 │   │   • 5 AI Board inclus par mois                                          │   │
 │   │     - 4 LLMs TOP deliberent sur le deal                                 │   │
 │   │     - Claude Opus 4.5, GPT-4 Turbo, Gemini Ultra, Mistral Large         │   │
@@ -2047,17 +2047,17 @@ interface PortfolioSynergies {
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
 │  │                         4. AGENT NETWORK                                 │    │
 │  │                                                                          │    │
-│  │   "27 agents specialises, contexte injecte"                             │    │
+│  │   "28 agents specialises, contexte injecte"                             │    │
 │  │                                                                          │    │
-│  │   TIER 1: Investigation (parallel)     TIER 2: Synthesis (sequential)   │    │
+│  │   TIER 1: Investigation (parallel)     TIER 2: Sector Experts (dynamic) │    │
 │  │   ┌─────┬─────┬─────┬─────┬─────┐    ┌─────┬─────┬─────┬─────┬─────┐   │    │
-│  │   │ D.S │ D.F │ F.A │ M.I │ C.I │    │ C.D │ S.M │ D.S │ D.A │ M.G │   │    │
-│  │   │ T.I │ T.D │ L.R │ C.A │ GTM │    └─────┴─────┴─────┴─────┴─────┘   │    │
-│  │   │ C.I │ E.S │ Q.M │     │     │                                       │    │
-│  │   └─────┴─────┴─────┴─────┴─────┘    TIER 3: Sector Experts (dynamic)   │    │
+│  │   │ D.S │ D.F │ F.A │ M.I │ C.I │    │SaaS │Mkt │Fin │Hlth│Deep│   │    │
+│  │   │ T.I │ T.D │ L.R │ C.A │ GTM │    │     │plc │tech│tech│tech│...│   │    │
+│  │   │ C.I │ E.S │ Q.M │     │     │    └─────┴─────┴─────┴─────┴─────┘   │    │
+│  │   └─────┴─────┴─────┴─────┴─────┘    TIER 3: Synthesis (sequential)     │    │
 │  │                                       ┌─────┬─────┬─────┬─────┬─────┐   │    │
-│  │                                       │SaaS │Mkt │Fin │Hlth│Deep│   │    │
-│  │                                       │     │plc │tech│tech│tech│...│   │    │
+│  │                                       │ C.D │ S.M │ D.S │ D.A │ M.G │   │    │
+│  │                                       │     │     │     │     │     │   │    │
 │  │                                       └─────┴─────┴─────┴─────┴─────┘   │    │
 │  │                                                                          │    │
 │  └─────────────────────────────────────────────────────────────────────────┘    │
@@ -3798,19 +3798,19 @@ interface InternalQualityEngine {
 
 # PARTIE 4 : AGENT NETWORK
 
-## 4.1 Les 27 Agents
+## 4.1 Les 39 Agents
 
 ### TIER 1 : Investigation Agents (13 agents, parallel)
 
 | # | Agent | Emoji | Mission | Context Required |
 |---|-------|-------|---------|------------------|
-| 1 | Deal Screener | 📥 | Qualification rapide | Similar deals, benchmarks |
-| 2 | Deck Forensics | 📊 | Analyse forensique du deck | Competitor decks patterns |
-| 3 | Financial Auditor | 💰 | Audit des chiffres | Benchmarks, comparable financials |
-| 4 | Market Intelligence | 🔍 | Verification claims marche | Market data, reports |
-| 5 | Competitive Intel | ⚔️ | Paysage concurrentiel | Competitor database |
-| 6 | Team Investigator | 👥 | Background check equipe | People graph, history |
-| 7 | Technical DD | 🔧 | Evaluation technique | Tech trends, architecture patterns |
+| 1 | Deck Forensics | 📊 | Analyse forensique du deck | Competitor decks patterns |
+| 2 | Financial Auditor | 💰 | Audit des chiffres | Benchmarks, comparable financials |
+| 3 | Market Intelligence | 🔍 | Verification claims marche | Market data, reports |
+| 4 | Competitive Intel | ⚔️ | Paysage concurrentiel | Competitor database |
+| 5 | Team Investigator | 👥 | Background check equipe | People graph, history |
+| 6 | Tech Stack DD | 🔧 | Stack + Scalabilite + Dette | Tech trends, architecture patterns |
+| 7 | Tech Ops DD | ⚙️ | Maturite + Equipe + Secu + IP | Team benchmarks, security standards |
 | 8 | Legal & Regulatory | ⚖️ | Risques juridiques | Regulatory database |
 | 9 | Cap Table Auditor | 📈 | Audit cap table | Terms database, preferences |
 | 10 | GTM Analyst | 🚀 | Go-to-market | Channel benchmarks |
@@ -3818,29 +3818,54 @@ interface InternalQualityEngine {
 | 12 | Exit Strategist | 🚪 | Scenarios de sortie | Exit database, acquirers |
 | 13 | Question Master | ❓ | Questions killer | Pattern from failures |
 
-### TIER 2 : Synthesis Agents (5 agents, sequential after Tier 1)
+> **Note**: Technical DD a ete split en 2 agents (Tech Stack DD + Tech Ops DD) pour optimiser les couts et eviter les timeouts sur Haiku (limite 4096 tokens output).
+
+### TIER 2 : Sector Experts (21 agents: 20 secteurs + 1 general)
+
+**Implementes (10 secteurs):**
+| # | Agent | Emoji | Activated When | Status |
+|---|-------|-------|----------------|--------|
+| 13 | SaaS Expert | 💻 | sector in ['SaaS', 'B2B Software'] | IMPL |
+| 14 | Marketplace Expert | 🏪 | sector in ['Marketplace', 'Platform'] | IMPL |
+| 15 | Fintech Expert | 🏦 | sector in ['Fintech', 'Payments', 'InsurTech'] | IMPL |
+| 16 | HealthTech Expert | 🏥 | sector in ['HealthTech', 'Digital Health', 'MedTech'] | IMPL |
+| 17 | DeepTech Expert | 🔬 | sector in ['DeepTech', 'Hard Tech', 'Deep Science'] | IMPL |
+| 18 | AI Expert | 🤖 | sector in ['AI', 'AI/ML', 'LLM', 'GenAI'] | IMPL |
+| 19 | Climate Expert | 🌱 | sector in ['CleanTech', 'Climate', 'GreenTech'] | IMPL |
+| 20 | Hardware Expert | 🏭 | sector in ['Hardware', 'IoT', 'Robotics'] | IMPL |
+| 21 | Gaming Expert | 🎮 | sector in ['Gaming', 'Mobile Games', 'Esports'] | IMPL |
+| 22 | Consumer Expert | 📱 | sector in ['Consumer', 'D2C', 'E-commerce'] | IMPL |
+
+**A creer (10 secteurs):**
+| # | Agent | Emoji | Activated When | Status |
+|---|-------|-------|----------------|--------|
+| 23 | BioTech Expert | 🧬 | sector in ['BioTech', 'Life Sciences', 'Pharma'] | TODO |
+| 24 | EdTech Expert | 📚 | sector in ['EdTech', 'Education', 'Learning'] | TODO |
+| 25 | PropTech Expert | 🏠 | sector in ['PropTech', 'Real Estate', 'ConTech'] | TODO |
+| 26 | Mobility Expert | 🚗 | sector in ['Mobility', 'Transportation', 'Logistics'] | TODO |
+| 27 | FoodTech Expert | 🍔 | sector in ['FoodTech', 'AgTech', 'Alt Protein'] | TODO |
+| 28 | HRTech Expert | 👥 | sector in ['HRTech', 'Workforce', 'Recruitment'] | TODO |
+| 29 | LegalTech Expert | ⚖️ | sector in ['LegalTech', 'RegTech', 'Compliance'] | TODO |
+| 30 | Cybersecurity Expert | 🔒 | sector in ['Cybersecurity', 'InfoSec', 'Security'] | TODO |
+| 31 | SpaceTech Expert | 🚀 | sector in ['SpaceTech', 'Aerospace', 'Satellite'] | TODO |
+| 32 | Creator Expert | 🎬 | sector in ['Creator Economy', 'Media', 'Content'] | TODO |
+
+**Fallback (1 agent):**
+| # | Agent | Emoji | Activated When | Status |
+|---|-------|-------|----------------|--------|
+| 33 | General Expert | 🌐 | Aucun expert sectoriel ne matche | TODO |
+
+*Note: General Expert fait 100% recherche web, pas de standards hardcodes.*
+
+### TIER 3 : Synthesis Agents (5 agents, sequential after Tier 1 & 2)
 
 | # | Agent | Emoji | Mission | Input |
 |---|-------|-------|---------|-------|
-| 14 | Contradiction Detector | 🔀 | Trouve les incoherences | All Tier 1 outputs |
-| 15 | Scenario Modeler | 📉 | Bull/Base/Bear | Financial + Market |
-| 16 | Deal Scorer | 🎯 | Score final | All outputs |
-| 17 | Devil's Advocate | 😈 | Challenge la these | All outputs |
-| 18 | Memo Generator | 📝 | Documents finaux | All outputs |
-
-### TIER 3 : Sector Experts (9 agents, activated by sector)
-
-| # | Agent | Emoji | Activated When |
-|---|-------|-------|----------------|
-| 19 | SaaS Expert | 💻 | sector in ['SaaS', 'B2B Software'] |
-| 20 | Marketplace Expert | 🏪 | sector in ['Marketplace', 'Platform'] |
-| 21 | Fintech Expert | 🏦 | sector in ['Fintech', 'Payments', 'Banking'] |
-| 22 | HealthTech Expert | 🏥 | sector in ['HealthTech', 'MedTech', 'BioTech'] |
-| 23 | DeepTech Expert | 🔬 | sector in ['DeepTech', 'AI/ML', 'Quantum'] |
-| 24 | Climate Expert | 🌱 | sector in ['CleanTech', 'Climate', 'Energy'] |
-| 25 | Hardware Expert | 🏭 | sector in ['Hardware', 'IoT', 'Robotics'] |
-| 26 | Gaming Expert | 🎮 | sector in ['Gaming', 'Esports', 'Metaverse'] |
-| 27 | Consumer Expert | 📱 | sector in ['Consumer', 'D2C', 'Social'] |
+| 24 | Contradiction Detector | 🔀 | Trouve les incoherences | All Tier 1 & 2 outputs |
+| 25 | Scenario Modeler | 📉 | Bull/Base/Bear | Financial + Market |
+| 26 | Deal Scorer | 🎯 | Score final | All outputs |
+| 27 | Devil's Advocate | 😈 | Challenge la these | All outputs |
+| 28 | Memo Generator | 📝 | Documents finaux | All outputs |
 
 ## 4.2 Agent Base Template
 
@@ -3858,8 +3883,8 @@ interface AgentTemplate {
   // Execution
   execution: {
     parallel: boolean;           // Tier 1 = true
-    depends_on: string[];        // For Tier 2
-    activation_condition?: string; // For Tier 3
+    activation_condition?: string; // For Tier 2 (sector experts)
+    depends_on: string[];        // For Tier 3 (synthesis)
   };
 
   // Model selection
@@ -4041,7 +4066,7 @@ J-7 ─────────────────────────�
   ┌──────────────────────────────────────────────────────────────────────┐
   │  📊 Full DD Report (20-30 pages)                                      │
   │  ├── Executive Summary                                                │
-  │  ├── Agent Analyses (27 agents)                                       │
+  │  ├── Agent Analyses (28 agents)                                       │
   │  ├── Context Data (similar deals, benchmarks, competitors)            │
   │  ├── Claim Verification Matrix                                        │
   │  ├── Red Flags & Concerns                                             │
@@ -4972,9 +4997,9 @@ SLACK_WEBHOOK_URL=
 | Component | Est. Cost |
 |-----------|-----------|
 | Context fetching (APIs) | $0.50-2.00 |
-| Tier 1 agents (13x) | $1.50-3.00 |
-| Tier 2 agents (5x) | $0.75-1.50 |
-| Tier 3 agent (1x) | $0.25-0.50 |
+| Tier 1 agents (12x) | $1.50-3.00 |
+| Tier 2 agents (1-2x sector) | $0.25-0.50 |
+| Tier 3 agents (5x synthesis) | $0.75-1.50 |
 | Ensemble (3 critical Q) | $1.00-2.00 |
 | **Total** | **$4-9** |
 

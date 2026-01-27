@@ -1,12 +1,11 @@
 import type {
   AgentResult,
-  ScreeningResult,
   RedFlagResult,
   ScoringResult,
   SynthesisDealScorerResult,
 } from "../types";
 import type { AnalysisType } from "./types";
-import { TIER1_AGENT_NAMES, TIER2_AGENT_NAMES, TIER3_EXPERT_NAMES } from "./types";
+import { TIER1_AGENT_NAMES, TIER3_AGENT_NAMES, TIER2_EXPERT_NAMES } from "./types";
 
 /**
  * Generate summary for Tier 1 analysis
@@ -26,7 +25,8 @@ export function generateTier1Summary(results: Record<string, AgentResult>): stri
     "market-intelligence": "marketScore",
     "competitive-intel": "competitiveScore",
     "team-investigator": "overallTeamScore",
-    "technical-dd": "technicalScore",
+    "tech-stack-dd": "techStackScore",
+    "tech-ops-dd": "techOpsScore",
     "legal-regulatory": "legalScore",
     "cap-table-auditor": "capTableScore",
     "gtm-analyst": "gtmScore",
@@ -72,14 +72,14 @@ export function generateTier1Summary(results: Record<string, AgentResult>): stri
 }
 
 /**
- * Generate summary for Tier 2 analysis
+ * Generate summary for Tier 3 analysis
  */
-export function generateTier2Summary(results: Record<string, AgentResult>): string {
+export function generateTier3Summary(results: Record<string, AgentResult>): string {
   const parts: string[] = [];
   const successCount = Object.values(results).filter((r) => r.success).length;
   const totalCount = Object.keys(results).length;
 
-  parts.push(`**Tier 2 Synthesis**: ${successCount}/${totalCount} agents completes`);
+  parts.push(`**Tier 3 Synthesis**: ${successCount}/${totalCount} agents completes`);
 
   // Get verdict from synthesis-deal-scorer
   const scorer = results["synthesis-deal-scorer"] as SynthesisDealScorerResult | undefined;
@@ -114,19 +114,19 @@ export function generateFullAnalysisSummary(results: Record<string, AgentResult>
 
   // Count successes by tier
   const tier1Success = TIER1_AGENT_NAMES.filter((a) => results[a]?.success).length;
-  const tier2Success = TIER2_AGENT_NAMES.filter((a) => results[a]?.success).length;
+  const tier3Success = TIER3_AGENT_NAMES.filter((a) => results[a]?.success).length;
 
-  // Find which Tier 3 agent ran (if any)
-  const tier3Result = TIER3_EXPERT_NAMES.find((a) => results[a]);
-  const tier3Success = tier3Result && results[tier3Result]?.success;
+  // Find which Tier 2 sector expert ran (if any)
+  const tier2Result = TIER2_EXPERT_NAMES.find((a) => results[a]);
+  const tier2ExpertSuccess = tier2Result && results[tier2Result]?.success;
 
   parts.push(`**Full Analysis Complete**`);
   parts.push(`- Tier 1 (Investigation): ${tier1Success}/12 agents`);
-  parts.push(`- Tier 2 (Synthesis): ${tier2Success}/5 agents`);
-  if (tier3Result) {
-    const expertName = tier3Result.replace("-expert", "").replace(/-/g, " ").toUpperCase();
-    parts.push(`- Tier 3 (Sector): ${tier3Success ? "✅" : "❌"} ${expertName} Expert`);
+  if (tier2Result) {
+    const expertName = tier2Result.replace("-expert", "").replace(/-/g, " ").toUpperCase();
+    parts.push(`- Tier 2 (Sector): ${tier2ExpertSuccess ? "✅" : "❌"} ${expertName} Expert`);
   }
+  parts.push(`- Tier 3 (Synthesis): ${tier3Success}/5 agents`);
 
   // Get final verdict
   const scorer = results["synthesis-deal-scorer"] as SynthesisDealScorerResult | undefined;
@@ -138,9 +138,9 @@ export function generateFullAnalysisSummary(results: Record<string, AgentResult>
     parts.push(`> ${investmentRecommendation.rationale}`);
   }
 
-  // Add Tier 3 sector insights if available
-  if (tier3Result && results[tier3Result]?.success && "data" in results[tier3Result]) {
-    const sectorData = results[tier3Result].data as {
+  // Add Tier 2 sector insights if available
+  if (tier2Result && results[tier2Result]?.success && "data" in results[tier2Result]) {
+    const sectorData = results[tier2Result].data as {
       sectorScore?: number;
       sectorFit?: string;
       sectorInsights?: { metric?: string; assessment?: string }[];
@@ -171,16 +171,6 @@ export function generateSummary(
   _type: AnalysisType
 ): string {
   const parts: string[] = [];
-
-  // Screening summary
-  const screening = results["deal-screener"] as ScreeningResult | undefined;
-  if (screening?.success && screening.data) {
-    const { shouldProceed, confidenceScore, summary } = screening.data;
-    parts.push(
-      `**Screening**: ${shouldProceed ? "PROCEED" : "PASS"} (${confidenceScore}% confiance)`
-    );
-    parts.push(summary);
-  }
 
   // Scoring summary
   const scoring = results["deal-scorer"] as ScoringResult | undefined;

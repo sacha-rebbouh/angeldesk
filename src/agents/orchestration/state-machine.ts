@@ -1,12 +1,18 @@
 /**
  * Analysis State Machine
- * Manages the lifecycle of an analysis session
+ * Manages the lifecycle of an analysis session with DB persistence for crash recovery
  */
 
 import type { AgentResult, AnalysisAgentResult } from "../types";
 import type { ScoredFinding } from "@/scoring/types";
 import { messageBus } from "./message-bus";
 import { createMessage } from "./message-types";
+import {
+  saveCheckpoint,
+  loadLatestCheckpoint,
+  cleanupOldCheckpoints,
+  type CheckpointData,
+} from "../orchestrator/persistence";
 
 // ============================================================================
 // STATE TYPES
@@ -201,9 +207,11 @@ export class AnalysisStateMachine {
       callback(from, to, trigger);
     }
 
-    // Create checkpoint if enabled
+    // Create checkpoint if enabled (async, don't await to not block transitions)
     if (this.config.enableCheckpointing) {
-      this.createCheckpoint();
+      this.createCheckpoint().catch((err) => {
+        console.error("[StateMachine] Checkpoint failed during transition:", err);
+      });
     }
   }
 
@@ -244,10 +252,11 @@ export class AnalysisStateMachine {
 
     // Start checkpoint timer if enabled
     if (this.config.enableCheckpointing) {
-      this.checkpointTimer = setInterval(
-        () => this.createCheckpoint(),
-        this.config.checkpointInterval
-      );
+      this.checkpointTimer = setInterval(() => {
+        this.createCheckpoint().catch((err) => {
+          console.error("[StateMachine] Periodic checkpoint failed:", err);
+        });
+      }, this.config.checkpointInterval);
     }
   }
 
@@ -419,13 +428,14 @@ export class AnalysisStateMachine {
   }
 
   // ============================================================================
-  // CHECKPOINTING
+  // CHECKPOINTING (with DB persistence for crash recovery)
   // ============================================================================
 
   /**
-   * Create a checkpoint
+   * Create a checkpoint and persist to DB
+   * Called on every state transition and periodically via timer
    */
-  private createCheckpoint(): void {
+  private async createCheckpoint(): Promise<void> {
     const checkpoint: AnalysisCheckpoint = {
       id: crypto.randomUUID(),
       state: this.state,
@@ -439,21 +449,54 @@ export class AnalysisStateMachine {
 
     this.checkpoints.push(checkpoint);
 
-    // Keep only last 10 checkpoints
+    // Keep only last 10 checkpoints in memory
     if (this.checkpoints.length > 10) {
       this.checkpoints = this.checkpoints.slice(-10);
+    }
+
+    // Persist to database for crash recovery
+    try {
+      const totalCost = Array.from(this.results.values()).reduce(
+        (sum, r) => sum + (r.cost ?? 0),
+        0
+      );
+
+      const checkpointData: CheckpointData = {
+        state: this.state,
+        completedAgents: checkpoint.completedAgents,
+        pendingAgents: checkpoint.pendingAgents,
+        failedAgents: this.getFailedAgents().map((f) => ({
+          agent: f.name,
+          error: f.error,
+          retries: f.retries,
+        })),
+        findings: checkpoint.findings,
+        results: checkpoint.results,
+        totalCost,
+        startTime: this.startTime?.toISOString() ?? new Date().toISOString(),
+      };
+
+      await saveCheckpoint(this.config.analysisId, checkpointData);
+
+      // Cleanup old checkpoints periodically (every 5th checkpoint)
+      if (this.checkpoints.length % 5 === 0) {
+        await cleanupOldCheckpoints(this.config.analysisId, 5);
+      }
+    } catch (error) {
+      // Log but don't fail the analysis - checkpointing is best-effort
+      console.error("[StateMachine] Failed to persist checkpoint:", error);
     }
   }
 
   /**
-   * Get latest checkpoint
+   * Get latest checkpoint (from memory)
    */
   getLatestCheckpoint(): AnalysisCheckpoint | null {
     return this.checkpoints[this.checkpoints.length - 1] ?? null;
   }
 
   /**
-   * Restore from checkpoint
+   * Restore from an in-memory checkpoint
    */
   restoreFromCheckpoint(checkpoint: AnalysisCheckpoint): void {
     this.state = checkpoint.state;
@@ -465,6 +508,88 @@ export class AnalysisStateMachine {
     for (const err of checkpoint.errors) {
       this.failedAgents.set(err.agent, { error: err.error, retries: 1 });
     }
+  }
+
+  /**
+   * Restore state from database checkpoint (for crash recovery)
+   * Returns true if recovery was successful, false if no checkpoint found
+   */
+  async restoreFromDb(): Promise<boolean> {
+    try {
+      const checkpoint = await loadLatestCheckpoint(this.config.analysisId);
+
+      if (!checkpoint) {
+        console.log(`[StateMachine] No checkpoint found for analysis ${this.config.analysisId}`);
+        return false;
+      }
+
+      // Restore state
+      this.state = checkpoint.state as AnalysisState;
+      this.completedAgents = new Set(checkpoint.completedAgents);
+      this.pendingAgents = new Set(checkpoint.pendingAgents);
+      this.findings = checkpoint.findings as ScoredFinding[];
+      this.results = new Map(
+        Object.entries(checkpoint.results as Record<string, AnalysisAgentResult>)
+      );
+
+      // Restore failed agents
+      for (const fa of checkpoint.failedAgents) {
+        this.failedAgents.set(fa.agent, { error: fa.error, retries: fa.retries });
+      }
+
+      // Restore start time
+      this.startTime = new Date(checkpoint.startTime);
+      this.stateStartTime = new Date();
+
+      console.log(
+        `[StateMachine] Restored from DB checkpoint: state=${this.state}, ` +
+          `completed=${this.completedAgents.size}/${this.config.agents.length}`
+      );
+
+      return true;
+    } catch (error) {
+      console.error("[StateMachine] Failed to restore from DB:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if this analysis can be resumed (has a valid checkpoint)
+   */
+  async canResume(): Promise<boolean> {
+    const checkpoint = await loadLatestCheckpoint(this.config.analysisId);
+    return checkpoint !== null;
+  }
+
+  /**
+   * Get recovery info without fully restoring
+   */
+  async getRecoveryInfo(): Promise<{
+    hasCheckpoint: boolean;
+    state: string | null;
+    completedAgents: number;
+    pendingAgents: number;
+    totalCost: number;
+  }> {
+    const checkpoint = await loadLatestCheckpoint(this.config.analysisId);
+
+    if (!checkpoint) {
+      return {
+        hasCheckpoint: false,
+        state: null,
+        completedAgents: 0,
+        pendingAgents: this.config.agents.length,
+        totalCost: 0,
+      };
+    }
+
+    return {
+      hasCheckpoint: true,
+      state: checkpoint.state,
+      completedAgents: checkpoint.completedAgents.length,
+      pendingAgents: checkpoint.pendingAgents.length,
+      totalCost: checkpoint.totalCost,
+    };
   }
 
   // ============================================================================

@@ -1,7 +1,7 @@
 /**
  * Tier 1 Agents - Investigation
  *
- * 12 agents qui s'executent en parallele pour analyser un deal sous tous les angles.
+ * 13 agents qui s'executent en parallele pour analyser un deal sous tous les angles.
  * Chaque agent reçoit le contexte enrichi par le Context Engine.
  */
 
@@ -9,7 +9,8 @@
 export { financialAuditor } from "./financial-auditor";
 export { deckForensics } from "./deck-forensics";
 export { capTableAuditor } from "./cap-table-auditor";
-export { technicalDD } from "./technical-dd";
+export { techStackDD } from "./tech-stack-dd"; // Tech Stack + Scalabilité + Dette Technique
+export { techOpsDD } from "./tech-ops-dd"; // Maturité Produit + Équipe Tech + Sécurité + IP
 
 // Agents independants (pas de dependance sur document-extractor)
 export { teamInvestigator } from "./team-investigator";

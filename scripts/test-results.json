@@ -1,0 +1,182 @@
+{
+  "results": [
+    {
+      "agent": "document-extractor",
+      "tier": "T0",
+      "success": true,
+      "timeMs": 35046,
+      "cost": 0.09845100000000001,
+      "hasData": true,
+      "dataPreview": "{\"extractedInfo\":{\"companyName\":\"Antiopea\",\"tagline\":\"We build solutions you can trust. Blockchain synchronization\",\"sector\":\"Blockchain / Cybersécurité\",\"stage\":\"SEED\",\"geography\":\"France\",\"foundedYear\":null,\"teamSize\":12,\"arr\":null,\"mrr\":null,\"revenue\":null,\"growthRateYoY\":null,\"burnRate\":16583,\"r"
+    },
+    {
+      "agent": "financial-auditor",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 33826,
+      "cost": 0.121446,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"financial-auditor\",\"analysisDate\":\"2026-01-27T16:13:22.902Z\",\"dataCompleteness\":\"minimal\",\"confidenceLevel\":35,\"limitations\":[\"Pas de données historiques de revenus\",\"Pas de métriques SaaS standards (ARR, Churn, etc.)\",\"Valorisation non communiquée\",\"Montant demandé non spécifi"
+    },
+    {
+      "agent": "deck-forensics",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 42610,
+      "cost": 0.098511,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"deck-forensics\",\"analysisDate\":\"2026-01-27T16:14:06.513Z\",\"dataCompleteness\":\"partial\",\"confidenceLevel\":85,\"limitations\":[\"Certaines données financières historiques non fournies\",\"Cap table non fournie\"]},\"score\":{\"value\":45,\"grade\":\"D\",\"breakdown\":[{\"criterion\":\"Coherence nar"
+    },
+    {
+      "agent": "cap-table-auditor",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 33997,
+      "cost": 0.086958,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"cap-table-auditor\",\"analysisDate\":\"2026-01-27T16:14:41.510Z\",\"dataCompleteness\":\"minimal\",\"confidenceLevel\":30,\"limitations\":[\"Cap table non fournie dans les documents\",\"Terms du round non communiqués\",\"Structure d'ownership actuelle inconnue\",\"Historique de financement partiel"
+    },
+    {
+      "agent": "technical-dd",
+      "tier": "T1",
+      "success": false,
+      "timeMs": 120011,
+      "cost": 0,
+      "error": "LLM JSON call timed out after 120000ms",
+      "hasData": false
+    },
+    {
+      "agent": "team-investigator",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 118936,
+      "cost": 0.12812099999999998,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"team-investigator\",\"analysisDate\":\"2026-01-27T16:18:42.461Z\",\"dataCompleteness\":\"partial\",\"confidenceLevel\":65,\"limitations\":[\"LinkedIn non disponible pour les fondateurs\",\"Pas d'historique détaillé des fondateurs dans le deck\",\"Equity split non communiqué\",\"Vesting non mention"
+    },
+    {
+      "agent": "competitive-intel",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 38372,
+      "cost": 0.09261,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"competitive-intel\",\"analysisDate\":\"2026-01-27T16:19:21.832Z\",\"dataCompleteness\":\"partial\",\"confidenceLevel\":75,\"limitations\":[\"Données financières limitées sur les concurrents\",\"Peu d'informations sur les parts de marché\",\"Manque de détails sur la technologie blockchain utilisé"
+    },
+    {
+      "agent": "market-intelligence",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 46332,
+      "cost": 0.10139999999999999,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"market-intelligence\",\"analysisDate\":\"2026-01-27T16:20:09.165Z\",\"dataCompleteness\":\"partial\",\"confidenceLevel\":70,\"limitations\":[\"Données Context Engine limitées sur le marché blockchain spécifique\",\"Peu de deals comparables directs dans la DB\",\"Manque de détails sur les parts d"
+    },
+    {
+      "agent": "legal-regulatory",
+      "tier": "T1",
+      "success": false,
+      "timeMs": 120004,
+      "cost": 0,
+      "error": "LLM JSON call timed out after 120000ms",
+      "hasData": false
+    },
+    {
+      "agent": "gtm-analyst",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 35841,
+      "cost": 0.09090600000000001,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"gtm-analyst\",\"analysisDate\":\"2026-01-27T16:22:47.017Z\",\"dataCompleteness\":\"partial\",\"confidenceLevel\":null,\"limitations\":[\"Pas de données CAC/LTV dans le deck\",\"Pas de métriques de croissance\",\"Manque d'information sur les premiers clients\"]},\"score\":{\"value\":42,\"grade\":\"D\",\"br"
+    },
+    {
+      "agent": "customer-intel",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 57652,
+      "cost": 0.11746499999999999,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"customer-intel\",\"analysisDate\":\"2026-01-27T16:23:45.670Z\",\"dataCompleteness\":\"minimal\",\"confidenceLevel\":20,\"limitations\":[\"Aucune donnée de rétention (NRR/Churn)\",\"Base clients non détaillée\",\"Métriques d'usage absentes\",\"Pas de données de satisfaction client\",\"Historique de c"
+    },
+    {
+      "agent": "exit-strategist",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 50944,
+      "cost": 0.106671,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"exit-strategist\",\"analysisDate\":\"2026-01-27T16:24:37.615Z\",\"dataCompleteness\":\"partial\",\"confidenceLevel\":65,\"limitations\":[\"ARR actuel non communiqué\",\"Données financières limitées\",\"Peu de comparables directs blockchain/cybersécurité\"]},\"score\":{\"value\":58,\"grade\":\"C\",\"breakd"
+    },
+    {
+      "agent": "question-master",
+      "tier": "T1",
+      "success": true,
+      "timeMs": 33780,
+      "cost": 0.09967200000000001,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"question-master\",\"analysisDate\":\"2026-01-27T16:25:12.396Z\",\"dataCompleteness\":\"partial\",\"confidenceLevel\":65,\"limitations\":[\"Technical DD incomplete\",\"Legal DD incomplete\",\"Cap table non fournie\",\"Données financières historiques manquantes\"]},\"score\":{\"value\":42,\"grade\":\"D\",\"br"
+    },
+    {
+      "agent": "general-expert",
+      "tier": "T2",
+      "success": false,
+      "timeMs": 35855,
+      "cost": 0.11994,
+      "error": "Failed to parse LLM response: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorResearch\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"keyMetrics\"\n    ],\n    \"message\": \"Invalid input: expected array, received object\"\n  },\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"benchmarksFound\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"redFlags\"\n    ],\n    \"message\": \"Invalid input: expected array, received undefined\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"greenFlags\"\n    ],\n    \"message\": \"Invalid input: expected array, received undefined\"\n  },\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"competitiveAnalysis\",\n      \"competitorsFromDb\"\n    ],\n    \"message\": \"Invalid input: expected number, received undefined\"\n  },\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"competitiveAnalysis\",\n      \"competitorsFromWebSearch\"\n    ],\n    \"message\": \"Invalid input: expected number, received undefined\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"competitiveAnalysis\",\n      \"competitorMentionedInDeck\"\n    ],\n    \"message\": \"Invalid input: expected array, received undefined\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"competitiveAnalysis\",\n      \"hiddenCompetitors\"\n    ],\n    \"message\": \"Invalid input: expected array, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"competitiveAnalysis\",\n      \"marketPosition\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"unitEconomics\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  },\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorDynamics\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"exitLandscape\",\n      \"recentExits\",\n      0,\n      \"acquirer\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"exitLandscape\",\n      \"recentExits\",\n      0,\n      \"year\"\n    ],\n    \"message\": \"Invalid input: expected number, received undefined\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"exitLandscape\",\n      \"typicalAcquirers\"\n    ],\n    \"message\": \"Invalid input: expected array, received undefined\"\n  },\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"null\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected null, received undefined\"\n        }\n      ]\n    ],\n    \"path\": [\n      \"exitLandscape\",\n      \"medianMultiple\"\n    ],\n    \"message\": \"Invalid input\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"exitLandscape\",\n      \"multipleSource\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"exitLandscape\",\n      \"timeToExitYears\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"strong\",\n      \"moderate\",\n      \"weak\",\n      \"uncertain\"\n    ],\n    \"path\": [\n      \"exitLandscape\",\n      \"exitPotentialAssessment\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"strong\\\"|\\\"moderate\\\"|\\\"weak\\\"|\\\"uncertain\\\"\"\n  },\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"null\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected null, received undefined\"\n        }\n      ]\n    ],\n    \"path\": [\n      \"valuationAnalysis\",\n      \"askMultiple\"\n    ],\n    \"message\": \"Invalid input\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"valuationAnalysis\",\n      \"multipleType\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"null\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected null, received undefined\"\n        }\n      ]\n    ],\n    \"path\": [\n      \"valuationAnalysis\",\n      \"sectorMedianMultiple\"\n    ],\n    \"message\": \"Invalid input\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"valuationAnalysis\",\n      \"sectorMedianSource\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"expected\": \"number\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected number, received undefined\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"null\",\n          \"code\": \"invalid_type\",\n          \"path\": [],\n          \"message\": \"Invalid input: expected null, received undefined\"\n        }\n      ]\n    ],\n    \"path\": [\n      \"valuationAnalysis\",\n      \"percentilePosition\"\n    ],\n    \"message\": \"Invalid input\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"attractive\",\n      \"fair\",\n      \"stretched\",\n      \"excessive\",\n      \"cannot_assess\"\n    ],\n    \"path\": [\n      \"valuationAnalysis\",\n      \"verdict\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"attractive\\\"|\\\"fair\\\"|\\\"stretched\\\"|\\\"excessive\\\"|\\\"cannot_assess\\\"\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"valuationAnalysis\",\n      \"negotiationLeverage\"\n    ],\n    \"message\": \"Invalid input: expected array, received undefined\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"business_model\",\n      \"metrics\",\n      \"competition\",\n      \"regulation\",\n      \"technology\",\n      \"market\"\n    ],\n    \"path\": [\n      \"sectorQuestions\",\n      0,\n      \"category\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"business_model\\\"|\\\"metrics\\\"|\\\"competition\\\"|\\\"regulation\\\"|\\\"technology\\\"|\\\"market\\\"\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"must_ask\",\n      \"should_ask\",\n      \"nice_to_have\"\n    ],\n    \"path\": [\n      \"sectorQuestions\",\n      0,\n      \"priority\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"must_ask\\\"|\\\"should_ask\\\"|\\\"nice_to_have\\\"\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorQuestions\",\n      0,\n      \"sectorContext\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorQuestions\",\n      0,\n      \"greenFlagAnswer\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorQuestions\",\n      0,\n      \"redFlagAnswer\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"business_model\",\n      \"metrics\",\n      \"competition\",\n      \"regulation\",\n      \"technology\",\n      \"market\"\n    ],\n    \"path\": [\n      \"sectorQuestions\",\n      1,\n      \"category\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"business_model\\\"|\\\"metrics\\\"|\\\"competition\\\"|\\\"regulation\\\"|\\\"technology\\\"|\\\"market\\\"\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"must_ask\",\n      \"should_ask\",\n      \"nice_to_have\"\n    ],\n    \"path\": [\n      \"sectorQuestions\",\n      1,\n      \"priority\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"must_ask\\\"|\\\"should_ask\\\"|\\\"nice_to_have\\\"\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorQuestions\",\n      1,\n      \"sectorContext\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorQuestions\",\n      1,\n      \"greenFlagAnswer\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorQuestions\",\n      1,\n      \"redFlagAnswer\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"sectorScore\"\n    ],\n    \"message\": \"Invalid input: expected number, received undefined\"\n  },\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"scoreBreakdown\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  },\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"analysisConfidence\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"executiveSummary\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"strong_sector_fit\",\n      \"solid_with_concerns\",\n      \"sector_challenges\",\n      \"fundamental_concerns\",\n      \"insufficient_data\"\n    ],\n    \"path\": [\n      \"investmentImplication\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"strong_sector_fit\\\"|\\\"solid_with_concerns\\\"|\\\"sector_challenges\\\"|\\\"fundamental_concerns\\\"|\\\"insufficient_data\\\"\"\n  }\n]",
+      "hasData": true,
+      "dataPreview": "{\"sectorName\":\"Secteur Non Identifie\",\"sectorMaturity\":\"growing\",\"keyMetrics\":[],\"sectorRedFlags\":[{\"flag\":\"Analyse incomplete\",\"severity\":\"major\",\"sectorReason\":\"L'analyse sectorielle generaliste n'a pas pu etre completee. Donnees insuffisantes ou erreur d'execution.\"}],\"sectorOpportunities\":[],\"re"
+    },
+    {
+      "agent": "contradiction-detector",
+      "tier": "T3",
+      "success": true,
+      "timeMs": 34175,
+      "cost": 0.077778,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"contradiction-detector\",\"analysisDate\":\"2026-01-27T16:26:23.627Z\",\"dataCompleteness\":\"complete\",\"confidenceLevel\":42,\"limitations\":[\"Seulement 11/12 agents Tier 1 ont produit un output\",\"Funding DB non disponible - cross-reference limite\",\"Donnees extraites du deck non disponib"
+    },
+    {
+      "agent": "scenario-modeler",
+      "tier": "T3",
+      "success": true,
+      "timeMs": 20615,
+      "cost": 0.078213,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"scenario-modeler\",\"analysisDate\":\"2026-01-27T16:26:45.242Z\",\"dataCompleteness\":\"minimal\",\"confidenceLevel\":0,\"limitations\":[\"ARR non disponible - projections moins fiables\",\"Taux de croissance non disponible\",\"Valorisation pre-money non disponible\",\"Aucun comparable réel trouvé"
+    },
+    {
+      "agent": "devils-advocate",
+      "tier": "T3",
+      "success": true,
+      "timeMs": 35525,
+      "cost": 0.039162,
+      "hasData": true,
+      "dataPreview": "{\"meta\":{\"agentName\":\"devils-advocate\",\"analysisDate\":\"2026-01-27T16:27:21.769Z\",\"dataCompleteness\":\"minimal\",\"confidenceLevel\":35,\"limitations\":[\"Absence de données financières détaillées\",\"Cap table non fournie\",\"Clients non vérifiables\",\"Background fondateurs non vérifiable\",\"Pas d'accès aux métr"
+    },
+    {
+      "agent": "synthesis-deal-scorer",
+      "tier": "T3",
+      "success": true,
+      "timeMs": 25897,
+      "cost": 0.087465,
+      "hasData": true,
+      "dataPreview": "{\"overallScore\":32,\"verdict\":\"conditional_pass\",\"confidence\":75,\"dimensionScores\":[{\"dimension\":\"Team\",\"score\":40,\"weight\":0.25,\"weightedScore\":10,\"sourceAgents\":[],\"keyFactors\":[\"team-investigator: 40/100, background non vérifiable, équipe technique incomplète\"]},{\"dimension\":\"Financials\",\"score\":4"
+    },
+    {
+      "agent": "memo-generator",
+      "tier": "T3",
+      "success": true,
+      "timeMs": 52269,
+      "cost": 0.11657700000000001,
+      "hasData": true,
+      "dataPreview": "{\"executiveSummary\":{\"oneLiner\":\"Solution blockchain de sécurisation documentaire avec 2 clients enterprise mais budget tech critique de 97k€/an vs benchmark 400-500k€\",\"recommendation\":\"pass\",\"keyPoints\":[\"Marché blockchain/cybersécurité en croissance (Source: market-intelligence)\",\"2 clients enter"
+    }
+  ],
+  "summary": {
+    "totalSuccess": 16,
+    "totalAgents": 19,
+    "totalCost": 1.6613459999999998,
+    "totalTime": 971687
+  }
+}

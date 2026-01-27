@@ -297,6 +297,8 @@ export interface CompleterDetails {
 export interface FieldUpdateStats {
   industry: number
   description: number
+  tagline: number
+  useCases: number
   founders: number
   investors: number
   headquarters: number
@@ -324,6 +326,8 @@ export interface LLMExtractionResult {
   industry: string | null
   sub_industry: string | null
   description: string | null
+  tagline: string | null // One-liner pitch (e.g., "Slack for healthcare")
+  use_cases: string[] // Problems solved - CRITICAL for competitor matching
   business_model: 'SaaS' | 'Marketplace' | 'Transactional' | 'Hardware' | 'Services' | null
   target_market: 'B2B' | 'B2C' | 'B2B2C' | null
   headquarters_country: string | null

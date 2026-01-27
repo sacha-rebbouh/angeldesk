@@ -44,7 +44,7 @@ const DEFAULT_CONFIG: CircuitBreakerConfig = {
   recoveryTimeout: 30000,    // Wait 30s before trying again
   successThreshold: 2,       // 2 successes to close
   failureWindow: 60000,      // Count failures in last 60s
-  requestTimeout: 60000,     // 60s timeout per request
+  requestTimeout: 180000,    // 3 min timeout per request (for complex agents)
 };
 
 // ============================================================================

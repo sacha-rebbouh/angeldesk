@@ -1,5 +1,4 @@
 import type { AgentResult, EnrichedAgentContext, AgentContext } from "../types";
-import { dealScreener } from "../deal-screener";
 import { redFlagDetector } from "../red-flag-detector";
 import { documentExtractor } from "../document-extractor";
 import { dealScorer } from "../deal-scorer";
@@ -7,7 +6,6 @@ import type { BaseAgentName } from "./types";
 
 // Base agent registry (existing agents)
 export const BASE_AGENTS: Record<BaseAgentName, { run: (context: AgentContext) => Promise<AgentResult> }> = {
-  "deal-screener": dealScreener,
   "red-flag-detector": redFlagDetector,
   "document-extractor": documentExtractor,
   "deal-scorer": dealScorer,
@@ -18,39 +16,14 @@ type DynamicAgent = { run: (context: EnrichedAgentContext) => Promise<AgentResul
 
 // Cached agent modules (lazy loaded)
 let tier1Agents: Record<string, DynamicAgent> | null = null;
-let tier1ReactAgents: Record<string, DynamicAgent> | null = null;
-let tier2Agents: Record<string, DynamicAgent> | null = null;
+let tier3Agents: Record<string, DynamicAgent> | null = null;
 
 /**
- * Get Tier 1 agents (12 investigation agents)
- * Supports both standard and ReAct versions
+ * Get Tier 1 agents (13 investigation agents)
+ * Note: technical-dd has been split into tech-stack-dd and tech-ops-dd
  */
-export async function getTier1Agents(useReAct = false): Promise<Record<string, DynamicAgent>> {
-  // Return ReAct agents if requested - ALL agents now have ReAct versions
-  if (useReAct) {
-    if (!tier1ReactAgents) {
-      const reactModule = await import("../react");
-
-      // ALL 12 Tier 1 agents now have ReAct versions
-      tier1ReactAgents = {
-        "deck-forensics": reactModule.deckForensicsReAct,
-        "financial-auditor": reactModule.financialAuditorReAct,
-        "market-intelligence": reactModule.marketIntelligenceReAct,
-        "competitive-intel": reactModule.competitiveIntelReAct,
-        "team-investigator": reactModule.teamInvestigatorReAct,
-        "technical-dd": reactModule.technicalDDReAct,
-        "legal-regulatory": reactModule.legalRegulatoryReAct,
-        "cap-table-auditor": reactModule.capTableAuditorReAct,
-        "gtm-analyst": reactModule.gtmAnalystReAct,
-        "customer-intel": reactModule.customerIntelReAct,
-        "exit-strategist": reactModule.exitStrategistReAct,
-        "question-master": reactModule.questionMasterReAct,
-      };
-    }
-    return tier1ReactAgents;
-  }
-
-  // Standard agents
+export async function getTier1Agents(_useReAct = false): Promise<Record<string, DynamicAgent>> {
+  // Always return Standard agents (ReAct removed - better results, 20x cheaper)
   if (!tier1Agents) {
     // Dynamic import to avoid circular dependencies
     const tier1Module = await import("../tier1");
@@ -60,7 +33,8 @@ export async function getTier1Agents(useReAct = false): Promise<Record<string, D
       "market-intelligence": tier1Module.marketIntelligence,
       "competitive-intel": tier1Module.competitiveIntel,
       "team-investigator": tier1Module.teamInvestigator,
-      "technical-dd": tier1Module.technicalDD,
+      "tech-stack-dd": tier1Module.techStackDD,
+      "tech-ops-dd": tier1Module.techOpsDD,
       "legal-regulatory": tier1Module.legalRegulatory,
       "cap-table-auditor": tier1Module.capTableAuditor,
       "gtm-analyst": tier1Module.gtmAnalyst,
@@ -73,33 +47,33 @@ export async function getTier1Agents(useReAct = false): Promise<Record<string, D
 }
 
 /**
- * Get Tier 2 agents (5 synthesis agents)
+ * Get Tier 3 agents (5 synthesis agents)
  */
-export async function getTier2Agents(): Promise<Record<string, DynamicAgent>> {
-  if (!tier2Agents) {
-    const tier2Module = await import("../tier2");
-    tier2Agents = {
-      "contradiction-detector": tier2Module.contradictionDetector,
-      "scenario-modeler": tier2Module.scenarioModeler,
-      "synthesis-deal-scorer": tier2Module.synthesisDealScorer,
-      "devils-advocate": tier2Module.devilsAdvocate,
-      "memo-generator": tier2Module.memoGenerator,
+export async function getTier3Agents(): Promise<Record<string, DynamicAgent>> {
+  if (!tier3Agents) {
+    const tier3Module = await import("../tier3");
+    tier3Agents = {
+      "contradiction-detector": tier3Module.contradictionDetector,
+      "scenario-modeler": tier3Module.scenarioModeler,
+      "synthesis-deal-scorer": tier3Module.synthesisDealScorer,
+      "devils-advocate": tier3Module.devilsAdvocate,
+      "memo-generator": tier3Module.memoGenerator,
     };
   }
-  return tier2Agents;
+  return tier3Agents;
 }
 
 /**
- * Get Tier 3 sector expert based on deal sector
+ * Get Tier 2 sector expert based on deal sector
  * Returns null if no matching expert is available
  */
-export async function getTier3SectorExpert(
+export async function getTier2SectorExpert(
   sector: string | null | undefined
 ): Promise<{ name: string; run: (context: EnrichedAgentContext) => Promise<AgentResult> } | null> {
   if (!sector) return null;
 
-  const tier3Module = await import("../tier3");
-  return tier3Module.getSectorExpertForDeal(sector);
+  const tier2Module = await import("../tier2");
+  return tier2Module.getSectorExpertForDeal(sector);
 }
 
 /**
@@ -107,6 +81,5 @@ export async function getTier3SectorExpert(
  */
 export function clearAgentCache(): void {
   tier1Agents = null;
-  tier1ReactAgents = null;
-  tier2Agents = null;
+  tier3Agents = null;
 }

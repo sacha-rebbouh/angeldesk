@@ -5,12 +5,11 @@
 
 // Analysis type options (kept for internal use / API compatibility)
 export const ANALYSIS_TYPES = [
-  { value: "screening", label: "Screening rapide", description: "~30s", tier: 1 },
   { value: "extraction", label: "Extraction documents", description: "~1min", tier: 1 },
   { value: "tier1_complete", label: "Investigation Tier 1", description: "12 agents en parallele", tier: 1 },
-  { value: "tier2_synthesis", label: "Synthese Tier 2", description: "5 agents (necessite Tier 1)", tier: 2 },
+  { value: "tier2_sector", label: "Expert Sectoriel Tier 2", description: "1 expert selon secteur", tier: 2 },
   { value: "full_dd", label: "Due Diligence complete", description: "~2min", tier: 2 },
-  { value: "tier3_sector", label: "Expert Sectoriel Tier 3", description: "1 expert selon secteur", tier: 3 },
+  { value: "tier3_synthesis", label: "Synthese Tier 3", description: "5 agents (necessite Tier 1)", tier: 3 },
   { value: "full_analysis", label: "Analyse Complete", description: "18+ agents (Tier 1 + 2 + 3)", tier: 3 },
 ] as const;
 
@@ -32,13 +31,13 @@ export const PLAN_ANALYSIS_CONFIG = {
     analysisType: "full_analysis" as AnalysisTypeValue,
     label: "Analyse complete",
     description: "Due Diligence complete + Expert sectoriel",
-    includes: ["extraction", "tier1_complete", "tier2_synthesis", "tier3_sector", "full_analysis"],
+    includes: ["extraction", "tier1_complete", "tier2_sector", "tier3_synthesis", "full_analysis"],
   },
   ENTERPRISE: {
     analysisType: "full_analysis" as AnalysisTypeValue,
     label: "Analyse complete",
     description: "Due Diligence complete + Expert sectoriel",
-    includes: ["extraction", "tier1_complete", "tier2_synthesis", "tier3_sector", "full_analysis"],
+    includes: ["extraction", "tier1_complete", "tier2_sector", "tier3_synthesis", "full_analysis"],
   },
 } as const;
 
@@ -94,7 +93,8 @@ export const TIER1_AGENTS = [
   "competitive-intel",
   "deck-forensics",
   "market-intelligence",
-  "technical-dd",
+  "tech-stack-dd",
+  "tech-ops-dd",
   "legal-regulatory",
   "cap-table-auditor",
   "gtm-analyst",
@@ -104,18 +104,11 @@ export const TIER1_AGENTS = [
 ] as const;
 
 export const TIER2_AGENTS = [
-  "synthesis-deal-scorer",
-  "scenario-modeler",
-  "devils-advocate",
-  "contradiction-detector",
-  "memo-generator",
-] as const;
-
-export const TIER3_AGENTS = [
   "saas-expert",
   "marketplace-expert",
   "fintech-expert",
   "healthtech-expert",
+  "ai-expert",
   "deeptech-expert",
   "climate-expert",
   "hardware-expert",
@@ -123,10 +116,17 @@ export const TIER3_AGENTS = [
   "consumer-expert",
 ] as const;
 
+export const TIER3_AGENTS = [
+  "synthesis-deal-scorer",
+  "scenario-modeler",
+  "devils-advocate",
+  "contradiction-detector",
+  "memo-generator",
+] as const;
+
 // Agent display names mapping
 export const AGENT_DISPLAY_NAMES: Record<string, string> = {
   // Base agents
-  "deal-screener": "Deal Screener",
   "red-flag-detector": "Red Flag Detector",
   "document-extractor": "Document Extractor",
   "deal-scorer": "Deal Scorer",
@@ -136,41 +136,41 @@ export const AGENT_DISPLAY_NAMES: Record<string, string> = {
   "competitive-intel": "Competitive Intel",
   "deck-forensics": "Deck Forensics",
   "market-intelligence": "Market Intelligence",
-  "technical-dd": "Technical DD",
+  "tech-stack-dd": "Tech Stack DD",
+  "tech-ops-dd": "Tech Ops DD",
   "legal-regulatory": "Legal & Regulatory",
   "cap-table-auditor": "Cap Table Auditor",
   "gtm-analyst": "GTM Analyst",
   "customer-intel": "Customer Intel",
   "exit-strategist": "Exit Strategist",
   "question-master": "Question Master",
-  // Tier 2 agents
-  "contradiction-detector": "Contradiction Detector",
-  "scenario-modeler": "Scenario Modeler",
-  "synthesis-deal-scorer": "Synthesis Scorer",
-  "devils-advocate": "Devil's Advocate",
-  "memo-generator": "Memo Generator",
-  // Tier 3 experts
+  // Tier 2 - Sector Experts
   "saas-expert": "SaaS Expert",
   "marketplace-expert": "Marketplace Expert",
   "fintech-expert": "FinTech Expert",
   "healthtech-expert": "HealthTech Expert",
+  "ai-expert": "AI Expert",
   "deeptech-expert": "DeepTech Expert",
   "climate-expert": "Climate Expert",
   "hardware-expert": "Hardware Expert",
   "gaming-expert": "Gaming Expert",
   "consumer-expert": "Consumer Expert",
+  // Tier 3 - Synthesis agents
+  "contradiction-detector": "Contradiction Detector",
+  "scenario-modeler": "Scenario Modeler",
+  "synthesis-deal-scorer": "Synthesis Scorer",
+  "devils-advocate": "Devil's Advocate",
+  "memo-generator": "Memo Generator",
 };
 
 // Analysis mode display names
 export const ANALYSIS_MODE_NAMES: Record<string, string> = {
-  screening: "Screening",
   extraction: "Extraction",
   full_dd: "Due Diligence",
   tier1_complete: "Investigation Tier 1",
-  tier2_synthesis: "Synthese Tier 2",
-  tier3_sector: "Expert Sectoriel",
+  tier2_sector: "Expert Sectoriel",
+  tier3_synthesis: "Synthese Tier 3",
   full_analysis: "Analyse Complete",
-  SCREENING: "Screening",
   FULL_DD: "Due Diligence",
 };
 
@@ -235,6 +235,7 @@ export const SECTOR_CONFIG = {
   "marketplace-expert": { emoji: "🛒", displayName: "Marketplace Expert", color: "from-purple-500 to-pink-600" },
   "fintech-expert": { emoji: "💳", displayName: "FinTech Expert", color: "from-emerald-500 to-teal-600" },
   "healthtech-expert": { emoji: "🏥", displayName: "HealthTech Expert", color: "from-red-500 to-rose-600" },
+  "ai-expert": { emoji: "🤖", displayName: "AI Expert", color: "from-fuchsia-500 to-pink-600" },
   "deeptech-expert": { emoji: "🔬", displayName: "DeepTech Expert", color: "from-cyan-500 to-blue-600" },
   "climate-expert": { emoji: "🌱", displayName: "Climate Expert", color: "from-green-500 to-emerald-600" },
   "hardware-expert": { emoji: "🏭", displayName: "Hardware Expert", color: "from-gray-500 to-slate-600" },

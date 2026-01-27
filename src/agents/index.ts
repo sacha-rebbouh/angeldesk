@@ -2,7 +2,6 @@
 export * from "./types";
 
 // Base Agents
-export { dealScreener } from "./deal-screener";
 export { redFlagDetector } from "./red-flag-detector";
 export { documentExtractor } from "./document-extractor";
 export { dealScorer } from "./deal-scorer";
@@ -12,7 +11,8 @@ export {
   financialAuditor,
   deckForensics,
   capTableAuditor,
-  technicalDD,
+  techStackDD,
+  techOpsDD,
   teamInvestigator,
   competitiveIntel,
   marketIntelligence,
@@ -23,14 +23,14 @@ export {
   questionMaster,
 } from "./tier1";
 
-// Tier 2 Agents (Synthesis)
+// Tier 3 Agents (Synthesis)
 export {
   contradictionDetector,
   scenarioModeler,
   synthesisDealScorer,
   devilsAdvocate,
   memoGenerator,
-} from "./tier2";
+} from "./tier3";
 
 // Orchestrator
 export { orchestrator, type AnalysisType, type AnalysisResult } from "./orchestrator";

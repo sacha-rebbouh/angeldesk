@@ -2,9 +2,22 @@
 
 > Document de référence pour le système de maintenance automatisée de la base de données FullInvest.
 
-**Version**: 1.1
-**Dernière mise à jour**: 2026-01-23
+**Version**: 1.2
+**Dernière mise à jour**: 2026-01-26
 **Status**: En cours d'implémentation (Tests validés)
+
+---
+
+## Document connexe: Exploitation de la DB
+
+**IMPORTANT**: Ce document traite de la **maintenance** de la DB (nettoyage, import, enrichissement).
+
+Pour l'**exploitation** de la DB par les agents d'analyse (Tier 1), voir:
+→ **`DB-EXPLOITATION-SPEC.md`** - Spécification des usages de la DB pour:
+  - Détection de concurrents
+  - Benchmark valorisation
+  - Validation market timing
+  - Track record investisseurs
 
 ---
 

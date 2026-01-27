@@ -3,11 +3,12 @@ import type {
   AgentContext,
   AgentResult,
   EnrichedAgentContext,
-  ScreeningResult,
   AnalysisAgentResult,
 } from "../types";
 import { enrichDeal, invalidateDealContext, getContextEngineCacheStats, type FounderInput } from "@/services/context-engine";
 import { getCacheManager } from "@/services/cache";
+import { prisma } from "@/lib/prisma";
+import { getBAPreferences, type BAPreferences } from "@/services/benchmarks";
 import {
   generateDealFingerprint,
   lookupCachedAnalysis,
@@ -24,7 +25,7 @@ import {
 } from "../orchestration";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { costMonitor } from "@/services/cost-monitor";
-import { setAgentContext } from "@/services/openrouter/router";
+import { setAgentContext, setAnalysisContext } from "@/services/openrouter/router";
 
 // Import modular components
 import {
@@ -35,18 +36,18 @@ import {
   ANALYSIS_CONFIGS,
   AGENT_COUNTS,
   TIER1_AGENT_NAMES,
-  TIER2_AGENT_NAMES,
-  TIER2_DEPENDENCIES,
-  TIER2_EXECUTION_BATCHES,
-  TIER2_BATCHES_BEFORE_TIER3,
-  TIER2_BATCHES_AFTER_TIER3,
+  TIER3_AGENT_NAMES,
+  TIER3_DEPENDENCIES,
+  TIER3_EXECUTION_BATCHES,
+  TIER3_BATCHES_BEFORE_TIER2,
+  TIER3_BATCHES_AFTER_TIER2,
   resolveAgentDependencies,
 } from "./types";
 import {
   BASE_AGENTS,
   getTier1Agents,
-  getTier2Agents,
-  getTier3SectorExpert,
+  getTier3Agents,
+  getTier2SectorExpert,
 } from "./agent-registry";
 import {
   createAnalysis,
@@ -59,11 +60,14 @@ import {
   processAgentResult,
   updateDealStatus,
   getDealWithRelations,
+  findInterruptedAnalyses,
+  loadAnalysisForRecovery,
+  markAnalysisAsFailed,
 } from "./persistence";
 import {
   generateSummary,
   generateTier1Summary,
-  generateTier2Summary,
+  generateTier3Summary,
   generateFullAnalysisSummary,
 } from "./summary";
 import {
@@ -99,7 +103,8 @@ export class AgentOrchestrator {
       dealId,
       type,
       onProgress,
-      useReAct = false,
+      useReAct = false, // Deprecated: always use Standard agents
+      enableTrace = true, // Enable traces by default for transparency
       forceRefresh = false,
       mode = "full",
       failFastOnCritical = false,
@@ -119,7 +124,7 @@ export class AgentOrchestrator {
 
     // === CACHE CHECK ===
     // Only check cache for expensive analysis types
-    const cacheableTypes: AnalysisType[] = ["tier1_complete", "tier2_synthesis", "tier3_sector", "full_analysis"];
+    const cacheableTypes: AnalysisType[] = ["tier1_complete", "tier3_synthesis", "tier2_sector", "full_analysis"];
 
     if (!forceRefresh && cacheableTypes.includes(type)) {
       const cachedResult = await this.checkAnalysisCache(dealId, type, useReAct);
@@ -140,26 +145,28 @@ export class AgentOrchestrator {
 
     switch (type) {
       case "tier1_complete":
-        result = await this.runTier1Analysis(deal as DealWithDocs, dealId, onProgress, useReAct, {
+        result = await this.runTier1Analysis(deal as DealWithDocs, dealId, onProgress, false, {
           mode,
           failFastOnCritical,
           maxCostUsd,
           onEarlyWarning,
+          enableTrace,
         });
         break;
       case "full_analysis":
-        result = await this.runFullAnalysis(deal as DealWithDocs, dealId, onProgress, useReAct, {
+        result = await this.runFullAnalysis(deal as DealWithDocs, dealId, onProgress, false, {
           mode,
           failFastOnCritical,
           maxCostUsd,
           onEarlyWarning,
+          enableTrace,
         });
         break;
-      case "tier2_synthesis":
-        result = await this.runTier2Synthesis(deal as DealWithDocs, dealId, onProgress, onEarlyWarning);
+      case "tier3_synthesis":
+        result = await this.runTier3Synthesis(deal as DealWithDocs, dealId, onProgress, onEarlyWarning);
         break;
-      case "tier3_sector":
-        result = await this.runTier3SectorAnalysis(deal as DealWithDocs, dealId, onProgress, useReAct);
+      case "tier2_sector":
+        result = await this.runTier2SectorAnalysis(deal as DealWithDocs, dealId, onProgress, useReAct);
         break;
       default:
         result = await this.runBaseAnalysis(deal as DealWithDocs, dealId, type, onProgress, onEarlyWarning, startTime);
@@ -306,12 +313,21 @@ export class AgentOrchestrator {
     const config = ANALYSIS_CONFIGS[type];
     const collectedWarnings: EarlyWarning[] = [];
 
+    // Get document IDs for versioning
+    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+      .filter((d) => d.processingStatus === "COMPLETED")
+      .map((d) => d.id);
+
     // Create analysis record
     const analysis = await createAnalysis({
       dealId,
       type,
       totalAgents: config.agents.length,
+      documentIds,
     });
+
+    // Set analysis context for LLM logging
+    setAnalysisContext(analysis.id);
 
     // Build context
     const context: AgentContext = {
@@ -379,14 +395,6 @@ export class AgentOrchestrator {
       mode: type,
     });
 
-    // Update deal status if screening passed
-    if (type === "screening" && allSuccess) {
-      const screeningResult = results["deal-screener"] as ScreeningResult;
-      if (screeningResult?.data?.shouldProceed) {
-        await updateDealStatus(dealId, "IN_DD");
-      }
-    }
-
     const baseResult: AnalysisResult = {
       sessionId: analysis.id,
       dealId,
@@ -408,19 +416,28 @@ export class AgentOrchestrator {
     deal: DealWithDocs,
     dealId: string,
     onProgress: AnalysisOptions["onProgress"],
-    useReAct: boolean,
+    _useReAct: boolean, // Deprecated: always use Standard agents
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning } = advancedOptions;
+    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, enableTrace = true } = advancedOptions;
     const startTime = Date.now();
     const TIER1_AGENT_COUNT = 12;
     const collectedWarnings: EarlyWarning[] = [];
+
+    // Get document IDs for versioning
+    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+      .filter((d) => d.processingStatus === "COMPLETED")
+      .map((d) => d.id);
 
     const analysis = await createAnalysis({
       dealId,
       type: "tier1_complete",
       totalAgents: TIER1_AGENT_COUNT + 1,
+      documentIds,
     });
+
+    // Set analysis context for LLM logging
+    setAnalysisContext(analysis.id);
 
     const results: Record<string, AgentResult> = {};
     let totalCost = 0;
@@ -507,7 +524,8 @@ export class AgentOrchestrator {
       totalAgents: TIER1_AGENT_COUNT + 1,
     });
 
-    const tier1AgentMap = await getTier1Agents(useReAct);
+    // Always use Standard agents (better results, lower cost)
+    const tier1AgentMap = await getTier1Agents(false);
 
     const tier1Results = await Promise.all(
       TIER1_AGENT_NAMES.map(async (agentName) => {
@@ -576,14 +594,14 @@ export class AgentOrchestrator {
   }
 
   /**
-   * Run Tier 2 synthesis (requires Tier 1 results in previousResults)
+   * Run Tier 3 synthesis (requires Tier 1 results in previousResults)
    *
    * OPTIMIZED: Uses dependency graph for parallel execution
    * - Batch 1 (parallel): contradiction-detector, scenario-modeler, devils-advocate
    * - Batch 2 (sequential): synthesis-deal-scorer (needs batch 1)
    * - Batch 3 (sequential): memo-generator (needs all)
    */
-  private async runTier2Synthesis(
+  private async runTier3Synthesis(
     deal: DealWithDocs,
     dealId: string,
     onProgress: AnalysisOptions["onProgress"],
@@ -592,45 +610,58 @@ export class AgentOrchestrator {
     maxCostUsd?: number
   ): Promise<AnalysisResult> {
     const startTime = Date.now();
-    const TIER2_AGENT_COUNT = 5;
+    const TIER3_AGENT_COUNT = 5;
     const collectedWarnings: EarlyWarning[] = [];
+
+    // Get document IDs for versioning
+    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+      .filter((d) => d.processingStatus === "COMPLETED")
+      .map((d) => d.id);
 
     const analysis = await createAnalysis({
       dealId,
-      type: "tier2_synthesis",
-      totalAgents: TIER2_AGENT_COUNT,
+      type: "tier3_synthesis",
+      totalAgents: TIER3_AGENT_COUNT,
+      documentIds,
     });
+
+    // Set analysis context for LLM logging
+    setAnalysisContext(analysis.id);
 
     const results: Record<string, AgentResult> = {};
     let totalCost = 0;
+
+    // Load BA preferences for Tier 3 personalization
+    const baPreferences = await this.loadBAPreferences(deal.userId);
 
     const context: EnrichedAgentContext = {
       dealId,
       deal,
       documents: deal.documents,
       previousResults: tier1Results ?? {},
+      baPreferences, // Only passed to Tier 3 agents
     };
 
-    const tier2AgentMap = await getTier2Agents();
+    const tier3AgentMap = await getTier3Agents();
     let completedCount = 0;
 
     // Execute in batches based on dependency graph
-    for (const batch of TIER2_EXECUTION_BATCHES) {
+    for (const batch of TIER3_EXECUTION_BATCHES) {
       // COST CHECK: Before each batch, check if we've exceeded limit
       if (maxCostUsd && totalCost >= maxCostUsd) {
-        console.log(`[Tier2] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), stopping`);
+        console.log(`[Tier3] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), stopping`);
         break;
       }
 
       if (batch.length === 1) {
         // Single agent - run directly
         const agentName = batch[0];
-        const agent = tier2AgentMap[agentName];
+        const agent = tier3AgentMap[agentName];
 
         onProgress?.({
           currentAgent: agentName,
           completedAgents: completedCount,
-          totalAgents: TIER2_AGENT_COUNT,
+          totalAgents: TIER3_AGENT_COUNT,
           estimatedCostSoFar: totalCost,
         });
 
@@ -648,7 +679,7 @@ export class AgentOrchestrator {
           onProgress?.({
             currentAgent: agentName,
             completedAgents: completedCount,
-            totalAgents: TIER2_AGENT_COUNT,
+            totalAgents: TIER3_AGENT_COUNT,
             latestResult: result,
             estimatedCostSoFar: totalCost,
           });
@@ -665,15 +696,15 @@ export class AgentOrchestrator {
       } else {
         // Multiple agents - run in PARALLEL
         onProgress?.({
-          currentAgent: `tier2-parallel (${batch.join(", ")})`,
+          currentAgent: `tier3-parallel (${batch.join(", ")})`,
           completedAgents: completedCount,
-          totalAgents: TIER2_AGENT_COUNT,
+          totalAgents: TIER3_AGENT_COUNT,
           estimatedCostSoFar: totalCost,
         });
 
         const batchResults = await Promise.all(
           batch.map(async (agentName) => {
-            const agent = tier2AgentMap[agentName];
+            const agent = tier3AgentMap[agentName];
             try {
               const result = await agent.run(context);
               return { agentName, result };
@@ -706,15 +737,15 @@ export class AgentOrchestrator {
         await updateAnalysisProgress(analysis.id, completedCount, totalCost);
 
         onProgress?.({
-          currentAgent: `tier2-parallel (${batch.join(", ")})`,
+          currentAgent: `tier3-parallel (${batch.join(", ")})`,
           completedAgents: completedCount,
-          totalAgents: TIER2_AGENT_COUNT,
+          totalAgents: TIER3_AGENT_COUNT,
           estimatedCostSoFar: totalCost,
         });
       }
     }
 
-    const summary = generateTier2Summary(results);
+    const summary = generateTier3Summary(results);
     const totalTimeMs = Date.now() - startTime;
     const allSuccess = Object.values(results).every((r) => r.success);
 
@@ -725,13 +756,13 @@ export class AgentOrchestrator {
       totalTimeMs,
       summary,
       results,
-      mode: "tier2_synthesis",
+      mode: "tier3_synthesis",
     });
 
     const baseResult: AnalysisResult = {
       sessionId: analysis.id,
       dealId,
-      type: "tier2_synthesis",
+      type: "tier3_synthesis",
       success: allSuccess,
       results,
       totalCost,
@@ -743,9 +774,9 @@ export class AgentOrchestrator {
   }
 
   /**
-   * Run Tier 3 sector analysis
+   * Run Tier 2 sector analysis
    */
-  private async runTier3SectorAnalysis(
+  private async runTier2SectorAnalysis(
     deal: DealWithDocs,
     dealId: string,
     onProgress: AnalysisOptions["onProgress"],
@@ -754,13 +785,13 @@ export class AgentOrchestrator {
   ): Promise<AnalysisResult> {
     const startTime = Date.now();
 
-    const sectorExpert = await getTier3SectorExpert(deal.sector);
+    const sectorExpert = await getTier2SectorExpert(deal.sector);
 
     if (!sectorExpert) {
       return {
         sessionId: "",
         dealId,
-        type: "tier3_sector",
+        type: "tier2_sector",
         success: true,
         results: {},
         totalCost: 0,
@@ -769,12 +800,21 @@ export class AgentOrchestrator {
       };
     }
 
+    // Get document IDs for versioning
+    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+      .filter((d) => d.processingStatus === "COMPLETED")
+      .map((d) => d.id);
+
     const analysis = await createAnalysis({
       dealId,
-      type: "tier3_sector",
+      type: "tier2_sector",
       totalAgents: 1,
-      mode: "tier3_sector",
+      mode: "tier2_sector",
+      documentIds,
     });
+
+    // Set analysis context for LLM logging
+    setAnalysisContext(analysis.id);
 
     const results: Record<string, AgentResult> = {};
     let totalCost = 0;
@@ -854,7 +894,7 @@ export class AgentOrchestrator {
     return {
       sessionId: analysis.id,
       dealId,
-      type: "tier3_sector",
+      type: "tier2_sector",
       success: allSuccess,
       results,
       totalCost,
@@ -882,15 +922,24 @@ export class AgentOrchestrator {
     const startTime = Date.now();
     const collectedWarnings: EarlyWarning[] = [];
 
-    const sectorExpert = await getTier3SectorExpert(deal.sector);
+    const sectorExpert = await getTier2SectorExpert(deal.sector);
     const hasSectorExpert = sectorExpert !== null;
     const TOTAL_AGENTS = 12 + 5 + 1 + (hasSectorExpert ? 1 : 0);
+
+    // Get document IDs for versioning
+    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+      .filter((d) => d.processingStatus === "COMPLETED")
+      .map((d) => d.id);
 
     const analysis = await createAnalysis({
       dealId,
       type: "full_analysis",
       totalAgents: TOTAL_AGENTS,
+      documentIds,
     });
+
+    // Set analysis context for LLM logging
+    setAnalysisContext(analysis.id);
 
     // Initialize cost monitoring
     costMonitor.startAnalysis({
@@ -906,7 +955,7 @@ export class AgentOrchestrator {
       analysisId: analysis.id,
       dealId,
       mode: "full_analysis",
-      agents: ["document-extractor", ...TIER1_AGENT_NAMES, ...TIER2_AGENT_NAMES],
+      agents: ["document-extractor", ...TIER1_AGENT_NAMES, ...TIER3_AGENT_NAMES],
       enableCheckpointing: true,
     });
 
@@ -1172,22 +1221,26 @@ export class AgentOrchestrator {
       // Run contradiction-detector, scenario-modeler, devils-advocate in PARALLEL
       await stateMachine.startSynthesis();
 
-      const tier2AgentMap = await getTier2Agents();
+      const tier3AgentMap = await getTier3Agents();
 
-      // Cost check before Tier 2
+      // Load BA preferences for Tier 3 personalization (does NOT affect Tier 1/2)
+      const baPreferences = await this.loadBAPreferences(deal.userId);
+      enrichedContext.baPreferences = baPreferences;
+
+      // Cost check before Tier 3
       if (!(maxCostUsd && totalCost >= maxCostUsd)) {
-        const tier2BeforeAgents = TIER2_BATCHES_BEFORE_TIER3[0]; // Single batch with 3 agents
+        const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0]; // Single batch with 3 agents
 
         onProgress?.({
-          currentAgent: `tier2-parallel (${tier2BeforeAgents.join(", ")})`,
+          currentAgent: `tier3-parallel (${tier3BeforeAgents.join(", ")})`,
           completedAgents: completedCount,
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
 
         const batchResults = await Promise.all(
-          tier2BeforeAgents.map(async (agentName) => {
-            const agent = tier2AgentMap[agentName];
+          tier3BeforeAgents.map(async (agentName) => {
+            const agent = tier3AgentMap[agentName];
             try {
               const result = await agent.run(enrichedContext);
               return { agentName, result };
@@ -1225,19 +1278,19 @@ export class AgentOrchestrator {
         await updateAnalysisProgress(analysis.id, completedCount, totalCost);
 
         onProgress?.({
-          currentAgent: `tier2-parallel completed`,
+          currentAgent: `tier3-parallel completed`,
           completedAgents: completedCount,
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
       } else {
-        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 2`);
+        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
       }
 
-      // STEP 6: SECTOR EXPERT PHASE - Tier 3 (if available)
+      // STEP 6: SECTOR EXPERT PHASE - Tier 2 (if available)
       if (sectorExpert) {
         onProgress?.({
-          currentAgent: `tier3-${sectorExpert.name}`,
+          currentAgent: `tier2-${sectorExpert.name}`,
           completedAgents: completedCount,
           totalAgents: TOTAL_AGENTS,
         });
@@ -1281,9 +1334,9 @@ export class AgentOrchestrator {
         }
       }
 
-      // STEP 7: FINAL SYNTHESIS - Tier 2 AFTER Tier 3
+      // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
       // synthesis-deal-scorer and memo-generator run last with ALL insights
-      for (const batch of TIER2_BATCHES_AFTER_TIER3) {
+      for (const batch of TIER3_BATCHES_AFTER_TIER2) {
         // REAL-TIME COST CHECK: Before each batch
         if (maxCostUsd && totalCost >= maxCostUsd) {
           console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
@@ -1292,7 +1345,7 @@ export class AgentOrchestrator {
 
         // These are single-agent batches, run sequentially
         const agentName = batch[0];
-        const agent = tier2AgentMap[agentName];
+        const agent = tier3AgentMap[agentName];
 
         onProgress?.({
           currentAgent: agentName,
@@ -1409,6 +1462,28 @@ export class AgentOrchestrator {
   // ============================================================================
   // HELPER METHODS
   // ============================================================================
+
+  /**
+   * Load BA preferences from database for personalized analysis (Tier 3)
+   *
+   * Returns the user's investment preferences if available,
+   * otherwise returns default BA preferences.
+   */
+  private async loadBAPreferences(userId: string): Promise<BAPreferences> {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      // investmentPreferences is a Json field - may need npx prisma generate if types outdated
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const prefs = (user as unknown as { investmentPreferences?: unknown })?.investmentPreferences;
+      return getBAPreferences(prefs as Parameters<typeof getBAPreferences>[0]);
+    } catch (error) {
+      console.error("[Orchestrator] Failed to load BA preferences:", error);
+      return getBAPreferences(null);
+    }
+  }
 
   /**
    * Enrich deal context with Context Engine
@@ -1651,6 +1726,346 @@ export class AgentOrchestrator {
       description: config.description,
       agentCount: AGENT_COUNTS[type as AnalysisType] ?? config.agents.length,
     }));
+  }
+
+  // ============================================================================
+  // CRASH RECOVERY
+  // ============================================================================
+
+  /**
+   * Find all interrupted analyses that can be resumed
+   * Call this at app startup to detect analyses that crashed
+   */
+  async findInterruptedAnalyses(userId?: string): Promise<
+    Array<{
+      id: string;
+      dealId: string;
+      dealName: string;
+      type: string;
+      mode: string | null;
+      startedAt: Date | null;
+      completedAgents: number;
+      totalAgents: number;
+      totalCost: number;
+      lastCheckpointAt: Date | null;
+      canResume: boolean;
+    }>
+  > {
+    const interrupted = await findInterruptedAnalyses(userId);
+
+    // Check if each has a valid checkpoint
+    return interrupted.map((analysis) => ({
+      ...analysis,
+      canResume: analysis.lastCheckpointAt !== null,
+    }));
+  }
+
+  /**
+   * Resume an interrupted analysis from its last checkpoint
+   *
+   * This will:
+   * 1. Load the checkpoint from DB
+   * 2. Restore the state machine
+   * 3. Continue from where it left off
+   * 4. Skip already completed agents
+   */
+  async resumeAnalysis(
+    analysisId: string,
+    onProgress?: AnalysisOptions["onProgress"],
+    onEarlyWarning?: AnalysisOptions["onEarlyWarning"]
+  ): Promise<AnalysisResult> {
+    console.log(`[Orchestrator] Attempting to resume analysis ${analysisId}`);
+
+    // Load analysis data and checkpoint
+    const recoveryData = await loadAnalysisForRecovery(analysisId);
+
+    if (!recoveryData) {
+      throw new Error(`Cannot resume analysis ${analysisId}: not found or not in RUNNING state`);
+    }
+
+    const { analysis, deal, checkpoint } = recoveryData;
+
+    if (!deal) {
+      throw new Error(`Cannot resume analysis ${analysisId}: deal not found`);
+    }
+
+    if (!checkpoint) {
+      // No checkpoint - cannot resume, mark as failed
+      await markAnalysisAsFailed(analysisId, "No checkpoint available for recovery");
+      throw new Error(`Cannot resume analysis ${analysisId}: no checkpoint found`);
+    }
+
+    console.log(
+      `[Orchestrator] Resuming analysis ${analysisId}: ` +
+        `state=${checkpoint.state}, completed=${checkpoint.completedAgents.length}/${analysis.totalAgents}`
+    );
+
+    const startTime = new Date(checkpoint.startTime).getTime();
+    const collectedWarnings: EarlyWarning[] = [];
+
+    // Calculate which agents still need to run
+    const completedSet = new Set(checkpoint.completedAgents);
+    const failedSet = new Set(checkpoint.failedAgents.map((f) => f.agent));
+
+    // Restore results from checkpoint
+    const allResults = checkpoint.results as Record<string, AgentResult>;
+    let totalCost = checkpoint.totalCost;
+    let completedCount = checkpoint.completedAgents.length;
+
+    // Initialize state machine with recovery
+    const stateMachine = new AnalysisStateMachine({
+      analysisId: analysis.id,
+      dealId: analysis.dealId,
+      mode: analysis.mode ?? "full_analysis",
+      agents: [...TIER1_AGENT_NAMES, ...TIER3_AGENT_NAMES],
+      enableCheckpointing: true,
+    });
+
+    // Restore state from checkpoint
+    const restored = await stateMachine.restoreFromDb();
+    if (!restored) {
+      await markAnalysisAsFailed(analysisId, "Failed to restore state from checkpoint");
+      throw new Error(`Failed to restore state machine for analysis ${analysisId}`);
+    }
+
+    stateMachine.onStateChange(async (from, to, trigger) => {
+      console.log(`[StateMachine:Resume] ${from} → ${to} (${trigger})`);
+      await persistStateTransition(analysis.id, from, to, trigger);
+    });
+
+    messageBus.clear();
+
+    // Determine what phase we were in and what to do next
+    const currentState = stateMachine.getState();
+
+    try {
+      // Build context (we need to re-enrich since context engine data is not persisted)
+      const baseContext: AgentContext = {
+        dealId: deal.id,
+        deal,
+        documents: deal.documents,
+        previousResults: allResults,
+      };
+
+      // Re-run context engine enrichment
+      onProgress?.({
+        currentAgent: "context-engine (re-enriching)",
+        completedAgents: completedCount,
+        totalAgents: analysis.totalAgents,
+      });
+
+      const contextEngineData = await this.enrichContext(deal as DealWithDocs, {});
+
+      const enrichedContext: EnrichedAgentContext = {
+        ...baseContext,
+        contextEngine: contextEngineData,
+      };
+
+      // Resume based on current state
+      if (currentState === "ANALYZING" || currentState === "GATHERING") {
+        // Need to run remaining Tier 1 agents
+        const pendingTier1 = TIER1_AGENT_NAMES.filter(
+          (name) => !completedSet.has(name) && !failedSet.has(name)
+        );
+
+        if (pendingTier1.length > 0) {
+          onProgress?.({
+            currentAgent: `resuming tier1-agents (${pendingTier1.length} remaining)`,
+            completedAgents: completedCount,
+            totalAgents: analysis.totalAgents,
+          });
+
+          const tier1AgentMap = await getTier1Agents(false);
+
+          const tier1Results = await Promise.all(
+            pendingTier1.map(async (agentName) => {
+              const agent = tier1AgentMap[agentName];
+              try {
+                const result = await agent.run(enrichedContext);
+                return { agentName, result };
+              } catch (error) {
+                return {
+                  agentName,
+                  result: {
+                    agentName,
+                    success: false,
+                    executionTimeMs: 0,
+                    cost: 0,
+                    error: error instanceof Error ? error.message : "Unknown error",
+                  } as AgentResult,
+                };
+              }
+            })
+          );
+
+          for (const { agentName, result } of tier1Results) {
+            allResults[agentName] = result;
+            totalCost += result.cost;
+            completedCount++;
+            enrichedContext.previousResults![agentName] = result;
+            await processAgentResult(deal.id, agentName, result);
+            this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
+          }
+
+          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+        }
+      }
+
+      // Check if we need to run Tier 3
+      if (
+        currentState === "ANALYZING" ||
+        currentState === "SYNTHESIZING" ||
+        currentState === "DEBATING"
+      ) {
+        const pendingTier3 = TIER3_AGENT_NAMES.filter(
+          (name) => !completedSet.has(name) && !failedSet.has(name)
+        );
+
+        if (pendingTier3.length > 0) {
+          // Load BA preferences for Tier 3
+          const baPreferences = await this.loadBAPreferences(deal.userId);
+          enrichedContext.baPreferences = baPreferences;
+
+          const tier3AgentMap = await getTier3Agents();
+
+          // Run remaining Tier 3 agents in dependency order
+          for (const batch of TIER3_EXECUTION_BATCHES) {
+            const pendingInBatch = batch.filter((name) => pendingTier3.includes(name));
+
+            if (pendingInBatch.length === 0) continue;
+
+            onProgress?.({
+              currentAgent: `resuming tier3 (${pendingInBatch.join(", ")})`,
+              completedAgents: completedCount,
+              totalAgents: analysis.totalAgents,
+            });
+
+            if (pendingInBatch.length === 1) {
+              const agentName = pendingInBatch[0];
+              const agent = tier3AgentMap[agentName];
+
+              try {
+                const result = await agent.run(enrichedContext);
+                allResults[agentName] = result;
+                totalCost += result.cost;
+                completedCount++;
+                enrichedContext.previousResults![agentName] = result;
+                await processAgentResult(deal.id, agentName, result);
+              } catch (error) {
+                allResults[agentName] = {
+                  agentName,
+                  success: false,
+                  executionTimeMs: 0,
+                  cost: 0,
+                  error: error instanceof Error ? error.message : "Unknown error",
+                };
+                completedCount++;
+              }
+            } else {
+              const batchResults = await Promise.all(
+                pendingInBatch.map(async (agentName) => {
+                  const agent = tier3AgentMap[agentName];
+                  try {
+                    const result = await agent.run(enrichedContext);
+                    return { agentName, result };
+                  } catch (error) {
+                    return {
+                      agentName,
+                      result: {
+                        agentName,
+                        success: false,
+                        executionTimeMs: 0,
+                        cost: 0,
+                        error: error instanceof Error ? error.message : "Unknown error",
+                      } as AgentResult,
+                    };
+                  }
+                })
+              );
+
+              for (const { agentName, result } of batchResults) {
+                allResults[agentName] = result;
+                totalCost += result.cost;
+                completedCount++;
+                enrichedContext.previousResults![agentName] = result;
+                await processAgentResult(deal.id, agentName, result);
+              }
+            }
+
+            await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+          }
+        }
+      }
+
+      // Complete the analysis
+      await stateMachine.complete();
+
+      const summary = generateFullAnalysisSummary(allResults);
+      const totalTimeMs = Date.now() - startTime;
+      const allSuccess = Object.values(allResults).every((r) => r.success);
+
+      await completeAnalysis({
+        analysisId: analysis.id,
+        success: allSuccess,
+        totalCost,
+        totalTimeMs,
+        summary: `${summary}\n\n**Resumed from checkpoint** - Analysis recovered after interruption`,
+        results: allResults,
+        mode: analysis.mode ?? "full_analysis",
+      });
+
+      await updateDealStatus(deal.id, "IN_DD");
+
+      console.log(
+        `[Orchestrator] Successfully resumed and completed analysis ${analysisId}`
+      );
+
+      return this.addWarningsToResult(
+        {
+          sessionId: analysis.id,
+          dealId: deal.id,
+          type: analysis.type as AnalysisType,
+          success: allSuccess,
+          results: allResults,
+          totalCost,
+          totalTimeMs,
+          summary,
+          resumedFromCheckpoint: true,
+        },
+        collectedWarnings
+      );
+    } catch (error) {
+      // Handle failure during resume
+      const currentStateAfterError = stateMachine.getState();
+      if (currentStateAfterError !== "COMPLETED" && currentStateAfterError !== "FAILED") {
+        await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
+      }
+
+      const totalTimeMs = Date.now() - startTime;
+
+      await completeAnalysis({
+        analysisId: analysis.id,
+        success: false,
+        totalCost,
+        totalTimeMs,
+        summary: `Resume failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        results: allResults,
+        mode: analysis.mode ?? "full_analysis",
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Cancel an interrupted analysis (mark as failed without attempting recovery)
+   */
+  async cancelInterruptedAnalysis(analysisId: string, reason?: string): Promise<void> {
+    await markAnalysisAsFailed(
+      analysisId,
+      reason ?? "Cancelled by user"
+    );
+    console.log(`[Orchestrator] Cancelled interrupted analysis ${analysisId}`);
   }
 }
 

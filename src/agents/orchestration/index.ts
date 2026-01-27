@@ -9,8 +9,12 @@ export * from "./message-types";
 // Export message bus
 export { AgentMessageBus, messageBus } from "./message-bus";
 
-// Export state machine
-export { AnalysisStateMachine, type AnalysisState, type AnalysisCheckpoint } from "./state-machine";
+// Export state machine (with recovery capabilities)
+export {
+  AnalysisStateMachine,
+  type AnalysisState,
+  type AnalysisCheckpoint,
+} from "./state-machine";
 
 // Export memory management
 export {

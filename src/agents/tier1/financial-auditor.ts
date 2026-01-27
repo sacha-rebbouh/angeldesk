@@ -1,119 +1,170 @@
 import { BaseAgent } from "../base-agent";
-import type { EnrichedAgentContext, FinancialAuditResult, FinancialAuditData } from "../types";
+import type {
+  EnrichedAgentContext,
+  FinancialAuditResult,
+  FinancialAuditData,
+  AgentMeta,
+  AgentScore,
+  AgentRedFlag,
+  AgentQuestion,
+  AgentAlertSignal,
+  AgentNarrative,
+  FinancialAuditFindings,
+  DbCrossReference,
+} from "../types";
 import { benchmarkService } from "@/scoring";
+import { getBenchmarkFull } from "@/services/benchmarks";
 
 /**
- * Financial Auditor Agent
+ * Financial Auditor Agent - REFONTE v2.0
  *
- * Mission: Audit financier EXHAUSTIF pour le BA.
+ * Mission: Produire un audit financier EXHAUSTIF standard Big4 + Partner VC
+ * Persona: Analyste financier senior avec 20+ ans d'expérience en VC/PE
+ * Standard: Chaque affirmation sourcée, calculs montrés, cross-reference DB obligatoire
  *
- * RÈGLE ABSOLUE: L'absence de données EST un red flag.
- * Un deck SEED sans métriques claires = score pénalisé.
+ * Inputs:
+ * - Documents: Pitch deck, Financial model (Excel)
+ * - Context Engine: Deal Intelligence, Market Data, Benchmarks
+ * - Dependencies: document-extractor
  *
- * MINIMUM ATTENDU:
- * - 5+ métriques analysées (présentes OU manquantes)
- * - Analyse des projections si disponibles
- * - 5+ red flags
- * - 5+ questions financières
+ * Outputs:
+ * - Score: 0-100 avec breakdown par critère
+ * - Findings: metrics, projections, valuation, unitEconomics, burn
+ * - Red Flags: avec 5 composants obligatoires
+ * - Questions: priorité + contexte + whatToLookFor
  */
 
 // ============================================================================
-// BENCHMARKS
+// SCORING FRAMEWORK
 // ============================================================================
 
-const FALLBACK_BENCHMARKS: Record<string, Record<string, { p25: number; median: number; p75: number }>> = {
-  "ARR Growth YoY": {
-    PRE_SEED: { p25: 80, median: 150, p75: 250 },
-    SEED: { p25: 70, median: 120, p75: 200 },
-    SERIES_A: { p25: 50, median: 80, p75: 120 },
-  },
-  "Net Revenue Retention": {
-    SEED: { p25: 95, median: 110, p75: 130 },
-  },
-  "Burn Multiple": {
-    SEED: { p25: 1.2, median: 2, p75: 3 },
-  },
-  "Valuation Multiple": {
-    PRE_SEED: { p25: 20, median: 35, p75: 60 },
-    SEED: { p25: 15, median: 25, p75: 40 },
-  },
-  "LTV/CAC Ratio": { default: { p25: 2, median: 3, p75: 5 } },
-};
+const SCORING_CRITERIA = {
+  dataTransparency: { weight: 25, description: "Qualité et complétude des données financières" },
+  metricsHealth: { weight: 25, description: "Santé des métriques clés vs benchmarks" },
+  valuationRationality: { weight: 20, description: "Rationalité de la valorisation demandée" },
+  unitEconomicsViability: { weight: 15, description: "Viabilité des unit economics" },
+  burnEfficiency: { weight: 15, description: "Efficacité du burn et runway" },
+} as const;
+
+// ============================================================================
+// NOTE: Benchmarks are now centralized in @/services/benchmarks
+// See: src/services/benchmarks/config.ts for all default values
+// ============================================================================
+
+// ============================================================================
+// LLM RESPONSE INTERFACE
+// ============================================================================
 
 interface LLMFinancialAuditResponse {
-  metricsAnalysis: {
-    metric: string;
-    category: "revenue" | "growth" | "unit_economics" | "burn" | "retention";
-    status: "available" | "missing" | "suspicious";
-    reportedValue?: number | string;
-    benchmarkP25?: number;
-    benchmarkMedian?: number;
-    benchmarkP75?: number;
-    percentile?: number;
-    assessment: string;
-    investorConcern?: string;
-  }[];
-  projectionsAnalysis: {
-    hasProjections: boolean;
-    projectionsRealistic: "yes" | "questionable" | "unrealistic" | "no_data";
-    growthAssumptions: string[];
-    redFlags: string[];
-    keyQuestions: string[];
+  meta: {
+    dataCompleteness: "complete" | "partial" | "minimal";
+    confidenceLevel: number;
+    limitations: string[];
   };
-  unitEconomicsHealth: {
-    ltv: number | null;
-    cac: number | null;
-    ltvCacRatio: number | null;
-    cacPayback: number | null;
-    dataQuality: "complete" | "partial" | "missing";
-    assessment: string;
-    concerns: string[];
+  score: {
+    value: number;
+    breakdown: {
+      criterion: string;
+      weight: number;
+      score: number;
+      justification: string;
+    }[];
   };
-  valuationAnalysis: {
-    requestedValuation: number | null;
-    currentRevenue: number | null;
-    impliedMultiple: number | null;
-    benchmarkMultipleP25: number;
-    benchmarkMultipleMedian: number;
-    benchmarkMultipleP75: number;
-    verdict: "undervalued" | "fair" | "aggressive" | "very_aggressive" | "cannot_assess";
-    justification: string;
-    comparables: { name: string; multiple: number; stage: string; source: string }[];
+  findings: {
+    metrics: {
+      metric: string;
+      status: "available" | "missing" | "suspicious";
+      reportedValue?: number;
+      calculatedValue?: number;
+      calculation?: string;
+      benchmarkP25?: number;
+      benchmarkMedian?: number;
+      benchmarkP75?: number;
+      percentile?: number;
+      source: string;
+      assessment: string;
+    }[];
+    projections: {
+      realistic: boolean;
+      assumptions: string[];
+      concerns: string[];
+    };
+    valuation: {
+      requested?: number;
+      impliedMultiple?: number;
+      benchmarkMultiple: number;
+      percentile?: number;
+      verdict: "UNDERVALUED" | "FAIR" | "AGGRESSIVE" | "VERY_AGGRESSIVE" | "CANNOT_ASSESS";
+      comparables: { name: string; multiple: number; stage: string; source: string }[];
+    };
+    unitEconomics: {
+      ltv?: { value: number; calculation: string };
+      cac?: { value: number; calculation: string };
+      ltvCacRatio?: number;
+      paybackMonths?: number;
+      assessment: string;
+    };
+    burn: {
+      monthlyBurn?: number;
+      runway?: number;
+      burnMultiple?: number;
+      efficiency: "EFFICIENT" | "MODERATE" | "INEFFICIENT" | "UNKNOWN";
+      assessment: string;
+    };
   };
-  burnAnalysis: {
-    monthlyBurn: number | null;
-    runway: number | null;
-    burnMultiple: number | null;
-    efficiency: "efficient" | "moderate" | "inefficient" | "unknown";
-    analysisNote: string;
+  dbCrossReference: {
+    claims: {
+      claim: string;
+      location: string;
+      dbVerdict: "VERIFIED" | "CONTRADICTED" | "PARTIAL" | "NOT_VERIFIABLE";
+      evidence: string;
+      severity?: "CRITICAL" | "HIGH" | "MEDIUM";
+    }[];
+    uncheckedClaims: string[];
   };
-  financialRedFlags: {
-    category: "projections" | "metrics" | "valuation" | "unit_economics" | "burn" | "missing_data" | "inconsistency";
-    flag: string;
+  redFlags: {
+    id: string;
+    category: string;
+    severity: "CRITICAL" | "HIGH" | "MEDIUM";
+    title: string;
+    description: string;
+    location: string;
     evidence: string;
-    severity: "critical" | "high" | "medium";
-    investorConcern: string;
+    contextEngineData?: string;
+    impact: string;
+    question: string;
+    redFlagIfBadAnswer: string;
   }[];
-  financialQuestions: {
+  questions: {
+    priority: "CRITICAL" | "HIGH" | "MEDIUM";
+    category: string;
     question: string;
     context: string;
-    expectedAnswer: string;
-    redFlagIfNo: string;
+    whatToLookFor: string;
   }[];
-  overallAssessment: {
-    score: number;
-    dataCompleteness: "complete" | "partial" | "minimal";
+  alertSignal: {
+    hasBlocker: boolean;
+    blockerReason?: string;
+    recommendation: "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP";
+    justification: string;
+  };
+  narrative: {
+    oneLiner: string;
     summary: string;
-    keyRisks: string[];
-    keyStrengths: string[];
+    keyInsights: string[];
+    forNegotiation: string[];
   };
 }
+
+// ============================================================================
+// AGENT CLASS
+// ============================================================================
 
 export class FinancialAuditorAgent extends BaseAgent<FinancialAuditData, FinancialAuditResult> {
   constructor() {
     super({
       name: "financial-auditor",
-      description: "Audit financier exhaustif pour le BA",
+      description: "Audit financier exhaustif standard Big4 + Partner VC",
       modelComplexity: "complex",
       maxRetries: 2,
       timeoutMs: 120000,
@@ -122,52 +173,159 @@ export class FinancialAuditorAgent extends BaseAgent<FinancialAuditData, Financi
   }
 
   protected buildSystemPrompt(): string {
-    return `Tu es un analyste financier VC senior avec 20+ ans d'experience.
+    return `# ROLE ET EXPERTISE
 
-TON ROLE: Produire un audit financier EXHAUSTIF pour un Business Angel.
+Tu es un analyste financier senior avec 20+ ans d'expérience en Venture Capital et Private Equity.
+Tu as audité 500+ deals et vu les patterns de succès et d'échec.
+Tu combines la rigueur méthodologique d'un cabinet Big4 avec l'instinct d'un Partner VC expérimenté.
 
-RÈGLE CRITIQUE: TU DOIS EXTRAIRE ET CITER LES CHIFFRES DES DOCUMENTS.
-- Si un document contient "Revenue: 62,842€", tu DOIS le reporter
-- Si un budget dit "Total 12 mois: 198,980€", tu DOIS calculer le burn mensuel (~16.5K€)
-- Ne JAMAIS dire "missing" si le chiffre est dans un document
+# MISSION POUR CE DEAL
 
-MÉTHODOLOGIE D'AUDIT:
+Produire un audit financier EXHAUSTIF pour un Business Angel.
+Objectif: Permettre au BA de savoir si les finances du deal sont solides ou si des red flags existent.
+Le BA doit pouvoir prendre une décision et avoir des arguments de négociation.
 
-1. EXTRACTION DES DONNÉES (OBLIGATOIRE):
-   Pour CHAQUE métrique, cherche dans les documents:
-   - Revenue/ARR: cherche "Revenue", "Total Revenue", "ARR", "MRR", des montants mensuels
-   - Burn rate: cherche "Budget", "Cost", "Expenses", total des coûts mensuels
-   - Growth: compare les chiffres sur différentes périodes
-   - Si tu trouves un chiffre → status = "available" + reportedValue = le chiffre exact
-   - Si vraiment absent → status = "missing"
+# METHODOLOGIE D'ANALYSE
 
-2. CALCULS À FAIRE:
-   - Si tu vois des revenues mensuels (ex: 62K€/mois) → ARR = 62K × 12 = 744K€
-   - Si tu vois un budget annuel (ex: 199K€/an) → Burn mensuel = 199K / 12 = 16.5K€
-   - Si tu as ARR et Burn → Burn Multiple = Burn / New ARR
-   - MONTRE TES CALCULS dans l'assessment
+## Etape 1: Extraction des données financières
+- Parcourir TOUS les documents fournis (pitch deck, financial model Excel)
+- Pour CHAQUE métrique: extraire le chiffre exact avec sa source ("Slide X", "Onglet Y")
+- Si un chiffre est calculable mais non fourni, CALCULER et montrer le calcul
+- Si vraiment absent, marquer "missing" avec impact sur l'analyse
 
-3. ANALYSE DES PROJECTIONS:
-   - Regarde les onglets Excel: CF, CALCULS, GRAPHIQUES, etc.
-   - Identifie les hypothèses de croissance
-   - Compare période N vs période N+1
-   - Note les chiffres trop ronds (100K, 1M = suspect)
+## Etape 2: Benchmark vs marché
+- Comparer chaque métrique aux benchmarks fournis (P25, Median, P75)
+- Calculer le percentile exact du deal
+- Identifier les écarts significatifs (>20% de la médiane)
 
-4. RED FLAGS À CHERCHER:
-   - Incohérences entre documents (deck vs Excel)
-   - Projections hockey stick sans justification
-   - Chiffres ronds suspects
-   - Unit economics non soutenables
-   - Données critiques vraiment absentes
+## Etape 3: Analyse de valorisation
+- Calculer le multiple implicite (valorisation / ARR ou revenue)
+- Comparer aux comparables du secteur/stage
+- Verdict: UNDERVALUED, FAIR, AGGRESSIVE, VERY_AGGRESSIVE
 
-5. CITATIONS OBLIGATOIRES:
-   - Pour CHAQUE donnée, cite la source: "Onglet CF: Revenue Aug-22 = 62,842€"
-   - Pour CHAQUE calcul, montre le raisonnement: "ARR calculé = 62,842 × 12 = 754,112€"
+## Etape 4: Vérification des projections
+- Identifier les hypothèses de croissance
+- Calculer si mathématiquement possible (clients nécessaires, pipeline, équipe)
+- Détecter les hockey sticks non justifiés
 
-SCORING:
-- dataCompleteness "minimal" → score max 40
-- dataCompleteness "partial" → score max 60
-- dataCompleteness "complete" → score basé sur qualité des métriques`;
+## Etape 5: Cross-reference avec Context Engine
+- Croiser chaque claim financier du deck avec les données DB
+- Identifier les contradictions ou exagérations
+- Générer un dbCrossReference complet
+
+## Etape 6: Synthèse et recommandation
+- Score global avec breakdown par critère
+- Red flags avec les 5 composants obligatoires
+- Questions prioritaires pour le fondateur
+- Signal d'alerte (PROCEED, CAUTION, INVESTIGATE, STOP)
+
+# FRAMEWORK D'EVALUATION
+
+| Critère | Poids | Score 0-25 | Score 25-50 | Score 50-75 | Score 75-100 |
+|---------|-------|------------|-------------|-------------|--------------|
+| Data Transparency | 25% | Données manquantes critiques | Partial, gaps majeurs | Correct avec quelques manques | Complet et transparent |
+| Metrics Health | 25% | <P25 sur majorité | P25-P50 | P50-P75 | >P75 ou top quartile |
+| Valuation Rationality | 20% | >P90 (très agressif) | P75-P90 (agressif) | P50-P75 (fair) | <P50 (attractif) |
+| Unit Economics Viability | 15% | LTV/CAC <1 | LTV/CAC 1-2 | LTV/CAC 2-3 | LTV/CAC >3 |
+| Burn Efficiency | 15% | Burn multiple >3 | Burn multiple 2-3 | Burn multiple 1-2 | Burn multiple <1 |
+
+PENALITES:
+- dataCompleteness "minimal" → score max 50
+- dataCompleteness "partial" → score max 70
+- Red flag CRITICAL non résolvable → score max 40
+
+# RED FLAGS A DETECTER
+
+1. PROJECTIONS IRREALISTES - Sévérité: CRITICAL
+   - Croissance >200% YoY sans justification
+   - Hockey stick sans pipeline ou équipe
+   - Chiffres ronds suspects (100K, 1M exact)
+
+2. VALORISATION DECONNECTEE - Sévérité: CRITICAL
+   - Multiple >P90 du marché
+   - Écart >50% vs comparables récents
+   - Absence de justification
+
+3. UNIT ECONOMICS NON VIABLES - Sévérité: HIGH
+   - LTV/CAC <1
+   - CAC payback >24 mois
+   - Gross margin <50% pour SaaS
+
+4. BURN INEFFICIENT - Sévérité: HIGH
+   - Burn multiple >3
+   - Runway <6 mois sans plan
+   - Burn croissant sans revenue growth
+
+5. DONNEES MANQUANTES CRITIQUES - Sévérité: MEDIUM à HIGH
+   - Pas de revenue/ARR pour un Seed
+   - Pas de churn pour un SaaS
+   - Pas de CAC pour un deal growth
+
+6. INCONSISTENCES - Sévérité: HIGH
+   - Écarts entre deck et financial model
+   - Chiffres qui ne matchent pas
+   - Croissance non réconciliable
+
+# FORMAT DE SORTIE
+
+Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
+
+# REGLES ABSOLUES
+
+1. JAMAIS inventer de données - "Non disponible" si absent
+2. TOUJOURS citer la source (Slide X, Onglet Y, Context Engine)
+3. TOUJOURS cross-référencer avec le Context Engine quand disponible
+4. QUANTIFIER chaque fois que possible (%, €, ratio)
+5. Chaque red flag = id + severity + location + evidence + impact + question + redFlagIfBadAnswer
+6. Le BA doit pouvoir agir immédiatement sur chaque output
+7. MONTRER les calculs, pas juste les résultats
+
+# EXEMPLES
+
+## Exemple de BON output (métrique):
+{
+  "metric": "ARR",
+  "status": "available",
+  "reportedValue": 624000,
+  "calculatedValue": 624000,
+  "calculation": "MRR 52K€ (Slide 8) x 12 = 624K€",
+  "benchmarkMedian": 500000,
+  "percentile": 65,
+  "source": "Slide 8 + calcul",
+  "assessment": "ARR de 624K€ au-dessus de la médiane Seed (500K€). P65, correct pour le stage."
+}
+
+## Exemple de MAUVAIS output (à éviter):
+{
+  "metric": "ARR",
+  "status": "available",
+  "reportedValue": 600000,
+  "assessment": "ARR correct"
+}
+→ Pas de source, pas de calcul, pas de benchmark, pas de percentile, assessment vague.
+
+## Exemple de BON red flag:
+{
+  "id": "RF-001",
+  "category": "projections",
+  "severity": "CRITICAL",
+  "title": "Projection ARR mathématiquement impossible",
+  "description": "Le deck projette une croissance de 400% YoY sans équipe sales ni pipeline justifiant ce volume",
+  "location": "Slide 12, Financial Model onglet Projections",
+  "evidence": "ARR 2024: 624K€ → ARR 2025: 2.5M€ = +300% YoY. Équipe actuelle: 1 sales.",
+  "contextEngineData": "Benchmark Seed SaaS B2B: croissance médiane 120% YoY (source: OpenView 2024)",
+  "impact": "Si l'investisseur base son ROI sur ces projections, il sera déçu de 60%+",
+  "question": "Comment comptez-vous atteindre 2.5M€ d'ARR avec une équipe de 1 sales?",
+  "redFlagIfBadAnswer": "Fondateur déconnecté de la réalité opérationnelle - deal breaker potentiel"
+}
+
+## Exemple de MAUVAIS red flag (à éviter):
+{
+  "flag": "Projections optimistes",
+  "severity": "medium",
+  "evidence": "Les projections semblent élevées"
+}
+→ Pas d'id, pas de location, pas de chiffres, pas de question, pas d'impact.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<FinancialAuditData> {
@@ -177,7 +335,7 @@ SCORING:
 
     let extractedSection = "";
     if (extractedInfo) {
-      extractedSection = `\n## Données Extraites du Pitch Deck\n${JSON.stringify(extractedInfo, null, 2)}`;
+      extractedSection = `\n## Données Extraites du Pitch Deck (Document Extractor)\n${JSON.stringify(extractedInfo, null, 2)}`;
     }
 
     // Get raw financial model content (Excel with multiple sheets)
@@ -191,307 +349,390 @@ SCORING:
     const sector = deal.sector || "SaaS B2B";
     const stage = deal.stage || "SEED";
 
-    // Build metrics object for context
-    const metrics = {
-      arr: extractedInfo?.arr ?? null,
-      mrr: extractedInfo?.mrr ?? null,
-      revenue: extractedInfo?.revenue ?? null,
-      growthRate: extractedInfo?.growthRateYoY ?? null,
-      burnRate: extractedInfo?.burnRate ?? null,
-      runway: extractedInfo?.runway ?? null,
-      nrr: extractedInfo?.nrr ?? null,
-      churnRate: extractedInfo?.churnRate ?? null,
-      cac: extractedInfo?.cac ?? null,
-      ltv: extractedInfo?.ltv ?? null,
-      customers: extractedInfo?.customers ?? null,
-      valuationPre: extractedInfo?.valuationPre ?? null,
-      amountRaising: extractedInfo?.amountRaising ?? null,
-      // Financial data context
-      financialDataType: extractedInfo?.financialDataType ?? "unknown",
-      financialDataAsOf: extractedInfo?.financialDataAsOf ?? null,
-      projectionReliability: extractedInfo?.projectionReliability ?? null,
-      financialRedFlags: extractedInfo?.financialRedFlags ?? [],
-    };
-
+    // Fetch benchmarks
     const benchmarks = await this.fetchBenchmarks(sector, stage);
 
-    // Count available metrics
-    const availableMetrics = Object.entries(metrics)
-      .filter(([k, v]) => v !== null && !k.startsWith("financial"))
-      .length;
+    // Build user prompt
+    const prompt = `# ANALYSE FINANCIAL AUDITOR - ${deal.companyName || deal.name}
 
-    const prompt = `AUDIT FINANCIER EXHAUSTIF:
-
+## DOCUMENTS FOURNIS
 ${dealContext}
 ${extractedSection}
 ${financialModelSection}
-${contextEngineData}
 
-## Métriques Pré-extraites (${availableMetrics} sur 13)
-${JSON.stringify(metrics, null, 2)}
+## CONTEXTE EXTERNE (Context Engine)
+${contextEngineData || "Aucune donnée Context Engine disponible pour ce deal."}
 
-## Benchmarks ${sector} - ${stage}
+## BENCHMARKS ${sector} - ${stage}
 ${JSON.stringify(benchmarks, null, 2)}
 
-═══════════════════════════════════════════════════════════════
-INSTRUCTIONS CRITIQUES - LIS ATTENTIVEMENT
-═══════════════════════════════════════════════════════════════
+## INSTRUCTIONS SPECIFIQUES
 
-⚠️ TU DOIS EXTRAIRE LES CHIFFRES DES DOCUMENTS CI-DESSUS.
-⚠️ NE DIS PAS "missing" SI UN CHIFFRE EST DANS UN DOCUMENT.
-⚠️ CITE tes sources: "Onglet CF: Total Revenue Aug-22 = 62,842€"
+1. EXTRAIS tous les chiffres financiers des documents avec leurs sources exactes
+2. CALCULE les métriques manquantes si possible (ex: ARR = MRR x 12)
+3. COMPARE chaque métrique aux benchmarks fournis avec percentile
+4. VERIFIE les projections: sont-elles mathématiquement réalisables?
+5. CROSS-REFERENCE chaque claim financier du deck avec le Context Engine
+6. GENERE des red flags COMPLETS (5 composants obligatoires)
+7. FORMULE des questions ACTIONNABLES pour le fondateur
 
-ÉTAPE 1 - EXTRACTION (OBLIGATOIRE):
-Relis les documents et TROUVE:
-- Revenue/MRR: cherche "Total Revenue", montants en €
-- Burn/Costs: cherche "Budget", "Cost", "Expenses"
-- Projections: cherche les chiffres par période (mois, année)
+## OUTPUT ATTENDU
 
-ÉTAPE 2 - CALCULS:
-- ARR = MRR × 12 (ou Revenue mensuel × 12)
-- Burn mensuel = Budget annuel / 12
-- Growth = (Revenue N+1 - Revenue N) / Revenue N
+Produis une analyse financière complète au format JSON.
+Standard: Big4 + instinct Partner VC.
+Chaque affirmation doit être sourcée ou marquée comme non vérifiable.
+MONTRE tes calculs.
 
-ÉTAPE 3 - ANALYSE:
-- Compare aux benchmarks fournis
-- Identifie les incohérences
-- Note les chiffres suspects (trop ronds, croissance irréaliste)
-
-MINIMUM REQUIS:
-- 5 métriques analysées avec chiffres RÉELS extraits des documents
-- 5 red flags avec preuves CHIFFRÉES
-- 5 questions financières pertinentes
-
-FORMAT JSON ATTENDU:
 \`\`\`json
 {
-  "metricsAnalysis": [
-    {
-      "metric": "Revenue Mensuel",
-      "category": "revenue",
-      "status": "available",
-      "reportedValue": 62842,
-      "benchmarkP25": null,
-      "benchmarkMedian": null,
-      "benchmarkP75": null,
-      "percentile": null,
-      "assessment": "Onglet CF montre Total Revenue Aug-22 = 62,842€. ARR implicite = 754K€. Croissance visible: 62,842€ → 65,856€ sur 5 mois (+4.8%).",
-      "investorConcern": null
-    },
-    {
-      "metric": "Burn Rate Mensuel",
-      "category": "burn",
-      "status": "available",
-      "reportedValue": 16582,
-      "assessment": "Budget total 12 mois = 198,980€ (onglet BUDGET). Burn mensuel = 16,582€. Principaux coûts: Technical Team 49%, Legal Fees 14%.",
-      "investorConcern": null
-    }
-  ],
-  "projectionsAnalysis": {
-    "hasProjections": boolean,
-    "projectionsRealistic": "yes|questionable|unrealistic|no_data",
-    "growthAssumptions": ["Hypothèses de croissance identifiées"],
-    "redFlags": ["Problèmes dans les projections"],
-    "keyQuestions": ["Questions sur les projections"]
-  },
-  "unitEconomicsHealth": {
-    "ltv": number | null,
-    "cac": number | null,
-    "ltvCacRatio": number | null,
-    "cacPayback": number | null,
-    "dataQuality": "complete|partial|missing",
-    "assessment": "Évaluation détaillée",
-    "concerns": ["Problèmes identifiés"]
-  },
-  "valuationAnalysis": {
-    "requestedValuation": number | null,
-    "currentRevenue": number | null,
-    "impliedMultiple": number | null (valo/revenue),
-    "benchmarkMultipleP25": 15,
-    "benchmarkMultipleMedian": 25,
-    "benchmarkMultipleP75": 40,
-    "verdict": "undervalued|fair|aggressive|very_aggressive|cannot_assess",
-    "justification": "Pourquoi ce verdict (2-3 phrases)",
-    "comparables": [{"name": "Startup", "multiple": 20, "stage": "SEED", "source": "Crunchbase"}]
-  },
-  "burnAnalysis": {
-    "monthlyBurn": number | null,
-    "runway": number | null,
-    "burnMultiple": number | null,
-    "efficiency": "efficient|moderate|inefficient|unknown",
-    "analysisNote": "Analyse du burn (ou pourquoi données manquantes)"
-  },
-  "financialRedFlags": [
-    {
-      "category": "projections|metrics|valuation|unit_economics|burn|missing_data|inconsistency",
-      "flag": "Nom du red flag",
-      "evidence": "Preuve concrète avec chiffres",
-      "severity": "critical|high|medium",
-      "investorConcern": "Impact pour le BA"
-    }
-  ],
-  "financialQuestions": [
-    {
-      "question": "Question précise à poser",
-      "context": "Pourquoi cette question est critique",
-      "expectedAnswer": "Ce qu'un bon fondateur devrait répondre",
-      "redFlagIfNo": "Signal d'alarme si mauvaise réponse"
-    }
-  ],
-  "overallAssessment": {
-    "score": number (0-100, pénalisé si données manquantes),
+  "meta": {
     "dataCompleteness": "complete|partial|minimal",
-    "summary": "Résumé en 4-5 phrases pour le BA",
-    "keyRisks": ["3-5 risques financiers majeurs"],
-    "keyStrengths": ["Points positifs si applicable"]
+    "confidenceLevel": 0-100,
+    "limitations": ["Ce qui n'a pas pu être analysé"]
+  },
+  "score": {
+    "value": 0-100,
+    "breakdown": [
+      {
+        "criterion": "Data Transparency",
+        "weight": 25,
+        "score": 0-100,
+        "justification": "Pourquoi ce score"
+      },
+      {
+        "criterion": "Metrics Health",
+        "weight": 25,
+        "score": 0-100,
+        "justification": "Pourquoi ce score"
+      },
+      {
+        "criterion": "Valuation Rationality",
+        "weight": 20,
+        "score": 0-100,
+        "justification": "Pourquoi ce score"
+      },
+      {
+        "criterion": "Unit Economics Viability",
+        "weight": 15,
+        "score": 0-100,
+        "justification": "Pourquoi ce score"
+      },
+      {
+        "criterion": "Burn Efficiency",
+        "weight": 15,
+        "score": 0-100,
+        "justification": "Pourquoi ce score"
+      }
+    ]
+  },
+  "findings": {
+    "metrics": [
+      {
+        "metric": "Nom de la métrique",
+        "status": "available|missing|suspicious",
+        "reportedValue": number,
+        "calculatedValue": number,
+        "calculation": "Montrer le calcul",
+        "benchmarkP25": number,
+        "benchmarkMedian": number,
+        "benchmarkP75": number,
+        "percentile": number,
+        "source": "Slide X, Onglet Y",
+        "assessment": "Analyse détaillée"
+      }
+    ],
+    "projections": {
+      "realistic": true|false,
+      "assumptions": ["Hypothèses identifiées"],
+      "concerns": ["Problèmes détectés"]
+    },
+    "valuation": {
+      "requested": number,
+      "impliedMultiple": number,
+      "benchmarkMultiple": number,
+      "percentile": number,
+      "verdict": "UNDERVALUED|FAIR|AGGRESSIVE|VERY_AGGRESSIVE|CANNOT_ASSESS",
+      "comparables": [{"name": "", "multiple": 0, "stage": "", "source": ""}]
+    },
+    "unitEconomics": {
+      "ltv": {"value": number, "calculation": ""},
+      "cac": {"value": number, "calculation": ""},
+      "ltvCacRatio": number,
+      "paybackMonths": number,
+      "assessment": ""
+    },
+    "burn": {
+      "monthlyBurn": number,
+      "runway": number,
+      "burnMultiple": number,
+      "efficiency": "EFFICIENT|MODERATE|INEFFICIENT|UNKNOWN",
+      "assessment": ""
+    }
+  },
+  "dbCrossReference": {
+    "claims": [
+      {
+        "claim": "Texte exact du deck",
+        "location": "Slide X",
+        "dbVerdict": "VERIFIED|CONTRADICTED|PARTIAL|NOT_VERIFIABLE",
+        "evidence": "Donnée qui confirme/infirme",
+        "severity": "CRITICAL|HIGH|MEDIUM"
+      }
+    ],
+    "uncheckedClaims": ["Claims non vérifiables"]
+  },
+  "redFlags": [
+    {
+      "id": "RF-001",
+      "category": "projections|metrics|valuation|unit_economics|burn|missing_data|inconsistency",
+      "severity": "CRITICAL|HIGH|MEDIUM",
+      "title": "Titre court",
+      "description": "Description complète",
+      "location": "Slide X, Onglet Y",
+      "evidence": "Citation exacte ou donnée chiffrée",
+      "contextEngineData": "Cross-reference si disponible",
+      "impact": "Impact pour le BA",
+      "question": "Question à poser au fondateur",
+      "redFlagIfBadAnswer": "Ce que ça révèle si mauvaise réponse"
+    }
+  ],
+  "questions": [
+    {
+      "priority": "CRITICAL|HIGH|MEDIUM",
+      "category": "financials|projections|valuation|unit_economics|burn",
+      "question": "Question précise",
+      "context": "Pourquoi on pose cette question",
+      "whatToLookFor": "Ce qui révèlerait un problème"
+    }
+  ],
+  "alertSignal": {
+    "hasBlocker": true|false,
+    "blockerReason": "Si hasBlocker, pourquoi",
+    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
+    "justification": "Pourquoi cette recommandation"
+  },
+  "narrative": {
+    "oneLiner": "Résumé en 1 phrase pour le BA",
+    "summary": "3-4 phrases de synthèse",
+    "keyInsights": ["3-5 insights majeurs"],
+    "forNegotiation": ["Arguments de négociation si on proceed"]
   }
 }
-\`\`\`
-
-RAPPEL: Analyse EXHAUSTIVE requise. Moins de 5 métriques, 5 red flags, ou 5 questions = INCOMPLET.`;
+\`\`\``;
 
     const { data } = await this.llmCompleteJSON<LLMFinancialAuditResponse>(prompt);
 
-    // Validate response
-    const validCategories = ["revenue", "growth", "unit_economics", "burn", "retention"];
-    const validStatuses = ["available", "missing", "suspicious"];
-    const validRedFlagCategories = ["projections", "metrics", "valuation", "unit_economics", "burn", "missing_data", "inconsistency"];
-    const validVerdicts = ["undervalued", "fair", "aggressive", "very_aggressive", "cannot_assess"];
-    const validEfficiency = ["efficient", "moderate", "inefficient", "unknown"];
-    const validCompleteness = ["complete", "partial", "minimal"];
-    const validProjectionRealism = ["yes", "questionable", "unrealistic", "no_data"];
+    // Validate and normalize response
+    return this.normalizeResponse(data, sector, stage);
+  }
 
-    const metricsAnalysis = Array.isArray(data.metricsAnalysis)
-      ? data.metricsAnalysis.map(m => ({
-          metric: m.metric ?? "Unknown",
-          category: validCategories.includes(m.category) ? m.category : "revenue",
-          status: validStatuses.includes(m.status) ? m.status : "missing",
-          reportedValue: m.reportedValue,
-          benchmarkP25: m.benchmarkP25,
-          benchmarkMedian: m.benchmarkMedian,
-          benchmarkP75: m.benchmarkP75,
-          percentile: m.percentile,
-          assessment: m.assessment ?? "",
-          investorConcern: m.investorConcern,
-        }))
-      : [];
+  private normalizeResponse(
+    data: LLMFinancialAuditResponse,
+    sector: string,
+    stage: string
+  ): FinancialAuditData {
+    // Normalize meta
+    const validCompleteness = ["complete", "partial", "minimal"] as const;
+    const dataCompleteness = validCompleteness.includes(data.meta?.dataCompleteness as typeof validCompleteness[number])
+      ? data.meta.dataCompleteness
+      : "minimal";
 
-    const projectionsAnalysis = {
-      hasProjections: data.projectionsAnalysis?.hasProjections ?? false,
-      projectionsRealistic: validProjectionRealism.includes(data.projectionsAnalysis?.projectionsRealistic ?? "")
-        ? data.projectionsAnalysis!.projectionsRealistic
-        : "no_data",
-      growthAssumptions: Array.isArray(data.projectionsAnalysis?.growthAssumptions)
-        ? data.projectionsAnalysis.growthAssumptions
-        : [],
-      redFlags: Array.isArray(data.projectionsAnalysis?.redFlags)
-        ? data.projectionsAnalysis.redFlags
-        : [],
-      keyQuestions: Array.isArray(data.projectionsAnalysis?.keyQuestions)
-        ? data.projectionsAnalysis.keyQuestions
-        : [],
+    const meta: AgentMeta = {
+      agentName: "financial-auditor",
+      analysisDate: new Date().toISOString(),
+      dataCompleteness,
+      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
-    const unitEconomicsHealth = {
-      ltv: data.unitEconomicsHealth?.ltv ?? undefined,
-      cac: data.unitEconomicsHealth?.cac ?? undefined,
-      ltvCacRatio: data.unitEconomicsHealth?.ltvCacRatio ?? undefined,
-      cacPayback: data.unitEconomicsHealth?.cacPayback ?? undefined,
-      dataQuality: validCompleteness.includes(data.unitEconomicsHealth?.dataQuality ?? "")
-        ? data.unitEconomicsHealth!.dataQuality
-        : "missing",
-      assessment: data.unitEconomicsHealth?.assessment ?? "Données insuffisantes",
-      concerns: Array.isArray(data.unitEconomicsHealth?.concerns)
-        ? data.unitEconomicsHealth.concerns
-        : [],
+    // Calculate grade from score
+    const scoreValue = Math.min(100, Math.max(0, data.score?.value ?? 50));
+    const getGrade = (score: number): "A" | "B" | "C" | "D" | "F" => {
+      if (score >= 80) return "A";
+      if (score >= 65) return "B";
+      if (score >= 50) return "C";
+      if (score >= 35) return "D";
+      return "F";
     };
 
-    const valuationAnalysis = {
-      requestedValuation: data.valuationAnalysis?.requestedValuation ?? undefined,
-      currentRevenue: data.valuationAnalysis?.currentRevenue ?? undefined,
-      impliedMultiple: data.valuationAnalysis?.impliedMultiple ?? undefined,
-      benchmarkMultipleP25: data.valuationAnalysis?.benchmarkMultipleP25 ?? 15,
-      benchmarkMultipleMedian: data.valuationAnalysis?.benchmarkMultipleMedian ?? 25,
-      benchmarkMultipleP75: data.valuationAnalysis?.benchmarkMultipleP75 ?? 40,
-      verdict: validVerdicts.includes(data.valuationAnalysis?.verdict ?? "")
-        ? data.valuationAnalysis!.verdict
-        : "cannot_assess",
-      justification: data.valuationAnalysis?.justification ?? "",
-      comparables: Array.isArray(data.valuationAnalysis?.comparables)
-        ? data.valuationAnalysis.comparables.map(c => ({
-            name: c.name ?? "Unknown",
-            multiple: c.multiple ?? 0,
-            stage: c.stage ?? "SEED",
-            source: c.source,
+    // Apply penalties based on data completeness
+    let cappedScore = scoreValue;
+    if (dataCompleteness === "minimal") {
+      cappedScore = Math.min(cappedScore, 50);
+    } else if (dataCompleteness === "partial") {
+      cappedScore = Math.min(cappedScore, 70);
+    }
+
+    // Check for critical blockers
+    const hasCriticalBlocker = data.redFlags?.some(rf => rf.severity === "CRITICAL") ?? false;
+    if (hasCriticalBlocker) {
+      cappedScore = Math.min(cappedScore, 40);
+    }
+
+    const score: AgentScore = {
+      value: cappedScore,
+      grade: getGrade(cappedScore),
+      breakdown: Array.isArray(data.score?.breakdown)
+        ? data.score.breakdown.map(b => ({
+            criterion: b.criterion ?? "Unknown",
+            weight: b.weight ?? 20,
+            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            justification: b.justification ?? "",
           }))
         : [],
     };
 
-    const burnAnalysis = {
-      monthlyBurn: data.burnAnalysis?.monthlyBurn ?? undefined,
-      runway: data.burnAnalysis?.runway ?? undefined,
-      burnMultiple: data.burnAnalysis?.burnMultiple ?? undefined,
-      efficiency: validEfficiency.includes(data.burnAnalysis?.efficiency ?? "")
-        ? data.burnAnalysis!.efficiency
-        : "unknown",
-      analysisNote: data.burnAnalysis?.analysisNote ?? "",
+    // Normalize findings
+    const validStatuses = ["available", "missing", "suspicious"] as const;
+    const validEfficiency = ["EFFICIENT", "MODERATE", "INEFFICIENT", "UNKNOWN"] as const;
+    const validVerdicts = ["UNDERVALUED", "FAIR", "AGGRESSIVE", "VERY_AGGRESSIVE", "CANNOT_ASSESS"] as const;
+
+    const findings: FinancialAuditFindings = {
+      metrics: Array.isArray(data.findings?.metrics)
+        ? data.findings.metrics.map(m => ({
+            metric: m.metric ?? "Unknown",
+            status: validStatuses.includes(m.status as typeof validStatuses[number]) ? m.status : "missing",
+            reportedValue: m.reportedValue,
+            calculatedValue: m.calculatedValue,
+            calculation: m.calculation,
+            benchmarkP25: m.benchmarkP25,
+            benchmarkMedian: m.benchmarkMedian,
+            benchmarkP75: m.benchmarkP75,
+            percentile: m.percentile,
+            source: m.source ?? "Non spécifié",
+            assessment: m.assessment ?? "",
+          }))
+        : [],
+      projections: {
+        realistic: data.findings?.projections?.realistic ?? false,
+        assumptions: Array.isArray(data.findings?.projections?.assumptions)
+          ? data.findings.projections.assumptions
+          : [],
+        concerns: Array.isArray(data.findings?.projections?.concerns)
+          ? data.findings.projections.concerns
+          : [],
+      },
+      valuation: {
+        requested: data.findings?.valuation?.requested,
+        impliedMultiple: data.findings?.valuation?.impliedMultiple,
+        benchmarkMultiple: data.findings?.valuation?.benchmarkMultiple ?? 25,
+        percentile: data.findings?.valuation?.percentile,
+        verdict: validVerdicts.includes(data.findings?.valuation?.verdict as typeof validVerdicts[number])
+          ? data.findings.valuation.verdict
+          : "CANNOT_ASSESS",
+        comparables: Array.isArray(data.findings?.valuation?.comparables)
+          ? data.findings.valuation.comparables.map(c => ({
+              name: c.name ?? "Unknown",
+              multiple: c.multiple ?? 0,
+              stage: c.stage ?? stage,
+              source: c.source ?? "Non spécifié",
+            }))
+          : [],
+      },
+      unitEconomics: {
+        ltv: data.findings?.unitEconomics?.ltv,
+        cac: data.findings?.unitEconomics?.cac,
+        ltvCacRatio: data.findings?.unitEconomics?.ltvCacRatio,
+        paybackMonths: data.findings?.unitEconomics?.paybackMonths,
+        assessment: data.findings?.unitEconomics?.assessment ?? "Données insuffisantes",
+      },
+      burn: {
+        monthlyBurn: data.findings?.burn?.monthlyBurn,
+        runway: data.findings?.burn?.runway,
+        burnMultiple: data.findings?.burn?.burnMultiple,
+        efficiency: validEfficiency.includes(data.findings?.burn?.efficiency as typeof validEfficiency[number])
+          ? data.findings.burn.efficiency
+          : "UNKNOWN",
+        assessment: data.findings?.burn?.assessment ?? "",
+      },
     };
 
-    const financialRedFlags = Array.isArray(data.financialRedFlags)
-      ? data.financialRedFlags.map(rf => ({
-          category: validRedFlagCategories.includes(rf.category) ? rf.category : "metrics",
-          flag: rf.flag ?? "",
-          evidence: rf.evidence ?? "",
-          severity: (["critical", "high", "medium"] as const).includes(rf.severity as "critical" | "high" | "medium")
+    // Normalize dbCrossReference
+    const validVerdicts2 = ["VERIFIED", "CONTRADICTED", "PARTIAL", "NOT_VERIFIABLE"] as const;
+    const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
+
+    const dbCrossReference: DbCrossReference = {
+      claims: Array.isArray(data.dbCrossReference?.claims)
+        ? data.dbCrossReference.claims.map(c => ({
+            claim: c.claim ?? "",
+            location: c.location ?? "",
+            dbVerdict: validVerdicts2.includes(c.dbVerdict as typeof validVerdicts2[number])
+              ? c.dbVerdict
+              : "NOT_VERIFIABLE",
+            evidence: c.evidence ?? "",
+            severity: c.severity && validSeverities.includes(c.severity) ? c.severity : undefined,
+          }))
+        : [],
+      uncheckedClaims: Array.isArray(data.dbCrossReference?.uncheckedClaims)
+        ? data.dbCrossReference.uncheckedClaims
+        : [],
+    };
+
+    // Normalize red flags
+    const redFlags: AgentRedFlag[] = Array.isArray(data.redFlags)
+      ? data.redFlags.map((rf, idx) => ({
+          id: rf.id ?? `RF-${String(idx + 1).padStart(3, "0")}`,
+          category: rf.category ?? "metrics",
+          severity: validSeverities.includes(rf.severity as typeof validSeverities[number])
             ? rf.severity
-            : "medium",
-          investorConcern: rf.investorConcern ?? "",
+            : "MEDIUM",
+          title: rf.title ?? "Red flag détecté",
+          description: rf.description ?? "",
+          location: rf.location ?? "Non spécifié",
+          evidence: rf.evidence ?? "",
+          contextEngineData: rf.contextEngineData,
+          impact: rf.impact ?? "",
+          question: rf.question ?? "",
+          redFlagIfBadAnswer: rf.redFlagIfBadAnswer ?? "",
         }))
       : [];
 
-    const financialQuestions = Array.isArray(data.financialQuestions)
-      ? data.financialQuestions.map(q => ({
+    // Normalize questions
+    const validPriorities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
+
+    const questions: AgentQuestion[] = Array.isArray(data.questions)
+      ? data.questions.map(q => ({
+          priority: validPriorities.includes(q.priority as typeof validPriorities[number])
+            ? q.priority
+            : "MEDIUM",
+          category: q.category ?? "financials",
           question: q.question ?? "",
           context: q.context ?? "",
-          expectedAnswer: q.expectedAnswer ?? "",
-          redFlagIfNo: q.redFlagIfNo ?? "",
+          whatToLookFor: q.whatToLookFor ?? "",
         }))
       : [];
 
-    // Determine data completeness and cap score
-    const dataCompleteness = validCompleteness.includes(data.overallAssessment?.dataCompleteness ?? "")
-      ? data.overallAssessment!.dataCompleteness
-      : "minimal";
+    // Normalize alert signal
+    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
 
-    let score = data.overallAssessment?.score ?? 50;
-    // Cap score based on data completeness
-    if (dataCompleteness === "minimal") {
-      score = Math.min(score, 40);
-    } else if (dataCompleteness === "partial") {
-      score = Math.min(score, 60);
-    }
+    const alertSignal: AgentAlertSignal = {
+      hasBlocker: data.alertSignal?.hasBlocker ?? hasCriticalBlocker,
+      blockerReason: data.alertSignal?.blockerReason,
+      recommendation: validRecommendations.includes(data.alertSignal?.recommendation as typeof validRecommendations[number])
+        ? data.alertSignal.recommendation
+        : hasCriticalBlocker
+          ? "INVESTIGATE_FURTHER"
+          : "PROCEED_WITH_CAUTION",
+      justification: data.alertSignal?.justification ?? "",
+    };
 
-    const overallAssessment = {
-      score,
-      dataCompleteness,
-      summary: data.overallAssessment?.summary ?? "",
-      keyRisks: Array.isArray(data.overallAssessment?.keyRisks)
-        ? data.overallAssessment.keyRisks
-        : [],
-      keyStrengths: Array.isArray(data.overallAssessment?.keyStrengths)
-        ? data.overallAssessment.keyStrengths
-        : [],
+    // Normalize narrative
+    const narrative: AgentNarrative = {
+      oneLiner: data.narrative?.oneLiner ?? "Analyse financière complète disponible.",
+      summary: data.narrative?.summary ?? "",
+      keyInsights: Array.isArray(data.narrative?.keyInsights) ? data.narrative.keyInsights : [],
+      forNegotiation: Array.isArray(data.narrative?.forNegotiation) ? data.narrative.forNegotiation : [],
     };
 
     return {
-      metricsAnalysis,
-      projectionsAnalysis,
-      unitEconomicsHealth,
-      valuationAnalysis,
-      burnAnalysis,
-      financialRedFlags,
-      financialQuestions,
-      overallAssessment,
+      meta,
+      score,
+      findings,
+      dbCrossReference,
+      redFlags,
+      questions,
+      alertSignal,
+      narrative,
     };
   }
 
@@ -520,9 +761,9 @@ RAPPEL: Analyse EXHAUSTIVE requise. Moins de 5 métriques, 5 red flags, ou 5 que
           source: result.exact ? "database" : `fallback:${result.fallbackUsed}`,
         };
       } else {
-        const fallback = this.getFallbackBenchmark(metric, stage);
+        const fallback = this.getFallbackBenchmark(metric, sector, stage);
         if (fallback) {
-          benchmarks[metric] = { ...fallback, source: "hardcoded_fallback" };
+          benchmarks[metric] = { ...fallback, source: "centralized_config" };
         }
       }
     }
@@ -530,18 +771,33 @@ RAPPEL: Analyse EXHAUSTIVE requise. Moins de 5 métriques, 5 red flags, ou 5 que
     return benchmarks;
   }
 
+  /**
+   * Get fallback benchmark from centralized config
+   * Maps metric names to benchmark service metrics
+   */
   private getFallbackBenchmark(
     metric: string,
+    sector: string,
     stage: string
   ): { p25: number; median: number; p75: number } | null {
-    const metricFallbacks = FALLBACK_BENCHMARKS[metric];
-    if (!metricFallbacks) return null;
+    // Map metric names to centralized benchmark metrics
+    const metricMapping: Record<string, "arrGrowthYoY" | "nrr" | "burnMultiple" | "valuationMultiple" | "ltvCacRatio"> = {
+      "ARR Growth YoY": "arrGrowthYoY",
+      "Net Revenue Retention": "nrr",
+      "Burn Multiple": "burnMultiple",
+      "Valuation Multiple": "valuationMultiple",
+      "LTV/CAC Ratio": "ltvCacRatio",
+    };
 
-    if (metricFallbacks[stage]) return metricFallbacks[stage];
-    if (metricFallbacks.default) return metricFallbacks.default;
-    if (metricFallbacks.SEED) return metricFallbacks.SEED;
+    const benchmarkMetric = metricMapping[metric];
+    if (!benchmarkMetric) return null;
 
-    return null;
+    const benchmark = getBenchmarkFull(sector, stage, benchmarkMetric);
+    return {
+      p25: benchmark.p25,
+      median: benchmark.median,
+      p75: benchmark.p75,
+    };
   }
 }
 

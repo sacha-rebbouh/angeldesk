@@ -262,7 +262,6 @@ export class BoardOrchestrator {
       agentOutputs: {
         tier1: analysisResults
           ? {
-              screener: analysisResults["deal-screener"],
               scorer: analysisResults["deal-scorer"],
               redFlagDetector: analysisResults["red-flag-detector"],
             }

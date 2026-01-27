@@ -13,12 +13,23 @@ export const openrouter = new OpenAI({
 export const MODELS = {
   // Fast models for simple tasks
   HAIKU: {
-    id: "anthropic/claude-3-haiku",
-    name: "Claude 3 Haiku",
-    inputCost: 0.00025, // per 1K tokens
-    outputCost: 0.00125,
+    id: "anthropic/claude-haiku-4.5", // Claude Haiku 4.5 - 64K output
+    name: "Claude Haiku 4.5",
+    inputCost: 0.001, // per 1K tokens ($1/M)
+    outputCost: 0.005, // per 1K tokens ($5/M)
     contextWindow: 200000,
-    capabilities: ["fast", "cheap", "extraction"],
+    maxOutputTokens: 64000, // 64K output limit
+    capabilities: ["fast", "cheap", "extraction", "extended-thinking"],
+  },
+
+  HAIKU_35: {
+    id: "anthropic/claude-3-haiku-20240307", // Claude 3 Haiku - 4K output (fallback)
+    name: "Claude 3 Haiku",
+    inputCost: 0.00025, // per 1K tokens ($0.25/M)
+    outputCost: 0.00125, // per 1K tokens ($1.25/M)
+    contextWindow: 200000,
+    maxOutputTokens: 4096, // 4K output limit
+    capabilities: ["fast", "cheapest", "extraction"],
   },
 
   // Balanced models for most tasks
@@ -29,6 +40,15 @@ export const MODELS = {
     outputCost: 0.015,
     contextWindow: 200000,
     capabilities: ["balanced", "reasoning", "analysis"],
+  },
+
+  SONNET_4: {
+    id: "anthropic/claude-3.5-sonnet", // Using 3.5 Sonnet (claude-sonnet-4 not available on OpenRouter)
+    name: "Claude 3.5 Sonnet (as SONNET_4)",
+    inputCost: 0.003,
+    outputCost: 0.015,
+    contextWindow: 200000,
+    capabilities: ["balanced", "reasoning", "analysis", "best-quality"],
   },
 
   GPT4O_MINI: {
@@ -89,6 +109,24 @@ export const MODELS = {
     outputCost: 0.030,
     contextWindow: 128000,
     capabilities: ["powerful", "reasoning", "board-member"],
+  },
+
+  GEMINI_FLASH: {
+    id: "google/gemini-2.5-flash",
+    name: "Gemini 2.5 Flash",
+    inputCost: 0.00015,
+    outputCost: 0.0006,
+    contextWindow: 1000000,
+    capabilities: ["fast", "cheap", "large-context"],
+  },
+
+  GEMINI_PRO: {
+    id: "google/gemini-2.5-pro",
+    name: "Gemini 2.5 Pro",
+    inputCost: 0.00125,
+    outputCost: 0.01,
+    contextWindow: 1000000,
+    capabilities: ["balanced", "reasoning", "large-context"],
   },
 
   GEMINI_ULTRA: {

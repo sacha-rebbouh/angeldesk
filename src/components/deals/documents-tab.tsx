@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Eye, FileText, MoreHorizontal, Pencil, Trash2, Upload } from "lucide-react";
+import { Eye, FileText, MoreHorizontal, Pencil, Trash2, Upload, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Card,
@@ -66,6 +67,30 @@ interface DocumentsTabProps {
   documents: Document[];
 }
 
+interface StalenessInfo {
+  hasAnalysis: boolean;
+  staleness: {
+    isStale: boolean;
+    newDocumentCount: number;
+    message: string | null;
+    analyzedDocumentIds: string[];
+    analysisId: string;
+    analysisType: string;
+  } | null;
+  unanalyzedDocuments: Array<{
+    id: string;
+    name: string;
+    type: string;
+    createdAt: string;
+  }>;
+}
+
+async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
+  const response = await fetch(`/api/deals/${dealId}/staleness`);
+  if (!response.ok) throw new Error("Failed to fetch staleness");
+  return response.json();
+}
+
 export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
   const router = useRouter();
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -74,6 +99,23 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
   const [newName, setNewName] = useState("");
   const [deleteDoc, setDeleteDoc] = useState<Document | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Fetch staleness info to know which documents were analyzed
+  const { data: stalenessData } = useQuery({
+    queryKey: ["deals", dealId, "staleness"],
+    queryFn: () => fetchStaleness(dealId),
+  });
+
+  // Set of document IDs that have been analyzed
+  const analyzedDocIds = useMemo(() => {
+    if (!stalenessData?.staleness?.analyzedDocumentIds) {
+      return new Set<string>();
+    }
+    return new Set(stalenessData.staleness.analyzedDocumentIds);
+  }, [stalenessData]);
+
+  // Check if there's at least one analysis
+  const hasAnalysis = stalenessData?.hasAnalysis ?? false;
 
   const handleUploadSuccess = useCallback(() => {
     router.refresh();
@@ -205,6 +247,16 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
+                      {/* Show "Non analysé" badge if document wasn't included in analysis */}
+                      {hasAnalysis && doc.processingStatus === "COMPLETED" && !analyzedDocIds.has(doc.id) && (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-400 bg-amber-50 text-amber-700 gap-1"
+                        >
+                          <AlertTriangle className="h-3 w-3" />
+                          Non analyse
+                        </Badge>
+                      )}
                       {doc.mimeType === "application/pdf" ? (
                         <ExtractionQualityBadge
                           quality={doc.extractionQuality}

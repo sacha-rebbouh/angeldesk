@@ -1,22 +1,17 @@
 import type { AgentResult } from "../types";
 
 // Base agents registry type
-export type BaseAgentName = "deal-screener" | "red-flag-detector" | "document-extractor" | "deal-scorer";
+export type BaseAgentName = "red-flag-detector" | "document-extractor" | "deal-scorer";
 
 // Analysis types with their required agents
 export const ANALYSIS_CONFIGS = {
-  screening: {
-    agents: ["deal-screener"] as BaseAgentName[],
-    description: "Quick screening to determine if deal warrants full DD",
-    parallel: false,
-  },
   extraction: {
     agents: ["document-extractor"] as BaseAgentName[],
     description: "Extract structured data from uploaded documents",
     parallel: false,
   },
   full_dd: {
-    agents: ["document-extractor", "deal-screener", "deal-scorer", "red-flag-detector"] as BaseAgentName[],
+    agents: ["document-extractor", "deal-scorer", "red-flag-detector"] as BaseAgentName[],
     description: "Complete due diligence analysis",
     parallel: false,
   },
@@ -25,19 +20,19 @@ export const ANALYSIS_CONFIGS = {
     description: "Investigation complete par 12 agents en parallele",
     parallel: true,
   },
-  tier2_synthesis: {
-    agents: [] as BaseAgentName[], // Special handling - uses Tier 2 agents after Tier 1
-    description: "Synthese complete avec 5 agents (requires Tier 1 results)",
-    parallel: false, // Tier 2 runs sequentially
-  },
-  tier3_sector: {
+  tier2_sector: {
     agents: [] as BaseAgentName[], // Special handling - sector expert based on deal sector
     description: "Analyse sectorielle par expert specialise (dynamique selon secteur)",
     parallel: false,
   },
+  tier3_synthesis: {
+    agents: [] as BaseAgentName[], // Special handling - uses Tier 3 agents after Tier 1
+    description: "Synthese complete avec 5 agents (requires Tier 1 results)",
+    parallel: false, // Tier 3 runs sequentially
+  },
   full_analysis: {
     agents: [] as BaseAgentName[], // Special handling - Tier 1 + Tier 2 + Tier 3
-    description: "Analyse complete: Tier 1 (12) + Tier 2 (5) + Tier 3 Sector Expert (1)",
+    description: "Analyse complete: Tier 1 (12) + Tier 2 Sector Expert (1) + Tier 3 (5)",
     parallel: false,
   },
 } as const;
@@ -100,7 +95,10 @@ export type AnalysisMode = "full" | "lite" | "express";
 export interface AnalysisOptions {
   dealId: string;
   type: AnalysisType;
-  useReAct?: boolean; // Use ReAct agents for traceable, benchmark-anchored scores
+  /** @deprecated ReAct agents are no longer used. Standard agents provide better results. */
+  useReAct?: boolean;
+  /** Enable detailed traces for transparency and reproducibility (default: true) */
+  enableTrace?: boolean;
   forceRefresh?: boolean; // Bypass cache and force re-analysis
   mode?: AnalysisMode; // Execution mode (default: "full")
   failFastOnCritical?: boolean; // Stop analysis on critical red flags (default: false)
@@ -130,6 +128,8 @@ export interface AnalysisResult {
   // Early warnings collected during analysis
   earlyWarnings?: EarlyWarning[];
   hasCriticalWarnings?: boolean; // Quick check for UI
+  // Recovery metadata
+  resumedFromCheckpoint?: boolean; // True if analysis was resumed after crash
 }
 
 /**
@@ -140,27 +140,29 @@ export interface AdvancedAnalysisOptions {
   failFastOnCritical: boolean;
   maxCostUsd?: number;
   onEarlyWarning?: OnEarlyWarning;
+  /** Enable detailed traces for transparency (default: true) */
+  enableTrace?: boolean;
 }
 
 // Agent counts by analysis type
 export const AGENT_COUNTS: Record<AnalysisType, number> = {
-  screening: 1,
   extraction: 1,
   full_dd: 4,
   tier1_complete: 13, // 12 Tier 1 + extractor
-  tier2_synthesis: 5,
-  tier3_sector: 1, // Dynamic sector expert
-  full_analysis: 19, // 12 Tier 1 + 5 Tier 2 + 1 extractor + 1 sector expert
+  tier2_sector: 1, // Dynamic sector expert
+  tier3_synthesis: 5,
+  full_analysis: 19, // 12 Tier 1 + 1 sector expert + 5 Tier 3 + 1 extractor
 };
 
-// Tier 1 agent names (12 agents)
+// Tier 1 agent names (13 agents)
 export const TIER1_AGENT_NAMES = [
   "deck-forensics",
   "financial-auditor",
   "market-intelligence",
   "competitive-intel",
   "team-investigator",
-  "technical-dd",
+  "tech-stack-dd",
+  "tech-ops-dd",
   "legal-regulatory",
   "cap-table-auditor",
   "gtm-analyst",
@@ -169,8 +171,8 @@ export const TIER1_AGENT_NAMES = [
   "question-master",
 ] as const;
 
-// Tier 2 agent names (5 agents)
-export const TIER2_AGENT_NAMES = [
+// Tier 3 agent names (5 synthesis agents)
+export const TIER3_AGENT_NAMES = [
   "contradiction-detector",
   "scenario-modeler",
   "synthesis-deal-scorer",
@@ -183,11 +185,11 @@ export const TIER2_AGENT_NAMES = [
 // ============================================================================
 
 /**
- * Agent dependencies for Tier 2
+ * Agent dependencies for Tier 3
  * - Empty array = can run in parallel with other independent agents
  * - Array with names = must wait for those agents to complete
  */
-export const TIER2_DEPENDENCIES: Record<typeof TIER2_AGENT_NAMES[number], string[]> = {
+export const TIER3_DEPENDENCIES: Record<typeof TIER3_AGENT_NAMES[number], string[]> = {
   "contradiction-detector": [], // No deps - runs immediately
   "scenario-modeler": [],       // No deps - runs immediately
   "devils-advocate": [],        // No deps - runs immediately
@@ -196,13 +198,13 @@ export const TIER2_DEPENDENCIES: Record<typeof TIER2_AGENT_NAMES[number], string
 };
 
 /**
- * Execution batches for Tier 2 (computed from dependencies)
+ * Execution batches for Tier 3 (computed from dependencies)
  * Agents in same batch can run in parallel
  *
- * IMPORTANT: synthesis-deal-scorer runs AFTER Tier 3 to include sector expert insights
- * See TIER2_BATCHES_BEFORE_TIER3 and TIER2_BATCHES_AFTER_TIER3
+ * IMPORTANT: synthesis-deal-scorer runs AFTER Tier 2 to include sector expert insights
+ * See TIER3_BATCHES_BEFORE_TIER2 and TIER3_BATCHES_AFTER_TIER2
  */
-export const TIER2_EXECUTION_BATCHES = [
+export const TIER3_EXECUTION_BATCHES = [
   // Batch 1: All independent agents (parallel)
   ["contradiction-detector", "scenario-modeler", "devils-advocate"],
   // Batch 2: Depends on contradiction-detector + scenario-modeler
@@ -212,20 +214,20 @@ export const TIER2_EXECUTION_BATCHES = [
 ] as const;
 
 /**
- * NEW: Tier 2 batches BEFORE Tier 3 sector expert
+ * NEW: Tier 3 batches BEFORE Tier 2 sector expert
  * These agents don't need sector expert insights
  */
-export const TIER2_BATCHES_BEFORE_TIER3 = [
+export const TIER3_BATCHES_BEFORE_TIER2 = [
   // Batch 1: All independent agents (parallel)
   ["contradiction-detector", "scenario-modeler", "devils-advocate"],
 ] as const;
 
 /**
- * NEW: Tier 2 batches AFTER Tier 3 sector expert
+ * NEW: Tier 3 batches AFTER Tier 2 sector expert
  * These agents benefit from sector expert insights for final scoring
  */
-export const TIER2_BATCHES_AFTER_TIER3 = [
-  // synthesis-deal-scorer: Final scoring with ALL insights including Tier 3
+export const TIER3_BATCHES_AFTER_TIER2 = [
+  // synthesis-deal-scorer: Final scoring with ALL insights including Tier 2
   ["synthesis-deal-scorer"],
   // memo-generator: Investment memo with complete analysis
   ["memo-generator"],
@@ -275,8 +277,8 @@ export function resolveAgentDependencies(
   return batches;
 }
 
-// Tier 3 sector expert names
-export const TIER3_EXPERT_NAMES = [
+// Tier 2 sector expert names
+export const TIER2_EXPERT_NAMES = [
   "saas-expert",
   "marketplace-expert",
   "fintech-expert",

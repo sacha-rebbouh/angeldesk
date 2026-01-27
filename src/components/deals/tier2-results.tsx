@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback, memo } from "react";
+import { memo, useMemo } from "react";
 import {
   Card,
   CardContent,
@@ -9,7 +9,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { ScoreBadge } from "@/components/shared/score-badge";
 import { ExpandableSection } from "@/components/shared/expandable-section";
@@ -19,26 +18,94 @@ import {
   XCircle,
   TrendingUp,
   TrendingDown,
-  Minus,
-  Scale,
-  Brain,
-  FileText,
-  BarChart3,
-  Target,
   Lightbulb,
   ShieldAlert,
-  Eye,
+  Scale,
+  HelpCircle,
+  Target,
+  BarChart3,
+  Briefcase,
+  Compass,
+  DollarSign,
+  Calculator,
+  Database,
   Zap,
+  Shield,
+  Building2,
+  Users,
+  ArrowRight,
+  ChevronRight,
+  Percent,
+  Clock,
+  Award,
+  AlertCircle,
+  Minus,
 } from "lucide-react";
-import type {
-  ContradictionDetectorData,
-  ScenarioModelerData,
-  SynthesisDealScorerData,
-  DevilsAdvocateData,
-  MemoGeneratorData,
-} from "@/agents/types";
-import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-teaser";
-import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
+import type { SectorExpertData, SectorExpertResult, ExtendedSectorData } from "@/agents/tier2/types";
+import {
+  SECTOR_CONFIG,
+  MATURITY_CONFIG,
+  ASSESSMENT_CONFIG,
+  SEVERITY_CONFIG,
+  type SectorExpertType,
+  type SubscriptionPlan,
+} from "@/lib/analysis-constants";
+import { ProTeaserSection } from "@/components/shared/pro-teaser";
+
+// =============================================================================
+// HOISTED CONFIGS - Prevent recreation on every render
+// =============================================================================
+
+const POTENTIAL_COLORS: Record<string, string> = {
+  high: "border-green-200 bg-green-50",
+  medium: "border-blue-200 bg-blue-50",
+  low: "border-gray-200 bg-gray-50",
+};
+
+const COMPLEXITY_COLORS: Record<string, string> = {
+  low: "bg-green-100 text-green-800",
+  medium: "bg-yellow-100 text-yellow-800",
+  high: "bg-orange-100 text-orange-800",
+  very_high: "bg-red-100 text-red-800",
+};
+
+const PRIORITY_COLORS: Record<string, string> = {
+  must_ask: "border-red-200 bg-red-50",
+  should_ask: "border-yellow-200 bg-yellow-50",
+  nice_to_have: "border-gray-200 bg-gray-50",
+};
+
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  technical: <Briefcase className="h-3 w-3" />,
+  business: <Target className="h-3 w-3" />,
+  regulatory: <Scale className="h-3 w-3" />,
+  competitive: <BarChart3 className="h-3 w-3" />,
+};
+
+const TIMING_COLORS: Record<string, string> = {
+  early: "bg-purple-100 text-purple-800",
+  optimal: "bg-green-100 text-green-800",
+  late: "bg-orange-100 text-orange-800",
+};
+
+const VERDICT_CONFIG = {
+  STRONG_FIT: { color: "bg-green-500", textColor: "text-green-700", label: "Strong Fit", icon: Award },
+  GOOD_FIT: { color: "bg-blue-500", textColor: "text-blue-700", label: "Good Fit", icon: CheckCircle },
+  MODERATE_FIT: { color: "bg-yellow-500", textColor: "text-yellow-700", label: "Moderate Fit", icon: Minus },
+  POOR_FIT: { color: "bg-orange-500", textColor: "text-orange-700", label: "Poor Fit", icon: AlertTriangle },
+  NOT_RECOMMENDED: { color: "bg-red-500", textColor: "text-red-700", label: "Not Recommended", icon: XCircle },
+};
+
+const VALUATION_VERDICT_CONFIG = {
+  attractive: { color: "bg-green-100 text-green-800 border-green-200", label: "Attractive" },
+  fair: { color: "bg-blue-100 text-blue-800 border-blue-200", label: "Fair" },
+  stretched: { color: "bg-yellow-100 text-yellow-800 border-yellow-200", label: "Stretched" },
+  excessive: { color: "bg-red-100 text-red-800 border-red-200", label: "Excessive" },
+};
+
+// =============================================================================
+// TYPES
+// =============================================================================
 
 interface Tier2ResultsProps {
   results: Record<string, {
@@ -48,848 +115,1119 @@ interface Tier2ResultsProps {
     cost: number;
     error?: string;
     data?: unknown;
+    _extended?: ExtendedSectorData;
   }>;
   subscriptionPlan?: SubscriptionPlan;
 }
 
-// Hoisted color function - pure, no need for useCallback
-function getSkepticismColor(s: number): string {
-  if (s <= 20) return "bg-green-100 text-green-800";
-  if (s <= 40) return "bg-blue-100 text-blue-800";
-  if (s <= 60) return "bg-yellow-100 text-yellow-800";
-  if (s <= 80) return "bg-orange-100 text-orange-800";
-  return "bg-red-100 text-red-800";
-}
+// =============================================================================
+// SUB-COMPONENTS - Memoized for performance
+// =============================================================================
 
-const SkepticismBadge = memo(function SkepticismBadge({ score }: { score: number }) {
+const MaturityBadge = memo(function MaturityBadge({ maturity }: { maturity: SectorExpertData["sectorMaturity"] }) {
+  const c = MATURITY_CONFIG[maturity as keyof typeof MATURITY_CONFIG] ?? { label: maturity, color: "bg-gray-100 text-gray-800" };
+  return <Badge variant="outline" className={cn("text-xs", c.color)}>{c.label}</Badge>;
+});
+
+const ASSESSMENT_ICONS: Record<string, React.ReactNode> = {
+  exceptional: <TrendingUp className="h-3 w-3" />,
+  above_average: <TrendingUp className="h-3 w-3" />,
+  average: <BarChart3 className="h-3 w-3" />,
+  below_average: <AlertTriangle className="h-3 w-3" />,
+  concerning: <XCircle className="h-3 w-3" />,
+};
+
+const AssessmentBadge = memo(function AssessmentBadge({ assessment }: { assessment: SectorExpertData["keyMetrics"][0]["assessment"] }) {
+  const c = ASSESSMENT_CONFIG[assessment as keyof typeof ASSESSMENT_CONFIG] ?? { label: assessment, color: "text-gray-500" };
+  const icon = ASSESSMENT_ICONS[assessment] ?? null;
   return (
-    <span className={cn("rounded-full border px-3 py-1.5 text-lg font-bold", getSkepticismColor(score))}>
-      {score}/100
+    <span className={cn("flex items-center gap-1 text-xs font-medium", c.color)}>
+      {icon}
+      {c.label}
     </span>
   );
 });
 
-// Hoisted config
-const VERDICT_CONFIG: Record<string, { label: string; color: string }> = {
-  strong_pass: { label: "Strong Pass", color: "bg-green-100 text-green-800 border-green-300" },
-  pass: { label: "Pass", color: "bg-blue-100 text-blue-800 border-blue-300" },
-  conditional_pass: { label: "Conditional", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  weak_pass: { label: "Weak Pass", color: "bg-orange-100 text-orange-800 border-orange-300" },
-  no_go: { label: "No Go", color: "bg-red-100 text-red-800 border-red-300" },
-};
-
-const VerdictBadge = memo(function VerdictBadge({ verdict }: { verdict: string }) {
-  const c = VERDICT_CONFIG[verdict] ?? { label: verdict, color: "bg-gray-100 text-gray-800" };
-  return <Badge variant="outline" className={cn("text-sm px-3 py-1", c.color)}>{c.label}</Badge>;
+const SeverityBadge = memo(function SeverityBadge({ severity }: { severity: "critical" | "major" | "minor" }) {
+  const c = SEVERITY_CONFIG[severity] ?? { label: severity, color: "bg-gray-100 text-gray-800" };
+  return <Badge variant="outline" className={cn("text-xs", c.color)}>{c.label}</Badge>;
 });
 
-// Hoisted config (without icons - they'll be resolved at render)
-const RECOMMENDATION_CONFIG: Record<string, { label: string; color: string }> = {
-  invest: { label: "Investir", color: "bg-green-500 text-white" },
-  pass: { label: "Passer", color: "bg-red-500 text-white" },
-  wait: { label: "Attendre", color: "bg-yellow-500 text-white" },
-  negotiate: { label: "Negocier", color: "bg-blue-500 text-white" },
-};
+// =============================================================================
+// NEW: Verdict Hero Section
+// =============================================================================
 
-const RECOMMENDATION_ICONS: Record<string, React.ReactNode> = {
-  invest: <CheckCircle className="h-4 w-4" />,
-  pass: <XCircle className="h-4 w-4" />,
-  wait: <Minus className="h-4 w-4" />,
-  negotiate: <Scale className="h-4 w-4" />,
-};
-
-const RecommendationBadge = memo(function RecommendationBadge({ action }: { action: string }) {
-  const c = RECOMMENDATION_CONFIG[action] ?? { label: action, color: "bg-gray-500 text-white" };
-  const icon = RECOMMENDATION_ICONS[action] ?? null;
-  return (
-    <Badge className={cn("text-sm px-3 py-1.5 flex items-center gap-1.5", c.color)}>
-      {icon}
-      {c.label}
-    </Badge>
-  );
-});
-
-// Synthesis Deal Scorer Card - Main scoring synthesis
-const SynthesisScorerCard = memo(function SynthesisScorerCard({
-  data,
-  strengthsLimit = Infinity,
-  weaknessesLimit = Infinity,
-  showFullScore = true,
+const VerdictHero = memo(function VerdictHero({
+  verdict,
+  sectorScore,
 }: {
-  data: SynthesisDealScorerData;
-  strengthsLimit?: number;
-  weaknessesLimit?: number;
-  showFullScore?: boolean;
+  verdict?: ExtendedSectorData["verdict"];
+  sectorScore: number;
 }) {
-  const visibleStrengths = data.keyStrengths.slice(0, strengthsLimit);
-  const hiddenStrengthsCount = Math.max(0, data.keyStrengths.length - strengthsLimit);
-  const visibleWeaknesses = data.keyWeaknesses.slice(0, weaknessesLimit);
-  const hiddenWeaknessesCount = Math.max(0, data.keyWeaknesses.length - weaknessesLimit);
+  if (!verdict) return null;
+
+  const config = VERDICT_CONFIG[verdict.recommendation] ?? VERDICT_CONFIG.MODERATE_FIT;
+  const Icon = config.icon;
 
   return (
-    <Card className="md:col-span-2 border-2 border-primary/20">
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Target className="h-6 w-6 text-primary" />
-            <CardTitle className="text-xl">Score Final</CardTitle>
-          </div>
+    <div className="p-6 rounded-xl bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200">
+      <div className="flex items-start gap-6">
+        {/* Verdict Badge */}
+        <div className={cn("p-4 rounded-xl", config.color, "bg-opacity-20")}>
+          <Icon className={cn("h-8 w-8", config.textColor)} />
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 space-y-3">
           <div className="flex items-center gap-3">
-            <VerdictBadge verdict={data.verdict} />
-            <ScoreBadge score={data.overallScore} size="lg" />
+            <Badge className={cn("text-sm px-3 py-1", config.color, "text-white")}>
+              {config.label}
+            </Badge>
+            <Badge variant="outline" className="text-sm">
+              Confidence: {verdict.confidence}
+            </Badge>
           </div>
-        </div>
-        <CardDescription>Synthese de tous les agents Tier 1</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Recommendation */}
-        <div className="flex items-center justify-between p-4 rounded-lg bg-muted">
-          <div>
-            <p className="text-sm text-muted-foreground">Recommandation</p>
-            <p className="text-lg font-medium mt-1">{data.investmentRecommendation.rationale}</p>
-          </div>
-          <RecommendationBadge action={data.investmentRecommendation.action} />
-        </div>
 
-        {/* Dimension Scores - Only for PRO */}
-        {showFullScore ? (
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Scores par dimension</p>
-            <div className="grid gap-2">
-              {data.dimensionScores.map((dim, i) => (
-                <div key={i} className="flex items-center justify-between p-2 border rounded">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm">{dim.dimension}</span>
-                    <Badge variant="outline" className="text-xs">{dim.weight}%</Badge>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-24 h-2 rounded-full bg-muted">
-                      <div
-                        className={cn(
-                          "h-full rounded-full",
-                          dim.score >= 70 ? "bg-green-500" :
-                          dim.score >= 50 ? "bg-yellow-500" : "bg-red-500"
-                        )}
-                        style={{ width: `${dim.score}%` }}
-                      />
-                    </div>
-                    <span className="text-sm font-medium w-12 text-right">{dim.score}/100</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <ProTeaserSection
-            title="Score detaille par dimension"
-            description={`${data.dimensionScores.length} dimensions analysees avec benchmarks`}
-            icon={Target}
-            previewText={`Score global: ${data.overallScore}/100 - Top ${data.comparativeRanking.percentileSector}% du secteur`}
-          />
-        )}
+          <p className="text-lg font-medium text-slate-800">{verdict.keyInsight}</p>
 
-        {/* Comparative Ranking - Only for PRO */}
-        {showFullScore && (
-          <div className="grid grid-cols-3 gap-3">
-            <div className="p-3 rounded-lg bg-muted text-center">
-              <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
-              <p className="text-xs text-muted-foreground">Percentile Global</p>
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            <div className="flex items-start gap-2">
+              <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Top Strength</p>
+                <p className="text-sm text-slate-700">{verdict.topStrength}</p>
+              </div>
             </div>
-            <div className="p-3 rounded-lg bg-muted text-center">
-              <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
-              <p className="text-xs text-muted-foreground">Percentile Secteur</p>
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Top Concern</p>
+                <p className="text-sm text-slate-700">{verdict.topConcern}</p>
+              </div>
             </div>
-            <div className="p-3 rounded-lg bg-muted text-center">
-              <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
-              <p className="text-xs text-muted-foreground">Deals Compares</p>
-            </div>
-          </div>
-        )}
-
-        {/* Strengths & Weaknesses - Limited for FREE */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-green-600 flex items-center gap-1">
-              <CheckCircle className="h-4 w-4" /> Points forts
-            </p>
-            <ul className="space-y-1">
-              {visibleStrengths.map((s, i) => (
-                <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                  <span className="text-green-500 mt-1">+</span> {s}
-                </li>
-              ))}
-            </ul>
-            {hiddenStrengthsCount > 0 && (
-              <ProTeaserInline hiddenCount={hiddenStrengthsCount} itemLabel="points forts" />
-            )}
-          </div>
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-red-600 flex items-center gap-1">
-              <XCircle className="h-4 w-4" /> Points faibles
-            </p>
-            <ul className="space-y-1">
-              {visibleWeaknesses.map((w, i) => (
-                <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                  <span className="text-red-500 mt-1">-</span> {w}
-                </li>
-              ))}
-            </ul>
-            {hiddenWeaknessesCount > 0 && (
-              <ProTeaserInline hiddenCount={hiddenWeaknessesCount} itemLabel="faiblesses" />
-            )}
           </div>
         </div>
 
-        {/* Critical Risks */}
-        {data.criticalRisks.length > 0 && (
-          <div className="pt-2 border-t">
-            <p className="text-sm font-medium text-red-600 mb-2 flex items-center gap-1">
-              <AlertTriangle className="h-4 w-4" /> Risques critiques
-            </p>
-            <ul className="space-y-1">
-              {data.criticalRisks.map((r, i) => (
-                <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-                  {r}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Conditions if present */}
-        {data.investmentRecommendation.conditions && data.investmentRecommendation.conditions.length > 0 && (
-          <div className="pt-2 border-t">
-            <p className="text-sm font-medium text-blue-600 mb-2">Conditions</p>
-            <ul className="text-sm text-muted-foreground list-disc list-inside">
-              {data.investmentRecommendation.conditions.map((c, i) => <li key={i}>{c}</li>)}
-            </ul>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+        {/* Score */}
+        <div className="text-center">
+          <div className="text-4xl font-bold text-slate-800">{sectorScore}</div>
+          <div className="text-xs text-slate-500 uppercase tracking-wide">Sector Score</div>
+        </div>
+      </div>
+    </div>
   );
 });
 
-// Scenario Modeler Card - Hoisted configs
-const SCENARIO_ICONS: Record<string, React.ReactNode> = {
-  bull: <TrendingUp className="h-5 w-5 text-green-600" />,
-  base: <Minus className="h-5 w-5 text-blue-600" />,
-  bear: <TrendingDown className="h-5 w-5 text-red-600" />,
-};
+// =============================================================================
+// NEW: Score Breakdown Visual
+// =============================================================================
 
-const SCENARIO_COLORS: Record<string, string> = {
-  bull: "border-green-200 bg-green-50",
-  base: "border-blue-200 bg-blue-50",
-  bear: "border-red-200 bg-red-50",
-};
+const ScoreBreakdownSection = memo(function ScoreBreakdownSection({
+  breakdown,
+  totalScore,
+}: {
+  breakdown: ExtendedSectorData["scoreBreakdown"];
+  totalScore: number;
+}) {
+  if (!breakdown) return null;
 
-const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: ScenarioModelerData }) {
+  // Determine which scoring model is used (SaaS vs Fintech)
+  const isSaaS = breakdown.unitEconomics !== undefined;
+  const isFintech = breakdown.metricsScore !== undefined;
+
+  const dimensions = isSaaS
+    ? [
+        { name: "Unit Economics", score: breakdown.unitEconomics ?? 0, max: 25, icon: Calculator, color: "bg-blue-500" },
+        { name: "Growth", score: breakdown.growth ?? 0, max: 25, icon: TrendingUp, color: "bg-green-500" },
+        { name: "Retention", score: breakdown.retention ?? 0, max: 25, icon: Users, color: "bg-purple-500" },
+        { name: "GTM Efficiency", score: breakdown.gtmEfficiency ?? 0, max: 25, icon: Zap, color: "bg-orange-500" },
+      ]
+    : isFintech
+    ? [
+        { name: "Metrics", score: breakdown.metricsScore ?? 0, max: 25, icon: BarChart3, color: "bg-blue-500" },
+        { name: "Regulatory", score: breakdown.regulatoryScore ?? 0, max: 25, icon: Shield, color: "bg-green-500" },
+        { name: "Business Model", score: breakdown.businessModelScore ?? 0, max: 25, icon: Building2, color: "bg-purple-500" },
+        { name: "Market Position", score: breakdown.marketPositionScore ?? 0, max: 25, icon: Target, color: "bg-orange-500" },
+      ]
+    : [];
+
+  if (dimensions.length === 0) return null;
+
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-indigo-600" />
-            <CardTitle className="text-lg">Scenarios</CardTitle>
-          </div>
-          <Badge variant="outline" className="text-sm">
-            Confiance: {data.confidenceLevel}%
-          </Badge>
-        </div>
-        <CardDescription>Bull / Base / Bear avec projections ROI</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Scenarios */}
-        <div className="space-y-3">
-          {data.scenarios.map((scenario, i) => (
-            <div key={i} className={cn("p-3 rounded-lg border", SCENARIO_COLORS[scenario.name])}>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        {dimensions.map((dim) => {
+          const Icon = dim.icon;
+          const percentage = (dim.score / dim.max) * 100;
+
+          return (
+            <div key={dim.name} className="p-4 rounded-lg bg-slate-50 border border-slate-100">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  {SCENARIO_ICONS[scenario.name]}
-                  <span className="font-medium capitalize">{scenario.name}</span>
-                  <Badge variant="outline" className="text-xs">{scenario.probability}%</Badge>
+                  <Icon className="h-4 w-4 text-slate-600" />
+                  <span className="text-sm font-medium text-slate-700">{dim.name}</span>
                 </div>
-                <span className="text-sm font-bold">{scenario.returnAnalysis.multiple.toFixed(1)}x</span>
+                <span className="text-lg font-bold text-slate-800">{dim.score}/{dim.max}</span>
               </div>
-              <p className="text-sm text-muted-foreground mb-2">{scenario.description}</p>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <span className="text-muted-foreground">Y5 Revenue:</span>
-                  <span className="ml-1 font-medium">
-                    {(scenario.financialProjections.year5.revenue / 1000000).toFixed(1)}M
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Exit:</span>
-                  <span className="ml-1 font-medium">
-                    {(scenario.exitScenario.valuation / 1000000).toFixed(0)}M
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">IRR:</span>
-                  <span className={cn(
-                    "ml-1 font-medium",
-                    scenario.returnAnalysis.irr >= 30 ? "text-green-600" :
-                    scenario.returnAnalysis.irr >= 15 ? "text-blue-600" : "text-red-600"
-                  )}>
-                    {scenario.returnAnalysis.irr.toFixed(0)}%
-                  </span>
-                </div>
+              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                <div
+                  className={cn("h-full rounded-full transition-all duration-500", dim.color)}
+                  style={{ width: `${percentage}%` }}
+                />
               </div>
             </div>
-          ))}
-        </div>
+          );
+        })}
+      </div>
 
-        {/* Break-even */}
-        <div className="p-3 rounded-lg bg-muted">
-          <p className="text-sm font-medium mb-2">Break-even Analysis</p>
-          <div className="grid grid-cols-3 gap-2 text-sm">
-            <div>
-              <span className="text-muted-foreground">Mois:</span>
-              <span className="ml-1 font-medium">{data.breakEvenAnalysis.monthsToBreakeven}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Croissance requise:</span>
-              <span className="ml-1 font-medium">{data.breakEvenAnalysis.requiredGrowthRate}%</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Burn:</span>
-              <span className="ml-1 font-medium">
-                {(data.breakEvenAnalysis.burnUntilBreakeven / 1000000).toFixed(1)}M
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Sensitivity Analysis */}
-        {data.sensitivityAnalysis.length > 0 && (
-          <ExpandableSection title="Analyse de sensibilite" count={data.sensitivityAnalysis.length}>
-            <div className="space-y-2 mt-2">
-              {data.sensitivityAnalysis.map((s, i) => (
-                <div key={i} className="flex items-center justify-between text-sm p-2 border rounded">
-                  <span className="font-medium">{s.variable}</span>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className={cn(
-                      "text-xs",
-                      s.impact === "high" ? "bg-red-100 text-red-800" :
-                      s.impact === "medium" ? "bg-yellow-100 text-yellow-800" :
-                      "bg-green-100 text-green-800"
-                    )}>
-                      {s.impact}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </ExpandableSection>
-        )}
-      </CardContent>
-    </Card>
+      {breakdown.justification && (
+        <p className="text-sm text-slate-600 italic">{breakdown.justification}</p>
+      )}
+    </div>
   );
 });
 
-// Devil's Advocate Card
-const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
-  data,
-  objectionsLimit = Infinity,
+// =============================================================================
+// NEW: Unit Economics Deep Dive
+// =============================================================================
+
+const UnitEconomicsSection = memo(function UnitEconomicsSection({
+  unitEconomics,
 }: {
-  data: DevilsAdvocateData;
-  objectionsLimit?: number;
+  unitEconomics: ExtendedSectorData["unitEconomics"];
 }) {
-  const visibleConcerns = data.topConcerns.slice(0, objectionsLimit);
-  const hiddenConcernsCount = Math.max(0, data.topConcerns.length - objectionsLimit);
-  const isFree = objectionsLimit !== Infinity;
+  if (!unitEconomics) return null;
+
+  const metrics = [
+    unitEconomics.ltvCacRatio && {
+      name: "LTV/CAC Ratio",
+      value: unitEconomics.ltvCacRatio.value,
+      assessment: unitEconomics.ltvCacRatio.assessment,
+      detail: unitEconomics.ltvCacRatio.vsMedian,
+      icon: Calculator,
+      good: "> 3x",
+    },
+    unitEconomics.cacPaybackMonths && {
+      name: "CAC Payback",
+      value: unitEconomics.cacPaybackMonths.value ? `${unitEconomics.cacPaybackMonths.value} mo` : null,
+      assessment: unitEconomics.cacPaybackMonths.assessment,
+      detail: unitEconomics.cacPaybackMonths.runway,
+      icon: Clock,
+      good: "< 12 mo",
+    },
+    unitEconomics.burnMultiple && {
+      name: "Burn Multiple",
+      value: unitEconomics.burnMultiple.value ? `${unitEconomics.burnMultiple.value}x` : null,
+      assessment: unitEconomics.burnMultiple.assessment,
+      icon: TrendingDown,
+      good: "< 2x",
+    },
+    unitEconomics.magicNumber && {
+      name: "Magic Number",
+      value: unitEconomics.magicNumber.value,
+      assessment: unitEconomics.magicNumber.assessment,
+      icon: Zap,
+      good: "> 0.75",
+    },
+  ].filter(Boolean) as Array<{
+    name: string;
+    value: number | string | null;
+    assessment: string;
+    detail?: string;
+    icon: typeof Calculator;
+    good: string;
+  }>;
+
+  if (metrics.length === 0) return null;
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Brain className="h-5 w-5 text-purple-600" />
-            <CardTitle className="text-lg">Devil&apos;s Advocate</CardTitle>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Scepticisme:</span>
-            <SkepticismBadge score={data.overallSkepticism} />
-          </div>
-        </div>
-        <CardDescription>Challenge de la these d&apos;investissement</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Top Concerns - Limited for FREE */}
-        {data.topConcerns.length > 0 && (
-          <div className="p-3 rounded-lg bg-orange-50 border border-orange-200">
-            <p className="text-sm font-medium text-orange-800 mb-2 flex items-center gap-1">
-              <ShieldAlert className="h-4 w-4" /> Top Concerns
-            </p>
-            <ul className="space-y-1">
-              {visibleConcerns.map((c, i) => (
-                <li key={i} className="text-sm text-orange-700 flex items-start gap-2">
-                  <span className="font-bold">{i + 1}.</span> {c}
-                </li>
-              ))}
-            </ul>
-            {hiddenConcernsCount > 0 && (
-              <div className="mt-2">
-                <ProTeaserInline hiddenCount={hiddenConcernsCount} itemLabel="objections" />
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        {metrics.map((metric) => {
+          const Icon = metric.icon;
+          const isGood = metric.assessment?.toLowerCase().includes("good") ||
+                         metric.assessment?.toLowerCase().includes("healthy") ||
+                         metric.assessment?.toLowerCase().includes("excellent") ||
+                         metric.assessment?.toLowerCase().includes("strong");
+
+          return (
+            <div
+              key={metric.name}
+              className={cn(
+                "p-4 rounded-lg border",
+                isGood ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200"
+              )}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Icon className={cn("h-4 w-4", isGood ? "text-green-600" : "text-slate-600")} />
+                <span className="text-sm font-medium text-slate-700">{metric.name}</span>
+              </div>
+              <div className="text-2xl font-bold text-slate-800 mb-1">
+                {metric.value ?? "N/A"}
+              </div>
+              <div className="text-xs text-slate-500">
+                Benchmark: {metric.good}
+              </div>
+              {metric.detail && (
+                <p className="text-xs text-slate-600 mt-2">{metric.detail}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* LTV & CAC Details */}
+      {(unitEconomics.ltv || unitEconomics.cac) && (
+        <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+          <h4 className="text-sm font-medium text-slate-700 mb-3">Calculations</h4>
+          <div className="space-y-2 text-xs text-slate-600 font-mono">
+            {unitEconomics.ltv?.calculation && (
+              <div>
+                <span className="text-slate-500">LTV:</span> {unitEconomics.ltv.calculation}
+              </div>
+            )}
+            {unitEconomics.cac?.calculation && (
+              <div>
+                <span className="text-slate-500">CAC:</span> {unitEconomics.cac.calculation}
               </div>
             )}
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Dealbreakers */}
-        {data.dealbreakers.length > 0 && (
-          <div className="p-3 rounded-lg bg-red-50 border border-red-200">
-            <p className="text-sm font-medium text-red-800 mb-2 flex items-center gap-1">
-              <XCircle className="h-4 w-4" /> Dealbreakers potentiels
-            </p>
-            <ul className="space-y-1">
-              {data.dealbreakers.map((d, i) => (
-                <li key={i} className="text-sm text-red-700">{d}</li>
-              ))}
-            </ul>
+      {unitEconomics.overallAssessment && (
+        <p className="text-sm text-slate-600">{unitEconomics.overallAssessment}</p>
+      )}
+    </div>
+  );
+});
+
+// =============================================================================
+// NEW: Valuation Analysis Section
+// =============================================================================
+
+const ValuationAnalysisSection = memo(function ValuationAnalysisSection({
+  valuation,
+}: {
+  valuation: ExtendedSectorData["valuationAnalysis"];
+}) {
+  if (!valuation) return null;
+
+  const verdictConfig = VALUATION_VERDICT_CONFIG[valuation.verdict] ?? VALUATION_VERDICT_CONFIG.fair;
+
+  return (
+    <div className="space-y-4">
+      {/* Main Verdict */}
+      <div className="flex items-center justify-between p-4 rounded-lg bg-slate-50 border border-slate-100">
+        <div className="flex items-center gap-4">
+          <DollarSign className="h-8 w-8 text-slate-600" />
+          <div>
+            <div className="text-sm text-slate-500">ARR Multiple Asked</div>
+            <div className="text-3xl font-bold text-slate-800">{valuation.askMultiple}x</div>
           </div>
-        )}
+        </div>
+        <div className="text-center">
+          <div className="text-sm text-slate-500">vs Sector Median</div>
+          <div className="text-2xl font-semibold text-slate-700">{valuation.medianSectorMultiple}x</div>
+        </div>
+        <div className="text-center">
+          <div className="text-sm text-slate-500">Percentile</div>
+          <div className="text-2xl font-semibold text-slate-700">P{valuation.percentilePosition}</div>
+        </div>
+        <Badge className={cn("text-sm px-3 py-1", verdictConfig.color)}>
+          {verdictConfig.label}
+        </Badge>
+      </div>
 
-        {/* Challenged Assumptions - PRO only */}
-        {isFree ? (
-          <ProTeaserSection
-            title="Hypotheses challengees"
-            description={`${data.challengedAssumptions.length} hypotheses analysees et challengees`}
-            icon={Brain}
+      {/* Fair Value Range */}
+      <div className="p-4 rounded-lg bg-white border border-slate-200">
+        <h4 className="text-sm font-medium text-slate-700 mb-3">Fair Value Range (ARR Multiples)</h4>
+        <div className="relative h-8 bg-slate-100 rounded-full overflow-hidden">
+          {/* Scale markers */}
+          <div className="absolute inset-0 flex items-center justify-between px-4 text-xs text-slate-500">
+            <span>Low</span>
+            <span>Fair</span>
+            <span>High</span>
+          </div>
+          {/* Value markers */}
+          <div
+            className="absolute top-0 bottom-0 w-1 bg-green-500"
+            style={{ left: `${(valuation.justifiedRange.low / (valuation.justifiedRange.high * 1.2)) * 100}%` }}
           />
-        ) : (
-          <ExpandableSection title="Hypotheses challengees" count={data.challengedAssumptions.length} defaultOpen>
-            <div className="space-y-2 mt-2">
-              {data.challengedAssumptions.slice(0, 5).map((a, i) => (
-                <div key={i} className="p-2 border rounded">
-                  <div className="flex items-start justify-between">
-                    <p className="text-sm font-medium">{a.assumption}</p>
-                    <Badge variant="outline" className={cn(
-                      "text-xs shrink-0 ml-2",
-                      a.impact === "critical" ? "bg-red-100 text-red-800" :
-                      a.impact === "high" ? "bg-orange-100 text-orange-800" :
-                      a.impact === "medium" ? "bg-yellow-100 text-yellow-800" :
-                      "bg-green-100 text-green-800"
-                    )}>
-                      {a.impact}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">{a.challenge}</p>
-                  {a.mitigation && (
-                    <p className="text-xs text-green-600 mt-1">Mitigation: {a.mitigation}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </ExpandableSection>
-        )}
+          <div
+            className="absolute top-0 bottom-0 w-1 bg-blue-500"
+            style={{ left: `${(valuation.justifiedRange.fair / (valuation.justifiedRange.high * 1.2)) * 100}%` }}
+          />
+          <div
+            className="absolute top-0 bottom-0 w-1 bg-purple-500"
+            style={{ left: `${(valuation.justifiedRange.high / (valuation.justifiedRange.high * 1.2)) * 100}%` }}
+          />
+          {/* Asked marker */}
+          <div
+            className="absolute top-0 bottom-0 w-2 bg-orange-500 rounded"
+            style={{ left: `${Math.min((valuation.askMultiple / (valuation.justifiedRange.high * 1.2)) * 100, 100)}%` }}
+          />
+        </div>
+        <div className="flex justify-between mt-2 text-xs text-slate-600">
+          <span>{valuation.justifiedRange.low}x</span>
+          <span>{valuation.justifiedRange.fair}x</span>
+          <span>{valuation.justifiedRange.high}x</span>
+        </div>
+      </div>
 
-        {/* Blind Spots - PRO only */}
-        {!isFree && (
-          <ExpandableSection title="Blind Spots identifies" count={data.blindSpots.length}>
-            <div className="space-y-2 mt-2">
-              {data.blindSpots.map((b, i) => (
-                <div key={i} className="p-2 border rounded">
-                  <p className="text-sm font-medium flex items-center gap-1">
-                    <Eye className="h-3 w-3 text-purple-500" /> {b.area}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">{b.description}</p>
-                  <p className="text-xs text-blue-600 mt-1">Recommandation: {b.recommendation}</p>
-                </div>
-              ))}
+      {/* Negotiation Leverage */}
+      {valuation.negotiationLeverage && (
+        <div className="p-4 rounded-lg bg-amber-50 border border-amber-200">
+          <div className="flex items-start gap-3">
+            <Target className="h-5 w-5 text-amber-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <h4 className="text-sm font-semibold text-amber-800">Negotiation Leverage</h4>
+              <p className="text-sm text-amber-700 mt-1">{valuation.negotiationLeverage}</p>
             </div>
-          </ExpandableSection>
-        )}
-
-        {/* Questions Requiring Answers - PRO only */}
-        {!isFree && data.questionsRequiringAnswers.length > 0 && (
-          <ExpandableSection title="Questions critiques" count={data.questionsRequiringAnswers.length}>
-            <ul className="space-y-1 mt-2">
-              {data.questionsRequiringAnswers.map((q, i) => (
-                <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                  <Lightbulb className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
-                  {q}
-                </li>
-              ))}
-            </ul>
-          </ExpandableSection>
-        )}
-      </CardContent>
-    </Card>
+          </div>
+        </div>
+      )}
+    </div>
   );
 });
 
-// Contradiction Detector Card - Hoisted config
-const CONTRADICTION_SEVERITY_COLORS: Record<string, string> = {
-  minor: "bg-gray-100 text-gray-800",
-  moderate: "bg-yellow-100 text-yellow-800",
-  major: "bg-orange-100 text-orange-800",
-  critical: "bg-red-100 text-red-800",
-};
+// =============================================================================
+// NEW: DB Comparison Section
+// =============================================================================
 
-const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data }: { data: ContradictionDetectorData }) {
+const DbComparisonSection = memo(function DbComparisonSection({
+  comparison,
+}: {
+  comparison: ExtendedSectorData["dbComparison"];
+}) {
+  if (!comparison) return null;
+
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-amber-600" />
-            <CardTitle className="text-lg">Coherence</CardTitle>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between p-4 rounded-lg bg-slate-50 border border-slate-100">
+        <div className="flex items-center gap-3">
+          <Database className="h-6 w-6 text-slate-600" />
+          <div>
+            <div className="text-sm text-slate-500">Similar Deals Analyzed</div>
+            <div className="text-2xl font-bold text-slate-800">{comparison.similarDealsFound}</div>
           </div>
-          <ScoreBadge score={data.consistencyScore} size="lg" />
         </div>
-        <CardDescription>Detection des contradictions entre analyses</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Summary */}
-        <div className="p-3 rounded-lg bg-muted">
-          <p className="text-sm">{data.summaryAssessment}</p>
+        <div className="text-right max-w-md">
+          <div className="text-sm text-slate-500">Position vs DB</div>
+          <div className="text-sm font-medium text-slate-700">{comparison.thisDealsPosition}</div>
         </div>
+      </div>
 
-        {/* Contradictions */}
-        {data.contradictions.length > 0 ? (
-          <ExpandableSection title="Contradictions detectees" count={data.contradictions.length} defaultOpen>
-            <div className="space-y-3 mt-2">
-              {data.contradictions.map((c, i) => (
-                <div key={i} className="p-3 border rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-sm">{c.topic}</span>
-                    <Badge variant="outline" className={cn("text-xs", CONTRADICTION_SEVERITY_COLORS[c.severity])}>
-                      {c.severity}
-                    </Badge>
-                  </div>
-                  <div className="space-y-2 text-xs">
-                    <div className="p-2 bg-red-50 rounded">
-                      <span className="font-medium text-red-700">{c.claim1.agent}:</span>
-                      <span className="text-red-600 ml-1">{c.claim1.statement}</span>
-                    </div>
-                    <div className="p-2 bg-blue-50 rounded">
-                      <span className="font-medium text-blue-700">{c.claim2.agent}:</span>
-                      <span className="text-blue-600 ml-1">{c.claim2.statement}</span>
-                    </div>
-                  </div>
-                  {c.resolution && (
-                    <p className="text-xs text-green-600 mt-2">Resolution: {c.resolution}</p>
-                  )}
-                  {c.needsVerification && (
-                    <Badge variant="outline" className="mt-2 text-xs bg-yellow-100 text-yellow-800">
-                      Verification requise
-                    </Badge>
-                  )}
-                </div>
-              ))}
+      <div className="grid grid-cols-2 gap-4">
+        {/* Best Comparable */}
+        {comparison.bestComparable && (
+          <div className="p-4 rounded-lg bg-green-50 border border-green-200">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle className="h-4 w-4 text-green-600" />
+              <span className="text-sm font-semibold text-green-800">Best Comparable</span>
             </div>
-          </ExpandableSection>
-        ) : (
-          <div className="p-3 rounded-lg bg-green-50 border border-green-200 flex items-center gap-2">
-            <CheckCircle className="h-5 w-5 text-green-600" />
-            <span className="text-sm text-green-700">Aucune contradiction majeure detectee</span>
+            <div className="text-lg font-bold text-green-900">{comparison.bestComparable.name}</div>
+            <p className="text-xs text-green-700 mt-1">{comparison.bestComparable.similarity}</p>
+            <div className="flex items-center gap-1 mt-2 text-sm text-green-800">
+              <ArrowRight className="h-3 w-3" />
+              {comparison.bestComparable.outcome}
+            </div>
           </div>
         )}
 
-        {/* Data Gaps */}
-        {data.dataGaps.length > 0 && (
-          <ExpandableSection title="Donnees manquantes" count={data.dataGaps.length}>
-            <div className="space-y-2 mt-2">
-              {data.dataGaps.map((g, i) => (
-                <div key={i} className="flex items-start justify-between p-2 border rounded">
-                  <div>
-                    <p className="text-sm font-medium">{g.area}</p>
-                    <p className="text-xs text-muted-foreground">{g.recommendation}</p>
-                  </div>
-                  <Badge variant="outline" className={cn(
-                    "text-xs shrink-0 ml-2",
-                    g.importance === "high" ? "bg-red-100 text-red-800" :
-                    g.importance === "medium" ? "bg-yellow-100 text-yellow-800" :
-                    "bg-gray-100 text-gray-800"
-                  )}>
-                    {g.importance}
-                  </Badge>
-                </div>
-              ))}
+        {/* Concerning Comparable */}
+        {comparison.concerningComparable && (
+          <div className="p-4 rounded-lg bg-red-50 border border-red-200">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="h-4 w-4 text-red-600" />
+              <span className="text-sm font-semibold text-red-800">Warning Comparable</span>
             </div>
-          </ExpandableSection>
+            <div className="text-lg font-bold text-red-900">{comparison.concerningComparable.name}</div>
+            <p className="text-xs text-red-700 mt-1">{comparison.concerningComparable.similarity}</p>
+            <div className="flex items-center gap-1 mt-2 text-sm text-red-800">
+              <AlertCircle className="h-3 w-3" />
+              {comparison.concerningComparable.whatHappened}
+            </div>
+          </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 });
 
-// Memo Generator Card
-const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: MemoGeneratorData }) {
-  const recommendationConfig = {
-    invest: { label: "Investir", color: "bg-green-500 text-white" },
-    pass: { label: "Passer", color: "bg-red-500 text-white" },
-    more_dd_needed: { label: "DD supplementaire", color: "bg-yellow-500 text-white" },
+// =============================================================================
+// NEW: GTM Assessment Section
+// =============================================================================
+
+const GtmAssessmentSection = memo(function GtmAssessmentSection({
+  gtm,
+}: {
+  gtm: ExtendedSectorData["gtmAssessment"];
+}) {
+  if (!gtm) return null;
+
+  const modelColors = {
+    sales_led: "bg-blue-100 text-blue-800",
+    product_led: "bg-purple-100 text-purple-800",
+    hybrid: "bg-green-100 text-green-800",
+    unclear: "bg-gray-100 text-gray-800",
   };
-  const rec = recommendationConfig[data.executiveSummary.recommendation] ??
-    { label: data.executiveSummary.recommendation, color: "bg-gray-500 text-white" };
+
+  const efficiencyColors = {
+    efficient: "text-green-600",
+    acceptable: "text-blue-600",
+    inefficient: "text-red-600",
+    unknown: "text-gray-600",
+  };
 
   return (
-    <Card className="md:col-span-2">
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-emerald-600" />
-            <CardTitle className="text-lg">Investment Memo</CardTitle>
-          </div>
-          <Badge className={cn("text-sm px-3 py-1", rec.color)}>{rec.label}</Badge>
+    <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Badge className={cn("text-xs capitalize", modelColors[gtm.model])}>
+            {gtm.model.replace("_", " ")}
+          </Badge>
+          <span className={cn("text-sm font-medium capitalize", efficiencyColors[gtm.efficiency])}>
+            {gtm.efficiency} Sales Motion
+          </span>
         </div>
-        <CardDescription>Memo d&apos;investissement complet</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Executive Summary */}
-        <div className="p-4 rounded-lg bg-gradient-to-r from-primary/5 to-primary/10 border border-primary/20">
-          <p className="text-lg font-medium mb-2">&quot;{data.executiveSummary.oneLiner}&quot;</p>
-          <ul className="space-y-1">
-            {data.executiveSummary.keyPoints.map((p, i) => (
-              <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                <CheckCircle className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                {p}
+        {gtm.salesCycleMonths && (
+          <div className="text-right">
+            <div className="text-xs text-slate-500">Sales Cycle</div>
+            <div className="text-lg font-bold text-slate-800">{gtm.salesCycleMonths} mo</div>
+          </div>
+        )}
+      </div>
+      <p className="text-sm text-slate-600">{gtm.keyInsight}</p>
+    </div>
+  );
+});
+
+// =============================================================================
+// NEW: Cohort Health Section
+// =============================================================================
+
+const CohortHealthSection = memo(function CohortHealthSection({
+  cohort,
+}: {
+  cohort: ExtendedSectorData["cohortHealth"];
+}) {
+  if (!cohort || !cohort.dataAvailable) return null;
+
+  const trendIcons = {
+    improving: TrendingUp,
+    accelerating: TrendingUp,
+    stable: Minus,
+    declining: TrendingDown,
+    worsening: TrendingDown,
+    decelerating: TrendingDown,
+    unknown: HelpCircle,
+  };
+
+  const trendColors = {
+    improving: "text-green-600",
+    accelerating: "text-green-600",
+    stable: "text-blue-600",
+    declining: "text-red-600",
+    worsening: "text-red-600",
+    decelerating: "text-orange-600",
+    unknown: "text-gray-500",
+  };
+
+  const metrics = [
+    { name: "NRR Trend", trend: cohort.nrrTrend },
+    { name: "Churn Trend", trend: cohort.churnTrend },
+    { name: "Expansion Trend", trend: cohort.expansionTrend },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        {metrics.map((m) => {
+          const Icon = trendIcons[m.trend] ?? Minus;
+          return (
+            <div key={m.name} className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-center">
+              <Icon className={cn("h-5 w-5 mx-auto mb-1", trendColors[m.trend])} />
+              <div className="text-xs text-slate-500">{m.name}</div>
+              <div className={cn("text-sm font-medium capitalize", trendColors[m.trend])}>
+                {m.trend.replace("_", " ")}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {cohort.concern && (
+        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-700">{cohort.concern}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
+// =============================================================================
+// NEW: Competitive Moat Section
+// =============================================================================
+
+const CompetitiveMoatSection = memo(function CompetitiveMoatSection({
+  moat,
+}: {
+  moat: ExtendedSectorData["saasCompetitiveMoat"];
+}) {
+  if (!moat) return null;
+
+  const factors = [
+    {
+      name: "Data Network Effects",
+      value: moat.dataNetworkEffects,
+      type: "boolean",
+    },
+    {
+      name: "Switching Cost",
+      value: moat.switchingCostLevel,
+      type: "level",
+    },
+    {
+      name: "Integration Depth",
+      value: moat.integrationDepth,
+      type: "level",
+    },
+    {
+      name: "Category Leader Potential",
+      value: moat.categoryLeaderPotential,
+      type: "boolean",
+    },
+  ];
+
+  const levelColors = {
+    high: "bg-green-100 text-green-800",
+    deep: "bg-green-100 text-green-800",
+    medium: "bg-yellow-100 text-yellow-800",
+    low: "bg-red-100 text-red-800",
+    shallow: "bg-red-100 text-red-800",
+    unknown: "bg-gray-100 text-gray-800",
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        {factors.map((f) => (
+          <div key={f.name} className="p-3 rounded-lg bg-slate-50 border border-slate-100">
+            <div className="text-xs text-slate-500 mb-1">{f.name}</div>
+            {f.type === "boolean" ? (
+              <div className="flex items-center gap-2">
+                {f.value ? (
+                  <>
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                    <span className="text-sm font-medium text-green-700">Yes</span>
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="h-4 w-4 text-red-600" />
+                    <span className="text-sm font-medium text-red-700">No</span>
+                  </>
+                )}
+              </div>
+            ) : (
+              <Badge className={cn("text-xs capitalize", levelColors[f.value as keyof typeof levelColors])}>
+                {String(f.value).replace("_", " ")}
+              </Badge>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="text-sm text-slate-600">{moat.moatAssessment}</p>
+    </div>
+  );
+});
+
+// =============================================================================
+// ORIGINAL SUB-COMPONENTS (Updated for consistency)
+// =============================================================================
+
+const KeyMetricsSection = memo(function KeyMetricsSection({ metrics }: { metrics: SectorExpertData["keyMetrics"] }) {
+  return (
+    <div className="space-y-3">
+      {metrics.map((metric, idx) => (
+        <div key={idx} className="p-3 rounded-lg bg-muted/30 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-sm">{metric.metricName}</span>
+            <AssessmentBadge assessment={metric.assessment} />
+          </div>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span>Value: <span className="font-mono">{metric.value ?? "N/A"}</span></span>
+            <span>Benchmark: P25={metric.sectorBenchmark.p25}, Median={metric.sectorBenchmark.median}, P75={metric.sectorBenchmark.p75}</span>
+          </div>
+          <p className="text-xs text-muted-foreground">{metric.sectorContext}</p>
+        </div>
+      ))}
+    </div>
+  );
+});
+
+const SectorRedFlagsSection = memo(function SectorRedFlagsSection({ redFlags }: { redFlags: SectorExpertData["sectorRedFlags"] }) {
+  if (redFlags.length === 0) {
+    return (
+      <div className="flex items-center gap-2 text-green-600 text-sm">
+        <CheckCircle className="h-4 w-4" />
+        No sector-specific red flags identified
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {redFlags.map((flag, idx) => (
+        <div key={idx} className="p-3 rounded-lg bg-red-50 border border-red-100 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-sm text-red-800">{flag.flag}</span>
+            <SeverityBadge severity={flag.severity} />
+          </div>
+          <p className="text-xs text-red-700">{flag.sectorReason}</p>
+        </div>
+      ))}
+    </div>
+  );
+});
+
+const OpportunitiesSection = memo(function OpportunitiesSection({ opportunities }: { opportunities: SectorExpertData["sectorOpportunities"] }) {
+  return (
+    <div className="space-y-3">
+      {opportunities.map((opp, idx) => (
+        <div key={idx} className={cn("p-3 rounded-lg border", POTENTIAL_COLORS[opp.potential])}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-medium text-sm">{opp.opportunity}</span>
+            <Badge variant="outline" className="text-xs capitalize">{opp.potential} potential</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">{opp.reasoning}</p>
+        </div>
+      ))}
+    </div>
+  );
+});
+
+const RegulatorySection = memo(function RegulatorySection({ regulatory }: { regulatory: SectorExpertData["regulatoryEnvironment"] }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground">Complexity:</span>
+        <Badge variant="outline" className={cn("text-xs capitalize", COMPLEXITY_COLORS[regulatory.complexity])}>
+          {regulatory.complexity.replace("_", " ")}
+        </Badge>
+      </div>
+
+      {regulatory.keyRegulations.length > 0 && (
+        <div>
+          <p className="text-xs font-medium mb-2">Key Regulations:</p>
+          <div className="flex flex-wrap gap-1">
+            {regulatory.keyRegulations.map((reg, idx) => (
+              <Badge key={idx} variant="secondary" className="text-xs">{reg}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {regulatory.complianceRisks.length > 0 && (
+        <div>
+          <p className="text-xs font-medium mb-2 text-orange-700">Compliance Risks:</p>
+          <ul className="text-xs text-muted-foreground space-y-1">
+            {regulatory.complianceRisks.map((risk, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <AlertTriangle className="h-3 w-3 text-orange-500 mt-0.5 flex-shrink-0" />
+                {risk}
               </li>
             ))}
           </ul>
         </div>
+      )}
 
-        {/* Company Overview */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Probleme</p>
-            <p className="text-sm text-muted-foreground">{data.companyOverview.problem}</p>
-          </div>
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Solution</p>
-            <p className="text-sm text-muted-foreground">{data.companyOverview.solution}</p>
-          </div>
-        </div>
-
-        {/* Investment Highlights */}
-        <ExpandableSection title="Investment Highlights" count={data.investmentHighlights.length} defaultOpen>
-          <div className="space-y-2 mt-2">
-            {data.investmentHighlights.map((h, i) => (
-              <div key={i} className="p-2 border rounded bg-green-50">
-                <p className="text-sm font-medium text-green-800">{h.highlight}</p>
-                <p className="text-xs text-green-600 mt-1">{h.evidence}</p>
-              </div>
+      {regulatory.upcomingChanges.length > 0 && (
+        <div>
+          <p className="text-xs font-medium mb-2">Upcoming Changes:</p>
+          <ul className="text-xs text-muted-foreground space-y-1">
+            {regulatory.upcomingChanges.map((change, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <Compass className="h-3 w-3 text-blue-500 mt-0.5 flex-shrink-0" />
+                {change}
+              </li>
             ))}
-          </div>
-        </ExpandableSection>
-
-        {/* Key Risks */}
-        <ExpandableSection title="Risques cles" count={data.keyRisks.length} defaultOpen>
-          <div className="space-y-2 mt-2">
-            {data.keyRisks.map((r, i) => (
-              <div key={i} className="p-2 border rounded">
-                <div className="flex items-start justify-between">
-                  <p className="text-sm font-medium">{r.risk}</p>
-                  <Badge variant="outline" className={cn(
-                    "text-xs shrink-0 ml-2",
-                    r.residualRisk === "high" ? "bg-red-100 text-red-800" :
-                    r.residualRisk === "medium" ? "bg-yellow-100 text-yellow-800" :
-                    "bg-green-100 text-green-800"
-                  )}>
-                    {r.residualRisk}
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Mitigation: {r.mitigation}</p>
-              </div>
-            ))}
-          </div>
-        </ExpandableSection>
-
-        {/* Investment Thesis */}
-        <div className="p-4 rounded-lg bg-muted">
-          <p className="text-sm font-medium mb-2">These d&apos;investissement</p>
-          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{data.investmentThesis}</p>
+          </ul>
         </div>
-
-        {/* Deal Terms */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="p-3 rounded-lg border">
-            <p className="text-sm font-medium mb-2">Termes du deal</p>
-            <div className="space-y-1 text-sm">
-              <p><span className="text-muted-foreground">Valorisation:</span> {data.dealTerms.valuation}</p>
-              <p><span className="text-muted-foreground">Taille du round:</span> {data.dealTerms.roundSize}</p>
-            </div>
-          </div>
-          <div className="p-3 rounded-lg border">
-            <p className="text-sm font-medium mb-2">Points de negociation</p>
-            <ul className="text-sm text-muted-foreground list-disc list-inside">
-              {data.dealTerms.negotiationPoints.slice(0, 3).map((n, i) => (
-                <li key={i}>{n}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        {/* Due Diligence Findings */}
-        {(data.dueDiligenceFindings.outstanding.length > 0 || data.dueDiligenceFindings.redFlags.length > 0) && (
-          <div className="grid md:grid-cols-2 gap-4">
-            {data.dueDiligenceFindings.outstanding.length > 0 && (
-              <div className="p-3 rounded-lg border border-yellow-200 bg-yellow-50">
-                <p className="text-sm font-medium text-yellow-800 mb-2">DD a completer</p>
-                <ul className="text-sm text-yellow-700 list-disc list-inside">
-                  {data.dueDiligenceFindings.outstanding.map((o, i) => <li key={i}>{o}</li>)}
-                </ul>
-              </div>
-            )}
-            {data.dueDiligenceFindings.redFlags.length > 0 && (
-              <div className="p-3 rounded-lg border border-red-200 bg-red-50">
-                <p className="text-sm font-medium text-red-800 mb-2">Red Flags</p>
-                <ul className="text-sm text-red-700 list-disc list-inside">
-                  {data.dueDiligenceFindings.redFlags.map((r, i) => <li key={i}>{r}</li>)}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Next Steps */}
-        {data.nextSteps.length > 0 && (
-          <div className="pt-2 border-t">
-            <p className="text-sm font-medium mb-2">Prochaines etapes</p>
-            <ul className="space-y-1">
-              {data.nextSteps.map((s, i) => (
-                <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                  <span className="bg-primary text-primary-foreground rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0">
-                    {i + 1}
-                  </span>
-                  {s}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+      )}
+    </div>
   );
 });
 
-// Main Tier 2 Results Component
+const SectorDynamicsSection = memo(function SectorDynamicsSection({ dynamics }: { dynamics: SectorExpertData["sectorDynamics"] }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Competition</p>
+          <Badge variant="outline" className="text-xs capitalize">{dynamics.competitionIntensity}</Badge>
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Consolidation</p>
+          <Badge variant="outline" className="text-xs capitalize">{dynamics.consolidationTrend}</Badge>
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Barrier to Entry</p>
+          <Badge variant="outline" className="text-xs capitalize">{dynamics.barrierToEntry}</Badge>
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Typical Exit Multiple</p>
+          <span className="text-sm font-bold">{dynamics.typicalExitMultiple}x</span>
+        </div>
+      </div>
+
+      {dynamics.recentExits.length > 0 && (
+        <div>
+          <p className="text-xs font-medium mb-2">Recent Exits:</p>
+          <ul className="text-xs text-muted-foreground space-y-1">
+            {dynamics.recentExits.map((exit, idx) => (
+              <li key={idx}>{exit}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+});
+
+const SectorQuestionsSection = memo(function SectorQuestionsSection({ questions }: { questions: SectorExpertData["sectorQuestions"] }) {
+  return (
+    <div className="space-y-3">
+      {questions.map((q, idx) => (
+        <div key={idx} className={cn("p-3 rounded-lg border", PRIORITY_COLORS[q.priority])}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              {CATEGORY_ICONS[q.category]}
+              <Badge variant="outline" className="text-xs capitalize">{q.category}</Badge>
+            </div>
+            <Badge variant="outline" className="text-xs capitalize">{q.priority.replace("_", " ")}</Badge>
+          </div>
+          <p className="font-medium text-sm mb-2">{q.question}</p>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="p-2 bg-green-50 rounded">
+              <p className="text-green-700 font-medium mb-1">Expected Answer:</p>
+              <p className="text-green-600">{q.expectedAnswer}</p>
+            </div>
+            <div className="p-2 bg-red-50 rounded">
+              <p className="text-red-700 font-medium mb-1">Red Flag Answer:</p>
+              <p className="text-red-600">{q.redFlagAnswer}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+});
+
+const SectorFitSection = memo(function SectorFitSection({ fit }: { fit: SectorExpertData["sectorFit"] }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">Sector Fit Score</span>
+        <ScoreBadge score={fit.score} size="lg" />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground">Timing:</span>
+        <Badge variant="outline" className={cn("text-xs capitalize", TIMING_COLORS[fit.sectorTiming])}>
+          {fit.sectorTiming}
+        </Badge>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-xs font-medium text-green-700 mb-2">Strengths:</p>
+          <ul className="text-xs text-muted-foreground space-y-1">
+            {fit.strengths.map((s, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <CheckCircle className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
+                {s}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-red-700 mb-2">Weaknesses:</p>
+          <ul className="text-xs text-muted-foreground space-y-1">
+            {fit.weaknesses.map((w, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <XCircle className="h-3 w-3 text-red-500 mt-0.5 flex-shrink-0" />
+                {w}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// =============================================================================
+// MAIN COMPONENT
+// =============================================================================
+
 export function Tier2Results({ results, subscriptionPlan = "FREE" }: Tier2ResultsProps) {
-  const getAgentData = useCallback(<T,>(agentName: string): T | null => {
-    const result = results[agentName];
-    if (!result?.success || !result.data) return null;
-    return result.data as T;
-  }, [results]);
-
-  const scorerData = getAgentData<SynthesisDealScorerData>("synthesis-deal-scorer");
-  const scenarioData = getAgentData<ScenarioModelerData>("scenario-modeler");
-  const devilsData = getAgentData<DevilsAdvocateData>("devils-advocate");
-  const contradictionData = getAgentData<ContradictionDetectorData>("contradiction-detector");
-  const memoData = getAgentData<MemoGeneratorData>("memo-generator");
-
-  // Get display limits based on plan
-  const displayLimits = useMemo(() => getDisplayLimits(subscriptionPlan), [subscriptionPlan]);
   const isFree = subscriptionPlan === "FREE";
 
-  const successfulAgents = useMemo(() => {
-    return Object.values(results).filter(r => r.success).length;
+  // Find the sector expert result (there should only be one)
+  const sectorExpertEntry = useMemo(() => {
+    return Object.entries(results).find(([name]) =>
+      name.endsWith("-expert") && name !== "document-extractor"
+    );
   }, [results]);
 
-  return (
-    <div className="space-y-6">
-      {/* Summary Header */}
-      <Card className="bg-gradient-to-r from-primary/5 to-primary/10">
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle>Synthese Tier 2</CardTitle>
-            {scorerData && <ScoreBadge score={scorerData.overallScore} size="lg" />}
-          </div>
-          <CardDescription>
-            {successfulAgents} agents de synthese executes
-          </CardDescription>
+  // For FREE users, show a teaser instead of the full analysis
+  if (isFree) {
+    const [agentName] = sectorExpertEntry ?? ["unknown-expert"];
+    const expertType = agentName as SectorExpertType;
+    const config = SECTOR_CONFIG[expertType];
+    const data = sectorExpertEntry?.[1]?.data as SectorExpertData | undefined;
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <span className="text-xl">{config?.emoji ?? "🔍"}</span>
+            {config?.displayName ?? "Expert Sectoriel"}
+          </CardTitle>
+          <CardDescription>Analyse sectorielle specialisee</CardDescription>
         </CardHeader>
-        {scorerData && (
-          <CardContent>
-            <div className="flex items-center gap-4">
-              <VerdictBadge verdict={scorerData.verdict} />
-              <RecommendationBadge action={scorerData.investmentRecommendation.action} />
-              <span className="text-sm text-muted-foreground">
-                Confiance: {scorerData.confidence}%
-              </span>
-            </div>
-          </CardContent>
-        )}
+        <CardContent>
+          <ProTeaserSection
+            title={`Analyse ${config?.displayName ?? "Expert Sectoriel"}`}
+            description={data
+              ? `Score secteur: ${data.sectorScore}/100 - ${data.keyMetrics.length} metriques sectorielles analysees, ${data.sectorQuestions.length} questions DD specifiques`
+              : "Analyse approfondie par un expert sectoriel avec benchmarks et recommandations"}
+            icon={Compass}
+            previewText={data?.executiveSummary?.slice(0, 100) + "..."}
+          />
+        </CardContent>
       </Card>
+    );
+  }
 
-      {/* Tabbed Results */}
-      <Tabs defaultValue="synthesis" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="synthesis">Score & Scenarios</TabsTrigger>
-          <TabsTrigger value="challenge">Challenge</TabsTrigger>
-          <TabsTrigger value="memo">Memo</TabsTrigger>
-        </TabsList>
+  if (!sectorExpertEntry) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Compass className="h-5 w-5" />
+            Tier 2 - Expert Sectoriel
+          </CardTitle>
+          <CardDescription>No sector expert analysis available</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            No sector-specific expert was activated for this deal.
+            This may be because the deal sector doesn&apos;t match any of our specialized experts.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
-        <TabsContent value="synthesis" className="space-y-4 mt-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            {scorerData && (
-              <SynthesisScorerCard
-                data={scorerData}
-                strengthsLimit={displayLimits.strengths}
-                weaknessesLimit={displayLimits.weaknesses}
-                showFullScore={displayLimits.score}
-              />
-            )}
+  const [agentName, result] = sectorExpertEntry;
+  const expertType = agentName as SectorExpertType;
+  const config = SECTOR_CONFIG[expertType];
+
+  if (!result.success) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <span className="text-xl">{config?.emoji ?? "🔍"}</span>
+            {config?.displayName ?? agentName}
+          </CardTitle>
+          <CardDescription>Sector analysis failed</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 text-red-600">
+            <XCircle className="h-4 w-4" />
+            <span className="text-sm">{result.error ?? "Unknown error"}</span>
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* Scenarios - PRO only */}
-            {isFree ? (
-              <ProTeaserSection
-                title="Scenarios modelises"
-                description="3 scenarios Bull/Base/Bear avec projections ROI et IRR"
-                icon={BarChart3}
-                previewText={scenarioData ? `Confiance: ${scenarioData.confidenceLevel}%` : undefined}
-              />
-            ) : (
-              scenarioData && <ScenarioModelerCard data={scenarioData} />
-            )}
+        </CardContent>
+      </Card>
+    );
+  }
 
-            {/* Contradictions - PRO only (FREE sees count teaser) */}
-            {isFree ? (
-              <ProTeaserSection
-                title="Contradictions detectees"
-                description={contradictionData
-                  ? `${contradictionData.contradictions.length} contradiction(s) identifiee(s) entre les analyses`
-                  : "Detection automatique des incoherences"}
-                icon={Zap}
-                previewText={contradictionData ? `Score coherence: ${contradictionData.consistencyScore}/100` : undefined}
-              />
-            ) : (
-              contradictionData && <ContradictionDetectorCard data={contradictionData} />
-            )}
-          </div>
-        </TabsContent>
+  const data = result.data as SectorExpertData;
+  const extended = result._extended;
 
-        <TabsContent value="challenge" className="space-y-4 mt-4">
-          <div className="grid gap-4 md:grid-cols-1">
-            {devilsData && (
-              <DevilsAdvocateCard
-                data={devilsData}
-                objectionsLimit={displayLimits.devilsAdvocate}
-              />
-            )}
+  return (
+    <Card className="overflow-hidden">
+      {/* Header with gradient */}
+      <div className={cn("bg-gradient-to-r p-6 text-white", config?.color ?? "from-gray-500 to-gray-600")}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-4xl">{config?.emoji ?? "🔍"}</span>
+            <div>
+              <h2 className="text-xl font-bold">{config?.displayName ?? agentName}</h2>
+              <p className="text-sm opacity-90">{data.sectorName} Sector Analysis</p>
+            </div>
           </div>
-        </TabsContent>
+          <div className="text-right">
+            <p className="text-sm opacity-75">Sector Score</p>
+            <p className="text-4xl font-bold">{data.sectorScore}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 mt-4">
+          <MaturityBadge maturity={data.sectorMaturity} />
+          <span className="text-xs opacity-75">
+            Analysis completed in {(result.executionTimeMs / 1000).toFixed(1)}s
+          </span>
+        </div>
+      </div>
 
-        <TabsContent value="memo" className="space-y-4 mt-4">
-          <div className="grid gap-4 md:grid-cols-1">
-            {/* Memo - PRO only */}
-            {isFree ? (
-              <ProTeaserSection
-                title="Investment Memo"
-                description="Memo d'investissement complet et exportable en PDF"
-                icon={FileText}
-                previewText={memoData ? memoData.executiveSummary.oneLiner : undefined}
-              />
-            ) : (
-              memoData && <MemoGeneratorCard data={memoData} />
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
-    </div>
+      <CardContent className="p-6 space-y-6">
+        {/* NEW: Verdict Hero (if extended data available) */}
+        {extended?.verdict && (
+          <VerdictHero verdict={extended.verdict} sectorScore={data.sectorScore} />
+        )}
+
+        {/* Executive Summary */}
+        <div className="p-4 bg-muted/30 rounded-lg">
+          <p className="text-sm leading-relaxed">{data.executiveSummary}</p>
+        </div>
+
+        {/* NEW: Score Breakdown (if extended data available) */}
+        {extended?.scoreBreakdown && (
+          <ExpandableSection
+            title="Score Breakdown"
+            icon={<BarChart3 className="h-4 w-4" />}
+            defaultOpen={true}
+          >
+            <ScoreBreakdownSection breakdown={extended.scoreBreakdown} totalScore={data.sectorScore} />
+          </ExpandableSection>
+        )}
+
+        {/* NEW: Unit Economics (if extended data available) */}
+        {extended?.unitEconomics && (
+          <ExpandableSection
+            title="Unit Economics Deep Dive"
+            icon={<Calculator className="h-4 w-4" />}
+            defaultOpen={true}
+          >
+            <UnitEconomicsSection unitEconomics={extended.unitEconomics} />
+          </ExpandableSection>
+        )}
+
+        {/* NEW: Valuation Analysis (if extended data available) */}
+        {extended?.valuationAnalysis && (
+          <ExpandableSection
+            title="Valuation Analysis"
+            icon={<DollarSign className="h-4 w-4" />}
+            defaultOpen={true}
+          >
+            <ValuationAnalysisSection valuation={extended.valuationAnalysis} />
+          </ExpandableSection>
+        )}
+
+        {/* NEW: DB Comparison (if extended data available) */}
+        {extended?.dbComparison && (
+          <ExpandableSection
+            title="Database Comparison"
+            icon={<Database className="h-4 w-4" />}
+          >
+            <DbComparisonSection comparison={extended.dbComparison} />
+          </ExpandableSection>
+        )}
+
+        {/* NEW: GTM Assessment (if extended data available) */}
+        {extended?.gtmAssessment && (
+          <ExpandableSection
+            title="Go-to-Market Assessment"
+            icon={<Zap className="h-4 w-4" />}
+          >
+            <GtmAssessmentSection gtm={extended.gtmAssessment} />
+          </ExpandableSection>
+        )}
+
+        {/* NEW: Cohort Health (if extended data available) */}
+        {extended?.cohortHealth && extended.cohortHealth.dataAvailable && (
+          <ExpandableSection
+            title="Cohort Health"
+            icon={<Users className="h-4 w-4" />}
+          >
+            <CohortHealthSection cohort={extended.cohortHealth} />
+          </ExpandableSection>
+        )}
+
+        {/* NEW: Competitive Moat (if extended data available) */}
+        {extended?.saasCompetitiveMoat && (
+          <ExpandableSection
+            title="Competitive Moat Analysis"
+            icon={<Shield className="h-4 w-4" />}
+          >
+            <CompetitiveMoatSection moat={extended.saasCompetitiveMoat} />
+          </ExpandableSection>
+        )}
+
+        {/* Expandable Sections - Original */}
+        <div className="space-y-3">
+          <ExpandableSection
+            title={`Key Metrics (${data.keyMetrics.length})`}
+            icon={<BarChart3 className="h-4 w-4" />}
+          >
+            <KeyMetricsSection metrics={data.keyMetrics} />
+          </ExpandableSection>
+
+          <ExpandableSection
+            title={`Sector Red Flags (${data.sectorRedFlags.length})`}
+            icon={<ShieldAlert className="h-4 w-4" />}
+            defaultOpen={data.sectorRedFlags.length > 0}
+          >
+            <SectorRedFlagsSection redFlags={data.sectorRedFlags} />
+          </ExpandableSection>
+
+          <ExpandableSection
+            title={`Opportunities (${data.sectorOpportunities.length})`}
+            icon={<Lightbulb className="h-4 w-4" />}
+          >
+            <OpportunitiesSection opportunities={data.sectorOpportunities} />
+          </ExpandableSection>
+
+          <ExpandableSection
+            title="Regulatory Environment"
+            icon={<Scale className="h-4 w-4" />}
+          >
+            <RegulatorySection regulatory={data.regulatoryEnvironment} />
+          </ExpandableSection>
+
+          <ExpandableSection
+            title="Sector Dynamics"
+            icon={<Target className="h-4 w-4" />}
+          >
+            <SectorDynamicsSection dynamics={data.sectorDynamics} />
+          </ExpandableSection>
+
+          <ExpandableSection
+            title={`Due Diligence Questions (${data.sectorQuestions.length})`}
+            icon={<HelpCircle className="h-4 w-4" />}
+          >
+            <SectorQuestionsSection questions={data.sectorQuestions} />
+          </ExpandableSection>
+
+          <ExpandableSection
+            title="Sector Fit Analysis"
+            icon={<CheckCircle className="h-4 w-4" />}
+          >
+            <SectorFitSection fit={data.sectorFit} />
+          </ExpandableSection>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between text-xs text-muted-foreground pt-4 border-t">
+          <span>Cost: ${result.cost.toFixed(4)}</span>
+          <span>Execution: {(result.executionTimeMs / 1000).toFixed(1)}s</span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

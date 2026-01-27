@@ -704,8 +704,8 @@ class CostMonitor {
       full_dd: { min: 0.08, max: 0.15, avg: 0.10 },
       tier1_complete: { min: 0.25, max: 0.45, avg: 0.34 },
       tier1_complete_react: { min: 1.00, max: 1.80, avg: 1.35 },
-      tier2_synthesis: { min: 0.10, max: 0.18, avg: 0.13 },
-      tier3_sector: { min: 0.02, max: 0.05, avg: 0.03 },
+      tier2_sector: { min: 0.02, max: 0.05, avg: 0.03 },
+      tier3_synthesis: { min: 0.10, max: 0.18, avg: 0.13 },
       full_analysis: { min: 0.40, max: 0.65, avg: 0.50 },
       full_analysis_react: { min: 1.50, max: 2.50, avg: 1.90 },
     };
@@ -727,8 +727,8 @@ class CostMonitor {
       full_dd: { min: 0.08, max: 0.15, avg: 0.10 },
       tier1_complete: { min: 0.25, max: 0.45, avg: 0.34 },
       tier1_complete_react: { min: 1.00, max: 1.80, avg: 1.35 },
-      tier2_synthesis: { min: 0.10, max: 0.18, avg: 0.13 },
-      tier3_sector: { min: 0.02, max: 0.05, avg: 0.03 },
+      tier2_sector: { min: 0.02, max: 0.05, avg: 0.03 },
+      tier3_synthesis: { min: 0.10, max: 0.18, avg: 0.13 },
       full_analysis: { min: 0.40, max: 0.65, avg: 0.50 },
       full_analysis_react: { min: 1.50, max: 2.50, avg: 1.90 },
     };

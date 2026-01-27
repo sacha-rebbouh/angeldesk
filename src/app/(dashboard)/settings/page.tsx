@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { User, Mail, Shield, CreditCard } from "lucide-react";
+import { InvestmentPreferencesForm } from "@/components/settings/investment-preferences-form";
 
 export default async function SettingsPage() {
   const [user, isAdmin] = await Promise.all([requireAuth(), checkIsAdmin()]);
@@ -21,7 +22,7 @@ export default async function SettingsPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Paramètres</h1>
         <p className="text-muted-foreground">
-          Gérez votre compte et vos préférences
+          Gérez votre compte et vos préférences d&apos;investissement
         </p>
       </div>
 
@@ -93,6 +94,9 @@ export default async function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Investment Preferences */}
+        <InvestmentPreferencesForm />
       </div>
     </div>
   );

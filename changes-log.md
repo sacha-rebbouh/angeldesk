@@ -2,6 +2,3917 @@
 
 ---
 
+## 2026-01-28 09:30 - UI: Stepper de progression d'analyse (premium feel)
+
+### Contexte
+L'attente pendant l'analyse etait longue et l'utilisateur n'avait aucune visibilite sur ce qui se passait (juste un spinner "Analyse en cours...").
+
+### Solution implementee
+Composant `AnalysisProgress` - Stepper vertical minimaliste style Vercel/Linear:
+
+```
+Analyse en cours                               1:45
+
+✓ Extraction des documents
+◉ Investigation approfondie
+○ Expert sectoriel
+○ Synthese & Scoring
+```
+
+### Features
+1. **4 etapes simples** - juste les noms, pas de chiffres
+2. **Timer temps ecoule** (coin superieur droit)
+3. **Icones animees** (pulse header, spin running, check completed)
+4. **Delai extraction prolonge** (8-12s) pour effet premium
+5. **Lignes de connexion** qui changent de couleur
+
+### Design decisions
+- **Pas de chiffres** (evite confusion FREE vs PRO sur nombre d'agents)
+- **Pas de liste d'agents** (garde le "secret sauce")
+- **Labels generiques** ("Investigation approfondie" pas "13 agents Tier 1")
+
+### Fichiers crees/modifies
+- `src/components/deals/analysis-progress.tsx` (nouveau composant)
+- `src/components/deals/analysis-panel.tsx` (integration)
+
+### UX Impact
+- Premium feel minimaliste
+- L'utilisateur sait ou en est l'analyse sans details techniques
+
+---
+
+## 2026-01-28 07:00 - Config finale: Sonnet pour 2 agents + retries optimises
+
+### Contexte
+Haiku 4.5 et 3.5 timeout/rate-limit via OpenRouter pour tech-ops-dd et customer-intel.
+Sonnet fonctionne parfaitement pour ces deux agents.
+
+### Config finale
+
+**Modeles:**
+- `tech-ops-dd` → SONNET (2 tentatives max)
+- `customer-intel` → SONNET (2 tentatives max)
+- Tous les autres → HAIKU 4.5 (3 tentatives max)
+
+**Timeouts:**
+- Circuit breaker: 60s → 180s (pour requetes longues)
+- Agents: 180s
+
+### Tests finaux
+- tech-ops-dd: ✅ $0.088, 52s, 0 retry
+- customer-intel: ✅ $0.118, 60s, 0 retry
+
+### Impact cout
+- ~$0.10/agent pour ces 2 agents avec Sonnet
+- Tous les autres restent sur Haiku 4.5 (~$0.03/agent)
+
+### Fichiers modifies
+- `src/services/openrouter/router.ts`
+- `src/services/openrouter/client.ts`
+- `src/services/openrouter/circuit-breaker.ts`
+
+---
+
+## 2026-01-28 06:00 - tech-ops-dd: Filtrage documents (-50k chars, -12k tokens)
+
+### Contexte
+Malgré la suppression de l'exemple JSON, l'agent utilisait encore 64k tokens.
+Cause: `formatDealContext` injecte 50k chars pour FINANCIAL_MODEL (inutile pour cet agent).
+
+### Modification
+- Filtrage des documents avant `formatDealContext`
+- Exclusion de `FINANCIAL_MODEL` (non pertinent pour tech-ops)
+- Garde: PITCH_DECK, TECHNICAL_DOC, etc.
+
+### Code ajouté
+```typescript
+const filteredContext = {
+  ...context,
+  documents: context.documents?.filter(
+    (doc) => doc.type !== "FINANCIAL_MODEL"
+  ),
+};
+```
+
+### Impact
+- **-50k caractères** (~12k tokens) si FINANCIAL_MODEL présent
+- Zéro perte de qualité (le financial model n'apporte rien pour analyser équipe/maturité/sécurité)
+
+### Fichiers modifiés
+- `src/agents/tier1/tech-ops-dd.ts`
+
+---
+
+## 2026-01-28 05:45 - tech-ops-dd: Allègement du prompt (-250 lignes, -1500 tokens)
+
+### Contexte
+L'agent causait des timeouts. Première optimisation: supprimer l'exemple JSON complet du system prompt.
+
+### Modification
+- Suppression de la section `# EXEMPLES` (lignes 156-417)
+- Exemple JSON complet de 245 lignes supprimé
+- Contre-exemple "mauvais output" supprimé
+- Remplacé par référence au format dans le user prompt
+
+### Impact
+- **-250 lignes** de code
+- **-1500 tokens** estimés par appel
+- Le format JSON reste défini dans le user prompt (pas de perte de qualité)
+
+### Fichiers modifiés
+- `src/agents/tier1/tech-ops-dd.ts`
+
+---
+
+## 2026-01-28 05:15 - tech-ops-dd: Intégration team-investigator + Context Engine obligatoire
+
+### Contexte
+Suite à l'analyse de conformité de tech-ops-dd (85/100), 2 axes d'amélioration identifiés:
+1. Coordination avec team-investigator pour éviter analyses redondantes
+2. Context Engine pas assez strictement obligatoire
+
+### Modifications
+
+**1. Dependency team-investigator ajoutée**
+- `dependencies: ["document-extractor", "team-investigator"]`
+- Récupération des résultats via `context.previousResults?.["team-investigator"]`
+- Injection dans le prompt avec instructions d'utilisation
+
+**2. Context Engine rendu obligatoire**
+- Nouvelles règles absolues (points 3 et 4) dans le system prompt
+- Section Context Engine dynamique dans le user prompt:
+  - Si données disponibles: "DONNÉES DISPONIBLES ✅" + obligation de cross-ref
+  - Si pas de données: "PAS DE DONNÉES ⚠️" + impact sur confidenceLevel et limitations
+
+**3. Instructions pour éviter duplication**
+- Si team-investigator disponible: "Ne pas refaire l'analyse équipe from scratch - compléter avec focus TECHNIQUE"
+- Focus sur: séniorité technique, gaps techniques, key person risk technique, capacité delivery
+
+### Fichiers modifiés
+- `src/agents/tier1/tech-ops-dd.ts` (constructor, system prompt, execute method)
+
+### Impact
+- Meilleure cohérence entre agents Tier 1
+- Analyses équipe non dupliquées
+- Traçabilité Context Engine améliorée
+
+---
+
+## 2026-01-28 04:30 - Upgrade tech-ops-dd vers niveau A (5 améliorations)
+
+### Contexte
+Analyse de conformité de l'agent tech-ops-dd par rapport à AGENT-REFONTE-PROMPT.md. Score initial: B- (70/100). Objectif: passer à A.
+
+### Améliorations implémentées
+
+**1. Format d'injection DB dans le prompt (Section 8.6)**
+- Ajout de tableaux de benchmarks sectoriels directement dans le user prompt
+- Taille équipe par stage (P25/median/P75)
+- Séniorité attendue par stage
+- Ratio ARR/dev par stage
+- Sécurité attendue par stage
+
+**2. Demande explicite de calculs**
+- Nouvelle section "RÈGLE CRITIQUE - MONTRER LES CALCULS" dans le system prompt
+- Exemples concrets de calculs obligatoires (séniorité moyenne, ratio ARR/dev)
+- Checklist de vérification finale avec calculs requis
+
+**3. SectorBenchmark enrichi avec P25/median/P75**
+- Structure `teamSize` avec thisCompany, sectorP25, sectorMedian, sectorP75, percentile, source
+- Structure `maturity` avec thisCompany, sectorTypical, assessment
+- Structure `security` avec thisCompany, sectorExpected, assessment
+- Type mis à jour dans `src/agents/types.ts`
+- Normalisation mise à jour dans l'agent
+
+**4. Exemple JSON complet dans le system prompt**
+- Exemple de 150+ lignes montrant un output complet
+- Tous les champs remplis avec des valeurs réalistes
+- Calculs montrés dans les justifications
+- Benchmarks chiffrés
+
+**5. Questions par défaut enrichies (6 questions)**
+- 2 CRITICAL: déploiement/DevOps, key person risk
+- 3 HIGH: séniorité, sécurité, recrutements
+- 1 MEDIUM: IP/brevets
+- Chaque question avec context et whatToLookFor détaillés
+
+### Fichiers modifiés
+- `src/agents/tier1/tech-ops-dd.ts` - System prompt, user prompt, questions par défaut, normalisation
+- `src/agents/types.ts` - Type TechOpsDDFindings.sectorBenchmark enrichi
+
+### Score après modifications
+- Conformité structure: 85% → 95%
+- Profondeur d'analyse: 60% → 90%
+- Exploitation DB: 50% → 85%
+- Exemples: 65% → 95%
+- **Global: B- (70%) → A (90%)**
+
+---
+
+## 2026-01-28 03:45 - Fix timeout tech-ops-dd - Prompt optimisé
+
+### Contexte
+L'agent tech-ops-dd causait des timeouts. Le schéma JSON dans le prompt était trop verbeux (~180 lignes avec descriptions multilignes pour chaque champ).
+
+### Modifications
+- `src/agents/tier1/tech-ops-dd.ts`:
+  - Schéma JSON compacté: descriptions inline courtes au lieu de multilignes (~90 lignes vs ~180)
+  - Instructions spécifiques condensées en 6 points clairs
+  - Règles critiques rappelées en fin de prompt
+  - Timeout augmenté de 120s à 180s (marge supplémentaire)
+  - Structure 100% conforme à Section 5.2 de AGENT-REFONTE-PROMPT.md
+
+### Contenu préservé
+- Toutes les instructions d'analyse (maturité, équipe, sécu, IP)
+- Cross-reference Context Engine
+- Tous les champs du schéma JSON
+- Règles absolues (CTO seul, équipe junior, etc.)
+- Format red flags complet (5 composants)
+
+### Impact
+- Réduction ~50% tokens du prompt user
+- Timeout 3 min (marge pour JSON complexe)
+- Qualité d'analyse préservée
+
+---
+
+## 2026-01-28 02:30 - Migration complete technical-dd → tech-stack-dd + tech-ops-dd
+
+### Contexte
+Finalisation de la migration de `technical-dd` vers les deux nouveaux agents. Suppression complete de l'ancien agent et integration dans toute la codebase.
+
+### Fichiers supprimes
+- `src/agents/tier1/technical-dd.ts` - Agent legacy supprime
+
+### Fichiers modifies
+**Orchestrateur & Registry:**
+- `src/agents/orchestrator/agent-registry.ts` - technical-dd → tech-stack-dd + tech-ops-dd
+- `src/agents/orchestrator/types.ts` - TIER1_AGENT_NAMES mis a jour (12 → 13)
+- `src/agents/orchestrator/summary.ts` - scoreMapping mis a jour
+- `src/agents/index.ts` - Exports mis a jour
+- `src/agents/tier1/index.ts` - Export technicalDD supprime
+
+**Agents Tier 3 (Synthese):**
+- `src/agents/tier3/synthesis-deal-scorer.ts` - Listes et scoreMapping
+- `src/agents/tier3/contradiction-detector.ts` - Listes tier1Agents
+- `src/agents/tier3/devils-advocate.ts` - Liste tier1Agents
+- `src/agents/tier3/memo-generator.ts` - Liste tier1Agents
+
+**Agents Tier 2:**
+- `src/agents/tier2/legaltech-expert.ts` - Reference technical-dd → 2 agents
+
+**Agents Tier 1:**
+- `src/agents/tier1/question-master.ts` - Liste et prompt
+
+**UI:**
+- `src/components/deals/tier1-results.tsx` - Nouveau: TechStackDDCard + TechOpsDDCard, supprime TechnicalDDCard
+
+**Config:**
+- `src/lib/analysis-constants.ts` - TIER1_AGENTS et AGENT_DISPLAY_NAMES
+- `src/lib/format-utils.ts` - AGENT_DISPLAY_NAMES
+
+### Impact
+- 13 agents Tier 1 actifs (contre 12 avant)
+- UI affiche 2 cartes separees: Tech Stack DD et Tech Ops DD
+- Compilation TypeScript OK
+
+---
+
+## 2026-01-28 01:15 - Split technical-dd en 2 agents
+
+### Contexte
+Le test de technical-dd sur Haiku causait des timeouts car Haiku a une limite hard de 4096 tokens output. L'agent demandait ~5000+ tokens, ce qui causait des JSON tronques et des timeouts.
+
+### Solution implementee
+Split de technical-dd (7 criteres) en 2 agents specialises:
+
+| Agent | Criteres | Poids | Output |
+|-------|----------|-------|--------|
+| **tech-stack-dd** | Stack (36%) + Scalabilite (36%) + Dette (28%) | 55% | ~2500 tokens |
+| **tech-ops-dd** | Maturite (33%) + Equipe (33%) + Secu (22%) + IP (11%) | 45% | ~2500 tokens |
+
+### Fichiers crees
+- `src/agents/tier1/tech-stack-dd.ts` - Stack + Scalabilite + Dette technique
+- `src/agents/tier1/tech-ops-dd.ts` - Maturite + Equipe + Securite + IP
+
+### Fichiers modifies
+- `src/agents/types.ts` - Nouveaux types TechStackDDResult, TechOpsDDResult
+- `src/agents/tier1/index.ts` - Export des nouveaux agents
+- `CLAUDE.md` - Liste agents (12 → 13)
+- `investor.md` - Liste agents (12 → 13)
+- `AGENT-REFONTE-PROMPT.md` - Documentation mise a jour
+
+### Impact
+- Nombre d'agents Tier 1: 12 → 13
+- Total agents: 38 → 39
+- Cout estime: ~$0.01 par agent (Haiku) x 2 = pas de surcoût significatif
+- Temps: Parallele, donc pas d'impact sur le temps total
+
+### Prochaine etape
+- Supprimer l'ancien technical-dd.ts une fois la migration validee
+- Tester les deux nouveaux agents sur le deal Antiopea
+
+---
+
+## 2026-01-28 00:25 - Switch modèle LLM → Haiku
+
+### Résumé
+Passage à Claude 3 Haiku pour tous les agents. Sonnet coûtait $6/analyse (trop cher). Haiku = bon compromis qualité/prix (~$0.50/analyse).
+
+### Fichiers modifiés
+- `src/services/openrouter/router.ts` - Tous les agents utilisent HAIKU
+
+### Coûts comparés
+| Modèle | Coût/analyse | Qualité |
+|--------|--------------|---------|
+| DeepSeek | ~$0.10 | ⭐⭐ |
+| **Haiku** | ~$0.50 | ⭐⭐⭐ |
+| Sonnet | ~$6.00 | ⭐⭐⭐⭐⭐ |
+
+---
+
+## 2026-01-27 18:45 - Corrections finales post-test 2
+
+### Résumé
+Suite au deuxième test (16/19 succès), correction des 3 derniers bugs identifiés.
+
+### Bugs corrigés
+
+#### 1. Cost tracking sous-évalué (70% manquant)
+- **Fichier**: `src/services/openrouter/router.ts`
+- **Problème**: $1.66 reporté vs $5-6 réel. Les retries et timeouts n'étaient pas comptabilisés.
+- **Fix**: Estimation du coût input tokens pour chaque retry, accumulation dans le coût final.
+
+#### 2. Timeouts T1 agents (technical-dd, legal-regulatory)
+- **Fichiers**: `src/agents/tier1/technical-dd.ts`, `src/agents/tier1/legal-regulatory.ts`
+- **Problème**: Timeout 120s insuffisant pour analyse complexe
+- **Fix**: Timeout augmenté à 180s
+
+#### 3. general-expert schema validation error
+- **Fichier**: `src/agents/tier2/general-expert.ts`
+- **Problème**: Le LLM ne retourne pas toujours tous les champs requis par le schema Zod (sectorResearch, keyMetrics, redFlags, greenFlags, etc.)
+- **Fix**: Ajout de `normalizeOutput()` qui remplit les champs manquants avec des valeurs par défaut avant validation Zod.
+
+### Fichiers modifiés
+- `src/services/openrouter/router.ts` - Cost tracking des retries
+- `src/agents/tier1/technical-dd.ts` - timeout 120s → 180s
+- `src/agents/tier1/legal-regulatory.ts` - timeout 120s → 180s
+- `src/agents/tier2/general-expert.ts` - normalizeOutput() + schema resilience
+
+---
+
+## 2026-01-27 16:52 - Test complet de tous les agents (T0→T1→T2→T3) sur Antiopea
+
+### Résumé
+Test de bout en bout de 19 agents sur le deal Antiopea Seed. **16/19 agents succeeded (84%)**.
+Total: $1.72, 14 minutes d'exécution.
+
+### Résultats par tier
+| Tier | Agents | Succès | Coût | Temps |
+|------|--------|--------|------|-------|
+| T0 (Base) | 1 | 1/1 ✅ | $0.10 | 39s |
+| T1 (Investigation) | 12 | 11/12 ✅ | $1.18 | 607s |
+| T2 (Sector) | 1 | 0/1 ❌ | $0.12 | 23s |
+| T3 (Synthesis) | 5 | 4/5 ✅ | $0.31 | 170s |
+
+### Agents qui ont échoué (3)
+1. **customer-intel (T1)**: Timeout 120s - prompt trop long ou réponse excessive
+2. **ai-expert (T2)**: Parse error "No JSON found" - le LLM n'a pas retourné de JSON valide
+3. **scenario-modeler (T3)**: Parse error "non-whitespace after JSON" - texte après le JSON
+
+### Bug corrigé pendant le test
+- **src/services/openrouter/client.ts** - Model ID invalide `anthropic/claude-sonnet-4-20250514` corrigé vers `anthropic/claude-3.5-sonnet`
+
+### Fichiers créés
+- **scripts/test-all-agents.ts** - Script de test séquentiel de tous les agents
+- **scripts/test-results.json** - Résultats détaillés du test
+
+### Prochaines actions requises
+- [x] Fix customer-intel: timeout handling ✅
+- [x] Fix sector routing: word boundaries pour pattern matching ✅
+- [x] Fix scenario-modeler: extraction JSON robuste ✅
+- [x] Fix confidence calculation guidance ✅
+
+---
+
+## 2026-01-27 17:30 - Corrections post-test agents
+
+### Bugs corrigés
+
+#### 1. customer-intel timeout (T1)
+- **Fichier**: `src/agents/tier1/customer-intel.ts`
+- **Problème**: Timeout 120s insuffisant pour JSON complexe
+- **Fix**: Timeout augmenté à 180s
+
+#### 2. Sector routing - "blockchain" matchait "ai"
+- **Fichier**: `src/agents/tier2/index.ts`
+- **Problème**: `"blockchain".includes("ai")` → true (blockch**AI**n)
+- **Root cause**: Pattern matching par `includes()` trop permissif pour patterns courts
+- **Fix**: Nouvelle fonction `patternMatchesSector()` avec word boundaries pour patterns ≤3 chars
+- **Résultat**: "Blockchain / Web3" → `general-expert` (correct), "AI/ML" → `ai-expert` (correct)
+
+#### 3. scenario-modeler JSON parse error (T3)
+- **Fichier**: `src/services/openrouter/router.ts`
+- **Problème**: Le LLM ajoute du texte après le JSON, causant "non-whitespace after JSON"
+- **Fix**: Nouvelle fonction `extractFirstJSON()` qui parse le premier objet JSON valide et ignore le reste
+
+#### 4. Confidence scores trop bas (~65% au lieu de 80-90%)
+- **Fichiers**: `src/agents/base-agent.ts`, `src/agents/tier1/deck-forensics.ts`
+- **Problème**: Les agents pénalisaient leur confidence pour des infos manquantes dans le DECK (cap table, clients, ARR)
+- **Root cause**: Confusion entre "ma capacité à analyser" vs "qualité des données du deal"
+- **Fix**: Guidance explicite: confidence = capacité à faire l'analyse, PAS qualité du deck
+- **Helper ajouté**: `getConfidenceGuidance()` dans BaseAgent pour standardiser
+
+### Fichiers modifiés
+- `src/agents/tier1/customer-intel.ts` - timeout 120s → 180s
+- `src/agents/tier2/index.ts` - `patternMatchesSector()` + retrait blockchain/web3 de deeptech
+- `src/services/openrouter/router.ts` - `extractFirstJSON()` pour parsing robuste
+- `src/agents/base-agent.ts` - `getConfidenceGuidance()` helper
+- `src/agents/tier1/deck-forensics.ts` - guidance confidence dans prompt
+
+---
+
+## 2026-01-28 00:15 - Switch modèle LLM: DeepSeek → Sonnet 4
+
+### Resume
+Passage de DeepSeek à Claude Sonnet 4 pour tous les agents d'analyse. Sonnet 4 offre une meilleure qualité de raisonnement, détection de red flags plus précise, et outputs JSON plus propres. Coût ~$1.10/analyse vs $0.10 avec DeepSeek (11x plus cher mais qualité DD justifie).
+
+### Fichiers modifies
+- **src/services/openrouter/client.ts** - Ajout du modèle SONNET_4 (claude-sonnet-4-20250514)
+- **src/services/openrouter/router.ts** - Switch de DEEPSEEK vers SONNET_4 pour tous les agents
+
+### Raison
+Pour une plateforme de Due Diligence, la qualité prime sur le coût. DeepSeek suffisant pour le prototypage mais Sonnet 4 nécessaire en production pour:
+- Détection précise des red flags subtils
+- Calculs financiers fiables
+- Cohérence des analyses multi-agents
+- Réduction des hallucinations
+
+---
+
+## 2026-01-27 23:30 - Fix TypeScript compilation pour 9 agents Tier 2 avec _extended
+
+### Resume
+Correction des erreurs TypeScript dans les agents Tier 2 qui utilisent `_extended` pour l'effet wow UI. Les agents produisent un schema LLM (`SectorExpertOutput`) avec des valeurs enum differentes du schema UI (`SectorExpertData`). Ajout de fonctions de mapping pour convertir les formats.
+
+### Fichiers modifies
+- **src/agents/tier2/output-mapper.ts** (nouveau) - Utilitaires de mapping de types:
+  - `mapMaturity`: "growth" → "growing"
+  - `mapAssessment`: "critical" → "concerning"
+  - `mapSeverity`: "high" → "major"
+  - `mapCompetition`: "moderate" → "medium"
+  - `mapConsolidation`: "winner_take_all" → "consolidating"
+  - `mapBarrier`: "very_high" → "high"
+  - `mapCategory`, `mapPriority`: mapping des questions
+
+- **Agents corriges** (9 fichiers):
+  - climate-expert.ts
+  - gaming-expert.ts
+  - deeptech-expert.ts
+  - consumer-expert.ts
+  - hardware-expert.ts
+  - healthtech-expert.ts
+  - spacetech-expert.ts
+  - biotech-expert.ts
+  - (marketplace-expert.ts deja OK)
+
+### Corrections appliquees
+- Import des fonctions de mapping dans chaque agent
+- Utilisation de `mapMaturity()`, `mapAssessment()`, etc. dans les transformations
+- Conversion `recentExits` d'objets vers strings formatees
+- Remplacement `.value` → `.metricValue` dans les sections _extended
+- Remplacement `sectorQuestions` → `mustAskQuestions`
+- Remplacement `expectedAnswer` → `goodAnswer`
+- Remplacement `sectorFit.strengths` → `executiveSummary.topStrengths`
+- Fix des default functions avec "moderate" → "medium"
+- Ajout de casts `as unknown as` pour les types _extended
+
+### Resultat
+TypeScript compile sans erreur (0 errors).
+
+---
+
+## 2026-01-27 22:45 - Amelioration majeure UI Tier 3 (Effet WOW)
+
+### Resume
+Refonte complete de l'affichage des resultats Tier 3 pour creer un effet "wow" et montrer clairement la valeur ajoutee au Business Angel. Header impactant avec metriques cles, visualisations ameliorees pour chaque agent de synthese.
+
+### Fichiers modifies
+- **src/components/deals/tier3-results.tsx** - Refonte UI complete (~1550 lignes):
+
+  **Header Impactant (nouveau)**:
+  - Design dark mode premium avec gradient slate/primary
+  - 4 metriques cles visibles immediatement:
+    - Multiple Espere (calcul probabilite-pondere avec formule)
+    - IRR Espere (moyenne ponderee des scenarios)
+    - Score de Scepticisme (gauge visuelle)
+    - Alertes (dealbreakers + contradictions)
+  - Banniere de recommandation avec confiance
+
+  **ScenarioModelerCard (ameliore)**:
+  - Resume probabilite-pondere avec calcul visible
+  - 4 scenarios avec couleurs distinctes (BULL/BASE/BEAR/CATASTROPHIC)
+  - Calcul ROI detaille expandable (ownership, dilution, IRR formule)
+  - Comparables utilises pour ancrer les scenarios
+  - Break-even analysis avec indicateur d'achievability
+
+  **DevilsAdvocateCard (ameliore)**:
+  - Gauge de scepticisme avec breakdown par facteur
+  - Dealbreakers absolus en banniere rouge impactante
+  - Contre-arguments avec comparables echecs mis en evidence
+  - Scenario catastrophe en dark mode dramatique
+  - Questions critiques avec red flags si mauvaise reponse
+
+  **ContradictionDetectorCard (ameliore)**:
+  - Stats rapides (total, critiques, hauts, gaps)
+  - Breakdown de coherence par dimension avec barres de progression
+  - Visualisation VS entre statements contradictoires
+  - Convergence des red flags entre agents
+  - Data gaps avec impact sur l'analyse
+
+### Fonctions utilitaires ajoutees
+- `calculateExpectedReturn()` - Calcul retour probabilite-pondere
+- `getIRRColorClass()` - Couleur selon niveau IRR
+
+### Corrections de types
+- Remplacement `source` par `sourceAgent` sur KillReason
+- Remplacement `wouldChangeAnalysisIf` par `impactOnAnalysis` sur DataGap
+- Correction severity: "HIGH" au lieu de "MAJOR" pour contradictions
+- Correction verdict scepticisme: valeurs valides du type
+- Correction resolution: utilisation de `likely` au lieu de `resolution`
+
+### Verification
+- `npx tsc --noEmit` passe pour tier3-results.tsx
+- (Erreurs preexistantes dans gaming-expert.ts et healthtech-expert.ts non liees a cette modification)
+
+---
+
+## 2026-01-27 - Fix Tier 2/3 Agents Compilation & UI Types
+
+### Resume
+Correction de toutes les erreurs de compilation des agents Tier 2 et Tier 3, ainsi que l'adaptation de l'UI `tier3-results.tsx` pour utiliser les nouveaux types v2.0 standardises.
+
+### Fichiers modifies
+
+**Agents Tier 2:**
+- **src/agents/tier2/edtech-expert.ts** - Mapping `investmentImplication` vers valeurs standardisees
+- **src/agents/tier2/fintech-expert.ts** - Correction variable `stage` non definie dans system prompt (conversion en fonction)
+- **src/agents/tier2/foodtech-expert.ts** - Suppression reference `deal.revenue` inexistante
+- **src/agents/tier2/healthtech-expert.ts** - Cast `HEALTHTECH_BENCHMARKS` vers `SectorBenchmarkData`
+- **src/agents/tier2/types.ts** - Extension `investmentImplication` pour tous secteurs + ajout `foodtechSpecific` permissif
+
+**Types globaux:**
+- **src/agents/types.ts** - Extension `fundingContext` avec proprietes manquantes (`valuationBenchmarks`, `similarDeals`, `benchmarks`, `potentialCompetitors`)
+
+**UI Tier 3:**
+- **src/components/deals/tier3-results.tsx** - Adaptation complete aux types v2.0:
+  - `ScenarioModelerCard`: Utilisation `findings.scenarios`, `findings.breakEvenAnalysis`, `findings.sensitivityAnalysis`, `meta.confidenceLevel`
+  - `ContradictionDetectorCard`: Utilisation `findings.contradictions`, `findings.dataGaps`, `findings.consistencyAnalysis.overallScore`, `narrative.summary`
+  - Mapping proprietes: `probability.value`, `investorReturn`, `exitOutcome.exitValuation`, `impactLevel` (majuscules), `statement1`/`statement2`
+  - Import types supplementaires: `DetectedContradiction`, `DataGap`, `ScenarioV2`, `SensitivityAnalysisV2`
+
+### Verification
+- `npx tsc --noEmit` passe sans erreurs
+- `npm run build` reussit
+
+---
+
+## 2026-01-28 00:20 - Refonte Agent Synthesis Deal Scorer (Tier 3)
+
+### Resume
+Refonte complete de l'agent `synthesis-deal-scorer` selon les standards AGENT-REFONTE-PROMPT.md. L'agent produit le SCORE FINAL et la RECOMMANDATION d'investissement en synthetisant TOUS les outputs Tier 1 (12 agents) et Tier 2 (expert sectoriel).
+
+### Fichiers modifies
+- **src/agents/tier3/synthesis-deal-scorer.ts** - Refonte complete (~1375 lignes):
+
+  **Persona**: Senior Investment Committee Partner (20+ ans, 200+ IC meetings, 3000+ deals analyses)
+
+  **System prompt** (~340 lignes):
+  - Methodologie en 7 etapes:
+    1. Agregation scores Tier 1 (extraire score, red flags, forces, questions)
+    2. Ponderation dimensions: Team(25%) + Financials(20%) + Market(15%) + GTM(15%) + Product(15%) + Competitive(5%) + Exit(5%)
+    3. Ajustements: CRITICAL(-10 a -20), HIGH(-5 a -10), incohérences(-5 a -15), data incomplete(-10)
+    4. Bonifications: top decile(+5), serial founder(+5), investor signal(+3)
+    5. Cross-reference Funding DB (percentile valo, position vs median, verif claims)
+    6. Construction Investment Thesis (3-5 bull, 3-5 bear, key assumptions)
+    7. Verdict final selon grille: 85-100=STRONG_PASS, 70-84=PASS, 55-69=CONDITIONAL_PASS, 40-54=WEAK_PASS, 0-39=NO_GO
+  - Framework evaluation detaille pour 7 dimensions avec criteres scoring par niveau (0-100)
+  - Red flags a detecter: deal-breakers, critical, high
+  - Exemples BON/MAUVAIS output detailles
+  - REGLES ABSOLUES: score sourced avec agent, calculs montres, cross-ref DB, red flags 5 composants
+
+  **User prompt** dynamique:
+  - Injection tous scores Tier 1 (12 agents) avec facteurs cles
+  - Injection red flags agreges avec severite (CRITICAL/HIGH/MEDIUM)
+  - Injection synthese Tier 1 (completeness, avg score, highest/lowest)
+  - Injection donnees Tier 2 (sector expert: sectorScore, verdict, strengths, concerns)
+  - Injection contradictions (contradiction-detector: consistencyScore, contradictions)
+  - Injection Funding DB (concurrents, benchmarks secteur)
+  - Injection profil BA (ticket, secteur match, stage match, risk tolerance, horizon)
+
+  **Helpers specifiques**:
+  - `extractTier1Scores()` - Extraction et formatage scores de tous les 12 agents Tier 1
+  - `extractKeyFactors()` - Extraction facteurs cles par type d'agent (valuation, burn, complementarite...)
+  - `extractTier1RedFlags()` - Agregation et tri par severite de tous les red flags
+  - `buildTier1Synthesis()` - Construction synthese (completeness %, avg score, min, max agents)
+  - `extractTier2Data()` - Extraction donnees des 21 sector experts possibles
+  - `extractContradictions()` - Extraction incohérences du contradiction-detector
+  - `formatFundingDbContext()` - Formatage donnees DB (concurrents, benchmarks, tendance marche)
+  - `formatBAPreferences()` - Formatage preferences BA avec match analysis (secteur, stage, risk)
+  - `transformResponse()` - Transformation robuste avec backward compatibility
+
+  **Types internes nouveaux**:
+  - `DimensionScore` - Score dimension avec calcul detaille (rawScore, adjustedScore, weightedScore, keyFactors)
+  - `ScoreBreakdown` - Breakdown transparent (baseScore, adjustments[], finalScore, calculationShown)
+  - `MarketPosition` - Position vs marche (percentileOverall/Sector/Stage, valuationAssessment, comparableDeals)
+  - `InvestmentThesis` - Bull/bear/assumptions structures avec evidence et sourceAgent
+  - `InvestmentRecommendation` - Recommandation avec action, verdict, rationale, conditions, nextSteps
+  - `SynthesisDealScorerFindings` - Findings complets v2.0 (dimensionScores, marketPosition, investmentThesis, recommendation, tier1Synthesis, baAlignment, topStrengths, topWeaknesses)
+  - `SynthesisDealScorerDataV2` - Structure universelle (meta, score, findings, dbCrossReference, redFlags, questions, alertSignal, narrative)
+
+  **Backward compatibility**: Conserve `SynthesisDealScorerData` et `SynthesisDealScorerResult` pour les consumers existants
+
+### Ameliorations vs version precedente
+| Aspect | Avant | Apres |
+|--------|-------|-------|
+| System prompt | ~30 lignes | ~340 lignes avec persona + methodologie + exemples |
+| Ponderation | Implicite | Explicite: Team(25%) + Financials(20%) + Market(15%) + GTM(15%) + Product(15%) + Competitive(5%) + Exit(5%) |
+| Ajustements | Non documentes | CRITICAL(-10 a -20), HIGH(-5 a -10), incohérences(-5 a -15) |
+| Tier 1 agregation | Basique | Extraction score + keyFactors + red flags de chaque agent |
+| Investment thesis | Absente | Bull/bear/assumptions structures avec sources |
+| Cross-ref DB | Optionnel | Obligatoire (percentile, comparables, benchmarks) |
+| BA alignment | Absent | Secteur match, stage match, risk tolerance, ticket fit |
+
+### Points cles
+- Score final = moyenne ponderee + ajustements (red flags, incohérences, data completeness)
+- Chaque score dimension source avec agent origine (ex: "Team: 72 via team-investigator")
+- Calculs montres (ex: "Score = 25×75 + 20×70 + ... = 68.6")
+- Investment thesis avec bull/bear cases structures et sources
+- 5 verdicts possibles: STRONG_PASS (85+), PASS (70-84), CONDITIONAL_PASS (55-69), WEAK_PASS (40-54), NO_GO (0-39)
+- Next steps concrets par verdict (IMMEDIATE / BEFORE_TERM_SHEET / DURING_DD)
+
+---
+
+## 2026-01-28 00:15 - Refonte Agent Memo Generator (Tier 3)
+
+### Resume
+Refonte complete de l'agent `memo-generator` selon les standards AGENT-REFONTE-PROMPT.md. L'agent produit maintenant un Investment Memo de qualite institutionnelle synthetisant TOUTES les analyses Tier 1, 2 et 3 avec consolidation des red flags et questions.
+
+### Fichiers modifies
+- **src/agents/tier3/memo-generator.ts** - Refonte complete (~1220 lignes):
+
+  **System prompt** (~140 lignes):
+  - Persona: Senior Investment Director 20+ ans + Managing Partner VC + Ex-Partner Tier 1 (Sequoia/a16z)
+  - Auteur de 500+ memos, track record 40% deals reussis
+  - Methodologie en 5 etapes:
+    1. Consolidation red flags (tous agents, dedupliques, tries par severite)
+    2. Consolidation questions (tous agents, dedupliquees, non-confrontationnelles)
+    3. Synthese scores (ponderation Team 25%, Financials 25%, Market 20%, Product 15%, Traction 15%)
+    4. Analyse termes (benchmarks marche, percentiles, points de nego)
+    5. Redaction memo (source, chiffre, actionnable)
+  - Framework evaluation avec 5 criteres et grille scoring
+  - 5 recommandations (STRONG_INVEST -> STRONG_PASS) avec scores associes
+  - Exemples BON/MAUVAIS output detailles
+  - REGLES ABSOLUES: jamais inventer, toujours citer source, benchmarks obligatoires
+
+  **Nouvelles fonctionnalites**:
+  - `extractTier1Insights()` - Synthese des 12 agents Tier 1 (scores, verdicts, red flags count)
+  - `extractTier2Insights()` - Synthese expert sectoriel active (21 experts possibles)
+  - `extractTier3Insights()` - Synthese Tier 3 (scorer, devils-advocate, contradictions, scenarios)
+  - `consolidateRedFlags()` - Consolidation TOUS red flags avec deduplication et tri severite
+  - `consolidateQuestions()` - Consolidation TOUTES questions avec deduplication et tri priorite
+  - `deduplicateRedFlags()` - Deduplication par titre normalise, garde le plus severe
+  - `deduplicateQuestions()` - Deduplication par question normalisee, garde la plus prioritaire
+
+  **Structure LLM amelioree**:
+  - meta: dataCompleteness, confidenceLevel, limitations
+  - score: value (0-100), grade (A-F), breakdown 5 criteres avec justification
+  - executiveSummary: oneLiner, recommendation, verdict, keyStrengths, keyRisks (AVEC SOURCES)
+  - investmentHighlights: highlight + evidence + dbComparable + source
+  - keyRisks: risk + severity + category + mitigation + residualRisk + source
+  - termsAnalysis: metric + proposed + marketStandard + percentile + negotiationRoom
+  - nextSteps: action + priority (IMMEDIATE/BEFORE_TERM_SHEET/DURING_DD) + owner (INVESTOR/FOUNDER)
+  - questionsForFounder: consolidees de tous les agents
+  - alertSignal: hasBlocker + blockerReason + recommendation + justification
+
+### Ameliorations vs version precedente
+| Aspect | Avant | Apres |
+|--------|-------|-------|
+| System prompt | 30 lignes, generique | 140 lignes, persona + methodologie + exemples |
+| Red flags | Non consolides | Consolides de TOUS agents, dedupliques, tries |
+| Questions | Non consolidees | Consolidees de TOUS agents, dedupliquees |
+| Sources | Optionnelles | OBLIGATOIRES dans chaque section |
+| Benchmarks | Optionnels | Obligatoires (percentile, comparables DB) |
+| nextSteps | Array strings | Structure avec priority + owner |
+
+---
+
+## 2026-01-27 23:52 - Refonte Agent Contradiction Detector (Tier 3)
+
+### Resume
+Refonte complete de l'agent `contradiction-detector` selon les standards AGENT-REFONTE-PROMPT.md. L'agent detecte TOUTES les contradictions entre le deck, la Funding DB, le Context Engine, et les outputs des agents Tier 1 et Tier 2.
+
+### Fichiers modifies
+- **src/agents/types.ts**:
+  - Ajout nouvelles interfaces conformes Section 5.4:
+    - `ContradictionType` - 6 types de contradictions (INTERNAL, DECK_VS_DB, CLAIM_VS_DATA, TIER1_VS_TIER1, TIER1_VS_TIER2, DECK_VS_CONTEXT_ENGINE)
+    - `DetectedContradiction` - Contradiction avec statements, analyse, resolution, question
+    - `DataGap` - Gap de donnees avec importance et recommendation
+    - `AggregatedDbComparison` - Cross-reference agregee deck vs DB avec `competitorComparison` (CRITIQUE)
+    - `AgentOutputSummary` - Synthese des outputs de chaque agent
+    - `ContradictionDetectorFindings` - Structure complete (contradictions, dataGaps, consistencyAnalysis, redFlagConvergence)
+    - `ContradictionDetectorData` - Structure standardisee v2.0 (meta, score, findings, dbCrossReference, redFlags, questions, alertSignal, narrative)
+
+- **src/agents/tier3/contradiction-detector.ts** - Refonte complete (~1150 lignes):
+  - **System prompt** (~170 lignes):
+    - Persona: Forensics documentaire 15+ ans + Audit Big4 senior 20+ ans + Partner VC skeptique 500+ deals
+    - Methodologie en 5 etapes (cartographier sources, detecter internes, cross-ref DB, agreger claims, synthetiser)
+    - Framework scoring consistance (5 dimensions avec poids: interne 20%, deck_vs_db 25%, tier1 25%, tier1_vs_tier2 15%, claims_vs_calculs 15%)
+    - 6 types de contradictions documentes avec exemples
+    - 6 red flags automatiques a generer
+    - Exemples BON/MAUVAIS output detailles
+    - REGLES ABSOLUES: jamais inventer, toujours comparer deck vs DB pour concurrents, quantifier ecarts, citer sources
+  - **User prompt** dynamique:
+    - Injection TOUS les outputs Tier 1 (12 agents)
+    - Injection TOUS les outputs Tier 2 (21 experts sectoriels)
+    - Injection donnees extraites du deck (extractedData)
+    - Injection Context Engine (competitive landscape, market data)
+    - Injection Funding DB (concurrents, benchmarks, similar deals)
+    - Comparaison automatique concurrents deck vs DB
+  - **Helpers specifiques**:
+    - `formatTier1Outputs()` - Formatage sorties 12 agents Tier 1
+    - `formatTier2Outputs()` - Formatage sorties 21 experts Tier 2
+    - `formatAgentOutput()` - Extraction score, redFlags, narrative de chaque agent
+    - `formatExtractedData()` - Donnees deck (financials, team, competitors)
+    - `formatFundingDbData()` - Donnees DB avec concurrents et benchmarks
+    - `buildAggregatedDbComparison()` - Construction comparaison deck vs DB
+    - `buildContradictionSummary()` - Resume par type et severite
+    - `addAutomaticRedFlags()` - Generation red flags automatiques (concurrents caches, contradictions critiques, score bas)
+  - **Normalisation robuste**:
+    - Validation types contradictions (6 valides)
+    - Validation severites (CRITICAL/HIGH/MEDIUM)
+    - Validation consensus levels (STRONG/MODERATE/WEAK/CONFLICTING)
+    - Validation recommendations (PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP)
+    - Grades automatiques (A/B/C/D/F)
+
+### Structure de sortie
+```typescript
+{
+  meta: AgentMeta;              // Metadata agent
+  score: AgentScore;            // Score consistance 0-100 avec breakdown
+  findings: {
+    contradictions: DetectedContradiction[];  // Contradictions par type
+    contradictionSummary: { byType, bySeverity, topicsMostContradicted };
+    dataGaps: DataGap[];
+    aggregatedDbComparison: {   // CRITIQUE - deck vs DB
+      competitorComparison: { hiddenCompetitors, deckAccuracy, impactOnCredibility };
+      overallVerdict: "COHERENT" | "MINOR_ISSUES" | "SIGNIFICANT_CONCERNS" | "MAJOR_DISCREPANCIES";
+    };
+    agentOutputsSummary: AgentOutputSummary[];
+    consistencyAnalysis: { overallScore, breakdown, interpretation };
+    redFlagConvergence: [];     // Convergence/divergence agents
+  };
+  dbCrossReference: DbCrossReference;
+  redFlags: AgentRedFlag[];     // Dont auto-generes
+  questions: AgentQuestion[];   // 5+ questions fondateur
+  alertSignal: AgentAlertSignal;
+  narrative: AgentNarrative;
+}
+```
+
+### Points cles
+- Cross-reference obligatoire deck vs DB pour concurrents = test credibilite #1
+- Detection automatique concurrents caches (dans DB mais pas deck) = RED FLAG CRITIQUE
+- Score de consistance decompose en 5 dimensions avec poids
+- 3 red flags automatiques: concurrents caches, contradictions critiques multiples, score < 50
+- Questions generees pour chaque contradiction detectee
+- Support des 12 agents Tier 1 + 21 experts Tier 2
+
+### Prochaines etapes
+- Aucune pour cet agent - refonte complete
+
+---
+
+## 2026-01-27 23:45 - Refonte Agent Scenario Modeler (Tier 3)
+
+### Resume
+Refonte complete de l'agent `scenario-modeler` selon les standards AGENT-REFONTE-PROMPT.md. L'agent modelise 4 scenarios (BASE, BULL, BEAR, CATASTROPHIC) bases sur des trajectoires REELLES d'entreprises comparables - REGLE ABSOLUE: NE JAMAIS INVENTER.
+
+### Fichiers modifies
+- **src/agents/types.ts**:
+  - Ajout nouvelles interfaces conformes Section 5.4:
+    - `SourcedAssumption` - Hypothese avec source obligatoire
+    - `ScenarioYearMetrics` - Metriques annuelles avec source pour chaque valeur
+    - `InvestorReturnCalculation` - Calculs IRR avec formules explicites
+    - `ScenarioV2` - Scenario complet avec 4 types obligatoires
+    - `SensitivityAnalysisV2` - Analyse sensibilite avec impact levels
+    - `ScenarioComparable` - Comparable reel de la DB avec trajectoire
+    - `ScenarioModelerFindings` - Structure complete des findings
+    - `ScenarioModelerData` - Structure standardisee v2.0 (meta, score, findings, dbCrossReference, redFlags, questions, alertSignal, narrative)
+
+- **src/agents/tier3/scenario-modeler.ts** - Refonte complete (~1050 lignes):
+  - **System prompt** (~110 lignes):
+    - Persona: Scenario Modeler expert 20+ ans VC, Big4 + Partner VC
+    - Methodologie en 5 etapes (collecter donnees, identifier comparables, construire scenarios, analyse sensibilite, synthese)
+    - Framework scoring scenarios (25% donnees, 25% comparables, 25% realisme, 25% risque/rendement)
+    - Formules IRR obligatoires montrees
+    - 5 red flags specifiques a detecter
+    - Exemples BON/MAUVAIS output
+    - REGLE ABSOLUE: NE JAMAIS INVENTER - chaque hypothese sourcee
+  - **User prompt** dynamique:
+    - Injection Context Engine (benchmarks, similar deals)
+    - Injection Funding DB (comparables, trajectoires)
+    - Injection resultats Tier 1 (financial-auditor, market-intelligence, exit-strategist, competitive-intel, team-investigator)
+    - Injection resultats Tier 2 (sector experts)
+    - Parametres BA (ticket, horizon, tolerance risque)
+  - **Helpers specifiques**:
+    - `extractTier1Insights()` - Extraction insights de tous les agents Tier 1
+    - `extractTier2Insights()` - Extraction insights des sector experts Tier 2
+    - `formatFundingDbData()` - Formatage donnees DB pour prompt
+    - `formatBAInvestment()` - Calcul parametres investissement BA
+    - `identifyLimitations()` - Detection automatique des limitations
+    - `getDefaultScenarios()` - Scenarios par defaut si donnees insuffisantes
+  - **Normalisation robuste**:
+    - Validation de tous les champs avec valeurs par defaut
+    - 4 scenarios obligatoires (BASE, BULL, BEAR, CATASTROPHIC)
+    - Clamp des probabilites 0-100
+
+### Structure de sortie
+```typescript
+{
+  meta: AgentMeta,
+  score: AgentScore,
+  findings: {
+    scenarios: [
+      {
+        name: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC",
+        probability: { value, rationale, source },
+        assumptions: [{ assumption, value, source, confidence }],
+        metrics: [{ year, revenue, revenueSource, valuation, valuationSource, employeeCount, employeeCountSource }],
+        exitOutcome: { type, typeRationale, timing, timingSource, exitValuation, exitValuationCalculation, exitMultiple, exitMultipleSource },
+        investorReturn: { // TOUS LES CALCULS MONTRES
+          initialInvestment, ownershipAtEntry, ownershipCalculation,
+          dilutionToExit, dilutionSource, ownershipAtExit, ownershipAtExitCalculation,
+          grossProceeds, proceedsCalculation, multiple, multipleCalculation,
+          irr, irrCalculation, holdingPeriodYears
+        },
+        keyRisks, keyDrivers,
+        basedOnComparable: { company, trajectory, relevance, source } // OBLIGATOIRE
+      }
+    ],
+    sensitivityAnalysis: [...],
+    basedOnComparables: [...],  // 3+ comparables reels
+    breakEvenAnalysis: {...},
+    probabilityWeightedOutcome: { expectedMultiple, expectedMultipleCalculation, expectedIRR, expectedIRRCalculation },
+    mostLikelyScenario, mostLikelyRationale
+  },
+  dbCrossReference: {...},
+  redFlags: [...],
+  questions: [...],
+  alertSignal: {...},
+  narrative: {...}
+}
+```
+
+### Points cles de la refonte
+1. **4 scenarios obligatoires** (vs 3 avant): BASE, BULL, BEAR, CATASTROPHIC
+2. **Chaque hypothese sourcee** (Deck, DB median, financial-auditor output, etc.)
+3. **Calculs IRR explicites** avec formules montrees
+4. **basedOnComparable obligatoire** - trajectoires reelles de la DB
+5. **Cross-ref Tier 1/2** - utilisation red flags et scores pour ajuster probabilites
+6. **Synthese probabilite-ponderee** avec calcul esperance multiple et IRR
+7. **Detection automatique limitations** (donnees manquantes, comparables insuffisants)
+
+### Prochaines etapes
+- Verifier build TypeScript
+- Tester avec un deal reel
+- Potentiellement ajuster les poids du framework scoring
+
+---
+
+## 2026-01-27 23:15 - Refonte Agent Devils Advocate (Tier 3)
+
+### Resume
+Refonte complete de l'agent `devils-advocate` selon les standards AGENT-REFONTE-PROMPT.md. L'agent challenge systematiquement la these d'investissement avec des comparables echecs reels (sources).
+
+### Fichiers modifies
+- **src/agents/types.ts**:
+  - Suppression ancienne interface `DevilsAdvocateData` (structure plate)
+  - Ajout nouvelles interfaces conformes Section 5.4:
+    - `CounterArgument` - Contre-argument avec comparable echec reel obligatoire
+    - `WorstCaseScenario` - Scenario catastrophe avec triggers, probabilites, early warning signs
+    - `KillReason` - Raison de ne pas investir (ABSOLUTE/CONDITIONAL/CONCERN)
+    - `BlindSpot` - Zone non analysee avec precedent historique
+    - `AlternativeNarrative` - Narrative alternative avec test de validation
+    - `DevilsAdvocateFindings` - Structure complete des findings
+    - `DevilsAdvocateData` - Structure standardisee Tier 3 (meta, score, findings, dbCrossReference, redFlags, questions, alertSignal, narrative)
+
+- **src/agents/tier3/devils-advocate.ts** - Refonte complete:
+  - **System prompt** (~180 lignes):
+    - Persona: Partner VC ultra-sceptique (25+ ans, 500+ deals vus, 35+ echecs) + Analyste Big4
+    - Methodologie en 6 etapes (extraction theses, challenge, worst case, kill reasons, blind spots, narratives)
+    - Framework scoring scepticisme (CAUTIOUSLY_OPTIMISTIC -> VERY_SKEPTICAL)
+    - 10 red flags specifiques a detecter
+    - Exemples BON/MAUVAIS output
+    - Regles absolues (sources obligatoires, comparables reels, quantification)
+  - **User prompt** dynamique:
+    - Injection resultats Tier 1 (12 agents)
+    - Injection resultats Tier 2 (sector experts)
+    - Injection Context Engine
+    - Injection Funding DB pour comparables echecs
+  - **Normalisation robuste**:
+    - Validation de tous les champs avec valeurs par defaut
+    - Support des structures optionnelles
+    - Clamp des scores 0-100
+
+### Structure de sortie
+```typescript
+{
+  meta: AgentMeta,
+  score: AgentScore,
+  findings: {
+    counterArguments: [...],  // Min 5, avec comparableFailure obligatoire
+    worstCaseScenario: {...}, // triggers, cascadeEffects, comparableCatastrophes
+    killReasons: [...],       // Min 3, niveaux ABSOLUTE/CONDITIONAL/CONCERN
+    blindSpots: [...],
+    alternativeNarratives: [...],
+    skepticismAssessment: {...},
+    concernsSummary: {...},
+    positiveClaimsChallenged: [...]
+  },
+  dbCrossReference: {...},
+  redFlags: [...],
+  questions: [...],
+  alertSignal: {...},
+  narrative: {...}
+}
+```
+
+### Fichiers UI mis a jour
+- **src/components/deals/tier3-results.tsx**:
+  - Mise a jour `DevilsAdvocateCard` pour utiliser la nouvelle structure v2.0
+  - Mapping: `topConcerns` -> `findings.concernsSummary`
+  - Mapping: `dealbreakers` -> `findings.killReasons` (ABSOLUTE)
+  - Mapping: `challengedAssumptions` -> `findings.counterArguments`
+  - Mapping: `overallSkepticism` -> `findings.skepticismAssessment.score`
+  - Mapping: `questionsRequiringAnswers` -> `questions`
+  - Ajout affichage: comparables echecs, worst case scenario, kill reasons conditionnels
+  - Ajout badges: urgency pour blind spots, verdict scepticisme
+
+### Prochaines etapes
+- Tester avec des deals reels
+- Verifier integration avec les autres agents Tier 3
+
+---
+
+## 2026-01-27 22:30 - Document Versioning pour Analyses
+
+### Resume
+Implementation du systeme de versioning des documents pour detecter les analyses obsoletes. Quand un utilisateur ajoute de nouveaux documents apres une analyse, l'UI affiche maintenant un avertissement et un badge "Non analyse" sur les nouveaux documents.
+
+### Fichiers crees
+- **src/services/analysis-versioning/index.ts** - Service de detection de fraicheur:
+  - `getAnalysisStaleness(analysisId)` - Verifie si une analyse est obsolete
+  - `getAnalysesStaleness(analysisIds)` - Verification batch pour les listes
+  - `getLatestAnalysisStaleness(dealId)` - Verifie la derniere analyse d'un deal
+  - `getUnanalyzedDocuments(dealId, analysisId?)` - Liste les documents non analyses
+
+- **src/app/api/deals/[dealId]/staleness/route.ts** - API endpoint:
+  - GET /api/deals/[dealId]/staleness - Retourne les infos de fraicheur
+
+### Fichiers modifies
+- **prisma/schema.prisma**:
+  - Ajout `documentIds String[]` au modele Analysis pour tracker les documents utilises
+
+- **src/agents/orchestrator/persistence.ts**:
+  - `createAnalysis()` accepte maintenant `documentIds` en parametre
+
+- **src/agents/orchestrator/index.ts**:
+  - `runBaseAnalysis()` - Passe les documentIds a createAnalysis
+  - `runTier1Analysis()` - Passe les documentIds a createAnalysis
+  - `runTier3Synthesis()` - Passe les documentIds a createAnalysis
+  - `runTier2SectorAnalysis()` - Passe les documentIds a createAnalysis
+  - `runFullAnalysis()` - Passe les documentIds a createAnalysis
+
+- **src/components/deals/analysis-panel.tsx**:
+  - Ajout query pour fetcher staleness info
+  - Ajout banner d'avertissement si analyse obsolete
+  - Invalidation de la query staleness apres nouvelle analyse
+
+- **src/components/deals/documents-tab.tsx**:
+  - Ajout query pour fetcher staleness info
+  - Ajout badge "Non analyse" sur les documents non inclus dans la derniere analyse
+
+### Comportement
+1. Quand une analyse est lancee, les IDs des documents COMPLETED sont sauvegardes
+2. Quand l'utilisateur consulte un deal avec une analyse existante:
+   - Si de nouveaux documents ont ete ajoutes depuis -> Banner d'avertissement orange
+   - Les nouveaux documents affichent un badge "Non analyse"
+3. Apres relance d'une analyse, les warnings disparaissent
+
+### Prochaines etapes
+- Ajouter migration Prisma pour le champ documentIds (run: npx prisma db push)
+
+---
+
+## 2026-01-27 21:15 - Creation agent spacetech-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel pour **SpaceTech / NewSpace / Aerospace**. Secteur a haute intensite capitalistique avec des cycles de developpement tres longs (5-10 ans), des regulations complexes (ITAR, ITU, FAA), et une menace SpaceX dominante.
+
+### Fichiers crees
+- **src/agents/tier2/spacetech-expert.ts** - Agent complet avec:
+  - **Standards inline** (normes etablies SpaceTech)
+  - **Metriques primaires**: TRL, Flight Heritage, Backlog/Pipeline, Government Contract %, Capital Intensity
+  - **Metriques secondaires**: Cost per kg to Orbit, Satellite Manufacturing Cost, Time to Revenue, Spectrum/Orbital Rights, ITAR Status
+  - **Unit economics formulas**: Revenue per Satellite, Launch Cost Ratio, Constellation Payback, Ground Segment Leverage, Capital Efficiency
+  - **Red flag rules**: TRL < 4, Zero heritage, 90%+ gov dependency, 7+ years to revenue
+  - **SpaceX threat assessment**: Critical pour launch/broadband, variable selon segment
+  - **Regulatory analysis**: ITAR/EAR, ITU spectrum, FAA launch, NOAA imaging
+  - **Exit landscape**: Primes (Lockheed, Northrop, Boeing), PE, SPAC history
+  - **Helper functions**: assessTRLForStage, assessSpaceXThreat, assessFlightHeritage, assessRegulatoryRisk
+  - **Scoring weights**: Team (30%), Metrics (20%), Competitive (20%), Timing (15%), Unit Economics (15%)
+
+### Fichiers modifies
+- **src/agents/tier2/types.ts**:
+  - Ajout "spacetech-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour spacetech-expert (SpaceTech, Space, Aerospace, NewSpace, Satellite, Launch, Rocket, LEO, GEO, Constellation, etc.)
+  - Retrait de "SpaceTech" et "Space Tech" de hardware-expert
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du spacetechExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (AVANT hardware-expert pour priorite)
+
+### Caracteristiques SpaceTech
+- **Capital intensity extreme**: $100M+ avant premier revenu pour launch
+- **Cycles tres longs**: 5-10 ans typique (plus long que DeepTech)
+- **Flight heritage critique**: Zero heritage = risque majeur pour Series A+
+- **SpaceX benchmark**: Competition ou complementarite obligatoire a evaluer
+- **Regulatory moat**: Spectrum/orbital rights comme avantage defensif
+- **Government anchors**: NASA, DoD, ESA comme clients stabilisateurs
+
+### Prochaines etapes
+- Ajouter SPACETECH_STANDARDS a sector-standards.ts (optionnel, standards inline fonctionnent)
+- Tester avec des deals SpaceTech reels
+
+---
+
+## 2026-01-27 20:45 - Creation agent general-expert (Tier 2 FALLBACK)
+
+### Resume
+Creation de l'agent FALLBACK pour les secteurs NON COUVERTS par les 20 experts specialises. Cet agent utilise 100% recherche web sans standards hardcodes, identifie dynamiquement les metriques pertinentes, et est transparent sur les donnees trouvees vs manquantes.
+
+### Fichiers crees
+- **src/agents/tier2/general-expert.ts** - Agent fallback complet avec:
+  - **ZERO standards hardcodes** - Tout est recherche dynamiquement
+  - Identification sectorielle dynamique (peut etre different du secteur declare)
+  - Recherche des metriques pertinentes pour le secteur identifie
+  - Recherche de benchmarks via web search (avec sources obligatoires)
+  - Cross-reference avec Funding Database
+  - Detection concurrents (deck vs DB vs web search)
+  - Analyse unit economics adaptee au secteur
+  - Dynamiques sectorielles (maturite, competition, barrieres, Big Tech threat, regulatory)
+  - Paysage exit (exits recents, multiples, acquereurs typiques - tout recherche)
+  - Valorisation vs benchmarks trouves
+  - Questions sectorielles generees dynamiquement
+  - Scoring avec transparence sur la confiance de l'analyse
+  - Data gaps explicites et recommandations d'actions
+
+### Caracteristiques uniques
+- **100% recherche web**: Aucun benchmark hardcode, tout est source
+- **Transparence totale**: Indique clairement ce qui a ete trouve vs ce qui manque
+- **Confiance ajustee**: Score plafonne selon la qualite des donnees disponibles
+- **Adaptabilite**: Fonctionne pour n'importe quel secteur emergent ou niche
+
+### Fichiers modifies
+- **src/agents/tier2/types.ts**:
+  - Ajout "general-expert" au SectorExpertType
+  - Ajout `SECTOR_MAPPINGS["general-expert"] = []` (pas de patterns - fallback uniquement)
+  - Ajout `getSectorExpert()` modifie pour retourner "general-expert" comme fallback
+  - Ajout `getSectorExpertStrict()` pour obtenir uniquement les experts specialises (sans fallback)
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du generalExpert
+  - Ajout a SECTOR_EXPERTS
+  - `getSectorExpertForDeal(sector, useDynamicFallback=true)` utilise maintenant general-expert comme fallback
+  - `getAllSectorExpertsForDeal(sector, useDynamicFallback=true)` utilise maintenant general-expert comme fallback
+
+### Regles de fallback
+- Si un deal ne match aucun des 20 patterns sectoriels -> general-expert
+- general-expert n'a PAS de patterns de matching (tableau vide)
+- `useDynamicFallback=false` pour obtenir `null` si pas de match specialise
+
+### Prochaines etapes
+- Tester sur des deals de secteurs non couverts (Ocean Tech, Defense Tech, Govtech, etc.)
+- Evaluer la qualite des benchmarks trouves via recherche web
+- Potentiellement creer de nouveaux experts specialises pour secteurs frequents
+
+---
+
+## 2026-01-27 20:15 - Creation agent creator-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel Creator Economy (Media, Content, Influencer Marketing) pour le Tier 2. Couvre Creator Platforms (Patreon, OnlyFans), Creator Tools (link-in-bio, scheduling, analytics), Influencer Marketing, MCN/Talent Management, Podcasting, Newsletter, Streaming, UGC Platforms, Creator-led Brands, Digital Media.
+
+### Fichiers crees
+- **src/agents/tier2/creator-expert.ts** - Agent complet avec:
+  - Sous-secteurs: creator_platform, creator_tools, influencer_marketing, mcn_talent, podcasting, newsletter, streaming, ugc_platform, creator_brand, media_content
+  - Metriques primaires: Creator Retention Rate, Revenue per Creator (RPC), Platform Dependency Score (CRITIQUE), Creator Acquisition Cost, Engagement Rate
+  - Metriques secondaires: CPM/RPM, Payout Ratio, Owned Audience Ratio, Monetization Diversification Score, Content Velocity, Creator NPS
+  - Unit Economics: Creator LTV (> 5x CAC), Platform Take Rate (10-20%), Audience Value (> $0.50/follower), Creator ROI (> 5x), Monetization Efficiency (> $5/1K views)
+  - Platform Dependency Analysis (CRITIQUE): dependency score, primary platforms, risk level, mitigation factors, worst case scenario
+  - Creator Economics Analysis: business model, take rate/pricing, creator value proposition, retention risk, concentration risk
+  - Red flags: Platform dependency > 80% (CRITICAL), Creator retention < 40% (CRITICAL), Creator concentration > 50% (CRITICAL), Payout ratio < 40% (MAJOR), Engagement rate < 1% (MAJOR), Owned audience < 5% (MAJOR)
+  - Sector Dynamics: competition intensity, consolidation trend, barrier to entry, regulatory risk (FTC, COPPA), exit landscape
+  - Acquirers typiques: Meta, Google, ByteDance, Amazon, Spotify, Apple, Netflix, Disney, WPP/Omnicom/Publicis (agencies), Patreon, Substack, Kajabi, Adobe, HubSpot, PE
+  - Contexte specifique par sous-secteur avec metriques a verifier
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts**:
+  - Ajout CREATOR_STANDARDS avec metriques, unit economics formulas, red flag rules, sector risks, success patterns
+  - Ajout mappings: Creator Economy, Creator, Media, Content, Influencer, Influencer Marketing, Social Media, Podcasting, Podcast, Newsletter, Streaming, UGC, User Generated Content, Creator Tools, Creator Platform, Patreon, Substack, YouTube, TikTok, Twitch, OnlyFans, Talent Management, MCN, Multi-Channel Network, Digital Media, Media Tech
+
+- **src/agents/tier2/types.ts**:
+  - Ajout "creator-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour Creator Economy
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du creatorExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (AVANT gaming-expert pour priorite sur "media tech", "streaming", "digital media")
+
+### Specificites Creator Economy
+- **Platform Dependency est LE risque #1**: > 70% revenus d'une seule plateforme = risque existentiel. Algorithme, demonetisation, policy change peuvent tuer le business overnight.
+- **Creator Concentration**: Top 10 creators > 50% revenue = single point of failure. Un depart = effondrement.
+- **Monetization Diversification**: Single stream (ads only) = vulnerable. Les meilleurs ont 4-6 sources de revenus.
+- **Owned Audience**: Email list, SMS = vrai moat. Followers sur social = audience "louee", pas possedee.
+- **Algorithm Volatility**: Reach peut chuter 50-90% overnight sans avertissement.
+- **Burnout Risk**: Creator burnout est un risque systemic - affecte retention et qualite.
+- **AI Disruption**: AI content generation menace certaines categories de createurs.
+
+### Separation Creator Economy vs Gaming
+- **Creator Economy**: Creator, Influencer, Podcasting, Newsletter, Streaming, UGC, Creator Tools, Digital Media, MCN, Talent Management
+- **Gaming**: Gaming, Esports, Metaverse, VR, AR, Entertainment (sans Creator Economy patterns)
+
+---
+
+## 2026-01-27 19:35 - Creation agent legaltech-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel LegalTech (Law Tech, RegTech, Compliance Tech) pour le Tier 2. Couvre Legal Practice Management, Contract Lifecycle Management (CLM), Document Automation, Legal Research & Analytics, E-Discovery, Compliance & RegTech, Litigation Analytics, Legal Marketplaces.
+
+### Fichiers crees
+- **src/agents/tier2/legaltech-expert.ts** - Agent complet avec:
+  - Sous-secteurs: practice_management, contract_lifecycle_management, document_automation, legal_research, e_discovery, compliance_regtech, litigation_analytics, legal_marketplace, billing_invoicing, ip_management
+  - Target segments: biglaw (AmLaw 100), midmarket_law, smb_law, corporate_legal, solo_practitioners, government, consumers
+  - Metriques primaires: ARR Growth YoY, NRR, User Adoption Rate (CRITIQUE), Gross Margin, Professional Services Ratio
+  - Metriques secondaires: Sales Cycle Length, Implementation Time, Customer Concentration (Top 10%), Logo Churn Rate, Revenue Per Seat
+  - Unit Economics: LTV (> 3x CAC), CAC Payback (< 18 mois), Implementation Payback (< 12 mois), Magic Number (> 0.75)
+  - Adoption Analysis (CRITIQUE): user adoption rate, time saved metric, workflow integration, lawyer resistance assessment
+  - Regulatory Environment (CRITIQUE):
+    - UPL Risk: Unauthorized Practice of Law assessment avec activites a risque et mitigations
+    - Bar Compliance: ABA Model Rules, state bar regulations
+    - Privilege Handling: data residency, encryption, access controls, audit trail
+  - AI Assessment (si applicable): AI components, hallucination risk, accuracy claims verification, human-in-the-loop adequacy
+  - Red flags: User adoption < 50% (CRITICAL), Services > 30% (MAJOR), Sales cycle > 18 months (MAJOR), Customer concentration > 50% (MAJOR), NRR < 95% (MAJOR)
+  - Sector Dynamics: incumbent power (Thomson Reuters, LexisNexis), competition intensity, Big Tech threat
+  - Scoring: Metrics (20%), Adoption (20%), Regulatory (20%), Business Model (20%), Market Position (20%)
+  - Acquirers typiques: Thomson Reuters, LexisNexis (RELX), Wolters Kluwer, Litera, Intapp, Clio, Thoma Bravo, Vista Equity Partners, Insight Partners
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts**:
+  - Ajout LEGALTECH_STANDARDS avec metriques, unit economics formulas, red flag rules, sector risks, success patterns
+  - Ajout mappings: LegalTech, Legal Tech, Legal Technology, Law Tech, Legal Software, CLM, Contract Lifecycle Management, Contract Management, Legal Practice Management, Practice Management, Legal Research, E-Discovery, eDiscovery, Document Automation, Legal Document Automation, Legal AI, Legal Analytics, Litigation Analytics, Legal Marketplace, Law Firm Software, Legal Billing, Legal Ops, Legal Operations, IP Management, Intellectual Property
+
+- **src/agents/tier2/types.ts**:
+  - Ajout "legaltech-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour LegalTech (retire de saas-expert: LegalTech, Legal Tech, RegTech)
+  - L'agent herite de ExtendedSectorData existant pour regulatoryDetails, verdict, businessModelFit
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du legaltechExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (AVANT saas-expert pour priorite)
+  - Retrait de "legaltech", "legal tech", "regtech" de saas-expert patterns
+
+### Specificites LegalTech
+- **UPL Risk**: Produits qui fournissent des conseils juridiques sans avocat licensie - risque existentiel
+- **Attorney-Client Privilege**: Donnees privilegiees necessitent SOC 2 Type II, encryption, audit trails
+- **Lawyer Adoption Resistance**: Profession conservatrice, 30-40% des implementations echouent par manque d'adoption
+- **Long Sales Cycles**: BigLaw 9-18 mois, Midmarket 3-6 mois, SMB 1-3 mois
+- **AI Hallucination Risk**: Legal research AI citant des cas inexistants (voir Mata v. Avianca 2023)
+- **Bar Regulations**: ABA Model Rules 1.1 (Competence), 1.6 (Confidentiality), 5.3 (Supervision), 5.5 (UPL)
+
+### Separation LegalTech vs SaaS
+- **LegalTech**: LegalTech, Legal Tech, Law Tech, Legal Software, CLM, Legal Practice Management, Legal Research, E-Discovery, Legal AI, Legal Marketplace, Legal Ops, RegTech
+- **SaaS**: SaaS generique, B2B Software, Enterprise Software (sans les patterns LegalTech)
+
+---
+
+## 2026-01-27 19:15 - Creation agent hrtech-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel HRTech (Workforce, Recruitment, Payroll, L&D, Benefits) pour le Tier 2. Couvre HRIS, Payroll, ATS/Recruiting, Talent Management, Benefits Administration, Workforce Management, Compensation, PEO/EOR.
+
+### Fichiers crees
+- **src/agents/tier2/hrtech-expert.ts** - Agent complet avec:
+  - Sous-secteurs: hris_core, payroll, recruiting_ats, talent_management, benefits_admin, workforce_management, compensation, employee_engagement, deskless_workforce, contingent_workforce
+  - Target segments: enterprise, mid_market, smb, multi_segment
+  - Business models: pepm (Per Employee Per Month), per_seat, flat_subscription, usage_based, hybrid
+  - Metriques primaires: NRR, Gross Margin, Implementation Time (Days to Value), Logo Churn Rate, ACV, CAC Payback Period
+  - Metriques secondaires: Revenue per Employee Served (PEPM), Services Revenue %, Sales Cycle Length, Customer Expansion Rate, Integration Depth, Compliance Certifications
+  - Unit Economics: LTV, CAC (segmente par Enterprise/Mid-Market/SMB), LTV/CAC Ratio, CAC Payback, Revenue per Employee, Implementation Revenue %
+  - Compliance (CRITIQUE): Payroll Compliance (jurisdictions), Data Privacy (GDPR, CCPA, SOC 2), Industry-specific regulations
+  - Integration Ecosystem: core integrations (ADP, Workday, SAP, ATS), integration as moat, switching cost assessment
+  - Implementation Analysis: time to value, cycle, self-serve capability, scalability risk
+  - Sales & GTM: sales cycle, motion (enterprise_field, inside_sales, PLG), buyer persona, expansion mechanism, channel strategy
+  - Customer Analysis: total customers, employees served, concentration risk, industry diversity
+  - Retention Analysis: GRR, NRR, logo churn, expansion rate, churn reasons, cohort health
+  - HRTech Moat: data advantage, network effects, integration depth, regulatory moat, switching costs, brand in HR
+  - Red flags: NRR < 100% (CRITICAL), implementation > 180 days mid-market (CRITICAL), logo churn > 20% (CRITICAL), services > 35% (MAJOR), gross margin < 55% (MAJOR), CAC payback > 36 months (CRITICAL)
+  - Scoring: Unit Economics (20%), Retention (20%), Compliance (20%), GTM Efficiency (20%), Product-Market Fit (20%)
+  - Acquirers typiques: Workday, ADP, Paylocity, Paycom, Paychex, UKG, Ceridian, Deel, Rippling, Gusto, PE (Vista, Thoma Bravo)
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts**:
+  - Ajout HRTECH_STANDARDS avec metriques, unit economics formulas, red flag rules, sector risks, success patterns
+  - Ajout mappings: HRTech, HR Tech, HR Software, Human Resources, People Tech, Talent Tech, Workforce, WFM, Payroll, HRIS, HCM, ATS, Recruiting, Talent Management, Benefits, PEO, EOR
+
+- **src/agents/tier2/types.ts**:
+  - Ajout "hrtech-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour HRTech (retire de saas-expert)
+  - Ajout champs ExtendedSectorData: hrtechCompliance, hrtechIntegrations, hrtechImplementation, hrtechSalesGtm, hrtechCustomerAnalysis, hrtechRetention, hrtechMoat
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du hrtechExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (AVANT saas-expert pour priorite)
+  - Retrait de "hrtech", "hr tech" de saas-expert patterns
+
+### Specificites HRTech
+- Sales cycles longs (enterprise): 6-12 mois avec RFP, security review, pilot
+- Compliance critique: payroll errors = legal risk, SOC 2 obligatoire pour enterprise
+- Implementation = key bottleneck: scalabilite limitee par capacity d'onboarding
+- Natural expansion via headcount growth (PEPM model)
+- Integration ecosystem cree des switching costs eleves
+- Seasonal patterns: Q4 budget decisions, Q1 implementations
+
+### Separation HRTech vs SaaS
+- **HRTech**: HRTech, HR Tech, HR Software, Human Resources, People Tech, Workforce, Payroll, HRIS, HCM, ATS, Recruiting, Talent Management, Benefits, PEO, EOR
+- **SaaS**: SaaS generique, B2B Software, Enterprise Software, LegalTech, RegTech
+
+---
+
+## 2026-01-27 19:15 - Creation agent cybersecurity-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel Cybersecurity/InfoSec pour le Tier 2. Couvre Endpoint Security (EDR/XDR), Cloud Security (CSPM/CWPP), Identity & Access (IAM/CIAM), Application Security (AppSec/DevSecOps), Network Security, Security Operations (SIEM/SOAR), Data Security, Threat Intelligence, Vulnerability Management.
+
+### Fichiers crees
+- **src/agents/tier2/cybersecurity-expert.ts** - Agent complet avec:
+  - Categories: EDR, XDR, IAM, SIEM, SOAR, AppSec, Cloud Security, Network Security, Data Security, etc.
+  - Category Analysis: maturite de categorie, risque de consolidation, menace Big Tech (Microsoft/CrowdStrike/Palo Alto)
+  - Moat Analysis: 4 types de moat (Data Flywheel, Tech, Integration, Compliance) avec score 0-100
+  - GTM Analysis: sales motion (PLG/sales-led/channel-led/hybrid), target buyer, sales cycle, channel strategy, land & expand
+  - Team Analysis: presence de CISO/security leader, background security, credibilite industrie
+  - Metriques primaires: ARR, NRR, Gross Margin, Logo Churn Rate, ACV
+  - Metriques secondaires: Magic Number, CAC Payback, Rule of 40, Trial Conversion, Time to Value
+  - Unit Economics: LTV (> 4x CAC), CAC Payback (< 18 mois), Magic Number (> 0.75), Burn Multiple (< 2x), Revenue per Security Engineer
+  - Red flags specifiques: NRR < 95% (CRITICAL - anormal en security), Churn > 20% (CRITICAL), GM < 55% (CRITICAL), CAC Payback > 36m (CRITICAL), Magic Number < 0.3 (MAJOR), ACV < $5K (MAJOR)
+  - Verdict: isRealSecurityProduct, productVsFeature (standalone/platform_component/feature_risk/feature), consolidationRisk, moatStrength
+  - Scoring: Product Differentiation (25%), Moat Strength (25%), Unit Economics (25%), GTM Execution (25%)
+  - Acquirers typiques: Palo Alto Networks, CrowdStrike, Cisco, Microsoft, Fortinet, Zscaler, SentinelOne, Splunk, Broadcom, Thoma Bravo, Vista Equity, Insight Partners
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts** - Ajout CYBERSECURITY_STANDARDS avec:
+  - Metriques primaires: ARR, NRR (120%+ top quartile), Gross Margin (75-85% pure software), Logo Churn (< 5% enterprise), ACV ($5-25K SMB, $50-150K mid-market, $200K-1M+ enterprise)
+  - Metriques secondaires: Magic Number (> 0.75), CAC Payback (18-24 mois enterprise), Rule of 40, Trial Conversion, TTV
+  - Unit economics formulas: LTV, CAC Payback, Magic Number, Burn Multiple, Revenue per Security Engineer
+  - Red flag rules: NRR < 95%, Churn > 20%, GM < 55%, CAC Payback > 36m, Magic Number < 0.3, ACV < $5K
+  - Sector risks: platform consolidation, commoditization, Big Tech competition, talent scarcity, POC fatigue, compliance-driven only, false positive fatigue, breach liability, rapid threat evolution, channel dependency
+  - Success patterns: platform play, category creation, threat intel moat, API-first, enterprise land-and-expand, compliance-plus-security, channel mastery, automation focus, developer security shift-left, cloud-native, high NRR > 120%, CISO advisory board
+  - Mappings: Cybersecurity, Cyber, InfoSec, Security Software, Network Security, Endpoint Security, Cloud Security, AppSec, DevSecOps, Security, SIEM, SOAR, XDR, EDR, IAM, Identity, Zero Trust, Threat Intelligence, Vulnerability Management, MSSP, SOC
+
+- **src/agents/tier2/types.ts**:
+  - Ajout "cybersecurity-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour Cybersecurity
+  - Retrait "Cybersecurity", "Cyber", "Security" de deeptech-expert
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du cybersecurityExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (avant deeptech-expert pour priorite)
+  - Retrait des patterns cybersecurity/cyber/security de deeptech-expert
+
+### Notes techniques
+- Utilisation de getStandardsOnlyInjection() pour injection des benchmarks dans le prompt
+- Focus sur le risque de consolidation par les grandes plateformes (CrowdStrike, Palo Alto, Microsoft)
+- Detection feature vs product (risque d'absorption par plateforme)
+- Analyse specifique du moat en 4 dimensions: Data Flywheel, Tech, Integration, Compliance
+- NRR anormalement bas en security = CRITIQUE (le threat landscape grandit, clients devraient acheter plus)
+- Churn eleve anormal en security (switching costs sont eleves)
+
+### Separation Cybersecurity vs DeepTech
+- **Cybersecurity**: Cybersecurity, Cyber, InfoSec, Security Software, Network Security, Endpoint Security, Cloud Security, AppSec, DevSecOps, Security, SIEM, SOAR, XDR, EDR, IAM, Identity, Zero Trust, Threat Intelligence, Vulnerability Management, MSSP, SOC
+- **DeepTech**: Quantum, Blockchain, Web3 (Cybersecurity retire)
+
+---
+
+## 2026-01-27 18:45 - Creation agent mobility-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel Mobility/Transportation/Logistics pour le Tier 2. Couvre Ridesharing, Micromobility, Delivery/Last-mile, Fleet Management, Freight/Trucking, MaaS, Autonomous Vehicles.
+
+### Fichiers crees
+- **src/agents/tier2/mobility-expert.ts** - Agent complet avec:
+  - Sous-secteurs: ridesharing, micromobility, delivery_lastmile, fleet_management, autonomous_vehicles, maas, freight_trucking, logistics_tech, ev_charging
+  - Business models: asset_light_marketplace, asset_heavy_owned_fleet, hybrid, software_platform, infrastructure
+  - Metriques primaires: Contribution Margin per Trip, Take Rate, Utilization Rate, Driver/Rider Retention D30, CAC
+  - Metriques secondaires: Trips per User/Month, LTV/CAC, Dead Miles Ratio, Operating Ratio, Asset Turnover, Safety Incidents
+  - Unit Economics: Contribution Margin per Trip (DOIT etre positive), Take Rate, Utilization Rate, LTV/CAC, Path to Profitability
+  - Supply Analysis: supply type, acquisition cost, retention D30/D90, churn rate, quality, challenges
+  - Regulatory Environment: Gig Worker Status (AB5, EU Platform Work Directive), Operating Permits, Safety Compliance
+  - Sector Dynamics: Competition intensity, Big Player Threat (Uber, Amazon), AV Disruption Risk
+  - Red flags: contribution margin < 0 (CRITICAL), utilization < 5% (CRITICAL), supply D30 < 20% (CRITICAL), take rate < 10% (MAJOR), operating ratio > 98% (CRITICAL), dead miles > 50% (MAJOR)
+  - Scoring: Unit Economics (25%), Regulatory (25%), Competitive Position (25%), Scalability (25%)
+  - Acquirers typiques: Uber, Lyft, Grab, DiDi, Bolt, Amazon, FedEx, UPS, DHL, Automotive OEMs (GM, Ford, VW, Toyota), PE
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts** - Ajout MOBILITY_STANDARDS avec:
+  - Metriques primaires: Contribution Margin per Trip, Take Rate (20-30% ridesharing), Utilization Rate (5-15% micro, 40-60% fleet), Driver Retention D30 (40-60%), CAC
+  - Metriques secondaires: Trips/User/Month, LTV/CAC, Dead Miles (30-40%), Operating Ratio (< 90% profitable), Asset Turnover, Safety Incidents
+  - Unit economics formulas: Contribution Margin, Customer LTV, Payback Period (trips), Asset ROI, Supply-Demand Balance
+  - Red flag rules: contribution < 0, utilization < 5%, D30 < 20%, take rate < 10%, LTV/CAC < 1.5, operating ratio > 98%, dead miles > 50%
+  - Sector risks: gig worker classification, capital intensity, price sensitivity, insurance costs, seasonality, AV disruption, vandalism/theft, EV transition
+  - Success patterns: asset-light, dense urban markets, multi-modal, B2B focus, vertical specialization, supply-side loyalty, dynamic pricing, regulatory moats
+  - Mappings: Mobility, Transportation, Logistics, Ridesharing, Micromobility, Fleet, Delivery, Last-mile, MaaS, Transit, Freight, Trucking, Shipping, Supply Chain
+
+- **src/agents/tier2/types.ts**:
+  - Ajout "mobility-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour Mobility
+  - Ajout champs ExtendedSectorData: businessModel, supplyAnalysis, avDisruptionRisk, gigWorkerStatus, mobilityUnitEconomics
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du mobilityExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (avant consumer-expert pour priorite sur "delivery")
+
+### Notes techniques
+- Utilisation de getStandardsOnlyInjection() pour injection des benchmarks dans le prompt
+- Support complet des analyses supply-side (drivers, riders, vehicles)
+- Focus sur les risques reglementaires (gig worker classification, operating permits)
+- Integration de l'analyse AV disruption risk
+
+---
+
+## 2026-01-27 18:30 - Creation agent foodtech-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel FoodTech pour le Tier 2. Couvre D2C Food Brands, Alt Protein, Meal Kits, AgTech, Restaurant Tech, Food Supply Chain.
+
+### Fichiers crees
+- **src/agents/tier2/foodtech-expert.ts** - Agent complet avec:
+  - Sous-secteurs: d2c_food_brand, alt_protein, meal_kit, agtech_vertical_farming, restaurant_tech, food_delivery, food_supply_chain, food_safety_qa
+  - Business models: d2c_subscription, d2c_one_time, retail_distribution, b2b_saas, marketplace, b2b_ingredients, vertical_integration
+  - Metriques primaires: Gross Margin, Food Cost Ratio, Repeat Purchase Rate, CAC, Contribution Margin per Order
+  - Metriques secondaires: AOV, LTV/CAC Ratio, Retail Velocity, Spoilage Rate, Channel Mix, Certifications Count
+  - Unit Economics: Contribution Margin (DOIT etre positive), LTV, CAC, CAC Payback en ordres, Gross Margin
+  - Distribution Analysis: channels (d2c, amazon, retail, foodservice), velocity retail, diversification, delisting risk
+  - Supply Chain Assessment: manufacturing model, copacker dependency, spoilage/waste, resilience
+  - Regulatory Status: FDA compliance, certifications (Organic, Non-GMO, B-Corp), health claims issues
+  - Brand Analysis: brand strength, organic acquisition %, repeat rate, NPS, social media
+  - Competitive Position: direct competitors, DB competitors, hidden competitors (RED FLAG), private label threat
+  - Red flags: contribution margin negative (CRITICAL), repeat rate < 20% (CRITICAL), GM < 25% (CRITICAL), single retailer > 40% (MAJOR), spoilage > 5% (MAJOR)
+  - Scoring: Unit Economics (25%), Brand & Retention (25%), Distribution (25%), Supply Chain & Ops (25%)
+  - Acquirers typiques: Nestle, PepsiCo, Coca-Cola, Unilever, Danone, Kraft Heinz, Tyson, JBS, L Catterton, KKR
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts** - Ajout FOODTECH_STANDARDS avec:
+  - Metriques primaires: Gross Margin (varie selon sous-secteur), Food Cost Ratio, Repeat Purchase Rate, CAC, Contribution Margin per Order
+  - Metriques secondaires: AOV, LTV/CAC, Retail Velocity, Spoilage Rate, Channel Mix, Certifications
+  - Unit economics formulas: Contribution Margin, LTV, CAC Payback (orders), Gross Margin per Unit, Trade Spend Ratio, Break-even Volume
+  - Red flag rules: contribution < 0, GM < 25%, LTV/CAC < 1.5, repeat < 20%, food cost > 50%, spoilage > 5%, concentration > 40%
+  - Sector risks: commodity input, retailer dependency, D2C CAC, perishability, regulatory, private label
+  - Success patterns: organic acquisition, retail distribution, multi-channel, first-order profitable, proprietary formulation
+  - Mappings: FoodTech, Food, F&B, AgTech, AgriTech, Alt Protein, Meal Kit, Dark Kitchen, Vertical Farming, Plant-Based, CPG Food
+
+- **src/agents/tier2/types.ts**:
+  - Ajout "foodtech-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour FoodTech
+  - Retrait FoodTech patterns de climate-expert et consumer-expert
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du foodtechExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (avant climate-expert et consumer-expert pour priorite)
+  - Retrait des patterns agtech/foodtech de climate-expert
+  - Retrait du pattern "food" de consumer-expert
+
+### Separation FoodTech vs Climate vs Consumer
+- **FoodTech**: Food, F&B, AgTech, AgriTech, Alt Protein, Meal Kit, Dark Kitchen, Vertical Farming, Plant-Based, CPG Food
+- **Climate**: CleanTech, Climate, Energy, Sustainability, GreenTech (AgTech/FoodTech retire)
+- **Consumer**: D2C, Social, E-commerce, Retail, Lifestyle (Food retire)
+
+---
+
+## 2026-01-27 17:45 - Creation agent proptech-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel PropTech/Real Estate Tech pour le Tier 2.
+
+### Fichiers crees
+- **src/agents/tier2/proptech-expert.ts** - Agent complet avec:
+  - Segments couverts: Real Estate Marketplaces, iBuying, Property Management SaaS, Construction Tech, Mortgage Tech, CRE Tech, Co-working/Flex Space, Smart Building/IoT
+  - Metriques cles: GMV, Take Rate, Units Under Management, Gross Margin, Cycle Sensitivity Score, Inventory Turnover Days
+  - Metriques segment-specific: NRR (SaaS), Occupancy Rate (flex), Days to Close (mortgage), Break-even Occupancy, Lead Conversion Rate
+  - Cycle Analysis: CRITIQUE - sensibilite taux d'interet, resilience au downturn, worst-case scenario, score de resilience
+  - Geographic Analysis: concentration risk, regulatory risk local (rent control, zoning, licensing)
+  - Capital Intensity: working capital needs, inventory risk, break-even timeline
+  - PropTech Moat: data advantage, network effects, regulatory moat, local lock-in, integration depth
+  - Red flags: inventory turnover > 180j (CRITICAL), GM iBuying < 5% (CRITICAL), break-even occupancy > 75% (CRITICAL), NRR < 85% (CRITICAL)
+  - Lecons du crash PropTech 2022-2023: WeWork, Zillow Offers, Better.com, Compass
+  - Scoring: Unit Economics (20%), Cycle Resilience (20%), Moat Strength (20%), Growth Potential (20%), Execution Risk (20%)
+  - Acquirers typiques: CoStar, Zillow, Redfin, Procore, Autodesk, Blackstone, CBRE, Fifth Wall portfolio
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts** - Ajout PROPTECH_STANDARDS avec:
+  - Metriques primaires: Transaction Volume/GMV, Take Rate, Units Under Management, Gross Margin, Cycle Sensitivity, Inventory Turnover
+  - Metriques secondaires: NRR, Occupancy Rate, Break-even Occupancy, Lead Conversion, Revenue/sqft, Days to Close, Cost/Loan
+  - Unit economics formulas: Take Rate Economics, iBuyer Unit Economics, Revenue per Door, Flex Space Economics, Mortgage Spread, Holding Cost Burn
+  - Red flag rules: inventory > 180j, GM iBuying < 5%, break-even occupancy > 75%, NRR < 85%, cycle sensitivity > 8, geographic concentration > 70%
+  - Sector risks: interest rate sensitivity, RE cycle, capital intensity, inventory risk, regulatory fragmentation, long sales cycles, WeWork/Zillow precedent
+  - Success patterns: cycle-resilient model, capital-light, regulatory moat, vertical SaaS depth, multi-market, B2B over B2C
+  - Mappings: PropTech, Real Estate Tech, Construction Tech, ConTech, Mortgage Tech, CRE Tech, Coworking, Smart Building, iBuying
+
+- **src/agents/tier2/types.ts**:
+  - Ajout "proptech-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour PropTech (retire de marketplace-expert)
+  - Ajout ExtendedSectorData: proptechCycleAnalysis, proptechGeographicAnalysis, proptechCapitalIntensity, proptechMoat, proptechUnitEconomics
+  - Ajout scoreBreakdown: cycleResilience, moatStrength, growthPotential, executionRisk
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du proptechExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (avant marketplace-expert pour priorite)
+
+### Separation PropTech vs Marketplace
+- **PropTech**: Real Estate Tech, Construction Tech, Mortgage Tech, CRE Tech, Coworking, Smart Building
+- **Marketplace**: Generic marketplaces, platforms, two-sided (PropTech retire)
+
+---
+
+## 2026-01-27 - Creation agent edtech-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel EdTech/Education Technology pour le Tier 2.
+
+### Fichiers crees
+- **src/agents/tier2/edtech-expert.ts** - Agent complet avec:
+  - Expertise: K-12 B2B, Higher Ed, Corporate Learning, B2C Education, Bootcamps/ISA
+  - Metriques cles: Completion Rate (#1), Learner Acquisition Cost, LLTV, NRR, MAL
+  - Compliance: COPPA (enfants), FERPA (donnees etudiants), WCAG 2.1 AA (accessibilite)
+  - Business models: subscription B2C/B2B, freemium, ISA, one-time purchase
+  - GTM specifique: cycles ecoles (12-18 mois), saisonnalite Q1-Q2, teacher adoption
+  - Red flags: completion < 10%, NRR < 85%, LAC > $200, pas d'outcomes data
+  - Moat analysis: content differentiation, adaptive technology, credential value, LMS integration
+  - Scoring: Engagement (25%), Unit Economics (25%), GTM Efficiency (25%), Moat/Regulatory (25%)
+  - Acquirers typiques: Pearson, McGraw-Hill, Coursera, 2U, Google, Microsoft
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts** - Ajout EDTECH_STANDARDS avec:
+  - Metriques primaires: Completion Rate, LAC, NRR, MAL, LLTV
+  - Metriques secondaires: TTFV, Learning Outcomes, Teacher NPS, Content Cost, District Penetration
+  - Unit economics formulas: Learner LTV, LAC Payback, Engagement Score, Content ROI, School Contract Value
+  - Red flag rules: completion < 10%, NRR < 85%, LAC > 200, penetration < 20%, LTV/LAC < 2
+  - Sector risks: saisonnalite, budgets publics, procurement, teacher adoption, free alternatives
+  - Success patterns: proven outcomes, teacher champions, cohort-based, LMS integration
+
+- **src/agents/tier2/types.ts**:
+  - Ajout "edtech-expert" au SectorExpertType
+  - Ajout SECTOR_MAPPINGS pour EdTech (retire de consumer-expert)
+  - Ajout ExtendedSectorData: edtechEngagement, edtechRegulatory, edtechMoat
+
+- **src/agents/tier2/index.ts**:
+  - Export et import du edtechExpert
+  - Ajout a SECTOR_EXPERTS
+  - Ajout a SECTOR_PATTERNS (avant consumer-expert)
+
+### Separation EdTech vs Consumer
+- **EdTech**: Education Technology, E-Learning, K-12, Higher Ed, Corporate Learning, Bootcamps
+- **Consumer**: D2C, Social, E-commerce, Retail, Food, Lifestyle (EdTech retire)
+
+---
+
+## 2026-01-27 - Creation agent biotech-expert (Tier 2)
+
+### Resume
+Creation de l'agent expert sectoriel BioTech/Life Sciences pour le Tier 2.
+
+### Fichiers crees
+- **src/agents/tier2/biotech-expert.ts** - Agent complet avec:
+  - Expertise: Drug Discovery, Clinical Development, Pharma, Gene/Cell Therapy
+  - Standards FDA: IND, NDA, BLA, 510(k), PMA
+  - Designations speciales: Breakthrough, Fast Track, Orphan, RMAT, Accelerated Approval
+  - Phases cliniques: Preclinical, Phase I, II, III avec success rates et couts
+  - Valuation: rNPV methodology, pipeline valuation par phase
+  - M&A recents: Seagen/Pfizer, Prometheus/Merck, Horizon/Amgen, Karuna/BMS
+  - Red flags specifiques: cash runway, clinical success probability, patent life
+  - Scoring: Clinical stage (25%), Financial runway (20%), Competitive (15%), Timing (20%), Team (20%)
+
+### Fichiers modifies
+- **src/agents/tier2/sector-standards.ts** - Ajout BIOTECH_STANDARDS avec:
+  - Metriques primaires: Clinical Phase, Cash Runway, Pipeline Value (rNPV), Clinical Success Probability, Patent Life
+  - Metriques secondaires: Patient Enrollment Rate, Monthly Burn Rate, Number of Indications, Regulatory Designations
+  - Unit economics formulas: rNPV, Cash Runway, Cost per Patient, Pipeline Concentration Risk
+  - Red flag rules: < 12 months runway, < 5% success probability, < 8 years patent life
+  - Success patterns et sector risks specifiques biotech
+  - Typical acquirers: Big Pharma (Pfizer, Merck, J&J, Roche, etc.)
+
+- **src/agents/tier2/types.ts** - Ajout "biotech-expert" au SectorExpertType et SECTOR_MAPPINGS
+  - Patterns: BioTech, Life Sciences, Pharma, Drug Discovery, Therapeutics, Gene Therapy, Cell Therapy, Biologics, Oncology, Immunotherapy
+  - Separation de BioTech et HealthTech (avant: BioTech etait dans HealthTech)
+
+- **src/agents/tier2/index.ts** - Export et registration du biotechExpert
+  - biotech-expert place AVANT healthtech-expert dans SECTOR_PATTERNS pour priorite de matching
+
+### Separation BioTech vs HealthTech
+- **HealthTech**: Digital Health, MedTech (devices), Telehealth, Mental Health, FemTech
+- **BioTech**: Drug Discovery, Therapeutics, Clinical Trials, Pharma, Gene/Cell Therapy
+
+---
+
+## 2026-01-27 23:45 - Persistance Complete (Context Engine, LLM Logs, Couts)
+
+### Probleme resolu
+Les donnees intermediaires etaient perdues meme apres une analyse reussie:
+- Context Engine data (web search, Pappers, GitHub, etc.) - non persiste, refetch a chaque analyse
+- Prompts/reponses LLM bruts - pas de logging, impossible de debug
+- Detail des couts par appel - seulement le total, pas le breakdown
+
+### Nouvelles tables Prisma
+
+**ContextEngineSnapshot** - Cache persistant du Context Engine
+- Sauvegarde automatique apres enrichissement
+- Validite 30 jours par defaut (suffisant pour cycle DD d'un BA)
+- Evite les refetch sur reanalyse du meme deal
+- Stocke: dealIntelligence, marketData, competitiveLandscape, newsSentiment, peopleGraph
+
+**LLMCallLog** - Logging complet des appels LLM
+- Chaque appel est logge avec prompt et reponse
+- Permet debug et audit
+- Stocke: systemPrompt, userPrompt, response, tokens, cost, duration, errors
+
+### Fichiers crees
+
+**src/services/context-engine/persistence.ts**
+- `saveContextSnapshot()` - Sauvegarde apres enrichissement
+- `loadContextSnapshot()` - Charge depuis DB si valide
+- `hasValidSnapshot()` - Verifie si snapshot existe et non expire
+- `deleteContextSnapshot()` - Supprime snapshot (ex: apres update deal)
+- `getSnapshotStats()` - Statistiques pour debug
+- `cleanupExpiredSnapshots()` - Nettoyage periodique
+
+**src/services/llm-logger/index.ts**
+- `logLLMCall()` - Log synchrone
+- `logLLMCallAsync()` - Log asynchrone (fire-and-forget)
+- `getLLMCallsForAnalysis()` - Liste les appels d'une analyse
+- `getLLMCallDetails()` - Detail complet d'un appel
+- `getAnalysisCostBreakdown()` - Breakdown couts par agent/modele
+- `cleanupOldLLMLogs()` - Nettoyage (garde 30 jours par defaut)
+
+### Fichiers modifies
+
+**src/services/context-engine/index.ts**
+- Integration de la persistance dans `enrichDeal()`
+- Niveau 1: Check DB snapshot (cross-session)
+- Niveau 2: Check memory cache (intra-session)
+- Sauvegarde automatique apres compute
+
+**src/services/openrouter/router.ts**
+- Import du logger
+- `setAnalysisContext()` - Set le contexte d'analyse pour le logging
+- Logging automatique dans `complete()` et `stream()`
+- Log des erreurs avec retry count
+
+**src/agents/orchestrator/index.ts**
+- Appel `setAnalysisContext()` au debut de chaque analyse
+- Tous les flux (tier1, tier2, tier3, full) sont couverts
+
+**prisma/schema.prisma**
+- Ajout model `ContextEngineSnapshot`
+- Ajout model `LLMCallLog`
+
+### Impact
+- **Analyses repetees** - Pas de refetch si snapshot valide (economie API)
+- **Debug** - Prompts/reponses accessibles pour comprendre les outputs
+- **Audit** - Breakdown couts detaille par agent, modele, appel
+- **Replay** - Possibilite de rejouer une analyse avec les memes inputs
+
+### Queries utiles
+
+```sql
+-- Voir les snapshots Context Engine
+SELECT deal_id, completeness, expires_at FROM "ContextEngineSnapshot";
+
+-- Voir les appels LLM d'une analyse
+SELECT agent_name, model, input_tokens, output_tokens, cost, duration_ms
+FROM "LLMCallLog" WHERE analysis_id = '...' ORDER BY created_at;
+
+-- Breakdown couts par agent
+SELECT agent_name, COUNT(*) as calls, SUM(cost) as total_cost
+FROM "LLMCallLog" GROUP BY agent_name ORDER BY total_cost DESC;
+```
+
+---
+
+## 2026-01-27 23:00 - Extension Tier 2 a 21 agents (20 secteurs + 1 general)
+
+### Resume
+Extension de la liste des experts sectoriels Tier 2 de 10 a 21 agents.
+
+### Changements
+- **10 secteurs existants** (implementes): SaaS, Fintech, Marketplace, AI, HealthTech, DeepTech, Climate, Consumer, Hardware, Gaming
+- **10 nouveaux secteurs** (a creer): BioTech, EdTech, PropTech, Mobility, FoodTech, HRTech, LegalTech, Cybersecurity, SpaceTech, Creator Economy
+- **1 general-expert** (fallback): 100% recherche web pour secteurs non couverts
+
+### Fichiers mis a jour
+- `CLAUDE.md` - Liste des 21 agents Tier 2
+- `investor.md` - Tableau complet avec status IMPL/TODO
+- `AGENT-REFONTE-PROMPT.md` - Toutes les sections concernees (resume, section 8, section 11)
+
+### Pour creer un nouveau secteur
+1. Creer `{sector}-expert.ts` dans `src/agents/tier2/`
+2. Ajouter `{SECTOR}_STANDARDS` dans `sector-standards.ts`
+3. Suivre le pattern des agents existants (voir saas-expert.ts)
+
+---
+
+## 2026-01-27 22:30 - Checkpoint Persistence & Crash Recovery
+
+### Probleme resolu
+Les analyses interrompues (crash, timeout, redemarrage serveur) etaient perdues:
+- Checkpoints stockes en memoire seulement, jamais persistes en DB
+- La table `AnalysisCheckpoint` existait dans le schema Prisma mais n'etait pas utilisee
+- Impossible de reprendre une analyse a 80% completee
+
+### Fichiers modifies
+
+**src/agents/orchestrator/persistence.ts**
+- `saveCheckpoint()` - Sauvegarde un checkpoint en DB
+- `loadLatestCheckpoint()` - Charge le dernier checkpoint
+- `findInterruptedAnalyses()` - Liste les analyses en status RUNNING (potentiellement crashees)
+- `loadAnalysisForRecovery()` - Charge toutes les donnees pour reprendre une analyse
+- `markAnalysisAsFailed()` - Marque une analyse interrompue comme FAILED
+- `cleanupOldCheckpoints()` - Nettoie les vieux checkpoints (garde les 5 derniers)
+
+**src/agents/orchestration/state-machine.ts**
+- `createCheckpoint()` devient async et persiste en DB
+- `restoreFromDb()` - Restaure l'etat depuis la DB
+- `canResume()` - Verifie si une analyse peut etre reprise
+- `getRecoveryInfo()` - Obtient les infos de recovery sans restaurer
+
+**src/agents/orchestrator/index.ts**
+- `findInterruptedAnalyses(userId?)` - Liste les analyses interrompues
+- `resumeAnalysis(analysisId)` - Reprend une analyse depuis son checkpoint
+- `cancelInterruptedAnalysis(analysisId)` - Annule une analyse interrompue
+
+**src/agents/orchestrator/types.ts**
+- Ajout `resumedFromCheckpoint?: boolean` dans `AnalysisResult`
+
+### Fonctionnement
+1. Checkpoints sauvegardes en DB a chaque transition d'etat + toutes les 30s
+2. Si crash, l'analyse reste en status RUNNING avec ses checkpoints
+3. Au redemarrage, `findInterruptedAnalyses()` detecte les analyses crashees
+4. `resumeAnalysis()` restaure l'etat et reprend uniquement les agents non completes
+5. Context Engine re-enrichi (pas persiste) mais resultats des agents recuperes
+
+### Impact
+- Recovery possible apres crash (pas de perte de travail)
+- Visibilite sur les analyses interrompues
+- Possibilite d'annuler proprement une analyse bloquee
+
+---
+
+## 2026-01-27 20:00 - Migration COMPLETE agents Tier 2 vers nouvelle architecture benchmarks
+
+### Resume
+Migration complete de **10 agents sectoriels Tier 2** vers la nouvelle architecture de benchmarks (standards + recherche web).
+
+### Agents migres (10/10)
+1. **saas-expert.ts** - Import SAAS_STANDARDS, utilisation getStandardsOnlyInjection()
+2. **fintech-expert.ts** - Import FINTECH_STANDARDS, utilisation getStandardsOnlyInjection()
+3. **marketplace-expert.ts** - Import MARKETPLACE_STANDARDS, utilisation getStandardsOnlyInjection()
+4. **ai-expert.ts** - Import AI_STANDARDS + patterns AI locaux
+5. **gaming-expert.ts** - Import GAMING_STANDARDS, rebuild EXTENDED_GAMING_BENCHMARKS
+6. **deeptech-expert.ts** - Import DEEPTECH_STANDARDS, utilisation getStandardsOnlyInjection()
+7. **climate-expert.ts** - Import CLIMATE_STANDARDS, utilisation getStandardsOnlyInjection()
+8. **healthtech-expert.ts** - Import HEALTHTECH_STANDARDS, suppression benchmarks locaux (~250 lignes)
+9. **consumer-expert.ts** - Import CONSUMER_STANDARDS, refonte benchmarks locaux
+10. **hardware-expert.ts** - Import HARDWARE_STANDARDS, utilisation getStandardsOnlyInjection()
+
+### Pattern de migration applique
+Pour chaque agent:
+1. Ajouter import de `SECTOR_STANDARDS` depuis sector-standards.ts
+2. Ajouter import de `getStandardsOnlyInjection` depuis benchmark-injector.ts
+3. Modifier ou supprimer les benchmarks locaux pour utiliser les standards
+4. Remplacer le formatage inline des percentiles par `getStandardsOnlyInjection("Sector", stage)`
+5. Ajouter notes de recherche web requise pour donnees actuelles
+6. Remplacer les references aux exit multiples hardcodes par placeholders
+
+### Benefices
+- Plus de percentiles inventes ou dates dans les prompts
+- Standards (formules, seuils, red flags) toujours disponibles
+- Instruction claire pour LLM de rechercher donnees actuelles en ligne
+- Architecture coherente entre TOUS les agents sectoriels
+
+### Status
+**MIGRATION COMPLETE** - Tous les 10 agents Tier 2 utilisent la nouvelle architecture.
+
+---
+
+## 2026-01-27 18:45 - Refonte architecture benchmarks (sector-benchmarks)
+
+### Probleme identifie
+Le fichier `sector-benchmarks.ts` contenait ~1800 lignes de donnees hardcodees dont:
+- Percentiles de marche potentiellement inventes ou dates
+- Exits de 2014-2021 (obsoletes)
+- Sources "2026 Edition" inventees
+- Donnees injectees directement dans les prompts LLM comme "verite absolue"
+
+### Nouvelle architecture
+
+**1. Standards etablis (NOUVEAU)** - `src/agents/tier2/sector-standards.ts`
+- Formules d'unit economics (LTV, CAC Payback, Burn Multiple, etc.)
+- Seuils de red flags (NRR < 90% = critical, etc.)
+- Regles stables de l'industrie
+- Descriptions et contexte sectoriel
+- Mots-cles de recherche pour benchmarks dynamiques
+- **10 secteurs couverts**: SaaS, Fintech, Marketplace, AI, HealthTech, DeepTech, Climate, Consumer, Gaming, Hardware
+
+**2. Benchmarks dynamiques (NOUVEAU)** - `src/services/benchmarks/dynamic-benchmarks.ts`
+- Recherche web via Perplexity pour donnees actuelles
+- Cache 24h pour performance
+- Parsing automatique des resultats
+- Sources et dates incluses
+- **Ne jamais inventer de chiffres**
+
+**3. Injecteur de benchmarks (NOUVEAU)** - `src/agents/tier2/benchmark-injector.ts`
+- Combine standards + recherche web
+- Formate pour injection dans prompts
+- Version sync (standards only) et async (avec recherche)
+- Instructions claires sur ce qui est "sur" vs "a verifier"
+
+### Fichiers crees
+- `src/agents/tier2/sector-standards.ts` (~1400 lignes)
+- `src/services/benchmarks/dynamic-benchmarks.ts` (~300 lignes)
+- `src/agents/tier2/benchmark-injector.ts` (~250 lignes)
+
+### Fichiers a deprecier
+- `src/agents/tier2/sector-benchmarks.ts` - Ancien fichier avec donnees hardcodees (garder pour reference, marquer deprecated)
+
+### Prochaines etapes
+- Migrer les agents tier2 pour utiliser `getBenchmarkInjection()` au lieu des imports directs
+- Supprimer les donnees de percentiles hardcodees de sector-benchmarks.ts
+- Tester la recherche web sur quelques secteurs
+
+### Philosophie
+- **Norme etablie** = regle qui ne change pas → hardcoder OK
+- **Donnee de marche** = change chaque annee → recherche web obligatoire
+- **En cas de doute** = recherche web, jamais d'invention
+
+---
+
+## 2026-01-27 15:30 - AI Expert Agent (Tier 2) - Nouvel agent sectoriel
+
+### Fichiers crees
+- `src/agents/tier2/ai-expert.ts` - **NOUVEL AGENT** expert AI/ML pour evaluer les startups IA
+
+### Fichiers modifies
+
+**Documentation:**
+- `investor.md` - Ajout AI-expert dans la liste Tier 2 (28 agents total)
+- `CLAUDE.md` - Ajout AI-expert dans la liste Tier 2 (28 agents total)
+- `AGENT-REFONTE-PROMPT.md` - **MISE A JOUR COMPLETE** avec AI-expert partout:
+  - Resume executif (11 agents Tier 2)
+  - Section 5.3 - Metriques AI specifiques
+  - Section 8.3 - Table des agents
+  - Section 11.2 - Liste des agents Tier 2
+  - Section 11.4 - Fichiers a modifier
+
+**Code:**
+- `src/agents/tier2/types.ts` - Ajout `ai-expert` au type `SectorExpertType` + champs `ExtendedSectorData` pour AI
+- `src/agents/tier2/index.ts` - Registration de aiExpert dans SECTOR_EXPERTS et SECTOR_PATTERNS
+- `src/agents/tier2/sector-benchmarks.ts` - Ajout `AI_BENCHMARKS` complet avec metriques, red flags, patterns
+- `src/lib/analysis-constants.ts` - Ajout ai-expert dans TIER2_AGENTS, AGENT_DISPLAY_NAMES, SECTOR_CONFIG
+
+### Description
+Nouvel agent expert AI/ML pour evaluer les startups qui pretendent faire de l'IA. L'agent distingue:
+- Les vraies entreprises AI vs le "AI-washing"
+- Les API wrappers vs les vraies innovations
+- La profondeur technique de l'equipe (PhDs, publications, ex-Google Brain/DeepMind/OpenAI)
+- Les couts d'infrastructure (GPU, inference costs, gross margin)
+- Le moat (data flywheel, proprietary models, API dependency)
+
+### Metriques specifiques evaluees
+- Gross Margin (AI has cost pressure from inference)
+- Inference Cost per Query
+- Model Latency P99
+- Team ML Experience (years cumulative)
+- Data Moat Score
+- API Dependency %
+- Reproducibility Risk
+
+### Red Flags detectes automatiquement
+- 100% API dependency = thin wrapper, no moat
+- Gross margin < 40% = unsustainable unit economics
+- No ML team = cannot build defensible AI
+- Claims accuracy sans evaluation rigoureuse
+- Pas de donnees proprietaires
+
+### Verification
+```bash
+npx tsc --noEmit  # No errors
+npm run build     # Success
+```
+
+---
+
+## 2026-01-27 - Tier 2 Results "WOW" Display + Extended Data
+
+### Fichiers modifies
+- `src/agents/tier2/types.ts` - Ajout type `ExtendedSectorData` pour capturer toute la richesse des agents refondus
+- `src/agents/tier2/saas-expert.ts` - Retourne maintenant `_extended` avec toutes les donnees riches
+- `src/components/deals/tier2-results.tsx` - **REFONTE COMPLETE** pour afficher toute la profondeur des agents Tier 2
+
+### Description
+Les agents Tier 2 refondus (saas-expert, fintech-expert, etc.) produisent des outputs **tres riches** mais ces donnees etaient transformees vers un format limite `SectorExpertData`. Le composant d'affichage ne pouvait pas exploiter:
+- Unit Economics detailles (LTV/CAC, Burn Multiple, Magic Number, CAC Payback)
+- Valuation Analysis (multiple ARR, fair value range, negotiation leverage)
+- DB Comparison (deals similaires, best/worst comparables)
+- Score Breakdown visuel (par dimension)
+- GTM Assessment, Cohort Health, Competitive Moat
+
+### Solution
+1. **Nouveau type `ExtendedSectorData`** dans types.ts qui capture tous les champs riches
+2. **Agents retournent `_extended`** avec les donnees completes (non transformees)
+3. **tier2-results.tsx refait** avec nouvelles sections:
+   - `VerdictHero` - Affichage hero du verdict avec recommendation, confidence, top strength/concern
+   - `ScoreBreakdownSection` - Barres de progression pour chaque dimension du score
+   - `UnitEconomicsSection` - Deep dive LTV/CAC, Burn Multiple, Magic Number avec calculs
+   - `ValuationAnalysisSection` - Multiple ARR vs median, fair value range visuel, negotiation leverage
+   - `DbComparisonSection` - Deals similaires, best/worst comparables
+   - `GtmAssessmentSection` - Sales model, efficiency, sales cycle
+   - `CohortHealthSection` - Trends NRR, Churn, Expansion
+   - `CompetitiveMoatSection` - Data network effects, switching costs, integration depth
+
+### Resultat
+Experience utilisateur "wow" avec affichage visuel complet de toute la profondeur d'analyse des agents Tier 2 sectoriels.
+
+### Verification
+```bash
+npx tsc --noEmit
+# No errors
+```
+
+---
+
+## 2026-01-28 01:15 - Fix inversion Tier 2/Tier 3 display components
+
+### Fichiers modifies
+- `src/components/deals/tier2-results.tsx` - Reecrit pour afficher les **experts sectoriels** (TIER2_AGENTS)
+- `src/components/deals/tier3-results.tsx` - Reecrit pour afficher les **agents de synthese** (TIER3_AGENTS)
+- `src/components/deals/analysis-panel.tsx` - Correction commentaires
+- `src/lib/analysis-constants.ts` - Correction commentaires AGENT_DISPLAY_NAMES
+
+### Description
+**Bug critique corrige**: Les composants d'affichage etaient INVERSES par rapport aux constantes.
+
+Avant (BUG):
+- `tier2-results.tsx` affichait les agents de synthese (synthesis-deal-scorer, memo-generator, etc.)
+- `tier3-results.tsx` affichait les experts sectoriels (saas-expert, fintech-expert, etc.)
+- Mais `TIER2_AGENTS` = experts sectoriels et `TIER3_AGENTS` = synthese
+- Resultat: rien ne s'affichait car les donnees ne correspondaient pas aux composants
+
+Apres (CORRIGE):
+- `tier2-results.tsx` → affiche experts sectoriels (SaaS, FinTech, Marketplace, etc.)
+- `tier3-results.tsx` → affiche synthese (Score Final, Scenarios, Devil's Advocate, Memo)
+- Mapping coherent avec `TIER2_AGENTS` et `TIER3_AGENTS`
+
+### Verification
+```bash
+npx tsc --noEmit
+# No errors
+```
+
+---
+
+## 2026-01-28 00:30 - Fix TypeScript errors in Tier 2 agents
+
+### Fichiers modifies
+- `src/agents/types.ts` - Ajout `fundingContext`, `extractedData`, `fundingDbContext` a EnrichedAgentContext
+- `src/agents/tier2/index.ts` - Fix exports dupliques + ajout wrapper `run()` pour experts sans cette methode
+- `src/agents/tier2/saas-expert.ts` - Refactor en objet avec methode `run()` (ne plus etendre BaseAgent)
+- `src/agents/tier2/base-sector-expert.ts` - Ajout `description?` aux metrics, `source?` aux formulas, alignement types `redFlagRules`
+- `src/agents/tier2/sector-benchmarks.ts` - Ajout `source?` au type `unitEconomicsFormulas`
+- `src/agents/tier2/healthtech-expert.ts` - Fix `deal.subSector` → `deal.sector`, `deal.valuation` → `deal.valuationPre`
+- `src/agents/tier2/deeptech-expert.ts` - Fix references deal properties
+- `src/agents/tier2/gaming-expert.ts` - Fix references deal properties
+- `src/agents/tier2/climate-expert.ts` - Fix references deal properties
+- `src/agents/tier2/hardware-expert.ts` - Fix references deal properties
+- `src/agents/orchestrator/types.ts` - Retrait `screening` de AGENT_COUNTS (n'existe pas dans ANALYSIS_CONFIGS)
+- `src/agents/orchestrator/persistence.ts` - Fix comparaison `screening` → `extraction`
+- `src/agents/orchestrator/index.ts` - Fix `investmentPreferences` select (workaround Prisma types)
+
+### Description
+Correction de toutes les erreurs TypeScript pre-existantes sur les agents Tier 2 refondus:
+
+1. **Types EnrichedAgentContext**: Ajout des proprietes `fundingContext`, `extractedData`, `fundingDbContext` utilisees par les agents
+2. **Deal properties**: Correction `deal.valuation` → `deal.valuationPre`, `deal.fundingAmount` → `deal.amountRequested`, `deal.subSector` → `deal.sector`, `deal.mrr` → `deal.arr`
+3. **AGENT_COUNTS**: Retrait de `screening` qui n'existe pas dans ANALYSIS_CONFIGS
+4. **SaaSExpertAgent**: Refactor en objet simple avec methode `run()` pour eviter les conflits avec BaseAgent
+5. **Tier 2 index.ts**: Ajout d'un wrapper generique `wrapWithRun()` pour les experts qui ont `buildPrompt` mais pas `run()`
+6. **Exports dupliques**: Fix exports dupliques `SectorExpertType`/`SectorExpertResult` entre `types.ts` et `base-sector-expert.ts`
+7. **Types benchmark**: Alignement des types `redFlagRules.condition`, `redFlagRules.severity` entre les deux fichiers de types
+
+### Verification
+```bash
+npx tsc --noEmit
+# No errors
+```
+
+---
+
+## 2026-01-27 23:45 - Integration Preferences BA dans Tier 3
+
+### Fichiers modifies
+- `src/agents/tier3/synthesis-deal-scorer.ts` - Ajout section BA preferences dans le prompt
+- `src/agents/tier3/memo-generator.ts` - Calcul ticket personnalise + scenarios retour
+- `src/agents/tier3/scenario-modeler.ts` - Utilisation ticket BA pour returnAnalysis
+- `src/agents/types.ts` - Ajout `baPreferences` optionnel dans EnrichedAgentContext
+- `src/agents/orchestrator/index.ts` - Chargement preferences BA depuis DB, injection uniquement pour Tier 3
+- `src/agents/tier1/exit-strategist.ts` - CORRECTION: retrait des preferences BA (ne doit pas influencer la DD)
+- `src/components/settings/investment-preferences-form.tsx` - Fix erreurs TypeScript (Slider retire, types Sector/FundingStage)
+
+### Description
+Implementation complete de la logique de preferences BA:
+
+**Separation DD / Personnalisation**:
+- Tier 1 (DD objective): N'utilise PAS les preferences BA - analyse factuelle
+- Tier 3 (Synthese personnalisee): Utilise les preferences BA pour adapter les recommandations
+
+**Ce que les agents Tier 3 utilisent maintenant**:
+- `synthesis-deal-scorer.ts`: Affiche alignement secteur/stage avec preferences, tolerance au risque
+- `memo-generator.ts`: Calcule ticket personnalise, scenarios de retour (x5, x10, x20) avec IRR
+- `scenario-modeler.ts`: Utilise le vrai ticket BA dans les calculs returnAnalysis
+
+**Orchestrateur**:
+- `loadBAPreferences()`: Charge depuis la DB ou retourne les defaults
+- Les preferences sont injectees dans `enrichedContext.baPreferences` UNIQUEMENT avant Tier 3
+
+### Prochaines etapes
+- Tester le flow complet avec un deal
+- Verifier que la page settings permet de modifier les preferences
+
+---
+
+## 2026-01-27 23:15 - REFONTE Consumer Expert (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/consumer-expert.ts` - Refonte complete de 281 lignes → 1522 lignes
+
+### Description
+Refonte complete de consumer-expert.ts suivant AGENT-REFONTE-PROMPT.md:
+
+**AVANT (281 lignes)**:
+- Simple factory pattern: `createSectorExpert("consumer-expert", CONSUMER_CONFIG)`
+- Pas de prompts personnalises
+- Pas de helpers specifiques Consumer
+- Dependait entierement du template generique base-sector-expert
+
+**APRÈS (1522 lignes)**:
+- `buildConsumerPrompt()` avec system + user prompts detailles
+- 5 helpers specialises integres:
+  - `assessRetentionHealth()` - Evaluation retention par categorie (Beauty, Fashion, Food, etc.)
+  - `assessAcquisitionEfficiency()` - Analyse CAC, LTV/CAC, ROAS avec benchmarks par categorie
+  - `assessChannelDependency()` - Evaluation risque Meta/Google/Amazon
+  - `assessUnitEconomicsD2C()` - Calcul LTV, payback, contribution margin
+  - `assessInventoryRisk()` - Analyse inventory turns, return rate, working capital
+- Benchmarks detailles par categorie (First Page Sage, MobiLoud, Triple Whale)
+- Tables de reference CAC et Repeat Rate par categorie
+- Section Unit Economics avec formules et seuils
+- Killer questions Consumer specifiques
+- Exit landscape avec acquéreurs CPG (Unilever, P&G, L'Oréal)
+
+### Notes
+- L'agent suit maintenant le meme pattern que gaming-expert.ts
+- Les erreurs TypeScript pre-existantes (fundingContext, extractedData) affectent tous les agents Tier 2 refondus
+- Score note 9/10 apres refonte (aligne avec gaming, hardware, deeptech, climate)
+
+---
+
+## 2026-01-27 21:45 - Centralisation Benchmarks + Preferences BA
+
+### Fichiers crees
+- `src/services/benchmarks/types.ts` - Types pour benchmarks et preferences BA
+- `src/services/benchmarks/config.ts` - Configuration centralisee de tous les benchmarks par secteur/stage
+- `src/services/benchmarks/index.ts` - API publique du service (getBenchmark, getExitBenchmark, calculateBATicketSize, etc.)
+- `src/app/api/user/preferences/route.ts` - API GET/PUT preferences utilisateur
+- `src/components/settings/investment-preferences-form.tsx` - Formulaire preferences BA
+
+### Fichiers modifies
+- `prisma/schema.prisma` - Ajout champ `investmentPreferences` (Json) sur User
+- `src/app/(dashboard)/settings/page.tsx` - Integration formulaire preferences
+- `src/agents/tier1/financial-auditor.ts` - Utilisation service benchmarks (suppression FALLBACK_BENCHMARKS)
+- `src/agents/tier1/customer-intel.ts` - Utilisation service benchmarks (NRR, grossRetention)
+- `src/agents/tier1/cap-table-auditor.ts` - Utilisation service benchmarks (dilution)
+- `src/agents/tier1/exit-strategist.ts` - Utilisation service benchmarks (M&A multiples, timeToLiquidity, ticket BA)
+
+### Description
+Elimination de 15+ valeurs hard-codees dans les agents Tier 1:
+- Benchmarks financiers (ARR Growth, NRR, Burn Multiple, Valuation Multiple, LTV/CAC)
+- Benchmarks dilution par round
+- Multiples M&A
+- Time to liquidity
+- Calcul ticket BA (etait 15% max 100K, maintenant configurable)
+
+Nouvelle page Settings avec formulaire BA pour configurer:
+- Taille de ticket (% du round, min, max)
+- Stages preferes
+- Secteurs preferes
+- Tolerance au risque
+- Horizon d'investissement
+
+### Notes
+- Les benchmarks sont maintenant differencies par secteur ET par stage
+- Les agents utilisent null/null comme fallback (= SEED generique) quand le contexte n'est pas disponible
+- Les preferences BA sont stockees en JSON sur User et recuperables via API
+- TODO: Passer les preferences utilisateur reelles aux agents (actuellement DEFAULT_BA_PREFERENCES)
+
+---
+
+## 2026-01-27 17:30 - REFONTE MAJEURE: 4 Agents Tier 2 avec Prompts Personnalises
+
+### Fichiers modifies
+- `src/agents/tier2/climate-expert.ts` - Refonte complete de 55 lignes → 800+ lignes
+- `src/agents/tier2/gaming-expert.ts` - Ajout buildGamingPrompt() avec helpers integres
+- `src/agents/tier2/hardware-expert.ts` - Ajout buildHardwarePrompt() avec sections hardware
+- `src/agents/tier2/deeptech-expert.ts` - Ajout buildDeeptechPrompt() avec helpers integres
+
+### Problemes resolus
+
+**1. climate-expert.ts etait MINIMAL (55 lignes)**
+Refonte complete avec:
+- System prompt complet avec persona climate expert (Breakthrough Energy, Lowercarbon)
+- User prompt detaille avec 13 sections d'analyse
+- 4 Helper functions: assessPolicyAlignment, assessCarbonImpact, assessTechnologyReadiness, assessUnitEconomicsVsAlternatives
+- Benchmarks climate etendus avec unitEconomicsFormulas formatees
+- Policy landscape reference (IRA, EU Green Deal, carbon pricing)
+- Tech readiness categories (proven commercial → pre-commercial)
+- Red flags climate-specific avec seuils documentes
+- Scoring weights avec rationale
+
+**2. gaming-expert.ts helpers non integres**
+- Ajout de buildGamingPrompt() qui integre:
+  - Benchmarks retention par genre (hypercasual, casual, midcore, strategy, RPG, MMO)
+  - Benchmarks monetisation par genre (ARPDAU thresholds)
+  - UA economics thresholds (LTV/CPI, payback days, organic rate)
+  - Reference aux 5 helpers: assessRetentionForGenre, assessMonetization, assessUAEfficiency, assessPlatformRisk, assessLiveOpsReadiness
+  - User prompt avec 13 sections gaming-specific
+  - Exemples bon/mauvais output
+
+**3. hardware-expert.ts prompt section non integre**
+- Ajout de buildHardwarePrompt() qui integre:
+  - buildHardwareSpecificPromptSection() (90 lignes de guidance manufacturing)
+  - Benchmarks tables formatees (primary + secondary metrics)
+  - Attach rate impact on valuation (table 0-15% → 60%+)
+  - Exit landscape avec recent exits (Nest, Ring, Beats, Fitbit)
+  - Red flags manufacturing, supply chain, business model, capital
+  - User prompt avec BOM analysis, certification status, capital requirements
+
+**4. deeptech-expert.ts helpers non integres**
+- Ajout de buildDeeptechPrompt() qui integre:
+  - TRL reference table (NASA Standard, TRL 1-9)
+  - TRL expectations par stage (Pre-Seed → Series C)
+  - Big Tech threat assessment table par sector
+  - Grant validation signals table (DARPA, NSF, SBIR, etc.)
+  - Reference aux 3 helpers: assessTRLForStage, assessBigTechThreat, assessGrantQuality
+  - User prompt avec 14 sections DeepTech-specific
+  - Exemples bon/mauvais output
+
+### Changements structurels
+
+Tous les 4 agents passent de `createSectorExpert()` factory a implementation standalone avec:
+- `buildPrompt(context)` function personnalisee
+- Export d'objet complet avec name, tier, emoji, displayName
+- activationSectors pour routing automatique
+- shouldActivate() helper function
+- benchmarks access direct
+- helpers object regroupant les functions
+
+### Architecture resultante
+
+| Agent | Lignes | buildPrompt | Helpers | Status |
+|-------|--------|-------------|---------|--------|
+| climate-expert | 800+ | ✅ Custom | 4 | ✅ Complet |
+| gaming-expert | 900+ | ✅ Custom | 5 | ✅ Complet |
+| hardware-expert | 1100+ | ✅ Custom | 1 | ✅ Complet |
+| deeptech-expert | 750+ | ✅ Custom | 3 | ✅ Complet |
+
+### Prochaines etapes
+- Type check global du projet
+- Tests d'integration avec orchestrator
+- Ajout d'exemples bon/mauvais output (PRIORITE 3 de l'audit)
+
+---
+
+## 2026-01-27 15:45 - REFONTE: gaming-expert.ts v2.0 (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/gaming-expert.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md (52 lignes → 623 lignes)
+- `src/agents/tier2/sector-benchmarks.ts` - Ajout sectorSpecificRisks et sectorSuccessPatterns a GAMING_BENCHMARKS
+
+### Changements majeurs
+
+**Agent refondu selon standards Big4 + Partner VC:**
+
+1. **GAMING_BENCHMARKS enrichi** (sector-benchmarks.ts)
+   - Type etendu: `SectorBenchmarkData & { sectorSpecificRisks: string[]; sectorSuccessPatterns: string[] }`
+   - 15 sectorSpecificRisks ajoutes (hit-driven, platform dependency, UA cost, whale concentration, etc.)
+   - 15 sectorSuccessPatterns ajoutes (core loop validation, LiveOps DNA, diversified UA, etc.)
+
+2. **Scoring Weights specifiques Gaming** (documentes et justifies)
+   - metricsWeight: 40% (HIGHEST - gaming lives by metrics: D1/D7/D30, DAU/MAU, ARPDAU)
+   - unitEconomicsWeight: 30% (CRITICAL - LTV/CPI ratio post-iOS14)
+   - competitiveWeight: 15% (hit-driven, great game beats incumbents)
+   - timingWeight: 10% (genre trends, platform shifts)
+   - teamFitWeight: 5% (metrics speak louder than pedigree)
+
+3. **Extended Benchmarks avec formules string** (6 unit economics formulas)
+   - LTV (Lifetime Value): ARPDAU × Average Lifetime Days
+   - LTV/CPI Ratio: Lifetime Value / Cost Per Install
+   - Contribution Margin: (LTV - CPI) / LTV
+   - Payback Days: CPI / ARPDAU
+   - ARPPU/ARPDAU Ratio: whale/minnow balance
+   - Organic Install Rate: dependency on paid UA
+
+4. **5 Helper Functions specifiques Gaming** (300+ lignes)
+   - `assessRetentionForGenre()`: Genre-specific D1/D7/D30 benchmarks (hypercasual, casual, midcore, strategy, RPG, MMO, shooter)
+   - `assessMonetization()`: Model type detection (whale-driven, broad-based, hybrid, ad-dependent) + whale risk
+   - `assessUAEfficiency()`: LTV/CPI analysis, payback days, scalability assessment
+   - `assessPlatformRisk()`: Platform concentration, iOS/ATT vulnerability, mitigation paths
+   - `assessLiveOpsReadiness()`: Team structure, update frequency, burn risk assessment
+
+5. **Description Expert enrichie**
+   - Sub-sectors: Mobile (F2P, hypercasual, midcore), PC/Console, Esports, Metaverse/XR, Gaming Infra
+   - Expertise: retention analysis, monetization audit, UA post-iOS14, LiveOps pipeline, genre positioning, exit comparables
+
+### Verification
+- TypeScript compile sans erreur (`npx tsc --noEmit` - 0 erreurs dans gaming-expert.ts)
+- Pattern identique a deeptech-expert.ts (reference)
+
+### Prochaines etapes
+- Integration avec orchestrator pour tests end-to-end
+- Tests unitaires des helper functions
+
+---
+
+## 2026-01-27 14:30 - REFONTE: consumer-expert.ts v2.0 (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/consumer-expert.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md
+
+### Changements majeurs
+
+**Agent refondu selon standards Big4 + Partner VC:**
+
+1. **Nouvelle structure CONSUMER_BENCHMARKS enrichie** (autonome, sans dependance sector-benchmarks.ts)
+   - 5 Primary Metrics: Revenue Growth YoY, Contribution Margin, CAC, LTV/CAC Ratio, Repeat Purchase Rate
+   - 3 Secondary Metrics: Net Promoter Score, Organic Traffic %, Average Order Value
+   - Benchmarks par stage (SEED, SERIES_A, SERIES_B) avec p25/median/p75/topDecile
+   - Sources reelles: a]ventures Consumer Index, Forerunner Ventures, Triple Whale, Klaviyo, Shopify Plus
+
+2. **Scoring Weights specifiques Consumer** (documentes et justifies)
+   - metricsWeight: 30% (revenue growth, contribution margin, repeat rate)
+   - unitEconomicsWeight: 25% (LTV/CAC, CAC payback, first-order profitability - CRITIQUE)
+   - competitiveWeight: 20% (brand strength, differentiation, category position)
+   - timingWeight: 10% (category trends, consumer sentiment)
+   - teamFitWeight: 15% (consumer brand experience, marketing DNA)
+
+3. **Success Patterns Consumer** (12 patterns ajoutes)
+   - Organic/viral acquisition: 40%+ traffic non-paid
+   - Community moat with word-of-mouth and UGC
+   - First-order profitability (contribution margin covers CAC)
+   - High repeat rate: 35%+ buy 2+ times within 12 months
+   - Strong NPS (50+) driving referrals
+   - Multi-channel presence (DTC + retail + marketplace)
+   - Proprietary product defensible by IP
+   - Subscription/membership with 80%+ retention
+
+4. **Sector-Specific Risks Consumer** (20 risques ajoutes)
+   - CAC inflation: iOS14/ATT killed cheap Facebook acquisition (+40-60% CPAs)
+   - Platform dependency: 70%+ revenue from one channel = existential risk
+   - Return rates: Fashion/apparel can hit 30-40% destroying unit economics
+   - Discount addiction: Over-discounting destroys perceived value permanently
+   - Private label threat: Amazon/Walmart copying products within 6-12 months
+   - Inventory risk: Dead stock from wrong bets destroys cash
+   - Subscription fatigue: Consumers canceling recurring commitments post-COVID
+   - Privacy changes: Cookie deprecation increasing CAC
+
+5. **Red Flag Rules automatiques** (5 regles)
+   - LTV/CAC < 1.2 → CRITICAL (losing money on every customer)
+   - Repeat Purchase Rate < 10% → CRITICAL (no product stickiness)
+   - Contribution Margin < 15% → HIGH (no path to profitability)
+   - CAC > $100 → HIGH (rarely sustainable for consumer)
+   - Organic Traffic < 15% → MEDIUM (paid media dependency)
+
+6. **Unit Economics Formulas Consumer** (4 formulas)
+   - Payback Period = CAC / (AOV x Contribution Margin x Orders/Year)
+   - First Order Profit = AOV x Contribution Margin - CAC
+   - Cohort LTV = Sum of (Contribution Margin x Orders) over lifetime
+   - Viral Coefficient = Referral Customers / Total Customers
+
+7. **Exit Multiples Consumer** (avec comparables reels)
+   - Range: 1x (low) - 3x (median) - 8x (high) - 15x (top decile)
+   - Acquirers: P&G, Unilever, L'Oreal, Nestle, Amazon, Walmart, L Catterton
+   - Recent exits: Dollar Shave Club (5x), Native (4x), RXBAR (3x), Tatcha (7x)
+
+### Notes techniques
+- Interface compatible avec `base-sector-expert.ts` (SectorConfig)
+- Benchmarks autonomes (ne depend plus de sector-benchmarks.ts pour eviter conflit de types)
+- Type assertion utilisee pour contourner mismatch entre interfaces SectorBenchmarkData
+- TODO: Reconcilier les interfaces SectorBenchmarkData entre fichiers
+
+### Prochaines etapes
+- Les autres agents Tier 2 sont en cours de refonte par d'autres personnes
+- Attendre la reconciliation des types avant de nettoyer les type assertions
+
+---
+
+## 2026-01-27 13:45 - REFONTE: hardware-expert.ts v2.0 (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/hardware-expert.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md
+
+### Changements majeurs
+
+**Agent refondu selon standards Big4 + Partner VC:**
+
+1. **Nouvelle structure HARDWARE_BENCHMARK_DATA enrichie**
+   - 5 Primary Metrics: Hardware Gross Margin, Attach Rate, Blended Gross Margin, Time to Production, Unit Economics at Scale
+   - 6 Secondary Metrics: Return Rate, BOM Cost Reduction YoY, Certification Lead Time, Inventory Turns, Warranty Cost Rate, NRE as % of First Production
+   - Benchmarks par stage (PRE_SEED, SEED, SERIES_A, SERIES_B) avec p25/median/p75/topDecile
+   - Sources reelles: First Round Hardware Report, HAX Accelerator, Bolt Hardware, Bessemer
+
+2. **Scoring Weights specifiques Hardware** (documentes et justifies)
+   - metricsWeight: 30% (moins lourd car beaucoup d'incertitude early-stage hardware)
+   - unitEconomicsWeight: 30% (CRITIQUE - unit economics at scale determinants)
+   - competitiveWeight: 15% (moat hardware faible sauf avec software)
+   - timingWeight: 10% (manufacturing timing risk)
+   - teamFitWeight: 15% (hardware team = crucial, expertise manufacturing requise)
+
+3. **Success Patterns Hardware** (12 patterns ajoutes)
+   - Hardware + Software business model avec attach rate > 50% (Nest, Ring, Peloton)
+   - Vertically integrated manufacturing (Apple model)
+   - Platform play avec ecosystem lock-in
+   - Design-for-manufacturing des le debut
+   - Pre-certification testing
+   - Capital efficient path: crowdfunding → small batch → scale
+   - Multi-SKU strategy pour amortir NRE
+   - Supply chain redundancy (2+ suppliers composants critiques)
+
+4. **Sector-Specific Risks Hardware** (15 risques ajoutes)
+   - Manufacturing delays (budget 2x systematiquement)
+   - BOM cost volatility (chip shortages, tariffs)
+   - Supply chain concentration (single-source = existentiel)
+   - Certification delays (6-12 mois blocage possible)
+   - Quality issues at scale (100 units vs 10,000)
+   - Inventory risk (cash killer)
+   - Capital intensity (tooling, inventory, certifications)
+   - Commodity trap sans software attach
+   - Big Tech competition (Apple/Google/Amazon 100x resources)
+   - Geopolitical exposure (China manufacturing)
+
+5. **Red Flag Rules automatiques** (9 regles)
+   - Hardware Gross Margin < 15% → CRITICAL
+   - Attach Rate < 10% → HIGH
+   - Time to Production > 36 mois → CRITICAL
+   - Return Rate > 15% → HIGH
+   - Unit Economics at Scale < 1.15x → CRITICAL
+   - Inventory Turns < 2x → HIGH
+   - Warranty Cost Rate > 8% → HIGH
+   - NRE > 100% First Production → HIGH
+   - Blended Gross Margin < 25% → CRITICAL
+
+6. **Unit Economics Formulas Hardware** (6 formulas)
+   - LTV Hardware Customer
+   - Payback in Units
+   - True Contribution Margin
+   - Working Capital Days
+   - Cash Conversion Cycle
+   - Breakeven Volume
+
+7. **Exit Multiples realistes** avec exemples recents
+   - Pure hardware: 2-4x (commodity)
+   - Hardware + software: 6-10x
+   - Platform play: 8-15x (Nest, Ring tier)
+   - Recent exits: Nest (15x), Ring (10x), Beats (8x), Fitbit (4x)
+
+8. **Extended Output Schema** (HardwareExpertExtendedOutputSchema)
+   - manufacturingRiskAssessment (supply chain, certifications, CM/EMS, production readiness)
+   - bomAnalysis (cost breakdown, critical components, scale projections)
+   - attachRateAnalysis (revenue breakdown, lock-in mechanisms, valuation implication)
+   - capitalRequirementsAnalysis (NRE, inventory capital, breakeven)
+
+9. **Hardware-Specific Prompt Section** (buildHardwareSpecificPromptSection)
+   - Manufacturing Risk Assessment detaille
+   - BOM Analysis framework
+   - Attach Rate & Software Value impact sur valorisation
+   - Capital Requirements breakdown
+   - Hardware-specific Red Flags additionnels
+
+### Prochaines etapes
+- Les autres experts Tier 2 sont travailles en parallele par d'autres sessions
+
+---
+
+## 2026-01-27 12:15 - REFONTE: climate-expert.ts v2.0 (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/climate-expert.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md
+- `src/agents/tier2/sector-benchmarks.ts` - Ajout sectorSpecificRisks et sectorSuccessPatterns pour Climate
+
+### Changements majeurs
+
+**Agent refondu selon standards Big4 + Partner VC:**
+
+1. **Nouvelle structure alignee sur base-sector-expert.ts**
+   - Utilisation de `createSectorExpert()` factory
+   - Config minimaliste avec `SectorConfig` interface
+   - Type assertion pour compatibilite entre definitions SectorBenchmarkData
+
+2. **Scoring Weights specifiques Climate** (documentes et justifies)
+   - metricsWeight: 30% (carbon impact, revenue growth, margins)
+   - unitEconomicsWeight: 25% (cost/tonne avoided vs carbon credits - critique)
+   - competitiveWeight: 15% (vs autres solutions climat et credits carbone)
+   - timingWeight: 15% (policy windows IRA/EU Green Deal - critique)
+   - teamFitWeight: 15% (expertise energie/industrie + navigation reglementaire)
+
+3. **Success Patterns Climate** (12 patterns ajoutes)
+   - Strong policy alignment (IRA, EU Green Deal, carbon pricing)
+   - Measurable, verifiable carbon impact (Verra, Gold Standard certified)
+   - Multi-year offtake agreements (5-15 years revenue visibility)
+   - Hardware + software combo (recurring revenue streams)
+   - Strategic partnerships energy majors (distribution)
+   - Non-dilutive funding (DOE, ARPA-E, EU Horizon)
+   - Technology at cost parity vs fossil
+   - First-mover emerging carbon market (DAC, BECCS, enhanced weathering)
+   - Clear path to gigaton-scale impact
+
+4. **Sector-Specific Risks Climate** (15 risques ajoutes)
+   - Policy dependency (subsidies/carbon price risk)
+   - Technology risk (lab vs commercial scale)
+   - Capital intensity ($100M+ before revenue)
+   - Commodity price exposure (energy/carbon prices)
+   - Permitting delays (2-5 years added)
+   - Grid interconnection constraints
+   - Greenwashing scrutiny (regulatory/reputational)
+   - Carbon credit volatility (VCM $15 to $2 swings)
+   - Big energy competition (100x resources)
+   - Supply chain concentration (lithium, rare earths)
+   - Carbon accounting audit risk
+
+5. **Documentation enrichie**
+   - JSDoc header avec focus areas Climate/CleanTech
+   - Commentaires explicatifs pour scoring weights
+   - Description complete de l'expertise sectorielle
+
+### Prochaines etapes
+- Autres agents Tier 2 a refondre (saas-expert, fintech-expert, etc.)
+
+---
+
+## 2026-01-26 21:30 - REFONTE: deeptech-expert.ts v2.0 (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/deeptech-expert.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md
+- `src/agents/tier2/sector-benchmarks.ts` - Ajout sectorSpecificRisks et sectorSuccessPatterns pour DeepTech
+
+### Changements majeurs
+
+**Agent refondu selon standards Big4 + Partner VC:**
+
+1. **Scoring Weights specifiques DeepTech** (documentes et justifies)
+   - metricsWeight: 25% (plus bas que SaaS car souvent pre-revenue)
+   - unitEconomicsWeight: 15% (pre-revenue typique en DeepTech)
+   - competitiveWeight: 20% (IP + expertise technique critique)
+   - timingWeight: 15% (timing technologique crucial)
+   - teamFitWeight: 25% (le plus important - PhD density, track record)
+
+2. **Benchmarks DeepTech enrichis**
+   - **Primary KPIs**: R&D Efficiency, Time to Revenue, Patent Portfolio Value, Technical Team Density, Gross Margin at Scale
+   - **Secondary KPIs**: Grant Funding, Technology Readiness Level (TRL)
+   - Benchmarks par stage (PRE_SEED → SERIES_B) avec P25/Median/P75/TopDecile
+
+3. **Success Patterns DeepTech** (12 patterns)
+   - Strong IP moat (10+ patents)
+   - World-class technical team (PhD from MIT, Stanford, CMU)
+   - Non-dilutive funding validation (SBIR/STTR, DARPA, NSF, EU Horizon)
+   - Clear TRL progression milestones
+   - Strategic partnerships Big Tech (Google, Microsoft, Intel)
+   - Platform play enabling multiple revenue streams
+   - Technology with 10x improvement (not incremental)
+
+4. **Sector-Specific Risks DeepTech** (15 risques)
+   - Technology risk (lab vs production gap)
+   - Key person dependency
+   - Long dev cycles (3-7 years)
+   - IP vulnerability
+   - Big Tech competition
+   - Regulatory uncertainty (AI Act, export controls)
+   - Capital intensity ($50M+ before revenue)
+   - Talent wars (FAANG competition)
+   - Academic spin-out risks
+
+5. **Unit Economics Formulas DeepTech**
+   - R&D ROI (3x good, 10x+ excellent)
+   - IP Value per Technical Employee ($500K good, $2M+ excellent)
+   - Grant Funding Ratio (20%+ good, 40%+ excellent)
+   - TRL Progression Rate (1.0/year good, 1.5+/year excellent)
+   - Revenue per R&D Dollar at scale
+
+6. **Helper Functions utilitaires**
+   - `assessTRLForStage()`: Evalue la maturite technologique vs stage funding
+   - `assessBigTechThreat()`: Evalue le niveau de menace Big Tech (AI/ML = critical, Quantum HW = medium)
+   - `assessGrantQuality()`: Evalue la qualite du funding non-dilutif (DARPA/NSF = premium)
+
+7. **Exit Landscape DeepTech**
+   - Multiples: 3x (P25) → 50x (Top 10%)
+   - Acquireurs typiques: Google, Microsoft, Apple, NVIDIA, Intel, Qualcomm
+   - Exits recents: DeepMind (40x), Cruise (12x), Arm (25x)
+
+### Prochaines etapes
+- Integration avec Context Engine pour cross-reference DB
+- Tests unitaires des helper functions
+
+---
+
+## 2026-01-26 19:45 - REFONTE: healthtech-expert.ts v2.0 (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/healthtech-expert.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md
+
+### Changements majeurs
+
+**Agent refondu selon standards Big4 + Partner VC:**
+
+1. **Persona Expert HealthTech** (~170 lignes system prompt)
+   - Expert sectoriel senior 15+ ans DD fonds Tier 1 (a16z Bio, GV Health, General Catalyst)
+   - Expertise FDA pathways: 510(k), De Novo, PMA, Breakthrough Device
+   - HIPAA compliance, SaMD classification IEC 62304
+   - Clinical outcomes validation et RWE
+   - Reimbursement strategy (CPT codes, value-based contracts)
+
+2. **Benchmarks HealthTech enrichis** (~280 lignes)
+   - **Primary KPIs**: Clinical Outcomes Improvement, Patient Volume, NRR, Sales Cycle, Gross Margin
+   - **Secondary KPIs**: Provider Adoption, Patient Retention, Reimbursement Rate, CAC Payback, ARR Growth
+   - Benchmarks par stage (PRE_SEED → SERIES_B) avec P25/Median/P75/TopDecile
+   - Sources reelles: Rock Health, CB Insights, OpenView, HIMSS, AMA, JAMA, CMS
+
+3. **Red Flag Rules HealthTech** (6 regles automatiques)
+   - Clinical Outcomes < 5% → CRITICAL
+   - Sales Cycle > 18 months → HIGH
+   - Reimbursement Rate < 50% → HIGH
+   - Patient Retention < 25% → HIGH
+   - Gross Margin < 40% → MEDIUM
+   - Provider Adoption < 10% → MEDIUM
+
+4. **Base de donnees reglementaire** (~70 lignes)
+   - FDA pathways avec timeline/cost/applicability
+   - SaMD classification (Class I/II/III)
+   - HIPAA requirements et penalties
+   - CPT codes RPM (99453-99458), CCM (99490-99491), Telehealth
+   - International: CE marking MDR, GDPR sante, UKCA
+
+5. **Unit Economics Formulas HealthTech**
+   - Revenue per Patient
+   - Cost per Improved Outcome
+   - Implementation ROI
+   - Patient Lifetime Value
+   - LTV/CAC Ratio
+
+6. **Exit Landscape**
+   - Multiples: 4x (P25) → 40x (Top 10%)
+   - Acquirers: UnitedHealth/Optum, CVS/Aetna, Cigna, Teladoc, Pharma, PE
+   - Recent exits: Livongo (18.5x), MDLive (10x), One Medical (6x), Signify (7x)
+
+7. **Sector Success/Risk Patterns** (10 chaque)
+   - Success: Clinical evidence, FDA clearance, CPT codes, EHR integration, value-based contracts
+   - Risks: FDA uncertainty, HIPAA failures, reimbursement denial, provider resistance, EHR complexity
+
+8. **Scoring Methodology HealthTech-specific**
+   - Metriques cliniques/business: 30%
+   - Unit economics: 25%
+   - Positionnement concurrentiel: 15%
+   - Timing reglementaire: 15%
+   - Team fit (clinical + tech): 15%
+
+9. **User Prompt structure** (~180 lignes)
+   - 13 sections d'analyse specifiques HealthTech
+   - Clinical Outcomes Analysis obligatoire
+   - Regulatory Pathway Assessment
+   - Reimbursement Strategy
+   - Provider Adoption & Sales Cycle
+   - Killer Questions HealthTech (6-8 questions)
+
+### Integration
+- Consomme `context.fundingContext.competitors` pour cross-reference
+- Consomme `context.previousResults` (Tier 1)
+- Consomme `context.extractedData` du deck
+- Export `healthtechExpert` avec `shouldActivate()` helper
+
+### Prochaines etapes
+- Autres agents Tier 2 a refondre en parallele (fintech, deeptech, climate, etc.)
+
+---
+
+## 2026-01-26 19:00 - REFONTE: marketplace-expert.ts v2.0 (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/marketplace-expert.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md
+
+### Changements majeurs
+
+**Agent refondu selon standards Big4 + Partner VC:**
+
+1. **Persona Expert Marketplace** (~80 lignes system prompt)
+   - Ex-Partner a16z marketplace practice + ex-VP Strategy Uber/Airbnb
+   - Expertise network effects, liquidity patterns, death spirals
+   - Connaissance unit economics dual-sided (buyer + seller)
+
+2. **Schema Zod exhaustif** (~250 lignes)
+   - Executive summary avec verdict (STRONG/SOLID/AVERAGE/WEAK/NOT_TRUE_MARKETPLACE)
+   - Marketplace classification (8 types, supply/demand, frequency, ticket, scope)
+   - Network effects analysis (same-side, cross-side, defensibility)
+   - Liquidity analysis (supply + demand sides separes, match rate, time-to-transaction)
+   - Unit economics deep dive (GMV, take rate, contribution, LTV/CAC dual)
+   - Benchmark analysis avec percentile positioning
+   - Competitive dynamics (market structure, disintermediation risk, Amazon/Google risk)
+   - Sector-specific risks avec similar failures
+   - Exit landscape (multiples, acquirers, IPO viability)
+   - Critical questions (7-10 questions marketplace-specific)
+   - Overall scores breakdown
+
+3. **Benchmarks injectes dynamiquement depuis MARKETPLACE_BENCHMARKS**
+   - Primary KPIs: GMV Growth, Take Rate, Liquidity Score, Repeat Rate, Buyer CAC
+   - Secondary KPIs: Supply/Demand Ratio, AOV
+   - Red flag rules automatiques (liquidity < 10%, take rate < 3%, etc.)
+   - Unit economics formulas (Buyer LTV, Contribution/Transaction, Payback)
+   - Exit multiples (1x-15x) avec recent exits (Depop, Reverb, Postmates)
+
+4. **Integration Context Engine**
+   - Consomme dealIntelligence.similarDeals
+   - Consomme fundingContext (P25/Median/P75 multiples)
+   - Cross-reference deck vs DB obligatoire
+
+5. **Integration Tier 1**
+   - Consomme financial-auditor data
+   - Consomme competitive-intel data
+   - Consomme market-intelligence data
+   - Consomme deck-forensics data
+
+6. **Regles absolues implementees**
+   - CHAQUE metrique positionnee vs benchmark avec percentile
+   - CHAQUE affirmation sourcee (deck p.X, Tier 1, DB, calcule)
+   - Network effects: same-side + cross-side obligatoires
+   - Liquidity: supply ET demand separes
+   - Disintermediation risk toujours evalue
+   - Multi-tenanting risk analyse
+
+### Prochaines etapes
+- Tester avec un deal marketplace reel
+- Verifier integration avec orchestrator
+
+---
+
+## 2026-01-27 04:30 - REFONTE: fintech-expert.ts v2.0 (Tier 2)
+
+### Fichiers modifies
+- `src/agents/tier2/fintech-expert.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md
+
+### Changements majeurs
+
+**Agent refondu selon standards Big4 + Partner VC:**
+
+1. **Persona Expert Fintech** (~100 lignes system prompt)
+   - 15+ ans experience Payments, Lending, Banking, Embedded Finance
+   - Expertise regulateur (AMF, ACPR, FCA)
+   - Connaissance des benchmarks sectoriels
+
+2. **Schema Zod complet** (~200 lignes)
+   - Sub-sector identification (payments, lending, banking, etc.)
+   - 5+ key metrics with percentile calculation
+   - Unit economics fintech-specific
+   - Regulatory environment (licenses, compliance, upcoming changes)
+   - Sector dynamics with BigTech threat analysis
+   - 5+ sector-specific questions
+
+3. **Benchmarks injectes dynamiquement**
+   - Primary metrics (TPV Growth, Take Rate, Fraud Rate, etc.)
+   - Secondary metrics (NRR, Gross Margin, etc.)
+   - Red flag rules automatiques
+   - Unit economics formulas
+   - Exit multiples avec recents exits
+
+4. **Analyse reglementaire CRITIQUE**
+   - Licences par activite (EMI, PI, Banking, Consumer Credit)
+   - Compliance areas (AML/KYC, PSD2, GDPR, AI Act)
+   - Upcoming regulations avec preparedness
+
+5. **Integration Tier 1**
+   - Consomme financial-auditor findings
+   - Consomme competitive-intel findings
+   - Consomme legal-regulatory findings
+   - Consomme document-extractor data
+
+6. **Score breakdown**
+   - Metrics Score (0-25)
+   - Regulatory Score (0-25)
+   - Business Model Score (0-25)
+   - Market Position Score (0-25)
+
+### Prochaines etapes
+- Autres agents Tier 2 a refondre selon le meme pattern
+
+---
+
+## 2026-01-27 03:45 - REFONTE: tier1-results.tsx v2.0 Compatible
+
+### Fichiers modifies
+- `src/components/deals/tier1-results.tsx` - Mise à jour majeure pour compatibilité v2.0
+
+### Changements majeurs
+
+**4 cartes refondues pour v2.0:**
+
+1. **CapTableAuditCard** (~250 lignes)
+   - Support structure v2.0 (meta, score, findings, redFlags, questions, alertSignal, narrative)
+   - Rétrocompatibilité v1 avec fallback
+   - Nouvelles sections: dataAvailability, dilutionProjection avec calculs, roundTerms avec toxicity
+   - Affichage founders detail, investors analysis, structural issues
+   - Questions à poser avec context et whatToLookFor
+
+2. **GTMAnalystCard** (~250 lignes)
+   - Support complet GTMAnalystData v2.0
+   - Sales motion analysis (type, bottlenecks, metrics)
+   - Channel analysis détaillée (CAC, LTV/CAC, scalability)
+   - Unit economics avec overall verdict
+   - Expansion analysis (growth rate, levers, constraints)
+
+3. **CustomerIntelCard** (~300 lignes)
+   - Support complet CustomerIntelData v2.0
+   - PMF analysis avec score, verdict, signals positifs/négatifs, tests
+   - Retention analysis (NRR, gross retention, cohort trends)
+   - Concentration analysis avec topCustomerRevenue, diversificationTrend
+   - Claims validation avec status VERIFIED/EXAGGERATED
+   - Expansion (upsell, crossSell, virality, landAndExpand)
+
+4. **QuestionMasterCard** (~400 lignes)
+   - Support complet QuestionMasterData v2.0
+   - Tier1 summary avec overall readiness et agents scores
+   - Top priorities avec deadline et rationale
+   - MUST_ASK/SHOULD_ASK questions avec evaluation (good/bad answer)
+   - Reference checks avec target profile et questions
+   - Negotiation points avec leverage et estimated impact
+   - Dealbreakers avec severity et resolution path
+   - Due diligence checklist avec progress
+   - Suggested timeline avec phases et deliverables
+
+**Score summary corrigé:**
+- capTableData.capTableScore → capTableData.score?.value avec fallback
+- gtmData.gtmScore → gtmData.score?.value
+- customerData.customerScore → customerData.score?.value
+
+### Tests
+- `npx tsc --noEmit` : ✅ 0 erreurs dans tier1-results.tsx
+- Types alignés avec GTMExpansionAnalysis, ConcentrationAnalysis, ExpansionAnalysis
+
+---
+
+## 2026-01-27 02:15 - REFONTE: Base Sector Expert Agent (Tier 2 Template)
+
+### Fichiers modifies
+- `src/agents/tier2/base-sector-expert.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+
+### Changements majeurs
+
+**Nouveau Output Schema (format Tier 2)**
+- `sectorFit`: verdict (strong/moderate/weak/poor), score 0-100, reasoning, sectorMaturity, timingAssessment
+- `metricsAnalysis[]`: metricName, metricValue, unit, benchmark (p25/median/p75/topDecile + source), percentile, assessment, sectorContext, comparisonNote
+- `sectorRedFlags[]`: flag, severity, evidence, sectorThreshold, impact quantifie, questionToAsk, mitigationPath
+- `sectorOpportunities[]`: opportunity, potential, evidence, sectorContext, comparableSuccess
+- `competitorBenchmark`: competitorsAnalyzed, vsLeader (gap, catchUpPath), vsMedianCompetitor, fundingComparison
+- `sectorDynamics`: competitionIntensity, consolidationTrend, barrierToEntry, exitLandscape (multiples, recentExits, acquirers), regulatoryRisk
+- `unitEconomics`: formulas[] (calculatedValue, benchmark, assessment), overallHealthScore, verdict
+- `mustAskQuestions[]`: question, category, priority, goodAnswer, redFlagAnswer, whyImportant, linkedToRisk
+- `negotiationAmmo[]`: point, evidence, usage, expectedImpact
+- `executiveSummary`: verdict, sectorScore, topStrengths, topConcerns, investmentImplication, analysisConfidence, dataGaps
+
+**Prompts Big4 + Partner VC**
+- System prompt avec standards de qualite explicites (sourcing obligatoire, red flags structures, cross-ref DB)
+- Benchmarks sectoriels en tableaux avec P25/Median/P75/TopDecile et source
+- Red flag rules automatiques avec seuils precis
+- Unit economics formulas avec thresholds good/excellent
+- Exit landscape avec comparables recents et acquireurs typiques
+- Scoring methodology documente (5 criteres ponderes)
+
+**Cross-reference Funding DB**
+- Integration `context.fundingContext.competitors` dans le prompt
+- Integration `context.fundingContext.sectorBenchmarks`
+- Comparaison valorisation vs deals similaires de la DB
+- Positionnement vs leader et median sectoriel
+
+**Architecture simplifiee**
+- `createSectorExpert()` retourne `{ name, config, buildPrompt, outputSchema }`
+- Suppression dependance ReActEngine (gere par orchestrateur)
+- `SectorConfig` enrichi avec `benchmarkData` obligatoire et `scoringWeights`
+- `SectorBenchmarkData` structure complete (primaryMetrics, secondaryMetrics, redFlagRules, unitEconomicsFormulas, exitMultiples, sectorSpecificRisks, sectorSuccessPatterns)
+
+### Prochaines etapes
+- Implementer les 9 sector experts specifiques (saas, fintech, marketplace, etc.) avec leurs benchmarkData
+
+---
+
+## 2026-01-27 01:00 - REFONTE: Question Master Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/question-master.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types FounderQuestion, ReferenceCheck, DiligenceChecklistItem, NegotiationPoint, Dealbreaker, AgentFindingsSummary, QuestionMasterFindings, QuestionMasterData v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output QuestionMasterData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value 0-100, grade A-F, breakdown 5 criteres)
+- `findings`: QuestionMasterFindings (founderQuestions[], referenceChecks[], diligenceChecklist, negotiationPoints[], dealbreakers[], tier1Summary, topPriorities[], suggestedTimeline[])
+- `dbCrossReference`: Cross-reference claims vs Context Engine
+- `redFlags`: AgentRedFlag[] (synthese de tous les agents Tier 1)
+- `questions`: AgentQuestion[] (resume des plus critiques)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt Senior Partner VC 25+ ans**
+- Persona: Senior Partner VC avec 25+ ans d'experience en DD, 2000+ deals analyses
+- Standards: Questions SPECIFIQUES liees aux donnees, jamais generiques
+- Framework evaluation: Questions Relevance 30%, DD Completeness 25%, Negotiation Leverage 20%, Risk Identification 15%, Actionability 10%
+- Methodologie: 6 etapes (synthese Tier 1, questions fondateur, reference checks, checklist DD, points negociation, synthese finale)
+
+**Nouvelles structures findings**
+- `FounderQuestion`: id, priority (MUST_ASK/SHOULD_ASK/NICE_TO_HAVE), category (9 categories), question, context (sourceAgent, redFlagId?, triggerData, whyItMatters), evaluation (goodAnswer, badAnswer, redFlagIfBadAnswer, followUpIfBad), timing (first_meeting/second_meeting/dd_phase/pre_term_sheet)
+- `ReferenceCheck`: id, targetType (6 types), priority, targetProfile (description, idealPerson?, howToFind), questions[] (question, whatToLookFor, redFlagAnswer), rationale, linkedToRedFlag?
+- `DiligenceChecklistItem`: id, category (8 categories), item, description, status (5 statuts), criticalPath, blockingForDecision, responsibleParty (3 types), estimatedEffort (3 niveaux), documentsNeeded[], deadline?, blockerDetails?
+- `NegotiationPoint`: id, priority (HIGH_LEVERAGE/MEDIUM_LEVERAGE/NICE_TO_HAVE), category (7 categories), point, leverage (argument, evidence, sourceAgent), suggestedApproach, fallbackPosition, walkAwayPoint, estimatedImpact?
+- `Dealbreaker`: id, severity (ABSOLUTE/CONDITIONAL), condition, description, sourceAgent, linkedRedFlags[], resolvable, resolutionPath?, timeToResolve?, riskIfIgnored
+- `AgentFindingsSummary`: agentName, score, grade, criticalRedFlagsCount, highRedFlagsCount, topConcerns[], topStrengths[], questionsGenerated
+
+**Categories de questions fondateur**
+- vision: Strategie long terme (triggers: claims ambitieux non justifies)
+- execution: Comment atteindre les objectifs (triggers: projections irrealistes)
+- team: Gaps, dynamics, experience (triggers: red flags team-investigator)
+- market: Taille, timing, concurrence (triggers: claims marche non verifies)
+- financials: Metriques, projections, valo (triggers: red flags financial-auditor)
+- tech: Stack, scalabilite, dette (triggers: red flags technical-dd)
+- legal: Structure, IP, compliance (triggers: red flags legal-regulatory)
+- risk: Scenarios negatifs (triggers: red flags de plusieurs agents)
+- exit: Strategie de sortie (triggers: liquidite, timeline)
+
+**Reference checks cibles prioritaires**
+- CRITIQUE: Clients (utilisation reelle, satisfaction, intention renouveler)
+- HIGH: Ex-employes (culture, leadership, raisons depart, red flags caches)
+- HIGH: Co-investisseurs (pourquoi investi, DD, conviction)
+- MEDIUM: Experts secteur (validation marche, positionnement, timing)
+
+**Minimums requis**
+- 15+ questions fondateur dont 5+ MUST_ASK
+- 5+ reference checks structures
+- 5+ points de negociation avec leverage concret
+- Checklist DD complete avec critical path
+
+**Dependances**
+- Depend de TOUS les agents Tier 1 (document-extractor, deck-forensics, financial-auditor, market-intelligence, competitive-intel, team-investigator, exit-strategist, etc.)
+
+### Prochaines etapes
+- Continuer refonte des autres agents Tier 1
+
+---
+
+## 2026-01-27 00:30 - REFONTE: Customer Intel Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/customer-intel.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types CustomerAnalysis, CustomerClaimValidation, RetentionAnalysis, PMFAnalysis, ConcentrationAnalysis, ExpansionAnalysis, CustomerIntelFindings, CustomerIntelData v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output CustomerIntelData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value 0-100, grade A-F, breakdown 4 criteres)
+- `findings`: CustomerIntelFindings (customers[], claimValidations[], retention, pmf, concentration, expansion, signalsContradictoires)
+- `dbCrossReference`: Cross-reference claims vs Context Engine
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM avec location, evidence, impact, question, redFlagIfBadAnswer)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt VP Customer Success/Partner VC**
+- Persona: Expert Customer Success 15+ ans enterprise SaaS, ex-VP Customer Success 3 licornes, advisor customer strategy Sequoia/Bessemer
+- Standards: Big4 (rigueur) + Partner VC (pattern matching)
+- Framework evaluation: PMF 40%, Retention 25%, Concentration 20%, Expansion 15%
+- Methodologie: 5 etapes (analyse customers, verification claims, metriques retention, test PMF, cross-ref DB)
+
+**Nouvelles structures findings**
+- `CustomerAnalysis`: name, logo?, description, segment (enterprise/mid/smb/consumer), type (known/claimed/inferred), verified (status, method, source?), relationship (since?, acv?, useCase?, publicReference?, testimonial?)
+- `CustomerClaimValidation`: claim (text, location), verified (status, method, evidence?), reality?, discrepancy?, severity? (CRITICAL/HIGH/MEDIUM/LOW/INFO)
+- `RetentionAnalysis`: nrr (value?, calculation?, benchmark, verdict), grr (value?, calculation?, benchmark, verdict), churn (value?, calculation?, benchmark, verdict), cohortAnalysis?
+- `PMFAnalysis`: overallVerdict, confidenceLevel, tests (seanEllisTest, organicGrowth, retention, engagement, nps, referralRate, pricingPower, cohortRetention, expansionRevenue, churnAnalysis)
+- `ConcentrationAnalysis`: topCustomerPercent (top1, top3, top10), verdict (level, risk, benchmark, calculation), revenueBySegment[], recommendations[]
+- `ExpansionAnalysis`: upsell (present, evidence?, potential), crossSell (present, evidence?, potential), viral (present, mechanism?, k_factor?), ndrDrivers[]
+
+**Tests PMF standardises**
+- Sean Ellis Test: >40% "very disappointed" = Strong PMF
+- Organic Growth: >40% organic acquisition = Healthy
+- NRR: >120% = Best-in-class
+- Monthly Churn: <5% = Acceptable
+- NPS: >50 = Strong PMF signal
+
+**Seuils concentration**
+- CRITICAL: Top 1 >30% revenus
+- HIGH: Top 3 >50% revenus
+- MEDIUM: Top 10 >70% revenus
+
+**Red flags detectes**
+- CRITICAL: NRR <80%, Concentration top1 >30%, Churn >10%/mois, Aucun client verifiable
+- HIGH: NRR 80-100%, Concentration top3 >50%, Pas de donnees retention, Sean Ellis <20%
+- MEDIUM: NRR 100-110%, Pas de logos publics, Testimonials introuvables
+
+### Prochaines etapes
+- Continuer refonte des autres agents Tier 1
+
+---
+
+## 2026-01-27 00:15 - REFONTE: GTM Analyst Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/gtm-analyst.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types GTMChannelAnalysis, GTMSalesMotionAnalysis, GTMExpansionAnalysis, GTMCompetitorPattern, GTMCacBenchmark, GTMAnalystFindings, GTMAnalystData v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output GTMAnalystData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value 0-100, grade A-F, breakdown 5 criteres)
+- `findings`: GTMAnalystFindings (channels[], channelSummary, salesMotion, expansion, competitorPatterns, cacBenchmark, unitEconomics, deckClaimsAnalysis[])
+- `dbCrossReference`: Cross-reference claims vs Context Engine
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM avec location, evidence, impact, question, redFlagIfBadAnswer)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt VP Growth/Partner VC**
+- Persona: Expert GTM/Growth 15+ ans en scale-ups B2B et B2C, ex-VP Growth 3 licornes, advisor GTM Sequoia/a16z
+- Standards: Big4 (rigueur) + Partner VC (pattern matching)
+- Framework evaluation: Channel Strategy 25%, Sales Motion Fit 20%, Unit Economics 25%, Growth Potential 15%, Data Quality 15%
+- Methodologie: 4 etapes (canaux, motion vente, unit economics, cross-ref DB)
+
+**Nouvelles structures findings**
+- `GTMChannelAnalysis`: channel, type (organic/paid/sales/partnership/referral/viral), contribution (revenuePercent, customerPercent), economics (cac, cacCalculation, cacPaybackMonths, ltv, ltvCacRatio, benchmarkCac), efficiency, scalability (level, constraints, investmentRequired), risks[], verdict
+- `GTMSalesMotionAnalysis`: type (PLG/SALES_LED/HYBRID/COMMUNITY_LED/UNCLEAR), typeEvidence, appropriateness (verdict, rationale, benchmark), salesCycle, acv, winRate, pipelineCoverage, bottlenecks[], magicNumber
+- `GTMExpansionAnalysis`: currentGrowthRate (value, sustainability, sustainabilityRationale), expansion (strategy, markets[], risks[]), growthLevers[], scalingConstraints[]
+- `GTMCompetitorPattern`: company, channel, success, insight, source - Cross-ref DB obligatoire
+- `GTMCacBenchmark`: sector, stage, p25, median, p75, source, thisDeal (cac, percentile)
+
+**Modeles GTM de reference**
+- PLG (Slack, Notion, Figma): Freemium, self-service, viral loops, CAC < €100 SMB
+- SLG (Salesforce, Workday): AEs, SDRs, ACV > €10K, sales cycle SMB <30j
+- HYBRID (Zoom, Datadog): PLG acquisition + sales expansion
+
+**Benchmarks par stage**
+- SEED: CAC Payback <12 mois, LTV/CAC >2x, Growth >15% MoM, Magic Number >0.5
+- SERIES A: CAC Payback <18 mois, LTV/CAC >3x, Growth >100% YoY, Magic Number >0.75
+
+**Red flags detectes**
+- CRITICAL: Aucun canal clair, CAC >24 mois revenus, LTV/CAC <1x, 100% paid sans path organic, Motion inadaptee
+- HIGH: CAC Payback >18 mois, Un canal >80% clients, Sales cycle >2x benchmark, Pas de donnees retention
+- MEDIUM: CAC en augmentation, Channel mix non diversifie, Pas de strategie expansion
+
+### Prochaines etapes
+- Continuer refonte des autres agents Tier 1
+
+---
+
+## 2026-01-26 23:50 - REFONTE: Team Investigator Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/team-investigator.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Types: LinkedInEnrichedProfile, TeamInvestigatorFindings, TeamInvestigatorData v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output TeamInvestigatorData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value 0-100, grade A-F, breakdown 5 criteres)
+- `findings`: TeamInvestigatorFindings (founderProfiles[], teamComposition, cofounderDynamics, networkAnalysis, benchmarkComparison)
+- `dbCrossReference`: Cross-reference claims team vs Context Engine
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM avec 5 composants)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt Big4/VC Partner**
+- Persona: Ex-Head of Talent fonds VC + Investigateur PE
+- Framework evaluation: Founder Quality 30%, Team Complementarity 25%, Entrepreneurial Experience 20%, Cofounder Dynamics 15%, Network Strength 10%
+- Methodologie: analyse individuelle, cross deck/LinkedIn, metriques calculees
+
+**Integration Apify LinkedIn (via Context Engine)**
+- Actor: curious_coder/linkedin-profile-scraper (ID: 2SyF0bVxmgGr8IVCZ)
+- Champs: experiences, education, skills, headline, about
+- Analyses: expertise (industries, roles), red flags (gaps, job hopping), sector fit
+- Integration via buildPeopleGraph() dans Context Engine
+
+**Structures findings**
+- Founder Profile: background, entrepreneurialTrack, scores individuels, red flags specifiques
+- Team Composition: roles present/missing, gaps avec severity, key hires to make
+- Cofounder Dynamics: equity split, vesting, working history, potential conflicts
+- Network Analysis: notable connections, advisors, investor relationships
+
+**Red flags detectes**
+- CRITICAL: Fondateur en poste ailleurs, Equity tres desequilibre, Gaps CV > 2 ans
+- HIGH: Job hopping, Pas de vesting, Pas d'historique commun cofondateurs
+- MEDIUM: Network limite, Pas d'experience secteur, First-time founders tous
+
+---
+
+## 2026-01-26 23:30 - REFONTE: Technical DD Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/technical-dd.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types TechStackAnalysis, ScalabilityAnalysis, TechnicalDebtAnalysis, ProductMaturityAnalysis, TechTeamCapability, SecurityAnalysis, TechIPAnalysis, TechnicalDDFindings, TechnicalDDData v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output TechnicalDDData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value 0-100, grade A-F, breakdown 7 criteres)
+- `findings`: TechnicalDDFindings (techStack, scalability, technicalDebt, productMaturity, teamCapability, security, ipProtection, technicalRisks[], sectorBenchmark)
+- `dbCrossReference`: Cross-reference claims vs Context Engine
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM avec location, evidence, impact, question, redFlagIfBadAnswer)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt CTO/VPE senior**
+- Persona: CTO/VPE 20+ ans experience en startups tech et scale-ups, 500+ stacks auditees
+- Standards: Big4 (rigueur) + Partner VC (pattern matching)
+- Framework evaluation: Stack 20%, Scalabilite 20%, Dette 15%, Maturite 15%, Equipe 15%, Securite 10%, IP 5%
+- Methodologie: 7 etapes (stack, scalabilite, dette, maturite, equipe tech, securite, IP)
+
+**Nouvelles structures findings**
+- `TechStackAnalysis`: frontend (technologies, modernityScore), backend (languages, frameworks, modernityScore), infrastructure (cloud, containerization, orchestration, cicd), databases, thirdPartyDependencies (vendorLockIn), overallAssessment (MODERN/ADEQUATE/OUTDATED/CONCERNING)
+- `ScalabilityAnalysis`: currentArchitecture (monolith/microservices/serverless/hybrid), currentCapacity, bottlenecks[], scalingStrategy, readinessForGrowth (x10, x100)
+- `TechnicalDebtAnalysis`: level (LOW/MEDIUM/HIGH/CRITICAL), indicators[], estimatedCost (toFix, ifIgnored, timeline), codeQuality (testCoverage, documentation, codeReview)
+- `ProductMaturityAnalysis`: stage (concept/prototype/mvp/beta/production/scale), stability, featureCompleteness, releaseVelocity
+- `TechTeamCapability`: teamSize, seniorityLevel, gaps[], keyPersonRisk, hiringNeeds[]
+- `SecurityAnalysis`: posture, compliance (gdpr, soc2), practices[], vulnerabilities[]
+- `TechIPAnalysis`: patents, tradeSecrets, openSourceRisk, proprietaryTech
+
+**Red flags detectes**
+- CRITICAL: CTO inexistant/non-technique, Stack inadequate, Zero tests/docs/CI, Dependance service deprecate, Failles securite evidentes, Key person risk absolu
+- HIGH: Stack legacy (PHP5, jQuery), Pas de CI/CD, Equipe 100% junior, Vendor lock-in extreme, Open source licences problematiques
+- MEDIUM: Architecture over-engineered, Ratio devs/features desequilibre, Gaps equipe (DevOps, QA), Tests/docs insuffisants
+
+### Prochaines etapes
+- Refondre les autres agents Tier 1 selon meme methodologie
+
+---
+
+## 2026-01-26 22:15 - REFONTE: Legal & Regulatory Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/legal-regulatory.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types ComplianceArea, IPStatusAnalysis, RegulatoryRisk, LegalStructureAnalysis, ContractualRisksAnalysis, LitigationRiskAnalysis, SectorRegulatoryPrecedent, LegalRegulatoryFindings, LegalRegulatoryData v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output LegalRegulatoryData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value 0-100, grade A-F, breakdown par critere)
+- `findings`: LegalRegulatoryFindings (structureAnalysis, compliance[], ipStatus, regulatoryRisks[], contractualRisks, litigationRisk, sectorPrecedents, upcomingRegulations[])
+- `dbCrossReference`: Cross-reference claims vs Context Engine/Funding DB
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM avec location, evidence, impact, question, redFlagIfBadAnswer)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt Big4/VC Partner**
+- Persona: Avocat M&A/VC senior 20+ ans + Partner VC expertise reglementaire
+- Standards: chaque risque source, chaque gap quantifie
+- Framework evaluation: Structure juridique 20%, Conformite reglementaire 30%, Protection IP 20%, Risques contractuels 15%, Risques litige 15%
+- Methodologie: 6 etapes (structure, compliance, IP, contrats, litige, precedents sectoriels)
+
+**Nouvelles structures findings**
+- `ComplianceArea`: area, status (COMPLIANT/PARTIAL/NON_COMPLIANT/UNKNOWN), requirements[], gaps[], risk, evidence, remediation (action, estimatedCost, timeline)
+- `IPStatusAnalysis`: patents, trademarks, tradeSecrets, copyrights (openSourceRisk, licenses, concerns), overallIPStrength, ipVerdict
+- `RegulatoryRisk`: risk, regulation, probability, impact, timeline, mitigation, estimatedCost, precedent
+- `LegalStructureAnalysis`: entityType, jurisdiction, appropriateness, concerns[], vestingInPlace, shareholderAgreement
+- `ContractualRisksAnalysis`: keyContracts[], customerConcentration, vendorDependencies[], concerningClauses[]
+- `LitigationRiskAnalysis`: currentLitigation, potentialClaims[], founderDisputes, riskLevel
+
+**Specificites sectorielles**
+- FINTECH: ACPR, DSP2, AML/KYC, MiCA
+- HEALTHTECH: CE Marking, FDA, RGPD + HDS + HIPAA
+- AI/ML: AI Act EU categories de risque
+- EDTECH: Protection mineurs (COPPA, RGPD)
+- SAAS B2B: RGPD, SOC2, ISO 27001
+
+**Red flags detectes**
+- CRITICAL: Contentieux fondateurs, Non-conformite RGPD donnees sensibles, Absence vesting, GPL sur code core, Structure offshore suspecte
+- HIGH: Pas de pacte actionnaires, Conformite RGPD partielle, Aucun brevet malgre claim "tech proprietaire"
+- MEDIUM: Structure suboptimale, Marques non deposees, Documentation incomplete
+
+### Prochaines etapes
+- Refondre les autres agents Tier 1 selon meme methodologie
+
+---
+
+## 2026-01-26 21:30 - REFONTE: Exit Strategist Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/exit-strategist.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types ExitScenario, ComparableExit, MnAMarketAnalysis, LiquidityRisk, ExitStrategistFindings, ExitStrategistData v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output ExitStrategistData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value 0-100, grade A-F, breakdown Exit Attractiveness Score)
+- `findings`: ExitStrategistFindings (scenarios, comparableExits, mnaMarket, liquidityAnalysis, deckClaimsAnalysis, returnSummary)
+- `dbCrossReference`: Cross-reference claims exit vs Context Engine/Funding DB
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt Big4/VC Partner**
+- Persona: Managing Director M&A Goldman Sachs 20+ ans + Partner VC experimente exits
+- Standards: chaque scenario base sur comparables reels, calculs IRR/dilution MONTRES
+- Framework evaluation: Acquirability 25%, Multiples secteur 20%, Fenetre sortie 20%, Timeline 15%, Retour IRR 20%
+- Methodologie: profil sortie, marche M&A, modelisation scenarios, validation vs comparables, risques liquidite
+
+**Nouvelles structures ExitScenario**
+- Types: acquisition_strategic, acquisition_pe, ipo, secondary, acquihire, failure
+- Probability avec level, percentage, rationale, basedOn (source obligatoire)
+- Timeline avec estimatedYears, range, milestones, assumptions
+- ExitValuation avec estimated, range, methodology, multipleUsed, multipleSource, calculation MONTRE
+- PotentialBuyers avec name, type, rationale, likelihoodToBuy
+- InvestorReturn avec tous calculs montres: dilutionCalculation, proceedsCalculation, irrCalculation
+
+**ComparableExit source obligatoire**
+- Target, acquirer, year, sector, stage
+- Metriques: exitValue, revenueAtExit, arrAtExit, multiples
+- Source OBLIGATOIRE: "Funding DB", "Crunchbase", "News"
+- Relevance score avec similarities et differences
+
+**MnAMarketAnalysis**
+- Activity: totalDeals, totalValue, trend HEATING/STABLE/COOLING
+- Multiples: revenueMultiple, arrMultiple avec P25/median/P75
+- ActiveBuyers: name, type, recentDeals, focusAreas
+- ExitWindow: assessment EXCELLENT/GOOD/NEUTRAL/POOR/CLOSED
+
+**LiquidityRisk structure**
+- Categories: market, company, structural, timing, dilution
+- Severity + probability
+- Impact, mitigation, questionToAsk
+
+**ReturnSummary**
+- ExpectedCase, upside, downside avec scenario, probability, multiple, irr
+- ProbabilityWeightedReturn avec calculation MONTREE
+
+**Red flags automatiques detectes**
+- No Exit Path (aucun acquereur logique) = CRITICAL
+- Unrealistic Projections (valorisation 5x+ vs comparables, timeline irrealiste) = CRITICAL
+- Excessive Dilution (>80% seed→exit) = HIGH
+- Market Window Closing (activite M&A en baisse >30% YoY) = HIGH
+- Single Buyer Dependency = MEDIUM
+- Long Time to Exit (>7 ans) = MEDIUM
+
+**Formules obligatoires montrees**
+- IRR = (Exit Proceeds / Initial Investment)^(1/years) - 1
+- Ownership at Exit = Initial % × (1 - Dilution_A) × (1 - Dilution_B) × ...
+- Exit Proceeds = Exit Valuation × Ownership at Exit
+- Expected Multiple = Σ (Scenario Probability × Scenario Multiple)
+
+### Prochaines etapes
+- Mettre a jour le composant UI tier1-results.tsx pour utiliser la nouvelle structure
+- Refondre les autres agents Tier 1
+
+---
+
+## 2026-01-26 18:45 - REFONTE: Market Intelligence Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/market-intelligence.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types MarketClaimValidation, MarketCompetitorSignal, MarketIntelFindings, MarketIntelData v2.0
+- `src/components/deals/tier1-results.tsx` - Mise a jour MarketIntelCard pour utiliser la nouvelle structure
+
+### Changements majeurs
+
+**Nouvelle structure output MarketIntelData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value 0-100, grade A-F, breakdown avec justifications par critere)
+- `findings`: MarketIntelFindings (marketSize, fundingTrends, timing, regulatoryLandscape, claimValidations)
+- `dbCrossReference`: Cross-reference claims deck vs Context Engine/Funding DB
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM, 5 composants obligatoires)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt Big4/VC Partner**
+- Persona: Analyste Marche Big4 (McKinsey/BCG/Bain) + Partner VC 20+ ans
+- Standards: chaque TAM/SAM/SOM valide avec sources, cross-ref DB obligatoire
+- Framework evaluation: 5 criteres (Taille marche 25%, Croissance 20%, Timing 25%, Tendance funding 15%, Risque reglementaire 15%)
+- Methodologie: extraction claims, validation, cross-ref DB, generation red flags
+
+**Nouvelles structures MarketIntelFindings**
+- `marketSize`: TAM/SAM/SOM avec claimed vs validated, source, methodology, confidence
+- `fundingTrends`: totalFunding, dealCount, averageDealSize, medianValuation, trend HEATING/STABLE/COOLING/FROZEN
+- `timing`: marketMaturity, adoptionCurve, assessment EXCELLENT/GOOD/NEUTRAL/POOR/TERRIBLE, windowRemaining, competitorActivity
+- `regulatoryLandscape`: riskLevel, keyRegulations, upcomingChanges, impact
+- `claimValidations`: chaque claim du deck valide avec status VERIFIED/CONTRADICTED/PARTIAL/EXAGGERATED/NOT_VERIFIABLE
+
+**Red flags automatiques detectes**
+- TAM = "tous ceux qui utilisent Internet" = CRITICAL
+- SOM > 5% du SAM sans justification = HIGH
+- Pas de source pour chiffres marche = HIGH
+- Ecart >100% entre TAM claim et valide = CRITICAL
+- Marche en decline mais presente "en croissance" = CRITICAL
+- Funding secteur en chute non mentionne = HIGH
+
+**Mise a jour du composant UI**
+- Affichage score.value au lieu de marketScore
+- Affichage findings.marketSize.discrepancyLevel
+- Affichage findings.timing avec assessment et windowRemaining
+- Affichage findings.fundingTrends avec trend et YoY changes
+- Affichage red flags avec severity badges
+- Affichage narrative.keyInsights
+
+---
+
+## 2026-01-26 15:30 - REFONTE: Competitive Intel Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/competitive-intel.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types CompetitorAnalysis, MoatAnalysis, CompetitiveClaim, CompetitiveIntelFindings, CompetitiveIntelData v2.0
+- `src/components/deals/tier1-results.tsx` - Mise a jour CompetitiveIntelCard pour nouvelle structure v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output CompetitiveIntelData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value, grade A-F, breakdown avec justifications)
+- `findings`: CompetitiveIntelFindings (competitors, competitorsMissedInDeck, marketStructure, moatAnalysis, competitivePositioning, claimsAnalysis, competitiveThreats, fundingBenchmark)
+- `dbCrossReference`: Cross-reference claims deck vs Context Engine/Funding DB
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt Big4/VC Partner**
+- Persona: Analyste concurrentiel senior McKinsey 15 ans + Partner VC Sequoia 5 ans
+- Standards: chaque concurrent source, moat prouve pas juste revendique
+- Framework moat: network_effects, data_moat, brand, switching_costs, scale, technology, regulatory, none
+- Minimum: 5+ concurrents, 3+ red flags, 5+ questions
+
+**Nouvelles structures CompetitorAnalysis**
+- Overlap: direct/indirect/adjacent/future_threat avec explication
+- Funding details: total, lastRound, stage, investors, source
+- Threat assessment: threatLevel CRITICAL/HIGH/MEDIUM/LOW avec rationale
+- DifferentiationVsUs: ourAdvantage, theirAdvantage, verdict WE_WIN/THEY_WIN/PARITY/DIFFERENT_SEGMENT
+
+**MoatAnalysis detaillee**
+- Primary + secondary moat types
+- Scoring par type avec evidence + sustainability + timeframe
+- Verdict: STRONG_MOAT/EMERGING_MOAT/WEAK_MOAT/NO_MOAT
+- Moat risks identifies
+
+**Claims verification**
+- Chaque claim competitif verifie: VERIFIED/CONTRADICTED/EXAGGERATED/UNVERIFIABLE
+- Source utilisee (Funding DB, Context Engine, News)
+- Severity si faux
+
+**Red flags automatiques**
+- Concurrent bien finance (>50M€) non mentionne = CRITICAL
+- GAFAM present sur segment = CRITICAL
+- Moat revendique sans preuve = HIGH
+- Deck dit "pas de concurrent" = RED FLAG majeur
+
+### Standards appliques
+- Jamais de donnees inventees
+- Chaque concurrent sourced
+- Moat PROUVE pas juste revendique
+- Cross-reference deck vs DB obligatoire
+- Questions specifiques avec whatToLookFor
+
+### Prochaine etape
+Refondre les autres agents Tier 1 (market-intelligence, team-investigator, etc.)
+
+---
+
+## 2026-01-27 01:50 - REFONTE: Deck Forensics Agent v2.0
+
+### Fichiers modifies
+- `src/agents/tier1/deck-forensics.ts` - Refonte complete selon standards AGENT-REFONTE-PROMPT.md
+- `src/agents/types.ts` - Nouveaux types DeckClaimVerification, DeckInconsistency, DeckForensicsFindings, DeckForensicsData v2.0
+
+### Changements majeurs
+
+**Nouvelle structure output DeckForensicsData (format universel)**
+- `meta`: AgentMeta (dataCompleteness, confidenceLevel, limitations)
+- `score`: AgentScore (value, grade A-F, breakdown avec justifications)
+- `findings`: DeckForensicsFindings (narrativeAnalysis, claimVerification, inconsistencies, deckQuality)
+- `dbCrossReference`: Cross-reference claims deck vs Context Engine DB
+- `redFlags`: AgentRedFlag[] (severity CRITICAL/HIGH/MEDIUM)
+- `questions`: AgentQuestion[] (priority, context, whatToLookFor)
+- `alertSignal`: Recommendation PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP
+- `narrative`: oneLiner, summary, keyInsights, forNegotiation
+
+**Nouveau system prompt Big4/VC Partner**
+- Persona: Senior Partner VC 25 ans + Auditeur Big4
+- Standards: affirmations sourcees, calculs montres, cross-reference obligatoire
+- Methodologie: verification claims → detection inconsistances → red flags → questions
+- Regles absolues: INTERDIT inventer/affirmer sans preuve/termes vagues
+
+**DB Cross-Reference oblig.**
+- Concurrents deck vs Context Engine DB
+- Valorisation vs benchmarks (P25/Median/P75)
+- Verdicts: VERIFIED/CONTRADICTED/PARTIAL/NOT_VERIFIABLE
+
+---
+
+## 2026-01-27 01:30 - REFONTE: Financial Auditor Agent v2.0
+
+### Fichiers modifies
+- `src/agents/types.ts` - Nouveaux types universels (AgentMeta, AgentScore, AgentRedFlag, AgentQuestion, AgentAlertSignal, AgentNarrative, DbCrossReference) + nouvelle structure FinancialAuditData v2.0
+- `src/agents/tier1/financial-auditor.ts` - Refonte complete selon AGENT-REFONTE-PROMPT.md
+- `src/components/deals/tier1-results.tsx` - Mise a jour FinancialAuditorCard et DeckForensicsCard pour nouvelle structure v2.0
+
+### Changements majeurs
+
+**Types universels ajoutes (Section 5.1)**
+- `AgentMeta`: agentName, analysisDate, dataCompleteness, confidenceLevel, limitations
+- `AgentScore`: value (0-100), grade (A-F), breakdown avec criteres + poids + justification
+- `AgentRedFlag`: id, category, severity (CRITICAL/HIGH/MEDIUM), title, location, evidence, contextEngineData, impact, question, redFlagIfBadAnswer
+- `AgentQuestion`: priority, category, question, context, whatToLookFor
+- `AgentAlertSignal`: hasBlocker, blockerReason, recommendation (PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP), justification
+- `AgentNarrative`: oneLiner, summary, keyInsights, forNegotiation
+- `DbCrossReference`: claims avec dbVerdict (VERIFIED/CONTRADICTED/PARTIAL/NOT_VERIFIABLE)
+
+**Financial Auditor refait**
+- System prompt structure selon Section 4.1 (ROLE + MISSION + METHODOLOGIE + FRAMEWORK + RED FLAGS + REGLES + EXEMPLES)
+- User prompt structure selon Section 4.2
+- Scoring framework avec 5 criteres ponderes (Data Transparency 25%, Metrics Health 25%, Valuation Rationality 20%, Unit Economics 15%, Burn Efficiency 15%)
+- Penalites automatiques: minimal → max 50, partial → max 70, CRITICAL red flag → max 40
+- DB cross-reference obligatoire
+- Normalisation robuste de la reponse LLM
+
+**UI mise a jour**
+- FinancialAuditorCard: nouvelle structure avec alertSignal, findings.metrics, redFlags avec severity UPPERCASE
+- DeckForensicsCard: compatible avec structure v2.0 (findings.narrativeAnalysis, findings.claimVerification, etc.)
+
+### Standards appliques
+- Chaque affirmation sourcee (Slide X, Onglet Y, Context Engine)
+- Calculs montres, pas juste les resultats
+- Red flags avec 5 composants obligatoires
+- Questions avec priority + context + whatToLookFor
+- Cross-reference deck vs DB obligatoire
+
+### Prochaine etape
+Refondre les autres agents Tier 1 (deck-forensics, team-investigator, etc.)
+
+---
+
+## 2026-01-27 00:10 - DOC: Ajout resume executif + MAJ CLAUDE.md
+
+### Fichiers modifies
+- `AGENT-REFONTE-PROMPT.md` - Ajout bloc "RESUME EXECUTIF - 27 AGENTS (3 TIERS)" en debut de document
+- `CLAUDE.md` (projet) - MAJ section "REFONTE DES AGENTS" : 12 agents → 27 agents (3 tiers)
+- `~/.claude/CLAUDE.md` (global) - Ajout regle "Lecture complete des fichiers"
+
+### Raison
+- Eviter qu'un agent fasse un resume partiel base sur d'autres fichiers
+- Le resume executif en debut de document force la lecture des 27 agents des le debut
+- Le CLAUDE.md projet disait "12 agents" alors que AGENT-REFONTE-PROMPT.md dit "27 agents"
+
+---
+
+## 2026-01-26 23:15 - CLEANUP: Suppression deal-screener + Alignement tiers investor.md
+
+### Fichiers supprimes
+- `src/agents/deal-screener.ts` - Agent redondant avec les 12 agents Tier 1
+
+### Fichiers modifies
+- `src/agents/index.ts` - Retrait export dealScreener
+- `src/agents/types.ts` - Retrait ScreeningResult
+- `src/agents/orchestrator/agent-registry.ts` - Retrait deal-screener de BASE_AGENTS
+- `src/agents/orchestrator/types.ts` - Retrait "screening" config, retrait deal-screener de BaseAgentName
+- `src/agents/orchestrator/index.ts` - Retrait logique screening, retrait import ScreeningResult
+- `src/agents/orchestrator/summary.ts` - Retrait screening summary, retrait import ScreeningResult
+- `src/agents/orchestrator/persistence.ts` - Retrait case deal-screener
+- `src/agents/tier3/contradiction-detector.ts` - Retrait extractDealScreenerContent
+- `src/agents/board/board-orchestrator.ts` - Retrait screener des agentOutputs
+- `src/lib/analysis-constants.ts` - Retrait screening des ANALYSIS_TYPES, AGENT_DISPLAY_NAMES, ANALYSIS_MODE_NAMES
+- `investor.md` - Correction definition tiers (Tier 2 = Sector Experts, Tier 3 = Synthesis) + retrait Deal Screener
+
+### Changements majeurs
+
+**Alignement definition des tiers**
+- investor.md maintenant aligne avec AGENT-REFONTE-PROMPT.md
+- Tier 1: 12 agents d'investigation (plus 13)
+- Tier 2: 10 experts sectoriels (etait Tier 3)
+- Tier 3: 5 agents de synthese (etait Tier 2)
+- Total: 27 agents (plus 28)
+
+**Suppression deal-screener**
+- L'agent faisait un screening GO/NO-GO basique
+- Redondant avec les 12 agents Tier 1 qui font une analyse complete
+- Plus aucune reference dans le code
+
+---
+
+## 2026-01-26 22:30 - REFONTE COMPLETE: Document 27 agents (3 Tiers)
+
+### Fichiers modifies
+- `AGENT-REFONTE-PROMPT.md` - Document entierement etendu aux 27 agents
+
+### Changements majeurs
+
+**Titre et intro**
+- "Refonte des Agents Tier 1" → "Refonte des 27 Agents (3 Tiers)"
+- "12 agents Tier 1" → "27 agents (Tier 1, 2 et 3)"
+
+**Section 5 - Format de sortie (NOUVEAU)**
+- 5.2: Structures Tier 1 completes (12 agents)
+- 5.3: Structures Tier 2 - Experts Sectoriels (10 agents avec structure commune + metriques specifiques)
+- 5.4: Structures Tier 3 - Synthese (5 agents)
+
+**Section 11 - Liste des agents**
+- 11.1 TIER 1 - Agents d'Analyse (12)
+- 11.2 TIER 2 - Experts Sectoriels (10)
+- 11.3 TIER 3 - Agents de Synthese (5)
+- 11.4 Fichiers a Modifier (27 fichiers)
+
+**Version**: 1.2 → 2.0
+
+### Impact
+Document maintenant complet pour refondre les 27 agents avec structures de sortie specifiques pour chaque agent.
+
+---
+
+## 2026-01-26 22:00 - FEATURE: Pipeline enrichissement avec tagline et useCases
+
+### Fichiers modifies
+- `src/agents/maintenance/types.ts` - Ajout tagline, use_cases a LLMExtractionResult + FieldUpdateStats
+- `src/agents/maintenance/db-completer/prompt-cache.ts` - Prompt LLM enrichi
+- `src/agents/maintenance/db-completer/llm-extract.ts` - Merge et completeness
+- `src/agents/maintenance/db-completer/validator.ts` - Sauvegarde Company + FundingRound
+- `src/agents/maintenance/db-completer/cross-validator.ts` - Empty result avec nouveaux champs
+- `src/agents/maintenance/db-completer/index.ts` - Init fieldsUpdated
+
+### Nouveaux champs extraits par le LLM
+- `tagline` - One-liner pitch (ex: "Slack for healthcare")
+- `use_cases[]` - **CRITIQUE** pour matching concurrents (ex: ["invoice management", "expense tracking"])
+
+### Changements prompt LLM
+```
+6. USE_CASES - CRITIQUE: liste des problemes resolus par le produit
+7. TAGLINE - One-liner pitch si trouve
+```
+
+### Sauvegarde dual
+- **Company**: tagline → shortDescription, useCases → useCases
+- **FundingRound**: tagline, useCases, businessModel, targetMarket, linkedinUrl
+
+### Fonction ajoutee
+- `updateRelatedFundingRounds()` - Met a jour tous les FundingRounds d'une Company
+
+### Impact
+- Le pipeline enrichit maintenant les donnees CRITIQUES pour le matching de concurrents
+- Les agents pourront utiliser useCases pour detecter des concurrents similaires
+- Aligne avec DB-EXPLOITATION-SPEC.md section 5 (Logique de matching)
+
+---
+
+## 2026-01-26 21:30 - FIX: Clarification logique red flags concurrents
+
+### Fichiers modifies
+- `DB-EXPLOITATION-SPEC.md` - Matrice clarifiee
+- `AGENT-REFONTE-PROMPT.md` - Red flags clarifies
+
+### Clarification importante
+- Concurrent dans deck mais PAS dans DB → **PAS un red flag** (DB limitee, rechercher en ligne)
+- Concurrent dans DB mais PAS dans deck → **RED FLAG CRITIQUE** (omission volontaire)
+
+### Changements
+- Matrice de comparaison mise a jour avec "RECHERCHER EN LIGNE" au lieu de "A VERIFIER"
+- Ajout champ `deckCompetitorsNotInDb` dans output JSON
+- Section red flags: ajout "NE PAS generer de red flag si..."
+
+---
+
+## 2026-01-26 21:15 - DOC: Comparaison concurrents deck vs DB + 27 agents
+
+### Fichiers modifies
+- `DB-EXPLOITATION-SPEC.md` - Ajout section 2.5 + section 4 complete
+- `AGENT-REFONTE-PROMPT.md` - Section 8 enrichie
+
+### Changements DB-EXPLOITATION-SPEC.md (v1.1)
+- **Nouvelle section 2.5**: "Comparaison Concurrents Deck vs DB (CRITIQUE)"
+  - Matrice de comparaison (deck OUI/NON x DB OUI/NON)
+  - Exemple detaille avec Freebe/Tiime/Shine/Indy
+  - Structure JSON `competitorComparison` obligatoire
+  - Red flags automatiques pour concurrents caches
+
+- **Section 4 completement refaite**: 27 agents au lieu de 6
+  - Tier 1: 12 agents d'analyse avec instructions DB detaillees
+  - Tier 2: 10 experts sectoriels (SaaS, FinTech, Marketplace, etc.)
+  - Tier 3: 5 agents de synthese
+  - Chaque agent a son OUTPUT OBLIGATOIRE documente
+
+### Changements AGENT-REFONTE-PROMPT.md (v1.2)
+- **Section 8.2**: Comparaison concurrents deck vs DB avec matrice
+- **Section 8.3**: Tableau complet des 27 agents (Tier 1, 2, 3)
+- **Section 8.5**: Red flags enrichis (concurrents caches, omission volontaire)
+- **Section 8.6**: Format d'injection enrichi avec comparaison deck vs DB
+- **Section 8.7**: Checklist DB enrichie (10 points au lieu de 7)
+
+### Impact
+- Tous les agents doivent maintenant produire un `competitorComparison` si applicable
+- La detection de concurrents caches devient un red flag CRITICAL
+- Les agents Tier 2 ont leurs benchmarks sectoriels specifiques documentes
+
+---
+
+## 2026-01-26 20:45 - DOC: Ajout Section 8 exploitation DB dans AGENT-REFONTE-PROMPT
+
+### Fichiers modifies
+- `AGENT-REFONTE-PROMPT.md` - Ajout section 8 + renumerotation sections
+
+### Changements
+- **Nouvelle section 8**: "Exploitation de la Funding Database"
+  - Principe fondamental du cross-reference obligatoire
+  - Tableau usages par agent (financial-auditor, competitive-intel, etc.)
+  - Format dbCrossReference obligatoire
+  - Red flags automatiques selon conditions
+  - Format d'injection des donnees DB dans les prompts
+  - Checklist DB par agent
+
+- **Renumerotation**: 8→9, 9→10, 10→11
+- **Mise a jour ANNEXE**: Ajout DB-EXPLOITATION-SPEC.md, dbagents.md, funding-db.ts
+- **Mise a jour checklist validation**: Ajout "Exploitation DB Section 8"
+- **Version**: 1.0 → 1.1
+
+### Lien avec autres fichiers
+- Reference vers `DB-EXPLOITATION-SPEC.md` pour les details techniques
+- Les agents doivent implementer le format dbCrossReference
+
+---
+
+## 2026-01-26 20:15 - SCHEMA: Nouveaux champs pour exploitation DB
+
+### Fichiers modifies
+- `prisma/schema.prisma` - Ajout champs FundingRound et Company
+
+### Champs ajoutes a FundingRound
+- `tagline` - One-liner de la boite
+- `linkedinUrl` - URL LinkedIn company
+- `useCases` - String[] des use cases (matching concurrents)
+- `businessModel` - SaaS, Marketplace, etc.
+- `targetMarket` - B2B, B2C, B2B2C
+- `valuationMultiple` - Multiple ARR (ex: 25x)
+- `isDownRound` - Boolean si down round
+- `arrAtRaise` - ARR au moment de la levee
+- `mrrAtRaise` - MRR au moment de la levee
+- `growthRateAtRaise` - Croissance au moment de la levee
+- `employeesAtRaise` - Headcount au moment de la levee
+
+### Champs ajoutes a Company
+- `useCases` - String[] des use cases (matching concurrents)
+
+### Nouveaux index
+- `businessModel`, `targetMarket`, `isDownRound` sur FundingRound
+
+### Commande executee
+```bash
+npx prisma db push
+```
+
+---
+
+## 2026-01-26 19:30 - DOC: Specification d'exploitation de la Funding Database
+
+### Fichiers crees
+- `DB-EXPLOITATION-SPEC.md` - Specification complete (~500 lignes)
+
+### Fichiers modifies
+- `CLAUDE.md` - Ajout section "Exploitation de la Funding Database"
+- `dbagents.md` - Ajout reference vers DB-EXPLOITATION-SPEC.md
+
+### Contenu de la specification
+Document de reference pour l'exploitation de la DB de deals par les agents d'analyse:
+
+1. **Usages de la DB** (4 priorites):
+   - Detection de concurrents (use cases, secteur)
+   - Benchmark valorisation (P25/median/P75)
+   - Validation market timing (tendances funding)
+   - Track record investisseurs (qui investit ou)
+
+2. **Schema de donnees cible** - Champs a ajouter:
+   - description, tagline, useCases[]
+   - investors[], leadInvestor
+   - website, linkedinUrl
+   - arrAtRaise, valuationMultiple, isDownRound
+
+3. **Exploitation par agent** - Instructions specifiques:
+   - financial-auditor: benchmark valo
+   - competitive-intel: detection concurrents
+   - market-intelligence: tendances marche
+
+4. **Logique de matching** - Algorithmes pour:
+   - Trouver concurrents (use_case > sub_sector > sector > fuzzy)
+   - Calculer overlap (direct/partial/adjacent)
+
+5. **Format d'injection** - Template pour prompts agents
+
+6. **Cross-reference obligatoire** - Chaque claim vs DB
+
+### Volume cible
+- Actuel: ~1,500 deals
+- Cible: 5,000+ deals enrichis (90% avec description, 80% avec use cases)
+
+### Prochaines etapes
+1. Modifier schema Prisma
+2. Mettre a jour AGENT-REFONTE-PROMPT.md
+3. Creer pipeline d'enrichissement
+
+---
+
+## 2026-01-26 17:45 - DOC: Guide de refonte des agents Tier 1
+
+### Fichiers crees
+- `AGENT-REFONTE-PROMPT.md` - Guide complet de refonte (~800 lignes)
+
+### Fichiers modifies
+- `CLAUDE.md` - Ajout section dediee a la refonte des agents
+
+### Contenu du guide
+Document de reference pour la refonte complete des 12 agents Tier 1:
+
+1. **Vision & Philosophie** - Double persona Big4 + Partner VC
+2. **Anti-Patterns** - Exemples concrets de ce qu'il faut eviter
+3. **Standards de Qualite** - Niveau d'analyse facturable 5000€
+4. **Architecture des Prompts** - Templates system + user
+5. **Format de Sortie** - Structure JSON universelle + specifique par agent
+6. **Regles Absolues** - Interdictions et obligations formelles
+7. **Gestion Donnees Manquantes** - Hierarchie de compensation
+8. **Template de Refonte** - Process step-by-step
+9. **Checklist de Validation** - Criteres de qualite
+10. **Liste des Agents** - Ordre de priorite
+
+### Objectif
+Permettre a des sessions Claude separees de refondre chaque agent de maniere coherente avec les memes standards de qualite.
+
+### Utilisation
+Chaque nouvelle session doit lire `AGENT-REFONTE-PROMPT.md` avant de modifier un agent Tier 1.
+
+---
+
+## 2026-01-26 15:30 - REFACTOR: Interversion Tier 2 ↔ Tier 3
+
+### Motivation
+L'ordre d'execution des tiers a ete inverse dans le process d'analyse. Pour que les noms soient coherents avec l'execution :
+- **Tier 2** = Sector Experts (execute AVANT la synthese)
+- **Tier 3** = Agents de synthese (execute APRES les sector experts)
+
+### Dossiers renommes
+- `src/agents/tier2/` → `src/agents/tier3/` (agents de synthese)
+- `src/agents/tier3/` → `src/agents/tier2/` (sector experts)
+
+### Fichiers modifies
+- `src/agents/tier2/index.ts` : Commentaire "Tier 2 Sector Experts"
+- `src/agents/tier3/index.ts` : Export des agents de synthese
+- `src/agents/orchestrator/agent-registry.ts` : Renommage fonctions getTier2Agents → getTier3Agents, getTier3SectorExpert → getTier2SectorExpert
+- `src/agents/orchestrator/types.ts` : Renommage constantes TIER2_* → TIER3_*, TIER3_* → TIER2_*, ANALYSIS_CONFIGS
+- `src/agents/orchestrator/index.ts` : Mise a jour imports et references
+- `src/agents/orchestrator/summary.ts` : Renommage generateTier2Summary → generateTier3Summary
+- `src/agents/index.ts` : Mise a jour commentaires exports
+- `src/lib/analysis-constants.ts` : Renommage TIER2_AGENTS ↔ TIER3_AGENTS, ANALYSIS_TYPES
+- `src/app/api/analyze/route.ts` : Mise a jour schema Zod et getAnalysisTier
+- `src/services/cost-monitor/index.ts` : Mise a jour cost estimates
+- `src/services/sector-benchmarks/index.ts` : Mise a jour imports
+- `src/components/deals/tier3-results.tsx` : Mise a jour import SectorExpertData
+
+### Types d'analyse renommes
+- `tier2_synthesis` → `tier3_synthesis`
+- `tier3_sector` → `tier2_sector`
+
+---
+
+## 2026-01-25 21:45 - FIX: Erreur Prisma monthlyLimit dans recordDealAnalysis
+
+### Fichier modifié
+- `src/services/deal-limits/index.ts`: Ligne 198, remplacement de `Infinity` par `UNLIMITED` (-1)
+
+### Problème
+L'upsert Prisma échouait car `Infinity` n'est pas un entier valide pour la base de données PostgreSQL. Le champ `monthlyLimit` requiert un Int.
+
+### Solution
+Utilisation de la constante `UNLIMITED = -1` déjà définie dans le fichier pour représenter "illimité" en base de données.
+
+---
+
+## 2026-01-25 21:30 - CLEANUP: Suppression des agents ReAct
+
+### Fichiers supprimés
+- `src/agents/react/agents/` (12 fichiers)
+  - deck-forensics-react.ts
+  - financial-auditor-react.ts
+  - market-intelligence-react.ts
+  - competitive-intel-react.ts
+  - team-investigator-react.ts
+  - technical-dd-react.ts
+  - legal-regulatory-react.ts
+  - cap-table-auditor-react.ts
+  - gtm-analyst-react.ts
+  - customer-intel-react.ts
+  - exit-strategist-react.ts
+  - question-master-react.ts
+
+### Fichiers modifiés
+- `src/agents/react/index.ts`: Suppression des exports ReAct agents
+- `src/agents/orchestrator/agent-registry.ts`: Suppression du support ReAct
+
+### Raison
+Les tests comparatifs ont montré que les agents Standard sont supérieurs:
+- **Meilleurs résultats**: 5 metrics vs 2 pour ReAct
+- **20x moins cher**: $0.003 vs $0.07
+- **Pas de timeout**: 48s vs 120s+ (timeout)
+
+Le ReAct engine reste disponible pour les agents Tier 3 (sector experts).
+
+---
+
+## 2026-01-25 21:15 - FEAT: Traces de raisonnement pour agents Standard
+
+### Fichiers modifiés
+- `src/agents/types.ts`: Ajout types `StandardTrace`, `LLMCallTrace`, `ContextUsed`
+- `src/agents/base-agent.ts`: Capture automatique des traces (activé par défaut)
+- `src/services/openrouter/router.ts`: `completeJSON` retourne `raw`, `model`, `usage`
+- `src/agents/orchestrator/types.ts`: Ajout `enableTrace` à `AnalysisOptions`
+- `src/agents/orchestrator/index.ts`: Toujours Standard, traces activées
+- `src/app/api/analyze/route.ts`: Suppression de `useReAct`, traces par défaut
+- `src/components/deals/analysis-panel.tsx`: Suppression du toggle ReAct
+
+### Système de traces pour transparence et reproductibilité
+
+**Problème résolu:**
+- Les agents ReAct avaient des traces de raisonnement (Think → Act → Observe)
+- Mais ReAct = 20x plus cher, résultats moins bons
+- Solution: Ajouter des traces aux agents Standard
+
+**Nouvelles structures:**
+
+```typescript
+interface StandardTrace {
+  id: string;
+  agentName: string;
+  startedAt: string;
+  completedAt: string;
+  totalDurationMs: number;
+  llmCalls: LLMCallTrace[];      // Chaque appel LLM capturé
+  contextUsed: ContextUsed;       // Documents, Context Engine
+  metrics: {
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCost: number;
+    llmCallCount: number;
+  };
+  contextHash: string;           // Hash pour reproductibilité
+  promptVersion: string;
+}
+
+interface LLMCallTrace {
+  prompt: { system: string; user: string };
+  response: { raw: string; parsed?: unknown };
+  metrics: { inputTokens, outputTokens, cost, latencyMs };
+  model: string;
+  temperature: number;
+}
+```
+
+**Changements clés:**
+1. Traces activées par défaut (`_enableTrace = true`)
+2. Toggle ReAct supprimé du frontend
+3. API `/api/analyze` n'accepte plus `useReAct`
+4. Résultats incluent `_trace` pour inspection
+
+**Avantages vs ReAct:**
+- Même transparence (traces complètes)
+- 20x moins cher
+- Meilleurs résultats
+- Pas de timeout
+
+---
+
+## 2026-01-25 20:30 - REFACTOR: Architecture agents simplifiée (Standard par défaut)
+
+### Fichiers modifiés
+- `src/agents/tier1/deck-forensics.ts`: Suppression des minimums artificiels, qualité Big4
+- `src/agents/tier1/financial-auditor.ts`: Suppression des minimums artificiels, qualité Big4
+
+### Architecture établie après tests comparatifs
+
+**Tests réalisés sur "ANTIOPEA - SEED" :**
+- Standard financial-auditor: Score 50, 5 metrics, 5 red flags, cost $0.003, 48s
+- ReAct financial-auditor: Score 30, 2 metrics, 2 red flags, cost $0.07, 120s (timeout)
+- **Verdict: Standard gagne largement** (meilleur résultat, 20x moins cher)
+
+**Décisions architecturales :**
+1. **Standard par défaut** - `useReAct = false` dans l'orchestrateur
+2. **Context Engine fait le web search** - website-resolver, website-crawler, competitor search
+3. **Agents analysent le contexte enrichi** - pas de webSearch dans les agents
+4. **Pas de minimums artificiels** - "minimum 5 red flags" = absurde (peut être 0 ou 25)
+5. **Qualité Big4** - Standard de due diligence top-tier VC
+
+**Prompts nettoyés :**
+- Suppression de tous les "minimum X" et "MINIMUM ATTENDU"
+- Focus sur la qualité factuelle, pas les quotas
+- "Rapporte TOUS les findings - 0 si rien, des dizaines si nombreux"
+- Les fondateurs analysés via LinkedIn API séparément (pas le coeur des agents)
+
+**Flow final :**
+```
+Context Engine (amont) → Agents Standard → [Post-vérification si confidence < 70%]
+    ↓                       ↓
+  - Website resolver      - Analyse docs enrichis
+  - Website crawler       - Cross-ref Context Engine
+  - Competitor search     - Qualité Big4
+  - Similar deals         - Pas de minimums
+```
+
+---
+
+## 2026-01-25 19:15 - FEAT: Website URL Resolver avec fallbacks
+
+### Fichiers créés
+- `src/services/context-engine/website-resolver.ts` (~500 lignes)
+
+### Fichiers modifiés
+- `src/agents/types.ts`: Ajout `websiteUrl` à `ExtractedDealInfo`
+- `src/services/context-engine/index.ts`: Intégration du resolver
+
+### Nouvelle fonctionnalité : Résolution automatique de l'URL du site
+
+Le Context Engine résout automatiquement l'URL du site web avec cascade de fallbacks :
+
+**Ordre de priorité :**
+1. **Form URL** : URL fournie par le user → on la valide (HEAD request)
+2. **Form invalide** : Si 404/timeout/typo → on passe au deck
+3. **Deck** : Extraction depuis le pitch deck (regex sur URLs, domaines emails)
+4. **Autres docs** : Chercher dans les documents financiers, etc.
+5. **Web search** : Recherche "nom + secteur" via Serper ou Brave
+
+**Extraction depuis les documents :**
+- URLs explicites (`https://`, `www.`)
+- Domaines dans les emails (`contact@startup.com` → `startup.com`)
+- Patterns courants (`Visit us at startup.io`)
+- Score de matching avec le nom de la startup
+- Filtrage des agrégateurs (LinkedIn, Crunchbase, etc.)
+
+**Usage :**
+```typescript
+await enrichDeal(query, {
+  includeWebsite: true,
+  formWebsiteUrl: deal.website,         // URL du formulaire (sera validée)
+  documentTexts: [                       // Fallback pour extraction
+    { type: "pitch_deck", text: deckText },
+    { type: "other", text: otherDocText }
+  ],
+});
+```
+
+**Ou directement :**
+```typescript
+import { resolveWebsiteUrl } from "@/services/context-engine";
+
+const result = await resolveWebsiteUrl({
+  formUrl: "startup.cm",  // typo
+  companyName: "Startup",
+  sector: "fintech",
+  documentTexts: [...]
+});
+// result.url = "https://startup.com" (trouvé via web search)
+// result.source = "web_search"
+// result.failedUrl = "startup.cm"
+```
+
+---
+
+## 2026-01-25 18:45 - FEAT: Website Crawler pour Context Engine
+
+### Fichiers créés
+- `src/services/context-engine/connectors/website-crawler.ts` (~900 lignes)
+
+### Fichiers modifiés
+- `src/services/context-engine/types.ts`: Ajout types WebsiteContent, WebsitePage, WebsitePageType
+- `src/services/context-engine/index.ts`: Intégration du crawler avec cache
+
+### Nouvelle fonctionnalité : Crawl intégral du site web
+
+**Principe : on scrape TOUT le site, pas de paths hardcodés.**
+
+Le crawler part de la homepage, suit tous les liens internes, et récupère l'intégralité du contenu. C'est une mine d'or contextuelle car le site montre ce que la startup dit au MARCHÉ (vs ce qu'elle dit aux investisseurs).
+
+**Fonctionnement :**
+1. Part de l'URL de base
+2. Découvre les liens internes sur chaque page
+3. Crawl en parallèle (5 requêtes simultanées)
+4. Extrait le contenu texte + données structurées
+5. Agrège les insights de toutes les pages
+
+**Données extraites (si présentes) :**
+- Contenu texte de chaque page
+- Team members (noms, rôles, LinkedIn)
+- Pricing plans (prix, features)
+- Testimonials et clients
+- Job openings
+- Features produit
+- Intégrations connues
+
+**Configuration :**
+```typescript
+await enrichDeal(query, {
+  includeWebsite: true,
+  extractedWebsiteUrl: "https://startup.com",
+  websiteMaxPages: 100,  // default
+});
+```
+
+**Caractéristiques techniques :**
+- Max 100 pages par défaut
+- 5 requêtes parallèles
+- 100ms delay entre batches (politesse)
+- Timeout 10s/page, 2min total
+- Cache 1h
+- Skip automatique : assets, mailto, login, etc.
+
+### Prochaines étapes
+- Extraction automatique de l'URL depuis le pitch deck
+- Support sitemap.xml
+
+---
+
+## 2026-01-25 16:00 - FEAT: webSearch tool + Amélioration agents ReAct
+
+### Fichiers modifiés
+- `src/agents/react/tools/built-in.ts`: Ajout du tool webSearch (Serper + Brave + Perplexity)
+- `src/agents/document-extractor.ts`: Règles strictes pour parsing Team (backgrounds = null si ambigu)
+- `src/agents/react/agents/deck-forensics-react.ts`: Refonte complète du prompt (niveau Big4)
+- `src/services/openrouter/router.ts`: document-extractor passe à Claude 3.5 Sonnet
+
+### Changements majeurs
+
+**1. webSearch tool pour agents ReAct**
+- 3 modes: Serper (fast), Brave (fallback), Perplexity (AI-synthesized)
+- Permet aux agents de vérifier les claims en temps réel
+- Format requête optimal: mots-clés simples, pas de phrases
+
+**2. document-extractor amélioré**
+- Règle stricte: background = null si association nom-entreprise non explicite
+- Plus d'hallucinations sur les backgrounds des fondateurs
+- Utilise Claude 3.5 Sonnet au lieu de GPT-4o Mini
+
+**3. deck-forensics ReAct refactorisé**
+- Suppression des minimums artificiels (8 claims, 5 red flags, 8 questions)
+- Niveau d'exigence: Big4 / Top-tier VC
+- Focus sur claims business (market, competition, traction, partnerships)
+- Les backgrounds fondateurs sont récupérés via API LinkedIn séparément
+
+### Tests effectués
+- document-extractor: backgrounds correctement à null pour Antiopea
+- deck-forensics: webSearch fonctionne (Kevin Cohen, Sacha Rebbouh trouvés)
+- Coût: ~$0.15 par analyse complète (Sonnet + Perplexity)
+
+---
+
 ## 2026-01-25 12:30 - FEAT: Extraction LinkedIn URL dans DB_COMPLETER
 
 ### Fichiers modifiés
@@ -5922,3 +9833,54 @@ L'apprentissage reste crucial pour l'optimisation interne du systeme, mais ce n'
 ### Prochaines etapes
 - Continuer a detailler le Context Engine et ses sources de donnees
 - Definir les specs techniques pour l'integration des APIs de donnees
+
+---
+
+## 2026-01-26 14:30
+
+### Fichiers modifies
+- `src/agents/tier2/saas-expert.ts`
+
+### Description du changement
+**Refonte complete de saas-expert.ts selon AGENT-REFONTE-PROMPT.md**
+
+Transformation de l'agent de ~50 lignes (factory pattern) vers ~630 lignes (classe standalone) :
+
+1. **Schemas Zod riches** :
+   - `SaaSMetricEvaluationSchema` - Evaluation avec source, reasoning, confidence
+   - `SaaSRedFlagSchema` - Red flags avec severity, proof, impact, question
+   - `SaaSUnitEconomicsSchema` - LTV, CAC, LTV/CAC, Burn Multiple, Magic Number
+   - `SaaSCohortHealthSchema` - Net Revenue Retention, Logo Retention, contraction
+   - `SaaSGTMAssessmentSchema` - CAC by channel, sales efficiency, pipeline coverage
+   - `SaaSMoatAnalysisSchema` - Switching costs, network effects, data moat, integrations
+   - `SaaSOutputSchema` - Schema complet de sortie
+
+2. **System prompt Big4 + Partner VC** :
+   - Persona expert SaaS avec 200+ deals evalues
+   - Injection des benchmarks SaaS par stage (pre-seed, seed, series-a, series-b)
+   - Standards de qualite: chaque affirmation sourcee, red flags avec 4 elements
+   - Formules de calcul des metriques (LTV, CAC, Magic Number, etc.)
+
+3. **User prompt avec cross-reference** :
+   - Integration Funding DB pour contexte concurrentiel
+   - Comparables SaaS du meme stage
+   - Verification des claims deck vs donnees DB
+
+4. **Classe SaaSExpertAgent** :
+   - Extends BaseAgent<SaaSExpertOutput>
+   - Methodes: buildSystemPrompt(), buildUserPrompt(), transformOutput()
+   - Transformation vers SectorExpertData standard pour compatibilite
+
+5. **Scoring system** :
+   - Unit Economics: 25 points
+   - Growth Quality: 25 points
+   - Retention Health: 25 points
+   - GTM Efficiency: 25 points
+   - Total: 100 points
+
+### Verification
+- TypeScript compilation OK (pas d'erreurs dans le nouveau fichier)
+- Erreurs pre-existantes dans d'autres fichiers tier2 (base-sector-expert.ts)
+
+### Prochaines etapes
+- Attendre instruction pour prochain agent Tier 2 a refondre

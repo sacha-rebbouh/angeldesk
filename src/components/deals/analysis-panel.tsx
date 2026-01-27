@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
-import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Brain, Crown, AlertCircle } from "lucide-react";
+import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,8 +12,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { queryKeys } from "@/lib/query-keys";
@@ -34,6 +32,7 @@ import {
 } from "./loading-skeletons";
 import { EarlyWarningsPanel } from "./early-warnings-panel";
 import { ProTeaserBanner } from "@/components/shared/pro-teaser";
+import { AnalysisProgress } from "./analysis-progress";
 
 // Dynamic imports for heavy Tier components - reduces initial bundle by ~50KB
 const Tier1Results = dynamic(
@@ -131,11 +130,29 @@ interface AnalyzeError {
   remainingDeals?: number;
 }
 
-async function runAnalysis(dealId: string, type: string, useReAct: boolean): Promise<{ data: AnalysisResult }> {
+interface StalenessInfo {
+  hasAnalysis: boolean;
+  staleness: {
+    isStale: boolean;
+    newDocumentCount: number;
+    message: string | null;
+    analyzedDocumentIds: string[];
+    analysisId: string;
+    analysisType: string;
+  } | null;
+  unanalyzedDocuments: Array<{
+    id: string;
+    name: string;
+    type: string;
+    createdAt: string;
+  }>;
+}
+
+async function runAnalysis(dealId: string, type: string): Promise<{ data: AnalysisResult }> {
   const response = await fetch("/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dealId, type, useReAct }),
+    body: JSON.stringify({ dealId, type }),
   });
 
   if (!response.ok) {
@@ -154,9 +171,14 @@ async function fetchUsageStatus(): Promise<{ usage: UsageStatus }> {
   return response.json();
 }
 
+async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
+  const response = await fetch(`/api/deals/${dealId}/staleness`);
+  if (!response.ok) throw new Error("Failed to fetch staleness");
+  return response.json();
+}
+
 export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: AnalysisPanelProps) {
   const queryClient = useQueryClient();
-  const [useReAct, setUseReAct] = useState(false);
   const [liveResult, setLiveResult] = useState<AnalysisResult | null>(null);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
   const [showAgentDetails, setShowAgentDetails] = useState(false);
@@ -169,6 +191,17 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   });
 
   const usage = usageData?.usage;
+
+  // Fetch staleness info (are there new documents since last analysis?)
+  const { data: stalenessData } = useQuery({
+    queryKey: ["deals", dealId, "staleness"],
+    queryFn: () => fetchStaleness(dealId),
+    // Refetch when analyses list changes
+    enabled: analyses.length > 0,
+  });
+
+  const staleness = stalenessData?.staleness;
+  const isAnalysisStale = staleness?.isStale ?? false;
 
   // Determine analysis type based on subscription plan
   const subscriptionPlan: SubscriptionPlan = (usage?.subscriptionStatus as SubscriptionPlan) ?? "FREE";
@@ -226,13 +259,14 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   }, [liveResult, selectedAnalysisId, analyses]);
 
   const mutation = useMutation({
-    mutationFn: () => runAnalysis(dealId, analysisType, useReAct),
+    mutationFn: () => runAnalysis(dealId, analysisType),
     onSuccess: (response) => {
       setLiveResult(response.data);
       setSelectedAnalysisId(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
       queryClient.invalidateQueries({ queryKey: ["analyze", "usage"] });
-      toast.success(useReAct ? "Analyse ReAct terminee" : "Analyse terminee");
+      queryClient.invalidateQueries({ queryKey: ["deals", dealId, "staleness"] });
+      toast.success("Analyse terminee");
     },
     onError: (error: Error & { upgradeRequired?: boolean }) => {
       if (error.upgradeRequired) {
@@ -303,6 +337,37 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   return (
     <div className="space-y-4">
+      {/* Stale Analysis Warning Banner */}
+      {isAnalysisStale && staleness && (
+        <Card className="border-amber-300 bg-amber-50">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <FileWarning className="h-5 w-5 text-amber-600" />
+                <div>
+                  <p className="font-medium text-amber-800">
+                    {staleness.message}
+                  </p>
+                  <p className="text-sm text-amber-700">
+                    De nouveaux documents ont ete ajoutes depuis la derniere analyse. Relancez une analyse pour les inclure.
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-amber-400 text-amber-700 hover:bg-amber-100"
+                onClick={handleRunAnalysis}
+                disabled={isRunning || !canRunAnalysis}
+              >
+                <Play className="mr-2 h-4 w-4" />
+                Relancer
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Usage Status Banner for FREE users */}
       {usage && !usage.isUnlimited && (
         <Card className={usage.remainingDeals === 0 ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}>
@@ -347,49 +412,34 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Button
-            onClick={handleRunAnalysis}
-            disabled={isRunning || !canRunAnalysis}
-            size="lg"
-            className="w-full"
-          >
-            {isRunning ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Analyse en cours...
-              </>
-            ) : !canRunAnalysis ? (
-              <>
-                <AlertCircle className="mr-2 h-4 w-4" />
-                Limite atteinte
-              </>
-            ) : (
-              <>
-                <Play className="mr-2 h-4 w-4" />
-                Analyser ce deal
-              </>
-            )}
-          </Button>
+          {/* Analysis Progress - shown when running */}
+          {isRunning && (
+            <AnalysisProgress
+              isRunning={isRunning}
+              analysisType={analysisType === "tier1_complete" ? "tier1_complete" : "full_analysis"}
+            />
+          )}
 
-          {/* ReAct Mode Toggle - for PRO users */}
-          {subscriptionPlan !== "FREE" && (
-            <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
-              <Brain className="h-5 w-5 text-primary" />
-              <div className="flex-1">
-                <Label htmlFor="react-mode" className="text-sm font-medium cursor-pointer">
-                  Mode ReAct
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Scores reproductibles (variance &lt; 5 points), traces de raisonnement
-                </p>
-              </div>
-              <Switch
-                id="react-mode"
-                checked={useReAct}
-                onCheckedChange={setUseReAct}
-                disabled={isRunning}
-              />
-            </div>
+          {/* Launch button - hidden when running */}
+          {!isRunning && (
+            <Button
+              onClick={handleRunAnalysis}
+              disabled={!canRunAnalysis}
+              size="lg"
+              className="w-full"
+            >
+              {!canRunAnalysis ? (
+                <>
+                  <AlertCircle className="mr-2 h-4 w-4" />
+                  Limite atteinte
+                </>
+              ) : (
+                <>
+                  <Play className="mr-2 h-4 w-4" />
+                  Analyser ce deal
+                </>
+              )}
+            </Button>
           )}
 
           {/* History Toggle */}
@@ -466,17 +516,17 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               />
             )}
 
-            {/* Tier 2 Results - Detailed View (PRO only shows full, FREE shows teasers) */}
+            {/* Tier 2 Results - Sector Expert Analysis (PRO only) */}
             {isTier2Analysis && displayedResult.success && Object.keys(tier2Results).length > 0 && (
               <Tier2Results results={tier2Results} subscriptionPlan={subscriptionPlan} />
             )}
 
-            {/* Tier 1 Results - Detailed View (FREE sees limited items + teasers) */}
+            {/* Tier 1 Results - 12 Investigation Agents (FREE sees limited items + teasers) */}
             {isTier1Analysis && displayedResult.success && Object.keys(tier1Results).length > 0 && (
               <Tier1Results results={tier1Results} subscriptionPlan={subscriptionPlan} />
             )}
 
-            {/* Tier 3 Results - Sector Expert (PRO only) */}
+            {/* Tier 3 Results - Synthesis Agents (Score, Scenarios, Devil's Advocate, Memo) */}
             {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
               <Tier3Results results={tier3Results} subscriptionPlan={subscriptionPlan} />
             )}

@@ -217,6 +217,8 @@ export interface DealContext {
   peopleGraph?: PeopleGraph;
   competitiveLandscape?: CompetitiveLandscape;
   newsSentiment?: NewsSentiment;
+  /** Full website content from crawling the startup's site */
+  websiteContent?: WebsiteContent;
 
   // Metadata
   enrichedAt: string;
@@ -258,6 +260,8 @@ export interface ConnectorQuery {
   geography?: string;
   founderNames?: string[];
   keywords?: string[];
+  /** Startup website URL for full site crawling */
+  websiteUrl?: string;
 
   // ============================================================================
   // EXTRACTED DATA (from document-extractor)
@@ -297,4 +301,135 @@ export interface Connector {
   getFounderBackground?(founderName: string): Promise<FounderBackground | null>;
   getCompetitors?(query: ConnectorQuery): Promise<Competitor[]>;
   getNews?(query: ConnectorQuery): Promise<NewsArticle[]>;
+}
+
+// ============================================================================
+// WEBSITE CONTENT (Full site crawling)
+// ============================================================================
+
+/**
+ * A single scraped page from the startup's website
+ */
+export interface WebsitePage {
+  url: string;
+  path: string; // e.g., "/about", "/pricing"
+  title: string;
+  description?: string; // meta description
+  content: string; // full text content
+  pageType: WebsitePageType;
+  extractedData?: {
+    // Team page specific
+    teamMembers?: {
+      name: string;
+      role: string;
+      bio?: string;
+      linkedinUrl?: string;
+    }[];
+    // Pricing page specific
+    pricingPlans?: {
+      name: string;
+      price: string;
+      features: string[];
+    }[];
+    // Testimonials
+    testimonials?: {
+      quote: string;
+      author: string;
+      company?: string;
+      role?: string;
+    }[];
+    // Client logos/names
+    clients?: string[];
+    // Job openings
+    jobOpenings?: {
+      title: string;
+      department: string;
+      location?: string;
+    }[];
+    // Features/product info
+    features?: {
+      title: string;
+      description: string;
+    }[];
+    // Integrations
+    integrations?: string[];
+  };
+  scrapedAt: string;
+  wordCount: number;
+}
+
+export type WebsitePageType =
+  | "homepage"
+  | "about"
+  | "team"
+  | "pricing"
+  | "product"
+  | "features"
+  | "customers"
+  | "case-studies"
+  | "testimonials"
+  | "blog"
+  | "blog-post"
+  | "careers"
+  | "contact"
+  | "legal"
+  | "documentation"
+  | "api"
+  | "integrations"
+  | "other";
+
+/**
+ * Complete website content from crawling
+ */
+export interface WebsiteContent {
+  /** Base URL of the website */
+  baseUrl: string;
+  /** Company name extracted from site */
+  companyName?: string;
+  /** Main tagline/value prop from homepage */
+  tagline?: string;
+  /** All crawled pages */
+  pages: WebsitePage[];
+  /** Aggregated insights from all pages */
+  insights: {
+    // Product
+    productDescription?: string;
+    features: string[];
+    integrations: string[];
+    // Pricing
+    hasFreeTier: boolean;
+    hasPricing: boolean;
+    pricingModel?: "freemium" | "subscription" | "usage-based" | "enterprise" | "contact-sales";
+    priceRange?: { min: number; max: number; currency: string };
+    // Team
+    teamSize?: number;
+    teamMembers: { name: string; role: string; linkedinUrl?: string }[];
+    // Traction
+    clientCount?: number;
+    clients: string[];
+    testimonials: { quote: string; author: string; company?: string }[];
+    // Hiring
+    openPositions: number;
+    hiringDepartments: string[];
+    // Content health
+    lastBlogPost?: string;
+    blogPostCount?: number;
+    hasDocumentation: boolean;
+    hasAPI: boolean;
+  };
+  /** Crawl metadata */
+  crawlStats: {
+    totalPages: number;
+    successfulPages: number;
+    failedPages: number;
+    totalWordCount: number;
+    crawlDurationMs: number;
+    crawledAt: string;
+  };
+  /** Red flags detected from website */
+  redFlags: {
+    type: string;
+    description: string;
+    severity: "low" | "medium" | "high";
+  }[];
 }

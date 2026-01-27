@@ -18,6 +18,10 @@ model User {
 
   subscriptionStatus SubscriptionStatus @default(FREE)
 
+  // Préférences d'investissement BA (Business Angel)
+  // Stocké en JSON pour flexibilité (voir BAPreferences dans services/benchmarks/types.ts)
+  investmentPreferences Json?
+
   deals         Deal[]
 
   createdAt     DateTime  @default(now())
@@ -229,6 +233,10 @@ model Analysis {
   // If deal changes, fingerprint changes, cache is invalid
   dealFingerprint String?
   useReAct        Boolean  @default(false)
+
+  // Document versioning: track which documents were analyzed
+  // Allows detecting "stale" analyses when new docs are added
+  documentIds     String[] @default([])
 
   createdAt       DateTime @default(now())
 
@@ -654,6 +662,7 @@ model Company {
   subIndustry     String?  // More specific classification
   businessModel   String?  // SaaS, Marketplace, Transactional, Hardware, Services
   targetMarket    String?  // B2B, B2C, B2B2C
+  useCases        String[] // Problems solved (for competitor matching)
 
   // Location
   headquarters    String?  // Country
@@ -777,7 +786,16 @@ model FundingRound {
   companyName     String
   companySlug     String?  // Normalized name for deduplication
   description     String?  @db.Text
+  tagline         String?  // One-liner (e.g., "Slack for healthcare")
   website         String?
+  linkedinUrl     String?  // LinkedIn company page
+
+  // ============================================================================
+  // USE CASES & BUSINESS MODEL (for competitor detection)
+  // ============================================================================
+  useCases        String[] // Problems solved (e.g., ["invoice management", "expense tracking"])
+  businessModel   String?  // SaaS, Marketplace, Transactional, Hardware, Services
+  targetMarket    String?  // B2B, B2C, B2B2C
 
   // Funding details
   amount          Decimal? @db.Decimal(14, 2) // In original currency
@@ -805,9 +823,19 @@ model FundingRound {
   investorsCorporates String[] // Corporate investors
   leadInvestor    String?
 
-  // Valuation at this round
+  // ============================================================================
+  // VALUATION & METRICS AT RAISE (for benchmark comparison)
+  // ============================================================================
   valuationPre    Decimal? @db.Decimal(14, 2)
   valuationPost   Decimal? @db.Decimal(14, 2)
+  valuationMultiple Float? // Multiple ARR (e.g., 25x) - calculated or reported
+  isDownRound     Boolean? // True if valuation < previous round
+
+  // Metrics at the time of raise (for accurate benchmarking)
+  arrAtRaise      Decimal? @db.Decimal(14, 2) // ARR at time of funding
+  mrrAtRaise      Decimal? @db.Decimal(14, 2) // MRR at time of funding
+  growthRateAtRaise Float? // YoY growth % at time of funding
+  employeesAtRaise Int?    // Headcount at time of funding
 
   // Dates
   fundingDate     DateTime?
@@ -849,6 +877,9 @@ model FundingRound {
   @@index([fundingDate])
   @@index([amountUsd])
   @@index([isMigrated])
+  @@index([businessModel])
+  @@index([targetMarket])
+  @@index([isDownRound])
 }
 
 // FUNDING SOURCE - Track data sources and their freshness
@@ -1278,4 +1309,90 @@ model CacheEntry {
   updatedAt       DateTime @updatedAt
 
   @@index([expiresAt])
+}
+
+// ============================================================================
+// CONTEXT ENGINE & LLM PERSISTENCE
+// ============================================================================
+
+// CONTEXT ENGINE SNAPSHOT - Persisted enrichment data for a deal
+// Saves Context Engine results to avoid re-fetching on reanalysis
+model ContextEngineSnapshot {
+  id              String   @id @default(cuid())
+  dealId          String
+
+  // Context Engine output (full JSON)
+  dealIntelligence    Json?  // { similarDeals, fundingContext, competitors }
+  marketData          Json?  // { marketSize, trends, news }
+  competitiveLandscape Json? // { directCompetitors, indirectCompetitors }
+  newsSentiment       Json?  // { articles, overallSentiment }
+  peopleGraph         Json?  // { founders, connections }
+
+  // Metadata
+  completeness    Int      @default(0) // 0-100 how complete the data is
+  connectorResults Json?   // { pappers: true, github: false, ... }
+
+  // Source tracking (what was available when enriched)
+  inputData       Json?    // { companyName, sector, stage, tagline, ... }
+
+  // Validity
+  expiresAt       DateTime // When to consider stale (default: 7 days)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([dealId]) // One snapshot per deal (overwritten on refresh)
+  @@index([dealId])
+  @@index([expiresAt])
+}
+
+// LLM CALL LOG - Raw prompts and responses for debugging/audit
+model LLMCallLog {
+  id              String   @id @default(cuid())
+
+  // Linking
+  analysisId      String?
+  boardSessionId  String?
+  agentName       String   // Which agent made the call
+
+  // Model info
+  model           String   // e.g., "claude-3-5-sonnet-20241022"
+  provider        String   @default("openrouter") // openrouter, anthropic, openai
+
+  // Request
+  systemPrompt    String?  @db.Text
+  userPrompt      String   @db.Text
+  temperature     Float?
+  maxTokens       Int?
+
+  // Response
+  response        String   @db.Text
+  finishReason    String?  // stop, length, content_filter, etc.
+
+  // Tokens & Cost
+  inputTokens     Int
+  outputTokens    Int
+  totalTokens     Int
+  cost            Decimal  @db.Decimal(10, 6)
+
+  // Timing
+  durationMs      Int
+  firstTokenMs    Int?     // Time to first token (TTFT)
+
+  // Error tracking (if failed)
+  isError         Boolean  @default(false)
+  errorMessage    String?  @db.Text
+  errorType       String?  // rate_limit, timeout, content_filter, etc.
+
+  // Metadata
+  metadata        Json?    // Additional context (retry count, etc.)
+
+  createdAt       DateTime @default(now())
+
+  @@index([analysisId])
+  @@index([boardSessionId])
+  @@index([agentName])
+  @@index([model])
+  @@index([createdAt])
+  @@index([isError])
 }
