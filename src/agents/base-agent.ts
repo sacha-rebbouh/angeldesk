@@ -24,7 +24,7 @@ export interface LLMCallOptions {
   temperature?: number;
   timeoutMs?: number; // Per-step timeout (default: config.timeoutMs)
   maxTokens?: number;
-  model?: "HAIKU" | "SONNET" | "OPUS" | "GPT4O" | "GPT4O_MINI" | "DEEPSEEK" | "GEMINI_FLASH" | "GEMINI_PRO";
+  model?: "HAIKU" | "SONNET" | "OPUS" | "GPT4O" | "GPT4O_MINI" | "DEEPSEEK" | "GEMINI_FLASH" | "GEMINI_PRO" | "GEMINI_3_FLASH";
 }
 
 export interface LLMStreamOptions extends LLMCallOptions {

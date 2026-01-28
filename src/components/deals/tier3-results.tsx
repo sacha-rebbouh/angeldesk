@@ -188,25 +188,53 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             title="Score detaille par dimension"
             description={`${data.dimensionScores.length} dimensions analysees avec benchmarks`}
             icon={Target}
-            previewText={`Score global: ${data.overallScore}/100 - Top ${data.comparativeRanking.percentileSector}% du secteur`}
+            previewText={data.comparativeRanking.similarDealsAnalyzed > 0
+              ? `Score global: ${data.overallScore}/100 - Top ${data.comparativeRanking.percentileSector}% du secteur`
+              : `Score global: ${data.overallScore}/100`
+            }
           />
         )}
 
         {/* Comparative Ranking - Only for PRO */}
         {showFullScore && (
-          <div className="grid grid-cols-3 gap-3">
-            <div className="p-3 rounded-lg bg-muted text-center">
-              <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
-              <p className="text-xs text-muted-foreground">Percentile Global</p>
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="p-3 rounded-lg bg-muted text-center">
+                {data.comparativeRanking.similarDealsAnalyzed > 0 ? (
+                  <>
+                    <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
+                    <p className="text-xs text-muted-foreground">Percentile Global</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-2xl font-bold text-muted-foreground">N/A</p>
+                    <p className="text-xs text-muted-foreground">Percentile Global</p>
+                  </>
+                )}
+              </div>
+              <div className="p-3 rounded-lg bg-muted text-center">
+                {data.comparativeRanking.similarDealsAnalyzed > 0 ? (
+                  <>
+                    <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
+                    <p className="text-xs text-muted-foreground">Percentile Secteur</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-2xl font-bold text-muted-foreground">N/A</p>
+                    <p className="text-xs text-muted-foreground">Percentile Secteur</p>
+                  </>
+                )}
+              </div>
+              <div className="p-3 rounded-lg bg-muted text-center">
+                <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
+                <p className="text-xs text-muted-foreground">Deals Compares</p>
+              </div>
             </div>
-            <div className="p-3 rounded-lg bg-muted text-center">
-              <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
-              <p className="text-xs text-muted-foreground">Percentile Secteur</p>
-            </div>
-            <div className="p-3 rounded-lg bg-muted text-center">
-              <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
-              <p className="text-xs text-muted-foreground">Deals Compares</p>
-            </div>
+            {data.comparativeRanking.similarDealsAnalyzed === 0 && (
+              <p className="text-xs text-amber-600 text-center">
+                Percentiles non disponibles - aucun deal comparable dans la base
+              </p>
+            )}
           </div>
         )}
 
@@ -312,17 +340,52 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: 
   const probabilityWeighted = data.findings?.probabilityWeightedOutcome;
   const confidenceLevel = data.meta?.confidenceLevel ?? data.score?.value ?? 75;
 
-  // Calculate expected return
+  // Calculate expected return (with and without failure scenario)
   const expectedReturn = useMemo(() => {
     if (!scenarios.length) return null;
+
+    // Full calculation (all scenarios including failure)
     let expMult = 0;
     let expIRR = 0;
+
+    // Success-only calculation (excluding failure/catastrophe scenarios)
+    let successMult = 0;
+    let successIRR = 0;
+    let successProbTotal = 0;
+
     for (const s of scenarios) {
       const prob = (s.probability?.value ?? 0) / 100;
-      expMult += prob * (s.investorReturn?.multiple ?? 0);
-      expIRR += prob * (s.investorReturn?.irr ?? 0);
+      const multiple = s.investorReturn?.multiple ?? 0;
+      const irr = s.investorReturn?.irr ?? 0;
+
+      expMult += prob * multiple;
+      expIRR += prob * irr;
+
+      // Exclude failure scenarios from "success" calculation
+      const scenarioName = (s.name ?? "").toLowerCase();
+      const isFailure = scenarioName === "catastrophic" ||
+                        scenarioName.includes("failure") ||
+                        scenarioName.includes("catastrophe") ||
+                        scenarioName.includes("catastrophic") ||
+                        multiple <= 0;
+      if (!isFailure) {
+        successMult += prob * multiple;
+        successIRR += prob * irr;
+        successProbTotal += prob;
+      }
     }
-    return { multiple: expMult, irr: expIRR };
+
+    // Normalize success metrics by success probability
+    const normalizedSuccessIRR = successProbTotal > 0 ? successIRR / successProbTotal : 0;
+    const normalizedSuccessMult = successProbTotal > 0 ? successMult / successProbTotal : 0;
+
+    return {
+      multiple: expMult,
+      irr: expIRR,
+      successMultiple: normalizedSuccessMult,
+      successIRR: normalizedSuccessIRR,
+      successProbability: successProbTotal * 100,
+    };
   }, [scenarios]);
 
   return (
@@ -346,26 +409,44 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: 
         {expectedReturn && (probabilityWeighted || expectedReturn.multiple > 0) && (
           <div className="p-4 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-indigo-100">Retour Espere (Probabilite-Pondere)</span>
+              <span className="text-sm font-medium text-indigo-100">Retour Espere</span>
               <Badge className="bg-white/20 text-white border-white/30">
                 {data.findings?.mostLikelyScenario ?? "BASE"} le plus probable
               </Badge>
             </div>
+            {/* Main metrics: Multiple + IRR si succès */}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <div className="text-3xl font-bold">
                   {(probabilityWeighted?.expectedMultiple ?? expectedReturn.multiple).toFixed(1)}x
                 </div>
                 <div className="text-xs text-indigo-200 mt-1">
-                  {probabilityWeighted?.expectedMultipleCalculation ?? "Multiple attendu"}
+                  Multiple pondere (tous scenarios)
                 </div>
               </div>
               <div>
-                <div className={cn("text-3xl font-bold")}>
-                  {(probabilityWeighted?.expectedIRR ?? expectedReturn.irr).toFixed(0)}%
+                <div className="text-3xl font-bold text-emerald-300">
+                  {expectedReturn.successIRR.toFixed(0)}%
                 </div>
-                <div className="text-xs text-indigo-200 mt-1">IRR attendu</div>
+                <div className="text-xs text-indigo-200 mt-1">
+                  IRR si succes ({expectedReturn.successProbability.toFixed(0)}% de chances)
+                </div>
               </div>
+            </div>
+            {/* Secondary: IRR with risk */}
+            <div className="mt-3 pt-3 border-t border-white/20">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-indigo-200">IRR ajuste au risque (inclut echec total):</span>
+                <span className={cn(
+                  "font-semibold",
+                  expectedReturn.irr < 10 ? "text-amber-300" : "text-white"
+                )}>
+                  {(probabilityWeighted?.expectedIRR ?? expectedReturn.irr).toFixed(0)}%
+                </span>
+              </div>
+              <p className="text-xs text-indigo-300 mt-1">
+                = Moyenne ponderee de tous les scenarios, y compris perte totale ({(100 - expectedReturn.successProbability).toFixed(0)}% de risque)
+              </p>
             </div>
             {probabilityWeighted?.riskAdjustedAssessment && (
               <p className="text-sm text-indigo-100 mt-3 border-t border-white/20 pt-3">
@@ -915,16 +996,37 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
           </ExpandableSection>
         )}
 
-        {/* Critical Questions - PRO only */}
-        {!isFree && questions.length > 0 && (
-          <ExpandableSection title="Questions critiques pour le fondateur" count={questions.filter(q => q.priority === "CRITICAL").length}>
+        {/* Critical & High Questions - PRO only */}
+        {!isFree && questions.filter(q => q.priority === "CRITICAL" || q.priority === "HIGH").length > 0 && (
+          <ExpandableSection
+            title="Questions importantes pour le fondateur"
+            count={questions.filter(q => q.priority === "CRITICAL" || q.priority === "HIGH").length}
+          >
             <ul className="space-y-2 mt-3">
-              {questions.filter(q => q.priority === "CRITICAL").map((q, i) => (
-                <li key={i} className="p-3 border-2 rounded-lg bg-yellow-50/50 border-yellow-200">
+              {questions.filter(q => q.priority === "CRITICAL" || q.priority === "HIGH").map((q, i) => (
+                <li key={i} className={cn(
+                  "p-3 border-2 rounded-lg",
+                  q.priority === "CRITICAL"
+                    ? "bg-red-50/50 border-red-200"
+                    : "bg-yellow-50/50 border-yellow-200"
+                )}>
                   <div className="flex items-start gap-2">
-                    <Lightbulb className="h-5 w-5 text-yellow-500 shrink-0" />
-                    <div>
-                      <p className="font-medium text-sm">{q.question}</p>
+                    <Lightbulb className={cn(
+                      "h-5 w-5 shrink-0",
+                      q.priority === "CRITICAL" ? "text-red-500" : "text-yellow-500"
+                    )} />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="font-medium text-sm">{q.question}</p>
+                        <Badge variant="outline" className={cn(
+                          "text-xs shrink-0",
+                          q.priority === "CRITICAL"
+                            ? "bg-red-100 text-red-800 border-red-300"
+                            : "bg-yellow-100 text-yellow-800 border-yellow-300"
+                        )}>
+                          {q.priority}
+                        </Badge>
+                      </div>
                       {q.context && (
                         <p className="text-xs text-muted-foreground mt-1">Contexte: {q.context}</p>
                       )}

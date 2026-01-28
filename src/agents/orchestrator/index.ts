@@ -22,10 +22,20 @@ import {
   createFindingMessage,
   consensusEngine,
   reflexionEngine,
+  extractAllFindings,
 } from "../orchestration";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { costMonitor } from "@/services/cost-monitor";
 import { setAgentContext, setAnalysisContext } from "@/services/openrouter/router";
+
+// Fact Store imports for Tier 0 fact extraction
+import { factExtractorAgent, type FactExtractorOutput } from "@/agents/tier0/fact-extractor";
+import {
+  getCurrentFacts,
+  formatFactStoreForAgents,
+  createFactEventsBatch,
+} from "@/services/fact-store";
+import type { CurrentFact } from "@/services/fact-store/types";
 
 // Import modular components
 import {
@@ -110,6 +120,7 @@ export class AgentOrchestrator {
       failFastOnCritical = false,
       maxCostUsd,
       onEarlyWarning,
+      isUpdate = false, // If true, uses UPDATE_ANALYSIS credits (2) vs INITIAL_ANALYSIS (5)
     } = options;
     const startTime = Date.now();
 
@@ -151,6 +162,7 @@ export class AgentOrchestrator {
           maxCostUsd,
           onEarlyWarning,
           enableTrace,
+          isUpdate,
         });
         break;
       case "full_analysis":
@@ -160,6 +172,7 @@ export class AgentOrchestrator {
           maxCostUsd,
           onEarlyWarning,
           enableTrace,
+          isUpdate,
         });
         break;
       case "tier3_synthesis":
@@ -419,7 +432,7 @@ export class AgentOrchestrator {
     _useReAct: boolean, // Deprecated: always use Standard agents
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, enableTrace = true } = advancedOptions;
+    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, enableTrace = true, isUpdate = false } = advancedOptions;
     const startTime = Date.now();
     const TIER1_AGENT_COUNT = 12;
     const collectedWarnings: EarlyWarning[] = [];
@@ -432,7 +445,7 @@ export class AgentOrchestrator {
     const analysis = await createAnalysis({
       dealId,
       type: "tier1_complete",
-      totalAgents: TIER1_AGENT_COUNT + 1,
+      totalAgents: TIER1_AGENT_COUNT + 2, // +1 extractor +1 fact-extractor
       documentIds,
     });
 
@@ -449,6 +462,30 @@ export class AgentOrchestrator {
       documents: deal.documents,
       previousResults: {},
     };
+
+    // STEP 0: Run Tier 0 Fact Extraction (BEFORE document-extractor)
+    // This extracts structured facts that will be available to all agents
+    let factStore: CurrentFact[] = [];
+    let factStoreFormatted = "";
+
+    if (deal.documents.length > 0) {
+      const tier0Result = await this.runTier0FactExtraction(deal, isUpdate, onProgress);
+      factStore = tier0Result.factStore;
+      factStoreFormatted = tier0Result.factStoreFormatted;
+      totalCost += tier0Result.cost;
+
+      if (tier0Result.extractionResult) {
+        results["fact-extractor"] = {
+          agentName: "fact-extractor",
+          success: true,
+          executionTimeMs: tier0Result.executionTimeMs,
+          cost: tier0Result.cost,
+          data: tier0Result.extractionResult,
+        } as AgentResult & { data: FactExtractorOutput };
+      }
+
+      console.log(`[Orchestrator] Tier 0 complete: ${factStore.length} facts in store`);
+    }
 
     // STEP 1: Run document-extractor first (if documents exist)
     // Extract data needed for Context Engine (tagline, competitors, founders)
@@ -511,17 +548,19 @@ export class AgentOrchestrator {
     // STEP 2: Enrich with Context Engine (using extracted data)
     const contextEngineData = await this.enrichContext(deal, extractedData);
 
-    // Build enriched context for Tier 1 agents
+    // Build enriched context for Tier 1 agents with Fact Store
     const enrichedContext: EnrichedAgentContext = {
       ...baseContext,
       contextEngine: contextEngineData,
+      factStore,
+      factStoreFormatted,
     };
 
     // STEP 3: Run all Tier 1 agents in PARALLEL
     onProgress?.({
       currentAgent: "tier1-agents (parallel)",
-      completedAgents: deal.documents.length > 0 ? 1 : 0,
-      totalAgents: TIER1_AGENT_COUNT + 1,
+      completedAgents: deal.documents.length > 0 ? 2 : 0, // +1 for fact-extractor
+      totalAgents: TIER1_AGENT_COUNT + 2,
     });
 
     // Always use Standard agents (better results, lower cost)
@@ -918,13 +957,13 @@ export class AgentOrchestrator {
     useReAct: boolean,
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning } = advancedOptions;
+    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false } = advancedOptions;
     const startTime = Date.now();
     const collectedWarnings: EarlyWarning[] = [];
 
     const sectorExpert = await getTier2SectorExpert(deal.sector);
     const hasSectorExpert = sectorExpert !== null;
-    const TOTAL_AGENTS = 12 + 5 + 1 + (hasSectorExpert ? 1 : 0);
+    const TOTAL_AGENTS = 12 + 5 + 1 + 1 + (hasSectorExpert ? 1 : 0); // +1 for fact-extractor
 
     // Get document IDs for versioning
     const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
@@ -970,6 +1009,10 @@ export class AgentOrchestrator {
     let totalCost = 0;
     let completedCount = 0;
 
+    // Variables for fact store (will be populated in Tier 0)
+    let factStore: CurrentFact[] = [];
+    let factStoreFormatted = "";
+
     try {
       await stateMachine.start();
 
@@ -980,13 +1023,35 @@ export class AgentOrchestrator {
         previousResults: {},
       };
 
+      // STEP 0: TIER 0 FACT EXTRACTION (runs BEFORE everything)
+      // Extracts structured facts that will be available to all agents
+      if (deal.documents.length > 0) {
+        const tier0Result = await this.runTier0FactExtraction(deal, isUpdate, onProgress);
+        factStore = tier0Result.factStore;
+        factStoreFormatted = tier0Result.factStoreFormatted;
+        totalCost += tier0Result.cost;
+        completedCount++;
+
+        if (tier0Result.extractionResult) {
+          allResults["fact-extractor"] = {
+            agentName: "fact-extractor",
+            success: true,
+            executionTimeMs: tier0Result.executionTimeMs,
+            cost: tier0Result.cost,
+            data: tier0Result.extractionResult,
+          } as AgentResult & { data: FactExtractorOutput };
+        }
+
+        console.log(`[Orchestrator:FullAnalysis] Tier 0 complete: ${factStore.length} facts in store`);
+      }
+
       // STEP 1: DOCUMENT EXTRACTION (must run first)
       // We need extracted data (tagline, competitors, founders) for Context Engine
       await stateMachine.startExtraction();
 
       onProgress?.({
         currentAgent: "document-extractor",
-        completedAgents: 0,
+        completedAgents: completedCount,
         totalAgents: TOTAL_AGENTS,
       });
 
@@ -1050,9 +1115,12 @@ export class AgentOrchestrator {
 
       const contextEngineData = await this.enrichContext(deal, extractedData);
 
+      // Build enriched context with Fact Store for all agents
       const enrichedContext: EnrichedAgentContext = {
         ...baseContext,
         contextEngine: contextEngineData,
+        factStore,
+        factStoreFormatted,
       };
 
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in Parallel
@@ -1088,7 +1156,7 @@ export class AgentOrchestrator {
         })
       );
 
-      // Collect Tier 1 results and process findings
+      // Collect Tier 1 results
       for (const { agentName, result } of tier1Results) {
         allResults[agentName] = result;
         totalCost += result.cost;
@@ -1101,18 +1169,6 @@ export class AgentOrchestrator {
           stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
         }
 
-        // Extract and publish findings from ReAct agents
-        if (result.success && "_react" in result) {
-          await this.processReActFindings(
-            analysis.id,
-            agentName,
-            result,
-            allFindings,
-            deal.name,
-            deal.sector
-          );
-        }
-
         // Check for early warnings
         this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
 
@@ -1120,6 +1176,26 @@ export class AgentOrchestrator {
       }
 
       await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+      // Extract findings from ALL Standard agents (for Consensus + Reflexion engines)
+      const { allFindings: extractedFindings, agentConfidences, lowConfidenceAgents } =
+        extractAllFindings(allResults);
+      allFindings.push(...extractedFindings);
+
+      // Publish findings to message bus
+      for (const finding of extractedFindings) {
+        await messageBus.publish(createFindingMessage(finding.agentName, "*", finding));
+      }
+
+      // Persist findings
+      if (extractedFindings.length > 0) {
+        await persistScoredFindings(analysis.id, "tier1-aggregate", extractedFindings);
+      }
+
+      console.log(
+        `[Orchestrator] Extracted ${extractedFindings.length} findings from ${Object.keys(allResults).length} agents. ` +
+        `Low confidence agents: ${lowConfidenceAgents.join(", ") || "none"}`
+      );
 
       // FAIL-FAST: Check for critical warnings after Tier 1
       if (failFastOnCritical) {
@@ -1171,6 +1247,33 @@ export class AgentOrchestrator {
         await this.runConsensusDebate(analysis.id, allFindings);
       } else if (mode !== "full") {
         console.log(`[Orchestrator] Skipping debate phase (mode=${mode})`);
+      }
+
+      // STEP 4.5: REFLEXION PHASE - Auto-critique for low-confidence agents
+      // Now applies to ALL agents with confidence < 75%, not just ReAct agents
+      if (lowConfidenceAgents.length > 0 && mode === "full") {
+        onProgress?.({
+          currentAgent: `reflexion-engine (${lowConfidenceAgents.length} low-confidence agents)`,
+          completedAgents: completedCount,
+          totalAgents: TOTAL_AGENTS,
+          estimatedCostSoFar: totalCost,
+        });
+
+        for (const agentName of lowConfidenceAgents) {
+          const result = allResults[agentName];
+          if (result?.success) {
+            const agentFindings = allFindings.filter(f => f.agentName === agentName);
+            await this.applyReflexion(
+              analysis.id,
+              agentName,
+              result as AnalysisAgentResult,
+              agentFindings,
+              `Deal: ${deal.name}, Sector: ${deal.sector}`
+            );
+          }
+        }
+      } else if (mode !== "full") {
+        console.log(`[Orchestrator] Skipping reflexion phase (mode=${mode})`);
       }
 
       // Check cost limit before synthesis phase
@@ -1462,6 +1565,171 @@ export class AgentOrchestrator {
   // ============================================================================
   // HELPER METHODS
   // ============================================================================
+
+  /**
+   * Run Tier 0 Fact Extraction
+   *
+   * Extracts structured facts from documents BEFORE all other agents.
+   * Facts are persisted to the FactEvent table and returned for injection into agent context.
+   *
+   * @param deal - Deal with documents
+   * @param isUpdate - If true, loads existing facts for contradiction detection
+   * @param onProgress - Progress callback
+   * @returns Object containing current facts and extraction result
+   */
+  private async runTier0FactExtraction(
+    deal: DealWithDocs,
+    isUpdate: boolean,
+    onProgress?: AnalysisOptions["onProgress"]
+  ): Promise<{
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    extractionResult: FactExtractorOutput | null;
+    cost: number;
+    executionTimeMs: number;
+  }> {
+    const startTime = Date.now();
+
+    // Skip if no documents with extracted text
+    const documentsWithContent = deal.documents.filter(d => d.extractedText);
+    if (documentsWithContent.length === 0) {
+      console.log("[Orchestrator:Tier0] No documents with content, skipping fact extraction");
+      return {
+        factStore: [],
+        factStoreFormatted: "",
+        extractionResult: null,
+        cost: 0,
+        executionTimeMs: Date.now() - startTime,
+      };
+    }
+
+    onProgress?.({
+      currentAgent: "fact-extractor (tier0)",
+      completedAgents: 0,
+      totalAgents: 1,
+    });
+
+    try {
+      // Load existing facts if this is an update (for contradiction detection)
+      let existingFacts: CurrentFact[] = [];
+      if (isUpdate) {
+        existingFacts = await getCurrentFacts(deal.id);
+        console.log(`[Orchestrator:Tier0] Loaded ${existingFacts.length} existing facts for update`);
+      }
+
+      // Build context for fact-extractor
+      // Note: For updates, existing facts are passed via previousResults so fact-extractor
+      // can detect contradictions. We use type assertion since AgentResult base doesn't have data.
+      const factContext: AgentContext = {
+        dealId: deal.id,
+        deal,
+        documents: deal.documents,
+        // Pass existing facts via previousResults (fact-extractor extracts them)
+        previousResults: isUpdate && existingFacts.length > 0 ? {
+          "fact-extractor": {
+            agentName: "fact-extractor",
+            success: true,
+            executionTimeMs: 0,
+            cost: 0,
+            data: { facts: existingFacts.map(f => ({
+              factKey: f.factKey,
+              category: f.category,
+              value: f.currentValue,
+              displayValue: f.currentDisplayValue,
+              source: f.currentSource,
+              sourceConfidence: f.currentConfidence,
+            })) },
+          } as unknown as AgentResult,
+        } as Record<string, AgentResult> : {},
+      };
+
+      // Run fact-extractor agent
+      const result = await factExtractorAgent.run(factContext);
+
+      if (!result.success || !("data" in result)) {
+        console.error("[Orchestrator:Tier0] Fact extraction failed:", result.error);
+        return {
+          factStore: existingFacts,
+          factStoreFormatted: formatFactStoreForAgents(existingFacts),
+          extractionResult: null,
+          cost: result.cost,
+          executionTimeMs: Date.now() - startTime,
+        };
+      }
+
+      const extractionData = (result as { data: FactExtractorOutput }).data;
+
+      // Persist new facts to database
+      if (extractionData.facts.length > 0) {
+        try {
+          await createFactEventsBatch(
+            deal.id,
+            extractionData.facts.map(fact => ({
+              factKey: fact.factKey,
+              category: fact.category,
+              value: fact.value,
+              displayValue: fact.displayValue,
+              unit: fact.unit,
+              source: fact.source,
+              sourceDocumentId: fact.sourceDocumentId,
+              sourceConfidence: fact.sourceConfidence,
+              extractedText: fact.extractedText,
+            })),
+            "CREATED", // eventType: new facts being created
+            "system"
+          );
+          console.log(`[Orchestrator:Tier0] Persisted ${extractionData.facts.length} facts to database`);
+        } catch (persistError) {
+          console.error("[Orchestrator:Tier0] Failed to persist facts:", persistError);
+          // Continue anyway - facts are in memory
+        }
+      }
+
+      // Log contradictions if any
+      if (extractionData.contradictions.length > 0) {
+        console.log(`[Orchestrator:Tier0] Detected ${extractionData.contradictions.length} contradictions:`);
+        for (const c of extractionData.contradictions) {
+          console.log(`  - ${c.factKey}: ${c.significance} (${c.newSource} vs ${c.existingSource})`);
+        }
+      }
+
+      // Get current facts (after persistence, to include new events)
+      const currentFacts = await getCurrentFacts(deal.id);
+      const formattedFacts = formatFactStoreForAgents(currentFacts);
+
+      console.log(`[Orchestrator:Tier0] Fact extraction complete: ${extractionData.metadata.factsExtracted} facts, ` +
+        `${extractionData.metadata.contradictionsDetected} contradictions, ` +
+        `avg confidence ${extractionData.metadata.averageConfidence}%`);
+
+      onProgress?.({
+        currentAgent: "fact-extractor (tier0)",
+        completedAgents: 1,
+        totalAgents: 1,
+        latestResult: result,
+      });
+
+      return {
+        factStore: currentFacts,
+        factStoreFormatted: formattedFacts,
+        extractionResult: extractionData,
+        cost: result.cost,
+        executionTimeMs: Date.now() - startTime,
+      };
+    } catch (error) {
+      console.error("[Orchestrator:Tier0] Error during fact extraction:", error);
+
+      // Graceful degradation - return existing facts if available
+      const existingFacts = isUpdate ? await getCurrentFacts(deal.id).catch(() => []) : [];
+
+      return {
+        factStore: existingFacts,
+        factStoreFormatted: formatFactStoreForAgents(existingFacts),
+        extractionResult: null,
+        cost: 0,
+        executionTimeMs: Date.now() - startTime,
+      };
+    }
+  }
 
   /**
    * Load BA preferences from database for personalized analysis (Tier 3)

@@ -604,7 +604,6 @@ export const mobilityExpert = {
       const response = await complete(userPrompt, {
         systemPrompt,
         complexity: "complex",
-        maxTokens: 8000,
         temperature: 0.3, // Lower temperature for more consistent analysis
       });
 

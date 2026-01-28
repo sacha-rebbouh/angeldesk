@@ -5,16 +5,20 @@ import { cn } from "@/lib/utils";
 import { Check, Loader2 } from "lucide-react";
 
 // Timing configuration (in seconds)
-// These create a realistic feeling progression
-const STEP_TIMINGS = {
-  extraction: { min: 8, max: 12 }, // Artificially extended for premium feel
-  tier1: { min: 25, max: 45 },
-  tier2: { min: 8, max: 15 },
-  tier3: { min: 15, max: 30 },
+// Realistic durations based on actual analysis times
+// The last step is intentionally longer because it stays "running" until the analysis completes
+const STEP_TIMINGS_PRO = {
+  extraction: { duration: 15 }, // Document extraction ~15s
+  tier1: { duration: 90 }, // 13 Tier1 agents in parallel ~90s
+  tier2: { duration: 45 }, // Sector expert ~45s
+  tier3: { duration: 60 }, // 5 Tier3 agents ~60s (will stay running until complete)
 } as const;
 
-// Calculate total expected time
-const TOTAL_MAX_TIME = Object.values(STEP_TIMINGS).reduce((acc, t) => acc + t.max, 0);
+const STEP_TIMINGS_FREE = {
+  extraction: { duration: 15 }, // Document extraction ~15s
+  investigation: { duration: 60 }, // Simplified investigation ~60s
+  scoring: { duration: 30 }, // Basic scoring ~30s (will stay running until complete)
+} as const;
 
 export interface AnalysisProgressProps {
   isRunning: boolean;
@@ -25,66 +29,93 @@ export interface AnalysisProgressProps {
 interface StepConfig {
   id: string;
   label: string;
-  timing: { min: number; max: number };
+  duration: number;
 }
 
 export function AnalysisProgress({
   isRunning,
   analysisType = "full_analysis",
 }: AnalysisProgressProps) {
-  // Build steps based on analysis type
+  // Build steps based on analysis type (FREE vs PRO)
   const steps = useMemo<StepConfig[]>(() => {
-    const baseSteps: StepConfig[] = [
+    if (analysisType === "tier1_complete") {
+      // FREE plan - 3 steps
+      return [
+        {
+          id: "extraction",
+          label: "Extraction des documents",
+          duration: STEP_TIMINGS_FREE.extraction.duration,
+        },
+        {
+          id: "investigation",
+          label: "Investigation",
+          duration: STEP_TIMINGS_FREE.investigation.duration,
+        },
+        {
+          id: "scoring",
+          label: "Scoring",
+          duration: STEP_TIMINGS_FREE.scoring.duration,
+        },
+      ];
+    }
+
+    // PRO plan (full_analysis) - 4 steps
+    return [
       {
         id: "extraction",
         label: "Extraction des documents",
-        timing: STEP_TIMINGS.extraction,
+        duration: STEP_TIMINGS_PRO.extraction.duration,
       },
       {
         id: "tier1",
         label: "Investigation approfondie",
-        timing: STEP_TIMINGS.tier1,
+        duration: STEP_TIMINGS_PRO.tier1.duration,
+      },
+      {
+        id: "tier2",
+        label: "Expert sectoriel",
+        duration: STEP_TIMINGS_PRO.tier2.duration,
+      },
+      {
+        id: "tier3",
+        label: "Synthese & Scoring",
+        duration: STEP_TIMINGS_PRO.tier3.duration,
       },
     ];
-
-    if (analysisType === "full_analysis") {
-      baseSteps.push(
-        {
-          id: "tier2",
-          label: "Expert sectoriel",
-          timing: STEP_TIMINGS.tier2,
-        },
-        {
-          id: "tier3",
-          label: "Synthese & Scoring",
-          timing: STEP_TIMINGS.tier3,
-        }
-      );
-    }
-
-    return baseSteps;
   }, [analysisType]);
 
   const [elapsedTime, setElapsedTime] = useState(0);
-  const startTimeRef = useRef<number | null>(null);
+  const [isComplete, setIsComplete] = useState(false);
+  const startTimeRef = useRef<number>(Date.now());
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Calculate step statuses based on elapsed time
+  // CRITICAL: The last step NEVER becomes "completed" while isRunning is true
   const stepStatuses = useMemo(() => {
     const statuses: Record<string, "pending" | "running" | "completed"> = {};
 
     let accumulatedTime = 0;
 
-    for (const step of steps) {
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const isLastStep = i === steps.length - 1;
       const stepStartTime = accumulatedTime;
-      const estimatedDuration = (step.timing.min + step.timing.max) / 2;
-      const stepEndTime = stepStartTime + estimatedDuration;
+      const stepEndTime = stepStartTime + step.duration;
 
-      if (elapsedTime < stepStartTime) {
+      if (isComplete) {
+        // Analysis is done - mark all steps as completed
+        statuses[step.id] = "completed";
+      } else if (elapsedTime < stepStartTime) {
+        // Haven't reached this step yet
         statuses[step.id] = "pending";
+      } else if (isLastStep) {
+        // Last step: stays "running" until analysis completes (never auto-completes)
+        statuses[step.id] = "running";
       } else if (elapsedTime >= stepEndTime) {
+        // Non-last step and past its duration: completed
         statuses[step.id] = "completed";
       } else {
+        // Currently in this step
         statuses[step.id] = "running";
       }
 
@@ -92,27 +123,18 @@ export function AnalysisProgress({
     }
 
     return statuses;
-  }, [elapsedTime, steps]);
+  }, [elapsedTime, steps, isComplete]);
 
-  // Timer effect
+  // Start timer on mount, stop when isRunning becomes false
   useEffect(() => {
-    if (!isRunning) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      startTimeRef.current = null;
-      return;
-    }
-
+    // Start the timer immediately
     startTimeRef.current = Date.now();
     setElapsedTime(0);
+    setIsComplete(false);
 
     intervalRef.current = setInterval(() => {
-      if (startTimeRef.current) {
-        const newElapsed = (Date.now() - startTimeRef.current) / 1000;
-        setElapsedTime(newElapsed);
-      }
+      const newElapsed = (Date.now() - startTimeRef.current) / 1000;
+      setElapsedTime(newElapsed);
     }, 500);
 
     return () => {
@@ -121,12 +143,16 @@ export function AnalysisProgress({
         intervalRef.current = null;
       }
     };
-  }, [isRunning]);
+  }, []); // Empty deps = run once on mount
 
-  // Mark all steps as complete when analysis finishes
+  // When isRunning becomes false, mark as complete
   useEffect(() => {
-    if (!isRunning && startTimeRef.current !== null) {
-      setElapsedTime(TOTAL_MAX_TIME);
+    if (!isRunning) {
+      setIsComplete(true);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     }
   }, [isRunning]);
 
@@ -136,12 +162,7 @@ export function AnalysisProgress({
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Don't render if not running and never started
-  if (!isRunning && elapsedTime === 0) {
-    return null;
-  }
-
-  const allComplete = Object.values(stepStatuses).every((s) => s === "completed");
+  const displayTime = elapsedTime;
 
   return (
     <div className="rounded-lg border bg-card p-4 shadow-sm">
@@ -153,7 +174,7 @@ export function AnalysisProgress({
               <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
               <span className="font-medium text-sm">Analyse en cours</span>
             </>
-          ) : allComplete ? (
+          ) : isComplete ? (
             <>
               <div className="h-2 w-2 rounded-full bg-green-500" />
               <span className="font-medium text-sm text-green-700">
@@ -168,7 +189,7 @@ export function AnalysisProgress({
           )}
         </div>
         <span className="text-sm text-muted-foreground font-mono tabular-nums">
-          {formatTime(Math.min(elapsedTime, TOTAL_MAX_TIME))}
+          {formatTime(displayTime)}
         </span>
       </div>
 

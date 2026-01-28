@@ -736,7 +736,12 @@ Réponds UNIQUEMENT en JSON avec cette structure exacte:
 \`\`\`
 
 IMPORTANT:
-- Si données manquantes = score PMF maximum 50 et verdict "WEAK" ou "NOT_DEMONSTRATED"
+- Cohérence OBLIGATOIRE verdict/score PMF:
+  * NOT_DEMONSTRATED (pas de preuve) = score 0-15 MAXIMUM
+  * WEAK (signaux faibles) = score 15-35 MAXIMUM
+  * EMERGING (en construction) = score 35-60 MAXIMUM
+  * STRONG (prouvé) = score 60-100
+- Si données manquantes = verdict "NOT_DEMONSTRATED" et score 0-10
 - Si NRR non mentionné = red flag MEDIUM minimum
 - Si clients non vérifiables = customerQuality "LOW"
 - Concentration > 30% top client = red flag CRITICAL`;
@@ -1032,11 +1037,29 @@ IMPORTANT:
     const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
     const validResults = ["PASS", "FAIL", "PARTIAL", "NOT_TESTABLE"] as const;
 
+    // Get raw values
+    const rawScore = Math.min(100, Math.max(0, pmf?.pmfScore ?? 0));
+    const rawVerdict = validVerdicts.includes(pmf?.pmfVerdict as typeof validVerdicts[number])
+      ? pmf.pmfVerdict as typeof validVerdicts[number]
+      : "NOT_DEMONSTRATED";
+
+    // Enforce verdict/score coherence:
+    // - NOT_DEMONSTRATED: score capped at 15 (no proof = no points)
+    // - WEAK: score capped at 35
+    // - EMERGING: score capped at 60
+    // - STRONG: no cap
+    let coherentScore = rawScore;
+    if (rawVerdict === "NOT_DEMONSTRATED") {
+      coherentScore = Math.min(rawScore, 15);
+    } else if (rawVerdict === "WEAK") {
+      coherentScore = Math.min(rawScore, 35);
+    } else if (rawVerdict === "EMERGING") {
+      coherentScore = Math.min(rawScore, 60);
+    }
+
     return {
-      pmfScore: Math.min(100, Math.max(0, pmf?.pmfScore ?? 30)),
-      pmfVerdict: validVerdicts.includes(pmf?.pmfVerdict as typeof validVerdicts[number])
-        ? pmf.pmfVerdict as typeof validVerdicts[number]
-        : "NOT_DEMONSTRATED",
+      pmfScore: coherentScore,
+      pmfVerdict: rawVerdict,
       pmfJustification: pmf?.pmfJustification ?? "Données insuffisantes pour évaluer le PMF",
       positiveSignals: Array.isArray(pmf?.positiveSignals)
         ? pmf.positiveSignals.map((s) => ({
@@ -1186,7 +1209,7 @@ IMPORTANT:
         },
       },
       pmf: {
-        pmfScore: 30,
+        pmfScore: 0,
         pmfVerdict: "NOT_DEMONSTRATED",
         pmfJustification: "Données insuffisantes pour évaluer le PMF",
         positiveSignals: [],

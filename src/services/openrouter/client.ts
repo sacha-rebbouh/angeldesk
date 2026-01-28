@@ -120,6 +120,16 @@ export const MODELS = {
     capabilities: ["fast", "cheap", "large-context"],
   },
 
+  GEMINI_3_FLASH: {
+    id: "google/gemini-3-flash-preview",
+    name: "Gemini 3 Flash",
+    inputCost: 0.0005, // $0.50/M
+    outputCost: 0.003, // $3/M
+    contextWindow: 1000000,
+    maxOutputTokens: 65536, // 65K output limit
+    capabilities: ["agentic", "reasoning", "coding", "large-context", "best-quality"],
+  },
+
   GEMINI_PRO: {
     id: "google/gemini-2.5-pro",
     name: "Gemini 2.5 Pro",

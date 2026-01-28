@@ -481,7 +481,6 @@ export const fintechExpert = {
       const response = await complete(userPrompt, {
         systemPrompt: buildFintechSystemPrompt(stage),
         complexity: "complex",
-        maxTokens: 8000,
         temperature: 0.3, // Lower temperature for more consistent analysis
       });
 

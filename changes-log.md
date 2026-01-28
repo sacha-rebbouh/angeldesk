@@ -2,6 +2,1100 @@
 
 ---
 
+## 2026-01-29 01:00 - FACT STORE + CREDIT SYSTEM - Implementation Complete
+
+### Resume
+Implementation complete du systeme de mise a jour d'analyses avec Fact Store (event sourcing) et Credit System.
+
+**3 BATCHES executes en parallele:**
+- BATCH 1: Schema Prisma, Types TypeScript, Taxonomie 88 FACT_KEYS
+- BATCH 2: Services (fact-store, credits), Agent fact-extractor (Tier 0), APIs
+- BATCH 3: UI (Timeline, Highlights, Responses, Credits), Integration Orchestrator
+
+### Fichiers crees (21 fichiers)
+
+**Services:**
+- `src/services/fact-store/types.ts` - Types Fact Store
+- `src/services/fact-store/fact-keys.ts` - 88 cles canoniques
+- `src/services/fact-store/persistence.ts` - CRUD FactEvent
+- `src/services/fact-store/matching.ts` - Logique supersession
+- `src/services/fact-store/current-facts.ts` - Vue materialisee
+- `src/services/fact-store/index.ts` - Export public
+- `src/services/credits/types.ts` - Types Credits
+- `src/services/credits/usage-gate.ts` - UsageGate class
+- `src/services/credits/index.ts` - Export public
+
+**Agent Tier 0:**
+- `src/agents/tier0/fact-extractor.ts` - Agent extraction faits (607 lignes)
+- `src/agents/tier0/index.ts` - Export module
+
+**APIs:**
+- `src/app/api/facts/[dealId]/route.ts` - GET/POST faits
+- `src/app/api/credits/route.ts` - GET/POST credits
+- `src/app/api/founder-responses/[dealId]/route.ts` - GET/POST responses
+
+**UI Components:**
+- `src/components/deals/timeline-versions.tsx` - Timeline "ligne de metro"
+- `src/components/deals/delta-indicator.tsx` - Indicateur delta
+- `src/components/deals/changed-section.tsx` - Section modifiee
+- `src/components/deals/founder-responses.tsx` - Input reponses
+- `src/components/credits/credit-badge.tsx` - Badge solde
+- `src/components/credits/credit-modal.tsx` - Modal confirmation
+- `src/components/credits/index.ts` - Export
+
+### Fichiers modifies (3 fichiers)
+
+- `prisma/schema.prisma` - +3 modeles (FactEvent, UserCredits, CreditTransaction)
+- `src/agents/types.ts` - +factStore, +factStoreFormatted dans EnrichedAgentContext
+- `src/agents/orchestrator/index.ts` - Integration Tier 0 + Fact Store
+- `src/agents/orchestrator/types.ts` - +isUpdate option
+
+### Architecture implementee
+
+**Event Sourcing (Fact Store):**
+- Faits immuables, append-only
+- Supersession basee sur SOURCE_PRIORITY (DATA_ROOM=100 > FINANCIAL_MODEL=95 > FOUNDER_RESPONSE=90 > PITCH_DECK=80 > CONTEXT_ENGINE=60)
+- Detection contradictions (>30% delta = MAJOR)
+- 88 cles canoniques (financial.*, team.*, market.*, product.*, etc.)
+
+**Credit System:**
+- FREE: 10 credits/mois, PRO: illimite
+- INITIAL_ANALYSIS=5, UPDATE_ANALYSIS=2, AI_BOARD=10
+- Reset mensuel automatique
+- Transactions atomiques Prisma
+
+**Agent Pipeline:**
+- Tier 0 (fact-extractor) s'execute AVANT tous les autres
+- Context enrichi avec factStore pour Tier 1/2/3
+- Support mode `isUpdate` pour mises a jour
+
+### Commandes executees
+```bash
+npx dotenv -e .env.local -- npx prisma db push  # Schema applique
+npx tsc --noEmit  # 0 erreurs
+```
+
+---
+
+## 2026-01-29 00:15 - Integration Fact Store et Tier 0 Fact Extractor dans Orchestrator
+
+### Fichiers modifies
+- **`src/agents/types.ts`** - Ajout des champs `factStore` et `factStoreFormatted` dans `EnrichedAgentContext`
+- **`src/agents/orchestrator/types.ts`** - Ajout option `isUpdate` dans `AnalysisOptions` et `AdvancedAnalysisOptions`
+- **`src/agents/orchestrator/index.ts`** - Integration complete du Tier 0 fact extraction
+
+### Details techniques
+
+**Integration Tier 0:**
+| Element | Description |
+|---------|-------------|
+| Execution | AVANT tous les autres agents (Tier 0) |
+| Agent | `factExtractorAgent` de `@/agents/tier0/fact-extractor` |
+| Persistance | `createFactEventsBatch()` pour sauvegarder les faits |
+| Contexte | `factStore` et `factStoreFormatted` injectes dans `EnrichedAgentContext` |
+
+**Nouvelle methode `runTier0FactExtraction()`:**
+| Element | Description |
+|---------|-------------|
+| Parametres | `deal`, `isUpdate`, `onProgress` |
+| Retour | `{ factStore, factStoreFormatted, extractionResult, cost, executionTimeMs }` |
+| Comportement update | Charge les faits existants pour detection de contradictions |
+| Graceful degradation | Retourne faits existants si erreur |
+
+**Option `isUpdate`:**
+| Valeur | Credits | Utilisation |
+|--------|---------|-------------|
+| false | 5 (INITIAL_ANALYSIS) | Premiere analyse d'un deal |
+| true | 2 (UPDATE_ANALYSIS) | Ajout de nouveaux documents |
+
+**Analyses modifiees:**
+- `runTier1Analysis()` - Tier 0 execute avant document-extractor
+- `runFullAnalysis()` - Tier 0 execute avant Step 1 (extraction)
+
+### Imports ajoutes
+```typescript
+import { factExtractorAgent, type FactExtractorOutput } from "@/agents/tier0/fact-extractor";
+import { getCurrentFacts, formatFactStoreForAgents, createFactEventsBatch } from "@/services/fact-store";
+import type { CurrentFact } from "@/services/fact-store/types";
+```
+
+### Prochaines etapes
+- Les agents Tier 1/2/3 peuvent utiliser `context.factStore` et `context.factStoreFormatted`
+- Ajouter section Fact Store dans les prompts des agents prioritaires
+
+---
+
+## 2026-01-28 23:30 - Timeline Versions et Highlights UI Components
+
+### Fichiers crees
+- **`src/components/deals/timeline-versions.tsx`** - Timeline horizontale "ligne de metro" pour naviguer entre versions d'analyse
+- **`src/components/deals/delta-indicator.tsx`** - Indicateur de changement de valeur (fleche + delta)
+- **`src/components/deals/changed-section.tsx`** - Wrapper pour sections modifiees avec highlighting
+
+### Details techniques
+
+**timeline-versions.tsx:**
+| Element | Description |
+|---------|-------------|
+| Props | `analyses[]`, `currentAnalysisId`, `onSelectVersion` |
+| Max visible | 3 versions (tri par version desc, affichage oldest-to-newest) |
+| Design | Cercles connectes par ligne horizontale |
+| Version courante | Cercle plein primary color |
+| Autres versions | Cercle bordure muted, clickable |
+| Info affichee | V1/V2, date (format fr), score colore, badge Initial/Update |
+
+**delta-indicator.tsx:**
+| Element | Description |
+|---------|-------------|
+| Props | `currentValue`, `previousValue`, `unit?`, `showPercentage?` |
+| Augmentation | Fleche verte + delta positif |
+| Diminution | Fleche rouge + delta negatif |
+| Pas de changement | Ne rend rien (return null) |
+| Format | Support K/M pour grands nombres |
+
+**changed-section.tsx:**
+| Element | Description |
+|---------|-------------|
+| Props | `children`, `isChanged?`, `isNew?`, `changeType?` |
+| isNew | Fond vert clair + bordure gauche verte + badge "Nouveau" |
+| improved | Fond vert clair + bordure gauche verte |
+| degraded | Fond rouge clair + bordure gauche rouge |
+| neutral | Fond gris clair + bordure gauche grise |
+
+### Patterns utilises
+- Composants fonctionnels React avec TypeScript strict
+- `useMemo` pour calculs derives (sorting, delta)
+- `useCallback` pour handlers passes en props
+- Import direct depuis fichiers source (pas de barrel imports)
+- Tooltips radix pour details version
+- date-fns avec locale fr pour formatage dates
+- Responsive (gap adaptatif sm:w-12)
+
+### Prochaines etapes
+- Integrer TimelineVersions dans analysis-panel.tsx
+- Utiliser DeltaIndicator pour scores et metriques
+- Wrapper sections modifiees avec ChangedSection
+
+---
+
+## 2026-01-28 22:35 - Credit UI Components
+
+### Fichiers crees
+- **`src/components/credits/credit-badge.tsx`** - Badge affichant le solde de credits dans la navbar
+- **`src/components/credits/credit-modal.tsx`** - Modal de confirmation avant action couteuse
+- **`src/components/credits/index.ts`** - Export des composants
+
+### Details techniques
+
+**credit-badge.tsx:**
+| Element | Description |
+|---------|-------------|
+| Fetch | React Query avec `queryKey: ['credits']` |
+| staleTime | 30 secondes |
+| Affichage | Icone Coins + "{balance} credits" |
+| Tooltip | "Reset le {date}" (format francais) |
+| Warning | Couleur ambre si balance < 5 |
+| PRO | Ne s'affiche pas si plan PRO |
+
+**credit-modal.tsx:**
+| Props | Type | Description |
+|-------|------|-------------|
+| isOpen | boolean | Etat d'ouverture |
+| onClose | () => void | Callback fermeture |
+| action | CreditActionType | Type d'action (INITIAL_ANALYSIS, UPDATE_ANALYSIS, AI_BOARD) |
+| cost | number | Cout en credits |
+| balance | number | Solde actuel |
+| resetsAt | Date? | Date de reset |
+| onConfirm | () => void | Callback confirmation |
+| isLoading | boolean? | Etat de chargement |
+
+**Deux modes d'affichage:**
+1. Balance suffisante: Affiche cout, solde actuel, solde apres, boutons Annuler/Confirmer
+2. Balance insuffisante: Message erreur, lien vers /pricing pour upgrade PRO
+
+### Stack utilisee
+- React Query (TanStack Query)
+- shadcn/ui (Dialog, Button, Tooltip)
+- lucide-react (Coins, AlertTriangle, Loader2)
+- date-fns avec locale francaise
+
+---
+
+## 2026-01-28 22:30 - Composant UI Founder Responses
+
+### Fichier cree
+- **`src/components/deals/founder-responses.tsx`** - Composant pour saisir les reponses fondateur
+
+### Details techniques
+
+**Props du composant:**
+```typescript
+interface FounderResponsesProps {
+  dealId: string;
+  questions: AgentQuestion[];
+  existingResponses?: QuestionResponse[];
+  onSubmit: (responses: QuestionResponse[], freeNotes: string) => Promise<void>;
+  isSubmitting?: boolean;
+}
+```
+
+**Types exportes:**
+| Type | Description |
+|------|-------------|
+| `AgentQuestion` | Question avec id, category, priority, agentSource |
+| `QuestionResponse` | Paire questionId + answer |
+
+**Categories supportees:**
+- FINANCIAL, TEAM, MARKET, PRODUCT, LEGAL, TRACTION, OTHER
+- Chaque categorie affichee en section collapsible avec badge colore
+- Badge count des questions par categorie
+
+**UX Features:**
+- Groupement par categorie (sections collapsibles)
+- Badges de priorite (HIGH=rouge, MEDIUM=jaune, LOW=gris)
+- Pre-fill des reponses existantes
+- Section notes libres en bas
+- Validation: au moins 1 reponse OU notes libres requise
+- Compteur de questions repondues
+- Empty state si aucune question
+
+**Patterns utilises:**
+- useMemo pour groupement questions et stats
+- useCallback pour handlers
+- Pas de barrel imports (imports directs)
+- Accessible (labels, aria-expanded, aria-controls)
+- Mobile responsive
+
+---
+
+## 2026-01-28 22:15 - API Routes (Facts, Credits, Founder Responses)
+
+### Fichiers crees
+- **`src/app/api/facts/[dealId]/route.ts`** - API pour les faits d'un deal
+- **`src/app/api/credits/route.ts`** - API pour les credits utilisateur
+- **`src/app/api/founder-responses/[dealId]/route.ts`** - API pour les reponses fondateur
+
+### Details techniques
+
+**facts/[dealId]/route.ts:**
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/facts/[dealId]` | Liste les faits courants d'un deal |
+| `POST /api/facts/[dealId]` | Override manuel par le BA (source: BA_OVERRIDE) |
+
+Query params GET:
+- `?category=FINANCIAL` - Filtre par categorie
+- `?includeHistory=true` - Inclut l'historique des events
+
+Body POST:
+```typescript
+{ factKey: string, value: any, displayValue: string, reason: string }
+```
+
+**credits/route.ts:**
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/credits` | Recupere balance, plan, historique transactions |
+| `POST /api/credits` | Verifie si action possible (check sans consommer) |
+
+Body POST:
+```typescript
+{ action: 'INITIAL_ANALYSIS' | 'UPDATE_ANALYSIS' | 'AI_BOARD' }
+```
+
+Constantes:
+- FREE plan: 10 credits/mois
+- PRO plan: 100 credits/mois
+- Cout INITIAL_ANALYSIS: 5 credits
+- Cout UPDATE_ANALYSIS: 2 credits
+- Cout AI_BOARD: 10 credits
+
+**founder-responses/[dealId]/route.ts:**
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/founder-responses/[dealId]` | Liste les reponses existantes |
+| `POST /api/founder-responses/[dealId]` | Soumet nouvelles reponses |
+
+Body POST:
+```typescript
+{
+  responses: Array<{ questionId: string, answer: string }>,
+  freeNotes?: string
+}
+```
+
+### Patterns utilises
+- Auth via `requireAuth()` sur toutes les routes
+- Validation inputs via Zod schemas
+- Verification ownership du deal avant acces
+- Transactions Prisma pour operations atomiques
+- Gestion erreurs avec try/catch et status codes appropries
+
+---
+
+## 2026-01-28 20:45 - Agent Fact Extractor (Tier 0)
+
+### Fichiers crees
+- **`src/agents/tier0/fact-extractor.ts`** - Agent d'extraction structuree des faits
+- **`src/agents/tier0/index.ts`** - Export du module Tier 0
+
+### Details techniques
+
+**fact-extractor.ts** - Agent Tier 0 (pre-analyse):
+
+| Element | Description |
+|---------|-------------|
+| Persona | Data Analyst Senior (15+ ans), ex-Big4 |
+| Mission | Extraire faits structures avec confidence scoring rigoureux |
+| Execution | AVANT tous les autres agents (Tier 0) |
+| Model | "simple" complexity (Gemini Flash via router) |
+| Timeout | 90 secondes |
+
+**Input:**
+- `documents`: Liste des documents (pitch deck, financial model, data room)
+- `existingFacts`: Faits existants pour detection de contradictions
+- `founderResponses`: Reponses aux questions (optionnel)
+
+**Output:**
+- `facts[]`: ExtractedFact avec factKey, value, confidence, extractedText
+- `contradictions[]`: ContradictionInfo detectees vs faits existants
+- `metadata`: Stats d'extraction (count, avg confidence, time)
+
+**Regles de confidence scoring:**
+| Range | Signification |
+|-------|---------------|
+| 95-100 | Valeur EXPLICITE avec source claire |
+| 85-94 | Valeur CALCULEE avec haute certitude |
+| 70-84 | Estimation RAISONNABLE basee sur indices |
+| <70 | NE PAS EXTRAIRE (trop incertain) |
+
+**Taxonomie integree:**
+- Injecte les 88 cles canoniques de FACT_KEYS dans le prompt
+- Valide chaque fait extrait contre la taxonomie
+- Auto-corrige les categories si necessaire
+- Gere les types (currency, percentage, number, string, date, boolean, array, enum)
+
+**Detection des contradictions:**
+- Compare nouvelles valeurs vs existingFacts
+- Calcule deltaPercent pour valeurs numeriques
+- Classification: MINOR (<10%), SIGNIFICANT (10-30%), MAJOR (>30%)
+
+### Prochaines etapes
+- Integrer fact-extractor dans le pipeline d'analyse (avant Tier 1)
+- Creer l'API route pour declencher l'extraction
+- UI de visualisation des faits extraits
+
+---
+
+## 2026-01-28 18:30 - Service Fact Store complet (Event Sourcing)
+
+### Fichiers crees
+- **`src/services/fact-store/persistence.ts`** - CRUD pour FactEvent avec Prisma
+- **`src/services/fact-store/matching.ts`** - Logique de supersession basee sur SOURCE_PRIORITY
+- **`src/services/fact-store/current-facts.ts`** - Vue materialisee des faits courants
+- **`src/services/fact-store/index.ts`** - Export public du service
+
+### Details techniques
+
+**persistence.ts** - CRUD Event Sourcing:
+| Fonction | Description |
+|----------|-------------|
+| `createFactEvent()` | Cree un nouvel event (facts sont immutables) |
+| `createFactEventsBatch()` | Batch insert avec transaction |
+| `getFactEvents()` | Liste events avec filtres (factKey, category, limit) |
+| `getFactEventById()` | Recupere un event par ID |
+| `getFactEventHistory()` | Historique complet d'un factKey |
+| `getLatestFactEvents()` | Map factKey -> dernier event |
+| `markAsSuperseded()` | Marque un event comme supersede |
+| `createSupersessionEvent()` | Cree un event de supersession |
+
+**matching.ts** - Logique de supersession:
+| Fonction | Description |
+|----------|-------------|
+| `matchFact()` | Determine action pour un nouveau fait vs existants |
+| `matchFactsBatch()` | Match en batch avec categorisation |
+| `detectContradiction()` | Detecte contradictions numeriques |
+| `detectAllContradictions()` | Detecte toutes les contradictions |
+
+**Regles de matching:**
+1. Pas de fait existant -> `NEW`
+2. Contradiction majeure (>30% delta) -> `REVIEW_NEEDED`
+3. Source plus prioritaire -> `SUPERSEDE`
+4. Meme priorite, plus recent -> `SUPERSEDE`
+5. Source moins prioritaire -> `IGNORE`
+
+**SOURCE_PRIORITY:**
+- DATA_ROOM = 100 (max)
+- BA_OVERRIDE = 100 (max)
+- FINANCIAL_MODEL = 95
+- FOUNDER_RESPONSE = 90
+- PITCH_DECK = 80
+- CONTEXT_ENGINE = 60 (min)
+
+**current-facts.ts** - Vue materialisee:
+| Fonction | Description |
+|----------|-------------|
+| `getCurrentFacts()` | Calcule faits courants (derniers non-supersedes) |
+| `getCurrentFactByKey()` | Fait courant par cle |
+| `getCurrentFactsByCategory()` | Faits par categorie |
+| `getDisputedFacts()` | Faits en conflit |
+| `formatFactStoreForAgents()` | Formate pour injection prompts |
+| `formatFactStoreAsJSON()` | Format JSON structure |
+| `getFactStoreSummary()` | Stats globales |
+| `getFactValue()` / `getFactValues()` | Extraction valeurs |
+| `checkFactCompleteness()` | Verifie completude |
+| `getKeyFinancialMetrics()` | Metriques financieres cles |
+| `getKeyTractionMetrics()` | Metriques traction cles |
+
+### Prochaines etapes
+- Integrer le Fact Store dans les agents d'extraction
+- Creer l'UI de visualisation des faits
+- Implementer la resolution des contradictions
+
+---
+
+## 2026-01-28 17:05 - Service Credits complet (UsageGate)
+
+### Fichiers crees
+- **`src/services/credits/usage-gate.ts`** - Classe UsageGate complete
+- **`src/services/credits/index.ts`** - Export public du service
+
+### Details techniques
+
+**UsageGate** - Controle d'acces au systeme de credits:
+
+| Methode | Description |
+|---------|-------------|
+| `canPerform(userId, action)` | Verifie si l'utilisateur peut effectuer une action (PRO = toujours OK) |
+| `recordUsage(userId, action, metadata?)` | Enregistre une consommation (transaction atomique) |
+| `getOrCreateUserCredits(userId)` | Recupere ou cree les credits (balance=10, nextResetAt=+30j) |
+| `checkAndResetCredits(userId)` | Reset mensuel si now > nextResetAt |
+| `addBonusCredits(userId, amount, desc)` | Ajoute des credits bonus (promo, compensation) |
+| `refundCredits(userId, amount, desc, metadata?)` | Rembourse des credits (analyse echouee) |
+| `getTransactionHistory(userId, limit?)` | Historique des transactions |
+| `getBalance(userId)` | Balance actuelle (quick check) |
+| `hasEnoughCredits(userId, action)` | Verifie suffisance sans side effects |
+
+**Logique PRO:**
+- PRO users passent tous les checks (via `subscriptionStatus` dans User)
+- Leurs transactions sont loguees avec amount=0 et prefix "[PRO]"
+- Env var `FORCE_PRO_USER=true` pour tests
+
+**Couts:**
+- INITIAL_ANALYSIS = 5 credits
+- UPDATE_ANALYSIS = 2 credits
+- AI_BOARD = 10 credits
+
+**Garanties:**
+- Transactions Prisma atomiques (`$transaction`)
+- Jamais de balance negative (check avant decrement)
+- Double-check dans transactions pour eviter race conditions
+
+### Prochaines etapes
+- Integrer UsageGate dans les routes d'analyse
+- Ajouter UI pour afficher les credits restants
+
+---
+
+## 2026-01-28 16:36 - Taxonomie complete des Fact Keys (88 cles canoniques)
+
+### Fichiers crees
+- **`src/services/fact-store/fact-keys.ts`** - Taxonomie complete des cles canoniques
+
+### Details techniques
+
+**88 Fact Keys repartis en 8 categories:**
+| Categorie | Nombre | Exemples |
+|-----------|--------|----------|
+| FINANCIAL | 19 | arr, mrr, burn_rate, valuation_pre, runway_months |
+| TRACTION | 15 | churn_monthly, nrr, cac, ltv, customers_count |
+| TEAM | 15 | size, founders_count, ceo.name, cto.background |
+| MARKET | 10 | tam, sam, som, cagr, b2b_or_b2c |
+| PRODUCT | 10 | name, stage, tech_stack, moat, nps |
+| COMPETITION | 8 | main_competitor, competitors_list, switching_cost |
+| LEGAL | 8 | incorporation_country, patents_filed, pending_litigation |
+| OTHER | 4 | founding_date, headquarters, website, sector |
+
+**Types supportes:**
+- `currency` (avec unit EUR, EUR/month)
+- `percentage`
+- `number`
+- `string`
+- `date`
+- `boolean`
+- `array`
+- `enum` (avec enumValues)
+
+**Helpers inclus:**
+- `getFactKeyDefinition()` - Definition d'une cle
+- `getFactKeysByCategory()` - Cles par categorie
+- `isValidFactKey()` - Validation de cle
+- `getCategoryFromFactKey()` - Categorie d'une cle
+- `getFactKeysByType()` - Cles par type
+- `getCurrencyFactKeys()` / `getPercentageFactKeys()` - Cles formatables
+- `getEnumFactKeys()` - Cles avec valeurs enum
+- `isValidEnumValue()` - Validation valeur enum
+- `getCategoryStats()` - Stats par categorie
+- `FACT_KEY_COUNT` - Total (88)
+- `ALL_FACT_KEYS` - Array typee
+- `FactKey` type - Type string literal
+
+### Prochaines etapes
+- Utiliser cette taxonomie dans l'extraction de facts par les agents
+- Implementer la validation des facts extraits
+
+---
+
+## 2026-01-29 02:00 - Prisma Schema: Fact Store + Credit System
+
+### Resume
+Ajout des modeles Prisma pour le Fact Store (Event Sourcing) et le Credit System.
+
+### Fichiers modifies
+- **prisma/schema.prisma**:
+  - Ajout modele `FactEvent` (Event Sourcing pour facts du deal)
+  - Ajout modele `UserCredits` (balance et allocation mensuelle)
+  - Ajout modele `CreditTransaction` (historique des mouvements)
+  - Ajout relation `factEvents` sur modele `Deal`
+  - Ajout relation `factEvents` sur modele `Document`
+
+### Details techniques
+
+**FactEvent** - Chaque fait extrait avec provenance complete:
+- `factKey`: Cle canonique (ex: "financial.arr", "team.size")
+- `category`: FINANCIAL, TEAM, MARKET, PRODUCT, LEGAL, COMPETITION, TRACTION, OTHER
+- `source`: DATA_ROOM, FINANCIAL_MODEL, FOUNDER_RESPONSE, PITCH_DECK, CONTEXT_ENGINE, BA_OVERRIDE
+- `sourceDocumentId`: Lien vers document source
+- `sourceConfidence`: Score 0-100
+- `eventType`: CREATED, SUPERSEDED, DISPUTED, RESOLVED, DELETED
+- `supersedesEventId`: Pour chainer les versions
+
+**UserCredits** - Gestion des credits utilisateur:
+- `balance`: Credits actuels
+- `monthlyAllocation`: Credits par mois (selon plan)
+- `nextResetAt`: Date du prochain reset mensuel
+
+**CreditTransaction** - Audit trail des credits:
+- `type`: INITIAL_ANALYSIS, UPDATE_ANALYSIS, AI_BOARD, MONTHLY_RESET, BONUS, REFUND
+- `amount`: Positif = gain, negatif = depense
+- Lien optionnel vers deal/analysis
+
+### Prochaines etapes
+- Executer `npx prisma db push` pour appliquer les changements
+- Implementer services Fact Store et Credit System
+
+---
+
+## 2026-01-29 01:45 - Creation types TypeScript Fact Store et Credit System
+
+### Fichiers crees
+- **`src/services/fact-store/types.ts`** - Types pour le Fact Store:
+  - `FactCategory`, `FactSource`, `FactEventType` (unions)
+  - `SOURCE_PRIORITY` (constante de priorite des sources)
+  - `ExtractedFact`, `CurrentFact`, `FactEventRecord` (interfaces principales)
+  - `MatchResult`, `ContradictionInfo`, `ExtractionResult` (interfaces de matching)
+
+- **`src/services/credits/types.ts`** - Types pour le Credit System:
+  - `CreditActionType` (union des actions)
+  - `CREDIT_COSTS` (constante des couts)
+  - `UserCreditsInfo`, `CreditTransactionRecord` (interfaces principales)
+  - `CanPerformResult`, `RecordUsageOptions` (interfaces utilitaires)
+
+### Prochaines etapes
+- Implementer les services `fact-store/index.ts` et `credits/index.ts`
+- Ajouter le schema Prisma (FactEvent, UserCredits, CreditTransaction)
+
+---
+
+## 2026-01-29 01:30 - Creation FACT-STORE-SPEC.md (Systeme de Mise a Jour d'Analyses)
+
+### Resume
+Specification complete du systeme de mise a jour d'analyses avec Fact Store, Credit System, et UI.
+
+### Fichiers crees
+- **FACT-STORE-SPEC.md** - Masterdoc complet (~800 lignes) contenant:
+  - Vision et architecture Fact Store (Event Sourcing)
+  - Data model Prisma (FactEvent, UserCredits, CreditTransaction)
+  - Agent fact-extractor (Tier 0) - specs completes
+  - Pipeline extraction et matching (cles canoniques + LLM fallback)
+  - Gestion des contradictions (auto-resolution + escalade BA)
+  - Integration avec agents Tier 1/2/3
+  - UI/UX (Timeline "metro", highlights, questions repondues, input hybride)
+  - Credit System (FREE vs PRO, usage gate, modals)
+  - Plan d'implementation detaille (4 phases)
+
+### Decisions cles documentees
+- **Event sourcing** pour le Fact Store (audit trail complet)
+- **Agent fact-extractor dedie** (Tier 0, avant tous les autres)
+- **Cles canoniques** pour matching (~80 factKeys standards)
+- **Timeline "ligne de metro"** pour naviguer entre versions (3 max)
+- **Manuel avec nudge** pour trigger les re-runs
+- **Credit system** integre des maintenant (memes fichiers touches)
+
+### Prochaines etapes
+- Implementer Phase 1: Prisma schema + services de base + fact-extractor
+- Implementer Phase 2: Integration pipeline orchestrator
+- Implementer Phase 3: UI (timeline, highlights, credits)
+- Implementer Phase 4: Tests et polish
+
+---
+
+## 2026-01-29 00:30 - Fix blindSpots vides et questions critiques
+
+### Point 10: blindSpots affiche "3" mais section vide
+**Probleme**: Le LLM retournait des blindSpots avec des champs `area` et `description` vides.
+Le count etait 3 mais les elements renderaient comme vides.
+
+**Solution**: Ajout d'un filtre dans la normalisation pour exclure les blindSpots sans contenu:
+```typescript
+.filter((bs) => bs.area?.trim() && bs.description?.trim())
+```
+
+### Point 11: Questions critiques "0"
+**Probleme**: Le filtre UI ne gardait que les questions CRITICAL, mais le LLM generait
+surtout des questions HIGH. Resultat: count = 0.
+
+**Solution**:
+1. Filtre elargi: CRITICAL + HIGH
+2. Titre change: "Questions importantes" (pas "critiques")
+3. Badge de priorite pour distinguer visuellement CRITICAL (rouge) vs HIGH (jaune)
+
+### Fichiers modifies
+- `src/agents/tier3/devils-advocate.ts` (filtre blindSpots vides)
+- `src/components/deals/tier3-results.tsx` (filtre questions CRITICAL|HIGH + UI amelioree)
+
+---
+
+## 2026-01-29 00:15 - Fact-checking des sources du Devil's Advocate
+
+### Contexte
+Le Devil's Advocate cite des "comparable failures", "catastrophes comparables" et "precedents historiques"
+qui peuvent etre inventes par le LLM. Point 9 des 12 issues identifiees lors du premier run.
+
+### Solution
+Creation d'un service de fact-checking qui verifie les sources via recherche web (Perplexity via OpenRouter):
+
+1. **Service fact-checking** (`src/services/fact-checking/index.ts`):
+   - `webSearch()`: Recherche via Perplexity/Sonar
+   - `verifySingleSource()`: Verifie une source (company + claim + source)
+   - `extractSourcesToVerify()`: Extrait toutes les sources a verifier du Devil's Advocate
+   - `verifySourcesBatch()`: Verification parallele avec limite de concurrence
+   - `factCheckDevilsAdvocate()`: Point d'entree pour verifier et annoter les findings
+
+2. **Integration Devil's Advocate** (`src/agents/tier3/devils-advocate.ts`):
+   - Apres normalisation, appel du fact-checker
+   - Chaque source est annotee avec `verified: boolean` et `verificationUrl?: string`
+   - En cas d'echec du fact-check, l'analyse continue avec les sources non-verifiees
+
+3. **Types mis a jour** (`src/agents/types.ts`):
+   - `CounterArgument.comparableFailure` + verified/verificationUrl
+   - `WorstCaseScenario.comparableCatastrophes` + verified/verificationUrl
+   - `BlindSpot.historicalPrecedent` + verified/verificationUrl
+
+### Fix TypeScript
+Le code de fact-check etait dans `normalizeResponse()` (non-async) au lieu de `execute()` (async).
+Deplace dans `execute()` apres l'appel a `normalizeResponse()`.
+
+### Fichiers modifies
+- `src/services/fact-checking/index.ts` (cree)
+- `src/agents/tier3/devils-advocate.ts` (import + integration)
+- `src/agents/types.ts` (ajout verified/verificationUrl)
+
+### Prochaines etapes
+- Point 10: Debug blindSpots "3" mais section vide
+- Point 11: Fix questions critiques "0" (probleme de filtre)
+- Afficher le statut de verification dans l'UI (badge verified/unverified)
+
+---
+
+## 2026-01-28 23:45 - Refonte complete REFLEXION-CONSENSUS-ENGINES.md (v2.0)
+
+### Contexte
+Document de specification pour refondre les deux moteurs de qualite (Consensus Engine et Reflexion Engine).
+Version 1.0 etait incomplete - manquait code actionnable, gestion des couts, schemas Zod, tests.
+
+### Refonte effectuee
+Le document est maintenant **100% actionnable** pour un agent d'implementation:
+
+1. **Sections 1-3**: Vision, diagnostic, standards avec seuils justifies
+2. **Section 4**: Consensus Engine complet
+   - Types TypeScript (EnhancedContradiction, EnhancedResolution, etc.)
+   - System + User prompts pour Debater et Arbitrator
+   - Exemples de bons outputs JSON
+   - Fallback resolution rapide (sans debat)
+
+3. **Section 5**: Reflexion Engine complet
+   - Types TypeScript (EnhancedCritique, EnhancedImprovement, etc.)
+   - System + User prompts pour Critic et Improver
+   - Exemples de bons outputs JSON
+
+4. **Section 6 (NOUVEAU)**: Gestion des couts et optimisations
+   - Skip debate si confiance asymetrique
+   - Auto-resolve MINOR sans LLM
+   - Batch reflexion
+   - Configuration recommandee
+
+5. **Section 7 (NOUVEAU)**: Integration orchestrateur
+   - Code complet QualityProcessor
+   - Flux d'execution detaille
+   - Type VerificationContext
+
+6. **Section 8 (NOUVEAU)**: Schemas Zod et validation
+   - Schemas pour Consensus (DebaterResponse, ArbitratorResponse)
+   - Schemas pour Reflexion (CriticResponse, ImproverResponse)
+   - Helper completAndValidate avec retry
+
+7. **Section 9 (NOUVEAU)**: Tests et checklists
+   - Tests unitaires Consensus Engine
+   - Tests unitaires Reflexion Engine
+   - Checklists de validation
+
+8. **Section 10 (NOUVEAU)**: Fichiers a creer/modifier
+   - Liste complete des fichiers
+   - Ordre d'implementation recommande
+   - Estimation temps par phase
+
+### Fichiers modifies
+- `REFLEXION-CONSENSUS-ENGINES.md` (refonte complete ~1500 lignes)
+
+---
+
+## 2026-01-28 22:50 - UX: Percentiles "N/A" si pas de deals comparables
+
+### Probleme
+Les percentiles (Global 50%, Secteur 50%) s'affichaient meme sans deals comparables dans la base.
+50% est la valeur par defaut, mais suggere un positionnement median alors qu'on n'a pas de donnees.
+
+### Solution
+1. **Afficher "N/A"** si `similarDealsAnalyzed === 0`
+2. **Message explicatif**: "Percentiles non disponibles - aucun deal comparable dans la base"
+3. **Preview FREE** adapte: n'affiche plus le percentile secteur si pas de donnees
+
+### Fichiers modifies
+- `src/components/deals/tier3-results.tsx`
+
+---
+
+## 2026-01-28 22:40 - UX: Affichage IRR "si succes" vs "ajuste au risque"
+
+### Probleme
+L'IRR affiche (ex: 1%) etait une moyenne ponderee incluant le scenario catastrophe (-100% IRR),
+ce qui donnait un chiffre peu intuitif et trompeur pour le BA.
+
+### Solution
+Afficher DEUX metriques IRR avec explications:
+1. **IRR si succes** (en vert): Moyenne des scenarios positifs uniquement, avec % de chances
+2. **IRR ajuste au risque**: Moyenne de tous les scenarios (inclut echec total)
+
+### Exemple d'affichage
+```
+Multiple pondere: 7.6x
+IRR si succes: 35% (80% de chances)
+---
+IRR ajuste au risque (inclut echec total): 1%
+= Moyenne ponderee de tous les scenarios, y compris perte totale (20% de risque)
+```
+
+### Fichiers modifies
+- `src/components/deals/tier3-results.tsx` (calcul expectedReturn + affichage)
+
+---
+
+## 2026-01-28 22:30 - Fix: exit-strategist projections avec disclaimer si pas de financials
+
+### Probleme
+L'agent affichait des projections d'exit (45-65M€) meme sans donnees financieres reelles (ARR = 0).
+Ces projections basees sur benchmarks sectoriels etaient presentees comme fiables.
+
+### Solution
+1. **Detection ARR manquant** dans `normalizeResponse`
+2. **Confidence plafonnee a 40%** si ARR = 0
+3. **Disclaimer obligatoire** ajoute aux limitations:
+   "ATTENTION: Projections basees sur benchmarks sectoriels (pas de donnees financieres reelles). Fiabilite limitee."
+4. **Prompt mis a jour** avec instructions explicites:
+   - Si ARR = 0: dataCompleteness = "minimal", confidenceLevel MAX 40%
+   - Methodology doit preciser "Estimation benchmark" si pas d'ARR
+
+### Fichiers modifies
+- `src/agents/tier1/exit-strategist.ts`
+
+---
+
+## 2026-01-28 22:20 - Fix: Score cap-table-auditor coherent avec disponibilite donnees
+
+### Probleme
+Un score de 42/100 s'affichait pour cap-table-auditor alors qu'aucune cap table n'etait fournie.
+Incoherent: on ne peut pas bien noter ce qu'on n'a pas.
+
+### Solution
+1. **Coherence forcee dans transformResponse**:
+   - Cap table non fournie (dataQuality: "NONE") → score cap a 15, grade "F"
+   - Donnees MINIMAL → score cap a 30, grade "D"
+   - Donnees PARTIAL → score cap a 50, grade "C" max
+   - Donnees COMPLETE → score libre 0-100
+2. **Valeur par defaut changee**: 50 → 0
+3. **Prompt mis a jour** avec regles de scoring explicites
+
+### Fichiers modifies
+- `src/agents/tier1/cap-table-auditor.ts`
+
+---
+
+## 2026-01-28 22:15 - UX: Renommage "Claims verifies" → "Verification des claims"
+
+### Probleme
+Le titre "Claims verifies" etait trompeur car la section affiche TOUS les claims (VERIFIED, UNVERIFIED, CONTRADICTED, etc.), pas seulement les verifies.
+
+### Solution
+Renommer en "Verification des claims" - indique le processus, pas le resultat.
+
+### Fichiers modifies
+- `src/components/deals/tier1-results.tsx` (2 occurrences: Deck Forensics + Customer Intel)
+
+---
+
+## 2026-01-28 22:10 - Doc: Guide de refonte Consensus Engine & Reflexion Engine
+
+### Contexte
+Les engines actuels (consensus-engine.ts, reflexion.ts) ont des prompts trop basiques et generiques comparés aux standards etablis dans AGENT-REFONTE-PROMPT.md pour les 39 agents.
+
+### Document cree
+**`REFLEXION-CONSENSUS-ENGINES.md`** - Guide complet de refonte comprenant:
+- Vision & philosophie (Big4 + Investment Committee)
+- Diagnostic des engines actuels (anti-patterns identifies)
+- Standards de qualite attendus
+- Architecture complete des prompts (System + User) pour:
+  - Consensus Engine: Debater, Arbitrator
+  - Reflexion Engine: Critic, Improver
+- Structures de donnees ameliorees (EnhancedContradiction, EnhancedResolution, EnhancedCritique, etc.)
+- Exemples de bons outputs vs mauvais outputs
+- Integration avec le systeme (declenchement, acces aux donnees)
+- Checklist de validation
+
+### Prochaines etapes
+1. Refondre consensus-engine.ts selon le guide
+2. Refondre reflexion.ts selon le guide
+3. Ajouter les types dans src/scoring/types.ts
+4. Tester sur des cas reels de contradictions
+
+### Fichiers crees
+- `REFLEXION-CONSENSUS-ENGINES.md`
+
+---
+
+## 2026-01-28 20:45 - Fix: Coherence verdict/score PMF dans customer-intel
+
+### Probleme
+Un score PMF de 30/100 avec verdict "NOT_DEMONSTRATED" est incoherent.
+"Pas demontre" = pas de preuve = devrait etre proche de 0, pas 30.
+
+### Solution
+1. **Valeur par defaut changee**: 30 → 0
+2. **Coherence forcee dans transformPMF**:
+   - NOT_DEMONSTRATED → score cap a 15
+   - WEAK → score cap a 35
+   - EMERGING → score cap a 60
+   - STRONG → pas de cap
+3. **Prompt mis a jour** pour guider le LLM sur les bonnes fourchettes
+
+### Fichiers modifies
+- `src/agents/tier1/customer-intel.ts`
+
+---
+
+## 2026-01-28 20:30 - UX: Resultats d'analyse affiches AVANT le bouton
+
+### Changement
+Reorganisation de l'ordre des elements dans `analysis-panel.tsx`:
+- **Avant**: Bouton "Analyser" en haut → Resultats en bas (UX frustrante apres attente)
+- **Apres**: Resultats en premier → Bouton "Relancer" en bas (plus logique)
+
+### Details
+1. Progress bar dans sa propre Card pendant l'analyse
+2. Resultats affiches en premier si disponibles
+3. Bouton compact en bas avec label contextuel ("Analyser" ou "Relancer")
+4. Historique visible seulement si > 1 analyse (plus compact)
+
+### Fichiers modifies
+- `src/components/deals/analysis-panel.tsx`
+
+---
+
+## 2026-01-28 20:15 - Fix: Bug "X nouveaux documents non analyses" (staleness detection)
+
+### Probleme
+L'UI affichait "3 nouveaux documents non analyses" meme si les documents avaient bien ete analyses.
+
+### Cause racine
+Dans `getDealWithRelations()` (persistence.ts), le champ `processingStatus` n'etait pas selectionne:
+```typescript
+documents: {
+  select: {
+    id: true,
+    name: true,
+    type: true,
+    extractedText: true,
+    // processingStatus MANQUANT!
+  }
+}
+```
+
+L'orchestrateur filtrait ensuite les documents par `processingStatus === "COMPLETED"`, mais comme ce champ etait `undefined` pour tous les documents, le filtre retournait un tableau vide → `documentIds = []` sauvegarde dans l'analyse.
+
+Au moment de la detection de staleness, le code comparait:
+- `analyzedDocumentIds = []` (rien n'a ete sauvegarde)
+- `currentDocumentIds = [doc1, doc2, doc3]` (les 3 docs actuels)
+
+→ 3 "nouveaux" documents detectes alors qu'ils ont tous ete analyses.
+
+### Solution
+Ajoute `processingStatus: true` dans le select de `getDealWithRelations()`.
+
+### Fichiers modifies
+- `src/agents/orchestrator/persistence.ts` (ligne 415)
+
+### Impact
+Les futures analyses sauvegarderont correctement les documentIds. Pour les analyses existantes, relancer l'analyse corrigera le probleme.
+
+---
+
+## 2026-01-28 18:30 - Feature: Activation des Consensus + Reflexion Engines pour tous les agents
+
+### Contexte
+Les Consensus Engine et Reflexion Engine etaient du code mort - ils cherchaient une propriete `_react` qui n'existe plus depuis la suppression des agents ReAct. Resultat: les engines ne tournaient jamais meme en mode "full".
+
+### Solution
+Creation d'un "finding extractor" universel qui extrait les findings de TOUS les agents Standard:
+1. Extrait la confidence depuis `data.meta.confidenceLevel`
+2. Convertit les findings agent-specifiques vers le format `ScoredFinding`
+3. Extracteurs specialises pour: financial-auditor, team-investigator, market-intelligence, competitive-intel
+4. Extracteur generique pour les autres agents
+
+### Impact
+- **Consensus Engine**: Detecte maintenant les contradictions entre agents et lance des debats structures (3 rounds max)
+- **Reflexion Engine**: S'applique a TOUS les agents avec confidence < 75% (pas juste les anciens ReAct)
+- **Qualite**: Les analyses en mode "full" beneficient enfin des engines d'amelioration
+
+### Fichiers crees
+- `src/agents/orchestration/finding-extractor.ts` (nouveau)
+
+### Fichiers modifies
+- `src/agents/orchestration/index.ts` (export finding-extractor)
+- `src/agents/orchestrator/index.ts` (integration dans runFullAnalysis)
+
+### Prochaines etapes
+- Step 2: Refondre les prompts du Consensus Engine (debats + arbitrage)
+- Step 3: Refondre les prompts du Reflexion Engine (auto-critique + ameliorations)
+- Step 4: Exposer les resultats au BA dans l'UI
+
+---
+
+## 2026-01-28 16:45 - Fix: contradiction-detector et general-expert
+
+### Problemes
+1. **contradiction-detector**: `(data.redFlagConvergence ?? []).map is not a function`
+   - Le LLM renvoyait un objet au lieu d'un array
+   - `?? []` ne protege que contre null/undefined, pas contre un objet
+
+2. **general-expert**: Erreurs Zod de validation
+   - `sectorDynamics.maturity` - valeur non reconnue
+   - `exitLandscape.recentExits[0].multiple/year` - undefined
+
+### Solutions
+1. **contradiction-detector**: Remplace `(data.X ?? []).map()` par `(Array.isArray(data.X) ? data.X : []).map()`
+   - Applique a: contradictions, dataGaps, breakdown, redFlagConvergence, redFlags, questions
+
+2. **general-expert**: Schema Zod plus permissif
+   - `maturity` a un fallback `.catch("emerging")`
+   - `recentExits` champs rendus optionnels
+
+### Fichiers modifies
+- `src/agents/tier3/contradiction-detector.ts`
+- `src/agents/tier2/general-expert.ts`
+- `src/agents/tier1/tech-ops-dd.ts`
+
+---
+
+## 2026-01-28 00:15 - Switch: Gemini 3 Flash comme modele par defaut
+
+### Contexte
+Haiku 4.5 coutait ~$2/analyse. Gemini 3 Flash offre de meilleurs benchmarks pour moins cher.
+
+### Comparaison
+| Modele | MMLU | GPQA | Prix output | Cout/analyse |
+|--------|------|------|-------------|--------------|
+| Haiku 4.5 | ~85% | ~80% | $5/M | ~$2.00 |
+| Gemini 3 Flash | 92% | 90% | $3/M | ~$0.80-1.20 |
+
+### Changements
+- Ajout de `GEMINI_3_FLASH` dans client.ts (google/gemini-3-flash-preview)
+- `selectModel()` retourne maintenant `GEMINI_3_FLASH` par defaut
+- `completeJSONWithFallback()` utilise GEMINI_3_FLASH en premier (fallback: HAIKU)
+- Type `LLMCallOptions.model` mis a jour dans base-agent.ts
+- `maxTokens` default: 60000 → 65000 (Gemini 3 Flash supporte 65K)
+- `maxOutputTokens` GEMINI_3_FLASH: 65536
+- Validation API: max 64000 → 65536
+
+### Fichiers modifies
+- `src/services/openrouter/client.ts`
+- `src/services/openrouter/router.ts`
+- `src/agents/base-agent.ts`
+- `src/app/api/llm/route.ts`
+
+---
+
+## 2026-01-27 23:45 - Fix: Suppression des maxTokens hardcodes dans les agents Tier 2
+
+### Probleme
+Le default `maxTokens=60000` etait override par des valeurs hardcodees dans chaque agent Tier 2:
+- 17 experts sectoriels: `maxTokens: 8000`
+- general-expert: `maxTokens: 10000`
+
+Quand un agent generait plus de 8000-10000 tokens, le JSON etait tronque → `finishReason=length` → parse error → analyse incomplete.
+
+### Solution
+Suppression de toutes les lignes `maxTokens` hardcodees dans les agents Tier 2. Le default de 60000 (router.ts) s'applique maintenant.
+
+### Fichiers modifies
+- `src/agents/tier2/*.ts` (21 fichiers) - suppression de `maxTokens: 8000` et `maxTokens: 10000`
+
+---
+
+## 2026-01-28 10:45 - Fix: Progression d'analyse synchronisee avec l'etat reel
+
+### Probleme
+Le composant `AnalysisProgress` simulait la progression basee sur des timings fixes. Resultat:
+- Toutes les etapes etaient marquees "completed" apres ~1:42 alors que l'analyse continuait
+- Le timer s'arretait prematurement
+- L'utilisateur attendait 3+ minutes avec un affichage "termine" alors que ca tournait encore
+
+### Solution implementee
+1. **Timer synchronise** - Continue tant que `isRunning=true`, s'arrete seulement quand le backend repond
+2. **Derniere etape bloquee** - Ne passe JAMAIS en "completed" tant que l'analyse n'est pas reellement finie
+3. **Timings realistes** - Augmentes pour correspondre aux temps reels (extraction 15s, investigation 90s, expert 45s, synthese 60s)
+4. **Variantes FREE/PRO**:
+   - FREE (tier1_complete): Extraction → Investigation → Scoring (3 etapes)
+   - PRO (full_analysis): Extraction → Investigation approfondie → Expert sectoriel → Synthese & Scoring (4 etapes)
+
+### Fichiers modifies
+- `src/components/deals/analysis-progress.tsx`
+
+---
+
+## 2026-01-27 23:15 - Fix: maxTokens augmente de 16k a 60k
+
+### Probleme
+Plusieurs agents (financial-auditor, competitive-intel, tech-ops-dd, general-expert) generaient des JSON tronques car ils depassaient la limite de 16000 tokens. Cela causait des erreurs de parsing (`finishReason=length`) et des retries couteux.
+
+### Solution
+Augmente `maxTokens` de 16000 a 60000 dans `src/services/openrouter/router.ts` (lignes 192 et 577). Haiku 4.5 supporte 64k, donc 60k laisse une marge de securite.
+
+### Fichiers modifies
+- `src/services/openrouter/router.ts` (default 16k → 60k)
+- `src/app/api/llm/route.ts` (validation Zod max 16384 → 64000)
+
+---
+
 ## 2026-01-28 09:30 - UI: Stepper de progression d'analyse (premium feel)
 
 ### Contexte

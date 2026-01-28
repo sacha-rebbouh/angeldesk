@@ -413,6 +413,7 @@ export async function getDealWithRelations(dealId: string) {
           name: true,
           type: true,
           extractedText: true,
+          processingStatus: true, // Required for document versioning/staleness detection
         },
       },
       founders: true,

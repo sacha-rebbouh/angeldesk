@@ -803,7 +803,7 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
 
         {/* Claim Verification */}
         {data.findings?.claimVerification && (
-          <ExpandableSection title={`Claims vérifiés (${data.findings.claimVerification.length})`}>
+          <ExpandableSection title={`Vérification des claims (${data.findings.claimVerification.length})`}>
             <div className="space-y-2 mt-2">
               {data.findings.claimVerification.map((c: { claim: string; status: string; investorImplication: string; location: string }, i: number) => (
                 <div key={i} className="p-2 border rounded">
@@ -2635,7 +2635,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
 
         {/* Claims Validation */}
         {claimsValidation.length > 0 && (
-          <ExpandableSection title={`Claims vérifiés (${claimsValidation.length})`}>
+          <ExpandableSection title={`Vérification des claims (${claimsValidation.length})`}>
             <div className="space-y-2 mt-2">
               {claimsValidation.map((c: {
                 claim: string;

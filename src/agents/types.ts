@@ -22,6 +22,9 @@ export interface AgentContext {
   previousResults?: Record<string, AgentResult>;
 }
 
+// Import Fact Store types for agent context
+import type { CurrentFact } from "@/services/fact-store/types";
+
 // Enriched context with Context Engine data for Tier 1 agents
 export interface EnrichedAgentContext extends AgentContext {
   contextEngine?: {
@@ -35,6 +38,12 @@ export interface EnrichedAgentContext extends AgentContext {
   };
   // BA preferences for personalized analysis (Tier 3)
   baPreferences?: BAPreferences;
+
+  // Fact Store - Verified facts extracted from documents (Tier 0)
+  // Contains structured, typed facts with confidence scoring
+  factStore?: CurrentFact[];
+  // Pre-formatted version for direct injection into prompts
+  factStoreFormatted?: string;
 
   // Funding DB context for Tier 2 sector experts
   fundingContext?: {
@@ -3053,6 +3062,8 @@ export interface CounterArgument {
     outcome: string; // Ce qui s'est passe (shutdown, pivot, acquihire, etc.)
     lessonsLearned: string;
     source: string; // "Funding DB", "Crunchbase", "TechCrunch", etc.
+    verified?: boolean; // Added by fact-checker
+    verificationUrl?: string; // URL found during verification
   };
 
   probability: "HIGH" | "MEDIUM" | "LOW";
@@ -3083,6 +3094,8 @@ export interface WorstCaseScenario {
     whatHappened: string;
     investorLosses: string;
     source: string;
+    verified?: boolean; // Added by fact-checker
+    verificationUrl?: string; // URL found during verification
   }[];
   earlyWarningSigns: string[]; // Signes avant-coureurs a surveiller
 }
@@ -3122,6 +3135,8 @@ export interface BlindSpot {
     company: string;
     whatHappened: string;
     source: string;
+    verified?: boolean; // Added by fact-checker
+    verificationUrl?: string; // URL found during verification
   };
   recommendedAction: string;
   urgency: "IMMEDIATE" | "BEFORE_DECISION" | "DURING_DD";

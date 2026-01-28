@@ -103,6 +103,12 @@ export interface AnalysisOptions {
   mode?: AnalysisMode; // Execution mode (default: "full")
   failFastOnCritical?: boolean; // Stop analysis on critical red flags (default: false)
   maxCostUsd?: number; // Maximum cost in USD before stopping (default: no limit)
+  /**
+   * If true, this is an update analysis (new documents added).
+   * Uses UPDATE_ANALYSIS credits (2) instead of INITIAL_ANALYSIS (5).
+   * Existing facts are passed to fact-extractor for contradiction detection.
+   */
+  isUpdate?: boolean;
   onProgress?: (progress: {
     currentAgent: string;
     completedAgents: number;
@@ -142,6 +148,8 @@ export interface AdvancedAnalysisOptions {
   onEarlyWarning?: OnEarlyWarning;
   /** Enable detailed traces for transparency (default: true) */
   enableTrace?: boolean;
+  /** If true, uses UPDATE_ANALYSIS credits instead of INITIAL_ANALYSIS */
+  isUpdate?: boolean;
 }
 
 // Agent counts by analysis type

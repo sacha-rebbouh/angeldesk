@@ -502,9 +502,16 @@ ${contextEngineData}
    - Dilution > 75% = HIGH
    - Time to exit > 8 ans = HIGH
 
+6. **IMPORTANT - Données financières**:
+   - Si ARR = 0 ou non fourni: dataCompleteness = "minimal", confidenceLevel MAX 40%
+   - Les projections sont alors des ESTIMATIONS basées sur benchmarks sectoriels
+   - OBLIGATOIRE d'ajouter en limitation: "Projections basées sur benchmarks sectoriels, pas de données financières réelles"
+   - La methodology de chaque scénario DOIT préciser "Estimation benchmark" si pas d'ARR
+
 Produis une analyse EXIT STRATEGIST complète au format JSON.
 Standard: Qualité M&A Goldman Sachs.
 Le BA doit pouvoir utiliser ces projections dans sa décision d'investissement.
+HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que de produire des chiffres précis non fondés.
 
 \`\`\`json
 {
@@ -591,21 +598,38 @@ Le BA doit pouvoir utiliser ces projections dans sa décision d'investissement.
     const { data } = await this.llmCompleteJSON<LLMExitStrategistResponse>(prompt);
 
     // Normalize and validate the response
-    return this.normalizeResponse(data, ticketSize, initialOwnership);
+    return this.normalizeResponse(data, ticketSize, initialOwnership, arr);
   }
 
   private normalizeResponse(
     data: LLMExitStrategistResponse,
     ticketSize: number,
-    initialOwnership: number
+    initialOwnership: number,
+    arr: number
   ): ExitStrategistData {
+    // Check if financial data is available
+    const hasFinancialData = arr > 0;
+    const financialDataDisclaimer = !hasFinancialData
+      ? "ATTENTION: Projections basées sur benchmarks sectoriels (pas de données financières réelles). Fiabilité limitée."
+      : null;
+
+    // Adjust confidence if no financial data
+    const rawConfidence = Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50));
+    const adjustedConfidence = hasFinancialData ? rawConfidence : Math.min(rawConfidence, 40);
+
+    // Build limitations with disclaimer if needed
+    const baseLimitations = Array.isArray(data.meta?.limitations) ? data.meta.limitations : [];
+    const limitations = financialDataDisclaimer
+      ? [financialDataDisclaimer, ...baseLimitations]
+      : baseLimitations;
+
     // Normalize meta
     const meta: AgentMeta = {
       agentName: "exit-strategist",
       analysisDate: new Date().toISOString(),
       dataCompleteness: this.normalizeDataCompleteness(data.meta?.dataCompleteness),
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
-      limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
+      confidenceLevel: adjustedConfidence,
+      limitations,
     };
 
     // Normalize score

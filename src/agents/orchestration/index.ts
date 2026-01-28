@@ -54,3 +54,10 @@ export {
   type DataRequest,
   type ReflexionConfig,
 } from "./reflexion";
+
+// Export finding extractor (for Standard agents → Consensus/Reflexion)
+export {
+  extractAgentData,
+  extractAllFindings,
+  type ExtractedAgentData,
+} from "./finding-extractor";

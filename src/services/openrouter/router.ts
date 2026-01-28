@@ -124,16 +124,12 @@ const TEST_MODE = true; // TODO [PROD]: Mettre à false pour la production
 const ALWAYS_OPTIMAL_AGENTS = new Set(["document-extractor"]);
 
 export function selectModel(complexity: TaskComplexity, agentName?: string): ModelKey {
-  // Agents qui nécessitent Sonnet (timeout/rate-limit avec Haiku via OpenRouter)
-  const SONNET_AGENTS = new Set(["tech-ops-dd", "customer-intel"]);
-  if (agentName && SONNET_AGENTS.has(agentName)) {
-    return "SONNET";
-  }
-
-  // Tous les autres agents utilisent Haiku 4.5 (~$1-5/MTok)
-  // Bon compromis qualité/prix: meilleur que DeepSeek, 10x moins cher que Sonnet
-  // Haiku est fiable pour le JSON structuré et le suivi d'instructions
-  return "HAIKU";
+  // Tous les agents utilisent Gemini 3 Flash
+  // - Meilleurs benchmarks (92% MMLU, 90% GPQA, proche Opus 4.5 en coding)
+  // - Optimisé pour agentic workflows
+  // - $0.50/M input, $3/M output (~$0.80-1.20/analyse vs $2+ avec Haiku)
+  // - Context 1M tokens, output 64K
+  return "GEMINI_3_FLASH";
 
   // Exception: certains agents critiques gardent leur modèle optimal
   // DISABLED - on économise
@@ -189,7 +185,7 @@ export async function complete(
   const {
     model: modelKey,
     complexity = "medium",
-    maxTokens = 16000, // Haiku 4.5 supports 64K, safe default
+    maxTokens = 65000, // Gemini 3 Flash supports 65K
     temperature = 0.7,
     systemPrompt,
     maxRetries = RATE_LIMIT_CONFIG.maxRetries,
@@ -516,22 +512,22 @@ export async function completeJSONWithFallback<T>(
   model?: string;
   usage?: { inputTokens: number; outputTokens: number };
 }> {
-  // First try: Haiku 4.5
+  // First try: Gemini 3 Flash (default model)
   try {
-    console.log(`[completeJSONWithFallback] Trying Haiku 4.5...`);
+    console.log(`[completeJSONWithFallback] Trying Gemini 3 Flash...`);
     const result = await completeJSON<T>(prompt, {
       ...options,
-      model: "HAIKU",
+      model: "GEMINI_3_FLASH",
     });
     return result;
   } catch (error) {
-    console.log(`[completeJSONWithFallback] Haiku 4.5 failed, falling back to Haiku 3.5...`);
+    console.log(`[completeJSONWithFallback] Gemini 3 Flash failed, falling back to Haiku 4.5...`);
 
-    // Fallback: Haiku 3.5
+    // Fallback: Haiku 4.5
     try {
       const result = await completeJSON<T>(prompt, {
         ...options,
-        model: "HAIKU_35",
+        model: "HAIKU",
       });
       return result;
     } catch (fallbackError) {
@@ -574,7 +570,7 @@ export async function stream(
   const {
     model: modelKey,
     complexity = "medium",
-    maxTokens = 16000, // Haiku 4.5 supports 64K, safe default
+    maxTokens = 65000, // Gemini 3 Flash supports 65K
     temperature = 0.7,
     systemPrompt,
   } = options;

@@ -710,7 +710,7 @@ Produis un JSON avec cette structure:
 
   private buildOutput(data: LLMContradictionResponse, context: EnrichedAgentContext): ContradictionDetectorData {
     // Validate and normalize contradictions
-    const contradictions: DetectedContradiction[] = (data.contradictions ?? []).map((c, i) => ({
+    const contradictions: DetectedContradiction[] = (Array.isArray(data.contradictions) ? data.contradictions : []).map((c, i) => ({
       id: c.id ?? `CONT-${String(i + 1).padStart(3, "0")}`,
       type: this.validateContradictionType(c.type),
       severity: this.validateSeverity(c.severity),
@@ -730,7 +730,7 @@ Produis un JSON avec cette structure:
     }));
 
     // Validate and normalize data gaps
-    const dataGaps: DataGap[] = (data.dataGaps ?? []).map((g, i) => ({
+    const dataGaps: DataGap[] = (Array.isArray(data.dataGaps) ? data.dataGaps : []).map((g, i) => ({
       id: g.id ?? `GAP-${String(i + 1).padStart(3, "0")}`,
       area: g.area ?? "Unknown",
       description: g.description ?? "",
@@ -763,10 +763,10 @@ Produis un JSON avec cette structure:
       aggregatedDbComparison,
       agentOutputsSummary,
       consistencyAnalysis,
-      redFlagConvergence: (data.redFlagConvergence ?? []).map(r => ({
+      redFlagConvergence: (Array.isArray(data.redFlagConvergence) ? data.redFlagConvergence : []).map(r => ({
         topic: r.topic ?? "",
-        agentsAgreeing: r.agentsAgreeing ?? [],
-        agentsDisagreeing: r.agentsDisagreeing ?? [],
+        agentsAgreeing: Array.isArray(r.agentsAgreeing) ? r.agentsAgreeing : [],
+        agentsDisagreeing: Array.isArray(r.agentsDisagreeing) ? r.agentsDisagreeing : [],
         consensusLevel: this.validateConsensusLevel(r.consensusLevel),
         recommendation: r.recommendation ?? "",
       })),
@@ -776,7 +776,7 @@ Produis un JSON avec cette structure:
     const score: AgentScore = {
       value: consistencyAnalysis.overallScore,
       grade: this.getGrade(consistencyAnalysis.overallScore),
-      breakdown: (consistencyAnalysis.breakdown ?? []).map(b => ({
+      breakdown: (Array.isArray(consistencyAnalysis.breakdown) ? consistencyAnalysis.breakdown : []).map(b => ({
         criterion: b.dimension ?? "",
         weight: b.weight ?? 0,
         score: b.score ?? 0,
@@ -794,7 +794,7 @@ Produis un JSON avec cette structure:
     };
 
     // Build red flags
-    const redFlags: AgentRedFlag[] = (data.redFlags ?? []).map((rf, i) => ({
+    const redFlags: AgentRedFlag[] = (Array.isArray(data.redFlags) ? data.redFlags : []).map((rf, i) => ({
       id: rf.id ?? `RF-CD-${String(i + 1).padStart(3, "0")}`,
       category: rf.category ?? "credibility",
       severity: this.validateSeverity(rf.severity),
@@ -811,7 +811,7 @@ Produis un JSON avec cette structure:
     this.addAutomaticRedFlags(redFlags, aggregatedDbComparison, contradictions, consistencyAnalysis.overallScore);
 
     // Build questions
-    const questions: AgentQuestion[] = (data.questions ?? []).map(q => ({
+    const questions: AgentQuestion[] = (Array.isArray(data.questions) ? data.questions : []).map(q => ({
       priority: this.validatePriority(q.priority),
       category: q.category ?? "credibility",
       question: q.question ?? "",

@@ -172,7 +172,9 @@ Le format JSON détaillé est spécifié dans le user prompt. Respecter strictem
 
     // Get team-investigator results if available
     const teamInvestigatorResult = context.previousResults?.["team-investigator"];
-    const teamInvestigatorData = teamInvestigatorResult?.success ? teamInvestigatorResult.data : null;
+    const teamInvestigatorData = teamInvestigatorResult?.success && "data" in teamInvestigatorResult
+      ? (teamInvestigatorResult as { data: unknown }).data
+      : null;
     let teamInvestigatorSection = "";
     if (teamInvestigatorData) {
       teamInvestigatorSection = `

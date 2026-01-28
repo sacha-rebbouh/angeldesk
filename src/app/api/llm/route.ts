@@ -8,7 +8,7 @@ const completionSchema = z.object({
   prompt: z.string().min(1, "Prompt is required"),
   model: z.enum(Object.keys(MODELS) as [ModelKey, ...ModelKey[]]).optional(),
   complexity: z.enum(["simple", "medium", "complex", "critical"]).optional(),
-  maxTokens: z.number().positive().max(16384).optional(),
+  maxTokens: z.number().positive().max(65536).optional(),
   temperature: z.number().min(0).max(2).optional(),
   systemPrompt: z.string().optional(),
   jsonMode: z.boolean().optional(),

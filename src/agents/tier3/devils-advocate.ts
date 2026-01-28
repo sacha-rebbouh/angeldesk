@@ -21,6 +21,7 @@
  */
 
 import { BaseAgent } from "../base-agent";
+import { factCheckDevilsAdvocate } from "@/services/fact-checking";
 import type {
   EnrichedAgentContext,
   DevilsAdvocateResult,
@@ -72,6 +73,8 @@ interface LLMDevilsAdvocateResponse {
         outcome: string;
         lessonsLearned: string;
         source: string;
+        verified?: boolean; // Added by fact-checker
+        verificationUrl?: string; // URL found during verification
       };
       probability: "HIGH" | "MEDIUM" | "LOW";
       probabilityRationale: string;
@@ -99,6 +102,8 @@ interface LLMDevilsAdvocateResponse {
         whatHappened: string;
         investorLosses: string;
         source: string;
+        verified?: boolean; // Added by fact-checker
+        verificationUrl?: string; // URL found during verification
       }[];
       earlyWarningSigns: string[];
     };
@@ -126,6 +131,8 @@ interface LLMDevilsAdvocateResponse {
         company: string;
         whatHappened: string;
         source: string;
+        verified?: boolean; // Added by fact-checker
+        verificationUrl?: string; // URL found during verification
       };
       recommendedAction: string;
       urgency: "IMMEDIATE" | "BEFORE_DECISION" | "DURING_DD";
@@ -530,7 +537,75 @@ CHAQUE affirmation doit etre sourcee. CHAQUE comparable doit etre reel.
 
     const { data } = await this.llmCompleteJSON<LLMDevilsAdvocateResponse>(prompt);
 
-    return this.normalizeResponse(data, deal.name);
+    const result = this.normalizeResponse(data, deal.name);
+
+    // Fact-check sources via web search
+    // This verifies that comparable failures and historical precedents are real
+    try {
+      console.log("[DevilsAdvocate] Starting fact-check of sources...");
+      const { findings: checkedFindings, factCheckResult } = await factCheckDevilsAdvocate({
+        counterArguments: result.findings.counterArguments.map(ca => ({
+          comparableFailure: ca.comparableFailure ? {
+            company: ca.comparableFailure.company,
+            outcome: ca.comparableFailure.outcome,
+            source: ca.comparableFailure.source,
+          } : undefined,
+        })),
+        worstCaseScenario: {
+          comparableCatastrophes: result.findings.worstCaseScenario.comparableCatastrophes.map(cc => ({
+            company: cc.company,
+            whatHappened: cc.whatHappened,
+            source: cc.source,
+          })),
+        },
+        blindSpots: result.findings.blindSpots.map(bs => ({
+          historicalPrecedent: bs.historicalPrecedent ? {
+            company: bs.historicalPrecedent.company,
+            whatHappened: bs.historicalPrecedent.whatHappened,
+            source: bs.historicalPrecedent.source,
+          } : undefined,
+        })),
+      });
+
+      // Update findings with verification data
+      if (checkedFindings.counterArguments) {
+        for (let i = 0; i < result.findings.counterArguments.length; i++) {
+          const checked = checkedFindings.counterArguments[i];
+          if (checked?.comparableFailure && result.findings.counterArguments[i].comparableFailure) {
+            result.findings.counterArguments[i].comparableFailure.verified = checked.comparableFailure.verified;
+            result.findings.counterArguments[i].comparableFailure.verificationUrl = checked.comparableFailure.verificationUrl;
+          }
+        }
+      }
+
+      if (checkedFindings.worstCaseScenario?.comparableCatastrophes) {
+        for (let i = 0; i < result.findings.worstCaseScenario.comparableCatastrophes.length; i++) {
+          const checked = checkedFindings.worstCaseScenario.comparableCatastrophes[i];
+          if (checked) {
+            result.findings.worstCaseScenario.comparableCatastrophes[i].verified = checked.verified;
+            result.findings.worstCaseScenario.comparableCatastrophes[i].verificationUrl = checked.verificationUrl;
+          }
+        }
+      }
+
+      if (checkedFindings.blindSpots) {
+        for (let i = 0; i < result.findings.blindSpots.length; i++) {
+          const checked = checkedFindings.blindSpots[i];
+          const originalPrecedent = result.findings.blindSpots[i].historicalPrecedent;
+          if (checked?.historicalPrecedent && originalPrecedent) {
+            originalPrecedent.verified = checked.historicalPrecedent.verified;
+            originalPrecedent.verificationUrl = checked.historicalPrecedent.verificationUrl;
+          }
+        }
+      }
+
+      console.log(`[DevilsAdvocate] Fact-check complete: ${factCheckResult.verifiedCount}/${factCheckResult.totalSources} sources verified`);
+    } catch (error) {
+      console.error("[DevilsAdvocate] Fact-check failed, using unverified sources:", error);
+      // Continue with unverified findings - don't fail the whole analysis
+    }
+
+    return result;
   }
 
   private formatTier1Results(context: EnrichedAgentContext): string {
@@ -817,26 +892,28 @@ CHAQUE affirmation doit etre sourcee. CHAQUE comparable doit etre reel.
         }))
       : [];
 
-    // Normalize blind spots
+    // Normalize blind spots - filter out empty entries
     const blindSpots: BlindSpot[] = Array.isArray(data.findings?.blindSpots)
-      ? data.findings.blindSpots.map((bs, idx) => ({
-          id: bs.id ?? `bs-${idx + 1}`,
-          area: bs.area ?? "",
-          description: bs.description ?? "",
-          whyMissed: bs.whyMissed ?? "",
-          whatCouldGoWrong: bs.whatCouldGoWrong ?? "",
-          historicalPrecedent: bs.historicalPrecedent
-            ? {
-                company: bs.historicalPrecedent.company ?? "",
-                whatHappened: bs.historicalPrecedent.whatHappened ?? "",
-                source: bs.historicalPrecedent.source ?? "Unknown",
-              }
-            : undefined,
-          recommendedAction: bs.recommendedAction ?? "",
-          urgency: validUrgencies.includes(bs.urgency as (typeof validUrgencies)[number])
-            ? (bs.urgency as (typeof validUrgencies)[number])
-            : "BEFORE_DECISION",
-        }))
+      ? data.findings.blindSpots
+          .filter((bs) => bs.area?.trim() && bs.description?.trim()) // Only keep entries with content
+          .map((bs, idx) => ({
+            id: bs.id ?? `bs-${idx + 1}`,
+            area: bs.area ?? "",
+            description: bs.description ?? "",
+            whyMissed: bs.whyMissed ?? "",
+            whatCouldGoWrong: bs.whatCouldGoWrong ?? "",
+            historicalPrecedent: bs.historicalPrecedent
+              ? {
+                  company: bs.historicalPrecedent.company ?? "",
+                  whatHappened: bs.historicalPrecedent.whatHappened ?? "",
+                  source: bs.historicalPrecedent.source ?? "Unknown",
+                }
+              : undefined,
+            recommendedAction: bs.recommendedAction ?? "",
+            urgency: validUrgencies.includes(bs.urgency as (typeof validUrgencies)[number])
+              ? (bs.urgency as (typeof validUrgencies)[number])
+              : "BEFORE_DECISION",
+          }))
       : [];
 
     // Normalize alternative narratives

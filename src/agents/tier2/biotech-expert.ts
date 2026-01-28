@@ -713,7 +713,6 @@ export const biotechExpert = {
       const response = await complete(user, {
         systemPrompt: system,
         complexity: "complex",
-        maxTokens: 8000,
         temperature: 0.3,
       });
 

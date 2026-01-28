@@ -138,7 +138,7 @@ const GeneralOutputSchema = z.object({
 
   // Section 8: Dynamiques sectorielles
   sectorDynamics: z.object({
-    maturity: z.enum(["nascent", "emerging", "growing", "mature", "declining"]),
+    maturity: z.enum(["nascent", "emerging", "growing", "mature", "declining"]).catch("emerging"),
     competitionIntensity: z.enum(["low", "moderate", "high", "intense"]),
     barrierToEntry: z.enum(["low", "medium", "high", "very_high"]),
     consolidationTrend: z.enum(["fragmenting", "stable", "consolidating", "winner_take_all"]),
@@ -158,10 +158,10 @@ const GeneralOutputSchema = z.object({
   exitLandscape: z.object({
     recentExits: z.array(z.object({
       company: z.string(),
-      acquirer: z.string(),
-      multiple: z.union([z.number(), z.string()]),
-      year: z.number(),
-      source: z.string(),
+      acquirer: z.string().optional().default("Unknown"),
+      multiple: z.union([z.number(), z.string()]).optional().nullable(),
+      year: z.number().optional().nullable(),
+      source: z.string().optional().default("web search"),
     })).describe("Exits trouves via recherche"),
     typicalAcquirers: z.array(z.string()),
     medianMultiple: z.union([z.number(), z.string(), z.null()]).describe("Multiple median trouve avec source"),
@@ -610,9 +610,16 @@ function normalizeOutput(raw: unknown): unknown {
   }
 
   // Ensure sectorDynamics exists with all required fields
+  const validMaturity = ["nascent", "emerging", "growing", "mature", "declining"];
+  const validCompetition = ["low", "moderate", "high", "intense"];
+  const validBarrier = ["low", "medium", "high", "very_high"];
+  const validConsolidation = ["fragmenting", "stable", "consolidating", "winner_take_all"];
+  const validThreatLevel = ["none", "low", "medium", "high", "critical"];
+  const validRegLevel = ["low", "medium", "high", "very_high"];
+
   if (!obj.sectorDynamics || typeof obj.sectorDynamics !== "object") {
     obj.sectorDynamics = {
-      maturity: "growing",
+      maturity: "emerging",
       competitionIntensity: "moderate",
       barrierToEntry: "medium",
       consolidationTrend: "stable",
@@ -621,19 +628,31 @@ function normalizeOutput(raw: unknown): unknown {
     };
   } else {
     const sd = obj.sectorDynamics as Record<string, unknown>;
-    sd.maturity = sd.maturity || "growing";
-    sd.competitionIntensity = sd.competitionIntensity || "moderate";
-    sd.barrierToEntry = sd.barrierToEntry || "medium";
-    sd.consolidationTrend = sd.consolidationTrend || "stable";
+    // Validate enum values with fallbacks
+    sd.maturity = validMaturity.includes(sd.maturity as string) ? sd.maturity : "emerging";
+    sd.competitionIntensity = validCompetition.includes(sd.competitionIntensity as string) ? sd.competitionIntensity : "moderate";
+    sd.barrierToEntry = validBarrier.includes(sd.barrierToEntry as string) ? sd.barrierToEntry : "medium";
+    sd.consolidationTrend = validConsolidation.includes(sd.consolidationTrend as string) ? sd.consolidationTrend : "stable";
     if (!sd.bigTechThreat || typeof sd.bigTechThreat !== "object") {
       sd.bigTechThreat = { level: "low", players: [], rationale: "Non evalue" };
+    } else {
+      const bt = sd.bigTechThreat as Record<string, unknown>;
+      bt.level = validThreatLevel.includes(bt.level as string) ? bt.level : "low";
+      bt.players = Array.isArray(bt.players) ? bt.players : [];
+      bt.rationale = bt.rationale || "Non evalue";
     }
     if (!sd.regulatoryRisk || typeof sd.regulatoryRisk !== "object") {
       sd.regulatoryRisk = { level: "medium", keyRegulations: [], upcomingChanges: [] };
+    } else {
+      const rr = sd.regulatoryRisk as Record<string, unknown>;
+      rr.level = validRegLevel.includes(rr.level as string) ? rr.level : "medium";
+      rr.keyRegulations = Array.isArray(rr.keyRegulations) ? rr.keyRegulations : [];
+      rr.upcomingChanges = Array.isArray(rr.upcomingChanges) ? rr.upcomingChanges : [];
     }
   }
 
   // Ensure exitLandscape exists with all required fields
+  const validExitAssessment = ["strong", "moderate", "weak", "uncertain"];
   if (!obj.exitLandscape || typeof obj.exitLandscape !== "object") {
     obj.exitLandscape = {
       recentExits: [],
@@ -645,12 +664,26 @@ function normalizeOutput(raw: unknown): unknown {
     };
   } else {
     const el = obj.exitLandscape as Record<string, unknown>;
-    el.recentExits = Array.isArray(el.recentExits) ? el.recentExits : [];
+    // Normalize recentExits - ensure each item has required fields
+    const rawExits = Array.isArray(el.recentExits) ? el.recentExits : [];
+    el.recentExits = rawExits.map((exit: unknown) => {
+      if (!exit || typeof exit !== "object") return { company: "Unknown", acquirer: "Unknown" };
+      const e = exit as Record<string, unknown>;
+      return {
+        company: e.company || "Unknown",
+        acquirer: e.acquirer || "Unknown",
+        multiple: e.multiple ?? null,
+        year: typeof e.year === "number" ? e.year : null,
+        source: e.source || "web search",
+      };
+    });
     el.typicalAcquirers = Array.isArray(el.typicalAcquirers) ? el.typicalAcquirers : [];
     el.medianMultiple = el.medianMultiple ?? null;
     el.multipleSource = el.multipleSource ?? null;
     el.timeToExitYears = el.timeToExitYears || "5-7 ans";
-    el.exitPotentialAssessment = el.exitPotentialAssessment || "uncertain";
+    el.exitPotentialAssessment = validExitAssessment.includes(el.exitPotentialAssessment as string)
+      ? el.exitPotentialAssessment
+      : "uncertain";
   }
 
   // Ensure valuationAnalysis exists with all required fields
@@ -868,7 +901,6 @@ export const generalExpert = {
       const response = await complete(userPromptText, {
         systemPrompt: systemPromptText,
         complexity: "complex",
-        maxTokens: 10000, // Plus de tokens car pas de standards pre-definis
         temperature: 0.3,
       });
 

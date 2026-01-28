@@ -635,7 +635,14 @@ Chaque affirmation doit etre sourcee ou marquee comme non verifiable.
 RAPPEL CRITIQUE:
 - Si cap table non fournie = RED FLAG CRITICAL obligatoire
 - Chaque calcul de dilution doit etre montre
-- Le BA doit pouvoir agir immediatement avec cet output`;
+- Le BA doit pouvoir agir immediatement avec cet output
+
+REGLES DE SCORING OBLIGATOIRES (coherence data/score):
+- Cap table NON fournie (dataQuality: "NONE") → score MAXIMUM 15, grade "F"
+- Donnees MINIMAL → score MAXIMUM 30, grade "D" ou "F"
+- Donnees PARTIAL → score MAXIMUM 50, grade "C", "D" ou "F"
+- Donnees COMPLETE → score libre 0-100
+On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
 
     const { data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(prompt);
 
@@ -664,6 +671,32 @@ RAPPEL CRITIQUE:
     const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
     const validPriorities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
 
+    // Check if cap table was provided - this affects the entire scoring
+    const capTableProvided = data.findings?.dataAvailability?.capTableProvided ?? false;
+    const dataQuality = data.findings?.dataAvailability?.dataQuality ?? "NONE";
+
+    // Raw score from LLM
+    const rawScore = Math.min(100, Math.max(0, data.score?.value ?? 0));
+
+    // Enforce coherence: no cap table = score capped at 15 (can't evaluate what we don't have)
+    // MINIMAL data = score capped at 30
+    // PARTIAL data = score capped at 50
+    let coherentScore = rawScore;
+    let coherentGrade: "A" | "B" | "C" | "D" | "F" = validGrades.includes(data.score?.grade as typeof validGrades[number])
+      ? data.score.grade as typeof validGrades[number]
+      : "C";
+
+    if (!capTableProvided || dataQuality === "NONE") {
+      coherentScore = Math.min(rawScore, 15);
+      coherentGrade = "F";
+    } else if (dataQuality === "MINIMAL") {
+      coherentScore = Math.min(rawScore, 30);
+      if (coherentGrade !== "F") coherentGrade = "D";
+    } else if (dataQuality === "PARTIAL") {
+      coherentScore = Math.min(rawScore, 50);
+      if (coherentGrade === "A" || coherentGrade === "B") coherentGrade = "C";
+    }
+
     return {
       meta: {
         agentName: "cap-table-auditor",
@@ -675,22 +708,20 @@ RAPPEL CRITIQUE:
         limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
       },
       score: {
-        value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-        grade: validGrades.includes(data.score?.grade as typeof validGrades[number])
-          ? data.score.grade as typeof validGrades[number]
-          : "C",
+        value: coherentScore,
+        grade: coherentGrade,
         breakdown: Array.isArray(data.score?.breakdown)
           ? data.score.breakdown.map((b) => ({
               criterion: b.criterion ?? "Unknown",
               weight: b.weight ?? 0.2,
-              score: Math.min(100, Math.max(0, b.score ?? 50)),
+              score: Math.min(100, Math.max(0, b.score ?? 0)),
               justification: b.justification ?? "Non specifie",
             }))
           : [],
       },
       findings: {
         dataAvailability: {
-          capTableProvided: data.findings?.dataAvailability?.capTableProvided ?? false,
+          capTableProvided: capTableProvided,
           termSheetProvided: data.findings?.dataAvailability?.termSheetProvided ?? false,
           dataQuality: data.findings?.dataAvailability?.dataQuality ?? "NONE",
           missingCriticalInfo: Array.isArray(data.findings?.dataAvailability?.missingCriticalInfo)

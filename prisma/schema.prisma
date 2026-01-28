@@ -67,6 +67,7 @@ model Deal {
   founders        Founder[]
   redFlags        RedFlag[]
   analyses        Analysis[]
+  factEvents      FactEvent[]
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -128,6 +129,7 @@ model Document {
 
   processingStatus ProcessingStatus @default(PENDING)
   extractedText    String?  @db.Text
+  factEvents       FactEvent[]
 
   // Extraction quality tracking
   extractionQuality   Int?      // 0-100 quality score
@@ -1395,4 +1397,83 @@ model LLMCallLog {
   @@index([model])
   @@index([createdAt])
   @@index([isError])
+}
+
+// ============================================================================
+// FACT STORE - Event Sourcing for Deal Facts
+// ============================================================================
+
+// FACT EVENT - Individual fact with full provenance (Event Sourcing pattern)
+model FactEvent {
+  id                  String        @id @default(cuid())
+  dealId              String
+  deal                Deal          @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  // Identification
+  factKey             String        // "financial.arr", "team.size", etc.
+  category            String        // FINANCIAL, TEAM, MARKET, PRODUCT, LEGAL, COMPETITION, TRACTION, OTHER
+
+  // Valeur
+  value               Json
+  displayValue        String
+  unit                String?
+
+  // Provenance
+  source              String        // DATA_ROOM, FINANCIAL_MODEL, FOUNDER_RESPONSE, PITCH_DECK, CONTEXT_ENGINE, BA_OVERRIDE
+  sourceDocumentId    String?
+  sourceDocument      Document?     @relation(fields: [sourceDocumentId], references: [id])
+  sourceConfidence    Int           // 0-100
+  extractedText       String?       @db.Text
+
+  // Event
+  eventType           String        // CREATED, SUPERSEDED, DISPUTED, RESOLVED, DELETED
+  supersedesEventId   String?
+
+  createdAt           DateTime      @default(now())
+  createdBy           String        // 'system' | 'ba'
+  reason              String?
+
+  @@index([dealId])
+  @@index([dealId, factKey])
+  @@index([dealId, category])
+}
+
+// ============================================================================
+// CREDIT SYSTEM - User Credits for Analysis
+// ============================================================================
+
+// USER CREDITS - Credit balance and allocation for a user
+model UserCredits {
+  id                  String              @id @default(cuid())
+  clerkUserId         String              @unique
+
+  balance             Int                 @default(10)
+  monthlyAllocation   Int                 @default(10)
+
+  lastResetAt         DateTime            @default(now())
+  nextResetAt         DateTime
+
+  transactions        CreditTransaction[]
+
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+}
+
+// CREDIT TRANSACTION - Individual credit movement
+model CreditTransaction {
+  id                  String        @id @default(cuid())
+  clerkUserId         String
+  userCredits         UserCredits   @relation(fields: [clerkUserId], references: [clerkUserId])
+
+  type                String        // INITIAL_ANALYSIS, UPDATE_ANALYSIS, AI_BOARD, MONTHLY_RESET, BONUS, REFUND
+  amount              Int           // négatif = dépense
+
+  dealId              String?
+  analysisId          String?
+
+  description         String
+  createdAt           DateTime      @default(now())
+
+  @@index([clerkUserId])
+  @@index([clerkUserId, createdAt])
 }

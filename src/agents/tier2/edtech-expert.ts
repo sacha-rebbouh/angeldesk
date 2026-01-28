@@ -652,7 +652,6 @@ export const edtechExpert = {
       const response = await complete(userPromptText, {
         systemPrompt: systemPromptText,
         complexity: "complex",
-        maxTokens: 8000,
         temperature: 0.3,
       });
 

@@ -301,6 +301,10 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     setShowHistory(prev => !prev);
   }, []);
 
+  // mutation.isPending = user just clicked "Analyze" and we're waiting for response
+  // currentStatus === "ANALYZING" = deal has this status in DB (could be stuck/legacy)
+  // Only show progress stepper for active mutations, not stuck DB status
+  const isAnalyzing = mutation.isPending;
   const isRunning = mutation.isPending || currentStatus === "ANALYZING";
 
   // Check analysis type from results - using hoisted categorizeResults function
@@ -403,91 +407,22 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         </Card>
       )}
 
-      {/* Launch Analysis Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Analyse IA</CardTitle>
-          <CardDescription>
-            {planConfig.description}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Analysis Progress - shown when running */}
-          {isRunning && (
+      {/* Analysis Progress - shown during active mutation */}
+      {isAnalyzing && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Analyse en cours...</CardTitle>
+          </CardHeader>
+          <CardContent>
             <AnalysisProgress
-              isRunning={isRunning}
+              isRunning={isAnalyzing}
               analysisType={analysisType === "tier1_complete" ? "tier1_complete" : "full_analysis"}
             />
-          )}
+          </CardContent>
+        </Card>
+      )}
 
-          {/* Launch button - hidden when running */}
-          {!isRunning && (
-            <Button
-              onClick={handleRunAnalysis}
-              disabled={!canRunAnalysis}
-              size="lg"
-              className="w-full"
-            >
-              {!canRunAnalysis ? (
-                <>
-                  <AlertCircle className="mr-2 h-4 w-4" />
-                  Limite atteinte
-                </>
-              ) : (
-                <>
-                  <Play className="mr-2 h-4 w-4" />
-                  Analyser ce deal
-                </>
-              )}
-            </Button>
-          )}
-
-          {/* History Toggle */}
-          {completedAnalyses.length > 0 && (
-            <div className="border rounded-lg">
-              <button
-                onClick={toggleHistory}
-                className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
-              >
-                <span className="font-medium text-sm flex items-center gap-2">
-                  <History className="h-4 w-4" />
-                  Historique des analyses ({completedAnalyses.length})
-                </span>
-                {showHistory ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </button>
-              {showHistory && (
-                <div className="p-3 pt-0 border-t space-y-2">
-                  {completedAnalyses.map((analysis) => (
-                    <button
-                      key={analysis.id}
-                      onClick={() => handleSelectAnalysis(analysis.id)}
-                      className={`w-full flex items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors ${
-                        selectedAnalysisId === analysis.id ? "border-primary bg-primary/5" : ""
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="h-4 w-4 text-green-500" />
-                        <span className="font-medium text-sm">
-                          {formatAnalysisMode(analysis.mode ?? analysis.type)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Clock className="h-3 w-3" />
-                        {formatDate(analysis.completedAt ?? analysis.createdAt)}
-                        {analysis.totalTimeMs && (
-                          <span>({(analysis.totalTimeMs / 1000).toFixed(0)}s)</span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Results Display */}
+      {/* Results Display - FIRST (when available) */}
       {displayedResult && (
         <Card>
           <CardHeader className="pb-2">
@@ -616,6 +551,85 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               <ProTeaserBanner />
             )}
           </CardContent>
+        </Card>
+      )}
+
+      {/* Launch Analysis Card - AFTER results */}
+      {!isAnalyzing && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base">
+                  {displayedResult ? "Relancer une analyse" : "Analyse IA"}
+                </CardTitle>
+                <CardDescription className="text-sm">
+                  {planConfig.description}
+                </CardDescription>
+              </div>
+              <Button
+                onClick={handleRunAnalysis}
+                disabled={!canRunAnalysis}
+                size="default"
+              >
+                {!canRunAnalysis ? (
+                  <>
+                    <AlertCircle className="mr-2 h-4 w-4" />
+                    Limite atteinte
+                  </>
+                ) : (
+                  <>
+                    <Play className="mr-2 h-4 w-4" />
+                    {displayedResult ? "Relancer" : "Analyser"}
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardHeader>
+          {/* History Toggle */}
+          {completedAnalyses.length > 1 && (
+            <CardContent className="pt-0">
+              <div className="border rounded-lg">
+                <button
+                  onClick={toggleHistory}
+                  className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+                >
+                  <span className="font-medium text-sm flex items-center gap-2">
+                    <History className="h-4 w-4" />
+                    Historique ({completedAnalyses.length})
+                  </span>
+                  {showHistory ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                {showHistory && (
+                  <div className="p-3 pt-0 border-t space-y-2">
+                    {completedAnalyses.map((analysis) => (
+                      <button
+                        key={analysis.id}
+                        onClick={() => handleSelectAnalysis(analysis.id)}
+                        className={`w-full flex items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors ${
+                          selectedAnalysisId === analysis.id ? "border-primary bg-primary/5" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <span className="font-medium text-sm">
+                            {formatAnalysisMode(analysis.mode ?? analysis.type)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Clock className="h-3 w-3" />
+                          {formatDate(analysis.completedAt ?? analysis.createdAt)}
+                          {analysis.totalTimeMs && (
+                            <span>({(analysis.totalTimeMs / 1000).toFixed(0)}s)</span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          )}
         </Card>
       )}
     </div>
