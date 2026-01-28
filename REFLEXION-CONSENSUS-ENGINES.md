@@ -18,6 +18,7 @@
 8. [Schemas Zod et Validation](#8-schemas-zod-et-validation)
 9. [Tests et Checklist de Validation](#9-tests-et-checklist-de-validation)
 10. [Fichiers a Creer/Modifier](#10-fichiers-a-creermodifier)
+11. [Gestion des Benchmarks Sectoriels](#11-gestion-des-benchmarks-sectoriels)
 
 ---
 
@@ -2726,9 +2727,535 @@ npm install zod
 
 ---
 
+## 11. GESTION DES BENCHMARKS SECTORIELS
+
+### 11.1 Problématique
+
+Les engines de qualité ont besoin de **benchmarks sectoriels** pour :
+- Valider si une métrique est "bonne" ou "mauvaise"
+- Détecter des projections irréalistes (CAGR > P90 du marché)
+- Contextualiser les red flags ("CAC élevé" = élevé par rapport à quoi ?)
+
+**RISQUE IDENTIFIÉ :** Si ces benchmarks sont hardcodés dans les prompts :
+- ❌ Maintenance nightmare (grep dans 20+ fichiers)
+- ❌ Pas de traçabilité (d'où vient "CAGR median = 120%" ?)
+- ❌ Obsolescence silencieuse (OpenView 2024 → 2025, qui met à jour ?)
+- ❌ Incohérence possible entre prompts
+- ❌ Impossible pour le BA de vérifier la source
+
+### 11.2 Distinction des Sources de Benchmarks
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    SOURCES DE BENCHMARKS                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  TYPE 1: FUNDING DATABASE (dynamique)                                   │
+│  ─────────────────────────────────────                                  │
+│  - Valorisations (multiples ARR par stage/secteur)                     │
+│  - Tailles de round (Seed, Series A, etc.)                             │
+│  - Comparables spécifiques                                              │
+│  → Source: Ta propre DB de 5,000+ deals                                │
+│  → Mise à jour: Automatique (SOURCER/COMPLETER)                        │
+│  → ✅ DÉJÀ GÉRÉ dans DB-EXPLOITATION-SPEC.md                           │
+│                                                                         │
+│  TYPE 2: STANDARDS SECTORIELS (externe)                                 │
+│  ──────────────────────────────────────                                 │
+│  - Unit economics (CAC, LTV, payback period)                           │
+│  - Croissance (CAGR, NDR, NRR)                                         │
+│  - Efficacité (Rule of 40, Magic Number, Burn Multiple)                │
+│  - Marges (Gross Margin, EBITDA margin)                                │
+│  → Source: OpenView, Bessemer, a16z, KeyBanc, etc.                     │
+│  → Mise à jour: Manuelle (1x/an quand les rapports sortent)            │
+│  → ⚠️ DOIT ÊTRE EXTERNALISÉ - pas hardcodé dans les prompts           │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 11.3 Architecture de Gestion des Standards Sectoriels
+
+```typescript
+// src/data/sector-standards/types.ts
+
+export interface BenchmarkSource {
+  name: string;              // "OpenView SaaS Benchmarks"
+  year: number;              // 2024
+  url: string;               // "https://openview.com/saas-benchmarks-2024"
+  publishedAt: string;       // "2024-03-15"
+  methodology?: string;      // "Survey of 600 SaaS companies, $1M-$100M ARR"
+  sampleSize?: number;       // 600
+}
+
+export interface BenchmarkValues {
+  p10?: number;
+  p25: number;
+  median: number;
+  p75: number;
+  p90?: number;
+  unit: string;              // "percent", "ratio", "months", "dollars"
+}
+
+export interface SectorStandard {
+  id: string;                // "saas_b2b_seed_cac_payback"
+  metric: string;            // "cac_payback_months"
+  metricDisplayName: string; // "CAC Payback Period"
+
+  // Scope
+  sector: string;            // "saas_b2b"
+  stage: string;             // "seed" | "series_a" | "series_b" | "growth"
+  region?: string;           // "us" | "europe" | "global"
+
+  // Values
+  values: BenchmarkValues;
+
+  // Provenance (OBLIGATOIRE)
+  source: BenchmarkSource;
+
+  // Lifecycle
+  validFrom: string;         // "2024-03-15"
+  validUntil: string;        // "2025-06-01"
+  status: "active" | "expiring_soon" | "expired" | "superseded";
+  supersededBy?: string;     // ID du nouveau standard
+
+  // Context pour le prompt
+  interpretation: {
+    excellent: string;       // "< P25 = excellent, indique forte efficacité marketing"
+    good: string;            // "P25-P50 = bon, dans la norme du marché"
+    concerning: string;      // "P50-P75 = attention, efficacité marketing à améliorer"
+    problematic: string;     // "> P75 = problématique, CAC trop élevé"
+  };
+}
+```
+
+### 11.4 Fichier de Standards (exemple)
+
+```typescript
+// src/data/sector-standards/saas-b2b.ts
+
+import { SectorStandard } from "./types";
+
+export const SAAS_B2B_STANDARDS: SectorStandard[] = [
+  // ============================================
+  // CROISSANCE
+  // ============================================
+  {
+    id: "saas_b2b_seed_revenue_growth",
+    metric: "revenue_growth_yoy",
+    metricDisplayName: "Revenue Growth YoY",
+    sector: "saas_b2b",
+    stage: "seed",
+    region: "global",
+    values: {
+      p10: 50,
+      p25: 80,
+      median: 120,
+      p75: 180,
+      p90: 250,
+      unit: "percent",
+    },
+    source: {
+      name: "OpenView 2024 SaaS Benchmarks",
+      year: 2024,
+      url: "https://openview.com/2024-saas-benchmarks",
+      publishedAt: "2024-03-15",
+      methodology: "Survey of 600+ SaaS companies, Seed to Series D",
+      sampleSize: 612,
+    },
+    validFrom: "2024-03-15",
+    validUntil: "2025-06-01",
+    status: "active",
+    interpretation: {
+      excellent: "> 180% YoY = Top quartile, croissance exceptionnelle",
+      good: "120-180% YoY = Médiane à P75, bonne trajectoire",
+      concerning: "80-120% YoY = P25 à médiane, croissance modérée pour un Seed",
+      problematic: "< 80% YoY = Bottom quartile, croissance insuffisante pour Seed",
+    },
+  },
+
+  // ============================================
+  // UNIT ECONOMICS
+  // ============================================
+  {
+    id: "saas_b2b_seed_cac_payback",
+    metric: "cac_payback_months",
+    metricDisplayName: "CAC Payback Period",
+    sector: "saas_b2b",
+    stage: "seed",
+    region: "global",
+    values: {
+      p25: 6,
+      median: 12,
+      p75: 18,
+      p90: 24,
+      unit: "months",
+    },
+    source: {
+      name: "OpenView 2024 SaaS Benchmarks",
+      year: 2024,
+      url: "https://openview.com/2024-saas-benchmarks",
+      publishedAt: "2024-03-15",
+      sampleSize: 612,
+    },
+    validFrom: "2024-03-15",
+    validUntil: "2025-06-01",
+    status: "active",
+    interpretation: {
+      excellent: "< 6 mois = Excellent, unit economics très sains",
+      good: "6-12 mois = Bon, dans la norme",
+      concerning: "12-18 mois = Attention, à surveiller",
+      problematic: "> 18 mois = Problématique, cash burn élevé",
+    },
+  },
+
+  {
+    id: "saas_b2b_seed_ltv_cac_ratio",
+    metric: "ltv_cac_ratio",
+    metricDisplayName: "LTV/CAC Ratio",
+    sector: "saas_b2b",
+    stage: "seed",
+    region: "global",
+    values: {
+      p25: 2.0,
+      median: 3.0,
+      p75: 4.5,
+      p90: 6.0,
+      unit: "ratio",
+    },
+    source: {
+      name: "Bessemer State of the Cloud 2024",
+      year: 2024,
+      url: "https://www.bvp.com/state-of-the-cloud-2024",
+      publishedAt: "2024-02-01",
+    },
+    validFrom: "2024-02-01",
+    validUntil: "2025-04-01",
+    status: "active",
+    interpretation: {
+      excellent: "> 4.5x = Excellent, forte rentabilité client",
+      good: "3-4.5x = Bon, modèle sain",
+      concerning: "2-3x = Limite acceptable, optimisation nécessaire",
+      problematic: "< 2x = Problématique, modèle non viable",
+    },
+  },
+
+  // ============================================
+  // EFFICACITÉ
+  // ============================================
+  {
+    id: "saas_b2b_growth_rule_of_40",
+    metric: "rule_of_40",
+    metricDisplayName: "Rule of 40 Score",
+    sector: "saas_b2b",
+    stage: "growth",
+    region: "global",
+    values: {
+      p25: 25,
+      median: 40,
+      p75: 55,
+      p90: 70,
+      unit: "percent",
+    },
+    source: {
+      name: "Bessemer State of the Cloud 2024",
+      year: 2024,
+      url: "https://www.bvp.com/state-of-the-cloud-2024",
+      publishedAt: "2024-02-01",
+    },
+    validFrom: "2024-02-01",
+    validUntil: "2025-04-01",
+    status: "active",
+    interpretation: {
+      excellent: "> 55% = Excellent, candidat IPO",
+      good: "40-55% = Bon, équilibre croissance/profitabilité sain",
+      concerning: "25-40% = Sous le seuil, optimisation nécessaire",
+      problematic: "< 25% = Problématique, ni croissance ni profitabilité",
+    },
+  },
+
+  // ... autres standards
+];
+```
+
+### 11.5 Index et Agrégation
+
+```typescript
+// src/data/sector-standards/index.ts
+
+import { SectorStandard } from "./types";
+import { SAAS_B2B_STANDARDS } from "./saas-b2b";
+import { FINTECH_STANDARDS } from "./fintech";
+import { MARKETPLACE_STANDARDS } from "./marketplace";
+// ... autres secteurs
+
+// Tous les standards agrégés
+export const ALL_SECTOR_STANDARDS: SectorStandard[] = [
+  ...SAAS_B2B_STANDARDS,
+  ...FINTECH_STANDARDS,
+  ...MARKETPLACE_STANDARDS,
+  // ...
+];
+
+// Index par ID pour lookup rapide
+export const STANDARDS_BY_ID = new Map<string, SectorStandard>(
+  ALL_SECTOR_STANDARDS.map(s => [s.id, s])
+);
+
+// Helper: trouver les standards pour un secteur/stage
+export function getStandardsForContext(
+  sector: string,
+  stage: string,
+  region?: string
+): SectorStandard[] {
+  return ALL_SECTOR_STANDARDS.filter(s =>
+    s.sector === sector &&
+    s.stage === stage &&
+    (region ? s.region === region || s.region === "global" : true) &&
+    s.status !== "expired" &&
+    s.status !== "superseded"
+  );
+}
+
+// Helper: vérifier les standards expirés
+export function checkExpiredStandards(): {
+  expired: SectorStandard[];
+  expiringSoon: SectorStandard[];
+} {
+  const now = new Date();
+  const inOneMonth = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+  return {
+    expired: ALL_SECTOR_STANDARDS.filter(s => new Date(s.validUntil) < now),
+    expiringSoon: ALL_SECTOR_STANDARDS.filter(s => {
+      const validUntil = new Date(s.validUntil);
+      return validUntil >= now && validUntil <= inOneMonth;
+    }),
+  };
+}
+```
+
+### 11.6 Injection dans les Prompts
+
+```typescript
+// src/agents/orchestration/utils/benchmark-injector.ts
+
+import { SectorStandard, getStandardsForContext, checkExpiredStandards } from "@/data/sector-standards";
+
+export interface BenchmarkInjectionResult {
+  promptAddendum: string;
+  warnings: string[];
+  standardsUsed: string[];
+}
+
+export function injectSectorBenchmarks(
+  sector: string,
+  stage: string,
+  region?: string
+): BenchmarkInjectionResult {
+  const standards = getStandardsForContext(sector, stage, region);
+  const warnings: string[] = [];
+
+  // Vérifier les expirations
+  const { expired, expiringSoon } = checkExpiredStandards();
+
+  if (expired.length > 0) {
+    console.warn(`[Benchmarks] ⚠️ ${expired.length} standards expirés!`);
+    warnings.push(`${expired.length} standards expirés - mise à jour nécessaire`);
+  }
+
+  if (expiringSoon.length > 0) {
+    console.warn(`[Benchmarks] ⏰ ${expiringSoon.length} standards expirent dans < 30 jours`);
+  }
+
+  if (standards.length === 0) {
+    return {
+      promptAddendum: `\n\n## BENCHMARKS SECTORIELS\nAucun benchmark disponible pour ${sector}/${stage}. Utiliser la Funding DB pour les comparables.`,
+      warnings: [`Pas de standards pour ${sector}/${stage}`],
+      standardsUsed: [],
+    };
+  }
+
+  // Formater pour le prompt
+  const formattedStandards = standards.map(s => ({
+    metric: s.metricDisplayName,
+    values: s.values,
+    interpretation: s.interpretation,
+    source: `${s.source.name} (${s.source.year})`,
+    sourceUrl: s.source.url,
+  }));
+
+  const promptAddendum = `
+## BENCHMARKS SECTORIELS (${sector} / ${stage})
+
+Les benchmarks suivants proviennent de sources vérifiables. TOUJOURS citer la source quand tu utilises un benchmark.
+
+${JSON.stringify(formattedStandards, null, 2)}
+
+### Comment utiliser ces benchmarks:
+1. Comparer les métriques du deal aux percentiles
+2. Citer la source exacte: "Selon [Source] ([Year]), le CAC Payback médian est de X mois"
+3. Utiliser les interprétations fournies pour contextualiser
+4. Si une métrique n'a pas de benchmark, le signaler explicitement
+`;
+
+  return {
+    promptAddendum,
+    warnings,
+    standardsUsed: standards.map(s => s.id),
+  };
+}
+```
+
+### 11.7 Utilisation dans les Agents
+
+```typescript
+// Exemple dans un agent Tier 1 (financial-auditor)
+
+import { injectSectorBenchmarks } from "@/agents/orchestration/utils/benchmark-injector";
+
+async function analyze(deal: Deal, context: AnalysisContext) {
+  // Injecter les benchmarks appropriés
+  const { promptAddendum, warnings, standardsUsed } = injectSectorBenchmarks(
+    deal.sector,      // "saas_b2b"
+    deal.stage,       // "seed"
+    deal.region       // "europe"
+  );
+
+  // Logger les warnings
+  if (warnings.length > 0) {
+    console.warn(`[financial-auditor] Benchmark warnings:`, warnings);
+  }
+
+  // Construire le prompt avec benchmarks injectés
+  const fullPrompt = `${BASE_SYSTEM_PROMPT}${promptAddendum}`;
+
+  // Appeler le LLM
+  const result = await complete(fullPrompt, userPrompt);
+
+  // Tracker les standards utilisés (pour audit)
+  result.metadata = {
+    ...result.metadata,
+    benchmarksUsed: standardsUsed,
+  };
+
+  return result;
+}
+```
+
+### 11.8 Maintenance des Standards
+
+```markdown
+## PROCÉDURE DE MISE À JOUR DES BENCHMARKS
+
+### Quand mettre à jour ?
+- Quand un nouveau rapport sort (OpenView, Bessemer, KeyBanc, etc.)
+- Généralement Q1 de chaque année
+- Alerte automatique quand `validUntil` approche
+
+### Comment mettre à jour ?
+
+1. Créer une PR avec les nouveaux standards:
+   - Ajouter les nouveaux standards avec nouveau `validFrom`
+   - Marquer les anciens comme `status: "superseded"` et `supersededBy: "new_id"`
+
+2. Mettre à jour la source:
+   - URL du nouveau rapport
+   - Date de publication
+   - Sample size si disponible
+
+3. Valider:
+   - Les valeurs sont-elles cohérentes avec l'année précédente ?
+   - Les écarts importants sont-ils justifiés ?
+
+4. Merger et déployer
+
+### Qui est responsable ?
+- Owner: [À définir]
+- Backup: [À définir]
+- Alerte Slack/email quand standards expirent
+```
+
+### 11.9 Checklist de Validation - Benchmarks
+
+```markdown
+## CHECKLIST - Gestion des Benchmarks
+
+### Structure
+- [ ] Tous les standards ont un `id` unique
+- [ ] Tous les standards ont une `source` complète (name, year, url)
+- [ ] Tous les standards ont `validFrom` et `validUntil`
+- [ ] Tous les standards ont des `interpretation` pour chaque niveau
+
+### Injection
+- [ ] `injectSectorBenchmarks` appelé dans chaque agent Tier 1/2 pertinent
+- [ ] Warnings loggés si standards expirés
+- [ ] Standards utilisés trackés dans metadata
+
+### Maintenance
+- [ ] Script/job qui vérifie les expirations
+- [ ] Procédure de mise à jour documentée
+- [ ] Owner assigné pour la maintenance
+
+### Qualité
+- [ ] Aucun benchmark hardcodé dans les prompts (grep vérifié)
+- [ ] Chaque benchmark cité dans un output a une source traçable
+- [ ] BA peut cliquer sur l'URL source pour vérifier
+```
+
+### 11.10 Fichiers à Créer
+
+```
+src/data/sector-standards/
+├── types.ts                    # Types SectorStandard, BenchmarkSource
+├── index.ts                    # Agrégation + helpers
+├── saas-b2b.ts                 # Standards SaaS B2B
+├── fintech.ts                  # Standards Fintech
+├── marketplace.ts              # Standards Marketplace
+├── healthtech.ts               # Standards HealthTech
+├── deeptech.ts                 # Standards DeepTech
+└── ... (un fichier par secteur)
+
+src/agents/orchestration/utils/
+└── benchmark-injector.ts       # Fonction d'injection dans les prompts
+```
+
+---
+
 ## FIN DU DOCUMENT
 
-**Version:** 2.0 - Document ultime et actionnable
+**Version:** 2.1 - Ajout gestion des benchmarks sectoriels
+**Derniere mise a jour:** 2026-01-28
+**Auteur:** Refonte complete pour implementation par agent
+
+### Resume des Ajouts vs Version 2.0
+
+| Section | Ajout |
+|---------|-------|
+| **Section 11** | Gestion des Benchmarks Sectoriels |
+| 11.1 | Problématique des benchmarks hardcodés |
+| 11.2 | Distinction Funding DB vs Standards externes |
+| 11.3-11.4 | Types TypeScript + fichier d'exemple |
+| 11.5 | Index et helpers (getStandardsForContext, checkExpiredStandards) |
+| 11.6 | Fonction d'injection dans les prompts |
+| 11.7 | Exemple d'utilisation dans un agent |
+| 11.8 | Procédure de maintenance |
+| 11.9 | Checklist de validation |
+| 11.10 | Liste des fichiers à créer |
+
+### Resume des Ajouts vs Version 1.0
+
+| Section | Ajout |
+|---------|-------|
+| Standards | Seuils justifies, matrice de declenchement |
+| Consensus | Types complets, prompts system+user, exemples JSON |
+| Reflexion | Types complets, prompts system+user, exemples JSON |
+| Section 6 | Gestion des couts et optimisations |
+| Section 7 | Integration orchestrateur (code complet) |
+| Section 8 | Schemas Zod avec validation |
+| Section 9 | Tests unitaires |
+| Section 10 | Liste fichiers a creer avec ordre |
+| **Section 11** | Gestion des benchmarks sectoriels (NOUVEAU v2.1) |
+
+Ce document est maintenant **100% actionnable**. Un agent peut l'utiliser directement pour implementer les deux engines sans ambiguite.
 **Derniere mise a jour:** 2026-01-28
 **Auteur:** Refonte complete pour implementation par agent
 

@@ -356,6 +356,12 @@ POURQUOI C'EST NUL:
     // --- Section 5: Funding DB ---
     sections.push(this.formatFundingDbData(context));
 
+    // --- Section 6: Fact Store (verified facts) ---
+    const factStoreSection = this.formatFactStoreData(context);
+    if (factStoreSection) {
+      sections.push(factStoreSection);
+    }
+
     return sections.filter(s => s.length > 0).join("\n\n---\n\n");
   }
 

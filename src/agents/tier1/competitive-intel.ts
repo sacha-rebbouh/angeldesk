@@ -379,6 +379,7 @@ ${advantageSection}
 ${differentiatorsSection}
 ${fundingSection}
 ${contextEngineData}
+${this.formatFactStoreData(context)}
 
 # TA MISSION
 

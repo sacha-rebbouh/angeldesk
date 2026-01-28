@@ -352,6 +352,7 @@ ${marketSection}
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData}
 ${fundingDbSection}
+${this.formatFactStoreData(context)}
 
 ## INSTRUCTIONS SPECIFIQUES
 

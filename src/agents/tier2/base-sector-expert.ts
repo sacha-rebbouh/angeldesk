@@ -490,6 +490,15 @@ ${dbCompetitors.slice(0, 10).map((c: { name: string; totalFunding?: number; last
 ).join("\n")}
 ` : "Pas de données concurrentielles disponibles dans la DB"}
 
+${context.factStoreFormatted ? `
+## DONNÉES VÉRIFIÉES (Fact Store)
+
+Les données ci-dessous ont été extraites et vérifiées à partir des documents du deal.
+Base ton analyse sur ces faits. Si un fait important manque, signale-le.
+
+${context.factStoreFormatted}
+` : ""}
+
 ${dbBenchmarks ? `
 **Benchmarks sectoriels de la DB:**
 ${JSON.stringify(dbBenchmarks, null, 2)}

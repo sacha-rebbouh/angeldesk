@@ -696,6 +696,23 @@ ${deal.description ?? "No description provided"}
     return null;
   }
 
+  // Format Fact Store data for injection into prompts
+  // Returns empty string if no fact store available (conditional injection)
+  protected formatFactStoreData(context: EnrichedAgentContext): string {
+    if (!context.factStoreFormatted) {
+      return "";
+    }
+
+    return `
+## DONNÉES VÉRIFIÉES (Fact Store)
+
+Les données ci-dessous ont été extraites et vérifiées à partir des documents du deal.
+Base ton analyse sur ces faits. Si un fait important manque, signale-le.
+
+${context.factStoreFormatted}
+`;
+  }
+
   // Standard guidance for confidence calculation - use in agent prompts
   protected getConfidenceGuidance(): string {
     return `

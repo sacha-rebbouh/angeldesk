@@ -362,6 +362,7 @@ ${financialModelSection}
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Aucune donnée Context Engine disponible pour ce deal."}
+${this.formatFactStoreData(context)}
 
 ## BENCHMARKS ${sector} - ${stage}
 ${JSON.stringify(benchmarks, null, 2)}

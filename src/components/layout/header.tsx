@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
 import { BarChart3, Menu } from "lucide-react";
+import { CreditBadge } from "@/components/credits/credit-badge";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -83,14 +84,17 @@ export function Header() {
 
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end">
           <div className="w-full flex-1 md:w-auto md:flex-none" />
-          <UserButton
-            afterSignOutUrl="/"
-            appearance={{
-              elements: {
-                avatarBox: "h-8 w-8",
-              },
-            }}
-          />
+          <div className="flex items-center gap-4">
+            <CreditBadge className="hidden sm:flex" />
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  avatarBox: "h-8 w-8",
+                },
+              }}
+            />
+          </div>
         </div>
       </div>
     </header>

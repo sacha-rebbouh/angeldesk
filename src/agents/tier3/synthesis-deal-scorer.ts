@@ -680,7 +680,7 @@ ${fundingDbContext}
 
 ## PROFIL BUSINESS ANGEL
 ${baPrefsSection}
-
+${this.formatFactStoreData(context)}
 ---
 
 ## TA MISSION

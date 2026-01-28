@@ -485,6 +485,7 @@ ${peopleGraphSection}
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Aucune donnée Context Engine disponible pour ce deal."}
+${this.formatFactStoreData(context)}
 
 ## SECTEUR
 ${sector}

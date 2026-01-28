@@ -2,6 +2,264 @@
 
 ---
 
+## 2026-01-28 15:45 - Ajout Section 11 - Gestion des Benchmarks Sectoriels
+
+### Fichiers modifies (1 fichier)
+- `REFLEXION-CONSENSUS-ENGINES.md` - Ajout section 11 complete (benchmarks sectoriels)
+
+### Details
+Ajout d'une nouvelle section au document de spec des engines:
+- 11.1: Problématique des benchmarks hardcodés (anti-pattern)
+- 11.2: Distinction Funding DB (dynamique) vs Standards externes (manuels)
+- 11.3-11.4: Types TypeScript complets + fichier d'exemple (SaaS B2B)
+- 11.5: Index et helpers (getStandardsForContext, checkExpiredStandards)
+- 11.6: Fonction injectSectorBenchmarks() pour les prompts
+- 11.7: Exemple d'utilisation dans un agent
+- 11.8: Procédure de maintenance (quand/comment mettre à jour)
+- 11.9: Checklist de validation
+- 11.10: Liste des fichiers à créer
+
+### Fichiers à créer (identifiés)
+```
+src/data/sector-standards/
+├── types.ts
+├── index.ts
+├── saas-b2b.ts
+├── fintech.ts
+├── marketplace.ts
+└── ... (un par secteur)
+
+src/agents/orchestration/utils/
+└── benchmark-injector.ts
+```
+
+### Version
+Document passé de v2.0 à v2.1
+
+---
+
+## 2026-01-29 01:30 - IMPLEMENTATION COMPLETE - Fact Store + Credits + UI + Tests
+
+### Resume global
+Implementation complete du systeme Fact Store + Credit System avec:
+- 21 fichiers crees (services, agent Tier 0, APIs, UI)
+- 12 fichiers modifies (schema Prisma, orchestrator, 8 agents, header)
+- 73 tests unitaires (41 matching + 32 credits)
+- 0 erreurs TypeScript
+
+### Nouveautes dans analysis-panel.tsx
+- Timeline "ligne de metro" pour naviguer entre versions
+- Onglet "Reponses Fondateur" avec formulaire
+- CreditModal avant lancement analyse (FREE users)
+- DeltaIndicator sur le score global
+- ChangedSection wrapper pour sections modifiees
+
+### CreditBadge dans header
+- Affiche solde credits a cote du UserButton
+- Masque sur mobile, visible desktop
+- Warning ambre si balance < 5
+
+### Injection Fact Store dans 8 agents
+- Tier 1: financial-auditor, team-investigator, market-intelligence, competitive-intel, deck-forensics
+- Tier 2: base-sector-expert (impacte tous les experts)
+- Tier 3: synthesis-deal-scorer, contradiction-detector
+
+---
+
+## 2026-01-28 17:00 - Tests unitaires pour fact-store/matching et credits/usage-gate
+
+### Resume
+Creation de tests unitaires Vitest pour les services fact-store (logique de supersession) et credits (systeme de credits).
+
+### Fichiers crees (3 fichiers)
+- `src/services/fact-store/__tests__/matching.test.ts` - 41 tests pour la logique de supersession
+- `src/services/credits/__tests__/usage-gate.test.ts` - 32 tests pour le systeme de credits
+- `vitest.unit.config.ts` - Configuration Vitest separee pour tests unitaires (sans Storybook)
+
+### Fichiers modifies (1 fichier)
+- `package.json` - Ajout scripts `test`, `test:watch`, `test:coverage`
+
+### Details des tests
+
+**fact-store/matching.test.ts (41 tests):**
+- `SOURCE_PRIORITY` - Verification des priorites (DATA_ROOM=100, CONTEXT_ENGINE=60, etc.)
+- `getSourcePriority` - Retour priorite par source
+- `compareSourcePriority` - Comparaison de 2 sources
+- `matchFact` - Logique principale:
+  - NEW quand pas de fact existant
+  - SUPERSEDE quand source prioritaire (DATA_ROOM > PITCH_DECK)
+  - SUPERSEDE quand meme priorite mais plus recent
+  - IGNORE quand source moins prioritaire
+  - REVIEW_NEEDED pour contradiction majeure (>30% delta)
+- `detectContradiction` - Detection de contradictions:
+  - MAJOR pour >30% delta
+  - SIGNIFICANT pour 15-30% delta
+  - MINOR pour 5-15% delta
+  - null pour <5% delta
+  - Gestion valeurs string avec devise, objets {amount}, edge cases (0)
+- `matchFactsBatch` - Traitement batch de facts
+- Helpers: `shouldPersistFact`, `needsHumanReview`, `getSourcesByPriority`
+
+**credits/usage-gate.test.ts (32 tests):**
+- `CREDIT_COSTS` - Verification couts (INITIAL_ANALYSIS=5, UPDATE_ANALYSIS=2, AI_BOARD=10)
+- `canPerform`:
+  - PRO/ENTERPRISE users toujours autorises
+  - FREE users avec balance suffisante autorises
+  - FREE users avec balance insuffisante refuses
+  - Creation credits si inexistants
+  - Bypass via env FORCE_PRO_USER
+- `recordUsage`:
+  - PRO users: pas de decrement, mais log
+  - FREE users: decrement + transaction
+  - Erreur si balance insuffisante
+  - Erreur si UserCredits inexistant
+- `checkAndResetCredits`:
+  - Reset si nextResetAt depasse
+  - Pas de reset si nextResetAt futur
+- `getOrCreateUserCredits`, `addBonusCredits`, `refundCredits`
+- `getTransactionHistory`, `getBalance`, `hasEnoughCredits`
+
+### Configuration
+- Fichier `vitest.unit.config.ts` separe pour eviter conflit avec plugin Storybook
+- Alias `@` configure pour imports
+- Mocks Prisma via `vi.mock('@/lib/prisma')`
+
+### Scripts npm ajoutes
+```bash
+npm run test          # Lance tests unitaires une fois
+npm run test:watch    # Mode watch
+npm run test:coverage # Avec coverage
+```
+
+### Verification
+```bash
+npm run test -- --run
+# 73 tests passed (2 fichiers)
+```
+
+---
+
+## 2026-01-28 16:30 - Integration nouveaux composants UI dans analysis-panel.tsx
+
+### Resume
+Integration complete des nouveaux composants UI (TimelineVersions, FounderResponses, DeltaIndicator, ChangedSection, CreditModal) dans le panel d'analyse.
+
+### Fichiers modifies (1 fichier)
+- `src/components/deals/analysis-panel.tsx` - Integration complete
+
+### Details des modifications
+
+**1. Nouveaux imports:**
+- `TimelineVersions` - Navigation entre versions d'analyses
+- `FounderResponses`, `AgentQuestion`, `QuestionResponse` - Reponses fondateur
+- `DeltaIndicator` - Indicateur delta sur scores
+- `ChangedSection` - Wrapper pour sections modifiees
+- `CreditModal` - Modal confirmation credits
+- `CREDIT_COSTS` - Couts des actions
+- `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent` - Navigation onglets
+
+**2. Nouveaux states et queries:**
+- `showCreditModal` - Controle affichage modal credits
+- `activeTab` - Onglet actif (results | founder-responses)
+- `isSubmittingResponses` - Etat soumission reponses
+- `useQuery(['credits'])` - Fetch credits utilisateur
+- `useQuery(['deals', dealId, 'founder-responses'])` - Fetch reponses existantes
+
+**3. Nouvelles interfaces:**
+- `CreditsData` - Structure donnees credits
+- `FounderResponsesData` - Structure reponses fondateur
+
+**4. Nouvelles fonctions:**
+- `fetchCredits()` - API GET /api/credits
+- `fetchFounderResponses()` - API GET /api/founder-responses/[dealId]
+- `submitFounderResponses()` - API POST /api/founder-responses/[dealId]
+- `mapQuestionCategory()` - Mapping categories LLM -> UI
+- `mapQuestionPriority()` - Mapping priorites LLM -> UI
+- `handleAnalyzeClick()` - Gestion clic analyse (modal credits pour FREE)
+- `handleSubmitFounderResponses()` - Soumission reponses fondateur
+
+**5. Nouveaux useMemo:**
+- `timelineVersions` - Preparation donnees timeline (id, version, date, score, triggerType)
+- `currentAnalysisId` - ID analyse selectionnee
+- `previousAnalysis` - Analyse precedente pour comparaison
+- `currentScore`, `previousScore` - Scores pour DeltaIndicator
+- `founderQuestions` - Questions extraites de question-master
+
+**6. Modifications UI:**
+- Ajout `CreditModal` en haut (FREE users)
+- Ajout `TimelineVersions` en Card si multiple analyses
+- Remplacement structure resultats par `Tabs`:
+  - Onglet "Resultats" avec DeltaIndicator sur score global
+  - Onglet "Reponses Fondateur" avec badge compteur
+- Tier2Results encapsule dans ChangedSection
+- Boutons "Analyser/Relancer" utilisent handleAnalyzeClick
+
+### Flux utilisateur
+1. FREE user clique "Analyser" -> CreditModal s'affiche
+2. User confirme -> Analyse se lance
+3. Resultats s'affichent avec onglets
+4. Si multiple versions -> Timeline visible
+5. Scores affichent delta si version precedente
+6. Onglet "Reponses Fondateur" permet saisie
+
+### Verification
+```bash
+npx tsc --noEmit  # 0 erreurs analysis-panel
+```
+
+---
+
+## 2026-01-29 02:30 - Injection Fact Store dans tous les agents Tier 1, 2 et 3
+
+### Resume
+Injection conditionnelle du Fact Store (donnees verifiees) dans les prompts de tous les agents d'analyse pour enrichir le contexte des LLMs.
+
+### Fichiers modifies (8 fichiers)
+
+**Tier 1 (5 agents):**
+- `src/agents/tier1/financial-auditor.ts` - Ajout `${this.formatFactStoreData(context)}` apres Context Engine
+- `src/agents/tier1/team-investigator.ts` - Ajout `${this.formatFactStoreData(context)}` apres Context Engine
+- `src/agents/tier1/market-intelligence.ts` - Ajout `${this.formatFactStoreData(context)}` apres Funding DB
+- `src/agents/tier1/competitive-intel.ts` - Ajout `${this.formatFactStoreData(context)}` apres Context Engine
+- `src/agents/tier1/deck-forensics.ts` - Ajout `${this.formatFactStoreData(context)}` apres Valuation Context
+
+**Tier 2 (1 fichier):**
+- `src/agents/tier2/base-sector-expert.ts` - Ajout section conditionnelle Fact Store dans `buildSectorExpertPrompt()`
+
+**Tier 3 (2 agents):**
+- `src/agents/tier3/synthesis-deal-scorer.ts` - Ajout `${this.formatFactStoreData(context)}` apres BA Preferences
+- `src/agents/tier3/contradiction-detector.ts` - Ajout section Fact Store dans `formatAllInputs()`
+
+### Pattern d'injection
+La methode `formatFactStoreData(context)` dans `base-agent.ts` retourne:
+- Une section formatee "## DONNEES VERIFIEES (Fact Store)" si `context.factStoreFormatted` existe
+- Une chaine vide sinon (injection conditionnelle, ne casse pas les agents sans Fact Store)
+
+### Comportement
+- Les agents recoivent maintenant les faits verifies extraits par le Tier 0 (fact-extractor)
+- Les LLMs peuvent baser leur analyse sur des donnees coherentes et verifiees
+- Si un fait manque, l'agent est invite a le signaler
+
+### Verification
+```bash
+npx tsc --noEmit  # 0 erreurs TypeScript
+```
+
+---
+
+## 2026-01-28 - Integration CreditBadge dans Header
+
+### Fichier modifie
+- **`src/components/layout/header.tsx`** - Ajout du CreditBadge a cote du UserButton
+
+### Details
+- Import du composant `CreditBadge` depuis `@/components/credits/credit-badge`
+- Placement dans un wrapper flex avec `gap-4` pour espacement
+- Classe `hidden sm:flex` pour masquer sur mobile (responsive)
+- Le badge s'affiche uniquement pour les utilisateurs FREE (logique dans le composant)
+
+---
+
 ## 2026-01-29 01:00 - FACT STORE + CREDIT SYSTEM - Implementation Complete
 
 ### Resume

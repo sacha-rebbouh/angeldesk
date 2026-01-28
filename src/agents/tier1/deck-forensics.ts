@@ -331,6 +331,7 @@ ${extractedSection}
 ${contextEngineData}
 ${competitorContext}
 ${valuationContext}
+${this.formatFactStoreData(context)}
 
 ============================================================================
 INSTRUCTIONS CRITIQUES
