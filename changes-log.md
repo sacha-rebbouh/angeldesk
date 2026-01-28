@@ -2,6 +2,667 @@
 
 ---
 
+## 2026-01-28 22:00 - QA: 2 bugs critiques corrigés + 1 warning
+
+### Fichiers modifies
+- `src/agents/orchestration/reflexion.ts` — `const currentResult` → `let currentResult` + application de `revisedOutput` depuis l'improver
+- `src/agents/orchestrator/index.ts` — 5 fact keys corrigés (financial.cogs→financial.gross_margin, unit_economics.ltv→traction.ltv, unit_economics.cac→traction.cac, financial.revenue_growth→financial.revenue_growth_yoy, financial.ebitda_margin→financial.net_margin) + fallback traction.ltv_cac_ratio direct + JSDoc obsolète nettoyé
+
+### Bugs corrigés
+1. **CRITIQUE: Reflexion ne produisait JAMAIS de revisedResult** — `currentResult` était `const`, jamais mis à jour → `revisedResult` toujours `undefined`. Fix: `let` + application du `revisedOutput` de l'improver
+2. **CRITIQUE: 5/8 fact keys incorrects** — Les clés ne matchaient pas la taxonomie fact-store. Fix: `traction.ltv`, `traction.cac`, `financial.revenue_growth_yoy`, `financial.gross_margin` (direct), `financial.net_margin`
+
+---
+
+## 2026-01-28 21:45 - Intégration complète engines refondus dans l'orchestrateur (v2)
+
+### Fichiers modifies
+- `src/agents/orchestrator/index.ts`
+- `src/agents/orchestrator/types.ts`
+
+### Description
+1. **Suppression modes lite/express** — `AnalysisMode` = `"full"` uniquement
+2. **VerificationContext complet** — `buildVerificationContext()` (async) avec deck, fact store, Context Engine, Funding DB (`querySimilarDeals` + `getValuationBenchmarks`), pre-computed calculations (ARR, Gross Margin, LTV/CAC, Rule of 40)
+3. **Consensus avec sources** — `runConsensusDebate()` passe VerificationContext à `debate()`
+4. **Reflexion tier-aware** — `applyReflexion()` passe `tier` + VerificationContext
+5. **Reflexion post-Tier 2** — STEP 6.5 après sector expert
+6. **FIX: Réinjection revisedResult** — `applyReflexion()` réinjecte le résultat amélioré dans `allResults` + `enrichedContext.previousResults` → les agents downstream voient les outputs corrigés
+7. **FIX: Réinjection résolutions consensus** — `runConsensusDebate()` injecte les résolutions dans `previousResults["_consensus_resolutions"]` → Tier 3 voit les contradictions résolues
+8. **FIX: Tier1 standalone** — `runTier1Analysis()` a maintenant consensus + reflexion (pas juste `runFullAnalysis`)
+9. **FIX: Consensus post-Tier 2** — Détecte contradictions entre sector expert et Tier 1
+10. **FIX: Tracking coûts engines** — `applyReflexion()` et `runConsensusDebate()` retournent les tokens utilisés, ajoutés à `totalCost`
+
+---
+
+## 2026-01-28 20:30 - QA fixes: 6 corrections engines refondus
+
+### Fichiers modifies
+- `src/agents/orchestration/consensus-engine.ts`
+- `src/agents/orchestration/reflexion.ts`
+- `src/agents/orchestration/utils/financial-calculations.ts`
+
+### Changements
+1. **[MEDIUM]** debateRound2/3: migration vers prompts FR + validation Zod (avec fallback legacy + try/catch JSON.parse)
+2. **[LOW]** Arbitrator prompt: clarifie que `winner` = nom exact de l'agent
+3. **[LOW]** reflexion.ts: `criticalRedFlagAlwaysReflect` implementee dans `needsReflexion`
+4. **[LOW]** financial-calculations.ts: guard `p25 === 0` dans `calculatePercentile`
+5. **[LOW]** reflexion.ts: helper `extractResultData()` extrait pour eviter le double cast
+
+### Verification
+- `npx tsc --noEmit` : OK
+
+---
+
+## 2026-01-28 19:00 - Refonte Consensus Engine + Reflexion Engine
+
+### Fichiers modifies
+- `src/agents/orchestration/consensus-engine.ts` - Refonte complete: prompts FR, Zod validation, auto-resolve MINOR, skip-to-arbitration, quick resolution, token tracking, VerificationContext
+- `src/agents/orchestration/reflexion.ts` - Refonte complete: prompts FR Big4, Zod validation, tier-based triggering (T1<70%, T2<60%, T3 never), quality score tracking, token tracking, VerificationContext
+- `src/agents/orchestration/index.ts` - Ajout exports: VerificationContext, schemas Zod, utils (completeAndValidate, financial calculations)
+- `src/agents/orchestration/schemas/consensus-schemas.ts` - NOUVEAU: Schemas Zod (DebaterResponse, ArbitratorResponse, QuickResolution)
+- `src/agents/orchestration/schemas/reflexion-schemas.ts` - NOUVEAU: Schemas Zod (CriticResponse, ImproverResponse)
+- `src/agents/orchestration/utils/llm-validation.ts` - NOUVEAU: completeAndValidate<T>() avec retry + Zod validation
+- `src/agents/orchestration/utils/financial-calculations.ts` - NOUVEAU: calculateARR, calculateGrossMargin, calculateCAGR, calculatePercentile, etc.
+
+### Description
+Refonte des deux engines d'orchestration avec:
+- Prompts en francais, source-first, hierarchie des sources (Deck > FM > Context Engine > Funding DB > Inference)
+- Validation structuree des reponses LLM via Zod schemas
+- Optimisations consensus: auto-resolve MINOR sans LLM, skip debate si asymetrie confiance >35pts
+- Reflexion tier-aware: Tier 1 <70%, Tier 2 <60%, Tier 3 jamais
+- Token tracking sur toutes les resolutions
+- Backward compatible: memes interfaces publiques + fallbacks legacy
+
+---
+
+## 2026-01-28 17:30 - Tier gating in orchestrator (FREE vs PRO plan)
+
+### Fichiers modifies
+- `src/agents/orchestrator/types.ts` - Added `UserPlan` type, `userPlan` to `AnalysisOptions`, `AdvancedAnalysisOptions`, `tiersExecuted` to `AnalysisResult`
+- `src/agents/orchestrator/index.ts` - Tier gating logic in `runFullAnalysis`: FREE skips Tier 2 + limits Tier 3 to synthesis-deal-scorer only
+- `src/app/api/analyze/route.ts` - Fetches user subscription, passes `userPlan` to orchestrator, returns `tiersExecuted`
+
+### Description
+FREE plan: Tier 1 (13 agents) + synthesis-deal-scorer uniquement.
+PRO plan: Tier 1 + Tier 2 (sector expert) + Tier 3 complet (5 agents).
+Le plan est determine depuis `user.subscriptionStatus` en DB et passe a l'orchestrateur via `AnalysisOptions.userPlan`.
+Le resultat inclut `tiersExecuted` pour que l'UI sache quels tiers griser.
+
+---
+
+## 2026-01-28 16:00 - Backend: credits -> quotas system replacement
+
+### Fichiers modifies
+- `src/services/credits/types.ts` - Remplacement complet: credit types -> quota types (PlanType, PlanLimits, PLAN_LIMITS, QuotaAction, QuotaCheckResult, UserQuotaInfo)
+- `src/services/credits/usage-gate.ts` - Remplacement complet: UsageGate class -> fonctions checkQuota, getUserQuotaInfo, recordUsage (basees sur UserDealUsage)
+- `src/services/credits/index.ts` - Mise a jour exports pour nouveau systeme quota
+- `src/app/api/credits/route.ts` - GET retourne UserQuotaInfo, POST check quota avec action/dealId
+- `src/components/deals/analysis-panel.tsx` - Migration imports credits -> quota (fetchQuota, QuotaData, CreditModal avec props type/action/current/limit)
+- `src/services/credits/__tests__/usage-gate.test.ts` - Reecriture complete des tests pour le systeme quota
+
+### Description
+Remplacement du systeme de credits (balance, costs, transactions) par un systeme de quotas simples (analyses/mois, updates/deal, boards/mois) avec plan FREE (3 analyses, 2 updates/deal, 0 boards) et PRO (20 analyses, unlimited updates, 5 boards).
+
+---
+
+## 2026-01-28 - UI: credits -> quotas migration
+
+### Fichiers modifies
+- `src/components/credits/credit-badge.tsx` - Remplacement affichage credits par quotas (remaining/limit analyses, badge PRO)
+- `src/components/credits/credit-modal.tsx` - Remplacement modal confirmation credits par modal quota (LIMIT_REACHED, TIER_LOCKED)
+- `src/components/deals/tier-lock-overlay.tsx` - **NOUVEAU** Overlay cadenas pour sections Tier 2/3 verrouillees (FREE)
+- `src/components/deals/analysis-panel.tsx` - Adaptation au nouveau systeme quota (plus de confirmation modal, blocage seulement si limite atteinte)
+
+### Description
+Migration du systeme de credits vers un systeme de quotas mensuels:
+- FREE: 3 analyses/mois, badge affiche remaining/limit
+- PRO: badge "PRO" simple, pas de limite affichee
+- Modal ne s'affiche plus pour confirmer le cout mais seulement quand la limite est atteinte
+- Nouveau composant TierLockOverlay pour griser les sections PRO-only
+- Exports `CreditBadge` et `CreditModal` conserves pour retrocompatibilite
+
+---
+
+## 2026-01-28 - Calibration analytics pour fact-extractor confidence
+
+### Fichiers modifies
+- `src/services/fact-store/calibration.ts` - Creation du service de calibration analytics
+- `src/services/fact-store/index.ts` - Export du service calibration
+- `src/app/api/admin/calibration/route.ts` - API route GET /api/admin/calibration
+
+### Description
+Infrastructure de logging pour analyser la calibration des seuils de confidence du fact-extractor (70%, 85%, 95%). Le service calcule les taux d'override BA par bande de confidence, par categorie, et identifie les fact keys les plus souvent corriges. Read-only, appele occasionnellement via l'API admin (PRO/ENTERPRISE).
+
+---
+
+## 2026-01-28 24:15 - QA fixes: schemas, prompts, terminologie engines
+
+### Fichiers modifies
+- `docs/engines/05-SHARED-UTILS.md` - Ajout `trustLevel` au QuickResolutionSchema + alignement winner sur POSITION_A/POSITION_B
+- `docs/engines/02-CONSENSUS-PROMPTS.md` - Quick Resolution: winner POSITION_A/POSITION_B, `(max 150 chars)` sur baOneLiner, few-shot example
+- `docs/engines/04-REFLEXION-PROMPTS.md` - Ajout parametre `preComputedCalculations` et section injection dans buildCriticPrompt
+
+### Description
+3 corrections QA finale sur les engines:
+1. **QuickResolutionSchema**: ajout champ `trustLevel: z.enum(["HIGH", "MEDIUM", "LOW"])` et alignement terminologie winner sur `POSITION_A`/`POSITION_B` (coherent avec Arbitrator)
+2. **Critic user prompt**: ajout parametre optionnel `preComputedCalculations` (meme pattern que Improver) avec section conditionnelle d'injection et texte explicatif
+3. **Quick Resolution prompt**: terminologie winner alignee, `(max 150 chars)` sur baOneLiner, mini few-shot example ajoute
+
+---
+
+## 2026-01-28 23:55 - Reecriture des prompts Reflexion Engine
+
+### Fichiers modifies
+- `docs/engines/04-REFLEXION-PROMPTS.md` - Reecriture complete
+
+### Description
+Amelioration qualitative des 4 prompts LLM du Reflexion Engine (Critic system/user, Improver system/user):
+- **Critic system**: Remplacement des 5 etapes verbeuses par des regles concises + table de types. Ajout qualityScore objectif (deductions chiffrees: -15 CRITICAL, -10 HIGH, -5 MEDIUM). Ajout garde-fou "pas de critique gratuite" et respect du "NON DISPONIBLE". Hierarchie des sources explicite. Few-shot bon + mauvais exemple.
+- **Critic user**: Ajout instruction tri par severite et retour vide si output solide.
+- **Improver system**: Ajout regle "ne recalcule pas" (calculs TypeScript injectes). Ajout criteres explicites pour CANNOT_FIX (absent des 4 sources). Ajout regle "meme format que l'output original". Ajout regle "score ne baisse pas". Table de correction par type. Few-shot bon + mauvais exemple.
+- **Improver user**: Ajout parametre `preComputedCalculations` optionnel. Tri des critiques par severite. Compteurs par severite dans le header.
+
+---
+
+## 2026-01-28 23:30 - Reecriture des prompts Consensus Engine
+
+### Fichiers modifies
+- `docs/engines/02-CONSENSUS-PROMPTS.md` - Reecriture complete
+
+### Description
+Amelioration qualitative des 3 prompts LLM du Consensus Engine (Debater, Arbitrator, Quick Resolution):
+- **Debater**: Suppression du split prosecutor/defender inutile (prompt unifie). Ajout few-shot examples (bon + mauvais). Ajout garde-fou honnetete ("si ta position est fausse, DIS-LE"). Ajout regle confiance liee aux sources primaires.
+- **Arbitrator**: Ajout concept de "sources fantomes" (citees mais absentes des donnees). Regle: 2 positions avec sources fantomes = UNRESOLVED obligatoire. Ajout calculs pre-computes. Few-shot bon + mauvais verdict.
+- **Quick Resolution**: Ajout trustLevel dans le JSON de sortie. Ajout regle "citer AU MOINS une source". Ajout sources des positions dans le contexte.
+- **Transversal**: Hierarchie des sources explicite (deck > FM > CE > DB > inference). Mention des calculs pre-computes TypeScript (ne pas recalculer). Anti-patterns avec exemples concrets.
+
+---
+
+## 2026-01-28 22:00 - Propagation factStoreFormatted dans les 7 agents Tier 2 restants
+
+### Fichiers modifies (7 fichiers)
+- `src/agents/tier2/healthtech-expert.ts` - Ajout injection factStoreFormatted dans user prompt
+- `src/agents/tier2/deeptech-expert.ts` - Idem
+- `src/agents/tier2/climate-expert.ts` - Idem
+- `src/agents/tier2/consumer-expert.ts` - Idem
+- `src/agents/tier2/hardware-expert.ts` - Idem
+- `src/agents/tier2/gaming-expert.ts` - Idem
+- `src/agents/tier2/biotech-expert.ts` - Idem
+- `src/agents/tier2/fintech-expert.ts` - Idem (8e fichier)
+
+### Description
+Ces 7+1 agents Tier 2 ne utilisent PAS BaseSectorExpert - ils ont chacun leur propre fonction buildPrompt custom. Contrairement a ce qui etait indique dans l'entree precedente, ils ne beneficiaient pas du fact store via base-sector-expert.ts. Injection ajoutee entre la section "DONNEES EXTRAITES DU DECK" et "RESULTATS DES AGENTS TIER 1". Compilation verifiee (tsc --noEmit OK).
+
+---
+
+## 2026-01-28 21:45 - Propagation factStoreFormatted dans les 9 agents Tier 2 custom
+
+### Fichiers modifies (9 fichiers)
+- `src/agents/tier2/edtech-expert.ts` - Ajout injection factStoreFormatted dans buildUserPrompt
+- `src/agents/tier2/proptech-expert.ts` - Idem
+- `src/agents/tier2/foodtech-expert.ts` - Idem
+- `src/agents/tier2/hrtech-expert.ts` - Idem
+- `src/agents/tier2/cybersecurity-expert.ts` - Idem
+- `src/agents/tier2/ai-expert.ts` - Idem
+- `src/agents/tier2/saas-expert.ts` - Idem
+- `src/agents/tier2/general-expert.ts` - Idem
+- `src/agents/tier2/marketplace-expert.ts` - Idem (uses enrichedContext)
+
+### Description
+Les agents Tier 2 utilisant `createSectorExpert`/`BaseSectorExpert` (biotech, creator, spacetech, climate, hardware, healthtech, consumer, gaming, deeptech) recevaient deja le fact store via `base-sector-expert.ts` ligne 493. Fintech l'avait deja dans son propre prompt. Les 9 agents avec un `buildUserPrompt` custom (saas, ai, edtech, proptech, foodtech, hrtech, cybersecurity, general, marketplace) ne l'avaient pas. Corrige. Compilation verifiee.
+
+---
+
+## 2026-01-28 21:15 - Correction QA des fichiers engines splittés
+
+### Fichiers modifies (4 fichiers)
+- `docs/engines/05-SHARED-UTILS.md` - Ajout: standards SaaS B2B complets, index/helpers, procedure maintenance, arborescence fichiers, edge case FinancialModelQuality, batch reflexion, interface EngineMetrics
+- `docs/engines/06-INTEGRATION-CHECKLIST.md` - Ajout: tests resolve Consensus, tests reflect Reflexion, tableau scenarios couts, A/B testing prompts, MetricsCollector getWeeklyReport
+- `docs/engines/02-CONSENSUS-PROMPTS.md` - Ajout note pre-requis vers 01-CONSENSUS-SPEC.md
+- `docs/engines/04-REFLEXION-PROMPTS.md` - Ajout note pre-requis vers 03-REFLEXION-SPEC.md
+
+### Description
+Reintegration du contenu manquant identifie par l'analyse QA dans les fichiers splittes depuis REFLEXION-CONSENSUS-ENGINES.md. 7 blocs dans 05-SHARED-UTILS.md, 5 blocs dans 06-INTEGRATION-CHECKLIST.md, 2 notes pre-requis.
+
+---
+
+## 2026-01-28 19:30 - Propagation factStoreFormatted dans les 3 agents Tier 3 manquants
+
+### Fichiers modifies (3 fichiers)
+- `src/agents/tier3/devils-advocate.ts` - Ajout `${this.formatFactStoreData(context)}` dans le user prompt
+- `src/agents/tier3/scenario-modeler.ts` - Idem
+- `src/agents/tier3/memo-generator.ts` - Idem
+
+### Description
+Les 5 agents Tier 3 utilisent maintenant tous le Fact Store. 2 l'avaient deja (contradiction-detector via `formatFactStoreData()` dans `formatAllInputs`, synthesis-deal-scorer via injection directe dans le prompt). Les 3 restants (devils-advocate, scenario-modeler, memo-generator) ont ete mis a jour. Compilation verifiee avec `npx tsc --noEmit`.
+
+---
+
+## 2026-01-28 19:15 - Propagation factStoreFormatted dans les 8 agents Tier 1 manquants
+
+### Fichiers modifies (8 fichiers)
+- `src/agents/tier1/exit-strategist.ts` - Ajout `${this.formatFactStoreData(context)}` dans le user prompt
+- `src/agents/tier1/gtm-analyst.ts` - Idem
+- `src/agents/tier1/legal-regulatory.ts` - Idem
+- `src/agents/tier1/question-master.ts` - Idem
+- `src/agents/tier1/tech-stack-dd.ts` - Idem
+- `src/agents/tier1/tech-ops-dd.ts` - Idem
+- `src/agents/tier1/customer-intel.ts` - Idem
+- `src/agents/tier1/cap-table-auditor.ts` - Idem
+
+### Description
+Les 13 agents Tier 1 utilisent maintenant tous le Fact Store. 5 l'avaient deja (financial-auditor, deck-forensics, team-investigator, market-intelligence, competitive-intel). Les 8 restants ont ete mis a jour. L'injection utilise la methode `formatFactStoreData()` de `base-agent.ts`.
+
+---
+
+## 2026-01-28 19:00 - Background Job Abstraction (runJob) pour Fact Extraction
+
+### Fichiers crees (3 fichiers)
+- `src/services/jobs/types.ts` - Types JobStatus, JobResult, JobOptions + defaults (timeout 120s, 2 retries)
+- `src/services/jobs/runner.ts` - runJob() avec timeout (Promise.race) et retry logic
+- `src/services/jobs/index.ts` - Barrel export
+
+### Fichiers modifies (1 fichier)
+- `src/agents/orchestrator/index.ts` - Import runJob, wrap factExtractorAgent.run() dans runJob('fact-extraction', ..., { timeoutMs: 120000, maxRetries: 1 }). Graceful degradation si le job echoue (continue sans facts).
+
+### Description
+Abstraction de background job (V1 = inline avec timeout+retry, V2 = swap pour Inngest/Trigger.dev). Le fact-extractor est maintenant protege contre les timeouts et peut retry 1 fois en cas d'echec.
+
+---
+
+## 2026-01-28 18:30 - Temporal Facts + Token Management (Fact Extractor)
+
+### Fichiers modifies (4 fichiers)
+- `src/services/fact-store/types.ts` - Ajout PeriodType export + champs temporels (validAt, periodType, periodLabel) a ExtractedFact
+- `src/services/fact-store/fact-keys.ts` - Ajout isTemporal a FactKeyDefinition + flag sur 11 cles (financial.arr/mrr/revenue/burn_rate/runway_months, traction.customers_count/users_count/churn_monthly/nrr, team.size)
+- `prisma/schema.prisma` - Ajout colonnes validAt (DateTime?), periodType (String?), periodLabel (String?) au modele FactEvent
+- `src/agents/tier0/fact-extractor.ts` - (1) Temporal: champs validAt/periodType/periodLabel dans LLMExtractedFact, prompt system, exemple JSON, normalizeResponse. (2) Token mgmt: remplacement troncation brute par truncateDocumentsForPrompt() avec budget 150K chars, priorite par type doc, distribution intelligente
+
+### Prochaines etapes
+- Run `npx prisma generate` et migration DB pour les nouvelles colonnes FactEvent
+- Mettre a jour le fact-store service pour persister les champs temporels dans FactEvent
+
+---
+
+## 2026-01-28 - Split REFLEXION-CONSENSUS-ENGINES.md en 7 fichiers
+
+### Fichiers crees (7 fichiers)
+- `docs/engines/00-ENGINE-OVERVIEW.md` (223 lignes) - Vision, diagnostic, matrice declenchement, flux
+- `docs/engines/01-CONSENSUS-SPEC.md` (592 lignes) - Types TypeScript + logique detection/resolution
+- `docs/engines/02-CONSENSUS-PROMPTS.md` (365 lignes) - Prompts debater + arbitrator
+- `docs/engines/03-REFLEXION-SPEC.md` (498 lignes) - Types TypeScript + logique critique/amelioration
+- `docs/engines/04-REFLEXION-PROMPTS.md` (364 lignes) - Prompts critic + improver
+- `docs/engines/05-SHARED-UTILS.md` (869 lignes) - Calculs financiers, Zod, validation, config, benchmarks, fallbacks
+- `docs/engines/06-INTEGRATION-CHECKLIST.md` (649 lignes) - QualityProcessor, ordre implementation, checklists, metriques, structure fichiers
+
+### Changements effectues
+- Split du fichier monolithique (4217 lignes) en 7 fichiers cibles (3560 lignes total)
+- Tout le code TypeScript preserve integralement
+- Prose redondante condensee
+- References croisees ajoutees entre fichiers
+- Chaque fichier est autonome et lisible independamment
+
+---
+
+## 2026-01-28 - Composants UI BA Override (fact-override-modal + fact-item)
+
+### Fichiers crees (2 fichiers)
+- `src/components/deals/fact-override-modal.tsx` - Modal permettant au BA de corriger manuellement une valeur de fait (appelle POST /api/facts/[dealId])
+- `src/components/deals/fact-item.tsx` - Composant affichant un fait avec bouton edit pour ouvrir le modal d'override
+
+### Changements effectues
+- Modal avec affichage de la valeur actuelle (source, confidence), input nouvelle valeur, raison obligatoire
+- Mutation React Query avec granular invalidation (facts, fact-reviews, deal detail)
+- Toast sonner pour feedback succes/erreur
+- FactItem memoize avec React.memo, handlers stables via useCallback
+- Type check OK (npx tsc --noEmit)
+
+---
+
+## 2026-01-29 00:15 - Flow complet REVIEW_NEEDED pour contradictions majeures
+
+### Fichiers modifies (2 fichiers)
+- `src/services/fact-store/types.ts` - Ajout de `PENDING_REVIEW` au type `FactEventType`
+- `src/services/fact-store/persistence.ts` - Ajout des fonctions `createPendingReviewFact`, `getPendingReviewFacts`, `getPendingReviewCount`
+
+### Fichiers crees (2 fichiers)
+- `src/app/api/facts/[dealId]/reviews/route.ts` - API GET/POST pour lister et resoudre les reviews
+- `src/components/deals/fact-review-panel.tsx` - Composant UI pour afficher et resoudre les contradictions
+
+### Changements effectues
+
+1. **Types**
+   - Ajout de `PENDING_REVIEW` comme nouveau type d'event pour les faits en attente de validation humaine
+
+2. **Persistence**
+   - `createPendingReviewFact(dealId, fact, existingFact, reason)` - Cree un fait en attente de review
+   - `getPendingReviewFacts(dealId)` - Liste tous les faits PENDING_REVIEW d'un deal
+   - `getPendingReviewCount(dealId)` - Compte les reviews en attente
+
+3. **API Route `/api/facts/[dealId]/reviews`**
+   - `GET` - Liste les reviews en attente avec contexte (valeur actuelle vs nouvelle)
+   - `POST` - Resout une review avec 3 decisions:
+     - `ACCEPT_NEW` - Accepte la nouvelle valeur, supersede l'ancienne
+     - `KEEP_EXISTING` - Garde la valeur actuelle, marque review comme RESOLVED
+     - `OVERRIDE` - L'utilisateur fournit sa propre valeur (BA_OVERRIDE)
+
+4. **Composant UI `FactReviewPanel`**
+   - Affiche le nombre de contradictions a resoudre
+   - Liste chaque contradiction avec valeurs actuelles/nouvelles
+   - Dialog pour choisir la decision et fournir une raison
+   - Utilise React Query avec invalidation granulaire
+   - Patterns React optimises (memo, useCallback)
+
+### Usage
+```tsx
+import { FactReviewPanel } from "@/components/deals/fact-review-panel";
+
+// Dans la page deal
+<FactReviewPanel dealId={dealId} />
+```
+
+### Validation
+- `npx tsc --noEmit` : Aucune erreur
+
+---
+
+## 2026-01-28 23:45 - Vue materialisee pour Current Facts (performance)
+
+### Fichiers crees (1 fichier)
+- `prisma/migrations/manual_current_facts_view.sql` - Migration SQL pour la vue materialisee
+
+### Fichiers modifies (3 fichiers)
+- `src/services/fact-store/current-facts.ts` - Ajout fonctions `getCurrentFactsFromView()` et `refreshCurrentFactsView()`
+- `src/services/fact-store/persistence.ts` - Refresh automatique apres `createFactEventsBatch()`
+- `src/services/fact-store/index.ts` - Export des nouvelles fonctions
+
+### Changements effectues
+
+1. **Migration SQL manuelle**
+   - Creation de la vue materialisee `current_facts_mv`
+   - Selection avec `DISTINCT ON (deal_id, fact_key)` ordonne par `created_at DESC`
+   - Exclusion des events `DELETED` et `SUPERSEDED`
+   - Index unique pour `CONCURRENTLY` refresh
+   - Index pour lookups par deal et categorie
+   - Fonction `refresh_current_facts_mv()` pour le refresh
+
+2. **Nouvelles fonctions TypeScript**
+   - `getCurrentFactsFromView(dealId)` - Version rapide via la vue (sans historique)
+   - `refreshCurrentFactsView()` - Refresh de la vue apres modifications
+   - Fallback automatique sur `getCurrentFacts()` si la vue n'existe pas
+
+3. **Refresh automatique**
+   - `createFactEventsBatch()` appelle `refreshCurrentFactsView()` en fire-and-forget
+   - Utilise `CONCURRENTLY` pour ne pas bloquer les lectures
+
+### Notes importantes
+- La migration SQL doit etre executee manuellement (Prisma ne supporte pas les vues materialisees)
+- Commande: `npx prisma db execute --file prisma/migrations/manual_current_facts_view.sql`
+- La vue est optionnelle - le code fonctionne meme sans elle
+
+### Validation
+- `npx tsc --noEmit` : Aucune erreur
+
+---
+
+## 2026-01-28 22:30 - Connexion des reponses fondateur au fact-extractor
+
+### Fichiers modifies (3 fichiers)
+- `src/agents/types.ts` - Ajout du champ `founderResponses` a `EnrichedAgentContext`
+- `src/agents/tier0/fact-extractor.ts` - Implementation de `getFounderResponsesFromContext()`
+- `src/agents/orchestrator/index.ts` - Recuperation des reponses fondateur depuis la DB
+
+### Changements effectues
+
+1. **Types - Ajout de `founderResponses` au context**
+   - Nouveau champ optionnel dans `EnrichedAgentContext`
+   - Structure: `{ questionId, question, answer, category }[]`
+
+2. **Fact-extractor - Extraction des reponses du context**
+   - Suppression du placeholder TODO
+   - Implementation reelle qui lit `context.founderResponses`
+   - Les reponses sont passees au prompt LLM pour extraction de faits
+
+3. **Orchestrator - Recuperation depuis Prisma**
+   - Dans `runTier0FactExtraction()`, avant d'appeler le fact-extractor
+   - Query: `FactEvent` avec `source: 'FOUNDER_RESPONSE'` et `eventType NOT IN ['DELETED', 'SUPERSEDED']`
+   - Conversion en format `FounderResponse` (questionId, question via reason, answer via displayValue)
+   - Passage au fact-extractor via le context
+
+### Flow complet
+1. User saisit des reponses via FounderResponses component
+2. Reponses stockees via POST /api/founder-responses → cree des FactEvent (source=FOUNDER_RESPONSE)
+3. Lors d'une analyse, l'orchestrator recupere ces FactEvent depuis Prisma
+4. Les passe au fact-extractor via `factContext.founderResponses`
+5. Le fact-extractor les inclut dans son prompt pour extraire des faits additionnels
+
+### Validation
+- `npx tsc --noEmit` : Aucune erreur
+
+---
+
+## 2026-01-28 21:15 - 4 ameliorations sur la route facts API
+
+### Fichiers modifies (1 fichier)
+- `src/app/api/facts/[dealId]/route.ts` - Refactoring et ameliorations
+
+### Changements effectues
+
+1. **DRY - Utilisation du service `getCurrentFacts`**
+   - Import de `getCurrentFacts` et `getCurrentFactsByCategory` depuis `@/services/fact-store/current-facts`
+   - Suppression de la logique dupliquee (~80 lignes) qui recalculait les faits courants
+   - Le GET utilise maintenant directement le service
+
+2. **Audit trail - `createdBy: user.id`**
+   - Remplacement de `createdBy: 'ba'` par `createdBy: user.id` dans le POST
+   - Permet de tracer quel utilisateur a fait l'override
+
+3. **Validation Zod amelioree pour `value`**
+   - Remplacement de `z.unknown()` par une union de types valides:
+     - `z.number()` - pour les metriques numeriques
+     - `z.string()` - pour les textes
+     - `z.boolean()` - pour les flags
+     - `z.array(z.string())` - pour les listes
+     - `z.record(z.string(), z.unknown())` - pour les objets
+
+4. **Rate limiting basique (30 req/min)**
+   - Limite: 30 requetes par minute par utilisateur
+   - Fenetre: 60 secondes (reset apres)
+   - Integration dans GET et POST
+   - Cle de rate limit: `facts:{userId}`
+
+### Validation
+- `npx tsc --noEmit` : Aucune erreur dans le fichier route.ts
+
+---
+
+## 2026-01-28 19:45 - Logging des facts ignores dans FactExtractor
+
+### Fichiers modifies (1 fichier)
+- `src/agents/tier0/fact-extractor.ts` - Ajout logging pour facts ignores
+
+### Changements effectues
+
+1. **Nouvelle interface `IgnoredFactInfo`**
+   - `factKey: string` - La cle du fait ignore
+   - `reason: string` - La raison de l'ignorance
+
+2. **Extension de `FactExtractorOutput.metadata`**
+   - `factsIgnored: number` - Nombre de facts ignores
+   - `ignoredDetails: IgnoredFactInfo[]` - Details des facts ignores
+
+3. **Tracking des facts ignores dans `normalizeResponse()`**
+   - Missing required fields: factKey, extractedText, ou sourceConfidence
+   - Confidence too low: < 70%
+   - Unknown factKey: non present dans la taxonomie
+
+4. **Console warning pour debugging**
+   - Log en `console.warn` quand des facts sont ignores
+   - Format: `[FactExtractor] X facts ignored: factKey1: reason1; factKey2: reason2; ...`
+
+### Validation
+- `npx tsc --noEmit` : Aucune erreur
+
+---
+
+## 2026-01-28 19:30 - Rate limiting pour founder-responses API route
+
+### Fichiers modifies (1 fichier)
+- `src/app/api/founder-responses/[dealId]/route.ts` - Ajout rate limiting
+
+### Changements effectues
+
+1. **Ajout du rate limiting en memoire**
+   - Limite: 20 requetes par minute par utilisateur
+   - Fenetre: 60 secondes (reset apres)
+   - Map en memoire pour stocker les compteurs
+
+2. **Integration dans GET et POST**
+   - Verification du rate limit apres authentification
+   - Retourne HTTP 429 si limite depassee
+   - Cle de rate limit: `founder-responses:{userId}`
+
+### Code ajoute
+```typescript
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX = 20; // 20 requests per minute
+const requestCounts = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(identifier: string): boolean {
+  const now = Date.now();
+  const record = requestCounts.get(identifier);
+  if (!record || now > record.resetAt) {
+    requestCounts.set(identifier, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return true;
+  }
+  if (record.count >= RATE_LIMIT_MAX) return false;
+  record.count++;
+  return true;
+}
+```
+
+### Validation
+- `npx tsc --noEmit` : Aucune erreur dans founder-responses/route.ts
+
+---
+
+## 2026-01-28 19:20 - Fix race condition dans reset mensuel des crédits
+
+### Fichiers modifiés (1 fichier)
+- `src/app/api/credits/route.ts` - Correction race condition dans `getOrCreateUserCredits()`
+
+### Problème corrigé
+Si 2 requêtes arrivaient simultanément quand `now >= existing.nextResetAt`, les deux exécutaient le reset et créaient 2 transactions MONTHLY_RESET (doublon).
+
+### Solution appliquée
+1. **Reset mensuel**: Wrapper dans `prisma.$transaction()` avec re-fetch et re-check de `nextResetAt` à l'intérieur de la transaction
+2. **Création initiale**: Même pattern - re-check si le record existe déjà dans la transaction avant de créer
+
+### Pattern utilisé
+```typescript
+await prisma.$transaction(async (tx) => {
+  const current = await tx.userCredits.findUnique({ where: { clerkUserId } });
+  if (!current || now < current.nextResetAt) return; // Already reset
+  // Proceed with reset...
+});
+```
+
+### Validation
+- `npx tsc --noEmit` : Aucune erreur dans credits/route.ts
+
+---
+
+## 2026-01-28 19:15 - TimelineVersions: suppression limite 3 versions + scroll horizontal
+
+### Fichiers modifies (1 fichier)
+- `src/components/deals/timeline-versions.tsx` - Suppression limite et ajout scroll
+
+### Changements effectues
+
+1. **Suppression de la limite MAX_VISIBLE_VERSIONS = 3**
+   - Avant: seules les 3 versions les plus recentes etaient affichees
+   - Apres: toutes les versions sont affichees
+
+2. **Ajout du scroll horizontal**
+   - Container: `overflow-x-auto` pour permettre le scroll
+   - Inner div: `min-w-max` pour forcer la largeur minimum
+
+3. **Compteur de versions (> 10)**
+   - Affiche "(X versions)" si plus de 10 versions
+   - `flex-shrink-0` pour eviter le shrink du compteur
+
+### Code modifie
+```typescript
+// Avant
+const MAX_VISIBLE_VERSIONS = 3;
+const visibleAnalyses = useMemo(() => {
+  return [...analyses]
+    .sort((a, b) => b.version - a.version)
+    .slice(0, MAX_VISIBLE_VERSIONS)
+    .reverse();
+}, [analyses]);
+
+// Apres
+const visibleAnalyses = useMemo(() => {
+  return [...analyses]
+    .sort((a, b) => a.version - b.version); // Oldest to newest
+}, [analyses]);
+```
+
+### Type check
+- Compile sans erreurs (erreurs existantes dans d'autres fichiers)
+
+---
+
+## 2026-01-28 18:30 - REFLEXION-CONSENSUS-ENGINES.md v3.0 - Edge Cases, Métriques, Calculs Code
+
+### Fichiers modifiés (1 fichier)
+- `REFLEXION-CONSENSUS-ENGINES.md` - Mise à jour majeure v2.1 → v3.0
+
+### Nouvelles sections ajoutées
+
+**Section 12 - Edge Cases et Fallbacks**
+- 12.2: Gestion 3+ agents en désaccord → clustering par proximité de valeur
+- 12.2: Gestion 2 positions < 50% confiance → verdict CANNOT_ASSESS
+- 12.2: Deck sans slides numérotées → références textuelles
+- 12.2: Financial Model avec erreurs → warnings + cross-check deck
+- 12.3: Reflexion avec output vide/malformé
+- 12.3: Cas où toutes critiques sont CANNOT_FIX
+- 12.4: Hiérarchie des fallbacks (4 niveaux)
+
+**Section 13 - Métriques de Succès**
+- 13.2: ConsensusMetrics + targets (resolutionRate, unresolvedCritical, etc.)
+- 13.3: ReflexionMetrics + targets (fixRate, confidenceGain, etc.)
+- 13.4: MetricsCollector avec alertes automatiques
+- 13.5: A/B Testing des prompts pour optimisation continue
+
+**Section 14 - Calculs Arithmétiques en Code** ⚠️ CRITIQUE
+- 14.1: Problématique des LLMs mauvais en arithmétique
+- 14.2: Module financial-calculations.ts avec fonctions typées
+  - calculateARR, calculateGrossMargin, calculateCAGR
+  - calculateLTVCACRatio, calculateRuleOf40
+  - calculatePercentageDeviation, calculatePercentile
+- 14.3: Injection des résultats dans les prompts (LLM interprète, ne calcule pas)
+- 14.4: Validation des inputs avant calcul
+
+**Section 15 - Organisation des Fichiers**
+- 15.2: Structure modulaire consensus/reflexion/common/metrics/integration
+- 15.3: Imports simplifiés via index
+- 15.4: Export principal avec types et schemas
+
+### Changements critiques
+| Avant | Après | Raison |
+|-------|-------|--------|
+| LLM calcule | Code TS calcule | Fiabilité arithmétique |
+| Pas de gestion multi-positions | Clustering + CANNOT_ASSESS | Edge case réel |
+| Pas de métriques | KPIs + targets + alertes | Mesure amélioration |
+| 1 fichier 3500 lignes | Structure modulaire | Maintenabilité |
+
+### Version
+Document passé de v2.1 à v3.0
+
+---
+
 ## 2026-01-28 15:45 - Ajout Section 11 - Gestion des Benchmarks Sectoriels
 
 ### Fichiers modifies (1 fichier)

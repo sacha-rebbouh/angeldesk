@@ -87,10 +87,15 @@ export type OnEarlyWarning = (warning: EarlyWarning) => void;
 /**
  * Analysis execution mode
  * - "full": Complete analysis with consensus debates, reflexion, and all features
- * - "lite": Skip consensus debates and reflexion for faster/cheaper execution
- * - "express": Minimal analysis - parallel agents only, no synthesis phases
  */
-export type AnalysisMode = "full" | "lite" | "express";
+export type AnalysisMode = "full";
+
+/**
+ * User subscription plan - determines which tiers are available
+ * - FREE: Tier 1 + synthesis-deal-scorer only
+ * - PRO: All tiers (Tier 1 + Tier 2 + full Tier 3)
+ */
+export type UserPlan = "FREE" | "PRO";
 
 export interface AnalysisOptions {
   dealId: string;
@@ -117,6 +122,8 @@ export interface AnalysisOptions {
     estimatedCostSoFar?: number;
   }) => void;
   onEarlyWarning?: OnEarlyWarning; // Callback when potential dealbreaker detected
+  /** User subscription plan - determines tier gating (default: "FREE") */
+  userPlan?: UserPlan;
 }
 
 export interface AnalysisResult {
@@ -136,6 +143,8 @@ export interface AnalysisResult {
   hasCriticalWarnings?: boolean; // Quick check for UI
   // Recovery metadata
   resumedFromCheckpoint?: boolean; // True if analysis was resumed after crash
+  // Tier gating metadata
+  tiersExecuted?: string[]; // Which tiers were executed (for UI gating display)
 }
 
 /**
@@ -150,6 +159,8 @@ export interface AdvancedAnalysisOptions {
   enableTrace?: boolean;
   /** If true, uses UPDATE_ANALYSIS credits instead of INITIAL_ANALYSIS */
   isUpdate?: boolean;
+  /** User subscription plan for tier gating */
+  userPlan?: UserPlan;
 }
 
 // Agent counts by analysis type

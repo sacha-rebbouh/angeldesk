@@ -23,10 +23,19 @@ import {
   consensusEngine,
   reflexionEngine,
   extractAllFindings,
+  type VerificationContext,
+  validateAndCalculate,
+  type CalculationResult,
+  calculateARR,
+  calculateGrossMargin,
+  calculateLTVCACRatio,
+  calculateRuleOf40,
 } from "../orchestration";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { costMonitor } from "@/services/cost-monitor";
+import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
 import { setAgentContext, setAnalysisContext } from "@/services/openrouter/router";
+import { runJob } from "@/services/jobs";
 
 // Fact Store imports for Tier 0 fact extraction
 import { factExtractorAgent, type FactExtractorOutput } from "@/agents/tier0/fact-extractor";
@@ -43,6 +52,7 @@ import {
   type AnalysisResult,
   type AnalysisType,
   type AdvancedAnalysisOptions,
+  type UserPlan,
   ANALYSIS_CONFIGS,
   AGENT_COUNTS,
   TIER1_AGENT_NAMES,
@@ -87,7 +97,7 @@ import {
 import type { EarlyWarning, OnEarlyWarning } from "./types";
 
 // Re-export types
-export type { AnalysisOptions, AnalysisResult, AnalysisType, EarlyWarning };
+export type { AnalysisOptions, AnalysisResult, AnalysisType, EarlyWarning, UserPlan };
 export { ANALYSIS_CONFIGS, AGENT_COUNTS };
 
 // Type alias for deal with relations
@@ -121,6 +131,7 @@ export class AgentOrchestrator {
       maxCostUsd,
       onEarlyWarning,
       isUpdate = false, // If true, uses UPDATE_ANALYSIS credits (2) vs INITIAL_ANALYSIS (5)
+      userPlan = "FREE",
     } = options;
     const startTime = Date.now();
 
@@ -163,6 +174,7 @@ export class AgentOrchestrator {
           onEarlyWarning,
           enableTrace,
           isUpdate,
+          userPlan,
         });
         break;
       case "full_analysis":
@@ -173,6 +185,7 @@ export class AgentOrchestrator {
           onEarlyWarning,
           enableTrace,
           isUpdate,
+          userPlan,
         });
         break;
       case "tier3_synthesis":
@@ -601,6 +614,33 @@ export class AgentOrchestrator {
 
     await updateAnalysisProgress(analysis.id, completedCount, totalCost);
 
+    // Extract findings for Consensus + Reflexion
+    const { allFindings: extractedFindings, lowConfidenceAgents } = extractAllFindings(results);
+
+    // Build VerificationContext for engines
+    const verificationContext = await this.buildVerificationContext(
+      enrichedContext, extractedData ?? {}, factStoreFormatted, deal
+    );
+
+    // Consensus: detect and resolve contradictions
+    if (extractedFindings.length > 1) {
+      await this.runConsensusDebate(analysis.id, extractedFindings, verificationContext, enrichedContext);
+    }
+
+    // Reflexion: auto-critique low-confidence Tier 1 agents
+    for (const agentName of lowConfidenceAgents) {
+      const result = results[agentName];
+      if (result?.success) {
+        const agentFindings = extractedFindings.filter(f => f.agentName === agentName);
+        const reflexionStats = await this.applyReflexion(
+          analysis.id, agentName, result as AnalysisAgentResult, agentFindings,
+          `Deal: ${deal.name}, Sector: ${deal.sector}`, 1, verificationContext,
+          results, enrichedContext
+        );
+        totalCost += reflexionStats.tokensUsed * 0.00001;
+      }
+    }
+
     // Finalize
     const summary = generateTier1Summary(results);
     const totalTimeMs = Date.now() - startTime;
@@ -945,10 +985,7 @@ export class AgentOrchestrator {
   /**
    * Run full analysis: Tier 1 + Tier 2 + Tier 3 with full orchestration layer
    *
-   * Execution modes:
-   * - "full": Complete analysis with consensus debates, reflexion, all features
-   * - "lite": Skip consensus debates and reflexion (faster, cheaper)
-   * - "express": Minimal - parallel agents only, no synthesis
+   * Includes consensus debates and reflexion engines for quality assurance.
    */
   private async runFullAnalysis(
     deal: DealWithDocs,
@@ -957,13 +994,28 @@ export class AgentOrchestrator {
     useReAct: boolean,
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false } = advancedOptions;
+    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false, userPlan = "FREE" } = advancedOptions;
     const startTime = Date.now();
     const collectedWarnings: EarlyWarning[] = [];
 
-    const sectorExpert = await getTier2SectorExpert(deal.sector);
+    // Determine available tiers based on user plan
+    const availableTiers = userPlan === "PRO"
+      ? ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"]
+      : ["TIER_1", "SYNTHESIS"]; // FREE: Tier 1 + synthesis-deal-scorer only
+
+    const includeTier2 = availableTiers.includes("TIER_2");
+    const includeFullTier3 = availableTiers.includes("TIER_3");
+
+    console.log(`[Orchestrator] Tier gating: plan=${userPlan}, tiers=${availableTiers.join(",")}`);
+
+    const sectorExpert = includeTier2 ? await getTier2SectorExpert(deal.sector) : null;
     const hasSectorExpert = sectorExpert !== null;
-    const TOTAL_AGENTS = 12 + 5 + 1 + 1 + (hasSectorExpert ? 1 : 0); // +1 for fact-extractor
+
+    // Adjust total agent count based on plan
+    // FREE: 12 Tier1 + 1 extractor + 1 fact-extractor + 1 synthesis-deal-scorer = 15
+    // PRO:  12 Tier1 + 5 Tier3 + 1 extractor + 1 fact-extractor + (0-1 sector expert) = 19-20
+    const tier3AgentCount = includeFullTier3 ? 5 : 1; // Only synthesis-deal-scorer for FREE
+    const TOTAL_AGENTS = 12 + tier3AgentCount + 1 + 1 + (hasSectorExpert ? 1 : 0);
 
     // Get document IDs for versioning
     const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
@@ -1228,13 +1280,18 @@ export class AgentOrchestrator {
             totalCost,
             totalTimeMs,
             summary,
+            tiersExecuted: availableTiers,
           }, collectedWarnings);
         }
       }
 
+      // Build VerificationContext for Consensus and Reflexion engines
+      const verificationContext: VerificationContext = await this.buildVerificationContext(
+        enrichedContext, extractedData, factStoreFormatted, deal
+      );
+
       // STEP 4: DEBATE PHASE - Consensus Engine for Contradictions
-      // Skip in "lite" and "express" modes for faster/cheaper execution
-      if (allFindings.length > 1 && mode === "full") {
+      if (allFindings.length > 1) {
         await stateMachine.startDebate();
 
         onProgress?.({
@@ -1244,14 +1301,14 @@ export class AgentOrchestrator {
           estimatedCostSoFar: totalCost,
         });
 
-        await this.runConsensusDebate(analysis.id, allFindings);
-      } else if (mode !== "full") {
-        console.log(`[Orchestrator] Skipping debate phase (mode=${mode})`);
+        const debateStats = await this.runConsensusDebate(analysis.id, allFindings, verificationContext, enrichedContext);
+        totalCost += debateStats.totalTokens * 0.00001; // Approximate cost from tokens
+        console.log(`[ConsensusEngine] ${debateStats.debateCount} debates completed`);
       }
 
       // STEP 4.5: REFLEXION PHASE - Auto-critique for low-confidence agents
-      // Now applies to ALL agents with confidence < 75%, not just ReAct agents
-      if (lowConfidenceAgents.length > 0 && mode === "full") {
+      // Applies to ALL agents with confidence < threshold (tier-based)
+      if (lowConfidenceAgents.length > 0) {
         onProgress?.({
           currentAgent: `reflexion-engine (${lowConfidenceAgents.length} low-confidence agents)`,
           completedAgents: completedCount,
@@ -1263,17 +1320,23 @@ export class AgentOrchestrator {
           const result = allResults[agentName];
           if (result?.success) {
             const agentFindings = allFindings.filter(f => f.agentName === agentName);
-            await this.applyReflexion(
+            // Determine tier: Tier 1 agents are in TIER1_AGENT_NAMES
+            const tier: 1 | 2 | 3 = (TIER1_AGENT_NAMES as readonly string[]).includes(agentName) ? 1
+              : (TIER3_AGENT_NAMES as readonly string[]).includes(agentName) ? 3 : 2;
+            const reflexionStats = await this.applyReflexion(
               analysis.id,
               agentName,
               result as AnalysisAgentResult,
               agentFindings,
-              `Deal: ${deal.name}, Sector: ${deal.sector}`
+              `Deal: ${deal.name}, Sector: ${deal.sector}`,
+              tier,
+              verificationContext,
+              allResults,
+              enrichedContext
             );
+            totalCost += reflexionStats.tokensUsed * 0.00001;
           }
         }
-      } else if (mode !== "full") {
-        console.log(`[Orchestrator] Skipping reflexion phase (mode=${mode})`);
       }
 
       // Check cost limit before synthesis phase
@@ -1295,28 +1358,7 @@ export class AgentOrchestrator {
           totalCost,
           totalTimeMs,
           summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
-        }, collectedWarnings);
-      }
-
-      // Express mode: skip synthesis entirely
-      if (mode === "express") {
-        console.log(`[Orchestrator] Express mode: skipping Tier 2 synthesis`);
-        await stateMachine.complete();
-
-        const summary = generateFullAnalysisSummary(allResults);
-        const totalTimeMs = Date.now() - startTime;
-
-        await costMonitor.endAnalysis();
-
-        return this.addWarningsToResult({
-          sessionId: analysis.id,
-          dealId,
-          type: "full_analysis",
-          success: true,
-          results: allResults,
-          totalCost,
-          totalTimeMs,
-          summary: `${summary}\n\n**Note**: Express mode - Tier 2 synthesis skipped`,
+          tiersExecuted: availableTiers,
         }, collectedWarnings);
       }
 
@@ -1330,8 +1372,9 @@ export class AgentOrchestrator {
       const baPreferences = await this.loadBAPreferences(deal.userId);
       enrichedContext.baPreferences = baPreferences;
 
-      // Cost check before Tier 3
-      if (!(maxCostUsd && totalCost >= maxCostUsd)) {
+      // Cost check before Tier 3 (pre-Tier2 batch: contradiction-detector, scenario-modeler, devils-advocate)
+      // Skip for FREE plan (these are TIER_3 agents, not SYNTHESIS)
+      if (includeFullTier3 && !(maxCostUsd && totalCost >= maxCostUsd)) {
         const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0]; // Single batch with 3 agents
 
         onProgress?.({
@@ -1386,11 +1429,13 @@ export class AgentOrchestrator {
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
+      } else if (!includeFullTier3) {
+        console.log(`[Orchestrator] Tier 3 pre-synthesis agents skipped (FREE plan)`);
       } else {
         console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
       }
 
-      // STEP 6: SECTOR EXPERT PHASE - Tier 2 (if available)
+      // STEP 6: SECTOR EXPERT PHASE - Tier 2 (if available, PRO plan only)
       if (sectorExpert) {
         onProgress?.({
           currentAgent: `tier2-${sectorExpert.name}`,
@@ -1437,9 +1482,47 @@ export class AgentOrchestrator {
         }
       }
 
+      // STEP 6.5: CONSENSUS + REFLEXION for Tier 2 sector expert
+      if (sectorExpert) {
+        const sectorResult = allResults[sectorExpert.name];
+        if (sectorResult?.success) {
+          const sectorFindings = extractAllFindings({ [sectorExpert.name]: sectorResult }).allFindings;
+
+          // Consensus: check if sector expert contradicts Tier 1 findings
+          if (sectorFindings.length > 0) {
+            const allFindingsWithSector = [...allFindings, ...sectorFindings];
+            console.log(`[Orchestrator] Running post-Tier 2 consensus (${sectorFindings.length} new findings from sector expert)`);
+            const postTier2Debate = await this.runConsensusDebate(
+              analysis.id, allFindingsWithSector, verificationContext, enrichedContext
+            );
+            totalCost += postTier2Debate.totalTokens * 0.00001;
+          }
+
+          // Reflexion: auto-critique if confidence < 60%
+          if (reflexionEngine.needsReflexion(sectorResult as AnalysisAgentResult, sectorFindings, 2)) {
+            console.log(`[Orchestrator] Tier 2 sector expert needs reflexion`);
+            await this.applyReflexion(
+              analysis.id,
+              sectorExpert.name,
+              sectorResult as AnalysisAgentResult,
+              sectorFindings,
+              `Deal: ${deal.name}, Sector: ${deal.sector}`,
+              2,
+              verificationContext,
+              allResults,
+              enrichedContext
+            );
+          }
+        }
+      }
+
       // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
-      // synthesis-deal-scorer and memo-generator run last with ALL insights
-      for (const batch of TIER3_BATCHES_AFTER_TIER2) {
+      // FREE plan: only synthesis-deal-scorer; PRO plan: synthesis-deal-scorer + memo-generator
+      const finalSynthesisBatches = includeFullTier3
+        ? TIER3_BATCHES_AFTER_TIER2
+        : [TIER3_BATCHES_AFTER_TIER2[0]]; // Only synthesis-deal-scorer for FREE
+
+      for (const batch of finalSynthesisBatches) {
         // REAL-TIME COST CHECK: Before each batch
         if (maxCostUsd && totalCost >= maxCostUsd) {
           console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
@@ -1503,14 +1586,12 @@ export class AgentOrchestrator {
         console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
       }
 
-      const modeNote = mode !== "full" ? `\n\n**Mode**: ${mode} (some phases skipped)` : "";
-
       await completeAnalysis({
         analysisId: analysis.id,
         success: allSuccess,
         totalCost,
         totalTimeMs,
-        summary: `${summary}\n\n**Orchestration**: ${orchestrationSummary.transitions} state transitions, ${orchestrationSummary.totalFindings} findings${modeNote}`,
+        summary: `${summary}\n\n**Orchestration**: ${orchestrationSummary.transitions} state transitions, ${orchestrationSummary.totalFindings} findings`,
         results: allResults,
         mode: "full_analysis",
       });
@@ -1526,6 +1607,7 @@ export class AgentOrchestrator {
         totalCost,
         totalTimeMs,
         summary,
+        tiersExecuted: availableTiers,
       }, collectedWarnings);
     } catch (error) {
       // Only transition to FAILED if not already completed
@@ -1558,6 +1640,7 @@ export class AgentOrchestrator {
         totalCost,
         totalTimeMs,
         summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        tiersExecuted: availableTiers,
       }, collectedWarnings);
     }
   }
@@ -1617,13 +1700,36 @@ export class AgentOrchestrator {
         console.log(`[Orchestrator:Tier0] Loaded ${existingFacts.length} existing facts for update`);
       }
 
-      // Build context for fact-extractor
+      // Fetch founder responses stored as FOUNDER_RESPONSE facts
+      const founderResponseFacts = await prisma.factEvent.findMany({
+        where: {
+          dealId: deal.id,
+          source: "FOUNDER_RESPONSE",
+          eventType: { notIn: ["DELETED", "SUPERSEDED"] },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      // Convert to FounderResponse format for the fact-extractor
+      const founderResponses = founderResponseFacts.map(fact => ({
+        questionId: fact.id,
+        question: fact.reason || "Question non specifiee",
+        answer: fact.displayValue,
+        category: fact.category,
+      }));
+
+      if (founderResponses.length > 0) {
+        console.log(`[Orchestrator:Tier0] Loaded ${founderResponses.length} founder responses for fact extraction`);
+      }
+
+      // Build context for fact-extractor with founder responses
       // Note: For updates, existing facts are passed via previousResults so fact-extractor
       // can detect contradictions. We use type assertion since AgentResult base doesn't have data.
-      const factContext: AgentContext = {
+      const factContext: AgentContext & { founderResponses?: typeof founderResponses } = {
         dealId: deal.id,
         deal,
         documents: deal.documents,
+        founderResponses, // Pass founder responses to fact-extractor
         // Pass existing facts via previousResults (fact-extractor extracts them)
         previousResults: isUpdate && existingFacts.length > 0 ? {
           "fact-extractor": {
@@ -1643,8 +1749,26 @@ export class AgentOrchestrator {
         } as Record<string, AgentResult> : {},
       };
 
-      // Run fact-extractor agent
-      const result = await factExtractorAgent.run(factContext);
+      // Run fact-extractor agent via job runner (timeout + retry)
+      const jobResult = await runJob(
+        'fact-extraction',
+        () => factExtractorAgent.run(factContext),
+        { timeoutMs: 120000, maxRetries: 1 }
+      );
+
+      if (jobResult.status === 'FAILED') {
+        console.error(`[Orchestrator:Tier0] Fact extraction job failed: ${jobResult.error}`);
+        // Continue without facts rather than failing the entire analysis
+        return {
+          factStore: existingFacts,
+          factStoreFormatted: formatFactStoreForAgents(existingFacts),
+          extractionResult: null,
+          cost: 0,
+          executionTimeMs: Date.now() - startTime,
+        };
+      }
+
+      const result = jobResult.data!;
 
       if (!result.success || !("data" in result)) {
         console.error("[Orchestrator:Tier0] Fact extraction failed:", result.error);
@@ -1897,7 +2021,9 @@ export class AgentOrchestrator {
     result: AgentResult,
     allFindings: ScoredFinding[],
     dealName: string,
-    dealSector: string | null
+    dealSector: string | null,
+    tier?: 1 | 2 | 3,
+    verificationContext?: VerificationContext
   ): Promise<void> {
     const reactData = (result as { _react?: unknown })._react as {
       findings?: ScoredFinding[];
@@ -1927,27 +2053,53 @@ export class AgentOrchestrator {
         agentName,
         result as unknown as AnalysisAgentResult,
         reactData.findings,
-        `Deal: ${dealName}, Sector: ${dealSector}`
+        `Deal: ${dealName}, Sector: ${dealSector}`,
+        tier,
+        verificationContext
       );
     }
   }
 
   /**
    * Run consensus debate for contradictions
+   * Stores resolutions in enrichedContext.previousResults for downstream agents
    */
   private async runConsensusDebate(
     analysisId: string,
-    allFindings: ScoredFinding[]
-  ): Promise<void> {
+    allFindings: ScoredFinding[],
+    verificationContext?: VerificationContext,
+    enrichedContext?: EnrichedAgentContext
+  ): Promise<{ debateCount: number; totalTokens: number }> {
     const contradictions = await consensusEngine.detectContradictions(allFindings);
     console.log(`[ConsensusEngine] Detected ${contradictions.length} contradictions`);
+
+    let debateCount = 0;
+    let totalTokens = 0;
+    const resolutions: Array<{
+      topic: string;
+      resolution: string;
+      winner?: string;
+      finalValue?: unknown;
+      confidence: number;
+    }> = [];
 
     for (const contradiction of contradictions.filter(
       (c) => c.severity === "critical" || c.severity === "major"
     )) {
       try {
-        const debateResult = await consensusEngine.debate(contradiction.id);
+        const debateResult = await consensusEngine.debate(contradiction.id, verificationContext);
         await persistDebateRecord(analysisId, debateResult);
+        debateCount++;
+        totalTokens += debateResult.resolution.tokensUsed ?? 0;
+
+        resolutions.push({
+          topic: contradiction.topic,
+          resolution: debateResult.resolution.resolution,
+          winner: debateResult.resolution.winner,
+          finalValue: debateResult.resolution.finalValue,
+          confidence: debateResult.resolution.confidence.score,
+        });
+
         console.log(
           `[ConsensusEngine] Resolved ${contradiction.topic}: ${debateResult.resolution.resolution}`
         );
@@ -1955,34 +2107,252 @@ export class AgentOrchestrator {
         console.error(`[ConsensusEngine] Failed to debate ${contradiction.id}:`, error);
       }
     }
+
+    // Inject resolutions into enrichedContext so Tier 3 agents see resolved contradictions
+    if (resolutions.length > 0 && enrichedContext?.previousResults) {
+      enrichedContext.previousResults["_consensus_resolutions"] = {
+        agentName: "consensus-engine",
+        success: true,
+        executionTimeMs: 0,
+        cost: 0,
+        data: { resolutions },
+      } as unknown as AgentResult;
+      console.log(`[ConsensusEngine] ${resolutions.length} resolutions injected into context for downstream agents`);
+    }
+
+    return { debateCount, totalTokens };
   }
 
   /**
    * Apply reflexion engine for low-confidence results
+   * Returns tokens used for cost tracking
    */
   private async applyReflexion(
     _analysisId: string,
     agentName: string,
     result: AnalysisAgentResult,
     findings: ScoredFinding[],
-    context: string
-  ): Promise<void> {
+    context: string,
+    tier?: 1 | 2 | 3,
+    verificationContext?: VerificationContext,
+    allResults?: Record<string, AgentResult>,
+    enrichedContext?: EnrichedAgentContext
+  ): Promise<{ tokensUsed: number }> {
     try {
-      console.log(`[Reflexion] Applying to ${agentName} (low confidence)`);
+      console.log(`[Reflexion] Applying to ${agentName} (tier=${tier ?? "unknown"}, low confidence)`);
 
       const reflexionResult = await reflexionEngine.reflect({
         agentName,
         result,
         findings,
         context,
+        tier,
+        verificationContext,
       });
 
       console.log(
         `[Reflexion] ${agentName}: ${reflexionResult.critiques.length} critiques, ${reflexionResult.confidenceChange} confidence change`
       );
+
+      // Re-inject revised result into allResults so downstream agents get the improved version
+      if (reflexionResult.revisedResult && allResults) {
+        allResults[agentName] = reflexionResult.revisedResult;
+        if (enrichedContext?.previousResults) {
+          enrichedContext.previousResults[agentName] = reflexionResult.revisedResult;
+        }
+        console.log(`[Reflexion] ${agentName}: revised result injected into allResults`);
+      }
+
+      return { tokensUsed: reflexionResult.tokensUsed ?? 0 };
     } catch (error) {
       console.error(`[Reflexion] Failed for ${agentName}:`, error);
+      return { tokensUsed: 0 };
     }
+  }
+
+  /**
+   * Build VerificationContext from enriched context data for Consensus/Reflexion engines
+   */
+  private async buildVerificationContext(
+    enrichedContext: EnrichedAgentContext,
+    extractedData: {
+      tagline?: string;
+      competitors?: string[];
+      founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+      productDescription?: string;
+      businessModel?: string;
+    },
+    factStoreFormatted: string,
+    deal: DealWithDocs
+  ): Promise<VerificationContext> {
+    // Build deck extracts from document-extractor results
+    let deckExtracts: string | undefined;
+    const extractorResult = enrichedContext.previousResults?.["document-extractor"];
+    if (extractorResult?.success && "data" in extractorResult) {
+      const data = (extractorResult as { data: Record<string, unknown> }).data;
+      const parts: string[] = [];
+      if (extractedData.tagline) parts.push(`Tagline: ${extractedData.tagline}`);
+      if (extractedData.productDescription) parts.push(`Product: ${extractedData.productDescription}`);
+      if (extractedData.businessModel) parts.push(`Business Model: ${extractedData.businessModel}`);
+      if (extractedData.competitors?.length) parts.push(`Competitors: ${extractedData.competitors.join(", ")}`);
+      if (data.keyMetrics) parts.push(`Key Metrics: ${JSON.stringify(data.keyMetrics)}`);
+      if (data.financialHighlights) parts.push(`Financial Highlights: ${JSON.stringify(data.financialHighlights)}`);
+      deckExtracts = parts.length > 0 ? parts.join("\n") : undefined;
+    }
+
+    // Build financial model extracts from fact store
+    const financialModelExtracts = factStoreFormatted || undefined;
+
+    // Context Engine data
+    const contextEngineData = enrichedContext.contextEngine
+      ? {
+          dealIntelligence: enrichedContext.contextEngine.dealIntelligence,
+          competitiveLandscape: enrichedContext.contextEngine.competitiveLandscape,
+          marketData: enrichedContext.contextEngine.marketData,
+        }
+      : undefined;
+
+    // Funding DB data — fetch similar deals and valuation benchmarks
+    let fundingDbData: Record<string, unknown> | undefined;
+    try {
+      const [similarDeals, valuationBenchmarks] = await Promise.all([
+        querySimilarDeals({
+          sector: deal.sector ?? undefined,
+          stage: deal.stage ?? undefined,
+          region: deal.geography ?? undefined,
+          limit: 20,
+        }),
+        getValuationBenchmarks({
+          sector: deal.sector ?? undefined,
+          stage: deal.stage ?? undefined,
+          region: deal.geography ?? undefined,
+        }),
+      ]);
+
+      if (similarDeals.length > 0 || valuationBenchmarks.count > 0) {
+        fundingDbData = {
+          similarDeals: similarDeals.map(d => ({
+            company: d.companyName,
+            amount: d.amountUsd ? Number(d.amountUsd) : null,
+            stage: d.stageNormalized,
+            sector: d.sectorNormalized,
+            date: d.fundingDate,
+          })),
+          valuationBenchmarks: {
+            count: valuationBenchmarks.count,
+            median: valuationBenchmarks.median,
+            p25: valuationBenchmarks.p25,
+            p75: valuationBenchmarks.p75,
+            average: valuationBenchmarks.average,
+          },
+        };
+        console.log(`[Orchestrator] Funding DB: ${similarDeals.length} similar deals, ${valuationBenchmarks.count} for benchmarks`);
+      }
+    } catch (error) {
+      console.error("[Orchestrator] Failed to fetch funding DB data:", error);
+    }
+
+    // Pre-computed financial calculations from fact store
+    const preComputedCalculations: Record<string, CalculationResult | { error: string }> = {};
+    if (enrichedContext.factStore && enrichedContext.factStore.length > 0) {
+      const factMap = new Map(
+        enrichedContext.factStore.map(f => [f.factKey, f])
+      );
+
+      // ARR from MRR
+      const mrrFact = factMap.get("financial.mrr");
+      if (mrrFact?.currentValue != null) {
+        const mrr = Number(mrrFact.currentValue);
+        if (!isNaN(mrr) && mrr > 0) {
+          preComputedCalculations.arr = validateAndCalculate(
+            () => calculateARR(mrr, `Fact Store: financial.mrr (${mrrFact.currentSource})`),
+            { mustBePositive: true }
+          );
+        }
+      }
+
+      // Gross Margin — use pre-computed gross_margin fact, or calculate from revenue + gross_margin
+      const grossMarginFact = factMap.get("financial.gross_margin");
+      if (grossMarginFact?.currentValue != null) {
+        // Gross margin already available as a fact — use directly
+        const gm = Number(grossMarginFact.currentValue);
+        if (!isNaN(gm)) {
+          preComputedCalculations.grossMargin = {
+            value: gm,
+            formula: "Direct from fact store",
+            inputs: [{ name: "gross_margin", value: gm, source: `Fact Store: financial.gross_margin (${grossMarginFact.currentSource})` }],
+            formatted: `${gm.toFixed(1)}%`,
+            calculation: `Gross Margin = ${gm}% (source: ${grossMarginFact.currentSource})`,
+          };
+        }
+      }
+
+      // LTV/CAC Ratio
+      const ltvFact = factMap.get("traction.ltv");
+      const cacFact = factMap.get("traction.cac");
+      if (ltvFact?.currentValue != null && cacFact?.currentValue != null) {
+        const ltv = Number(ltvFact.currentValue);
+        const cac = Number(cacFact.currentValue);
+        if (!isNaN(ltv) && !isNaN(cac) && cac > 0) {
+          preComputedCalculations.ltvCacRatio = validateAndCalculate(
+            () => calculateLTVCACRatio(
+              ltv, cac,
+              `Fact Store: traction.ltv (${ltvFact.currentSource})`,
+              `Fact Store: traction.cac (${cacFact.currentSource})`
+            ),
+            { mustBePositive: true }
+          );
+        }
+      }
+
+      // LTV/CAC Ratio — also check if directly available
+      const ltvCacFact = factMap.get("traction.ltv_cac_ratio");
+      if (!preComputedCalculations.ltvCacRatio && ltvCacFact?.currentValue != null) {
+        const ratio = Number(ltvCacFact.currentValue);
+        if (!isNaN(ratio)) {
+          preComputedCalculations.ltvCacRatio = {
+            value: ratio,
+            formula: "Direct from fact store",
+            inputs: [{ name: "ltv_cac_ratio", value: ratio, source: `Fact Store: traction.ltv_cac_ratio (${ltvCacFact.currentSource})` }],
+            formatted: `${ratio.toFixed(1)}x`,
+            calculation: `LTV/CAC = ${ratio}x (source: ${ltvCacFact.currentSource})`,
+          };
+        }
+      }
+
+      // Rule of 40
+      const growthFact = factMap.get("financial.revenue_growth_yoy");
+      const marginFact = factMap.get("financial.net_margin");
+      if (growthFact?.currentValue != null && marginFact?.currentValue != null) {
+        const growth = Number(growthFact.currentValue);
+        const margin = Number(marginFact.currentValue);
+        if (!isNaN(growth) && !isNaN(margin)) {
+          preComputedCalculations.ruleOf40 = validateAndCalculate(
+            () => calculateRuleOf40(
+              growth, margin,
+              `Fact Store: financial.revenue_growth_yoy (${growthFact.currentSource})`,
+              `Fact Store: financial.net_margin (${marginFact.currentSource})`
+            ),
+            { minValue: -100, maxValue: 200 }
+          );
+        }
+      }
+
+      const calcCount = Object.keys(preComputedCalculations).length;
+      if (calcCount > 0) {
+        console.log(`[Orchestrator] Pre-computed ${calcCount} financial calculations from fact store`);
+      }
+    }
+
+    return {
+      deckExtracts,
+      financialModelExtracts,
+      contextEngineData,
+      fundingDbData,
+      preComputedCalculations: Object.keys(preComputedCalculations).length > 0
+        ? preComputedCalculations
+        : undefined,
+    };
   }
 
   /**
