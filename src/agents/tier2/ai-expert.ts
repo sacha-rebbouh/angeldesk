@@ -234,6 +234,29 @@ const AIOutputSchema = z.object({
   }),
 
   executiveSummary: z.string().describe("3-4 phrases: verdict AI, forces/faiblesses, principal risque, potentiel"),
+
+  // DB Cross-Reference (obligatoire si donnees DB disponibles)
+  dbCrossReference: z.object({
+    claims: z.array(z.object({
+      claim: z.string(), location: z.string(),
+      dbVerdict: z.enum(["VERIFIED", "CONTREDIT", "PARTIEL", "NON_VERIFIABLE"]),
+      evidence: z.string(), severity: z.enum(["CRITICAL", "HIGH", "MEDIUM"]).optional(),
+    })),
+    hiddenCompetitors: z.array(z.string()),
+    valuationPercentile: z.number().optional(),
+    competitorComparison: z.object({
+      fromDeck: z.object({ mentioned: z.array(z.string()), location: z.string() }),
+      fromDb: z.object({ detected: z.array(z.string()), directCompetitors: z.number() }),
+      deckAccuracy: z.enum(["ACCURATE", "INCOMPLETE", "MISLEADING"]),
+    }).optional(),
+  }).optional(),
+
+  // Data completeness assessment
+  dataCompleteness: z.object({
+    level: z.enum(["complete", "partial", "minimal"]),
+    availableDataPoints: z.number(), expectedDataPoints: z.number(),
+    missingCritical: z.array(z.string()), limitations: z.array(z.string()),
+  }),
 });
 
 export type AIExpertOutput = z.infer<typeof AIOutputSchema>;
@@ -379,13 +402,37 @@ function buildUserPrompt(context: EnrichedAgentContext): string {
   const stage = deal.stage || "SEED";
   const previousResults = context.previousResults || {};
 
-  // Extraire les infos des agents precedents
+  // ── Selective Tier 1 insights (not raw dump) ──
   let tier1Insights = "";
-  for (const [agentName, result] of Object.entries(previousResults)) {
-    const res = result as { success?: boolean; data?: unknown };
-    if (res.success && res.data) {
-      tier1Insights += `\n### ${agentName}\n${JSON.stringify(res.data, null, 2)}\n`;
+  if (previousResults) {
+    const financialAudit = previousResults["financial-auditor"] as { success?: boolean; data?: { findings?: unknown; narrative?: { keyInsights?: string[] } } } | undefined;
+    if (financialAudit?.success && financialAudit.data) {
+      tier1Insights += `\n### Financial Auditor Findings:\n`;
+      if (financialAudit.data.narrative?.keyInsights) tier1Insights += financialAudit.data.narrative.keyInsights.join("\n- ");
+      if (financialAudit.data.findings) tier1Insights += `\nFindings: ${JSON.stringify(financialAudit.data.findings, null, 2).slice(0, 2000)}...`;
     }
+    const competitiveIntel = previousResults["competitive-intel"] as { success?: boolean; data?: { findings?: { competitors?: unknown[] }; narrative?: { keyInsights?: string[] } } } | undefined;
+    if (competitiveIntel?.success && competitiveIntel.data) {
+      tier1Insights += `\n### Competitive Intel Findings:\n`;
+      if (competitiveIntel.data.narrative?.keyInsights) tier1Insights += competitiveIntel.data.narrative.keyInsights.join("\n- ");
+      if (competitiveIntel.data.findings?.competitors) tier1Insights += `\nCompetitors: ${(competitiveIntel.data.findings.competitors as { name: string }[]).slice(0, 5).map(c => c.name).join(", ")}`;
+    }
+    const legalRegulatory = previousResults["legal-regulatory"] as { success?: boolean; data?: { findings?: { compliance?: unknown[]; regulatoryRisks?: unknown[] } } } | undefined;
+    if (legalRegulatory?.success && legalRegulatory.data) {
+      tier1Insights += `\n### Legal & Regulatory Findings:\n`;
+      if (legalRegulatory.data.findings?.compliance) tier1Insights += `Compliance: ${JSON.stringify(legalRegulatory.data.findings.compliance, null, 2).slice(0, 1500)}`;
+      if (legalRegulatory.data.findings?.regulatoryRisks) tier1Insights += `\nRisks: ${JSON.stringify(legalRegulatory.data.findings.regulatoryRisks, null, 2).slice(0, 1000)}`;
+    }
+    const extractor = previousResults["document-extractor"] as { success?: boolean; data?: { extractedInfo?: Record<string, unknown> } } | undefined;
+    if (extractor?.success && extractor.data?.extractedInfo) tier1Insights += `\n### Extracted Deal Data:\n${JSON.stringify(extractor.data.extractedInfo, null, 2).slice(0, 2000)}`;
+  }
+
+  // ── Funding DB prompt section ──
+  let fundingDbData = "";
+  const contextEngineAny = context.contextEngine as Record<string, unknown> | undefined;
+  const fundingDb = contextEngineAny?.fundingDb as { competitors?: unknown; valuationBenchmark?: unknown; sectorTrend?: unknown } | undefined;
+  if (fundingDb) {
+    fundingDbData = `\n## FUNDING DATABASE - CROSS-REFERENCE OBLIGATOIRE\n\nTu DOIS produire un champ "dbCrossReference" dans ton output.\n\n### Concurrents detectes dans la DB\n${fundingDb.competitors ? JSON.stringify(fundingDb.competitors, null, 2).slice(0, 3000) : "Aucun"}\n\n### Benchmark valorisation\n${fundingDb.valuationBenchmark ? JSON.stringify(fundingDb.valuationBenchmark, null, 2) : "N/A"}\n\n### Tendance funding\n${fundingDb.sectorTrend ? JSON.stringify(fundingDb.sectorTrend, null, 2) : "N/A"}\n\nINSTRUCTIONS DB:\n1. Claims deck verifie vs donnees\n2. Concurrents DB absents du deck = RED FLAG CRITICAL\n3. Valo vs percentiles (P25/median/P75)\n4. pas de concurrent + DB en trouve = RED FLAG CRITICAL`;
   }
 
   return `
@@ -401,8 +448,19 @@ function buildUserPrompt(context: EnrichedAgentContext): string {
 
 ${formatFundingDbContext(context)}
 
+${context.factStoreFormatted ? `
+## DONNÉES VÉRIFIÉES (Fact Store)
+
+Les données ci-dessous ont été extraites et vérifiées à partir des documents du deal.
+Base ton analyse sur ces faits. Si un fait important manque, signale-le.
+
+${context.factStoreFormatted}
+` : ""}
+
 ## ANALYSES TIER 1 (A Exploiter)
 ${tier1Insights || "Pas d'analyses Tier 1 disponibles"}
+
+${fundingDbData}
 
 ## TES TACHES
 
@@ -472,7 +530,7 @@ IMPORTANT: Sois CRITIQUE. Beaucoup de startups font du AI-washing. Ton role est 
 // HELPER: Transform output to SectorExpertData
 // ============================================================================
 
-function transformOutput(raw: AIExpertOutput): SectorExpertData {
+function transformOutput(raw: AIExpertOutput, cappedScore: number, cappedFitScore: number): SectorExpertData {
   return {
     sectorName: "AI/ML",
     sectorMaturity: "growing",
@@ -522,13 +580,13 @@ function transformOutput(raw: AIExpertOutput): SectorExpertData {
     })),
 
     sectorFit: {
-      score: raw.sectorScore,
+      score: cappedFitScore,
       strengths: raw.greenFlags.map(gf => gf.flag),
       weaknesses: raw.redFlags.map(rf => rf.flag),
       sectorTiming: "optimal", // AI market is hot
     },
 
-    sectorScore: raw.sectorScore,
+    sectorScore: cappedScore,
     executiveSummary: raw.executiveSummary,
   };
 }
@@ -537,7 +595,7 @@ function transformOutput(raw: AIExpertOutput): SectorExpertData {
 // HELPER: Build Extended Data
 // ============================================================================
 
-function buildExtendedData(raw: AIExpertOutput): Partial<ExtendedSectorData> {
+function buildExtendedData(raw: AIExpertOutput, completenessLevel: string, rawScore: number, cappedScore: number, limitations: string[]): Partial<ExtendedSectorData> {
   return {
     subSector: {
       primary: raw.subSector,
@@ -600,6 +658,17 @@ function buildExtendedData(raw: AIExpertOutput): Partial<ExtendedSectorData> {
       justification: raw.executiveSummary,
     },
     dbComparison: raw.dbComparison,
+    dbCrossReference: raw.dbCrossReference,
+    dataCompleteness: {
+      level: completenessLevel as "complete" | "partial" | "minimal",
+      availableDataPoints: raw.dataCompleteness?.availableDataPoints ?? 0,
+      expectedDataPoints: raw.dataCompleteness?.expectedDataPoints ?? 0,
+      missingCritical: raw.dataCompleteness?.missingCritical ?? [],
+      limitations,
+      scoreCapped: cappedScore < rawScore,
+      rawScore,
+      cappedScore,
+    },
     verdict: {
       recommendation: raw.aiVerdict.recommendation === "STRONG_AI_PLAY" ? "STRONG_FIT" :
                       raw.aiVerdict.recommendation === "SOLID_AI_PLAY" ? "GOOD_FIT" :
@@ -682,7 +751,14 @@ export const aiExpert = {
         if (!jsonMatch) {
           throw new Error("No JSON found in response");
         }
-        parsedOutput = AIOutputSchema.parse(JSON.parse(jsonMatch[0]));
+        const rawJson = JSON.parse(jsonMatch[0]);
+        const parseResult = AIOutputSchema.safeParse(rawJson);
+        if (parseResult.success) {
+          parsedOutput = parseResult.data;
+        } else {
+          console.warn(`[ai-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
+          parsedOutput = rawJson as AIExpertOutput;
+        }
       } catch (parseError) {
         console.error("[ai-expert] Parse error:", parseError);
         return {
@@ -695,8 +771,36 @@ export const aiExpert = {
         };
       }
 
+      // ── Data completeness assessment & score capping ──
+      const completenessData = parsedOutput.dataCompleteness ?? {
+        level: "partial" as const, availableDataPoints: 0, expectedDataPoints: 0, missingCritical: [], limitations: [],
+      };
+      const availableMetrics = (parsedOutput.primaryMetrics ?? []).filter((m: { dealValue: unknown }) => m.dealValue !== null).length;
+      const totalMetrics = (parsedOutput.primaryMetrics ?? []).length;
+      let completenessLevel = completenessData.level;
+      if (totalMetrics > 0 && !parsedOutput.dataCompleteness) {
+        const ratio = availableMetrics / totalMetrics;
+        if (ratio < 0.3) completenessLevel = "minimal";
+        else if (ratio < 0.7) completenessLevel = "partial";
+        else completenessLevel = "complete";
+      }
+      let scoreMax = 100;
+      if (completenessLevel === "minimal") scoreMax = 50;
+      else if (completenessLevel === "partial") scoreMax = 70;
+      const rawScore = parsedOutput.sectorScore ?? 0;
+      const cappedScore = Math.min(rawScore, scoreMax);
+      const rawFitScore = parsedOutput.sectorScore ?? 0;
+      const cappedFitScore = Math.min(rawFitScore, scoreMax);
+      const limitations: string[] = [
+        ...(completenessData.limitations ?? []),
+        ...(completenessData.missingCritical ?? []).map((m: string) => `Missing critical data: ${m}`),
+      ];
+      if (cappedScore < rawScore) {
+        limitations.push(`Score capped from ${rawScore} to ${cappedScore} due to ${completenessLevel} data completeness`);
+      }
+
       // Transform to SectorExpertData format
-      const sectorData = transformOutput(parsedOutput);
+      const sectorData = transformOutput(parsedOutput, cappedScore, cappedFitScore);
 
       return {
         agentName: "ai-expert",
@@ -705,7 +809,7 @@ export const aiExpert = {
         cost: response.cost ?? 0,
         data: sectorData,
         // Include extended data for detailed display
-        _extended: buildExtendedData(parsedOutput),
+        _extended: buildExtendedData(parsedOutput, completenessLevel, rawScore, cappedScore, limitations),
       };
 
     } catch (error) {

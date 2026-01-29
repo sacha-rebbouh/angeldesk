@@ -22,6 +22,7 @@ import {
   Info,
 } from "lucide-react";
 import type { ConfidenceScore, ConfidenceFactor } from "@/scoring/types";
+import { getScoreColor, getScoreBgColor } from "@/lib/format-utils";
 
 interface ConfidenceBreakdownProps {
   confidence: ConfidenceScore;
@@ -46,22 +47,6 @@ const FACTOR_IMPROVEMENTS: Record<string, string> = {
   "Temporal Relevance": "Demander des données plus récentes",
 };
 
-function getScoreColor(score: number): string {
-  if (score >= 80) return "text-green-600";
-  if (score >= 60) return "text-blue-600";
-  if (score >= 40) return "text-yellow-600";
-  if (score >= 20) return "text-orange-600";
-  return "text-red-600";
-}
-
-function getScoreBgColor(score: number): string {
-  if (score >= 80) return "bg-green-100";
-  if (score >= 60) return "bg-blue-100";
-  if (score >= 40) return "bg-yellow-100";
-  if (score >= 20) return "bg-orange-100";
-  return "bg-red-100";
-}
-
 function getLevelBadge(level: string): { text: string; variant: "success" | "warning" | "danger" | "info" } {
   switch (level) {
     case "high":
@@ -81,53 +66,51 @@ function FactorBar({ factor }: { factor: ConfidenceFactor }) {
   const isLow = factor.score < 60;
 
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2">
-                <span className={cn("shrink-0", getScoreColor(factor.score))}>
-                  {icon}
-                </span>
-                <span className="font-medium truncate">{factor.name}</span>
-                {isLow && (
-                  <AlertCircle className="h-3 w-3 text-orange-500 shrink-0" />
-                )}
-              </div>
-              <span className={cn("font-bold", getScoreColor(factor.score))}>
-                {factor.score}%
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className={cn("shrink-0", getScoreColor(factor.score))}>
+                {icon}
               </span>
+              <span className="font-medium truncate">{factor.name}</span>
+              {isLow && (
+                <AlertCircle className="h-3 w-3 text-orange-500 shrink-0" />
+              )}
             </div>
-            <div className="h-2 rounded-full bg-muted overflow-hidden">
-              <div
-                className={cn(
-                  "h-full rounded-full transition-all",
-                  factor.score >= 80 ? "bg-green-500" :
-                  factor.score >= 60 ? "bg-blue-500" :
-                  factor.score >= 40 ? "bg-yellow-500" :
-                  factor.score >= 20 ? "bg-orange-500" : "bg-red-500"
-                )}
-                style={{ width: `${factor.score}%` }}
-              />
+            <span className={cn("font-bold", getScoreColor(factor.score))}>
+              {factor.score}%
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-muted overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all",
+                factor.score >= 80 ? "bg-green-500" :
+                factor.score >= 60 ? "bg-blue-500" :
+                factor.score >= 40 ? "bg-yellow-500" :
+                factor.score >= 20 ? "bg-orange-500" : "bg-red-500"
+              )}
+              style={{ width: `${factor.score}%` }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">{factor.reason}</p>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="left" className="max-w-xs">
+        <div className="space-y-2">
+          <p className="font-medium">{factor.name}</p>
+          <p className="text-sm">{factor.reason}</p>
+          {isLow && improvement && (
+            <div className="pt-2 border-t">
+              <p className="text-xs font-medium text-orange-600">Pour améliorer:</p>
+              <p className="text-xs">{improvement}</p>
             </div>
-            <p className="text-xs text-muted-foreground">{factor.reason}</p>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent side="left" className="max-w-xs">
-          <div className="space-y-2">
-            <p className="font-medium">{factor.name}</p>
-            <p className="text-sm">{factor.reason}</p>
-            {isLow && improvement && (
-              <div className="pt-2 border-t">
-                <p className="text-xs font-medium text-orange-600">Pour améliorer:</p>
-                <p className="text-xs">{improvement}</p>
-              </div>
-            )}
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -285,11 +268,13 @@ export function ConfidenceBreakdown({
           {expanded && (
             <div className="mt-4 space-y-4">
               {/* Factor breakdown */}
-              <div className="space-y-3">
-                {sortedFactors.map((factor, i) => (
-                  <FactorBar key={i} factor={factor} />
-                ))}
-              </div>
+              <TooltipProvider>
+                <div className="space-y-3">
+                  {sortedFactors.map((factor, i) => (
+                    <FactorBar key={i} factor={factor} />
+                  ))}
+                </div>
+              </TooltipProvider>
 
               {/* Improvement suggestions */}
               {weakFactors.length > 0 && (

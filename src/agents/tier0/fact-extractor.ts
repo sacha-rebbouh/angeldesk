@@ -57,6 +57,11 @@ export interface FactExtractorInput {
   founderResponses?: FounderResponse[];
 }
 
+export interface IgnoredFactInfo {
+  factKey: string;
+  reason: string;
+}
+
 export interface FactExtractorOutput {
   facts: ExtractedFact[];
   contradictions: ContradictionInfo[];
@@ -67,6 +72,8 @@ export interface FactExtractorOutput {
     processingTimeMs: number;
     documentsCovered: number;
     factKeysCovered: number;
+    factsIgnored: number;
+    ignoredDetails: IgnoredFactInfo[];
   };
 }
 
@@ -83,6 +90,10 @@ interface LLMExtractedFact {
   sourceDocumentId: string;
   sourceConfidence: number;
   extractedText: string;
+  // Temporal fields
+  validAt?: string; // ISO date string
+  periodType?: 'POINT_IN_TIME' | 'QUARTER' | 'YEAR' | 'MONTH';
+  periodLabel?: string; // "Q4 2024", "FY2024", "Dec 2024"
 }
 
 interface LLMContradiction {
@@ -165,6 +176,19 @@ Le confidence score mesure ta certitude sur la valeur extraite:
 - Mieux vaut manquer un fait qu'en extraire un faux
 - Tu peux mentionner dans extractionNotes ce qui n'a pas pu etre extrait
 
+# EXTRACTION TEMPORELLE
+
+Pour les metriques qui varient dans le temps (ARR, MRR, headcount, churn, etc.), TOUJOURS extraire:
+- validAt: Date a laquelle cette valeur etait valide (format ISO: "2024-12-31")
+- periodType: "POINT_IN_TIME" | "QUARTER" | "YEAR" | "MONTH"
+- periodLabel: Label lisible ("Q4 2024", "Dec 2024", "FY2024")
+
+Exemples:
+- "Notre ARR a fin Q4 2024 est de 500K" -> validAt: "2024-12-31", periodType: "QUARTER", periodLabel: "Q4 2024"
+- "En decembre, nous avions 50 clients" -> validAt: "2024-12-31", periodType: "MONTH", periodLabel: "Dec 2024"
+- "Revenue 2024: 1.2M EUR" -> validAt: "2024-12-31", periodType: "YEAR", periodLabel: "FY2024"
+- Si pas de date mentionnee, utiliser la date du document si disponible, sinon omettre ces champs
+
 # REGLES D'EXTRACTION
 
 ## OBLIGATOIRE - extractedText
@@ -208,7 +232,10 @@ Produis un JSON avec cette structure exacte:
       "unit": "EUR",
       "sourceDocumentId": "doc-pitch-deck",
       "sourceConfidence": 95,
-      "extractedText": "[Source: Pitch Deck, Slide 8] Notre ARR atteint 500K EUR a fin Q4 2024"
+      "extractedText": "[Source: Pitch Deck, Slide 8] Notre ARR atteint 500K EUR a fin Q4 2024",
+      "validAt": "2024-12-31",
+      "periodType": "QUARTER",
+      "periodLabel": "Q4 2024"
     }
   ],
   "contradictions": [
@@ -316,6 +343,8 @@ Produis un JSON avec cette structure exacte:
           processingTimeMs: Date.now() - startTime,
           documentsCovered: 0,
           factKeysCovered: 0,
+          factsIgnored: 0,
+          ignoredDetails: [],
         },
       };
     }
@@ -381,26 +410,105 @@ Produis un JSON avec cette structure exacte:
 
   /**
    * Extract founder responses from context if available
+   * These come from the /api/founder-responses endpoint stored as FOUNDER_RESPONSE facts
    */
-  private getFounderResponsesFromContext(_context: AgentContext): FounderResponse[] {
-    // TODO: Implement when founder Q&A is integrated
-    // This would come from a questionnaire system or previous agent results
+  private getFounderResponsesFromContext(context: AgentContext): FounderResponse[] {
+    // Check if founder responses are passed in the enriched context
+    const enrichedContext = context as AgentContext & {
+      founderResponses?: FounderResponse[];
+    };
+
+    if (enrichedContext.founderResponses && Array.isArray(enrichedContext.founderResponses)) {
+      return enrichedContext.founderResponses;
+    }
+
     return [];
+  }
+
+  // Constants for token management
+  private static readonly MAX_TOTAL_CHARS = 150000; // ~37K tokens, safe for most models
+  private static readonly DOC_TYPE_PRIORITY: Record<string, number> = {
+    'FINANCIAL_MODEL': 1,
+    'DATA_ROOM': 2,
+    'PITCH_DECK': 3,
+    'OTHER': 4,
+  };
+
+  /**
+   * Intelligently truncate documents to fit within token budget.
+   * Prioritizes FINANCIAL_MODEL > DATA_ROOM > PITCH_DECK > OTHER.
+   */
+  private truncateDocumentsForPrompt(
+    documents: FactExtractorDocument[]
+  ): { doc: FactExtractorDocument; truncatedContent: string; isTruncated: boolean }[] {
+    // Sort by priority (most important first)
+    const sorted = [...documents].sort((a, b) =>
+      (FactExtractorAgent.DOC_TYPE_PRIORITY[a.type] ?? 5) - (FactExtractorAgent.DOC_TYPE_PRIORITY[b.type] ?? 5)
+    );
+
+    // Calculate total current size
+    const totalChars = sorted.reduce((sum, doc) => sum + doc.content.length, 0);
+
+    // If under budget, no truncation needed
+    if (totalChars <= FactExtractorAgent.MAX_TOTAL_CHARS) {
+      return sorted.map(doc => ({
+        doc,
+        truncatedContent: doc.content,
+        isTruncated: false,
+      }));
+    }
+
+    // Distribute budget based on priority
+    const results: { doc: FactExtractorDocument; truncatedContent: string; isTruncated: boolean }[] = [];
+    let remainingBudget = FactExtractorAgent.MAX_TOTAL_CHARS;
+
+    for (let i = 0; i < sorted.length; i++) {
+      const doc = sorted[i];
+      const docsRemaining = sorted.length - i;
+
+      // Higher priority docs get more space
+      const priorityMultiplier = doc.type === 'FINANCIAL_MODEL' ? 2.0 :
+                                 doc.type === 'DATA_ROOM' ? 1.5 : 1.0;
+      const fairShare = Math.floor((remainingBudget / docsRemaining) * priorityMultiplier);
+      const allocatedChars = Math.min(doc.content.length, fairShare, remainingBudget);
+
+      const isTruncated = doc.content.length > allocatedChars;
+      const truncatedContent = isTruncated
+        ? doc.content.substring(0, allocatedChars) +
+          `\n\n[... TRONQUE: ${doc.content.length - allocatedChars} caracteres restants. ` +
+          `Priorisez les informations financieres et metriques cles. ...]`
+        : doc.content;
+
+      results.push({ doc, truncatedContent, isTruncated });
+      remainingBudget -= truncatedContent.length;
+    }
+
+    // Log truncation info
+    const truncatedDocs = results.filter(r => r.isTruncated);
+    if (truncatedDocs.length > 0) {
+      console.warn(
+        `[FactExtractor] ${truncatedDocs.length}/${documents.length} documents truncated to fit token budget:`,
+        truncatedDocs.map(r => `${r.doc.name}: ${r.doc.content.length} → ${r.truncatedContent.length} chars`)
+      );
+    }
+
+    return results;
   }
 
   private buildUserPrompt(input: FactExtractorInput): string {
     let prompt = `# EXTRACTION DE FAITS - ANALYSE DES DOCUMENTS\n\n`;
 
-    // Add documents
-    prompt += `## DOCUMENTS A ANALYSER (${input.documents.length})\n\n`;
-    for (const doc of input.documents) {
-      prompt += `### Document: ${doc.name} (ID: ${doc.id}, Type: ${doc.type})\n`;
-      // Limit content to avoid token overflow
-      const maxChars = doc.type === "FINANCIAL_MODEL" ? 80000 : 30000;
-      const content = doc.content.length > maxChars
-        ? doc.content.substring(0, maxChars) + `\n[... tronque, ${doc.content.length - maxChars} caracteres restants ...]`
-        : doc.content;
-      prompt += `\`\`\`\n${content}\n\`\`\`\n\n`;
+    // Truncate documents intelligently
+    const processedDocs = this.truncateDocumentsForPrompt(input.documents);
+
+    prompt += `## DOCUMENTS A ANALYSER (${processedDocs.length})\n\n`;
+
+    for (const { doc, truncatedContent, isTruncated } of processedDocs) {
+      prompt += `### Document: ${doc.name} (ID: ${doc.id}, Type: ${doc.type})`;
+      if (isTruncated) {
+        prompt += ` [TRONQUE]`;
+      }
+      prompt += `\n\`\`\`\n${truncatedContent}\n\`\`\`\n\n`;
     }
 
     // Add existing facts for contradiction detection
@@ -431,11 +539,12 @@ Produis un JSON avec cette structure exacte:
 4. N'extrait QUE les faits avec confidence >= 70
 5. Detecte les contradictions avec les faits existants
 6. Note ce qui n'a pas pu etre extrait dans extractionNotes
+7. Pour les metriques temporelles (ARR, MRR, headcount...), extrait validAt/periodType/periodLabel
 
 ## OUTPUT ATTENDU
 
 Produis le JSON avec:
-- facts: Liste des faits extraits (avec extractedText obligatoire)
+- facts: Liste des faits extraits (avec extractedText obligatoire, et champs temporels si applicable)
 - contradictions: Liste des contradictions detectees
 - extractionNotes: Ce qui n'a pas pu etre extrait et pourquoi`;
 
@@ -476,22 +585,35 @@ Produis le JSON avec:
     // Validate and filter facts
     const validFacts: ExtractedFact[] = [];
     const seenFactKeys = new Set<string>();
+    const ignoredFacts: IgnoredFactInfo[] = [];
 
     if (Array.isArray(data.facts)) {
       for (const fact of data.facts) {
         // Skip if missing required fields
         if (!fact.factKey || !fact.extractedText || fact.sourceConfidence === undefined) {
+          ignoredFacts.push({
+            factKey: fact.factKey || 'unknown',
+            reason: 'Missing required fields (factKey, extractedText, or sourceConfidence)',
+          });
           continue;
         }
 
         // Skip if confidence too low
         if (fact.sourceConfidence < 70) {
+          ignoredFacts.push({
+            factKey: fact.factKey,
+            reason: `Confidence too low: ${fact.sourceConfidence}% (minimum: 70%)`,
+          });
           continue;
         }
 
         // Validate fact key exists
         const factKeyDef = getFactKeyDefinition(fact.factKey);
         if (!factKeyDef) {
+          ignoredFacts.push({
+            factKey: fact.factKey,
+            reason: 'Unknown factKey not in taxonomy',
+          });
           continue;
         }
 
@@ -541,8 +663,19 @@ Produis le JSON avec:
           sourceDocumentId: fact.sourceDocumentId,
           sourceConfidence: Math.min(100, Math.max(70, fact.sourceConfidence)),
           extractedText: fact.extractedText,
+          validAt: fact.validAt ? new Date(fact.validAt) : undefined,
+          periodType: fact.periodType,
+          periodLabel: fact.periodLabel,
         });
       }
+    }
+
+    // Log ignored facts for debugging
+    if (ignoredFacts.length > 0) {
+      console.warn(
+        `[FactExtractor] ${ignoredFacts.length} facts ignored:`,
+        ignoredFacts.map(f => `${f.factKey}: ${f.reason}`).join('; ')
+      );
     }
 
     // Validate contradictions
@@ -598,6 +731,8 @@ Produis le JSON avec:
         processingTimeMs: Date.now() - startTime,
         documentsCovered: input.documents.length,
         factKeysCovered: uniqueFactKeys.size,
+        factsIgnored: ignoredFacts.length,
+        ignoredDetails: ignoredFacts,
       },
     };
   }

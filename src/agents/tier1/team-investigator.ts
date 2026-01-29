@@ -24,7 +24,7 @@ import type {
  * Inputs:
  * - Documents: Pitch deck (section team)
  * - Context Engine: People Graph (LinkedIn enrichi, ventures précédentes)
- * - Deal: Fondateurs avec données LinkedIn scrapées via Apify
+ * - Deal: Fondateurs avec données LinkedIn via Coresignal
  * - Dependencies: document-extractor
  *
  * Outputs:
@@ -33,8 +33,8 @@ import type {
  * - Red Flags: avec 5 composants obligatoires
  * - Questions: priorité + contexte + whatToLookFor
  *
- * Intégration LinkedIn (via Apify):
- * - Actor: curious_coder/linkedin-profile-scraper
+ * Intégration LinkedIn (via Coresignal):
+ * - API: Base Employee (search ES DSL + collect)
  * - Champs: experiences, education, skills, headline, about
  * - Contact enrichi: email, phone (payant)
  */
@@ -271,7 +271,7 @@ Le BA doit pouvoir évaluer le risque "people" et avoir des questions pour les r
 # METHODOLOGIE D'ANALYSE
 
 ## Etape 1: Vérification LinkedIn
-- Si données LinkedIn disponibles (scrapées via Apify), les utiliser comme source de vérité
+- Si données LinkedIn disponibles (via Coresignal), les utiliser comme source de vérité
 - Croiser avec ce qui est dit dans le deck
 - Identifier les embellissements (titres gonflés, dates modifiées)
 - Calculer les métriques: années d'expérience, tenure moyenne, job hopping
@@ -792,7 +792,7 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
           sectorFit: f.verifiedInfo.sectorFit,
           redFlagsFromLinkedIn: f.verifiedInfo.redFlags,
           questionsFromLinkedIn: f.verifiedInfo.questionsToAsk,
-          // Include raw LinkedIn data if available (from Apify)
+          // Include raw LinkedIn data if available (from Coresignal)
           rawLinkedInData: f.verifiedInfo.rawLinkedInData,
         };
       }

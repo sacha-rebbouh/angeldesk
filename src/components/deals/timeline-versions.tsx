@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback } from "react";
+import { useMemo } from "react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -26,27 +26,16 @@ interface TimelineVersionsProps {
   onSelectVersion: (id: string) => void;
 }
 
-const MAX_VISIBLE_VERSIONS = 3;
-
 export function TimelineVersions({
   analyses,
   currentAnalysisId,
   onSelectVersion,
 }: TimelineVersionsProps) {
-  // Sort by version descending and take max 3 most recent
+  // Sort by version and display all (oldest to newest, left to right)
   const visibleAnalyses = useMemo(() => {
     return [...analyses]
-      .sort((a, b) => b.version - a.version)
-      .slice(0, MAX_VISIBLE_VERSIONS)
-      .reverse(); // Display oldest to newest (left to right)
+      .sort((a, b) => a.version - b.version); // Oldest to newest
   }, [analyses]);
-
-  const handleSelectVersion = useCallback(
-    (id: string) => {
-      onSelectVersion(id);
-    },
-    [onSelectVersion]
-  );
 
   if (visibleAnalyses.length === 0) {
     return null;
@@ -54,8 +43,8 @@ export function TimelineVersions({
 
   return (
     <TooltipProvider>
-      <div className="flex items-center justify-center py-4">
-        <div className="flex items-center gap-0">
+      <div className="flex items-center justify-center py-4 overflow-x-auto">
+        <div className="flex items-center gap-0 min-w-max">
           {visibleAnalyses.map((analysis, index) => {
             const isCurrent = analysis.id === currentAnalysisId;
             const isFirst = index === 0;
@@ -73,7 +62,7 @@ export function TimelineVersions({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => handleSelectVersion(analysis.id)}
+                      onClick={() => onSelectVersion(analysis.id)}
                       className={cn(
                         "flex flex-col items-center gap-1 group focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-lg p-2 transition-colors",
                         isCurrent ? "cursor-default" : "hover:bg-muted/50 cursor-pointer"
@@ -161,6 +150,11 @@ export function TimelineVersions({
             );
           })}
         </div>
+        {analyses.length > 10 && (
+          <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">
+            ({analyses.length} versions)
+          </span>
+        )}
       </div>
     </TooltipProvider>
   );

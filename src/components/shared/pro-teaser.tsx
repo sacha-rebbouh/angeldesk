@@ -1,6 +1,7 @@
 "use client";
 
 import { memo } from "react";
+import { useRouter } from "next/navigation";
 import { Lock, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ export const ProTeaser = memo(function ProTeaser({
   showUpgradeButton = false,
   className,
 }: ProTeaserProps) {
+  const router = useRouter();
   const heightClasses = {
     sm: "h-12",
     md: "h-20",
@@ -79,7 +81,7 @@ export const ProTeaser = memo(function ProTeaser({
         <span className="font-medium">{displayMessage}</span>
         {!showUpgradeButton && (
           <button
-            onClick={() => window.location.href = "/pricing"}
+            onClick={() => router.push("/pricing")}
             className="text-amber-700 dark:text-amber-300 hover:underline font-semibold"
           >
             &rarr;
@@ -92,7 +94,7 @@ export const ProTeaser = memo(function ProTeaser({
         <Button
           size="sm"
           className="mt-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-          onClick={() => window.location.href = "/pricing"}
+          onClick={() => router.push("/pricing")}
         >
           <Crown className="mr-2 h-4 w-4" />
           Passer a PRO - 249EUR/mois
@@ -112,11 +114,12 @@ export const ProTeaserInline = memo(function ProTeaserInline({
   hiddenCount: number;
   itemLabel?: string;
 }) {
+  const router = useRouter();
   if (hiddenCount <= 0) return null;
 
   return (
     <button
-      onClick={() => window.location.href = "/pricing"}
+      onClick={() => router.push("/pricing")}
       className="w-full flex items-center gap-2 p-2 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/40 transition-colors text-sm"
     >
       <Lock className="h-4 w-4 shrink-0" />
@@ -141,6 +144,7 @@ export const ProTeaserSection = memo(function ProTeaserSection({
   icon?: React.ComponentType<{ className?: string }>;
   previewText?: string;
 }) {
+  const router = useRouter();
   return (
     <div className="relative p-4 rounded-lg border-2 border-dashed border-amber-300 dark:border-amber-700 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/20 dark:to-orange-950/20">
       {/* Lock badge */}
@@ -168,7 +172,7 @@ export const ProTeaserSection = memo(function ProTeaserSection({
       <Button
         size="sm"
         className="mt-4 w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-        onClick={() => window.location.href = "/pricing"}
+        onClick={() => router.push("/pricing")}
       >
         <Crown className="mr-2 h-4 w-4" />
         Debloquer avec PRO
@@ -181,6 +185,7 @@ export const ProTeaserSection = memo(function ProTeaserSection({
  * ProTeaserBanner - Banner for PRO upsell at the end of results
  */
 export const ProTeaserBanner = memo(function ProTeaserBanner() {
+  const router = useRouter();
   return (
     <div className="relative overflow-hidden rounded-xl border-2 border-amber-200 dark:border-amber-800 bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 dark:from-amber-950/30 dark:via-orange-950/30 dark:to-amber-950/30 p-6">
       {/* Background decoration */}
@@ -213,7 +218,7 @@ export const ProTeaserBanner = memo(function ProTeaserBanner() {
         <div className="flex items-center gap-4">
           <Button
             className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-            onClick={() => window.location.href = "/pricing"}
+            onClick={() => router.push("/pricing")}
           >
             <Crown className="mr-2 h-4 w-4" />
             Passer a PRO - 249EUR/mois

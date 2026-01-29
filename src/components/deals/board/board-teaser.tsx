@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ interface BoardTeaserProps {
 }
 
 export function BoardTeaser({ dealName }: BoardTeaserProps) {
+  const router = useRouter();
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -127,7 +129,7 @@ export function BoardTeaser({ dealName }: BoardTeaserProps) {
               className="mt-6 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
               onClick={() => {
                 // TODO: Redirect to pricing/upgrade page
-                window.location.href = "/pricing";
+                router.push("/pricing");
               }}
             >
               <Crown className="mr-2 h-4 w-4" />

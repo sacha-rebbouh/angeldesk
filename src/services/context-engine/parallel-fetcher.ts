@@ -87,7 +87,7 @@ const CONNECTOR_TIER_MAP: Record<string, keyof typeof CONNECTOR_TIERS> = {
   wttj: "fast",
 
   // Slow
-  apify_linkedin: "slow",  // LinkedIn scraping via Apify (replaces proxycurl)
+  coresignal_linkedin: "slow",  // LinkedIn data via Coresignal API
   web_search: "slow",
   news_api: "slow",
   societe_com: "slow",

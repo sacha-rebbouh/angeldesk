@@ -537,7 +537,7 @@ ${dealContext}
 ${capTableSection}
 ${contextEngineData}
 ${dilutionBenchmarkSection}
-
+${this.formatFactStoreData(context)}
 ## INSTRUCTIONS SPECIFIQUES
 
 1. Commence par evaluer si la cap table est fournie ou non

@@ -286,6 +286,39 @@ const MobilityExpertOutputSchema = z.object({
     timingRationale: z.string(),
   }),
 
+  // DB Cross-Reference (obligatoire si donnees DB disponibles)
+  dbCrossReference: z.object({
+    claims: z.array(z.object({
+      claim: z.string(),
+      location: z.string(),
+      dbVerdict: z.enum(["VERIFIED", "CONTREDIT", "PARTIEL", "NON_VERIFIABLE"]),
+      evidence: z.string(),
+      severity: z.enum(["CRITICAL", "HIGH", "MEDIUM"]).optional(),
+    })),
+    hiddenCompetitors: z.array(z.string()),
+    valuationPercentile: z.number().optional(),
+    competitorComparison: z.object({
+      fromDeck: z.object({
+        mentioned: z.array(z.string()),
+        location: z.string(),
+      }),
+      fromDb: z.object({
+        detected: z.array(z.string()),
+        directCompetitors: z.number(),
+      }),
+      deckAccuracy: z.enum(["ACCURATE", "INCOMPLETE", "MISLEADING"]),
+    }).optional(),
+  }).optional(),
+
+  // Data completeness assessment
+  dataCompleteness: z.object({
+    level: z.enum(["complete", "partial", "minimal"]),
+    availableDataPoints: z.number(),
+    expectedDataPoints: z.number(),
+    missingCritical: z.array(z.string()),
+    limitations: z.array(z.string()),
+  }),
+
   // Score global sectoriel
   sectorScore: z.number().min(0).max(100),
 
@@ -575,7 +608,34 @@ Score 0-100 avec breakdown:
 - Competitive Position (0-25)
 - Scalability (0-25)
 
-Produis ton analyse au format JSON conforme au schema.`;
+Produis ton analyse au format JSON conforme au schema.
+
+${(() => {
+  let fundingDbData = "";
+  const contextEngineAny = context.contextEngine as Record<string, unknown> | undefined;
+  const fundingDb = contextEngineAny?.fundingDb as { competitors?: unknown; valuationBenchmark?: unknown; sectorTrend?: unknown } | undefined;
+  if (fundingDb) {
+    fundingDbData = `\n## FUNDING DATABASE - CROSS-REFERENCE OBLIGATOIRE
+
+Tu DOIS produire un champ "dbCrossReference" dans ton output.
+
+### Concurrents détectés dans la DB
+${fundingDb.competitors ? JSON.stringify(fundingDb.competitors, null, 2).slice(0, 3000) : "Aucun concurrent détecté dans la DB"}
+
+### Benchmark valorisation
+${fundingDb.valuationBenchmark ? JSON.stringify(fundingDb.valuationBenchmark, null, 2) : "Pas de benchmark disponible"}
+
+### Tendance funding secteur
+${fundingDb.sectorTrend ? JSON.stringify(fundingDb.sectorTrend, null, 2) : "Pas de tendance disponible"}
+
+INSTRUCTIONS DB:
+1. Chaque claim du deck concernant le marché/concurrence DOIT être vérifié vs ces données
+2. Les concurrents DB absents du deck = RED FLAG CRITICAL "Omission volontaire"
+3. Positionner la valorisation vs percentiles (P25/median/P75)
+4. Si le deck dit "pas de concurrent" mais la DB en trouve = RED FLAG CRITICAL`;
+  }
+  return fundingDbData;
+})()}`;
 }
 
 // ============================================================================
@@ -614,7 +674,14 @@ export const mobilityExpert = {
         if (!jsonMatch) {
           throw new Error("No JSON found in response");
         }
-        parsedOutput = MobilityExpertOutputSchema.parse(JSON.parse(jsonMatch[0]));
+        const rawJson = JSON.parse(jsonMatch[0]);
+        const parseResult = MobilityExpertOutputSchema.safeParse(rawJson);
+        if (parseResult.success) {
+          parsedOutput = parseResult.data;
+        } else {
+          console.warn(`[mobility-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
+          parsedOutput = rawJson as MobilityExpertOutput;
+        }
       } catch (parseError) {
         console.error("[mobility-expert] Parse error:", parseError);
         return {
@@ -625,6 +692,34 @@ export const mobilityExpert = {
           error: `Failed to parse LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
           data: getDefaultMobilityData(),
         };
+      }
+
+      // -- Data completeness assessment and score capping --
+      const completenessData = parsedOutput.dataCompleteness ?? {
+        level: "partial" as const, availableDataPoints: 0, expectedDataPoints: 0, missingCritical: [], limitations: [],
+      };
+      const availableMetrics = (parsedOutput.keyMetrics ?? []).filter((m: { value: unknown }) => m.value !== null).length;
+      const totalMetrics = (parsedOutput.keyMetrics ?? []).length;
+      let completenessLevel = completenessData.level;
+      if (totalMetrics > 0 && !parsedOutput.dataCompleteness) {
+        const ratio = availableMetrics / totalMetrics;
+        if (ratio < 0.3) completenessLevel = "minimal";
+        else if (ratio < 0.7) completenessLevel = "partial";
+        else completenessLevel = "complete";
+      }
+      let scoreMax = 100;
+      if (completenessLevel === "minimal") scoreMax = 50;
+      else if (completenessLevel === "partial") scoreMax = 70;
+      const rawScore = parsedOutput.sectorScore ?? 0;
+      const cappedScore = Math.min(rawScore, scoreMax);
+      const rawFitScore = parsedOutput.sectorFit?.score ?? 0;
+      const cappedFitScore = Math.min(rawFitScore, scoreMax);
+      const limitations: string[] = [
+        ...(completenessData.limitations ?? []),
+        ...(completenessData.missingCritical ?? []).map((m: string) => `Missing critical data: ${m}`),
+      ];
+      if (cappedScore < rawScore) {
+        limitations.push(`Score capped from ${rawScore} to ${cappedScore} due to ${completenessLevel} data completeness`);
       }
 
       // Transform to SectorExpertData format
@@ -688,13 +783,13 @@ export const mobilityExpert = {
         })),
 
         sectorFit: {
-          score: parsedOutput.sectorFit.score,
+          score: cappedFitScore,
           strengths: parsedOutput.sectorFit.strengths,
           weaknesses: parsedOutput.sectorFit.weaknesses,
           sectorTiming: parsedOutput.sectorFit.sectorTiming,
         },
 
-        sectorScore: parsedOutput.sectorScore,
+        sectorScore: cappedScore,
         executiveSummary: parsedOutput.executiveSummary,
       };
 

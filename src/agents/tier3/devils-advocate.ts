@@ -445,7 +445,7 @@ ${contextEngineData || "Aucune donnee Context Engine disponible."}
 
 ## DONNEES FUNDING DB (pour comparables echecs)
 ${fundingDbData || "Aucune donnee Funding DB disponible. Utilise ta connaissance des echecs celebres du secteur."}
-
+${this.formatFactStoreData(context) ?? ""}
 ## INSTRUCTIONS SPECIFIQUES
 
 1. **COUNTER-ARGUMENTS**: Pour chaque score > 60 ou point fort mentionne dans les analyses Tier 1/2, formule un contre-argument avec un comparable echec reel. Minimum 5 counter-arguments.

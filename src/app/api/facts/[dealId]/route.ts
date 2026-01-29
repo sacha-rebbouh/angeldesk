@@ -2,8 +2,34 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { getCurrentFacts, getCurrentFactsByCategory } from "@/services/fact-store/current-facts";
 import type { FactCategory } from "@/services/fact-store/types";
 import type { Prisma } from "@prisma/client";
+
+// ============================================================================
+// RATE LIMITING
+// ============================================================================
+
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX = 30; // 30 requests per minute
+const requestCounts = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(identifier: string): boolean {
+  const now = Date.now();
+  const record = requestCounts.get(identifier);
+
+  if (!record || now > record.resetAt) {
+    requestCounts.set(identifier, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return true;
+  }
+
+  if (record.count >= RATE_LIMIT_MAX) {
+    return false;
+  }
+
+  record.count++;
+  return true;
+}
 
 // ============================================================================
 // VALIDATION SCHEMAS
@@ -27,7 +53,13 @@ const querySchema = z.object({
 
 const overrideSchema = z.object({
   factKey: z.string().min(1, "factKey is required"),
-  value: z.unknown(),
+  value: z.union([
+    z.number(),
+    z.string(),
+    z.boolean(),
+    z.array(z.string()),
+    z.record(z.string(), z.unknown()),
+  ]),
   displayValue: z.string().min(1, "displayValue is required"),
   reason: z.string().min(1, "reason is required"),
 });
@@ -43,6 +75,15 @@ export async function GET(
   try {
     const user = await requireAuth();
     const { dealId } = await params;
+
+    // Rate limit check
+    const rateLimitKey = `facts:${user.id}`;
+    if (!checkRateLimit(rateLimitKey)) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: 429 }
+      );
+    }
 
     // Validate dealId format
     if (!dealId || dealId.length < 10) {
@@ -80,128 +121,32 @@ export async function GET(
 
     const { category, includeHistory } = queryResult.data;
 
-    // Build the where clause
-    const whereClause: {
-      dealId: string;
-      category?: string;
-      eventType?: string;
-    } = {
-      dealId,
-    };
+    // Use the service to get current facts
+    const facts = category
+      ? await getCurrentFactsByCategory(dealId, category)
+      : await getCurrentFacts(dealId);
 
-    if (category) {
-      whereClause.category = category;
-    }
-
-    // Get fact events
-    const factEvents = await prisma.factEvent.findMany({
-      where: whereClause,
-      orderBy: [
-        { factKey: 'asc' },
-        { createdAt: 'desc' },
-      ],
-    });
-
-    // Group facts by factKey and compute current state
-    const factsByKey = new Map<string, typeof factEvents>();
-
-    for (const event of factEvents) {
-      const existing = factsByKey.get(event.factKey) || [];
-      existing.push(event);
-      factsByKey.set(event.factKey, existing);
-    }
-
-    // Build current facts response
-    const currentFacts: Array<{
-      dealId: string;
-      factKey: string;
-      category: string;
-      currentValue: unknown;
-      currentDisplayValue: string;
-      currentSource: string;
-      currentConfidence: number;
-      isDisputed: boolean;
-      disputeDetails?: {
-        conflictingValue: unknown;
-        conflictingSource: string;
-      };
-      eventHistory?: Array<{
-        id: string;
-        eventType: string;
-        value: unknown;
-        displayValue: string;
-        source: string;
-        sourceConfidence: number;
-        createdAt: Date;
-        createdBy: string;
-        reason?: string | null;
-      }>;
-      firstSeenAt: Date;
-      lastUpdatedAt: Date;
-    }> = [];
-
-    for (const [factKey, events] of factsByKey) {
-      // Sort by createdAt desc to get latest first
-      const sortedEvents = events.sort(
-        (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-      );
-
-      // Find the current active event (latest non-DELETED, non-SUPERSEDED)
-      const currentEvent = sortedEvents.find(
-        (e) => e.eventType !== 'DELETED' && e.eventType !== 'SUPERSEDED'
-      );
-
-      if (!currentEvent) {
-        // All events are deleted/superseded, skip this fact
-        continue;
-      }
-
-      // Check for disputes
-      const disputedEvents = sortedEvents.filter((e) => e.eventType === 'DISPUTED');
-      const isDisputed = disputedEvents.length > 0;
-
-      const fact: typeof currentFacts[0] = {
-        dealId,
-        factKey,
-        category: currentEvent.category,
-        currentValue: currentEvent.value,
-        currentDisplayValue: currentEvent.displayValue,
-        currentSource: currentEvent.source,
-        currentConfidence: currentEvent.sourceConfidence,
-        isDisputed,
-        firstSeenAt: sortedEvents[sortedEvents.length - 1].createdAt,
-        lastUpdatedAt: currentEvent.createdAt,
-      };
-
-      if (isDisputed && disputedEvents[0]) {
-        fact.disputeDetails = {
-          conflictingValue: disputedEvents[0].value,
-          conflictingSource: disputedEvents[0].source,
-        };
-      }
-
-      if (includeHistory) {
-        fact.eventHistory = sortedEvents.map((e) => ({
-          id: e.id,
-          eventType: e.eventType,
-          value: e.value,
-          displayValue: e.displayValue,
-          source: e.source,
-          sourceConfidence: e.sourceConfidence,
-          createdAt: e.createdAt,
-          createdBy: e.createdBy,
-          reason: e.reason,
-        }));
-      }
-
-      currentFacts.push(fact);
-    }
+    // Transform to API response format (optionally strip eventHistory)
+    const responseFacts = facts.map((fact) => ({
+      dealId: fact.dealId,
+      factKey: fact.factKey,
+      category: fact.category,
+      currentValue: fact.currentValue,
+      currentDisplayValue: fact.currentDisplayValue,
+      currentSource: fact.currentSource,
+      currentConfidence: fact.currentConfidence,
+      isDisputed: fact.isDisputed,
+      disputeDetails: fact.disputeDetails,
+      ...(includeHistory ? { eventHistory: fact.eventHistory } : {}),
+      firstSeenAt: fact.firstSeenAt,
+      lastUpdatedAt: fact.lastUpdatedAt,
+    }));
 
     return NextResponse.json({
       data: {
         dealId,
-        factsCount: currentFacts.length,
-        facts: currentFacts,
+        factsCount: responseFacts.length,
+        facts: responseFacts,
       },
     });
   } catch (error) {
@@ -224,6 +169,16 @@ export async function POST(
   try {
     const user = await requireAuth();
     const { dealId } = await params;
+
+    // Rate limit check
+    const rateLimitKey = `facts:${user.id}`;
+    if (!checkRateLimit(rateLimitKey)) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
 
     // Validate dealId format
@@ -302,7 +257,7 @@ export async function POST(
           sourceConfidence: 100, // BA override has max confidence
           eventType: existingFact ? 'SUPERSEDED' : 'CREATED',
           supersedesEventId: existingFact?.id,
-          createdBy: 'ba',
+          createdBy: user.id,
           reason,
         },
       });

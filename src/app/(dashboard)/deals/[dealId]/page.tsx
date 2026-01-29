@@ -29,6 +29,7 @@ import { ScoreGrid } from "@/components/deals/score-display";
 import { BoardPanelWrapper } from "@/components/deals/board-panel-wrapper";
 import { DocumentsTab } from "@/components/deals/documents-tab";
 import { TeamManagement } from "@/components/deals/team-management";
+import { getStatusColor, getStatusLabel, getStageLabel, getSeverityColor, formatCurrencyEUR } from "@/lib/format-utils";
 
 async function getDeal(dealId: string, userId: string) {
   return prisma.deal.findFirst({
@@ -49,62 +50,6 @@ async function getDeal(dealId: string, userId: string) {
       },
     },
   });
-}
-
-function getStatusColor(status: string) {
-  const colors: Record<string, string> = {
-    SCREENING: "bg-blue-100 text-blue-800",
-    ANALYZING: "bg-yellow-100 text-yellow-800",
-    IN_DD: "bg-purple-100 text-purple-800",
-    PASSED: "bg-gray-100 text-gray-800",
-    INVESTED: "bg-green-100 text-green-800",
-    ARCHIVED: "bg-gray-100 text-gray-800",
-  };
-  return colors[status] ?? "bg-gray-100 text-gray-800";
-}
-
-function getStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    SCREENING: "Screening",
-    ANALYZING: "En analyse",
-    IN_DD: "Due Diligence",
-    PASSED: "Passé",
-    INVESTED: "Investi",
-    ARCHIVED: "Archivé",
-  };
-  return labels[status] ?? status;
-}
-
-function getStageLabel(stage: string | null) {
-  if (!stage) return "Non défini";
-  const labels: Record<string, string> = {
-    PRE_SEED: "Pre-seed",
-    SEED: "Seed",
-    SERIES_A: "Série A",
-    SERIES_B: "Série B",
-    SERIES_C: "Série C",
-    LATER: "Later Stage",
-  };
-  return labels[stage] ?? stage;
-}
-
-function getSeverityColor(severity: string) {
-  const colors: Record<string, string> = {
-    CRITICAL: "bg-red-500 text-white",
-    HIGH: "bg-orange-500 text-white",
-    MEDIUM: "bg-yellow-500 text-black",
-    LOW: "bg-blue-100 text-blue-800",
-  };
-  return colors[severity] ?? "bg-gray-100 text-gray-800";
-}
-
-function formatCurrency(value: number | null | undefined) {
-  if (value == null) return "-";
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-  }).format(value);
 }
 
 interface PageProps {
@@ -172,12 +117,12 @@ export default async function DealDetailPage({ params }: PageProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(
+              {formatCurrencyEUR(
                 deal.valuationPre ? Number(deal.valuationPre) : null
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              Pre-money • {getStageLabel(deal.stage)}
+              Pre-money • {getStageLabel(deal.stage, "Non d\u00e9fini")}
             </p>
           </CardContent>
         </Card>
@@ -188,7 +133,7 @@ export default async function DealDetailPage({ params }: PageProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(deal.arr ? Number(deal.arr) : null)}
+              {formatCurrencyEUR(deal.arr ? Number(deal.arr) : null)}
             </div>
             <p className="text-xs text-muted-foreground">
               {deal.growthRate
@@ -268,7 +213,7 @@ export default async function DealDetailPage({ params }: PageProps) {
                     <p className="text-sm font-medium text-muted-foreground">
                       Stade
                     </p>
-                    <p>{getStageLabel(deal.stage)}</p>
+                    <p>{getStageLabel(deal.stage, "Non d\u00e9fini")}</p>
                   </div>
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">
@@ -281,7 +226,7 @@ export default async function DealDetailPage({ params }: PageProps) {
                       Montant demande
                     </p>
                     <p>
-                      {formatCurrency(
+                      {formatCurrencyEUR(
                         deal.amountRequested
                           ? Number(deal.amountRequested)
                           : null

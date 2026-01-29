@@ -214,6 +214,39 @@ const FintechExpertOutputSchema = z.object({
     timingRationale: z.string(),
   }),
 
+  // DB Cross-Reference (obligatoire si donnees DB disponibles)
+  dbCrossReference: z.object({
+    claims: z.array(z.object({
+      claim: z.string(),
+      location: z.string(),
+      dbVerdict: z.enum(["VERIFIED", "CONTREDIT", "PARTIEL", "NON_VERIFIABLE"]),
+      evidence: z.string(),
+      severity: z.enum(["CRITICAL", "HIGH", "MEDIUM"]).optional(),
+    })),
+    hiddenCompetitors: z.array(z.string()),
+    valuationPercentile: z.number().optional(),
+    competitorComparison: z.object({
+      fromDeck: z.object({
+        mentioned: z.array(z.string()),
+        location: z.string(),
+      }),
+      fromDb: z.object({
+        detected: z.array(z.string()),
+        directCompetitors: z.number(),
+      }),
+      deckAccuracy: z.enum(["ACCURATE", "INCOMPLETE", "MISLEADING"]),
+    }).optional(),
+  }).optional(),
+
+  // Data completeness assessment
+  dataCompleteness: z.object({
+    level: z.enum(["complete", "partial", "minimal"]),
+    availableDataPoints: z.number(),
+    expectedDataPoints: z.number(),
+    missingCritical: z.array(z.string()),
+    limitations: z.array(z.string()),
+  }),
+
   // Score global sectoriel
   sectorScore: z.number().min(0).max(100),
 
@@ -414,6 +447,13 @@ ${tier1Insights ? `## INSIGHTS DES AGENTS TIER 1\n${tier1Insights}` : ""}
 
 ${contextEngineData ? `## DONNÉES CONTEXT ENGINE\n${contextEngineData}` : ""}
 
+${context.factStoreFormatted ? `## DONNÉES VÉRIFIÉES (Fact Store)
+
+Les données ci-dessous ont été extraites et vérifiées à partir des documents du deal.
+Base ton analyse sur ces faits. Si un fait important manque, signale-le.
+
+${context.factStoreFormatted}` : ""}
+
 ## TA MISSION
 
 En tant qu'expert Fintech, tu dois produire une analyse sectorielle APPROFONDIE qui couvre:
@@ -453,7 +493,34 @@ Score 0-100 avec breakdown par dimension:
 - Business Model (0-25)
 - Position Marché (0-25)
 
-Produis ton analyse au format JSON conforme au schema.`;
+Produis ton analyse au format JSON conforme au schema.
+
+${(() => {
+  let fundingDbData = "";
+  const contextEngineAny = context.contextEngine as Record<string, unknown> | undefined;
+  const fundingDb = contextEngineAny?.fundingDb as { competitors?: unknown; valuationBenchmark?: unknown; sectorTrend?: unknown } | undefined;
+  if (fundingDb) {
+    fundingDbData = `\n## FUNDING DATABASE - CROSS-REFERENCE OBLIGATOIRE
+
+Tu DOIS produire un champ "dbCrossReference" dans ton output.
+
+### Concurrents détectés dans la DB
+${fundingDb.competitors ? JSON.stringify(fundingDb.competitors, null, 2).slice(0, 3000) : "Aucun concurrent détecté dans la DB"}
+
+### Benchmark valorisation
+${fundingDb.valuationBenchmark ? JSON.stringify(fundingDb.valuationBenchmark, null, 2) : "Pas de benchmark disponible"}
+
+### Tendance funding secteur
+${fundingDb.sectorTrend ? JSON.stringify(fundingDb.sectorTrend, null, 2) : "Pas de tendance disponible"}
+
+INSTRUCTIONS DB:
+1. Chaque claim du deck concernant le marché/concurrence DOIT être vérifié vs ces données
+2. Les concurrents DB absents du deck = RED FLAG CRITICAL "Omission volontaire"
+3. Positionner la valorisation vs percentiles (P25/median/P75)
+4. Si le deck dit "pas de concurrent" mais la DB en trouve = RED FLAG CRITICAL`;
+  }
+  return fundingDbData;
+})()}`;
 }
 
 // ============================================================================
@@ -491,7 +558,15 @@ export const fintechExpert = {
         if (!jsonMatch) {
           throw new Error("No JSON found in response");
         }
-        parsedOutput = FintechExpertOutputSchema.parse(JSON.parse(jsonMatch[0]));
+        const rawJson = JSON.parse(jsonMatch[0]);
+        const parseResult = FintechExpertOutputSchema.safeParse(rawJson);
+        if (parseResult.success) {
+          parsedOutput = parseResult.data;
+        } else {
+          // Partial response — use raw JSON as-is (transformation step handles missing fields with defaults)
+          console.warn(`[fintech-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
+          parsedOutput = rawJson as FintechExpertOutput;
+        }
       } catch (parseError) {
         console.error("[fintech-expert] Parse error:", parseError);
         return {
@@ -504,12 +579,44 @@ export const fintechExpert = {
         };
       }
 
-      // Transform to SectorExpertData format
-      const sectorData: SectorExpertData = {
-        sectorName: parsedOutput.sectorName,
-        sectorMaturity: parsedOutput.sectorMaturity,
+      // -- Data completeness assessment and score capping --
+      const completenessData = parsedOutput.dataCompleteness ?? {
+        level: "partial" as const, availableDataPoints: 0, expectedDataPoints: 0, missingCritical: [], limitations: [],
+      };
+      const availableMetrics = (parsedOutput.keyMetrics ?? []).filter((m: { value: unknown }) => m.value !== null).length;
+      const totalMetrics = (parsedOutput.keyMetrics ?? []).length;
+      let completenessLevel = completenessData.level;
+      if (totalMetrics > 0 && !parsedOutput.dataCompleteness) {
+        const ratio = availableMetrics / totalMetrics;
+        if (ratio < 0.3) completenessLevel = "minimal";
+        else if (ratio < 0.7) completenessLevel = "partial";
+        else completenessLevel = "complete";
+      }
+      let scoreMax = 100;
+      if (completenessLevel === "minimal") scoreMax = 50;
+      else if (completenessLevel === "partial") scoreMax = 70;
+      const rawScore = parsedOutput.sectorScore ?? 0;
+      const cappedScore = Math.min(rawScore, scoreMax);
+      const rawFitScore = parsedOutput.sectorFit?.score ?? 0;
+      const cappedFitScore = Math.min(rawFitScore, scoreMax);
+      const limitations: string[] = [
+        ...(completenessData.limitations ?? []),
+        ...(completenessData.missingCritical ?? []).map((m: string) => `Missing critical data: ${m}`),
+      ];
+      if (cappedScore < rawScore) {
+        limitations.push(`Score capped from ${rawScore} to ${cappedScore} due to ${completenessLevel} data completeness`);
+      }
 
-        keyMetrics: parsedOutput.keyMetrics.map(m => ({
+      // Transform to SectorExpertData format (tolerant of partial LLM responses)
+      const regEnv = (parsedOutput.regulatoryEnvironment ?? {}) as Partial<FintechExpertOutput["regulatoryEnvironment"]>;
+      const dynData = (parsedOutput.sectorDynamics ?? {}) as Partial<FintechExpertOutput["sectorDynamics"]>;
+      const fitData = (parsedOutput.sectorFit ?? {}) as Partial<FintechExpertOutput["sectorFit"]>;
+
+      const sectorData: SectorExpertData = {
+        sectorName: parsedOutput.sectorName ?? "Fintech",
+        sectorMaturity: parsedOutput.sectorMaturity ?? "emerging",
+
+        keyMetrics: (parsedOutput.keyMetrics ?? []).map(m => ({
           metricName: m.metricName,
           value: m.value,
           sectorBenchmark: m.sectorBenchmark,
@@ -517,40 +624,40 @@ export const fintechExpert = {
           sectorContext: m.sectorContext,
         })),
 
-        sectorRedFlags: parsedOutput.sectorRedFlags.map(rf => ({
+        sectorRedFlags: (parsedOutput.sectorRedFlags ?? []).map(rf => ({
           flag: rf.flag,
           severity: rf.severity,
           sectorReason: rf.sectorReason,
         })),
 
-        sectorOpportunities: parsedOutput.sectorOpportunities.map(o => ({
+        sectorOpportunities: (parsedOutput.sectorOpportunities ?? []).map(o => ({
           opportunity: o.opportunity,
           potential: o.potential,
           reasoning: o.reasoning,
         })),
 
         regulatoryEnvironment: {
-          complexity: parsedOutput.regulatoryEnvironment.complexity,
-          keyRegulations: parsedOutput.regulatoryEnvironment.complianceAreas.map(c => c.area),
-          complianceRisks: parsedOutput.regulatoryEnvironment.complianceAreas
+          complexity: regEnv.complexity ?? "unknown" as "low" | "medium" | "high" | "very_high",
+          keyRegulations: (regEnv.complianceAreas ?? []).map(c => c.area),
+          complianceRisks: (regEnv.complianceAreas ?? [])
             .filter(c => c.status !== "compliant")
             .map(c => `${c.area}: ${c.evidence}`),
-          upcomingChanges: parsedOutput.regulatoryEnvironment.upcomingChanges.map(
+          upcomingChanges: (regEnv.upcomingChanges ?? []).map(
             c => `${c.regulation} (${c.effectiveDate}): ${c.description}`
           ),
         },
 
         sectorDynamics: {
-          competitionIntensity: parsedOutput.sectorDynamics.competitionIntensity,
-          consolidationTrend: parsedOutput.sectorDynamics.consolidationTrend,
-          barrierToEntry: parsedOutput.sectorDynamics.barrierToEntry,
-          typicalExitMultiple: parsedOutput.sectorDynamics.typicalExitMultiple,
-          recentExits: parsedOutput.sectorDynamics.recentExits.map(
+          competitionIntensity: dynData.competitionIntensity ?? "medium",
+          consolidationTrend: dynData.consolidationTrend ?? "stable",
+          barrierToEntry: dynData.barrierToEntry ?? "medium",
+          typicalExitMultiple: dynData.typicalExitMultiple ?? 0,
+          recentExits: (dynData.recentExits ?? []).map(
             e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`
           ),
         },
 
-        sectorQuestions: parsedOutput.sectorQuestions.map(q => ({
+        sectorQuestions: (parsedOutput.sectorQuestions ?? []).map(q => ({
           question: q.question,
           category: q.category as "technical" | "business" | "regulatory" | "competitive",
           priority: q.priority,
@@ -559,14 +666,14 @@ export const fintechExpert = {
         })),
 
         sectorFit: {
-          score: parsedOutput.sectorFit.score,
-          strengths: parsedOutput.sectorFit.strengths,
-          weaknesses: parsedOutput.sectorFit.weaknesses,
-          sectorTiming: parsedOutput.sectorFit.sectorTiming,
+          score: cappedFitScore,
+          strengths: fitData.strengths ?? [],
+          weaknesses: fitData.weaknesses ?? [],
+          sectorTiming: fitData.sectorTiming ?? "early",
         },
 
-        sectorScore: parsedOutput.sectorScore,
-        executiveSummary: parsedOutput.executiveSummary,
+        sectorScore: cappedScore,
+        executiveSummary: parsedOutput.executiveSummary ?? "Analysis incomplete due to partial LLM response",
       };
 
       return {
@@ -583,11 +690,11 @@ export const fintechExpert = {
           scoreBreakdown: parsedOutput.scoreBreakdown,
           verdict: parsedOutput.verdict,
           regulatoryDetails: {
-            licenses: parsedOutput.regulatoryEnvironment.licensesRequired,
-            overallRisk: parsedOutput.regulatoryEnvironment.overallRegulatoryRisk,
-            verdict: parsedOutput.regulatoryEnvironment.regulatoryVerdict,
+            licenses: regEnv.licensesRequired,
+            overallRisk: regEnv.overallRegulatoryRisk,
+            verdict: regEnv.regulatoryVerdict,
           },
-          bigTechThreat: parsedOutput.sectorDynamics.bigTechThreat,
+          bigTechThreat: dynData.bigTechThreat,
         },
       } as SectorExpertResult & { _extended: unknown };
 

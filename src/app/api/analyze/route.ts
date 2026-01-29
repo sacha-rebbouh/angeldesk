@@ -8,6 +8,7 @@ import {
   recordDealAnalysis,
   getUsageStatus,
   type AnalysisTier,
+  type SubscriptionTier,
 } from "@/services/deal-limits";
 
 const analyzeSchema = z.object({
@@ -116,12 +117,20 @@ export async function POST(request: NextRequest) {
       data: { status: "ANALYZING" },
     });
 
+    // Get user subscription status for tier gating
+    const userData = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { subscriptionStatus: true },
+    });
+    const userPlan = (userData?.subscriptionStatus as SubscriptionTier) || "FREE";
+
     // Run the analysis (Standard agents with traces enabled)
     const result = await orchestrator.runAnalysis({
       dealId,
       type: type as AnalysisType,
       useReAct: false, // Always use Standard agents (better results, lower cost)
       enableTrace,
+      userPlan: userPlan === "PRO" || userPlan === "ENTERPRISE" ? "PRO" : "FREE",
     });
 
     return NextResponse.json({
@@ -134,6 +143,7 @@ export async function POST(request: NextRequest) {
         results: result.results,
         earlyWarnings: result.earlyWarnings,
         hasCriticalWarnings: result.hasCriticalWarnings,
+        tiersExecuted: result.tiersExecuted,
         remainingDeals: usageResult.remainingDeals,
       },
     });

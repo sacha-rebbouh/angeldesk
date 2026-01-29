@@ -149,7 +149,10 @@ export function generateFullAnalysisSummary(results: Record<string, AgentResult>
       parts.push(`\n**ANALYSE SECTORIELLE**`);
       parts.push(`Score Sectoriel: ${sectorData.sectorScore}/100`);
       if (sectorData.sectorFit) {
-        parts.push(`Fit: ${sectorData.sectorFit.toUpperCase()}`);
+        const fitLabel = typeof sectorData.sectorFit === "string"
+          ? sectorData.sectorFit.toUpperCase()
+          : `${(sectorData.sectorFit as { score?: number }).score ?? 0}/100`;
+        parts.push(`Fit: ${fitLabel}`);
       }
       if (sectorData.sectorInsights && sectorData.sectorInsights.length > 0) {
         const topInsights = sectorData.sectorInsights.slice(0, 3);

@@ -32,13 +32,14 @@ import { ycCompaniesConnector } from "./connectors/yc-companies";
 import { companiesHouseConnector } from "./connectors/companies-house";
 import { pappersConnector } from "./connectors/pappers";
 import { productHuntConnector } from "./connectors/product-hunt";
-// LinkedIn data - Apify replaces Proxycurl (which shut down in Jan 2025)
+// LinkedIn data - Coresignal (694M+ profiles, refreshed every 6h)
 import {
-  apifyLinkedInConnector,
+  coresignalLinkedInConnector,
   analyzeFounderLinkedIn,
+  analyzeFounderByName,
   analyzeTeamLinkedIn,
-  isApifyLinkedInConfigured,
-} from "./connectors/apify-linkedin";
+  isCoresignalLinkedInConfigured,
+} from "./connectors/coresignal-linkedin";
 // French ecosystem connectors
 import { societeComConnector } from "./connectors/societe-com";
 import { bpiFranceConnector } from "./connectors/bpi-france";
@@ -100,7 +101,7 @@ const connectors: Connector[] = [
   seedtableConnector,       // Seedtable - curated European startup database (40+ deals)
 
   // === FOUNDER DATA ===
-  apifyLinkedInConnector,   // LinkedIn data via Apify (~$0.003/profile) - replaces Proxycurl
+  coresignalLinkedInConnector,   // LinkedIn data via Coresignal (2 credits/profile)
 
   // === COMPANY DATA (REAL - scraping/APIs) ===
   societeComConnector,      // French company data (scraping)
@@ -442,6 +443,7 @@ async function maybeAddPeopleGraph(
 
   const peopleGraph = await buildPeopleGraph(founderList, {
     startupSector: options.startupSector || query.sector,
+    dealCompanyName: query.companyName,
     forceRefresh: options.forceRefresh,
   });
 
@@ -636,6 +638,7 @@ export interface FounderInput {
   name: string;
   role?: string;
   linkedinUrl?: string;
+  companyName?: string; // Current company name (used to disambiguate when no LinkedIn URL)
   background?: string; // Optional text background from pitch deck
 }
 
@@ -731,6 +734,7 @@ export async function buildPeopleGraph(
   founders: FounderInput[],
   options: {
     startupSector?: string;
+    dealCompanyName?: string;
     forceRefresh?: boolean;
   } = {}
 ): Promise<EnrichedPeopleGraph> {
@@ -748,7 +752,7 @@ export async function buildPeopleGraph(
       "context-engine",
       cacheKey,
       async () => {
-        return fetchAndAnalyzeFounder(founder, options.startupSector);
+        return fetchAndAnalyzeFounder(founder, options.startupSector, options.dealCompanyName);
       },
       {
         ttlMs: FOUNDER_CACHE_TTL_MS,
@@ -816,26 +820,52 @@ export async function buildPeopleGraph(
 
 /**
  * Internal: Fetch and analyze a single founder
- * Uses Apify LinkedIn connector (replaced Proxycurl which shut down Jan 2025)
+ * Uses Coresignal LinkedIn connector
+ *
+ * Strategy:
+ * 1. If LinkedIn URL available → search by shorthand (from URL)
+ * 2. If no URL → search by name + company name (disambiguation)
+ * 3. If not found → return null (will be flagged as "unverified" in results)
  */
 async function fetchAndAnalyzeFounder(
   founder: FounderInput,
-  startupSector?: string
+  startupSector?: string,
+  dealCompanyName?: string
 ): Promise<EnrichedFounderData | null> {
   const linkedinUrl = founder.linkedinUrl;
 
-  // LinkedIn URL is required - we can't search by name anymore
-  if (!linkedinUrl) {
-    console.log(`[ContextEngine] No LinkedIn URL for founder: ${founder.name}`);
-    return null;
-  }
+  let result: Awaited<ReturnType<typeof analyzeFounderLinkedIn>>;
 
-  // Fetch full analysis via Apify
-  const result = await analyzeFounderLinkedIn(
-    linkedinUrl,
-    founder.role || "Founder",
-    startupSector
-  );
+  if (linkedinUrl) {
+    // Case 1: LinkedIn URL available → direct lookup
+    result = await analyzeFounderLinkedIn(
+      linkedinUrl,
+      founder.role || "Founder",
+      startupSector
+    );
+  } else {
+    // Case 2: No URL → search by name + company
+    const companyName = founder.companyName || dealCompanyName;
+    if (!companyName) {
+      console.log(`[ContextEngine] No LinkedIn URL and no company name for founder: ${founder.name}`);
+      return null;
+    }
+
+    console.log(`[ContextEngine] Searching LinkedIn by name for ${founder.name} @ ${companyName}`);
+    const nameResult = await analyzeFounderByName(
+      founder.name,
+      companyName,
+      founder.role || "Founder",
+      startupSector
+    );
+
+    // If found, log the discovered LinkedIn URL
+    if (nameResult.success && nameResult.linkedinUrl) {
+      console.log(`[ContextEngine] Found LinkedIn for ${founder.name}: ${nameResult.linkedinUrl}`);
+    }
+
+    result = nameResult;
+  }
 
   if (!result.success || !result.profile || !result.rawProfile) {
     console.log(`[ContextEngine] Failed to fetch LinkedIn for ${founder.name}: ${result.error}`);
@@ -844,11 +874,15 @@ async function fetchAndAnalyzeFounder(
 
   const { profile, analysis, rawProfile } = result;
 
+  // Use discovered LinkedIn URL if original was not provided
+  const resolvedLinkedinUrl = linkedinUrl
+    || ("linkedinUrl" in result ? (result as { linkedinUrl?: string }).linkedinUrl : undefined);
+
   // Build enriched founder data
   const enrichedFounder: EnrichedFounderData = {
     name: profile.name,
     role: founder.role || profile.role,
-    linkedinUrl,
+    linkedinUrl: resolvedLinkedinUrl,
     previousCompanies: profile.previousCompanies,
     previousVentures: profile.previousVentures,
     education: profile.education,
@@ -1020,14 +1054,15 @@ export function getConnectorHealthStatus() {
 export { resetCircuit, resetAllCircuits } from "./circuit-breaker";
 
 /**
- * Export LinkedIn analysis functions (Apify)
+ * Export LinkedIn analysis functions (Coresignal)
  * Use these for founder/team due diligence
  */
 export {
   analyzeFounderLinkedIn,
+  analyzeFounderByName,
   analyzeTeamLinkedIn,
-  isApifyLinkedInConfigured,
-} from "./connectors/apify-linkedin";
+  isCoresignalLinkedInConfigured,
+} from "./connectors/coresignal-linkedin";
 
 // ============================================================================
 // INTERNAL HELPERS

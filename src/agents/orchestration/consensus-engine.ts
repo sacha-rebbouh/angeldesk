@@ -421,6 +421,57 @@ Reponds en JSON:
 }
 
 // ============================================================================
+// METRIC NORMALIZATION
+// ============================================================================
+
+/**
+ * Normalize metric names from different agents to canonical keys.
+ * This allows grouping of findings that measure the same concept
+ * but use different naming conventions (e.g., "financialAuditor_revenue" vs "deckForensics_claimedRevenue").
+ */
+const METRIC_NORMALIZATIONS: Record<string, string> = {
+  // Revenue variants
+  revenue: "revenue",
+  claimedRevenue: "revenue",
+  annualRevenue: "revenue",
+  arr: "revenue",
+  mrr: "monthly_revenue",
+  monthlyRevenue: "monthly_revenue",
+  // Team
+  teamSize: "team_size",
+  employeeCount: "team_size",
+  headcount: "team_size",
+  foundersCount: "founders",
+  // Valuation
+  valuation: "valuation",
+  preMoneyValuation: "valuation",
+  postMoneyValuation: "valuation",
+  // Market
+  tam: "tam",
+  totalAddressableMarket: "tam",
+  marketSize: "tam",
+  sam: "sam",
+  som: "som",
+  // Growth
+  growthRate: "growth_rate",
+  revenueGrowth: "growth_rate",
+  yoyGrowth: "growth_rate",
+  // Burn
+  burnRate: "burn_rate",
+  monthlyBurn: "burn_rate",
+  cashBurn: "burn_rate",
+  // Runway
+  runway: "runway",
+  cashRunway: "runway",
+  monthsOfRunway: "runway",
+  // Customers
+  customerCount: "customers",
+  customers: "customers",
+  activeUsers: "customers",
+  clients: "customers",
+};
+
+// ============================================================================
 // CONSENSUS ENGINE
 // ============================================================================
 
@@ -766,10 +817,23 @@ export class ConsensusEngine {
     const groups = new Map<string, ScoredFinding[]>();
 
     for (const finding of findings) {
-      const key = finding.metric;
-      const existing = groups.get(key) ?? [];
+      // Normalize the metric name to group semantically equivalent metrics
+      const rawMetric = finding.metric;
+
+      // Remove agent name prefix (e.g., "financialAuditor_revenue" → "revenue")
+      const stripped = rawMetric.includes("_")
+        ? rawMetric.substring(rawMetric.indexOf("_") + 1)
+        : rawMetric;
+
+      // Look up normalized key; fall back to stripped or original if not found
+      const normalizedKey =
+        METRIC_NORMALIZATIONS[stripped] ??
+        METRIC_NORMALIZATIONS[rawMetric] ??
+        rawMetric;
+
+      const existing = groups.get(normalizedKey) ?? [];
       existing.push(finding);
-      groups.set(key, existing);
+      groups.set(normalizedKey, existing);
     }
 
     return groups;

@@ -451,6 +451,45 @@ function extractBracedJSON(text: string): string | null {
     }
   }
 
+  // Truncated JSON — attempt repair by closing open braces/brackets
+  if (startIndex !== -1 && braceCount > 0 && maxBraceCount >= 2) {
+    console.log(`[extractBracedJSON] Truncated JSON detected (${braceCount} unclosed braces), attempting repair`);
+    let partial = text.substring(startIndex);
+    // Remove trailing incomplete string (unmatched quote)
+    const quoteCount = (partial.match(/(?<!\\)"/g) || []).length;
+    if (quoteCount % 2 !== 0) {
+      // Find last quote and truncate after it, adding closing quote
+      const lastQuote = partial.lastIndexOf('"');
+      partial = partial.substring(0, lastQuote + 1);
+    }
+    // Remove trailing comma or colon
+    partial = partial.replace(/[,:\s]+$/, "");
+    // Close remaining braces/brackets
+    // Count actual open braces/brackets
+    let openBraces = 0;
+    let openBrackets = 0;
+    let inStr = false;
+    let esc = false;
+    for (const ch of partial) {
+      if (esc) { esc = false; continue; }
+      if (ch === "\\") { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "{") openBraces++;
+      else if (ch === "}") openBraces--;
+      else if (ch === "[") openBrackets++;
+      else if (ch === "]") openBrackets--;
+    }
+    partial += "]".repeat(Math.max(0, openBrackets)) + "}".repeat(Math.max(0, openBraces));
+    try {
+      JSON.parse(partial); // Validate
+      console.log(`[extractBracedJSON] Repair succeeded (${partial.length} chars)`);
+      return partial;
+    } catch {
+      console.log(`[extractBracedJSON] Repair failed, returning null`);
+    }
+  }
+
   console.log(`[extractBracedJSON] Failed: startIndex=${startIndex}, finalBraceCount=${braceCount}, maxBraceCount=${maxBraceCount}`);
   return null;
 }

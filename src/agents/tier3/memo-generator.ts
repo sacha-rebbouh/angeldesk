@@ -422,7 +422,7 @@ ${contextEngineData}
 
 ## PROFIL INVESTISSEUR BA
 ${baSection}
-
+${this.formatFactStoreData(context) ?? ""}
 ---
 
 ## INSTRUCTIONS

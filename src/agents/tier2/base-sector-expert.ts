@@ -193,6 +193,39 @@ export const SectorExpertOutputSchema = z.object({
     analysisConfidence: z.enum(["high", "medium", "low"]),
     dataGaps: z.array(z.string()).describe("Missing data that would improve analysis"),
   }),
+
+  // SECTION 11: DB Cross-Reference (obligatoire si donnees DB disponibles)
+  dbCrossReference: z.object({
+    claims: z.array(z.object({
+      claim: z.string(),
+      location: z.string(),
+      dbVerdict: z.enum(["VERIFIED", "CONTREDIT", "PARTIEL", "NON_VERIFIABLE"]),
+      evidence: z.string(),
+      severity: z.enum(["CRITICAL", "HIGH", "MEDIUM"]).optional(),
+    })),
+    hiddenCompetitors: z.array(z.string()),
+    valuationPercentile: z.number().optional(),
+    competitorComparison: z.object({
+      fromDeck: z.object({
+        mentioned: z.array(z.string()),
+        location: z.string(),
+      }),
+      fromDb: z.object({
+        detected: z.array(z.string()),
+        directCompetitors: z.number(),
+      }),
+      deckAccuracy: z.enum(["ACCURATE", "INCOMPLETE", "MISLEADING"]),
+    }).optional(),
+  }).optional(),
+
+  // SECTION 12: Data Completeness Assessment
+  dataCompleteness: z.object({
+    level: z.enum(["complete", "partial", "minimal"]),
+    availableDataPoints: z.number(),
+    expectedDataPoints: z.number(),
+    missingCritical: z.array(z.string()),
+    limitations: z.array(z.string()),
+  }),
 });
 
 export type SectorExpertOutput = z.infer<typeof SectorExpertOutputSchema>;
@@ -690,6 +723,13 @@ export function getDefaultSectorData(sectorName: string): SectorExpertOutput {
       whyImportant: "Nécessaire pour évaluer le sector fit",
     }],
     negotiationAmmo: [],
+    dataCompleteness: {
+      level: "minimal" as const,
+      availableDataPoints: 0,
+      expectedDataPoints: 0,
+      missingCritical: ["All sector metrics missing"],
+      limitations: ["Analysis could not be completed"],
+    },
     executiveSummary: {
       verdict: "Analyse sectorielle incomplète - données insuffisantes pour conclure",
       sectorScore: 0,

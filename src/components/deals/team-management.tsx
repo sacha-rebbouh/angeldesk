@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import { toast } from "sonner";
 import {
   Card,
@@ -148,7 +148,7 @@ async function enrichFounder(dealId: string, founderId: string) {
 
 // Component
 export function TeamManagement({ dealId, founders }: TeamManagementProps) {
-  const router = useRouter();
+  const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editingFounder, setEditingFounder] = useState<Founder | null>(null);
@@ -175,7 +175,7 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
       toast.success("Fondateur ajoute");
       setDialogOpen(false);
       resetForm();
-      router.refresh(); // Refresh server data
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -189,7 +189,7 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
       toast.success("Fondateur mis a jour");
       setDialogOpen(false);
       resetForm();
-      router.refresh(); // Refresh server data
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -202,7 +202,7 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
       toast.success("Fondateur supprime");
       setDeleteDialogOpen(false);
       setFounderToDelete(null);
-      router.refresh(); // Refresh server data
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -219,7 +219,7 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
         toast.success("Profil LinkedIn enrichi avec succes");
       }
       setEnrichingFounderId(null);
-      router.refresh(); // Refresh server data
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     },
     onError: (error: Error) => {
       toast.error(error.message);

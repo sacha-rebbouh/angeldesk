@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { Eye, FileText, MoreHorizontal, Pencil, Trash2, Upload, AlertTriangle } from "lucide-react";
@@ -92,7 +92,7 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
 }
 
 export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
-  const router = useRouter();
+  const queryClient = useQueryClient();
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
   const [renameDoc, setRenameDoc] = useState<Document | null>(null);
@@ -102,7 +102,7 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
 
   // Fetch staleness info to know which documents were analyzed
   const { data: stalenessData } = useQuery({
-    queryKey: ["deals", dealId, "staleness"],
+    queryKey: queryKeys.staleness.byDeal(dealId),
     queryFn: () => fetchStaleness(dealId),
   });
 
@@ -118,8 +118,8 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
   const hasAnalysis = stalenessData?.hasAnalysis ?? false;
 
   const handleUploadSuccess = useCallback(() => {
-    router.refresh();
-  }, [router]);
+    queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+  }, [queryClient, dealId]);
 
   const openUploadDialog = useCallback(() => {
     setIsUploadOpen(true);
@@ -152,13 +152,13 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
 
       toast.success("Document renommé");
       setRenameDoc(null);
-      router.refresh();
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors du renommage");
     } finally {
       setIsLoading(false);
     }
-  }, [renameDoc, newName, router]);
+  }, [renameDoc, newName, queryClient, dealId]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteDoc) return;
@@ -176,13 +176,13 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
 
       toast.success("Document supprimé");
       setDeleteDoc(null);
-      router.refresh();
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors de la suppression");
     } finally {
       setIsLoading(false);
     }
-  }, [deleteDoc, router]);
+  }, [deleteDoc, queryClient, dealId]);
 
   return (
     <>

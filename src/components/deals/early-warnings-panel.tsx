@@ -5,6 +5,7 @@ import { AlertTriangle, AlertCircle, Info, ChevronDown, ChevronUp, MessageSquare
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { formatAgentName } from "@/lib/format-utils";
 
 // Match types from orchestrator
 interface EarlyWarning {
@@ -70,23 +71,6 @@ const RECOMMENDATION_LABELS = {
   likely_dealbreaker: "Dealbreaker probable",
   absolute_dealbreaker: "Dealbreaker absolu",
 };
-
-function formatAgentName(name: string): string {
-  const names: Record<string, string> = {
-    "red-flag-detector": "Red Flag Detector",
-    "financial-auditor": "Financial Auditor",
-    "team-investigator": "Team Investigator",
-    "competitive-intel": "Competitive Intel",
-    "market-intelligence": "Market Intelligence",
-    "legal-regulatory": "Legal & Regulatory",
-    "cap-table-auditor": "Cap Table Auditor",
-    "customer-intel": "Customer Intel",
-    "question-master": "Question Master",
-    "devils-advocate": "Devil's Advocate",
-    "synthesis-deal-scorer": "Synthesis Scorer",
-  };
-  return names[name] ?? name;
-}
 
 const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarning }) {
   const [isExpanded, setIsExpanded] = useState(false);

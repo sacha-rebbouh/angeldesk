@@ -349,6 +349,75 @@ CHAQUE champ doit contenir des données concrètes et sourcées, jamais de place
   // =============================================================================
   // USER PROMPT
   // =============================================================================
+  const previousResults = context.previousResults ?? null;
+
+  // Extract relevant info from previous Tier 1 results (selective, not raw JSON dump)
+  let tier1Insights = "";
+  if (previousResults) {
+    const financialAudit = previousResults["financial-auditor"] as { success?: boolean; data?: { findings?: unknown; narrative?: { keyInsights?: string[] } } } | undefined;
+    if (financialAudit?.success && financialAudit.data) {
+      tier1Insights += `\n### Financial Auditor Findings:\n`;
+      if (financialAudit.data.narrative?.keyInsights) {
+        tier1Insights += financialAudit.data.narrative.keyInsights.join("\n- ");
+      }
+      if (financialAudit.data.findings) {
+        tier1Insights += `\nFindings: ${JSON.stringify(financialAudit.data.findings, null, 2).slice(0, 2000)}...`;
+      }
+    }
+
+    const competitiveIntel = previousResults["competitive-intel"] as { success?: boolean; data?: { findings?: { competitors?: unknown[] }; narrative?: { keyInsights?: string[] } } } | undefined;
+    if (competitiveIntel?.success && competitiveIntel.data) {
+      tier1Insights += `\n### Competitive Intel Findings:\n`;
+      if (competitiveIntel.data.narrative?.keyInsights) {
+        tier1Insights += competitiveIntel.data.narrative.keyInsights.join("\n- ");
+      }
+      if (competitiveIntel.data.findings?.competitors) {
+        tier1Insights += `\nCompetitors identified: ${(competitiveIntel.data.findings.competitors as { name: string }[]).slice(0, 5).map(c => c.name).join(", ")}`;
+      }
+    }
+
+    const legalRegulatory = previousResults["legal-regulatory"] as { success?: boolean; data?: { findings?: { compliance?: unknown[]; regulatoryRisks?: unknown[] } } } | undefined;
+    if (legalRegulatory?.success && legalRegulatory.data) {
+      tier1Insights += `\n### Legal & Regulatory Findings:\n`;
+      if (legalRegulatory.data.findings?.compliance) {
+        tier1Insights += `Compliance areas: ${JSON.stringify(legalRegulatory.data.findings.compliance, null, 2).slice(0, 1500)}`;
+      }
+      if (legalRegulatory.data.findings?.regulatoryRisks) {
+        tier1Insights += `\nRegulatory risks: ${JSON.stringify(legalRegulatory.data.findings.regulatoryRisks, null, 2).slice(0, 1000)}`;
+      }
+    }
+
+    const extractor = previousResults["document-extractor"] as { success?: boolean; data?: { extractedInfo?: Record<string, unknown> } } | undefined;
+    if (extractor?.success && extractor.data?.extractedInfo) {
+      tier1Insights += `\n### Extracted Deal Data:\n${JSON.stringify(extractor.data.extractedInfo, null, 2).slice(0, 2000)}`;
+    }
+  }
+
+  // Funding DB data for cross-reference
+  let fundingDbData = "";
+  const contextEngineAny = context.contextEngine as Record<string, unknown> | undefined;
+  const fundingDb = contextEngineAny?.fundingDb as { competitors?: unknown; valuationBenchmark?: unknown; sectorTrend?: unknown } | undefined;
+  if (fundingDb) {
+    fundingDbData = `\n## FUNDING DATABASE - CROSS-REFERENCE OBLIGATOIRE
+
+Tu DOIS produire un champ "dbCrossReference" dans ton output.
+
+### Concurrents detectes dans la DB
+${fundingDb.competitors ? JSON.stringify(fundingDb.competitors, null, 2).slice(0, 3000) : "Aucun concurrent detecte dans la DB"}
+
+### Benchmark valorisation
+${fundingDb.valuationBenchmark ? JSON.stringify(fundingDb.valuationBenchmark, null, 2) : "Pas de benchmark disponible"}
+
+### Tendance funding secteur
+${fundingDb.sectorTrend ? JSON.stringify(fundingDb.sectorTrend, null, 2) : "Pas de tendance disponible"}
+
+INSTRUCTIONS DB:
+1. Chaque claim du deck concernant le marche/concurrence DOIT etre verifie vs ces donnees
+2. Les concurrents DB absents du deck = RED FLAG CRITICAL
+3. Positionner la valorisation vs percentiles (P25/median/P75)
+4. Si le deck dit "pas de concurrent" mais la DB en trouve = RED FLAG CRITICAL`;
+  }
+
   const userPrompt = `# ANALYSE SECTORIELLE HEALTHTECH
 
 ## DEAL À ANALYSER
@@ -368,15 +437,16 @@ ${context.extractedData ? JSON.stringify(context.extractedData, null, 2) : "Pas 
 
 ---
 
-## RÉSULTATS DES AGENTS TIER 1
-${
-  context.previousResults
-    ? Object.entries(context.previousResults)
-        .filter(([, v]) => (v as { success?: boolean })?.success)
-        .map(([k, v]) => `### ${k}\n${JSON.stringify((v as { data?: unknown })?.data, null, 2)}`)
-        .join("\n\n")
-    : "Pas de résultats Tier 1 disponibles"
-}
+${context.factStoreFormatted ? `
+## DONNÉES VÉRIFIÉES (Fact Store)
+
+Les données ci-dessous ont été extraites et vérifiées à partir des documents du deal.
+Base ton analyse sur ces faits. Si un fait important manque, signale-le.
+
+${context.factStoreFormatted}
+` : ''}
+
+${tier1Insights ? `## INSIGHTS DES AGENTS TIER 1\n${tier1Insights}` : ""}
 
 ---
 
@@ -410,6 +480,10 @@ ${JSON.stringify(dbBenchmarks, null, 2)}
 `
     : ""
 }
+
+---
+
+${fundingDbData}
 
 ---
 
@@ -604,6 +678,43 @@ export const healthtechExpert = {
 
       const parsedOutput = JSON.parse(jsonMatch[0]) as SectorExpertOutput;
 
+      // -- Data completeness assessment & score capping --
+      const completenessData = parsedOutput.dataCompleteness ?? {
+        level: "partial" as const,
+        availableDataPoints: 0,
+        expectedDataPoints: 0,
+        missingCritical: [],
+        limitations: [],
+      };
+
+      const availableMetrics = (parsedOutput.metricsAnalysis ?? []).filter((m: { metricValue: unknown }) => m.metricValue !== null).length;
+      const totalMetrics = (parsedOutput.metricsAnalysis ?? []).length;
+      let completenessLevel = completenessData.level;
+      if (totalMetrics > 0 && !parsedOutput.dataCompleteness) {
+        const ratio = availableMetrics / totalMetrics;
+        if (ratio < 0.3) completenessLevel = "minimal";
+        else if (ratio < 0.7) completenessLevel = "partial";
+        else completenessLevel = "complete";
+      }
+
+      let scoreMax = 100;
+      if (completenessLevel === "minimal") scoreMax = 50;
+      else if (completenessLevel === "partial") scoreMax = 70;
+
+      const rawScore = parsedOutput.executiveSummary?.sectorScore ?? parsedOutput.sectorFit?.score ?? 0;
+      const cappedScore = Math.min(rawScore, scoreMax);
+
+      const rawFitScore = parsedOutput.sectorFit?.score ?? 0;
+      const cappedFitScore = Math.min(rawFitScore, scoreMax);
+
+      const limitations: string[] = [
+        ...(completenessData.limitations ?? []),
+        ...(completenessData.missingCritical ?? []).map((m: string) => `Missing critical data: ${m}`),
+      ];
+      if (cappedScore < rawScore) {
+        limitations.push(`Score capped from ${rawScore} to ${cappedScore} due to ${completenessLevel} data completeness`);
+      }
+
       // Transform to SectorExpertData format
       const sectorData: SectorExpertData = {
         sectorName: "HealthTech",
@@ -646,13 +757,13 @@ export const healthtechExpert = {
           redFlagAnswer: q.redFlagAnswer ?? "",
         })) ?? [],
         sectorFit: {
-          score: parsedOutput.sectorFit?.score ?? 50,
+          score: cappedFitScore,
           strengths: parsedOutput.executiveSummary?.topStrengths ?? [],
           weaknesses: parsedOutput.executiveSummary?.topConcerns ?? [],
           sectorTiming: parsedOutput.sectorFit?.timingAssessment === "early_mover" ? "early" :
                         parsedOutput.sectorFit?.timingAssessment === "too_late" ? "late" : "optimal",
         },
-        sectorScore: parsedOutput.sectorFit?.score ?? 50,
+        sectorScore: cappedScore,
         executiveSummary: parsedOutput.sectorFit?.reasoning ?? "",
       };
 
@@ -706,6 +817,17 @@ export const healthtechExpert = {
             rf.flag.toLowerCase().includes("hipaa")
           ) ?? [],
           fullMetricsAnalysis: parsedOutput.metricsAnalysis ?? [],
+          dbCrossReference: parsedOutput.dbCrossReference,
+          dataCompleteness: {
+            level: completenessLevel,
+            availableDataPoints: completenessData.availableDataPoints ?? availableMetrics,
+            expectedDataPoints: completenessData.expectedDataPoints ?? totalMetrics,
+            missingCritical: completenessData.missingCritical ?? [],
+            limitations,
+            scoreCapped: cappedScore < rawScore,
+            rawScore,
+            cappedScore,
+          },
         },
       } as unknown as SectorExpertResult & { _extended: ExtendedHealthTechData };
 
@@ -757,6 +879,22 @@ interface ExtendedHealthTechData {
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   fullMetricsAnalysis: unknown[];
+  dbCrossReference?: {
+    claims: Array<{ claim: string; location: string; dbVerdict: string; evidence: string; severity?: string }>;
+    hiddenCompetitors: string[];
+    valuationPercentile?: number;
+    competitorComparison?: unknown;
+  };
+  dataCompleteness?: {
+    level: "complete" | "partial" | "minimal";
+    availableDataPoints: number;
+    expectedDataPoints: number;
+    missingCritical: string[];
+    limitations: string[];
+    scoreCapped: boolean;
+    rawScore: number;
+    cappedScore: number;
+  };
 }
 
 // Default data for error fallback

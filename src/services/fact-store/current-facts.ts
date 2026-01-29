@@ -20,6 +20,84 @@ import { getFactKeyDefinition, FACT_KEYS } from './fact-keys';
 // MAIN FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════
+// MATERIALIZED VIEW FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Get current facts using the materialized view (faster for large datasets).
+ * Falls back to the computed version if the view doesn't exist.
+ *
+ * Note: This version doesn't include event history or dispute details.
+ * Use getCurrentFacts() if you need the full event history.
+ *
+ * @param dealId - The deal ID
+ * @returns Array of CurrentFacts (without event history)
+ */
+export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFact[]> {
+  try {
+    // Try to use the materialized view
+    const rows = await prisma.$queryRaw<
+      Array<{
+        id: string;
+        dealId: string;
+        factKey: string;
+        category: string;
+        value: unknown;
+        displayValue: string;
+        unit: string | null;
+        source: string;
+        sourceDocumentId: string | null;
+        sourceConfidence: number;
+        extractedText: string | null;
+        createdAt: Date;
+        createdBy: string;
+      }>
+    >`
+      SELECT * FROM current_facts_mv WHERE "dealId" = ${dealId}
+    `;
+
+    return rows.map((row) => ({
+      dealId: row.dealId,
+      factKey: row.factKey,
+      category: row.category as FactCategory,
+      currentValue: row.value,
+      currentDisplayValue: row.displayValue,
+      currentSource: row.source as FactSource,
+      currentConfidence: row.sourceConfidence,
+      isDisputed: false, // View doesn't track disputes yet
+      eventHistory: [], // View doesn't include history
+      firstSeenAt: row.createdAt,
+      lastUpdatedAt: row.createdAt,
+    }));
+  } catch (error) {
+    // Fallback to computed version if view doesn't exist
+    console.warn(
+      '[getCurrentFactsFromView] Materialized view not available, using computed version'
+    );
+    return getCurrentFacts(dealId);
+  }
+}
+
+/**
+ * Refresh the materialized view after fact updates.
+ * Should be called after createFactEventsBatch.
+ *
+ * Uses CONCURRENTLY mode which doesn't block reads during refresh.
+ * Fails silently if the view doesn't exist.
+ */
+export async function refreshCurrentFactsView(): Promise<void> {
+  try {
+    await prisma.$executeRaw`SELECT refresh_current_facts_mv()`;
+  } catch (error) {
+    console.warn('[refreshCurrentFactsView] Failed to refresh materialized view:', error);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// COMPUTED CURRENT FACTS (Original Implementation)
+// ═══════════════════════════════════════════════════════════════════════
+
 /**
  * Computes the current facts for a deal by processing all fact events.
  * Returns the latest non-superseded fact for each fact key.

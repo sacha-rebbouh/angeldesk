@@ -16,7 +16,8 @@ export const SECTOR_MAPPINGS: Record<SectorExpertType, string[]> = {
   "healthtech-expert": ["HealthTech", "MedTech", "Healthcare", "Digital Health", "FemTech", "Mental Health", "Telehealth"],
   "biotech-expert": ["BioTech", "Biotech", "Life Sciences", "Pharma", "Drug Discovery", "Therapeutics", "Biopharma", "Gene Therapy", "Cell Therapy", "Biologics", "Pharmaceuticals", "Oncology", "Immunotherapy"],
   "ai-expert": ["AI", "AI/ML", "AI / Machine Learning", "ML", "Machine Learning", "LLM", "GenAI", "Generative AI", "NLP", "Computer Vision", "Deep Learning", "MLOps"],
-  "deeptech-expert": ["DeepTech", "Quantum", "Blockchain / Web3", "Blockchain", "Web3"],
+  "blockchain-expert": ["Blockchain", "Blockchain / Web3", "Web3", "Crypto", "Cryptocurrency", "DeFi", "Decentralized Finance", "NFT", "DAO", "Token", "Smart Contracts", "L1", "L2", "Layer 1", "Layer 2", "RWA", "Real World Assets"],
+  "deeptech-expert": ["DeepTech", "Quantum"],
   "climate-expert": ["CleanTech", "Climate", "Energy", "Sustainability", "GreenTech"],
   "hardware-expert": ["Hardware", "Hardware / IoT", "IoT", "Robotics", "Manufacturing", "Industrial", "Drones"],
   "spacetech-expert": ["SpaceTech", "Space Tech", "Space", "Aerospace", "NewSpace", "New Space", "Satellite", "Satellites", "Launch", "Launcher", "Rocket", "Earth Observation", "EO", "LEO", "GEO", "Constellation", "Space Infrastructure", "In-space", "Orbital"],
@@ -41,6 +42,7 @@ export type SectorExpertType =
   | "healthtech-expert"
   | "biotech-expert"
   | "ai-expert"
+  | "blockchain-expert"
   | "deeptech-expert"
   | "climate-expert"
   | "hardware-expert"
@@ -692,6 +694,103 @@ export interface ExtendedSectorData {
 
   // FoodTech specific data container - permissive type to accommodate agent output
   foodtechSpecific?: Record<string, unknown>;
+
+  // =============================================================================
+  // BLOCKCHAIN / WEB3 EXPERT SPECIFIC FIELDS
+  // =============================================================================
+
+  // Tokenomics Analysis (Blockchain - CRITICAL)
+  blockchainTokenomics?: {
+    hasToken: boolean;
+    tokenType?: "utility" | "governance" | "security" | "hybrid" | "none" | "unknown";
+    tokenDesign?: {
+      totalSupply?: string;
+      circulatingSupply?: string;
+      inflationRate?: string;
+      vestingSchedule?: string;
+      teamAllocation?: number;
+      investorAllocation?: number;
+      communityAllocation?: number;
+      treasuryAllocation?: number;
+    };
+    incentiveAlignment: {
+      assessment: "well_aligned" | "moderate" | "misaligned" | "unknown";
+      concerns: string[];
+      strengths: string[];
+    };
+    regulatoryClassification: {
+      likelyClassification: "utility" | "security" | "payment" | "unclear";
+      howeyTestRisk: "low" | "medium" | "high" | "critical";
+      micaClassification?: string;
+      rationale: string;
+    };
+    overallAssessment: string;
+  };
+
+  // Smart Contract Security (Blockchain)
+  blockchainSecurity?: {
+    auditStatus: "multiple_audits" | "single_audit" | "in_progress" | "not_audited" | "unknown";
+    auditors?: string[];
+    bugBountyProgram: "active" | "planned" | "none" | "unknown";
+    formalVerification?: boolean;
+    incidentHistory?: Array<{
+      date: string;
+      type: string;
+      lossAmount: string;
+      resolution: string;
+    }>;
+    overallSecurityPosture: "strong" | "adequate" | "weak" | "critical" | "unknown";
+    securityVerdict: string;
+  };
+
+  // Decentralization Assessment (Blockchain)
+  blockchainDecentralization?: {
+    level: "fully_decentralized" | "progressively_decentralizing" | "semi_decentralized" | "centralized" | "unknown";
+    governance: {
+      type: "token_voting" | "multisig" | "foundation" | "centralized" | "hybrid" | "unknown";
+      keyManRisk: boolean;
+      details: string;
+    };
+    infrastructure: {
+      nodeDistribution: "well_distributed" | "moderate" | "concentrated" | "unknown";
+      singlePointOfFailure: boolean;
+      details: string;
+    };
+    decentralizationRoadmap: string;
+    overallAssessment: string;
+  };
+
+  // =============================================================================
+  // COMMON - DB Cross-Reference & Data Completeness (all sectors)
+  // =============================================================================
+
+  dbCrossReference?: {
+    claims: Array<{
+      claim: string;
+      location: string;
+      dbVerdict: "VERIFIED" | "CONTREDIT" | "PARTIEL" | "NON_VERIFIABLE";
+      evidence: string;
+      severity?: "CRITICAL" | "HIGH" | "MEDIUM";
+    }>;
+    hiddenCompetitors: string[];
+    valuationPercentile?: number;
+    competitorComparison?: {
+      fromDeck: { mentioned: string[]; location: string };
+      fromDb: { detected: string[]; directCompetitors: number };
+      deckAccuracy: "ACCURATE" | "INCOMPLETE" | "MISLEADING";
+    };
+  };
+
+  dataCompleteness?: {
+    level: "complete" | "partial" | "minimal";
+    availableDataPoints: number;
+    expectedDataPoints: number;
+    missingCritical: string[];
+    limitations: string[];
+    scoreCapped?: boolean;
+    rawScore?: number;
+    cappedScore?: number;
+  };
 }
 
 // Helper to determine which sector expert to activate

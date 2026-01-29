@@ -38,6 +38,7 @@ export { foodtechExpert } from "./foodtech-expert";
 export { mobilityExpert } from "./mobility-expert";
 export { cybersecurityExpert } from "./cybersecurity-expert";
 export { creatorExpert } from "./creator-expert";
+export { blockchainExpert } from "./blockchain-expert";
 export { generalExpert } from "./general-expert";
 
 // Registry of all sector experts
@@ -61,6 +62,7 @@ import { foodtechExpert } from "./foodtech-expert";
 import { mobilityExpert } from "./mobility-expert";
 import { cybersecurityExpert } from "./cybersecurity-expert";
 import { creatorExpert } from "./creator-expert";
+import { blockchainExpert } from "./blockchain-expert";
 import { generalExpert } from "./general-expert";
 import type { SectorExpertType, SectorExpertResult, SectorExpertData } from "./types";
 import type { EnrichedAgentContext } from "../types";
@@ -225,6 +227,7 @@ export const SECTOR_EXPERTS: Record<
   "mobility-expert": getExpertWithRun(mobilityExpert),
   "cybersecurity-expert": getExpertWithRun(cybersecurityExpert),
   "creator-expert": getExpertWithRun(creatorExpert),
+  "blockchain-expert": getExpertWithRun(blockchainExpert),
   "general-expert": getExpertWithRun(generalExpert), // Fallback for uncovered sectors
 };
 
@@ -233,6 +236,7 @@ export const SECTOR_EXPERTS: Record<
 // NOTE: hrtech-expert comes BEFORE saas-expert to ensure HRTech companies go to hrtech-expert
 // NOTE: ai-expert comes BEFORE deeptech-expert to ensure AI companies go to ai-expert
 // NOTE: proptech-expert comes BEFORE marketplace-expert to ensure PropTech companies go to proptech-expert
+// NOTE: blockchain-expert comes BEFORE fintech-expert to ensure Web3/Crypto companies go to blockchain-expert
 // NOTE: biotech-expert comes BEFORE healthtech-expert to ensure Life Sciences companies go to biotech-expert
 // NOTE: foodtech-expert comes BEFORE climate-expert and consumer-expert to ensure Food/AgTech companies go to foodtech-expert
 // NOTE: cybersecurity-expert comes BEFORE deeptech-expert to ensure Security companies go to cybersecurity-expert
@@ -243,12 +247,13 @@ const SECTOR_PATTERNS: [SectorExpertType, string[]][] = [
   ["saas-expert", ["saas", "b2b software", "enterprise software", "software"]],
   ["proptech-expert", ["proptech", "prop tech", "real estate tech", "real estate", "construction tech", "contech", "mortgage tech", "cre tech", "commercial real estate", "co-working", "coworking", "smart building"]],
   ["marketplace-expert", ["marketplace", "platform", "two-sided"]],
+  ["blockchain-expert", ["blockchain", "web3", "crypto", "defi", "nft", "dao", "token", "cryptocurrency", "smart contract", "layer 1", "layer 2", "rwa", "decentralized"]],
   ["fintech-expert", ["fintech", "payments", "banking", "insurance", "insurtech", "lending", "wealthtech", "neobank"]],
   ["biotech-expert", ["biotech", "life sciences", "pharma", "drug discovery", "therapeutics", "biopharma", "gene therapy", "cell therapy", "biologics", "pharmaceuticals", "oncology", "immunotherapy"]],
   ["healthtech-expert", ["healthtech", "medtech", "healthcare", "digital health", "femtech", "mental health", "telehealth"]],
   ["ai-expert", ["ai", "ai/ml", "ai / machine learning", "ml", "machine learning", "llm", "genai", "generative ai", "nlp", "computer vision", "deep learning", "mlops"]],
   ["cybersecurity-expert", ["cybersecurity", "cyber", "infosec", "information security", "security software", "network security", "endpoint security", "cloud security", "application security", "appsec", "devsecops", "security", "siem", "soar", "xdr", "edr", "iam", "identity", "zero trust", "threat intelligence", "vulnerability management", "mssp", "soc"]],
-  ["deeptech-expert", ["deeptech", "quantum"]], // blockchain/web3 → general-expert (pas de standards établis)
+  ["deeptech-expert", ["deeptech", "quantum"]],
   ["foodtech-expert", ["foodtech", "food tech", "food", "f&b", "agtech", "agritech", "alt protein", "alternative protein", "meal kit", "dark kitchen", "ghost kitchen", "vertical farming", "plant-based", "cpg food", "food & beverage"]],
   ["climate-expert", ["cleantech", "climate", "energy", "sustainability", "greentech"]],
   ["spacetech-expert", ["spacetech", "space tech", "space", "aerospace", "newspace", "new space", "satellite", "satellites", "launch", "launcher", "rocket", "earth observation", "eo", "leo", "geo", "constellation", "space infrastructure", "in-space", "orbital"]],

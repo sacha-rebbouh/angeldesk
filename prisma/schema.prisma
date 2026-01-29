@@ -1425,6 +1425,11 @@ model FactEvent {
   sourceConfidence    Int           // 0-100
   extractedText       String?       @db.Text
 
+  // Temporal fields
+  validAt             DateTime?     // When this fact was valid
+  periodType          String?       // POINT_IN_TIME, QUARTER, YEAR, MONTH
+  periodLabel         String?       // "Q4 2024", "FY2024"
+
   // Event
   eventType           String        // CREATED, SUPERSEDED, DISPUTED, RESOLVED, DELETED
   supersedesEventId   String?

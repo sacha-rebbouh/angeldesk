@@ -615,7 +615,7 @@ export class AgentOrchestrator {
     await updateAnalysisProgress(analysis.id, completedCount, totalCost);
 
     // Extract findings for Consensus + Reflexion
-    const { allFindings: extractedFindings, lowConfidenceAgents } = extractAllFindings(results);
+    const { allFindings: extractedFindings, agentConfidences, lowConfidenceAgents } = extractAllFindings(results);
 
     // Build VerificationContext for engines
     const verificationContext = await this.buildVerificationContext(
@@ -628,16 +628,29 @@ export class AgentOrchestrator {
     }
 
     // Reflexion: auto-critique low-confidence Tier 1 agents
-    for (const agentName of lowConfidenceAgents) {
-      const result = results[agentName];
-      if (result?.success) {
-        const agentFindings = extractedFindings.filter(f => f.agentName === agentName);
-        const reflexionStats = await this.applyReflexion(
-          analysis.id, agentName, result as AnalysisAgentResult, agentFindings,
-          `Deal: ${deal.name}, Sector: ${deal.sector}`, 1, verificationContext,
-          results, enrichedContext
-        );
-        totalCost += reflexionStats.tokensUsed * 0.00001;
+    // Sort by confidence ascending, cap at 5 agents max, run in parallel batches of 4
+    const sortedLowConfidence = [...lowConfidenceAgents]
+      .sort((a, b) => (agentConfidences.get(a)?.score ?? 0) - (agentConfidences.get(b)?.score ?? 0))
+      .slice(0, 5);
+    const REFLEXION_BATCH_SIZE = 4;
+    for (let i = 0; i < sortedLowConfidence.length; i += REFLEXION_BATCH_SIZE) {
+      const batch = sortedLowConfidence.slice(i, i + REFLEXION_BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (agentName) => {
+          const result = results[agentName];
+          if (result?.success) {
+            const agentFindings = extractedFindings.filter(f => f.agentName === agentName);
+            return this.applyReflexion(
+              analysis.id, agentName, result as AnalysisAgentResult, agentFindings,
+              `Deal: ${deal.name}, Sector: ${deal.sector}`, 1, verificationContext,
+              results, enrichedContext
+            );
+          }
+          return { tokensUsed: 0 };
+        })
+      );
+      for (const stats of batchResults) {
+        totalCost += stats.tokensUsed * 0.00001;
       }
     }
 
@@ -1309,32 +1322,45 @@ export class AgentOrchestrator {
       // STEP 4.5: REFLEXION PHASE - Auto-critique for low-confidence agents
       // Applies to ALL agents with confidence < threshold (tier-based)
       if (lowConfidenceAgents.length > 0) {
+        // Sort by confidence ascending, cap at 5 agents max, run in parallel batches of 4
+        const sortedLowConfidence = [...lowConfidenceAgents]
+          .sort((a, b) => (agentConfidences.get(a)?.score ?? 0) - (agentConfidences.get(b)?.score ?? 0))
+          .slice(0, 5);
+
         onProgress?.({
-          currentAgent: `reflexion-engine (${lowConfidenceAgents.length} low-confidence agents)`,
+          currentAgent: `reflexion-engine (${sortedLowConfidence.length} low-confidence agents)`,
           completedAgents: completedCount,
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
 
-        for (const agentName of lowConfidenceAgents) {
-          const result = allResults[agentName];
-          if (result?.success) {
-            const agentFindings = allFindings.filter(f => f.agentName === agentName);
-            // Determine tier: Tier 1 agents are in TIER1_AGENT_NAMES
-            const tier: 1 | 2 | 3 = (TIER1_AGENT_NAMES as readonly string[]).includes(agentName) ? 1
-              : (TIER3_AGENT_NAMES as readonly string[]).includes(agentName) ? 3 : 2;
-            const reflexionStats = await this.applyReflexion(
-              analysis.id,
-              agentName,
-              result as AnalysisAgentResult,
-              agentFindings,
-              `Deal: ${deal.name}, Sector: ${deal.sector}`,
-              tier,
-              verificationContext,
-              allResults,
-              enrichedContext
-            );
-            totalCost += reflexionStats.tokensUsed * 0.00001;
+        const REFLEXION_BATCH_SIZE = 4;
+        for (let i = 0; i < sortedLowConfidence.length; i += REFLEXION_BATCH_SIZE) {
+          const batch = sortedLowConfidence.slice(i, i + REFLEXION_BATCH_SIZE);
+          const batchResults = await Promise.all(
+            batch.map(async (agentName) => {
+              const result = allResults[agentName];
+              if (result?.success) {
+                const agentFindings = allFindings.filter(f => f.agentName === agentName);
+                const tier: 1 | 2 | 3 = (TIER1_AGENT_NAMES as readonly string[]).includes(agentName) ? 1
+                  : (TIER3_AGENT_NAMES as readonly string[]).includes(agentName) ? 3 : 2;
+                return this.applyReflexion(
+                  analysis.id,
+                  agentName,
+                  result as AnalysisAgentResult,
+                  agentFindings,
+                  `Deal: ${deal.name}, Sector: ${deal.sector}`,
+                  tier,
+                  verificationContext,
+                  allResults,
+                  enrichedContext
+                );
+              }
+              return { tokensUsed: 0 };
+            })
+          );
+          for (const stats of batchResults) {
+            totalCost += stats.tokensUsed * 0.00001;
           }
         }
       }
@@ -1574,9 +1600,14 @@ export class AgentOrchestrator {
 
       // COMPLETE
       await stateMachine.complete();
+      console.log("[Orchestrator:DEBUG] State machine completed, generating summary...");
 
       const summary = generateFullAnalysisSummary(allResults);
       const totalTimeMs = Date.now() - startTime;
+      const failedAgents = Object.entries(allResults).filter(([, r]) => !r.success).map(([k, r]) => `${k}: ${r.error ?? "no error msg"}`);
+      if (failedAgents.length > 0) {
+        console.log(`[Orchestrator] Failed agents in allResults: ${failedAgents.join(", ")}`);
+      }
       const allSuccess = Object.values(allResults).every((r) => r.success);
       const orchestrationSummary = stateMachine.getSummary();
 
@@ -1586,6 +1617,7 @@ export class AgentOrchestrator {
         console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
       }
 
+      console.log(`[Orchestrator:DEBUG] allSuccess=${allSuccess}, calling completeAnalysis...`);
       await completeAnalysis({
         analysisId: analysis.id,
         success: allSuccess,
@@ -1595,8 +1627,10 @@ export class AgentOrchestrator {
         results: allResults,
         mode: "full_analysis",
       });
+      console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
 
       await updateDealStatus(dealId, "IN_DD");
+      console.log("[Orchestrator:DEBUG] All done, returning result");
 
       return this.addWarningsToResult({
         sessionId: analysis.id,
@@ -1610,6 +1644,8 @@ export class AgentOrchestrator {
         tiersExecuted: availableTiers,
       }, collectedWarnings);
     } catch (error) {
+      console.error(`[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
       // Only transition to FAILED if not already completed
       const currentState = stateMachine.getState();
       if (currentState !== "COMPLETED" && currentState !== "FAILED") {

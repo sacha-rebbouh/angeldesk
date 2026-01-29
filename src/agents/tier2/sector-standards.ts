@@ -3848,6 +3848,214 @@ export const CREATOR_STANDARDS: SectorStandards = {
 };
 
 // ============================================================================
+// BLOCKCHAIN / WEB3 STANDARDS
+// ============================================================================
+
+export const BLOCKCHAIN_STANDARDS: SectorStandards = {
+  sector: "Blockchain / Web3",
+  aliases: ["Blockchain", "Web3", "Crypto", "DeFi", "NFT", "DAO", "Token"],
+
+  primaryMetrics: [
+    {
+      name: "Total Value Locked (TVL)",
+      unit: "$M",
+      description: "Total assets deposited in the protocol's smart contracts",
+      direction: "higher_better",
+      sectorContext: "TVL is the north star for DeFi protocols. Indicates trust and capital attraction. Must track organic TVL vs incentivized.",
+      searchKeywords: ["DeFi TVL benchmark", "protocol TVL by stage", "DeFi TVL median"],
+    },
+    {
+      name: "Protocol Revenue (annualized)",
+      unit: "$M",
+      description: "Revenue accruing to the protocol (fees minus LP/validator rewards)",
+      direction: "higher_better",
+      sectorContext: "Distinguishes real revenue from token incentives. Protocol revenue = sustainable, token emissions = not.",
+      searchKeywords: ["crypto protocol revenue benchmark", "DeFi revenue median", "Token Terminal protocol revenue"],
+    },
+    {
+      name: "Monthly Active Wallets",
+      unit: "wallets",
+      description: "Unique wallets interacting with the protocol per month",
+      direction: "higher_better",
+      sectorContext: "Proxy for adoption. Must filter out bots/sybil. Quality > quantity.",
+      searchKeywords: ["Web3 active wallets benchmark", "DeFi monthly active users", "blockchain DAU benchmark"],
+    },
+    {
+      name: "Developer Activity",
+      unit: "weekly commits",
+      description: "GitHub commits and active developers per week",
+      direction: "higher_better",
+      sectorContext: "Developer activity is the strongest leading indicator in crypto. Electric Capital reports are the reference.",
+      searchKeywords: ["crypto developer activity benchmark", "Electric Capital developer report", "blockchain dev activity"],
+    },
+    {
+      name: "FDV / Revenue Multiple",
+      unit: "x",
+      description: "Fully Diluted Valuation divided by annualized protocol revenue",
+      direction: "lower_better",
+      sectorContext: "FDV (not market cap) is the true valuation. High FDV/Revenue = overvalued relative to fundamentals.",
+      searchKeywords: ["crypto FDV revenue multiple", "DeFi valuation multiples", "token FDV benchmark"],
+    },
+  ],
+
+  secondaryMetrics: [
+    {
+      name: "Token Holder Concentration (Gini)",
+      unit: "coefficient",
+      description: "Distribution of token holdings (0 = equal, 1 = concentrated)",
+      direction: "lower_better",
+      sectorContext: "High concentration = governance centralization risk + dump risk. Top 10 holders > 50% is a red flag.",
+      searchKeywords: ["token distribution benchmark", "crypto gini coefficient", "token holder concentration"],
+    },
+    {
+      name: "Smart Contract Audit Coverage",
+      unit: "%",
+      description: "Percentage of deployed contracts that have been audited",
+      direction: "higher_better",
+      sectorContext: "100% audit coverage expected for mainnet. Unaudited contracts = existential risk.",
+      searchKeywords: ["smart contract audit benchmark", "DeFi audit standards"],
+    },
+    {
+      name: "Transaction Cost (Gas)",
+      unit: "$",
+      description: "Average cost per transaction on the network/protocol",
+      direction: "lower_better",
+      sectorContext: "High gas costs limit adoption. L2s should be < $0.10. L1s vary widely.",
+      searchKeywords: ["blockchain transaction cost benchmark", "L2 gas cost comparison", "crypto gas fees"],
+    },
+    {
+      name: "Revenue Retention Rate",
+      unit: "%",
+      description: "Revenue from existing users month-over-month",
+      direction: "higher_better",
+      sectorContext: "Crypto users are mercenary. High retention = real product-market fit vs yield farming.",
+      searchKeywords: ["DeFi retention benchmark", "crypto user retention rates"],
+    },
+  ],
+
+  unitEconomicsFormulas: [
+    {
+      name: "Real Yield",
+      formula: "(Protocol Revenue - Token Emissions Value) / TVL",
+      description: "Sustainable yield after subtracting token incentives",
+      thresholds: { concerning: "< 0% (negative real yield)", good: "> 2%", excellent: "> 5%" },
+      source: "Token Terminal / DeFi Llama real yield methodology",
+    },
+    {
+      name: "Revenue per Active Wallet",
+      formula: "Annualized Protocol Revenue / Monthly Active Wallets",
+      description: "Revenue generated per active user",
+      thresholds: { concerning: "< $10/year", good: "> $50/year", excellent: "> $200/year" },
+      source: "Industry analysis",
+    },
+    {
+      name: "Token Emission Ratio",
+      formula: "Value of Token Emissions / Protocol Revenue",
+      description: "How much the protocol pays in tokens vs earns in fees",
+      thresholds: { concerning: "> 5x (paying 5x more in tokens than earning)", good: "< 2x", excellent: "< 1x (revenue > emissions)" },
+      source: "Token Terminal sustainability framework",
+    },
+    {
+      name: "Capital Efficiency",
+      formula: "Protocol Revenue / TVL",
+      description: "How efficiently locked capital generates revenue",
+      thresholds: { concerning: "< 1%", good: "> 3%", excellent: "> 10%" },
+      source: "DeFi capital efficiency benchmarks",
+    },
+  ],
+
+  redFlagRules: [
+    {
+      metric: "Token Insider Allocation",
+      condition: "above",
+      threshold: 40,
+      severity: "critical",
+      reason: "Team + Investor allocation > 40% signals extractive tokenomics and dump risk",
+      source: "Industry consensus - Messari tokenomics analysis",
+    },
+    {
+      metric: "Smart Contract Audit Coverage",
+      condition: "below",
+      threshold: 100,
+      severity: "critical",
+      reason: "Unaudited smart contracts on mainnet = existential hack risk",
+      source: "Industry standard - all mainnet code must be audited",
+    },
+    {
+      metric: "Token Emission Ratio",
+      condition: "above",
+      threshold: 10,
+      severity: "critical",
+      reason: "Emissions 10x+ revenue = unsustainable Ponzi-like dynamics",
+      source: "Token Terminal sustainability analysis",
+    },
+    {
+      metric: "FDV / Revenue Multiple",
+      condition: "above",
+      threshold: 100,
+      severity: "major",
+      reason: "FDV > 100x revenue requires extraordinary growth to justify",
+      source: "Crypto valuation analysis",
+    },
+    {
+      metric: "Top 10 Holder Concentration",
+      condition: "above",
+      threshold: 50,
+      severity: "major",
+      reason: "Top 10 holders owning > 50% of supply = governance capture + dump risk",
+      source: "Decentralization best practices",
+    },
+  ],
+
+  sectorRisks: [
+    "Regulatory crackdown: SEC enforcement, MiCA compliance costs, outright bans",
+    "Smart contract exploits: Reentrancy, oracle manipulation, bridge hacks, flash loan attacks",
+    "Token price dependency: Revenue/growth tied to token price appreciation",
+    "Market cyclicality: Crypto winters can reduce TVL/volume 80-90%",
+    "Decentralization theater: Claims of decentralization with centralized control",
+    "MEV and front-running: Value extraction by validators/searchers",
+    "Sybil attacks: Fake user/wallet metrics inflating adoption numbers",
+    "Liquidity fragmentation: Multi-chain deployment diluting liquidity",
+    "Key-man risk: Protocol dependent on small founding team",
+    "Airdrop farming: Users only engage for token rewards, leave after",
+  ],
+
+  successPatterns: [
+    "Real revenue > token emissions: Sustainable without printing tokens",
+    "Multi-chain deployment: Not dependent on single L1 ecosystem",
+    "Progressive decentralization: Clear roadmap from team control to DAO",
+    "Strong developer ecosystem: Active developer community building on protocol",
+    "Regulatory proactivity: Engaging with regulators, obtaining licenses",
+    "Bug bounty + multiple audits: Security-first culture",
+    "Organic growth: Users stay after incentives decline",
+    "Composability moat: Deep integrations with other protocols",
+    "Treasury management: Diversified treasury, not 100% native token",
+    "Real-world adoption: Use cases beyond speculation/yield farming",
+  ],
+
+  typicalAcquirers: [
+    "Coinbase", "Binance", "Circle", "ConsenSys", "Galaxy Digital",
+    "DCG (Digital Currency Group)", "Ripple", "Block (Square)",
+    "PayPal", "Stripe (crypto infrastructure)",
+  ],
+
+  benchmarkSearchQueries: [
+    "DeFi protocol revenue benchmark {current_year}",
+    "crypto TVL trends {current_year}",
+    "blockchain developer activity {current_year}",
+    "crypto valuation multiples {current_year}",
+    "Web3 funding rounds {current_year}",
+    "smart contract audit statistics {current_year}",
+    "DeFi hacks losses {current_year}",
+    "MiCA CASP license applications {current_year}",
+    "crypto regulatory landscape {current_year}",
+    "Token Terminal crypto revenue {current_year}",
+    "Electric Capital developer report {current_year}",
+    "recent crypto acquisitions {current_year}",
+  ],
+};
+
+// ============================================================================
 // EXPORT & LOOKUP
 // ============================================================================
 
@@ -4062,6 +4270,25 @@ export const SECTOR_STANDARDS: Record<string, SectorStandards> = {
   "Legal Operations": LEGALTECH_STANDARDS,
   "IP Management": LEGALTECH_STANDARDS,
   "Intellectual Property": LEGALTECH_STANDARDS,
+
+  // Blockchain / Web3
+  "Blockchain": BLOCKCHAIN_STANDARDS,
+  "Blockchain / Web3": BLOCKCHAIN_STANDARDS,
+  "Web3": BLOCKCHAIN_STANDARDS,
+  "Crypto": BLOCKCHAIN_STANDARDS,
+  "Cryptocurrency": BLOCKCHAIN_STANDARDS,
+  "DeFi": BLOCKCHAIN_STANDARDS,
+  "Decentralized Finance": BLOCKCHAIN_STANDARDS,
+  "NFT": BLOCKCHAIN_STANDARDS,
+  "DAO": BLOCKCHAIN_STANDARDS,
+  "Token": BLOCKCHAIN_STANDARDS,
+  "Smart Contracts": BLOCKCHAIN_STANDARDS,
+  "L1": BLOCKCHAIN_STANDARDS,
+  "L2": BLOCKCHAIN_STANDARDS,
+  "Layer 1": BLOCKCHAIN_STANDARDS,
+  "Layer 2": BLOCKCHAIN_STANDARDS,
+  "RWA": BLOCKCHAIN_STANDARDS,
+  "Real World Assets": BLOCKCHAIN_STANDARDS,
 
   // Creator Economy
   "Creator Economy": CREATOR_STANDARDS,

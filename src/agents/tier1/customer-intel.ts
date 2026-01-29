@@ -433,7 +433,7 @@ ${dealContext}
 ${customerDataSection}
 ${benchmarkSection}
 ${contextEngineData}
-
+${this.formatFactStoreData(context)}
 ## TA MISSION
 
 Produis une analyse EXHAUSTIVE de la base clients avec:

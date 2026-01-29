@@ -26,7 +26,7 @@ Ce fichier contient:
 - La vision produit complete (v5.0)
 - Les killer features detaillees
 - L'architecture technique
-- Les specs des 39 agents
+- Les specs des 40 agents
 - Le Context Engine
 - Le Model Orchestration Layer
 
@@ -92,15 +92,15 @@ src/agents/
 
 ---
 
-## REFONTE DES 39 AGENTS (3 TIERS)
+## REFONTE DES 40 AGENTS (3 TIERS)
 
 ### Resume
-**39 agents a refondre, repartis en 3 tiers :**
+**40 agents a refondre, repartis en 3 tiers :**
 
 | Tier | Nb | Role | Execution |
 |------|----|------|-----------|
 | Tier 1 | 13 | Analyse | Parallele |
-| Tier 2 | 21 | Experts sectoriels (20 secteurs + 1 general) | Dynamique (selon secteur) |
+| Tier 2 | 22 | Experts sectoriels (21 secteurs + 1 general) | Dynamique (selon secteur) |
 | Tier 3 | 5 | Synthese | Sequentiel (apres Tier 1 & 2) |
 
 > Note: technical-dd a ete split en 2 agents (tech-stack-dd + tech-ops-dd) pour optimiser les couts et eviter les timeouts sur Haiku (limite 4096 tokens output).
@@ -124,7 +124,7 @@ Le fichier **`AGENT-REFONTE-PROMPT.md`** a la racine contient:
 - L'exploitation de la Funding Database
 - Un template de refonte
 - Une checklist de validation
-- La liste des **39 agents** a refondre
+- La liste des **40 agents** a refondre
 
 ### Comment utiliser ce guide
 
@@ -141,7 +141,7 @@ Lis d'abord AGENT-REFONTE-PROMPT.md puis investor.md (sections pertinentes).
 Ensuite, applique le guide pour refaire l'agent.
 ```
 
-### Agents a Refondre (39 total)
+### Agents a Refondre (40 total)
 
 **TIER 1 - Analyse (13 agents)**
 ```
@@ -161,9 +161,9 @@ src/agents/tier1/
 └── question-master.ts        [PRIORITE 3]
 ```
 
-**TIER 2 - Experts Sectoriels (21 agents: 20 secteurs + 1 general)**
+**TIER 2 - Experts Sectoriels (22 agents: 21 secteurs + 1 general)**
 
-*Implementes (10 secteurs):*
+*Implementes (11 secteurs):*
 ```
 src/agents/tier2/
 ├── saas-expert.ts            [IMPL] SaaS, B2B Software
@@ -175,7 +175,8 @@ src/agents/tier2/
 ├── climate-expert.ts         [IMPL] CleanTech, GreenTech
 ├── consumer-expert.ts        [IMPL] D2C, E-commerce
 ├── hardware-expert.ts        [IMPL] IoT, Robotics
-└── gaming-expert.ts          [IMPL] Gaming, Mobile Games
+├── gaming-expert.ts          [IMPL] Gaming, Mobile Games
+└── blockchain-expert.ts      [IMPL] Blockchain, Web3, DeFi, NFT, DAO, Token
 ```
 
 *A creer (10 secteurs):*

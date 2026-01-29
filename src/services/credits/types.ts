@@ -1,53 +1,48 @@
-// ═══════════════════════════════════════════════════════════════════════
-// CREDIT SYSTEM - TYPES
-// ═══════════════════════════════════════════════════════════════════════
+// ============================================================================
+// QUOTA SYSTEM - Simple usage limits (replaces credit system)
+// ============================================================================
 
-export type CreditActionType =
-  | 'INITIAL_ANALYSIS'
-  | 'UPDATE_ANALYSIS'
-  | 'AI_BOARD'
-  | 'MONTHLY_RESET'
-  | 'BONUS'
-  | 'REFUND';
+export type PlanType = 'FREE' | 'PRO';
 
-export const CREDIT_COSTS: Record<string, number> = {
-  INITIAL_ANALYSIS: 5,
-  UPDATE_ANALYSIS: 2,
-  AI_BOARD: 10,
+export interface PlanLimits {
+  analysesPerMonth: number;
+  updatesPerDeal: number; // -1 = unlimited
+  boardsPerMonth: number;
+  tiers: ('TIER_1' | 'SYNTHESIS' | 'TIER_2' | 'TIER_3')[];
+  extraBoardPrice: number | null; // EUR, null = not available
+}
+
+export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
+  FREE: {
+    analysesPerMonth: 3,
+    updatesPerDeal: 2,
+    boardsPerMonth: 0,
+    tiers: ['TIER_1', 'SYNTHESIS'],
+    extraBoardPrice: null,
+  },
+  PRO: {
+    analysesPerMonth: 20,
+    updatesPerDeal: -1, // unlimited
+    boardsPerMonth: 5,
+    tiers: ['TIER_1', 'TIER_2', 'TIER_3', 'SYNTHESIS'],
+    extraBoardPrice: 59,
+  },
 };
 
-export interface UserCreditsInfo {
-  userId: string;
-  balance: number;
-  monthlyAllocation: number;
-  lastResetAt: Date;
-  nextResetAt: Date;
-  plan: 'FREE' | 'PRO';
-}
+export type QuotaAction = 'ANALYSIS' | 'UPDATE' | 'BOARD';
 
-export interface CreditTransactionRecord {
-  id: string;
-  userId: string;
-  type: CreditActionType;
-  amount: number;
-  dealId?: string;
-  analysisId?: string;
-  description: string;
-  createdAt: Date;
-}
-
-export type CanPerformReason = 'OK' | 'INSUFFICIENT_CREDITS' | 'UPGRADE_REQUIRED';
-
-export interface CanPerformResult {
+export interface QuotaCheckResult {
   allowed: boolean;
-  reason: CanPerformReason;
-  currentBalance?: number;
-  cost?: number;
-  resetsAt?: Date;
+  reason: 'OK' | 'LIMIT_REACHED' | 'UPGRADE_REQUIRED' | 'TIER_LOCKED';
+  current: number;
+  limit: number; // -1 = unlimited
+  plan: PlanType;
 }
 
-export interface RecordUsageOptions {
-  dealId?: string;
-  analysisId?: string;
-  description?: string;
+export interface UserQuotaInfo {
+  plan: PlanType;
+  analyses: { used: number; limit: number };
+  boards: { used: number; limit: number };
+  availableTiers: string[];
+  resetsAt: Date;
 }

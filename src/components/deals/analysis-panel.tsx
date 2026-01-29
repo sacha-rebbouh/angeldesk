@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -39,7 +40,6 @@ import { FounderResponses, type AgentQuestion, type QuestionResponse } from "./f
 import { DeltaIndicator } from "./delta-indicator";
 import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
-import { CREDIT_COSTS } from "@/services/credits/types";
 
 // Dynamic imports for heavy Tier components - reduces initial bundle by ~50KB
 const Tier1Results = dynamic(
@@ -155,12 +155,12 @@ interface StalenessInfo {
   }>;
 }
 
-interface CreditsData {
-  balance: number;
-  monthlyAllocation: number;
-  nextResetAt: string;
+interface QuotaData {
   plan: "FREE" | "PRO";
-  costs: Record<string, number>;
+  analyses: { used: number; limit: number };
+  boards: { used: number; limit: number };
+  availableTiers: string[];
+  resetsAt: string;
 }
 
 interface FounderResponsesData {
@@ -176,9 +176,9 @@ interface FounderResponsesData {
   freeNotes: { content: string; createdAt: string } | null;
 }
 
-async function fetchCredits(): Promise<{ data: CreditsData }> {
+async function fetchQuota(): Promise<{ data: QuotaData }> {
   const response = await fetch("/api/credits");
-  if (!response.ok) throw new Error("Failed to fetch credits");
+  if (!response.ok) throw new Error("Failed to fetch quota");
   return response.json();
 }
 
@@ -265,6 +265,7 @@ function mapQuestionPriority(priority: string): AgentQuestion["priority"] {
 
 export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: AnalysisPanelProps) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [liveResult, setLiveResult] = useState<AnalysisResult | null>(null);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
   const [showAgentDetails, setShowAgentDetails] = useState(false);
@@ -275,23 +276,23 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   // Fetch usage status
   const { data: usageData } = useQuery({
-    queryKey: ["analyze", "usage"],
+    queryKey: queryKeys.usage.analyze(),
     queryFn: fetchUsageStatus,
   });
 
   const usage = usageData?.usage;
 
-  // Fetch credits (for FREE users)
-  const { data: creditsData } = useQuery({
-    queryKey: ["credits"],
-    queryFn: fetchCredits,
+  // Fetch quota (for FREE users)
+  const { data: quotaData } = useQuery({
+    queryKey: queryKeys.quota.all,
+    queryFn: fetchQuota,
   });
 
-  const credits = creditsData?.data;
+  const quota = quotaData?.data;
 
   // Fetch founder responses
   const { data: founderResponsesData } = useQuery({
-    queryKey: ["deals", dealId, "founder-responses"],
+    queryKey: queryKeys.founderResponses.byDeal(dealId),
     queryFn: () => fetchFounderResponses(dealId),
   });
 
@@ -305,7 +306,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   // Fetch staleness info (are there new documents since last analysis?)
   const { data: stalenessData } = useQuery({
-    queryKey: ["deals", dealId, "staleness"],
+    queryKey: queryKeys.staleness.byDeal(dealId),
     queryFn: () => fetchStaleness(dealId),
     // Refetch when analyses list changes
     enabled: analyses.length > 0,
@@ -379,8 +380,8 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       setLiveResult(response.data);
       setSelectedAnalysisId(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
-      queryClient.invalidateQueries({ queryKey: ["analyze", "usage"] });
-      queryClient.invalidateQueries({ queryKey: ["deals", dealId, "staleness"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
       toast.success("Analyse terminee");
     },
     onError: (error: Error & { upgradeRequired?: boolean }) => {
@@ -388,7 +389,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         toast.error(error.message, {
           action: {
             label: "Passer PRO",
-            onClick: () => window.location.href = "/pricing",
+            onClick: () => router.push("/pricing"),
           },
         });
       } else {
@@ -397,26 +398,21 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     },
   });
 
-  // Handle analysis button click - show credit modal for FREE users
+  // Handle analysis button click - check quota for FREE users
   const handleAnalyzeClick = useCallback(() => {
-    // For FREE users, show credit confirmation modal
-    if (subscriptionPlan === "FREE" && credits) {
-      setShowCreditModal(true);
-      return;
+    // For FREE users, check if quota is exhausted
+    if (subscriptionPlan === "FREE" && quota) {
+      const remaining = quota.analyses.limit - quota.analyses.used;
+      if (remaining <= 0) {
+        setShowCreditModal(true);
+        return;
+      }
     }
-    // For PRO/ENTERPRISE users, run directly
+    // Quota available or PRO user - run directly
     setLiveResult(null);
     setSelectedAnalysisId(null);
     mutation.mutate();
-  }, [subscriptionPlan, credits, mutation]);
-
-  // Actual analysis run (called after credit confirmation)
-  const handleRunAnalysis = useCallback(() => {
-    setShowCreditModal(false);
-    setLiveResult(null);
-    setSelectedAnalysisId(null);
-    mutation.mutate();
-  }, [mutation]);
+  }, [subscriptionPlan, quota, mutation]);
 
   const handleSelectAnalysis = useCallback((analysisId: string) => {
     setSelectedAnalysisId(analysisId);
@@ -437,7 +433,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       setIsSubmittingResponses(true);
       try {
         await submitFounderResponses(dealId, responses, freeNotes);
-        queryClient.invalidateQueries({ queryKey: ["deals", dealId, "founder-responses"] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.founderResponses.byDeal(dealId) });
         toast.success("Reponses enregistrees");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Erreur lors de l'enregistrement");
@@ -565,22 +561,17 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     }));
   }, [displayedResult]);
 
-  // Determine credit cost for analysis
-  const creditCost = isUpdate ? CREDIT_COSTS.UPDATE_ANALYSIS : CREDIT_COSTS.INITIAL_ANALYSIS;
-
   return (
     <div className="space-y-4">
-      {/* Credit Modal for FREE users */}
-      {credits && (
+      {/* Quota Modal for FREE users */}
+      {quota && (
         <CreditModal
           isOpen={showCreditModal}
           onClose={() => setShowCreditModal(false)}
-          action={isUpdate ? "UPDATE_ANALYSIS" : "INITIAL_ANALYSIS"}
-          cost={creditCost}
-          balance={credits.balance}
-          resetsAt={credits.nextResetAt ? new Date(credits.nextResetAt) : undefined}
-          onConfirm={handleRunAnalysis}
-          isLoading={mutation.isPending}
+          type="LIMIT_REACHED"
+          action={isUpdate ? "UPDATE" : "ANALYSIS"}
+          current={quota.analyses.used}
+          limit={quota.analyses.limit}
         />
       )}
 
@@ -653,7 +644,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               <Button
                 size="sm"
                 className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-                onClick={() => window.location.href = "/pricing"}
+                onClick={() => router.push("/pricing")}
               >
                 <Crown className="mr-2 h-4 w-4" />
                 Passer PRO

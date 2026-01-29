@@ -25,7 +25,8 @@ export type FactEventType =
   | 'SUPERSEDED'
   | 'DISPUTED'
   | 'RESOLVED'
-  | 'DELETED';
+  | 'DELETED'
+  | 'PENDING_REVIEW'; // Awaits human validation due to major contradiction detected
 
 export const SOURCE_PRIORITY: Record<FactSource, number> = {
   DATA_ROOM: 100,
@@ -35,6 +36,8 @@ export const SOURCE_PRIORITY: Record<FactSource, number> = {
   PITCH_DECK: 80,
   CONTEXT_ENGINE: 60,
 };
+
+export type PeriodType = 'POINT_IN_TIME' | 'QUARTER' | 'YEAR' | 'MONTH';
 
 export interface ExtractedFact {
   factKey: string;
@@ -46,6 +49,11 @@ export interface ExtractedFact {
   sourceDocumentId?: string;
   sourceConfidence: number;
   extractedText?: string;
+
+  // Temporal fields - for facts that vary over time (ARR, MRR, headcount, etc.)
+  validAt?: Date; // Date at which this fact was valid
+  periodType?: PeriodType; // POINT_IN_TIME, QUARTER, YEAR, MONTH
+  periodLabel?: string; // "Q4 2024", "FY2024", "Dec 2024"
 }
 
 export interface CurrentFact {

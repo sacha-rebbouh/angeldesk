@@ -86,6 +86,14 @@ export interface EnrichedAgentContext extends AgentContext {
 
   // Extracted data from document-extractor agent
   extractedData?: ExtractedDealInfo;
+
+  // Founder responses for fact extraction (from questionnaire/Q&A)
+  founderResponses?: Array<{
+    questionId: string;
+    question: string;
+    answer: string;
+    category: string;
+  }>;
 }
 
 // Base result structure for all agents
@@ -814,10 +822,10 @@ export interface CompetitiveIntelResult extends AgentResult {
 // TEAM INVESTIGATOR AGENT - REFONTE v2.0
 // ============================================================================
 // Mission: Investigation approfondie de l'équipe fondatrice
-// Standard: LinkedIn vérifié via Apify, cross-reference DB, détection red flags
+// Standard: LinkedIn vérifié via Coresignal, cross-reference DB, détection red flags
 // Minimum: Profil complet par fondateur, 3+ red flags, 5+ questions
 
-/** Profil LinkedIn enrichi via Apify LinkedIn Profile Scraper */
+/** Profil LinkedIn enrichi via Coresignal Base Employee API */
 export interface LinkedInEnrichedProfile {
   linkedinUrl: string;
   scrapedAt: string;
@@ -827,7 +835,7 @@ export interface LinkedInEnrichedProfile {
   about?: string;
   profilePicture?: string;
 
-  // Expérience professionnelle (via Apify)
+  // Expérience professionnelle (via Coresignal)
   experiences: {
     title: string;
     company: string;
@@ -854,7 +862,7 @@ export interface LinkedInEnrichedProfile {
   // Compétences
   skills?: string[];
 
-  // Contact enrichi (Apify payant)
+  // Contact enrichi
   email?: string;
   phone?: string;
 

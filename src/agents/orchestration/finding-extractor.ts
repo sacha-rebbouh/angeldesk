@@ -606,7 +606,7 @@ export function extractAllFindings(results: Record<string, AgentResult>): {
       allFindings.push(...extracted.findings);
       agentConfidences.set(agentName, extracted.confidence);
 
-      if (extracted.confidence.score < 75) {
+      if (extracted.confidence.score < 50) {
         lowConfidenceAgents.push(agentName);
       }
     }

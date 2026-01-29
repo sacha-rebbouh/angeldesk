@@ -50,10 +50,52 @@ export const queryKeys = {
       [...queryKeys.benchmarks.all, sector, stage] as const,
   },
 
+  // Quota queries
+  quota: {
+    all: ["quota"] as const,
+  },
+
+  // Founder responses
+  founderResponses: {
+    all: ["founderResponses"] as const,
+    byDeal: (dealId: string) => ["deals", dealId, "founder-responses"] as const,
+  },
+
+  // Staleness queries
+  staleness: {
+    all: ["staleness"] as const,
+    byDeal: (dealId: string) => ["deals", dealId, "staleness"] as const,
+  },
+
   // Usage queries (for analyze usage limits)
   usage: {
     all: ["usage"] as const,
     analyze: () => ["analyze", "usage"] as const,
+  },
+
+  // User preferences
+  userPreferences: {
+    all: ["userPreferences"] as const,
+  },
+
+  // Facts queries
+  facts: {
+    all: ["facts"] as const,
+    byDeal: (dealId: string) => ["facts", dealId] as const,
+  },
+
+  // Fact reviews queries
+  factReviews: {
+    all: ["fact-reviews"] as const,
+    byDeal: (dealId: string) => ["fact-reviews", dealId] as const,
+  },
+
+  // Board queries
+  board: {
+    all: ["board"] as const,
+    credits: () => ["board", "credits"] as const,
+    session: (sessionId: string) => ["board", "session", sessionId] as const,
+    dealSessions: (dealId: string) => ["board", "deal", dealId] as const,
   },
 
   // Costs queries (admin dashboard)

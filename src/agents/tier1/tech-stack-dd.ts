@@ -186,7 +186,7 @@ ${techSection}
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Pas de données Context Engine disponibles pour ce deal."}
-
+${this.formatFactStoreData(context)}
 ## INSTRUCTIONS SPÉCIFIQUES
 
 1. Analyse CHAQUE composant de la stack mentionné dans les documents

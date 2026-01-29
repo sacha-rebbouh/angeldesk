@@ -4,6 +4,31 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 
 // ============================================================================
+// RATE LIMITING
+// ============================================================================
+
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX = 20; // 20 requests per minute (less than facts as it's heavier)
+const requestCounts = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(identifier: string): boolean {
+  const now = Date.now();
+  const record = requestCounts.get(identifier);
+
+  if (!record || now > record.resetAt) {
+    requestCounts.set(identifier, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return true;
+  }
+
+  if (record.count >= RATE_LIMIT_MAX) {
+    return false;
+  }
+
+  record.count++;
+  return true;
+}
+
+// ============================================================================
 // VALIDATION SCHEMAS
 // ============================================================================
 
@@ -27,6 +52,16 @@ export async function GET(
 ) {
   try {
     const user = await requireAuth();
+
+    // Rate limiting
+    const rateLimitKey = `founder-responses:${user.id}`;
+    if (!checkRateLimit(rateLimitKey)) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const { dealId } = await params;
 
     // Validate dealId format
@@ -122,6 +157,16 @@ export async function POST(
 ) {
   try {
     const user = await requireAuth();
+
+    // Rate limiting
+    const rateLimitKey = `founder-responses:${user.id}`;
+    if (!checkRateLimit(rateLimitKey)) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const { dealId } = await params;
     const body = await request.json();
 

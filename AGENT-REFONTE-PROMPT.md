@@ -1,6 +1,6 @@
-# PROMPT ABSOLU - Refonte des 38 Agents (3 Tiers)
+# PROMPT ABSOLU - Refonte des 40 Agents (3 Tiers)
 
-> **Document de reference pour la refonte complete des 38 agents d'Angel Desk (Tier 1, 2 et 3).**
+> **Document de reference pour la refonte complete des 40 agents d'Angel Desk (Tier 1, 2 et 3).**
 > Ce fichier doit etre lu en entier avant de modifier un agent.
 > Chaque agent doit etre refait selon ces standards - aucune exception.
 > L'agent ne doit JAMAIS inventer
@@ -13,10 +13,10 @@
 | Tier       | Nb Agents | Role                                         | Exemples                                                                          |
 | ---------- | --------- | -------------------------------------------- | --------------------------------------------------------------------------------- |
 | **Tier 1** | 12        | Analyse                                      | financial-auditor, deck-forensics, team-investigator, competitive-intel...        |
-| **Tier 2** | 21        | Experts sectoriels (20 secteurs + 1 general) | saas-expert, fintech-expert, biotech-expert, general-expert...                    |
+| **Tier 2** | 22        | Experts sectoriels (21 secteurs + 1 general) | saas-expert, fintech-expert, blockchain-expert, general-expert...                 |
 | **Tier 3** | 5         | Synthese                                     | contradiction-detector, synthesis-deal-scorer, devils-advocate, memo-generator... |
 
-**TOTAL : 38 agents (12 Tier 1 + 21 Tier 2 + 5 Tier 3)**
+**TOTAL : 40 agents (13 Tier 1 + 22 Tier 2 + 5 Tier 3)**
 
 - Tier 1 : Agents d'analyse qui tournent en parallele sur chaque deal
 - Tier 2 : Experts sectoriels actives dynamiquement selon le secteur du deal (20 secteurs couverts + 1 general-expert fallback)
@@ -38,7 +38,7 @@
 8. [Exploitation de la Funding Database](#8-exploitation-de-la-funding-database)
 9. [Template de Refonte](#9-template-de-refonte)
 10. [Checklist de Validation](#10-checklist-de-validation)
-11. [Liste des Agents a Refondre (38 agents)](#11-liste-des-agents-a-refondre-38-agents)
+11. [Liste des Agents a Refondre (40 agents)](#11-liste-des-agents-a-refondre-38-agents)
 
 ---
 
@@ -1171,6 +1171,47 @@ sectorMetrics: {
 }
 ```
 
+#### Blockchain Expert (metriques additionnelles)
+
+```typescript
+sectorMetrics: {
+  // Tokenomics (CRITICAL)
+  tokenomics: {
+    hasToken: boolean;
+    tokenType: "utility" | "governance" | "security" | "hybrid" | "none";
+    insiderAllocation: number; // % team + investors
+    vestingSchedule: string;
+    inflationRate: number;
+    howeyTestRisk: "low" | "medium" | "high" | "critical";
+  };
+  // Protocol Economics
+  protocolRevenue: {
+    annualized: number;
+    emissionRatio: number; // emissions / revenue
+    realYield: number; // (revenue - emissions) / TVL
+  };
+  // Security
+  smartContractSecurity: {
+    auditStatus: "multiple_audits" | "single_audit" | "not_audited";
+    auditors: string[];
+    bugBountyActive: boolean;
+    incidentHistory: { date: string; loss: number }[];
+  };
+  // Decentralization
+  decentralization: {
+    level: "fully_decentralized" | "progressive" | "centralized";
+    governanceType: string;
+    keyManRisk: boolean;
+    top10HolderConcentration: number; // %
+  };
+  // Market Cyclicality
+  cyclicality: {
+    currentPhase: "bull" | "accumulation" | "bear" | "recovery";
+    bearMarketResilience: "high" | "medium" | "low";
+  };
+};
+```
+
 ---
 
 ### 5.4 Structures TIER 3 - Agents de Synthese
@@ -1552,6 +1593,7 @@ La DB doit etre exploitee par **39 agents** repartis en 3 tiers:
 | `cybersecurity-expert` | ARR security, SOC2/ISO, threat landscape | TODO |
 | `spacetech-expert` | CapEx spatial, cycles longs, regulations | TODO |
 | `creator-expert` | CPM, creator LTV, platform dependency | TODO |
+| `blockchain-expert` | TVL, tokenomics, smart contract security | IMPL |
 
 **Fallback (1 agent):**
 | Agent | Usage DB | Status |
@@ -1870,7 +1912,7 @@ PRIORITE 3 - Specialized
 > **Note**: technical-dd a ete split en 2 agents (tech-stack-dd + tech-ops-dd) pour optimiser les couts
 > et eviter les timeouts sur Haiku (limite 4096 tokens output).
 
-### 11.2 TIER 2 - Experts Sectoriels (21 agents: 20 secteurs + 1 general)
+### 11.2 TIER 2 - Experts Sectoriels (22 agents: 21 secteurs + 1 general)
 
 ```
 IMPLEMENTES (10 secteurs)
@@ -1895,10 +1937,11 @@ IMPLEMENTES (10 secteurs)
 30. cybersecurity-expert - ARR security, SOC2/ISO                   [IMPL]
 31. spacetech-expert     - CapEx spatial, cycles longs              [IMPL]
 32. creator-expert       - CPM, creator LTV, platform dependency    [IMPL]
+33. blockchain-expert    - TVL, tokenomics, smart contract security [IMPL]
 
 FALLBACK (1 agent)
 ━━━━━━━━━━━━━━━━━━
-33. general-expert       - 100% recherche web, pas de standards     [IMPL]
+34. general-expert       - 100% recherche web, pas de standards     [IMPL]
 ```
 
 **Note**: Pour chaque nouveau secteur, creer aussi les standards dans `sector-standards.ts`.
@@ -1908,14 +1951,14 @@ FALLBACK (1 agent)
 ```
 PRIORITE CRITIQUE (synthese finale)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-34. contradiction-detector  - Agreger TOUTES les comparaisons deck vs DB
-35. synthesis-deal-scorer   - Score final avec position vs marche
+35. contradiction-detector  - Agreger TOUTES les comparaisons deck vs DB
+36. synthesis-deal-scorer   - Score final avec position vs marche
 
 PRIORITE HIGH (insights avances)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-36. devils-advocate         - Comparables echecs, contre-arguments
-37. scenario-modeler        - Scenarios bases sur trajectoires reelles
-38. memo-generator          - Synthese avec contexte marche
+37. devils-advocate         - Comparables echecs, contre-arguments
+38. scenario-modeler        - Scenarios bases sur trajectoires reelles
+39. memo-generator          - Synthese avec contexte marche
 ```
 
 ### 11.4 Fichiers a Modifier
@@ -1960,7 +2003,8 @@ A creer (10 secteurs):
 ├── legaltech-expert.ts               [TODO]
 ├── cybersecurity-expert.ts           [TODO]
 ├── spacetech-expert.ts               [TODO]
-└── creator-expert.ts                 [TODO]
+├── creator-expert.ts                 [TODO]
+└── blockchain-expert.ts              [IMPL] TVL, tokenomics, smart contract security
 
 Fallback:
 └── general-expert.ts                 [TODO] 100% web search
@@ -2003,9 +2047,10 @@ src/agents/tier3/                     TIER 3 - SYNTHESE
 
 **FIN DU DOCUMENT**
 
-_Derniere mise a jour: 2026-01-27_
-_Version: 2.1 - Document complet pour les 38 agents (3 Tiers)_
-_- Section 5: Structures de sortie pour les 38 agents (Tier 1 + Tier 2 + Tier 3)_
-_- Section 8: Exploitation DB pour les 38 agents_
-_- Section 11: Liste complete des 38 agents a refondre_
-_- Ajout: ai-expert (Tier 2) - Expert IA pour evaluer les startups AI/ML_
+_Derniere mise a jour: 2026-01-29_
+_Version: 2.2 - Document complet pour les 40 agents (3 Tiers)_
+_- Section 5: Structures de sortie pour les 40 agents (Tier 1 + Tier 2 + Tier 3)_
+_- Section 8: Exploitation DB pour les 40 agents_
+_- Section 11: Liste complete des 40 agents a refondre_
+_- Ajout: blockchain-expert (Tier 2) - Expert Blockchain/Web3 pour evaluer les startups crypto/DeFi/NFT_
+_- Ajout precedent: ai-expert (Tier 2) - Expert IA pour evaluer les startups AI/ML_

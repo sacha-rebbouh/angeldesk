@@ -5,13 +5,15 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { prisma } from '@/lib/prisma';
-import type { FactEvent } from '@prisma/client';
+import type { FactEvent, Prisma } from '@prisma/client';
 import type {
   ExtractedFact,
   FactEventType,
   FactCategory,
   FactEventRecord,
+  CurrentFact,
 } from './types';
+import { refreshCurrentFactsView } from './current-facts';
 
 // ═══════════════════════════════════════════════════════════════════════
 // TYPES
@@ -123,6 +125,11 @@ export async function createFactEventsBatch(
           },
         })
       )
+    );
+
+    // Refresh materialized view (fire and forget, don't block)
+    refreshCurrentFactsView().catch((err) =>
+      console.warn('[createFactEventsBatch] View refresh failed:', err)
     );
 
     return { success: true, events };
@@ -432,4 +439,77 @@ export async function getFactKeysForDeal(dealId: string): Promise<string[]> {
   });
 
   return events.map((e) => e.factKey);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PENDING REVIEW (Major Contradictions)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Creates a fact event that needs human review due to major contradiction detected.
+ * The fact is stored but not applied until a human resolves the contradiction.
+ *
+ * @param dealId - The deal this fact belongs to
+ * @param fact - The extracted fact data (the new contradicting value)
+ * @param existingFact - The current fact that contradicts
+ * @param contradictionReason - Human-readable explanation of the contradiction
+ * @returns Object with the created event ID
+ */
+export async function createPendingReviewFact(
+  dealId: string,
+  fact: ExtractedFact,
+  existingFact: CurrentFact,
+  contradictionReason: string
+): Promise<{ id: string }> {
+  const result = await prisma.factEvent.create({
+    data: {
+      dealId,
+      factKey: fact.factKey,
+      category: fact.category,
+      value: fact.value as Prisma.InputJsonValue,
+      displayValue: fact.displayValue,
+      unit: fact.unit,
+      source: fact.source,
+      sourceDocumentId: fact.sourceDocumentId,
+      sourceConfidence: fact.sourceConfidence,
+      extractedText: fact.extractedText,
+      eventType: 'PENDING_REVIEW',
+      supersedesEventId: null, // Not superseding yet - awaits human decision
+      createdBy: 'system',
+      reason: contradictionReason,
+    },
+  });
+
+  return { id: result.id };
+}
+
+/**
+ * Gets all pending review facts for a deal.
+ *
+ * @param dealId - The deal ID
+ * @returns Array of FactEvents with PENDING_REVIEW status
+ */
+export async function getPendingReviewFacts(dealId: string): Promise<FactEvent[]> {
+  return prisma.factEvent.findMany({
+    where: {
+      dealId,
+      eventType: 'PENDING_REVIEW',
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+/**
+ * Gets the count of pending reviews for a deal.
+ *
+ * @param dealId - The deal ID
+ * @returns Number of pending reviews
+ */
+export async function getPendingReviewCount(dealId: string): Promise<number> {
+  return prisma.factEvent.count({
+    where: {
+      dealId,
+      eventType: 'PENDING_REVIEW',
+    },
+  });
 }

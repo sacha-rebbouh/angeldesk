@@ -3,8 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import {
   analyzeFounderLinkedIn,
-  isApifyLinkedInConfigured,
-} from "@/services/context-engine/connectors/apify-linkedin";
+  isCoresignalLinkedInConfigured,
+} from "@/services/context-engine/connectors/coresignal-linkedin";
 
 interface RouteParams {
   params: Promise<{ dealId: string; founderId: string }>;
@@ -65,9 +65,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { dealId, founderId } = await params;
 
     // Check if Apify is configured
-    if (!isApifyLinkedInConfigured()) {
+    if (!isCoresignalLinkedInConfigured()) {
       return NextResponse.json(
-        { error: "LinkedIn enrichment not configured. Please set APIFY_API_KEY." },
+        { error: "LinkedIn enrichment not configured. Please set CORESIGNAL_API_KEY." },
         { status: 503 }
       );
     }

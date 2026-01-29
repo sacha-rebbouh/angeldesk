@@ -1,693 +1,278 @@
-// ═══════════════════════════════════════════════════════════════════════
-// USAGE GATE - CREDIT SYSTEM TESTS
-// Tests for credit checking and usage recording
-// ═══════════════════════════════════════════════════════════════════════
+// ============================================================================
+// QUOTA GATE - USAGE LIMIT TESTS
+// Tests for quota checking and usage recording
+// ============================================================================
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { UsageGate } from '../usage-gate';
-import { CREDIT_COSTS } from '../types';
-import type { CreditActionType } from '../types';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { checkQuota, getUserQuotaInfo, recordUsage } from '../usage-gate';
+import { PLAN_LIMITS } from '../types';
 
-// ═══════════════════════════════════════════════════════════════════════
+// ============================================================================
 // MOCK SETUP
-// ═══════════════════════════════════════════════════════════════════════
+// ============================================================================
 
-// Mock the prisma client
-const mockPrismaUser = {
-  findFirst: vi.fn(),
-};
-
-const mockPrismaUserCredits = {
+const mockUserDealUsage = {
   findUnique: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
 };
 
-const mockPrismaCreditTransaction = {
-  create: vi.fn(),
-  findMany: vi.fn(),
+const mockAnalysis = {
+  count: vi.fn(),
 };
 
-const mockPrismaTransaction = vi.fn();
+const mockAIBoardSession = {
+  count: vi.fn(),
+};
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    user: {
-      findFirst: (...args: unknown[]) => mockPrismaUser.findFirst(...args),
+    userDealUsage: {
+      findUnique: (...args: unknown[]) => mockUserDealUsage.findUnique(...args),
+      create: (...args: unknown[]) => mockUserDealUsage.create(...args),
+      update: (...args: unknown[]) => mockUserDealUsage.update(...args),
     },
-    userCredits: {
-      findUnique: (...args: unknown[]) => mockPrismaUserCredits.findUnique(...args),
-      create: (...args: unknown[]) => mockPrismaUserCredits.create(...args),
-      update: (...args: unknown[]) => mockPrismaUserCredits.update(...args),
+    analysis: {
+      count: (...args: unknown[]) => mockAnalysis.count(...args),
     },
-    creditTransaction: {
-      create: (...args: unknown[]) => mockPrismaCreditTransaction.create(...args),
-      findMany: (...args: unknown[]) => mockPrismaCreditTransaction.findMany(...args),
+    aIBoardSession: {
+      count: (...args: unknown[]) => mockAIBoardSession.count(...args),
     },
-    $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
   },
 }));
 
-// ═══════════════════════════════════════════════════════════════════════
+// ============================================================================
 // TEST HELPERS
-// ═══════════════════════════════════════════════════════════════════════
+// ============================================================================
 
-function createMockUserCredits(overrides: Partial<{
-  clerkUserId: string;
-  balance: number;
-  monthlyAllocation: number;
+function createMockUsage(overrides: Partial<{
+  id: string;
+  userId: string;
+  monthlyLimit: number;
+  usedThisMonth: number;
+  tier1Count: number;
+  tier2Count: number;
+  tier3Count: number;
   lastResetAt: Date;
-  nextResetAt: Date;
 }> = {}) {
-  const futureDate = new Date();
-  futureDate.setDate(futureDate.getDate() + 30);
-
   return {
-    clerkUserId: 'user-123',
-    balance: 10,
-    monthlyAllocation: 10,
+    id: 'usage-1',
+    userId: 'user-123',
+    monthlyLimit: 3,
+    usedThisMonth: 0,
+    tier1Count: 0,
+    tier2Count: 0,
+    tier3Count: 0,
     lastResetAt: new Date(),
-    nextResetAt: futureDate,
     ...overrides,
   };
 }
 
-function createMockUser(overrides: Partial<{
-  clerkId: string;
-  subscriptionStatus: string | null;
-}> = {}) {
-  return {
-    clerkId: 'user-123',
-    subscriptionStatus: 'FREE',
-    ...overrides,
-  };
-}
+// ============================================================================
+// PLAN_LIMITS TESTS
+// ============================================================================
 
-// ═══════════════════════════════════════════════════════════════════════
-// CREDIT_COSTS TESTS
-// ═══════════════════════════════════════════════════════════════════════
-
-describe('CREDIT_COSTS', () => {
-  it('should have INITIAL_ANALYSIS cost of 5', () => {
-    expect(CREDIT_COSTS.INITIAL_ANALYSIS).toBe(5);
+describe('PLAN_LIMITS', () => {
+  it('FREE plan should have 3 analyses per month', () => {
+    expect(PLAN_LIMITS.FREE.analysesPerMonth).toBe(3);
   });
 
-  it('should have UPDATE_ANALYSIS cost of 2', () => {
-    expect(CREDIT_COSTS.UPDATE_ANALYSIS).toBe(2);
+  it('FREE plan should have 2 updates per deal', () => {
+    expect(PLAN_LIMITS.FREE.updatesPerDeal).toBe(2);
   });
 
-  it('should have AI_BOARD cost of 10', () => {
-    expect(CREDIT_COSTS.AI_BOARD).toBe(10);
+  it('FREE plan should have 0 boards per month', () => {
+    expect(PLAN_LIMITS.FREE.boardsPerMonth).toBe(0);
+  });
+
+  it('PRO plan should have 20 analyses per month', () => {
+    expect(PLAN_LIMITS.PRO.analysesPerMonth).toBe(20);
+  });
+
+  it('PRO plan should have unlimited updates', () => {
+    expect(PLAN_LIMITS.PRO.updatesPerDeal).toBe(-1);
+  });
+
+  it('PRO plan should have 5 boards per month', () => {
+    expect(PLAN_LIMITS.PRO.boardsPerMonth).toBe(5);
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-// UsageGate TESTS
-// ═══════════════════════════════════════════════════════════════════════
+// ============================================================================
+// checkQuota TESTS
+// ============================================================================
 
-describe('UsageGate', () => {
-  let usageGate: UsageGate;
-
+describe('checkQuota', () => {
   beforeEach(() => {
-    usageGate = new UsageGate();
     vi.clearAllMocks();
-
-    // Reset environment variables
-    delete process.env.FORCE_PRO_USER;
   });
 
-  afterEach(() => {
-    vi.resetAllMocks();
+  it('should allow ANALYSIS when under limit', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(
+      createMockUsage({ tier1Count: 1 })
+    );
+
+    const result = await checkQuota('user-123', 'FREE', 'ANALYSIS');
+
+    expect(result.allowed).toBe(true);
+    expect(result.reason).toBe('OK');
+    expect(result.current).toBe(1);
+    expect(result.limit).toBe(3);
+    expect(result.plan).toBe('FREE');
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // canPerform TESTS
-  // ═══════════════════════════════════════════════════════════════════
+  it('should deny ANALYSIS when limit reached', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(
+      createMockUsage({ tier1Count: 3 })
+    );
 
-  describe('canPerform', () => {
-    it('should allow PRO users always', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'PRO' })
-      );
+    const result = await checkQuota('user-123', 'FREE', 'ANALYSIS');
 
-      const result = await usageGate.canPerform('user-123', 'INITIAL_ANALYSIS');
-
-      expect(result.allowed).toBe(true);
-      expect(result.reason).toBe('OK');
-      // PRO users don't need balance checks
-      expect(mockPrismaUserCredits.findUnique).not.toHaveBeenCalled();
-    });
-
-    it('should allow ENTERPRISE users always', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'ENTERPRISE' })
-      );
-
-      const result = await usageGate.canPerform('user-123', 'INITIAL_ANALYSIS');
-
-      expect(result.allowed).toBe(true);
-      expect(result.reason).toBe('OK');
-    });
-
-    it('should allow FREE users with sufficient balance', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 10 })
-      );
-
-      const result = await usageGate.canPerform('user-123', 'INITIAL_ANALYSIS');
-
-      expect(result.allowed).toBe(true);
-      expect(result.reason).toBe('OK');
-      expect(result.currentBalance).toBe(10);
-      expect(result.cost).toBe(5);
-    });
-
-    it('should deny FREE users with insufficient balance', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 2 })
-      );
-
-      const result = await usageGate.canPerform('user-123', 'INITIAL_ANALYSIS');
-
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toBe('INSUFFICIENT_CREDITS');
-      expect(result.currentBalance).toBe(2);
-      expect(result.cost).toBe(5);
-    });
-
-    it('should deny FREE users with 0 balance', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 0 })
-      );
-
-      const result = await usageGate.canPerform('user-123', 'INITIAL_ANALYSIS');
-
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toBe('INSUFFICIENT_CREDITS');
-    });
-
-    it('should create user credits if they do not exist', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      // First call returns null (no existing credits)
-      mockPrismaUserCredits.findUnique.mockResolvedValueOnce(null);
-      // After create
-      mockPrismaUserCredits.create.mockResolvedValue(
-        createMockUserCredits({ balance: 10 })
-      );
-      // Second call after potential reset returns the created credits
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 10 })
-      );
-
-      const result = await usageGate.canPerform('user-123', 'INITIAL_ANALYSIS');
-
-      expect(mockPrismaUserCredits.create).toHaveBeenCalled();
-      expect(result.allowed).toBe(true);
-    });
-
-    it('should bypass credit checks when FORCE_PRO_USER env is set', async () => {
-      process.env.FORCE_PRO_USER = 'true';
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-
-      const result = await usageGate.canPerform('user-123', 'INITIAL_ANALYSIS');
-
-      expect(result.allowed).toBe(true);
-      expect(result.reason).toBe('OK');
-    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('LIMIT_REACHED');
+    expect(result.current).toBe(3);
+    expect(result.limit).toBe(3);
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // recordUsage TESTS
-  // ═══════════════════════════════════════════════════════════════════
+  it('should allow PRO users more analyses', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(
+      createMockUsage({ tier1Count: 10 })
+    );
 
-  describe('recordUsage', () => {
-    it('should not decrement balance for PRO users but still log', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'PRO' })
-      );
+    const result = await checkQuota('user-123', 'PRO', 'ANALYSIS');
 
-      await usageGate.recordUsage('user-123', 'INITIAL_ANALYSIS', {
-        dealId: 'deal-123',
-      });
+    expect(result.allowed).toBe(true);
+    expect(result.limit).toBe(20);
+  });
 
-      expect(mockPrismaCreditTransaction.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          clerkUserId: 'user-123',
-          type: 'INITIAL_ANALYSIS',
-          amount: 0, // PRO users don't consume credits
-          dealId: 'deal-123',
-          description: expect.stringContaining('[PRO]'),
-        }),
-      });
-      // No balance decrement for PRO users
-      expect(mockPrismaTransaction).not.toHaveBeenCalled();
-    });
+  it('should allow unlimited updates for PRO', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(createMockUsage());
 
-    it('should decrement balance and create transaction for FREE users', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
+    const result = await checkQuota('user-123', 'PRO', 'UPDATE', 'deal-123');
 
-      const mockTx = {
-        userCredits: {
-          findUnique: vi.fn().mockResolvedValue(createMockUserCredits({ balance: 10 })),
-          update: vi.fn(),
-        },
-        creditTransaction: {
-          create: vi.fn(),
-        },
-      };
-      mockPrismaTransaction.mockImplementation(async (fn) => fn(mockTx));
+    expect(result.allowed).toBe(true);
+    expect(result.limit).toBe(-1);
+  });
 
-      await usageGate.recordUsage('user-123', 'INITIAL_ANALYSIS', {
-        dealId: 'deal-123',
-      });
+  it('should deny BOARD for FREE users', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(createMockUsage());
 
-      expect(mockPrismaTransaction).toHaveBeenCalled();
-      expect(mockTx.userCredits.update).toHaveBeenCalledWith({
-        where: { clerkUserId: 'user-123' },
-        data: { balance: { decrement: 5 } },
-      });
-      expect(mockTx.creditTransaction.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          clerkUserId: 'user-123',
-          type: 'INITIAL_ANALYSIS',
-          amount: -5, // Negative for consumption
-          dealId: 'deal-123',
-        }),
-      });
-    });
+    const result = await checkQuota('user-123', 'FREE', 'BOARD');
 
-    it('should throw error if user has insufficient balance', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('UPGRADE_REQUIRED');
+  });
 
-      const mockTx = {
-        userCredits: {
-          findUnique: vi.fn().mockResolvedValue(createMockUserCredits({ balance: 2 })),
-        },
-      };
-      mockPrismaTransaction.mockImplementation(async (fn) => fn(mockTx));
+  it('should allow BOARD for PRO users under limit', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(createMockUsage());
+    mockAIBoardSession.count.mockResolvedValue(2);
 
-      await expect(
-        usageGate.recordUsage('user-123', 'INITIAL_ANALYSIS')
-      ).rejects.toThrow('Insufficient credits');
-    });
+    const result = await checkQuota('user-123', 'PRO', 'BOARD');
 
-    it('should throw error if UserCredits not found', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
+    expect(result.allowed).toBe(true);
+    expect(result.current).toBe(2);
+    expect(result.limit).toBe(5);
+  });
 
-      const mockTx = {
-        userCredits: {
-          findUnique: vi.fn().mockResolvedValue(null),
-        },
-      };
-      mockPrismaTransaction.mockImplementation(async (fn) => fn(mockTx));
+  it('should create usage record if not found', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(null);
+    mockUserDealUsage.create.mockResolvedValue(createMockUsage());
 
-      await expect(
-        usageGate.recordUsage('user-123', 'INITIAL_ANALYSIS')
-      ).rejects.toThrow('UserCredits not found');
-    });
+    const result = await checkQuota('user-123', 'FREE', 'ANALYSIS');
 
-    it('should not record transaction for 0 cost actions', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
+    expect(mockUserDealUsage.create).toHaveBeenCalled();
+    expect(result.allowed).toBe(true);
+  });
 
-      // MONTHLY_RESET has 0 cost
-      await usageGate.recordUsage('user-123', 'MONTHLY_RESET');
+  it('should treat ENTERPRISE as PRO', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(createMockUsage());
 
-      expect(mockPrismaTransaction).not.toHaveBeenCalled();
-      expect(mockPrismaCreditTransaction.create).not.toHaveBeenCalled();
+    const result = await checkQuota('user-123', 'ENTERPRISE', 'ANALYSIS');
+
+    expect(result.plan).toBe('PRO');
+    expect(result.limit).toBe(20);
+  });
+});
+
+// ============================================================================
+// getUserQuotaInfo TESTS
+// ============================================================================
+
+describe('getUserQuotaInfo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should return quota info for FREE user', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(
+      createMockUsage({ tier1Count: 2 })
+    );
+    mockAIBoardSession.count.mockResolvedValue(0);
+
+    const info = await getUserQuotaInfo('user-123', 'FREE');
+
+    expect(info.plan).toBe('FREE');
+    expect(info.analyses.used).toBe(2);
+    expect(info.analyses.limit).toBe(3);
+    expect(info.boards.used).toBe(0);
+    expect(info.boards.limit).toBe(0);
+    expect(info.availableTiers).toEqual(['TIER_1', 'SYNTHESIS']);
+  });
+
+  it('should return quota info for PRO user', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(
+      createMockUsage({ tier1Count: 5 })
+    );
+    mockAIBoardSession.count.mockResolvedValue(2);
+
+    const info = await getUserQuotaInfo('user-123', 'PRO');
+
+    expect(info.plan).toBe('PRO');
+    expect(info.analyses.used).toBe(5);
+    expect(info.analyses.limit).toBe(20);
+    expect(info.boards.used).toBe(2);
+    expect(info.boards.limit).toBe(5);
+    expect(info.availableTiers).toEqual(['TIER_1', 'TIER_2', 'TIER_3', 'SYNTHESIS']);
+  });
+});
+
+// ============================================================================
+// recordUsage TESTS
+// ============================================================================
+
+describe('recordUsage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should increment counters for ANALYSIS', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(
+      createMockUsage({ usedThisMonth: 1, tier1Count: 1 })
+    );
+
+    await recordUsage('user-123', 'ANALYSIS');
+
+    expect(mockUserDealUsage.update).toHaveBeenCalledWith({
+      where: { userId: 'user-123' },
+      data: {
+        usedThisMonth: 2,
+        tier1Count: 2,
+      },
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // checkAndResetCredits TESTS
-  // ═══════════════════════════════════════════════════════════════════
+  it('should increment only usedThisMonth for non-ANALYSIS actions', async () => {
+    mockUserDealUsage.findUnique.mockResolvedValue(
+      createMockUsage({ usedThisMonth: 3 })
+    );
 
-  describe('checkAndResetCredits', () => {
-    it('should reset balance when nextResetAt is past', async () => {
-      const pastDate = new Date();
-      pastDate.setDate(pastDate.getDate() - 1);
+    await recordUsage('user-123', 'BOARD');
 
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({
-          balance: 3,
-          monthlyAllocation: 10,
-          nextResetAt: pastDate,
-        })
-      );
-
-      const mockTx = {
-        userCredits: {
-          findUnique: vi.fn().mockResolvedValue(
-            createMockUserCredits({
-              balance: 3,
-              monthlyAllocation: 10,
-              nextResetAt: pastDate,
-            })
-          ),
-          update: vi.fn(),
-        },
-        creditTransaction: {
-          create: vi.fn(),
-        },
-      };
-      mockPrismaTransaction.mockImplementation(async (fn) => fn(mockTx));
-
-      await usageGate.checkAndResetCredits('user-123');
-
-      expect(mockPrismaTransaction).toHaveBeenCalled();
-      expect(mockTx.userCredits.update).toHaveBeenCalledWith({
-        where: { clerkUserId: 'user-123' },
-        data: expect.objectContaining({
-          balance: 10, // Reset to monthlyAllocation
-        }),
-      });
-      expect(mockTx.creditTransaction.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          type: 'MONTHLY_RESET',
-          amount: 10,
-        }),
-      });
-    });
-
-    it('should not reset if nextResetAt is in the future', async () => {
-      const futureDate = new Date();
-      futureDate.setDate(futureDate.getDate() + 15);
-
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({
-          balance: 5,
-          nextResetAt: futureDate,
-        })
-      );
-
-      await usageGate.checkAndResetCredits('user-123');
-
-      expect(mockPrismaTransaction).not.toHaveBeenCalled();
-    });
-
-    it('should do nothing if user credits do not exist', async () => {
-      mockPrismaUserCredits.findUnique.mockResolvedValue(null);
-
-      await usageGate.checkAndResetCredits('user-123');
-
-      expect(mockPrismaTransaction).not.toHaveBeenCalled();
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // getOrCreateUserCredits TESTS
-  // ═══════════════════════════════════════════════════════════════════
-
-  describe('getOrCreateUserCredits', () => {
-    it('should return existing credits if found', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 7 })
-      );
-
-      const result = await usageGate.getOrCreateUserCredits('user-123');
-
-      expect(result.balance).toBe(7);
-      expect(result.plan).toBe('FREE');
-      expect(mockPrismaUserCredits.create).not.toHaveBeenCalled();
-    });
-
-    it('should create credits with default balance if not found', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(null);
-      mockPrismaUserCredits.create.mockResolvedValue(
-        createMockUserCredits({ balance: 10 })
-      );
-
-      const result = await usageGate.getOrCreateUserCredits('user-123');
-
-      expect(mockPrismaUserCredits.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          clerkUserId: 'user-123',
-          balance: 10,
-          monthlyAllocation: 10,
-        }),
-      });
-      expect(result.balance).toBe(10);
-    });
-
-    it('should set plan to PRO for pro users', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'PRO' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 10 })
-      );
-
-      const result = await usageGate.getOrCreateUserCredits('user-123');
-
-      expect(result.plan).toBe('PRO');
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // addBonusCredits TESTS
-  // ═══════════════════════════════════════════════════════════════════
-
-  describe('addBonusCredits', () => {
-    it('should add bonus credits to existing balance', async () => {
-      const mockTx = {
-        userCredits: {
-          findUnique: vi.fn().mockResolvedValue(createMockUserCredits({ balance: 5 })),
-          update: vi.fn(),
-        },
-        creditTransaction: {
-          create: vi.fn(),
-        },
-      };
-      mockPrismaTransaction.mockImplementation(async (fn) => fn(mockTx));
-
-      await usageGate.addBonusCredits('user-123', 10, 'Welcome bonus');
-
-      expect(mockTx.userCredits.update).toHaveBeenCalledWith({
-        where: { clerkUserId: 'user-123' },
-        data: { balance: { increment: 10 } },
-      });
-      expect(mockTx.creditTransaction.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          type: 'BONUS',
-          amount: 10,
-          description: 'Welcome bonus',
-        }),
-      });
-    });
-
-    it('should create credits if user does not have any', async () => {
-      const mockTx = {
-        userCredits: {
-          findUnique: vi.fn().mockResolvedValue(null),
-          create: vi.fn(),
-        },
-        creditTransaction: {
-          create: vi.fn(),
-        },
-      };
-      mockPrismaTransaction.mockImplementation(async (fn) => fn(mockTx));
-
-      await usageGate.addBonusCredits('user-123', 5, 'New user bonus');
-
-      expect(mockTx.userCredits.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          clerkUserId: 'user-123',
-          balance: 15, // Default 10 + 5 bonus
-          monthlyAllocation: 10,
-        }),
-      });
-    });
-
-    it('should throw error for non-positive amount', async () => {
-      await expect(
-        usageGate.addBonusCredits('user-123', 0, 'Invalid bonus')
-      ).rejects.toThrow('Bonus amount must be positive');
-
-      await expect(
-        usageGate.addBonusCredits('user-123', -5, 'Invalid bonus')
-      ).rejects.toThrow('Bonus amount must be positive');
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // refundCredits TESTS
-  // ═══════════════════════════════════════════════════════════════════
-
-  describe('refundCredits', () => {
-    it('should add refund credits back to balance', async () => {
-      const mockTx = {
-        userCredits: {
-          update: vi.fn(),
-        },
-        creditTransaction: {
-          create: vi.fn(),
-        },
-      };
-      mockPrismaTransaction.mockImplementation(async (fn) => fn(mockTx));
-
-      await usageGate.refundCredits('user-123', 5, 'Analysis failed', {
-        dealId: 'deal-123',
-        analysisId: 'analysis-456',
-      });
-
-      expect(mockTx.userCredits.update).toHaveBeenCalledWith({
-        where: { clerkUserId: 'user-123' },
-        data: { balance: { increment: 5 } },
-      });
-      expect(mockTx.creditTransaction.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          type: 'REFUND',
-          amount: 5,
-          dealId: 'deal-123',
-          analysisId: 'analysis-456',
-          description: 'Analysis failed',
-        }),
-      });
-    });
-
-    it('should throw error for non-positive amount', async () => {
-      await expect(
-        usageGate.refundCredits('user-123', 0, 'Invalid refund')
-      ).rejects.toThrow('Refund amount must be positive');
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // getTransactionHistory TESTS
-  // ═══════════════════════════════════════════════════════════════════
-
-  describe('getTransactionHistory', () => {
-    it('should return formatted transaction history', async () => {
-      mockPrismaCreditTransaction.findMany.mockResolvedValue([
-        {
-          id: 'tx-1',
-          clerkUserId: 'user-123',
-          type: 'INITIAL_ANALYSIS',
-          amount: -5,
-          dealId: 'deal-123',
-          analysisId: null,
-          description: 'Initial analysis for deal deal-123',
-          createdAt: new Date('2024-01-15'),
-        },
-        {
-          id: 'tx-2',
-          clerkUserId: 'user-123',
-          type: 'BONUS',
-          amount: 10,
-          dealId: null,
-          analysisId: null,
-          description: 'Welcome bonus',
-          createdAt: new Date('2024-01-01'),
-        },
-      ]);
-
-      const result = await usageGate.getTransactionHistory('user-123');
-
-      expect(result).toHaveLength(2);
-      expect(result[0].id).toBe('tx-1');
-      expect(result[0].type).toBe('INITIAL_ANALYSIS');
-      expect(result[0].amount).toBe(-5);
-      expect(result[0].dealId).toBe('deal-123');
-      expect(result[0].analysisId).toBeUndefined();
-    });
-
-    it('should respect limit parameter', async () => {
-      mockPrismaCreditTransaction.findMany.mockResolvedValue([]);
-
-      await usageGate.getTransactionHistory('user-123', 10);
-
-      expect(mockPrismaCreditTransaction.findMany).toHaveBeenCalledWith({
-        where: { clerkUserId: 'user-123' },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-      });
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // getBalance TESTS
-  // ═══════════════════════════════════════════════════════════════════
-
-  describe('getBalance', () => {
-    it('should return current balance', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 8 })
-      );
-
-      const result = await usageGate.getBalance('user-123');
-
-      expect(result).toBe(8);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // hasEnoughCredits TESTS
-  // ═══════════════════════════════════════════════════════════════════
-
-  describe('hasEnoughCredits', () => {
-    it('should return true when user has enough credits', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 10 })
-      );
-
-      const result = await usageGate.hasEnoughCredits('user-123', 'INITIAL_ANALYSIS');
-
-      expect(result).toBe(true);
-    });
-
-    it('should return false when user does not have enough credits', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'FREE' })
-      );
-      mockPrismaUserCredits.findUnique.mockResolvedValue(
-        createMockUserCredits({ balance: 1 })
-      );
-
-      const result = await usageGate.hasEnoughCredits('user-123', 'INITIAL_ANALYSIS');
-
-      expect(result).toBe(false);
-    });
-
-    it('should return true for PRO users regardless of balance', async () => {
-      mockPrismaUser.findFirst.mockResolvedValue(
-        createMockUser({ subscriptionStatus: 'PRO' })
-      );
-
-      const result = await usageGate.hasEnoughCredits('user-123', 'AI_BOARD');
-
-      expect(result).toBe(true);
+    expect(mockUserDealUsage.update).toHaveBeenCalledWith({
+      where: { userId: 'user-123' },
+      data: {
+        usedThisMonth: 4,
+      },
     });
   });
 });

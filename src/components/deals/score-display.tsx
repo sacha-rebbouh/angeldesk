@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { getScoreColor } from "@/lib/format-utils";
 
 interface ScoreDisplayProps {
   label: string;
@@ -8,14 +9,6 @@ interface ScoreDisplayProps {
   maxScore?: number;
   size?: "sm" | "md" | "lg";
   showBar?: boolean;
-}
-
-function getScoreColor(score: number): string {
-  if (score >= 80) return "text-green-600";
-  if (score >= 60) return "text-blue-600";
-  if (score >= 40) return "text-yellow-600";
-  if (score >= 20) return "text-orange-600";
-  return "text-red-600";
 }
 
 function getBarColor(score: number): string {

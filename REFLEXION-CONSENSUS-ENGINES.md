@@ -2,7 +2,7 @@
 
 > **Document de reference COMPLET pour implementer les deux moteurs de qualite d'Angel Desk.**
 > Ce fichier contient TOUT le code necessaire. Un agent peut l'utiliser directement pour implementer.
-> Version: 2.0 - Document actionnable avec code complet, schemas Zod, et fallbacks.
+> Version: 3.0 - Ajout edge cases, métriques de succès, calculs en code, et fallbacks robustes.
 
 ---
 
@@ -19,6 +19,10 @@
 9. [Tests et Checklist de Validation](#9-tests-et-checklist-de-validation)
 10. [Fichiers a Creer/Modifier](#10-fichiers-a-creermodifier)
 11. [Gestion des Benchmarks Sectoriels](#11-gestion-des-benchmarks-sectoriels)
+12. [Edge Cases et Fallbacks](#12-edge-cases-et-fallbacks)
+13. [Métriques de Succès](#13-métriques-de-succès)
+14. [Calculs Arithmétiques en Code](#14-calculs-arithmétiques-en-code)
+15. [Organisation des Fichiers](#15-organisation-des-fichiers)
 
 ---
 
@@ -3220,57 +3224,993 @@ src/agents/orchestration/utils/
 
 ---
 
+## 12. EDGE CASES ET FALLBACKS
+
+### 12.1 Problématique
+
+Les engines doivent gérer gracieusement les situations anormales. Un crash ou un résultat incohérent est pire qu'un "CANNOT_ASSESS" explicite.
+
+### 12.2 Edge Cases - Consensus Engine
+
+#### Case 1: 3+ agents avec positions différentes sur la même métrique
+
+```typescript
+// Situation: financial-auditor dit ARR=500K, market-intel dit ARR=800K, deck-forensics dit ARR=520K
+
+interface MultiPositionContradiction extends EnhancedContradiction {
+  positions: ContradictionPosition[]; // Array > 2
+  clusterAnalysis?: {
+    clusters: { positions: string[]; avgValue: number; avgConfidence: number }[];
+    outliers: string[];
+  };
+}
+
+function handleMultiPositionContradiction(
+  contradiction: MultiPositionContradiction
+): ResolutionStrategy {
+  const positions = contradiction.positions;
+
+  // Stratégie 1: Clustering par proximité de valeur (seuil 15%)
+  const clusters = clusterPositionsByValue(positions, 0.15);
+
+  if (clusters.length === 1) {
+    // Tous proches → prendre la moyenne pondérée par confiance
+    return { strategy: "WEIGHTED_AVERAGE", clusters };
+  }
+
+  if (clusters.length === 2) {
+    // 2 clusters → traiter comme contradiction binaire classique
+    // Prendre le cluster avec la plus haute confiance moyenne
+    const dominant = clusters.reduce((a, b) =>
+      a.avgConfidence > b.avgConfidence ? a : b
+    );
+    return { strategy: "DOMINANT_CLUSTER", winner: dominant };
+  }
+
+  // 3+ clusters → trop d'incertitude
+  return {
+    strategy: "CANNOT_ASSESS",
+    reason: `${clusters.length} positions incompatibles sans cluster dominant`,
+    suggestedAction: "Demander clarification au fondateur"
+  };
+}
+
+function clusterPositionsByValue(
+  positions: ContradictionPosition[],
+  threshold: number
+): Cluster[] {
+  // Implémentation du clustering par proximité
+  const clusters: Cluster[] = [];
+  const sorted = [...positions].sort((a, b) =>
+    Number(a.value) - Number(b.value)
+  );
+
+  let currentCluster: ContradictionPosition[] = [sorted[0]];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = Number(sorted[i - 1].value);
+    const curr = Number(sorted[i].value);
+    const deviation = Math.abs(curr - prev) / prev;
+
+    if (deviation <= threshold) {
+      currentCluster.push(sorted[i]);
+    } else {
+      clusters.push(createCluster(currentCluster));
+      currentCluster = [sorted[i]];
+    }
+  }
+  clusters.push(createCluster(currentCluster));
+
+  return clusters;
+}
+```
+
+#### Case 2: Les deux positions ont une confiance < 50%
+
+```typescript
+function handleLowConfidenceBothSides(
+  contradiction: EnhancedContradiction
+): EnhancedResolution {
+  const [posA, posB] = contradiction.positions;
+
+  // Si les deux sont < 50%, on ne peut pas trancher
+  if (posA.confidence < 50 && posB.confidence < 50) {
+    return {
+      contradictionId: contradiction.id,
+      resolvedAt: new Date(),
+      verdict: {
+        decision: "UNRESOLVED",
+        winner: null,
+        justification: {
+          decisiveFactors: [],
+          rejectedPositionFlaws: [
+            {
+              position: posA.agentName,
+              flaw: `Confiance trop faible: ${posA.confidence}%`,
+              evidence: "Seuil minimum de 50% non atteint"
+            },
+            {
+              position: posB.agentName,
+              flaw: `Confiance trop faible: ${posB.confidence}%`,
+              evidence: "Seuil minimum de 50% non atteint"
+            }
+          ]
+        }
+      },
+      finalValue: {
+        value: null,
+        confidence: 0,
+        derivedFrom: {
+          source: "CANNOT_ASSESS - confiance insuffisante des deux côtés"
+        }
+      },
+      baGuidance: {
+        oneLiner: `${contradiction.topic}: données insuffisantes pour trancher`,
+        canTrust: false,
+        trustLevel: "LOW",
+        whatToVerify: "Les données du deck sont insuffisantes ou contradictoires",
+        questionForFounder: buildClarificationQuestion(contradiction),
+        verifiableSources: []
+      },
+      debateRecord: {
+        rounds: [],
+        totalDuration: 0,
+        tokensUsed: 0,
+        optimizationApplied: "LOW_CONFIDENCE_SKIP"
+      },
+      unresolvedAspects: [{
+        aspect: contradiction.topic,
+        reason: `Agent A: ${posA.confidence}%, Agent B: ${posB.confidence}% - tous deux < 50%`,
+        suggestedAction: "BLOQUANT: demander données précises au fondateur"
+      }]
+    };
+  }
+
+  // Sinon, traitement normal
+  return null; // Continue avec le flow standard
+}
+```
+
+#### Case 3: Deck sans slides numérotées
+
+```typescript
+interface DeckExtractionQuality {
+  hasSlideNumbers: boolean;
+  extractionConfidence: number; // 0-100
+  warnings: string[];
+  fallbackReferences: boolean; // Utilise des références textuelles au lieu de numéros
+}
+
+function adaptSourceReferences(
+  quality: DeckExtractionQuality,
+  systemPrompt: string
+): string {
+  if (!quality.hasSlideNumbers) {
+    return systemPrompt.replace(
+      /Slide \d+/g,
+      "Section du deck"
+    ) + `
+
+## NOTE IMPORTANTE - RÉFÉRENCES DECK
+Le deck analysé n'a pas de numéros de slides. Utilise des références textuelles:
+- "Section 'Team'" au lieu de "Slide 5"
+- "Paragraphe commençant par 'Our revenue...'" au lieu de "Slide 8"
+- Cite le TEXTE EXACT entre guillemets pour permettre la vérification`;
+  }
+
+  return systemPrompt;
+}
+```
+
+#### Case 4: Financial Model avec formats incohérents
+
+```typescript
+interface FinancialModelQuality {
+  currency: string | null;          // null si mixte ou non détecté
+  dateFormat: string | null;        // null si incohérent
+  hasNamedRanges: boolean;
+  tabNamingConsistent: boolean;
+  extractionConfidence: number;
+  issues: {
+    type: "mixed_currency" | "inconsistent_dates" | "missing_formulas" | "circular_refs";
+    details: string;
+    severity: "warning" | "error";
+  }[];
+}
+
+function handleInconsistentFinancialModel(
+  quality: FinancialModelQuality,
+  verificationContext: VerificationContext
+): VerificationContext {
+  const warnings: string[] = [];
+
+  if (quality.currency === null) {
+    warnings.push("ATTENTION: Devises mixtes dans le FM - vérifier les conversions");
+  }
+
+  if (quality.extractionConfidence < 70) {
+    warnings.push(`ATTENTION: Extraction FM peu fiable (${quality.extractionConfidence}%) - cross-vérifier avec le deck`);
+  }
+
+  for (const issue of quality.issues) {
+    if (issue.severity === "error") {
+      warnings.push(`ERREUR FM: ${issue.type} - ${issue.details}`);
+    }
+  }
+
+  return {
+    ...verificationContext,
+    financialModelExtracts: verificationContext.financialModelExtracts
+      ? `## AVERTISSEMENTS FM\n${warnings.join("\n")}\n\n${verificationContext.financialModelExtracts}`
+      : undefined,
+    financialModelQuality: quality
+  };
+}
+```
+
+### 12.3 Edge Cases - Reflexion Engine
+
+#### Case 1: Agent output vide ou malformé
+
+```typescript
+function validateAgentOutputForReflexion(
+  output: unknown,
+  agentName: string
+): { valid: boolean; error?: string; canReflect: boolean } {
+  // Output null/undefined
+  if (output === null || output === undefined) {
+    return {
+      valid: false,
+      error: `Agent ${agentName} a retourné null/undefined`,
+      canReflect: false // Rien à critiquer
+    };
+  }
+
+  // Output vide (objet/array vide)
+  if (typeof output === "object") {
+    const isEmpty = Array.isArray(output)
+      ? output.length === 0
+      : Object.keys(output).length === 0;
+
+    if (isEmpty) {
+      return {
+        valid: false,
+        error: `Agent ${agentName} a retourné un output vide`,
+        canReflect: false
+      };
+    }
+  }
+
+  // Output sans findings
+  if (typeof output === "object" && !Array.isArray(output)) {
+    const obj = output as Record<string, unknown>;
+    if (!obj.findings && !obj.analysis && !obj.metrics) {
+      return {
+        valid: true,
+        error: `Agent ${agentName} output sans structure standard (findings/analysis/metrics)`,
+        canReflect: true // On peut quand même critiquer le format
+      };
+    }
+  }
+
+  return { valid: true, canReflect: true };
+}
+```
+
+#### Case 2: Toutes les critiques sont CANNOT_FIX
+
+```typescript
+function handleAllCannotFix(
+  critiques: EnhancedCritique[],
+  improvements: EnhancedImprovement[]
+): {
+  escalate: boolean;
+  action: string;
+  baNotice: BANotice;
+} {
+  const cannotFixCount = improvements.filter(i => i.status === "CANNOT_FIX").length;
+  const cannotFixRatio = cannotFixCount / improvements.length;
+
+  if (cannotFixRatio > 0.7) {
+    // Plus de 70% de critiques non corrigeables
+    return {
+      escalate: true,
+      action: "DATA_INSUFFICIENCY",
+      baNotice: {
+        remainingWeaknesses: critiques.map(c => c.issue),
+        dataNeedsFromFounder: critiques
+          .filter(c => c.type === "missing_data_not_flagged" || c.type === "unsourced_claim")
+          .map(c => c.suggestedFix.action),
+        confidenceLevel: "LOW"
+      }
+    };
+  }
+
+  return {
+    escalate: false,
+    action: "CONTINUE",
+    baNotice: {
+      remainingWeaknesses: improvements
+        .filter(i => i.status === "CANNOT_FIX")
+        .map(i => i.change.before),
+      dataNeedsFromFounder: [],
+      confidenceLevel: "MEDIUM"
+    }
+  };
+}
+```
+
+### 12.4 Fallback Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    HIÉRARCHIE DES FALLBACKS                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  NIVEAU 1: Données primaires disponibles                                │
+│  ─────────────────────────────────────────                              │
+│  ├─ Deck avec slides numérotées ✓                                       │
+│  ├─ Financial Model structuré ✓                                         │
+│  └─ → TRAITEMENT NORMAL                                                 │
+│                                                                         │
+│  NIVEAU 2: Données primaires partielles                                 │
+│  ───────────────────────────────────────                                │
+│  ├─ Deck sans numéros → Références textuelles                          │
+│  ├─ FM avec erreurs → Warnings + cross-check deck                       │
+│  └─ → TRAITEMENT AVEC AVERTISSEMENTS                                    │
+│                                                                         │
+│  NIVEAU 3: Données primaires insuffisantes                              │
+│  ─────────────────────────────────────────                              │
+│  ├─ Context Engine disponible → Utiliser comme source secondaire        │
+│  ├─ Funding DB disponible → Utiliser benchmarks                         │
+│  └─ → TRAITEMENT DÉGRADÉ + trustLevel=MEDIUM                            │
+│                                                                         │
+│  NIVEAU 4: Aucune donnée fiable                                         │
+│  ────────────────────────────                                           │
+│  ├─ Toutes sources < 50% confiance                                      │
+│  ├─ → verdict=CANNOT_ASSESS                                             │
+│  ├─ → trustLevel=LOW                                                    │
+│  └─ → questionForFounder obligatoire                                    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 13. MÉTRIQUES DE SUCCÈS
+
+### 13.1 Pourquoi des Métriques
+
+Sans métriques, impossible de savoir si la refonte améliore réellement la qualité. On risque de complexifier sans gain.
+
+### 13.2 Métriques Consensus Engine
+
+```typescript
+// src/agents/orchestration/metrics/consensus-metrics.ts
+
+export interface ConsensusMetrics {
+  // VOLUME
+  totalContradictionsDetected: number;
+  contradictionsByType: Record<ContradictionType, number>;
+  contradictionsBySeverity: Record<ContradictionSeverity, number>;
+
+  // RÉSOLUTION
+  resolutionRate: number;           // % contradictions résolues (non UNRESOLVED)
+  averageDebateRounds: number;       // Moyenne de rounds avant résolution
+  skipToArbitrationRate: number;     // % skip grâce à confiance asymétrique
+  autoResolveRate: number;           // % MINOR auto-résolues
+
+  // QUALITÉ
+  highTrustResolutions: number;      // % avec trustLevel=HIGH
+  mediumTrustResolutions: number;    // % avec trustLevel=MEDIUM
+  lowTrustResolutions: number;       // % avec trustLevel=LOW
+  unresolvedCritical: number;        // Nb CRITICAL non résolues (doit être 0)
+
+  // COÛTS
+  averageTokensPerContradiction: number;
+  totalTokensUsed: number;
+  estimatedCostUSD: number;
+
+  // TEMPS
+  averageResolutionTimeMs: number;
+  p95ResolutionTimeMs: number;
+}
+
+export interface ConsensusMetricsTargets {
+  resolutionRate: { target: 85, minimum: 70 };           // % minimum acceptable
+  highTrustResolutions: { target: 60, minimum: 40 };    // % HIGH trust
+  unresolvedCritical: { target: 0, maximum: 2 };        // Max CRITICAL non résolues
+  averageTokensPerContradiction: { target: 8000, maximum: 15000 };
+  averageResolutionTimeMs: { target: 5000, maximum: 15000 };
+}
+```
+
+### 13.3 Métriques Reflexion Engine
+
+```typescript
+// src/agents/orchestration/metrics/reflexion-metrics.ts
+
+export interface ReflexionMetrics {
+  // VOLUME
+  totalAgentsReflected: number;
+  totalCritiquesGenerated: number;
+  critiquesByType: Record<CritiqueType, number>;
+  critiquesBySeverity: Record<CritiqueSeverity, number>;
+
+  // CORRECTIONS
+  fixRate: number;                    // % critiques FIXED
+  partialFixRate: number;             // % critiques PARTIALLY_FIXED
+  cannotFixRate: number;              // % critiques CANNOT_FIX
+
+  // AMÉLIORATION QUALITÉ
+  averageConfidenceGain: number;      // Gain moyen de confiance (ex: +12 points)
+  averageQualityScoreGain: number;    // Gain moyen de qualité (ex: +20 points)
+  readyForBARate: number;             // % agents readyForBA=true après reflexion
+
+  // COÛTS
+  averageTokensPerReflexion: number;
+  totalTokensUsed: number;
+
+  // TEMPS
+  averageReflexionTimeMs: number;
+}
+
+export interface ReflexionMetricsTargets {
+  fixRate: { target: 70, minimum: 50 };
+  averageConfidenceGain: { target: 15, minimum: 8 };
+  averageQualityScoreGain: { target: 20, minimum: 10 };
+  readyForBARate: { target: 90, minimum: 75 };
+  cannotFixRate: { target: 15, maximum: 30 };
+}
+```
+
+### 13.4 Dashboard de Suivi
+
+```typescript
+// src/agents/orchestration/metrics/metrics-collector.ts
+
+import { ConsensusMetrics, ReflexionMetrics } from "./types";
+
+export class MetricsCollector {
+  private consensusHistory: ConsensusMetrics[] = [];
+  private reflexionHistory: ReflexionMetrics[] = [];
+
+  recordConsensusRun(metrics: ConsensusMetrics): void {
+    this.consensusHistory.push({
+      ...metrics,
+      timestamp: new Date()
+    });
+
+    // Alertes si hors cibles
+    if (metrics.unresolvedCritical > 0) {
+      console.error(`[ALERT] ${metrics.unresolvedCritical} contradictions CRITICAL non résolues!`);
+    }
+
+    if (metrics.resolutionRate < 70) {
+      console.warn(`[WARNING] Resolution rate faible: ${metrics.resolutionRate}%`);
+    }
+  }
+
+  recordReflexionRun(metrics: ReflexionMetrics): void {
+    this.reflexionHistory.push({
+      ...metrics,
+      timestamp: new Date()
+    });
+
+    if (metrics.cannotFixRate > 30) {
+      console.warn(`[WARNING] Cannot fix rate élevé: ${metrics.cannotFixRate}%`);
+    }
+  }
+
+  getWeeklyReport(): EnginePerformanceReport {
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recentConsensus = this.consensusHistory.filter(m => m.timestamp >= weekAgo);
+    const recentReflexion = this.reflexionHistory.filter(m => m.timestamp >= weekAgo);
+
+    return {
+      period: "weekly",
+      consensus: aggregateMetrics(recentConsensus),
+      reflexion: aggregateMetrics(recentReflexion),
+      alerts: this.generateAlerts(recentConsensus, recentReflexion),
+      recommendations: this.generateRecommendations(recentConsensus, recentReflexion)
+    };
+  }
+}
+```
+
+### 13.5 A/B Testing des Prompts
+
+```typescript
+// Pour comparer les performances de différentes versions de prompts
+
+interface PromptVariant {
+  id: string;
+  name: string;
+  systemPrompt: string;
+  trafficPercentage: number; // 0-100
+}
+
+interface ABTestResult {
+  variantId: string;
+  sampleSize: number;
+  metrics: ConsensusMetrics | ReflexionMetrics;
+  statisticalSignificance: number; // p-value
+}
+
+const CONSENSUS_ARBITRATOR_VARIANTS: PromptVariant[] = [
+  {
+    id: "v1-verbose",
+    name: "Prompt verbeux actuel",
+    systemPrompt: buildArbitratorSystemPrompt(), // Version actuelle
+    trafficPercentage: 50
+  },
+  {
+    id: "v2-concise",
+    name: "Prompt condensé",
+    systemPrompt: buildConciseArbitratorPrompt(), // Version plus courte
+    trafficPercentage: 50
+  }
+];
+
+function selectPromptVariant(variants: PromptVariant[]): PromptVariant {
+  const rand = Math.random() * 100;
+  let cumulative = 0;
+
+  for (const variant of variants) {
+    cumulative += variant.trafficPercentage;
+    if (rand < cumulative) return variant;
+  }
+
+  return variants[0];
+}
+```
+
+---
+
+## 14. CALCULS ARITHMÉTIQUES EN CODE
+
+### 14.1 Problématique
+
+**CRITIQUE:** Les LLMs sont notoirement mauvais en arithmétique. Leur demander de "vérifier mathématiquement" un calcul est une erreur.
+
+```
+Exemple de fail LLM classique:
+- Input: "Calcule 42,000 × 12"
+- LLM output: "504,000" ✓ (souvent correct pour des calculs simples)
+- Mais: "Calcule (507,000 - 142,000) / 507,000"
+- LLM output: "0.72" ou "72%" ou "71.99%" (inconsistant)
+```
+
+### 14.2 Solution: Calculs en TypeScript
+
+**Règle:** Tout calcul DOIT être fait en code TypeScript. Le LLM reçoit le RÉSULTAT et l'INTERPRÈTE.
+
+```typescript
+// src/agents/orchestration/utils/financial-calculations.ts
+
+/**
+ * TOUS les calculs financiers passent par ce module.
+ * Le LLM ne fait JAMAIS de calcul lui-même.
+ */
+
+export interface CalculationResult {
+  value: number;
+  formula: string;
+  inputs: { name: string; value: number; source: string }[];
+  formatted: string;
+  calculation: string; // Step-by-step pour affichage
+}
+
+// ============================================
+// MÉTRIQUES SaaS
+// ============================================
+
+export function calculateARR(mrr: number, source: string): CalculationResult {
+  const arr = mrr * 12;
+  return {
+    value: arr,
+    formula: "ARR = MRR × 12",
+    inputs: [{ name: "MRR", value: mrr, source }],
+    formatted: formatCurrency(arr),
+    calculation: `MRR ${formatCurrency(mrr)} × 12 = ${formatCurrency(arr)}`
+  };
+}
+
+export function calculateGrossMargin(
+  revenue: number,
+  cogs: number,
+  revenueSource: string,
+  cogsSource: string
+): CalculationResult {
+  const grossProfit = revenue - cogs;
+  const margin = (grossProfit / revenue) * 100;
+
+  return {
+    value: margin,
+    formula: "Gross Margin = (Revenue - COGS) / Revenue × 100",
+    inputs: [
+      { name: "Revenue", value: revenue, source: revenueSource },
+      { name: "COGS", value: cogs, source: cogsSource }
+    ],
+    formatted: `${margin.toFixed(1)}%`,
+    calculation: `(${formatCurrency(revenue)} - ${formatCurrency(cogs)}) / ${formatCurrency(revenue)} × 100 = ${margin.toFixed(1)}%`
+  };
+}
+
+export function calculateCAGR(
+  startValue: number,
+  endValue: number,
+  years: number,
+  startSource: string,
+  endSource: string
+): CalculationResult {
+  const cagr = (Math.pow(endValue / startValue, 1 / years) - 1) * 100;
+
+  return {
+    value: cagr,
+    formula: "CAGR = ((End Value / Start Value)^(1/Years) - 1) × 100",
+    inputs: [
+      { name: "Start Value", value: startValue, source: startSource },
+      { name: "End Value", value: endValue, source: endSource },
+      { name: "Years", value: years, source: "Période de projection" }
+    ],
+    formatted: `${cagr.toFixed(1)}%`,
+    calculation: `(${formatCurrency(endValue)} / ${formatCurrency(startValue)})^(1/${years}) - 1 = ${cagr.toFixed(1)}%`
+  };
+}
+
+export function calculateLTVCACRatio(
+  ltv: number,
+  cac: number,
+  ltvSource: string,
+  cacSource: string
+): CalculationResult {
+  const ratio = ltv / cac;
+
+  return {
+    value: ratio,
+    formula: "LTV/CAC = LTV / CAC",
+    inputs: [
+      { name: "LTV", value: ltv, source: ltvSource },
+      { name: "CAC", value: cac, source: cacSource }
+    ],
+    formatted: `${ratio.toFixed(1)}x`,
+    calculation: `${formatCurrency(ltv)} / ${formatCurrency(cac)} = ${ratio.toFixed(1)}x`
+  };
+}
+
+export function calculateRuleOf40(
+  revenueGrowth: number,
+  profitMargin: number,
+  growthSource: string,
+  marginSource: string
+): CalculationResult {
+  const score = revenueGrowth + profitMargin;
+
+  return {
+    value: score,
+    formula: "Rule of 40 = Revenue Growth % + Profit Margin %",
+    inputs: [
+      { name: "Revenue Growth", value: revenueGrowth, source: growthSource },
+      { name: "Profit Margin", value: profitMargin, source: marginSource }
+    ],
+    formatted: `${score.toFixed(0)}%`,
+    calculation: `${revenueGrowth.toFixed(1)}% + ${profitMargin.toFixed(1)}% = ${score.toFixed(0)}%`
+  };
+}
+
+// ============================================
+// COMPARAISONS
+// ============================================
+
+export function calculatePercentageDeviation(
+  valueA: number,
+  valueB: number
+): { deviation: number; formatted: string; significant: boolean } {
+  const avg = (valueA + valueB) / 2;
+  const deviation = Math.abs(valueA - valueB) / avg * 100;
+
+  return {
+    deviation,
+    formatted: `${deviation.toFixed(1)}%`,
+    significant: deviation > 30 // Seuil de contradiction
+  };
+}
+
+export function calculatePercentile(
+  value: number,
+  benchmarks: { p25: number; median: number; p75: number; p90?: number }
+): { percentile: number; interpretation: string } {
+  // Interpolation linéaire entre les percentiles
+  if (value <= benchmarks.p25) {
+    return { percentile: 25 * (value / benchmarks.p25), interpretation: "Bottom quartile" };
+  }
+  if (value <= benchmarks.median) {
+    return {
+      percentile: 25 + 25 * ((value - benchmarks.p25) / (benchmarks.median - benchmarks.p25)),
+      interpretation: "Below median"
+    };
+  }
+  if (value <= benchmarks.p75) {
+    return {
+      percentile: 50 + 25 * ((value - benchmarks.median) / (benchmarks.p75 - benchmarks.median)),
+      interpretation: "Above median"
+    };
+  }
+  if (benchmarks.p90 && value <= benchmarks.p90) {
+    return {
+      percentile: 75 + 15 * ((value - benchmarks.p75) / (benchmarks.p90 - benchmarks.p75)),
+      interpretation: "Top quartile"
+    };
+  }
+  return { percentile: 95, interpretation: "Top decile" };
+}
+
+// ============================================
+// HELPERS
+// ============================================
+
+function formatCurrency(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M€`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(0)}K€`;
+  }
+  return `${value.toFixed(0)}€`;
+}
+```
+
+### 14.3 Injection des Calculs dans les Prompts
+
+```typescript
+// Au lieu de demander au LLM de calculer, on lui donne le résultat
+
+export function buildArbitratorPromptWithCalculations(
+  contradiction: EnhancedContradiction,
+  calculations: CalculationResult[],
+  verificationContext: VerificationContext
+): string {
+  const calculationsSection = calculations.length > 0
+    ? `
+## CALCULS VÉRIFIÉS (faits en code, pas par le LLM)
+
+${calculations.map(c => `
+### ${c.formula}
+- **Résultat:** ${c.formatted}
+- **Inputs:** ${c.inputs.map(i => `${i.name}=${i.value} (${i.source})`).join(", ")}
+- **Calcul:** ${c.calculation}
+`).join("\n")}
+
+⚠️ Ces calculs sont CORRECTS. Ne les refais pas. Utilise-les pour ton analyse.
+`
+    : "";
+
+  return `${buildArbitratorPrompt(contradiction, [], verificationContext)}
+
+${calculationsSection}`;
+}
+```
+
+### 14.4 Validation des Inputs avant Calcul
+
+```typescript
+export function validateAndCalculate<T>(
+  calculationFn: () => CalculationResult,
+  validation: {
+    minValue?: number;
+    maxValue?: number;
+    mustBePositive?: boolean;
+  }
+): CalculationResult | { error: string } {
+  try {
+    const result = calculationFn();
+
+    if (validation.mustBePositive && result.value < 0) {
+      return { error: `Résultat négatif inattendu: ${result.value}` };
+    }
+
+    if (validation.minValue !== undefined && result.value < validation.minValue) {
+      return { error: `Valeur ${result.value} inférieure au minimum ${validation.minValue}` };
+    }
+
+    if (validation.maxValue !== undefined && result.value > validation.maxValue) {
+      return { error: `Valeur ${result.value} supérieure au maximum ${validation.maxValue}` };
+    }
+
+    return result;
+  } catch (e) {
+    return { error: `Erreur de calcul: ${e}` };
+  }
+}
+```
+
+---
+
+## 15. ORGANISATION DES FICHIERS
+
+### 15.1 Problématique
+
+Le document actuel fait 3500+ lignes. C'est difficile à maintenir et à naviguer.
+
+### 15.2 Structure Recommandée
+
+```
+src/agents/orchestration/
+├── index.ts                          # Exports publics
+│
+├── consensus/
+│   ├── index.ts                      # Export ConsensusEngine
+│   ├── types.ts                      # Types Section 4.1
+│   ├── engine.ts                     # ConsensusEngine class
+│   ├── detection.ts                  # Logique de détection des contradictions
+│   ├── resolution.ts                 # Logique de résolution
+│   ├── prompts/
+│   │   ├── debater.ts                # Prompts debater (Section 4.2, 4.3)
+│   │   └── arbitrator.ts             # Prompts arbitrator (Section 4.4, 4.5)
+│   ├── schemas.ts                    # Schemas Zod (Section 8.2)
+│   └── __tests__/
+│       ├── detection.test.ts
+│       └── resolution.test.ts
+│
+├── reflexion/
+│   ├── index.ts                      # Export ReflexionEngine
+│   ├── types.ts                      # Types Section 5.1
+│   ├── engine.ts                     # ReflexionEngine class
+│   ├── critique.ts                   # Logique de critique
+│   ├── improvement.ts                # Logique d'amélioration
+│   ├── prompts/
+│   │   ├── critic.ts                 # Prompts critic (Section 5.2, 5.3)
+│   │   └── improver.ts               # Prompts improver (Section 5.4, 5.5)
+│   ├── schemas.ts                    # Schemas Zod (Section 8.3)
+│   └── __tests__/
+│       ├── critique.test.ts
+│       └── improvement.test.ts
+│
+├── common/
+│   ├── config.ts                     # QUALITY_ENGINE_CONFIG (Section 6.3)
+│   ├── verification-context.ts       # VerificationContext (Section 7.3)
+│   ├── llm-validation.ts             # completAndValidate (Section 8.4)
+│   ├── financial-calculations.ts     # Calculs arithmétiques (Section 14)
+│   └── fallbacks.ts                  # Edge cases et fallbacks (Section 12)
+│
+├── metrics/
+│   ├── types.ts                      # Types métriques
+│   ├── collector.ts                  # MetricsCollector
+│   └── targets.ts                    # Cibles de performance
+│
+└── integration/
+    └── quality-processor.ts          # QualityProcessor (Section 7.2)
+```
+
+### 15.3 Imports Simplifiés
+
+```typescript
+// Usage depuis l'extérieur du module
+import {
+  ConsensusEngine,
+  ReflexionEngine,
+  QualityProcessor,
+  QUALITY_ENGINE_CONFIG
+} from "@/agents/orchestration";
+
+// Les types sont aussi exportés
+import type {
+  EnhancedContradiction,
+  EnhancedResolution,
+  EnhancedReflexionOutput
+} from "@/agents/orchestration";
+```
+
+### 15.4 Index Principal
+
+```typescript
+// src/agents/orchestration/index.ts
+
+// Engines
+export { ConsensusEngine } from "./consensus";
+export { ReflexionEngine } from "./reflexion";
+
+// Integration
+export { QualityProcessor } from "./integration/quality-processor";
+
+// Config
+export { QUALITY_ENGINE_CONFIG } from "./common/config";
+
+// Types (re-export)
+export type {
+  // Consensus
+  EnhancedContradiction,
+  EnhancedResolution,
+  ContradictionType,
+  ContradictionSeverity,
+  VerdictType,
+  BAGuidance,
+} from "./consensus/types";
+
+export type {
+  // Reflexion
+  EnhancedCritique,
+  EnhancedImprovement,
+  EnhancedReflexionOutput,
+  CritiqueType,
+  CritiqueSeverity,
+} from "./reflexion/types";
+
+// Schemas (pour validation externe si besoin)
+export {
+  ArbitratorResponseSchema,
+  DebaterResponseSchema,
+} from "./consensus/schemas";
+
+export {
+  CriticResponseSchema,
+  ImproverResponseSchema,
+} from "./reflexion/schemas";
+
+// Utils
+export { completAndValidate } from "./common/llm-validation";
+export { buildVerificationContext } from "./common/verification-context";
+export * from "./common/financial-calculations";
+```
+
+---
+
 ## FIN DU DOCUMENT
 
-**Version:** 2.1 - Ajout gestion des benchmarks sectoriels
+**Version:** 3.0 - Ajout edge cases, métriques de succès, calculs en code, et organisation fichiers
 **Derniere mise a jour:** 2026-01-28
 **Auteur:** Refonte complete pour implementation par agent
 
-### Resume des Ajouts vs Version 2.0
+---
 
-| Section | Ajout |
-|---------|-------|
-| **Section 11** | Gestion des Benchmarks Sectoriels |
-| 11.1 | Problématique des benchmarks hardcodés |
-| 11.2 | Distinction Funding DB vs Standards externes |
-| 11.3-11.4 | Types TypeScript + fichier d'exemple |
-| 11.5 | Index et helpers (getStandardsForContext, checkExpiredStandards) |
-| 11.6 | Fonction d'injection dans les prompts |
-| 11.7 | Exemple d'utilisation dans un agent |
-| 11.8 | Procédure de maintenance |
-| 11.9 | Checklist de validation |
-| 11.10 | Liste des fichiers à créer |
+### Resume des Ajouts - Version 3.0 (CETTE VERSION)
 
-### Resume des Ajouts vs Version 1.0
+| Section | Ajout | Impact |
+|---------|-------|--------|
+| **Section 12** | Edge Cases et Fallbacks | Robustesse ++, moins de crashes |
+| 12.2 | 3+ agents en désaccord → clustering | Gère les contradictions multiples |
+| 12.2 | 2 positions < 50% confiance → CANNOT_ASSESS | Évite les faux positifs |
+| 12.2 | Deck sans slides numérotées → références textuelles | Compatibilité élargie |
+| 12.2 | FM avec erreurs → warnings + cross-check | Dégradation gracieuse |
+| 12.4 | Hiérarchie des fallbacks | Comportement prévisible |
+| **Section 13** | Métriques de Succès | Mesure de l'amélioration |
+| 13.2-13.3 | Métriques Consensus + Reflexion | KPIs quantifiables |
+| 13.4 | Dashboard + alertes | Monitoring en production |
+| 13.5 | A/B Testing des prompts | Optimisation continue |
+| **Section 14** | Calculs Arithmétiques en Code | Fiabilité +++ |
+| 14.2 | financial-calculations.ts | Plus de calculs LLM |
+| 14.3 | Injection résultats dans prompts | LLM interprète, ne calcule pas |
+| **Section 15** | Organisation des Fichiers | Maintenabilité ++ |
+| 15.2 | Structure consensus/reflexion/common | Séparation des concerns |
+| 15.4 | Index principal avec exports | API propre |
 
-| Section | Ajout |
-|---------|-------|
-| Standards | Seuils justifies, matrice de declenchement |
-| Consensus | Types complets, prompts system+user, exemples JSON |
-| Reflexion | Types complets, prompts system+user, exemples JSON |
-| Section 6 | Gestion des couts et optimisations |
-| Section 7 | Integration orchestrateur (code complet) |
-| Section 8 | Schemas Zod avec validation |
-| Section 9 | Tests unitaires |
-| Section 10 | Liste fichiers a creer avec ordre |
-| **Section 11** | Gestion des benchmarks sectoriels (NOUVEAU v2.1) |
+### Changements Critiques
 
-Ce document est maintenant **100% actionnable**. Un agent peut l'utiliser directement pour implementer les deux engines sans ambiguite.
-**Derniere mise a jour:** 2026-01-28
-**Auteur:** Refonte complete pour implementation par agent
+| Avant (v2.x) | Après (v3.0) | Raison |
+|--------------|--------------|--------|
+| LLM calcule les métriques | Code TS calcule, LLM interprète | LLMs mauvais en arithmétique |
+| Pas de gestion 3+ positions | Clustering + fallback CANNOT_ASSESS | Edge case réel en prod |
+| Pas de métriques | KPIs + targets + alertes | Impossible de mesurer l'amélioration |
+| 1 fichier de 3500 lignes | Structure modulaire | Maintenabilité |
+| trustLevel forcé sur contradictions faibles | CANNOT_ASSESS explicite | Honnêteté envers le BA |
 
-### Resume des Ajouts vs Version 1.0
+---
 
-| Section | Ajout |
-|---------|-------|
-| Standards | Seuils justifies, matrice de declenchement |
-| Consensus | Types complets, prompts system+user, exemples JSON |
-| Reflexion | Types complets, prompts system+user, exemples JSON |
-| **NOUVEAU** | Gestion des couts et optimisations |
-| **NOUVEAU** | Integration orchestrateur (code complet) |
-| **NOUVEAU** | Schemas Zod avec validation |
-| **NOUVEAU** | Tests unitaires |
-| **NOUVEAU** | Liste fichiers a creer avec ordre |
+### Historique des Versions
 
-Ce document est maintenant **100% actionnable**. Un agent peut l'utiliser directement pour implementer les deux engines sans ambiguite.
+| Version | Date | Changements clés |
+|---------|------|------------------|
+| 1.0 | - | Document initial, prompts basiques |
+| 2.0 | - | Types complets, Zod, optimisations coûts |
+| 2.1 | - | Gestion des benchmarks sectoriels |
+| **3.0** | 2026-01-28 | Edge cases, métriques, calculs code, organisation |
+
+---
+
+Ce document est maintenant **100% actionnable et robuste**. Un agent peut l'utiliser directement pour implementer les deux engines avec:
+- Gestion des cas limites
+- Métriques de suivi
+- Calculs fiables
+- Code maintenable
 

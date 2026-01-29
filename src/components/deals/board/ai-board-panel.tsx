@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useReducer } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,25 +36,23 @@ interface AIBoardPanelProps {
   dealName: string;
 }
 
-// Query key factory
-const boardKeys = {
-  all: ["board"] as const,
-  credits: () => [...boardKeys.all, "credits"] as const,
-  session: (sessionId: string) => [...boardKeys.all, "session", sessionId] as const,
-  dealSessions: (dealId: string) => [...boardKeys.all, "deal", dealId] as const,
-};
+// Reducer for events — avoids O(n²) spread in SSE loop
+function eventsReducer(state: BoardProgressEvent[], action: { type: "add"; event: BoardProgressEvent } | { type: "reset" }): BoardProgressEvent[] {
+  if (action.type === "reset") return [];
+  return [...state, action.event];
+}
 
 export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
   const queryClient = useQueryClient();
   const [isRunning, setIsRunning] = useState(false);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [events, setEvents] = useState<BoardProgressEvent[]>([]);
+  const currentSessionIdRef = useRef<string | null>(null);
+  const [events, dispatchEvents] = useReducer(eventsReducer, []);
   const [result, setResult] = useState<BoardVerdictResult | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Fetch credits status
   const { data: creditsData, isLoading: isLoadingCredits } = useQuery({
-    queryKey: boardKeys.credits(),
+    queryKey: queryKeys.board.credits(),
     queryFn: async () => {
       const res = await fetch("/api/board");
       if (!res.ok) throw new Error("Failed to fetch credits");
@@ -64,7 +63,7 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
 
   // Fetch existing session for this deal (if any)
   const { data: existingSession } = useQuery({
-    queryKey: boardKeys.dealSessions(dealId),
+    queryKey: queryKeys.board.dealSessions(dealId),
     queryFn: async () => {
       // Get sessions for this deal from the list
       // For now we'll check if there's a completed session
@@ -75,8 +74,9 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
 
   const startBoard = useCallback(async () => {
     setIsRunning(true);
-    setEvents([]);
+    dispatchEvents({ type: "reset" });
     setResult(null);
+    currentSessionIdRef.current = null;
 
     abortControllerRef.current = new AbortController();
 
@@ -111,11 +111,11 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
           if (line.startsWith("data: ")) {
             const eventData = JSON.parse(line.slice(6)) as BoardProgressEvent;
 
-            if (eventData.sessionId && !currentSessionId) {
-              setCurrentSessionId(eventData.sessionId);
+            if (eventData.sessionId && !currentSessionIdRef.current) {
+              currentSessionIdRef.current = eventData.sessionId;
             }
 
-            setEvents((prev) => [...prev, eventData]);
+            dispatchEvents({ type: "add", event: eventData });
 
             if (eventData.type === "verdict_reached" && eventData.verdict) {
               setResult(eventData.verdict);
@@ -138,17 +138,17 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
     }
 
     // Invalidate credits after run
-    queryClient.invalidateQueries({ queryKey: boardKeys.credits() });
-  }, [dealId, currentSessionId, queryClient]);
+    queryClient.invalidateQueries({ queryKey: queryKeys.board.credits() });
+  }, [dealId, queryClient]);
 
   const stopBoard = useCallback(async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
 
-    if (currentSessionId) {
+    if (currentSessionIdRef.current) {
       try {
-        await fetch(`/api/board/${currentSessionId}`, {
+        await fetch(`/api/board/${currentSessionIdRef.current}`, {
           method: "POST",
         });
       } catch (error) {
@@ -157,7 +157,7 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
     }
 
     setIsRunning(false);
-  }, [currentSessionId]);
+  }, []);
 
   // Extract data from events
   const memberAnalyses = events

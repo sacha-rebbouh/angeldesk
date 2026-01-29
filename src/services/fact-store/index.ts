@@ -49,10 +49,13 @@ export {
 export {
   // Main functions
   getCurrentFacts,
+  getCurrentFactsFromView,
   getCurrentFactByKey,
   getCurrentFactsByCategory,
   getCurrentFactsBySource,
   getDisputedFacts,
+  // Materialized view management
+  refreshCurrentFactsView,
   // Formatting for agents
   formatFactStoreForAgents,
   formatFactStoreAsJSON,
@@ -65,3 +68,7 @@ export {
   getKeyFinancialMetrics,
   getKeyTractionMetrics,
 } from './current-facts';
+
+// Calibration Analytics
+export { getCalibrationMetrics } from './calibration';
+export type { CalibrationMetrics } from './calibration';

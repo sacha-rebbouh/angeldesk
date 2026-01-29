@@ -465,7 +465,7 @@ ${dealContext}
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Aucune donnee Context Engine disponible pour ce deal."}
-
+${this.formatFactStoreData(context)}
 ## RESULTATS DES AGENTS TIER 1
 ${tier1Summary}
 

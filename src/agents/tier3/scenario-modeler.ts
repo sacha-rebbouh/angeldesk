@@ -367,7 +367,7 @@ ${tier2Insights}
 
 ## PARAMETRES D'INVESTISSEMENT BA
 ${baInvestmentSection}
-
+${this.formatFactStoreData(context) ?? ""}
 ## INSTRUCTIONS SPECIFIQUES
 
 1. Construis les 4 scénarios (BASE, BULL, BEAR, CATASTROPHIC):

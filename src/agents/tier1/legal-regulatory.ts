@@ -410,7 +410,7 @@ ${extractedInfo ? JSON.stringify(extractedInfo, null, 2) : "Aucune donnée extra
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Aucune donnée Context Engine disponible"}
-
+${this.formatFactStoreData(context)}
 ## SECTEUR DU DEAL
 ${context.deal.sector ?? "Non spécifié"} - Adapte ton analyse réglementaire en conséquence.
 

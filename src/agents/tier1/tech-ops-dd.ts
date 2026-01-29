@@ -233,7 +233,7 @@ ${techSection}
 ${teamInvestigatorSection}
 
 ${contextEngineSection}
-
+${this.formatFactStoreData(context)}
 ## BENCHMARKS SECTORIELS DE RÉFÉRENCE (Context Engine)
 
 ### Taille équipe tech par stage (SaaS B2B)

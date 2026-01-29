@@ -1,12 +1,8 @@
 'use client';
 
-import * as React from 'react';
-import { Coins, AlertTriangle, Loader2 } from 'lucide-react';
-import { format } from 'date-fns';
-import { fr } from 'date-fns/locale';
+import { AlertTriangle, Lock } from 'lucide-react';
 import Link from 'next/link';
 
-import { cn } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -16,105 +12,62 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import type { CreditActionType } from '@/services/credits/types';
 
-interface CreditModalProps {
+interface QuotaModalProps {
   isOpen: boolean;
   onClose: () => void;
-  action: Extract<CreditActionType, 'INITIAL_ANALYSIS' | 'UPDATE_ANALYSIS' | 'AI_BOARD'>;
-  cost: number;
-  balance: number;
-  resetsAt?: Date;
-  onConfirm: () => void;
+  type: 'LIMIT_REACHED' | 'UPGRADE_REQUIRED' | 'TIER_LOCKED';
+  action: string; // "analyse", "mise à jour", "AI Board"
+  current?: number;
+  limit?: number;
+  onUpgrade?: () => void;
   isLoading?: boolean;
 }
 
-const ACTION_LABELS: Record<CreditModalProps['action'], string> = {
-  INITIAL_ANALYSIS: 'Lancer une analyse',
-  UPDATE_ANALYSIS: 'Mettre a jour l\'analyse',
-  AI_BOARD: 'Consulter l\'AI Board',
+const ACTION_MESSAGES: Record<string, string> = {
+  ANALYSIS: 'Lancer une analyse',
+  UPDATE: 'Mettre a jour l\'analyse',
+  BOARD: 'Consulter l\'AI Board',
 };
 
 export function CreditModal({
   isOpen,
   onClose,
+  type,
   action,
-  cost,
-  balance,
-  resetsAt,
-  onConfirm,
+  current,
+  limit,
   isLoading = false,
-}: CreditModalProps) {
-  const hasEnoughCredits = balance >= cost;
-  const balanceAfter = balance - cost;
-
-  const handleConfirm = React.useCallback(() => {
-    if (hasEnoughCredits && !isLoading) {
-      onConfirm();
-    }
-  }, [hasEnoughCredits, isLoading, onConfirm]);
-
-  // Sufficient credits UI
-  if (hasEnoughCredits) {
+}: QuotaModalProps) {
+  if (type === 'TIER_LOCKED') {
     return (
       <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Coins className="size-5 text-primary" />
-              Cette action utilise {cost} credit{cost > 1 ? 's' : ''}
+              <Lock className="size-5 text-muted-foreground" />
+              Fonctionnalite PRO
             </DialogTitle>
             <DialogDescription>
-              {ACTION_LABELS[action]}
+              {ACTION_MESSAGES[action] || action} est reserve aux abonnes PRO.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 py-4">
-            <div className="flex items-center justify-between rounded-lg bg-muted p-3">
-              <span className="text-sm text-muted-foreground">Solde actuel</span>
-              <span className="font-medium">{balance} credit{balance > 1 ? 's' : ''}</span>
-            </div>
-
-            <div className="flex items-center justify-between rounded-lg bg-muted p-3">
-              <span className="text-sm text-muted-foreground">Cout</span>
-              <span className="font-medium text-destructive">-{cost}</span>
-            </div>
-
-            <div
-              className={cn(
-                'flex items-center justify-between rounded-lg p-3',
-                balanceAfter < 5
-                  ? 'bg-amber-100 dark:bg-amber-900/30'
-                  : 'bg-primary/10'
-              )}
-            >
-              <span className="text-sm text-muted-foreground">Apres</span>
-              <span
-                className={cn(
-                  'font-semibold',
-                  balanceAfter < 5
-                    ? 'text-amber-700 dark:text-amber-400'
-                    : 'text-primary'
-                )}
-              >
-                {balanceAfter} credit{balanceAfter !== 1 ? 's' : ''}
-              </span>
-            </div>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Passez a PRO pour debloquer toutes les fonctionnalites :
+              experts sectoriels, synthese complete, AI Board, et plus.
+            </p>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={onClose} disabled={isLoading}>
-              Annuler
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button asChild className="w-full">
+              <Link href="/pricing">
+                Passer a PRO - 279EUR/mois
+              </Link>
             </Button>
-            <Button onClick={handleConfirm} disabled={isLoading}>
-              {isLoading ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Confirmation...
-                </>
-              ) : (
-                'Confirmer'
-              )}
+            <Button variant="ghost" onClick={onClose} className="w-full">
+              Fermer
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -122,43 +75,31 @@ export function CreditModal({
     );
   }
 
-  // Insufficient credits UI
+  // LIMIT_REACHED or UPGRADE_REQUIRED
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-destructive">
             <AlertTriangle className="size-5" />
-            Credits insuffisants
+            Limite atteinte
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           <p className="text-sm text-muted-foreground">
-            Cette action necessite <span className="font-semibold text-foreground">{cost} credit{cost > 1 ? 's' : ''}</span>.
+            Vous avez utilise <span className="font-semibold text-foreground">{current}/{limit}</span> de votre quota mensuel.
           </p>
 
-          <div className="flex items-center justify-between rounded-lg bg-destructive/10 p-3">
-            <span className="text-sm text-muted-foreground">Vous avez</span>
-            <span className="font-medium text-destructive">
-              {balance} credit{balance !== 1 ? 's' : ''}
-            </span>
-          </div>
-
-          {resetsAt && (
-            <p className="text-sm text-muted-foreground">
-              Vos credits se renouvellent le{' '}
-              <span className="font-medium text-foreground">
-                {format(new Date(resetsAt), 'd MMMM yyyy', { locale: fr })}
-              </span>.
-            </p>
-          )}
+          <p className="text-sm text-muted-foreground">
+            Passez a PRO pour augmenter vos limites.
+          </p>
         </div>
 
         <DialogFooter className="flex-col gap-2 sm:flex-col">
           <Button asChild className="w-full">
             <Link href="/pricing">
-              Passer a PRO - Illimite
+              Passer a PRO - 279EUR/mois
             </Link>
           </Button>
           <Button variant="ghost" onClick={onClose} className="w-full">

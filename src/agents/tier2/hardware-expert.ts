@@ -787,6 +787,34 @@ Cash cycle = Days inventory + Days receivables - Days payables
 `;
 }
 
+
+// =============================================================================
+// EXTENDED OUTPUT SCHEMA - dbCrossReference + dataCompleteness
+// =============================================================================
+
+const HardwareExtendedOutputSchema = SectorExpertOutputSchema.extend({
+  dbCrossReference: z.object({
+    claims: z.array(z.object({
+      claim: z.string(), location: z.string(),
+      dbVerdict: z.enum(["VERIFIED", "CONTREDIT", "PARTIEL", "NON_VERIFIABLE"]),
+      evidence: z.string(), severity: z.enum(["CRITICAL", "HIGH", "MEDIUM"]).optional(),
+    })),
+    hiddenCompetitors: z.array(z.string()),
+    valuationPercentile: z.number().optional(),
+    competitorComparison: z.object({
+      fromDeck: z.object({ mentioned: z.array(z.string()), location: z.string() }),
+      fromDb: z.object({ detected: z.array(z.string()), directCompetitors: z.number() }),
+      deckAccuracy: z.enum(["ACCURATE", "INCOMPLETE", "MISLEADING"]),
+    }).optional(),
+  }).optional(),
+
+  dataCompleteness: z.object({
+    level: z.enum(["complete", "partial", "minimal"]),
+    availableDataPoints: z.number(), expectedDataPoints: z.number(),
+    missingCritical: z.array(z.string()), limitations: z.array(z.string()),
+  }),
+});
+
 // =============================================================================
 // HARDWARE-SPECIFIC PROMPT BUILDER
 // =============================================================================
@@ -974,15 +1002,61 @@ ${context.extractedData ? JSON.stringify(context.extractedData, null, 2) : "Pas 
 
 ---
 
+${context.factStoreFormatted ? `
+## DONNÉES VÉRIFIÉES (Fact Store)
+
+Les données ci-dessous ont été extraites et vérifiées à partir des documents du deal.
+Base ton analyse sur ces faits. Si un fait important manque, signale-le.
+
+${context.factStoreFormatted}
+` : ''}
+
 ## RÉSULTATS DES AGENTS TIER 1
-${
-  context.previousResults
-    ? Object.entries(context.previousResults)
-        .filter(([, v]) => (v as { success?: boolean })?.success)
-        .map(([k, v]) => `### ${k}\n${JSON.stringify((v as { data?: unknown })?.data, null, 2)}`)
-        .join("\n\n")
-    : "Pas de résultats Tier 1 disponibles"
-}
+${(() => {
+  const previousResults = context.previousResults;
+  let tier1Insights = "";
+  if (previousResults) {
+    const financialAudit = previousResults["financial-auditor"] as { success?: boolean; data?: { findings?: unknown; narrative?: { keyInsights?: string[] } } } | undefined;
+    if (financialAudit?.success && financialAudit.data) {
+      tier1Insights += `\n### Financial Auditor Findings:\n`;
+      if (financialAudit.data.narrative?.keyInsights) {
+        tier1Insights += financialAudit.data.narrative.keyInsights.join("\n- ");
+      }
+      if (financialAudit.data.findings) {
+        tier1Insights += `\nFindings: ${JSON.stringify(financialAudit.data.findings, null, 2).slice(0, 2000)}...`;
+      }
+    }
+
+    const competitiveIntel = previousResults["competitive-intel"] as { success?: boolean; data?: { findings?: { competitors?: unknown[] }; narrative?: { keyInsights?: string[] } } } | undefined;
+    if (competitiveIntel?.success && competitiveIntel.data) {
+      tier1Insights += `\n### Competitive Intel Findings:\n`;
+      if (competitiveIntel.data.narrative?.keyInsights) {
+        tier1Insights += competitiveIntel.data.narrative.keyInsights.join("\n- ");
+      }
+      if (competitiveIntel.data.findings?.competitors) {
+        tier1Insights += `\nCompetitors identified: ${(competitiveIntel.data.findings.competitors as { name: string }[]).slice(0, 5).map(c => c.name).join(", ")}`;
+      }
+    }
+
+    const legalRegulatory = previousResults["legal-regulatory"] as { success?: boolean; data?: { findings?: { compliance?: unknown[]; regulatoryRisks?: unknown[] } } } | undefined;
+    if (legalRegulatory?.success && legalRegulatory.data) {
+      tier1Insights += `\n### Legal & Regulatory Findings:\n`;
+      if (legalRegulatory.data.findings?.compliance) {
+        tier1Insights += `Compliance areas: ${JSON.stringify(legalRegulatory.data.findings.compliance, null, 2).slice(0, 1500)}`;
+      }
+      if (legalRegulatory.data.findings?.regulatoryRisks) {
+        tier1Insights += `\nRegulatory risks: ${JSON.stringify(legalRegulatory.data.findings.regulatoryRisks, null, 2).slice(0, 1000)}`;
+      }
+    }
+
+    const extractor = previousResults["document-extractor"] as { success?: boolean; data?: { extractedInfo?: Record<string, unknown> } } | undefined;
+    if (extractor?.success && extractor.data?.extractedInfo) {
+      tier1Insights += `\n### Extracted Deal Data:\n${JSON.stringify(extractor.data.extractedInfo, null, 2).slice(0, 2000)}`;
+    }
+  }
+  return tier1Insights || "Pas de résultats Tier 1 disponibles";
+
+})()}
 
 ---
 
@@ -1140,6 +1214,35 @@ Identifie 3-5 leviers basés sur:
 ⚠️ **CERTIFICATION RISK**: FCC/CE/UL peuvent bloquer 6-12 mois
 ⚠️ **CROSS-REFERENCE** - Compare aux concurrents Hardware de la DB
 
+
+
+${(() => {
+  let fundingDbData = "";
+  const contextEngineAny = context.contextEngine as Record<string, unknown> | undefined;
+  const fundingDb = contextEngineAny?.fundingDb as { competitors?: unknown; valuationBenchmark?: unknown; sectorTrend?: unknown } | undefined;
+  if (fundingDb) {
+    fundingDbData = `\n## FUNDING DATABASE - CROSS-REFERENCE OBLIGATOIRE
+
+Tu DOIS produire un champ "dbCrossReference" dans ton output.
+
+### Concurrents détectés dans la DB
+${fundingDb.competitors ? JSON.stringify(fundingDb.competitors, null, 2).slice(0, 3000) : "Aucun concurrent détecté dans la DB"}
+
+### Benchmark valorisation
+${fundingDb.valuationBenchmark ? JSON.stringify(fundingDb.valuationBenchmark, null, 2) : "Pas de benchmark disponible"}
+
+### Tendance funding secteur
+${fundingDb.sectorTrend ? JSON.stringify(fundingDb.sectorTrend, null, 2) : "Pas de tendance disponible"}
+
+INSTRUCTIONS DB:
+1. Chaque claim du deck concernant le marché/concurrence DOIT être vérifié vs ces données
+2. Les concurrents DB absents du deck = RED FLAG CRITICAL "Omission volontaire"
+3. Positionner la valorisation vs percentiles (P25/median/P75)
+4. Si le deck dit "pas de concurrent" mais la DB en trouve = RED FLAG CRITICAL`;
+  }
+  return fundingDbData;
+})()}
+
 Retourne un JSON valide avec toutes les sections complétées.`;
 
   return { system: systemPrompt, user: userPrompt };
@@ -1226,6 +1329,36 @@ export const hardwareExpert = {
 
       const parsedOutput = JSON.parse(jsonMatch[0]) as SectorExpertOutput;
 
+      // -- Data completeness assessment and score capping --
+      const completenessData = (parsedOutput as unknown as { dataCompleteness?: { level: "complete" | "partial" | "minimal"; availableDataPoints: number; expectedDataPoints: number; missingCritical: string[]; limitations: string[] } }).dataCompleteness ?? {
+        level: 'partial' as const, availableDataPoints: 0, expectedDataPoints: 0, missingCritical: [], limitations: [],
+      };
+      const availableMetrics = (parsedOutput.metricsAnalysis ?? []).filter((m: { metricValue?: unknown }) => m.metricValue !== null).length;
+      const totalMetrics = (parsedOutput.metricsAnalysis ?? []).length;
+      let completenessLevel = completenessData.level;
+      if (totalMetrics > 0 && !parsedOutput.dataCompleteness) {
+        const ratio = availableMetrics / totalMetrics;
+        if (ratio < 0.3) completenessLevel = 'minimal';
+        else if (ratio < 0.7) completenessLevel = 'partial';
+        else completenessLevel = 'complete';
+      }
+      let scoreMax = 100;
+      if (completenessLevel === 'minimal') scoreMax = 50;
+      else if (completenessLevel === 'partial') scoreMax = 70;
+      const rawScore = parsedOutput.executiveSummary?.sectorScore ?? parsedOutput.sectorFit?.score ?? 0;
+      const cappedScore = Math.min(rawScore, scoreMax);
+      const rawFitScore = parsedOutput.sectorFit?.score ?? 0;
+      const cappedFitScore = Math.min(rawFitScore, scoreMax);
+      const limitations: string[] = [
+        ...(completenessData.limitations ?? []),
+        ...(completenessData.missingCritical ?? []).map((m: string) => `Missing critical data: ${m}`),
+      ];
+      if (cappedScore < rawScore) {
+        limitations.push(`Score capped from ${rawScore} to ${cappedScore} due to ${completenessLevel} data completeness`);
+      }
+
+
+
       // Transform to SectorExpertData format
       const sectorData: SectorExpertData = {
         sectorName: "Hardware",
@@ -1268,13 +1401,13 @@ export const hardwareExpert = {
           redFlagAnswer: q.redFlagAnswer ?? "",
         })) ?? [],
         sectorFit: {
-          score: parsedOutput.sectorFit?.score ?? 50,
+          score: cappedFitScore,
           strengths: parsedOutput.executiveSummary?.topStrengths ?? [],
           weaknesses: parsedOutput.executiveSummary?.topConcerns ?? [],
           sectorTiming: parsedOutput.sectorFit?.timingAssessment === "early_mover" ? "early" :
                         parsedOutput.sectorFit?.timingAssessment === "too_late" ? "late" : "optimal",
         },
-        sectorScore: parsedOutput.sectorFit?.score ?? 50,
+        sectorScore: cappedScore,
         executiveSummary: parsedOutput.sectorFit?.reasoning ?? "",
       };
 

@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import {
   Card,
   CardContent,
@@ -66,14 +67,14 @@ export function InvestmentPreferencesForm() {
   const [hasChanges, setHasChanges] = useState(false);
 
   const { data: preferences, isLoading, error } = useQuery({
-    queryKey: ["userPreferences"],
+    queryKey: queryKeys.userPreferences.all,
     queryFn: fetchPreferences,
   });
 
   const mutation = useMutation({
     mutationFn: updatePreferences,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["userPreferences"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.userPreferences.all });
       setHasChanges(false);
     },
   });

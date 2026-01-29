@@ -459,7 +459,7 @@ ${dealContext}
 
 ## DONNEES CONTEXT ENGINE
 ${contextEngineData}
-
+${this.formatFactStoreData(context)}
 ## PARAMETRES D'INVESTISSEMENT
 
 | Paramètre | Valeur | Source |

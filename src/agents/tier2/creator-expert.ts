@@ -479,6 +479,15 @@ ${contextEngine.competitiveLandscape ? `Competitive Landscape: ${JSON.stringify(
     .map(d => `### ${d.name}\n${d.extractedText}`)
     .join("\n\n") || "Pas de contenu de deck disponible";
 
+
+  // Funding DB from context engine
+  let fundingDbData = "";
+  const contextEngineAny = context.contextEngine as Record<string, unknown> | undefined;
+  const fundingDbFromEngine = contextEngineAny?.fundingDb as { competitors?: unknown; valuationBenchmark?: unknown; sectorTrend?: unknown } | undefined;
+  if (fundingDbFromEngine) {
+    fundingDbData = `\n## FUNDING DATABASE - CROSS-REFERENCE OBLIGATOIRE\n\nTu DOIS produire un champ "dbCrossReference" dans ton output.\n\n### Concurrents détectés dans la DB\n${fundingDbFromEngine.competitors ? JSON.stringify(fundingDbFromEngine.competitors, null, 2).slice(0, 3000) : "Aucun"}\n\n### Benchmark valorisation\n${fundingDbFromEngine.valuationBenchmark ? JSON.stringify(fundingDbFromEngine.valuationBenchmark, null, 2) : "N/A"}\n\n### Tendance funding\n${fundingDbFromEngine.sectorTrend ? JSON.stringify(fundingDbFromEngine.sectorTrend, null, 2) : "N/A"}\n\nINSTRUCTIONS DB:\n1. Claims deck \u2192 vérifié vs données\n2. Concurrents DB absents du deck = RED FLAG CRITICAL\n3. Valo vs percentiles\n4. "pas de concurrent" + DB en trouve = RED FLAG CRITICAL`;
+  }
+
   const userPrompt = `Analyse ce deal Creator Economy:
 
 ## INFORMATIONS DU DEAL
@@ -496,7 +505,7 @@ ${documents?.map(d => `- ${d.name} (${d.type})`).join("\n") || "Aucun document f
 ## CONTENU DU PITCH DECK
 ${deckText}
 
-## CONTEXTE ADDITIONNEL
+${fundingDbData}\n\n## CONTEXTE ADDITIONNEL
 ${fundingDbText}
 
 ${contextEngineText}
@@ -546,6 +555,24 @@ export const creatorExpert = {
 
       const output = parsed.success ? parsed.data : JSON.parse(jsonMatch[0]);
 
+      
+      // === SCORE CAPPING based on data completeness ===
+      const metricsAnalysis = output.metricsAnalysis ?? [];
+      const availableMetrics = metricsAnalysis.filter((m: { valueProvided?: unknown }) => m.valueProvided !== null && m.valueProvided !== undefined && m.valueProvided !== "Non fourni").length;
+      const totalMetrics = metricsAnalysis.length;
+      let completenessLevel: "complete" | "partial" | "minimal" = "partial";
+      if (totalMetrics > 0) {
+        const ratio = availableMetrics / totalMetrics;
+        if (ratio < 0.3) completenessLevel = "minimal";
+        else if (ratio < 0.7) completenessLevel = "partial";
+        else completenessLevel = "complete";
+      }
+      let scoreMax = 100;
+      if (completenessLevel === "minimal") scoreMax = 50;
+      else if (completenessLevel === "partial") scoreMax = 70;
+      const rawScore = output.sectorFit?.score ?? 50;
+      const cappedScore = Math.min(rawScore, scoreMax);
+
       // Transform to SectorExpertData
       const sectorData: SectorExpertData = {
         sectorName: "Creator Economy",
@@ -594,13 +621,13 @@ export const creatorExpert = {
           redFlagAnswer: q.redFlagAnswer ?? "",
         })) ?? [],
         sectorFit: {
-          score: output.sectorFit?.score ?? 50,
+          score: cappedScore,
           strengths: [],
           weaknesses: [],
           sectorTiming: output.sectorFit?.timingAssessment === "early_mover" ? "early" :
             output.sectorFit?.timingAssessment === "too_late" ? "late" : "optimal",
         },
-        sectorScore: output.sectorFit?.score ?? 50,
+        sectorScore: cappedScore,
         executiveSummary: output.executiveSummary ?? "",
       };
 

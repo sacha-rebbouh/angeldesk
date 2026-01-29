@@ -35,7 +35,7 @@ interface DetectionRule {
  */
 const DETECTION_RULES: DetectionRule[] = [
   // ============================================================================
-  // RED FLAG DETECTOR
+  // RED FLAG DETECTOR (not refactored - data is { redFlags, overallRiskLevel, summary })
   // ============================================================================
   {
     agentName: "red-flag-detector",
@@ -51,11 +51,11 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
-  // FINANCIAL AUDITOR
+  // FINANCIAL AUDITOR (refactored v2.0 - data is { meta, score, findings, ... })
   // ============================================================================
   {
     agentName: "financial-auditor",
-    field: "overallScore",
+    field: "score.value",
     condition: "below",
     threshold: 20,
     severity: "critical",
@@ -71,9 +71,9 @@ const DETECTION_RULES: DetectionRule[] = [
   },
   {
     agentName: "financial-auditor",
-    field: "valuationAnalysis.verdict",
+    field: "findings.valuation.verdict",
     condition: "equals",
-    threshold: "very_aggressive",
+    threshold: "VERY_AGGRESSIVE",
     severity: "high",
     category: "deal_structure",
     title: "Valuation Significantly Above Market",
@@ -86,17 +86,17 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
-  // LEGAL-REGULATORY
+  // LEGAL-REGULATORY (refactored v2.0 - data is { meta, score, findings, ... })
   // ============================================================================
   {
     agentName: "legal-regulatory",
-    field: "regulatoryExposure.riskLevel",
+    field: "findings.litigationRisk.riskLevel",
     condition: "equals",
-    threshold: "critical",
+    threshold: "CRITICAL",
     severity: "critical",
     category: "legal_existential",
-    title: "Critical Regulatory Risk",
-    descriptionTemplate: "Regulatory exposure at critical level - potential license or compliance issues.",
+    title: "Critical Litigation/Regulatory Risk",
+    descriptionTemplate: "Litigation risk at critical level - potential existential legal issues.",
     recommendation: "likely_dealbreaker",
     questionsToAsk: [
       "What specific regulations are at risk?",
@@ -106,7 +106,7 @@ const DETECTION_RULES: DetectionRule[] = [
   },
   {
     agentName: "legal-regulatory",
-    field: "litigationRisk.currentLitigation",
+    field: "findings.litigationRisk.currentLitigation",
     condition: "equals",
     threshold: "true",
     severity: "high",
@@ -122,21 +122,22 @@ const DETECTION_RULES: DetectionRule[] = [
   },
   {
     agentName: "legal-regulatory",
-    field: "criticalIssues",
-    condition: "exists",
+    field: "alertSignal.hasBlocker",
+    condition: "equals",
+    threshold: "true",
     severity: "critical",
     category: "legal_existential",
-    title: "Critical Legal Issues Identified",
-    descriptionTemplate: "Legal analysis found critical issues requiring immediate attention.",
+    title: "Critical Legal Blocker Identified",
+    descriptionTemplate: "Legal analysis found a blocking issue requiring immediate attention.",
     recommendation: "likely_dealbreaker",
   },
 
   // ============================================================================
-  // TEAM INVESTIGATOR
+  // TEAM INVESTIGATOR (refactored v2.0 - data is { meta, score, findings, ... })
   // ============================================================================
   {
     agentName: "team-investigator",
-    field: "overallTeamScore",
+    field: "score.value",
     condition: "below",
     threshold: 25,
     severity: "high",
@@ -152,7 +153,7 @@ const DETECTION_RULES: DetectionRule[] = [
   },
   {
     agentName: "team-investigator",
-    field: "founderProfiles.*.redFlags",
+    field: "findings.founderProfiles.*.redFlags",
     condition: "exists",
     severity: "high",
     category: "founder_integrity",
@@ -166,13 +167,13 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
-  // COMPETITIVE INTEL
+  // COMPETITIVE INTEL (refactored v2.0 - data is { meta, score, findings, ... })
   // ============================================================================
   {
     agentName: "competitive-intel",
-    field: "moatAssessment.type",
+    field: "findings.moatAnalysis.moatVerdict",
     condition: "equals",
-    threshold: "none",
+    threshold: "NO_MOAT",
     severity: "high",
     category: "product_broken",
     title: "No Competitive Moat Identified",
@@ -185,7 +186,7 @@ const DETECTION_RULES: DetectionRule[] = [
   },
   {
     agentName: "competitive-intel",
-    field: "competitiveScore",
+    field: "score.value",
     condition: "below",
     threshold: 25,
     severity: "high",
@@ -230,11 +231,11 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
-  // CAP TABLE AUDITOR
+  // CAP TABLE AUDITOR (refactored v2.0 - data is { meta, score, findings, ... })
   // ============================================================================
   {
     agentName: "cap-table-auditor",
-    field: "capTableScore",
+    field: "score.value",
     condition: "below",
     threshold: 30,
     severity: "high",
@@ -249,7 +250,7 @@ const DETECTION_RULES: DetectionRule[] = [
   },
   {
     agentName: "cap-table-auditor",
-    field: "roundTerms.participatingPreferred",
+    field: "findings.roundTerms.participatingPreferred.exists",
     condition: "equals",
     threshold: "true",
     severity: "medium",
@@ -260,11 +261,11 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
-  // CUSTOMER INTEL
+  // CUSTOMER INTEL (refactored v2.0 - data is { meta, score, findings, ... })
   // ============================================================================
   {
     agentName: "customer-intel",
-    field: "customerRisks.concentration",
+    field: "findings.concentration.topCustomerRevenue",
     condition: "above",
     threshold: 50,
     severity: "high",
@@ -279,9 +280,9 @@ const DETECTION_RULES: DetectionRule[] = [
   },
   {
     agentName: "customer-intel",
-    field: "productMarketFit.strength",
+    field: "findings.pmf.pmfVerdict",
     condition: "equals",
-    threshold: "weak",
+    threshold: "WEAK",
     severity: "high",
     category: "product_broken",
     title: "Weak Product-Market Fit Signals",
@@ -294,11 +295,11 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
-  // QUESTION MASTER (aggregates dealbreakers)
+  // QUESTION MASTER (refactored v2.0 - dealbreakers in findings)
   // ============================================================================
   {
     agentName: "question-master",
-    field: "dealbreakers",
+    field: "findings.dealbreakers",
     condition: "exists",
     severity: "critical",
     category: "founder_integrity", // Will be refined based on content
@@ -308,21 +309,21 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
-  // DEVIL'S ADVOCATE (Tier 2)
+  // DEVIL'S ADVOCATE (Tier 3 - refactored v2.0)
   // ============================================================================
   {
     agentName: "devils-advocate",
-    field: "dealbreakers",
+    field: "findings.concernsSummary.absolute",
     condition: "exists",
     severity: "critical",
     category: "founder_integrity",
-    title: "Devil's Advocate: Dealbreakers Found",
-    descriptionTemplate: "Critical review identified potential dealbreaking scenarios.",
+    title: "Devil's Advocate: Absolute Dealbreakers Found",
+    descriptionTemplate: "Critical review identified absolute dealbreaking scenarios.",
     recommendation: "likely_dealbreaker",
   },
   {
     agentName: "devils-advocate",
-    field: "overallSkepticism",
+    field: "findings.skepticismAssessment.score",
     condition: "above",
     threshold: 85,
     severity: "high",
@@ -333,16 +334,16 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
-  // SYNTHESIS DEAL SCORER (Tier 2)
+  // SYNTHESIS DEAL SCORER (Tier 3 - data is { overallScore, verdict, ... })
   // ============================================================================
   {
     agentName: "synthesis-deal-scorer",
     field: "verdict",
     condition: "equals",
-    threshold: "strong_pass",
+    threshold: "no_go",
     severity: "critical",
     category: "financial_critical",
-    title: "Strong Pass Recommendation",
+    title: "No-Go Recommendation",
     descriptionTemplate: "Synthesis analysis recommends passing on this deal.",
     recommendation: "likely_dealbreaker",
   },
@@ -526,6 +527,13 @@ export function detectEarlyWarnings(
         questionsToAsk: rule.questionsToAsk,
       });
     }
+  }
+
+  // Debug: log when applicable rules exist but none matched
+  if (applicableRules.length > 0 && warnings.length === 0) {
+    console.log(
+      `[EarlyWarnings] ${agentName}: ${applicableRules.length} rules checked, 0 matched. Available fields: ${Object.keys(data).join(", ")}`
+    );
   }
 
   return warnings;

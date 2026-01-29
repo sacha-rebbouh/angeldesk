@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { ChevronDown, ChevronUp, Loader2, MessageSquare, StickyNote } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatAgentName } from "@/lib/format-utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -183,15 +184,6 @@ function QuestionItem({ question, value, onChange }: QuestionItemProps) {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-function formatAgentName(agentName: string): string {
-  return agentName
-    .replace(/-/g, " ")
-    .replace(/_/g, " ")
-    .split(" ")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
 
 function groupQuestionsByCategory(
   questions: AgentQuestion[]

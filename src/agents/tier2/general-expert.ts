@@ -209,6 +209,28 @@ const GeneralOutputSchema = z.object({
     recommendedActions: z.array(z.string()).describe("Ce qu'il faudrait faire pour ameliorer l'analyse"),
   }),
 
+  dbCrossReference: z.object({
+    claims: z.array(z.object({
+      claim: z.string(), location: z.string(),
+      dbVerdict: z.enum(["VERIFIED", "CONTREDIT", "PARTIEL", "NON_VERIFIABLE"]),
+      evidence: z.string(), severity: z.enum(["CRITICAL", "HIGH", "MEDIUM"]).optional(),
+    })),
+    hiddenCompetitors: z.array(z.string()),
+    valuationPercentile: z.number().optional(),
+    competitorComparison: z.object({
+      fromDeck: z.object({ mentioned: z.array(z.string()), location: z.string() }),
+      fromDb: z.object({ detected: z.array(z.string()), directCompetitors: z.number() }),
+      deckAccuracy: z.enum(["ACCURATE", "INCOMPLETE", "MISLEADING"]),
+    }).optional(),
+  }).optional(),
+
+  dataCompleteness: z.object({
+    level: z.enum(["complete", "partial", "minimal"]),
+    availableDataPoints: z.number(), expectedDataPoints: z.number(),
+    missingCritical: z.array(z.string()), limitations: z.array(z.string()),
+  }),
+
+
   executiveSummary: z.string().describe("4-5 phrases: secteur identifie, position, forces, risques, verdict"),
 
   investmentImplication: z.enum([
@@ -348,12 +370,28 @@ function buildUserPrompt(context: EnrichedAgentContext): string {
 
   // Extraire les infos des agents precedents
   let tier1Insights = "";
-  for (const [agentName, result] of Object.entries(previousResults)) {
-    const res = result as { success?: boolean; data?: unknown };
-    if (res.success && res.data) {
-      tier1Insights += `\n### ${agentName}\n${JSON.stringify(res.data, null, 2)}\n`;
+    if (previousResults) {
+      const financialAudit = previousResults["financial-auditor"] as { success?: boolean; data?: { findings?: unknown; narrative?: { keyInsights?: string[] } } } | undefined;
+      if (financialAudit?.success && financialAudit.data) {
+        tier1Insights += `\n### Financial Auditor Findings:\n`;
+        if (financialAudit.data.narrative?.keyInsights) tier1Insights += financialAudit.data.narrative.keyInsights.join("\n- ");
+        if (financialAudit.data.findings) tier1Insights += `\nFindings: ${JSON.stringify(financialAudit.data.findings, null, 2).slice(0, 2000)}...`;
+      }
+      const competitiveIntel = previousResults["competitive-intel"] as { success?: boolean; data?: { findings?: { competitors?: unknown[] }; narrative?: { keyInsights?: string[] } } } | undefined;
+      if (competitiveIntel?.success && competitiveIntel.data) {
+        tier1Insights += `\n### Competitive Intel Findings:\n`;
+        if (competitiveIntel.data.narrative?.keyInsights) tier1Insights += competitiveIntel.data.narrative.keyInsights.join("\n- ");
+        if (competitiveIntel.data.findings?.competitors) tier1Insights += `\nCompetitors: ${(competitiveIntel.data.findings.competitors as { name: string }[]).slice(0, 5).map(c => c.name).join(", ")}`;
+      }
+      const legalRegulatory = previousResults["legal-regulatory"] as { success?: boolean; data?: { findings?: { compliance?: unknown[]; regulatoryRisks?: unknown[] } } } | undefined;
+      if (legalRegulatory?.success && legalRegulatory.data) {
+        tier1Insights += `\n### Legal & Regulatory Findings:\n`;
+        if (legalRegulatory.data.findings?.compliance) tier1Insights += `Compliance: ${JSON.stringify(legalRegulatory.data.findings.compliance, null, 2).slice(0, 1500)}`;
+        if (legalRegulatory.data.findings?.regulatoryRisks) tier1Insights += `\nRisks: ${JSON.stringify(legalRegulatory.data.findings.regulatoryRisks, null, 2).slice(0, 1000)}`;
+      }
+      const extractor = previousResults["document-extractor"] as { success?: boolean; data?: { extractedInfo?: Record<string, unknown> } } | undefined;
+      if (extractor?.success && extractor.data?.extractedInfo) tier1Insights += `\n### Extracted Deal Data:\n${JSON.stringify(extractor.data.extractedInfo, null, 2).slice(0, 2000)}`;
     }
-  }
 
   // Extraire le contexte Funding DB
   let fundingDbContext = "";
@@ -388,7 +426,15 @@ function buildUserPrompt(context: EnrichedAgentContext): string {
     fundingDbContext = "\n**Funding DB**: Pas de donnees disponibles.";
   }
 
-  return `
+  
+    let fundingDbData = "";
+    const contextEngineAny = context.contextEngine as Record<string, unknown> | undefined;
+    const fundingDb = contextEngineAny?.fundingDb as { competitors?: unknown; valuationBenchmark?: unknown; sectorTrend?: unknown } | undefined;
+    if (fundingDb) {
+      fundingDbData = `\n## FUNDING DATABASE - CROSS-REFERENCE OBLIGATOIRE\n\nTu DOIS produire un champ "dbCrossReference" dans ton output.\n\n### Concurrents détectés dans la DB\n${fundingDb.competitors ? JSON.stringify(fundingDb.competitors, null, 2).slice(0, 3000) : "Aucun"}\n\n### Benchmark valorisation\n${fundingDb.valuationBenchmark ? JSON.stringify(fundingDb.valuationBenchmark, null, 2) : "N/A"}\n\n### Tendance funding\n${fundingDb.sectorTrend ? JSON.stringify(fundingDb.sectorTrend, null, 2) : "N/A"}\n\nINSTRUCTIONS DB:\n1. Claims deck \u2192 v\u00e9rifi\u00e9 vs donn\u00e9es\n2. Concurrents DB absents du deck = RED FLAG CRITICAL\n3. Valo vs percentiles\n4. "pas de concurrent" + DB en trouve = RED FLAG CRITICAL`;
+    }
+
+    return `
 ## DEAL A ANALYSER - SECTEUR NON STANDARD
 
 **ATTENTION**: Ce deal est dans un secteur pour lequel il n'existe PAS d'expert specialise.
@@ -412,7 +458,18 @@ Tu dois donc effectuer une analyse complete en recherchant toi-meme les benchmar
 ## DONNEES FUNDING DATABASE
 ${fundingDbContext}
 
+${context.factStoreFormatted ? `
+## DONNÉES VÉRIFIÉES (Fact Store)
+
+Les données ci-dessous ont été extraites et vérifiées à partir des documents du deal.
+Base ton analyse sur ces faits. Si un fait important manque, signale-le.
+
+${context.factStoreFormatted}
+` : ""}
+
 ---
+
+${fundingDbData}
 
 ## ANALYSES TIER 1 (DEJA EFFECTUEES)
 ${tier1Insights || "Pas d'analyses Tier 1 disponibles"}
@@ -913,7 +970,13 @@ export const generalExpert = {
         }
         const rawJson = JSON.parse(jsonMatch[0]);
         const normalizedJson = normalizeOutput(rawJson);
-        parsedOutput = GeneralOutputSchema.parse(normalizedJson);
+        const parseResult = GeneralOutputSchema.safeParse(normalizedJson);
+        if (parseResult.success) {
+          parsedOutput = parseResult.data;
+        } else {
+          console.warn(`[general-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
+          parsedOutput = normalizedJson as GeneralExpertOutput;
+        }
       } catch (parseError) {
         console.error("[general-expert] Parse error:", parseError);
         return {
@@ -925,6 +988,37 @@ export const generalExpert = {
           data: getDefaultData(),
         };
       }
+
+      
+      // === SCORE CAPPING based on data completeness ===
+      const completenessData = parsedOutput.dataCompleteness ?? {
+        level: "partial" as const, availableDataPoints: 0, expectedDataPoints: 0, missingCritical: [], limitations: [],
+      };
+      const availableMetrics = (parsedOutput.keyMetrics ?? []).filter((m: { dealValue: unknown }) => m.dealValue !== null).length;
+      const totalMetrics = (parsedOutput.keyMetrics ?? []).length;
+      let completenessLevel = completenessData.level;
+      if (totalMetrics > 0 && !parsedOutput.dataCompleteness) {
+        const ratio = availableMetrics / totalMetrics;
+        if (ratio < 0.3) completenessLevel = "minimal";
+        else if (ratio < 0.7) completenessLevel = "partial";
+        else completenessLevel = "complete";
+      }
+      let scoreMax = 100;
+      if (completenessLevel === "minimal") scoreMax = 50;
+      else if (completenessLevel === "partial") scoreMax = 70;
+      const rawScore = parsedOutput.sectorScore ?? 0;
+      const cappedScore = Math.min(rawScore, scoreMax);
+      const rawFitScore = parsedOutput.sectorScore ?? 0;
+      const cappedFitScore = Math.min(rawFitScore, scoreMax);
+      const limitations: string[] = [
+        ...(completenessData.limitations ?? []),
+        ...(completenessData.missingCritical ?? []).map((m: string) => `Missing critical data: ${m}`),
+      ];
+      if (cappedScore < rawScore) {
+        limitations.push(`Score capped from ${rawScore} to ${cappedScore} due to ${completenessLevel} data completeness`);
+      }
+      // Override scores with capped values
+      parsedOutput.sectorScore = cappedScore;
 
       // Transform to SectorExpertData format
       const sectorData = transformOutput(parsedOutput);

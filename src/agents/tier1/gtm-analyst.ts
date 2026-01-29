@@ -489,7 +489,7 @@ ${gtmSection}
 ${competitorSection}
 ${benchmarkSection}
 ${contextEngineData}
-
+${this.formatFactStoreData(context)}
 ## INSTRUCTIONS SPÉCIFIQUES
 
 1. **Analyse des Canaux**: Identifie TOUS les canaux mentionnés ou détectables. Pour chacun:

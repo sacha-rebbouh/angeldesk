@@ -156,9 +156,9 @@ export async function persistScoredFindings(
           benchmarkData: finding.benchmarkData
             ? JSON.parse(JSON.stringify(finding.benchmarkData))
             : null,
-          confidenceLevel: finding.confidence.level,
-          confidenceScore: finding.confidence.score,
-          confidenceFactors: JSON.parse(JSON.stringify(finding.confidence.factors ?? [])),
+          confidenceLevel: finding.confidence?.level ?? "insufficient",
+          confidenceScore: Number.isFinite(finding.confidence?.score) ? finding.confidence.score : 0,
+          confidenceFactors: JSON.parse(JSON.stringify(finding.confidence?.factors ?? [])),
           evidence: JSON.parse(JSON.stringify(finding.evidence ?? [])),
         },
       });

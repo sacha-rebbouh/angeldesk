@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, SignOutButton } from "@clerk/nextjs";
@@ -55,7 +56,7 @@ const adminNavItems = [
   },
 ];
 
-export function Sidebar() {
+export const Sidebar = memo(function Sidebar() {
   const pathname = usePathname();
   const { user } = useUser();
 
@@ -202,4 +203,4 @@ export function Sidebar() {
       </div>
     </aside>
   );
-}
+});

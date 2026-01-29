@@ -11,6 +11,7 @@ export interface FactKeyDefinition {
   unit?: string;
   enumValues?: string[];
   description?: string;
+  isTemporal?: boolean; // True if this fact varies over time (ARR, MRR, headcount, etc.)
 }
 
 export const FACT_KEYS: Record<string, FactKeyDefinition> = {
@@ -22,18 +23,21 @@ export const FACT_KEYS: Record<string, FactKeyDefinition> = {
     category: 'FINANCIAL',
     unit: 'EUR',
     description: 'Annual Recurring Revenue',
+    isTemporal: true,
   },
   'financial.mrr': {
     type: 'currency',
     category: 'FINANCIAL',
     unit: 'EUR',
     description: 'Monthly Recurring Revenue',
+    isTemporal: true,
   },
   'financial.revenue': {
     type: 'currency',
     category: 'FINANCIAL',
     unit: 'EUR',
     description: 'Total Revenue (non-recurring)',
+    isTemporal: true,
   },
   'financial.revenue_growth_yoy': {
     type: 'percentage',
@@ -50,11 +54,13 @@ export const FACT_KEYS: Record<string, FactKeyDefinition> = {
     category: 'FINANCIAL',
     unit: 'EUR/month',
     description: 'Monthly burn rate',
+    isTemporal: true,
   },
   'financial.runway_months': {
     type: 'number',
     category: 'FINANCIAL',
     description: 'Months of runway remaining',
+    isTemporal: true,
   },
   'financial.gross_margin': {
     type: 'percentage',
@@ -131,6 +137,7 @@ export const FACT_KEYS: Record<string, FactKeyDefinition> = {
     type: 'percentage',
     category: 'TRACTION',
     description: 'Monthly churn rate',
+    isTemporal: true,
   },
   'traction.churn_annual': {
     type: 'percentage',
@@ -141,6 +148,7 @@ export const FACT_KEYS: Record<string, FactKeyDefinition> = {
     type: 'percentage',
     category: 'TRACTION',
     description: 'Net Revenue Retention',
+    isTemporal: true,
   },
   'traction.grr': {
     type: 'percentage',
@@ -173,11 +181,13 @@ export const FACT_KEYS: Record<string, FactKeyDefinition> = {
     type: 'number',
     category: 'TRACTION',
     description: 'Total paying customers',
+    isTemporal: true,
   },
   'traction.users_count': {
     type: 'number',
     category: 'TRACTION',
     description: 'Total users (free + paid)',
+    isTemporal: true,
   },
   'traction.dau': {
     type: 'number',
@@ -214,6 +224,7 @@ export const FACT_KEYS: Record<string, FactKeyDefinition> = {
     type: 'number',
     category: 'TEAM',
     description: 'Total team size',
+    isTemporal: true,
   },
   'team.founders_count': {
     type: 'number',
