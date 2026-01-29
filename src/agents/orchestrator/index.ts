@@ -32,6 +32,7 @@ import {
   calculateRuleOf40,
 } from "../orchestration";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
+import { applyTier3Coherence, injectCoherenceIntoContext } from "../orchestration/tier3-coherence";
 import { costMonitor } from "@/services/cost-monitor";
 import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
 import { setAgentContext, setAnalysisContext } from "@/services/openrouter/router";
@@ -447,7 +448,7 @@ export class AgentOrchestrator {
   ): Promise<AnalysisResult> {
     const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, enableTrace = true, isUpdate = false } = advancedOptions;
     const startTime = Date.now();
-    const TIER1_AGENT_COUNT = 12;
+    const TIER1_AGENT_COUNT = TIER1_AGENT_NAMES.length; // 13
     const collectedWarnings: EarlyWarning[] = [];
 
     // Get document IDs for versioning
@@ -579,11 +580,18 @@ export class AgentOrchestrator {
     // Always use Standard agents (better results, lower cost)
     const tier1AgentMap = await getTier1Agents(false);
 
+    const AGENT_TIMEOUT_MS = 120_000; // 2 minutes per agent
+
     const tier1Results = await Promise.all(
       TIER1_AGENT_NAMES.map(async (agentName) => {
         const agent = tier1AgentMap[agentName];
         try {
-          const result = await agent.run(enrichedContext);
+          const result = await Promise.race([
+            agent.run(enrichedContext),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`Agent ${agentName} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)), AGENT_TIMEOUT_MS)
+            ),
+          ]);
           return { agentName, result };
         } catch (error) {
           return {
@@ -833,6 +841,34 @@ export class AgentOrchestrator {
           completedAgents: completedCount,
           totalAgents: TIER3_AGENT_COUNT,
           estimatedCostSoFar: totalCost,
+        });
+      }
+
+      // After first batch (parallel), apply Tier 3 coherence check
+      if (batch === TIER3_EXECUTION_BATCHES[0]) {
+        const coherenceResult = applyTier3Coherence(context.previousResults!);
+        if (coherenceResult.adjusted) {
+          injectCoherenceIntoContext(context.previousResults!, coherenceResult);
+          console.log(`[Tier3Synthesis] Coherence: ${coherenceResult.adjustments.length} adjustments (score was ${coherenceResult.coherenceScore}/100)`);
+        }
+        context.tier3CoherenceResult = {
+          adjusted: coherenceResult.adjusted,
+          adjustments: coherenceResult.adjustments,
+          coherenceScore: coherenceResult.coherenceScore,
+          warnings: coherenceResult.warnings,
+        };
+        // Persist coherence trace
+        await persistReasoningTrace(analysis.id, "tier3-coherence", {
+          taskDescription: "Vérification cohérence inter-agents Tier 3",
+          totalIterations: 1,
+          finalConfidence: coherenceResult.coherenceScore,
+          executionTimeMs: 0,
+          selfCritique: {
+            adjusted: coherenceResult.adjusted,
+            adjustmentCount: coherenceResult.adjustments.length,
+            adjustments: coherenceResult.adjustments,
+            warnings: coherenceResult.warnings,
+          },
         });
       }
     }
@@ -1455,6 +1491,34 @@ export class AgentOrchestrator {
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
+        // STEP 5.5: TIER 3 COHERENCE CHECK (deterministic, no LLM)
+        // Adjusts scenario-modeler outputs based on scepticism, T1 scores, red flags
+        const coherenceResult = applyTier3Coherence(enrichedContext.previousResults!);
+        if (coherenceResult.adjusted) {
+          injectCoherenceIntoContext(enrichedContext.previousResults!, coherenceResult);
+          console.log(`[Orchestrator] Tier 3 coherence: ${coherenceResult.adjustments.length} adjustments applied (score was ${coherenceResult.coherenceScore}/100)`);
+        }
+        // Store coherence result for synthesis-deal-scorer access
+        enrichedContext.tier3CoherenceResult = {
+          adjusted: coherenceResult.adjusted,
+          adjustments: coherenceResult.adjustments,
+          coherenceScore: coherenceResult.coherenceScore,
+          warnings: coherenceResult.warnings,
+        };
+        // Persist coherence trace for observability
+        await persistReasoningTrace(analysis.id, "tier3-coherence", {
+          taskDescription: "Vérification cohérence inter-agents Tier 3",
+          totalIterations: 1,
+          finalConfidence: coherenceResult.coherenceScore,
+          executionTimeMs: 0,
+          selfCritique: {
+            adjusted: coherenceResult.adjusted,
+            adjustmentCount: coherenceResult.adjustments.length,
+            adjustments: coherenceResult.adjustments,
+            warnings: coherenceResult.warnings,
+          },
+        });
+
       } else if (!includeFullTier3) {
         console.log(`[Orchestrator] Tier 3 pre-synthesis agents skipped (FREE plan)`);
       } else {

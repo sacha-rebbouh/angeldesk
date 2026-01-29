@@ -106,18 +106,6 @@ function calculateBackoff(attempt: number): number {
 // =============================================================================
 // MODEL SELECTION
 // =============================================================================
-// TODO [PROD]: Remettre les bons modèles avant la production !
-// Configuration actuelle = TEST MODE (GPT-4o Mini partout pour économiser)
-//
-// CONFIGURATION PRODUCTION (à restaurer) :
-//   simple   → HAIKU      (Claude 3 Haiku)
-//   medium   → SONNET     (Claude 3.5 Sonnet)
-//   complex  → SONNET     (Claude 3.5 Sonnet)
-//   critical → OPUS       (Claude 3 Opus)
-//
-// EXCEPTION: document-extractor utilise TOUJOURS Sonnet (fondation critique)
-// =============================================================================
-const TEST_MODE = true; // TODO [PROD]: Mettre à false pour la production
 
 // Agents qui utilisent toujours leur modèle optimal (fiabilité critique)
 // Document-extractor = fondation de l'analyse, doit être précis et rapide

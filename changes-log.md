@@ -2,6 +2,180 @@
 
 ---
 
+## 2026-01-29 — Auto-expire stuck RUNNING analyses after 15min
+
+**Fichiers modifies:**
+- `src/app/api/analyze/route.ts` — Si une analyse est en `RUNNING` depuis >15min, elle est auto-passee en `FAILED` pour debloquer les nouvelles analyses (evite les stuck apres crash/circuit breaker)
+
+---
+
+## 2026-01-29 — Tier 3 Coherence Engine complet + tests + intégration scorer
+
+### Fichiers créés
+- `src/agents/orchestration/tier3-coherence.ts` — Module déterministe (no LLM) de cohérence inter-agents T3
+- `src/agents/orchestration/__tests__/tier3-coherence.test.ts` — 20 tests unitaires (100% pass)
+
+### Fichiers modifiés
+- `src/agents/orchestration/consensus-engine.ts` — Fix bug setCacheEntry (récursion infinie → `resolutionCache.set`)
+- `src/agents/orchestrator/index.ts` — Intégration tier3-coherence dans `runFullAnalysis()` et `runTier3Synthesis()`, persistence traces
+- `src/agents/orchestration/index.ts` — Export du nouveau module tier3-coherence
+- `src/agents/types.ts` — Ajout `tier3CoherenceResult` dans `EnrichedAgentContext` (suppression `any` cast)
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Section cohérence dans le prompt + instruction system pour aligner score/scénarios
+
+### Description
+- **Tier 3 Coherence Engine** : Vérifie la cohérence entre scenario-modeler, devils-advocate et contradiction-detector après T3 Batch 1. Ajuste les probabilités et multiples des scénarios selon le scepticisme, le score T1 moyen et les red flags critiques. Double normalisation avec re-enforcement des caps après proportionnalisation.
+- **Règles** : scepticisme >50 redistribution, >70 BASE cap 20%, >80 BULL <5%, >90 CATASTROPHIC >60%, T1 avg <40 CATASTROPHIC dominant, >3 red flags critiques boost CATASTROPHIC, multiples cappés si scepticisme >60.
+- **Synthesis-deal-scorer** : Reçoit maintenant une section "COHÉRENCE INTER-AGENTS TIER 3" dans son prompt avec les ajustements effectués, les flags adjusted/reliable, et l'instruction de cohérence score/scénarios.
+- **Tests** : 20 tests couvrant redistribution, normalisation, caps, flags, coherence score, injection in-place.
+- **Logs structurés** : Persistence via `persistReasoningTrace` pour observabilité dans la DB.
+- **Bug fix** : `setCacheEntry` récursion infinie corrigée.
+
+### Prochaines étapes
+- Tester sur un deal réel (ex: Antiopea) pour valider les ajustements
+- Optionnel : affichage des ajustements de cohérence dans l'UI (analysis-panel)
+
+---
+
+## 2026-01-29 — Cohérence scénarios avec score global (NO_GO = pas de retour espéré)
+
+**Fichiers modifiés:**
+- `src/components/deals/tier3-results.tsx` — ScenarioModelerCard reçoit overallScore et skepticism. Si NO_GO: retour espéré = tiret rouge + message, scénarios grisés (opacity 60%) + mention "projections théoriques". Confiance 0% fallback sur score global.
+
+---
+
+## 2026-01-29 — Fix compteur agents, multiple espéré <1x = tiret, couleurs multiples
+
+**Fichiers modifiés:**
+- `src/components/deals/analysis-panel.tsx` — Passe `totalAgentsRun` (tous tiers) au composant Tier3Results
+- `src/components/deals/tier3-results.tsx` — Multiple <1x affiche "—" + "Retour improbable". Couleurs: 5x+=emerald, 3-5x=green, 2-3x=yellow, 1-2x=orange. Compteur agents = total tous tiers
+
+---
+
+## 2026-01-29 — Fix verdict + multiple espéré cohérents avec le score et le scepticisme
+
+**Fichiers modifiés:**
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Le verdict est TOUJOURS dérivé du score (le LLM verdict est ignoré)
+- `src/components/deals/tier3-results.tsx` — Verdict frontend aussi dérivé du score (pour les analyses déjà en DB). Multiple espéré ajusté par taux de survie = (1 - scepticisme/100)². Scepticisme 88 → survie 1.4% → 4.4x devient 0.06x
+
+**Problèmes corrigés:**
+1. Score 24/100 affichait "conditional_pass" → maintenant "no_go" (backend + frontend)
+2. Scepticisme 88/100 avec multiple 4.4x → maintenant ~0.06x (taux de survie au carré)
+
+---
+
+## 2026-01-29 — Fix score timeline + delta (overallScore au lieu de score.value)
+
+- **Fichiers modifiés** : `src/components/deals/analysis-panel.tsx`
+- **Changement** : Extraction du score corrigée pour lire `overallScore` (format réel du scorer) au lieu de `score.value`
+- **Impact** : Timeline versions, currentScore, previousScore affichent maintenant le vrai score
+
+---
+
+## 2026-01-29 — Compactage timeline versions
+
+- **Fichier modifié** : `src/components/deals/timeline-versions.tsx`
+- **Changement** : Layout horizontal par noeud, cercle plus petit, date/badge dans tooltip uniquement
+- **Résultat** : Timeline ~3x moins haute
+
+---
+
+## 2026-01-29 — Réordonnancement résultats analyse
+
+- **Fichier modifié** : `src/components/deals/analysis-panel.tsx`
+- **Changement** : Tier 3 (synthèse) affiché en premier, avant Tier 2 et Tier 1
+- **Ordre** : Early Warnings → Tier 3 (synthèse) → Tier 2 (expert sectoriel) → Tier 1 (détail agents)
+
+---
+
+## 2026-01-30 01:00 — Sentry integration
+
+**Fichiers crees:**
+- `sentry.client.config.ts` — Config client (replay on error, 10% traces)
+- `sentry.server.config.ts` — Config server (10% traces)
+- `sentry.edge.config.ts` — Config edge (10% traces)
+- `src/instrumentation.ts` — Next.js instrumentation hook + captureRequestError
+- `src/app/global-error.tsx` — Global error page avec Sentry.captureException
+
+**Fichiers modifies:**
+- `next.config.ts` — Wrappé avec withSentryConfig
+- `package.json` — Ajout @sentry/nextjs
+
+**Checks:** tsc 0 erreurs, build pass clean (32/32 pages)
+
+**Note:** Ajouter `NEXT_PUBLIC_SENTRY_DSN` dans `.env.local` pour activer.
+
+---
+
+## 2026-01-30 00:30 — DB sync: relations, indexes, baseline fix
+
+**Actions:**
+- Supprimé migration baseline corrompue (`20260128200000_baseline` — contenait un warn Prisma dans le SQL)
+- `prisma db push` — synchronisé le schema avec la DB (relations @relation + onDelete Cascade sur 6 models, indexes sur Analysis.status, Document.processingStatus, FactEvent.eventType)
+- Prisma client régénéré
+
+---
+
+## 2026-01-30 00:15 — Finding extractor: 9 agents Tier 1 spécifiques
+
+**Fichier modifie:**
+- `src/agents/orchestration/finding-extractor.ts` — Ajout de 9 extractors spécifiques pour deck-forensics, exit-strategist, tech-stack-dd, tech-ops-dd, legal-regulatory, gtm-analyst, customer-intel, cap-table-auditor, question-master. Refactoring du dispatch via table de lookup au lieu de if/else chain. Couverture 13/13 agents Tier 1.
+
+---
+
+## 2026-01-30 00:00 — Bloc 4 Cleanup (3 fixes)
+
+**Fichiers supprimes:**
+- `src/hooks/use-error-handler.ts` — dead code, jamais importé
+- `src/components/deals/tier-lock-overlay.tsx` — dead code, jamais importé
+- `src/components/deals/fact-item.tsx` — dead code, jamais importé
+- `src/components/deals/fact-override-modal.tsx` — dead code, jamais importé
+- `src/components/deals/fact-review-panel.tsx` — dead code, jamais importé
+
+**Fichiers modifies:**
+- `src/agents/orchestrator/early-warnings.ts` — Ajout rules pour 5 agents manquants (deck-forensics, exit-strategist, tech-stack-dd, tech-ops-dd, gtm-analyst)
+
+**Note:** `output-mapper.ts`, `types/index.ts`, `deal-action-dialogs.tsx`, `use-deal-actions.ts` conservés car importés activement.
+
+---
+
+## 2026-01-29 23:45 — Bloc 3 Qualité React (6 fixes)
+
+**Fichiers modifies:**
+- `src/lib/query-keys.ts` — Fix founderResponses.byDeal, staleness.byDeal, usage.analyze pour utiliser leur prefix `all`
+- `src/components/deals/use-deal-actions.ts` — Granular invalidation (deals.lists() + deals.detail() au lieu de deals.all)
+- `src/components/deals/score-display.tsx` — React.memo sur ScoreDisplay et ScoreGrid
+- `src/app/(dashboard)/error.tsx` — Error boundary dashboard (nouveau)
+- `src/app/(dashboard)/deals/error.tsx` — Error boundary deals list (nouveau)
+- `src/app/(dashboard)/deals/[dealId]/error.tsx` — Error boundary deal detail (nouveau)
+
+---
+
+## 2026-01-29 23:30 — Bloc 2 Stabilité Infra (6 fixes)
+
+**Fichiers modifies:**
+- `prisma/schema.prisma` — @relation + onDelete Cascade sur ScoredFinding, ReasoningTrace, DebateRecord, AgentMessage, StateTransition, AnalysisCheckpoint + reverse relations sur Analysis + indexes sur Analysis.status, Document.processingStatus, FactEvent.eventType
+- `src/agents/orchestrator/index.ts` — TIER1_AGENT_COUNT = TIER1_AGENT_NAMES.length (fix 12→13) + per-agent timeout 120s avec Promise.race
+- `src/agents/orchestration/state-machine.ts` — Timeout enforcement dans transition() + méthode isCurrentStateTimedOut()
+- `src/agents/orchestration/consensus-engine.ts` — Eviction policy sur resolutionCache (max 100 entrées)
+
+---
+
+## 2026-01-29 23:00 — Bloc 1 Audit Sécurité (9 fixes)
+
+**Fichiers modifies:**
+- `src/middleware.ts` — BYPASS_AUTH gate au NODE_ENV=development
+- `src/app/api/llm/route.ts` — Route restreinte au dev uniquement (proxy LLM fermé en prod)
+- `src/app/api/founder/route.ts` — Validation URL whitelist linkedin.com (anti-SSRF)
+- `src/services/openrouter/router.ts` — Suppression TEST_MODE dead code et TODO [PROD]
+- `src/agents/board/types.ts` — Suppression TODO comments
+- `next.config.ts` — Security headers (X-Frame-Options, HSTS, nosniff, Referrer-Policy, Permissions-Policy)
+- `vercel.json` — maxDuration 300s pour /api/analyze, /api/board, cron routes
+- `src/app/api/telegram/webhook/route.ts` — Vérification secret token header
+- `src/app/api/admin/calibration/route.ts` — requireAdmin() au lieu de check subscription
+- `src/app/api/documents/upload/route.ts` — Sanitize filename, access private, suppression error details leak
+
+---
+
 ## 2026-01-29 21:00 — LinkedIn URL Finder via Brave Search (name → URL → RapidAPI)
 
 **Fichiers modifies:**

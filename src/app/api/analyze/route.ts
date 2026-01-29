@@ -91,10 +91,20 @@ export async function POST(request: NextRequest) {
     });
 
     if (runningAnalysis) {
-      return NextResponse.json(
-        { error: "An analysis is already running for this deal" },
-        { status: 409 }
-      );
+      // Auto-expire stuck analyses older than 10 minutes
+      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+      if (runningAnalysis.createdAt < tenMinAgo) {
+        await prisma.analysis.update({
+          where: { id: runningAnalysis.id },
+          data: { status: "FAILED" },
+        });
+        console.warn(`[analyze] Auto-expired stuck analysis ${runningAnalysis.id} (created ${runningAnalysis.createdAt.toISOString()})`);
+      } else {
+        return NextResponse.json(
+          { error: "An analysis is already running for this deal" },
+          { status: 409 }
+        );
+      }
     }
 
     // Record the analysis usage (consumes from limit for FREE users)

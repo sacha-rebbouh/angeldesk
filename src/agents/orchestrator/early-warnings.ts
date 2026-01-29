@@ -295,6 +295,111 @@ const DETECTION_RULES: DetectionRule[] = [
   },
 
   // ============================================================================
+  // DECK FORENSICS (refactored v2.0 - data is { meta, score, findings, ... })
+  // ============================================================================
+  {
+    agentName: "deck-forensics",
+    field: "score.value",
+    condition: "below",
+    threshold: 20,
+    severity: "high",
+    category: "founder_integrity",
+    title: "Deck Credibility Very Low",
+    descriptionTemplate: "Deck forensics score of {value}/100 — significant inconsistencies or misleading claims detected.",
+    recommendation: "investigate",
+    questionsToAsk: [
+      "Can you clarify the discrepancies found in the pitch deck?",
+      "Are the metrics presented verifiable?",
+    ],
+  },
+  {
+    agentName: "deck-forensics",
+    field: "findings.misleadingClaims",
+    condition: "exists",
+    severity: "high",
+    category: "founder_integrity",
+    title: "Misleading Claims in Pitch Deck",
+    descriptionTemplate: "Deck analysis found potentially misleading claims requiring verification.",
+    recommendation: "investigate",
+  },
+
+  // ============================================================================
+  // EXIT STRATEGIST (refactored v2.0 - data is { meta, score, findings, ... })
+  // ============================================================================
+  {
+    agentName: "exit-strategist",
+    field: "score.value",
+    condition: "below",
+    threshold: 20,
+    severity: "high",
+    category: "deal_structure",
+    title: "Very Low Exit Potential",
+    descriptionTemplate: "Exit score of {value}/100 — limited viable exit paths identified.",
+    recommendation: "investigate",
+    questionsToAsk: [
+      "What are your realistic exit scenarios?",
+      "Who are potential acquirers in this space?",
+    ],
+  },
+
+  // ============================================================================
+  // TECH STACK DD (refactored v2.0 - data is { meta, score, findings, ... })
+  // ============================================================================
+  {
+    agentName: "tech-stack-dd",
+    field: "score.value",
+    condition: "below",
+    threshold: 20,
+    severity: "high",
+    category: "product_broken",
+    title: "Critical Tech Stack Issues",
+    descriptionTemplate: "Tech stack score of {value}/100 — fundamental technical concerns.",
+    recommendation: "investigate",
+    questionsToAsk: [
+      "What's the plan to address technical debt?",
+      "Is the current architecture scalable?",
+    ],
+  },
+
+  // ============================================================================
+  // TECH OPS DD (refactored v2.0 - data is { meta, score, findings, ... })
+  // ============================================================================
+  {
+    agentName: "tech-ops-dd",
+    field: "score.value",
+    condition: "below",
+    threshold: 20,
+    severity: "high",
+    category: "product_broken",
+    title: "Critical Tech Operations Issues",
+    descriptionTemplate: "Tech ops score of {value}/100 — security, infrastructure, or team maturity concerns.",
+    recommendation: "investigate",
+    questionsToAsk: [
+      "What security measures are in place?",
+      "Do you have incident response procedures?",
+    ],
+  },
+
+  // ============================================================================
+  // GTM ANALYST (refactored v2.0 - data is { meta, score, findings, ... })
+  // ============================================================================
+  {
+    agentName: "gtm-analyst",
+    field: "score.value",
+    condition: "below",
+    threshold: 20,
+    severity: "high",
+    category: "market_dead",
+    title: "Weak Go-To-Market Strategy",
+    descriptionTemplate: "GTM score of {value}/100 — no clear path to market identified.",
+    recommendation: "investigate",
+    questionsToAsk: [
+      "What's your customer acquisition strategy?",
+      "What are your unit economics for customer acquisition?",
+    ],
+  },
+
+  // ============================================================================
   // QUESTION MASTER (refactored v2.0 - dealbreakers in findings)
   // ============================================================================
   {
