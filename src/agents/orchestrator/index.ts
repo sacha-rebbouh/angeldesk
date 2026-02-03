@@ -23,6 +23,7 @@ import {
   consensusEngine,
   reflexionEngine,
   extractAllFindings,
+  extractValidatedClaims,
   type VerificationContext,
   validateAndCalculate,
   type CalculationResult,
@@ -40,12 +41,15 @@ import { runJob } from "@/services/jobs";
 
 // Fact Store imports for Tier 0 fact extraction
 import { factExtractorAgent, type FactExtractorOutput } from "@/agents/tier0/fact-extractor";
+import { deckCoherenceChecker, type DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 import {
   getCurrentFacts,
   formatFactStoreForAgents,
   createFactEventsBatch,
+  updateFactsInMemory,
+  reformatFactStoreWithValidations,
 } from "@/services/fact-store";
-import type { CurrentFact } from "@/services/fact-store/types";
+import type { CurrentFact, FactCategory } from "@/services/fact-store/types";
 
 // Import modular components
 import {
@@ -57,6 +61,11 @@ import {
   ANALYSIS_CONFIGS,
   AGENT_COUNTS,
   TIER1_AGENT_NAMES,
+  TIER1_PHASE_A,
+  TIER1_PHASE_B,
+  TIER1_PHASE_C,
+  TIER1_PHASE_D,
+  TIER1_ALWAYS_REFLECT_PHASES,
   TIER3_AGENT_NAMES,
   TIER3_DEPENDENCIES,
   TIER3_EXECUTION_BATCHES,
@@ -99,6 +108,24 @@ import type { EarlyWarning, OnEarlyWarning } from "./types";
 
 // Re-export types
 export type { AnalysisOptions, AnalysisResult, AnalysisType, EarlyWarning, UserPlan };
+
+/**
+ * Infer FactCategory from a factKey prefix.
+ * Example: "financial.arr" → "FINANCIAL", "team.cto_experience" → "TEAM"
+ */
+function inferCategoryFromFactKey(factKey: string): FactCategory {
+  const prefix = factKey.split(".")[0]?.toLowerCase() ?? "";
+  const mapping: Record<string, FactCategory> = {
+    financial: "FINANCIAL",
+    team: "TEAM",
+    market: "MARKET",
+    product: "PRODUCT",
+    legal: "LEGAL",
+    competition: "COMPETITION",
+    traction: "TRACTION",
+  };
+  return mapping[prefix] ?? "OTHER";
+}
 export { ANALYSIS_CONFIGS, AGENT_COUNTS };
 
 // Type alias for deal with relations
@@ -559,6 +586,31 @@ export class AgentOrchestrator {
       }
     }
 
+    // STEP 1.5: Run Deck Coherence Check (Tier 0.5)
+    // Verifies data consistency before Tier 1 agents analyze
+    let deckCoherenceReport: DeckCoherenceReport | null = null;
+    if (deal.documents.length > 0 && results["document-extractor"]?.success) {
+      const coherenceResult = await this.runDeckCoherenceCheck(
+        deal,
+        extractedData as Record<string, unknown> | undefined,
+        onProgress
+      );
+      deckCoherenceReport = coherenceResult.report;
+      totalCost += coherenceResult.cost;
+
+      if (deckCoherenceReport) {
+        results["deck-coherence-checker"] = {
+          agentName: "deck-coherence-checker",
+          success: true,
+          executionTimeMs: coherenceResult.executionTimeMs,
+          cost: coherenceResult.cost,
+          data: deckCoherenceReport,
+        } as AgentResult & { data: DeckCoherenceReport };
+      }
+
+      console.log(`[Orchestrator] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
+    }
+
     // STEP 2: Enrich with Context Engine (using extracted data)
     const contextEngineData = await this.enrichContext(deal, extractedData);
 
@@ -568,98 +620,41 @@ export class AgentOrchestrator {
       contextEngine: contextEngineData,
       factStore,
       factStoreFormatted,
+      deckCoherenceReport: deckCoherenceReport ?? undefined,
     };
 
-    // STEP 3: Run all Tier 1 agents in PARALLEL
-    onProgress?.({
-      currentAgent: "tier1-agents (parallel)",
-      completedAgents: deal.documents.length > 0 ? 2 : 0, // +1 for fact-extractor
+    // STEP 3: Run Tier 1 agents in 4 sequential phases (A→B→C→D)
+    const tier1AgentMap = await getTier1Agents(false);
+    let completedCount = deal.documents.length > 0 ? 1 : 0;
+
+    const phasesResult = await this.runTier1Phases({
+      enrichedContext,
+      tier1AgentMap,
+      analysisId: analysis.id,
+      deal,
+      dealId,
+      onProgress,
       totalAgents: TIER1_AGENT_COUNT + 2,
+      onEarlyWarning,
+      collectedWarnings,
+      allResults: results,
+      initialTotalCost: totalCost,
+      initialCompletedCount: completedCount,
+      factStore,
+      factStoreFormatted,
+      extractedData,
     });
 
-    // Always use Standard agents (better results, lower cost)
-    const tier1AgentMap = await getTier1Agents(false);
+    totalCost += phasesResult.costIncurred;
+    completedCount += phasesResult.completedInPhases;
 
-    const AGENT_TIMEOUT_MS = 120_000; // 2 minutes per agent
-
-    const tier1Results = await Promise.all(
-      TIER1_AGENT_NAMES.map(async (agentName) => {
-        const agent = tier1AgentMap[agentName];
-        try {
-          const result = await Promise.race([
-            agent.run(enrichedContext),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`Agent ${agentName} timed out after ${AGENT_TIMEOUT_MS / 1000}s`)), AGENT_TIMEOUT_MS)
-            ),
-          ]);
-          return { agentName, result };
-        } catch (error) {
-          return {
-            agentName,
-            result: {
-              agentName,
-              success: false,
-              executionTimeMs: 0,
-              cost: 0,
-              error: error instanceof Error ? error.message : "Unknown error",
-            } as AgentResult,
-          };
-        }
-      })
-    );
-
-    // Collect results and check for early warnings
-    let completedCount = deal.documents.length > 0 ? 1 : 0;
-    for (const { agentName, result } of tier1Results) {
-      results[agentName] = result;
-      totalCost += result.cost;
-      completedCount++;
-      await processAgentResult(dealId, agentName, result);
-
-      // Check for early warnings
-      this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
-    }
-
-    await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-    // Extract findings for Consensus + Reflexion
-    const { allFindings: extractedFindings, agentConfidences, lowConfidenceAgents } = extractAllFindings(results);
-
-    // Build VerificationContext for engines
+    // Global consensus across all phases
     const verificationContext = await this.buildVerificationContext(
-      enrichedContext, extractedData ?? {}, factStoreFormatted, deal
+      enrichedContext, extractedData ?? {}, phasesResult.updatedFactStoreFormatted, deal
     );
-
-    // Consensus: detect and resolve contradictions
-    if (extractedFindings.length > 1) {
-      await this.runConsensusDebate(analysis.id, extractedFindings, verificationContext, enrichedContext);
-    }
-
-    // Reflexion: auto-critique low-confidence Tier 1 agents
-    // Sort by confidence ascending, cap at 5 agents max, run in parallel batches of 4
-    const sortedLowConfidence = [...lowConfidenceAgents]
-      .sort((a, b) => (agentConfidences.get(a)?.score ?? 0) - (agentConfidences.get(b)?.score ?? 0))
-      .slice(0, 5);
-    const REFLEXION_BATCH_SIZE = 4;
-    for (let i = 0; i < sortedLowConfidence.length; i += REFLEXION_BATCH_SIZE) {
-      const batch = sortedLowConfidence.slice(i, i + REFLEXION_BATCH_SIZE);
-      const batchResults = await Promise.all(
-        batch.map(async (agentName) => {
-          const result = results[agentName];
-          if (result?.success) {
-            const agentFindings = extractedFindings.filter(f => f.agentName === agentName);
-            return this.applyReflexion(
-              analysis.id, agentName, result as AnalysisAgentResult, agentFindings,
-              `Deal: ${deal.name}, Sector: ${deal.sector}`, 1, verificationContext,
-              results, enrichedContext
-            );
-          }
-          return { tokensUsed: 0 };
-        })
-      );
-      for (const stats of batchResults) {
-        totalCost += stats.tokensUsed * 0.00001;
-      }
+    if (phasesResult.allFindings.length > 1) {
+      const consensusStats = await this.runConsensusDebate(analysis.id, phasesResult.allFindings, verificationContext, enrichedContext);
+      totalCost += consensusStats.totalTokens * 0.00001;
     }
 
     // Finalize
@@ -1064,7 +1059,7 @@ export class AgentOrchestrator {
     // FREE: 12 Tier1 + 1 extractor + 1 fact-extractor + 1 synthesis-deal-scorer = 15
     // PRO:  12 Tier1 + 5 Tier3 + 1 extractor + 1 fact-extractor + (0-1 sector expert) = 19-20
     const tier3AgentCount = includeFullTier3 ? 5 : 1; // Only synthesis-deal-scorer for FREE
-    const TOTAL_AGENTS = 12 + tier3AgentCount + 1 + 1 + (hasSectorExpert ? 1 : 0);
+    const TOTAL_AGENTS = TIER1_AGENT_NAMES.length + tier3AgentCount + 1 + 1 + (hasSectorExpert ? 1 : 0);
 
     // Get document IDs for versioning
     const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
@@ -1205,6 +1200,31 @@ export class AgentOrchestrator {
         }
       }
 
+      // STEP 1.5: DECK COHERENCE CHECK (Tier 0.5)
+      // Verifies data consistency before Tier 1 agents analyze
+      let deckCoherenceReport: DeckCoherenceReport | null = null;
+      if (deal.documents.length > 0 && allResults["document-extractor"]?.success) {
+        const coherenceResult = await this.runDeckCoherenceCheck(
+          deal,
+          extractedData as Record<string, unknown> | undefined,
+          onProgress
+        );
+        deckCoherenceReport = coherenceResult.report;
+        totalCost += coherenceResult.cost;
+
+        if (deckCoherenceReport) {
+          allResults["deck-coherence-checker"] = {
+            agentName: "deck-coherence-checker",
+            success: true,
+            executionTimeMs: coherenceResult.executionTimeMs,
+            cost: coherenceResult.cost,
+            data: deckCoherenceReport,
+          } as AgentResult & { data: DeckCoherenceReport };
+        }
+
+        console.log(`[Orchestrator:FullAnalysis] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
+      }
+
       // STEP 2: CONTEXT ENGINE (runs AFTER extraction to use extracted data)
       await stateMachine.startGathering();
 
@@ -1222,79 +1242,60 @@ export class AgentOrchestrator {
         contextEngine: contextEngineData,
         factStore,
         factStoreFormatted,
+        deckCoherenceReport: deckCoherenceReport ?? undefined,
       };
 
-      // STEP 3: ANALYSIS PHASE - Tier 1 Agents in Parallel
+      // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases
+      // Phase A: deck-forensics → validates deck claims
+      // Phase B: financial-auditor → validates financial metrics
+      // Phase C: team + competitive + market (parallel) → using validated facts
+      // Phase D: remaining 8 agents (parallel) → using all validated facts
       await stateMachine.startAnalysis();
 
-      onProgress?.({
-        currentAgent: "tier1-agents (parallel)",
-        completedAgents: completedCount,
+      const tier1AgentMap = await getTier1Agents(useReAct);
+
+      const phasesResult = await this.runTier1Phases({
+        enrichedContext,
+        tier1AgentMap,
+        analysisId: analysis.id,
+        deal,
+        dealId,
+        onProgress,
         totalAgents: TOTAL_AGENTS,
+        onEarlyWarning,
+        collectedWarnings,
+        allResults,
+        initialTotalCost: totalCost,
+        initialCompletedCount: completedCount,
+        factStore,
+        factStoreFormatted,
+        extractedData,
+        stateMachine,
       });
 
-      const tier1AgentMap = await getTier1Agents(useReAct);
-      const allFindings: ScoredFinding[] = [];
+      const { allFindings, agentConfidences, lowConfidenceAgents } = phasesResult;
+      totalCost += phasesResult.costIncurred;
+      completedCount += phasesResult.completedInPhases;
+      factStore = phasesResult.updatedFactStore;
+      factStoreFormatted = phasesResult.updatedFactStoreFormatted;
 
-      const tier1Results = await Promise.all(
-        TIER1_AGENT_NAMES.map(async (agentName) => {
-          const agent = tier1AgentMap[agentName];
-          try {
-            const result = await agent.run(enrichedContext);
-            return { agentName, result };
-          } catch (error) {
-            return {
-              agentName,
-              result: {
-                agentName,
-                success: false,
-                executionTimeMs: 0,
-                cost: 0,
-                error: error instanceof Error ? error.message : "Unknown error",
-              } as AgentResult,
-            };
-          }
-        })
+      // Rebuild verificationContext for global consensus and downstream use
+      const verificationContext = await this.buildVerificationContext(
+        enrichedContext, extractedData, factStoreFormatted, deal
       );
 
-      // Collect Tier 1 results
-      for (const { agentName, result } of tier1Results) {
-        allResults[agentName] = result;
-        totalCost += result.cost;
-        completedCount++;
-        enrichedContext.previousResults![agentName] = result;
-
-        if (result.success) {
-          stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-        } else {
-          stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
-        }
-
-        // Check for early warnings
-        this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
-
-        await processAgentResult(dealId, agentName, result);
-      }
-
-      await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-      // Extract findings from ALL Standard agents (for Consensus + Reflexion engines)
-      const { allFindings: extractedFindings, agentConfidences, lowConfidenceAgents } =
-        extractAllFindings(allResults);
-      allFindings.push(...extractedFindings);
-
-      // Publish findings to message bus
-      for (const finding of extractedFindings) {
+      // Publish all findings to message bus
+      for (const finding of allFindings) {
         await messageBus.publish(createFindingMessage(finding.agentName, "*", finding));
       }
 
-      // Persist findings
-      if (extractedFindings.length > 0) {
-        await persistScoredFindings(analysis.id, "tier1-aggregate", extractedFindings);
+      // Persist all findings
+      if (allFindings.length > 0) {
+        await persistScoredFindings(analysis.id, "tier1-aggregate", allFindings);
       }
 
       console.log(
-        `[Orchestrator] Extracted ${extractedFindings.length} findings from ${Object.keys(allResults).length} agents. ` +
+        `[Orchestrator] Extracted ${allFindings.length} findings from ${Object.keys(allResults).length} agents. ` +
         `Low confidence agents: ${lowConfidenceAgents.join(", ") || "none"}`
       );
 
@@ -1334,71 +1335,21 @@ export class AgentOrchestrator {
         }
       }
 
-      // Build VerificationContext for Consensus and Reflexion engines
-      const verificationContext: VerificationContext = await this.buildVerificationContext(
-        enrichedContext, extractedData, factStoreFormatted, deal
-      );
-
-      // STEP 4: DEBATE PHASE - Consensus Engine for Contradictions
+      // STEP 4: GLOBAL CONSENSUS - Cross-phase contradiction detection
+      // (Phases already ran intra-phase consensus, this catches cross-phase contradictions)
       if (allFindings.length > 1) {
         await stateMachine.startDebate();
 
         onProgress?.({
-          currentAgent: "consensus-engine (detecting contradictions)",
+          currentAgent: "consensus-engine (global cross-phase contradictions)",
           completedAgents: completedCount,
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
 
         const debateStats = await this.runConsensusDebate(analysis.id, allFindings, verificationContext, enrichedContext);
-        totalCost += debateStats.totalTokens * 0.00001; // Approximate cost from tokens
-        console.log(`[ConsensusEngine] ${debateStats.debateCount} debates completed`);
-      }
-
-      // STEP 4.5: REFLEXION PHASE - Auto-critique for low-confidence agents
-      // Applies to ALL agents with confidence < threshold (tier-based)
-      if (lowConfidenceAgents.length > 0) {
-        // Sort by confidence ascending, cap at 5 agents max, run in parallel batches of 4
-        const sortedLowConfidence = [...lowConfidenceAgents]
-          .sort((a, b) => (agentConfidences.get(a)?.score ?? 0) - (agentConfidences.get(b)?.score ?? 0))
-          .slice(0, 5);
-
-        onProgress?.({
-          currentAgent: `reflexion-engine (${sortedLowConfidence.length} low-confidence agents)`,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-
-        const REFLEXION_BATCH_SIZE = 4;
-        for (let i = 0; i < sortedLowConfidence.length; i += REFLEXION_BATCH_SIZE) {
-          const batch = sortedLowConfidence.slice(i, i + REFLEXION_BATCH_SIZE);
-          const batchResults = await Promise.all(
-            batch.map(async (agentName) => {
-              const result = allResults[agentName];
-              if (result?.success) {
-                const agentFindings = allFindings.filter(f => f.agentName === agentName);
-                const tier: 1 | 2 | 3 = (TIER1_AGENT_NAMES as readonly string[]).includes(agentName) ? 1
-                  : (TIER3_AGENT_NAMES as readonly string[]).includes(agentName) ? 3 : 2;
-                return this.applyReflexion(
-                  analysis.id,
-                  agentName,
-                  result as AnalysisAgentResult,
-                  agentFindings,
-                  `Deal: ${deal.name}, Sector: ${deal.sector}`,
-                  tier,
-                  verificationContext,
-                  allResults,
-                  enrichedContext
-                );
-              }
-              return { tokensUsed: 0 };
-            })
-          );
-          for (const stats of batchResults) {
-            totalCost += stats.tokensUsed * 0.00001;
-          }
-        }
+        totalCost += debateStats.totalTokens * 0.00001;
+        console.log(`[ConsensusEngine] Global: ${debateStats.debateCount} debates completed`);
       }
 
       // Check cost limit before synthesis phase
@@ -1746,6 +1697,238 @@ export class AgentOrchestrator {
   }
 
   // ============================================================================
+  // TIER 1 PHASES PIPELINE (shared by runFullAnalysis + runTier1Analysis)
+  // ============================================================================
+
+  /**
+   * Execute Tier 1 agents in 4 sequential phases (A→B→C→D).
+   * Each phase runs agents in parallel within the phase, then:
+   * - Extracts findings and confidences
+   * - Applies reflexion (always for A/B, confidence < 70% for C/D)
+   * - Extracts validated claims and updates fact store in memory
+   * - Rebuilds verificationContext after Phase B
+   * - Runs intra-phase consensus for multi-agent phases
+   * - Persists validated facts to DB after all phases
+   *
+   * Used by both runFullAnalysis() and runTier1Analysis().
+   */
+  private async runTier1Phases(params: {
+    enrichedContext: EnrichedAgentContext;
+    tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
+    analysisId: string;
+    deal: DealWithDocs;
+    dealId: string;
+    onProgress?: AnalysisOptions["onProgress"];
+    totalAgents: number;
+    onEarlyWarning?: OnEarlyWarning;
+    collectedWarnings: EarlyWarning[];
+    allResults: Record<string, AgentResult>;
+    initialTotalCost: number;
+    initialCompletedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    extractedData: {
+      tagline?: string;
+      competitors?: string[];
+      founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+      productDescription?: string;
+      businessModel?: string;
+    };
+    stateMachine?: AnalysisStateMachine;
+  }): Promise<{
+    allFindings: ScoredFinding[];
+    agentConfidences: Map<string, ConfidenceScore>;
+    lowConfidenceAgents: string[];
+    updatedFactStore: CurrentFact[];
+    updatedFactStoreFormatted: string;
+    costIncurred: number;
+    completedInPhases: number;
+  }> {
+    const {
+      enrichedContext, tier1AgentMap, analysisId, deal, dealId,
+      onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+      allResults, extractedData, stateMachine,
+    } = params;
+    let { factStore, factStoreFormatted } = params;
+    let totalCost = 0;
+    let completedCount = params.initialCompletedCount;
+
+    const allFindings: ScoredFinding[] = [];
+    const allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[] = [];
+
+    // Build initial VerificationContext (needed for inline reflexion)
+    let verificationContext: VerificationContext = await this.buildVerificationContext(
+      enrichedContext, extractedData, factStoreFormatted, deal
+    );
+
+    const tier1Phases: { name: string; agents: readonly string[] }[] = [
+      { name: "Phase A: deck-forensics", agents: TIER1_PHASE_A },
+      { name: "Phase B: financial-auditor", agents: TIER1_PHASE_B },
+      { name: "Phase C: team + competitive + market", agents: TIER1_PHASE_C },
+      { name: "Phase D: remaining agents", agents: TIER1_PHASE_D },
+    ];
+
+    for (const phase of tier1Phases) {
+      onProgress?.({
+        currentAgent: `tier1 ${phase.name}`,
+        completedAgents: completedCount,
+        totalAgents,
+        estimatedCostSoFar: params.initialTotalCost + totalCost,
+      });
+
+      // Run agents in this phase (parallel within phase)
+      const phaseResults = await Promise.all(
+        phase.agents.map(async (agentName) => {
+          const agent = tier1AgentMap[agentName];
+          try {
+            const result = await agent.run(enrichedContext);
+            return { agentName, result };
+          } catch (error) {
+            return {
+              agentName,
+              result: {
+                agentName,
+                success: false,
+                executionTimeMs: 0,
+                cost: 0,
+                error: error instanceof Error ? error.message : "Unknown error",
+              } as AgentResult,
+            };
+          }
+        })
+      );
+
+      // Collect phase results
+      for (const { agentName, result } of phaseResults) {
+        allResults[agentName] = result;
+        totalCost += result.cost;
+        completedCount++;
+        enrichedContext.previousResults![agentName] = result;
+
+        if (stateMachine) {
+          if (result.success) {
+            stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
+          } else {
+            stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
+          }
+        }
+
+        this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
+        await processAgentResult(dealId, agentName, result);
+      }
+
+      // Extract findings for this phase
+      const phaseAgentResults: Record<string, AgentResult> = {};
+      for (const agentName of phase.agents) {
+        if (allResults[agentName]) {
+          phaseAgentResults[agentName] = allResults[agentName];
+        }
+      }
+      const { allFindings: phaseFindings, agentConfidences: phaseConfidences } =
+        extractAllFindings(phaseAgentResults);
+      allFindings.push(...phaseFindings);
+
+      // Inline reflexion for this phase
+      // Phases A and B: ALWAYS apply reflexion (critical foundation agents)
+      // Phases C and D: only apply if agent confidence < 70%
+      for (const { agentName, result } of phaseResults) {
+        if (!result.success) continue;
+
+        const confidence = phaseConfidences.get(agentName);
+        const alwaysReflect = (TIER1_ALWAYS_REFLECT_PHASES as ReadonlyArray<string>).includes(agentName);
+        const needsReflect = alwaysReflect || (confidence && confidence.score < 70);
+
+        if (needsReflect) {
+          const agentFindings = allFindings.filter(f => f.agentName === agentName);
+          const reflexionStats = await this.applyReflexion(
+            analysisId,
+            agentName,
+            result as AnalysisAgentResult,
+            agentFindings,
+            `Deal: ${deal.name}, Sector: ${deal.sector}`,
+            1,
+            verificationContext,
+            allResults,
+            enrichedContext
+          );
+          totalCost += reflexionStats.tokensUsed * 0.00001;
+        }
+      }
+
+      // Extract validated claims and update fact store in memory
+      for (const agentName of phase.agents) {
+        const result = allResults[agentName];
+        if (result?.success) {
+          const validations = extractValidatedClaims(result, agentName);
+          if (validations.length > 0) {
+            allValidations.push(...validations);
+            updateFactsInMemory(factStore, validations);
+            factStoreFormatted = reformatFactStoreWithValidations(factStore, allValidations);
+            enrichedContext.factStore = factStore;
+            enrichedContext.factStoreFormatted = factStoreFormatted;
+            console.log(`[Orchestrator:${phase.name}] ${agentName}: ${validations.length} fact validations applied`);
+          }
+        }
+      }
+
+      // Rebuild verificationContext after Phase B and Phase C (factStoreFormatted has changed)
+      if (phase.name.includes("Phase B") || phase.name.includes("Phase C")) {
+        verificationContext = await this.buildVerificationContext(
+          enrichedContext, extractedData, factStoreFormatted, deal
+        );
+        console.log(`[Orchestrator] Rebuilt verificationContext after ${phase.name} with updated factStore`);
+      }
+
+      // Consensus within phase (if multiple agents in phase)
+      if (phase.agents.length > 1 && phaseFindings.length > 1) {
+        const debateStats = await this.runConsensusDebate(
+          analysisId, phaseFindings, verificationContext, enrichedContext
+        );
+        totalCost += debateStats.totalTokens * 0.00001;
+        console.log(`[Orchestrator:${phase.name}] Consensus: ${debateStats.debateCount} debates`);
+      }
+
+      await updateAnalysisProgress(analysisId, completedCount, params.initialTotalCost + totalCost);
+
+      console.log(`[Orchestrator] ${phase.name} complete (${phase.agents.length} agents)`);
+    }
+
+    // Persist validated facts to DB (event sourcing)
+    // Only persist facts with actual corrected values (not just analysis notes)
+    if (allValidations.length > 0) {
+      const factEvents = allValidations
+        .filter(v => v.status === 'VERIFIED' || v.status === 'CONTRADICTED')
+        .filter(v => v.correctedValue !== undefined && v.correctedValue !== null)
+        .map(v => ({
+          factKey: v.factKey,
+          category: inferCategoryFromFactKey(v.factKey),
+          value: v.correctedValue,
+          displayValue: v.correctedDisplayValue ?? String(v.correctedValue),
+          source: 'DATA_ROOM' as const,
+          sourceConfidence: v.newConfidence,
+          extractedText: v.explanation,
+        }));
+      if (factEvents.length > 0) {
+        await createFactEventsBatch(dealId, factEvents, 'RESOLVED', 'system');
+        console.log(`[Orchestrator] Persisted ${factEvents.length} validated facts to DB`);
+      }
+    }
+
+    // Extract global confidences for downstream use
+    const { agentConfidences, lowConfidenceAgents } = extractAllFindings(allResults);
+
+    return {
+      allFindings,
+      agentConfidences,
+      lowConfidenceAgents,
+      updatedFactStore: factStore,
+      updatedFactStoreFormatted: factStoreFormatted,
+      costIncurred: totalCost,
+      completedInPhases: completedCount - params.initialCompletedCount,
+    };
+  }
+
+  // ============================================================================
   // HELPER METHODS
   // ============================================================================
 
@@ -1949,6 +2132,117 @@ export class AgentOrchestrator {
         factStore: existingFacts,
         factStoreFormatted: formatFactStoreForAgents(existingFacts),
         extractionResult: null,
+        cost: 0,
+        executionTimeMs: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * Run Deck Coherence Check (Tier 0.5)
+   *
+   * Verifies data coherence AFTER document extraction, BEFORE Tier 1 agents.
+   * Detects inconsistencies, missing critical data, and implausible metrics.
+   *
+   * @param deal - Deal with documents
+   * @param extractedData - Data extracted from document-extractor
+   * @param onProgress - Progress callback
+   * @returns DeckCoherenceReport or null if check fails
+   */
+  private async runDeckCoherenceCheck(
+    deal: DealWithDocs,
+    extractedData: Record<string, unknown> | undefined,
+    onProgress?: AnalysisOptions["onProgress"]
+  ): Promise<{
+    report: DeckCoherenceReport | null;
+    cost: number;
+    executionTimeMs: number;
+  }> {
+    const startTime = Date.now();
+
+    // Skip if no documents with extracted text
+    const documentsWithContent = deal.documents.filter(d => d.extractedText);
+    if (documentsWithContent.length === 0) {
+      console.log("[Orchestrator:CoherenceCheck] No documents with content, skipping coherence check");
+      return {
+        report: null,
+        cost: 0,
+        executionTimeMs: Date.now() - startTime,
+      };
+    }
+
+    onProgress?.({
+      currentAgent: "deck-coherence-checker (tier0)",
+      completedAgents: 0,
+      totalAgents: 1,
+    });
+
+    try {
+      // Build context for coherence checker
+      const coherenceContext: AgentContext = {
+        dealId: deal.id,
+        deal,
+        documents: deal.documents,
+        previousResults: extractedData ? {
+          "document-extractor": {
+            agentName: "document-extractor",
+            success: true,
+            executionTimeMs: 0,
+            cost: 0,
+            data: extractedData,
+          } as unknown as AgentResult,
+        } : {},
+      };
+
+      // Run coherence checker via job runner (timeout + retry)
+      const jobResult = await runJob(
+        'deck-coherence-check',
+        () => deckCoherenceChecker.run(coherenceContext),
+        { timeoutMs: 90000, maxRetries: 1 }
+      );
+
+      if (jobResult.status === 'FAILED') {
+        console.error(`[Orchestrator:CoherenceCheck] Coherence check job failed: ${jobResult.error}`);
+        return {
+          report: null,
+          cost: 0,
+          executionTimeMs: Date.now() - startTime,
+        };
+      }
+
+      const result = jobResult.data!;
+
+      if (!result.success || !("data" in result)) {
+        console.error("[Orchestrator:CoherenceCheck] Coherence check failed:", result.error);
+        return {
+          report: null,
+          cost: result.cost,
+          executionTimeMs: Date.now() - startTime,
+        };
+      }
+
+      const report = (result as { data: DeckCoherenceReport }).data;
+
+      console.log(`[Orchestrator:CoherenceCheck] Complete: score=${report.coherenceScore}, ` +
+        `grade=${report.reliabilityGrade}, critical=${report.summary.criticalIssues}, ` +
+        `warnings=${report.summary.warningIssues}, recommendation=${report.recommendation}`);
+
+      onProgress?.({
+        currentAgent: "deck-coherence-checker (tier0)",
+        completedAgents: 1,
+        totalAgents: 1,
+        latestResult: result,
+      });
+
+      return {
+        report,
+        cost: result.cost,
+        executionTimeMs: Date.now() - startTime,
+      };
+    } catch (error) {
+      console.error("[Orchestrator:CoherenceCheck] Error during coherence check:", error);
+      return {
+        report: null,
         cost: 0,
         executionTimeMs: Date.now() - startTime,
       };
@@ -2594,9 +2888,25 @@ export class AgentOrchestrator {
 
       const contextEngineData = await this.enrichContext(deal as DealWithDocs, {});
 
+      // Restore Fact Store from DB so remaining agents have validated facts
+      // COMPROMISE: We restore the factStore but use Promise.all for remaining agents
+      // rather than determining the exact interrupted phase. This is acceptable because
+      // the factStore contains all validations that occurred before the interruption.
+      let factStore: CurrentFact[] = [];
+      let factStoreFormatted = "";
+      try {
+        factStore = await getCurrentFacts(deal.id);
+        factStoreFormatted = formatFactStoreForAgents(factStore);
+        console.log(`[Orchestrator:Resume] Restored ${factStore.length} facts from DB`);
+      } catch (error) {
+        console.error("[Orchestrator:Resume] Failed to restore fact store:", error);
+      }
+
       const enrichedContext: EnrichedAgentContext = {
         ...baseContext,
         contextEngine: contextEngineData,
+        factStore,
+        factStoreFormatted,
       };
 
       // Resume based on current state
@@ -2615,6 +2925,10 @@ export class AgentOrchestrator {
 
           const tier1AgentMap = await getTier1Agents(false);
 
+          // Use Promise.all with restored factStore for remaining agents.
+          // NOTE: We don't re-run the full 4-phase pipeline here because determining
+          // the exact interrupted phase is complex and error-prone. Instead, all remaining
+          // agents run in parallel with the validated facts available at interruption time.
           const tier1Results = await Promise.all(
             pendingTier1.map(async (agentName) => {
               const agent = tier1AgentMap[agentName];
@@ -2646,6 +2960,41 @@ export class AgentOrchestrator {
           }
 
           await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+        }
+      }
+
+      // Check if we need to run Tier 2 sector expert (PRO plan only)
+      if (
+        currentState === "ANALYZING" ||
+        currentState === "SYNTHESIZING" ||
+        currentState === "DEBATING"
+      ) {
+        const sectorExpert = await getTier2SectorExpert(deal.sector);
+        if (sectorExpert && !completedSet.has(sectorExpert.name) && !failedSet.has(sectorExpert.name)) {
+          onProgress?.({
+            currentAgent: `resuming tier2-${sectorExpert.name}`,
+            completedAgents: completedCount,
+            totalAgents: analysis.totalAgents,
+          });
+
+          try {
+            const sectorResult = await sectorExpert.run(enrichedContext);
+            allResults[sectorExpert.name] = sectorResult;
+            totalCost += sectorResult.cost;
+            completedCount++;
+            enrichedContext.previousResults![sectorExpert.name] = sectorResult;
+            await processAgentResult(deal.id, sectorExpert.name, sectorResult);
+            await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+          } catch (error) {
+            allResults[sectorExpert.name] = {
+              agentName: sectorExpert.name,
+              success: false,
+              executionTimeMs: 0,
+              cost: 0,
+              error: error instanceof Error ? error.message : "Unknown error",
+            };
+            completedCount++;
+          }
         }
       }
 

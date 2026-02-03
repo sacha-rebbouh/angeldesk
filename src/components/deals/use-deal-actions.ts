@@ -35,7 +35,8 @@ export function useDealActions() {
 
       toast.success("Deal renommé");
       setRenameDeal(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.deals.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.lists() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(renameDeal.id) });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors du renommage");
     } finally {
@@ -59,7 +60,7 @@ export function useDealActions() {
 
       toast.success("Deal supprimé");
       setDeleteDeal(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.deals.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.lists() });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors de la suppression");
     } finally {

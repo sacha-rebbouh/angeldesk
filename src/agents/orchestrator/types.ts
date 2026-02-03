@@ -167,7 +167,7 @@ export interface AdvancedAnalysisOptions {
 export const AGENT_COUNTS: Record<AnalysisType, number> = {
   extraction: 1,
   full_dd: 4,
-  tier1_complete: 13, // 12 Tier 1 + extractor
+  tier1_complete: 13, // 13 Tier 1 agents (used for display; actual total includes extractor + fact-extractor)
   tier2_sector: 1, // Dynamic sector expert
   tier3_synthesis: 5,
   full_analysis: 19, // 12 Tier 1 + 1 sector expert + 5 Tier 3 + 1 extractor
@@ -189,6 +189,33 @@ export const TIER1_AGENT_NAMES = [
   "exit-strategist",
   "question-master",
 ] as const;
+
+// ============================================================================
+// TIER 1 SEQUENTIAL PHASES
+// ============================================================================
+
+/**
+ * Tier 1 agents execute in 4 sequential phases.
+ * After each phase, outputs are validated via Reflexion and promoted to Fact Store.
+ *
+ * Phase A: deck-forensics verifies deck claims → establishes factual ground truth
+ * Phase B: financial-auditor calculates metrics → using verified claims from Phase A
+ * Phase C: team + competitive + market (parallel) → using verified facts from A+B
+ * Phase D: remaining 8 agents (parallel) → using all validated facts from A+B+C
+ */
+export const TIER1_PHASE_A = ["deck-forensics"] as const;
+export const TIER1_PHASE_B = ["financial-auditor"] as const;
+export const TIER1_PHASE_C = ["team-investigator", "competitive-intel", "market-intelligence"] as const;
+export const TIER1_PHASE_D = [
+  "tech-stack-dd", "tech-ops-dd", "legal-regulatory", "cap-table-auditor",
+  "gtm-analyst", "customer-intel", "exit-strategist", "question-master",
+] as const;
+
+/** All phases in execution order */
+export const TIER1_PHASES = [TIER1_PHASE_A, TIER1_PHASE_B, TIER1_PHASE_C, TIER1_PHASE_D] as const;
+
+/** Phases where reflexion is ALWAYS applied (regardless of confidence) */
+export const TIER1_ALWAYS_REFLECT_PHASES: ReadonlyArray<string> = [...TIER1_PHASE_A, ...TIER1_PHASE_B];
 
 // Tier 3 agent names (5 synthesis agents)
 export const TIER3_AGENT_NAMES = [

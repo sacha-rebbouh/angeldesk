@@ -245,6 +245,13 @@ Reponds en JSON avec cette structure exacte:
       "linkedinUrl": "string ou null"
     }] ou null,
 
+    "teamMembers": [{
+      "name": "string - NOM TEL QUE DANS LE DECK",
+      "role": "string - TITRE EXACT tel qu'ecrit dans le deck (Architecte SI, Developpeur Full Stack, etc.) — NE PAS modifier ou upgrader le titre",
+      "category": "co-founder|development|business|operations|other",
+      "background": "string ou null - entreprises precedentes UNIQUEMENT si explicitement liees a cette personne"
+    }] ou null,
+
     "productName": "Nom du produit principal (ex: Axiom, Notion, Slack) ou null",
     "productDescription": "string ou null",
     "techStack": ["string"] ou null,

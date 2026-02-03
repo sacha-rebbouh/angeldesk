@@ -70,6 +70,7 @@ export default async function DealDetailPage({ params }: PageProps) {
     (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
   );
 
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -180,7 +181,7 @@ export default async function DealDetailPage({ params }: PageProps) {
             Documents ({deal.documents.length})
           </TabsTrigger>
           <TabsTrigger value="founders">
-            Fondateurs ({deal.founders.length})
+            Team ({deal.founders.length})
           </TabsTrigger>
           <TabsTrigger value="redflags">
             Red Flags ({openRedFlags.length})

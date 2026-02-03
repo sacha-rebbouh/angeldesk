@@ -15,7 +15,11 @@ const completionSchema = z.object({
 });
 
 // POST /api/llm - Get LLM completion via OpenRouter
+// SECURITY: This raw proxy is restricted to development only
 export async function POST(request: NextRequest) {
+  if (process.env.NODE_ENV !== "development") {
+    return NextResponse.json({ error: "Not available" }, { status: 404 });
+  }
   try {
     await requireAuth();
     const body = await request.json();
@@ -71,6 +75,9 @@ export async function POST(request: NextRequest) {
 
 // GET /api/llm - Get available models
 export async function GET() {
+  if (process.env.NODE_ENV !== "development") {
+    return NextResponse.json({ error: "Not available" }, { status: 404 });
+  }
   try {
     await requireAuth();
 

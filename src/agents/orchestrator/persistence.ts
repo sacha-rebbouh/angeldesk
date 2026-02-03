@@ -384,6 +384,81 @@ export async function processAgentResult(
       }
       break;
     }
+
+    case "team-investigator": {
+      // Auto-sync analyzed profiles to Founder table
+      const teamResult = result as AgentResult & {
+        data?: {
+          findings?: {
+            founderProfiles?: Array<{
+              name: string;
+              role: string;
+              linkedinUrl?: string;
+              linkedinVerified?: boolean;
+              background?: Record<string, unknown>;
+              scores?: Record<string, number>;
+              strengths?: string[];
+              concerns?: string[];
+              redFlags?: Array<{ type: string; severity: string; description: string }>;
+              entrepreneurialTrack?: Record<string, unknown>;
+            }>;
+          };
+        };
+      };
+
+      const profiles = teamResult.data?.findings?.founderProfiles;
+      if (profiles && profiles.length > 0) {
+        // Get existing founders for this deal
+        const existingFounders = await prisma.founder.findMany({
+          where: { dealId },
+          select: { id: true, name: true },
+        });
+
+        for (const profile of profiles) {
+          // Match by name (case-insensitive)
+          const existing = existingFounders.find(
+            f => f.name.toLowerCase().trim() === profile.name.toLowerCase().trim()
+          );
+
+          const analysisData = JSON.parse(JSON.stringify({
+            scores: profile.scores,
+            strengths: profile.strengths,
+            concerns: profile.concerns,
+            redFlags: profile.redFlags,
+            background: profile.background,
+            entrepreneurialTrack: profile.entrepreneurialTrack,
+            linkedinVerified: profile.linkedinVerified,
+            source: "team-investigator",
+            analyzedAt: new Date().toISOString(),
+          }));
+
+          if (existing) {
+            // Update existing founder with analysis data
+            await prisma.founder.update({
+              where: { id: existing.id },
+              data: {
+                role: profile.role,
+                linkedinUrl: profile.linkedinUrl ?? undefined,
+                verifiedInfo: analysisData as unknown as Prisma.InputJsonValue,
+              },
+            });
+          } else {
+            // Create new founder from analysis
+            await prisma.founder.create({
+              data: {
+                dealId,
+                name: profile.name,
+                role: profile.role,
+                linkedinUrl: profile.linkedinUrl ?? null,
+                verifiedInfo: analysisData as unknown as Prisma.InputJsonValue,
+              },
+            });
+          }
+        }
+        console.log(`[Persistence] Synced ${profiles.length} team profiles to Founder table for deal ${dealId}`);
+      }
+      break;
+    }
   }
 }
 

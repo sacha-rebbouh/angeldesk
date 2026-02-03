@@ -704,10 +704,12 @@ ${deal.description ?? "No description provided"}
     }
 
     return `
-## DONNÉES VÉRIFIÉES (Fact Store)
+## DONNÉES EXTRAITES (Fact Store)
 
-Les données ci-dessous ont été extraites et vérifiées à partir des documents du deal.
-Base ton analyse sur ces faits. Si un fait important manque, signale-le.
+Les données ci-dessous ont été extraites des documents du deal.
+**ATTENTION:** Les faits marqués "⚠️ UNVERIFIED CLAIM" ou avec confidence < 80% sont des DÉCLARATIONS
+du fondateur, PAS des faits vérifiés. Ne les utilise JAMAIS comme preuves dans ton analyse.
+Base-toi sur les faits vérifiés (✅). Si un fait important manque, signale-le.
 
 ${context.factStoreFormatted}
 `;

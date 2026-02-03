@@ -117,6 +117,22 @@ interface LLMTeamInvestigatorResponse {
       strengths: string[];
       concerns: string[];
     }[];
+    teamMemberProfiles: {
+      name: string;
+      role: string;
+      category: "development" | "business" | "operations" | "other";
+      isFullTime: boolean;
+      seniorityLevel: "junior" | "mid" | "senior" | "lead" | "unknown";
+      linkedinUrl?: string;
+      linkedinVerified: boolean;
+      background?: {
+        yearsExperience?: number;
+        relevantExperience?: string;
+        keySkills?: string[];
+      };
+      assessment: string;
+      concerns?: string[];
+    }[];
     teamComposition: {
       size: number;
       rolesPresent: string[];
@@ -248,9 +264,10 @@ Tu as vu les patterns de succès et d'échec. Tu sais que "team first" n'est pas
 
 # MISSION POUR CE DEAL
 
-Produire une investigation EXHAUSTIVE de l'équipe fondatrice pour un Business Angel.
+Produire une investigation EXHAUSTIVE de l'équipe (fondateurs ET membres clés) pour un Business Angel.
 Objectif: Permettre au BA de savoir si l'équipe a la crédibilité et la capacité d'exécution.
 Le BA doit pouvoir évaluer le risque "people" et avoir des questions pour les references.
+IMPORTANT: Analyser TOUS les team members listés dans le deck (pas seulement les "fondateurs"). Max 8 profils.
 
 # PHILOSOPHIE D'ANALYSE
 
@@ -421,7 +438,35 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
   ]
 }
 
-## Exemple de MAUVAIS output (à éviter):
+## Exemple de BON output (teamMemberProfile - pour NON-fondateurs):
+{
+  "name": "Enzo",
+  "role": "Développeur web full-stack",
+  "category": "development",
+  "isFullTime": true,
+  "seniorityLevel": "unknown",
+  "linkedinUrl": null,
+  "linkedinVerified": false,
+  "background": {
+    "yearsExperience": null,
+    "relevantExperience": "Source: deck uniquement, pas de LinkedIn",
+    "keySkills": ["Web development", "Full-stack"]
+  },
+  "assessment": "Profil technique, rôle de développeur full-stack. Séniorité non vérifiable sans LinkedIn.",
+  "concerns": []
+}
+→ CORRECT: Le titre "Développeur web full-stack" du deck est conservé tel quel. seniorityLevel = "unknown" (pas "junior").
+
+## Exemple de MAUVAIS output (teamMemberProfile - à éviter):
+{
+  "name": "Enzo",
+  "role": "Stagiaire développeur",
+  "seniorityLevel": "junior",
+  "assessment": "Profil junior type stagiaire/alternant"
+}
+→ FAUX: Le deck dit "Développeur web full-stack", pas "stagiaire". Ne jamais inventer un downgrade de titre.
+
+## Exemple de MAUVAIS output (founder - à éviter):
 {
   "name": "Jean Dupont",
   "role": "CEO",
@@ -465,6 +510,22 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
       foundersSection = `\n## FONDATEURS AVEC DONNEES LINKEDIN\n${foundersData}`;
     }
 
+    // Get ALL team members from document-extractor (not just founders)
+    let teamMembersSection = "";
+    const docExtractorResult = context.previousResults?.["document-extractor"];
+    if (docExtractorResult?.success && "data" in docExtractorResult) {
+      const extractorData = (docExtractorResult as { data?: { extractedInfo?: { teamMembers?: Array<{ name: string; role: string; category: string; background?: string }> } } }).data;
+      const teamMembers = extractorData?.extractedInfo?.teamMembers;
+      if (teamMembers && teamMembers.length > 0) {
+        teamMembersSection = `\n## TEAM MEMBERS NON-FONDATEURS EXTRAITS DU DECK (Source: document-extractor)
+**IMPORTANT: Ces personnes sont des employés/collaborateurs, PAS des fondateurs.**
+**Chaque personne ci-dessous DOIT avoir une entrée dans teamMemberProfiles (pas founderProfiles).**
+**Les rôles listés ici sont les titres EXACTS du deck — ne les modifie PAS et ne les interprète PAS (ex: "Développeur" ne devient PAS "stagiaire").**
+
+${JSON.stringify(teamMembers, null, 2)}`;
+      }
+    }
+
     // Get People Graph from Context Engine
     let peopleGraphSection = "";
     if (context.contextEngine?.peopleGraph) {
@@ -481,6 +542,7 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 ${dealContext}
 ${extractedSection}
 ${foundersSection}
+${teamMembersSection}
 ${peopleGraphSection}
 
 ## CONTEXTE EXTERNE (Context Engine)
@@ -492,7 +554,34 @@ ${sector}
 
 ## INSTRUCTIONS SPECIFIQUES
 
-1. ANALYSE chaque fondateur individuellement avec toutes les données disponibles
+IMPORTANT: Analyse TOUS les team members présents dans le deck.
+
+### SEPARATION FONDATEURS vs TEAM MEMBERS:
+
+**founderProfiles** = UNIQUEMENT les personnes avec un titre contenant: Fondateur, Founder, Co-founder, CEO (si fondateur)
+- Analyse approfondie: background, entrepreneurial track, LinkedIn vérifié, scores détaillés
+
+**teamMemberProfiles** = TOUS les autres employés/collaborateurs listés dans le deck
+- Inclure: CTO (si non-fondateur), développeurs, marketing, business dev, operations, etc.
+- Analyse simplifiée: nom, rôle EXACT du deck, catégorie, niveau de séniorité, assessment
+- NE JAMAIS interpréter le titre: "Développeur web full-stack" reste "Développeur web full-stack", PAS "junior" ou "stagiaire"
+- Le fait que seul le prénom soit affiché ne signifie PAS que la personne est junior ou stagiaire
+
+**Exclure des deux**: advisors, board members, investisseurs (ils vont dans networkAnalysis.advisors)
+
+## RÈGLES ANTI-HALLUCINATION (OBLIGATOIRE)
+
+1. **NE JAMAIS inventer un rôle** : Si le titre exact n'est pas lisible dans le deck ou LinkedIn, utilise le titre TEL QUEL du deck. Si même le deck est ambigu, marque le rôle comme "UNVERIFIED - [meilleure hypothèse]".
+2. **NE JAMAIS inventer un départ** : Ne JAMAIS affirmer qu'une personne "a quitté" ou "n'apparaît plus" sauf si une source EXPLICITE le confirme (LinkedIn, article, registre légal). L'absence d'une personne dans les données structurées NE signifie PAS qu'elle a quitté — c'est peut-être juste un manque de données.
+3. **NE JAMAIS downgrader un titre** : "Développeur web full-stack" reste "Développeur web full-stack", PAS "stagiaire", "junior", ou "alternant". Un prénom seul dans le deck NE signifie PAS que la personne est junior — c'est juste un choix de présentation.
+4. **NE JAMAIS upgrader un titre** : "Architecte SI" reste "Architecte SI", pas "CTO". "Développeur" reste "Développeur", pas "Lead Dev".
+5. **TOUS les membres visibles dans le deck doivent être analysés** : Chaque personne dans teamMembers DOIT avoir une entrée dans teamMemberProfiles. Si le deck montre 9 personnes, tu DOIS produire 9 entrées.
+6. **Source OBLIGATOIRE** : Chaque affirmation sur une personne doit indiquer sa source (deck, LinkedIn, registre légal, Context Engine). Sans source = ne pas affirmer.
+7. **seniorityLevel = "unknown"** par défaut : Sans LinkedIn ou expérience vérifiable, le niveau est "unknown", PAS "junior".
+
+## ÉTAPES D'ANALYSE
+
+1. ANALYSE chaque team member individuellement avec toutes les données disponibles
 2. CROISE le deck avec LinkedIn: identifier les embellissements ou contradictions
 3. CALCULE les métriques: années d'expérience, tenure moyenne, job hopping risk
 4. EVALUE la complémentarité de l'équipe: gaps critiques, overlaps

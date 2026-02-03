@@ -2,6 +2,519 @@
 
 ---
 
+## 2026-02-03 18:15 — QA Pass 4: Fix CRITICAL + HIGH
+
+**Fichiers modifies:**
+- `src/components/deals/deck-coherence-report.tsx`
+  - Fix HIGH: Ajout fallback pour `RECOMMENDATION_CONFIG` (crash si recommendation inconnue)
+
+- `src/app/api/negotiation/generate/route.ts`
+  - Fix CRITICAL: Gestion auth elargie (detecte "unauthenticated", "not authenticated" en plus de "Unauthorized")
+
+**Type check:** Pass
+
+---
+
+## 2026-02-03 18:00 — QA Pass 3: Defensive programming + fallbacks
+
+**Fichiers modifies:**
+- `src/components/deals/analysis-panel.tsx`
+  - Fix HIGH: try/catch autour de `response.json()` dans `runAnalysis()` erreur path
+
+- `src/components/deals/early-warnings-panel.tsx`
+  - Fallback pour `SEVERITY_CONFIG` si severite inconnue
+  - Fallback pour `CATEGORY_CONFIG` si categorie inconnue
+  - Fallback pour `RECOMMENDATION_LABELS` si recommendation inconnue
+
+- `src/components/deals/negotiation-panel.tsx`
+  - Fallback pour `LEVERAGE_CONFIG` si leverage inconnu
+  - Fallback pour `PRIORITY_CONFIG` si priorite inconnue
+  - Fallback pour `STATUS_CONFIG` si statut inconnu
+
+- `src/components/deals/deck-coherence-report.tsx`
+  - Fallback pour `SEVERITY_CONFIG` si severite inconnue
+  - Fallback pour `CATEGORY_LABELS` si categorie inconnue
+  - Fallback pour `TYPE_CONFIG` si type inconnu
+
+**Type check:** Pass
+
+---
+
+## 2026-02-03 17:45 — QA Pass 2: Refactors HIGH + fixes supplementaires
+
+**Fichiers modifies:**
+- `src/types/index.ts`
+  - Ajout interface `EarlyWarning` partagee (DRY)
+
+- `src/components/deals/analysis-panel.tsx`
+  - Import `EarlyWarning` depuis `@/types` (suppression interface locale)
+  - Fix: ajout `await` manquant sur `response.json()` dans `runAnalysis()`
+
+- `src/components/deals/early-warnings-panel.tsx`
+  - Import `EarlyWarning` depuis `@/types` (suppression interface locale)
+
+- `src/components/deals/negotiation-panel.tsx`
+  - Simplification `cn("", className)` -> `className`
+  - Ajout fallback pour `CategoryIcon` si categorie inconnue
+
+- `src/components/deals/deck-coherence-report.tsx`
+  - Simplification `cn("", className)` -> `className`
+  - Ajout fallback pour `GradeBadge` si grade inconnu
+
+- `src/app/api/negotiation/generate/route.ts`
+  - Remplacement `setInterval` par lazy cleanup (serverless-safe)
+  - Ajout gestion erreur auth -> retourne 401 au lieu de 500
+
+**Type check:** Pass
+
+---
+
+## 2026-02-03 17:15 — QA Pass: Corrections bugs + React best practices
+
+**Fichiers modifiés:**
+- `src/components/deals/analysis-panel.tsx`
+  - Extraction callback inline Tabs vers `handleTabChange` useCallback
+  - Ajout `aria-expanded` sur tous les boutons toggle
+  - Fix fetchApi: ajout try/catch pour JSON parsing errors
+  - Fix submitFounderResponses: ajout try/catch pour JSON parsing errors
+  - Fix TabsTrigger onClick double-call: remplace par useEffect sur activeTab
+
+- `src/components/deals/negotiation-panel.tsx`
+  - Ajout `aria-expanded` et `aria-label` sur les boutons expandables
+
+- `src/components/deals/deck-coherence-report.tsx`
+  - Suppression prop `index` inutilisée sur IssueCard
+  - Ajout `aria-expanded` et `aria-label` sur les boutons
+
+- `src/services/negotiation/strategist.ts`
+  - Fix prompt injection: ajout délimiteurs triple-quotes autour de dealName
+
+- `src/app/api/negotiation/generate/route.ts`
+  - Validation results non vide avant appel LLM
+  - Message d'erreur générique en production
+  - Fix nullish coalescing: `dealName ?? "Deal"` au lieu de `||`
+
+**Type check:** Pass
+
+---
+
+## 2026-02-03 16:30 — Intégration Deck Coherence + Négociation dans l'UI
+
+**Fichiers modifiés:**
+- `src/agents/orchestrator/index.ts` — Intégration du deck-coherence-checker dans le flow d'analyse (STEP 1.5), import et appel après document-extractor, stockage du rapport dans results et enrichedContext
+- `src/agents/types.ts` — Ajout du champ `deckCoherenceReport?: DeckCoherenceReport` dans `EnrichedAgentContext`
+- `src/components/deals/analysis-panel.tsx` — Ajout des onglets Cohérence et Négociation dans l'interface, génération on-demand de la stratégie de négociation, affichage du rapport de cohérence
+
+**Fichiers créés:**
+- `src/app/api/negotiation/generate/route.ts` — Endpoint API pour générer la stratégie de négociation à partir des résultats d'analyse
+
+**Bug fixes:**
+- Fix: `previousScore={currentScore}` corrigé en `previousScore={previousScore}` + ajout `currentScore={currentScore}` dans FounderResponses props
+
+**Fonctionnalités:**
+- Onglet Cohérence visible si le rapport est disponible (avec badge du nombre d'issues critiques)
+- Onglet Négociation pour les analyses PRO (Tier 3), génération lazy de la stratégie
+- Mise à jour du statut des points de négociation directement dans l'UI
+- Le deck coherence report est maintenant injecté dans le contexte des agents Tier 1
+
+---
+
+## 2026-02-03 — Feature: Négociation Strategist (post-processing)
+
+**Fichiers créés:**
+- `src/services/negotiation/strategist.ts` — Service de génération de stratégie de négociation basé sur les résultats d'analyse
+- `src/services/negotiation/index.ts` — Exports du service
+- `src/components/deals/negotiation-panel.tsx` — UI du panel de négociation avec points priorisés, dealbreakers, trade-offs
+
+**Fonctionnalités:**
+- Génère automatiquement un plan de négociation à partir des résultats d'analyse
+- Points de négociation priorisés: must_have / nice_to_have / optional
+- Calcul du leverage (strong/moderate/weak) basé sur les faiblesses détectées
+- Dealbreakers identifiés avec chemins de résolution
+- Trade-offs suggérés (ce qu'on cède vs ce qu'on obtient)
+- Score du deal amélioré si points obtenus
+- Statuts par point: to_negotiate / obtained / refused / compromised
+
+---
+
+## 2026-02-03 — Feature: Vérification Cohérence Deck (Tier 0)
+
+**Fichiers créés:**
+- `src/agents/tier0/deck-coherence-checker.ts` — Agent de vérification de cohérence des données du deck
+- `src/components/deals/deck-coherence-report.tsx` — UI du rapport de cohérence
+
+**Fonctionnalités:**
+- Vérifie les incohérences arithmétiques (MRR × 12 ≠ ARR, croissance incohérente)
+- Détecte les chiffres qui changent entre slides
+- Identifie les données critiques manquantes
+- Signale les métriques impossibles (NRR > 200%, churn négatif)
+- Score de cohérence 0-100 avec grade A/B/C/D/F
+- Recommandation: PROCEED / PROCEED_WITH_CAUTION / REQUEST_CLARIFICATION / DATA_UNRELIABLE
+
+**Note:** L'intégration dans l'orchestrator reste à faire (s'exécutera après document-extractor, avant Tier 1).
+
+---
+
+## 2026-02-03 — Feature: Refonte complète Réponses Fondateur avec priorités CRITICAL
+
+**Fichiers modifiés:**
+- `src/components/deals/founder-responses.tsx` — Refonte complète: groupement par priorité (pas catégorie), nouveau système de priorités CRITICAL/HIGH/MEDIUM/LOW, validation stricte (CRITICAL+HIGH obligatoires), statuts par question (answered/not_applicable/refused/pending), bouton "Re-analyser avec les réponses"
+- `src/agents/tier1/question-master.ts` — Mise à jour des priorités de MUST_ASK/SHOULD_ASK/NICE_TO_HAVE vers CRITICAL/HIGH/MEDIUM/LOW, nouvelles instructions pour définir quand utiliser CRITICAL vs HIGH
+- `src/agents/types.ts` — Type `FounderQuestion.priority` mis à jour vers CRITICAL/HIGH/MEDIUM/LOW
+- `src/components/deals/tier1-results.tsx` — Renommage mustAskQuestions → criticalQuestions, shouldAskQuestions → highQuestions
+- `src/components/deals/analysis-panel.tsx` — Nouveaux handlers handleSubmitAndReanalyze et handleSaveFounderResponses, mapping des priorités legacy vers nouvelles
+- `src/agents/orchestration/finding-extractor.ts` — Filtre MUST_ASK → CRITICAL pour l'extraction de findings
+
+**Changements:**
+1. **Nouveau système de priorités:**
+   - CRITICAL: Questions deal-breaking (sans réponse satisfaisante = NO GO)
+   - HIGH: Questions essentielles pour la décision
+   - MEDIUM: Questions importantes mais non bloquantes
+   - LOW: Questions nice-to-have
+
+2. **Validation stricte:**
+   - Le bouton "Re-analyser" est bloqué tant que TOUTES les questions CRITICAL et HIGH n'ont pas de réponse
+   - Chaque question a un statut: answered, not_applicable, refused, pending
+
+3. **Flow re-analyse:**
+   - Sauvegarde les réponses → Relance l'analyse complète → Les réponses sont injectées dans le contexte des agents
+
+---
+
+## 2026-02-03 — Fix: team-investigator ignorait les membres non-fondateurs
+
+**Fichiers modifiés:**
+- `src/agents/tier1/team-investigator.ts` — Ajout du champ `teamMemberProfiles` dans le schema LLM, séparation claire fondateurs vs équipe dans le prompt, règles anti-hallucination renforcées (ne jamais downgrader un titre, seniorityLevel = "unknown" par défaut)
+- `src/agents/types.ts` — Ajout de `teamMemberProfiles` dans `TeamInvestigatorFindings`
+- `src/components/deals/tier1-results.tsx` — Ajout de la section "Équipe" dans l'UI pour afficher les membres non-fondateurs
+
+**Problème:** Le team-investigator ne produisait que `founderProfiles` (fondateurs) mais ignorait complètement les `teamMembers` extraits par le document-extractor. Résultat: une équipe de 10 personnes apparaissait comme "1 fondatrice" dans l'UI.
+
+**Cause:**
+1. Le schema LLM n'avait pas de champ pour les membres non-fondateurs
+2. Le prompt demandait de mettre tout le monde dans `founderProfiles` mais le nom du champ causait une confusion sémantique pour le LLM
+3. Le LLM hallucinait des titres ("stagiaire", "junior") basé sur le fait que seuls les prénoms étaient affichés
+
+**Fix:**
+- Nouveau champ `teamMemberProfiles` distinct de `founderProfiles`
+- Prompt explicite sur la séparation fondateurs vs équipe
+- Règles anti-hallucination renforcées:
+  - NE JAMAIS downgrader un titre ("Développeur full-stack" ne devient PAS "stagiaire")
+  - seniorityLevel = "unknown" par défaut sans LinkedIn vérifié
+  - Le prénom seul ne signifie PAS junior
+
+---
+
+## 2026-02-03 — Fix: FactStore polluté par du texte d'analyse au lieu de valeurs
+
+**Fichiers modifiés:**
+- `src/agents/orchestrator/index.ts` — Filtre renforcé pour ne persister que les facts avec `correctedValue` réel (non null/undefined)
+
+**Problème:** Le champ `financial.arr` contenait du texte d'analyse ("Valorisation basée sur un DCF spéculatif...") au lieu de la valeur numérique de l'ARR. Résultat: UI confuse avec "base 500k€" venant d'une analyse d'assets et non d'une métrique extraite.
+
+**Cause:** Lors de la persistance des facts validés (ligne 1846-1856), quand `correctedValue` était undefined, le code utilisait `v.explanation` comme `displayValue`, stockant du texte d'analyse dans des champs de métriques.
+
+**Fix:**
+- Filtrer les validations pour n'inclure que celles avec `correctedValue !== undefined && correctedValue !== null`
+- Utiliser `String(v.correctedValue)` comme fallback pour `displayValue` au lieu de `v.explanation`
+- Les notes d'analyse sans valeur corrigée ne sont plus persistées comme facts
+
+---
+
+## 2026-02-02 — Fix: race condition analysis type (FREE vs PRO)
+
+**Fichiers modifiés:**
+- `src/app/api/analyze/route.ts` — Backend override: le type d'analyse est déterminé côté serveur basé sur le subscriptionStatus en DB, ignore le type envoyé par le frontend
+- `src/components/deals/analysis-panel.tsx` — Bouton "Analyser" désactivé tant que le statut usage n'est pas chargé
+
+**Problème:** Si l'utilisateur cliquait "Analyser" avant que la requête GET /api/analyze ait retourné, `usage` était undefined → subscriptionPlan fallback à "FREE" → frontend envoyait `tier1_complete` au lieu de `full_analysis`. Résultat: analyse sans Tier 2/3 même pour un utilisateur PRO.
+
+**Fix:** Double protection:
+1. Backend: `effectiveType` calculé depuis la DB, jamais depuis le frontend
+2. Frontend: bouton bloqué tant que `isUsageLoading` est true
+
+---
+
+## 2026-02-02 — Fix: crash "Cannot read properties of undefined (reading 'keyInsights')"
+
+**Fichiers modifiés:**
+- `src/components/deals/tier1-results.tsx` — ajout optional chaining `narrative?.keyInsights?.length` (ligne 1034)
+
+**Problème:** Quand un agent tier1 retourne un résultat sans `narrative`, l'accès direct `narrative.keyInsights.length` crashait le rendu React, attrapé par l'error boundary.
+
+---
+
+## 2026-02-01 — Fix: OCR incompatible serverless (remplacement @napi-rs/canvas + unpdf par pdf-to-img + pdfjs-dist)
+
+**Fichiers modifiés:**
+- `src/services/pdf/ocr-service.ts` — suppression de `@napi-rs/canvas` + `unpdf renderPageAsImage`, remplacement par `pdf-to-img` (pure JS, compatible serverless/Vercel)
+- `src/services/pdf/extractor.ts` — remplacement de `unpdf` par `pdfjs-dist/legacy/build/pdf.mjs` directement (extraction texte)
+- `next.config.ts` — retrait de `@napi-rs/canvas` de `serverExternalPackages`
+- `package.json` — `npm uninstall @napi-rs/canvas unpdf`, `npm install pdf-to-img`
+
+**Problème 1:** `@napi-rs/canvas` est un binding natif C++ incompatible avec les serverless functions Vercel.
+**Problème 2:** `unpdf` bundlait pdfjs-dist 5.4.296 en interne, tandis que `pdf-to-img` installait pdfjs-dist 5.4.624, causant "The API version does not match the Worker version".
+
+**Solution:** Suppression totale d'`unpdf` et `@napi-rs/canvas`. Utilisation de `pdfjs-dist` (via `pdf-to-img`) pour tout — extraction texte et rendu PDF→PNG. Une seule version de pdfjs-dist. Worker configuré via path absolu pour compatibilité serverless. Correction du calcul de qualité post-OCR : `analyzeExtractionQuality()` sur le texte combiné au lieu d'un bonus fixe par page.
+
+---
+
+## 2026-02-01 — Ajout extraction texte PowerPoint (.pptx)
+
+**Fichiers créés/modifiés:**
+- `src/services/pptx.ts` — extraction texte via JSZip (parse XML des slides, tags `<a:t>`)
+- `src/app/api/documents/upload/route.ts` — bloc extraction PPTX ajouté
+
+**Problème:** Les fichiers PPTX étaient uploadés mais restaient en PENDING indéfiniment — aucune logique d'extraction n'existait.
+
+---
+
+## 2026-02-01 — Fix: smartExtract crash sur PDF invalide (InvalidPDFException)
+
+**Fichiers modifiés:**
+- `src/services/pdf/ocr-service.ts` — try/catch autour de extractTextFromPDF et extractTextWithOCR dans smartExtract
+
+**Problème:** `smartExtract` n'avait pas de try/catch global. Un PDF structurellement invalide faisait throw `InvalidPDFException` qui remontait jusqu'à la route, au lieu de fallback gracieusement sur OCR puis quality 0%.
+
+---
+
+## 2026-02-01 — Fix: boutons OCR/Re-upload fonctionnels sur banner extraction
+
+**Fichiers modifiés/créés:**
+- `src/services/storage/index.ts` — ajout `downloadFile()`
+- `src/app/api/documents/[documentId]/ocr/route.ts` — nouvelle route OCR forcé
+- `src/components/deals/extraction-quality-badge.tsx` — boutons branchés avec loading state
+- `src/components/deals/documents-tab.tsx` — passage des props `documentId`, `onReupload`, `onOCRComplete`
+
+---
+
+## 2026-02-01 — Fix: upload échoue pour fichiers > 10MB
+
+**Fichiers modifiés:**
+- `next.config.ts` — ajout `middlewareClientMaxBodySize: "50mb"` + `serverExternalPackages: ["mammoth"]`
+- `src/app/api/documents/upload/route.ts` — ajout `maxDuration: 60`
+
+**Problème:** Next.js tronque le body à 10MB par défaut dans le middleware. Les fichiers > 10MB arrivaient incomplets, causant `Failed to parse body as FormData`.
+
+---
+
+## 2026-02-01 — Fix: documents pas rafraîchis après upload + support Word
+
+**Fichiers modifiés:**
+- `src/components/deals/document-upload-dialog.tsx` — ajout `router.refresh()` pour re-rendre le Server Component
+
+**Problème:** Après upload, la liste des documents ne se mettait pas à jour car la page est un RSC. L'invalidation React Query ne fait rien quand les données viennent de Prisma côté serveur.
+
+**Fix:** `router.refresh()` après upload (fermeture dialog + fin d'upload).
+
+---
+
+## 2026-02-01 — Support upload Word (.docx, .doc)
+
+**Fichiers modifiés:**
+- `src/app/api/documents/upload/route.ts` — ajout MIME types Word + bloc extraction
+- `src/services/docx.ts` — nouveau service extraction via mammoth
+
+**Changements:**
+- Upload de fichiers Word (.docx, .doc) désormais supporté
+- Extraction texte via mammoth (raw text)
+- Même pattern que Excel/PDF (PENDING → PROCESSING → COMPLETED/FAILED)
+- Dépendance ajoutée: `mammoth`
+
+---
+
+## 2026-01-30 — Refonte complète onglet Team: vue unifiée, auto-sync DB, CRUD sur tous profils
+
+**Fichiers modifiés:**
+- `src/components/deals/team-management.tsx` — réécriture complète
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — onglet renommé "Team"
+- `src/agents/orchestrator/persistence.ts` — auto-sync team-investigator → DB
+
+**Changements:**
+1. **Auto-sync DB**: Après analyse, `processAgentResult("team-investigator")` crée/met à jour automatiquement les Founder en DB pour chaque profil analysé (match par nom case-insensitive). Les données d'analyse (scores, strengths, concerns, background, red flags) sont stockées dans `verifiedInfo`.
+2. **Vue unifiée**: Plus de séparation "Fondateurs DB" / "Profils analysés". Un seul composant `MemberCard` qui affiche les données DB + analyse ensemble.
+3. **CRUD complet**: Chaque membre (qu'il vienne de l'analyse ou d'un ajout manuel) peut être modifié/supprimé. Les modifications sont persistées en DB et conservées pour les prochaines analyses.
+4. **Design refondu**: Avatar-score coloré (vert/bleu/orange/rouge), mini-barres de progression pour les 4 dimensions (Domain, Startup XP, Execution, Network), badges compacts (IA, LinkedIn), forces/concerns inline, red flags par sévérité.
+5. **Suppression = exclusion**: Le dialog de suppression indique que le membre ne sera plus inclus dans les prochaines analyses.
+
+---
+
+## 2026-01-30 — Fix: team-investigator hallucinations (3/9 profils, rôles inventés, départs fabriqués)
+
+**Fichiers modifiés:**
+- `src/agents/tier1/team-investigator.ts`
+- `src/agents/document-extractor.ts`
+
+**Problème:** Le team-investigator n'analysait que 3/9 membres, inventait des rôles (Kevin Descamps "CTO" au lieu de "Architecte SI"), et fabriquait des départs sans source.
+
+**Fix 1 — Prompt anti-hallucination (team-investigator):** 5 règles ajoutées: ne jamais inventer un rôle (marquer UNVERIFIED), ne jamais inventer un départ, ne jamais upgrader un titre, analyser TOUS les membres du deck, source obligatoire pour chaque affirmation.
+
+**Fix 2 — Extraction teamMembers (document-extractor):** Ajout du champ `teamMembers` au schéma d'extraction — extrait TOUS les membres (pas seulement les founders) avec nom, rôle exact, catégorie et background.
+
+**Fix 3 — Injection teamMembers (team-investigator):** Le team-investigator lit maintenant les `teamMembers` extraits par document-extractor et les injecte dans le prompt avec "Cette liste fait foi" — chaque personne DOIT avoir un founderProfile dans l'output.
+
+---
+
+## 2026-01-30 — Fix: cohérence scoring, action/verdict, label Tier 3, dimension scores ajustés
+
+**Fichiers modifiés:**
+- `src/agents/tier3/synthesis-deal-scorer.ts`
+- `src/components/deals/tier3-results.tsx`
+
+**Fix 1 — Action/verdict incohérents:** Le LLM retournait `action: "wait"` avec verdict `no_go`. Fix: forcer `action: "pass"` quand verdict=no_go, et `action: "invest"` quand verdict=strong_pass.
+
+**Fix 2 — Dimension scores = bruts Tier 1:** Le prompt LLM encourageait à "agréger les scores Tier 1" — le LLM recopiait les scores bruts sans les ajuster avec Tier 2/3. Fix: prompt rewritten pour explicitement demander des scores FINAUX ajustés cross-tiers (Tier 1 + expert sectoriel + contradictions + devil's advocate).
+
+**Fix 3 — Label "Synthèse de tous les agents Tier 1":** Remplacé par "Score final — analyse multi-tiers avec consensus et reflexion".
+
+**Fix 4 — Score logging:** Ajout d'un warning quand le score global diverge de >15pts du calcul pondéré des dimensions (pour débug futur).
+
+---
+
+## 2026-01-30 — Fix: crash UI "Impossible de charger", "Unknown critical risk" doublon, analyse invisible après reload
+
+**Fichiers modifiés:**
+- `src/components/deals/tier1-results.tsx`
+- `src/components/deals/tier3-results.tsx`
+- `src/agents/tier3/synthesis-deal-scorer.ts`
+
+**Bug 1 — Crash UI + analyse invisible après reload:**
+Le composant `MarketIntelCard` déstructurait `data.findings` sans vérifier son existence, puis accédait directement à `findings.marketSize`, `findings.timing`, `findings.fundingTrends`. Si l'agent retournait un `findings` incomplet, le render crashait → error boundary "Impossible de charger". Après reload, même crash → analyse "invisible".
+Fix: optional chaining + guards conditionnels sur chaque section.
+
+**Bug 2 — "Unknown critical risk" x2:**
+- Cause 1: `synthesis-deal-scorer.ts` ne cherchait que `rf.title` et `rf.description` dans les red flags. Le LLM peut utiliser `rf.flag`, `rf.risk`, `rf.issue`. Fix: lookup élargi + filtrage des valeurs vides au lieu du fallback "Unknown".
+- Cause 2: `SynthesisScorerCard` ET `NoGoReasonsCard` affichaient les mêmes `criticalRisks` quand score < 35. Fix: nouvelle prop `hideCriticalRisks` sur `SynthesisScorerCard`, passée à `true` quand `NoGoReasonsCard` est visible.
+
+---
+
+## 2026-01-29 19:00 — QA Audit 4: 9 corrections pipeline cascade (93/100)
+
+**Fichiers modifiés:**
+- `src/agents/orchestrator/index.ts`
+- `src/agents/orchestrator/types.ts`
+- `src/agents/orchestration/finding-extractor.ts`
+- `src/services/fact-store/current-facts.ts`
+
+**Fix 1 (MEDIUM):** Persistence VERIFIED sans correctedValue ne persiste plus `value: null` — filtre ajouté pour ne persister que si correctedValue est défini ou si status=CONTRADICTED.
+
+**Fix 2 (MEDIUM):** `verificationContext` reconstruit après Phase C en plus de Phase B — Phase D bénéficie des validations team/competitive/market.
+
+**Fix 3 (MEDIUM):** `resumeAnalysis()` gère maintenant le Tier 2 sector expert — exécuté entre Tier 1 et Tier 3 si non complété et non en échec.
+
+**Fix 4 (LOW):** `extractTeamInvestigatorValidations` — teamSize=0 marqué UNVERIFIABLE au lieu de VERIFIED.
+
+**Fix 5 (LOW):** `extractCompetitiveIntelValidations` — 0 competitors marqué UNVERIFIABLE au lieu de VERIFIED.
+
+**Fix 6 (LOW):** `reformatFactStoreWithValidations` cappé à 8000 chars pour éviter le bloat des prompts LLM.
+
+**Fix 7 (LOW):** AGENT_COUNTS commentaire corrigé (13 Tier 1 agents, pas "12 + extractor").
+
+**Fix 8 (LOW):** `extractValidatedClaims` log un `console.warn` pour les agents sans extracteur de validations.
+
+**Fix 9 (LOW):** Consensus cost dans `runTier1Analysis` ajouté à `totalCost` avant `completeAnalysis`.
+
+**Scores audit:** Code Review 93/100, Spec Compliance ~93%, Angles Morts 2 (0 blocking, 2 LOW compromis documentés).
+
+---
+
+## 2026-01-29 17:30 — Fix orchestrator: extract runTier1Phases, resumeAnalysis factStore, seuil reflexion, verificationContext, persist validations
+
+**Fichiers modifiés:**
+- `src/agents/orchestrator/index.ts`
+
+**Fix 1 (P0):** Extraction de la logique des 4 phases Tier 1 dans une méthode privée `runTier1Phases()`. Appelée depuis `runFullAnalysis()` ET `runTier1Analysis()` (qui utilisait encore l'ancien `Promise.all` parallèle sans phases).
+
+**Fix 2 (P0):** `resumeAnalysis()` restaure maintenant le Fact Store via `getCurrentFacts()` + `formatFactStoreForAgents()` avant de relancer les agents restants. Compromis documenté: les agents restants tournent en `Promise.all` avec les faits validés disponibles plutôt que de déterminer la phase exacte interrompue.
+
+**Fix 3 (P1):** Seuil de reflexion pour Phases C/D passé de `< 50` à `< 70` (spec: 70% pour Tier 1).
+
+**Fix 4 (P1):** Reconstruction du `verificationContext` après Phase B (était stale car `factStoreFormatted` avait changé).
+
+**Fix 5 (P1):** Persistance des validations en DB (`createFactEventsBatch` avec eventType `RESOLVED`) après la boucle des 4 phases. Ajout d'un helper `inferCategoryFromFactKey()` pour mapper les préfixes de factKey vers `FactCategory`.
+
+**Fix 6 (mineur):** Magic number `12` remplacé par `TIER1_AGENT_NAMES.length`.
+
+---
+
+## 2026-01-29 16:00 — Bugfix finding-extractor: mapping lossy, extracteurs manquants, import
+
+**Fichiers modifiés:**
+- `src/agents/orchestration/finding-extractor.ts`
+
+**Bug 1 (P1):** `mapClaimCategoryToFactKey` — toutes les claims d'une catégorie mappaient vers une seule fact key (ex: 3 claims financières → toutes `financial.arr`). Fix: la fonction prend maintenant le contenu du claim en plus de la catégorie, avec un mapping par mots-clés (ARR, MRR, burn, runway, churn, valuation, LTV, CAC, etc.) avant le fallback par catégorie. Ajout de `console.warn` pour les claims non mappées.
+
+**Bug 2 (P2):** `extractValidatedClaims` — limité à deck-forensics et financial-auditor. Ajout de 3 nouveaux extracteurs: `team-investigator` (headcount, founders_count), `competitive-intel` (competitor_count, moat_strength), `market-intelligence` (tam, sam).
+
+**Bug 3:** Import `AgentFactValidation` déplacé du milieu du fichier (ligne ~1304) vers le haut avec les autres imports.
+
+---
+
+## 2026-01-29 15:30 — Bugfix fact-store: disputeDetails + reformatFactStoreWithValidations
+
+**Fichiers modifiés:**
+- `src/services/fact-store/current-facts.ts`
+- `src/agents/orchestrator/index.ts`
+
+**Bug 1 (P0):** `updateFactsInMemory()` — `disputeDetails.conflictingValue` pointait vers la valeur déjà écrasée au lieu de l'ancienne valeur. Fix: sauvegarde de `previousValue` et `previousSource` avant mutation.
+
+**Bug 2 (P2):** `reformatFactStoreWithValidations()` — affichait "Validation par X" avec uniquement le dernier agent alors que `allValidations` contenait les validations de tous les agents. Fix: suppression du paramètre `agentName`, groupement par `validation.validatedBy` pour afficher une section par agent.
+
+---
+
+## 2026-01-29 — Pipeline séquentiel: Tier 1 en 4 phases avec validation inter-agents
+
+**Problème:** Les 13 agents Tier 1 tournaient en parallèle. Chaque agent traitait les claims non vérifiées du deck comme des faits établis (ex: "79 clients" pris pour argent comptant par tech-ops-dd alors que c'est une déclaration fondateur non vérifiée).
+
+**Solution:** Pipeline séquentiel en 4 phases avec validation Reflexion entre chaque phase:
+- Phase A: deck-forensics (vérifie les claims du deck) → Reflexion TOUJOURS
+- Phase B: financial-auditor (calcule les métriques) → Reflexion TOUJOURS
+- Phase C: team + competitive + market (parallèle) → Reflexion si confidence < 50 + Consensus intra-phase
+- Phase D: 8 agents restants (parallèle) → Reflexion si confidence < 50
+
+Après chaque phase, les claims vérifiées/réfutées sont injectées dans le Fact Store en mémoire pour les agents suivants.
+
+**Fichiers modifiés:**
+- `src/agents/orchestrator/types.ts` — Ajout constantes TIER1_PHASE_A/B/C/D, TIER1_PHASES, TIER1_ALWAYS_REFLECT_PHASES
+- `src/agents/orchestrator/index.ts` — Remplacement Promise.all Tier 1 par 4 phases séquentielles avec reflexion inline et propagation des faits validés
+- `src/services/fact-store/current-facts.ts` — Ajout `updateFactsInMemory()`, `reformatFactStoreWithValidations()`, type `AgentFactValidation`
+- `src/services/fact-store/index.ts` — Export des nouvelles fonctions
+- `src/agents/orchestration/finding-extractor.ts` — Ajout `extractValidatedClaims()` pour deck-forensics et financial-auditor
+- `src/agents/orchestration/index.ts` — Export de `extractValidatedClaims`
+
+**Impact:** Même nombre d'appels LLM. Wall-clock time Tier 1: ~70-110s (vs ~30-40s en parallèle). Qualité nettement supérieure.
+
+---
+
+## 2026-01-29 — Fix: fact-store marquait tous les faits comme "vérifiés"
+
+**Fichiers modifies:**
+- `src/agents/base-agent.ts` — `formatFactStoreData()`: wording corrigé "DONNÉES VÉRIFIÉES" → "DONNÉES EXTRAITES" avec avertissement sur les claims non vérifiés (⚠️ UNVERIFIED CLAIM).
+- `src/services/fact-store/current-facts.ts` — `formatFactStoreForAgents()`: faits low-confidence ou source DECK marqués "⚠️ UNVERIFIED CLAIM". Header corrigé. Faits vérifiés marqués ✅.
+
+---
+
+## 2026-01-29 — NO_GO: carte "Pourquoi NO_GO" full-width + layout optimisé
+
+**Fichiers modifies:**
+- `src/components/deals/tier3-results.tsx` — `NoGoReasonsCard` full-width (col-span-2) placé au-dessus de la grille scenarios/contradictions. Masque comparables, break-even, sensibilité pour NO_GO. Layout équilibré sans trou visuel.
+
+---
+
+## 2026-01-29 — team-investigator: analyser tous les team members (max 8)
+
+**Fichiers modifies:**
+- `src/agents/tier1/team-investigator.ts` — Le prompt demande maintenant d'analyser TOUS les team members du deck (pas seulement les "fondateurs"). Inclut CEO, CTO, COO, VP, etc. Exclut advisors/board. Max 8 profils. Corrige le bug où un COO co-fondateur (ex: Sacha Rebbouh) n'avait pas de founderProfile.
+
+---
+
+## 2026-01-29 — NO_GO: masquer scénarios optimistes (BULL/BASE)
+
+**Fichiers modifies:**
+- `src/components/deals/tier3-results.tsx` — Seuil NO_GO: 40 → 35. Pour les deals NO_GO, seuls CATASTROPHIC et BEAR sont affichés. Messages mis à jour. Suppression opacity 60%.
+
+---
+
 ## 2026-01-29 — Auto-expire stuck RUNNING analyses after 15min
 
 **Fichiers modifies:**

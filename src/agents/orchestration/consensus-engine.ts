@@ -480,8 +480,18 @@ export class ConsensusEngine {
   private resolutions: Map<string, ContradictionResolution> = new Map();
   private maxDebateRounds = 3;
 
-  // Cache for similar debate resolutions
+  // Cache for similar debate resolutions (max 100 entries to prevent memory leaks)
+  private static readonly MAX_CACHE_SIZE = 100;
   private resolutionCache: Map<string, ContradictionResolution> = new Map();
+
+  private setCacheEntry(key: string, value: ContradictionResolution): void {
+    if (this.resolutionCache.size >= ConsensusEngine.MAX_CACHE_SIZE) {
+      // Evict oldest entry (first key in Map iteration order)
+      const firstKey = this.resolutionCache.keys().next().value;
+      if (firstKey) this.resolutionCache.delete(firstKey);
+    }
+    this.resolutionCache.set(key, value);
+  }
 
   /**
    * Detect contradictions in findings
@@ -714,7 +724,7 @@ export class ConsensusEngine {
 
     contradiction.status = "resolved";
     this.resolutions.set(contradiction.id, resolution);
-    this.resolutionCache.set(
+    this.setCacheEntry(
       this.generateCacheKey(contradiction),
       resolution
     );
@@ -799,7 +809,7 @@ export class ConsensusEngine {
 
     contradiction.status = "resolved";
     this.resolutions.set(contradiction.id, resolution);
-    this.resolutionCache.set(
+    this.setCacheEntry(
       this.generateCacheKey(contradiction),
       resolution
     );
@@ -1440,7 +1450,7 @@ Respond in JSON:
     this.resolutions.set(contradiction.id, resolution);
 
     const cacheKey = this.generateCacheKey(contradiction);
-    this.resolutionCache.set(cacheKey, resolution);
+    this.setCacheEntry(cacheKey, resolution);
 
     return { contradiction, rounds, resolution };
   }

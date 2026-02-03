@@ -132,3 +132,28 @@ export interface BenchmarkComparison {
   percentile: number; // Where the deal falls (0-100)
   assessment: "below" | "average" | "above" | "excellent";
 }
+
+// Early Warning types (used by orchestrator and UI components)
+export type EarlyWarningSeverity = "critical" | "high" | "medium";
+export type EarlyWarningCategory =
+  | "founder_integrity"
+  | "legal_existential"
+  | "financial_critical"
+  | "market_dead"
+  | "product_broken"
+  | "deal_structure";
+export type EarlyWarningRecommendation = "investigate" | "likely_dealbreaker" | "absolute_dealbreaker";
+
+export interface EarlyWarning {
+  id: string;
+  timestamp: string | Date;
+  agentName: string;
+  severity: EarlyWarningSeverity;
+  category: EarlyWarningCategory;
+  title: string;
+  description: string;
+  evidence: string[];
+  confidence: number;
+  recommendation: EarlyWarningRecommendation;
+  questionsToAsk?: string[];
+}

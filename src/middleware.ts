@@ -13,8 +13,9 @@ const isPublicRoute = createRouteMatcher([
   "/api/inngest(.*)",
 ]);
 
-// Dev mode bypass
-const BYPASS_AUTH = process.env.BYPASS_AUTH === "true";
+// Dev mode bypass - ONLY works in development
+const BYPASS_AUTH =
+  process.env.NODE_ENV === "development" && process.env.BYPASS_AUTH === "true";
 
 export default clerkMiddleware(async (auth, req) => {
   // In dev mode with BYPASS_AUTH, allow all routes

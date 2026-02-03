@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import { ChevronDown, ChevronUp, Loader2, MessageSquare, StickyNote } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, MessageSquare, StickyNote, AlertTriangle, CheckCircle2, XCircle, HelpCircle, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatAgentName } from "@/lib/format-utils";
 import { Button } from "@/components/ui/button";
@@ -9,111 +9,169 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // =============================================================================
 // Types
 // =============================================================================
 
+export type QuestionPriority = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+export type QuestionCategory = "FINANCIAL" | "TEAM" | "MARKET" | "PRODUCT" | "LEGAL" | "TRACTION" | "OTHER";
+export type ResponseStatus = "answered" | "not_applicable" | "refused" | "pending";
+
 export interface AgentQuestion {
   id: string;
   question: string;
-  category: "FINANCIAL" | "TEAM" | "MARKET" | "PRODUCT" | "LEGAL" | "TRACTION" | "OTHER";
-  priority: "HIGH" | "MEDIUM" | "LOW";
+  category: QuestionCategory;
+  priority: QuestionPriority;
   agentSource: string;
 }
 
 export interface QuestionResponse {
   questionId: string;
   answer: string;
+  status: ResponseStatus;
 }
 
 interface FounderResponsesProps {
   dealId: string;
   questions: AgentQuestion[];
   existingResponses?: QuestionResponse[];
-  onSubmit: (responses: QuestionResponse[], freeNotes: string) => Promise<void>;
+  onSubmitAndReanalyze: (responses: QuestionResponse[], freeNotes: string) => Promise<void>;
+  onSaveOnly?: (responses: QuestionResponse[], freeNotes: string) => Promise<void>;
   isSubmitting?: boolean;
+  isReanalyzing?: boolean;
+  previousScore?: number;
+  currentScore?: number;
 }
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const CATEGORY_CONFIG: Record<
-  AgentQuestion["category"],
-  { label: string; color: string }
-> = {
-  FINANCIAL: { label: "Finances", color: "bg-emerald-100 text-emerald-800 border-emerald-200" },
-  TEAM: { label: "Equipe", color: "bg-blue-100 text-blue-800 border-blue-200" },
-  MARKET: { label: "Marche", color: "bg-purple-100 text-purple-800 border-purple-200" },
-  PRODUCT: { label: "Produit", color: "bg-orange-100 text-orange-800 border-orange-200" },
-  LEGAL: { label: "Legal", color: "bg-slate-100 text-slate-800 border-slate-200" },
-  TRACTION: { label: "Traction", color: "bg-cyan-100 text-cyan-800 border-cyan-200" },
-  OTHER: { label: "Autre", color: "bg-gray-100 text-gray-800 border-gray-200" },
+const PRIORITY_ORDER: QuestionPriority[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+
+const PRIORITY_CONFIG: Record<QuestionPriority, {
+  label: string;
+  labelFr: string;
+  className: string;
+  bgClass: string;
+  isRequired: boolean;
+  description: string;
+}> = {
+  CRITICAL: {
+    label: "Critical",
+    labelFr: "Critique",
+    className: "bg-red-600 text-white border-transparent",
+    bgClass: "bg-red-50 border-red-200",
+    isRequired: true,
+    description: "Question essentielle - reponse obligatoire avant re-analyse"
+  },
+  HIGH: {
+    label: "High",
+    labelFr: "Haute",
+    className: "bg-orange-500 text-white border-transparent",
+    bgClass: "bg-orange-50 border-orange-200",
+    isRequired: true,
+    description: "Question importante - reponse obligatoire"
+  },
+  MEDIUM: {
+    label: "Medium",
+    labelFr: "Moyenne",
+    className: "bg-amber-500 text-white border-transparent",
+    bgClass: "bg-amber-50/50 border-amber-200",
+    isRequired: false,
+    description: "Question utile - optionnelle"
+  },
+  LOW: {
+    label: "Low",
+    labelFr: "Basse",
+    className: "bg-gray-400 text-white border-transparent",
+    bgClass: "bg-gray-50 border-gray-200",
+    isRequired: false,
+    description: "Question complementaire - optionnelle"
+  },
 };
 
-const PRIORITY_CONFIG: Record<
-  AgentQuestion["priority"],
-  { label: string; className: string }
-> = {
-  HIGH: { label: "Haute", className: "bg-red-500 text-white border-transparent" },
-  MEDIUM: { label: "Moyenne", className: "bg-amber-500 text-white border-transparent" },
-  LOW: { label: "Basse", className: "bg-gray-400 text-white border-transparent" },
+const CATEGORY_CONFIG: Record<QuestionCategory, { label: string; color: string }> = {
+  FINANCIAL: { label: "Finances", color: "bg-emerald-100 text-emerald-800" },
+  TEAM: { label: "Equipe", color: "bg-blue-100 text-blue-800" },
+  MARKET: { label: "Marche", color: "bg-purple-100 text-purple-800" },
+  PRODUCT: { label: "Produit", color: "bg-orange-100 text-orange-800" },
+  LEGAL: { label: "Legal", color: "bg-slate-100 text-slate-800" },
+  TRACTION: { label: "Traction", color: "bg-cyan-100 text-cyan-800" },
+  OTHER: { label: "Autre", color: "bg-gray-100 text-gray-800" },
 };
 
-const CATEGORY_ORDER: AgentQuestion["category"][] = [
-  "FINANCIAL",
-  "TEAM",
-  "MARKET",
-  "PRODUCT",
-  "LEGAL",
-  "TRACTION",
-  "OTHER",
-];
+const STATUS_CONFIG: Record<ResponseStatus, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
+  pending: { label: "En attente", icon: HelpCircle },
+  answered: { label: "Repondu", icon: CheckCircle2 },
+  not_applicable: { label: "Non applicable", icon: XCircle },
+  refused: { label: "Refus de repondre", icon: AlertTriangle },
+};
 
 // =============================================================================
 // Sub-components
 // =============================================================================
 
-interface CategorySectionProps {
-  category: AgentQuestion["category"];
+interface PrioritySectionProps {
+  priority: QuestionPriority;
   questions: AgentQuestion[];
-  responses: Record<string, string>;
-  onResponseChange: (questionId: string, answer: string) => void;
+  responses: Record<string, { answer: string; status: ResponseStatus }>;
+  onResponseChange: (questionId: string, answer: string, status: ResponseStatus) => void;
   isExpanded: boolean;
   onToggle: () => void;
 }
 
-function CategorySection({
-  category,
+function PrioritySection({
+  priority,
   questions,
   responses,
   onResponseChange,
   isExpanded,
   onToggle,
-}: CategorySectionProps) {
-  const config = CATEGORY_CONFIG[category];
-  const answeredCount = questions.filter((q) => responses[q.id]?.trim()).length;
+}: PrioritySectionProps) {
+  const config = PRIORITY_CONFIG[priority];
+  const answeredCount = questions.filter((q) => {
+    const r = responses[q.id];
+    return r && (r.status === "answered" || r.status === "not_applicable" || r.status === "refused");
+  }).length;
+
+  const isComplete = answeredCount === questions.length;
 
   return (
-    <div className="border rounded-lg overflow-hidden">
+    <div className={cn("border rounded-lg overflow-hidden", config.bgClass)}>
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between p-4 hover:bg-muted/50 transition-colors text-left"
+        className="w-full flex items-center justify-between p-4 hover:bg-black/5 transition-colors text-left"
         aria-expanded={isExpanded}
-        aria-controls={`category-${category}-content`}
       >
         <div className="flex items-center gap-3">
-          <Badge className={cn("text-xs", config.color)}>{config.label}</Badge>
-          <span className="text-sm text-muted-foreground">
+          <Badge className={cn("text-xs font-semibold", config.className)}>
+            {config.labelFr}
+          </Badge>
+          <span className="text-sm font-medium">
             {questions.length} question{questions.length > 1 ? "s" : ""}
           </span>
-          {answeredCount > 0 && (
-            <span className="text-xs text-green-600 font-medium">
-              {answeredCount} repondue{answeredCount > 1 ? "s" : ""}
+          {config.isRequired && (
+            <span className="text-xs text-red-600 font-medium">
+              (obligatoire)
             </span>
           )}
+          <span className={cn(
+            "text-xs font-medium",
+            isComplete ? "text-green-600" : "text-muted-foreground"
+          )}>
+            {answeredCount}/{questions.length} traitee{answeredCount > 1 ? "s" : ""}
+          </span>
+          {isComplete && <CheckCircle2 className="h-4 w-4 text-green-600" />}
         </div>
         {isExpanded ? (
           <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -123,16 +181,13 @@ function CategorySection({
       </button>
 
       {isExpanded && (
-        <div
-          id={`category-${category}-content`}
-          className="border-t p-4 space-y-6"
-        >
+        <div className="border-t bg-white p-4 space-y-6">
           {questions.map((question) => (
             <QuestionItem
               key={question.id}
               question={question}
-              value={responses[question.id] || ""}
-              onChange={(value) => onResponseChange(question.id, value)}
+              response={responses[question.id] || { answer: "", status: "pending" }}
+              onChange={(answer, status) => onResponseChange(question.id, answer, status)}
             />
           ))}
         </div>
@@ -143,40 +198,96 @@ function CategorySection({
 
 interface QuestionItemProps {
   question: AgentQuestion;
-  value: string;
-  onChange: (value: string) => void;
+  response: { answer: string; status: ResponseStatus };
+  onChange: (answer: string, status: ResponseStatus) => void;
 }
 
-function QuestionItem({ question, value, onChange }: QuestionItemProps) {
-  const priorityConfig = PRIORITY_CONFIG[question.priority];
+function QuestionItem({ question, response, onChange }: QuestionItemProps) {
+  const categoryConfig = CATEGORY_CONFIG[question.category];
   const textareaId = `question-${question.id}`;
+  const isRequired = PRIORITY_CONFIG[question.priority].isRequired;
+
+  const handleStatusChange = (newStatus: ResponseStatus) => {
+    onChange(response.answer, newStatus);
+  };
+
+  const handleAnswerChange = (newAnswer: string) => {
+    // Auto-set status to "answered" if user types something
+    const newStatus = newAnswer.trim() ? "answered" : response.status === "answered" ? "pending" : response.status;
+    onChange(newAnswer, newStatus);
+  };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3 p-4 border rounded-lg bg-white">
       <div className="flex items-start justify-between gap-4">
-        <Label
-          htmlFor={textareaId}
-          className="text-sm font-medium leading-relaxed flex-1 cursor-pointer"
-        >
-          {question.question}
-        </Label>
-        <Badge className={cn("shrink-0 text-xs", priorityConfig.className)}>
-          {priorityConfig.label}
-        </Badge>
+        <div className="flex-1 space-y-1">
+          <Label
+            htmlFor={textareaId}
+            className="text-sm font-medium leading-relaxed cursor-pointer"
+          >
+            {question.question}
+            {isRequired && <span className="text-red-500 ml-1">*</span>}
+          </Label>
+          <div className="flex items-center gap-2">
+            <Badge className={cn("text-xs", categoryConfig.color)}>
+              {categoryConfig.label}
+            </Badge>
+            <span className="text-xs text-muted-foreground">
+              Source: {formatAgentName(question.agentSource)}
+            </span>
+          </div>
+        </div>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        Source: {formatAgentName(question.agentSource)}
-      </p>
+      <div className="flex items-center gap-3">
+        <Label className="text-xs text-muted-foreground whitespace-nowrap">Statut:</Label>
+        <Select
+          value={response.status}
+          onValueChange={(value: ResponseStatus) => handleStatusChange(value)}
+        >
+          <SelectTrigger className="w-[180px] h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.entries(STATUS_CONFIG) as [ResponseStatus, typeof STATUS_CONFIG[ResponseStatus]][]).map(([status, config]) => {
+              const Icon = config.icon;
+              return (
+                <SelectItem key={status} value={status} className="text-xs">
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-3 w-3" />
+                    {config.label}
+                  </div>
+                </SelectItem>
+              );
+            })}
+          </SelectContent>
+        </Select>
+      </div>
 
-      <Textarea
-        id={textareaId}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Saisissez la reponse du fondateur..."
-        className="min-h-[80px] resize-y"
-        aria-label={`Reponse a la question: ${question.question}`}
-      />
+      {(response.status === "answered" || response.status === "pending") && (
+        <Textarea
+          id={textareaId}
+          value={response.answer}
+          onChange={(e) => handleAnswerChange(e.target.value)}
+          placeholder="Saisissez la reponse du fondateur..."
+          className="min-h-[80px] resize-y"
+          disabled={response.status !== "answered" && response.status !== "pending"}
+        />
+      )}
+
+      {response.status === "refused" && (
+        <div className="text-sm text-amber-600 bg-amber-50 p-2 rounded flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4" />
+          Le fondateur a refuse de repondre - ceci sera pris en compte dans l&apos;analyse.
+        </div>
+      )}
+
+      {response.status === "not_applicable" && (
+        <div className="text-sm text-gray-600 bg-gray-50 p-2 rounded flex items-center gap-2">
+          <XCircle className="h-4 w-4" />
+          Question non applicable a ce deal.
+        </div>
+      )}
     </div>
   );
 }
@@ -185,27 +296,27 @@ function QuestionItem({ question, value, onChange }: QuestionItemProps) {
 // Helpers
 // =============================================================================
 
-function groupQuestionsByCategory(
+function groupQuestionsByPriority(
   questions: AgentQuestion[]
-): Map<AgentQuestion["category"], AgentQuestion[]> {
-  const grouped = new Map<AgentQuestion["category"], AgentQuestion[]>();
+): Map<QuestionPriority, AgentQuestion[]> {
+  const grouped = new Map<QuestionPriority, AgentQuestion[]>();
 
-  // Initialize all categories in order
-  for (const category of CATEGORY_ORDER) {
-    grouped.set(category, []);
+  // Initialize all priorities in order
+  for (const priority of PRIORITY_ORDER) {
+    grouped.set(priority, []);
   }
 
   // Group questions
   for (const question of questions) {
-    const categoryQuestions = grouped.get(question.category) || [];
-    categoryQuestions.push(question);
-    grouped.set(question.category, categoryQuestions);
+    const priorityQuestions = grouped.get(question.priority) || [];
+    priorityQuestions.push(question);
+    grouped.set(question.priority, priorityQuestions);
   }
 
-  // Remove empty categories
-  for (const category of CATEGORY_ORDER) {
-    if (grouped.get(category)?.length === 0) {
-      grouped.delete(category);
+  // Remove empty priorities
+  for (const priority of PRIORITY_ORDER) {
+    if (grouped.get(priority)?.length === 0) {
+      grouped.delete(priority);
     }
   }
 
@@ -220,79 +331,108 @@ export function FounderResponses({
   dealId,
   questions,
   existingResponses = [],
-  onSubmit,
+  onSubmitAndReanalyze,
+  onSaveOnly,
   isSubmitting = false,
+  isReanalyzing = false,
+  previousScore,
+  currentScore,
 }: FounderResponsesProps) {
   // Initialize responses from existing data
   const initialResponses = useMemo(() => {
-    const map: Record<string, string> = {};
+    const map: Record<string, { answer: string; status: ResponseStatus }> = {};
     for (const response of existingResponses) {
-      map[response.questionId] = response.answer;
+      map[response.questionId] = {
+        answer: response.answer,
+        status: response.status || (response.answer ? "answered" : "pending"),
+      };
     }
     return map;
   }, [existingResponses]);
 
-  const [responses, setResponses] = useState<Record<string, string>>(initialResponses);
+  const [responses, setResponses] = useState<Record<string, { answer: string; status: ResponseStatus }>>(initialResponses);
   const [freeNotes, setFreeNotes] = useState("");
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => {
-    // Start with first category expanded
-    const grouped = groupQuestionsByCategory(questions);
-    const firstCategory = grouped.keys().next().value;
-    return firstCategory ? new Set([firstCategory]) : new Set();
+  const [expandedPriorities, setExpandedPriorities] = useState<Set<string>>(() => {
+    // Start with CRITICAL and HIGH expanded
+    return new Set(["CRITICAL", "HIGH"]);
   });
 
-  // Group questions by category
+  // Group questions by priority
   const groupedQuestions = useMemo(
-    () => groupQuestionsByCategory(questions),
+    () => groupQuestionsByPriority(questions),
     [questions]
   );
 
   // Handle response change
-  const handleResponseChange = useCallback((questionId: string, answer: string) => {
+  const handleResponseChange = useCallback((questionId: string, answer: string, status: ResponseStatus) => {
     setResponses((prev) => ({
       ...prev,
-      [questionId]: answer,
+      [questionId]: { answer, status },
     }));
   }, []);
 
-  // Handle category toggle
-  const handleCategoryToggle = useCallback((category: string) => {
-    setExpandedCategories((prev) => {
+  // Handle priority toggle
+  const handlePriorityToggle = useCallback((priority: string) => {
+    setExpandedPriorities((prev) => {
       const next = new Set(prev);
-      if (next.has(category)) {
-        next.delete(category);
+      if (next.has(priority)) {
+        next.delete(priority);
       } else {
-        next.add(category);
+        next.add(priority);
       }
       return next;
     });
   }, []);
 
-  // Handle form submission
-  const handleSubmit = useCallback(async () => {
-    // Convert responses map to array format
-    const responsesArray: QuestionResponse[] = Object.entries(responses)
-      .filter(([, answer]) => answer.trim())
-      .map(([questionId, answer]) => ({
+  // Convert responses to array format
+  const getResponsesArray = useCallback((): QuestionResponse[] => {
+    return Object.entries(responses)
+      .filter(([, r]) => r.status !== "pending")
+      .map(([questionId, r]) => ({
         questionId,
-        answer: answer.trim(),
+        answer: r.answer.trim(),
+        status: r.status,
       }));
+  }, [responses]);
 
-    await onSubmit(responsesArray, freeNotes.trim());
-  }, [responses, freeNotes, onSubmit]);
+  // Handle re-analyze
+  const handleReanalyze = useCallback(async () => {
+    await onSubmitAndReanalyze(getResponsesArray(), freeNotes.trim());
+  }, [getResponsesArray, freeNotes, onSubmitAndReanalyze]);
 
-  // Validation: at least 1 response or free notes required
-  const hasContent = useMemo(() => {
-    const hasResponses = Object.values(responses).some((r) => r.trim());
-    const hasNotes = freeNotes.trim().length > 0;
-    return hasResponses || hasNotes;
-  }, [responses, freeNotes]);
+  // Handle save only
+  const handleSaveOnly = useCallback(async () => {
+    if (onSaveOnly) {
+      await onSaveOnly(getResponsesArray(), freeNotes.trim());
+    }
+  }, [getResponsesArray, freeNotes, onSaveOnly]);
 
-  // Stats
-  const answeredCount = useMemo(
-    () => Object.values(responses).filter((r) => r.trim()).length,
-    [responses]
-  );
+  // Calculate stats
+  const stats = useMemo(() => {
+    const criticalQuestions = questions.filter(q => q.priority === "CRITICAL");
+    const highQuestions = questions.filter(q => q.priority === "HIGH");
+    const requiredQuestions = [...criticalQuestions, ...highQuestions];
+
+    const answeredRequired = requiredQuestions.filter(q => {
+      const r = responses[q.id];
+      return r && (r.status === "answered" || r.status === "not_applicable" || r.status === "refused");
+    });
+
+    const totalAnswered = questions.filter(q => {
+      const r = responses[q.id];
+      return r && (r.status === "answered" || r.status === "not_applicable" || r.status === "refused");
+    });
+
+    return {
+      totalQuestions: questions.length,
+      requiredCount: requiredQuestions.length,
+      requiredAnswered: answeredRequired.length,
+      totalAnswered: totalAnswered.length,
+      canReanalyze: answeredRequired.length === requiredQuestions.length,
+      criticalCount: criticalQuestions.length,
+      highCount: highQuestions.length,
+    };
+  }, [questions, responses]);
 
   // Empty state
   if (questions.length === 0) {
@@ -316,31 +456,66 @@ export function FounderResponses({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <MessageSquare className="h-5 w-5" />
-          Reponses fondateur
+          Questions fondateur
         </CardTitle>
-        <CardDescription>
-          {questions.length} question{questions.length > 1 ? "s" : ""} a poser
-          {answeredCount > 0 && (
-            <span className="text-green-600">
-              {" "}
-              - {answeredCount} repondue{answeredCount > 1 ? "s" : ""}
+        <CardDescription className="space-y-2">
+          <div>
+            {stats.totalQuestions} question{stats.totalQuestions > 1 ? "s" : ""} a poser
+            {stats.requiredCount > 0 && (
+              <span className="text-red-600 font-medium">
+                {" "}- {stats.requiredCount} obligatoire{stats.requiredCount > 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+
+          {/* Progress indicator */}
+          <div className="flex items-center gap-4 text-sm">
+            <div className={cn(
+              "flex items-center gap-1",
+              stats.canReanalyze ? "text-green-600" : "text-amber-600"
+            )}>
+              {stats.canReanalyze ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : (
+                <AlertTriangle className="h-4 w-4" />
+              )}
+              <span>
+                {stats.requiredAnswered}/{stats.requiredCount} questions obligatoires traitees
+              </span>
+            </div>
+            <span className="text-muted-foreground">
+              ({stats.totalAnswered}/{stats.totalQuestions} total)
             </span>
+          </div>
+
+          {/* Score diff if available */}
+          {previousScore !== undefined && currentScore !== undefined && previousScore !== currentScore && (
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <span>Score:</span>
+              <span className="text-muted-foreground">{previousScore}</span>
+              <span>→</span>
+              <span className={cn(
+                currentScore > previousScore ? "text-green-600" : "text-red-600"
+              )}>
+                {currentScore} ({currentScore > previousScore ? "+" : ""}{currentScore - previousScore})
+              </span>
+            </div>
           )}
         </CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* Questions by Category */}
+        {/* Questions by Priority */}
         <div className="space-y-3">
-          {Array.from(groupedQuestions.entries()).map(([category, categoryQuestions]) => (
-            <CategorySection
-              key={category}
-              category={category}
-              questions={categoryQuestions}
+          {Array.from(groupedQuestions.entries()).map(([priority, priorityQuestions]) => (
+            <PrioritySection
+              key={priority}
+              priority={priority}
+              questions={priorityQuestions}
               responses={responses}
               onResponseChange={handleResponseChange}
-              isExpanded={expandedCategories.has(category)}
-              onToggle={() => handleCategoryToggle(category)}
+              isExpanded={expandedPriorities.has(priority)}
+              onToggle={() => handlePriorityToggle(priority)}
             />
           ))}
         </div>
@@ -359,29 +534,61 @@ export function FounderResponses({
             onChange={(e) => setFreeNotes(e.target.value)}
             placeholder="Collez vos notes de call, emails, messages..."
             className="min-h-[120px] resize-y"
-            aria-label="Notes libres additionnelles"
           />
         </div>
 
-        {/* Submit Button */}
-        <div className="flex items-center justify-between pt-2">
-          <p className="text-sm text-muted-foreground">
-            {!hasContent && "Au moins 1 reponse ou des notes libres requises"}
-          </p>
-          <Button
-            onClick={handleSubmit}
-            disabled={!hasContent || isSubmitting}
-            className="min-w-[180px]"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Enregistrement...
-              </>
-            ) : (
-              "Soumettre les reponses"
+        {/* Action Buttons */}
+        <div className="flex items-center justify-between pt-4 border-t">
+          <div className="text-sm">
+            {!stats.canReanalyze && (
+              <p className="text-amber-600 flex items-center gap-1">
+                <AlertTriangle className="h-4 w-4" />
+                Repondez aux {stats.requiredCount - stats.requiredAnswered} question{stats.requiredCount - stats.requiredAnswered > 1 ? "s" : ""} obligatoire{stats.requiredCount - stats.requiredAnswered > 1 ? "s" : ""} restante{stats.requiredCount - stats.requiredAnswered > 1 ? "s" : ""} pour re-analyser
+              </p>
             )}
-          </Button>
+            {stats.canReanalyze && (
+              <p className="text-green-600 flex items-center gap-1">
+                <CheckCircle2 className="h-4 w-4" />
+                Pret pour la re-analyse
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {onSaveOnly && (
+              <Button
+                variant="outline"
+                onClick={handleSaveOnly}
+                disabled={isSubmitting || isReanalyzing}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Sauvegarde...
+                  </>
+                ) : (
+                  "Sauvegarder"
+                )}
+              </Button>
+            )}
+            <Button
+              onClick={handleReanalyze}
+              disabled={!stats.canReanalyze || isReanalyzing || isSubmitting}
+              className="min-w-[200px]"
+            >
+              {isReanalyzing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Re-analyse en cours...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Re-analyser avec les reponses
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

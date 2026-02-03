@@ -275,9 +275,11 @@ export function formatFactStoreForAgents(facts: CurrentFact[]): string {
   }
 
   // Build formatted output
-  const lines: string[] = ['## Fact Store (Verified Information)'];
+  const lines: string[] = ['## Fact Store'];
   lines.push('');
-  lines.push('The following facts have been extracted and verified from documents:');
+  lines.push('The following facts have been extracted from documents.');
+  lines.push('**ATTENTION:** Facts with confidence < 80% or sourced from DECK are UNVERIFIED CLAIMS.');
+  lines.push('Do NOT treat unverified claims as established facts in your analysis.');
   lines.push('');
 
   // Define category order for consistent output
@@ -305,10 +307,13 @@ export function formatFactStoreForAgents(facts: CurrentFact[]): string {
       const factDef = getFactKeyDefinition(fact.factKey);
       const label = factDef?.description || formatFactKeyAsLabel(fact.factKey);
 
-      // Build the fact line
-      let factLine = `- **${label}**: ${fact.currentDisplayValue}`;
+      // Build the fact line with verification status
+      const isUnverified = fact.currentConfidence < 80 || fact.currentSource === 'PITCH_DECK';
+      let factLine = isUnverified
+        ? `- **${label}**: ${fact.currentDisplayValue} ⚠️ UNVERIFIED CLAIM`
+        : `- **${label}**: ${fact.currentDisplayValue} ✅`;
 
-      // Add confidence indicator
+      // Add confidence indicator for low confidence
       if (fact.currentConfidence < 80) {
         factLine += ` (confidence: ${fact.currentConfidence}%)`;
       }
@@ -419,6 +424,136 @@ export function getFactStoreSummary(facts: CurrentFact[]): {
     disputedCount,
     lowConfidenceCount,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// IN-MEMORY FACT UPDATES (for sequential pipeline)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Validation result from an agent (deck-forensics or financial-auditor).
+ * Used to update facts in-memory between pipeline phases.
+ */
+export interface AgentFactValidation {
+  factKey: string;
+  status: 'VERIFIED' | 'CONTRADICTED' | 'UNVERIFIABLE';
+  /** New confidence after validation (e.g., 95 if verified, 20 if contradicted) */
+  newConfidence: number;
+  /** Agent that performed the validation */
+  validatedBy: string;
+  /** Explanation of the validation result */
+  explanation: string;
+  /** Corrected value if CONTRADICTED */
+  correctedValue?: unknown;
+  correctedDisplayValue?: string;
+}
+
+/**
+ * Updates facts in-memory based on agent validation results.
+ * Does NOT persist to DB — used between sequential pipeline phases for speed.
+ *
+ * @param facts - Current facts array (mutated in place)
+ * @param validations - Validation results from an agent
+ * @returns Updated facts array (same reference, mutated)
+ */
+export function updateFactsInMemory(
+  facts: CurrentFact[],
+  validations: AgentFactValidation[]
+): CurrentFact[] {
+  for (const validation of validations) {
+    const fact = facts.find(f => f.factKey === validation.factKey);
+    if (!fact) continue;
+
+    if (validation.status === 'CONTRADICTED' && validation.correctedValue !== undefined) {
+      const previousValue = fact.currentValue;
+      const previousSource = fact.currentSource;
+      fact.currentValue = validation.correctedValue;
+      fact.currentDisplayValue = validation.correctedDisplayValue ?? String(validation.correctedValue);
+      fact.isDisputed = true;
+      fact.disputeDetails = {
+        conflictingValue: previousValue,
+        conflictingSource: previousSource,
+      };
+    }
+
+    fact.currentConfidence = validation.newConfidence;
+  }
+
+  return facts;
+}
+
+/**
+ * Reformats the fact store string with agent validation annotations.
+ * Adds a section showing what was verified/contradicted by the validating agent.
+ *
+ * @param facts - Current facts (possibly updated by updateFactsInMemory)
+ * @param validations - Validation results to annotate
+ * @returns New formatted string for injection into subsequent agent prompts
+ */
+export function reformatFactStoreWithValidations(
+  facts: CurrentFact[],
+  validations: AgentFactValidation[]
+): string {
+  // Start with the standard format
+  const base = formatFactStoreForAgents(facts);
+
+  if (validations.length === 0) return base;
+
+  // Group validations by the agent that performed them
+  const byAgent = new Map<string, AgentFactValidation[]>();
+  for (const v of validations) {
+    const existing = byAgent.get(v.validatedBy) || [];
+    existing.push(v);
+    byAgent.set(v.validatedBy, existing);
+  }
+
+  const lines: string[] = [base, ''];
+
+  for (const [agent, agentValidations] of byAgent) {
+    const verified = agentValidations.filter(v => v.status === 'VERIFIED');
+    const contradicted = agentValidations.filter(v => v.status === 'CONTRADICTED');
+    const unverifiable = agentValidations.filter(v => v.status === 'UNVERIFIABLE');
+
+    lines.push(`### Validation par ${agent}`);
+    lines.push('');
+
+    if (verified.length > 0) {
+      lines.push('**Claims vérifiées ✅:**');
+      for (const v of verified) {
+        lines.push(`- ${v.factKey}: ${v.explanation}`);
+      }
+      lines.push('');
+    }
+
+    if (contradicted.length > 0) {
+      lines.push('**Claims contredites ❌:**');
+      for (const v of contradicted) {
+        lines.push(`- ${v.factKey}: ${v.explanation}${v.correctedDisplayValue ? ` → Valeur corrigée: ${v.correctedDisplayValue}` : ''}`);
+      }
+      lines.push('');
+    }
+
+    if (unverifiable.length > 0) {
+      lines.push('**Claims non vérifiables ⚠️:**');
+      for (const v of unverifiable) {
+        lines.push(`- ${v.factKey}: ${v.explanation}`);
+      }
+      lines.push('');
+    }
+  }
+
+  const result = lines.join('\n');
+
+  // Cap output to ~8000 chars to avoid bloating LLM prompts
+  const MAX_CHARS = 8000;
+  if (result.length > MAX_CHARS) {
+    const truncated = result.slice(0, MAX_CHARS);
+    const lastNewline = truncated.lastIndexOf('\n');
+    return (lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated) +
+      `\n\n[... ${validations.length} validations au total, sortie tronquée à ${MAX_CHARS} caractères]`;
+  }
+
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

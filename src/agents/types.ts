@@ -24,6 +24,8 @@ export interface AgentContext {
 
 // Import Fact Store types for agent context
 import type { CurrentFact } from "@/services/fact-store/types";
+// Import Deck Coherence types for Tier 0 coherence check
+import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 
 // Enriched context with Context Engine data for Tier 1 agents
 export interface EnrichedAgentContext extends AgentContext {
@@ -39,11 +41,23 @@ export interface EnrichedAgentContext extends AgentContext {
   // BA preferences for personalized analysis (Tier 3)
   baPreferences?: BAPreferences;
 
+  // Tier 3 coherence result (injected after T3 Batch 1)
+  tier3CoherenceResult?: {
+    adjusted: boolean;
+    adjustments: { rule: string; field: string; before: number; after: number; reason: string }[];
+    coherenceScore: number;
+    warnings: string[];
+  };
+
   // Fact Store - Verified facts extracted from documents (Tier 0)
   // Contains structured, typed facts with confidence scoring
   factStore?: CurrentFact[];
   // Pre-formatted version for direct injection into prompts
   factStoreFormatted?: string;
+
+  // Deck Coherence Report - Tier 0 coherence check result
+  // Contains detected issues, missing data, and reliability grade
+  deckCoherenceReport?: DeckCoherenceReport;
 
   // Funding DB context for Tier 2 sector experts
   fundingContext?: {
@@ -940,6 +954,24 @@ export interface TeamInvestigatorFindings {
 
     // Points d'attention
     concerns: string[];
+  }[];
+
+  // Profils des membres non-fondateurs (équipe opérationnelle)
+  teamMemberProfiles?: {
+    name: string;
+    role: string;
+    category: "development" | "business" | "operations" | "other";
+    isFullTime: boolean;
+    seniorityLevel: "junior" | "mid" | "senior" | "lead" | "unknown";
+    linkedinUrl?: string;
+    linkedinVerified: boolean;
+    background?: {
+      yearsExperience?: number;
+      relevantExperience?: string;
+      keySkills?: string[];
+    };
+    assessment: string;
+    concerns?: string[];
   }[];
 
   teamComposition: {
@@ -2407,7 +2439,7 @@ export interface ExitStrategistResult extends AgentResult {
 /** Question fondateur enrichie avec contexte complet */
 export interface FounderQuestion {
   id: string;
-  priority: "MUST_ASK" | "SHOULD_ASK" | "NICE_TO_HAVE";
+  priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   category: "vision" | "execution" | "team" | "market" | "financials" | "tech" | "legal" | "risk" | "exit";
 
   // La question elle-meme
@@ -2542,7 +2574,7 @@ export interface AgentFindingsSummary {
 
 /** Findings specifiques Question Master */
 export interface QuestionMasterFindings {
-  // Questions fondateur (minimum 15, dont 5+ MUST_ASK)
+  // Questions fondateur (minimum 15, dont 3+ CRITICAL et 5+ HIGH)
   founderQuestions: FounderQuestion[];
 
   // Reference checks (minimum 5)

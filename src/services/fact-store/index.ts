@@ -67,7 +67,11 @@ export {
   // Metric helpers
   getKeyFinancialMetrics,
   getKeyTractionMetrics,
+  // In-memory updates (sequential pipeline)
+  updateFactsInMemory,
+  reformatFactStoreWithValidations,
 } from './current-facts';
+export type { AgentFactValidation } from './current-facts';
 
 // Calibration Analytics
 export { getCalibrationMetrics } from './calibration';

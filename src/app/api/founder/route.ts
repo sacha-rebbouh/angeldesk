@@ -39,6 +39,24 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { linkedinUrl, firstName, lastName, startupSector } = body;
 
+    // Validate LinkedIn URL to prevent SSRF
+    if (linkedinUrl) {
+      try {
+        const parsed = new URL(linkedinUrl);
+        if (!parsed.hostname.endsWith("linkedin.com")) {
+          return NextResponse.json(
+            { error: "Only LinkedIn URLs are accepted" },
+            { status: 400 }
+          );
+        }
+      } catch {
+        return NextResponse.json(
+          { error: "Invalid URL format" },
+          { status: 400 }
+        );
+      }
+    }
+
     // Get LinkedIn URL - either direct or via lookup
     let finalUrl = linkedinUrl;
 

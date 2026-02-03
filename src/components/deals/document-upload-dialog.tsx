@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -27,6 +28,7 @@ export function DocumentUploadDialog({
   onOpenChange,
   onUploadSuccess,
 }: DocumentUploadDialogProps) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [uploadedCount, setUploadedCount] = useState(0);
   const [hasUploaded, setHasUploaded] = useState(false);
@@ -44,12 +46,13 @@ export function DocumentUploadDialog({
     // Auto-close after short delay to show success state
     setTimeout(() => {
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      router.refresh();
       onUploadSuccess?.();
       setUploadedCount(0);
       setHasUploaded(false);
       onOpenChange(false);
     }, 500);
-  }, [queryClient, dealId, onUploadSuccess, onOpenChange]);
+  }, [queryClient, dealId, onUploadSuccess, onOpenChange, router]);
 
   const handleError = useCallback((error: string) => {
     toast.error(error);
@@ -57,8 +60,8 @@ export function DocumentUploadDialog({
 
   const handleClose = useCallback(() => {
     if (hasUploaded) {
-      // Invalidate deal query to refresh documents
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      router.refresh();
       onUploadSuccess?.();
     }
     setUploadedCount(0);

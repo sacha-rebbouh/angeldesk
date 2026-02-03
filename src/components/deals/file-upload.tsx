@@ -61,6 +61,8 @@ const ACCEPTED_TYPES = {
   "application/vnd.ms-excel": [".xls"],
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
   "application/vnd.ms-powerpoint": [".ppt"],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+  "application/msword": [".doc"],
   "image/png": [".png"],
   "image/jpeg": [".jpg", ".jpeg"],
 };

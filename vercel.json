@@ -1,5 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "src/app/api/analyze/route.ts": { "maxDuration": 300 },
+    "src/app/api/board/route.ts": { "maxDuration": 300 },
+    "src/app/api/cron/maintenance/*/route.ts": { "maxDuration": 300 }
+  },
   "crons": [
     {
       "path": "/api/cron/maintenance/cleaner",

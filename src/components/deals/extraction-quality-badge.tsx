@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   AlertTriangle,
   CheckCircle,
@@ -292,19 +293,43 @@ interface ExtractionWarningBannerProps {
   quality: number | null;
   warnings: ExtractionWarning[] | null;
   documentName: string;
+  documentId: string;
+  onReupload?: () => void;
+  onOCRComplete?: () => void;
 }
 
 export function ExtractionWarningBanner({
   quality,
   warnings,
   documentName,
+  documentId,
+  onReupload,
+  onOCRComplete,
 }: ExtractionWarningBannerProps) {
+  const [isOCRLoading, setIsOCRLoading] = useState(false);
+
   if (quality === null || quality >= 40) return null;
 
   const criticalWarnings =
     warnings?.filter(
       (w) => w.severity === "critical" || w.severity === "high"
     ) ?? [];
+
+  const handleOCR = async () => {
+    setIsOCRLoading(true);
+    try {
+      const res = await fetch(`/api/documents/${documentId}/ocr`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "OCR failed");
+      }
+      onOCRComplete?.();
+    } catch (error) {
+      console.error("OCR error:", error);
+    } finally {
+      setIsOCRLoading(false);
+    }
+  };
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-4 mb-4">
@@ -326,11 +351,11 @@ export function ExtractionWarningBanner({
             </ul>
           )}
           <div className="mt-3 flex gap-2">
-            <Button size="sm" variant="outline" className="text-red-700 border-red-300 hover:bg-red-100">
+            <Button size="sm" variant="outline" className="text-red-700 border-red-300 hover:bg-red-100" onClick={onReupload}>
               Re-uploader un PDF textuel
             </Button>
-            <Button size="sm" className="bg-red-600 hover:bg-red-700">
-              Tenter l&apos;OCR
+            <Button size="sm" className="bg-red-600 hover:bg-red-700" onClick={handleOCR} disabled={isOCRLoading}>
+              {isOCRLoading ? "OCR en cours..." : "Tenter l\u2019OCR"}
             </Button>
           </div>
         </div>

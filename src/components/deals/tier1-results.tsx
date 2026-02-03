@@ -169,11 +169,21 @@ const ReActTracePanel = memo(function ReActTracePanel({
 
 
 // Format number with K/M suffix
-function formatAmount(value: number | undefined | null): string {
+/** Safe toFixed that handles string values from LLM JSON */
+function safeFixed(value: unknown, decimals: number): string {
   if (value == null) return "N/A";
-  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M€`;
-  if (value >= 1000) return `${(value / 1000).toFixed(0)}K€`;
-  return `${value.toFixed(0)}€`;
+  const n = Number(value);
+  if (isNaN(n)) return String(value);
+  return n.toFixed(decimals);
+}
+
+function formatAmount(value: number | string | undefined | null): string {
+  if (value == null) return "N/A";
+  const n = Number(value);
+  if (isNaN(n)) return String(value);
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M€`;
+  if (n >= 1000) return `${(n / 1000).toFixed(0)}K€`;
+  return `${n.toFixed(0)}€`;
 }
 
 // Financial Auditor Card - Rich display
@@ -291,7 +301,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
               <div>
                 <div className="text-xs text-muted-foreground">Burn Multiple</div>
                 <div className="font-semibold">
-                  {data.findings.burn.burnMultiple?.toFixed(2) ?? "N/A"}
+                  {safeFixed(data.findings.burn.burnMultiple, 2)}
                 </div>
               </div>
             </div>
@@ -323,7 +333,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
               <div>
                 <span className="text-muted-foreground">Multiple implicite:</span>{" "}
                 <span className="font-medium">
-                  {data.findings.valuation.impliedMultiple?.toFixed(1) ?? "N/A"}x
+                  {safeFixed(data.findings.valuation.impliedMultiple, 1)}x
                 </span>
                 <span className="text-xs text-muted-foreground ml-1">
                   (bench: {data.findings.valuation.benchmarkMultiple}x)
@@ -501,6 +511,7 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
   onShowTrace?: () => void;
 }) {
   const founderProfiles = data.findings?.founderProfiles ?? [];
+  const teamMemberProfiles = data.findings?.teamMemberProfiles ?? [];
   const teamComposition = data.findings?.teamComposition;
   const gaps = teamComposition?.gaps ?? [];
 
@@ -573,6 +584,35 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
             ))}
           </div>
         </ExpandableSection>
+
+        {/* Team Members (non-founders) */}
+        {teamMemberProfiles.length > 0 && (
+          <ExpandableSection title={`Équipe (${teamMemberProfiles.length})`}>
+            <div className="space-y-2 mt-2">
+              {teamMemberProfiles.map((m, i) => (
+                <div key={i} className="p-2 border rounded-lg">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-medium">{m.name}</span>
+                    <Badge variant="outline">{m.role}</Badge>
+                  </div>
+                  <div className="flex gap-2 text-xs text-muted-foreground">
+                    <span className="capitalize">{m.category}</span>
+                    {m.seniorityLevel && m.seniorityLevel !== "unknown" && (
+                      <span>• {m.seniorityLevel}</span>
+                    )}
+                    {m.isFullTime === false && <span>• Temps partiel</span>}
+                  </div>
+                  {m.linkedinVerified && (
+                    <div className="text-xs text-green-600 mt-1">✓ LinkedIn vérifié</div>
+                  )}
+                  {m.assessment && (
+                    <p className="text-xs text-muted-foreground mt-1">{m.assessment}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </ExpandableSection>
+        )}
 
         {/* Gaps */}
         {gaps.length > 0 && (
@@ -905,7 +945,10 @@ const MarketIntelCard = memo(function MarketIntelCard({
   reactData?: ReActMetadata;
   onShowTrace?: () => void;
 }) {
-  const { findings, score, narrative, redFlags } = data;
+  const findings = data?.findings;
+  const score = data?.score;
+  const narrative = data?.narrative;
+  const redFlags = data?.redFlags;
   const timingAssessmentColors: Record<string, string> = {
     EXCELLENT: "text-green-600",
     GOOD: "text-blue-600",
@@ -937,12 +980,13 @@ const MarketIntelCard = memo(function MarketIntelCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={score.value} size="lg" />
+          <ScoreBadge score={score?.value ?? 0} size="lg" />
         </div>
         <CardDescription>Validation TAM / SAM / SOM et timing</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Market Size Validation */}
+        {findings?.marketSize && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">Validation marche</span>
@@ -953,8 +997,10 @@ const MarketIntelCard = memo(function MarketIntelCard({
           </div>
           <p className="text-xs text-muted-foreground">{findings.marketSize.overallAssessment}</p>
         </div>
+        )}
 
         {/* Timing Analysis */}
+        {findings?.timing && (
         <div className="p-3 rounded-lg bg-muted">
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div>
@@ -970,8 +1016,10 @@ const MarketIntelCard = memo(function MarketIntelCard({
           </div>
           <p className="text-xs text-muted-foreground mt-2">{findings.timing.windowRemaining}</p>
         </div>
+        )}
 
         {/* Funding Trends */}
+        {findings?.fundingTrends && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">Tendance Funding {findings.fundingTrends.sectorName}</span>
@@ -980,13 +1028,14 @@ const MarketIntelCard = memo(function MarketIntelCard({
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground">{findings.fundingTrends.trendAnalysis}</p>
-          {findings.fundingTrends.totalFunding.value > 0 && (
+          {findings.fundingTrends.totalFunding?.value > 0 && (
             <div className="text-xs grid grid-cols-2 gap-2 mt-1">
-              <span>Funding: {(findings.fundingTrends.totalFunding.value / 1000000).toFixed(0)}M ({findings.fundingTrends.totalFunding.yoyChange > 0 ? "+" : ""}{findings.fundingTrends.totalFunding.yoyChange}% YoY)</span>
+              <span>Funding: {safeFixed(Number(findings.fundingTrends.totalFunding.value) / 1000000, 0)}M ({Number(findings.fundingTrends.totalFunding.yoyChange) > 0 ? "+" : ""}{findings.fundingTrends.totalFunding.yoyChange}% YoY)</span>
               <span>Deals: {findings.fundingTrends.dealCount.value} ({findings.fundingTrends.dealCount.yoyChange > 0 ? "+" : ""}{findings.fundingTrends.dealCount.yoyChange}% YoY)</span>
             </div>
           )}
         </div>
+        )}
 
         {/* Red Flags */}
         {redFlags.length > 0 && (
@@ -1012,7 +1061,7 @@ const MarketIntelCard = memo(function MarketIntelCard({
         )}
 
         {/* Key Insights */}
-        {narrative.keyInsights.length > 0 && (
+        {narrative?.keyInsights?.length > 0 && (
           <div className="p-3 rounded-lg bg-cyan-50 border border-cyan-200">
             <p className="text-sm font-medium text-cyan-700 mb-1">Insights cles</p>
             <ul className="text-xs text-muted-foreground space-y-1">
@@ -1596,9 +1645,9 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
               <div className="bg-yellow-500" style={{ width: `${optionPoolSize}%` }} title="Option Pool" />
             </div>
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Fondateurs: {foundersTotal.toFixed(1)}%</span>
-              <span>Investisseurs: {investorsTotal.toFixed(1)}%</span>
-              <span>Pool: {optionPoolSize.toFixed(1)}%</span>
+              <span>Fondateurs: {safeFixed(foundersTotal, 1)}%</span>
+              <span>Investisseurs: {safeFixed(investorsTotal, 1)}%</span>
+              <span>Pool: {safeFixed(optionPoolSize, 1)}%</span>
             </div>
           </div>
         )}
@@ -1611,7 +1660,7 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
                 <div key={i} className="p-2 border rounded">
                   <div className="flex items-center justify-between">
                     <span className="font-medium text-sm">{f.name}</span>
-                    <span className="text-sm font-bold">{f.percentage.toFixed(1)}%</span>
+                    <span className="text-sm font-bold">{safeFixed(f.percentage, 1)}%</span>
                   </div>
                   <div className="flex gap-2 text-xs text-muted-foreground mt-1">
                     <span>Vesting: {f.vesting}</span>
@@ -1634,26 +1683,26 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
               <div className="p-2 rounded bg-muted">
                 <div className="text-muted-foreground">Actuel</div>
-                <div className="font-bold">{dilution.currentFounderOwnership?.toFixed(1)}%</div>
+                <div className="font-bold">{safeFixed(dilution.currentFounderOwnership, 1)}%</div>
               </div>
               {dilution.postThisRound && (
                 <div className="p-2 rounded bg-muted">
                   <div className="text-muted-foreground">Post-round</div>
-                  <div className="font-bold">{dilution.postThisRound.ownership?.toFixed(1)}%</div>
-                  <div className="text-red-600">-{dilution.postThisRound.dilution?.toFixed(1)}%</div>
+                  <div className="font-bold">{safeFixed(dilution.postThisRound.ownership, 1)}%</div>
+                  <div className="text-red-600">-{safeFixed(dilution.postThisRound.dilution, 1)}%</div>
                 </div>
               )}
               {dilution.atSeriesA && (
                 <div className="p-2 rounded bg-muted">
                   <div className="text-muted-foreground">Série A</div>
-                  <div className="font-bold">{dilution.atSeriesA.ownership?.toFixed(1)}%</div>
-                  <div className="text-red-600">-{dilution.atSeriesA.dilution?.toFixed(1)}%</div>
+                  <div className="font-bold">{safeFixed(dilution.atSeriesA.ownership, 1)}%</div>
+                  <div className="text-red-600">-{safeFixed(dilution.atSeriesA.dilution, 1)}%</div>
                 </div>
               )}
               {dilution.atExit && (
                 <div className="p-2 rounded bg-muted">
                   <div className="text-muted-foreground">Exit</div>
-                  <div className="font-bold">{dilution.atExit.ownership?.toFixed(1)}%</div>
+                  <div className="font-bold">{safeFixed(dilution.atExit.ownership, 1)}%</div>
                 </div>
               )}
             </div>
@@ -1737,7 +1786,7 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
                 <div key={i} className="p-2 border rounded">
                   <div className="flex items-center justify-between">
                     <span className="font-medium text-sm">{inv.name}</span>
-                    <span className="text-sm">{inv.percentage?.toFixed(1)}%</span>
+                    <span className="text-sm">{safeFixed(inv.percentage, 1)}%</span>
                   </div>
                   <div className="flex gap-1 mt-1">
                     <Badge variant="outline" className="text-xs">{inv.round}</Badge>
@@ -2024,7 +2073,7 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
                     salesMotion.magicNumber.value >= 0.75 ? "text-green-600" :
                     salesMotion.magicNumber.value >= 0.5 ? "text-yellow-600" : "text-red-600"
                   )}>
-                    {salesMotion.magicNumber.value.toFixed(2)}
+                    {safeFixed(salesMotion.magicNumber.value, 2)}
                   </span>
                 </div>
               )}
@@ -2092,7 +2141,7 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
                   </div>
                   <div className="flex gap-3 text-xs text-muted-foreground">
                     {c.economics?.cac && <span>CAC: {formatAmount(c.economics.cac)}</span>}
-                    {c.economics?.ltvCacRatio && <span>LTV/CAC: {c.economics.ltvCacRatio.toFixed(1)}x</span>}
+                    {c.economics?.ltvCacRatio && <span>LTV/CAC: {safeFixed(c.economics.ltvCacRatio, 1)}x</span>}
                     <span>Scalabilité: {c.scalability?.level}</span>
                   </div>
                   {c.verdict && <p className="text-xs text-muted-foreground mt-1">{c.verdict}</p>}
@@ -2864,7 +2913,7 @@ const ExitStrategistCard = memo(function ExitStrategistCard({
                 </Badge>
                 {s.exitValuation?.estimated && (
                   <p className="text-xs text-muted-foreground mt-1">
-                    {(s.exitValuation.estimated / 1000000).toFixed(0)}M
+                    {safeFixed(Number(s.exitValuation.estimated) / 1000000, 0)}M
                   </p>
                 )}
               </div>
@@ -2952,19 +3001,19 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
   const diligenceChecklist = findings?.diligenceChecklist;
   const suggestedTimeline = findings?.suggestedTimeline ?? [];
 
-  // Filter MUST_ASK questions
-  const mustAskQuestions = useMemo(
-    () => founderQuestions.filter(q => q.priority === "MUST_ASK"),
+  // Filter CRITICAL and HIGH priority questions
+  const criticalQuestions = useMemo(
+    () => founderQuestions.filter(q => q.priority === "CRITICAL"),
     [founderQuestions]
   );
 
-  const shouldAskQuestions = useMemo(
-    () => founderQuestions.filter(q => q.priority === "SHOULD_ASK"),
+  const highQuestions = useMemo(
+    () => founderQuestions.filter(q => q.priority === "HIGH"),
     [founderQuestions]
   );
 
-  const visibleMustAsk = mustAskQuestions.slice(0, questionLimit);
-  const hiddenMustAskCount = Math.max(0, mustAskQuestions.length - questionLimit);
+  const visibleCritical = criticalQuestions.slice(0, questionLimit);
+  const hiddenCriticalCount = Math.max(0, criticalQuestions.length - questionLimit);
 
   // Readiness color mapping
   const readinessColors: Record<string, string> = {
@@ -3096,10 +3145,10 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
           </div>
         )}
 
-        {/* MUST ASK Questions */}
-        <ExpandableSection title={`Questions MUST ASK (${mustAskQuestions.length})`} defaultOpen>
+        {/* CRITICAL Questions */}
+        <ExpandableSection title={`Questions CRITICAL (${criticalQuestions.length})`} defaultOpen>
           <div className="space-y-2 mt-2">
-            {visibleMustAsk.map((q: {
+            {visibleCritical.map((q: {
               id: string;
               priority: string;
               category: string;
@@ -3149,17 +3198,17 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                 </div>
               </div>
             ))}
-            {hiddenMustAskCount > 0 && (
-              <ProTeaserInline hiddenCount={hiddenMustAskCount} itemLabel="questions MUST ASK" />
+            {hiddenCriticalCount > 0 && (
+              <ProTeaserInline hiddenCount={hiddenCriticalCount} itemLabel="questions CRITICAL" />
             )}
           </div>
         </ExpandableSection>
 
-        {/* SHOULD ASK Questions */}
-        {shouldAskQuestions.length > 0 && (
-          <ExpandableSection title={`Questions SHOULD ASK (${shouldAskQuestions.length})`}>
+        {/* HIGH Priority Questions */}
+        {highQuestions.length > 0 && (
+          <ExpandableSection title={`Questions HIGH (${highQuestions.length})`}>
             <div className="space-y-2 mt-2">
-              {shouldAskQuestions.slice(0, questionLimit === Infinity ? 10 : 3).map((q: {
+              {highQuestions.slice(0, questionLimit === Infinity ? 10 : 3).map((q: {
                 id: string;
                 category: string;
                 question: string;

@@ -1,4 +1,11 @@
-import { extractText, getDocumentProxy } from "unpdf";
+import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
+import path from "path";
+
+// Point to the actual worker file for Node.js/serverless environments
+GlobalWorkerOptions.workerSrc = path.resolve(
+  process.cwd(),
+  "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"
+);
 import {
   analyzeExtractionQuality,
   QualityAnalysisResult,
@@ -37,28 +44,33 @@ export async function extractTextFromPDF(
   buffer: Buffer
 ): Promise<PDFExtractionResult> {
   try {
-    const pdf = await getDocumentProxy(new Uint8Array(buffer));
-    const result = await extractText(pdf, { mergePages: true });
+    const loadingTask = getDocument({ data: new Uint8Array(buffer), useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true });
+    const pdf: PDFDocumentProxy = await loadingTask.promise;
+    const totalPages = pdf.numPages;
+
+    // Extract text from all pages
+    const pageTexts: string[] = [];
+    for (let i = 1; i <= totalPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .filter((item) => "str" in item && typeof (item as Record<string, unknown>).str === "string")
+        .map((item) => (item as { str: string }).str)
+        .join(" ");
+      pageTexts.push(pageText);
+    }
 
     // Get metadata if available
     const metadata = await pdf.getMetadata().catch(() => null);
     const info = metadata?.info as PDFMetadataInfo | undefined;
 
-    // Handle text - can be string or array
-    let textContent: string;
-    if (typeof result.text === "string") {
-      textContent = result.text;
-    } else if (Array.isArray(result.text)) {
-      textContent = (result.text as string[]).join("\n");
-    } else {
-      textContent = String(result.text);
-    }
+    const textContent = pageTexts.join("\n");
 
     // Clean up extracted text
     const cleanedText = cleanExtractedText(textContent);
 
     // Analyze extraction quality
-    const quality = analyzeExtractionQuality(cleanedText, result.totalPages);
+    const quality = analyzeExtractionQuality(cleanedText, totalPages);
 
     // Log quality issues for debugging
     if (quality.warnings.length > 0) {
@@ -69,7 +81,7 @@ export async function extractTextFromPDF(
 
     return {
       text: cleanedText,
-      pageCount: result.totalPages,
+      pageCount: totalPages,
       info: {
         title: info?.Title,
         author: info?.Author,

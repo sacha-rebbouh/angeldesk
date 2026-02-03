@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { format } from "date-fns";
@@ -92,6 +93,7 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
 }
 
 export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
@@ -227,6 +229,12 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
                       quality={doc.extractionQuality}
                       warnings={doc.extractionWarnings}
                       documentName={doc.name}
+                      documentId={doc.id}
+                      onReupload={openUploadDialog}
+                      onOCRComplete={() => {
+                        toast.success("OCR terminé");
+                        router.refresh();
+                      }}
                     />
                   ))}
                 {documents.map((doc) => (

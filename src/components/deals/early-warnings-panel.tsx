@@ -6,27 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatAgentName } from "@/lib/format-utils";
-
-// Match types from orchestrator
-interface EarlyWarning {
-  id: string;
-  timestamp: string | Date;
-  agentName: string;
-  severity: "critical" | "high" | "medium";
-  category:
-    | "founder_integrity"
-    | "legal_existential"
-    | "financial_critical"
-    | "market_dead"
-    | "product_broken"
-    | "deal_structure";
-  title: string;
-  description: string;
-  evidence: string[];
-  confidence: number;
-  recommendation: "investigate" | "likely_dealbreaker" | "absolute_dealbreaker";
-  questionsToAsk?: string[];
-}
+import type { EarlyWarning } from "@/types";
 
 interface EarlyWarningsPanelProps {
   warnings: EarlyWarning[];
@@ -76,8 +56,8 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarni
   const [isExpanded, setIsExpanded] = useState(false);
   const toggleExpand = useCallback(() => setIsExpanded(prev => !prev), []);
 
-  const severityConfig = SEVERITY_CONFIG[warning.severity];
-  const categoryConfig = CATEGORY_CONFIG[warning.category];
+  const severityConfig = SEVERITY_CONFIG[warning.severity] ?? SEVERITY_CONFIG.medium;
+  const categoryConfig = CATEGORY_CONFIG[warning.category] ?? { icon: Info, label: "Autre" };
   const SeverityIcon = severityConfig.icon;
   const CategoryIcon = categoryConfig.icon;
 
@@ -111,7 +91,7 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarni
               variant={warning.recommendation === "absolute_dealbreaker" ? "destructive" : "secondary"}
               className="text-xs"
             >
-              {RECOMMENDATION_LABELS[warning.recommendation]}
+              {RECOMMENDATION_LABELS[warning.recommendation] ?? warning.recommendation}
             </Badge>
           </div>
 

@@ -38,6 +38,22 @@ export async function deleteFile(urlOrPath: string): Promise<void> {
 }
 
 /**
+ * Download a file from storage as Buffer
+ */
+export async function downloadFile(urlOrPath: string): Promise<Buffer> {
+  if (isVercelBlobConfigured) {
+    const res = await fetch(urlOrPath);
+    if (!res.ok) throw new Error(`Failed to download from blob: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+  const { readFile } = await import("fs/promises");
+  const localPath = urlOrPath.startsWith("/uploads/")
+    ? join(process.cwd(), "public", urlOrPath)
+    : join(process.cwd(), "public", "uploads", urlOrPath);
+  return readFile(localPath);
+}
+
+/**
  * Get the public URL for a file
  */
 export function getPublicUrl(pathname: string): string {

@@ -127,6 +127,16 @@ export class AnalysisStateMachine {
   }
 
   /**
+   * Check if current state has exceeded its timeout
+   */
+  isCurrentStateTimedOut(): boolean {
+    if (!this.stateStartTime) return false;
+    const timeout = this.config.stateTimeouts[this.state];
+    if (!timeout) return false;
+    return Date.now() - this.stateStartTime.getTime() > timeout;
+  }
+
+  /**
    * Get all transitions
    */
   getTransitions(): StateTransition[] {
@@ -178,6 +188,17 @@ export class AnalysisStateMachine {
       metadata,
     };
     this.transitions.push(transition);
+
+    // Check if previous state exceeded its timeout
+    if (from !== "IDLE" && this.stateStartTime) {
+      const elapsed = Date.now() - this.stateStartTime.getTime();
+      const timeout = this.config.stateTimeouts[from];
+      if (timeout && elapsed > timeout) {
+        console.warn(
+          `[StateMachine] State ${from} exceeded timeout (${elapsed}ms > ${timeout}ms)`
+        );
+      }
+    }
 
     // Update state
     this.state = to;

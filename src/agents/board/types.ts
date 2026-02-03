@@ -11,32 +11,30 @@ export interface BoardMemberConfig {
   color: string; // Hex color for UI
 }
 
-// TODO: Restore premium models for production
-// Original: CLAUDE_OPUS_45, GPT4_TURBO, GEMINI_ULTRA, MISTRAL_LARGE_2
 export const BOARD_MEMBERS: BoardMemberConfig[] = [
   {
     id: "claude",
-    modelKey: "HAIKU", // TEST MODE - was CLAUDE_OPUS_45
+    modelKey: "HAIKU",
     name: "Claude Haiku",
-    color: "#D97706", // Amber-600
+    color: "#D97706",
   },
   {
     id: "gpt4",
-    modelKey: "GPT4O_MINI", // TEST MODE - was GPT4_TURBO
+    modelKey: "GPT4O_MINI",
     name: "GPT-4o Mini",
-    color: "#059669", // Emerald-600
+    color: "#059669",
   },
   {
     id: "gemini",
-    modelKey: "HAIKU", // TEST MODE - was GEMINI_ULTRA
+    modelKey: "HAIKU",
     name: "Claude Haiku 2",
-    color: "#2563EB", // Blue-600
+    color: "#2563EB",
   },
   {
     id: "mistral",
-    modelKey: "GPT4O_MINI", // TEST MODE - was MISTRAL_LARGE_2
+    modelKey: "GPT4O_MINI",
     name: "GPT-4o Mini 2",
-    color: "#7C3AED", // Violet-600
+    color: "#7C3AED",
   },
 ];
 

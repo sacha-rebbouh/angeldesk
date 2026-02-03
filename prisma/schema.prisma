@@ -142,6 +142,7 @@ model Document {
   uploadedAt       DateTime @default(now())
 
   @@index([dealId])
+  @@index([processingStatus])
 }
 
 enum DocumentType {
@@ -240,9 +241,18 @@ model Analysis {
   // Allows detecting "stale" analyses when new docs are added
   documentIds     String[] @default([])
 
+  // Relations to sub-models (cascade delete)
+  scoredFindings    ScoredFinding[]
+  reasoningTraces   ReasoningTrace[]
+  debateRecords     DebateRecord[]
+  agentMessages     AgentMessage[]
+  stateTransitions  StateTransition[]
+  checkpoints       AnalysisCheckpoint[]
+
   createdAt       DateTime @default(now())
 
   @@index([dealId])
+  @@index([status])
   @@index([dealId, mode, dealFingerprint]) // For cache lookup
 }
 
@@ -306,6 +316,7 @@ model SectorBenchmark {
 model ScoredFinding {
   id              String   @id @default(cuid())
   analysisId      String
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
   agentName       String
 
   metric          String
@@ -342,6 +353,7 @@ model ScoredFinding {
 model ReasoningTrace {
   id              String   @id @default(cuid())
   analysisId      String
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
   agentName       String
 
   taskDescription String   @db.Text
@@ -367,6 +379,7 @@ model ReasoningTrace {
 model DebateRecord {
   id              String   @id @default(cuid())
   analysisId      String
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
   contradictionId String   @unique
   topic           String
@@ -404,6 +417,7 @@ model DebateRecord {
 model AgentMessage {
   id              String   @id @default(cuid())
   analysisId      String
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
   messageType     String   // finding, question, contradiction, request, response, etc.
   topic           String   // financial, team, market, etc.
@@ -434,6 +448,7 @@ model AgentMessage {
 model StateTransition {
   id              String   @id @default(cuid())
   analysisId      String
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
   fromState       String
   toState         String
@@ -450,6 +465,7 @@ model StateTransition {
 model AnalysisCheckpoint {
   id              String   @id @default(cuid())
   analysisId      String
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
   state           String
 
@@ -1441,6 +1457,7 @@ model FactEvent {
   @@index([dealId])
   @@index([dealId, factKey])
   @@index([dealId, category])
+  @@index([eventType])
 }
 
 // ============================================================================

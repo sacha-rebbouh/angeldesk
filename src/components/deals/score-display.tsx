@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { cn } from "@/lib/utils";
 import { getScoreColor } from "@/lib/format-utils";
 
@@ -19,7 +20,7 @@ function getBarColor(score: number): string {
   return "bg-red-500";
 }
 
-export function ScoreDisplay({
+export const ScoreDisplay = React.memo(function ScoreDisplay({
   label,
   score,
   maxScore = 100,
@@ -80,7 +81,7 @@ export function ScoreDisplay({
       )}
     </div>
   );
-}
+});
 
 interface ScoreGridProps {
   scores: {
@@ -92,7 +93,7 @@ interface ScoreGridProps {
   };
 }
 
-export function ScoreGrid({ scores }: ScoreGridProps) {
+export const ScoreGrid = React.memo(function ScoreGrid({ scores }: ScoreGridProps) {
   return (
     <div className="space-y-4">
       <ScoreDisplay label="Score Global" score={scores.global} size="lg" />
@@ -104,4 +105,4 @@ export function ScoreGrid({ scores }: ScoreGridProps) {
       </div>
     </div>
   );
-}
+});

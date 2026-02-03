@@ -4,7 +4,11 @@ import { requireAuth } from "@/lib/auth";
 import { DocumentType, Prisma } from "@prisma/client";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { extractFromExcel, summarizeForLLM } from "@/services/excel";
+import { extractFromDocx } from "@/services/docx";
+import { extractFromPptx } from "@/services/pptx";
 import { uploadFile } from "@/services/storage";
+
+export const maxDuration = 60;
 
 // POST /api/documents/upload - Upload a document
 export async function POST(request: NextRequest) {
@@ -48,13 +52,15 @@ export async function POST(request: NextRequest) {
       "application/vnd.ms-excel",
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
       "application/vnd.ms-powerpoint",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
       "image/png",
       "image/jpeg",
     ];
 
     if (!allowedMimeTypes.includes(file.type)) {
       return NextResponse.json(
-        { error: "Invalid file type. Allowed: PDF, Excel, PowerPoint, Images (PNG, JPG)" },
+        { error: "Invalid file type. Allowed: PDF, Word, Excel, PowerPoint, Images (PNG, JPG)" },
         { status: 400 }
       );
     }
@@ -72,9 +78,15 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
+    // Sanitize filename: remove path traversal and special chars
+    const sanitizedName = file.name
+      .replace(/[/\\]/g, "_")
+      .replace(/\.\./g, "_")
+      .replace(/[^a-zA-Z0-9._-]/g, "_");
+
     // Upload to storage (Vercel Blob in prod, local in dev)
-    const uploaded = await uploadFile(`deals/${dealId}/${file.name}`, buffer, {
-      access: "public",
+    const uploaded = await uploadFile(`deals/${dealId}/${sanitizedName}`, buffer, {
+      access: "private",
     });
 
     // Create document record with PENDING status
@@ -177,9 +189,6 @@ export async function POST(request: NextRequest) {
         });
       } catch (extractionError) {
         console.error("PDF extraction error:", extractionError);
-        const errorMessage = extractionError instanceof Error
-          ? extractionError.message
-          : "Unknown error";
 
         await prisma.document.update({
           where: { id: document.id },
@@ -188,7 +197,7 @@ export async function POST(request: NextRequest) {
             extractionWarnings: [{
               code: "EXTRACTION_ERROR",
               severity: "critical",
-              message: `Extraction failed: ${errorMessage}`,
+              message: "PDF extraction failed",
               suggestion: "The PDF may be corrupted or password-protected."
             }] as Prisma.InputJsonValue,
           },
@@ -196,7 +205,7 @@ export async function POST(request: NextRequest) {
         extractionWarnings = [{
           code: "EXTRACTION_ERROR",
           severity: "critical",
-          message: `Extraction failed: ${errorMessage}`,
+          message: "PDF extraction failed",
           suggestion: "The PDF may be corrupted or password-protected."
         }];
       }
@@ -281,6 +290,133 @@ export async function POST(request: NextRequest) {
           code: "EXCEL_EXTRACTION_ERROR",
           severity: "critical",
           message: `Excel extraction failed: ${errorMessage}`,
+          suggestion: "The file may be corrupted or password-protected."
+        }];
+      }
+    }
+
+    // Extract text for Word files (.docx, .doc)
+    const wordMimeTypes = [
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+    ];
+
+    if (wordMimeTypes.includes(file.type)) {
+      await prisma.document.update({
+        where: { id: document.id },
+        data: { processingStatus: "PROCESSING" },
+      });
+
+      try {
+        const result = await extractFromDocx(buffer);
+
+        if (result.success) {
+          extractionQuality = result.text.length > 100 ? 85 : 50;
+
+          await prisma.document.update({
+            where: { id: document.id },
+            data: {
+              extractedText: result.text,
+              processingStatus: "COMPLETED",
+              extractionQuality,
+              extractionMetrics: {
+                charCount: result.text.length,
+              },
+              extractionWarnings: Prisma.DbNull,
+            },
+          });
+
+          console.log(`[Word] Extracted ${result.text.length} chars`);
+        } else {
+          throw new Error(result.error || "Failed to parse Word file");
+        }
+      } catch (extractionError) {
+        console.error("Word extraction error:", extractionError);
+        const errorMessage = extractionError instanceof Error
+          ? extractionError.message
+          : "Unknown error";
+
+        await prisma.document.update({
+          where: { id: document.id },
+          data: {
+            processingStatus: "FAILED",
+            extractionWarnings: [{
+              code: "WORD_EXTRACTION_ERROR",
+              severity: "critical",
+              message: `Word extraction failed: ${errorMessage}`,
+              suggestion: "The file may be corrupted or password-protected."
+            }] as Prisma.InputJsonValue,
+          },
+        });
+
+        extractionWarnings = [{
+          code: "WORD_EXTRACTION_ERROR",
+          severity: "critical",
+          message: `Word extraction failed: ${errorMessage}`,
+          suggestion: "The file may be corrupted or password-protected."
+        }];
+      }
+    }
+
+    // Extract text for PowerPoint files (.pptx, .ppt)
+    const pptMimeTypes = [
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.ms-powerpoint",
+    ];
+
+    if (pptMimeTypes.includes(file.type)) {
+      await prisma.document.update({
+        where: { id: document.id },
+        data: { processingStatus: "PROCESSING" },
+      });
+
+      try {
+        const result = await extractFromPptx(buffer);
+
+        if (result.success) {
+          extractionQuality = result.text.length > 100 ? 80 : 50;
+
+          await prisma.document.update({
+            where: { id: document.id },
+            data: {
+              extractedText: result.text,
+              processingStatus: "COMPLETED",
+              extractionQuality,
+              extractionMetrics: {
+                slideCount: result.slideCount,
+                charCount: result.text.length,
+              },
+              extractionWarnings: Prisma.DbNull,
+            },
+          });
+
+          console.log(`[PPTX] Extracted ${result.text.length} chars from ${result.slideCount} slides`);
+        } else {
+          throw new Error(result.error || "Failed to parse PowerPoint file");
+        }
+      } catch (extractionError) {
+        console.error("PowerPoint extraction error:", extractionError);
+        const errorMessage = extractionError instanceof Error
+          ? extractionError.message
+          : "Unknown error";
+
+        await prisma.document.update({
+          where: { id: document.id },
+          data: {
+            processingStatus: "FAILED",
+            extractionWarnings: [{
+              code: "PPTX_EXTRACTION_ERROR",
+              severity: "critical",
+              message: `PowerPoint extraction failed: ${errorMessage}`,
+              suggestion: "The file may be corrupted or password-protected."
+            }] as Prisma.InputJsonValue,
+          },
+        });
+
+        extractionWarnings = [{
+          code: "PPTX_EXTRACTION_ERROR",
+          severity: "critical",
+          message: `PowerPoint extraction failed: ${errorMessage}`,
           suggestion: "The file may be corrupted or password-protected."
         }];
       }

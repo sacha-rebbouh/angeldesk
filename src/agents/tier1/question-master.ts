@@ -75,7 +75,7 @@ interface LLMQuestionMasterResponse {
   findings: {
     founderQuestions: {
       id: string;
-      priority: "MUST_ASK" | "SHOULD_ASK" | "NICE_TO_HAVE";
+      priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
       category: string;
       question: string;
       context: {
@@ -360,6 +360,18 @@ Pour chaque levier identifie par les agents (valorisation agressive, red flags, 
 
 Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 
+# PRIORITES DES QUESTIONS FONDATEUR
+
+| Priorite | Definition | Exemples |
+|----------|------------|----------|
+| CRITICAL | Questions DEAL-BREAKING - sans reponse satisfaisante = NO GO | Fraude suspectee, chiffres contradictoires majeurs, fondateur avec historique problematique |
+| HIGH | Questions essentielles pour la decision d'investir | Validation des metriques cles, plan d'execution, composition equity |
+| MEDIUM | Questions importantes mais non bloquantes | Details operationnels, plans secondaires |
+| LOW | Questions nice-to-have pour approfondir | Contexte additionnel, vision long terme |
+
+IMPORTANT: Les questions CRITICAL et HIGH sont OBLIGATOIRES avant la decision d'investissement.
+Le Business Angel ne peut pas re-analyser le deal tant qu'il n'a pas repondu a TOUTES les questions CRITICAL et HIGH.
+
 # REGLES ABSOLUES
 
 1. JAMAIS de question generique ("Comment voyez-vous l'avenir?")
@@ -367,16 +379,37 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 3. Chaque question = source agent + trigger data + evaluation criteria
 4. Chaque reference check = profil cible + questions + red flags a detecter
 5. Chaque point negociation = leverage + evidence + approche
-6. Minimum 15 questions fondateur dont 5+ MUST_ASK
+6. Minimum 15 questions fondateur dont 3+ CRITICAL et 5+ HIGH
 7. Minimum 5 reference checks
 8. Minimum 5 points de negociation
 
 # EXEMPLES
 
-## Exemple de BONNE question fondateur:
+## Exemple de question CRITICAL (deal-breaking):
 {
   "id": "Q-001",
-  "priority": "MUST_ASK",
+  "priority": "CRITICAL",
+  "category": "financials",
+  "question": "Votre deck annonce 800K€ ARR mais le P&L montre 450K€ de revenus recurrents. Pouvez-vous expliquer cet ecart de 77%?",
+  "context": {
+    "sourceAgent": "deck-forensics",
+    "redFlagId": "RF-001",
+    "triggerData": "Slide 5: ARR 800K€. P&L Annexe: Recurring Revenue 450K€. Ecart: 350K€ (77%)",
+    "whyItMatters": "Si les chiffres sont gonfles, toute la these d'investissement est invalide"
+  },
+  "evaluation": {
+    "goodAnswer": "Le 800K inclut les contrats signes Q4 non encore factures. Voici les contrats signes.",
+    "badAnswer": "C'est une projection / Je ne comprends pas la question / Les deux sont corrects",
+    "redFlagIfBadAnswer": "Fondateur qui gonfle ses chiffres ou qui ne maitrise pas ses metriques - NO GO immediat",
+    "followUpIfBad": "Pouvez-vous me montrer le detail de chaque ligne de revenu recurrent?"
+  },
+  "timing": "first_meeting"
+}
+
+## Exemple de question HIGH (essentielle mais non deal-breaking):
+{
+  "id": "Q-002",
+  "priority": "HIGH",
   "category": "financials",
   "question": "Votre deck projette une croissance de 300% YoY mais votre equipe sales est de 1 personne. Comment comptez-vous concretement generer 2.5M€ de nouveau ARR avec cette capacite?",
   "context": {
@@ -388,7 +421,7 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
   "evaluation": {
     "goodAnswer": "Plan de recrutement de 3 sales en Q1, pipeline deja qualifie de 500K€, contrats enterprise en cours",
     "badAnswer": "On va recruter quand on aura les fonds / Le produit se vend tout seul",
-    "redFlagIfBadAnswer": "Fondateur deconnecte de la realite operationnelle - reviser la these d'investissement",
+    "redFlagIfBadAnswer": "Fondateur deconnecte de la realite operationnelle - reviser les projections",
     "followUpIfBad": "Pouvez-vous me montrer le pipeline actuel et les conversations en cours?"
   },
   "timing": "second_meeting"
@@ -397,7 +430,7 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 ## Exemple de MAUVAISE question (a eviter):
 {
   "question": "Comment voyez-vous la croissance?",
-  "priority": "should_ask"
+  "priority": "MEDIUM"
 }
 → Pas de contexte, pas de donnee source, pas de critere d'evaluation
 
@@ -472,7 +505,7 @@ ${tier1Summary}
 ## INSTRUCTIONS SPECIFIQUES
 
 1. SYNTHETISE tous les findings des agents Tier 1 (red flags, scores, concerns)
-2. GENERE 15+ questions fondateur SPECIFIQUES (dont 5+ MUST_ASK) liees aux red flags
+2. GENERE 15+ questions fondateur SPECIFIQUES (dont 3+ CRITICAL et 5+ HIGH) liees aux red flags
 3. PREPARE 5+ reference checks avec profils cibles et questions
 4. CREE une checklist DD complete avec critical path
 5. IDENTIFIE 5+ points de negociation avec leverage concret
@@ -532,7 +565,7 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
     "founderQuestions": [
       {
         "id": "Q-001",
-        "priority": "MUST_ASK|SHOULD_ASK|NICE_TO_HAVE",
+        "priority": "CRITICAL|HIGH|MEDIUM|LOW",
         "category": "vision|execution|team|market|financials|tech|legal|risk|exit",
         "question": "Question SPECIFIQUE",
         "context": {
@@ -946,7 +979,7 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
   }
 
   private normalizeFindings(findings: LLMQuestionMasterResponse["findings"]): QuestionMasterFindings {
-    const validQuestionPriorities = ["MUST_ASK", "SHOULD_ASK", "NICE_TO_HAVE"] as const;
+    const validQuestionPriorities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
     const validCategories = ["vision", "execution", "team", "market", "financials", "tech", "legal", "risk", "exit"] as const;
     const validTimings = ["first_meeting", "second_meeting", "dd_phase", "pre_term_sheet"] as const;
 
@@ -956,7 +989,7 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
           id: q.id ?? `Q-${String(idx + 1).padStart(3, "0")}`,
           priority: validQuestionPriorities.includes(q.priority as typeof validQuestionPriorities[number])
             ? q.priority
-            : "SHOULD_ASK",
+            : "HIGH",
           category: validCategories.includes(q.category as typeof validCategories[number])
             ? (q.category as typeof validCategories[number])
             : "execution",

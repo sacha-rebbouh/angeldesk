@@ -133,14 +133,19 @@ export async function POST(request: NextRequest) {
       select: { subscriptionStatus: true },
     });
     const userPlan = (userData?.subscriptionStatus as SubscriptionTier) || "FREE";
+    const effectivePlan = userPlan === "PRO" || userPlan === "ENTERPRISE" ? "PRO" : "FREE";
+
+    // Override analysis type based on server-side subscription status
+    // Never trust the frontend type — it can be stale if usage query hasn't resolved yet
+    const effectiveType: AnalysisType = effectivePlan === "PRO" ? "full_analysis" : "tier1_complete";
 
     // Run the analysis (Standard agents with traces enabled)
     const result = await orchestrator.runAnalysis({
       dealId,
-      type: type as AnalysisType,
+      type: effectiveType,
       useReAct: false, // Always use Standard agents (better results, lower cost)
       enableTrace,
-      userPlan: userPlan === "PRO" || userPlan === "ENTERPRISE" ? "PRO" : "FREE",
+      userPlan: effectivePlan,
     });
 
     return NextResponse.json({

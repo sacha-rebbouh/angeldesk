@@ -58,19 +58,19 @@ export const queryKeys = {
   // Founder responses
   founderResponses: {
     all: ["founderResponses"] as const,
-    byDeal: (dealId: string) => ["deals", dealId, "founder-responses"] as const,
+    byDeal: (dealId: string) => [...queryKeys.founderResponses.all, dealId] as const,
   },
 
   // Staleness queries
   staleness: {
     all: ["staleness"] as const,
-    byDeal: (dealId: string) => ["deals", dealId, "staleness"] as const,
+    byDeal: (dealId: string) => [...queryKeys.staleness.all, dealId] as const,
   },
 
   // Usage queries (for analyze usage limits)
   usage: {
     all: ["usage"] as const,
-    analyze: () => ["analyze", "usage"] as const,
+    analyze: () => [...queryKeys.usage.all, "analyze"] as const,
   },
 
   // User preferences

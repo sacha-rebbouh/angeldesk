@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth';
+import { requireAdmin } from '@/lib/auth';
 import { getCalibrationMetrics } from '@/services/fact-store/calibration';
 
 export async function GET() {
   try {
-    const user = await requireAuth();
-
-    if (user.subscriptionStatus !== 'ENTERPRISE' && user.subscriptionStatus !== 'PRO') {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    await requireAdmin();
 
     const metrics = await getCalibrationMetrics();
 

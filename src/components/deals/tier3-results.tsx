@@ -54,6 +54,7 @@ interface Tier3ResultsProps {
     data?: unknown;
   }>;
   subscriptionPlan?: SubscriptionPlan;
+  totalAgentsRun?: number;
 }
 
 // Hoisted color function - pure, no need for useCallback
@@ -119,11 +120,13 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
   strengthsLimit = Infinity,
   weaknessesLimit = Infinity,
   showFullScore = true,
+  hideCriticalRisks = false,
 }: {
   data: SynthesisDealScorerData;
   strengthsLimit?: number;
   weaknessesLimit?: number;
   showFullScore?: boolean;
+  hideCriticalRisks?: boolean;
 }) {
   const visibleStrengths = data.keyStrengths.slice(0, strengthsLimit);
   const hiddenStrengthsCount = Math.max(0, data.keyStrengths.length - strengthsLimit);
@@ -143,7 +146,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             <ScoreBadge score={data.overallScore} size="lg" />
           </div>
         </div>
-        <CardDescription>Synthese de tous les agents Tier 1</CardDescription>
+        <CardDescription>Score final — analyse multi-tiers avec consensus et reflexion</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Recommendation */}
@@ -164,7 +167,6 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
                 <div key={i} className="flex items-center justify-between p-2 border rounded">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{dim.dimension}</span>
-                    <Badge variant="outline" className="text-xs">{dim.weight}%</Badge>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-24 h-2 rounded-full bg-muted">
@@ -195,46 +197,23 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           />
         )}
 
-        {/* Comparative Ranking - Only for PRO */}
-        {showFullScore && (
+        {/* Comparative Ranking - Only for PRO, hidden if not enough comparables */}
+        {showFullScore && data.comparativeRanking.similarDealsAnalyzed >= 3 && (
           <div className="space-y-2">
             <div className="grid grid-cols-3 gap-3">
               <div className="p-3 rounded-lg bg-muted text-center">
-                {data.comparativeRanking.similarDealsAnalyzed > 0 ? (
-                  <>
-                    <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
-                    <p className="text-xs text-muted-foreground">Percentile Global</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-2xl font-bold text-muted-foreground">N/A</p>
-                    <p className="text-xs text-muted-foreground">Percentile Global</p>
-                  </>
-                )}
+                <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
+                <p className="text-xs text-muted-foreground">Percentile Global</p>
               </div>
               <div className="p-3 rounded-lg bg-muted text-center">
-                {data.comparativeRanking.similarDealsAnalyzed > 0 ? (
-                  <>
-                    <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
-                    <p className="text-xs text-muted-foreground">Percentile Secteur</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-2xl font-bold text-muted-foreground">N/A</p>
-                    <p className="text-xs text-muted-foreground">Percentile Secteur</p>
-                  </>
-                )}
+                <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
+                <p className="text-xs text-muted-foreground">Percentile Secteur</p>
               </div>
               <div className="p-3 rounded-lg bg-muted text-center">
                 <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
                 <p className="text-xs text-muted-foreground">Deals Compares</p>
               </div>
             </div>
-            {data.comparativeRanking.similarDealsAnalyzed === 0 && (
-              <p className="text-xs text-amber-600 text-center">
-                Percentiles non disponibles - aucun deal comparable dans la base
-              </p>
-            )}
           </div>
         )}
 
@@ -272,8 +251,8 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           </div>
         </div>
 
-        {/* Critical Risks */}
-        {data.criticalRisks.length > 0 && (
+        {/* Critical Risks (hidden when NoGoReasonsCard shows them) */}
+        {!hideCriticalRisks && data.criticalRisks.length > 0 && (
           <div className="pt-2 border-t">
             <p className="text-sm font-medium text-red-600 mb-2 flex items-center gap-1">
               <AlertTriangle className="h-4 w-4" /> Risques critiques
@@ -295,6 +274,130 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             <p className="text-sm font-medium text-blue-600 mb-2">Conditions</p>
             <ul className="text-sm text-muted-foreground list-disc list-inside">
               {data.investmentRecommendation.conditions.map((c, i) => <li key={i}>{c}</li>)}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+});
+
+// NO_GO Reasons Card - Shows why a deal is NO_GO when optimistic scenarios are hidden
+const NoGoReasonsCard = memo(function NoGoReasonsCard({
+  scorerData,
+  devilsData,
+  contradictionData,
+}: {
+  scorerData: SynthesisDealScorerData | null;
+  devilsData: DevilsAdvocateData | null;
+  contradictionData: ContradictionDetectorData | null;
+}) {
+  const killReasons = devilsData?.findings?.killReasons ?? [];
+  const absoluteKills = killReasons.filter(kr => kr.dealBreakerLevel === "ABSOLUTE");
+  const conditionalKills = killReasons.filter(kr => kr.dealBreakerLevel === "CONDITIONAL");
+  const criticalRisks = scorerData?.criticalRisks ?? [];
+  const topConcerns = [
+    ...(devilsData?.findings?.concernsSummary?.absolute ?? []),
+    ...(devilsData?.findings?.concernsSummary?.conditional ?? []),
+  ];
+  const criticalContradictions = (contradictionData?.findings?.contradictions ?? [])
+    .filter((c: DetectedContradiction) => c.severity === "CRITICAL" || c.severity === "HIGH");
+
+  const hasContent = absoluteKills.length > 0 || conditionalKills.length > 0 ||
+    criticalRisks.length > 0 || topConcerns.length > 0 || criticalContradictions.length > 0;
+
+  if (!hasContent) return null;
+
+  return (
+    <Card className="md:col-span-2 border-2 border-red-200 bg-gradient-to-b from-red-50/50 to-white">
+      <CardHeader className="pb-2 bg-gradient-to-r from-red-50 to-orange-50">
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="h-6 w-6 text-red-600" />
+          <CardTitle className="text-lg text-red-900">Pourquoi NO_GO</CardTitle>
+        </div>
+        <CardDescription>Raisons principales de passer ce deal</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 pt-4">
+        {/* Absolute Kill Reasons */}
+        {absoluteKills.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-red-700 flex items-center gap-1.5">
+              <XCircle className="h-4 w-4" /> Dealbreakers ({absoluteKills.length})
+            </p>
+            <div className="space-y-2">
+              {absoluteKills.map((kr, i) => (
+                <div key={i} className="p-3 rounded-lg bg-red-50 border border-red-200">
+                  <p className="text-sm font-medium text-red-900">{kr.reason}</p>
+                  {kr.evidence && <p className="text-xs text-red-700 mt-1">{kr.evidence}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Conditional Kill Reasons */}
+        {conditionalKills.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-orange-700 flex items-center gap-1.5">
+              <AlertTriangle className="h-4 w-4" /> Risques majeurs ({conditionalKills.length})
+            </p>
+            <div className="space-y-2">
+              {conditionalKills.map((kr, i) => (
+                <div key={i} className="p-3 rounded-lg bg-orange-50 border border-orange-200">
+                  <p className="text-sm font-medium text-orange-900">{kr.reason}</p>
+                  {kr.evidence && <p className="text-xs text-orange-700 mt-1">{kr.evidence}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Critical Risks from Scorer */}
+        {criticalRisks.length > 0 && absoluteKills.length === 0 && conditionalKills.length === 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-red-700 flex items-center gap-1.5">
+              <AlertTriangle className="h-4 w-4" /> Risques critiques ({criticalRisks.length})
+            </p>
+            <ul className="space-y-1.5">
+              {criticalRisks.map((r, i) => (
+                <li key={i} className="text-sm text-red-800 flex items-start gap-2 p-2 rounded bg-red-50 border border-red-100">
+                  <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                  {r}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Critical Contradictions */}
+        {criticalContradictions.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-amber-700 flex items-center gap-1.5">
+              <Zap className="h-4 w-4" /> Contradictions ({criticalContradictions.length})
+            </p>
+            <div className="space-y-2">
+              {criticalContradictions.slice(0, 3).map((c: DetectedContradiction, i: number) => (
+                <div key={i} className="p-2 rounded bg-amber-50 border border-amber-200 text-sm">
+                  <p className="font-medium text-amber-900">{c.topic}</p>
+                  <p className="text-xs text-amber-700 mt-1">{c.analysis}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Top Concerns */}
+        {topConcerns.length > 0 && absoluteKills.length === 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+              <Eye className="h-4 w-4" /> Points de vigilance
+            </p>
+            <ul className="space-y-1">
+              {topConcerns.slice(0, 5).map((c, i) => (
+                <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
+                  <span className="text-red-400 mt-0.5">•</span> {c}
+                </li>
+              ))}
             </ul>
           </div>
         )}
@@ -331,14 +434,17 @@ const SCENARIO_ICONS_EXTENDED: Record<string, React.ReactNode> = {
   CATASTROPHIC: <XCircle className="h-5 w-5 text-red-600" />,
 };
 
-const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: ScenarioModelerData }) {
+const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallScore, skepticism }: { data: ScenarioModelerData; overallScore?: number; skepticism?: number }) {
   // Access findings with fallbacks for backwards compatibility
   const scenarios = data.findings?.scenarios ?? [];
   const breakEvenAnalysis = data.findings?.breakEvenAnalysis;
   const sensitivityAnalysis = data.findings?.sensitivityAnalysis ?? [];
   const basedOnComparables = data.findings?.basedOnComparables ?? [];
   const probabilityWeighted = data.findings?.probabilityWeightedOutcome;
-  const confidenceLevel = data.meta?.confidenceLevel ?? data.score?.value ?? 75;
+  const rawConfidence = data.meta?.confidenceLevel ?? data.score?.value ?? 75;
+  // If confidence is 0 or absurdly low, derive from overall score
+  const confidenceLevel = rawConfidence > 0 ? rawConfidence : (overallScore ?? 0);
+  const isNoGo = (overallScore ?? 100) < 35;
 
   // Calculate expected return (with and without failure scenario)
   const expectedReturn = useMemo(() => {
@@ -402,63 +508,77 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: 
             </Badge>
           </div>
         </div>
-        <CardDescription>4 scenarios avec calculs ROI detailles</CardDescription>
+        <CardDescription>{isNoGo ? "Scenarios de risque" : "4 scenarios avec calculs ROI detailles"}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 pt-4">
-        {/* Expected Return Summary - THE WOW */}
+        {/* Expected Return Summary */}
         {expectedReturn && (probabilityWeighted || expectedReturn.multiple > 0) && (
-          <div className="p-4 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-indigo-100">Retour Espere</span>
-              <Badge className="bg-white/20 text-white border-white/30">
-                {data.findings?.mostLikelyScenario ?? "BASE"} le plus probable
-              </Badge>
-            </div>
-            {/* Main metrics: Multiple + IRR si succès */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-3xl font-bold">
-                  {(probabilityWeighted?.expectedMultiple ?? expectedReturn.multiple).toFixed(1)}x
-                </div>
-                <div className="text-xs text-indigo-200 mt-1">
-                  Multiple pondere (tous scenarios)
-                </div>
+          isNoGo ? (
+            <div className="p-4 rounded-lg bg-gradient-to-r from-red-900 to-red-800 text-white">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className="h-5 w-5 text-red-300" />
+                <span className="text-sm font-medium text-red-200">Retour Espere</span>
               </div>
-              <div>
-                <div className="text-3xl font-bold text-emerald-300">
-                  {expectedReturn.successIRR.toFixed(0)}%
-                </div>
-                <div className="text-xs text-indigo-200 mt-1">
-                  IRR si succes ({expectedReturn.successProbability.toFixed(0)}% de chances)
-                </div>
-              </div>
-            </div>
-            {/* Secondary: IRR with risk */}
-            <div className="mt-3 pt-3 border-t border-white/20">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-indigo-200">IRR ajuste au risque (inclut echec total):</span>
-                <span className={cn(
-                  "font-semibold",
-                  expectedReturn.irr < 10 ? "text-amber-300" : "text-white"
-                )}>
-                  {(probabilityWeighted?.expectedIRR ?? expectedReturn.irr).toFixed(0)}%
-                </span>
-              </div>
-              <p className="text-xs text-indigo-300 mt-1">
-                = Moyenne ponderee de tous les scenarios, y compris perte totale ({(100 - expectedReturn.successProbability).toFixed(0)}% de risque)
+              <div className="text-3xl font-bold text-red-300">—</div>
+              <p className="text-sm text-red-200 mt-2">
+                Deal evalue NO_GO (score {overallScore}/100). Seuls les scenarios de risque (BEAR, CATASTROPHIC) sont affiches.
               </p>
             </div>
-            {probabilityWeighted?.riskAdjustedAssessment && (
-              <p className="text-sm text-indigo-100 mt-3 border-t border-white/20 pt-3">
-                {probabilityWeighted.riskAdjustedAssessment}
-              </p>
-            )}
-          </div>
+          ) : (
+            <div className="p-4 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-indigo-100">Retour Espere</span>
+                <Badge className="bg-white/20 text-white border-white/30">
+                  {data.findings?.mostLikelyScenario ?? "BASE"} le plus probable
+                </Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-3xl font-bold">
+                    {(probabilityWeighted?.expectedMultiple ?? expectedReturn.multiple).toFixed(1)}x
+                  </div>
+                  <div className="text-xs text-indigo-200 mt-1">
+                    Multiple pondere (tous scenarios)
+                  </div>
+                </div>
+                <div>
+                  <div className="text-3xl font-bold text-emerald-300">
+                    {expectedReturn.successIRR.toFixed(0)}%
+                  </div>
+                  <div className="text-xs text-indigo-200 mt-1">
+                    IRR si succes ({expectedReturn.successProbability.toFixed(0)}% de chances)
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 pt-3 border-t border-white/20">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-indigo-200">IRR ajuste au risque (inclut echec total):</span>
+                  <span className={cn(
+                    "font-semibold",
+                    expectedReturn.irr < 10 ? "text-amber-300" : "text-white"
+                  )}>
+                    {(probabilityWeighted?.expectedIRR ?? expectedReturn.irr).toFixed(0)}%
+                  </span>
+                </div>
+                <p className="text-xs text-indigo-300 mt-1">
+                  = Moyenne ponderee de tous les scenarios, y compris perte totale ({(100 - expectedReturn.successProbability).toFixed(0)}% de risque)
+                </p>
+              </div>
+              {probabilityWeighted?.riskAdjustedAssessment && (
+                <p className="text-sm text-indigo-100 mt-3 border-t border-white/20 pt-3">
+                  {probabilityWeighted.riskAdjustedAssessment}
+                </p>
+              )}
+            </div>
+          )
         )}
 
         {/* Scenarios Grid */}
+        {isNoGo && (
+          <p className="text-xs text-muted-foreground italic">Seuls les scenarios de risque sont affiches pour un deal NO_GO.</p>
+        )}
         <div className="space-y-3">
-          {scenarios.map((scenario: ScenarioV2, i: number) => {
+          {scenarios.filter((s: ScenarioV2) => !isNoGo || s.name === "CATASTROPHIC" || s.name === "BEAR").map((scenario: ScenarioV2, i: number) => {
             const y5Metrics = scenario.metrics?.find(m => m.year === 5);
             const investorReturn = scenario.investorReturn;
             const exitValuation = scenario.exitOutcome?.exitValuation ?? 0;
@@ -565,8 +685,8 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: 
           })}
         </div>
 
-        {/* Comparables Used */}
-        {basedOnComparables.length > 0 && (
+        {/* Comparables Used - hidden for NO_GO */}
+        {!isNoGo && basedOnComparables.length > 0 && (
           <ExpandableSection title="Comparables utilises" count={basedOnComparables.length}>
             <div className="mt-2 space-y-2">
               {basedOnComparables.map((c, i) => (
@@ -604,8 +724,8 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: 
           </ExpandableSection>
         )}
 
-        {/* Break-even */}
-        {breakEvenAnalysis && (
+        {/* Break-even - hidden for NO_GO */}
+        {!isNoGo && breakEvenAnalysis && (
           <div className="p-4 rounded-lg bg-gradient-to-r from-slate-50 to-gray-50 border">
             <div className="flex items-center gap-2 mb-3">
               <Target className="h-4 w-4 text-slate-600" />
@@ -640,8 +760,8 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data }: { data: 
           </div>
         )}
 
-        {/* Sensitivity Analysis */}
-        {sensitivityAnalysis.length > 0 && (
+        {/* Sensitivity Analysis - hidden for NO_GO */}
+        {!isNoGo && sensitivityAnalysis.length > 0 && (
           <ExpandableSection title="Analyse de sensibilite" count={sensitivityAnalysis.length}>
             <div className="space-y-2 mt-2">
               {sensitivityAnalysis.map((s: SensitivityAnalysisV2, i: number) => (
@@ -1198,188 +1318,53 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
           </div>
         )}
 
-        {/* Consistency Breakdown */}
-        {consistencyBreakdown.length > 0 && (
-          <div className="p-4 rounded-lg bg-gradient-to-r from-slate-50 to-gray-50 border">
-            <p className="text-xs font-medium text-muted-foreground mb-3">Decomposition de la coherence</p>
-            <div className="space-y-3">
-              {consistencyBreakdown.map((item, i) => (
-                <div key={i}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium">{item.dimension}</span>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs">Poids: {item.weight}%</Badge>
-                      <span className={cn(
-                        "text-sm font-bold",
-                        item.score >= 70 ? "text-green-600" :
-                        item.score >= 50 ? "text-yellow-600" : "text-red-600"
-                      )}>
-                        {item.score}/100
-                      </span>
-                    </div>
-                  </div>
-                  <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                    <div
-                      className={cn(
-                        "h-full",
-                        item.score >= 70 ? "bg-green-500" :
-                        item.score >= 50 ? "bg-yellow-500" : "bg-red-500"
-                      )}
-                      style={{ width: `${item.score}%` }}
-                    />
-                  </div>
-                  {item.issues && item.issues.length > 0 && (
-                    <ul className="mt-1 text-xs text-muted-foreground">
-                      {item.issues.slice(0, 2).map((issue, j) => (
-                        <li key={j} className="flex items-start gap-1">
-                          <span className="text-amber-500">•</span> {issue}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Contradictions - Visual comparison */}
+        {/* Contradictions - Table format */}
         {contradictions.length > 0 ? (
           <ExpandableSection title="Contradictions detectees" count={contradictions.length} defaultOpen>
-            <div className="space-y-4 mt-3">
-              {contradictions.map((c: DetectedContradiction, i: number) => (
-                <div key={i} className={cn(
-                  "p-4 rounded-lg border-2",
-                  c.severity === "CRITICAL" ? "border-red-300 bg-gradient-to-r from-red-50 to-rose-50" :
-                  c.severity === "HIGH" ? "border-orange-300 bg-gradient-to-r from-orange-50 to-amber-50" :
-                  "border-yellow-300 bg-gradient-to-r from-yellow-50 to-amber-50"
-                )}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Zap className={cn(
-                        "h-5 w-5",
-                        c.severity === "CRITICAL" ? "text-red-500" :
-                        c.severity === "HIGH" ? "text-orange-500" : "text-yellow-500"
-                      )} />
-                      <span className="font-bold">{c.topic}</span>
-                    </div>
-                    <Badge variant="outline" className={cn(
-                      "font-bold",
-                      c.severity === "CRITICAL" ? "bg-red-100 text-red-800 border-red-300" :
-                      c.severity === "HIGH" ? "bg-orange-100 text-orange-800 border-orange-300" :
-                      "bg-yellow-100 text-yellow-800 border-yellow-300"
+            <div className="mt-3 border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-muted/50 border-b">
+                    <th className="text-left p-3 font-medium text-muted-foreground">Sujet</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Le deck dit...</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Les agents trouvent...</th>
+                    <th className="text-center p-3 font-medium text-muted-foreground w-24">Severite</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contradictions.map((c: DetectedContradiction, i: number) => (
+                    <tr key={i} className={cn(
+                      "border-b last:border-b-0",
+                      c.severity === "CRITICAL" ? "bg-red-50/50" :
+                      c.severity === "HIGH" ? "bg-orange-50/50" : "bg-yellow-50/30"
                     )}>
-                      {c.severity}
-                    </Badge>
-                  </div>
-
-                  {/* Visual Contradiction Display */}
-                  <div className="relative">
-                    {/* Statement 1 */}
-                    <div className="p-3 bg-white rounded-lg border-2 border-blue-200 mb-2">
-                      <div className="flex items-start gap-2">
-                        <div className="w-3 h-3 rounded-full bg-blue-500 shrink-0 mt-1" />
-                        <div>
-                          <span className="text-xs font-medium text-blue-800">{c.statement1.source}</span>
-                          <p className="text-sm text-blue-700 mt-1">&ldquo;{c.statement1.text}&rdquo;</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* VS indicator */}
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
-                      <div className="w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center font-bold text-xs shadow-lg">
-                        VS
-                      </div>
-                    </div>
-
-                    {/* Statement 2 */}
-                    <div className="p-3 bg-white rounded-lg border-2 border-purple-200">
-                      <div className="flex items-start gap-2">
-                        <div className="w-3 h-3 rounded-full bg-purple-500 shrink-0 mt-1" />
-                        <div>
-                          <span className="text-xs font-medium text-purple-800">{c.statement2.source}</span>
-                          <p className="text-sm text-purple-700 mt-1">&ldquo;{c.statement2.text}&rdquo;</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Resolution */}
-                  {c.resolution && (
-                    <div className={cn(
-                      "mt-3 p-3 rounded-lg",
-                      c.resolution.needsVerification
-                        ? "bg-yellow-100 border border-yellow-300"
-                        : "bg-green-100 border border-green-300"
-                    )}>
-                      <div className="flex items-start gap-2">
-                        {c.resolution.needsVerification ? (
-                          <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
-                        ) : (
-                          <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
-                        )}
-                        <div>
-                          <p className="text-xs font-medium text-slate-700">Resolution: {c.resolution.likely === "statement1" ? "Statement 1 correct" : c.resolution.likely === "statement2" ? "Statement 2 correct" : "A verifier"}</p>
-                          <p className="text-xs text-slate-600 mt-1">{c.resolution.reasoning}</p>
-                          {c.resolution.needsVerification && (
-                            <Badge className="mt-2 bg-yellow-200 text-yellow-800 border-yellow-400 text-xs">
-                              Verification requise avec le fondateur
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                      <td className="p-3 font-medium">{c.topic}</td>
+                      <td className="p-3 text-muted-foreground">{c.statement1.text}</td>
+                      <td className="p-3 text-muted-foreground">{c.statement2.text}</td>
+                      <td className="p-3 text-center">
+                        <Badge variant="outline" className={cn(
+                          "text-xs font-bold",
+                          c.severity === "CRITICAL" ? "bg-red-100 text-red-800 border-red-300" :
+                          c.severity === "HIGH" ? "bg-orange-100 text-orange-800 border-orange-300" :
+                          "bg-yellow-100 text-yellow-800 border-yellow-300"
+                        )}>
+                          {c.severity}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </ExpandableSection>
         ) : (
           <div className="p-4 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 flex items-center gap-3">
             <CheckCircle className="h-8 w-8 text-green-600" />
             <div>
-              <p className="font-medium text-green-800">Excellent - Aucune contradiction majeure</p>
+              <p className="font-medium text-green-800">Aucune contradiction majeure</p>
               <p className="text-sm text-green-700">Les analyses des 12 agents sont coherentes entre elles.</p>
             </div>
           </div>
-        )}
-
-        {/* Red Flag Convergence */}
-        {redFlagConvergence.length > 0 && (
-          <ExpandableSection title="Convergence des Red Flags" count={redFlagConvergence.length}>
-            <div className="space-y-2 mt-3">
-              {redFlagConvergence.map((r, i) => (
-                <div key={i} className="p-3 border-2 rounded-lg bg-white">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-sm">{r.topic}</span>
-                    <Badge variant="outline" className={cn(
-                      "text-xs",
-                      r.consensusLevel === "STRONG" ? "bg-green-100 text-green-800" :
-                      r.consensusLevel === "MODERATE" ? "bg-blue-100 text-blue-800" :
-                      r.consensusLevel === "WEAK" ? "bg-yellow-100 text-yellow-800" :
-                      "bg-red-100 text-red-800"
-                    )}>
-                      Consensus: {r.consensusLevel}
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="p-2 bg-green-50 rounded">
-                      <span className="font-medium text-green-700">Agents d&apos;accord:</span>
-                      <p className="text-green-600">{r.agentsAgreeing.join(", ") || "Aucun"}</p>
-                    </div>
-                    <div className="p-2 bg-red-50 rounded">
-                      <span className="font-medium text-red-700">Agents en desaccord:</span>
-                      <p className="text-red-600">{r.agentsDisagreeing.join(", ") || "Aucun"}</p>
-                    </div>
-                  </div>
-                  {r.recommendation && (
-                    <p className="text-xs text-muted-foreground mt-2 pt-2 border-t">{r.recommendation}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </ExpandableSection>
         )}
 
         {/* Data Gaps */}
@@ -1614,7 +1599,7 @@ function getIRRColorClass(irr: number): string {
 }
 
 // Main Tier 3 Results Component - Synthesis Agents
-export function Tier3Results({ results, subscriptionPlan = "FREE" }: Tier3ResultsProps) {
+export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRun }: Tier3ResultsProps) {
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
     if (!result?.success || !result.data) return null;
@@ -1635,11 +1620,31 @@ export function Tier3Results({ results, subscriptionPlan = "FREE" }: Tier3Result
     return Object.values(results).filter(r => r.success).length;
   }, [results]);
 
-  // Calculate expected return from scenarios
+  // Calculate expected return from scenarios, adjusted by skepticism
   const expectedReturn = useMemo(() => {
     if (!scenarioData?.findings?.scenarios) return null;
-    return calculateExpectedReturn(scenarioData.findings.scenarios);
-  }, [scenarioData]);
+    const raw = calculateExpectedReturn(scenarioData.findings.scenarios);
+
+    // Apply skepticism adjustment — confidence-weighted expected return
+    // A skepticism score IS a probability of failure. If devil's advocate says 88/100,
+    // there's roughly an 88% chance the deal goes wrong.
+    // We use skepticism directly as a loss probability:
+    //   skepticism 50 → multiply by 0.50 (2.2x from 4.4x)
+    //   skepticism 70 → multiply by 0.30 (1.3x from 4.4x)
+    //   skepticism 88 → multiply by 0.12 (0.5x from 4.4x)
+    //   skepticism 95 → multiply by 0.05 (0.2x from 4.4x)
+    const skepticism = devilsData?.findings?.skepticismAssessment?.score ?? 0;
+    if (skepticism > 0) {
+      const survivalRate = Math.pow(1 - skepticism / 100, 2); // squared for extra pessimism
+      raw.expectedMultiple = raw.expectedMultiple * survivalRate;
+      raw.expectedIRR = raw.expectedIRR * survivalRate;
+      if (skepticism > 40) {
+        raw.calculation = raw.calculation + ` (×${(survivalRate * 100).toFixed(0)}% survie)`;
+      }
+    }
+
+    return raw;
+  }, [scenarioData, devilsData]);
 
   // Get key metrics for impactful header
   const headerMetrics = useMemo(() => {
@@ -1673,13 +1678,18 @@ export function Tier3Results({ results, subscriptionPlan = "FREE" }: Tier3Result
                 Synthese Due Diligence
               </CardTitle>
               <CardDescription className="text-slate-300 mt-1">
-                {successfulAgents} agents d&apos;analyse • Score, Scenarios, Risques, Memo
+                {totalAgentsRun ?? successfulAgents} agents d&apos;analyse • Score, Scenarios, Risques, Memo
               </CardDescription>
             </div>
             {scorerData && (
               <div className="text-right">
                 <div className="text-4xl font-bold text-white">{scorerData.overallScore}<span className="text-xl text-slate-400">/100</span></div>
-                <VerdictBadge verdict={scorerData.verdict} />
+                <VerdictBadge verdict={
+                  scorerData.overallScore >= 85 ? "strong_pass" :
+                  scorerData.overallScore >= 70 ? "pass" :
+                  scorerData.overallScore >= 55 ? "conditional_pass" :
+                  scorerData.overallScore >= 40 ? "weak_pass" : "no_go"
+                } />
               </div>
             )}
           </div>
@@ -1688,13 +1698,25 @@ export function Tier3Results({ results, subscriptionPlan = "FREE" }: Tier3Result
           {/* Key Metrics Grid - The WOW factor */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             {/* Expected Return */}
-            {expectedReturn && expectedReturn.expectedMultiple > 0 && (
+            {expectedReturn && (
               <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
                 <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Multiple Espere</div>
-                <div className="text-3xl font-bold text-emerald-400">{expectedReturn.expectedMultiple.toFixed(1)}x</div>
-                <div className="text-xs text-slate-400 mt-1 truncate" title={expectedReturn.calculation}>
-                  {expectedReturn.calculation.split("=")[0].trim()}
-                </div>
+                {expectedReturn.expectedMultiple < 1 ? (
+                  <>
+                    <div className="text-3xl font-bold text-slate-500">—</div>
+                    <div className="text-xs text-slate-500 mt-1">Retour improbable</div>
+                  </>
+                ) : (
+                  <>
+                    <div className={cn("text-3xl font-bold",
+                      expectedReturn.expectedMultiple >= 5 ? "text-emerald-400" :
+                      expectedReturn.expectedMultiple >= 3 ? "text-green-400" :
+                      expectedReturn.expectedMultiple >= 2 ? "text-yellow-400" :
+                      "text-orange-400"
+                    )}>{expectedReturn.expectedMultiple.toFixed(1)}x</div>
+                    <div className="text-xs text-slate-400 mt-1">Pondere par scenarios</div>
+                  </>
+                )}
               </div>
             )}
 
@@ -1773,43 +1795,65 @@ export function Tier3Results({ results, subscriptionPlan = "FREE" }: Tier3Result
         </TabsList>
 
         <TabsContent value="synthesis" className="space-y-4 mt-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            {scorerData && (
-              <SynthesisScorerCard
-                data={scorerData}
-                strengthsLimit={displayLimits.strengths}
-                weaknessesLimit={displayLimits.weaknesses}
-                showFullScore={displayLimits.score}
-              />
-            )}
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* Scenarios - PRO only */}
-            {isFree ? (
-              <ProTeaserSection
-                title="Scenarios modelises"
-                description="3 scenarios Bull/Base/Bear avec projections ROI et IRR"
-                icon={BarChart3}
-                previewText={scenarioData ? `Confiance: ${scenarioData.meta?.confidenceLevel ?? scenarioData.score?.value ?? 75}%` : undefined}
-              />
-            ) : (
-              scenarioData && <ScenarioModelerCard data={scenarioData} />
-            )}
+          {(() => {
+            const showNoGo = !isFree && scorerData && (scorerData.overallScore ?? 100) < 35;
+            return (
+              <>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {scorerData && (
+                    <SynthesisScorerCard
+                      data={scorerData}
+                      strengthsLimit={displayLimits.strengths}
+                      weaknessesLimit={displayLimits.weaknesses}
+                      showFullScore={displayLimits.score}
+                      hideCriticalRisks={!!showNoGo}
+                    />
+                  )}
+                </div>
+                {/* NO_GO: full-width "Pourquoi NO_GO" card */}
+                {showNoGo && (
+                  <NoGoReasonsCard
+                    scorerData={scorerData}
+                    devilsData={devilsData}
+                    contradictionData={contradictionData}
+                  />
+                )}
+              </>
+            );
+          })()}
 
-            {/* Contradictions - PRO only (FREE sees count teaser) */}
-            {isFree ? (
-              <ProTeaserSection
-                title="Contradictions detectees"
-                description={contradictionData
-                  ? `${contradictionData.findings?.contradictions?.length ?? 0} contradiction(s) identifiee(s) entre les analyses`
-                  : "Detection automatique des incoherences"}
-                icon={Zap}
-                previewText={contradictionData ? `Score coherence: ${contradictionData.findings?.consistencyAnalysis?.overallScore ?? contradictionData.score?.value ?? 0}/100` : undefined}
-              />
-            ) : (
-              contradictionData && <ContradictionDetectorCard data={contradictionData} />
-            )}
-          </div>
+          {(() => {
+            const isNoGoLayout = !isFree && scorerData && (scorerData.overallScore ?? 100) < 35;
+            return (
+              <div className={cn("grid gap-4", isNoGoLayout ? "md:grid-cols-1" : "md:grid-cols-2")}>
+                {/* Scenarios - PRO only */}
+                {isFree ? (
+                  <ProTeaserSection
+                    title="Scenarios modelises"
+                    description="3 scenarios Bull/Base/Bear avec projections ROI et IRR"
+                    icon={BarChart3}
+                    previewText={scenarioData ? `Confiance: ${scenarioData.meta?.confidenceLevel ?? scenarioData.score?.value ?? 75}%` : undefined}
+                  />
+                ) : (
+                  scenarioData && <ScenarioModelerCard data={scenarioData} overallScore={scorerData?.overallScore} skepticism={devilsData?.findings?.skepticismAssessment?.score} />
+                )}
+
+                {/* Contradictions - PRO only (FREE sees count teaser) */}
+                {isFree ? (
+                  <ProTeaserSection
+                    title="Contradictions detectees"
+                    description={contradictionData
+                      ? `${contradictionData.findings?.contradictions?.length ?? 0} contradiction(s) identifiee(s) entre les analyses`
+                      : "Detection automatique des incoherences"}
+                    icon={Zap}
+                    previewText={contradictionData ? `Score coherence: ${contradictionData.findings?.consistencyAnalysis?.overallScore ?? contradictionData.score?.value ?? 0}/100` : undefined}
+                  />
+                ) : (
+                  contradictionData && <ContradictionDetectorCard data={contradictionData} />
+                )}
+              </div>
+            );
+          })()}
         </TabsContent>
 
         <TabsContent value="challenge" className="space-y-4 mt-4">

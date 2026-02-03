@@ -300,8 +300,8 @@ Tu es un **SENIOR INVESTMENT COMMITTEE PARTNER** avec 20+ ans d'expérience en v
 ## TA MISSION POUR CE DEAL
 
 **PRODUIRE LA DÉCISION FINALE D'INVESTISSEMENT** en:
-1. Synthétisant les outputs de 12 agents Tier 1 + expert sectoriel Tier 2
-2. Calculant un score final pondéré transparent
+1. Synthétisant les outputs de 12 agents Tier 1 + expert sectoriel Tier 2 + agents Tier 3 (contradictions, scénarios, devil's advocate)
+2. Calculant un score final pondéré AJUSTÉ (pas les scores bruts Tier 1 — les scores finaux après analyse cross-tiers)
 3. Identifiant les deal-breakers vs nice-to-have concerns
 4. Donnant une recommandation GO/NO-GO claire et actionnée
 
@@ -309,12 +309,17 @@ Tu es un **SENIOR INVESTMENT COMMITTEE PARTNER** avec 20+ ans d'expérience en v
 
 # MÉTHODOLOGIE D'ANALYSE
 
-## Étape 1: AGRÉGATION DES SCORES TIER 1
-Pour chaque agent Tier 1, extraire:
-- Score principal (0-100)
-- Red flags critiques et high
+## Étape 1: ANALYSE CROSS-TIERS
+Pour chaque dimension, tu dois COMBINER les insights de TOUS les tiers:
+- Score Tier 1 (base) + ajustements Tier 2 (expert sectoriel) + ajustements Tier 3 (contradictions, devil's advocate, scénarios)
+- Red flags critiques et high consolidés
 - Forces majeures identifiées
 - Questions non résolues
+
+**IMPORTANT: Les dimension scores que tu produis NE SONT PAS les scores bruts Tier 1.**
+**Ce sont les scores FINAUX ajustés après prise en compte de l'expert sectoriel, des contradictions détectées, et des insights du devil's advocate.**
+
+Exemple: Si Tier 1 financial-auditor donne Market=70 mais que l'expert sectoriel Tier 2 révèle un marché en déclin et le devil's advocate identifie un risque de disruption, ton score Market final doit être inférieur à 70.
 
 ## Étape 2: PONDÉRATION DES DIMENSIONS
 Appliquer les poids suivants (total = 100%):
@@ -640,6 +645,7 @@ Tu dois produire un JSON avec cette structure EXACTE:
     const fundingDbContext = this.formatFundingDbContext(context);
     const baPrefsSection = this.formatBAPreferences(context.baPreferences, deal.sector, deal.stage);
     const contradictions = this.extractContradictions(context);
+    const coherenceSection = this.formatCoherenceData(context);
 
     const prompt = `# ANALYSE SYNTHESIS DEAL SCORER - ${deal.companyName ?? deal.name}
 
@@ -648,7 +654,7 @@ ${dealContext}
 
 ---
 
-## SCORES DES AGENTS TIER 1 (12 agents)
+## SCORES BRUTS TIER 1 (12 agents) — À AJUSTER avec Tier 2/3
 ${tier1Scores}
 
 ---
@@ -670,6 +676,11 @@ ${tier2Data}
 
 ## INCOHÉRENCES DÉTECTÉES (contradiction-detector)
 ${contradictions}
+
+---
+
+## COHÉRENCE INTER-AGENTS TIER 3
+${coherenceSection}
 
 ---
 
@@ -724,6 +735,7 @@ ${this.formatFactStoreData(context)}
 ⚠️ **SOIS ACTIONNABLE** - GO/NO-GO clair, pas de "ça dépend" sans conditions
 ⚠️ **CONSOLIDE LES RED FLAGS** - Ne répète pas, synthétise avec priorité
 ⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences
+⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les scénarios ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal NO_GO avec scepticisme >80 ne peut pas avoir un score > 40.
 
 Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
@@ -1022,6 +1034,46 @@ ${Array.isArray(topConcerns) ? topConcerns.map((c: string) => `- ${c}`).join("\n
     return "Aucun expert sectoriel Tier 2 n'a été exécuté.";
   }
 
+  private formatCoherenceData(context: EnrichedAgentContext): string {
+    const coherence = context.tier3CoherenceResult;
+
+    if (!coherence) {
+      return "Module de cohérence Tier 3 non exécuté.";
+    }
+
+    if (!coherence.adjusted) {
+      return `**Score de cohérence**: ${coherence.coherenceScore}/100
+✅ Aucun ajustement nécessaire — les agents Tier 3 sont cohérents entre eux.`;
+    }
+
+    let output = `**Score de cohérence PRÉ-AJUSTEMENT**: ${coherence.coherenceScore}/100
+⚠️ **${coherence.adjustments.length} ajustements appliqués** aux scénarios pour corriger des incohérences inter-agents.
+
+### Ajustements effectués
+`;
+
+    for (const adj of coherence.adjustments) {
+      output += `- **[${adj.rule}]** ${adj.field}: ${adj.before} → ${adj.after} — ${adj.reason}\n`;
+    }
+
+    output += `
+### Impact sur ton analyse
+- Les scénarios que tu reçois ont DÉJÀ été ajustés par le module de cohérence
+- Les scénarios marqués **adjusted: true** ont été modifiés par rapport à l'output original de scenario-modeler
+- Les scénarios marqués **reliable: false** sont à interpréter avec prudence (scepticisme élevé)
+- **IMPORTANT**: Ton score final doit être COHÉRENT avec ces scénarios ajustés. Un deal avec CATASTROPHIC > 60% ne peut PAS avoir un score > 55.
+`;
+
+    if (coherence.warnings.length > 0) {
+      output += `\n### Avertissements\n`;
+      for (const w of coherence.warnings) {
+        output += `- ${w}\n`;
+      }
+    }
+
+    return output;
+  }
+
   private extractContradictions(context: EnrichedAgentContext): string {
     const results = context.previousResults ?? {};
     const contradictionResult = results["contradiction-detector"];
@@ -1172,7 +1224,7 @@ Aucune incohérence majeure détectée entre les agents.`;
     };
 
     const rawAction = data.findings?.recommendation?.action ?? data.investmentRecommendation?.action;
-    const mappedAction = actionMapping[rawAction as string] ??
+    let mappedAction = actionMapping[rawAction as string] ??
                         (validActions.includes(rawAction as typeof validActions[number]) ? rawAction : "wait");
 
     // Extract dimension scores with backward compatibility
@@ -1195,9 +1247,20 @@ Aucune incohérence majeure détectée entre les agents.`;
       };
     });
 
-    // Calculate overall score if not provided
-    const overallScore = data.score?.value ?? data.overallScore ??
-      Math.round(dimensionScores.reduce((sum, d) => sum + d.weightedScore, 0));
+    // Score logic:
+    // 1. Use LLM overall score (includes red flag adjustments the dimensions don't capture)
+    // 2. Fallback to computed weighted average if LLM didn't provide a score
+    // 3. Log divergence for debugging but trust the LLM's holistic judgment
+    const computedWeighted = dimensionScores.length > 0
+      ? Math.round(dimensionScores.reduce((sum, d) => sum + d.weightedScore, 0))
+      : null;
+    const overallScore = data.score?.value ?? data.overallScore ?? computedWeighted ?? 50;
+
+    if (computedWeighted !== null && Math.abs(overallScore - computedWeighted) > 15) {
+      console.warn(
+        `[SynthesisDealScorer] Overall score (${overallScore}) diverges from weighted dimensions (${computedWeighted}) by ${Math.abs(overallScore - computedWeighted)} pts — red flag adjustments likely applied`
+      );
+    }
 
     // Extract key strengths/weaknesses
     const keyStrengths = data.narrative?.keyInsights?.filter((_, i) => i < 3) ??
@@ -1210,15 +1273,30 @@ Aucune incohérence majeure détectée entre les agents.`;
     // Extract critical risks from red flags
     const criticalRisks = (data.redFlags ?? [])
       .filter(rf => rf.severity === "CRITICAL")
-      .map(rf => rf.title ?? rf.description ?? "Unknown critical risk");
+      .map(rf => {
+        const rfAny = rf as Record<string, unknown>;
+        return (rfAny.title ?? rfAny.description ?? rfAny.flag ?? rfAny.risk ?? rfAny.issue ?? rfAny.impact) as string | undefined;
+      })
+      .filter((text): text is string => !!text && text !== "");
 
-    // Determine verdict with proper null checks
-    const findingsVerdict = data.findings?.recommendation?.verdict;
-    let finalVerdict: typeof validVerdicts[number] = "conditional_pass";
-    if (findingsVerdict && validVerdicts.includes(findingsVerdict as typeof validVerdicts[number])) {
-      finalVerdict = findingsVerdict as typeof validVerdicts[number];
-    } else if (data.verdict && validVerdicts.includes(data.verdict as typeof validVerdicts[number])) {
-      finalVerdict = data.verdict as typeof validVerdicts[number];
+    // Verdict is ALWAYS derived from the score — never trust the LLM verdict alone
+    // The LLM often returns "conditional_pass" as a safe default which contradicts low scores
+    const scoreBasedVerdict = (score: number): typeof validVerdicts[number] => {
+      if (score >= 85) return "strong_pass";
+      if (score >= 70) return "pass";
+      if (score >= 55) return "conditional_pass";
+      if (score >= 40) return "weak_pass";
+      return "no_go";
+    };
+    const finalVerdict = scoreBasedVerdict(overallScore);
+
+    // Enforce action/verdict coherence — "wait" makes no sense for NO_GO
+    if (finalVerdict === "no_go" && mappedAction !== "pass") {
+      console.warn(`[SynthesisDealScorer] Action "${mappedAction}" incoherent with verdict "${finalVerdict}" — forcing "pass"`);
+      mappedAction = "pass";
+    }
+    if (finalVerdict === "strong_pass" && mappedAction === "pass") {
+      mappedAction = "invest";
     }
 
     return {

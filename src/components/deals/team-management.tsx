@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { toast } from "sonner";
@@ -35,7 +36,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Users,
-  ExternalLink,
   Plus,
   Linkedin,
   Loader2,
@@ -44,41 +44,85 @@ import {
   Pencil,
   Trash2,
   Sparkles,
-  GraduationCap,
   Briefcase,
   Award,
+  GraduationCap,
+  TrendingUp,
+  Target,
+  Network,
+  Zap,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-// Types
-interface FounderHighlights {
+// ============================================================================
+// TYPES
+// ============================================================================
+
+interface AnalysisScores {
+  domainExpertise?: number;
+  entrepreneurialExperience?: number;
+  executionCapability?: number;
+  networkStrength?: number;
+  overallFounderScore?: number;
+}
+
+interface AnalysisBackground {
   yearsExperience?: number;
-  educationLevel?: "phd" | "masters" | "bachelors" | "other" | null;
-  hasRelevantIndustryExp?: boolean;
-  hasFounderExperience?: boolean;
-  hasTechBackground?: boolean;
-  isSerialFounder?: boolean;
+  headline?: string;
+  topPreviousCompanies?: string[];
+  keySkills?: string[];
+  educationHighlight?: string;
+  relevantRoles?: string[];
+  domainExpertiseYears?: number;
 }
 
-interface RedFlag {
+interface AnalysisRedFlag {
   type: string;
-  severity: "low" | "medium" | "high";
-  message: string;
-}
-
-interface ExpertiseSummary {
-  primaryIndustry: string | null;
-  primaryRole: string | null;
-  primaryEcosystem: string | null;
+  severity: string;
   description: string;
-  isDiversified: boolean;
-  hasDeepExpertise: boolean;
+  evidence?: string;
 }
 
+/** verifiedInfo can come from LinkedIn enrichment OR team-investigator analysis */
 interface VerifiedInfo {
+  // From LinkedIn enrichment
   linkedinScrapedAt?: string;
-  highlights?: FounderHighlights;
-  expertise?: ExpertiseSummary | null;
-  redFlags?: RedFlag[];
+  highlights?: {
+    yearsExperience?: number;
+    educationLevel?: "phd" | "masters" | "bachelors" | "other" | null;
+    hasRelevantIndustryExp?: boolean;
+    hasFounderExperience?: boolean;
+    hasTechBackground?: boolean;
+    isSerialFounder?: boolean;
+  };
+  expertise?: {
+    primaryIndustry?: string | null;
+    primaryRole?: string | null;
+    description?: string;
+  } | null;
+  // From LinkedIn enrichment (old format)
+  redFlags?: Array<{ type: string; severity: string; message: string }>;
+
+  // From team-investigator analysis (new format)
+  source?: "team-investigator";
+  analyzedAt?: string;
+  scores?: AnalysisScores;
+  background?: AnalysisBackground;
+  strengths?: string[];
+  concerns?: string[];
+  linkedinVerified?: boolean;
+  entrepreneurialTrack?: {
+    isFirstTimeFounder?: boolean;
+    previousVentures?: Array<{
+      name: string;
+      role: string;
+      outcome: string;
+      duration?: string;
+      relevance?: string;
+    }>;
+    totalVentures?: number;
+    successfulExits?: number;
+  };
 }
 
 interface Founder {
@@ -88,7 +132,7 @@ interface Founder {
   role: string;
   linkedinUrl: string | null;
   previousVentures: unknown;
-  verifiedInfo: VerifiedInfo | null;
+  verifiedInfo: VerifiedInfo | Record<string, unknown> | null;
   createdAt: string;
 }
 
@@ -97,7 +141,10 @@ interface TeamManagementProps {
   founders: Founder[];
 }
 
-// API functions
+// ============================================================================
+// API FUNCTIONS
+// ============================================================================
+
 async function createFounder(dealId: string, data: { name: string; role: string; linkedinUrl?: string }) {
   const response = await fetch(`/api/deals/${dealId}/founders`, {
     method: "POST",
@@ -146,8 +193,35 @@ async function enrichFounder(dealId: string, founderId: string) {
   return response.json();
 }
 
-// Component
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function getScoreColor(score: number): string {
+  if (score >= 75) return "text-green-700 bg-green-50 border-green-200";
+  if (score >= 50) return "text-blue-700 bg-blue-50 border-blue-200";
+  if (score >= 30) return "text-orange-700 bg-orange-50 border-orange-200";
+  return "text-red-700 bg-red-50 border-red-200";
+}
+
+function getScoreBg(score: number): string {
+  if (score >= 75) return "bg-green-500";
+  if (score >= 50) return "bg-blue-500";
+  if (score >= 30) return "bg-orange-500";
+  return "bg-red-500";
+}
+
+function getVerifiedInfo(founder: Founder): VerifiedInfo | null {
+  if (!founder.verifiedInfo) return null;
+  return founder.verifiedInfo as VerifiedInfo;
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
 export function TeamManagement({ dealId, founders }: TeamManagementProps) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -155,7 +229,6 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
   const [founderToDelete, setFounderToDelete] = useState<Founder | null>(null);
   const [enrichingFounderId, setEnrichingFounderId] = useState<string | null>(null);
 
-  // Form state
   const [formData, setFormData] = useState({
     name: "",
     role: "",
@@ -167,15 +240,25 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
     setEditingFounder(null);
   }, []);
 
+  // Count analyzed members
+  const analyzedCount = useMemo(
+    () => founders.filter(f => {
+      const vi = getVerifiedInfo(f);
+      return vi?.source === "team-investigator";
+    }).length,
+    [founders]
+  );
+
   // Mutations
   const createMutation = useMutation({
     mutationFn: (data: { name: string; role: string; linkedinUrl?: string }) =>
       createFounder(dealId, data),
     onSuccess: () => {
-      toast.success("Fondateur ajoute");
+      toast.success("Membre ajoute");
       setDialogOpen(false);
       resetForm();
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      router.refresh();
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -186,10 +269,11 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
     mutationFn: ({ founderId, data }: { founderId: string; data: { name?: string; role?: string; linkedinUrl?: string | null } }) =>
       updateFounder(dealId, founderId, data),
     onSuccess: () => {
-      toast.success("Fondateur mis a jour");
+      toast.success("Membre mis a jour");
       setDialogOpen(false);
       resetForm();
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      router.refresh();
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -199,10 +283,11 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
   const deleteMutation = useMutation({
     mutationFn: (founderId: string) => deleteFounder(dealId, founderId),
     onSuccess: () => {
-      toast.success("Fondateur supprime");
+      toast.success("Membre supprime");
       setDeleteDialogOpen(false);
       setFounderToDelete(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      router.refresh();
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -220,6 +305,7 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
       }
       setEnrichingFounderId(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      router.refresh();
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -291,16 +377,24 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
   return (
     <>
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Equipe Fondatrice</CardTitle>
-              <CardDescription>
-                Ajoutez les fondateurs avec leur LinkedIn pour une analyse approfondie
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Equipe
+              </CardTitle>
+              <CardDescription className="mt-1">
+                {founders.length} membre{founders.length !== 1 ? "s" : ""}
+                {analyzedCount > 0 && (
+                  <span className="ml-1 text-blue-600">
+                    &middot; {analyzedCount} analyse{analyzedCount !== 1 ? "s" : ""} IA
+                  </span>
+                )}
               </CardDescription>
             </div>
-            <Button onClick={() => handleOpenDialog()}>
-              <Plus className="mr-2 h-4 w-4" />
+            <Button size="sm" onClick={() => handleOpenDialog()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
               Ajouter
             </Button>
           </div>
@@ -309,9 +403,9 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
           {founders.length === 0 ? (
             <EmptyState onAdd={() => handleOpenDialog()} />
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {founders.map((founder) => (
-                <FounderCard
+                <MemberCard
                   key={founder.id}
                   founder={founder}
                   isEnriching={enrichingFounderId === founder.id}
@@ -330,12 +424,12 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingFounder ? "Modifier le fondateur" : "Ajouter un fondateur"}
+              {editingFounder ? "Modifier" : "Ajouter un membre"}
             </DialogTitle>
             <DialogDescription>
               {editingFounder
-                ? "Modifiez les informations du fondateur"
-                : "Ajoutez un membre de l'equipe fondatrice"}
+                ? "Modifiez les informations. Les modifications sont conservees pour les prochaines analyses."
+                : "Ajoutez un membre de l'equipe"}
             </DialogDescription>
           </DialogHeader>
 
@@ -353,17 +447,17 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
               <Label htmlFor="role">Role *</Label>
               <Input
                 id="role"
-                placeholder="CEO & Co-founder"
+                placeholder="CEO, CTO, Architecte SI..."
                 value={formData.role}
                 onChange={(e) => setFormData((prev) => ({ ...prev, role: e.target.value }))}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="linkedinUrl">
-                <div className="flex items-center gap-2">
+                <span className="flex items-center gap-2">
                   <Linkedin className="h-4 w-4 text-[#0077B5]" />
                   URL LinkedIn
-                </div>
+                </span>
               </Label>
               <Input
                 id="linkedinUrl"
@@ -371,9 +465,6 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
                 value={formData.linkedinUrl}
                 onChange={(e) => setFormData((prev) => ({ ...prev, linkedinUrl: e.target.value }))}
               />
-              <p className="text-xs text-muted-foreground">
-                Ajoutez l&apos;URL LinkedIn pour enrichir automatiquement le profil
-              </p>
             </div>
           </div>
 
@@ -393,9 +484,9 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer ce fondateur ?</AlertDialogTitle>
+            <AlertDialogTitle>Supprimer ce membre ?</AlertDialogTitle>
             <AlertDialogDescription>
-              Etes-vous sur de vouloir supprimer {founderToDelete?.name} ? Cette action est irreversible.
+              Supprimer {founderToDelete?.name} de l&apos;equipe ? Cette personne ne sera plus incluse dans les prochaines analyses.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -415,25 +506,55 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
   );
 }
 
-// Empty state component
+// ============================================================================
+// EMPTY STATE
+// ============================================================================
+
 function EmptyState({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-10 text-center">
-      <Users className="h-12 w-12 text-muted-foreground/50" />
-      <h3 className="mt-4 text-lg font-semibold">Aucun fondateur</h3>
-      <p className="mt-2 text-sm text-muted-foreground max-w-sm">
-        Ajoutez les fondateurs avec leur profil LinkedIn pour une analyse approfondie de l&apos;equipe.
+      <Users className="h-12 w-12 text-muted-foreground/30" />
+      <h3 className="mt-4 text-base font-semibold">Aucun membre</h3>
+      <p className="mt-1.5 text-sm text-muted-foreground max-w-xs">
+        Ajoutez les membres de l&apos;equipe ou lancez une analyse pour les detecter automatiquement.
       </p>
-      <Button className="mt-4" onClick={onAdd}>
-        <Plus className="mr-2 h-4 w-4" />
-        Ajouter un fondateur
+      <Button className="mt-4" size="sm" onClick={onAdd}>
+        <Plus className="mr-1.5 h-3.5 w-3.5" />
+        Ajouter un membre
       </Button>
     </div>
   );
 }
 
-// Founder card component
-function FounderCard({
+// ============================================================================
+// SCORE MINI BAR
+// ============================================================================
+
+function ScoreMiniBar({ label, value, icon: Icon }: { label: string; value: number; icon: React.ComponentType<{ className?: string }> }) {
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between mb-0.5">
+          <span className="text-[10px] text-muted-foreground truncate">{label}</span>
+          <span className="text-[10px] font-semibold ml-1">{value}</span>
+        </div>
+        <div className="h-1 rounded-full bg-muted overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all", getScoreBg(value))}
+            style={{ width: `${value}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MEMBER CARD (unified: DB founder + analysis data)
+// ============================================================================
+
+function MemberCard({
   founder,
   isEnriching,
   onEdit,
@@ -446,146 +567,204 @@ function FounderCard({
   onDelete: () => void;
   onEnrich: () => void;
 }) {
-  const verifiedInfo = founder.verifiedInfo as VerifiedInfo | null;
-  const isEnriched = !!verifiedInfo?.linkedinScrapedAt;
-  const highlights = verifiedInfo?.highlights;
-  const redFlags = verifiedInfo?.redFlags ?? [];
+  const vi = getVerifiedInfo(founder);
+  const isAnalyzed = vi?.source === "team-investigator";
+  const isLinkedInEnriched = !!vi?.linkedinScrapedAt;
+  const scores = vi?.scores;
+  const background = vi?.background;
+  const strengths = vi?.strengths;
+  const concerns = vi?.concerns;
+  const analysisRedFlags = isAnalyzed
+    ? (vi?.redFlags as AnalysisRedFlag[] | undefined)
+    : undefined;
+  const linkedInRedFlags = !isAnalyzed
+    ? (vi?.redFlags as Array<{ type: string; severity: string; message: string }> | undefined)
+    : undefined;
+  const highlights = vi?.highlights;
+  const overallScore = scores?.overallFounderScore;
 
   return (
-    <div className="rounded-lg border p-4">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-lg font-semibold">
-            {founder.name.charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <p className="font-medium">{founder.name}</p>
-              {isEnriched && (
-                <Badge variant="secondary" className="bg-green-50 text-green-700 text-xs">
-                  <CheckCircle2 className="mr-1 h-3 w-3" />
-                  Enrichi
-                </Badge>
-              )}
-            </div>
-            <p className="text-sm text-muted-foreground">{founder.role}</p>
+    <div className="rounded-lg border bg-card transition-colors hover:border-muted-foreground/20">
+      {/* Header row */}
+      <div className="flex items-start gap-3 p-4 pb-2">
+        {/* Avatar with score ring */}
+        <div className="relative shrink-0">
+          <div className={cn(
+            "flex h-11 w-11 items-center justify-center rounded-full text-sm font-semibold",
+            overallScore !== undefined
+              ? getScoreColor(overallScore) + " border"
+              : "bg-muted text-muted-foreground"
+          )}>
+            {overallScore !== undefined ? overallScore : founder.name.charAt(0).toUpperCase()}
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
+        {/* Name + role + badges */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-medium text-sm truncate">{founder.name}</span>
+            {isAnalyzed && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-blue-50 text-blue-700 border-blue-200">
+                IA
+              </Badge>
+            )}
+            {(isLinkedInEnriched || vi?.linkedinVerified) && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-50 text-green-700 border-green-200">
+                <CheckCircle2 className="mr-0.5 h-2.5 w-2.5" />
+                LinkedIn
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">{founder.role}</p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-0.5 shrink-0">
           {founder.linkedinUrl && (
             <>
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon"
+                className="h-7 w-7"
                 onClick={onEnrich}
                 disabled={isEnriching}
-                title={isEnriched ? "Re-analyser le profil" : "Analyser le profil LinkedIn"}
+                title="Enrichir via LinkedIn"
               >
                 {isEnriching ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Sparkles className="h-4 w-4" />
+                  <Sparkles className="h-3.5 w-3.5" />
                 )}
               </Button>
-              <Button variant="ghost" size="sm" asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
                 <a href={founder.linkedinUrl} target="_blank" rel="noopener noreferrer">
-                  <Linkedin className="h-4 w-4 text-[#0077B5]" />
+                  <Linkedin className="h-3.5 w-3.5 text-[#0077B5]" />
                 </a>
               </Button>
             </>
           )}
-          <Button variant="ghost" size="sm" onClick={onEdit}>
-            <Pencil className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit} title="Modifier">
+            <Pencil className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="sm" onClick={onDelete}>
-            <Trash2 className="h-4 w-4 text-destructive" />
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onDelete} title="Supprimer">
+            <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
           </Button>
         </div>
       </div>
 
-      {/* Enriched Data */}
-      {isEnriched && highlights && (
-        <div className="mt-4 pt-4 border-t">
-          {/* Highlights Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-            {highlights.yearsExperience !== undefined && (
-              <div className="flex items-center gap-2 text-sm">
-                <Briefcase className="h-4 w-4 text-muted-foreground" />
-                <span>{highlights.yearsExperience} ans d&apos;exp.</span>
-              </div>
-            )}
-            {highlights.educationLevel && (
-              <div className="flex items-center gap-2 text-sm">
-                <GraduationCap className="h-4 w-4 text-muted-foreground" />
-                <span className="capitalize">{highlights.educationLevel}</span>
-              </div>
-            )}
-            {highlights.isSerialFounder && (
-              <div className="flex items-center gap-2 text-sm text-green-700">
-                <Award className="h-4 w-4" />
-                <span>Serial Founder</span>
-              </div>
-            )}
-            {highlights.hasTechBackground && (
-              <div className="flex items-center gap-2 text-sm text-blue-700">
-                <CheckCircle2 className="h-4 w-4" />
-                <span>Background Tech</span>
-              </div>
-            )}
+      {/* Analysis scores */}
+      {scores && (
+        <div className="px-4 pb-2">
+          <div className="grid grid-cols-4 gap-3">
+            <ScoreMiniBar label="Domain" value={scores.domainExpertise ?? 0} icon={Target} />
+            <ScoreMiniBar label="Startup XP" value={scores.entrepreneurialExperience ?? 0} icon={TrendingUp} />
+            <ScoreMiniBar label="Execution" value={scores.executionCapability ?? 0} icon={Zap} />
+            <ScoreMiniBar label="Network" value={scores.networkStrength ?? 0} icon={Network} />
           </div>
+        </div>
+      )}
 
-          {/* Badges */}
-          <div className="flex flex-wrap gap-2">
-            {highlights.hasRelevantIndustryExp && (
-              <Badge variant="secondary" className="bg-green-50 text-green-700">
-                Experience sectorielle
-              </Badge>
-            )}
-            {highlights.hasFounderExperience && (
-              <Badge variant="secondary" className="bg-blue-50 text-blue-700">
-                Experience fondateur
-              </Badge>
-            )}
-          </div>
-
-          {/* Red Flags */}
-          {redFlags.length > 0 && (
-            <div className="mt-3 pt-3 border-t space-y-2">
-              <p className="text-sm font-medium text-orange-700 flex items-center gap-1">
-                <AlertTriangle className="h-4 w-4" />
-                Points d&apos;attention ({redFlags.length})
-              </p>
-              <div className="space-y-1">
-                {redFlags.slice(0, 3).map((flag, idx) => (
-                  <div
-                    key={idx}
-                    className={`text-xs p-2 rounded ${
-                      flag.severity === "high"
-                        ? "bg-red-50 text-red-700"
-                        : flag.severity === "medium"
-                          ? "bg-orange-50 text-orange-700"
-                          : "bg-yellow-50 text-yellow-700"
-                    }`}
-                  >
-                    {flag.message}
-                  </div>
-                ))}
-                {redFlags.length > 3 && (
-                  <p className="text-xs text-muted-foreground">
-                    +{redFlags.length - 3} autres points
-                  </p>
-                )}
-              </div>
-            </div>
+      {/* Background companies */}
+      {background?.topPreviousCompanies && background.topPreviousCompanies.length > 0 && (
+        <div className="px-4 pb-2 flex flex-wrap gap-1">
+          {background.topPreviousCompanies.map((co, j) => (
+            <Badge key={j} variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+              {co}
+            </Badge>
+          ))}
+          {background.yearsExperience !== undefined && (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+              <Briefcase className="mr-0.5 h-2.5 w-2.5" />
+              {background.yearsExperience} ans
+            </Badge>
           )}
         </div>
       )}
 
+      {/* LinkedIn highlights (old enrichment format) */}
+      {isLinkedInEnriched && highlights && !isAnalyzed && (
+        <div className="px-4 pb-2">
+          <div className="flex flex-wrap gap-1.5">
+            {highlights.yearsExperience !== undefined && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+                <Briefcase className="mr-0.5 h-2.5 w-2.5" />
+                {highlights.yearsExperience} ans
+              </Badge>
+            )}
+            {highlights.educationLevel && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+                <GraduationCap className="mr-0.5 h-2.5 w-2.5" />
+                {highlights.educationLevel}
+              </Badge>
+            )}
+            {highlights.isSerialFounder && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-50 text-green-700">
+                <Award className="mr-0.5 h-2.5 w-2.5" />
+                Serial Founder
+              </Badge>
+            )}
+            {highlights.hasTechBackground && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-blue-50 text-blue-700">
+                Background Tech
+              </Badge>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Strengths + Concerns */}
+      {((strengths && strengths.length > 0) || (concerns && concerns.length > 0)) && (
+        <div className="px-4 pb-2 space-y-1">
+          {strengths?.slice(0, 2).map((s, j) => (
+            <div key={`s-${j}`} className="flex items-start gap-1.5 text-[11px] text-green-700">
+              <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
+              <span>{s}</span>
+            </div>
+          ))}
+          {concerns?.slice(0, 2).map((c, j) => (
+            <div key={`c-${j}`} className="flex items-start gap-1.5 text-[11px] text-orange-600">
+              <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+              <span>{c}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Analysis red flags */}
+      {analysisRedFlags && analysisRedFlags.length > 0 && (
+        <div className="px-4 pb-3 space-y-1">
+          {analysisRedFlags.slice(0, 2).map((rf, j) => (
+            <div key={j} className={cn(
+              "text-[11px] px-2 py-1 rounded",
+              rf.severity === "CRITICAL" ? "bg-red-50 text-red-700" :
+              rf.severity === "HIGH" ? "bg-orange-50 text-orange-700" :
+              "bg-yellow-50 text-yellow-700"
+            )}>
+              {rf.description}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* LinkedIn enrichment red flags (old format) */}
+      {linkedInRedFlags && linkedInRedFlags.length > 0 && (
+        <div className="px-4 pb-3 space-y-1">
+          {linkedInRedFlags.slice(0, 2).map((flag, idx) => (
+            <div key={idx} className={cn(
+              "text-[11px] px-2 py-1 rounded",
+              flag.severity === "high" ? "bg-red-50 text-red-700" :
+              flag.severity === "medium" ? "bg-orange-50 text-orange-700" :
+              "bg-yellow-50 text-yellow-700"
+            )}>
+              {flag.message}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* No LinkedIn hint */}
-      {!founder.linkedinUrl && (
-        <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+      {!founder.linkedinUrl && !isAnalyzed && (
+        <div className="px-4 pb-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <Linkedin className="h-3 w-3" />
           Ajoutez le LinkedIn pour enrichir le profil
         </div>

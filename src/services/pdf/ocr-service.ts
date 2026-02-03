@@ -1,39 +1,19 @@
 /**
  * OCR Service for Image-Heavy PDFs
  *
- * Uses Vision LLMs to extract text from PDF pages that contain
- * images, charts, or non-selectable text.
+ * Uses pdf-to-img (pure JS, no native bindings) to render PDF pages
+ * as images, then sends them to a Vision LLM for text extraction.
  *
  * OPTIMIZED for cost:
  * - Selective OCR: Only processes pages with low text content
- * - Uses Claude Haiku (cheapest vision model)
+ * - Uses GPT-4o Mini (cheapest vision model)
  * - Max 20 pages per document
  *
- * NOTE: Requires 'canvas' package for image rendering.
- * Install with: npm install canvas
+ * Serverless-compatible: No @napi-rs/canvas or native dependencies.
  */
 
-import { getDocumentProxy, renderPageAsImage } from "unpdf";
 import { openrouter, MODELS } from "../openrouter/client";
-import { getPagesNeedingOCR } from "./quality-analyzer";
-
-// Check if canvas is available
-let canvasAvailable = false;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let canvasModule: any = null;
-
-async function checkCanvasAvailability(): Promise<boolean> {
-  if (canvasAvailable) return true;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    canvasModule = require("canvas");
-    canvasAvailable = true;
-    return true;
-  } catch {
-    console.warn("Canvas not available - OCR features disabled. Install with: npm install canvas");
-    return false;
-  }
-}
+import { getPagesNeedingOCR, analyzeExtractionQuality } from "./quality-analyzer";
 
 export interface OCRResult {
   success: boolean;
@@ -68,11 +48,26 @@ const BATCH_SIZE = 3;
 // Cost per page estimate (GPT-4o Mini vision)
 const ESTIMATED_INPUT_TOKENS = 800;  // Image ~800 tokens
 const ESTIMATED_OUTPUT_TOKENS = 300; // Text output ~300 tokens
-// GPT-4o Mini: $0.15/MTok input, $0.60/MTok output
+
+const COST_PER_PAGE = (ESTIMATED_INPUT_TOKENS / 1000) * OCR_MODEL.inputCost +
+                      (ESTIMATED_OUTPUT_TOKENS / 1000) * OCR_MODEL.outputCost;
+
+/**
+ * Convert PDF buffer to per-page PNG images using pdf-to-img (pure JS).
+ */
+async function pdfToImages(buffer: Buffer): Promise<Map<number, Buffer>> {
+  const { pdf } = await import("pdf-to-img");
+  const images = new Map<number, Buffer>();
+  let pageNum = 1;
+  for await (const image of await pdf(buffer, { scale: 1.5 })) {
+    images.set(pageNum, Buffer.from(image));
+    pageNum++;
+  }
+  return images;
+}
 
 /**
  * Selective OCR - only process specific pages
- * This is the main function to use for cost-efficient OCR
  */
 export async function selectiveOCR(
   buffer: Buffer,
@@ -82,22 +77,6 @@ export async function selectiveOCR(
   const startTime = Date.now();
   let totalCost = 0;
 
-  // Check canvas availability
-  const hasCanvas = await checkCanvasAvailability();
-  if (!hasCanvas) {
-    return {
-      success: false,
-      text: existingText || "",
-      pageResults: [],
-      pagesProcessed: 0,
-      pagesSkipped: pageIndices.length,
-      totalCost: 0,
-      processingTimeMs: Date.now() - startTime,
-      error: "OCR unavailable: canvas package not installed"
-    };
-  }
-
-  // Limit pages
   const pagesToProcess = pageIndices.slice(0, MAX_PAGES_TO_OCR);
   const pagesSkipped = pageIndices.length - pagesToProcess.length;
 
@@ -114,15 +93,30 @@ export async function selectiveOCR(
   }
 
   try {
-    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    // Render all pages as images
+    const allImages = await pdfToImages(buffer);
+
     const pageResults: PageOCRResult[] = [];
 
     // Process pages in batches
     for (let i = 0; i < pagesToProcess.length; i += BATCH_SIZE) {
       const batch = pagesToProcess.slice(i, i + BATCH_SIZE);
-      const batchPromises = batch.map(pageIdx =>
-        processPage(pdf, pageIdx + 1) // unpdf uses 1-indexed pages
-      );
+      const batchPromises = batch.map(pageIdx => {
+        const pageNum = pageIdx + 1; // convert 0-indexed to 1-indexed
+        const imageBuffer = allImages.get(pageNum);
+        if (!imageBuffer) {
+          return Promise.resolve<PageOCRResult>({
+            pageNumber: pageNum,
+            text: "",
+            confidence: 'low',
+            hasCharts: false,
+            hasImages: false,
+            processingTimeMs: 0,
+            cost: 0
+          });
+        }
+        return processPageImage(imageBuffer, pageNum);
+      });
 
       const batchResults = await Promise.all(batchPromises);
       pageResults.push(...batchResults);
@@ -132,10 +126,8 @@ export async function selectiveOCR(
     // Build final text: merge existing text with OCR results
     let finalText = existingText || "";
 
-    // Sort results by page number
     const sortedResults = [...pageResults].sort((a, b) => a.pageNumber - b.pageNumber);
 
-    // Append OCR text
     if (sortedResults.length > 0) {
       const ocrText = sortedResults
         .filter(r => r.text.length > 0)
@@ -177,23 +169,9 @@ export async function selectiveOCR(
  * Full OCR - process all pages (expensive, use sparingly)
  */
 export async function extractTextWithOCR(buffer: Buffer): Promise<OCRResult> {
-  const hasCanvas = await checkCanvasAvailability();
-  if (!hasCanvas) {
-    return {
-      success: false,
-      text: "",
-      pageResults: [],
-      pagesProcessed: 0,
-      pagesSkipped: 0,
-      totalCost: 0,
-      processingTimeMs: 0,
-      error: "OCR unavailable: canvas package not installed"
-    };
-  }
-
   try {
-    const pdf = await getDocumentProxy(new Uint8Array(buffer));
-    const allPages = Array.from({ length: pdf.numPages }, (_, i) => i);
+    const allImages = await pdfToImages(buffer);
+    const allPages = Array.from({ length: allImages.size }, (_, i) => i);
     return selectiveOCR(buffer, allPages);
   } catch (error) {
     return {
@@ -210,44 +188,18 @@ export async function extractTextWithOCR(buffer: Buffer): Promise<OCRResult> {
 }
 
 /**
- * Process a single page with Vision OCR
+ * Process a single page image with Vision OCR
  */
-async function processPage(
-  pdf: Awaited<ReturnType<typeof getDocumentProxy>>,
-  pageNumber: number  // 1-indexed
+async function processPageImage(
+  imageBuffer: Buffer,
+  pageNumber: number
 ): Promise<PageOCRResult> {
   const pageStart = Date.now();
-  const costPerPage = (ESTIMATED_INPUT_TOKENS / 1000) * OCR_MODEL.inputCost +
-                      (ESTIMATED_OUTPUT_TOKENS / 1000) * OCR_MODEL.outputCost;
 
   try {
-    if (!canvasModule) {
-      throw new Error("Canvas not available");
-    }
-
-    // Render page as PNG image
-    const imageResult = await renderPageAsImage(pdf, pageNumber, {
-      canvasImport: () => Promise.resolve(canvasModule),
-      scale: 1.5,
-    });
-
-    if (!imageResult) {
-      return {
-        pageNumber,
-        text: "",
-        confidence: 'low',
-        hasCharts: false,
-        hasImages: false,
-        processingTimeMs: Date.now() - pageStart,
-        cost: 0
-      };
-    }
-
-    // Convert to base64
-    const base64Image = Buffer.from(imageResult).toString('base64');
+    const base64Image = imageBuffer.toString('base64');
     const dataUrl = `data:image/png;base64,${base64Image}`;
 
-    // Call Vision API with Haiku
     const response = await openrouter.chat.completions.create({
       model: OCR_MODEL.id,
       messages: [
@@ -278,11 +230,9 @@ Output clean text only, no commentary.`
 
     const extractedText = response.choices[0]?.message?.content || "";
 
-    // Detect content types
     const hasCharts = /chart|graph|%|\d+[KMB]|\$\d/i.test(extractedText);
     const hasImages = /logo|image|photo|diagram/i.test(extractedText);
 
-    // Determine confidence
     let confidence: 'high' | 'medium' | 'low' = 'medium';
     if (extractedText.length > 150) {
       confidence = 'high';
@@ -297,7 +247,7 @@ Output clean text only, no commentary.`
       hasCharts,
       hasImages,
       processingTimeMs: Date.now() - pageStart,
-      cost: costPerPage
+      cost: COST_PER_PAGE
     };
   } catch (error) {
     console.error(`OCR error on page ${pageNumber}:`, error);
@@ -308,14 +258,13 @@ Output clean text only, no commentary.`
       hasCharts: false,
       hasImages: false,
       processingTimeMs: Date.now() - pageStart,
-      cost: costPerPage // Still charge for failed attempt
+      cost: COST_PER_PAGE
     };
   }
 }
 
 /**
  * Smart extraction: Regular extraction + selective OCR for low-content pages
- * This is the recommended function for automatic processing
  */
 export async function smartExtract(
   buffer: Buffer,
@@ -339,21 +288,33 @@ export async function smartExtract(
   } = options;
 
   // First try regular text extraction
-  const { extractTextFromPDF } = await import("./extractor");
-  const regularResult = await extractTextFromPDF(buffer);
+  let regularResult;
+  try {
+    const { extractTextFromPDF } = await import("./extractor");
+    regularResult = await extractTextFromPDF(buffer);
+  } catch (extractError) {
+    console.warn("[smartExtract] Text extraction threw, treating as failure:", extractError instanceof Error ? extractError.message : extractError);
+    regularResult = { success: false as const, text: "", pageCount: 0, info: {} };
+  }
 
   if (!regularResult.success) {
-    // Complete failure - try full OCR if enabled
     if (autoOCR) {
-      const ocrResult = await extractTextWithOCR(buffer);
-      return {
-        text: ocrResult.text,
-        method: 'ocr',
-        quality: ocrResult.success ? 60 : 0,
-        ocrResult,
-        pagesOCRd: ocrResult.pagesProcessed,
-        estimatedCost: ocrResult.totalCost
-      };
+      try {
+        const ocrResult = await extractTextWithOCR(buffer);
+        const ocrQuality = ocrResult.success
+          ? analyzeExtractionQuality(ocrResult.text, ocrResult.pagesProcessed || 1).metrics.qualityScore
+          : 0;
+        return {
+          text: ocrResult.text,
+          method: 'ocr',
+          quality: ocrQuality,
+          ocrResult,
+          pagesOCRd: ocrResult.pagesProcessed,
+          estimatedCost: ocrResult.totalCost
+        };
+      } catch (ocrError) {
+        console.error("[smartExtract] OCR also failed:", ocrError instanceof Error ? ocrError.message : ocrError);
+      }
     }
     return {
       text: "",
@@ -367,7 +328,6 @@ export async function smartExtract(
   const qualityScore = regularResult.quality?.metrics.qualityScore ?? 0;
   const pageDistribution = regularResult.quality?.metrics.pageContentDistribution ?? [];
 
-  // Good quality - no OCR needed
   if (qualityScore >= qualityThreshold) {
     return {
       text: regularResult.text,
@@ -378,7 +338,6 @@ export async function smartExtract(
     };
   }
 
-  // Poor quality - do selective OCR if enabled
   if (!autoOCR) {
     return {
       text: regularResult.text,
@@ -389,7 +348,6 @@ export async function smartExtract(
     };
   }
 
-  // Get pages that need OCR (limited)
   const pagesToOCR = getPagesNeedingOCR(pageDistribution, maxOCRPages);
 
   if (pagesToOCR.length === 0) {
@@ -402,7 +360,6 @@ export async function smartExtract(
     };
   }
 
-  // Run selective OCR
   const ocrResult = await selectiveOCR(buffer, pagesToOCR, regularResult.text);
 
   if (!ocrResult.success || ocrResult.pagesProcessed === 0) {
@@ -415,9 +372,10 @@ export async function smartExtract(
     };
   }
 
-  // Calculate improved quality score
-  const ocrBonus = Math.min(ocrResult.pagesProcessed * 2, 20);
-  const newQuality = Math.min(qualityScore + ocrBonus, 75);
+  // Re-analyze quality on the combined text (original + OCR)
+  const totalPages = (regularResult.quality?.metrics.pageContentDistribution ?? []).length || 1;
+  const reanalyzed = analyzeExtractionQuality(ocrResult.text, totalPages);
+  const newQuality = Math.max(reanalyzed.metrics.qualityScore, qualityScore);
 
   return {
     text: ocrResult.text,
@@ -437,10 +395,8 @@ export function estimateOCRCost(pageCount: number): {
   pagesWillProcess: number;
 } {
   const pagesWillProcess = Math.min(pageCount, MAX_PAGES_TO_OCR);
-  const costPerPage = (ESTIMATED_INPUT_TOKENS / 1000) * OCR_MODEL.inputCost +
-                      (ESTIMATED_OUTPUT_TOKENS / 1000) * OCR_MODEL.outputCost;
   return {
-    cost: pagesWillProcess * costPerPage,
+    cost: pagesWillProcess * COST_PER_PAGE,
     pagesWillProcess
   };
 }

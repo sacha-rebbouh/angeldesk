@@ -6,6 +6,7 @@
  *
  * Agents:
  * - fact-extractor: Extraction structuree des faits avec confidence scoring
+ * - deck-coherence-checker: Verification coherence des donnees du deck
  */
 
 export { FactExtractorAgent, factExtractorAgent } from "./fact-extractor";
@@ -15,3 +16,10 @@ export type {
   FactExtractorDocument,
   FounderResponse,
 } from "./fact-extractor";
+
+export { DeckCoherenceChecker, deckCoherenceChecker } from "./deck-coherence-checker";
+export type {
+  DeckCoherenceReport,
+  DeckCoherenceInput,
+  CoherenceIssue,
+} from "./deck-coherence-checker";

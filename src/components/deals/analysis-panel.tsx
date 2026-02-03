@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, MessageSquare } from "lucide-react";
+import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, MessageSquare, Handshake, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -33,6 +33,7 @@ import {
   Tier3ResultsSkeleton,
 } from "./loading-skeletons";
 import { EarlyWarningsPanel } from "./early-warnings-panel";
+import type { EarlyWarning } from "@/types";
 import { ProTeaserBanner } from "@/components/shared/pro-teaser";
 import { AnalysisProgress } from "./analysis-progress";
 import { TimelineVersions } from "./timeline-versions";
@@ -40,6 +41,10 @@ import { FounderResponses, type AgentQuestion, type QuestionResponse } from "./f
 import { DeltaIndicator } from "./delta-indicator";
 import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
+import { NegotiationPanel } from "./negotiation-panel";
+import { DeckCoherenceReport as DeckCoherenceReportPanel } from "./deck-coherence-report";
+import type { NegotiationStrategy } from "@/services/negotiation/strategist";
+import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 
 // Dynamic imports for heavy Tier components - reduces initial bundle by ~50KB
 const Tier1Results = dynamic(
@@ -64,26 +69,6 @@ interface AgentResult {
   cost: number;
   error?: string;
   data?: unknown;
-}
-
-interface EarlyWarning {
-  id: string;
-  timestamp: string | Date;
-  agentName: string;
-  severity: "critical" | "high" | "medium";
-  category:
-    | "founder_integrity"
-    | "legal_existential"
-    | "financial_critical"
-    | "market_dead"
-    | "product_broken"
-    | "deal_structure";
-  title: string;
-  description: string;
-  evidence: string[];
-  confidence: number;
-  recommendation: "investigate" | "likely_dealbreaker" | "absolute_dealbreaker";
-  questionsToAsk?: string[];
 }
 
 interface AnalysisResult {
@@ -176,16 +161,32 @@ interface FounderResponsesData {
   freeNotes: { content: string; createdAt: string } | null;
 }
 
+// Helper: Generic fetch wrapper to reduce duplication
+async function fetchApi<T>(url: string, errorMessage: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(errorMessage);
+  try {
+    return await response.json();
+  } catch {
+    throw new Error(errorMessage);
+  }
+}
+
+// Helper: Extract deal score from analysis results
+function extractDealScore(results: Record<string, AgentResult> | null | undefined): number {
+  if (!results) return 0;
+  const scorerResult = results["synthesis-deal-scorer"];
+  if (!scorerResult?.success || !scorerResult.data) return 0;
+  const d = scorerResult.data as { overallScore?: number; score?: { value?: number } };
+  return d.overallScore ?? d.score?.value ?? 0;
+}
+
 async function fetchQuota(): Promise<{ data: QuotaData }> {
-  const response = await fetch("/api/credits");
-  if (!response.ok) throw new Error("Failed to fetch quota");
-  return response.json();
+  return fetchApi("/api/credits", "Failed to fetch quota");
 }
 
 async function fetchFounderResponses(dealId: string): Promise<{ data: FounderResponsesData }> {
-  const response = await fetch(`/api/founder-responses/${dealId}`);
-  if (!response.ok) throw new Error("Failed to fetch founder responses");
-  return response.json();
+  return fetchApi(`/api/founder-responses/${dealId}`, "Failed to fetch founder responses");
 }
 
 async function submitFounderResponses(
@@ -199,8 +200,12 @@ async function submitFounderResponses(
     body: JSON.stringify({ responses, freeNotes }),
   });
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error ?? "Failed to submit responses");
+    try {
+      const error = await response.json();
+      throw new Error(error.error ?? "Failed to submit responses");
+    } catch {
+      throw new Error("Failed to submit responses");
+    }
   }
 }
 
@@ -212,25 +217,26 @@ async function runAnalysis(dealId: string, type: string): Promise<{ data: Analys
   });
 
   if (!response.ok) {
-    const error: AnalyzeError = await response.json();
+    let error: AnalyzeError = { error: "Failed to run analysis" };
+    try {
+      error = await response.json();
+    } catch {
+      // Keep default error if JSON parsing fails
+    }
     const err = new Error(error.error ?? "Failed to run analysis") as Error & { upgradeRequired?: boolean };
     err.upgradeRequired = error.upgradeRequired;
     throw err;
   }
 
-  return response.json();
+  return await response.json();
 }
 
 async function fetchUsageStatus(): Promise<{ usage: UsageStatus }> {
-  const response = await fetch("/api/analyze");
-  if (!response.ok) throw new Error("Failed to fetch usage");
-  return response.json();
+  return fetchApi("/api/analyze", "Failed to fetch usage");
 }
 
 async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
-  const response = await fetch(`/api/deals/${dealId}/staleness`);
-  if (!response.ok) throw new Error("Failed to fetch staleness");
-  return response.json();
+  return fetchApi(`/api/deals/${dealId}/staleness`, "Failed to fetch staleness");
 }
 
 // Helper to map question category from LLM output to UI format
@@ -252,14 +258,19 @@ function mapQuestionCategory(category: string): AgentQuestion["category"] {
 }
 
 // Helper to map question priority from LLM output to UI format
+// Supports both new priorities (CRITICAL/HIGH/MEDIUM/LOW) and legacy (MUST_ASK/SHOULD_ASK/NICE_TO_HAVE)
 function mapQuestionPriority(priority: string): AgentQuestion["priority"] {
   const normalizedPriority = priority.toUpperCase();
-  if (normalizedPriority === "MUST_ASK" || normalizedPriority === "HIGH" || normalizedPriority === "CRITICAL") {
+  if (normalizedPriority === "CRITICAL") {
+    return "CRITICAL";
+  }
+  if (normalizedPriority === "MUST_ASK" || normalizedPriority === "HIGH") {
     return "HIGH";
   }
   if (normalizedPriority === "SHOULD_ASK" || normalizedPriority === "MEDIUM") {
     return "MEDIUM";
   }
+  // NICE_TO_HAVE or LOW or anything else
   return "LOW";
 }
 
@@ -271,11 +282,14 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const [showAgentDetails, setShowAgentDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCreditModal, setShowCreditModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<"results" | "founder-responses">("results");
+  const [activeTab, setActiveTab] = useState<"results" | "founder-responses" | "negotiation" | "coherence">("results");
   const [isSubmittingResponses, setIsSubmittingResponses] = useState(false);
+  const [negotiationStrategy, setNegotiationStrategy] = useState<NegotiationStrategy | null>(null);
+  const [isLoadingNegotiation, setIsLoadingNegotiation] = useState(false);
+  const isGeneratingNegotiationRef = useRef(false); // Sync ref to prevent race conditions
 
   // Fetch usage status
-  const { data: usageData } = useQuery({
+  const { data: usageData, isLoading: isUsageLoading } = useQuery({
     queryKey: queryKeys.usage.analyze(),
     queryFn: fetchUsageStatus,
   });
@@ -298,9 +312,10 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   const existingResponses = useMemo(() => {
     const responses = founderResponsesData?.data?.responses ?? [];
-    return responses.map((r) => ({
+    return responses.map((r: { questionId: string; answer: string; status?: string }) => ({
       questionId: r.questionId,
       answer: r.answer,
+      status: (r.status || (r.answer ? "answered" : "pending")) as "answered" | "not_applicable" | "refused" | "pending",
     }));
   }, [founderResponsesData]);
 
@@ -317,7 +332,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   // Determine analysis type based on subscription plan
   const subscriptionPlan: SubscriptionPlan = (usage?.subscriptionStatus as SubscriptionPlan) ?? "FREE";
-  const planConfig = PLAN_ANALYSIS_CONFIG[subscriptionPlan];
+  const planConfig = PLAN_ANALYSIS_CONFIG[subscriptionPlan] ?? PLAN_ANALYSIS_CONFIG.FREE;
   const analysisType = getAnalysisTypeForPlan(subscriptionPlan);
 
   // Check if this is an update (has previous analysis)
@@ -427,8 +442,13 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     setShowHistory(prev => !prev);
   }, []);
 
-  // Handle founder responses submission
-  const handleSubmitFounderResponses = useCallback(
+  // Memoized tab change handler (extracted from inline callback)
+  const handleTabChange = useCallback((value: string) => {
+    setActiveTab(value as "results" | "founder-responses" | "negotiation" | "coherence");
+  }, []);
+
+  // Handle founder responses - save only (without re-analyze)
+  const handleSaveFounderResponses = useCallback(
     async (responses: QuestionResponse[], freeNotes: string) => {
       setIsSubmittingResponses(true);
       try {
@@ -444,6 +464,28 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     [dealId, queryClient]
   );
 
+  // Handle founder responses submission AND re-analyze
+  const handleSubmitAndReanalyze = useCallback(
+    async (responses: QuestionResponse[], freeNotes: string) => {
+      setIsSubmittingResponses(true);
+      try {
+        // First save the responses
+        await submitFounderResponses(dealId, responses, freeNotes);
+        queryClient.invalidateQueries({ queryKey: queryKeys.founderResponses.byDeal(dealId) });
+        toast.success("Reponses enregistrees, relancement de l'analyse...");
+
+        // Then trigger a new analysis with onSettled to reset state
+        mutation.mutate(undefined, {
+          onSettled: () => setIsSubmittingResponses(false),
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Erreur lors de l'enregistrement");
+        setIsSubmittingResponses(false);
+      }
+    },
+    [dealId, queryClient, mutation]
+  );
+
   // mutation.isPending = user just clicked "Analyze" and we're waiting for response
   // currentStatus === "ANALYZING" = deal has this status in DB (could be stuck/legacy)
   // Only show progress stepper for active mutations, not stuck DB status
@@ -451,7 +493,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const isRunning = mutation.isPending || currentStatus === "ANALYZING";
 
   // Check analysis type from results - using hoisted categorizeResults function
-  const { isTier1Analysis, isTier2Analysis, isTier3Analysis, tier1Results, tier2Results, tier3Results } = useMemo(() => {
+  const { isTier1Analysis, isTier2Analysis, isTier3Analysis, tier1Results, tier2Results, tier3Results, deckCoherenceReport } = useMemo(() => {
     if (!displayedResult?.results) {
       return {
         isTier1Analysis: false,
@@ -460,10 +502,18 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         tier1Results: {},
         tier2Results: {},
         tier3Results: {},
+        deckCoherenceReport: null as DeckCoherenceReport | null,
       };
     }
 
     const categorized = categorizeResults(displayedResult.results);
+
+    // Extract deck coherence report from results
+    const coherenceResult = displayedResult.results["deck-coherence-checker"];
+    const deckCoherenceReport = coherenceResult?.success && coherenceResult.data
+      ? coherenceResult.data as DeckCoherenceReport
+      : null;
+
     return {
       isTier1Analysis: categorized.isTier1,
       isTier2Analysis: categorized.isTier2,
@@ -471,6 +521,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       tier1Results: categorized.tier1Results as Record<string, AgentResult>,
       tier2Results: categorized.tier2Results as Record<string, AgentResult>,
       tier3Results: categorized.tier3Results as Record<string, AgentResult>,
+      deckCoherenceReport,
     };
   }, [displayedResult]);
 
@@ -479,8 +530,8 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     return analyses.filter(a => a.status === "COMPLETED" && a.results);
   }, [analyses]);
 
-  // Can run analysis if user has remaining deals
-  const canRunAnalysis = usage ? usage.canAnalyze : true;
+  // Can run analysis if user has remaining deals AND usage is loaded
+  const canRunAnalysis = isUsageLoading ? false : (usage ? usage.canAnalyze : true);
 
   // Prepare timeline versions data (for multi-version display)
   const timelineVersions = useMemo(() => {
@@ -488,9 +539,10 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       .map((analysis, index) => {
         // Extract global score from synthesis-deal-scorer if available
         const scorerResult = analysis.results?.["synthesis-deal-scorer"];
-        const score = scorerResult?.success && scorerResult.data
-          ? (scorerResult.data as { score?: { value?: number } })?.score?.value ?? 0
-          : 0;
+        const scorerData = scorerResult?.success && scorerResult.data
+          ? scorerResult.data as { overallScore?: number; score?: { value?: number } }
+          : null;
+        const score = scorerData?.overallScore ?? scorerData?.score?.value ?? 0;
 
         return {
           id: analysis.id,
@@ -519,19 +571,8 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   }, [completedAnalyses, currentAnalysisId]);
 
   // Extract current and previous scores for DeltaIndicator
-  const currentScore = useMemo(() => {
-    if (!displayedResult?.results) return 0;
-    const scorerResult = displayedResult.results["synthesis-deal-scorer"];
-    if (!scorerResult?.success || !scorerResult.data) return 0;
-    return (scorerResult.data as { score?: { value?: number } })?.score?.value ?? 0;
-  }, [displayedResult]);
-
-  const previousScore = useMemo(() => {
-    if (!previousAnalysis?.results) return 0;
-    const scorerResult = previousAnalysis.results["synthesis-deal-scorer"];
-    if (!scorerResult?.success || !scorerResult.data) return 0;
-    return (scorerResult.data as { score?: { value?: number } })?.score?.value ?? 0;
-  }, [previousAnalysis]);
+  const currentScore = useMemo(() => extractDealScore(displayedResult?.results), [displayedResult]);
+  const previousScore = useMemo(() => extractDealScore(previousAnalysis?.results), [previousAnalysis]);
 
   // Extract questions from question-master agent results
   const founderQuestions = useMemo((): AgentQuestion[] => {
@@ -561,6 +602,81 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     }));
   }, [displayedResult]);
 
+  // Generate negotiation strategy on-demand when tab is selected
+  const handleGenerateNegotiation = useCallback(async () => {
+    // Use ref for synchronous check to prevent race conditions on rapid clicks
+    if (negotiationStrategy || isGeneratingNegotiationRef.current || !displayedResult?.results) return;
+
+    // Get analysis ID from current selection or first completed
+    const analysisId = selectedAnalysisId ?? completedAnalyses[0]?.id;
+    if (!analysisId) return;
+
+    // Set ref immediately (sync) to prevent double calls
+    isGeneratingNegotiationRef.current = true;
+    setIsLoadingNegotiation(true);
+
+    try {
+      const response = await fetch("/api/negotiation/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dealId,
+          analysisId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to generate negotiation strategy");
+      }
+
+      const data = await response.json();
+      setNegotiationStrategy(data.strategy);
+    } catch (error) {
+      console.error("[AnalysisPanel] Error generating negotiation strategy:", error);
+      toast.error(error instanceof Error ? error.message : "Erreur lors de la generation de la strategie");
+    } finally {
+      isGeneratingNegotiationRef.current = false;
+      setIsLoadingNegotiation(false);
+    }
+  }, [negotiationStrategy, displayedResult, dealId, selectedAnalysisId, completedAnalyses]);
+
+  // Update negotiation point status
+  const handleUpdateNegotiationPointStatus = useCallback(
+    (pointId: string, status: "to_negotiate" | "obtained" | "refused" | "compromised") => {
+      if (!negotiationStrategy) return;
+      setNegotiationStrategy({
+        ...negotiationStrategy,
+        negotiationPoints: negotiationStrategy.negotiationPoints.map(point =>
+          point.id === pointId ? { ...point, status } : point
+        ),
+      });
+    },
+    [negotiationStrategy]
+  );
+
+  // Reset negotiation strategy when selected analysis changes
+  useEffect(() => {
+    setNegotiationStrategy(null);
+  }, [selectedAnalysisId]);
+
+  // Reset active tab if current tab is no longer available
+  useEffect(() => {
+    if (activeTab === "coherence" && !deckCoherenceReport) {
+      setActiveTab("results");
+    }
+    if (activeTab === "negotiation" && !isTier3Analysis) {
+      setActiveTab("results");
+    }
+  }, [activeTab, deckCoherenceReport, isTier3Analysis]);
+
+  // Auto-generate negotiation strategy when tab is selected
+  useEffect(() => {
+    if (activeTab === "negotiation" && isTier3Analysis && !negotiationStrategy && !isLoadingNegotiation) {
+      handleGenerateNegotiation();
+    }
+  }, [activeTab, isTier3Analysis, negotiationStrategy, isLoadingNegotiation, handleGenerateNegotiation]);
+
   return (
     <div className="space-y-4">
       {/* Quota Modal for FREE users */}
@@ -579,11 +695,16 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       {timelineVersions.length > 1 && currentAnalysisId && (
         <Card>
           <CardContent className="py-2">
-            <TimelineVersions
-              analyses={timelineVersions}
-              currentAnalysisId={currentAnalysisId}
-              onSelectVersion={handleSelectAnalysis}
-            />
+            <div className="grid grid-cols-[auto_1fr] items-center">
+              <span className="text-base font-bold text-foreground">Versions</span>
+              <div className="flex justify-center">
+                <TimelineVersions
+                  analyses={timelineVersions}
+                  currentAnalysisId={currentAnalysisId}
+                  onSelectVersion={handleSelectAnalysis}
+                />
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -671,7 +792,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
       {/* Results Display with Tabs - FIRST (when available) */}
       {displayedResult && (
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "results" | "founder-responses")}>
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <Card>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
@@ -702,6 +823,17 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               {/* Tabs Navigation */}
               <TabsList className="mt-3">
                 <TabsTrigger value="results">Resultats</TabsTrigger>
+                {deckCoherenceReport && (
+                  <TabsTrigger value="coherence" className="flex items-center gap-1.5">
+                    <ShieldAlert className="h-4 w-4" />
+                    Coherence
+                    {deckCoherenceReport.summary.criticalIssues > 0 && (
+                      <Badge variant="destructive" className="ml-1 text-xs">
+                        {deckCoherenceReport.summary.criticalIssues}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                )}
                 <TabsTrigger value="founder-responses" className="flex items-center gap-1.5">
                   <MessageSquare className="h-4 w-4" />
                   Reponses Fondateur
@@ -711,6 +843,15 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                     </Badge>
                   )}
                 </TabsTrigger>
+                {isTier3Analysis && displayedResult.success && (
+                  <TabsTrigger
+                    value="negotiation"
+                    className="flex items-center gap-1.5"
+                  >
+                    <Handshake className="h-4 w-4" />
+                    Negociation
+                  </TabsTrigger>
+                )}
               </TabsList>
             </CardHeader>
 
@@ -723,6 +864,11 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                     warnings={displayedResult.earlyWarnings}
                     hasCritical={displayedResult.hasCriticalWarnings}
                   />
+                )}
+
+                {/* Tier 3 Results - Synthesis Agents (Score, Scenarios, Devil's Advocate, Memo) */}
+                {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
+                  <Tier3Results results={tier3Results} subscriptionPlan={subscriptionPlan} totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter(r => r.success).length : 0} />
                 )}
 
                 {/* Tier 2 Results - Sector Expert Analysis (PRO only) */}
@@ -741,16 +887,13 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                   <Tier1Results results={tier1Results} subscriptionPlan={subscriptionPlan} />
                 )}
 
-                {/* Tier 3 Results - Synthesis Agents (Score, Scenarios, Devil's Advocate, Memo) */}
-                {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
-                  <Tier3Results results={tier3Results} subscriptionPlan={subscriptionPlan} />
-                )}
-
                 {/* Agent Results - Collapsible for Tier 1/2/3 */}
                 {(isTier1Analysis || isTier2Analysis || isTier3Analysis) ? (
                   <div className="border rounded-lg">
                     <button
                       onClick={toggleAgentDetails}
+                      aria-expanded={showAgentDetails}
+                      aria-label="Afficher les details des agents"
                       className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
                     >
                       <span className="font-medium text-sm">
@@ -838,10 +981,54 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                   dealId={dealId}
                   questions={founderQuestions}
                   existingResponses={existingResponses}
-                  onSubmit={handleSubmitFounderResponses}
+                  onSubmitAndReanalyze={handleSubmitAndReanalyze}
+                  onSaveOnly={handleSaveFounderResponses}
                   isSubmitting={isSubmittingResponses}
+                  isReanalyzing={mutation.isPending}
+                  previousScore={previousScore}
+                  currentScore={currentScore}
                 />
               </TabsContent>
+
+              {/* Deck Coherence Report Tab Content */}
+              {deckCoherenceReport && (
+                <TabsContent value="coherence" className="mt-0">
+                  <DeckCoherenceReportPanel report={deckCoherenceReport} />
+                </TabsContent>
+              )}
+
+              {/* Negotiation Tab Content */}
+              {isTier3Analysis && displayedResult.success && (
+                <TabsContent value="negotiation" className="mt-0">
+                  {isLoadingNegotiation ? (
+                    <div className="flex flex-col items-center justify-center py-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                      <p className="mt-4 text-sm text-muted-foreground">
+                        Generation de la strategie de negociation...
+                      </p>
+                    </div>
+                  ) : negotiationStrategy ? (
+                    <NegotiationPanel
+                      strategy={negotiationStrategy}
+                      onUpdatePointStatus={handleUpdateNegotiationPointStatus}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12">
+                      <Handshake className="h-12 w-12 text-muted-foreground/50" />
+                      <p className="mt-4 text-sm text-muted-foreground">
+                        Cliquez sur l&apos;onglet pour generer la strategie de negociation
+                      </p>
+                      <Button
+                        variant="outline"
+                        className="mt-4"
+                        onClick={handleGenerateNegotiation}
+                      >
+                        Generer la strategie
+                      </Button>
+                    </div>
+                  )}
+                </TabsContent>
+              )}
             </CardContent>
           </Card>
         </Tabs>
@@ -885,6 +1072,8 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               <div className="border rounded-lg">
                 <button
                   onClick={toggleHistory}
+                  aria-expanded={showHistory}
+                  aria-label="Afficher l'historique des analyses"
                   className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
                 >
                   <span className="font-medium text-sm flex items-center gap-2">
