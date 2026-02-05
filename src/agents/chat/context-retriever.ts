@@ -29,6 +29,7 @@ export interface RetrievedAgentResult {
   findings: string[];
   score?: number;
   confidence?: number;
+  fullData?: Record<string, unknown>; // Complete agent output, not just summary
 }
 
 export interface RetrievedRedFlag {
@@ -42,6 +43,7 @@ export interface RetrievedRedFlag {
 export interface RetrievedDocument {
   name: string;
   type: string;
+  extractedText?: string | null;
   relevantExcerpt?: string;
 }
 
@@ -51,12 +53,70 @@ export interface RetrievedBenchmarks {
   metrics: Record<string, unknown>;
 }
 
+export interface RetrievedFounder {
+  name: string;
+  role: string;
+  linkedinUrl: string | null;
+  previousVentures: unknown;
+  verifiedInfo: Record<string, unknown> | null;
+}
+
+export interface RetrievedScoredFinding {
+  agentName: string;
+  metric: string;
+  category: string;
+  value: string | null;
+  unit: string;
+  normalizedValue: number | null;
+  percentile: number | null;
+  assessment: string;
+  benchmarkData: Record<string, unknown> | null;
+  confidenceLevel: string;
+  confidenceScore: number;
+  evidence: Array<Record<string, unknown>> | null;
+}
+
+export interface RetrievedDebateRecord {
+  topic: string;
+  severity: string;
+  participants: string[];
+  claims: Array<Record<string, unknown>>;
+  resolution: string | null;
+  resolvedBy: string | null;
+  winner: string | null;
+  finalValue: string | null;
+  resolutionConfidence: number | null;
+  status: string;
+}
+
+export interface RetrievedBoardResult {
+  verdict: string | null;
+  consensusLevel: string | null;
+  consensusPoints: unknown[] | null;
+  frictionPoints: unknown[] | null;
+  questionsForFounder: unknown[] | null;
+  totalRounds: number;
+  members: Array<{
+    modelName: string;
+    finalVote: string | null;
+    finalConfidence: number | null;
+    voteJustification: string | null;
+    initialAnalysis: Record<string, unknown> | null;
+  }>;
+}
+
 export interface RetrievedContext {
   facts: RetrievedFact[];
   agentResults: RetrievedAgentResult[];
   redFlags: RetrievedRedFlag[];
   benchmarks?: RetrievedBenchmarks;
   documents?: RetrievedDocument[];
+  founders?: RetrievedFounder[];
+  scoredFindings?: RetrievedScoredFinding[];
+  debateRecords?: RetrievedDebateRecord[];
+  boardResult?: RetrievedBoardResult;
+  analysisSummary?: string | null;
+  negotiationStrategy?: unknown;
   conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
@@ -177,10 +237,8 @@ export async function retrieveContext(
   message: string,
   intent: ChatIntent
 ): Promise<RetrievedContext> {
-  // Pre-fetch deal info once (to avoid redundant queries in enrichment functions)
-  // This single query covers all fields needed by enrichForComparison, enrichForSimulation,
-  // enrichForNegotiation, and enrichForGeneral
-  const [facts, redFlags, chatContext, dealInfo] = await Promise.all([
+  // Pre-fetch ALL data sources in parallel for maximum DB coverage
+  const [facts, redFlags, chatContext, dealInfo, scoredFindings, debateRecords, boardResult, latestAnalysisMeta] = await Promise.all([
     getCurrentFacts(dealId),
     getRedFlags(dealId),
     getDealChatContext(dealId),
@@ -200,6 +258,10 @@ export async function retrieveContext(
         financialsScore: true,
       },
     }),
+    getScoredFindings(dealId),
+    getDebateRecords(dealId),
+    getBoardResult(dealId),
+    getLatestAnalysisMeta(dealId),
   ]);
 
   // Convert Decimal fields to number | null
@@ -223,7 +285,7 @@ export async function retrieveContext(
   const retrievedFacts = facts.map(factToRetrieved);
   const retrievedRedFlags = redFlags.map(redFlagToRetrieved);
 
-  // Build base context
+  // Build base context with ALL available data
   const context: RetrievedContext = {
     facts: retrievedFacts,
     agentResults: chatContext?.agentSummaries
@@ -236,6 +298,11 @@ export async function retrieveContext(
         }))
       : [],
     redFlags: retrievedRedFlags,
+    scoredFindings: scoredFindings.length > 0 ? scoredFindings : undefined,
+    debateRecords: debateRecords.length > 0 ? debateRecords : undefined,
+    boardResult: boardResult ?? undefined,
+    analysisSummary: latestAnalysisMeta?.summary,
+    negotiationStrategy: latestAnalysisMeta?.negotiationStrategy,
   };
 
   // Intent-specific retrieval (pass pre-fetched deal info to avoid redundant queries)
@@ -295,7 +362,6 @@ async function enrichForClarification(
 
   // If we found specific relevant facts, prioritize them
   if (relevantFacts.length > 0) {
-    // Move relevant facts to the top
     const relevantFactKeys = new Set(relevantFacts.map((f) => f.factKey));
     context.facts = [
       ...relevantFacts.map(factToRetrieved),
@@ -303,13 +369,32 @@ async function enrichForClarification(
     ];
   }
 
-  // Get relevant documents that might provide more context
-  const documents = await getDocuments(dealId);
+  // Fetch documents, founders, and relevant agent results in parallel
+  const topic = detectTopic(message);
+  const [documents, founders, agentResults] = await Promise.all([
+    getDocuments(dealId),
+    getFounders(dealId),
+    getAgentResultsForTopic(dealId, topic),
+  ]);
+
   if (documents.length > 0) {
     context.documents = documents.map((doc) => ({
       name: doc.name,
       type: doc.type,
+      extractedText: doc.extractedText,
     }));
+  }
+
+  if (founders.length > 0) {
+    context.founders = founders;
+  }
+
+  if (agentResults.length > 0) {
+    const agentNames = new Set(agentResults.map((r) => r.agent));
+    context.agentResults = [
+      ...agentResults,
+      ...context.agentResults.filter((r) => !agentNames.has(r.agent)),
+    ];
   }
 }
 
@@ -325,15 +410,30 @@ async function enrichForComparison(
 ): Promise<void> {
   if (!deal?.sector) return;
 
-  // Fetch benchmarks
-  const benchmarks = await getBenchmarks(deal.sector, deal.stage ?? undefined);
+  // Fetch benchmarks, founders, and financial agent results in parallel
+  const [benchmarks, founders, financialResults] = await Promise.all([
+    getBenchmarks(deal.sector, deal.stage ?? undefined),
+    getFounders(dealId),
+    getAgentResultsForTopic(dealId, "financial"),
+  ]);
+
   if (benchmarks) {
     context.benchmarks = benchmarks;
   }
 
+  if (founders.length > 0) {
+    context.founders = founders;
+  }
+
+  if (financialResults.length > 0) {
+    context.agentResults = [
+      ...financialResults,
+      ...context.agentResults.filter((r) => !financialResults.some((f) => f.agent === r.agent)),
+    ];
+  }
+
   // Use pre-fetched chat context for comparable deals
   if (chatContext?.comparableDeals) {
-    // Include comparable deals in benchmarks
     if (!context.benchmarks) {
       context.benchmarks = {
         sector: deal.sector,
@@ -357,20 +457,29 @@ async function enrichForSimulation(
 ): Promise<void> {
   if (!deal) return;
 
-  // Fetch benchmarks for simulation
-  if (deal.sector) {
-    const benchmarks = await getBenchmarks(deal.sector, deal.stage ?? undefined);
-    if (benchmarks) {
-      context.benchmarks = benchmarks;
-    }
+  // Fetch benchmarks, scenario results, financial results, and founders in parallel
+  const [benchmarks, scenarioResults, financialResults, founders] = await Promise.all([
+    deal.sector ? getBenchmarks(deal.sector, deal.stage ?? undefined) : null,
+    getAgentResultsForTopic(dealId, "scenario"),
+    getAgentResultsForTopic(dealId, "financial"),
+    getFounders(dealId),
+  ]);
+
+  if (benchmarks) {
+    context.benchmarks = benchmarks;
   }
 
-  // Fetch scenario modeler results if available
-  const scenarioResults = await getAgentResultsForTopic(dealId, "scenario");
-  if (scenarioResults.length > 0) {
+  if (founders.length > 0) {
+    context.founders = founders;
+  }
+
+  // Merge scenario + financial results
+  const mergedResults = [...scenarioResults, ...financialResults];
+  if (mergedResults.length > 0) {
+    const mergedNames = new Set(mergedResults.map((r) => r.agent));
     context.agentResults = [
-      ...scenarioResults,
-      ...context.agentResults.filter((r) => r.agent !== "scenario-modeler"),
+      ...mergedResults,
+      ...context.agentResults.filter((r) => !mergedNames.has(r.agent)),
     ];
   }
 }
@@ -387,8 +496,11 @@ async function enrichForDeepDive(
   // Detect topic from message
   const topic = detectTopic(message);
 
-  // Get relevant agent results for the topic
-  const topicAgentResults = await getAgentResultsForTopic(dealId, topic);
+  // Get relevant agent results and documents in parallel
+  const [topicAgentResults, documents] = await Promise.all([
+    getAgentResultsForTopic(dealId, topic),
+    getDocumentsForTopic(dealId, topic),
+  ]);
 
   if (topicAgentResults.length > 0) {
     // Replace or merge with existing agent results
@@ -399,25 +511,45 @@ async function enrichForDeepDive(
     ];
   }
 
-  // Get documents relevant to the topic
-  const documents = await getDocumentsForTopic(dealId, topic);
   if (documents.length > 0) {
     context.documents = documents;
+  }
+
+  // For team/founder topics, fetch enriched founder data (LinkedIn profiles)
+  const teamTopics = new Set(["team", "founder", "founders", "experience"]);
+  if (teamTopics.has(topic) || message.toLowerCase().match(/fondateur|founder|ceo|cto|equipe|team/)) {
+    const founders = await getFounders(dealId);
+    if (founders.length > 0) {
+      context.founders = founders;
+    }
   }
 }
 
 /**
  * Enrich context for follow-up intents.
- * Focuses on previous conversation context.
+ * Focuses on previous conversation context + all data for reference.
  */
 async function enrichForFollowUp(
   context: RetrievedContext,
   dealId: string
 ): Promise<void> {
-  // Get recent conversation history
-  const recentConversation = await getRecentConversationHistory(dealId);
+  // Get conversation history, founders, and all agent results in parallel
+  const [recentConversation, founders, allResults] = await Promise.all([
+    getRecentConversationHistory(dealId),
+    getFounders(dealId),
+    getAgentResultsForTopic(dealId, "overall"),
+  ]);
+
   if (recentConversation.length > 0) {
     context.conversationHistory = recentConversation;
+  }
+
+  if (founders.length > 0) {
+    context.founders = founders;
+  }
+
+  if (allResults.length > 0) {
+    context.agentResults = allResults;
   }
 }
 
@@ -456,7 +588,6 @@ async function enrichForNegotiation(
 
   // Add financial data for negotiation context (using pre-fetched deal info)
   if (deal) {
-    // Ensure benchmarks object exists
     if (!context.benchmarks) {
       context.benchmarks = {
         sector: deal.sector ?? "unknown",
@@ -471,6 +602,20 @@ async function enrichForNegotiation(
       growthRate: deal.growthRate,
     };
   }
+
+  // Get founders and all agent results for negotiation context
+  const [founders, allResults] = await Promise.all([
+    getFounders(dealId),
+    getAgentResultsForTopic(dealId, "overall"),
+  ]);
+
+  if (founders.length > 0) {
+    context.founders = founders;
+  }
+
+  if (allResults.length > 0) {
+    context.agentResults = allResults;
+  }
 }
 
 /**
@@ -482,21 +627,33 @@ async function enrichForGeneral(
   dealId: string,
   deal: DealInfo | null
 ): Promise<void> {
-  // Add benchmarks if available (using pre-fetched deal info)
-  if (deal?.sector) {
-    const benchmarks = await getBenchmarks(deal.sector, deal.stage ?? undefined);
-    if (benchmarks) {
-      context.benchmarks = benchmarks;
-    }
+  // Fetch benchmarks, documents, founders, and ALL agent results in parallel
+  const [benchmarks, documents, founders, allAgentResults] = await Promise.all([
+    deal?.sector ? getBenchmarks(deal.sector, deal.stage ?? undefined) : null,
+    getDocuments(dealId),
+    getFounders(dealId),
+    getAgentResultsForTopic(dealId, "overall"),
+  ]);
+
+  if (benchmarks) {
+    context.benchmarks = benchmarks;
   }
 
-  // Get document list
-  const documents = await getDocuments(dealId);
   if (documents.length > 0) {
     context.documents = documents.map((doc) => ({
       name: doc.name,
       type: doc.type,
+      extractedText: doc.extractedText,
     }));
+  }
+
+  if (founders.length > 0) {
+    context.founders = founders;
+  }
+
+  // Include ALL agent results for general questions
+  if (allAgentResults.length > 0) {
+    context.agentResults = allAgentResults;
   }
 }
 
@@ -684,19 +841,43 @@ async function getBenchmarks(
 }
 
 /**
- * Get documents for a deal.
+ * Get founders for a deal (including enriched LinkedIn data).
+ */
+async function getFounders(dealId: string): Promise<RetrievedFounder[]> {
+  const founders = await prisma.founder.findMany({
+    where: { dealId },
+    select: {
+      name: true,
+      role: true,
+      linkedinUrl: true,
+      previousVentures: true,
+      verifiedInfo: true,
+    },
+  });
+
+  return founders.map((f) => ({
+    name: f.name,
+    role: f.role,
+    linkedinUrl: f.linkedinUrl,
+    previousVentures: f.previousVentures,
+    verifiedInfo: f.verifiedInfo as Record<string, unknown> | null,
+  }));
+}
+
+/**
+ * Get documents for a deal (including extracted text for full context).
  */
 async function getDocuments(
   dealId: string
-): Promise<Array<{ id: string; name: string; type: string }>> {
+): Promise<Array<{ id: string; name: string; type: string; extractedText: string | null }>> {
   return prisma.document.findMany({
     where: { dealId },
-    select: { id: true, name: true, type: true },
+    select: { id: true, name: true, type: true, extractedText: true },
   });
 }
 
 /**
- * Get documents relevant to a specific topic.
+ * Get documents relevant to a specific topic (including extracted text).
  */
 async function getDocumentsForTopic(
   dealId: string,
@@ -722,8 +903,8 @@ async function getDocumentsForTopic(
   const relevantTypes = topicToDocTypes[topic.toLowerCase()] ?? [];
 
   if (relevantTypes.length === 0) {
-    // Return all documents
-    return documents.map((doc) => ({ name: doc.name, type: doc.type }));
+    // Return all documents with extractedText
+    return documents.map((doc) => ({ name: doc.name, type: doc.type, extractedText: doc.extractedText }));
   }
 
   // Filter by relevant types
@@ -731,7 +912,7 @@ async function getDocumentsForTopic(
     relevantTypes.includes(doc.type)
   );
 
-  return relevantDocs.map((doc) => ({ name: doc.name, type: doc.type }));
+  return relevantDocs.map((doc) => ({ name: doc.name, type: doc.type, extractedText: doc.extractedText }));
 }
 
 /**
@@ -779,6 +960,134 @@ async function getLatestAnalysis(
     orderBy: { completedAt: "desc" },
     select: { id: true, mode: true, results: true },
   });
+}
+
+/**
+ * Get latest analysis metadata (summary + negotiation strategy).
+ */
+async function getLatestAnalysisMeta(
+  dealId: string
+): Promise<{ summary: string | null; negotiationStrategy: unknown } | null> {
+  const analysis = await prisma.analysis.findFirst({
+    where: { dealId, status: "COMPLETED" },
+    orderBy: { completedAt: "desc" },
+    select: { summary: true, negotiationStrategy: true },
+  });
+  return analysis;
+}
+
+/**
+ * Get scored findings for a deal (quantified metrics with benchmarks).
+ */
+async function getScoredFindings(
+  dealId: string
+): Promise<RetrievedScoredFinding[]> {
+  // Get the latest analysis ID first
+  const analysis = await prisma.analysis.findFirst({
+    where: { dealId, status: "COMPLETED" },
+    orderBy: { completedAt: "desc" },
+    select: { id: true },
+  });
+  if (!analysis) return [];
+
+  const findings = await prisma.scoredFinding.findMany({
+    where: { analysisId: analysis.id },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return findings.map((f) => ({
+    agentName: f.agentName,
+    metric: f.metric,
+    category: f.category,
+    value: f.value,
+    unit: f.unit,
+    normalizedValue: f.normalizedValue,
+    percentile: f.percentile,
+    assessment: f.assessment,
+    benchmarkData: f.benchmarkData as Record<string, unknown> | null,
+    confidenceLevel: f.confidenceLevel,
+    confidenceScore: f.confidenceScore,
+    evidence: f.evidence as Array<Record<string, unknown>> | null,
+  }));
+}
+
+/**
+ * Get debate records for a deal (contradiction resolutions).
+ */
+async function getDebateRecords(
+  dealId: string
+): Promise<RetrievedDebateRecord[]> {
+  const analysis = await prisma.analysis.findFirst({
+    where: { dealId, status: "COMPLETED" },
+    orderBy: { completedAt: "desc" },
+    select: { id: true },
+  });
+  if (!analysis) return [];
+
+  const records = await prisma.debateRecord.findMany({
+    where: { analysisId: analysis.id },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return records.map((r) => ({
+    topic: r.topic,
+    severity: r.severity,
+    participants: r.participants,
+    claims: r.claims as Array<Record<string, unknown>>,
+    resolution: r.resolution,
+    resolvedBy: r.resolvedBy,
+    winner: r.winner,
+    finalValue: r.finalValue,
+    resolutionConfidence: r.resolutionConfidence,
+    status: r.status,
+  }));
+}
+
+/**
+ * Get AI Board results for a deal (multi-LLM deliberation).
+ */
+async function getBoardResult(
+  dealId: string
+): Promise<RetrievedBoardResult | null> {
+  const session = await prisma.aIBoardSession.findFirst({
+    where: { dealId, status: "COMPLETED" },
+    orderBy: { completedAt: "desc" },
+    select: {
+      verdict: true,
+      consensusLevel: true,
+      consensusPoints: true,
+      frictionPoints: true,
+      questionsForFounder: true,
+      totalRounds: true,
+      members: {
+        select: {
+          modelName: true,
+          finalVote: true,
+          finalConfidence: true,
+          voteJustification: true,
+          initialAnalysis: true,
+        },
+      },
+    },
+  });
+
+  if (!session) return null;
+
+  return {
+    verdict: session.verdict,
+    consensusLevel: session.consensusLevel,
+    consensusPoints: session.consensusPoints as unknown[] | null,
+    frictionPoints: session.frictionPoints as unknown[] | null,
+    questionsForFounder: session.questionsForFounder as unknown[] | null,
+    totalRounds: session.totalRounds,
+    members: session.members.map((m) => ({
+      modelName: m.modelName,
+      finalVote: m.finalVote,
+      finalConfidence: m.finalConfidence,
+      voteJustification: m.voteJustification,
+      initialAnalysis: m.initialAnalysis as Record<string, unknown> | null,
+    })),
+  };
 }
 
 // ============================================================================
@@ -1039,13 +1348,13 @@ function extractSingleAgentResult(
       .filter((c): c is string => c !== null);
   }
 
-  // Skip if no meaningful content
-  if (!summary && findings.length === 0) return null;
+  // Skip if no meaningful content at all
+  if (!summary && findings.length === 0 && Object.keys(data).length === 0) return null;
 
   return {
     agent: agentName,
     summary,
-    findings: findings.slice(0, 10), // Limit findings
+    findings: findings.slice(0, 10),
     score: typeof data.score === "number" ? data.score : undefined,
     confidence:
       typeof data.confidenceLevel === "number"
@@ -1053,5 +1362,6 @@ function extractSingleAgentResult(
         : typeof data.confidence === "number"
         ? data.confidence
         : undefined,
+    fullData: data, // Pass the COMPLETE agent output
   };
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MessageSquare, Columns, Clock, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -70,30 +69,35 @@ export function DebateViewer({
   }, [viewMode, memberAnalyses, debateResponses]);
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Historique du Debat</CardTitle>
-          <div className="flex gap-1 rounded-lg bg-muted p-1">
-            {VIEW_OPTIONS.map(({ mode, label, icon: Icon }) => (
-              <Button
-                key={mode}
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "h-8 px-3",
-                  viewMode === mode && "bg-background shadow-sm"
-                )}
-                onClick={() => setViewMode(mode)}
-              >
-                <Icon className="mr-1.5 h-4 w-4" />
-                {label}
-              </Button>
-            ))}
-          </div>
+    <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 overflow-hidden">
+      {/* Header + Tab bar */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+        <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider">
+          Historique du Debat
+        </h3>
+        <div className="flex gap-0.5 rounded-lg bg-slate-800/60 p-0.5">
+          {VIEW_OPTIONS.map(({ mode, label, icon: Icon }) => (
+            <button
+              key={mode}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                viewMode === mode
+                  ? "bg-slate-700 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-300"
+              )}
+              onClick={() => setViewMode(mode)}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
         </div>
-      </CardHeader>
-      <CardContent>{renderView()}</CardContent>
-    </Card>
+      </div>
+
+      {/* View content */}
+      <div className="p-6">
+        {renderView()}
+      </div>
+    </div>
   );
 }

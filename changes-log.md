@@ -2,6 +2,518 @@
 
 ---
 
+## 2026-02-06 07:30 — AI Board: Retry + logging echecs debat et vote
+
+### Fichiers modifies
+- `src/agents/board/board-orchestrator.ts` — Retry 1x + error logging + SSE event pour echecs debate et vote
+
+### Probleme
+Sonnet a crash pendant les rounds de debat mais l'echec etait SILENCIEUX: `Promise.allSettled` + `.filter(fulfilled)` supprimait les rejections sans log ni event SSE. Le frontend affichait "En attente..." sans explication.
+
+### Fix
+- **Debate** (`runSingleDebateRound`): retry 1x avant abandon, log `console.error`, event SSE `member_analysis_failed` avec detail "Debat round N: [erreur]"
+- **Vote** (`runFinalVotes`): meme pattern retry 1x + log + event SSE "Vote: [erreur]"
+- Les echecs ne sont plus silencieux — le frontend recoit l'event et peut afficher l'etat d'erreur
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 07:15 — AI Board: Fix lisibilite cartes synthese
+
+### Fichiers modifies
+- `src/components/deals/board/key-points-section.tsx` — Fond opaque `bg-slate-900/90` au lieu de `bg-gradient-to-br from-slate-950 to-[color]-950/20`
+
+### Probleme
+Les cartes Consensus/Friction/Questions avaient un gradient vers une couleur a 20% d'opacite (`to-emerald-950/20`). Le fond clair de la page transparaissait → texte `text-slate-300` illisible en bas des cartes.
+
+### Fix
+Remplacement des 3 gradients semi-transparents par un fond opaque uniforme `bg-slate-900/90`. Lisibilite constante de haut en bas.
+
+---
+
+## 2026-02-06 07:00 — AI Board: Deduplication LLM des points de synthese
+
+### Fichiers modifies
+- `src/agents/board/board-orchestrator.ts` — `synthesizeKeyPoints()` appel GPT-4o Mini pour deduplication semantique des consensus/friction/questions
+
+### Probleme
+4 LLMs expriment la meme idee differemment → `Set` (exact match) ne deduplique pas:
+- "Le churn 16.6% est un dealbreaker critique" / "Le taux de churn reel est un dealbreaker majeur" / "Churn reel 16.6% comme dealbreaker (unanimite)" = 4 variantes du meme point
+- Pareil pour terms financiers (3x), unit economics (3x), equipe (3x)
+
+### Fix
+- `compileVerdict()` devenu `async`
+- Nouvelle methode `synthesizeKeyPoints()`: appel GPT-4o Mini (~$0.002) avec prompt de deduplication semantique
+- Modele: SONNET (Claude 3.5 Sonnet) — zero risque sur la qualite de synthese, cout negligeable (~$0.01) sur une session a $2+
+- Prompt: "fusionne les doublons semantiques, garde la version la plus precise, AUCUNE limite de nombre"
+- Temperature 0.1 pour du quasi-deterministe
+- AUCUN cap artificiel — tous les points uniques sont conserves
+- Fallback gracieux: si l'appel LLM echoue → Set-based dedup classique
+- `collectRawQuestions()` extrait les questions brutes (separation of concerns)
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 06:30 — AI Board: Digestibilite vue Chat (collapse/expand + severity badges)
+
+### Fichiers modifies
+- `src/components/deals/board/views/chat-view.tsx` — Refonte complete: AnalysisBubbleContent (3 args + 2 concerns preview, severity badges colores), DebateBubbleContent (250 chars preview), suppression formatAnalysis() string plate
+
+### Changements
+- **Avant**: `formatAnalysis()` convertissait tout en string plate avec `[strong]`/`[critical]` en texte. ChatBubble affichait tout dans un `<p>` avec `whitespace-pre-wrap` = mur de texte (5 args + 13 concerns d'un coup)
+- **Apres**: Contenu structure avec composants dedies:
+  - `AnalysisBubbleContent`: preview 3 args + 2 concerns, badges colores par severity (critical=rouge, high=orange, strong=vert, moderate=bleu, medium=gris), "Voir tout (N args, N concerns)" toggle
+  - `DebateBubbleContent`: preview 250 chars, "Lire la suite" toggle
+  - `severityColor` mapping pour un rendu visuel immediat de la gravite
+- Data brute (analysis/response) passee au composant au lieu de string pre-formatee
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 06:00 — AI Board: Digestibilite vues Colonnes + Timeline
+
+### Fichiers modifies
+- `src/components/deals/board/views/columns-view.tsx` — Collapse/expand pattern: AnalysisCard (3 args + 2 concerns preview, "Voir tout" toggle), ResponseCard (180 chars preview, "Lire la suite" toggle)
+- `src/components/deals/board/views/timeline-view.tsx` — Refacto data (raw analysis/response au lieu de string pre-tronquee), TimelineMemberCard expandable, cartes plus larges (w-80)
+
+### Probleme
+- Colonnes: contenu soit trop tronque (truncate CSS), soit trop verbeux (wall of text)
+- Timeline: `justification.slice(0, 100) + "..."` hardcode, analyses initiales = juste "N arguments, N concerns" sans contenu
+
+### Fix
+- Pattern collapse/expand coherent sur les 2 vues
+- Preview compact par defaut, "Lire la suite" pour voir le texte complet
+- ChevronDown rotate-180 quand expand
+- Analyses initiales: premier argument en preview, expand montre tout (arguments + concerns)
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 05:30 — AI Board: Fix vote cards missing (PROD+TEST model keys)
+
+### Fichiers modifies
+- `src/components/deals/board/ai-board-panel.tsx` — `modelKeyToConfigId` inclut BOARD_MEMBERS_PROD + BOARD_MEMBERS_TEST
+
+### Bug
+Vote cards ne s'affichaient pas apres persistence fix. `modelKeyToConfigId` ne contenait que les model keys PROD (SONNET, GPT4O, etc.) mais la session test utilisait les model keys TEST (HAIKU, GPT4O_MINI, etc.). Le mapping vers les config IDs (claude, gpt, gemini, grok) echouait silencieusement.
+
+### Fix
+`[...BOARD_MEMBERS_PROD, ...BOARD_MEMBERS_TEST].reduce(...)` pour couvrir les 2 environnements.
+
+---
+
+## 2026-02-06 05:15 — AI Board: Persistence + Demarcation phases
+
+### Fichiers modifies
+- `src/app/api/board/route.ts` — GET accepte `?dealId=xxx`, retourne `latestSession` (derniere session COMPLETED)
+- `src/components/deals/board/ai-board-panel.tsx` — Charge session sauvegardee au montage, hydrate memberAnalyses/debateResponses/result depuis DB, separateurs de phase (SectionDivider)
+
+### Persistence (BUG FIX)
+**Avant**: `existingSession = null` hardcode. Sur refresh, tout perdu (events SSE + result en client state seulement).
+**Apres**: `useQuery` fetch `GET /api/board?dealId=xxx` qui retourne credits + derniere session. `hydrateSavedSession()` mappe les donnees DB (AIBoardMember.initialAnalysis, AIBoardRound.responses, votes) vers les formats du composant. Live SSE override saved quand session en cours.
+
+### Demarcation des phases (UX)
+Ajout de `SectionDivider` entre les 3 phases:
+1. **Votes individuels** (icone Vote)
+2. **Synthese** (icone Lightbulb) — consensus, friction, questions
+3. **Debat — N round(s)** (icone MessageSquareMore) — historique
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 04:30 — REFONTE COMPLETE AI Board (Backend + Frontend)
+
+### Fichiers modifies
+
+**Backend (6 fichiers)**:
+- `src/services/openrouter/client.ts` — Remplace MISTRAL_LARGE_2/MISTRAL_SMALL par GROK_4/GROK_41_FAST
+- `src/agents/board/types.ts` — Grok remplace Mistral (id, modelKey, name, color, provider "xai"), event `member_analysis_failed`
+- `src/agents/board/context-compressor.ts` — **NOUVEAU** Smart context compression (450K→60-80K tokens)
+- `src/agents/board/board-member.ts` — Utilise compressBoardContext() + buildDealSummary(), supprime formatInputForLLM()
+- `src/agents/board/board-orchestrator.ts` — MIN_MEMBERS=2, fallback gracieux, event member_analysis_failed
+
+**Frontend (11 fichiers)**:
+- `src/components/deals/board/ai-board-panel.tsx` — Refonte dark theme, grid pattern, amber glow
+- `src/components/deals/board/board-progress.tsx` — ProviderIcon SVGs, status failed, emerald/amber phases
+- `src/components/deals/board/vote-board.tsx` — ProviderIcon, SVG arc gauge, VerdictBanner glow, failedMembers
+- `src/components/deals/board/key-points-section.tsx` — Dark theme, gradient borders, colored headers
+- `src/components/deals/board/debate-viewer.tsx` — Dark theme tab bar
+- `src/components/deals/board/views/chat-view.tsx` — ProviderIcon, dark chat bubbles
+- `src/components/deals/board/views/columns-view.tsx` — Dark theme cards
+- `src/components/deals/board/views/timeline-view.tsx` — Dark scroll buttons, useCallback
+- `src/components/deals/board/views/arena-view.tsx` — Dark connection colors, dark detail panel
+- `src/components/deals/board/board-teaser.tsx` — Refonte dark premium upsell
+
+### 3 bugs critiques fixes
+
+1. **Token overflow (450K→60-80K)**: `context-compressor.ts` prioritise Tier 3 syntheses > Tier 1 raw JSON
+2. **Mistral→Grok**: xAI (Grok 4 PROD / Grok 4.1 Fast TEST) remplace Mistral partout
+3. **Fallback gracieux**: Board fonctionne avec 2/4 membres minimum, event SSE pour membres en echec
+
+### Modeles PROD (~$2.17/session)
+- Claude 3.5 Sonnet (200K) | GPT-4o (128K) | Gemini 2.5 Pro (1M) | Grok 4 (256K)
+
+### Modeles TEST (~$0.15/session)
+- Claude Haiku 4.5 (200K) | GPT-4o Mini (128K) | Gemini 2.5 Flash (1M) | Grok 4.1 Fast (2M)
+
+### Validation
+- `npx tsc --noEmit` : 0 errors (backend + frontend)
+
+---
+
+## 2026-02-06 02:15 — CRITICAL FIX: processAgentResult écrasait les données LinkedIn des fondateurs
+
+### Fichiers modifiés
+- `src/agents/orchestrator/persistence.ts` — Fix MERGE au lieu d'OVERWRITE pour verifiedInfo
+
+### Bug
+`processAgentResult` pour `team-investigator` faisait un remplacement complet de `Founder.verifiedInfo` avec uniquement les données d'analyse de l'agent (scores, strengths, concerns, etc.). Les données LinkedIn enrichies via RapidAPI (experiences, education, skills, headline, summary, etc.) étaient **DÉTRUITES** à chaque analyse.
+
+### Flux avant fix
+1. Enrich via RapidAPI → `verifiedInfo` = profil LinkedIn COMPLET ✅
+2. Team-investigator lit `verifiedInfo` → produit son analyse ✅
+3. `processAgentResult` → `verifiedInfo` = **SEULEMENT** scores/strengths/concerns ❌ (LinkedIn PERDU)
+
+### Fix
+- `existingFounders` sélectionne maintenant `verifiedInfo` (en plus de `id` et `name`)
+- Le `verifiedInfo` existant est **spreadé** (`...existingVerifiedInfo`) AVANT les données d'analyse
+- Résultat: `verifiedInfo` contient LinkedIn (experiences, education, etc.) + analyse (scores, etc.)
+
+---
+
+## 2026-02-06 02:00 — Chat: Intégralité BDD (ScoredFindings, DebateRecords, AI Board, Documents, Négociation)
+
+### Fichiers modifiés
+- `src/agents/chat/context-retriever.ts` — 6 nouveaux types + 4 fonctions de récupération
+- `src/agents/chat/deal-chat-agent.ts` — 6 nouvelles sections dans le prompt
+- `src/services/chat-context/index.ts` — Documents avec extractedText + analysis metadata
+
+### Description
+Le chat récupère maintenant l'INTÉGRALITÉ des données de la base:
+
+**Nouveaux types**: `RetrievedScoredFinding`, `RetrievedDebateRecord`, `RetrievedBoardResult`
+
+**Nouvelles sources de données**:
+1. **ScoredFinding** — Métriques quantifiées avec benchmarks P25/Median/P75, percentiles, confidence
+2. **DebateRecord** — Contradictions détectées entre agents, claims, résolutions
+3. **AI Board** — Verdicts multi-LLM, votes individuels avec justification, consensus/friction
+4. **Document.extractedText** — Contenu intégral des documents (pitch deck, etc.)
+5. **Analysis.summary** — Résumé global de l'analyse (tous les intents)
+6. **Analysis.negotiationStrategy** — Stratégie de négociation (tous les intents, pas juste NEGOTIATION)
+
+**Fonctions ajoutées**: `getScoredFindings()`, `getDebateRecords()`, `getBoardResult()`, `getLatestAnalysisMeta()`
+
+**Prompt LLM**: Toutes les nouvelles sections sont rendues dans `buildRetrievedContextPrompt()` avec formatage structuré.
+
+### Prochaines étapes
+- Test en situation réelle avec un deal analysé
+- Monitoring de la taille du contexte (extractedText peut être volumineux)
+
+---
+
+## 2026-02-06 01:30 — REFONTE: Chat accès 100% données DB (résultats complets + fondateurs)
+
+### Fichiers modifiés
+- `src/agents/chat/context-retriever.ts` — Refonte complète de la récupération
+- `src/agents/chat/deal-chat-agent.ts` — Formatage données complètes dans le prompt
+
+### Problème
+Le chat ne voyait que des résumés tronqués des agents (summary + max 10 findings). 90% des données étaient jetées par `extractSingleAgentResult`. Les fondateurs et leur `verifiedInfo` (LinkedIn) n'étaient jamais récupérés.
+
+### Fix
+- `RetrievedAgentResult.fullData`: nouveau champ contenant le JSON COMPLET de chaque agent
+- `extractSingleAgentResult`: retourne maintenant `data` dans `fullData`
+- `buildRetrievedContextPrompt`: injecte le JSON brut des agents (pas juste summary)
+- TOUS les intents (CLARIFICATION, COMPARISON, SIMULATION, DEEP_DIVE, FOLLOW_UP, NEGOTIATION, GENERAL) chargent maintenant: résultats complets, fondateurs avec LinkedIn, facts, red flags, benchmarks, documents
+- `getFounders()` appelé systématiquement pour tous les intents
+
+---
+
+## 2026-02-06 01:00 — Fix: Chat ne récupérait pas les données LinkedIn des fondateurs
+
+### Fichiers modifiés
+- `src/agents/chat/context-retriever.ts`
+- `src/agents/chat/deal-chat-agent.ts`
+
+### Description
+Le context-retriever ne récupérait jamais les données de la table `Founder` (dont `verifiedInfo` contenant les profils LinkedIn enrichis). Ajout d'un type `RetrievedFounder`, d'une fonction `getFounders()`, et de la détection automatique des questions sur l'équipe/fondateurs dans `enrichForDeepDive()`. Le prompt du chat inclut maintenant une section complète avec les données LinkedIn vérifiées de chaque fondateur.
+
+---
+
+## 2026-02-06 00:45 — Cleanup dead code selectModel() + intégration Chat UI
+
+### Fichiers modifiés
+- `src/services/openrouter/router.ts` — Suppression code mort dans `selectModel()`
+- `src/components/chat/chat-wrapper.tsx` — Nouveau wrapper client pour le chat
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Intégration du chat flottant
+- `src/components/chat/deal-chat-panel.tsx` — Bouton "Analyste IA" avec Sparkles + prefetch au hover
+- `src/app/api/chat/[dealId]/route.ts` — Fix Zod `.nullish()` + logs debug
+
+---
+
+## 2026-02-06 00:00 — Auto-détection analyse terminée sans refresh + timeline auto-update
+
+### Problème
+1. Quand le polling s'arrête, l'utilisateur doit refresh pour voir les résultats
+2. La timeline "Versions" (V1, V2, V3...) ne se met pas à jour après une analyse — elle vient du SSR
+
+### Fix
+- Query `analyses.latest` **toujours active** : polling 3s quand actif, refetch au focus fenêtre sinon
+- Passive detection : COMPLETED détecté hors polling → résultats chargés auto
+- `router.refresh()` dans `loadCompletedAnalysis` et sur FAILED → force re-render Server Component (timeline, scores, statut deal)
+- `lastProcessedAnalysisIdRef` empêche de traiter la même analyse deux fois
+
+### Fichiers modifiés
+- `src/components/deals/analysis-panel.tsx` — Query always-on, `router.refresh()`, passive detection
+
+---
+
+## 2026-02-05 23:45 — Fix crash MarketIntelCard: redFlags undefined
+
+### Problème
+"Cannot read properties of undefined (reading 'length')" dans `MarketIntelCard` au chargement des résultats d'analyse.
+
+### Cause
+`const redFlags = data?.redFlags;` puis `{redFlags.length > 0 && ...}` — si l'agent `market-intelligence` ne retourne pas de `redFlags`, `.length` crashe.
+
+### Fix
+Ajout du guard null : `{redFlags && redFlags.length > 0 && ...}`
+
+### Fichiers modifiés
+- `src/components/deals/tier1-results.tsx` — Guard null sur `redFlags.length` dans `MarketIntelCard`
+
+---
+
+## 2026-02-05 23:30 — Fix faux "analyse échouée" sur refresh + race condition polling
+
+### Problème 1 : Toast "L'analyse a échoué" alors qu'elle tourne normalement
+- **Cause** : L'endpoint `/api/deals/[dealId]/analyses` auto-expirait les analyses RUNNING créées il y a plus de 10 minutes. Les analyses complètes (20+ agents) prennent souvent 10-20 min.
+- **Fix** : Timeout augmenté de 10 min → 30 min dans les 3 endroits :
+  - `src/app/api/deals/[dealId]/analyses/route.ts` (endpoint polling)
+  - `src/app/api/analyze/route.ts` (détection stuck au lancement)
+  - `src/components/deals/analysis-panel.tsx` (polling frontend timeout)
+
+### Problème 2 : Progress UI ne s'affiche pas après lancement d'une analyse
+- **Cause** : Race condition — le polling démarre avant que l'orchestrateur crée le record Analysis en DB. Le poll récupère l'ancienne analyse COMPLETED et arrête le polling immédiatement.
+- **Fix** : Ajout `mutationTimestampRef` — le polling ignore les analyses créées avant le timestamp de la mutation (tolérance 5s). Ne s'applique pas au polling SSR.
+
+### Fichiers modifiés
+- `src/components/deals/analysis-panel.tsx` — `mutationTimestampRef`, garde anti-race-condition, timeout 30min
+- `src/app/api/deals/[dealId]/analyses/route.ts` — timeout 10min → 30min
+- `src/app/api/analyze/route.ts` — timeout 10min → 30min
+
+---
+
+## 2026-02-05 22:30 — Fix score global incohérent + sous-scores manquants + nettoyage code mort
+
+### Problèmes résolus
+
+**1. Score V3=42 mais Score Global=41 sur la page deal**
+- Cause: `overallScore` stocké comme float (ex: 41.6) sans `Math.round()`, tronqué en Int par PostgreSQL
+- Fix: Ajout `Math.round()` dans `synthesis-deal-scorer.ts:transformResponse()` et dans `persistence.ts`
+
+**2. Sous-scores (Equipe, Marché, Produit, Financiers) affichent "-"**
+- Cause: `synthesis-deal-scorer` ne persistait que `globalScore`, pas les dimension scores
+- L'ancien agent `deal-scorer` (code mort) écrivait tous les scores mais ne tourne plus
+- Fix: Extraction des `dimensionScores` du synthesis-deal-scorer et mapping vers `teamScore`, `marketScore`, `productScore`, `financialsScore` avec matching case-insensitive
+
+**3. Code mort supprimé**
+- Case `deal-scorer` supprimé de `persistence.ts` (agent remplacé par `synthesis-deal-scorer`)
+- Import `ScoringResult` supprimé de `persistence.ts` et `summary.ts`
+- Référence `deal-scorer` dans `generateSummary()` remplacée par `synthesis-deal-scorer`
+
+### Fichiers modifiés
+- `src/agents/orchestrator/persistence.ts` — Suppression case dead code, ajout Math.round + sous-scores
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Ajout Math.round() sur overallScore
+- `src/agents/orchestrator/summary.ts` — Nettoyage référence deal-scorer
+
+### Vérification
+- TypeScript compilation OK (0 erreurs)
+
+---
+
+## 2026-02-05 21:30 — Fix analyses non affichees + retry agents + extractFirstJSON robuste
+
+**Fichiers modifies:**
+- `src/services/openrouter/router.ts` — `extractFirstJSON`: nouveau fallback pour code blocks non fermes (` ```json ` sans closing ` ``` `). Strip le header et tente l'extraction JSON quand le regex standard echoue.
+- `src/agents/orchestrator/index.ts` — Retry automatique (1 retry) pour les agents Tier 3 (pre-synthese: contradiction-detector, scenario-modeler, devils-advocate) et les agents de synthese finale (synthesis-deal-scorer, memo-generator). Si un agent echoue, il est relance une fois avant d'etre marque FAILED.
+- `src/components/deals/analysis-panel.tsx` — Polling FAILED branch: invalide les queries (deals.detail, usage.analyze) pour rafraichir l'UI apres echec. Toast plus explicite "Relancez pour reessayer".
+- `src/app/api/deals/[dealId]/analyses/route.ts` — Pas de changement fonctionnel (revert d'un changement temporaire).
+
+**Pourquoi:**
+L'analyse completait 19/21 agents (contradiction-detector echouait sur un JSON tronque dans un code block non ferme). L'orchestrateur marquait FAILED. L'UI ne montre que les analyses COMPLETED, donc l'utilisateur ne voyait rien. 3 fixes: (1) extractFirstJSON gere les code blocks tronques, (2) retry auto des agents echoues, (3) invalidation queries sur FAILED pour rafraichir l'UI.
+
+---
+
+## 2026-02-05 19:30 — Timeouts RapidAPI LinkedIn augmentes
+
+**Fichiers modifies:**
+- `src/services/context-engine/connectors/rapidapi-linkedin.ts` — Timeout fetch profil: 15s → 60s. Timeout Brave search: 10s → 30s.
+- `src/services/context-engine/parallel-fetcher.ts` — Tier "slow" (LinkedIn, web search): timeout 10s → 60s, retryDelay 1s → 2s.
+
+**Pourquoi:**
+Les 3 appels RapidAPI LinkedIn timeout systematiquement a 15s pendant l'analyse. RapidAPI Fresh LinkedIn peut prendre plus de 15s selon la charge. Le parallel-fetcher avait aussi un timeout de 10s pour le tier "slow" qui pouvait couper avant meme le timeout du fetch.
+
+---
+
+## 2026-02-05 19:00 — Renommage coresignal → rapidapi-linkedin + enrichment complet + team-investigator
+
+**Fichiers modifies:**
+- `src/services/context-engine/connectors/coresignal-linkedin.ts` → **renomme** `rapidapi-linkedin.ts`
+- `test-coresignal.ts` → **renomme** `test-rapidapi-linkedin.ts`
+- `src/services/context-engine/connectors/rapidapi-linkedin.ts` — Exports renommes: `rapidapiLinkedInConnector` (principal), `isRapidAPILinkedInConfigured()` (principal). Anciens noms gardes comme alias backward-compatible.
+- `src/services/context-engine/index.ts` — Imports mis a jour vers `rapidapi-linkedin.ts`, noms de fonctions renommes
+- `src/app/api/deals/[dealId]/founders/[founderId]/enrich/route.ts` — Import mis a jour, message d'erreur corrige (`RAPIDAPI_LINKEDIN_KEY` au lieu de `CORESIGNAL_API_KEY`)
+- `src/services/context-engine/parallel-fetcher.ts` — Commentaire corrige
+- `src/agents/types.ts` — Commentaires corriges (RapidAPI Fresh LinkedIn au lieu de Coresignal)
+- `src/agents/tier1/team-investigator.ts` — Commentaires corriges + **type `FounderWithLinkedIn` mis a jour** pour correspondre au nouveau format `verifiedInfo` (experiences, education, skills, languages, headline, summary, etc.) + **data formatting** passe maintenant toutes les donnees LinkedIn au LLM (experiences completes, education, skills, languages, headline, summary, location)
+
+**Pourquoi:**
+1. Le fichier s'appelait `coresignal-linkedin.ts` alors qu'il utilise RapidAPI Fresh LinkedIn depuis fin janvier. Nom trompeur corrige.
+2. Le team-investigator referençait `rawLinkedInData` qui n'existait plus dans le nouveau format `verifiedInfo`. Il ne passait donc PAS les experiences, education, skills au LLM pour l'analyse d'equipe.
+3. Toutes les donnees LinkedIn sont maintenant transmises au LLM via le team-investigator: parcours complet, formation, competences, langues, headline, bio.
+
+---
+
+## 2026-02-05 18:00 — Enrichissement LinkedIn: stockage complet + chat agent
+
+**Fichiers modifies:**
+- `src/app/api/deals/[dealId]/founders/[founderId]/enrich/route.ts` — `verifiedInfo` stocke maintenant TOUTES les donnees du profil LinkedIn: headline, summary, country, city, connections, followerCount, experiences completes (company, title, description, location, dates), education complete (school, degree, fieldOfStudy, dates), skills, languages. Plus les highlights, expertise, sectorFit, redFlags, questionsToAsk deja presents.
+- `src/services/chat-context/index.ts` — `getDealBasicInfo()` inclut maintenant `linkedinUrl`, `verifiedInfo`, `previousVentures` dans le select des founders.
+- `src/agents/chat/deal-chat-agent.ts` — Type `FullChatContext.founders` mis a jour avec `verifiedInfo: unknown`, `previousVentures: unknown`. `buildContextPrompt()` genere maintenant une section complete par fondateur: headline, bio, location, connections, historique professionnel complet, formation, skills, langues, highlights, expertise, sector fit, red flags, questions, previous ventures.
+
+**Pourquoi:**
+Le chat agent ne connaissait que le nom et le role des fondateurs malgre l'enrichissement LinkedIn. Toute la chaine etait cassee: la query DB ne selectionnait pas les champs enrichis, le type ne les incluait pas, et le prompt builder ne les rendait pas. Maintenant le chat a acces a toutes les donnees LinkedIn pour repondre aux questions sur les fondateurs.
+
+---
+
+## 2026-02-05 17:30 — Analyse en arriere-plan: fire-and-forget + polling frontend
+
+**Fichiers modifies:**
+- `src/app/api/analyze/route.ts` — POST ne bloque plus: lance `orchestrator.runAnalysis()` sans await (fire-and-forget) et retourne `{ status: "RUNNING", dealId }` immediatement. Le .catch() reset le deal status si l'orchestrateur crash avant de creer l'analysis record.
+- `src/app/api/deals/[dealId]/analyses/route.ts` — **NOUVEAU** endpoint GET qui retourne la derniere analyse d'un deal (status, completedAgents, totalAgents, results si COMPLETED). Utilise pour le polling frontend.
+- `src/lib/query-keys.ts` — Ajout `analyses.latest(dealId)` pour le polling.
+- `src/components/deals/analysis-panel.tsx` — Refonte du flow d'analyse:
+  - La mutation appelle `startAnalysis()` (retour immediat) au lieu de `runAnalysis()` (bloquant)
+  - `onSuccess` demarre le polling (`setIsPolling(true)`)
+  - `useQuery` avec `refetchInterval: 3000` interroge `/api/deals/[dealId]/analyses` tant que `isPolling=true`
+  - Quand le polling detecte COMPLETED: stop polling, set `liveResult` avec les resultats, invalide les queries deal/usage/staleness
+  - Quand le polling detecte FAILED: stop polling + toast erreur
+  - Au chargement de la page, detecte les analyses RUNNING dans les props (`hasRunningAnalysisFromProps`) et demarre automatiquement le polling
+  - Indicateur de progression montre `completedAgents/totalAgents` depuis le polling
+
+**Pourquoi:**
+L'analyse etait synchrone dans la requete HTTP: si le navigateur fermait l'onglet ou si la page etait refresh pendant l'analyse (~2-5min), elle etait perdue. Maintenant l'analyse tourne cote serveur independamment du navigateur. L'utilisateur peut fermer l'onglet, revenir des heures/jours plus tard et retrouver l'analyse terminee.
+
+**Securites:**
+- Timeout polling frontend: 15 min max, puis toast "analyse semble bloquee"
+- Auto-expire backend: analyses RUNNING > 10 min marquees FAILED dans l'endpoint de polling
+- .catch() sur le fire-and-forget pour reset deal status si crash pre-analysis record
+
+**Flow:**
+1. Click "Analyser" → POST retourne immediatement
+2. Orchestrateur tourne en arriere-plan (cree analysis record RUNNING, run agents, appelle completeAnalysis())
+3. Frontend poll toutes les 3s → affiche progression (completedAgents/totalAgents)
+4. Analyse terminee → resultats affiches
+5. Si page fermee puis rouverte → RUNNING detecte dans props → polling reprend → ou COMPLETED affiches directement
+
+---
+
+## 2026-02-05 16:00 — Scenario Modeler: UI reformulee, coherence mathematique
+
+**Fichiers modifies:**
+- `src/components/deals/tier3-results.tsx`
+  - Suppression des metriques "Y5 Revenue" et "Exit Valo" (decredibilisantes)
+  - Bloc unique "Retour potentiel (X% de chances)" avec: montants (€30K → €142K), multiple (x4.7), IRR (%/an), duree
+  - Proceeds recalcules dans le composant depuis `investment * multiple` pour garantir la coherence (le LLM envoyait des IRR incoherents avec les multiples)
+  - IRR recalcule depuis `multiple^(1/years) - 1` pour etre mathematiquement correct
+  - Ajout de `scenario.probability.rationale` comme justification sous les montants
+  - Badge "X% proba" remplace par "X% de chances"
+  - Suppression exit valos dans les comparables
+  - Section expandable "Calcul ROI detaille" mise a jour avec formules coherentes
+
+**Pourquoi:**
+1. Exit valos en millions decredibilisent la plateforme sur des deals early-stage
+2. Les chiffres du LLM etaient incoherents (ex: x24.3 affiché mais IRR a 109% → mathematiquement ca devrait etre ~70%)
+3. Pas de justification ni de probabilite visible dans le bloc retour
+4. "Votre retour" sans "potentiel" laissait croire a une garantie
+
+**Avant:** Y5 Revenue €12M | Exit Valo €100M | Multiple 24.3x | IRR 109%
+**Apres:** Hypotheses sourcees + Retour potentiel (2% de chances) : €30,000 → €729,000 (x24.3 en 6 ans, soit 70%/an) + justification
+
+---
+
+## 2026-02-05 16:15 — Scenario Modeler: affichage des hypotheses par scenario
+
+**Fichiers modifies:**
+- `src/components/deals/tier3-results.tsx` — Ajout de l'affichage des assumptions entre la description et le bloc retour. Format compact inline: "Croissance Y1: 100% (DB median Seed SaaS)" pour chaque hypothese (max 4 par scenario)
+
+**Pourquoi:**
+Sans les hypotheses, le BA ne sait pas pourquoi le modele predit tel multiple. Les assumptions sourcees (croissance, multiple exit, dilution, etc.) sont la justification concrete du retour potentiel affiche
+
+---
+
+## 2026-02-05 15:30 — Scenario Modeler: garde-fous de realisme sur exit valuations
+
+**Fichiers modifies:**
+- `src/agents/tier3/scenario-modeler.ts`
+  - **Prompt**: Ajout section "GARDE-FOUS DE REALISME" avec CAGR max par scenario (BULL 150%, BASE 80%, BEAR 20%), exit multiples max (BULL 10x, BASE 7x, BEAR 3x), et regles de coherence (ex: deal <100K ARR ne peut pas afficher >50M exit valo)
+  - **Post-processing**: Methode `sanitizeExitValuations()` qui cap les exit valos en code apres reponse LLM. Calcule le max realiste = currentARR * CAGR^5 * exitMultiple, et recalcule proceeds/multiple/IRR si cap applique
+  - **Weighted outcome**: Methode `recalculateWeightedOutcome()` qui recalcule le multiple pondere et l'IRR pondere apres sanitization
+
+**Pourquoi:**
+Un deal a 48K€ ARR affichait un scenario BULL a Exit Valo €100M et 24.3x, ce qui decredibilise toute la plateforme. Meme le BASE a €15M etait trop eleve. Avec les caps:
+- BULL max pour 48K ARR: ~47M (au lieu de 100M)
+- BASE max pour 48K ARR: ~6.4M (au lieu de 15M)
+- BEAR max pour 48K ARR: ~360K
+
+**Double protection:**
+1. Prompt: le LLM devrait generer des valeurs realistes des le depart
+2. Code: `sanitizeExitValuations()` cap en dernier recours si le LLM depasse quand meme
+
+---
+
+## 2026-02-05 15:00 — Chat IA: persistance messages + scroll to bottom
+
+**Fichiers modifies:**
+- `src/components/chat/deal-chat-panel.tsx` — Ajout `useQuery` pour charger les messages persistes depuis la DB via `GET /api/chat/${dealId}?conversationId=xxx`. Les messages de sessions precedentes sont maintenant affiches a la reouverture du chat. Scroll automatique vers le bas a l'ouverture (`isOpen` ajoute aux deps du useEffect scroll). Separation `pendingMessages` (optimistic) vs `allMessages` (persisted + pending).
+- `src/app/api/chat/[dealId]/route.ts` — Le GET accepte un query param `conversationId` optionnel pour retourner les messages d'une conversation specifique.
+
+**Pourquoi:**
+1. Le chat perdait tous les messages quand on le fermait/rouvrait (localMessages = [] a chaque mount)
+2. A la reouverture, le scroll etait en haut au lieu d'etre en bas du chat
+
+---
+
+## 2026-02-05 14:45 — Chat IA: ajustement taille titres Markdown
+
+**Fichiers modifies:**
+- `src/components/chat/deal-chat-panel.tsx` — Override tailles titres dans le conteneur prose : h1→lg (18px), h2→base (16px), h3→15px, h4→sm (14px). Juste milieu entre trop gros et trop petit.
+
+---
+
+## 2026-02-05 14:30 — Chat IA: rendu Markdown des reponses
+
+**Fichiers modifies:**
+- `src/components/chat/deal-chat-panel.tsx` — Import `react-markdown`, rendu Markdown pour les messages assistant (prose Tailwind), texte brut conserve pour les messages utilisateur
+- `src/app/globals.css` — Ajout `@plugin "@tailwindcss/typography"` pour les classes `prose`
+- `package.json` — Ajout `react-markdown` + `@tailwindcss/typography`
+
+**Pourquoi:**
+Les reponses de l'assistant IA contenaient du Markdown (titres `###`, gras `**`, listes `*`) mais etaient rendues en texte brut. Le Markdown est maintenant parse et affiche correctement (titres, gras, listes, code inline, etc.).
+
+---
+
 ## 2026-02-05 12:00 — Transparence LinkedIn: UI warning + score capping agent
 
 **Fichiers modifies:**

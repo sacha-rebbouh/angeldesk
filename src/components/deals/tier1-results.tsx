@@ -1038,7 +1038,7 @@ const MarketIntelCard = memo(function MarketIntelCard({
         )}
 
         {/* Red Flags */}
-        {redFlags.length > 0 && (
+        {redFlags && redFlags.length > 0 && (
           <ExpandableSection title={`Red Flags (${redFlags.length})`}>
             <div className="space-y-2 mt-2">
               {redFlags.map((rf, i) => (

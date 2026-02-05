@@ -209,7 +209,33 @@ async function submitFounderResponses(
   }
 }
 
-async function runAnalysis(dealId: string, type: string): Promise<{ data: AnalysisResult }> {
+interface StartAnalysisResponse {
+  data: {
+    status: "RUNNING";
+    dealId: string;
+    remainingDeals?: number;
+  };
+}
+
+interface LatestAnalysisResponse {
+  data: {
+    id: string;
+    status: string;
+    type: string;
+    mode: string | null;
+    completedAgents: number;
+    totalAgents: number;
+    results: Record<string, AgentResult> | null;
+    summary: string | null;
+    totalCost: string | null;
+    totalTimeMs: number | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    createdAt: string;
+  } | null;
+}
+
+async function startAnalysis(dealId: string, type: string): Promise<StartAnalysisResponse> {
   const response = await fetch("/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -229,6 +255,10 @@ async function runAnalysis(dealId: string, type: string): Promise<{ data: Analys
   }
 
   return await response.json();
+}
+
+async function fetchLatestAnalysis(dealId: string): Promise<LatestAnalysisResponse> {
+  return fetchApi(`/api/deals/${dealId}/analyses`, "Failed to fetch analysis status");
 }
 
 async function fetchUsageStatus(): Promise<{ usage: UsageStatus }> {
@@ -288,6 +318,17 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const [isLoadingNegotiation, setIsLoadingNegotiation] = useState(false);
   const isGeneratingNegotiationRef = useRef(false); // Sync ref to prevent race conditions
 
+  // Background analysis polling: detect if there's a RUNNING analysis (from mutation or page reload)
+  const hasRunningAnalysisFromProps = useMemo(
+    () => analyses.some((a) => a.status === "RUNNING"),
+    [analyses]
+  );
+  const [isPolling, setIsPolling] = useState(hasRunningAnalysisFromProps);
+  const pollingStartRef = useRef<number>(hasRunningAnalysisFromProps ? Date.now() : 0);
+  // Tracks when mutation was triggered — used to ignore stale analyses from before the mutation
+  const mutationTimestampRef = useRef<number>(0);
+  const POLLING_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max (aligned with server auto-expire)
+
   // Fetch usage status
   const { data: usageData, isLoading: isUsageLoading } = useQuery({
     queryKey: queryKeys.usage.analyze(),
@@ -303,6 +344,92 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   });
 
   const quota = quotaData?.data;
+
+  // Track the latest analysis ID we've already processed to avoid re-processing
+  const lastProcessedAnalysisIdRef = useRef<string | null>(null);
+
+  // Poll latest analysis status — always enabled so we catch completions even after polling stops
+  // Active polling: refetch every 3s. Idle: refetch on window focus only.
+  const { data: polledAnalysis } = useQuery({
+    queryKey: queryKeys.analyses.latest(dealId),
+    queryFn: () => fetchLatestAnalysis(dealId),
+    refetchInterval: isPolling ? 3000 : false,
+    refetchOnWindowFocus: true,
+    staleTime: isPolling ? 0 : 30_000,
+  });
+
+  // Helper: load completed analysis results into UI + refresh SSR data (timeline, scores)
+  const loadCompletedAnalysis = useCallback((polledData: NonNullable<LatestAnalysisResponse["data"]>) => {
+    if (polledData.results) {
+      setLiveResult({
+        sessionId: polledData.id,
+        success: true,
+        summary: polledData.summary ?? "",
+        totalCost: parseFloat(polledData.totalCost ?? "0"),
+        totalTimeMs: polledData.totalTimeMs ?? 0,
+        results: polledData.results,
+      });
+    }
+    queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
+    queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+    // Refresh Server Component data so timeline versions, scores, and status update
+    router.refresh();
+  }, [dealId, queryClient, router]);
+
+  // When polling detects COMPLETED or FAILED, stop polling and load results
+  useEffect(() => {
+    if (!polledAnalysis?.data) return;
+
+    const { status, createdAt, id } = polledAnalysis.data;
+
+    // --- Active polling path ---
+    if (isPolling) {
+      // Safety timeout: stop polling after 30 minutes
+      if (pollingStartRef.current > 0 && Date.now() - pollingStartRef.current > POLLING_TIMEOUT_MS) {
+        setIsPolling(false);
+        toast.error("L'analyse semble bloquee. Rechargez la page pour verifier.");
+        return;
+      }
+
+      // Race condition guard: ignore analyses created BEFORE the mutation fired.
+      if (mutationTimestampRef.current > 0 && createdAt) {
+        const analysisCreatedAt = new Date(createdAt).getTime();
+        if (analysisCreatedAt < mutationTimestampRef.current - 5000) {
+          return;
+        }
+      }
+
+      if (status === "COMPLETED") {
+        setIsPolling(false);
+        mutationTimestampRef.current = 0;
+        lastProcessedAnalysisIdRef.current = id;
+        loadCompletedAnalysis(polledAnalysis.data);
+        toast.success("Analyse terminee");
+      } else if (status === "FAILED") {
+        setIsPolling(false);
+        mutationTimestampRef.current = 0;
+        lastProcessedAnalysisIdRef.current = id;
+        toast.error("L'analyse a echoue. Relancez pour reessayer.");
+        queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
+        router.refresh();
+      }
+      return;
+    }
+
+    // --- Passive detection path (not actively polling) ---
+    // Catches completed analyses on window focus / tab switch
+    if (status === "COMPLETED" && id !== lastProcessedAnalysisIdRef.current) {
+      // Check if this is a NEW completed analysis we haven't shown yet
+      const isAlreadyDisplayed = analyses.some(a => a.id === id && a.status === "COMPLETED");
+      if (!isAlreadyDisplayed) {
+        lastProcessedAnalysisIdRef.current = id;
+        loadCompletedAnalysis(polledAnalysis.data);
+        toast.success("Analyse terminee");
+      }
+    }
+  }, [polledAnalysis, isPolling, dealId, queryClient, analyses, loadCompletedAnalysis]);
 
   // Fetch founder responses
   const { data: founderResponsesData } = useQuery({
@@ -390,14 +517,16 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   }, [liveResult, selectedAnalysisId, analyses]);
 
   const mutation = useMutation({
-    mutationFn: () => runAnalysis(dealId, analysisType),
-    onSuccess: (response) => {
-      setLiveResult(response.data);
+    mutationFn: () => startAnalysis(dealId, analysisType),
+    onSuccess: () => {
+      // Analysis is now running in the background - start polling
+      const now = Date.now();
+      pollingStartRef.current = now;
+      mutationTimestampRef.current = now;
+      setIsPolling(true);
       setSelectedAnalysisId(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
-      toast.success("Analyse terminee");
+      toast.success("Analyse lancee en arriere-plan");
     },
     onError: (error: Error & { upgradeRequired?: boolean }) => {
       if (error.upgradeRequired) {
@@ -486,11 +615,10 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     [dealId, queryClient, mutation]
   );
 
-  // mutation.isPending = user just clicked "Analyze" and we're waiting for response
-  // currentStatus === "ANALYZING" = deal has this status in DB (could be stuck/legacy)
-  // Only show progress stepper for active mutations, not stuck DB status
-  const isAnalyzing = mutation.isPending;
-  const isRunning = mutation.isPending || currentStatus === "ANALYZING";
+  // isAnalyzing = actively running (user just triggered or polling a background analysis)
+  // isRunning = any running state (including stuck DB status)
+  const isAnalyzing = mutation.isPending || isPolling;
+  const isRunning = mutation.isPending || isPolling || currentStatus === "ANALYZING";
 
   // Check analysis type from results - using hoisted categorizeResults function
   const { isTier1Analysis, isTier2Analysis, isTier3Analysis, tier1Results, tier2Results, tier3Results, deckCoherenceReport } = useMemo(() => {
@@ -892,11 +1020,19 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         </Card>
       )}
 
-      {/* Analysis Progress - shown during active mutation */}
+      {/* Analysis Progress - shown during active analysis (mutation + polling) */}
       {isAnalyzing && (
         <Card>
           <CardHeader>
-            <CardTitle>Analyse en cours...</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Analyse en cours...
+            </CardTitle>
+            {isPolling && polledAnalysis?.data && (
+              <CardDescription>
+                {polledAnalysis.data.completedAgents}/{polledAnalysis.data.totalAgents} agents termines
+              </CardDescription>
+            )}
           </CardHeader>
           <CardContent>
             <AnalysisProgress

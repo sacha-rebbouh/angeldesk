@@ -107,7 +107,7 @@ export class AnalysisStateMachine {
         ANALYZING: 180000,
         DEBATING: 120000,
         REFLECTING: 60000,
-        SYNTHESIZING: 60000,
+        SYNTHESIZING: 240000,
       },
       ...config,
     };

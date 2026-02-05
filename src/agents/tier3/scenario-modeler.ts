@@ -285,6 +285,33 @@ Multiple = Proceeds / Investment
 IRR = ((Multiple)^(1/years) - 1) × 100
 \`\`\`
 
+# GARDE-FOUS DE REALISME (OBLIGATOIRE)
+
+## Croissance annuelle maximale (CAGR) par scenario
+- BULL: Max 150%/an (top 1% des startups) → Y5 revenue ≈ 100x current ARR
+- BASE: Max 80%/an (bonne execution) → Y5 revenue ≈ 19x current ARR
+- BEAR: Max 20%/an (croissance molle) → Y5 revenue ≈ 2.5x current ARR
+- CATASTROPHIC: 0% ou negatif → stagnation ou decline
+
+## Exit multiples maximaux (sur ARR Y5)
+- BULL: Max 10x ARR (exceptionnel, P95+)
+- BASE: Max 7x ARR (median SaaS mature)
+- BEAR: Max 3x ARR (distress, fire sale)
+- CATASTROPHIC: 0-1x ARR (acquihire ou shutdown)
+
+## Exemples pour un deal a 48K€ ARR:
+- BULL max exit valo: 48K × 100 × 10 = ~48M (JAMAIS 100M+)
+- BASE max exit valo: 48K × 19 × 7 = ~6.4M (JAMAIS 15M+)
+- BEAR max exit valo: 48K × 2.5 × 3 = ~360K
+- CATASTROPHIC: 0 (shutdown) ou valeur equipe (acquihire ~500K-1M)
+
+## Regle de coherence OBLIGATOIRE
+- TOUJOURS calculer le CAGR implicite de tes projections Y5 et verifier qu'il est < aux caps ci-dessus
+- Si ARR actuel < 200K€: etre EXTRA CONSERVATEUR sur les exit valos
+- NE JAMAIS projeter une exit valo BASE > 300x le current ARR
+- NE JAMAIS projeter une exit valo BULL > 1000x le current ARR
+- Un deal early-stage avec < 100K ARR ne peut PAS raisonnablement atteindre > 50M exit valo (meme BULL)
+
 # RED FLAGS A DETECTER
 
 1. Projections deck irréalistes vs comparables DB - CRITICAL
@@ -507,8 +534,17 @@ RAPPEL CRITIQUE: NE JAMAIS INVENTER. Si tu n'as pas de données, écris "NON DIS
 
     const { data } = await this.llmCompleteJSON<LLMScenarioResponse>(prompt);
 
-    // Validate and normalize response
-    return this.normalizeResponse(data, context);
+    // Validate, normalize, and apply sanity caps
+    const normalized = this.normalizeResponse(data, context);
+    normalized.findings.scenarios = this.sanitizeExitValuations(
+      normalized.findings.scenarios,
+      context
+    );
+    // Recalculate probability-weighted outcome after sanitization
+    normalized.findings.probabilityWeightedOutcome = this.recalculateWeightedOutcome(
+      normalized.findings.scenarios
+    );
+    return normalized;
   }
 
   // ============================================================================
@@ -988,6 +1024,110 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
       questions,
       alertSignal,
       narrative,
+    };
+  }
+
+  /**
+   * Caps de realisme sur les exit valuations pour eviter les scenarios delirants.
+   * Un deal a 48K ARR ne peut pas afficher un BULL a 100M - ca decredibilise la plateforme.
+   */
+  private sanitizeExitValuations(
+    scenarios: ScenarioV2[],
+    context: EnrichedAgentContext
+  ): ScenarioV2[] {
+    const currentARR = context.deal.arr ? Number(context.deal.arr) : 0;
+    if (currentARR <= 0) return scenarios;
+
+    // CAGR annuel max et exit multiple max par scenario
+    const caps: Record<string, { cagr: number; exitMult: number }> = {
+      BULL: { cagr: 2.5, exitMult: 10 },        // 150% CAGR, 10x ARR
+      BASE: { cagr: 1.8, exitMult: 7 },          // 80% CAGR, 7x ARR
+      BEAR: { cagr: 1.2, exitMult: 3 },          // 20% CAGR, 3x ARR
+      CATASTROPHIC: { cagr: 1.0, exitMult: 1 },  // flat, 1x ARR
+    };
+
+    return scenarios.map((s) => {
+      const cap = caps[s.name];
+      if (!cap) return s;
+
+      const maxY5Revenue = currentARR * Math.pow(cap.cagr, 5);
+      const maxExitValo = Math.round(maxY5Revenue * cap.exitMult);
+
+      if (s.exitOutcome.exitValuation <= maxExitValo) return s;
+
+      // Cap needed - recalculate downstream metrics
+      const cappedExitValo = maxExitValo;
+      const ownershipAtExitPct = s.investorReturn.ownershipAtExit / 100;
+      const newProceeds = Math.round(ownershipAtExitPct * cappedExitValo);
+      const investment = s.investorReturn.initialInvestment;
+      const newMultiple = investment > 0
+        ? Math.round((newProceeds / investment) * 10) / 10
+        : 0;
+      const years = s.investorReturn.holdingPeriodYears || 6;
+      const newIrr = newMultiple > 0
+        ? Math.round((Math.pow(newMultiple, 1 / years) - 1) * 1000) / 10
+        : -100;
+
+      return {
+        ...s,
+        exitOutcome: {
+          ...s.exitOutcome,
+          exitValuation: cappedExitValo,
+          exitMultiple: Math.round((cappedExitValo / Math.max(maxY5Revenue, 1)) * 10) / 10,
+          exitValuationCalculation: `${s.exitOutcome.exitValuationCalculation} [CAPPE: max realiste ${(cappedExitValo / 1_000_000).toFixed(1)}M€ base sur CAGR ${Math.round((cap.cagr - 1) * 100)}%/an]`,
+        },
+        investorReturn: {
+          ...s.investorReturn,
+          grossProceeds: newProceeds,
+          proceedsCalculation: `${ownershipAtExitPct * 100}% × €${cappedExitValo.toLocaleString()} = €${newProceeds.toLocaleString()} [recalcule apres cap]`,
+          multiple: newMultiple,
+          multipleCalculation: `€${newProceeds.toLocaleString()} / €${investment.toLocaleString()} = ${newMultiple}x [recalcule apres cap]`,
+          irr: newIrr,
+          irrCalculation: `((${newMultiple})^(1/${years}) - 1) × 100 = ${newIrr}% [recalcule apres cap]`,
+        },
+      };
+    });
+  }
+
+  /**
+   * Recalcule le weighted outcome apres sanitization des scenarios
+   */
+  private recalculateWeightedOutcome(
+    scenarios: ScenarioV2[]
+  ): ScenarioModelerFindings["probabilityWeightedOutcome"] {
+    let weightedMultiple = 0;
+    let totalProb = 0;
+
+    for (const s of scenarios) {
+      const prob = s.probability.value / 100;
+      weightedMultiple += prob * s.investorReturn.multiple;
+      totalProb += prob;
+    }
+
+    // Normaliser si les probas ne font pas 100%
+    if (totalProb > 0 && totalProb !== 1) {
+      weightedMultiple /= totalProb;
+    }
+
+    const years = scenarios[0]?.investorReturn.holdingPeriodYears ?? 6;
+    const weightedIRR = weightedMultiple > 0
+      ? Math.round((Math.pow(weightedMultiple, 1 / years) - 1) * 1000) / 10
+      : -100;
+
+    const calcParts = scenarios
+      .map((s) => `${s.probability.value}% × ${s.investorReturn.multiple}x`)
+      .join(" + ");
+
+    return {
+      expectedMultiple: Math.round(weightedMultiple * 10) / 10,
+      expectedMultipleCalculation: `${calcParts} = ${Math.round(weightedMultiple * 10) / 10}x`,
+      expectedIRR: weightedIRR,
+      expectedIRRCalculation: `((${Math.round(weightedMultiple * 10) / 10})^(1/${years}) - 1) × 100 = ${weightedIRR}%`,
+      riskAdjustedAssessment: weightedMultiple >= 3
+        ? "Rapport risque/rendement favorable"
+        : weightedMultiple >= 1.5
+          ? "Rapport risque/rendement acceptable"
+          : "Rapport risque/rendement defavorable - rendement esperé ne compense pas le risque",
     };
   }
 

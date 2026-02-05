@@ -3,7 +3,6 @@ import { Prisma } from "@prisma/client";
 import type {
   AgentResult,
   RedFlagResult,
-  ScoringResult,
   SynthesisDealScorerResult,
 } from "../types";
 import type { ScoredFinding } from "@/scoring/types";
@@ -365,31 +364,26 @@ export async function processAgentResult(
       break;
     }
 
-    case "deal-scorer": {
-      const scoreResult = result as ScoringResult;
-      if (scoreResult.data?.scores) {
-        const { scores } = scoreResult.data;
-        await prisma.deal.update({
-          where: { id: dealId },
-          data: {
-            globalScore: scores.global,
-            teamScore: scores.team,
-            marketScore: scores.market,
-            productScore: scores.product,
-            financialsScore: scores.financials,
-          },
-        });
-      }
-      break;
-    }
-
     case "synthesis-deal-scorer": {
       const synthResult = result as SynthesisDealScorerResult;
       if (synthResult.data?.overallScore) {
+        // Extract dimension sub-scores from dimensionScores array
+        const dimensionScores = synthResult.data.dimensionScores ?? [];
+        const findDimensionScore = (keywords: string[]): number | null => {
+          const match = dimensionScores.find((d) =>
+            keywords.some((kw) => d.dimension.toLowerCase().includes(kw))
+          );
+          return match ? Math.round(match.score) : null;
+        };
+
         await prisma.deal.update({
           where: { id: dealId },
           data: {
-            globalScore: synthResult.data.overallScore,
+            globalScore: Math.round(synthResult.data.overallScore),
+            teamScore: findDimensionScore(["team", "equipe", "équipe"]),
+            marketScore: findDimensionScore(["market", "marché", "marche"]),
+            productScore: findDimensionScore(["product", "produit", "tech"]),
+            financialsScore: findDimensionScore(["financial", "financ"]),
           },
         });
       }
@@ -398,6 +392,7 @@ export async function processAgentResult(
 
     case "team-investigator": {
       // Auto-sync analyzed profiles to Founder table
+      // CRITICAL: MERGE with existing verifiedInfo (LinkedIn data) — never overwrite
       const teamResult = result as AgentResult & {
         data?: {
           findings?: {
@@ -419,10 +414,10 @@ export async function processAgentResult(
 
       const profiles = teamResult.data?.findings?.founderProfiles;
       if (profiles && profiles.length > 0) {
-        // Get existing founders for this deal
+        // Get existing founders WITH their verifiedInfo (to preserve LinkedIn data)
         const existingFounders = await prisma.founder.findMany({
           where: { dealId },
-          select: { id: true, name: true },
+          select: { id: true, name: true, verifiedInfo: true },
         });
 
         // Build a map for fast lookup (case-insensitive)
@@ -435,7 +430,8 @@ export async function processAgentResult(
         const toCreate: Prisma.FounderCreateManyInput[] = [];
 
         for (const profile of profiles) {
-          const analysisData = JSON.parse(JSON.stringify({
+          // Team-investigator analysis data
+          const analysisData = {
             scores: profile.scores,
             strengths: profile.strengths,
             concerns: profile.concerns,
@@ -445,17 +441,24 @@ export async function processAgentResult(
             linkedinVerified: profile.linkedinVerified,
             source: "team-investigator",
             analyzedAt: new Date().toISOString(),
-          }));
+          };
 
           const existing = existingByName.get(profile.name.toLowerCase().trim());
 
           if (existing) {
+            // MERGE: preserve existing LinkedIn data, add/update team-investigator analysis
+            const existingVerifiedInfo = (existing.verifiedInfo as Record<string, unknown>) ?? {};
+            const mergedVerifiedInfo = {
+              ...existingVerifiedInfo,   // Keep LinkedIn data (experiences, education, skills, etc.)
+              ...analysisData,           // Add team-investigator analysis
+            };
+
             toUpdate.push({
               id: existing.id,
               data: {
                 role: profile.role,
                 linkedinUrl: profile.linkedinUrl ?? undefined,
-                verifiedInfo: analysisData as unknown as Prisma.InputJsonValue,
+                verifiedInfo: mergedVerifiedInfo as unknown as Prisma.InputJsonValue,
               },
             });
           } else {
@@ -480,7 +483,7 @@ export async function processAgentResult(
         ]);
 
         if (process.env.NODE_ENV === "development") {
-          console.log(`[Persistence] Synced ${profiles.length} team profiles to Founder table for deal ${dealId}`);
+          console.log(`[Persistence] Synced ${profiles.length} team profiles to Founder table for deal ${dealId} (merged with existing LinkedIn data)`);
         }
       }
       break;

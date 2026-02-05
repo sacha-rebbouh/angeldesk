@@ -2,9 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-// Use BOARD_MEMBERS_PROD directly for client components to avoid module-load race condition
 import { BOARD_MEMBERS_PROD } from "@/agents/board/types";
 import type { InitialAnalysis, DebateResponse } from "@/agents/board/types";
 
@@ -21,26 +19,22 @@ interface ArenaViewProps {
 export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
 
-  // Calculate member positions in a circle
   const memberPositions = useMemo(() => {
-    const positions: Record<string, { x: number; y: number; angle: number }> = {};
+    const positions: Record<string, { x: number; y: number }> = {};
     const center = 150;
     const radius = 110;
 
     BOARD_MEMBERS_PROD.forEach((member, index) => {
-      // Start from top, go clockwise
       const angle = (index * 90 - 45) * (Math.PI / 180);
       positions[member.id] = {
         x: center + radius * Math.sin(angle),
         y: center - radius * Math.cos(angle),
-        angle: index * 90 - 45,
       };
     });
 
     return positions;
   }, []);
 
-  // Get latest state for each member
   const memberStates = useMemo(() => {
     return BOARD_MEMBERS_PROD.map((config) => {
       const analysis = memberAnalyses[config.id]?.analysis;
@@ -67,7 +61,6 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
     });
   }, [memberAnalyses, debateResponses]);
 
-  // Get connections (responses to others)
   const connections = useMemo(() => {
     const conns: {
       from: string;
@@ -112,13 +105,13 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
                 y2={to.y}
                 stroke={
                   conn.agreement === "agree"
-                    ? "#22c55e"
+                    ? "#34d399"
                     : conn.agreement === "disagree"
-                      ? "#ef4444"
-                      : "#f59e0b"
+                      ? "#f87171"
+                      : "#fbbf24"
                 }
-                strokeWidth="2"
-                strokeOpacity="0.3"
+                strokeWidth="1.5"
+                strokeOpacity="0.25"
                 strokeDasharray={conn.agreement === "partially_agree" ? "4,4" : undefined}
               />
             );
@@ -127,8 +120,8 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
 
         {/* Center circle */}
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-muted-foreground/30">
-            <span className="text-xs text-muted-foreground text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full border border-dashed border-slate-700/50">
+            <span className="text-[10px] text-slate-600 text-center font-medium uppercase tracking-wider">
               Debat
             </span>
           </div>
@@ -155,29 +148,26 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
                 setSelectedMember(selectedMember === member.id ? null : member.id)
               }
             >
-              {/* Avatar */}
               <div
                 className={cn(
-                  "flex h-14 w-14 items-center justify-center rounded-full text-white font-bold shadow-lg transition-all",
-                  selectedMember === member.id && "ring-4 ring-primary/50"
+                  "flex h-14 w-14 items-center justify-center rounded-full font-bold text-white shadow-lg transition-all",
+                  selectedMember === member.id && "ring-3 ring-white/30"
                 )}
                 style={{ backgroundColor: member.color }}
               >
                 {member.name.charAt(0)}
               </div>
 
-              {/* Name */}
-              <span className="mt-1 text-xs font-medium">{member.name}</span>
+              <span className="mt-1 text-[11px] font-medium text-slate-300">{member.name}</span>
 
-              {/* Verdict badge */}
               {member.currentVerdict && (
                 <Badge
                   variant="secondary"
                   className={cn(
-                    "mt-1 text-[10px]",
-                    member.currentVerdict === "GO" && "bg-green-100 text-green-800",
-                    member.currentVerdict === "NO_GO" && "bg-red-100 text-red-800",
-                    member.currentVerdict === "NEED_MORE_INFO" && "bg-amber-100 text-amber-800"
+                    "mt-0.5 text-[9px] border-0",
+                    member.currentVerdict === "GO" && "bg-emerald-500/15 text-emerald-400",
+                    member.currentVerdict === "NO_GO" && "bg-red-500/15 text-red-400",
+                    member.currentVerdict === "NEED_MORE_INFO" && "bg-amber-500/15 text-amber-400"
                   )}
                 >
                   {member.currentVerdict === "NO_GO" ? "NO GO" : member.currentVerdict === "NEED_MORE_INFO" ? "MORE" : member.currentVerdict}
@@ -189,19 +179,19 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
       </div>
 
       {/* Detail panel */}
-      <div className="flex-1 rounded-lg border bg-muted/30 p-4">
+      <div className="flex-1 rounded-xl border border-slate-700/50 bg-slate-800/30 p-5">
         {selectedMemberData ? (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div
-                className="flex h-10 w-10 items-center justify-center rounded-full text-white font-bold"
+                className="flex h-10 w-10 items-center justify-center rounded-full font-bold text-white"
                 style={{ backgroundColor: selectedMemberData.color }}
               >
                 {selectedMemberData.name.charAt(0)}
               </div>
               <div>
-                <p className="font-semibold">{selectedMemberData.name}</p>
-                <p className="text-sm text-muted-foreground">
+                <p className="font-medium text-white">{selectedMemberData.name}</p>
+                <p className="text-xs text-slate-400">
                   {selectedMemberData.currentVerdict ?? "En attente"}{" "}
                   {selectedMemberData.currentConfidence !== undefined &&
                     `(${selectedMemberData.currentConfidence}%)`}
@@ -209,20 +199,19 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
               </div>
             </div>
 
-            {/* Analysis */}
             {selectedMemberData.analysis && (
               <div className="space-y-2">
-                <p className="text-sm font-medium">Analyse initiale</p>
-                <div className="text-sm text-muted-foreground">
-                  <p className="mb-1">
-                    <strong>Arguments:</strong>{" "}
+                <p className="text-xs font-medium text-slate-300 uppercase tracking-wider">Analyse initiale</p>
+                <div className="text-sm text-slate-400">
+                  <p className="mb-1 text-xs">
+                    <strong className="text-slate-300">Arguments:</strong>{" "}
                     {selectedMemberData.analysis.arguments.length}
                   </p>
-                  <ul className="list-disc list-inside space-y-1">
+                  <ul className="list-none space-y-1">
                     {selectedMemberData.analysis.arguments
                       .slice(0, 3)
                       .map((arg, i) => (
-                        <li key={i} className="truncate">
+                        <li key={i} className="truncate text-xs text-slate-400 pl-2 border-l border-slate-700">
                           {arg.point}
                         </li>
                       ))}
@@ -231,15 +220,14 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
               </div>
             )}
 
-            {/* Recent responses */}
             {selectedMemberData.responses.length > 0 && (
               <div className="space-y-2">
-                <p className="text-sm font-medium">Derniere reponse</p>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-xs font-medium text-slate-300 uppercase tracking-wider">Derniere reponse</p>
+                <p className="text-xs text-slate-400 leading-relaxed">
                   {selectedMemberData.responses[0]?.response.justification}
                 </p>
                 {selectedMemberData.responses[0]?.response.positionChanged && (
-                  <Badge variant="outline" className="border-purple-300 text-purple-600">
+                  <Badge variant="secondary" className="text-[10px] border-0 bg-purple-500/15 text-purple-400">
                     A change de position
                   </Badge>
                 )}
@@ -247,8 +235,8 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
             )}
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            <p className="text-sm">Cliquez sur un membre pour voir les details</p>
+          <div className="flex h-full items-center justify-center">
+            <p className="text-sm text-slate-500">Cliquez sur un membre pour voir les details</p>
           </div>
         )}
       </div>

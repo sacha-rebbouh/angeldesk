@@ -385,7 +385,23 @@ function extractFirstJSON(content: string): string {
     }
   }
 
-  // Approach 2: Find JSON object directly in content (skip preceding text)
+  // Approach 2: If content starts with ```json but has no closing ```, strip the header
+  const unclosedCodeBlockMatch = content.match(/^`{3,}(?:json)?\s*/);
+  if (unclosedCodeBlockMatch) {
+    const strippedContent = content.substring(unclosedCodeBlockMatch[0].length);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[extractFirstJSON] Unclosed code block detected, stripped header (${unclosedCodeBlockMatch[0].length} chars)`);
+    }
+    const jsonFromStripped = extractBracedJSON(strippedContent);
+    if (jsonFromStripped) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[extractFirstJSON] Extracted JSON from stripped code block (${jsonFromStripped.length} chars)`);
+      }
+      return jsonFromStripped;
+    }
+  }
+
+  // Approach 3: Find JSON object directly in content (skip preceding text)
   if (process.env.NODE_ENV === 'development') {
     console.log(`[extractFirstJSON] No code block match, trying direct extraction from content (${content.length} chars)`);
   }

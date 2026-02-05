@@ -142,23 +142,23 @@ export const MODELS = {
     capabilities: ["powerful", "large-context", "board-member"],
   },
 
-  MISTRAL_LARGE_2: {
-    id: "mistralai/mistral-large-2",
-    name: "Mistral Large 2",
-    inputCost: 0.003,
-    outputCost: 0.009,
-    contextWindow: 128000,
-    capabilities: ["powerful", "european", "board-member"],
+  // Grok models (xAI) — replaces Mistral for AI Board
+  GROK_4: {
+    id: "x-ai/grok-4",
+    name: "Grok 4",
+    inputCost: 0.003, // $3/M
+    outputCost: 0.015, // $15/M
+    contextWindow: 256000,
+    capabilities: ["powerful", "reasoning", "board-member"],
   },
 
-  // Mistral Small - cheap option for testing
-  MISTRAL_SMALL: {
-    id: "mistralai/mistral-small-2503",
-    name: "Mistral Small",
-    inputCost: 0.0001, // $0.10/M
-    outputCost: 0.0003, // $0.30/M
-    contextWindow: 32000,
-    capabilities: ["fast", "cheap", "european", "board-member"],
+  GROK_41_FAST: {
+    id: "x-ai/grok-4.1-fast",
+    name: "Grok 4.1 Fast",
+    inputCost: 0.0002, // $0.20/M
+    outputCost: 0.0005, // $0.50/M
+    contextWindow: 2000000,
+    capabilities: ["fast", "agentic", "large-context", "board-member"],
   },
 } as const;
 

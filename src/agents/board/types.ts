@@ -9,7 +9,7 @@ export interface BoardMemberConfig {
   modelKey: ModelKey;
   name: string;
   color: string; // Hex color for UI
-  provider: "anthropic" | "openai" | "google" | "mistral"; // For UI display
+  provider: "anthropic" | "openai" | "google" | "xai"; // For UI display
 }
 
 /**
@@ -39,11 +39,11 @@ export const BOARD_MEMBERS_TEST: BoardMemberConfig[] = [
     provider: "google",
   },
   {
-    id: "mistral",
-    modelKey: "MISTRAL_SMALL",
-    name: "Mistral Small",
-    color: "#8B5CF6", // Purple - Mistral
-    provider: "mistral",
+    id: "grok",
+    modelKey: "GROK_41_FAST",
+    name: "Grok 4.1 Fast",
+    color: "#FF6600", // Orange - xAI
+    provider: "xai",
   },
 ];
 
@@ -74,11 +74,11 @@ export const BOARD_MEMBERS_PROD: BoardMemberConfig[] = [
     provider: "google",
   },
   {
-    id: "mistral",
-    modelKey: "MISTRAL_LARGE_2",
-    name: "Mistral Large",
-    color: "#8B5CF6", // Purple - Mistral
-    provider: "mistral",
+    id: "grok",
+    modelKey: "GROK_4",
+    name: "Grok 4",
+    color: "#FF6600", // Orange - xAI
+    provider: "xai",
   },
 ];
 
@@ -302,6 +302,7 @@ export type BoardProgressEventType =
   | "session_started"
   | "member_analysis_started"
   | "member_analysis_completed"
+  | "member_analysis_failed"
   | "debate_round_started"
   | "debate_response"
   | "debate_round_completed"

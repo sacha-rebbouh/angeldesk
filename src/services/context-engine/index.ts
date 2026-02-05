@@ -32,14 +32,14 @@ import { ycCompaniesConnector } from "./connectors/yc-companies";
 import { companiesHouseConnector } from "./connectors/companies-house";
 import { pappersConnector } from "./connectors/pappers";
 import { productHuntConnector } from "./connectors/product-hunt";
-// LinkedIn data - Coresignal (694M+ profiles, refreshed every 6h)
+// LinkedIn data - RapidAPI Fresh LinkedIn Profile Data
 import {
-  coresignalLinkedInConnector,
+  rapidapiLinkedInConnector,
   analyzeFounderLinkedIn,
   analyzeFounderByName,
   analyzeTeamLinkedIn,
-  isCoresignalLinkedInConfigured,
-} from "./connectors/coresignal-linkedin";
+  isRapidAPILinkedInConfigured,
+} from "./connectors/rapidapi-linkedin";
 // French ecosystem connectors
 import { societeComConnector } from "./connectors/societe-com";
 import { bpiFranceConnector } from "./connectors/bpi-france";
@@ -101,7 +101,7 @@ const connectors: Connector[] = [
   seedtableConnector,       // Seedtable - curated European startup database (40+ deals)
 
   // === FOUNDER DATA ===
-  coresignalLinkedInConnector,   // LinkedIn data via Coresignal (2 credits/profile)
+  rapidapiLinkedInConnector,     // LinkedIn data via RapidAPI Fresh LinkedIn
 
   // === COMPANY DATA (REAL - scraping/APIs) ===
   societeComConnector,      // French company data (scraping)
@@ -820,7 +820,7 @@ export async function buildPeopleGraph(
 
 /**
  * Internal: Fetch and analyze a single founder
- * Uses Coresignal LinkedIn connector
+ * Uses RapidAPI Fresh LinkedIn connector
  *
  * Strategy:
  * 1. If LinkedIn URL available → search by shorthand (from URL)
@@ -1054,15 +1054,15 @@ export function getConnectorHealthStatus() {
 export { resetCircuit, resetAllCircuits } from "./circuit-breaker";
 
 /**
- * Export LinkedIn analysis functions (Coresignal)
+ * Export LinkedIn analysis functions (RapidAPI Fresh LinkedIn)
  * Use these for founder/team due diligence
  */
 export {
   analyzeFounderLinkedIn,
   analyzeFounderByName,
   analyzeTeamLinkedIn,
-  isCoresignalLinkedInConfigured,
-} from "./connectors/coresignal-linkedin";
+  isRapidAPILinkedInConfigured,
+} from "./connectors/rapidapi-linkedin";
 
 // ============================================================================
 // INTERNAL HELPERS

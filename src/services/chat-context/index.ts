@@ -375,6 +375,9 @@ async function getDealBasicInfo(dealId: string) {
         select: {
           name: true,
           role: true,
+          linkedinUrl: true,
+          verifiedInfo: true,
+          previousVentures: true,
         },
       },
     },
@@ -389,6 +392,7 @@ async function getDocumentSummaries(dealId: string) {
       name: true,
       type: true,
       processingStatus: true,
+      extractedText: true,
     },
   });
 
@@ -397,6 +401,7 @@ async function getDocumentSummaries(dealId: string) {
     name: doc.name,
     type: doc.type,
     isProcessed: doc.processingStatus === "COMPLETED",
+    extractedText: doc.extractedText,
   }));
 }
 
@@ -407,9 +412,9 @@ async function getLatestAnalysisResults(dealId: string) {
     select: {
       id: true,
       mode: true,
-      results: true,
       summary: true,
       completedAt: true,
+      negotiationStrategy: true,
     },
   });
 
@@ -420,8 +425,7 @@ async function getLatestAnalysisResults(dealId: string) {
     mode: analysis.mode,
     summary: analysis.summary,
     completedAt: analysis.completedAt,
-    // Don't include full results - too large for context
-    hasResults: !!analysis.results,
+    hasResults: true,
   };
 }
 

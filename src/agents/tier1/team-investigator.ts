@@ -24,7 +24,7 @@ import type {
  * Inputs:
  * - Documents: Pitch deck (section team)
  * - Context Engine: People Graph (LinkedIn enrichi, ventures précédentes)
- * - Deal: Fondateurs avec données LinkedIn via Coresignal
+ * - Deal: Fondateurs avec données LinkedIn via RapidAPI Fresh LinkedIn
  * - Dependencies: document-extractor
  *
  * Outputs:
@@ -33,10 +33,10 @@ import type {
  * - Red Flags: avec 5 composants obligatoires
  * - Questions: priorité + contexte + whatToLookFor
  *
- * Intégration LinkedIn (via Coresignal):
- * - API: Base Employee (search ES DSL + collect)
- * - Champs: experiences, education, skills, headline, about
- * - Contact enrichi: email, phone (payant)
+ * Intégration LinkedIn (via RapidAPI Fresh LinkedIn):
+ * - API: Fresh LinkedIn Profile Data ($10/mois, GET endpoint)
+ * - Champs: experiences, education, skills, headline, about, languages
+ * - Données temps réel, profils frais
  */
 
 // ============================================================================
@@ -288,7 +288,7 @@ IMPORTANT: Analyser TOUS les team members listés dans le deck (pas seulement le
 # METHODOLOGIE D'ANALYSE
 
 ## Etape 1: Vérification LinkedIn
-- Si données LinkedIn disponibles (via Coresignal), les utiliser comme source de vérité
+- Si données LinkedIn disponibles (via RapidAPI), les utiliser comme source de vérité
 - Croiser avec ce qui est dit dans le deck
 - Identifier les embellissements (titres gonflés, dates modifiées)
 - Calculer les métriques: années d'expérience, tenure moyenne, job hopping
@@ -822,7 +822,7 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
    * Extract founders data from deal with LinkedIn enrichment
    */
   private getFoundersData(context: EnrichedAgentContext): string | null {
-    // Type for founders with LinkedIn enrichment
+    // Type for founders with LinkedIn enrichment (matches verifiedInfo from enrich route)
     interface FounderWithLinkedIn {
       name: string;
       role: string;
@@ -830,7 +830,34 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       linkedinUrl?: string;
       verifiedInfo?: {
         linkedinScrapedAt?: string;
-        rawLinkedInData?: LinkedInEnrichedProfile;
+        fullName?: string;
+        headline?: string | null;
+        summary?: string | null;
+        country?: string | null;
+        city?: string | null;
+        connections?: number | null;
+        followerCount?: number | null;
+        experiences?: Array<{
+          company: string;
+          title: string;
+          description?: string | null;
+          location?: string | null;
+          startYear?: number | null;
+          startMonth?: number | null;
+          endYear?: number | null;
+          endMonth?: number | null;
+          isCurrent?: boolean;
+        }>;
+        education?: Array<{
+          school: string;
+          degree?: string | null;
+          fieldOfStudy?: string | null;
+          startYear?: number | null;
+          endYear?: number | null;
+          description?: string | null;
+        }>;
+        skills?: string[];
+        languages?: string[];
         highlights?: {
           yearsExperience?: number;
           educationLevel?: string;
@@ -838,17 +865,16 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
           hasFounderExperience?: boolean;
           hasTechBackground?: boolean;
           isSerialFounder?: boolean;
-          topCompanies?: string[];
-          longestTenure?: number;
-          averageTenure?: number;
-          jobHoppingRisk?: boolean;
         };
         expertise?: {
           primaryIndustry?: string;
           primaryRole?: string;
+          primaryEcosystem?: string;
           description?: string;
+          isDiversified?: boolean;
+          hasDeepExpertise?: boolean;
         };
-        sectorFit?: { fits: boolean; explanation: string };
+        sectorFit?: { fits: boolean; explanation: string } | null;
         redFlags?: { type: string; severity: string; message: string }[];
         questionsToAsk?: { question: string; context: string; priority: string }[];
       };
@@ -876,13 +902,25 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
           ...base,
           linkedinEnriched: true,
           linkedinScrapedAt: f.verifiedInfo.linkedinScrapedAt,
+          // Full profile data from RapidAPI
+          fullName: f.verifiedInfo.fullName,
+          headline: f.verifiedInfo.headline,
+          summary: f.verifiedInfo.summary,
+          location: [f.verifiedInfo.city, f.verifiedInfo.country].filter(Boolean).join(", ") || null,
+          connections: f.verifiedInfo.connections,
+          // Full work history
+          experiences: f.verifiedInfo.experiences,
+          // Full education
+          education: f.verifiedInfo.education,
+          // Skills & languages
+          skills: f.verifiedInfo.skills,
+          languages: f.verifiedInfo.languages,
+          // Computed highlights
           highlights: f.verifiedInfo.highlights,
           expertise: f.verifiedInfo.expertise,
           sectorFit: f.verifiedInfo.sectorFit,
           redFlagsFromLinkedIn: f.verifiedInfo.redFlags,
           questionsFromLinkedIn: f.verifiedInfo.questionsToAsk,
-          // Include raw LinkedIn data if available (from Coresignal)
-          rawLinkedInData: f.verifiedInfo.rawLinkedInData,
         };
       }
 

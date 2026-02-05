@@ -1418,6 +1418,22 @@ export class AgentOrchestrator {
           })
         );
 
+        // Auto-retry failed agents (1 retry each, sequential to avoid overload)
+        for (let i = 0; i < batchResults.length; i++) {
+          if (!batchResults[i].result.success) {
+            const { agentName } = batchResults[i];
+            console.log(`[Orchestrator] Retrying failed agent: ${agentName}`);
+            const agent = tier3AgentMap[agentName];
+            try {
+              const retryResult = await agent.run(enrichedContext);
+              batchResults[i] = { agentName, result: retryResult };
+              console.log(`[Orchestrator] Retry succeeded for ${agentName}`);
+            } catch (retryError) {
+              console.log(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
+            }
+          }
+        }
+
         // Collect batch results
         for (const { agentName, result } of batchResults) {
           allResults[agentName] = result;
@@ -1581,35 +1597,52 @@ export class AgentOrchestrator {
           estimatedCostSoFar: totalCost,
         });
 
-        try {
-          const result = await agent.run(enrichedContext);
-          allResults[agentName] = result;
-          totalCost += result.cost;
-          completedCount++;
-          enrichedContext.previousResults![agentName] = result;
+        let agentResult: AgentResult | null = null;
 
-          stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-          await processAgentResult(dealId, agentName, result);
+        // Try up to 2 attempts (initial + 1 retry)
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const result = await agent.run(enrichedContext);
+            agentResult = result;
+            break; // Success, exit retry loop
+          } catch (error) {
+            const errMsg = error instanceof Error ? error.message : "Unknown error";
+            if (attempt === 1) {
+              console.log(`[Orchestrator] ${agentName} failed (attempt ${attempt}), retrying... Error: ${errMsg}`);
+            } else {
+              console.log(`[Orchestrator] ${agentName} failed after ${attempt} attempts: ${errMsg}`);
+              agentResult = {
+                agentName,
+                success: false,
+                executionTimeMs: 0,
+                cost: 0,
+                error: errMsg,
+              };
+            }
+          }
+        }
+
+        if (agentResult) {
+          allResults[agentName] = agentResult;
+          totalCost += agentResult.cost;
+          completedCount++;
+          enrichedContext.previousResults![agentName] = agentResult;
+
+          if (agentResult.success) {
+            stateMachine.recordAgentComplete(agentName, agentResult as AnalysisAgentResult);
+          } else {
+            stateMachine.recordAgentFailed(agentName, agentResult.error ?? "Unknown");
+          }
+          await processAgentResult(dealId, agentName, agentResult);
           await updateAnalysisProgress(analysis.id, completedCount, totalCost);
 
           onProgress?.({
             currentAgent: agentName,
             completedAgents: completedCount,
             totalAgents: TOTAL_AGENTS,
-            latestResult: result,
+            latestResult: agentResult,
             estimatedCostSoFar: totalCost,
           });
-        } catch (error) {
-          const errorResult: AgentResult = {
-            agentName,
-            success: false,
-            executionTimeMs: 0,
-            cost: 0,
-            error: error instanceof Error ? error.message : "Unknown error",
-          };
-          allResults[agentName] = errorResult;
-          stateMachine.recordAgentFailed(agentName, errorResult.error ?? "Unknown");
-          completedCount++;
         }
       }
 

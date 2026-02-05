@@ -1,6 +1,6 @@
 import { MODELS, type ModelKey } from "@/services/openrouter/client";
 import { complete, setAgentContext, completeJSON } from "@/services/openrouter/router";
-import { sanitizeName, sanitizeDocumentText, sanitizeForLLM } from "@/lib/sanitize";
+import { compressBoardContext, buildDealSummary } from "./context-compressor";
 import type {
   BoardMemberConfig,
   BoardInput,
@@ -19,7 +19,7 @@ export class BoardMember {
   readonly modelKey: ModelKey;
   readonly name: string;
   readonly color: string;
-  readonly provider: "anthropic" | "openai" | "google" | "mistral";
+  readonly provider: "anthropic" | "openai" | "google" | "xai";
 
   private totalCost = 0;
 
@@ -136,13 +136,13 @@ export class BoardMember {
       anthropic: "Anthropic (Claude)",
       openai: "OpenAI (GPT)",
       google: "Google (Gemini)",
-      mistral: "Mistral AI",
+      xai: "xAI (Grok)",
     };
 
     return `Tu es un Senior Investment Analyst participant a un Board d'Investissement IA multi-modeles.
 
 ## CONTEXTE UNIQUE
-Tu es ${this.name}, un LLM de ${providerNames[this.provider]}. Tu fais partie d'un comite de 4 modeles IA differents (Claude, GPT, Gemini, Mistral) qui analysent le meme deal en parallele.
+Tu es ${this.name}, un LLM de ${providerNames[this.provider]}. Tu fais partie d'un comite de 4 modeles IA differents (Claude, GPT, Gemini, Grok) qui analysent le meme deal en parallele.
 
 La valeur de ce board reside dans la DIVERSITE des perspectives:
 - Chaque modele a ete entraine differemment
@@ -175,11 +175,12 @@ FORMAT: Toujours repondre en JSON valide.`;
   }
 
   private buildAnalysisPrompt(input: BoardInput): string {
-    const formattedInput = this.formatInputForLLM(input);
+    // Use compressed context instead of raw JSON dumps
+    const compressedContext = compressBoardContext(input);
 
     return `ANALYSE INITIALE DU DEAL
 
-${formattedInput}
+${compressedContext}
 
 ---
 
@@ -217,7 +218,8 @@ Reponds en JSON avec ce format exact:
     othersAnalyses: { memberId: string; memberName: string; analysis: InitialAnalysis }[],
     roundNumber: number
   ): string {
-    const formattedInput = this.formatInputForLLM(input);
+    // Use short deal summary instead of full context for debate
+    const dealSummary = buildDealSummary(input);
 
     const othersSection = othersAnalyses
       .map(
@@ -234,8 +236,7 @@ ${o.analysis.concerns.map((c) => `  * [${c.severity}] ${c.concern}`).join("\n")}
 
     return `ROUND DE DEBAT ${roundNumber}
 
-## RAPPEL DU DEAL
-${formattedInput}
+## ${dealSummary}
 
 ---
 
@@ -290,7 +291,8 @@ Reponds en JSON:
       responses: { memberId: string; memberName: string; response: DebateResponse }[];
     }[]
   ): string {
-    const formattedInput = this.formatInputForLLM(input);
+    // Use short deal summary instead of full context for vote
+    const dealSummary = buildDealSummary(input);
 
     const debateSection = debateHistory
       .map(
@@ -310,8 +312,7 @@ ${r.response.positionChanged ? `(A CHANGE de position vers ${r.response.newVerdi
 
     return `VOTE FINAL
 
-## RAPPEL DU DEAL
-${formattedInput}
+## ${dealSummary}
 
 ---
 
@@ -344,69 +345,6 @@ Reponds en JSON:
   ]
 }
 \`\`\``;
-  }
-
-  private formatInputForLLM(input: BoardInput): string {
-    const sections: string[] = [];
-
-    // Basic info - SANITIZED to prevent prompt injection
-    const safeDealName = sanitizeName(input.dealName);
-    const safeCompanyName = sanitizeName(input.companyName);
-
-    sections.push(`# DEAL: ${safeDealName}
-Entreprise: ${safeCompanyName}
-`);
-
-    // Documents - SANITIZED with smart truncation
-    if (input.documents.length > 0) {
-      // Calculate per-document limit based on number of docs (total ~10K chars for docs)
-      const perDocLimit = Math.floor(10000 / Math.max(input.documents.length, 1));
-
-      sections.push(`## DOCUMENTS ANALYSES
-${input.documents
-  .map(
-    (d) => `### ${sanitizeName(d.name)} (${d.type})
-${sanitizeDocumentText(d.extractedText, perDocLimit)}`
-  )
-  .join("\n\n")}`);
-    }
-
-    // Agent outputs - NO pretty print (saves ~30% tokens)
-    if (input.agentOutputs.tier1) {
-      sections.push(`## RESULTATS TIER 1 (Screening)
-${JSON.stringify(input.agentOutputs.tier1)}`);
-    }
-
-    if (input.agentOutputs.tier2) {
-      sections.push(`## RESULTATS TIER 2 (Sector Expert)
-${JSON.stringify(input.agentOutputs.tier2)}`);
-    }
-
-    if (input.agentOutputs.tier3) {
-      sections.push(`## RESULTATS TIER 3 (Synthesis)
-${JSON.stringify(input.agentOutputs.tier3)}`);
-    }
-
-    // Fact Store - Pre-formatted text is already optimized
-    if (input.agentOutputs.factStore?.formatted) {
-      sections.push(`## FACT STORE (Verified Facts)
-${input.agentOutputs.factStore.formatted}`);
-    }
-
-    // Enriched data - NO pretty print, sanitized to prevent injection
-    if (input.enrichedData) {
-      const sanitizedEnrichedData = sanitizeForLLM(JSON.stringify(input.enrichedData));
-      sections.push(`## DONNEES ENRICHIES (Context Engine)
-${sanitizedEnrichedData}`);
-    }
-
-    // Sources - sanitized to prevent injection
-    if (input.sources.length > 0) {
-      sections.push(`## SOURCES
-${input.sources.map((s) => `- ${sanitizeName(s.source)} [${s.reliability}]: ${s.dataPoints.map(dp => sanitizeForLLM(dp)).join(", ")}`).join("\n")}`);
-    }
-
-    return sections.join("\n\n---\n\n");
   }
 
   private timeout<T>(ms: number, message: string): Promise<T> {

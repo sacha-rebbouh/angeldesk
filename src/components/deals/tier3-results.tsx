@@ -579,13 +579,18 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
         )}
         <div className="space-y-3">
           {scenarios.filter((s: ScenarioV2) => !isNoGo || s.name === "CATASTROPHIC" || s.name === "BEAR").map((scenario: ScenarioV2, i: number) => {
-            const y5Metrics = scenario.metrics?.find(m => m.year === 5);
             const investorReturn = scenario.investorReturn;
-            const exitValuation = scenario.exitOutcome?.exitValuation ?? 0;
-            const irr = investorReturn?.irr ?? 0;
             const multiple = investorReturn?.multiple ?? 0;
             const probability = scenario.probability?.value ?? 0;
             const comparable = scenario.basedOnComparable;
+            const investment = investorReturn?.initialInvestment ?? 0;
+            // Recalculer les proceeds depuis le multiple pour garantir la coherence
+            const computedProceeds = Math.round(investment * multiple);
+            const years = investorReturn?.holdingPeriodYears ?? 6;
+            // IRR coherent avec le multiple: (multiple^(1/years) - 1) * 100
+            const computedIRR = multiple > 0
+              ? Math.round((Math.pow(multiple, 1 / years) - 1) * 1000) / 10
+              : -100;
 
             return (
               <div key={i} className={cn("p-4 rounded-lg border-2 transition-all hover:shadow-md", SCENARIO_COLORS_EXTENDED[scenario.name] ?? "border-gray-200 bg-gray-50")}>
@@ -600,7 +605,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                       scenario.name === "BEAR" ? "bg-orange-100 text-orange-800 border-orange-300" :
                       "bg-red-100 text-red-800 border-red-300"
                     )}>
-                      {probability}% proba
+                      {probability}% de chances
                     </Badge>
                   </div>
                   <div className="text-right">
@@ -617,51 +622,57 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
 
                 <p className="text-sm text-muted-foreground mb-3">{scenario.description}</p>
 
-                {/* Key Metrics */}
-                <div className="grid grid-cols-4 gap-3 text-sm mb-3">
-                  <div className="p-2 bg-white/50 rounded border">
-                    <div className="text-xs text-muted-foreground">Y5 Revenue</div>
-                    <div className="font-bold">
-                      {y5Metrics ? `€${(y5Metrics.revenue / 1000000).toFixed(1)}M` : "N/A"}
+                {/* Hypotheses */}
+                {scenario.assumptions && scenario.assumptions.length > 0 && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-3 px-1">
+                    {scenario.assumptions.map((a, j) => (
+                      <div key={j} className="flex items-center gap-1">
+                        <span className="text-muted-foreground">{a.assumption}:</span>
+                        <span className="font-medium">{a.value}</span>
+                        <span className="text-muted-foreground/60">({a.source})</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Retour potentiel */}
+                <div className="p-3 bg-white/50 rounded border text-sm mb-3">
+                  <div className="text-xs text-muted-foreground mb-1.5">
+                    Retour potentiel ({probability}% de chances)
+                  </div>
+                  {investment > 0 ? (
+                    <div className="font-bold text-base">
+                      €{investment.toLocaleString()} → €{computedProceeds.toLocaleString()}
+                      <span className="text-sm font-normal text-muted-foreground ml-2">
+                        (x{multiple.toFixed(1)} en {years} ans{computedIRR > 0 ? `, soit ${computedIRR.toFixed(0)}%/an` : ""})
+                      </span>
                     </div>
-                  </div>
-                  <div className="p-2 bg-white/50 rounded border">
-                    <div className="text-xs text-muted-foreground">Exit Valo</div>
-                    <div className="font-bold">€{(exitValuation / 1000000).toFixed(0)}M</div>
-                  </div>
-                  <div className="p-2 bg-white/50 rounded border">
-                    <div className="text-xs text-muted-foreground">Multiple</div>
-                    <div className="font-bold">{multiple.toFixed(1)}x</div>
-                  </div>
-                  <div className="p-2 bg-white/50 rounded border">
-                    <div className="text-xs text-muted-foreground">IRR</div>
-                    <div className={cn(
-                      "font-bold",
-                      irr >= 30 ? "text-green-600" :
-                      irr >= 15 ? "text-blue-600" :
-                      irr >= 0 ? "text-yellow-600" : "text-red-600"
-                    )}>
-                      {irr.toFixed(0)}%
-                    </div>
-                  </div>
+                  ) : (
+                    <div className="font-bold text-base">{multiple.toFixed(1)}x</div>
+                  )}
+                  {scenario.probability?.rationale && (
+                    <p className="text-xs text-muted-foreground mt-2 border-t border-border/50 pt-2">
+                      {scenario.probability.rationale}
+                    </p>
+                  )}
                 </div>
 
-                {/* IRR Calculation (expandable detail) */}
-                {investorReturn && (
+                {/* Calcul ROI detaille (expandable) */}
+                {investorReturn && investment > 0 && (
                   <ExpandableSection title="Calcul ROI detaille" count={1}>
                     <div className="mt-2 p-3 bg-white/70 rounded border text-xs space-y-2">
                       <div className="grid grid-cols-2 gap-2">
-                        <div><span className="text-muted-foreground">Investissement initial:</span> €{investorReturn.initialInvestment?.toLocaleString()}</div>
-                        <div><span className="text-muted-foreground">Ownership entree:</span> {investorReturn.ownershipAtEntry?.toFixed(2)}%</div>
-                        <div><span className="text-muted-foreground">Dilution exit:</span> {investorReturn.dilutionToExit}%</div>
-                        <div><span className="text-muted-foreground">Ownership exit:</span> {investorReturn.ownershipAtExit?.toFixed(2)}%</div>
-                        <div><span className="text-muted-foreground">Proceeds bruts:</span> €{investorReturn.grossProceeds?.toLocaleString()}</div>
-                        <div><span className="text-muted-foreground">Holding:</span> {investorReturn.holdingPeriodYears} ans</div>
+                        <div><span className="text-muted-foreground">Investissement:</span> €{investment.toLocaleString()}</div>
+                        <div><span className="text-muted-foreground">Part au capital:</span> {investorReturn.ownershipAtEntry?.toFixed(2)}%</div>
+                        <div><span className="text-muted-foreground">Dilution estimee:</span> {investorReturn.dilutionToExit}%</div>
+                        <div><span className="text-muted-foreground">Part a la sortie:</span> {investorReturn.ownershipAtExit?.toFixed(2)}%</div>
+                        <div><span className="text-muted-foreground">Retour brut:</span> €{computedProceeds.toLocaleString()}</div>
+                        <div><span className="text-muted-foreground">Duree:</span> {years} ans</div>
                       </div>
                       <div className="border-t pt-2 mt-2">
-                        <div className="text-muted-foreground mb-1">Formule IRR:</div>
+                        <div className="text-muted-foreground mb-1">Calcul:</div>
                         <code className="text-xs bg-gray-100 p-1 rounded block">
-                          {investorReturn.irrCalculation || `((${multiple.toFixed(1)})^(1/${investorReturn.holdingPeriodYears}) - 1) × 100 = ${irr.toFixed(1)}%`}
+                          €{investment.toLocaleString()} × {multiple.toFixed(1)} = €{computedProceeds.toLocaleString()} → IRR = ({multiple.toFixed(1)}^(1/{years}) - 1) = {computedIRR.toFixed(1)}%/an
                         </code>
                       </div>
                     </div>
@@ -706,15 +717,12 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                   <p className="text-xs text-muted-foreground">{c.sector} • {c.stage}</p>
                   <p className="text-xs text-slate-600 mt-1">{c.trajectory}</p>
                   {c.keyMetrics && (
-                    <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                    <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
                       {c.keyMetrics.seedValuation && (
                         <div className="p-1 bg-white rounded">Seed: €{(c.keyMetrics.seedValuation / 1000000).toFixed(1)}M</div>
                       )}
-                      {c.keyMetrics.exitValuation && (
-                        <div className="p-1 bg-white rounded">Exit: €{(c.keyMetrics.exitValuation / 1000000).toFixed(0)}M</div>
-                      )}
                       {c.keyMetrics.timeToExit && (
-                        <div className="p-1 bg-white rounded">{c.keyMetrics.timeToExit} ans</div>
+                        <div className="p-1 bg-white rounded">Exit apres {c.keyMetrics.timeToExit} ans</div>
                       )}
                     </div>
                   )}

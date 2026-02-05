@@ -55,9 +55,9 @@ export const CONNECTOR_TIERS: Record<string, FetchConfig> = {
   },
   // Tier 3: Slow APIs (LinkedIn, web search)
   slow: {
-    timeoutMs: 10000,
+    timeoutMs: 60000,
     maxRetries: 2,
-    retryDelayMs: 1000,
+    retryDelayMs: 2000,
     useCircuitBreaker: true,
   },
 };
@@ -87,7 +87,7 @@ const CONNECTOR_TIER_MAP: Record<string, keyof typeof CONNECTOR_TIERS> = {
   wttj: "fast",
 
   // Slow
-  coresignal_linkedin: "slow",  // LinkedIn data via Coresignal API
+  coresignal_linkedin: "slow",  // LinkedIn data via RapidAPI Fresh LinkedIn
   web_search: "slow",
   news_api: "slow",
   societe_com: "slow",

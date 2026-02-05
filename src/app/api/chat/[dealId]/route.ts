@@ -67,6 +67,25 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
+    // If conversationId is provided, return that conversation's messages
+    const conversationId = request.nextUrl.searchParams.get("conversationId");
+    if (conversationId) {
+      if (!/^c[a-z0-9]{20,30}$/.test(conversationId)) {
+        return NextResponse.json(
+          { error: "Invalid conversation ID format" },
+          { status: 400 }
+        );
+      }
+      const conversation = await getConversation(conversationId, user.id);
+      if (!conversation || conversation.dealId !== dealId) {
+        return NextResponse.json(
+          { error: "Conversation not found" },
+          { status: 404 }
+        );
+      }
+      return NextResponse.json({ data: { conversation } });
+    }
+
     // Parallelize independent DB calls
     const [conversations, chatContext] = await Promise.all([
       getConversationsForDeal(dealId, user.id),

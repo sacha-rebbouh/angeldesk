@@ -11,6 +11,8 @@ import React, {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Send, MessageSquare, Loader2, Sparkles } from "lucide-react";
 
+import Markdown from "react-markdown";
+
 import { cn } from "@/lib/utils";
 import { queryKeys } from "@/lib/query-keys";
 import { Button } from "@/components/ui/button";
@@ -117,7 +119,13 @@ const ChatMessage = memo(function ChatMessage({ message }: ChatMessageProps) {
             : "bg-muted text-foreground rounded-bl-md"
         )}
       >
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        {isUser ? (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        ) : (
+          <div className="prose prose-sm dark:prose-invert max-w-none break-words [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-[0.9375rem] [&_h4]:text-sm">
+            <Markdown>{message.content}</Markdown>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -296,6 +304,15 @@ const EmptyState = memo(function EmptyState({ dealName }: EmptyStateProps) {
 // MAIN DEAL CHAT PANEL COMPONENT
 // ============================================================================
 
+interface ConversationMessagesResponse {
+  data: {
+    conversation: {
+      id: string;
+      messages: ChatMessageData[];
+    };
+  };
+}
+
 export const DealChatPanel = memo(function DealChatPanel({
   dealId,
   dealName,
@@ -306,7 +323,7 @@ export const DealChatPanel = memo(function DealChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [inputValue, setInputValue] = useState("");
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [localMessages, setLocalMessages] = useState<ChatMessageData[]>([]);
+  const [pendingMessages, setPendingMessages] = useState<ChatMessageData[]>([]);
 
   // Fetch conversations for this deal
   const { data: conversationsData, isLoading: isLoadingConversations } =
@@ -335,6 +352,36 @@ export const DealChatPanel = memo(function DealChatPanel({
       setActiveConversationId(latestConversation.id);
     }
   }, [latestConversation, activeConversationId]);
+
+  // Fetch persisted messages for the active conversation
+  const { data: conversationData, isLoading: isLoadingMessages } =
+    useQuery<ConversationMessagesResponse>({
+      queryKey: queryKeys.chat.messages(dealId, activeConversationId ?? ""),
+      queryFn: async () => {
+        const response = await fetch(
+          `/api/chat/${dealId}?conversationId=${activeConversationId}`
+        );
+        if (!response.ok) {
+          throw new Error("Failed to fetch messages");
+        }
+        return response.json();
+      },
+      enabled: isOpen && !!activeConversationId,
+      staleTime: 30_000,
+    });
+
+  // Merge persisted messages with optimistic pending messages
+  const allMessages = useMemo(() => {
+    const persisted: ChatMessageData[] =
+      conversationData?.data?.conversation?.messages?.map((m) => ({
+        ...m,
+        createdAt: typeof m.createdAt === "string" ? m.createdAt : new Date(m.createdAt).toISOString(),
+      })) ?? [];
+    const persistedIds = new Set(persisted.map((m) => m.id));
+    // Only add pending messages that aren't already in persisted data
+    const newPending = pendingMessages.filter((m) => !persistedIds.has(m.id));
+    return [...persisted, ...newPending];
+  }, [conversationData, pendingMessages]);
 
   // Send message mutation
   const sendMessageMutation = useMutation<
@@ -367,57 +414,37 @@ export const DealChatPanel = memo(function DealChatPanel({
         intent: null,
         createdAt: new Date().toISOString(),
       };
-      setLocalMessages((prev) => [...prev, optimisticUserMessage]);
+      setPendingMessages((prev) => [...prev, optimisticUserMessage]);
     },
-    onSuccess: (response, variables) => {
-      // Update with real data
-      const { conversationId, response: assistantResponse, userMessageId, assistantMessageId } =
-        response.data;
+    onSuccess: (response) => {
+      const { conversationId, isNewConversation } = response.data;
 
       // Set active conversation if this was a new one
-      if (!activeConversationId || response.data.isNewConversation) {
+      if (!activeConversationId || isNewConversation) {
         setActiveConversationId(conversationId);
       }
 
-      // Replace optimistic message with real one and add assistant response
-      setLocalMessages((prev) => {
-        const filtered = prev.filter((m) => !m.id.startsWith("temp-"));
-        return [
-          ...filtered,
-          {
-            id: userMessageId,
-            role: "USER",
-            content: variables.message,
-            intent: null,
-            createdAt: new Date().toISOString(),
-          },
-          {
-            id: assistantMessageId,
-            role: "ASSISTANT",
-            content: assistantResponse,
-            intent: null,
-            createdAt: new Date().toISOString(),
-          },
-        ];
+      // Clear pending messages and refresh from server
+      setPendingMessages([]);
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.chat.messages(dealId, conversationId),
       });
-
-      // Invalidate conversations query to refresh list
       queryClient.invalidateQueries({
         queryKey: queryKeys.chat.conversations(dealId),
       });
     },
     onError: () => {
       // Remove optimistic message on error
-      setLocalMessages((prev) => prev.filter((m) => !m.id.startsWith("temp-")));
+      setPendingMessages((prev) => prev.filter((m) => !m.id.startsWith("temp-")));
     },
   });
 
-  // Auto-scroll to bottom when new messages arrive
+  // Scroll to bottom on open and when messages change
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [localMessages, sendMessageMutation.isPending]);
+  }, [allMessages, sendMessageMutation.isPending, isOpen]);
 
   // Handle send message
   const handleSendMessage = useCallback(() => {
@@ -444,7 +471,8 @@ export const DealChatPanel = memo(function DealChatPanel({
   // Don't render if not open
   if (!isOpen) return null;
 
-  const hasMessages = localMessages.length > 0;
+  const isLoading = isLoadingConversations || isLoadingMessages;
+  const hasMessages = allMessages.length > 0;
   const isSending = sendMessageMutation.isPending;
 
   return (
@@ -479,13 +507,13 @@ export const DealChatPanel = memo(function DealChatPanel({
 
       {/* Messages area */}
       <CardContent className="flex-1 overflow-y-auto p-0">
-        {isLoadingConversations ? (
+        {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
         ) : hasMessages ? (
           <div className="flex flex-col gap-3 p-4">
-            {localMessages.map((message) => (
+            {allMessages.map((message) => (
               <ChatMessage key={message.id} message={message} />
             ))}
             {isSending && <TypingIndicator />}

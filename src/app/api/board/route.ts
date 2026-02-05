@@ -179,13 +179,68 @@ export async function POST(req: NextRequest) {
 /**
  * GET /api/board
  * Get user's board credits status
+ * Optional: ?dealId=xxx to also return the latest completed session for that deal
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const user = await requireAuth();
     const status = await getCreditsStatus(user.id);
 
-    return NextResponse.json({ status });
+    const dealId = req.nextUrl.searchParams.get("dealId");
+
+    // If dealId provided, also fetch the latest completed session
+    let latestSession = null;
+    if (dealId) {
+      const session = await prisma.aIBoardSession.findFirst({
+        where: {
+          dealId,
+          userId: user.id,
+          status: "COMPLETED",
+        },
+        orderBy: { completedAt: "desc" },
+        include: {
+          members: true,
+          rounds: {
+            orderBy: { roundNumber: "asc" },
+          },
+        },
+      });
+
+      if (session) {
+        latestSession = {
+          id: session.id,
+          dealId: session.dealId,
+          status: session.status,
+          verdict: session.verdict,
+          consensusLevel: session.consensusLevel,
+          stoppingReason: session.stoppingReason,
+          votes: session.members.map((member) => ({
+            memberId: member.id,
+            modelId: member.modelId,
+            memberName: member.modelName,
+            color: member.color,
+            initialAnalysis: member.initialAnalysis,
+            finalVote: member.finalVote,
+            finalConfidence: member.finalConfidence,
+            justification: member.voteJustification,
+          })),
+          rounds: session.rounds.map((round) => ({
+            roundNumber: round.roundNumber,
+            roundType: round.roundType,
+            responses: round.responses,
+          })),
+          consensusPoints: session.consensusPoints,
+          frictionPoints: session.frictionPoints,
+          questionsForFounder: session.questionsForFounder,
+          totalRounds: session.totalRounds,
+          totalCost: session.totalCost?.toString(),
+          totalTimeMs: session.totalTimeMs,
+          completedAt: session.completedAt?.toISOString(),
+        };
+      }
+    }
+
+    return NextResponse.json({ status, latestSession });
   } catch (error) {
     if (process.env.NODE_ENV === "development") {
       console.error("Board credits API error:", error);

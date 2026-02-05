@@ -4,8 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import {
   analyzeFounderLinkedIn,
-  isCoresignalLinkedInConfigured,
-} from "@/services/context-engine/connectors/coresignal-linkedin";
+  isRapidAPILinkedInConfigured,
+} from "@/services/context-engine/connectors/rapidapi-linkedin";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -75,10 +75,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Invalid ID format" }, { status: 400 });
     }
 
-    // Check if Apify is configured
-    if (!isCoresignalLinkedInConfigured()) {
+    // Check if RapidAPI LinkedIn is configured
+    if (!isRapidAPILinkedInConfigured()) {
       return NextResponse.json(
-        { error: "LinkedIn enrichment not configured. Please set CORESIGNAL_API_KEY." },
+        { error: "LinkedIn enrichment not configured. Please set RAPIDAPI_LINKEDIN_KEY." },
         { status: 503 }
       );
     }
@@ -148,9 +148,43 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const hasRelevantIndustryExp = result.analysis?.sectorFit?.fits ?? false;
 
     // Build verifiedInfo object (must be JSON-serializable)
+    // Store the FULL profile data from the API — we pay for it, use it all
+    const rawProfile = result.rawProfile;
     const verifiedInfo = {
       linkedinScrapedAt: new Date().toISOString(),
-      // Store key highlights for quick display in UI
+      // Full LinkedIn profile data
+      fullName: rawProfile?.full_name ?? founder.name,
+      headline: rawProfile?.headline ?? null,
+      summary: rawProfile?.summary ?? null,
+      country: rawProfile?.country ?? rawProfile?.country_full_name ?? null,
+      city: rawProfile?.city ?? null,
+      connections: rawProfile?.connections ?? null,
+      followerCount: rawProfile?.follower_count ?? null,
+      // Full work history (ALL experiences, not just founder roles)
+      experiences: rawProfile?.experiences?.map((exp) => ({
+        company: exp.company,
+        title: exp.title,
+        description: exp.description ?? null,
+        location: exp.location ?? null,
+        startYear: exp.starts_at?.year ?? null,
+        startMonth: exp.starts_at?.month ?? null,
+        endYear: exp.ends_at?.year ?? null,
+        endMonth: exp.ends_at?.month ?? null,
+        isCurrent: exp.ends_at === null,
+      })) ?? [],
+      // Full education
+      education: rawProfile?.education?.map((edu) => ({
+        school: edu.school,
+        degree: edu.degree_name ?? null,
+        fieldOfStudy: edu.field_of_study ?? null,
+        startYear: edu.starts_at?.year ?? null,
+        endYear: edu.ends_at?.year ?? null,
+        description: edu.description ?? null,
+      })) ?? [],
+      // Skills & languages
+      skills: rawProfile?.skills ?? [],
+      languages: rawProfile?.languages ?? [],
+      // Computed highlights for quick display in UI
       highlights: {
         yearsExperience,
         educationLevel,

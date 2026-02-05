@@ -1,7 +1,6 @@
 import type {
   AgentResult,
   RedFlagResult,
-  ScoringResult,
   SynthesisDealScorerResult,
 } from "../types";
 import type { AnalysisType } from "./types";
@@ -175,18 +174,10 @@ export function generateSummary(
 ): string {
   const parts: string[] = [];
 
-  // Scoring summary
-  const scoring = results["deal-scorer"] as ScoringResult | undefined;
-  if (scoring?.success && scoring.data) {
-    const { scores } = scoring.data;
-    parts.push(
-      `**Score Global**: ${scores.global}/100\n` +
-        `- Team: ${scores.team}/100\n` +
-        `- Market: ${scores.market}/100\n` +
-        `- Product: ${scores.product}/100\n` +
-        `- Financials: ${scores.financials}/100\n` +
-        `- Timing: ${scores.timing}/100`
-    );
+  // Scoring summary from synthesis-deal-scorer
+  const scorer = results["synthesis-deal-scorer"] as SynthesisDealScorerResult | undefined;
+  if (scorer?.success && scorer.data?.overallScore) {
+    parts.push(`**Score Global**: ${scorer.data.overallScore}/100`);
   }
 
   // Red flags summary

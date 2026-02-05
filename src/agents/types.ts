@@ -836,10 +836,10 @@ export interface CompetitiveIntelResult extends AgentResult {
 // TEAM INVESTIGATOR AGENT - REFONTE v2.0
 // ============================================================================
 // Mission: Investigation approfondie de l'équipe fondatrice
-// Standard: LinkedIn vérifié via Coresignal, cross-reference DB, détection red flags
+// Standard: LinkedIn vérifié via RapidAPI Fresh LinkedIn, cross-reference DB, détection red flags
 // Minimum: Profil complet par fondateur, 3+ red flags, 5+ questions
 
-/** Profil LinkedIn enrichi via Coresignal Base Employee API */
+/** Profil LinkedIn enrichi via RapidAPI Fresh LinkedIn */
 export interface LinkedInEnrichedProfile {
   linkedinUrl: string;
   scrapedAt: string;
@@ -849,7 +849,7 @@ export interface LinkedInEnrichedProfile {
   about?: string;
   profilePicture?: string;
 
-  // Expérience professionnelle (via Coresignal)
+  // Expérience professionnelle (via RapidAPI Fresh LinkedIn)
   experiences: {
     title: string;
     company: string;

@@ -25,6 +25,9 @@ import {
   retrieveContext,
   type RetrievedContext,
   type ChatIntent as RetrieverChatIntent,
+  type RetrievedScoredFinding,
+  type RetrievedDebateRecord,
+  type RetrievedBoardResult,
 } from "./context-retriever";
 
 // ============================================================================
@@ -94,7 +97,13 @@ export interface FullChatContext {
     marketScore?: number | null;
     productScore?: number | null;
     financialsScore?: number | null;
-    founders?: Array<{ name: string; role: string }>;
+    founders?: Array<{
+      name: string;
+      role: string;
+      linkedinUrl?: string | null;
+      verifiedInfo?: unknown;
+      previousVentures?: unknown;
+    }>;
   };
 
   // Pre-computed chat context
@@ -237,7 +246,105 @@ Aider le Business Angel a comprendre et exploiter l'analyse de son deal:
 
 ## Fondateurs
 ${deal.founders && deal.founders.length > 0
-  ? deal.founders.map((f) => `- **${f.name}** (${f.role})`).join("\n")
+  ? deal.founders.map((f) => {
+      let founderInfo = `- **${f.name}** (${f.role})`;
+      if (f.linkedinUrl) {
+        founderInfo += ` — LinkedIn: ${f.linkedinUrl}`;
+      }
+      const vi = f.verifiedInfo as Record<string, unknown> | null | undefined;
+      if (vi) {
+        // Profile basics
+        if (vi.headline) founderInfo += `\n  - Tagline LinkedIn: "${vi.headline}"`;
+        if (vi.summary) founderInfo += `\n  - Bio: ${String(vi.summary).slice(0, 500)}`;
+        if (vi.city || vi.country) founderInfo += `\n  - Localisation: ${[vi.city, vi.country].filter(Boolean).join(", ")}`;
+        if (vi.connections) founderInfo += `\n  - Connexions LinkedIn: ${vi.connections}`;
+
+        // Full work history
+        const experiences = vi.experiences as Array<Record<string, unknown>> | undefined;
+        if (experiences && experiences.length > 0) {
+          founderInfo += `\n  - Parcours professionnel (${experiences.length} postes):`;
+          for (const exp of experiences) {
+            const period = exp.isCurrent
+              ? `${exp.startYear ?? "?"}–present`
+              : `${exp.startYear ?? "?"}–${exp.endYear ?? "?"}`;
+            founderInfo += `\n    - **${exp.title}** @ ${exp.company} (${period})`;
+            if (exp.description) founderInfo += `\n      ${String(exp.description).slice(0, 200)}`;
+          }
+        }
+
+        // Education
+        const education = vi.education as Array<Record<string, unknown>> | undefined;
+        if (education && education.length > 0) {
+          founderInfo += `\n  - Formation:`;
+          for (const edu of education) {
+            const parts = [edu.degree, edu.fieldOfStudy].filter(Boolean).join(" - ");
+            founderInfo += `\n    - ${edu.school}${parts ? ` (${parts})` : ""}${edu.endYear ? ` — ${edu.endYear}` : ""}`;
+          }
+        }
+
+        // Skills
+        const skills = vi.skills as string[] | undefined;
+        if (skills && skills.length > 0) {
+          founderInfo += `\n  - Competences: ${skills.slice(0, 15).join(", ")}`;
+        }
+
+        // Languages
+        const languages = vi.languages as string[] | undefined;
+        if (languages && languages.length > 0) {
+          founderInfo += `\n  - Langues: ${languages.join(", ")}`;
+        }
+
+        // Highlights
+        const hl = vi.highlights as Record<string, unknown> | undefined;
+        if (hl) {
+          if (hl.yearsExperience) founderInfo += `\n  - Annees d'experience: ${hl.yearsExperience} ans`;
+          if (hl.hasRelevantIndustryExp) founderInfo += `\n  - Experience sectorielle pertinente: Oui`;
+          if (hl.hasFounderExperience) founderInfo += `\n  - Experience fondateur/CEO: Oui`;
+          if (hl.hasTechBackground) founderInfo += `\n  - Background technique: Oui`;
+          if (hl.isSerialFounder) founderInfo += `\n  - Serial founder: Oui`;
+        }
+
+        // Expertise
+        const expertise = vi.expertise as Record<string, unknown> | undefined;
+        if (expertise) {
+          if (expertise.description) founderInfo += `\n  - Expertise: ${expertise.description}`;
+        }
+
+        // Sector fit
+        const sectorFit = vi.sectorFit as Record<string, unknown> | undefined;
+        if (sectorFit) {
+          founderInfo += `\n  - Adequation sectorielle: ${sectorFit.fits ? "Oui" : "Non"}`;
+          if (sectorFit.explanation) founderInfo += ` — ${sectorFit.explanation}`;
+        }
+
+        // Red flags
+        const redFlags = vi.redFlags as Array<Record<string, unknown>> | undefined;
+        if (redFlags && redFlags.length > 0) {
+          founderInfo += `\n  - Red flags profil:`;
+          for (const rf of redFlags) {
+            founderInfo += `\n    - [${rf.severity}] ${rf.message}`;
+          }
+        }
+
+        // Questions
+        const questions = vi.questionsToAsk as Array<Record<string, unknown>> | undefined;
+        if (questions && questions.length > 0) {
+          founderInfo += `\n  - Questions suggerees:`;
+          for (const q of questions) {
+            founderInfo += `\n    - ${q.question}${q.context ? ` (${q.context})` : ""}`;
+          }
+        }
+      }
+      // Previous ventures (from Prisma field)
+      const ventures = f.previousVentures as Array<Record<string, unknown>> | undefined;
+      if (ventures && ventures.length > 0) {
+        founderInfo += `\n  - Ventures precedentes:`;
+        for (const v of ventures) {
+          founderInfo += `\n    - ${v.company ?? "?"} (${v.role ?? "?"}, ${v.startYear ?? "?"}–${v.endYear ?? "present"})`;
+        }
+      }
+      return founderInfo;
+    }).join("\n")
   : "Non renseigne"}
 
 ## Documents analyses
@@ -362,24 +469,30 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       sections.push(factsSection);
     }
 
-    // Agent results (full analysis results, not summaries)
+    // Agent results (FULL analysis data)
     if (retrievedCtx.agentResults.length > 0) {
-      let agentsSection = "## RÉSULTATS D'AGENTS (Analyses complètes)\n";
+      let agentsSection = "## RÉSULTATS D'AGENTS (Données COMPLÈTES)\n";
       for (const result of retrievedCtx.agentResults) {
         agentsSection += `\n### ${this.formatAgentName(result.agent)}\n`;
-        if (result.summary) {
-          agentsSection += `**Résumé**: ${result.summary}\n`;
-        }
         if (result.score !== undefined) {
           agentsSection += `**Score**: ${result.score}/100\n`;
         }
         if (result.confidence !== undefined) {
           agentsSection += `**Confiance**: ${result.confidence}%\n`;
         }
-        if (result.findings.length > 0) {
-          agentsSection += `**Findings**:\n`;
-          for (const finding of result.findings) {
-            agentsSection += `- ${finding}\n`;
+        // Include FULL agent data if available
+        if (result.fullData) {
+          agentsSection += `**Données complètes de l'agent**:\n\`\`\`json\n${JSON.stringify(result.fullData, null, 2).slice(0, 15000)}\n\`\`\`\n`;
+        } else {
+          // Fallback to summary/findings if no fullData
+          if (result.summary) {
+            agentsSection += `**Résumé**: ${result.summary}\n`;
+          }
+          if (result.findings.length > 0) {
+            agentsSection += `**Findings**:\n`;
+            for (const finding of result.findings) {
+              agentsSection += `- ${finding}\n`;
+            }
           }
         }
       }
@@ -424,17 +537,161 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       sections.push(benchSection);
     }
 
-    // Documents (for clarification/deep-dive intents)
+    // Documents (with extracted text for full context)
     if (retrievedCtx.documents && retrievedCtx.documents.length > 0) {
-      let docsSection = "## DOCUMENTS DISPONIBLES\n";
+      let docsSection = "## DOCUMENTS ANALYSÉS\n";
       for (const doc of retrievedCtx.documents) {
-        docsSection += `- **${doc.name}** (${doc.type})`;
-        if (doc.relevantExcerpt) {
-          docsSection += `\n  Extrait pertinent: "${doc.relevantExcerpt.slice(0, 500)}..."`;
+        docsSection += `\n### ${doc.name} (${doc.type})\n`;
+        if (doc.extractedText) {
+          // Truncate very long documents to avoid context overflow
+          const truncatedText = doc.extractedText.slice(0, 8000);
+          docsSection += `**Contenu extrait**:\n${truncatedText}${doc.extractedText.length > 8000 ? "\n[... texte tronqué ...]" : ""}\n`;
         }
-        docsSection += "\n";
+        if (doc.relevantExcerpt) {
+          docsSection += `**Extrait pertinent**: "${doc.relevantExcerpt.slice(0, 500)}"\n`;
+        }
       }
       sections.push(docsSection);
+    }
+
+    // Founders (enriched LinkedIn data)
+    if (retrievedCtx.founders && retrievedCtx.founders.length > 0) {
+      let foundersSection = "## FONDATEURS (Profils enrichis LinkedIn)\n";
+      for (const founder of retrievedCtx.founders) {
+        foundersSection += `\n### ${founder.name} — ${founder.role}\n`;
+        if (founder.linkedinUrl) {
+          foundersSection += `**LinkedIn**: ${founder.linkedinUrl}\n`;
+        }
+        if (founder.previousVentures) {
+          foundersSection += `**Ventures précédentes**: ${JSON.stringify(founder.previousVentures)}\n`;
+        }
+        if (founder.verifiedInfo) {
+          foundersSection += `**Données LinkedIn vérifiées**:\n`;
+          for (const [key, value] of Object.entries(founder.verifiedInfo)) {
+            if (typeof value === "object" && value !== null) {
+              foundersSection += `- **${key}**: ${JSON.stringify(value)}\n`;
+            } else {
+              foundersSection += `- **${key}**: ${value}\n`;
+            }
+          }
+        }
+      }
+      sections.push(foundersSection);
+    }
+
+    // Scored Findings (quantified metrics with benchmarks)
+    if (retrievedCtx.scoredFindings && retrievedCtx.scoredFindings.length > 0) {
+      let findingsSection = `## MÉTRIQUES QUANTIFIÉES (${retrievedCtx.scoredFindings.length} findings)\n`;
+      // Group by category
+      const byCategory: Record<string, RetrievedScoredFinding[]> = {};
+      for (const f of retrievedCtx.scoredFindings) {
+        if (!byCategory[f.category]) byCategory[f.category] = [];
+        byCategory[f.category].push(f);
+      }
+      for (const [category, findings] of Object.entries(byCategory)) {
+        findingsSection += `\n### ${category.charAt(0).toUpperCase() + category.slice(1)}\n`;
+        for (const f of findings) {
+          findingsSection += `- **${f.metric}**: ${f.value ?? "N/A"} ${f.unit}`;
+          if (f.percentile != null) {
+            findingsSection += ` — Percentile: P${f.percentile}`;
+          }
+          findingsSection += ` — Évaluation: ${f.assessment}`;
+          findingsSection += ` [conf: ${f.confidenceLevel} ${f.confidenceScore}%]\n`;
+          if (f.benchmarkData) {
+            const bd = f.benchmarkData;
+            if (bd.p25 !== undefined) {
+              findingsSection += `  Benchmark: P25=${bd.p25}, Median=${bd.median}, P75=${bd.p75}`;
+              if (bd.source) findingsSection += ` (${bd.source})`;
+              findingsSection += `\n`;
+            }
+          }
+        }
+      }
+      sections.push(findingsSection);
+    }
+
+    // Debate Records (contradiction resolutions)
+    if (retrievedCtx.debateRecords && retrievedCtx.debateRecords.length > 0) {
+      let debateSection = `## DÉBATS INTER-AGENTS (${retrievedCtx.debateRecords.length} contradictions)\n`;
+      for (const d of retrievedCtx.debateRecords) {
+        debateSection += `\n### [${d.severity.toUpperCase()}] ${d.topic}\n`;
+        debateSection += `**Participants**: ${d.participants.join(", ")}\n`;
+        debateSection += `**Statut**: ${d.status}`;
+        if (d.resolvedBy) debateSection += ` (résolu par: ${d.resolvedBy})`;
+        debateSection += `\n`;
+        if (d.resolution) {
+          debateSection += `**Résolution**: ${d.resolution}\n`;
+        }
+        if (d.finalValue) {
+          debateSection += `**Valeur retenue**: ${d.finalValue}`;
+          if (d.resolutionConfidence != null) {
+            debateSection += ` (conf: ${d.resolutionConfidence}%)`;
+          }
+          debateSection += `\n`;
+        }
+        if (d.claims.length > 0) {
+          debateSection += `**Claims**:\n`;
+          for (const c of d.claims.slice(0, 5)) {
+            debateSection += `- ${c.agentName ?? "?"}: "${c.claim}" (conf: ${c.confidence ?? "?"})%\n`;
+          }
+        }
+      }
+      sections.push(debateSection);
+    }
+
+    // AI Board Results (multi-LLM deliberation)
+    if (retrievedCtx.boardResult) {
+      const br = retrievedCtx.boardResult;
+      let boardSection = `## BOARD IA (Délibération Multi-LLM)\n`;
+      boardSection += `**Verdict**: ${br.verdict ?? "Non déterminé"}\n`;
+      boardSection += `**Consensus**: ${br.consensusLevel ?? "N/A"} (${br.totalRounds} rounds)\n`;
+
+      if (br.members.length > 0) {
+        boardSection += `\n### Votes des membres\n`;
+        for (const m of br.members) {
+          boardSection += `- **${m.modelName}**: ${m.finalVote ?? "N/A"}`;
+          if (m.finalConfidence != null) boardSection += ` (conf: ${m.finalConfidence}%)`;
+          boardSection += `\n`;
+          if (m.voteJustification) {
+            boardSection += `  Justification: ${m.voteJustification.slice(0, 500)}\n`;
+          }
+        }
+      }
+
+      if (br.consensusPoints && (br.consensusPoints as unknown[]).length > 0) {
+        boardSection += `\n### Points de consensus\n`;
+        for (const p of br.consensusPoints as unknown[]) {
+          boardSection += `- ${typeof p === "string" ? p : JSON.stringify(p)}\n`;
+        }
+      }
+
+      if (br.frictionPoints && (br.frictionPoints as unknown[]).length > 0) {
+        boardSection += `\n### Points de friction\n`;
+        for (const p of br.frictionPoints as unknown[]) {
+          boardSection += `- ${typeof p === "string" ? p : JSON.stringify(p)}\n`;
+        }
+      }
+
+      if (br.questionsForFounder && (br.questionsForFounder as unknown[]).length > 0) {
+        boardSection += `\n### Questions pour le fondateur (Board IA)\n`;
+        for (const q of br.questionsForFounder as unknown[]) {
+          boardSection += `- ${typeof q === "string" ? q : JSON.stringify(q)}\n`;
+        }
+      }
+
+      sections.push(boardSection);
+    }
+
+    // Analysis summary
+    if (retrievedCtx.analysisSummary) {
+      sections.push(`## RÉSUMÉ DE L'ANALYSE\n${retrievedCtx.analysisSummary}\n`);
+    }
+
+    // Negotiation strategy
+    if (retrievedCtx.negotiationStrategy) {
+      let negoSection = "## STRATÉGIE DE NÉGOCIATION\n";
+      negoSection += `\`\`\`json\n${JSON.stringify(retrievedCtx.negotiationStrategy, null, 2).slice(0, 10000)}\n\`\`\`\n`;
+      sections.push(negoSection);
     }
 
     // Conversation history (for follow-up intents)
@@ -451,7 +708,7 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       return "";
     }
 
-    return `\n# DONNÉES RÉCUPÉRÉES DE LA BASE (Intent-specific)\n\n${sections.join("\n")}`;
+    return `\n# DONNÉES RÉCUPÉRÉES DE LA BASE (Intégralité)\n\n${sections.join("\n")}`;
   }
 
   /**

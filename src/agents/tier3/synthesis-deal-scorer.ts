@@ -1334,7 +1334,7 @@ Aucune incohérence majeure détectée entre les agents.`;
     }
 
     return {
-      overallScore: Math.min(100, Math.max(0, overallScore)),
+      overallScore: Math.round(Math.min(100, Math.max(0, overallScore))),
       verdict: finalVerdict,
       confidence: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? data.confidence ?? 50)),
       dimensionScores,

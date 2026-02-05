@@ -111,9 +111,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (runningAnalysis) {
-      // Auto-expire stuck analyses older than 10 minutes
-      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
-      if (runningAnalysis.createdAt < tenMinAgo) {
+      // Auto-expire stuck analyses older than 30 minutes
+      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+      if (runningAnalysis.createdAt < thirtyMinAgo) {
         await prisma.analysis.update({
           where: { id: runningAnalysis.id },
           data: { status: "FAILED" },
@@ -161,26 +161,43 @@ export async function POST(request: NextRequest) {
     // Never trust the frontend type — it can be stale if usage query hasn't resolved yet
     const effectiveType: AnalysisType = effectivePlan === "PRO" ? "full_analysis" : "tier1_complete";
 
-    // Run the analysis (Standard agents with traces enabled)
-    const result = await orchestrator.runAnalysis({
-      dealId,
-      type: effectiveType,
-      useReAct: false, // Always use Standard agents (better results, lower cost)
-      enableTrace,
-      userPlan: effectivePlan,
-    });
+    // Fire-and-forget: start analysis in background, return immediately
+    // The orchestrator handles its own persistence (createAnalysis → completeAnalysis)
+    orchestrator
+      .runAnalysis({
+        dealId,
+        type: effectiveType,
+        useReAct: false, // Always use Standard agents (better results, lower cost)
+        enableTrace,
+        userPlan: effectivePlan,
+      })
+      .then((result) => {
+        if (process.env.NODE_ENV === "development") {
+          console.log(
+            `[analyze] Background analysis completed for deal ${dealId}: success=${result.success}, time=${result.totalTimeMs}ms`
+          );
+        }
+      })
+      .catch(async (error) => {
+        console.error(
+          `[analyze] Background analysis failed for deal ${dealId}:`,
+          error
+        );
+        // Reset deal status if analysis failed at a very early stage
+        try {
+          await prisma.deal.update({
+            where: { id: dealId },
+            data: { status: "IN_DD" },
+          });
+        } catch (e) {
+          console.error(`[analyze] Failed to reset deal status:`, e);
+        }
+      });
 
     return NextResponse.json({
       data: {
-        sessionId: result.sessionId,
-        success: result.success,
-        summary: result.summary,
-        totalCost: result.totalCost,
-        totalTimeMs: result.totalTimeMs,
-        results: result.results,
-        earlyWarnings: result.earlyWarnings,
-        hasCriticalWarnings: result.hasCriticalWarnings,
-        tiersExecuted: result.tiersExecuted,
+        status: "RUNNING",
+        dealId,
         remainingDeals: usageResult.remainingDeals,
       },
     });

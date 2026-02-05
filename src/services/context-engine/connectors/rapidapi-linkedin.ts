@@ -256,7 +256,7 @@ export async function findLinkedInUrl(
           "Accept-Encoding": "gzip",
           "X-Subscription-Token": braveKey,
         },
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(30000),
       }
     );
 
@@ -806,7 +806,7 @@ async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProf
           "x-rapidapi-host": RAPIDAPI_HOST,
           "x-rapidapi-key": apiKey,
         },
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(60000),
       }
     );
 
@@ -887,7 +887,7 @@ function profileToFounderBackground(
 // CONNECTOR IMPLEMENTATION
 // ============================================================================
 
-export const coresignalLinkedInConnector: Connector = {
+export const rapidapiLinkedInConnector: Connector = {
   name: "rapidapi_linkedin",
   type: "linkedin",
 
@@ -902,8 +902,9 @@ export const coresignalLinkedInConnector: Connector = {
   },
 };
 
-// Backward-compatible alias
-export const apifyLinkedInConnector = coresignalLinkedInConnector;
+// Backward-compatible aliases
+export const coresignalLinkedInConnector = rapidapiLinkedInConnector;
+export const apifyLinkedInConnector = rapidapiLinkedInConnector;
 
 // ============================================================================
 // EXPORTED ANALYSIS FUNCTIONS
@@ -1065,9 +1066,10 @@ export async function analyzeTeamLinkedIn(
 /**
  * Check if LinkedIn connector is available
  */
-export function isCoresignalLinkedInConfigured(): boolean {
+export function isRapidAPILinkedInConfigured(): boolean {
   return !!getApiKey();
 }
 
-// Backward-compatible alias
-export const isApifyLinkedInConfigured = isCoresignalLinkedInConfigured;
+// Backward-compatible aliases
+export const isCoresignalLinkedInConfigured = isRapidAPILinkedInConfigured;
+export const isApifyLinkedInConfigured = isRapidAPILinkedInConfigured;

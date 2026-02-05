@@ -15,10 +15,11 @@ import type {
 import { getBoardMembers } from "./types";
 import { enrichDeal } from "@/services/context-engine";
 import { getCurrentFacts, getDisputedFacts, formatFactStoreForAgents } from "@/services/fact-store";
+import { completeJSON } from "@/services/openrouter/router";
 
 const DEFAULT_MAX_ROUNDS = 3;
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
-const MIN_MEMBERS_REQUIRED = 3; // Continue if at least 3 members are working
+const MIN_MEMBERS_REQUIRED = 2; // Continue if at least 2 members are working (graceful degradation)
 
 export class BoardOrchestrator {
   private sessionId: string | null = null;
@@ -116,7 +117,7 @@ export class BoardOrchestrator {
 
       // 10. Compile verdict
       const stoppingCondition = this.checkStoppingCondition(0);
-      const result = this.compileVerdict(
+      const result = await this.compileVerdict(
         finalVotes,
         stoppingCondition.reason ?? "max_rounds"
       );
@@ -446,12 +447,26 @@ export class BoardOrchestrator {
     );
 
     // Process results
-    for (const result of results) {
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const member = this.members[i];
       if (result.status === "fulfilled") {
         this.initialAnalyses.set(result.value.memberId, result.value.analysis);
         this.currentVerdicts.set(result.value.memberId, result.value.analysis.verdict);
       } else {
-        console.error(`Member analysis failed:`, result.reason);
+        const errorMessage = result.reason instanceof Error
+          ? result.reason.message
+          : String(result.reason);
+        console.error(`[BoardOrchestrator] ${member.name} analysis failed:`, errorMessage);
+
+        this.emitProgress({
+          type: "member_analysis_failed",
+          sessionId: this.sessionId!,
+          memberId: member.id,
+          memberName: member.name,
+          error: errorMessage,
+          message: `${member.name} a echoue: ${errorMessage}`,
+        });
       }
     }
   }
@@ -508,9 +523,12 @@ export class BoardOrchestrator {
     input: BoardInput,
     roundNumber: number
   ): Promise<{ memberId: string; memberName: string; response: DebateResponse }[]> {
+    // Only include members that succeeded in analysis phase
+    const activeMembers = this.members.filter((m) => this.initialAnalyses.has(m.id));
+
     // Prepare others' analyses for each member
     const results = await Promise.allSettled(
-      this.members.map(async (member) => {
+      activeMembers.map(async (member) => {
         const ownAnalysis = this.initialAnalyses.get(member.id);
         if (!ownAnalysis) {
           throw new Error(`No analysis found for ${member.id}`);
@@ -527,12 +545,16 @@ export class BoardOrchestrator {
             };
           });
 
-        const { response, cost } = await member.debate(
-          input,
-          ownAnalysis,
-          othersAnalyses,
-          roundNumber
-        );
+        // Retry once on failure before giving up
+        let response: DebateResponse;
+        try {
+          const result = await member.debate(input, ownAnalysis, othersAnalyses, roundNumber);
+          response = result.response;
+        } catch (firstError) {
+          console.warn(`[BoardOrchestrator] ${member.name} debate attempt 1 failed, retrying...`);
+          const result = await member.debate(input, ownAnalysis, othersAnalyses, roundNumber);
+          response = result.response;
+        }
 
         this.emitProgress({
           type: "debate_response",
@@ -557,19 +579,51 @@ export class BoardOrchestrator {
       })
     );
 
-    return results
-      .filter((r): r is PromiseFulfilledResult<{ memberId: string; memberName: string; response: DebateResponse }> =>
-        r.status === "fulfilled"
-      )
-      .map((r) => r.value);
+    const successful: { memberId: string; memberName: string; response: DebateResponse }[] = [];
+
+    results.forEach((r, idx) => {
+      if (r.status === "fulfilled") {
+        successful.push(r.value);
+      } else {
+        const failedMember = activeMembers[idx];
+        const errorMessage = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        console.error(`[BoardOrchestrator] ${failedMember.name} debate round ${roundNumber} failed:`, errorMessage);
+
+        this.emitProgress({
+          type: "member_analysis_failed",
+          sessionId: this.sessionId!,
+          memberId: failedMember.id,
+          memberName: failedMember.name,
+          error: `Debat round ${roundNumber}: ${errorMessage}`,
+          message: `${failedMember.name} n'a pas pu participer au round ${roundNumber}`,
+        });
+      }
+    });
+
+    return successful;
   }
 
   private async runFinalVotes(
     input: BoardInput
   ): Promise<{ memberId: string; member: BoardMember; vote: FinalVote }[]> {
+    // Only vote with members that participated in analysis
+    const activeMembers = this.members.filter((m) => this.initialAnalyses.has(m.id));
+
     const results = await Promise.allSettled(
-      this.members.map(async (member) => {
-        const { vote, cost } = await member.vote(input, this.debateHistory);
+      activeMembers.map(async (member) => {
+        // Retry once on failure
+        let vote: FinalVote;
+        let cost: number;
+        try {
+          const result = await member.vote(input, this.debateHistory);
+          vote = result.vote;
+          cost = result.cost;
+        } catch (firstError) {
+          console.warn(`[BoardOrchestrator] ${member.name} vote attempt 1 failed, retrying...`);
+          const result = await member.vote(input, this.debateHistory);
+          vote = result.vote;
+          cost = result.cost;
+        }
 
         this.emitProgress({
           type: "member_voted",
@@ -590,11 +644,28 @@ export class BoardOrchestrator {
       })
     );
 
-    return results
-      .filter((r): r is PromiseFulfilledResult<{ memberId: string; member: BoardMember; vote: FinalVote }> =>
-        r.status === "fulfilled"
-      )
-      .map((r) => r.value);
+    const successful: { memberId: string; member: BoardMember; vote: FinalVote }[] = [];
+
+    results.forEach((r, idx) => {
+      if (r.status === "fulfilled") {
+        successful.push(r.value);
+      } else {
+        const failedMember = activeMembers[idx];
+        const errorMessage = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        console.error(`[BoardOrchestrator] ${failedMember.name} vote failed:`, errorMessage);
+
+        this.emitProgress({
+          type: "member_analysis_failed",
+          sessionId: this.sessionId!,
+          memberId: failedMember.id,
+          memberName: failedMember.name,
+          error: `Vote: ${errorMessage}`,
+          message: `${failedMember.name} n'a pas pu voter`,
+        });
+      }
+    });
+
+    return successful;
   }
 
   private checkStoppingCondition(roundNumber: number): StoppingConditionResult {
@@ -731,24 +802,22 @@ export class BoardOrchestrator {
     return maxVerdict;
   }
 
-  private compileVerdict(
+  private async compileVerdict(
     finalVotes: { memberId: string; member: BoardMember; vote: FinalVote }[],
     reason: "consensus" | "majority_stable" | "max_rounds" | "stagnation"
-  ): BoardVerdictResult {
+  ): Promise<BoardVerdictResult> {
     // Calculate consensus level
     const consensusLevel = this.calculateConsensusLevel();
     const majorityVerdict = this.getMajorityVerdict();
 
-    // Collect consensus points (mentioned by multiple members)
-    const allAgreementPoints = finalVotes.flatMap((v) => v.vote.agreementPoints);
-    const consensusPoints = [...new Set(allAgreementPoints)];
+    // Collect raw points from all members
+    const rawAgreementPoints = finalVotes.flatMap((v) => v.vote.agreementPoints);
+    const rawConcerns = finalVotes.flatMap((v) => v.vote.remainingConcerns);
+    const rawQuestions = this.collectRawQuestions(finalVotes);
 
-    // Collect friction points (remaining concerns)
-    const allConcerns = finalVotes.flatMap((v) => v.vote.remainingConcerns);
-    const frictionPoints = [...new Set(allConcerns)];
-
-    // Generate questions for founder based on concerns
-    const questionsForFounder = this.generateFounderQuestions(finalVotes);
+    // LLM-powered deduplication + synthesis for high confidence
+    const { consensusPoints, frictionPoints, questionsForFounder } =
+      await this.synthesizeKeyPoints(rawAgreementPoints, rawConcerns, rawQuestions);
 
     return {
       verdict: majorityVerdict,
@@ -771,25 +840,111 @@ export class BoardOrchestrator {
     };
   }
 
-  private generateFounderQuestions(
+  private collectRawQuestions(
     finalVotes: { memberId: string; member: BoardMember; vote: FinalVote }[]
   ): string[] {
-    const questions = new Set<string>();
-
-    // Convert negative factors into questions
+    const questions: string[] = [];
     for (const { vote } of finalVotes) {
       for (const factor of vote.keyFactors) {
         if (factor.direction === "negative" && factor.weight === "high") {
-          questions.add(`Comment comptez-vous adresser: ${factor.factor}?`);
+          questions.push(`Comment comptez-vous adresser: ${factor.factor}?`);
         }
       }
-
       for (const concern of vote.remainingConcerns) {
-        questions.add(`Pouvez-vous clarifier: ${concern}?`);
+        questions.push(`Pouvez-vous clarifier: ${concern}?`);
       }
     }
+    return questions;
+  }
 
-    return Array.from(questions).slice(0, 10); // Max 10 questions
+  /**
+   * Uses a fast/cheap LLM call to deduplicate and synthesize the 3 lists.
+   * Multiple board members often express the same insight in different words —
+   * this merges duplicates and produces clean, non-redundant bullet points.
+   * Falls back to simple Set-based dedup if the LLM call fails.
+   */
+  private async synthesizeKeyPoints(
+    rawConsensus: string[],
+    rawFriction: string[],
+    rawQuestions: string[]
+  ): Promise<{
+    consensusPoints: string[];
+    frictionPoints: string[];
+    questionsForFounder: string[];
+  }> {
+    // Fallback: simple exact-match dedup
+    const fallback = {
+      consensusPoints: [...new Set(rawConsensus)],
+      frictionPoints: [...new Set(rawFriction)],
+      questionsForFounder: [...new Set(rawQuestions)],
+    };
+
+    if (rawConsensus.length === 0 && rawFriction.length === 0 && rawQuestions.length === 0) {
+      return fallback;
+    }
+
+    try {
+      const prompt = `Tu es un analyste qui synthetise les resultats d'un comite d'investissement.
+
+4 analystes IA ont chacun produit leurs points de consensus, points de friction, et questions pour le fondateur. Beaucoup de ces points sont REDONDANTS car les analystes expriment la meme idee differemment.
+
+Ta tache: FUSIONNER les doublons semantiques et produire des listes DEDUPLICQUEES. Quand plusieurs analystes disent la meme chose avec des mots differents, garde UNE SEULE version (la plus precise et detaillee). Ne perds aucune idee unique.
+
+## POINTS DE CONSENSUS BRUTS (${rawConsensus.length} items):
+${rawConsensus.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+
+## POINTS DE FRICTION BRUTS (${rawFriction.length} items):
+${rawFriction.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+
+## QUESTIONS BRUTES (${rawQuestions.length} items):
+${rawQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")}
+
+Reponds en JSON strict:
+{
+  "consensusPoints": ["point unique 1", "point unique 2", ...],
+  "frictionPoints": ["point unique 1", "point unique 2", ...],
+  "questionsForFounder": ["question unique 1", "question unique 2", ...]
+}
+
+REGLES:
+- Chaque point doit etre unique — ZERO redondance
+- Garde la formulation la plus precise et detaillee quand tu fusionnes
+- AUCUNE limite de nombre — garde TOUS les points uniques, n'en supprime aucun
+- En francais
+- JSON seulement, rien d'autre`;
+
+      const result = await completeJSON<{
+        consensusPoints: string[];
+        frictionPoints: string[];
+        questionsForFounder: string[];
+      }>(prompt, {
+        model: "SONNET",
+        maxTokens: 2000,
+        temperature: 0.1,
+      });
+
+      // Validate the response structure
+      const { data } = result;
+      if (
+        Array.isArray(data.consensusPoints) &&
+        Array.isArray(data.frictionPoints) &&
+        Array.isArray(data.questionsForFounder)
+      ) {
+        return {
+          consensusPoints: data.consensusPoints.filter((s) => typeof s === "string" && s.length > 0),
+          frictionPoints: data.frictionPoints.filter((s) => typeof s === "string" && s.length > 0),
+          questionsForFounder: data.questionsForFounder.filter((s) => typeof s === "string" && s.length > 0),
+        };
+      }
+
+      // Invalid structure, use fallback
+      return fallback;
+    } catch (error) {
+      if (process.env.NODE_ENV === "development") {
+        console.error("[BoardOrchestrator] synthesizeKeyPoints LLM failed, using fallback:", error);
+      }
+      return fallback;
+    }
   }
 
   private getTotalCost(): number {

@@ -33,6 +33,8 @@ export const queryKeys = {
     byId: (id: string) => [...queryKeys.analyses.all, id] as const,
     byDeal: (dealId: string) =>
       [...queryKeys.analyses.all, "deal", dealId] as const,
+    latest: (dealId: string) =>
+      [...queryKeys.analyses.all, "latest", dealId] as const,
   },
 
   // Document queries
