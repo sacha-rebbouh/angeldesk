@@ -241,6 +241,9 @@ model Analysis {
   // Allows detecting "stale" analyses when new docs are added
   documentIds     String[] @default([])
 
+  // Cached negotiation strategy (generated after Tier 3 analysis)
+  negotiationStrategy Json?
+
   // Relations to sub-models (cascade delete)
   scoredFindings    ScoredFinding[]
   reasoningTraces   ReasoningTrace[]
@@ -1498,4 +1501,121 @@ model CreditTransaction {
 
   @@index([clerkUserId])
   @@index([clerkUserId, createdAt])
+}
+
+// ============================================================================
+// DEAL CHAT - Premium Conversational AI for Deal Analysis
+// ============================================================================
+
+// DEAL CHAT CONTEXT - Pre-computed context for fast chat responses
+// Contains aggregated facts, summaries and key data points for a deal
+model DealChatContext {
+  id                  String        @id @default(cuid())
+  dealId              String        @unique
+
+  // Pre-computed key facts (most important facts from FactEvent)
+  keyFacts            Json          // Array of { factKey, value, displayValue, confidence, source }
+
+  // Agent summaries (condensed outputs from each agent)
+  agentSummaries      Json          // { [agentName]: { summary, keyFindings, confidence } }
+
+  // Red flags context (structured for quick access)
+  redFlagsContext     Json          // Array of { title, severity, description, questionsToAsk }
+
+  // Extracted document data (raw facts not in FactEvent)
+  extractedData       Json?         // { [documentType]: { key facts extracted } }
+
+  // Analysis metadata
+  lastAnalysisId      String?       // ID of the analysis used to build context
+  lastAnalysisMode    String?       // Mode of the analysis (tier1, tier2, tier3, full)
+
+  // Benchmarks & comparables (for simulation tools)
+  benchmarkData       Json?         // Sector benchmarks snapshot
+  comparableDeals     Json?         // Similar deals for comparison
+
+  // Context versioning
+  version             Int           @default(1)
+  lastUpdatedAt       DateTime      @updatedAt
+
+  createdAt           DateTime      @default(now())
+
+  @@index([dealId])
+  @@index([lastAnalysisId])
+}
+
+// CHAT CONVERSATION - A conversation thread about a deal
+model ChatConversation {
+  id                  String        @id @default(cuid())
+  dealId              String
+  userId              String
+
+  title               String?       // Auto-generated or user-defined
+  status              ConversationStatus @default(ACTIVE)
+
+  // Conversation metadata
+  messageCount        Int           @default(0)
+  lastMessageAt       DateTime?
+
+  // Cost tracking for this conversation
+  totalCost           Decimal?      @db.Decimal(8, 4)
+  totalInputTokens    Int           @default(0)
+  totalOutputTokens   Int           @default(0)
+
+  // Messages in this conversation
+  messages            ChatMessage[]
+
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@index([dealId])
+  @@index([userId])
+  @@index([dealId, userId])
+  @@index([dealId, userId, updatedAt])
+  @@index([status])
+}
+
+enum ConversationStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+// CHAT MESSAGE - Individual message in a conversation
+model ChatMessage {
+  id                  String        @id @default(cuid())
+  conversationId      String
+  conversation        ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  role                ChatRole
+  content             String        @db.Text
+
+  // For assistant messages: what context was used
+  contextUsed         Json?         // { facts: [...], agentResults: [...], documents: [...] }
+
+  // For assistant messages: what tools were called
+  toolsCalled         Json?         // Array of { tool, input, output }
+
+  // Intent classification (for assistant to understand the message)
+  intent              String?       // clarification, comparison, simulation, deep_dive, follow_up
+  intentConfidence    Float?        // 0-1
+
+  // Cost tracking for this message
+  cost                Decimal?      @db.Decimal(8, 6)
+  inputTokens         Int?
+  outputTokens        Int?
+  model               String?       // Model used for this response
+
+  // Timing
+  responseTimeMs      Int?          // Time to generate response
+
+  createdAt           DateTime      @default(now())
+
+  @@index([conversationId])
+  @@index([role])
+  @@index([createdAt])
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+  SYSTEM
 }

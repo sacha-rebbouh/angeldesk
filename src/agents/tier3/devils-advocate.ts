@@ -370,6 +370,37 @@ Produis un JSON avec la structure exacte demandee. CHAQUE element doit etre:
 6. Le worst case scenario doit etre REALISTE (pas apocalyptique gratuitement)
 7. Les narratives alternatives doivent etre PLAUSIBLES (pas conspirationnistes)
 
+# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
+
+**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
+
+1. **LIMITES STRICTES sur les arrays**:
+   - counterArguments: MAX 4 items (les plus importants)
+   - killReasons: MAX 4 items (priorisés ABSOLUTE > CONDITIONAL > CONCERN)
+   - blindSpots: MAX 3 items
+   - alternativeNarratives: MAX 2 items
+   - additionalMarketRisks: MAX 3 items
+   - hiddenCompetitiveThreats: MAX 2 items
+   - executionChallenges: MAX 3 items
+   - redFlags: MAX 5 items (les plus critiques)
+   - questions: MAX 5 items (priorisés CRITICAL > HIGH)
+   - triggers, cascadeEffects, earlyWarningSigns: MAX 3 items chacun
+   - comparableCatastrophes: MAX 2 items
+
+2. **BREVITE dans les textes**:
+   - justification/rationale: 1-2 phrases MAX
+   - description: 2-3 phrases MAX
+   - evidence: 1 phrase avec source
+   - oneLiner: 15 mots MAX
+   - summary: 3-4 phrases MAX
+   - keyInsights: 3-4 items MAX, 10 mots chacun
+
+3. **Pas de redondance**:
+   - Ne pas répéter la même info dans différents champs
+   - Si un risque est dans killReasons, pas besoin de le dupliquer ailleurs
+
+4. **Structure > Contenu**: Mieux vaut 3 counter-arguments complets que 8 tronqués
+
 # EXEMPLES
 
 ## BON output - Counter-argument:
@@ -448,25 +479,35 @@ ${fundingDbData || "Aucune donnee Funding DB disponible. Utilise ta connaissance
 ${this.formatFactStoreData(context) ?? ""}
 ## INSTRUCTIONS SPECIFIQUES
 
-1. **COUNTER-ARGUMENTS**: Pour chaque score > 60 ou point fort mentionne dans les analyses Tier 1/2, formule un contre-argument avec un comparable echec reel. Minimum 5 counter-arguments.
+1. **COUNTER-ARGUMENTS**: 3-4 contre-arguments MAX pour les theses les plus optimistes. Chacun avec un comparable echec reel CONCIS.
 
-2. **WORST CASE SCENARIO**: Construis LE scenario catastrophe le plus probable pour ce deal specifique. Pas generique - specifique a CE deal avec SES faiblesses.
+2. **WORST CASE SCENARIO**: LE scenario catastrophe le plus probable. Specifique a CE deal. 2-3 triggers max, 2 comparables max.
 
-3. **KILL REASONS**: Identifie minimum 3 raisons de ne pas investir, classees par niveau (ABSOLUTE/CONDITIONAL/CONCERN).
+3. **KILL REASONS**: 2-4 raisons de ne pas investir, classees par niveau (ABSOLUTE > CONDITIONAL > CONCERN).
 
-4. **BLIND SPOTS**: Qu'est-ce que les agents Tier 1/2 n'ont PAS analyse et qui pourrait etre critique?
+4. **BLIND SPOTS**: 2-3 angles morts critiques que les agents n'ont pas couvert.
 
-5. **NARRATIVES ALTERNATIVES**: Le fondateur raconte une histoire. Quelles autres histoires les memes faits pourraient-ils raconter?
+5. **NARRATIVES ALTERNATIVES**: 1-2 narratives alternatives plausibles.
 
-6. **SCORE DE SCEPTICISME**: Calcule ton score avec le breakdown detaille.
+6. **SCORE DE SCEPTICISME**: Score + verdict + 3-4 facteurs principaux.
 
-7. **QUESTIONS PIEGES**: Formule des questions qui revelent les faiblesses si le fondateur ment ou cache des informations.
+7. **QUESTIONS PIEGES**: 3-5 questions critiques pour le fondateur.
 
 ## OUTPUT ATTENDU
 
 Produis une analyse Devil's Advocate COMPLETE au format JSON specifie.
 Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
-CHAQUE affirmation doit etre sourcee. CHAQUE comparable doit etre reel.
+
+**REGLES DE CONCISION CRITIQUES (le JSON sera INVALIDE si tronque):**
+- counterArguments: MAX 4 items
+- killReasons: MAX 4 items
+- blindSpots: MAX 3 items
+- alternativeNarratives: MAX 2 items
+- redFlags: MAX 5 items
+- questions: MAX 5 items
+- Justifications: 1-2 phrases MAX
+- Descriptions: 2-3 phrases MAX
+- PRIORITE: JSON complet > quantité d'items
 
 \`\`\`json
 {

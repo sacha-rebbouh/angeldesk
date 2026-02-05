@@ -626,7 +626,34 @@ Tu dois produire un JSON avec cette structure EXACTE:
 - "semble" = pas de source
 - "quelques points" = vague
 - Pas de calcul montré
-- Pas actionnable`;
+- Pas actionnable
+
+---
+
+# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
+
+**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
+
+1. **LIMITES STRICTES sur les arrays**:
+   - dimensionScores: 7 items exactement (les 7 dimensions)
+   - adjustments: MAX 5 items
+   - comparableDeals: MAX 3 items
+   - bull/bear thesis: MAX 4 items chacun
+   - keyAssumptions: MAX 3 items
+   - nextSteps: MAX 5 items
+   - topStrengths/topWeaknesses: MAX 4 items chacun
+   - redFlags: MAX 6 items (les plus critiques)
+   - questions: MAX 5 items
+   - keyInsights: MAX 4 items
+
+2. **BREVITE dans les textes**:
+   - justification: 1-2 phrases MAX avec source
+   - rationale: 2-3 phrases MAX
+   - oneLiner: 15 mots MAX
+   - summary: 3-4 phrases MAX
+   - calculation strings: formule + resultat seulement
+
+3. **Structure > Contenu**: Mieux vaut un JSON complet et concis qu'un JSON tronque`;
   }
 
   // ===========================================================================
@@ -736,6 +763,13 @@ ${this.formatFactStoreData(context)}
 ⚠️ **CONSOLIDE LES RED FLAGS** - Ne répète pas, synthétise avec priorité
 ⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences
 ⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les scénarios ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal NO_GO avec scepticisme >80 ne peut pas avoir un score > 40.
+
+**CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
+- dimensionScores: 7 items, adjustments: MAX 5, comparableDeals: MAX 3
+- bull/bear: MAX 4 chacun, nextSteps: MAX 5
+- redFlags: MAX 6, questions: MAX 5, keyInsights: MAX 4
+- justification: 1-2 phrases, rationale: 2-3 phrases
+- PRIORITE: JSON complet > detail
 
 Produis le JSON complet selon le format spécifié dans le system prompt.`;
 

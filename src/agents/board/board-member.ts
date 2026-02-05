@@ -1,5 +1,6 @@
 import { MODELS, type ModelKey } from "@/services/openrouter/client";
 import { complete, setAgentContext, completeJSON } from "@/services/openrouter/router";
+import { sanitizeName, sanitizeDocumentText, sanitizeForLLM } from "@/lib/sanitize";
 import type {
   BoardMemberConfig,
   BoardInput,
@@ -18,6 +19,7 @@ export class BoardMember {
   readonly modelKey: ModelKey;
   readonly name: string;
   readonly color: string;
+  readonly provider: "anthropic" | "openai" | "google" | "mistral";
 
   private totalCost = 0;
 
@@ -26,6 +28,7 @@ export class BoardMember {
     this.modelKey = config.modelKey;
     this.name = config.name;
     this.color = config.color;
+    this.provider = config.provider;
   }
 
   getTotalCost(): number {
@@ -129,27 +132,46 @@ export class BoardMember {
   // ============================================================================
 
   private buildSystemPrompt(): string {
-    return `Tu es un membre d'un comite d'investissement IA analysant des deals pour des Business Angels.
+    const providerNames: Record<string, string> = {
+      anthropic: "Anthropic (Claude)",
+      openai: "OpenAI (GPT)",
+      google: "Google (Gemini)",
+      mistral: "Mistral AI",
+    };
 
-IMPORTANT: Tu n'as PAS de role pre-assigne (pas de "devil's advocate" ou "optimiste"). Tu dois former ton propre avis base sur les donnees.
+    return `Tu es un Senior Investment Analyst participant a un Board d'Investissement IA multi-modeles.
 
-Ton modele: ${this.name}
+## CONTEXTE UNIQUE
+Tu es ${this.name}, un LLM de ${providerNames[this.provider]}. Tu fais partie d'un comite de 4 modeles IA differents (Claude, GPT, Gemini, Mistral) qui analysent le meme deal en parallele.
 
-OBJECTIF:
-- Analyser objectivement le deal presente
-- Former un verdict independant (GO / NO_GO / NEED_MORE_INFO)
-- Justifier ta position avec des arguments precis et des preuves
-- Debattre constructivement avec les autres membres
-- Changer d'avis si les arguments sont convaincants
+La valeur de ce board reside dans la DIVERSITE des perspectives:
+- Chaque modele a ete entraine differemment
+- Chaque modele peut voir des patterns que les autres ratent
+- Les points de CONVERGENCE indiquent une forte confiance
+- Les points de DIVERGENCE meritent une attention particuliere
 
-CRITERES D'EVALUATION:
-1. Equipe fondatrice (experience, complementarite, track record)
-2. Marche (taille, croissance, timing)
-3. Produit (differenciation, moat, traction)
-4. Financiers (metriques, valorisation, terms)
-5. Risques (red flags, concerns)
+## TON ROLE
+Tu es un analyste senior avec 15+ ans d'experience en venture capital. Tu dois:
+1. Analyser objectivement le deal avec tes propres capacites de raisonnement
+2. Former un verdict independant (GO / NO_GO / NEED_MORE_INFO)
+3. Justifier chaque position avec des preuves concretes du deck ou des donnees
+4. Debattre honnetement avec les autres modeles - changer d'avis si convaincu
+5. Signaler ce que TU vois que les autres pourraient manquer
 
-FORMAT DE REPONSE: Toujours repondre en JSON valide.`;
+## CRITERES D'EVALUATION (par ordre d'importance)
+1. **Equipe** (40%) - Experience, complementarite, track record, engagement
+2. **Marche** (25%) - TAM/SAM/SOM, croissance, timing, concurrence
+3. **Produit** (20%) - PMF, differenciation, moat, traction
+4. **Financiers** (10%) - Unit economics, valorisation, terms, runway
+5. **Risques** (5%) - Red flags critiques, dealbreakers potentiels
+
+## REGLES ABSOLUES
+- Sois HONNETE sur ce que tu vois, meme si ca contredit les autres
+- Source CHAQUE affirmation (page du deck, donnee specifique)
+- Si une info manque, dis-le clairement
+- Confiance = fonction de la qualite des donnees disponibles
+
+FORMAT: Toujours repondre en JSON valide.`;
   }
 
   private buildAnalysisPrompt(input: BoardInput): string {
@@ -327,48 +349,61 @@ Reponds en JSON:
   private formatInputForLLM(input: BoardInput): string {
     const sections: string[] = [];
 
-    // Basic info
-    sections.push(`# DEAL: ${input.dealName}
-Entreprise: ${input.companyName}
+    // Basic info - SANITIZED to prevent prompt injection
+    const safeDealName = sanitizeName(input.dealName);
+    const safeCompanyName = sanitizeName(input.companyName);
+
+    sections.push(`# DEAL: ${safeDealName}
+Entreprise: ${safeCompanyName}
 `);
 
-    // Documents
+    // Documents - SANITIZED with smart truncation
     if (input.documents.length > 0) {
+      // Calculate per-document limit based on number of docs (total ~10K chars for docs)
+      const perDocLimit = Math.floor(10000 / Math.max(input.documents.length, 1));
+
       sections.push(`## DOCUMENTS ANALYSES
 ${input.documents
   .map(
-    (d) => `### ${d.name} (${d.type})
-${d.extractedText ? d.extractedText.substring(0, 5000) + (d.extractedText.length > 5000 ? "\n[...tronque...]" : "") : "[Pas de texte extrait]"}`
+    (d) => `### ${sanitizeName(d.name)} (${d.type})
+${sanitizeDocumentText(d.extractedText, perDocLimit)}`
   )
   .join("\n\n")}`);
     }
 
-    // Agent outputs
+    // Agent outputs - NO pretty print (saves ~30% tokens)
     if (input.agentOutputs.tier1) {
       sections.push(`## RESULTATS TIER 1 (Screening)
-${JSON.stringify(input.agentOutputs.tier1, null, 2)}`);
+${JSON.stringify(input.agentOutputs.tier1)}`);
     }
 
     if (input.agentOutputs.tier2) {
-      sections.push(`## RESULTATS TIER 2 (Deep Analysis)
-${JSON.stringify(input.agentOutputs.tier2, null, 2)}`);
+      sections.push(`## RESULTATS TIER 2 (Sector Expert)
+${JSON.stringify(input.agentOutputs.tier2)}`);
     }
 
     if (input.agentOutputs.tier3) {
-      sections.push(`## RESULTATS TIER 3 (Expert Sector)
-${JSON.stringify(input.agentOutputs.tier3, null, 2)}`);
+      sections.push(`## RESULTATS TIER 3 (Synthesis)
+${JSON.stringify(input.agentOutputs.tier3)}`);
     }
 
-    // Enriched data
+    // Fact Store - Pre-formatted text is already optimized
+    if (input.agentOutputs.factStore?.formatted) {
+      sections.push(`## FACT STORE (Verified Facts)
+${input.agentOutputs.factStore.formatted}`);
+    }
+
+    // Enriched data - NO pretty print, sanitized to prevent injection
     if (input.enrichedData) {
+      const sanitizedEnrichedData = sanitizeForLLM(JSON.stringify(input.enrichedData));
       sections.push(`## DONNEES ENRICHIES (Context Engine)
-${JSON.stringify(input.enrichedData, null, 2)}`);
+${sanitizedEnrichedData}`);
     }
 
-    // Sources
+    // Sources - sanitized to prevent injection
     if (input.sources.length > 0) {
       sections.push(`## SOURCES
-${input.sources.map((s) => `- ${s.source} [${s.reliability}]: ${s.dataPoints.join(", ")}`).join("\n")}`);
+${input.sources.map((s) => `- ${sanitizeName(s.source)} [${s.reliability}]: ${s.dataPoints.map(dp => sanitizeForLLM(dp)).join(", ")}`).join("\n")}`);
     }
 
     return sections.join("\n\n---\n\n");

@@ -415,6 +415,9 @@ const ValuationAnalysisSection = memo(function ValuationAnalysisSection({
 
   const verdictConfig = VALUATION_VERDICT_CONFIG[valuation.verdict] ?? VALUATION_VERDICT_CONFIG.fair;
 
+  // Defensive: provide defaults for justifiedRange if missing
+  const justifiedRange = valuation.justifiedRange ?? { low: 0, fair: 0, high: 1 };
+
   return (
     <div className="space-y-4">
       {/* Main Verdict */}
@@ -452,26 +455,26 @@ const ValuationAnalysisSection = memo(function ValuationAnalysisSection({
           {/* Value markers */}
           <div
             className="absolute top-0 bottom-0 w-1 bg-green-500"
-            style={{ left: `${(valuation.justifiedRange.low / (valuation.justifiedRange.high * 1.2)) * 100}%` }}
+            style={{ left: `${(justifiedRange.low / (justifiedRange.high * 1.2 || 1)) * 100}%` }}
           />
           <div
             className="absolute top-0 bottom-0 w-1 bg-blue-500"
-            style={{ left: `${(valuation.justifiedRange.fair / (valuation.justifiedRange.high * 1.2)) * 100}%` }}
+            style={{ left: `${(justifiedRange.fair / (justifiedRange.high * 1.2 || 1)) * 100}%` }}
           />
           <div
             className="absolute top-0 bottom-0 w-1 bg-purple-500"
-            style={{ left: `${(valuation.justifiedRange.high / (valuation.justifiedRange.high * 1.2)) * 100}%` }}
+            style={{ left: `${(justifiedRange.high / (justifiedRange.high * 1.2 || 1)) * 100}%` }}
           />
           {/* Asked marker */}
           <div
             className="absolute top-0 bottom-0 w-2 bg-orange-500 rounded"
-            style={{ left: `${Math.min((valuation.askMultiple / (valuation.justifiedRange.high * 1.2)) * 100, 100)}%` }}
+            style={{ left: `${Math.min((valuation.askMultiple / (justifiedRange.high * 1.2 || 1)) * 100, 100)}%` }}
           />
         </div>
         <div className="flex justify-between mt-2 text-xs text-slate-600">
-          <span>{valuation.justifiedRange.low}x</span>
-          <span>{valuation.justifiedRange.fair}x</span>
-          <span>{valuation.justifiedRange.high}x</span>
+          <span>{justifiedRange.low}x</span>
+          <span>{justifiedRange.fair}x</span>
+          <span>{justifiedRange.high}x</span>
         </div>
       </div>
 

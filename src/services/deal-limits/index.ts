@@ -4,9 +4,10 @@ import { prisma } from "@/lib/prisma";
 // Use -1 to represent unlimited (Infinity is not a valid DB integer)
 const UNLIMITED = -1;
 
+// IMPORTANT: Keep in sync with src/services/credits/types.ts PLAN_LIMITS
 const LIMITS_CONFIG = {
   FREE: {
-    monthlyDeals: 5,
+    monthlyDeals: 3, // Aligned with PLAN_LIMITS.FREE.analysesPerMonth
     maxTier: 1, // Only Tier 1
   },
   PRO: {
@@ -119,6 +120,7 @@ export async function getUsageStatus(userId: string): Promise<DealUsageStatus> {
   }
 
   const subscriptionStatus = user.subscriptionStatus as SubscriptionTier;
+  console.log("[DEBUG deal-limits] userId:", userId, "subscriptionStatus:", subscriptionStatus);
   const config = LIMITS_CONFIG[subscriptionStatus];
 
   // PRO/ENTERPRISE = unlimited
@@ -165,7 +167,7 @@ export async function getUsageStatus(userId: string): Promise<DealUsageStatus> {
 
   return {
     canAnalyze,
-    reason: canAnalyze ? undefined : "Limite mensuelle atteinte (5 deals/mois)",
+    reason: canAnalyze ? undefined : "Limite mensuelle atteinte (3 deals/mois)",
     monthlyLimit: config.monthlyDeals,
     usedThisMonth: usage.usedThisMonth,
     remainingDeals,
@@ -268,9 +270,9 @@ function getNextResetDate(): Date {
   return new Date(now.getFullYear(), now.getMonth() + 1, 1);
 }
 
-// Export pricing/limits for UI
+// Export pricing/limits for UI (keep in sync with PLAN_LIMITS in credits/types.ts)
 export const FREE_TIER_LIMITS = {
-  MONTHLY_DEALS: 5,
+  MONTHLY_DEALS: 3, // Aligned with PLAN_LIMITS.FREE.analysesPerMonth
   MAX_TIER: 1,
 } as const;
 

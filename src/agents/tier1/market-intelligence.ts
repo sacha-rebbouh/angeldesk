@@ -181,7 +181,7 @@ export class MarketIntelligenceAgent extends BaseAgent<MarketIntelData, MarketIn
       description: "Valide les claims de marche (TAM/SAM/SOM) et analyse le timing - Standard Big4 + Partner VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      timeoutMs: 180000, // 3 min (was 2 min - increased to avoid premature termination)
     });
   }
 
@@ -550,7 +550,21 @@ Standard: Big4 + Partner VC. Chaque affirmation doit etre sourcee ou marquee com
     "forNegotiation": ["string (arguments pour negocier si on proceed)"]
   }
 }
-\`\`\``;
+\`\`\`
+
+## OUTPUT CRITIQUE
+Réponds UNIQUEMENT avec le JSON valide. Commence par { et termine par }.
+
+STYLE D'ÉCRITURE:
+- Champs courts (title, source, location): 5-10 mots
+- Champs moyens (description, impact, reasoning): 2-3 phrases, droit au but
+- Champs analytiques (analysis, justification, overallAssessment): 3-5 phrases si nécessaire
+- ÉVITER: introductions inutiles ("Il est important de noter que..."), répétitions, formules creuses
+- INCLURE: chiffres, sources, calculs - c'est le contenu utile
+
+NE PAS limiter le nombre d'éléments: inclure TOUS les claims, red flags et questions pertinents.
+
+CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arrête JAMAIS au milieu.`;
 
     const { data } = await this.llmCompleteJSON<LLMMarketIntelResponse>(prompt);
 

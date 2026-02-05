@@ -313,7 +313,28 @@ POURQUOI C'EST NUL:
 - "quelque part" = pas de localisation
 - "Il semble" = incertitude
 - "A verifier" = pas actionnable
-- Question trop vague`;
+- Question trop vague
+
+# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
+
+**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
+
+1. **LIMITES STRICTES sur les arrays**:
+   - contradictions: MAX 6 items (les plus critiques)
+   - dataGaps: MAX 4 items
+   - consistencyAnalysis.breakdown: 5 dimensions exactement
+   - redFlagConvergence: MAX 4 topics
+   - redFlags: MAX 5 items
+   - questions: MAX 5 items
+
+2. **BREVITE dans les textes**:
+   - analysis: 1-2 phrases MAX
+   - implication: 1 phrase MAX
+   - description: 2 phrases MAX
+   - issues dans breakdown: MAX 2 items par dimension
+   - keyInsights: MAX 4 items
+
+3. **Structure > Contenu**: Mieux vaut 5 contradictions completes que 10 tronquees`;
   }
 
   // ============================================================================
@@ -707,7 +728,16 @@ Produis un JSON avec cette structure:
     "forNegotiation": ["Argument 1", "Argument 2"]
   }
 }
-\`\`\``;
+\`\`\`
+
+**CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
+- contradictions: MAX 6 items
+- dataGaps: MAX 4 items
+- redFlagConvergence: MAX 4 topics
+- redFlags: MAX 5 items
+- questions: MAX 5 items
+- analysis/implication: 1-2 phrases MAX
+- PRIORITE: JSON complet > quantite d'items`;
   }
 
   // ============================================================================

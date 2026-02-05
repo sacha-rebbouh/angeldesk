@@ -7,15 +7,42 @@ import type { FactCategory } from "@/services/fact-store/types";
 import type { Prisma } from "@prisma/client";
 
 // ============================================================================
-// RATE LIMITING
+// RATE LIMITING (with bounded Map to prevent memory exhaustion)
 // ============================================================================
 
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
 const RATE_LIMIT_MAX = 30; // 30 requests per minute
+const MAX_RATE_LIMIT_ENTRIES = 10000; // Prevent unbounded growth
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
+
+function lazyCleanup(now: number): void {
+  // Only cleanup if map is getting large
+  if (requestCounts.size <= MAX_RATE_LIMIT_ENTRIES * 0.8) return;
+
+  // Remove expired entries
+  for (const [key, record] of requestCounts) {
+    if (now > record.resetAt) {
+      requestCounts.delete(key);
+    }
+  }
+
+  // If still too large, remove oldest 20%
+  if (requestCounts.size > MAX_RATE_LIMIT_ENTRIES * 0.8) {
+    const entries = Array.from(requestCounts.entries())
+      .sort((a, b) => a[1].resetAt - b[1].resetAt);
+    const toRemove = Math.floor(entries.length * 0.2);
+    for (let i = 0; i < toRemove; i++) {
+      requestCounts.delete(entries[i][0]);
+    }
+  }
+}
 
 function checkRateLimit(identifier: string): boolean {
   const now = Date.now();
+
+  // Lazy cleanup to prevent memory exhaustion
+  lazyCleanup(now);
+
   const record = requestCounts.get(identifier);
 
   if (!record || now > record.resetAt) {
@@ -85,10 +112,11 @@ export async function GET(
       );
     }
 
-    // Validate dealId format
-    if (!dealId || dealId.length < 10) {
+    // Validate dealId format using standard CUID validation
+    // CUIDs are 25 chars starting with 'c', e.g., 'cljrxyz123456789012345678'
+    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
       return NextResponse.json(
-        { error: "Invalid deal ID" },
+        { error: "Invalid deal ID format" },
         { status: 400 }
       );
     }
@@ -181,10 +209,11 @@ export async function POST(
 
     const body = await request.json();
 
-    // Validate dealId format
-    if (!dealId || dealId.length < 10) {
+    // Validate dealId format using standard CUID validation
+    // CUIDs are 25 chars starting with 'c', e.g., 'cljrxyz123456789012345678'
+    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
       return NextResponse.json(
-        { error: "Invalid deal ID" },
+        { error: "Invalid deal ID format" },
         { status: 400 }
       );
     }

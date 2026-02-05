@@ -146,15 +146,24 @@ export class CircuitBreaker {
   // ============================================================================
 
   private async executeWithTimeout<T>(fn: () => Promise<T>): Promise<T> {
-    return Promise.race([
-      fn(),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Request timeout after ${this.config.requestTimeout}ms`)),
-          this.config.requestTimeout
-        )
-      ),
-    ]);
+    let timeoutId: NodeJS.Timeout | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error(`Request timeout after ${this.config.requestTimeout}ms`)),
+        this.config.requestTimeout
+      );
+    });
+
+    try {
+      const result = await Promise.race([fn(), timeoutPromise]);
+      return result;
+    } finally {
+      // Always clear timeout to prevent memory leak
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   private onSuccess(): void {

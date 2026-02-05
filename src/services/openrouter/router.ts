@@ -2,6 +2,12 @@ import { openrouter, MODELS, type ModelKey } from "./client";
 import { getCircuitBreaker, CircuitOpenError } from "./circuit-breaker";
 import { costMonitor } from "@/services/cost-monitor";
 import { logLLMCallAsync } from "@/services/llm-logger";
+import {
+  StreamingJSONParser,
+  buildContinuationPrompt,
+  mergePartialResponses,
+  type StreamingParserResult,
+} from "./streaming-json-parser";
 
 export type TaskComplexity = "simple" | "medium" | "complex" | "critical";
 
@@ -50,15 +56,22 @@ const RATE_LIMIT_CONFIG = {
   requestsPerMinute: 60, // Conservative limit
 };
 
-// Simple in-memory rate limiter
+// Simple in-memory rate limiter with bounded array
 class RateLimiter {
   private timestamps: number[] = [];
   private readonly windowMs = 60000; // 1 minute
+  private readonly maxTimestamps = 200; // Safety limit to prevent unbounded growth
 
   canMakeRequest(): boolean {
     const now = Date.now();
     // Remove old timestamps
     this.timestamps = this.timestamps.filter((t) => now - t < this.windowMs);
+
+    // Safety: if array somehow grew too large, trim it
+    if (this.timestamps.length > this.maxTimestamps) {
+      this.timestamps = this.timestamps.slice(-RATE_LIMIT_CONFIG.requestsPerMinute);
+    }
+
     return this.timestamps.length < RATE_LIMIT_CONFIG.requestsPerMinute;
   }
 
@@ -67,7 +80,15 @@ class RateLimiter {
   }
 
   async waitForSlot(): Promise<void> {
+    const maxWaitMs = 60000; // Maximum total wait time: 1 minute
+    const startTime = Date.now();
+
     while (!this.canMakeRequest()) {
+      // Escape hatch: don't wait forever
+      if (Date.now() - startTime > maxWaitMs) {
+        throw new Error("Rate limit wait timeout exceeded");
+      }
+
       const waitTime = Math.min(1000, this.windowMs - (Date.now() - this.timestamps[0]));
       await new Promise((r) => setTimeout(r, waitTime));
     }
@@ -107,43 +128,8 @@ function calculateBackoff(attempt: number): number {
 // MODEL SELECTION
 // =============================================================================
 
-// Agents qui utilisent toujours leur modèle optimal (fiabilité critique)
-// Document-extractor = fondation de l'analyse, doit être précis et rapide
-const ALWAYS_OPTIMAL_AGENTS = new Set(["document-extractor"]);
-
-export function selectModel(complexity: TaskComplexity, agentName?: string): ModelKey {
-  // Tous les agents utilisent Gemini 3 Flash
-  // - Meilleurs benchmarks (92% MMLU, 90% GPQA, proche Opus 4.5 en coding)
-  // - Optimisé pour agentic workflows
-  // - $0.50/M input, $3/M output (~$0.80-1.20/analyse vs $2+ avec Haiku)
-  // - Context 1M tokens, output 64K
+export function selectModel(_complexity: TaskComplexity, _agentName?: string): ModelKey {
   return "GEMINI_3_FLASH";
-
-  // Exception: certains agents critiques gardent leur modèle optimal
-  // DISABLED - on économise
-  // if (agentName && ALWAYS_OPTIMAL_AGENTS.has(agentName)) {
-  //   return "SONNET"; // Document extraction = fondation, doit être précis
-  // }
-
-  // TEST MODE: Autres agents utilisent GPT-4o Mini (le moins cher avec vision)
-  // DISABLED - DeepSeek est encore moins cher
-  // if (TEST_MODE) {
-  //   return "GPT4O_MINI";
-  // }
-
-  // PRODUCTION MODE: Modèles adaptés à la complexité
-  switch (complexity) {
-    case "simple":
-      return "HAIKU";
-    case "medium":
-      return "SONNET";
-    case "complex":
-      return "SONNET";
-    case "critical":
-      return "OPUS";
-    default:
-      return "SONNET";
-  }
 }
 
 export interface CompletionOptions {
@@ -178,7 +164,9 @@ export async function complete(
     systemPrompt,
     maxRetries = RATE_LIMIT_CONFIG.maxRetries,
   } = options;
-  console.log(`[complete] maxTokens=${maxTokens}`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[complete] maxTokens=${maxTokens}`);
+  }
 
   const selectedModelKey = modelKey ?? selectModel(complexity, currentAgentContext ?? undefined);
   const model = MODELS[selectedModelKey];
@@ -277,7 +265,9 @@ export async function complete(
       });
 
       const finishReason = response.choices[0]?.finish_reason;
-      console.log(`[complete] Response: ${usage.completion_tokens} output tokens, finishReason=${finishReason}, contentLen=${content.length}`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[complete] Response: ${usage.completion_tokens} output tokens, finishReason=${finishReason}, contentLen=${content.length}`);
+      }
 
       return {
         content,
@@ -338,9 +328,11 @@ export async function complete(
 
       // Calculate backoff and retry
       const delay = calculateBackoff(attempt);
-      console.log(
-        `[OpenRouter] Retryable error on attempt ${attempt + 1}/${effectiveMaxRetries + 1}. Waiting ${delay}ms... (est. cost so far: $${accumulatedRetryCost.toFixed(4)})`
-      );
+      if (process.env.NODE_ENV === 'development') {
+        console.log(
+          `[OpenRouter] Retryable error on attempt ${attempt + 1}/${effectiveMaxRetries + 1}. Waiting ${delay}ms... (est. cost so far: $${accumulatedRetryCost.toFixed(4)})`
+        );
+      }
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -362,23 +354,31 @@ function extractFirstJSON(content: string): string {
 
   // Check if content contains backticks at all
   const backtickIndex = content.indexOf('`');
-  console.log(`[extractFirstJSON] Backtick char found at index: ${backtickIndex}`);
-  if (backtickIndex >= 0) {
-    const surroundingChars = content.substring(Math.max(0, backtickIndex - 5), backtickIndex + 10);
-    console.log(`[extractFirstJSON] Chars around backtick: "${surroundingChars}" (charCodes: ${[...surroundingChars].map(c => c.charCodeAt(0)).join(',')})`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[extractFirstJSON] Backtick char found at index: ${backtickIndex}`);
+    if (backtickIndex >= 0) {
+      const surroundingChars = content.substring(Math.max(0, backtickIndex - 5), backtickIndex + 10);
+      console.log(`[extractFirstJSON] Chars around backtick: "${surroundingChars}" (charCodes: ${[...surroundingChars].map(c => c.charCodeAt(0)).join(',')})`);
+    }
   }
 
   for (const pattern of codeBlockPatterns) {
     const match = content.match(pattern);
-    console.log(`[extractFirstJSON] Pattern ${pattern}: match=${!!match}`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[extractFirstJSON] Pattern ${pattern}: match=${!!match}`);
+    }
     if (match && match[1]) {
       const extracted = match[1].trim();
-      console.log(`[extractFirstJSON] Code block found, extracted starts with: "${extracted.substring(0, 50)}..."`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[extractFirstJSON] Code block found, extracted starts with: "${extracted.substring(0, 50)}..."`);
+      }
       // Verify it starts with { (is actual JSON)
       if (extracted.startsWith("{")) {
         const json = extractBracedJSON(extracted);
         if (json) {
-          console.log(`[extractFirstJSON] Successfully extracted JSON (${json.length} chars)`);
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[extractFirstJSON] Successfully extracted JSON (${json.length} chars)`);
+          }
           return json;
         }
       }
@@ -386,15 +386,21 @@ function extractFirstJSON(content: string): string {
   }
 
   // Approach 2: Find JSON object directly in content (skip preceding text)
-  console.log(`[extractFirstJSON] No code block match, trying direct extraction from content (${content.length} chars)`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[extractFirstJSON] No code block match, trying direct extraction from content (${content.length} chars)`);
+  }
   const json = extractBracedJSON(content);
   if (json) {
-    console.log(`[extractFirstJSON] Direct extraction succeeded (${json.length} chars)`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[extractFirstJSON] Direct extraction succeeded (${json.length} chars)`);
+    }
     return json;
   }
 
   // Fallback: return trimmed content
-  console.log(`[extractFirstJSON] FALLBACK - returning trimmed content`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[extractFirstJSON] FALLBACK - returning trimmed content`);
+  }
   return content.trim();
 }
 
@@ -433,7 +439,9 @@ function extractBracedJSON(text: string): string | null {
     } else if (char === "}") {
       braceCount--;
       if (braceCount === 0 && startIndex !== -1) {
-        console.log(`[extractBracedJSON] Found complete JSON from ${startIndex} to ${i+1}, maxDepth=${maxBraceCount}`);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[extractBracedJSON] Found complete JSON from ${startIndex} to ${i+1}, maxDepth=${maxBraceCount}`);
+        }
         return text.substring(startIndex, i + 1);
       }
     }
@@ -441,7 +449,9 @@ function extractBracedJSON(text: string): string | null {
 
   // Truncated JSON — attempt repair by closing open braces/brackets
   if (startIndex !== -1 && braceCount > 0 && maxBraceCount >= 2) {
-    console.log(`[extractBracedJSON] Truncated JSON detected (${braceCount} unclosed braces), attempting repair`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[extractBracedJSON] Truncated JSON detected (${braceCount} unclosed braces), attempting repair`);
+    }
     let partial = text.substring(startIndex);
     // Remove trailing incomplete string (unmatched quote)
     const quoteCount = (partial.match(/(?<!\\)"/g) || []).length;
@@ -471,14 +481,20 @@ function extractBracedJSON(text: string): string | null {
     partial += "]".repeat(Math.max(0, openBrackets)) + "}".repeat(Math.max(0, openBraces));
     try {
       JSON.parse(partial); // Validate
-      console.log(`[extractBracedJSON] Repair succeeded (${partial.length} chars)`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[extractBracedJSON] Repair succeeded (${partial.length} chars)`);
+      }
       return partial;
     } catch {
-      console.log(`[extractBracedJSON] Repair failed, returning null`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[extractBracedJSON] Repair failed, returning null`);
+      }
     }
   }
 
-  console.log(`[extractBracedJSON] Failed: startIndex=${startIndex}, finalBraceCount=${braceCount}, maxBraceCount=${maxBraceCount}`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[extractBracedJSON] Failed: startIndex=${startIndex}, finalBraceCount=${braceCount}, maxBraceCount=${maxBraceCount}`);
+  }
   return null;
 }
 
@@ -493,7 +509,9 @@ export async function completeJSON<T>(
   model?: string;
   usage?: { inputTokens: number; outputTokens: number };
 }> {
-  console.log(`[completeJSON] Calling complete with maxTokens=${options.maxTokens ?? 'default'}`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[completeJSON] Calling complete with maxTokens=${options.maxTokens ?? 'default'}`);
+  }
   const result = await complete(prompt, {
     ...options,
     temperature: options.temperature ?? 0.3, // Lower temperature for structured output
@@ -541,14 +559,18 @@ export async function completeJSONWithFallback<T>(
 }> {
   // First try: Gemini 3 Flash (default model)
   try {
-    console.log(`[completeJSONWithFallback] Trying Gemini 3 Flash...`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[completeJSONWithFallback] Trying Gemini 3 Flash...`);
+    }
     const result = await completeJSON<T>(prompt, {
       ...options,
       model: "GEMINI_3_FLASH",
     });
     return result;
   } catch (error) {
-    console.log(`[completeJSONWithFallback] Gemini 3 Flash failed, falling back to Haiku 4.5...`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[completeJSONWithFallback] Gemini 3 Flash failed, falling back to Haiku 4.5...`);
+    }
 
     // Fallback: Haiku 4.5
     try {
@@ -744,4 +766,332 @@ export async function stream(
     callbacks.onError?.(err);
     throw err;
   }
+}
+
+// ============================================================================
+// STREAMING JSON COMPLETION (with continuation on truncation)
+// ============================================================================
+
+export interface StreamingJSONOptions extends CompletionOptions {
+  /** Max continuation attempts if response is truncated */
+  maxContinuations?: number;
+  /** Callback for each token received */
+  onToken?: (token: string) => void;
+  /** Callback when parsing state changes */
+  onParseState?: (state: { openBraces: number; openBrackets: number; complete: boolean }) => void;
+}
+
+export interface StreamingJSONResult<T> {
+  /** Parsed data (complete or partial if all continuations exhausted) */
+  data: T | null;
+  /** Whether the final result was from a truncated response */
+  wasTruncated: boolean;
+  /** Number of continuation attempts made */
+  continuationAttempts: number;
+  /** Total cost across all calls */
+  cost: number;
+  /** Model used */
+  model: string;
+  /** Total tokens used */
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  /** Raw content for debugging */
+  rawContent: string;
+}
+
+/**
+ * Streaming JSON completion with automatic continuation on truncation.
+ *
+ * This function streams the LLM response, parsing JSON incrementally.
+ * If the response is truncated (finishReason: "length"), it automatically
+ * retries with a continuation prompt to get the rest of the response.
+ *
+ * Key benefits:
+ * - Zero data loss from truncation
+ * - Same cost as non-streaming (no wasted retries with different prompts)
+ * - Real-time parsing feedback
+ *
+ * @param prompt The user prompt requesting JSON output
+ * @param options Completion options including max continuations
+ * @returns Parsed JSON data with metadata
+ */
+export async function completeJSONStreaming<T>(
+  prompt: string,
+  options: StreamingJSONOptions = {}
+): Promise<StreamingJSONResult<T>> {
+  const {
+    model: modelKey,
+    complexity = "medium",
+    maxTokens = 65000,
+    temperature = 0.3, // Lower for structured output
+    systemPrompt,
+    maxContinuations = 3,
+    onToken,
+    onParseState,
+  } = options;
+
+  const selectedModelKey = modelKey ?? selectModel(complexity, currentAgentContext ?? undefined);
+  const model = MODELS[selectedModelKey];
+  const circuitBreaker = getCircuitBreaker();
+
+  // Accumulate stats across all calls
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCost = 0;
+  let continuationAttempts = 0;
+  const partialResponses: string[] = [];
+
+  // Current prompt (changes on continuation)
+  let currentPrompt = prompt;
+  let currentSystemPrompt = systemPrompt;
+  let parser = new StreamingJSONParser<T>(prompt);
+
+  // Main loop: stream and continue if truncated
+  while (continuationAttempts <= maxContinuations) {
+    const startTime = Date.now();
+
+    // Build messages
+    const messages: Array<{ role: "system" | "user"; content: string }> = [];
+    if (currentSystemPrompt) {
+      messages.push({ role: "system", content: currentSystemPrompt });
+    }
+    messages.push({ role: "user", content: currentPrompt });
+
+    // Check circuit breaker
+    if (!circuitBreaker.canExecute()) {
+      const stats = circuitBreaker.getStats();
+      throw new CircuitOpenError(
+        `Circuit breaker is OPEN. Too many failures.`,
+        stats
+      );
+    }
+
+    // Wait for rate limit
+    await rateLimiter.waitForSlot();
+    rateLimiter.recordRequest();
+
+    let finishReason: string | null = null;
+
+    try {
+      // Stream the response
+      const streamResponse = await circuitBreaker.execute(() =>
+        openrouter.chat.completions.create({
+          model: model.id,
+          messages,
+          max_tokens: maxTokens,
+          temperature,
+          stream: true,
+        })
+      );
+
+      let inputTokens = 0;
+      let outputTokens = 0;
+
+      // Process stream
+      for await (const chunk of streamResponse) {
+        const delta = chunk.choices[0]?.delta?.content;
+        if (delta) {
+          parser.processToken(delta);
+          onToken?.(delta);
+
+          // Report parse state
+          if (onParseState) {
+            const state = parser.getState();
+            onParseState({
+              openBraces: state.openBraces,
+              openBrackets: state.openBrackets,
+              complete: parser.isComplete(),
+            });
+          }
+        }
+
+        // Capture finish reason
+        if (chunk.choices[0]?.finish_reason) {
+          finishReason = chunk.choices[0].finish_reason;
+        }
+
+        // Capture usage
+        if (chunk.usage) {
+          inputTokens = chunk.usage.prompt_tokens;
+          outputTokens = chunk.usage.completion_tokens;
+        }
+      }
+
+      // Estimate tokens if not provided
+      if (inputTokens === 0) {
+        const promptLength = messages.reduce((sum, m) => sum + m.content.length, 0);
+        inputTokens = Math.ceil(promptLength / 4);
+        outputTokens = Math.ceil(parser.getContent().length / 4);
+      }
+
+      // Calculate cost for this call
+      const callCost =
+        (inputTokens / 1000) * model.inputCost +
+        (outputTokens / 1000) * model.outputCost;
+
+      totalInputTokens += inputTokens;
+      totalOutputTokens += outputTokens;
+      totalCost += callCost;
+
+      const durationMs = Date.now() - startTime;
+
+      // Log call
+      logLLMCallAsync({
+        analysisId: currentAnalysisContext ?? undefined,
+        agentName: currentAgentContext ?? "unknown",
+        model: model.id,
+        provider: "openrouter",
+        systemPrompt: currentSystemPrompt,
+        userPrompt: currentPrompt,
+        temperature,
+        maxTokens,
+        response: parser.getContent(),
+        finishReason: finishReason ?? undefined,
+        inputTokens,
+        outputTokens,
+        cost: callCost,
+        durationMs,
+        metadata: continuationAttempts > 0
+          ? { continuationAttempt: continuationAttempts, streaming: true }
+          : { streaming: true },
+      });
+
+      // Check if complete or truncated
+      const result = parser.finalize(finishReason);
+
+      if (result.data && !result.wasTruncated) {
+        // Success! Complete JSON parsed
+        costMonitor.recordCall({
+          model: model.id,
+          agent: currentAgentContext ?? "unknown",
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          cost: totalCost,
+        });
+
+        return {
+          data: result.data,
+          wasTruncated: false,
+          continuationAttempts,
+          cost: totalCost,
+          model: model.id,
+          usage: {
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            totalTokens: totalInputTokens + totalOutputTokens,
+          },
+          rawContent: parser.getContent(),
+        };
+      }
+
+      // Truncated - prepare for continuation
+      if (finishReason === "length" || result.wasTruncated) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[completeJSONStreaming] Response truncated (finishReason=${finishReason}), attempt ${continuationAttempts + 1}/${maxContinuations + 1}`);
+        }
+
+        partialResponses.push(result.partialContent || parser.getContent());
+        continuationAttempts++;
+
+        if (continuationAttempts <= maxContinuations) {
+          // Build continuation prompt
+          currentPrompt = buildContinuationPrompt(parser.getContent(), prompt);
+          currentSystemPrompt = systemPrompt
+            ? `${systemPrompt}\n\nIMPORTANT: This is a CONTINUATION request. Continue the JSON from where it was cut off. Do not restart.`
+            : "IMPORTANT: This is a CONTINUATION request. Continue the JSON from where it was cut off. Do not restart.";
+
+          // Reset parser but keep partial content for merging
+          parser = new StreamingJSONParser<T>(prompt);
+          parser.setContent(result.partialContent || "");
+
+          continue;
+        }
+      }
+
+      // Max continuations reached or parsing failed
+      // Try to merge all partial responses
+      if (partialResponses.length > 0) {
+        const merged = mergePartialResponses<T>(partialResponses);
+        if (merged) {
+          costMonitor.recordCall({
+            model: model.id,
+            agent: currentAgentContext ?? "unknown",
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            cost: totalCost,
+          });
+
+          return {
+            data: merged,
+            wasTruncated: true,
+            continuationAttempts,
+            cost: totalCost,
+            model: model.id,
+            usage: {
+              inputTokens: totalInputTokens,
+              outputTokens: totalOutputTokens,
+              totalTokens: totalInputTokens + totalOutputTokens,
+            },
+            rawContent: partialResponses.join(""),
+          };
+        }
+      }
+
+      // Return whatever we have
+      costMonitor.recordCall({
+        model: model.id,
+        agent: currentAgentContext ?? "unknown",
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        cost: totalCost,
+      });
+
+      return {
+        data: result.data,
+        wasTruncated: true,
+        continuationAttempts,
+        cost: totalCost,
+        model: model.id,
+        usage: {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          totalTokens: totalInputTokens + totalOutputTokens,
+        },
+        rawContent: parser.getContent(),
+      };
+
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+
+      // Log error
+      const durationMs = Date.now() - startTime;
+      logLLMCallAsync({
+        analysisId: currentAnalysisContext ?? undefined,
+        agentName: currentAgentContext ?? "unknown",
+        model: model.id,
+        provider: "openrouter",
+        systemPrompt: currentSystemPrompt,
+        userPrompt: currentPrompt,
+        temperature,
+        maxTokens,
+        response: parser.getContent(),
+        inputTokens: 0,
+        outputTokens: 0,
+        cost: 0,
+        durationMs,
+        isError: true,
+        errorMessage: err.message,
+        errorType: "streaming_error",
+        metadata: { continuationAttempt: continuationAttempts },
+      });
+
+      throw err;
+    }
+  }
+
+  // Should not reach here, but TypeScript needs it
+  throw new Error("Unexpected end of completeJSONStreaming loop");
 }

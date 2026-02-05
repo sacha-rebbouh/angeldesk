@@ -133,7 +133,9 @@ class BenchmarkService implements IBenchmarkService {
   private async loadCache(): Promise<void> {
     if (this.isCacheValid()) return;
 
-    const benchmarks = await prisma.benchmark.findMany();
+    const benchmarks = await prisma.benchmark.findMany({
+      take: 1000, // Safety limit - benchmark tables should be small
+    });
     this.cache.clear();
 
     for (const b of benchmarks) {

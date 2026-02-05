@@ -5,7 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Loader2, CheckCircle2, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BoardProgressEvent } from "@/agents/board/types";
-import { BOARD_MEMBERS } from "@/agents/board/types";
+// Use BOARD_MEMBERS_PROD directly for client components to avoid module-load race condition
+import { BOARD_MEMBERS_PROD } from "@/agents/board/types";
 
 interface BoardProgressProps {
   events: BoardProgressEvent[];
@@ -28,7 +29,7 @@ export function BoardProgress({ events }: BoardProgressProps) {
     let message = "Initialisation...";
     const status: Record<string, "pending" | "running" | "done"> = {};
 
-    BOARD_MEMBERS.forEach((m) => {
+    BOARD_MEMBERS_PROD.forEach((m) => {
       status[m.id] = "pending";
     });
 
@@ -51,7 +52,7 @@ export function BoardProgress({ events }: BoardProgressProps) {
           phase = "debate";
           round = event.roundNumber ?? 1;
           // Reset status for debate
-          BOARD_MEMBERS.forEach((m) => {
+          BOARD_MEMBERS_PROD.forEach((m) => {
             status[m.id] = "pending";
           });
           message = event.message ?? `Round ${round}...`;
@@ -65,7 +66,7 @@ export function BoardProgress({ events }: BoardProgressProps) {
           break;
         case "voting_started":
           phase = "vote";
-          BOARD_MEMBERS.forEach((m) => {
+          BOARD_MEMBERS_PROD.forEach((m) => {
             status[m.id] = "pending";
           });
           message = event.message ?? "Vote en cours...";
@@ -140,7 +141,7 @@ export function BoardProgress({ events }: BoardProgressProps) {
 
           {/* Member status */}
           <div className="flex items-center justify-center gap-4">
-            {BOARD_MEMBERS.map((member) => {
+            {BOARD_MEMBERS_PROD.map((member) => {
               const status = memberStatus[member.id];
 
               return (

@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type {
   AgentResult,
   RedFlagResult,
@@ -93,7 +93,9 @@ export async function persistStateTransition(
       },
     });
   } catch (error) {
-    console.error("[Persistence] Failed to persist state transition:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Persistence] Failed to persist state transition:", error);
+    }
   }
 }
 
@@ -128,43 +130,48 @@ export async function persistReasoningTrace(
       },
     });
   } catch (error) {
-    console.error("[Persistence] Failed to persist reasoning trace:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Persistence] Failed to persist reasoning trace:", error);
+    }
   }
 }
 
 /**
  * Persist scored findings to database
+ * Uses createMany for batch insertion (avoids N sequential inserts)
  */
 export async function persistScoredFindings(
   analysisId: string,
   agentName: string,
   findings: ScoredFinding[]
 ): Promise<void> {
+  if (findings.length === 0) return;
+
   try {
-    for (const finding of findings) {
-      await prisma.scoredFinding.create({
-        data: {
-          analysisId,
-          agentName,
-          metric: finding.metric,
-          category: finding.category,
-          value: finding.value?.toString() ?? null,
-          unit: finding.unit,
-          normalizedValue: finding.normalizedValue ?? null,
-          percentile: finding.percentile ?? null,
-          assessment: finding.assessment,
-          benchmarkData: finding.benchmarkData
-            ? JSON.parse(JSON.stringify(finding.benchmarkData))
-            : null,
-          confidenceLevel: finding.confidence?.level ?? "insufficient",
-          confidenceScore: Number.isFinite(finding.confidence?.score) ? finding.confidence.score : 0,
-          confidenceFactors: JSON.parse(JSON.stringify(finding.confidence?.factors ?? [])),
-          evidence: JSON.parse(JSON.stringify(finding.evidence ?? [])),
-        },
-      });
-    }
+    const data = findings.map(finding => ({
+      analysisId,
+      agentName,
+      metric: finding.metric,
+      category: finding.category,
+      value: finding.value?.toString() ?? null,
+      unit: finding.unit,
+      normalizedValue: finding.normalizedValue ?? null,
+      percentile: finding.percentile ?? null,
+      assessment: finding.assessment,
+      benchmarkData: finding.benchmarkData
+        ? JSON.parse(JSON.stringify(finding.benchmarkData))
+        : Prisma.JsonNull,
+      confidenceLevel: finding.confidence?.level ?? "insufficient",
+      confidenceScore: Number.isFinite(finding.confidence?.score) ? finding.confidence.score : 0,
+      confidenceFactors: JSON.parse(JSON.stringify(finding.confidence?.factors ?? [])),
+      evidence: JSON.parse(JSON.stringify(finding.evidence ?? [])),
+    }));
+
+    await prisma.scoredFinding.createMany({ data });
   } catch (error) {
-    console.error("[Persistence] Failed to persist scored findings:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Persistence] Failed to persist scored findings:", error);
+    }
   }
 }
 
@@ -211,7 +218,9 @@ export async function persistDebateRecord(
       },
     });
   } catch (error) {
-    console.error("[Persistence] Failed to persist debate record:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Persistence] Failed to persist debate record:", error);
+    }
   }
 }
 
@@ -325,7 +334,9 @@ export async function processAgentResult(
             where: { id: dealId },
             data: updateData,
           });
-          console.log(`[Persistence] Updated deal ${dealId} with extracted info:`, Object.keys(updateData));
+          if (process.env.NODE_ENV === "development") {
+            console.log(`[Persistence] Updated deal ${dealId} with extracted info:`, Object.keys(updateData));
+          }
         }
       }
       break;
@@ -335,10 +346,10 @@ export async function processAgentResult(
       const rfResult = result as RedFlagResult;
       const redFlags = rfResult.data?.redFlags ?? [];
 
-      // Save red flags to database
-      for (const flag of redFlags) {
-        await prisma.redFlag.create({
-          data: {
+      // Save red flags to database in batch
+      if (redFlags.length > 0) {
+        await prisma.redFlag.createMany({
+          data: redFlags.map(flag => ({
             dealId,
             category: flag.category,
             title: flag.title,
@@ -348,7 +359,7 @@ export async function processAgentResult(
             evidence: flag.evidence,
             questionsToAsk: flag.questionsToAsk,
             status: "OPEN",
-          },
+          })),
         });
       }
       break;
@@ -414,12 +425,16 @@ export async function processAgentResult(
           select: { id: true, name: true },
         });
 
-        for (const profile of profiles) {
-          // Match by name (case-insensitive)
-          const existing = existingFounders.find(
-            f => f.name.toLowerCase().trim() === profile.name.toLowerCase().trim()
-          );
+        // Build a map for fast lookup (case-insensitive)
+        const existingByName = new Map(
+          existingFounders.map(f => [f.name.toLowerCase().trim(), f])
+        );
 
+        // Separate into updates and creates
+        const toUpdate: Array<{ id: string; data: Prisma.FounderUpdateInput }> = [];
+        const toCreate: Prisma.FounderCreateManyInput[] = [];
+
+        for (const profile of profiles) {
           const analysisData = JSON.parse(JSON.stringify({
             scores: profile.scores,
             strengths: profile.strengths,
@@ -432,10 +447,11 @@ export async function processAgentResult(
             analyzedAt: new Date().toISOString(),
           }));
 
+          const existing = existingByName.get(profile.name.toLowerCase().trim());
+
           if (existing) {
-            // Update existing founder with analysis data
-            await prisma.founder.update({
-              where: { id: existing.id },
+            toUpdate.push({
+              id: existing.id,
               data: {
                 role: profile.role,
                 linkedinUrl: profile.linkedinUrl ?? undefined,
@@ -443,19 +459,29 @@ export async function processAgentResult(
               },
             });
           } else {
-            // Create new founder from analysis
-            await prisma.founder.create({
-              data: {
-                dealId,
-                name: profile.name,
-                role: profile.role,
-                linkedinUrl: profile.linkedinUrl ?? null,
-                verifiedInfo: analysisData as unknown as Prisma.InputJsonValue,
-              },
+            toCreate.push({
+              dealId,
+              name: profile.name,
+              role: profile.role,
+              linkedinUrl: profile.linkedinUrl ?? null,
+              verifiedInfo: analysisData as unknown as Prisma.InputJsonValue,
             });
           }
         }
-        console.log(`[Persistence] Synced ${profiles.length} team profiles to Founder table for deal ${dealId}`);
+
+        // Batch operations in a transaction
+        await prisma.$transaction([
+          // Updates need individual calls but we batch them in a transaction
+          ...toUpdate.map(({ id, data }) =>
+            prisma.founder.update({ where: { id }, data })
+          ),
+          // Creates can use createMany
+          ...(toCreate.length > 0 ? [prisma.founder.createMany({ data: toCreate })] : []),
+        ]);
+
+        if (process.env.NODE_ENV === "development") {
+          console.log(`[Persistence] Synced ${profiles.length} team profiles to Founder table for deal ${dealId}`);
+        }
       }
       break;
     }
@@ -542,14 +568,18 @@ export async function saveCheckpoint(
       },
     });
 
-    console.log(
-      `[Checkpoint] Saved checkpoint ${saved.id} for analysis ${analysisId}: ` +
-        `state=${checkpoint.state}, completed=${checkpoint.completedAgents.length}/${checkpoint.completedAgents.length + checkpoint.pendingAgents.length}`
-    );
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        `[Checkpoint] Saved checkpoint ${saved.id} for analysis ${analysisId}: ` +
+          `state=${checkpoint.state}, completed=${checkpoint.completedAgents.length}/${checkpoint.completedAgents.length + checkpoint.pendingAgents.length}`
+      );
+    }
 
     return saved.id;
   } catch (error) {
-    console.error("[Checkpoint] Failed to save checkpoint:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Checkpoint] Failed to save checkpoint:", error);
+    }
     throw error;
   }
 }
@@ -581,7 +611,9 @@ export async function loadLatestCheckpoint(
       startTime: checkpoint.createdAt.toISOString(),
     };
   } catch (error) {
-    console.error("[Checkpoint] Failed to load checkpoint:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Checkpoint] Failed to load checkpoint:", error);
+    }
     return null;
   }
 }
@@ -589,6 +621,7 @@ export async function loadLatestCheckpoint(
 /**
  * Find all interrupted analyses (status = RUNNING) for a user or globally
  * These are analyses that crashed or were interrupted and can be resumed
+ * Uses batched checkpoint query to avoid N+1
  */
 export async function findInterruptedAnalyses(userId?: string): Promise<
   Array<{
@@ -620,33 +653,38 @@ export async function findInterruptedAnalyses(userId?: string): Promise<
       orderBy: { startedAt: "desc" },
     });
 
-    // Get last checkpoint time for each analysis
-    const result = await Promise.all(
-      analyses.map(async (analysis) => {
-        const lastCheckpoint = await prisma.analysisCheckpoint.findFirst({
-          where: { analysisId: analysis.id },
-          orderBy: { createdAt: "desc" },
-          select: { createdAt: true },
-        });
+    if (analyses.length === 0) return [];
 
-        return {
-          id: analysis.id,
-          dealId: analysis.dealId,
-          dealName: analysis.deal.name,
-          type: analysis.type,
-          mode: analysis.mode,
-          startedAt: analysis.startedAt,
-          completedAgents: analysis.completedAgents,
-          totalAgents: analysis.totalAgents,
-          totalCost: Number(analysis.totalCost ?? 0),
-          lastCheckpointAt: lastCheckpoint?.createdAt ?? null,
-        };
-      })
+    // BATCH FETCH: Get latest checkpoints for all analyses in one query
+    // Using raw query to get MAX(createdAt) grouped by analysisId
+    const analysisIds = analyses.map(a => a.id);
+    const latestCheckpoints = await prisma.analysisCheckpoint.groupBy({
+      by: ["analysisId"],
+      where: { analysisId: { in: analysisIds } },
+      _max: { createdAt: true },
+    });
+
+    // Build map of analysisId -> lastCheckpointAt
+    const checkpointMap = new Map(
+      latestCheckpoints.map(c => [c.analysisId, c._max.createdAt])
     );
 
-    return result;
+    return analyses.map(analysis => ({
+      id: analysis.id,
+      dealId: analysis.dealId,
+      dealName: analysis.deal.name,
+      type: analysis.type,
+      mode: analysis.mode,
+      startedAt: analysis.startedAt,
+      completedAgents: analysis.completedAgents,
+      totalAgents: analysis.totalAgents,
+      totalCost: Number(analysis.totalCost ?? 0),
+      lastCheckpointAt: checkpointMap.get(analysis.id) ?? null,
+    }));
   } catch (error) {
-    console.error("[Checkpoint] Failed to find interrupted analyses:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Checkpoint] Failed to find interrupted analyses:", error);
+    }
     return [];
   }
 }
@@ -704,7 +742,9 @@ export async function loadAnalysisForRecovery(analysisId: string): Promise<{
       checkpoint,
     };
   } catch (error) {
-    console.error("[Checkpoint] Failed to load analysis for recovery:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Checkpoint] Failed to load analysis for recovery:", error);
+    }
     return null;
   }
 }
@@ -726,9 +766,13 @@ export async function markAnalysisAsFailed(
       },
     });
 
-    console.log(`[Checkpoint] Marked analysis ${analysisId} as FAILED: ${reason}`);
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[Checkpoint] Marked analysis ${analysisId} as FAILED: ${reason}`);
+    }
   } catch (error) {
-    console.error("[Checkpoint] Failed to mark analysis as failed:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Checkpoint] Failed to mark analysis as failed:", error);
+    }
   }
 }
 
@@ -757,10 +801,14 @@ export async function cleanupOldCheckpoints(
       where: { id: { in: toDelete } },
     });
 
-    console.log(`[Checkpoint] Cleaned up ${toDelete.length} old checkpoints for analysis ${analysisId}`);
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[Checkpoint] Cleaned up ${toDelete.length} old checkpoints for analysis ${analysisId}`);
+    }
     return toDelete.length;
   } catch (error) {
-    console.error("[Checkpoint] Failed to cleanup checkpoints:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Checkpoint] Failed to cleanup checkpoints:", error);
+    }
     return 0;
   }
 }

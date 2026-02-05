@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { generateNegotiationStrategy, type AnalysisResults } from "@/services/negotiation/strategist";
+import { generateNegotiationStrategy, type AnalysisResults, type NegotiationStrategy } from "@/services/negotiation/strategist";
 
 export const maxDuration = 60;
 
@@ -11,9 +11,15 @@ export const maxDuration = 60;
 // =============================================================================
 
 const requestSchema = z.object({
-  dealId: z.string().min(1, "dealId is required"),
-  analysisId: z.string().min(1, "analysisId is required"),
+  dealId: z.string().cuid("dealId must be a valid CUID"),
+  analysisId: z.string().cuid("analysisId must be a valid CUID"),
   dealName: z.string().max(200).optional(),
+  forceRegenerate: z.boolean().optional(), // Force regeneration even if cached
+});
+
+const getRequestSchema = z.object({
+  dealId: z.string().cuid(),
+  analysisId: z.string().cuid(),
 });
 
 // =============================================================================
@@ -79,13 +85,87 @@ function sanitizeDealName(name: string): string {
 }
 
 // =============================================================================
-// API Handler
+// GET Handler - Load cached strategy
+// =============================================================================
+
+export async function GET(req: NextRequest) {
+  try {
+    const user = await requireAuth();
+
+    const { searchParams } = new URL(req.url);
+    const parseResult = getRequestSchema.safeParse({
+      dealId: searchParams.get("dealId"),
+      analysisId: searchParams.get("analysisId"),
+    });
+
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: parseResult.error.issues[0]?.message || "Invalid request" },
+        { status: 400 }
+      );
+    }
+
+    const { dealId, analysisId } = parseResult.data;
+
+    // Fetch analysis with cached strategy
+    const analysis = await prisma.analysis.findFirst({
+      where: {
+        id: analysisId,
+        deal: {
+          id: dealId,
+          userId: user.id,
+        },
+      },
+      select: {
+        negotiationStrategy: true,
+      },
+    });
+
+    if (!analysis) {
+      return NextResponse.json(
+        { error: "Analysis not found" },
+        { status: 404 }
+      );
+    }
+
+    // Return cached strategy or null
+    return NextResponse.json({
+      strategy: analysis.negotiationStrategy as unknown as NegotiationStrategy | null,
+      cached: analysis.negotiationStrategy !== null,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      const errorMsg = error.message.toLowerCase();
+      if (errorMsg === "unauthorized" || errorMsg.includes("unauthenticated") || errorMsg.includes("not authenticated")) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
+
+    if (process.env.NODE_ENV === "development") {
+      console.error("[API] Error fetching negotiation strategy:", error);
+    }
+    return NextResponse.json(
+      { error: "An error occurred while fetching the negotiation strategy." },
+      { status: 500 }
+    );
+  }
+}
+
+// =============================================================================
+// POST Handler - Generate and cache strategy
 // =============================================================================
 
 export async function POST(req: NextRequest) {
   try {
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Negotiation API] POST request received");
+    }
+
     // 1. Authentication
     const user = await requireAuth();
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Negotiation API] User authenticated:", user.id);
+    }
 
     // 2. Rate limiting
     const rateLimit = checkRateLimit(user.id);
@@ -120,7 +200,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { dealId, analysisId, dealName } = parseResult.data;
+    const { dealId, analysisId, dealName, forceRegenerate } = parseResult.data;
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Negotiation API] Request params:", { dealId, analysisId, forceRegenerate });
+    }
 
     // 4. Fetch the analysis with results
     const analysis = await prisma.analysis.findFirst({
@@ -134,13 +217,27 @@ export async function POST(req: NextRequest) {
     });
 
     if (!analysis || !analysis.results) {
+      if (process.env.NODE_ENV === "development") {
+        console.log("[Negotiation API] Analysis not found or no results");
+      }
       return NextResponse.json(
         { error: "Analysis not found or has no results" },
         { status: 404 }
       );
     }
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Negotiation API] Analysis found, hasCache:", !!analysis.negotiationStrategy);
+    }
 
-    // 5. Verify results is not empty
+    // 5. Check cache first (unless forceRegenerate)
+    if (!forceRegenerate && analysis.negotiationStrategy) {
+      return NextResponse.json({
+        strategy: analysis.negotiationStrategy as unknown as NegotiationStrategy,
+        cached: true,
+      });
+    }
+
+    // 6. Verify results is not empty
     const resultsObj = analysis.results as Record<string, unknown>;
     if (Object.keys(resultsObj).length === 0) {
       return NextResponse.json(
@@ -149,14 +246,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 6. Extract relevant data from analysis results
+    // 7. Extract relevant data from analysis results
     const results = analysis.results as Record<string, {
       agentName: string;
       success: boolean;
       data?: Record<string, unknown>;
     }>;
 
-    // 7. Build AnalysisResults from agent outputs - match the expected interface
+    // 8. Build AnalysisResults from agent outputs - match the expected interface
     const analysisResults: AnalysisResults = {};
 
     // Extract financial-auditor data
@@ -218,12 +315,18 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // 8. Sanitize deal name and generate the negotiation strategy
+    // 9. Sanitize deal name and generate the negotiation strategy
     const safeDealName = sanitizeDealName(dealName ?? "Deal");
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Negotiation API] Generating strategy for:", safeDealName);
+    }
     const strategy = await generateNegotiationStrategy(
       safeDealName,
       analysisResults
     );
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Negotiation API] Strategy generated:", !!strategy);
+    }
 
     if (!strategy) {
       return NextResponse.json(
@@ -232,7 +335,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ strategy });
+    // 10. Save strategy to database for caching
+    await prisma.analysis.update({
+      where: { id: analysisId },
+      data: { negotiationStrategy: JSON.parse(JSON.stringify(strategy)) },
+    });
+
+    return NextResponse.json({ strategy, cached: false });
   } catch (error) {
     // Handle authentication errors specifically (Clerk can throw various auth-related messages)
     if (error instanceof Error) {
@@ -245,7 +354,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    console.error("[API] Error generating negotiation strategy:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Negotiation API] Error:", error);
+      console.error("[Negotiation API] Error stack:", error instanceof Error ? error.stack : "N/A");
+    }
     // Return generic error message in production to avoid leaking internal details
     return NextResponse.json(
       { error: "An error occurred while generating the negotiation strategy. Please try again." },

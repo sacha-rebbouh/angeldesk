@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { deleteFile } from "@/services/storage";
+
+// CUID validation schema
+const cuidSchema = z.string().cuid();
 
 interface RouteParams {
   params: Promise<{ documentId: string }>;
@@ -12,6 +16,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { documentId } = await params;
+
+    // Validate CUID format
+    const cuidResult = cuidSchema.safeParse(documentId);
+    if (!cuidResult.success) {
+      return NextResponse.json({ error: "Invalid document ID format" }, { status: 400 });
+    }
+
     const body = await request.json();
     const { name } = body;
 
@@ -40,7 +51,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ data: updated });
   } catch (error) {
-    console.error("Error renaming document:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error renaming document:", error);
+    }
     return NextResponse.json({ error: "Failed to rename document" }, { status: 500 });
   }
 }
@@ -50,6 +63,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { documentId } = await params;
+
+    // Validate CUID format
+    const cuidResult = cuidSchema.safeParse(documentId);
+    if (!cuidResult.success) {
+      return NextResponse.json({ error: "Invalid document ID format" }, { status: 400 });
+    }
 
     // Verify ownership through deal
     const document = await prisma.document.findFirst({
@@ -70,7 +89,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       try {
         await deleteFile(document.storageUrl);
       } catch (storageError) {
-        console.error("Error deleting from storage:", storageError);
+        if (process.env.NODE_ENV === "development") {
+          console.error("Error deleting from storage:", storageError);
+        }
         // Continue with DB deletion even if storage fails
       }
     }
@@ -82,7 +103,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error deleting document:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error deleting document:", error);
+    }
     return NextResponse.json({ error: "Failed to delete document" }, { status: 500 });
   }
 }

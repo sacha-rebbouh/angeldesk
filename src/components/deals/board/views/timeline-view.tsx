@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { BOARD_MEMBERS } from "@/agents/board/types";
+// Use BOARD_MEMBERS_PROD directly for client components to avoid module-load race condition
+import { BOARD_MEMBERS_PROD } from "@/agents/board/types";
 import type { InitialAnalysis, DebateResponse } from "@/agents/board/types";
 
 interface TimelineViewProps {
@@ -44,7 +45,7 @@ export function TimelineView({ memberAnalyses, debateResponses }: TimelineViewPr
     result.push({
       roundNumber: 0,
       label: "Analyses Initiales",
-      members: BOARD_MEMBERS.map((m) => {
+      members: BOARD_MEMBERS_PROD.map((m) => {
         const analysis = memberAnalyses[m.id]?.analysis;
         return {
           id: m.id,
@@ -65,7 +66,7 @@ export function TimelineView({ memberAnalyses, debateResponses }: TimelineViewPr
       result.push({
         roundNumber: round,
         label: `Round ${round}`,
-        members: BOARD_MEMBERS.map((m) => {
+        members: BOARD_MEMBERS_PROD.map((m) => {
           const response = roundResponses.find((r) => r.memberId === m.id);
           return {
             id: m.id,

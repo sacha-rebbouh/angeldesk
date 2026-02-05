@@ -1057,13 +1057,17 @@ Respond in JSON:
 
     const jsonMatch = result.content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        agentName: claim.agentName,
-        position: parsed.position,
-        supportingEvidence: parsed.supportingEvidence ?? [],
-        confidenceChange: 0,
-      };
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          agentName: claim.agentName,
+          position: parsed.position,
+          supportingEvidence: parsed.supportingEvidence ?? [],
+          confidenceChange: 0,
+        };
+      } catch {
+        // JSON parse failed, fall through to default
+      }
     }
 
     return {
@@ -1539,21 +1543,25 @@ Respond in JSON:
 
     const jsonMatch = result.content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
 
-      return {
-        contradictionId: contradiction.id,
-        resolvedBy: "arbitration",
-        winner: parsed.winner,
-        resolution: parsed.resolution,
-        finalValue: parsed.finalValue,
-        confidence: confidenceCalculator.calculate({
-          dataAvailability: parsed.confidence ?? 60,
-        }),
-        debateRounds: rounds,
-        resolvedAt: new Date(),
-        tokensUsed: arbTokens,
-      };
+        return {
+          contradictionId: contradiction.id,
+          resolvedBy: "arbitration",
+          winner: parsed.winner,
+          resolution: parsed.resolution,
+          finalValue: parsed.finalValue,
+          confidence: confidenceCalculator.calculate({
+            dataAvailability: parsed.confidence ?? 60,
+          }),
+          debateRounds: rounds,
+          resolvedAt: new Date(),
+          tokensUsed: arbTokens,
+        };
+      } catch {
+        // JSON parse failed, fall through to fallback
+      }
     }
 
     // Ultimate fallback

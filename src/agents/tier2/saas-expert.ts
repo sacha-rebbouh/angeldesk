@@ -18,7 +18,7 @@ import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertData, SectorExpertResult, SectorExpertType } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
 import { SAAS_STANDARDS } from "./sector-standards";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { completeJSON, setAgentContext } from "@/services/openrouter/router";
 
 // ============================================================================
 // OUTPUT SCHEMA
@@ -473,7 +473,87 @@ Vérifie au minimum:
 - Executive Summary: 3-4 phrases max, actionnable
 - Implication pour l'investissement
 
-IMPORTANT: Sois spécifique. Pas de généralités. Chaque affirmation doit être sourcée ou calculée.`;
+IMPORTANT: Sois spécifique. Pas de généralités. Chaque affirmation doit être sourcée ou calculée.
+
+## FORMAT DE RÉPONSE OBLIGATOIRE
+
+Tu DOIS répondre UNIQUEMENT avec un objet JSON valide. Pas de texte avant ou après.
+PAS de markdown, PAS d'explication, JUSTE le JSON.
+
+Schema attendu:
+\`\`\`json
+{
+  "subSector": "string (Horizontal | Vertical | Infrastructure | API-first)",
+  "businessModel": "string (Pure SaaS | SaaS + Services | Usage-based | Hybrid)",
+  "sectorScore": number (0-100),
+  "dataCompleteness": {
+    "level": "complete | partial | minimal",
+    "availableDataPoints": number,
+    "expectedDataPoints": number,
+    "missingCritical": ["string"],
+    "limitations": ["string"]
+  },
+  "primaryMetrics": [
+    {
+      "metricName": "string",
+      "dealValue": number | string | null,
+      "source": "string",
+      "benchmark": { "p25": number, "median": number, "p75": number, "topDecile": number },
+      "percentilePosition": number,
+      "assessment": "exceptional | above_average | average | below_average | critical",
+      "insight": "string"
+    }
+  ],
+  "unitEconomics": {
+    "ltv": number | null,
+    "cac": number | null,
+    "ltvCacRatio": number | null,
+    "cacPaybackMonths": number | null,
+    "burnMultiple": number | null,
+    "magicNumber": number | null,
+    "calculations": "string (montre les calculs)"
+  },
+  "redFlags": [
+    {
+      "flag": "string",
+      "severity": "critical | major | minor",
+      "evidence": "string",
+      "impact": "string",
+      "question": "string",
+      "benchmarkViolated": "string | null"
+    }
+  ],
+  "valuationAnalysis": {
+    "multipleAsked": number | null,
+    "marketMultipleRange": { "low": number, "median": number, "high": number },
+    "fairValueRange": { "low": number, "high": number },
+    "negotiationArguments": ["string"]
+  },
+  "questions": [
+    {
+      "question": "string",
+      "importance": "string",
+      "goodAnswer": "string",
+      "redFlagAnswer": "string"
+    }
+  ],
+  "scoreBreakdown": {
+    "unitEconomics": number,
+    "growth": number,
+    "retention": number,
+    "gtmEfficiency": number
+  },
+  "executiveSummary": "string (3-4 phrases max)",
+  "investmentImplication": "string",
+  "dbCrossReference": {
+    "similarDealsFound": number,
+    "medianMetrics": {},
+    "competitorsNotMentioned": ["string"]
+  }
+}
+\`\`\`
+
+RAPPEL CRITIQUE: Réponds UNIQUEMENT avec le JSON, rien d'autre.`;
 }
 
 // ============================================================================
@@ -487,14 +567,14 @@ function transformOutput(raw: SaaSExpertOutput, cappedScore: number, cappedFitSc
       sectorMaturity: "growing",
 
       keyMetrics: [
-        ...raw.primaryMetrics.map(m => ({
+        ...(raw.primaryMetrics ?? []).map(m => ({
           metricName: m.metricName,
           value: m.dealValue,
           sectorBenchmark: m.benchmark,
           assessment: m.assessment === "critical" ? "concerning" as const : m.assessment,
           sectorContext: m.insight,
         })),
-        ...raw.secondaryMetrics.map(m => ({
+        ...(raw.secondaryMetrics ?? []).map(m => ({
           metricName: m.metricName,
           value: m.dealValue,
           sectorBenchmark: m.benchmark,
@@ -503,13 +583,13 @@ function transformOutput(raw: SaaSExpertOutput, cappedScore: number, cappedFitSc
         })),
       ],
 
-      sectorRedFlags: raw.redFlags.map(rf => ({
+      sectorRedFlags: (raw.redFlags ?? []).map(rf => ({
         flag: rf.flag,
         severity: rf.severity,
         sectorReason: `${rf.evidence}. Impact: ${rf.impact}. Question: ${rf.questionToAsk}`,
       })),
 
-      sectorOpportunities: raw.greenFlags.map(gf => ({
+      sectorOpportunities: (raw.greenFlags ?? []).map(gf => ({
         opportunity: gf.flag,
         potential: gf.strength === "strong" ? "high" as const : "medium" as const,
         reasoning: `${gf.evidence}. ${gf.implication}`,
@@ -525,13 +605,13 @@ function transformOutput(raw: SaaSExpertOutput, cappedScore: number, cappedFitSc
       sectorDynamics: {
         competitionIntensity: "high",
         consolidationTrend: "consolidating",
-        barrierToEntry: raw.saasCompetitiveMoat.switchingCostLevel === "high" ? "high" : "medium",
-        typicalExitMultiple: raw.exitPotential.typicalMultiple,
+        barrierToEntry: raw.saasCompetitiveMoat?.switchingCostLevel === "high" ? "high" : "medium",
+        typicalExitMultiple: raw.exitPotential?.typicalMultiple ?? 5,
         // Exits recents: doivent venir de la recherche web, pas de donnees hardcodees
         recentExits: [],
       },
 
-      sectorQuestions: raw.sectorQuestions.map(q => ({
+      sectorQuestions: (raw.sectorQuestions ?? []).map(q => ({
         question: q.question,
         category: q.category === "unit_economics" || q.category === "retention" ? "business" as const :
                   q.category === "gtm" ? "business" as const :
@@ -543,8 +623,8 @@ function transformOutput(raw: SaaSExpertOutput, cappedScore: number, cappedFitSc
 
       sectorFit: {
         score: cappedFitScore,
-        strengths: raw.greenFlags.map(gf => gf.flag),
-        weaknesses: raw.redFlags.map(rf => rf.flag),
+        strengths: (raw.greenFlags ?? []).map(gf => gf.flag),
+        weaknesses: (raw.redFlags ?? []).map(rf => rf.flag),
         sectorTiming: "optimal",
       },
 
@@ -610,37 +690,21 @@ export const saasExpert = {
 
       setAgentContext("saas-expert");
 
-      const response = await complete(userPromptText, {
+      // Use completeJSON for more reliable JSON extraction with retry logic
+      const { data: rawJson, cost } = await completeJSON<SaaSExpertOutput>(userPromptText, {
         systemPrompt: systemPromptText,
         complexity: "complex",
         temperature: 0.3,
       });
 
-      // Parse and validate response
+      // Validate response
       let parsedOutput: SaaSExpertOutput;
-      try {
-        const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error("No JSON found in response");
-        }
-        const rawJson = JSON.parse(jsonMatch[0]);
-        const parseResult = SaaSOutputSchema.safeParse(rawJson);
-        if (parseResult.success) {
-          parsedOutput = parseResult.data;
-        } else {
-          console.warn(`[saas-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
-          parsedOutput = rawJson as SaaSExpertOutput;
-        }
-      } catch (parseError) {
-        console.error("[saas-expert] Parse error:", parseError);
-        return {
-          agentName: "saas-expert",
-          success: false,
-          executionTimeMs: Date.now() - startTime,
-          cost: response.cost ?? 0,
-          error: `Failed to parse LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
-          data: getDefaultData(),
-        };
+      const parseResult = SaaSOutputSchema.safeParse(rawJson);
+      if (parseResult.success) {
+        parsedOutput = parseResult.data;
+      } else {
+        console.warn(`[saas-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
+        parsedOutput = rawJson as SaaSExpertOutput;
       }
 
       // ── Data completeness assessment & score capping ──
@@ -678,7 +742,7 @@ export const saasExpert = {
         agentName: "saas-expert",
         success: true,
         executionTimeMs: Date.now() - startTime,
-        cost: response.cost ?? 0,
+        cost: cost ?? 0,
         data: sectorData,
         // Include extended data for detailed display
         _extended: {

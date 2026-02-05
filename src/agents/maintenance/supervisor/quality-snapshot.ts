@@ -77,6 +77,7 @@ export async function captureQualitySnapshot(
   })
 
   // Calculate duplicates (approximate - companies with same slug prefix)
+  // SECURITY NOTE: No user input in this query - safe static SQL
   const duplicates = await prisma.$queryRaw<[{ count: bigint }]>`
     SELECT COUNT(*) as count
     FROM (

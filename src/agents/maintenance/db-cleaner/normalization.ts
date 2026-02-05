@@ -26,50 +26,67 @@ interface NormalizationResult {
 
 /**
  * Normalise tous les noms de pays dans Company et FundingRound
+ * Uses batched updateMany grouped by normalized value to avoid N+1
  */
 export async function normalizeAllCountries(): Promise<NormalizationResult> {
   let normalized = 0
   let skipped = 0
 
-  // Normalize Company.headquarters
+  // Normalize Company.headquarters - group by target value
   const companies = await prisma.company.findMany({
     where: { headquarters: { not: null } },
     select: { id: true, headquarters: true },
   })
 
+  const companyUpdateGroups = new Map<string, string[]>() // normalizedCountry -> [companyIds]
   for (const company of companies) {
     const normalizedCountry = normalizeCountry(company.headquarters)
-
     if (normalizedCountry && normalizedCountry !== company.headquarters) {
-      await prisma.company.update({
-        where: { id: company.id },
-        data: { headquarters: normalizedCountry },
-      })
-      normalized++
+      const ids = companyUpdateGroups.get(normalizedCountry) || []
+      ids.push(company.id)
+      companyUpdateGroups.set(normalizedCountry, ids)
     } else {
       skipped++
     }
   }
 
-  // Normalize FundingRound.geography
+  // Batch update companies by normalized country
+  const companyUpdates = Array.from(companyUpdateGroups.entries()).map(
+    ([normalizedCountry, ids]) =>
+      prisma.company.updateMany({
+        where: { id: { in: ids } },
+        data: { headquarters: normalizedCountry },
+      }).then(result => { normalized += result.count })
+  )
+  await Promise.all(companyUpdates)
+
+  // Normalize FundingRound.geography - group by target value
   const rounds = await prisma.fundingRound.findMany({
     where: { geography: { not: null } },
     select: { id: true, geography: true },
   })
 
+  const roundUpdateGroups = new Map<string, string[]>() // normalizedCountry -> [roundIds]
   for (const round of rounds) {
     const normalizedCountry = normalizeCountry(round.geography)
-
     if (normalizedCountry && normalizedCountry !== round.geography) {
-      await prisma.fundingRound.update({
-        where: { id: round.id },
-        data: { geography: normalizedCountry },
-      })
-      normalized++
+      const ids = roundUpdateGroups.get(normalizedCountry) || []
+      ids.push(round.id)
+      roundUpdateGroups.set(normalizedCountry, ids)
     } else {
       skipped++
     }
   }
+
+  // Batch update rounds by normalized country
+  const roundUpdates = Array.from(roundUpdateGroups.entries()).map(
+    ([normalizedCountry, ids]) =>
+      prisma.fundingRound.updateMany({
+        where: { id: { in: ids } },
+        data: { geography: normalizedCountry },
+      }).then(result => { normalized += result.count })
+  )
+  await Promise.all(roundUpdates)
 
   logger.info(`Country normalization complete`, { normalized, skipped })
   return { normalized, skipped }
@@ -81,50 +98,67 @@ export async function normalizeAllCountries(): Promise<NormalizationResult> {
 
 /**
  * Normalise tous les stages de funding
+ * Uses batched updateMany grouped by normalized value to avoid N+1
  */
 export async function normalizeAllStages(): Promise<NormalizationResult> {
   let normalized = 0
   let skipped = 0
 
-  // Get rounds with stage but no normalized stage, or mismatched
+  // Get rounds with stage - group by target normalized value
   const rounds = await prisma.fundingRound.findMany({
     where: { stage: { not: null } },
     select: { id: true, stage: true, stageNormalized: true },
   })
 
+  const roundUpdateGroups = new Map<string, string[]>() // normalizedStage -> [roundIds]
   for (const round of rounds) {
     const normalizedStage = normalizeStage(round.stage)
-
     if (normalizedStage && normalizedStage !== round.stageNormalized) {
-      await prisma.fundingRound.update({
-        where: { id: round.id },
-        data: { stageNormalized: normalizedStage },
-      })
-      normalized++
+      const ids = roundUpdateGroups.get(normalizedStage) || []
+      ids.push(round.id)
+      roundUpdateGroups.set(normalizedStage, ids)
     } else {
       skipped++
     }
   }
 
-  // Also normalize Company.lastRoundStage
+  // Batch update rounds by normalized stage
+  const roundUpdates = Array.from(roundUpdateGroups.entries()).map(
+    ([normalizedStage, ids]) =>
+      prisma.fundingRound.updateMany({
+        where: { id: { in: ids } },
+        data: { stageNormalized: normalizedStage },
+      }).then(result => { normalized += result.count })
+  )
+  await Promise.all(roundUpdates)
+
+  // Normalize Company.lastRoundStage - group by target value
   const companies = await prisma.company.findMany({
     where: { lastRoundStage: { not: null } },
     select: { id: true, lastRoundStage: true },
   })
 
+  const companyUpdateGroups = new Map<string, string[]>() // normalizedStage -> [companyIds]
   for (const company of companies) {
     const normalizedStage = normalizeStage(company.lastRoundStage)
-
     if (normalizedStage && normalizedStage !== company.lastRoundStage) {
-      await prisma.company.update({
-        where: { id: company.id },
-        data: { lastRoundStage: normalizedStage },
-      })
-      normalized++
+      const ids = companyUpdateGroups.get(normalizedStage) || []
+      ids.push(company.id)
+      companyUpdateGroups.set(normalizedStage, ids)
     } else {
       skipped++
     }
   }
+
+  // Batch update companies by normalized stage
+  const companyUpdates = Array.from(companyUpdateGroups.entries()).map(
+    ([normalizedStage, ids]) =>
+      prisma.company.updateMany({
+        where: { id: { in: ids } },
+        data: { lastRoundStage: normalizedStage },
+      }).then(result => { normalized += result.count })
+  )
+  await Promise.all(companyUpdates)
 
   logger.info(`Stage normalization complete`, { normalized, skipped })
   return { normalized, skipped }
@@ -136,54 +170,79 @@ export async function normalizeAllStages(): Promise<NormalizationResult> {
 
 /**
  * Normalise toutes les industries selon la taxonomie
+ * Uses batched updateMany grouped by normalized value to avoid N+1
  */
 export async function normalizeAllIndustries(): Promise<NormalizationResult> {
   let normalized = 0
   let skipped = 0
 
-  // Normalize Company.industry
+  // Normalize Company.industry - group by target value
   const companies = await prisma.company.findMany({
     where: { industry: { not: null } },
     select: { id: true, industry: true },
   })
 
+  const companyUpdateGroups = new Map<string, string[]>() // normalizedIndustry -> [companyIds]
+  const unknownIndustries: Array<{ companyId: string; industry: string }> = []
+
   for (const company of companies) {
     const normalizedIndustry = normalizeIndustry(company.industry)
-
     if (normalizedIndustry && normalizedIndustry !== company.industry) {
-      await prisma.company.update({
-        where: { id: company.id },
-        data: { industry: normalizedIndustry },
-      })
-      normalized++
+      const ids = companyUpdateGroups.get(normalizedIndustry) || []
+      ids.push(company.id)
+      companyUpdateGroups.set(normalizedIndustry, ids)
     } else if (!normalizedIndustry) {
-      // Industry not in taxonomy - log for review
-      logger.warn(`Unknown industry: "${company.industry}"`, { companyId: company.id })
+      unknownIndustries.push({ companyId: company.id, industry: company.industry! })
       skipped++
     } else {
       skipped++
     }
   }
 
-  // Normalize FundingRound.sector → sectorNormalized
+  // Log unknown industries in batch (avoid log spam)
+  if (unknownIndustries.length > 0) {
+    logger.warn(`Unknown industries found: ${unknownIndustries.length} records`, {
+      samples: unknownIndustries.slice(0, 10).map(u => u.industry),
+    })
+  }
+
+  // Batch update companies by normalized industry
+  const companyUpdates = Array.from(companyUpdateGroups.entries()).map(
+    ([normalizedIndustry, ids]) =>
+      prisma.company.updateMany({
+        where: { id: { in: ids } },
+        data: { industry: normalizedIndustry },
+      }).then(result => { normalized += result.count })
+  )
+  await Promise.all(companyUpdates)
+
+  // Normalize FundingRound.sector → sectorNormalized - group by target value
   const rounds = await prisma.fundingRound.findMany({
     where: { sector: { not: null } },
     select: { id: true, sector: true, sectorNormalized: true },
   })
 
+  const roundUpdateGroups = new Map<string, string[]>() // normalizedSector -> [roundIds]
   for (const round of rounds) {
     const normalizedSector = normalizeIndustry(round.sector)
-
     if (normalizedSector && normalizedSector !== round.sectorNormalized) {
-      await prisma.fundingRound.update({
-        where: { id: round.id },
-        data: { sectorNormalized: normalizedSector },
-      })
-      normalized++
+      const ids = roundUpdateGroups.get(normalizedSector) || []
+      ids.push(round.id)
+      roundUpdateGroups.set(normalizedSector, ids)
     } else {
       skipped++
     }
   }
+
+  // Batch update rounds by normalized sector
+  const roundUpdates = Array.from(roundUpdateGroups.entries()).map(
+    ([normalizedSector, ids]) =>
+      prisma.fundingRound.updateMany({
+        where: { id: { in: ids } },
+        data: { sectorNormalized: normalizedSector },
+      }).then(result => { normalized += result.count })
+  )
+  await Promise.all(roundUpdates)
 
   logger.info(`Industry normalization complete`, { normalized, skipped })
   return { normalized, skipped }
@@ -195,6 +254,7 @@ export async function normalizeAllIndustries(): Promise<NormalizationResult> {
 
 /**
  * Recalcule les slugs pour toutes les companies
+ * Uses batched updates with pre-computed collision detection to avoid N+1
  */
 export async function normalizeAllSlugs(): Promise<NormalizationResult> {
   let normalized = 0
@@ -204,11 +264,9 @@ export async function normalizeAllSlugs(): Promise<NormalizationResult> {
     select: { id: true, name: true, slug: true },
   })
 
-  // Use a map to detect collisions
-  const slugMap = new Map<string, string[]>() // slug -> [company ids]
-
-  for (const company of companies) {
-    const expectedSlug = company.name
+  // Helper to compute slug
+  const computeSlug = (name: string): string =>
+    name
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
@@ -222,36 +280,91 @@ export async function normalizeAllSlugs(): Promise<NormalizationResult> {
       .replace(/^-|-$/g, '')
       .trim()
 
-    if (!slugMap.has(expectedSlug)) {
-      slugMap.set(expectedSlug, [])
-    }
-    slugMap.get(expectedSlug)!.push(company.id)
+  // Pre-compute all expected slugs and detect collisions locally
+  const slugToCompanyIds = new Map<string, string[]>() // expectedSlug -> [company ids that want it]
+  const companyExpectedSlug = new Map<string, string>() // companyId -> expectedSlug
+
+  for (const company of companies) {
+    const expectedSlug = computeSlug(company.name)
+    companyExpectedSlug.set(company.id, expectedSlug)
 
     if (expectedSlug !== company.slug) {
-      // Check for conflicts before updating
-      const existing = await prisma.company.findFirst({
-        where: { slug: expectedSlug, id: { not: company.id } },
-      })
-
-      if (!existing) {
-        await prisma.company.update({
-          where: { id: company.id },
-          data: { slug: expectedSlug },
-        })
-        normalized++
-      } else {
-        // Collision - add suffix
-        const suffixedSlug = `${expectedSlug}-${company.id.slice(0, 6)}`
-        await prisma.company.update({
-          where: { id: company.id },
-          data: { slug: suffixedSlug },
-        })
-        normalized++
-        logger.warn(`Slug collision for "${company.name}", using "${suffixedSlug}"`)
-      }
+      const ids = slugToCompanyIds.get(expectedSlug) || []
+      ids.push(company.id)
+      slugToCompanyIds.set(expectedSlug, ids)
     } else {
       skipped++
     }
+  }
+
+  // Build existing slugs set for collision detection
+  const existingSlugs = new Set(companies.map(c => c.slug))
+
+  // Group updates: no collision (can batch by slug) vs collision (need suffix)
+  const noCollisionUpdates = new Map<string, string[]>() // slug -> [companyIds]
+  const collisionUpdates: Array<{ id: string; slug: string }> = []
+  const collisionLogs: string[] = []
+
+  for (const [expectedSlug, companyIds] of slugToCompanyIds.entries()) {
+    // If multiple companies want the same slug, first one wins, others get suffix
+    const [firstId, ...restIds] = companyIds
+
+    // Check if slug exists (owned by another company not in our update list)
+    const slugExistsElsewhere = existingSlugs.has(expectedSlug) &&
+      !companyIds.some(id => companies.find(c => c.id === id && c.slug === expectedSlug))
+
+    if (slugExistsElsewhere) {
+      // All need suffix
+      for (const id of companyIds) {
+        const suffixedSlug = `${expectedSlug}-${id.slice(0, 6)}`
+        collisionUpdates.push({ id, slug: suffixedSlug })
+        collisionLogs.push(suffixedSlug)
+      }
+    } else {
+      // First one gets the slug
+      const ids = noCollisionUpdates.get(expectedSlug) || []
+      ids.push(firstId)
+      noCollisionUpdates.set(expectedSlug, ids)
+
+      // Rest get suffixed slugs
+      for (const id of restIds) {
+        const suffixedSlug = `${expectedSlug}-${id.slice(0, 6)}`
+        collisionUpdates.push({ id, slug: suffixedSlug })
+        collisionLogs.push(suffixedSlug)
+      }
+    }
+  }
+
+  // Log collisions in batch
+  if (collisionLogs.length > 0) {
+    logger.warn(`Slug collisions resolved: ${collisionLogs.length} records`, {
+      samples: collisionLogs.slice(0, 10),
+    })
+  }
+
+  // Batch update - no collision (grouped by slug)
+  const batchUpdates = Array.from(noCollisionUpdates.entries()).map(
+    ([slug, ids]) =>
+      prisma.company.updateMany({
+        where: { id: { in: ids } },
+        data: { slug },
+      }).then(result => { normalized += result.count })
+  )
+  await Promise.all(batchUpdates)
+
+  // Batch update - collisions (each needs unique slug, use transaction)
+  const BATCH_SIZE = 100
+  for (let i = 0; i < collisionUpdates.length; i += BATCH_SIZE) {
+    const chunk = collisionUpdates.slice(i, i + BATCH_SIZE)
+    await prisma.$transaction(
+      chunk.map(({ id, slug }) =>
+        prisma.company.update({
+          where: { id },
+          data: { slug },
+        })
+      )
+    )
+    normalized += chunk.length
   }
 
   logger.info(`Slug normalization complete`, { normalized, skipped })
@@ -264,6 +377,7 @@ export async function normalizeAllSlugs(): Promise<NormalizationResult> {
 
 /**
  * Convertit tous les montants en USD
+ * Uses batched updates grouped by currency to avoid N+1
  */
 export async function normalizeAllCurrencies(): Promise<NormalizationResult> {
   let normalized = 0
@@ -290,19 +404,35 @@ export async function normalizeAllCurrencies(): Promise<NormalizationResult> {
     select: { id: true, amount: true, currency: true, amountUsd: true },
   })
 
+  // Group updates by computed amountUsd (same amount can be batched)
+  // For currency normalization, each record likely has a unique amountUsd
+  // so we batch by chunks instead
+  const BATCH_SIZE = 100
+  const toUpdate: Array<{ id: string; amountUsd: number }> = []
+
   for (const round of rounds) {
     const rate = rates[round.currency] || 1
     const amountUsd = Number(round.amount) * rate
 
     if (amountUsd !== Number(round.amountUsd)) {
-      await prisma.fundingRound.update({
-        where: { id: round.id },
-        data: { amountUsd },
-      })
-      normalized++
+      toUpdate.push({ id: round.id, amountUsd })
     } else {
       skipped++
     }
+  }
+
+  // Batch update in chunks using transaction
+  for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+    const chunk = toUpdate.slice(i, i + BATCH_SIZE)
+    await prisma.$transaction(
+      chunk.map(({ id, amountUsd }) =>
+        prisma.fundingRound.update({
+          where: { id },
+          data: { amountUsd },
+        })
+      )
+    )
+    normalized += chunk.length
   }
 
   logger.info(`Currency normalization complete`, { normalized, skipped })

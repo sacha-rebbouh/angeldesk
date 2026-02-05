@@ -535,7 +535,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-3xl font-bold">
-                    {(probabilityWeighted?.expectedMultiple ?? expectedReturn.multiple).toFixed(1)}x
+                    {Number(probabilityWeighted?.expectedMultiple ?? expectedReturn.multiple ?? 0).toFixed(1)}x
                   </div>
                   <div className="text-xs text-indigo-200 mt-1">
                     Multiple pondere (tous scenarios)
@@ -543,10 +543,10 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                 </div>
                 <div>
                   <div className="text-3xl font-bold text-emerald-300">
-                    {expectedReturn.successIRR.toFixed(0)}%
+                    {Number(expectedReturn.successIRR ?? 0).toFixed(0)}%
                   </div>
                   <div className="text-xs text-indigo-200 mt-1">
-                    IRR si succes ({expectedReturn.successProbability.toFixed(0)}% de chances)
+                    IRR si succes ({Number(expectedReturn.successProbability ?? 0).toFixed(0)}% de chances)
                   </div>
                 </div>
               </div>
@@ -555,13 +555,13 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                   <span className="text-indigo-200">IRR ajuste au risque (inclut echec total):</span>
                   <span className={cn(
                     "font-semibold",
-                    expectedReturn.irr < 10 ? "text-amber-300" : "text-white"
+                    Number(expectedReturn.irr ?? 0) < 10 ? "text-amber-300" : "text-white"
                   )}>
-                    {(probabilityWeighted?.expectedIRR ?? expectedReturn.irr).toFixed(0)}%
+                    {Number(probabilityWeighted?.expectedIRR ?? expectedReturn.irr ?? 0).toFixed(0)}%
                   </span>
                 </div>
                 <p className="text-xs text-indigo-300 mt-1">
-                  = Moyenne ponderee de tous les scenarios, y compris perte totale ({(100 - expectedReturn.successProbability).toFixed(0)}% de risque)
+                  = Moyenne ponderee de tous les scenarios, y compris perte totale ({(100 - Number(expectedReturn.successProbability ?? 0)).toFixed(0)}% de risque)
                 </p>
               </div>
               {probabilityWeighted?.riskAdjustedAssessment && (
@@ -1709,11 +1709,11 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
                 ) : (
                   <>
                     <div className={cn("text-3xl font-bold",
-                      expectedReturn.expectedMultiple >= 5 ? "text-emerald-400" :
-                      expectedReturn.expectedMultiple >= 3 ? "text-green-400" :
-                      expectedReturn.expectedMultiple >= 2 ? "text-yellow-400" :
+                      Number(expectedReturn.expectedMultiple ?? 0) >= 5 ? "text-emerald-400" :
+                      Number(expectedReturn.expectedMultiple ?? 0) >= 3 ? "text-green-400" :
+                      Number(expectedReturn.expectedMultiple ?? 0) >= 2 ? "text-yellow-400" :
                       "text-orange-400"
-                    )}>{expectedReturn.expectedMultiple.toFixed(1)}x</div>
+                    )}>{Number(expectedReturn.expectedMultiple ?? 0).toFixed(1)}x</div>
                     <div className="text-xs text-slate-400 mt-1">Pondere par scenarios</div>
                   </>
                 )}
@@ -1724,8 +1724,8 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
             {expectedReturn && expectedReturn.expectedIRR !== 0 && (
               <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
                 <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">IRR Espere</div>
-                <div className={cn("text-3xl font-bold", getIRRColorClass(expectedReturn.expectedIRR))}>
-                  {expectedReturn.expectedIRR.toFixed(0)}%
+                <div className={cn("text-3xl font-bold", getIRRColorClass(Number(expectedReturn.expectedIRR ?? 0)))}>
+                  {Number(expectedReturn.expectedIRR ?? 0).toFixed(0)}%
                 </div>
                 <div className="text-xs text-slate-400 mt-1">Moyenne ponderee</div>
               </div>

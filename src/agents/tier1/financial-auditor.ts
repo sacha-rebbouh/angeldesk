@@ -749,11 +749,15 @@ MONTRE tes calculs.
       "LTV/CAC Ratio",
     ];
 
+    // Fetch all benchmarks in parallel to avoid N+1
+    const results = await Promise.all(
+      metricsToFetch.map(metric => benchmarkService.lookup(sector, stage, metric))
+    );
+
     const benchmarks: Record<string, { p25: number; median: number; p75: number; source: string }> = {};
 
-    for (const metric of metricsToFetch) {
-      const result = await benchmarkService.lookup(sector, stage, metric);
-
+    results.forEach((result, index) => {
+      const metric = metricsToFetch[index];
       if (result.found && result.benchmark) {
         benchmarks[metric] = {
           p25: result.benchmark.p25,
@@ -767,7 +771,7 @@ MONTRE tes calculs.
           benchmarks[metric] = { ...fallback, source: "centralized_config" };
         }
       }
-    }
+    });
 
     return benchmarks;
   }

@@ -13,7 +13,9 @@ import {
   Scale,
   HelpCircle,
 } from "lucide-react";
-import { BOARD_MEMBERS } from "@/agents/board/types";
+// Use BOARD_MEMBERS_PROD directly since this is a client component
+// and we want to show the premium models in the teaser
+import { BOARD_MEMBERS_PROD } from "@/agents/board/types";
 import { BOARD_PRICING } from "@/services/board-credits";
 
 interface BoardTeaserProps {
@@ -82,7 +84,7 @@ export function BoardTeaser({ dealName }: BoardTeaserProps) {
           <div className="mt-6 pt-6 border-t">
             <h3 className="font-semibold mb-4">Les 4 membres du Board</h3>
             <div className="flex flex-wrap gap-3">
-              {BOARD_MEMBERS.map((member) => (
+              {BOARD_MEMBERS_PROD.map((member) => (
                 <div
                   key={member.id}
                   className="flex items-center gap-2 rounded-full border px-3 py-1.5"
@@ -128,7 +130,6 @@ export function BoardTeaser({ dealName }: BoardTeaserProps) {
               size="lg"
               className="mt-6 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
               onClick={() => {
-                // TODO: Redirect to pricing/upgrade page
                 router.push("/pricing");
               }}
             >

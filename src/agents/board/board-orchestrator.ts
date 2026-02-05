@@ -11,9 +11,10 @@ import type {
   BoardVerdictType,
   ConsensusLevelType,
   StoppingConditionResult,
-  BOARD_MEMBERS,
 } from "./types";
-import { BOARD_MEMBERS as BOARD_MEMBERS_CONFIG } from "./types";
+import { getBoardMembers } from "./types";
+import { enrichDeal } from "@/services/context-engine";
+import { getCurrentFacts, getDisputedFacts, formatFactStoreForAgents } from "@/services/fact-store";
 
 const DEFAULT_MAX_ROUNDS = 3;
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
@@ -66,13 +67,14 @@ export class BoardOrchestrator {
     });
 
     try {
-      // 2. Initialize board members
-      await this.initializeMembers();
+      // 2. Initialize board members AND prepare input package IN PARALLEL
+      // These don't depend on each other - saves 500ms-2s latency
+      const [, input] = await Promise.all([
+        this.initializeMembers(),
+        this.prepareInputPackage(options.dealId),
+      ]);
 
-      // 3. Prepare input package from deal data
-      const input = await this.prepareInputPackage(options.dealId);
-
-      // 4. Update status to ANALYZING
+      // 3. Update status to ANALYZING
       await prisma.aIBoardSession.update({
         where: { id: session.id },
         data: { status: "ANALYZING" },
@@ -207,7 +209,9 @@ export class BoardOrchestrator {
   // ============================================================================
 
   private async initializeMembers(): Promise<void> {
-    this.members = BOARD_MEMBERS_CONFIG.map((config) => new BoardMember(config));
+    // Get board members config based on environment (test vs prod)
+    const boardMembersConfig = getBoardMembers();
+    this.members = boardMembersConfig.map((config) => new BoardMember(config));
 
     // Create member records in DB
     if (this.sessionId) {
@@ -249,6 +253,137 @@ export class BoardOrchestrator {
     const latestAnalysis = deal.analyses[0];
     const analysisResults = latestAnalysis?.results as Record<string, unknown> | null;
 
+    // Enrich with Context Engine data
+    let enrichedData: BoardInput["enrichedData"] = null;
+    try {
+      console.log(`[BoardOrchestrator] Enriching deal ${dealId} with Context Engine...`);
+      const contextData = await enrichDeal(
+        {
+          companyName: deal.companyName ?? deal.name,
+          sector: deal.sector ?? undefined,
+          stage: deal.stage ?? undefined,
+          geography: deal.geography ?? undefined,
+        },
+        {
+          dealId,
+          includeFounders: true,
+          founders: deal.founders.map((f) => ({
+            name: f.name,
+            role: f.role ?? undefined,
+            linkedinUrl: f.linkedinUrl ?? undefined,
+          })),
+        }
+      );
+
+      // Map Context Engine data to BoardInput format
+      if (contextData) {
+        enrichedData = {
+          linkedinProfiles: contextData.peopleGraph?.founders,
+          marketData: contextData.marketData,
+          competitorData: contextData.competitiveLandscape,
+          fundingHistory: contextData.dealIntelligence,
+          newsArticles: contextData.newsSentiment?.articles,
+        };
+        console.log(`[BoardOrchestrator] Context Engine enrichment complete`);
+      }
+    } catch (error) {
+      console.error(`[BoardOrchestrator] Context Engine enrichment failed:`, error);
+      // Continue without enriched data - board can still function
+    }
+
+    // Build comprehensive agent outputs - ALL TIERS
+    const agentOutputs: BoardInput["agentOutputs"] = {};
+
+    if (analysisResults) {
+      // Tier 0: Base agents
+      agentOutputs.tier0 = {
+        documentExtractor: analysisResults["document-extractor"],
+        dealScorer: analysisResults["deal-scorer"],
+        redFlagDetector: analysisResults["red-flag-detector"],
+      };
+
+      // Tier 1: 13 Investigation agents
+      agentOutputs.tier1 = {
+        deckForensics: analysisResults["deck-forensics"],
+        financialAuditor: analysisResults["financial-auditor"],
+        marketIntelligence: analysisResults["market-intelligence"],
+        competitiveIntel: analysisResults["competitive-intel"],
+        teamInvestigator: analysisResults["team-investigator"],
+        techStackDD: analysisResults["tech-stack-dd"],
+        techOpsDD: analysisResults["tech-ops-dd"],
+        legalRegulatory: analysisResults["legal-regulatory"],
+        capTableAuditor: analysisResults["cap-table-auditor"],
+        gtmAnalyst: analysisResults["gtm-analyst"],
+        customerIntel: analysisResults["customer-intel"],
+        exitStrategist: analysisResults["exit-strategist"],
+        questionMaster: analysisResults["question-master"],
+      };
+
+      // Tier 2: Sector expert (find the expert that ran)
+      const tier2Experts = [
+        "saas-expert", "fintech-expert", "marketplace-expert", "ai-expert",
+        "healthtech-expert", "deeptech-expert", "climate-expert", "consumer-expert",
+        "hardware-expert", "gaming-expert", "blockchain-expert", "general-expert",
+      ];
+      for (const expertName of tier2Experts) {
+        if (analysisResults[expertName]) {
+          agentOutputs.tier2 = {
+            sectorExpertName: expertName,
+            sectorExpert: analysisResults[expertName],
+          };
+          break;
+        }
+      }
+
+      // Tier 3: 5 Synthesis agents
+      agentOutputs.tier3 = {
+        contradictionDetector: analysisResults["contradiction-detector"],
+        scenarioModeler: analysisResults["scenario-modeler"],
+        synthesisDealScorer: analysisResults["synthesis-deal-scorer"],
+        devilsAdvocate: analysisResults["devils-advocate"],
+        memoGenerator: analysisResults["memo-generator"],
+      };
+
+    }
+
+    // Fact Store: Fetch directly from service (not from analysis results)
+    try {
+      console.log(`[BoardOrchestrator] Fetching Fact Store for deal ${dealId}...`);
+      const [currentFacts, disputedFacts] = await Promise.all([
+        getCurrentFacts(dealId),
+        getDisputedFacts(dealId),
+      ]);
+
+      if (currentFacts.length > 0 || disputedFacts.length > 0) {
+        // Format for LLM consumption
+        const formattedFactStore = formatFactStoreForAgents(currentFacts);
+
+        agentOutputs.factStore = {
+          facts: currentFacts,
+          contradictions: disputedFacts,
+          formatted: formattedFactStore, // Pre-formatted for LLM
+        };
+        console.log(
+          `[BoardOrchestrator] Fact Store: ${currentFacts.length} facts, ${disputedFacts.length} disputed`
+        );
+      }
+    } catch (error) {
+      console.error(`[BoardOrchestrator] Fact Store fetch failed:`, error);
+      // Continue without fact store - board can still function
+    }
+
+    // Count how many agents have data
+    const tier1Count = agentOutputs.tier1
+      ? Object.values(agentOutputs.tier1).filter(Boolean).length
+      : 0;
+    const tier3Count = agentOutputs.tier3
+      ? Object.values(agentOutputs.tier3).filter(Boolean).length
+      : 0;
+    console.log(
+      `[BoardOrchestrator] Agent outputs: Tier0=${agentOutputs.tier0 ? 3 : 0}, ` +
+      `Tier1=${tier1Count}/13, Tier2=${agentOutputs.tier2 ? 1 : 0}, Tier3=${tier3Count}/5`
+    );
+
     return {
       dealId: deal.id,
       dealName: deal.name,
@@ -258,23 +393,8 @@ export class BoardOrchestrator {
         type: doc.type,
         extractedText: doc.extractedText,
       })),
-      enrichedData: null, // Will be populated from Context Engine if available
-      agentOutputs: {
-        tier1: analysisResults
-          ? {
-              scorer: analysisResults["deal-scorer"],
-              redFlagDetector: analysisResults["red-flag-detector"],
-            }
-          : undefined,
-        tier2: analysisResults
-          ? {
-              founderAnalyst: analysisResults["founder-analyst"],
-              marketAnalyst: analysisResults["market-analyst"],
-              financialAnalyst: analysisResults["financial-analyst"],
-              productAnalyst: analysisResults["product-analyst"],
-            }
-          : undefined,
-      },
+      enrichedData,
+      agentOutputs,
       sources: [
         {
           source: "Pitch Deck",
@@ -282,6 +402,15 @@ export class BoardOrchestrator {
           dataPoints: deal.documents
             .filter((d) => d.type === "PITCH_DECK")
             .map((d) => d.name),
+        },
+        {
+          source: "Agent Analysis",
+          reliability: "high" as const,
+          dataPoints: [
+            `${tier1Count} Tier 1 agents`,
+            agentOutputs.tier2?.sectorExpertName ?? "No sector expert",
+            `${tier3Count} Tier 3 agents`,
+          ],
         },
       ],
     };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useState, useMemo, memo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
@@ -92,7 +92,7 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
   return response.json();
 }
 
-export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
+export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -402,4 +402,4 @@ export function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
       </AlertDialog>
     </>
   );
-}
+});

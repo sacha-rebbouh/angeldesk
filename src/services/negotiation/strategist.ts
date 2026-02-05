@@ -36,6 +36,8 @@ export interface NegotiationPoint {
     valueRange?: string;
   };
   status: "to_negotiate" | "obtained" | "refused" | "compromised";
+  // User input when status is "compromised" - describes what was actually negotiated
+  compromiseValue?: string;
 }
 
 export interface Dealbreaker {
@@ -45,6 +47,7 @@ export interface Dealbreaker {
   resolvable: boolean;
   resolutionPath?: string;
   linkedPoints: string[]; // IDs of linked negotiation points
+  resolved?: boolean; // Auto-set to true when all linkedPoints are obtained/compromised
 }
 
 export interface TradeOff {

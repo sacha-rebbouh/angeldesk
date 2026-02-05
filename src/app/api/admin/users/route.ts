@@ -19,6 +19,8 @@ export async function GET(request: NextRequest) {
     });
 
     // Get users from Prisma for subscription status
+    // Note: We fetch all users to match with Clerk data. In production with many users,
+    // consider caching or fetching only the users returned by Clerk.
     const prismaUsers = await prisma.user.findMany({
       select: {
         id: true,
@@ -32,6 +34,7 @@ export async function GET(request: NextRequest) {
           },
         },
       },
+      take: 1000, // Safety limit - should match Clerk's max users for the account
     });
 
     // Create a map for quick lookup

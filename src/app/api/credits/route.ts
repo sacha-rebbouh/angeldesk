@@ -1,17 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/sanitize";
 import { getUserQuotaInfo, checkQuota } from "@/services/credits/usage-gate";
 
 // GET /api/credits → user quota info
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const user = await requireAuth();
+
+    // Rate limiting: max 60 requests per minute
+    const rateLimit = checkRateLimit(`credits-get:${user.id}`, { maxRequests: 60, windowMs: 60000 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded", retryAfter: rateLimit.resetIn },
+        { status: 429, headers: { "Retry-After": String(rateLimit.resetIn) } }
+      );
+    }
+
     const quotaInfo = await getUserQuotaInfo(user.id, user.subscriptionStatus);
 
     return NextResponse.json({ data: quotaInfo });
   } catch (error) {
-    console.error("Error fetching quota info:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error fetching quota info:", error);
+    }
     return NextResponse.json({ error: "Failed to fetch quota info" }, { status: 500 });
   }
 }
@@ -25,6 +38,16 @@ const checkSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
+
+    // Rate limiting: max 60 requests per minute
+    const rateLimit = checkRateLimit(`credits-post:${user.id}`, { maxRequests: 60, windowMs: 60000 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded", retryAfter: rateLimit.resetIn },
+        { status: 429, headers: { "Retry-After": String(rateLimit.resetIn) } }
+      );
+    }
+
     const body = await request.json();
 
     const parseResult = checkSchema.safeParse(body);
@@ -37,7 +60,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: result });
   } catch (error) {
-    console.error("Error checking quota:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error checking quota:", error);
+    }
     return NextResponse.json({ error: "Failed to check quota" }, { status: 500 });
   }
 }

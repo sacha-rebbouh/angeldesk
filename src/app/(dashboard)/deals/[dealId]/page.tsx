@@ -29,6 +29,7 @@ import { ScoreGrid } from "@/components/deals/score-display";
 import { BoardPanelWrapper } from "@/components/deals/board-panel-wrapper";
 import { DocumentsTab } from "@/components/deals/documents-tab";
 import { TeamManagement } from "@/components/deals/team-management";
+import { ChatWrapper } from "@/components/chat/chat-wrapper";
 import { getStatusColor, getStatusLabel, getStageLabel, getSeverityColor, formatCurrencyEUR } from "@/lib/format-utils";
 
 async function getDeal(dealId: string, userId: string) {
@@ -398,6 +399,9 @@ export default async function DealDetailPage({ params }: PageProps) {
           <BoardPanelWrapper dealId={deal.id} dealName={deal.name} />
         </TabsContent>
       </Tabs>
+
+      {/* Chat IA flottant - accessible sur tous les onglets */}
+      <ChatWrapper dealId={deal.id} dealName={deal.name} />
     </div>
   );
 }

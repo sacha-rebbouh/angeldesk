@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -41,7 +42,7 @@ interface DealsTableProps {
   deals: Deal[];
 }
 
-export function DealsTable({ deals }: DealsTableProps) {
+export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
   const router = useRouter();
   const {
     renameDeal,
@@ -173,4 +174,4 @@ export function DealsTable({ deals }: DealsTableProps) {
       />
     </>
   );
-}
+});

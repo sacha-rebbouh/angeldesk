@@ -8,6 +8,7 @@ import type {
   FactCategory,
   FactSource,
 } from "@/services/fact-store/types";
+import { sanitizeForLLM, sanitizeName } from "@/lib/sanitize";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FACT EXTRACTOR AGENT - TIER 0
@@ -219,7 +220,8 @@ Si un fait existant est fourni et que tu trouves une valeur differente:
 
 # FORMAT DE SORTIE
 
-Produis un JSON avec cette structure exacte:
+Produis un JSON avec cette structure exacte.
+**IMPORTANT**: Pour sourceDocumentId, utilise les vrais IDs fournis dans "IDs DES DOCUMENTS", pas des IDs inventes.
 
 \`\`\`json
 {
@@ -230,7 +232,7 @@ Produis un JSON avec cette structure exacte:
       "value": 500000,
       "displayValue": "500K EUR",
       "unit": "EUR",
-      "sourceDocumentId": "doc-pitch-deck",
+      "sourceDocumentId": "<ID_REEL_DU_DOCUMENT>",
       "sourceConfidence": 95,
       "extractedText": "[Source: Pitch Deck, Slide 8] Notre ARR atteint 500K EUR a fin Q4 2024",
       "validAt": "2024-12-31",
@@ -267,8 +269,18 @@ Produis un JSON avec cette structure exacte:
 6. Si enum, verifier que la valeur est dans enumValues
 7. Pour les devises, convertir en EUR si possible (sinon mentionner)
 8. Les pourcentages doivent etre entre 0 et 100 (pas 0.25 pour 25%)
+9. **CRITIQUE - sourceDocumentId**: Utiliser UNIQUEMENT les IDs reels fournis dans "IDs DES DOCUMENTS". NE JAMAIS inventer d'ID comme "doc-pitch-deck" ou "doc-financial-model".
+10. **CHURN et METRIQUES - Interpretation periode**:
+    - TOUJOURS regarder le contexte temporel du document (ex: "BP Février - Mai 2026" = période de 4 mois)
+    - Si un churn est donné pour une période spécifique (ex: 6% sur 4 mois), CALCULER le churn mensuel:
+      * churn_mensuel = churn_periode / nombre_mois (ex: 6% / 4 = 1.5% mensuel)
+      * churn_annuel = 1 - (1 - churn_mensuel)^12 ou approximation: churn_mensuel × 12
+    - Utiliser traction.churn_monthly pour le churn mensuel calculé
+    - Utiliser traction.churn_annual pour le churn annualisé
+    - INCLURE le calcul dans extractedText: "[Source: BP] 6% sur 4 mois (Fév-Mai) → 1.5% mensuel → ~18% annuel"
+    - NE JAMAIS assumer qu'un churn sans contexte est mensuel (6% mensuel = 53% annuel = business mort)
 
-# EXEMPLES
+# EXEMPLES (IDs illustratifs - utiliser les vrais IDs du deal)
 
 ## BON - Extraction avec haute confidence
 {
@@ -277,7 +289,7 @@ Produis un JSON avec cette structure exacte:
   "value": 42000,
   "displayValue": "42K EUR",
   "unit": "EUR",
-  "sourceDocumentId": "doc-financial-model",
+  "sourceDocumentId": "<UTILISER_VRAI_ID_DU_DOCUMENT>",
   "sourceConfidence": 98,
   "extractedText": "[Source: Financial Model, Onglet Dashboard] MRR Dec 2024: 42,000 EUR"
 }
@@ -289,7 +301,7 @@ Produis un JSON avec cette structure exacte:
   "value": 504000,
   "displayValue": "504K EUR (calcule)",
   "unit": "EUR",
-  "sourceDocumentId": "doc-financial-model",
+  "sourceDocumentId": "<UTILISER_VRAI_ID_DU_DOCUMENT>",
   "sourceConfidence": 90,
   "extractedText": "[Source: Financial Model, Onglet Dashboard] MRR Dec 2024: 42,000 EUR. ARR calcule = MRR x 12 = 504K EUR"
 }
@@ -501,14 +513,30 @@ Produis un JSON avec cette structure exacte:
     // Truncate documents intelligently
     const processedDocs = this.truncateDocumentsForPrompt(input.documents);
 
+    // CRITICAL: List real document IDs upfront so LLM uses them
+    prompt += `## IDs DES DOCUMENTS (UTILISER CES IDs EXACTS)\n\n`;
+    prompt += `⚠️ CRITIQUE: Tu DOIS utiliser ces IDs exacts dans sourceDocumentId, PAS des IDs inventes.\n\n`;
+    for (const { doc } of processedDocs) {
+      prompt += `- **${doc.type}**: \`${doc.id}\` (${doc.name})\n`;
+    }
+    prompt += `\n`;
+
     prompt += `## DOCUMENTS A ANALYSER (${processedDocs.length})\n\n`;
 
     for (const { doc, truncatedContent, isTruncated } of processedDocs) {
-      prompt += `### Document: ${doc.name} (ID: ${doc.id}, Type: ${doc.type})`;
+      // Sanitize document name and content to prevent prompt injection
+      const sanitizedName = sanitizeName(doc.name);
+      const sanitizedType = sanitizeName(doc.type);
+      const sanitizedContent = sanitizeForLLM(truncatedContent, {
+        maxLength: 100000,
+        preserveNewlines: true,
+      });
+
+      prompt += `### Document: ${sanitizedName} (ID: \`${doc.id}\`, Type: ${sanitizedType})`;
       if (isTruncated) {
         prompt += ` [TRONQUE]`;
       }
-      prompt += `\n\`\`\`\n${truncatedContent}\n\`\`\`\n\n`;
+      prompt += `\n\`\`\`\n${sanitizedContent}\n\`\`\`\n\n`;
     }
 
     // Add existing facts for contradiction detection
@@ -520,13 +548,16 @@ Produis un JSON avec cette structure exacte:
       prompt += `\n`;
     }
 
-    // Add founder responses if any
+    // Add founder responses if any (sanitize user-provided content)
     if (input.founderResponses && input.founderResponses.length > 0) {
       prompt += `## REPONSES DU FONDATEUR\n\n`;
       for (const response of input.founderResponses) {
-        prompt += `**Q: ${response.question}**\n`;
-        prompt += `A: ${response.answer}\n`;
-        prompt += `(Categorie: ${response.category})\n\n`;
+        const sanitizedQuestion = sanitizeForLLM(response.question, { maxLength: 1000 });
+        const sanitizedAnswer = sanitizeForLLM(response.answer, { maxLength: 5000 });
+        const sanitizedCategory = sanitizeName(response.category);
+        prompt += `**Q: ${sanitizedQuestion}**\n`;
+        prompt += `A: ${sanitizedAnswer}\n`;
+        prompt += `(Categorie: ${sanitizedCategory})\n\n`;
       }
     }
 
@@ -634,8 +665,51 @@ Produis le JSON avec:
         }
         seenFactKeys.add(fact.factKey);
 
-        // Map source document type
-        const sourceDoc = input.documents.find(d => d.id === fact.sourceDocumentId);
+        // Map source document - CRITICAL: LLM may return incorrect sourceDocumentId
+        // We need to find the actual document by ID, or fallback to matching by type
+        let sourceDoc = input.documents.find(d => d.id === fact.sourceDocumentId);
+
+        // If LLM returned an invalid ID (e.g. "doc-pitch-deck" from examples), try to match by type
+        if (!sourceDoc && fact.sourceDocumentId) {
+          // Extract type hint from LLM's fake ID (e.g. "doc-pitch-deck" -> "PITCH_DECK")
+          const typeHint = fact.sourceDocumentId.toUpperCase().replace(/^DOC[-_]?/, '').replace(/-/g, '_');
+          sourceDoc = input.documents.find(d => d.type === typeHint);
+
+          // If still no match, use the first document of the inferred source type
+          if (!sourceDoc) {
+            const inferredType = typeHint.includes('FINANCIAL') ? 'FINANCIAL_MODEL' :
+                                 typeHint.includes('DATA') ? 'DATA_ROOM' :
+                                 typeHint.includes('PITCH') ? 'PITCH_DECK' : null;
+            if (inferredType) {
+              sourceDoc = input.documents.find(d => d.type === inferredType);
+            }
+          }
+
+          // Last resort: use the first document
+          if (!sourceDoc && input.documents.length > 0) {
+            sourceDoc = input.documents[0];
+          }
+
+          if (sourceDoc) {
+            console.warn(
+              `[FactExtractor] Corrected invalid sourceDocumentId "${fact.sourceDocumentId}" → "${sourceDoc.id}" for fact ${fact.factKey}`
+            );
+          }
+        }
+
+        // Determine the actual sourceDocumentId to use (must be a valid document ID)
+        const validSourceDocumentId = sourceDoc?.id ?? input.documents[0]?.id;
+
+        // Skip this fact if we can't determine a valid document ID
+        if (!validSourceDocumentId) {
+          ignoredFacts.push({
+            factKey: fact.factKey,
+            reason: `Could not determine valid sourceDocumentId (LLM returned: ${fact.sourceDocumentId})`,
+          });
+          continue;
+        }
+
+        // Determine source type from actual document
         let source: FactSource = "PITCH_DECK";
         if (sourceDoc) {
           switch (sourceDoc.type) {
@@ -660,7 +734,7 @@ Produis le JSON avec:
           displayValue: fact.displayValue || String(fact.value),
           unit: fact.unit || factKeyDef.unit,
           source,
-          sourceDocumentId: fact.sourceDocumentId,
+          sourceDocumentId: validSourceDocumentId, // Use validated ID, not LLM's potentially fake ID
           sourceConfidence: Math.min(100, Math.max(70, fact.sourceConfidence)),
           extractedText: fact.extractedText,
           validAt: fact.validAt ? new Date(fact.validAt) : undefined,

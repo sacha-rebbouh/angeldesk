@@ -14,6 +14,7 @@
 
 import { z } from "zod";
 import type { AgentResult, EnrichedAgentContext } from "../types";
+import { sanitizeForLLM, sanitizeName } from "@/lib/sanitize";
 
 // =============================================================================
 // OUTPUT SCHEMA - Tier 2 Standard Format
@@ -487,23 +488,27 @@ Tu DOIS retourner un JSON valide suivant exactement le schema fourni.
 Chaque champ doit être rempli avec des données concrètes, pas de placeholders.`;
 
   // =============================================================================
-  // USER PROMPT
+  // USER PROMPT - Sanitize all user-provided data
   // =============================================================================
+  const sanitizedCompanyName = sanitizeName(deal.companyName ?? deal.name);
+  const sanitizedSector = sanitizeName(deal.sector);
+  const sanitizedGeography = sanitizeName(deal.geography);
+
   const userPrompt = `# ANALYSE SECTORIELLE ${config.name.toUpperCase()}
 
 ## DEAL À ANALYSER
 
-**Company:** ${deal.companyName ?? deal.name}
-**Sector:** ${deal.sector ?? "Non spécifié"}
+**Company:** ${sanitizedCompanyName}
+**Sector:** ${sanitizedSector || "Non spécifié"}
 **Stage:** ${stage}
-**Geography:** ${deal.geography ?? "Non spécifié"}
+**Geography:** ${sanitizedGeography || "Non spécifié"}
 **Valorisation demandée:** ${deal.valuationPre ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non spécifiée"}
 **Montant levé:** ${deal.amountRequested ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non spécifié"}
 
 ---
 
 ## DONNÉES EXTRAITES DU DECK
-${context.extractedData ? JSON.stringify(context.extractedData, null, 2) : "Pas de données extraites disponibles"}
+${context.extractedData ? sanitizeForLLM(JSON.stringify(context.extractedData, null, 2), { maxLength: 50000 }) : "Pas de données extraites disponibles"}
 
 ---
 

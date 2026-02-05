@@ -122,6 +122,15 @@ export const queryKeys = {
     usersList: (params?: { limit?: number; offset?: number }) =>
       [...queryKeys.admin.users(), "list", params] as const,
   },
+
+  // Chat queries
+  chat: {
+    all: ["chat"] as const,
+    conversations: (dealId: string) =>
+      [...queryKeys.chat.all, "conversations", dealId] as const,
+    messages: (dealId: string, conversationId: string) =>
+      [...queryKeys.chat.all, "messages", dealId, conversationId] as const,
+  },
 } as const;
 
 // Type helper for extracting query key types

@@ -139,47 +139,152 @@ export async function getCreditsStatus(userId: string): Promise<BoardCreditsStat
 
 /**
  * Consume one credit from the user's allocation
+ * Uses atomic transaction to prevent race conditions
  */
 export async function consumeCredit(userId: string): Promise<ConsumeResult> {
-  const status = await getCreditsStatus(userId);
+  try {
+    // Use a transaction to atomically check and consume credits
+    const result = await prisma.$transaction(async (tx) => {
+      // Get current credits with row-level lock (SELECT FOR UPDATE)
+      const credits = await tx.userBoardCredits.findUnique({
+        where: { userId },
+      });
 
-  if (!status.canUseBoard) {
+      if (!credits) {
+        return {
+          success: false,
+          creditsRemaining: 0,
+          usedFrom: "monthly" as const,
+          error: "Credits non initialises",
+        };
+      }
+
+      // Check if monthly reset is needed
+      const shouldReset = shouldResetMonthlyCredits(credits.lastResetAt);
+      if (shouldReset) {
+        // Get user subscription to know allocation
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: { subscriptionStatus: true },
+        });
+        const subStatus = user?.subscriptionStatus ?? "PRO";
+        const config = CREDITS_CONFIG[subStatus] ?? CREDITS_CONFIG.PRO;
+
+        // Reset monthly credits atomically
+        await tx.userBoardCredits.update({
+          where: { userId },
+          data: {
+            monthlyAllocation: config.monthlyAllocation,
+            usedThisMonth: 0,
+            lastResetAt: new Date(),
+          },
+        });
+
+        // Recalculate after reset
+        const remainingMonthly = config.monthlyAllocation;
+        const totalAvailable = remainingMonthly + credits.extraCredits;
+
+        if (totalAvailable <= 0) {
+          return {
+            success: false,
+            creditsRemaining: 0,
+            usedFrom: "monthly" as const,
+            error: "Plus de credits disponibles",
+          };
+        }
+
+        // Consume from monthly
+        await tx.userBoardCredits.update({
+          where: { userId },
+          data: { usedThisMonth: 1 },
+        });
+
+        return {
+          success: true,
+          creditsRemaining: totalAvailable - 1,
+          usedFrom: "monthly" as const,
+        };
+      }
+
+      // Calculate available credits
+      const remainingMonthly = Math.max(0, credits.monthlyAllocation - credits.usedThisMonth);
+      const totalAvailable = remainingMonthly + credits.extraCredits;
+
+      if (totalAvailable <= 0) {
+        return {
+          success: false,
+          creditsRemaining: 0,
+          usedFrom: "monthly" as const,
+          error: "Plus de credits disponibles ce mois-ci",
+        };
+      }
+
+      // Consume credit atomically - prefer monthly first
+      let usedFrom: "monthly" | "extra" = "monthly";
+
+      if (remainingMonthly > 0) {
+        // Atomic increment with condition check
+        const updated = await tx.userBoardCredits.updateMany({
+          where: {
+            userId,
+            // Ensure we still have credits (prevents race condition)
+            usedThisMonth: { lt: credits.monthlyAllocation },
+          },
+          data: {
+            usedThisMonth: { increment: 1 },
+          },
+        });
+
+        if (updated.count === 0) {
+          // Race condition: credits were consumed by another request
+          return {
+            success: false,
+            creditsRemaining: 0,
+            usedFrom: "monthly" as const,
+            error: "Credits deja consommes (concurrent request)",
+          };
+        }
+        usedFrom = "monthly";
+      } else {
+        // Use extra credits
+        const updated = await tx.userBoardCredits.updateMany({
+          where: {
+            userId,
+            extraCredits: { gt: 0 },
+          },
+          data: {
+            extraCredits: { decrement: 1 },
+          },
+        });
+
+        if (updated.count === 0) {
+          return {
+            success: false,
+            creditsRemaining: 0,
+            usedFrom: "extra" as const,
+            error: "Credits extra deja consommes",
+          };
+        }
+        usedFrom = "extra";
+      }
+
+      return {
+        success: true,
+        creditsRemaining: totalAvailable - 1,
+        usedFrom,
+      };
+    });
+
+    return result;
+  } catch (error) {
+    console.error("[BoardCredits] consumeCredit transaction failed:", error);
     return {
       success: false,
       creditsRemaining: 0,
       usedFrom: "monthly",
-      error: status.reason ?? "Credits insuffisants",
+      error: "Erreur lors de la consommation du credit",
     };
   }
-
-  // Prefer monthly credits first, then extra
-  let usedFrom: "monthly" | "extra" = "monthly";
-
-  if (status.remainingMonthly > 0) {
-    // Use monthly credit
-    await prisma.userBoardCredits.update({
-      where: { userId },
-      data: {
-        usedThisMonth: { increment: 1 },
-      },
-    });
-    usedFrom = "monthly";
-  } else {
-    // Use extra credit
-    await prisma.userBoardCredits.update({
-      where: { userId },
-      data: {
-        extraCredits: { decrement: 1 },
-      },
-    });
-    usedFrom = "extra";
-  }
-
-  return {
-    success: true,
-    creditsRemaining: status.totalAvailable - 1,
-    usedFrom,
-  };
 }
 
 /**

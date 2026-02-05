@@ -194,36 +194,39 @@ async function getStageBenchmarks(stage?: string): Promise<InternalStageBenchmar
     where.stageNormalized = normalizeStage(stage);
   }
 
-  const results = await prisma.fundingRound.groupBy({
-    by: ["stageNormalized"],
+  // SINGLE QUERY: Fetch all amounts with their stages at once (avoids N+1)
+  const allRounds = await prisma.fundingRound.findMany({
     where,
-    _count: { id: true },
-    _avg: { amountUsd: true },
+    select: { stageNormalized: true, amountUsd: true },
+    orderBy: { amountUsd: "asc" },
   });
 
+  // Group amounts by stage in memory
+  const amountsByStage = new Map<string, number[]>();
+  for (const round of allRounds) {
+    if (!round.stageNormalized || !round.amountUsd) continue;
+    const amount = Number(round.amountUsd);
+    if (amount <= 0) continue;
+
+    const existing = amountsByStage.get(round.stageNormalized) || [];
+    existing.push(amount);
+    amountsByStage.set(round.stageNormalized, existing);
+  }
+
+  // Calculate benchmarks from grouped data
   const benchmarks: InternalStageBenchmark[] = [];
 
-  for (const result of results) {
-    if (!result.stageNormalized) continue;
-
-    const amounts = await prisma.fundingRound.findMany({
-      where: {
-        stageNormalized: result.stageNormalized,
-        amountUsd: { not: null },
-      },
-      select: { amountUsd: true },
-      orderBy: { amountUsd: "asc" },
-    });
-
-    const values = amounts.map(a => Number(a.amountUsd)).filter(v => v > 0);
+  for (const [stageKey, values] of amountsByStage.entries()) {
+    // Values are already sorted because of orderBy above
     const count = values.length;
-
     if (count === 0) continue;
 
+    const sum = values.reduce((a, b) => a + b, 0);
+
     benchmarks.push({
-      stage: result.stageNormalized,
+      stage: stageKey,
       count,
-      avgAmount: Number(result._avg.amountUsd) || 0,
+      avgAmount: sum / count,
       medianAmount: values[Math.floor(count / 2)],
       p25: values[Math.floor(count * 0.25)],
       p75: values[Math.floor(count * 0.75)],
@@ -279,7 +282,9 @@ export const fundingDbConnector: Connector = {
           };
         });
     } catch (error) {
-      console.error("[FundingDB] Error searching similar deals:", error);
+      if (process.env.NODE_ENV === "development") {
+        console.error("[FundingDB] Error searching similar deals:", error);
+      }
       return [];
     }
   },
@@ -334,7 +339,9 @@ export const fundingDbConnector: Connector = {
         trends,
       };
     } catch (error) {
-      console.error("[FundingDB] Error getting market data:", error);
+      if (process.env.NODE_ENV === "development") {
+        console.error("[FundingDB] Error getting market data:", error);
+      }
       return {
         benchmarks: [],
         trends: [],

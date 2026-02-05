@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { cuidSchema } from "@/lib/sanitize";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,17 @@ interface RouteParams {
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
-    const { sessionId } = await params;
+    const { sessionId: rawSessionId } = await params;
+
+    // Validate sessionId format
+    const parseResult = cuidSchema.safeParse(rawSessionId);
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: "ID de session invalide" },
+        { status: 400 }
+      );
+    }
+    const sessionId = parseResult.data;
 
     const session = await prisma.aIBoardSession.findFirst({
       where: {
@@ -99,7 +110,17 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
-    const { sessionId } = await params;
+    const { sessionId: rawSessionId } = await params;
+
+    // Validate sessionId format
+    const parseResult = cuidSchema.safeParse(rawSessionId);
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: "ID de session invalide" },
+        { status: 400 }
+      );
+    }
+    const sessionId = parseResult.data;
 
     // Verify session exists and belongs to user
     const session = await prisma.aIBoardSession.findFirst({

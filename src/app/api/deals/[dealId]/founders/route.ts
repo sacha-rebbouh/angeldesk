@@ -9,6 +9,9 @@ const createFounderSchema = z.object({
   linkedinUrl: z.string().url("URL LinkedIn invalide").optional().or(z.literal("")),
 });
 
+// CUID validation
+const cuidSchema = z.string().cuid();
+
 interface RouteParams {
   params: Promise<{ dealId: string }>;
 }
@@ -18,6 +21,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { dealId } = await params;
+
+    // Validate CUID format
+    const cuidResult = cuidSchema.safeParse(dealId);
+    if (!cuidResult.success) {
+      return NextResponse.json({ error: "Invalid deal ID format" }, { status: 400 });
+    }
 
     // Verify deal belongs to user
     const deal = await prisma.deal.findFirst({
@@ -35,7 +44,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ founders });
   } catch (error) {
-    console.error("Error fetching founders:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error fetching founders:", error);
+    }
     return NextResponse.json(
       { error: "Failed to fetch founders" },
       { status: 500 }
@@ -48,6 +59,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { dealId } = await params;
+
+    // Validate CUID format
+    const cuidResult = cuidSchema.safeParse(dealId);
+    if (!cuidResult.success) {
+      return NextResponse.json({ error: "Invalid deal ID format" }, { status: 400 });
+    }
 
     // Verify deal belongs to user
     const deal = await prisma.deal.findFirst({
@@ -78,7 +95,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         { status: 400 }
       );
     }
-    console.error("Error creating founder:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error creating founder:", error);
+    }
     return NextResponse.json(
       { error: "Failed to create founder" },
       { status: 500 }

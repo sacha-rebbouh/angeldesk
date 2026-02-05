@@ -29,6 +29,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const user = await requireAuth();
     const { dealId } = await context.params;
 
+    // Validate dealId format (CUID)
+    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+      return NextResponse.json(
+        { error: "Invalid deal ID format" },
+        { status: 400 }
+      );
+    }
+
     const deal = await prisma.deal.findFirst({
       where: {
         id: dealId,
@@ -41,6 +49,18 @@ export async function GET(request: NextRequest, context: RouteContext) {
           orderBy: [{ severity: "asc" }, { detectedAt: "desc" }],
         },
         analyses: {
+          select: {
+            id: true,
+            type: true,
+            mode: true,
+            status: true,
+            completedAgents: true,
+            totalAgents: true,
+            summary: true,
+            totalCost: true,
+            createdAt: true,
+            completedAt: true,
+          },
           orderBy: { createdAt: "desc" },
         },
       },
@@ -65,6 +85,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const user = await requireAuth();
     const { dealId } = await context.params;
+
+    // Validate dealId format (CUID)
+    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+      return NextResponse.json(
+        { error: "Invalid deal ID format" },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
 
     // Verify ownership
@@ -91,7 +120,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         founders: true,
         documents: true,
         redFlags: true,
-        analyses: true,
+        analyses: {
+          select: {
+            id: true,
+            type: true,
+            mode: true,
+            status: true,
+            completedAgents: true,
+            totalAgents: true,
+            summary: true,
+            totalCost: true,
+            createdAt: true,
+            completedAt: true,
+          },
+          orderBy: { createdAt: "desc" },
+        },
       },
     });
 
@@ -117,6 +160,14 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const user = await requireAuth();
     const { dealId } = await context.params;
+
+    // Validate dealId format (CUID)
+    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+      return NextResponse.json(
+        { error: "Invalid deal ID format" },
+        { status: 400 }
+      );
+    }
 
     // Verify ownership
     const existingDeal = await prisma.deal.findFirst({

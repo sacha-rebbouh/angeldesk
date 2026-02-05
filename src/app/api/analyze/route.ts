@@ -10,9 +10,13 @@ import {
   type AnalysisTier,
   type SubscriptionTier,
 } from "@/services/deal-limits";
+import { checkRateLimit } from "@/lib/sanitize";
+
+// CUID validation pattern
+const CUID_PATTERN = /^c[a-z0-9]{20,30}$/;
 
 const analyzeSchema = z.object({
-  dealId: z.string().min(1, "Deal ID is required"),
+  dealId: z.string().min(1, "Deal ID is required").regex(CUID_PATTERN, "Invalid deal ID format"),
   type: z.enum([
     "screening",
     "extraction",
@@ -51,6 +55,22 @@ function getAnalysisTier(type: string): AnalysisTier {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
+
+    // Rate limiting: 5 analyses per minute per user (analyses are expensive)
+    const rateLimit = checkRateLimit(`analyze:${user.id}`, {
+      maxRequests: 5,
+      windowMs: 60000,
+    });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.resetIn) },
+        }
+      );
+    }
+
     const body = await request.json();
 
     const { dealId, type, enableTrace } = analyzeSchema.parse(body);
@@ -98,7 +118,9 @@ export async function POST(request: NextRequest) {
           where: { id: runningAnalysis.id },
           data: { status: "FAILED" },
         });
-        console.warn(`[analyze] Auto-expired stuck analysis ${runningAnalysis.id} (created ${runningAnalysis.createdAt.toISOString()})`);
+        if (process.env.NODE_ENV === "development") {
+          console.warn(`[analyze] Auto-expired stuck analysis ${runningAnalysis.id} (created ${runningAnalysis.createdAt.toISOString()})`);
+        }
       } else {
         return NextResponse.json(
           { error: "An analysis is already running for this deal" },
@@ -170,7 +192,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.error("Error running analysis:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error running analysis:", error);
+    }
     return NextResponse.json(
       { error: "Failed to run analysis" },
       { status: 500 }
@@ -202,7 +226,9 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("Error fetching analysis types:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error fetching analysis types:", error);
+    }
     return NextResponse.json(
       { error: "Failed to fetch analysis types" },
       { status: 500 }

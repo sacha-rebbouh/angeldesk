@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { BOARD_MEMBERS } from "@/agents/board/types";
+// Use BOARD_MEMBERS_PROD directly for client components to avoid module-load race condition
+import { BOARD_MEMBERS_PROD } from "@/agents/board/types";
 import type { InitialAnalysis, DebateResponse } from "@/agents/board/types";
 
 interface ArenaViewProps {
@@ -26,7 +27,7 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
     const center = 150;
     const radius = 110;
 
-    BOARD_MEMBERS.forEach((member, index) => {
+    BOARD_MEMBERS_PROD.forEach((member, index) => {
       // Start from top, go clockwise
       const angle = (index * 90 - 45) * (Math.PI / 180);
       positions[member.id] = {
@@ -41,7 +42,7 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
 
   // Get latest state for each member
   const memberStates = useMemo(() => {
-    return BOARD_MEMBERS.map((config) => {
+    return BOARD_MEMBERS_PROD.map((config) => {
       const analysis = memberAnalyses[config.id]?.analysis;
       const responses = debateResponses
         .filter((r) => r.memberId === config.id)

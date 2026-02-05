@@ -4,6 +4,7 @@ import { memo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, SignOutButton } from "@clerk/nextjs";
+import { useQuery } from "@tanstack/react-query";
 import {
   BarChart3,
   FolderKanban,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { queryKeys } from "@/lib/query-keys";
 
 const sidebarNavItems = [
   {
@@ -56,12 +58,31 @@ const adminNavItems = [
   },
 ];
 
+interface QuotaData {
+  plan: "FREE" | "PRO";
+  analyses: { used: number; limit: number };
+}
+
+async function fetchQuota(): Promise<{ data: QuotaData }> {
+  const response = await fetch("/api/credits");
+  if (!response.ok) throw new Error("Failed to fetch quota");
+  return response.json();
+}
+
 export const Sidebar = memo(function Sidebar() {
   const pathname = usePathname();
   const { user } = useUser();
 
+  // Fetch plan from DB (source of truth) instead of Clerk publicMetadata
+  const { data: quotaData } = useQuery({
+    queryKey: queryKeys.quota.all,
+    queryFn: fetchQuota,
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+  });
+
   const isAdmin = user?.publicMetadata?.role === "admin";
-  const isPro = user?.publicMetadata?.plan === "pro" || isAdmin;
+  // Use DB subscription status as source of truth
+  const isPro = quotaData?.data?.plan === "PRO" || isAdmin;
 
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex sticky top-0 h-screen">
@@ -156,7 +177,9 @@ export const Sidebar = memo(function Sidebar() {
               <p className="text-sm font-semibold">Plan Gratuit</p>
             </div>
             <p className="text-xs text-sidebar-foreground/70 mb-3">
-              3 analyses restantes ce mois
+              {quotaData?.data?.analyses
+                ? `${quotaData.data.analyses.limit - quotaData.data.analyses.used} analyses restantes ce mois`
+                : "Chargement..."}
             </p>
             <Button
               variant="secondary"

@@ -558,9 +558,25 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   // Get current analysis ID for timeline selection
   const currentAnalysisId = useMemo(() => {
     if (selectedAnalysisId) return selectedAnalysisId;
-    if (liveResult) return null;
+    // Note: même si liveResult existe, on permet la navigation entre versions
     return completedAnalyses[0]?.id ?? null;
-  }, [selectedAnalysisId, liveResult, completedAnalyses]);
+  }, [selectedAnalysisId, completedAnalyses]);
+
+  // Ref pour détecter l'ajout d'une nouvelle analyse
+  const prevAnalysesCountRef = useRef(completedAnalyses.length);
+
+  // Quand une nouvelle analyse est sauvegardée, basculer de liveResult vers la version DB
+  useEffect(() => {
+    if (completedAnalyses.length > prevAnalysesCountRef.current && liveResult) {
+      // La nouvelle analyse est maintenant dans la DB, l'utiliser
+      const latestAnalysis = completedAnalyses[0];
+      if (latestAnalysis) {
+        setLiveResult(null);
+        setSelectedAnalysisId(latestAnalysis.id);
+      }
+    }
+    prevAnalysesCountRef.current = completedAnalyses.length;
+  }, [completedAnalyses, liveResult]);
 
   // Get previous analysis for delta comparison
   const previousAnalysis = useMemo(() => {
@@ -602,9 +618,9 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     }));
   }, [displayedResult]);
 
-  // Generate negotiation strategy on-demand when tab is selected
-  const handleGenerateNegotiation = useCallback(async () => {
-    // Use ref for synchronous check to prevent race conditions on rapid clicks
+  // Load or generate negotiation strategy (with cache support)
+  const loadOrGenerateNegotiation = useCallback(async () => {
+    // Use ref for synchronous check to prevent race conditions
     if (negotiationStrategy || isGeneratingNegotiationRef.current || !displayedResult?.results) return;
 
     // Get analysis ID from current selection or first completed
@@ -616,6 +632,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     setIsLoadingNegotiation(true);
 
     try {
+      // POST will return cached strategy if available, or generate a new one
       const response = await fetch("/api/negotiation/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -627,32 +644,77 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to generate negotiation strategy");
+        throw new Error(errorData.error || "Failed to load negotiation strategy");
       }
 
       const data = await response.json();
       setNegotiationStrategy(data.strategy);
+
+      // Log if it was cached for debugging
+      if (data.cached) {
+        console.log("[AnalysisPanel] Negotiation strategy loaded from cache");
+      }
     } catch (error) {
-      console.error("[AnalysisPanel] Error generating negotiation strategy:", error);
-      toast.error(error instanceof Error ? error.message : "Erreur lors de la generation de la strategie");
+      console.error("[AnalysisPanel] Error loading negotiation strategy:", error);
+      toast.error(error instanceof Error ? error.message : "Erreur lors du chargement de la strategie");
     } finally {
       isGeneratingNegotiationRef.current = false;
       setIsLoadingNegotiation(false);
     }
   }, [negotiationStrategy, displayedResult, dealId, selectedAnalysisId, completedAnalyses]);
 
-  // Update negotiation point status
+  // Update negotiation point status (with API persistence)
+  const [isUpdatingNegotiation, setIsUpdatingNegotiation] = useState(false);
+
   const handleUpdateNegotiationPointStatus = useCallback(
-    (pointId: string, status: "to_negotiate" | "obtained" | "refused" | "compromised") => {
-      if (!negotiationStrategy) return;
+    async (pointId: string, status: "to_negotiate" | "obtained" | "refused" | "compromised", compromiseValue?: string) => {
+      // Get analysisId from selected or most recent completed
+      const analysisId = selectedAnalysisId ?? completedAnalyses[0]?.id;
+      if (!negotiationStrategy || !analysisId || !dealId) return;
+
+      // Optimistic update for immediate feedback
+      const previousStrategy = negotiationStrategy;
       setNegotiationStrategy({
         ...negotiationStrategy,
         negotiationPoints: negotiationStrategy.negotiationPoints.map(point =>
-          point.id === pointId ? { ...point, status } : point
+          point.id === pointId ? { ...point, status, compromiseValue: status === "compromised" ? compromiseValue : undefined } : point
         ),
       });
+
+      setIsUpdatingNegotiation(true);
+      try {
+        const response = await fetch("/api/negotiation/update", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dealId,
+            analysisId,
+            pointId,
+            status,
+            compromiseValue,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Erreur lors de la mise a jour");
+        }
+
+        const data = await response.json();
+        // Update with server response (includes auto-resolved dealbreakers)
+        if (data.strategy) {
+          setNegotiationStrategy(data.strategy);
+        }
+      } catch (error) {
+        // Rollback on error
+        setNegotiationStrategy(previousStrategy);
+        console.error("[AnalysisPanel] Error updating negotiation point:", error);
+        toast.error(error instanceof Error ? error.message : "Erreur lors de la mise a jour");
+      } finally {
+        setIsUpdatingNegotiation(false);
+      }
     },
-    [negotiationStrategy]
+    [negotiationStrategy, selectedAnalysisId, completedAnalyses, dealId]
   );
 
   // Reset negotiation strategy when selected analysis changes
@@ -670,12 +732,67 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     }
   }, [activeTab, deckCoherenceReport, isTier3Analysis]);
 
-  // Auto-generate negotiation strategy when tab is selected
+  // Auto-load negotiation strategy when Tier 3 analysis is displayed (background pre-load)
   useEffect(() => {
-    if (activeTab === "negotiation" && isTier3Analysis && !negotiationStrategy && !isLoadingNegotiation) {
-      handleGenerateNegotiation();
+    if (isTier3Analysis && displayedResult?.success && !negotiationStrategy && !isLoadingNegotiation) {
+      // Pre-load in background - will be ready when user clicks the tab
+      loadOrGenerateNegotiation();
     }
-  }, [activeTab, isTier3Analysis, negotiationStrategy, isLoadingNegotiation, handleGenerateNegotiation]);
+  }, [isTier3Analysis, displayedResult?.success, negotiationStrategy, isLoadingNegotiation, loadOrGenerateNegotiation]);
+
+  // Re-analyze with negotiated terms
+  const [isReanalyzingWithTerms, setIsReanalyzingWithTerms] = useState(false);
+
+  const handleReanalyzeWithNegotiatedTerms = useCallback(async () => {
+    if (!negotiationStrategy) return;
+
+    // Get negotiated terms to save to fact-store
+    const negotiatedTerms = negotiationStrategy.negotiationPoints
+      .filter(p => p.status !== "to_negotiate")
+      .map(p => ({
+        topic: p.topic,
+        status: p.status,
+        value: p.status === "obtained" ? p.ask :
+               p.status === "compromised" ? (p.compromiseValue || p.fallback || p.ask) :
+               null, // refused
+      }));
+
+    if (negotiatedTerms.length === 0) {
+      toast.error("Aucun terme negocie a prendre en compte");
+      return;
+    }
+
+    setIsReanalyzingWithTerms(true);
+    try {
+      // Save negotiated terms to fact-store for the orchestrator to pick up
+      await fetch("/api/facts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dealId,
+          facts: [{
+            factType: "negotiated_terms",
+            value: JSON.stringify(negotiatedTerms),
+            source: "user_negotiation",
+            confidence: 1,
+          }],
+        }),
+      });
+
+      toast.success("Termes negocies enregistres, relancement de l'analyse...");
+
+      // Trigger re-analysis
+      setLiveResult(null);
+      setSelectedAnalysisId(null);
+      mutation.mutate(undefined, {
+        onSettled: () => setIsReanalyzingWithTerms(false),
+      });
+    } catch (error) {
+      console.error("[AnalysisPanel] Error re-analyzing with terms:", error);
+      toast.error("Erreur lors du relancement de l'analyse");
+      setIsReanalyzingWithTerms(false);
+    }
+  }, [negotiationStrategy, dealId, mutation]);
 
   return (
     <div className="space-y-4">
@@ -985,8 +1102,6 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                   onSaveOnly={handleSaveFounderResponses}
                   isSubmitting={isSubmittingResponses}
                   isReanalyzing={mutation.isPending}
-                  previousScore={previousScore}
-                  currentScore={currentScore}
                 />
               </TabsContent>
 
@@ -1011,19 +1126,22 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                     <NegotiationPanel
                       strategy={negotiationStrategy}
                       onUpdatePointStatus={handleUpdateNegotiationPointStatus}
+                      onReanalyzeWithTerms={handleReanalyzeWithNegotiatedTerms}
+                      isUpdating={isUpdatingNegotiation}
+                      isReanalyzing={isReanalyzingWithTerms}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center py-12">
                       <Handshake className="h-12 w-12 text-muted-foreground/50" />
                       <p className="mt-4 text-sm text-muted-foreground">
-                        Cliquez sur l&apos;onglet pour generer la strategie de negociation
+                        La strategie de negociation n&apos;a pas pu etre chargee
                       </p>
                       <Button
                         variant="outline"
                         className="mt-4"
-                        onClick={handleGenerateNegotiation}
+                        onClick={loadOrGenerateNegotiation}
                       >
-                        Generer la strategie
+                        Reessayer
                       </Button>
                     </div>
                   )}

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/sanitize";
 import { DocumentType, Prisma } from "@prisma/client";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { extractFromExcel, summarizeForLLM } from "@/services/excel";
@@ -8,12 +10,24 @@ import { extractFromDocx } from "@/services/docx";
 import { extractFromPptx } from "@/services/pptx";
 import { uploadFile } from "@/services/storage";
 
+// CUID validation
+const cuidSchema = z.string().cuid();
+
 export const maxDuration = 60;
 
 // POST /api/documents/upload - Upload a document
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
+
+    // Rate limiting: max 10 uploads per minute
+    const rateLimit = checkRateLimit(`upload:${user.id}`, { maxRequests: 10, windowMs: 60000 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded", retryAfter: rateLimit.resetIn },
+        { status: 429, headers: { "Retry-After": String(rateLimit.resetIn) } }
+      );
+    }
 
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
@@ -31,6 +45,12 @@ export async function POST(request: NextRequest) {
         { error: "Deal ID is required" },
         { status: 400 }
       );
+    }
+
+    // Validate CUID format
+    const cuidResult = cuidSchema.safeParse(dealId);
+    if (!cuidResult.success) {
+      return NextResponse.json({ error: "Invalid deal ID format" }, { status: 400 });
     }
 
     // Verify deal ownership
@@ -188,7 +208,9 @@ export async function POST(request: NextRequest) {
           },
         });
       } catch (extractionError) {
-        console.error("PDF extraction error:", extractionError);
+        if (process.env.NODE_ENV === "development") {
+          console.error("PDF extraction error:", extractionError);
+        }
 
         await prisma.document.update({
           where: { id: document.id },
@@ -263,12 +285,16 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          console.log(`[Excel] Extracted ${result.metadata.totalCells} cells from ${result.metadata.sheetCount} sheets`);
+          if (process.env.NODE_ENV === "development") {
+            console.log(`[Excel] Extracted ${result.metadata.totalCells} cells from ${result.metadata.sheetCount} sheets`);
+          }
         } else {
           throw new Error(result.error || "Failed to parse Excel file");
         }
       } catch (extractionError) {
-        console.error("Excel extraction error:", extractionError);
+        if (process.env.NODE_ENV === "development") {
+          console.error("Excel extraction error:", extractionError);
+        }
         const errorMessage = extractionError instanceof Error
           ? extractionError.message
           : "Unknown error";
@@ -326,12 +352,16 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          console.log(`[Word] Extracted ${result.text.length} chars`);
+          if (process.env.NODE_ENV === "development") {
+            console.log(`[Word] Extracted ${result.text.length} chars`);
+          }
         } else {
           throw new Error(result.error || "Failed to parse Word file");
         }
       } catch (extractionError) {
-        console.error("Word extraction error:", extractionError);
+        if (process.env.NODE_ENV === "development") {
+          console.error("Word extraction error:", extractionError);
+        }
         const errorMessage = extractionError instanceof Error
           ? extractionError.message
           : "Unknown error";
@@ -390,12 +420,16 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          console.log(`[PPTX] Extracted ${result.text.length} chars from ${result.slideCount} slides`);
+          if (process.env.NODE_ENV === "development") {
+            console.log(`[PPTX] Extracted ${result.text.length} chars from ${result.slideCount} slides`);
+          }
         } else {
           throw new Error(result.error || "Failed to parse PowerPoint file");
         }
       } catch (extractionError) {
-        console.error("PowerPoint extraction error:", extractionError);
+        if (process.env.NODE_ENV === "development") {
+          console.error("PowerPoint extraction error:", extractionError);
+        }
         const errorMessage = extractionError instanceof Error
           ? extractionError.message
           : "Unknown error";
@@ -456,7 +490,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
-    console.error("Error uploading document:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error uploading document:", error);
+    }
     return NextResponse.json(
       { error: "Failed to upload document" },
       { status: 500 }

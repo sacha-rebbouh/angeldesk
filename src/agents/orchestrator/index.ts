@@ -1615,7 +1615,8 @@ export class AgentOrchestrator {
 
       // COMPLETE
       await stateMachine.complete();
-      console.log("[Orchestrator:DEBUG] State machine completed, generating summary...");
+      // DEBUG log removed for production - uncomment for debugging:
+      // console.log("[Orchestrator:DEBUG] State machine completed, generating summary...");
 
       const summary = generateFullAnalysisSummary(allResults);
       const totalTimeMs = Date.now() - startTime;
@@ -1632,7 +1633,8 @@ export class AgentOrchestrator {
         console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
       }
 
-      console.log(`[Orchestrator:DEBUG] allSuccess=${allSuccess}, calling completeAnalysis...`);
+      // DEBUG log removed for production - uncomment for debugging:
+      // console.log(`[Orchestrator:DEBUG] allSuccess=${allSuccess}, calling completeAnalysis...`);
       await completeAnalysis({
         analysisId: analysis.id,
         success: allSuccess,
@@ -1642,10 +1644,12 @@ export class AgentOrchestrator {
         results: allResults,
         mode: "full_analysis",
       });
-      console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
+      // DEBUG log removed for production - uncomment for debugging:
+      // console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
 
       await updateDealStatus(dealId, "IN_DD");
-      console.log("[Orchestrator:DEBUG] All done, returning result");
+      // DEBUG log removed for production - uncomment for debugging:
+      // console.log("[Orchestrator:DEBUG] All done, returning result");
 
       return this.addWarningsToResult({
         sessionId: analysis.id,
@@ -1659,8 +1663,10 @@ export class AgentOrchestrator {
         tiersExecuted: availableTiers,
       }, collectedWarnings);
     } catch (error) {
-      console.error(`[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
-      console.error(`[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
+      // DEBUG log removed for production - uncomment for debugging:
+      // console.error("[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
+      // DEBUG log removed for production - uncomment for debugging:
+      // console.error("[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
       // Only transition to FAILED if not already completed
       const currentState = stateMachine.getState();
       if (currentState !== "COMPLETED" && currentState !== "FAILED") {

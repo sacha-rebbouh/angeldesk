@@ -1091,11 +1091,30 @@ const DEFAULT_CIRCUIT_CONFIG: CircuitBreakerConfig = {
  * État global des circuit breakers par service
  */
 const circuitBreakers: Map<string, CircuitBreakerState> = new Map()
+const MAX_CIRCUIT_BREAKERS = 100 // Prevent unbounded growth
+
+/**
+ * Clean up stale circuit breakers if map grows too large
+ */
+function cleanupCircuitBreakers(): void {
+  if (circuitBreakers.size <= MAX_CIRCUIT_BREAKERS) return
+
+  // Remove closed circuit breakers that haven't failed recently (> 1 hour ago)
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
+  for (const [key, state] of circuitBreakers) {
+    if (!state.isOpen && (!state.lastFailure || state.lastFailure < oneHourAgo)) {
+      circuitBreakers.delete(key)
+    }
+  }
+}
 
 /**
  * Récupère ou initialise l'état d'un circuit breaker
  */
 function getCircuitState(serviceName: string): CircuitBreakerState {
+  // Clean up periodically
+  cleanupCircuitBreakers()
+
   let state = circuitBreakers.get(serviceName)
   if (!state) {
     state = {

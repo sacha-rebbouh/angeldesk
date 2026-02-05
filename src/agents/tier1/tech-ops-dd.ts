@@ -443,7 +443,19 @@ ${this.formatFactStoreData(context)}
 - [ ] TOUJOURS montrer les calculs (séniorité moyenne, ratio ARR/dev, etc.)
 - [ ] TOUJOURS comparer aux benchmarks P25/median/P75
 
-Réponds UNIQUEMENT avec le JSON valide. Commence par { et termine par }.`;
+## OUTPUT CRITIQUE
+Réponds UNIQUEMENT avec le JSON valide. Commence par { et termine par }.
+
+STYLE D'ÉCRITURE:
+- Champs courts (title, role, gap): 5-10 mots
+- Champs moyens (description, impact, assessment): 2-3 phrases, droit au but
+- Champs analytiques (justification, evidence avec calculs): 3-5 phrases si nécessaire
+- ÉVITER: introductions inutiles, répétitions, formules creuses
+- INCLURE: chiffres, calculs montrés, sources - c'est le contenu utile
+
+NE PAS limiter le nombre d'éléments: inclure TOUS les red flags, gaps et questions pertinents.
+
+CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arrête JAMAIS au milieu.`;
 
     const { data } = await this.llmCompleteJSON<LLMTechOpsDDResponse>(prompt, {});
 

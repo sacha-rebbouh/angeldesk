@@ -3,7 +3,8 @@
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { BOARD_MEMBERS } from "@/agents/board/types";
+// Use BOARD_MEMBERS_PROD directly for client components to avoid module-load race condition
+import { BOARD_MEMBERS_PROD } from "@/agents/board/types";
 import type { InitialAnalysis, DebateResponse } from "@/agents/board/types";
 
 interface ChatViewProps {
@@ -30,7 +31,7 @@ interface ChatMessage {
 
 export function ChatView({ memberAnalyses, debateResponses }: ChatViewProps) {
   const memberColors = useMemo(() => {
-    return BOARD_MEMBERS.reduce(
+    return BOARD_MEMBERS_PROD.reduce(
       (acc, m) => {
         acc[m.id] = m.color;
         return acc;
@@ -75,8 +76,8 @@ export function ChatView({ memberAnalyses, debateResponses }: ChatViewProps) {
     // Sort by round number, then by member order
     return msgs.sort((a, b) => {
       if (a.roundNumber !== b.roundNumber) return a.roundNumber - b.roundNumber;
-      return BOARD_MEMBERS.findIndex((m) => m.id === a.memberId) -
-        BOARD_MEMBERS.findIndex((m) => m.id === b.memberId);
+      return BOARD_MEMBERS_PROD.findIndex((m) => m.id === a.memberId) -
+        BOARD_MEMBERS_PROD.findIndex((m) => m.id === b.memberId);
     });
   }, [memberAnalyses, debateResponses, memberColors]);
 

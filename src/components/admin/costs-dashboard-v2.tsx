@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import {
@@ -259,7 +259,7 @@ async function acknowledgeAlert(alertId: string): Promise<void> {
 // MAIN COMPONENT
 // ============================================================================
 
-export function CostsDashboardV2() {
+export const CostsDashboardV2 = memo(function CostsDashboardV2() {
   const queryClient = useQueryClient();
 
   // State
@@ -618,7 +618,7 @@ export function CostsDashboardV2() {
       </Dialog>
     </div>
   );
-}
+});
 
 // ============================================================================
 // SUB-COMPONENTS

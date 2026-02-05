@@ -827,24 +827,28 @@ Respond in JSON:
     const jsonMatch = response.content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return [];
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
 
-    return (parsed.critiques ?? []).map(
-      (c: {
-        area: string;
-        issue: string;
-        severity: string;
-        evidence: string;
-        suggestion: string;
-      }) => ({
-        id: crypto.randomUUID(),
-        area: c.area,
-        issue: c.issue,
-        severity: c.severity as Critique["severity"],
-        evidence: c.evidence,
-        suggestion: c.suggestion,
-      })
-    );
+      return (parsed.critiques ?? []).map(
+        (c: {
+          area: string;
+          issue: string;
+          severity: string;
+          evidence: string;
+          suggestion: string;
+        }) => ({
+          id: crypto.randomUUID(),
+          area: c.area,
+          issue: c.issue,
+          severity: c.severity as Critique["severity"],
+          evidence: c.evidence,
+          suggestion: c.suggestion,
+        })
+      );
+    } catch {
+      return [];
+    }
   }
 
   private async identifyDataNeeds(
@@ -883,23 +887,27 @@ Respond in JSON:
     const jsonMatch = response.content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return [];
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
 
-    return (parsed.dataRequests ?? []).map(
-      (r: {
-        requestedFrom: string | string[];
-        dataType: string;
-        description: string;
-        priority: string;
-      }) => ({
-        id: crypto.randomUUID(),
-        requestedFrom: r.requestedFrom,
-        dataType: r.dataType,
-        description: r.description,
-        priority: r.priority as DataRequest["priority"],
-        fulfilled: false,
-      })
-    );
+      return (parsed.dataRequests ?? []).map(
+        (r: {
+          requestedFrom: string | string[];
+          dataType: string;
+          description: string;
+          priority: string;
+        }) => ({
+          id: crypto.randomUUID(),
+          requestedFrom: r.requestedFrom,
+          dataType: r.dataType,
+          description: r.description,
+          priority: r.priority as DataRequest["priority"],
+          fulfilled: false,
+        })
+      );
+    } catch {
+      return [];
+    }
   }
 
   private async generateImprovements(
@@ -937,20 +945,24 @@ Respond in JSON:
     const jsonMatch = response.content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return [];
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
 
-    return (parsed.improvements ?? []).map(
-      (
-        i: { description: string; applied: boolean; impact: string },
-        index: number
-      ) => ({
-        id: crypto.randomUUID(),
-        critiqueId: critiques[index]?.id ?? "",
-        description: i.description,
-        applied: i.applied ?? false,
-        impact: i.impact as Improvement["impact"],
-      })
-    );
+      return (parsed.improvements ?? []).map(
+        (
+          i: { description: string; applied: boolean; impact: string },
+          index: number
+        ) => ({
+          id: crypto.randomUUID(),
+          critiqueId: critiques[index]?.id ?? "",
+          description: i.description,
+          applied: i.applied ?? false,
+          impact: i.impact as Improvement["impact"],
+        })
+      );
+    } catch {
+      return [];
+    }
   }
 }
 

@@ -34,11 +34,25 @@ interface TelegramUpdate {
 // ============================================================================
 
 export async function POST(request: NextRequest) {
-  // Verify Telegram secret token if configured
+  // Security: Require webhook secret when Telegram is configured (fail-secure)
   const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET;
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+
+  // If Telegram bot is configured, webhook secret is REQUIRED
+  if (botToken && !secretToken) {
+    if (process.env.NODE_ENV === "development") {
+      console.error("[Telegram] CRITICAL: TELEGRAM_WEBHOOK_SECRET must be configured when TELEGRAM_BOT_TOKEN is set");
+    }
+    return NextResponse.json({ ok: false, error: "Webhook not properly configured" }, { status: 500 });
+  }
+
+  // Verify secret token (mandatory when configured)
   if (secretToken) {
     const headerToken = request.headers.get("x-telegram-bot-api-secret-token");
     if (headerToken !== secretToken) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[Telegram] Invalid webhook secret token received");
+      }
       return NextResponse.json({ ok: false }, { status: 403 });
     }
   }
@@ -58,7 +72,9 @@ export async function POST(request: NextRequest) {
 
     // Security: Only allow admin
     if (chatId !== adminChatId) {
-      console.warn(`[Telegram] Unauthorized access attempt from chat ${chatId}`)
+      if (process.env.NODE_ENV === "development") {
+        console.warn(`[Telegram] Unauthorized access attempt from chat ${chatId}`)
+      }
       return NextResponse.json({ ok: true })
     }
 
@@ -71,7 +87,9 @@ export async function POST(request: NextRequest) {
     const command = parts[0].toLowerCase().replace(/@\w+$/, '') // Remove @botname if present
     const args = parts.slice(1)
 
-    console.log(`[Telegram] Command received: /${command}`, args)
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[Telegram] Command received: /${command}`, args)
+    }
 
     // Handle command
     const result = await handleTelegramCommand({
@@ -84,17 +102,25 @@ export async function POST(request: NextRequest) {
     // Send response
     if (result.success && result.response) {
       const sendResult = await sendToAdmin(result.response)
-      console.log(`[Telegram] Response sent:`, sendResult)
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[Telegram] Response sent:`, sendResult)
+      }
     } else if (!result.success && result.error) {
       const sendResult = await sendToAdmin(`❌ Erreur: ${result.error}`)
-      console.log(`[Telegram] Error sent:`, sendResult)
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[Telegram] Error sent:`, sendResult)
+      }
     } else {
-      console.log(`[Telegram] No response to send. Result:`, result)
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[Telegram] No response to send. Result:`, result)
+      }
     }
 
     return NextResponse.json({ ok: true })
   } catch (error) {
-    console.error('[Telegram] Webhook error:', error)
+    if (process.env.NODE_ENV === "development") {
+      console.error('[Telegram] Webhook error:', error)
+    }
 
     // Don't expose errors to Telegram
     return NextResponse.json({ ok: true })

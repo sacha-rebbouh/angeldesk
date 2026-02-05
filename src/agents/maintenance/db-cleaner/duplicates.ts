@@ -173,46 +173,70 @@ export async function deduplicateCompanies(
 }
 
 /**
- * Fetch all companies with necessary relations for deduplication
+ * Fetch companies with necessary relations for deduplication
+ * Uses batching to prevent memory exhaustion
  */
+const DEDUP_BATCH_SIZE = 1000;
+
 async function fetchCompaniesForDedup(): Promise<CompanyWithRelations[]> {
-  return prisma.company.findMany({
-    select: {
-      id: true,
-      name: true,
-      slug: true,
-      headquarters: true,
-      industry: true,
-      subIndustry: true,
-      description: true,
-      shortDescription: true,
-      website: true,
-      linkedinUrl: true,
-      crunchbaseUrl: true,
-      founders: true,
-      totalRaised: true,
-      lastValuation: true,
-      lastRoundStage: true,
-      lastRoundDate: true,
-      businessModel: true,
-      targetMarket: true,
-      city: true,
-      region: true,
-      foundedYear: true,
-      employeeCount: true,
-      employeeRange: true,
-      status: true,
-      statusDetails: true,
-      competitors: true,
-      notableClients: true,
-      aliases: true,
-      dataQuality: true,
-      _count: {
-        select: { fundingRounds: true, enrichments: true },
+  const allCompanies: CompanyWithRelations[] = [];
+  let cursor: string | undefined = undefined;
+  let hasMore = true;
+
+  while (hasMore) {
+    const batch: CompanyWithRelations[] = await prisma.company.findMany({
+      take: DEDUP_BATCH_SIZE,
+      ...(cursor && {
+        skip: 1,
+        cursor: { id: cursor },
+      }),
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        headquarters: true,
+        industry: true,
+        subIndustry: true,
+        description: true,
+        shortDescription: true,
+        website: true,
+        linkedinUrl: true,
+        crunchbaseUrl: true,
+        founders: true,
+        totalRaised: true,
+        lastValuation: true,
+        lastRoundStage: true,
+        lastRoundDate: true,
+        businessModel: true,
+        targetMarket: true,
+        city: true,
+        region: true,
+        foundedYear: true,
+        employeeCount: true,
+        employeeRange: true,
+        status: true,
+        statusDetails: true,
+        competitors: true,
+        notableClients: true,
+        aliases: true,
+        dataQuality: true,
+        _count: {
+          select: { fundingRounds: true, enrichments: true },
+        },
       },
-    },
-    orderBy: { createdAt: 'asc' },
-  })
+      orderBy: { createdAt: 'asc' },
+    });
+
+    allCompanies.push(...batch);
+
+    if (batch.length < DEDUP_BATCH_SIZE) {
+      hasMore = false;
+    } else {
+      cursor = batch[batch.length - 1].id;
+    }
+  }
+
+  return allCompanies;
 }
 
 /**
@@ -707,32 +731,71 @@ export async function deduplicateFundingRounds(
 
 /**
  * Fetch companies with their funding rounds for deduplication
+ * Uses batching to prevent memory exhaustion
  */
-async function fetchCompaniesWithRounds() {
-  return prisma.company.findMany({
-    where: {
-      fundingRounds: { some: {} },
-    },
-    select: {
-      id: true,
-      name: true,
-      fundingRounds: {
-        select: {
-          id: true,
-          amount: true,
-          amountUsd: true,
-          fundingDate: true,
-          stage: true,
-          stageNormalized: true,
-          investors: true,
-          source: true,
-          isEnriched: true,
-          createdAt: true,
-        },
-        orderBy: { fundingDate: 'desc' },
+type CompanyWithRounds = {
+  id: string;
+  name: string;
+  fundingRounds: Array<{
+    id: string;
+    amount: unknown;
+    amountUsd: unknown;
+    fundingDate: Date | null;
+    stage: string | null;
+    stageNormalized: string | null;
+    investors: string[];
+    source: string | null;
+    isEnriched: boolean;
+    createdAt: Date;
+  }>;
+};
+
+async function fetchCompaniesWithRounds(): Promise<CompanyWithRounds[]> {
+  const allCompanies: CompanyWithRounds[] = [];
+  let cursor: string | undefined = undefined;
+  let hasMore = true;
+
+  while (hasMore) {
+    const batch: CompanyWithRounds[] = await prisma.company.findMany({
+      take: DEDUP_BATCH_SIZE,
+      ...(cursor && {
+        skip: 1,
+        cursor: { id: cursor },
+      }),
+      where: {
+        fundingRounds: { some: {} },
       },
-    },
-  })
+      select: {
+        id: true,
+        name: true,
+        fundingRounds: {
+          select: {
+            id: true,
+            amount: true,
+            amountUsd: true,
+            fundingDate: true,
+            stage: true,
+            stageNormalized: true,
+            investors: true,
+            source: true,
+            isEnriched: true,
+            createdAt: true,
+          },
+          orderBy: { fundingDate: 'desc' },
+        },
+      },
+    });
+
+    allCompanies.push(...batch);
+
+    if (batch.length < DEDUP_BATCH_SIZE) {
+      hasMore = false;
+    } else {
+      cursor = batch[batch.length - 1].id;
+    }
+  }
+
+  return allCompanies;
 }
 
 /**

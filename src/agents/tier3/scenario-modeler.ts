@@ -320,7 +320,29 @@ Scénario BASE (40% probabilité):
 # EXEMPLE DE MAUVAIS OUTPUT (a éviter)
 
 "Le scénario optimiste prévoit une croissance de 200% et un exit à 100M€"
-→ Aucune source, aucun comparable, aucun calcul montré = INACCEPTABLE`;
+→ Aucune source, aucun comparable, aucun calcul montré = INACCEPTABLE
+
+# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
+
+**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
+
+1. **LIMITES STRICTES sur les arrays**:
+   - scenarios: 4 items EXACTEMENT (BASE, BULL, BEAR, CATASTROPHIC)
+   - assumptions par scenario: MAX 4 items
+   - metrics par scenario: MAX 3 items (Y1, Y3, Y5)
+   - keyRisks/keyDrivers: MAX 3 items chacun
+   - sensitivityAnalysis: MAX 4 variables
+   - basedOnComparables: MAX 3 items
+   - redFlags: MAX 5 items
+   - questions: MAX 5 items
+
+2. **BREVITE dans les textes**:
+   - revenueSource/valuationSource: 1 phrase MAX avec calcul
+   - rationale: 1-2 phrases MAX
+   - description: 2-3 phrases MAX
+   - irrCalculation: formule + resultat, pas d'explication
+
+3. **Structure > Contenu**: Mieux vaut 4 scenarios complets que des scenarios tronques`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<ScenarioModelerData> {
@@ -474,7 +496,14 @@ Réponds en JSON avec la structure suivante:
 }
 \`\`\`
 
-RAPPEL CRITIQUE: NE JAMAIS INVENTER. Si tu n'as pas de données, écris "NON DISPONIBLE" ou "Basé sur benchmark général (confidence: low)".`;
+RAPPEL CRITIQUE: NE JAMAIS INVENTER. Si tu n'as pas de données, écris "NON DISPONIBLE" ou "Basé sur benchmark général (confidence: low)".
+
+**CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
+- 4 scenarios exactement, assumptions MAX 4 par scenario
+- metrics MAX 3 par scenario, keyRisks/keyDrivers MAX 3
+- sensitivityAnalysis MAX 4, basedOnComparables MAX 3
+- redFlags MAX 5, questions MAX 5
+- PRIORITE: JSON complet > detail`;
 
     const { data } = await this.llmCompleteJSON<LLMScenarioResponse>(prompt);
 

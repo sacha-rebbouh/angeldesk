@@ -3,7 +3,8 @@
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { BOARD_MEMBERS } from "@/agents/board/types";
+// Use BOARD_MEMBERS_PROD directly for client components to avoid module-load race condition
+import { BOARD_MEMBERS_PROD } from "@/agents/board/types";
 import type { InitialAnalysis, DebateResponse } from "@/agents/board/types";
 
 interface ColumnsViewProps {
@@ -19,7 +20,7 @@ interface ColumnsViewProps {
 export function ColumnsView({ memberAnalyses, debateResponses }: ColumnsViewProps) {
   // Group responses by member
   const memberData = useMemo(() => {
-    return BOARD_MEMBERS.map((config) => {
+    return BOARD_MEMBERS_PROD.map((config) => {
       const analysis = memberAnalyses[config.id]?.analysis;
       const responses = debateResponses
         .filter((r) => r.memberId === config.id)

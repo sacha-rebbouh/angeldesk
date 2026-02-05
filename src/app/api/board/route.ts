@@ -8,6 +8,7 @@ import {
   refundCredit,
   getCreditsStatus,
 } from "@/services/board-credits";
+import { boardRequestSchema, checkRateLimit } from "@/lib/sanitize";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes max (Vercel limit)
@@ -22,13 +23,42 @@ export const maxDuration = 300; // 5 minutes max (Vercel limit)
 export async function POST(req: NextRequest) {
   try {
     const user = await requireAuth();
-    const body = await req.json();
-    const { dealId } = body;
 
-    if (!dealId) {
+    // Parse and validate request body with Zod
+    const body = await req.json();
+    const parseResult = boardRequestSchema.safeParse(body);
+
+    if (!parseResult.success) {
       return NextResponse.json(
-        { error: "dealId est requis" },
+        {
+          error: "Requete invalide",
+          details: parseResult.error.issues.map((e) => e.message),
+        },
         { status: 400 }
+      );
+    }
+
+    const { dealId } = parseResult.data;
+
+    // Rate limiting: max 2 board sessions per minute per user
+    const rateLimit = checkRateLimit(user.id, {
+      maxRequests: 2,
+      windowMs: 60000, // 1 minute
+    });
+
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: `Rate limit atteint. Reessayez dans ${rateLimit.resetIn}s`,
+          retryAfter: rateLimit.resetIn,
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(rateLimit.resetIn),
+            "X-RateLimit-Remaining": String(rateLimit.remaining),
+          },
+        }
       );
     }
 
@@ -109,7 +139,9 @@ export async function POST(req: NextRequest) {
 
           controller.close();
         } catch (error) {
-          console.error("Board orchestration error:", error);
+          if (process.env.NODE_ENV === "development") {
+            console.error("Board orchestration error:", error);
+          }
 
           // Refund credit on failure
           await refundCredit(user.id);
@@ -134,7 +166,9 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Board API error:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Board API error:", error);
+    }
     return NextResponse.json(
       { error: "Erreur serveur" },
       { status: 500 }
@@ -153,7 +187,9 @@ export async function GET() {
 
     return NextResponse.json({ status });
   } catch (error) {
-    console.error("Board credits API error:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Board credits API error:", error);
+    }
     return NextResponse.json(
       { error: "Erreur serveur" },
       { status: 500 }

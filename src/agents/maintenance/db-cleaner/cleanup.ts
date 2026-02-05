@@ -99,6 +99,7 @@ export async function removeOrphans(): Promise<CleanupResult> {
 
   // Find orphaned funding rounds (companyId points to non-existent company)
   // Note: With proper foreign keys this shouldn't happen, but check anyway
+  // SECURITY NOTE: No user input in this query - safe static SQL
   const orphanedRounds = await prisma.$queryRaw<{ id: string }[]>`
     SELECT fr.id
     FROM "FundingRound" fr
@@ -117,6 +118,7 @@ export async function removeOrphans(): Promise<CleanupResult> {
   }
 
   // Find orphaned enrichments
+  // SECURITY NOTE: No user input in this query - safe static SQL
   const orphanedEnrichments = await prisma.$queryRaw<{ id: string }[]>`
     SELECT ce.id
     FROM "CompanyEnrichment" ce
@@ -455,6 +457,7 @@ export async function planOrphansRemoval(): Promise<{
   }
 
   // Find orphaned enrichments
+  // SECURITY NOTE: No user input in this query - safe static SQL
   const orphanedEnrichments = await prisma.$queryRaw<{ id: string }[]>`
     SELECT ce.id
     FROM "CompanyEnrichment" ce

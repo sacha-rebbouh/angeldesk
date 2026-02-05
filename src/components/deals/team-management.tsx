@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
@@ -220,7 +220,7 @@ function getVerifiedInfo(founder: Founder): VerifiedInfo | null {
 // MAIN COMPONENT
 // ============================================================================
 
-export function TeamManagement({ dealId, founders }: TeamManagementProps) {
+export const TeamManagement = memo(function TeamManagement({ dealId, founders }: TeamManagementProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -504,7 +504,7 @@ export function TeamManagement({ dealId, founders }: TeamManagementProps) {
       </AlertDialog>
     </>
   );
-}
+});
 
 // ============================================================================
 // EMPTY STATE
@@ -608,12 +608,17 @@ function MemberCard({
                 IA
               </Badge>
             )}
-            {(isLinkedInEnriched || vi?.linkedinVerified) && (
+            {(isLinkedInEnriched || vi?.linkedinVerified) ? (
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-50 text-green-700 border-green-200">
                 <CheckCircle2 className="mr-0.5 h-2.5 w-2.5" />
                 LinkedIn
               </Badge>
-            )}
+            ) : isAnalyzed ? (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-50 text-amber-700 border-amber-200">
+                <AlertTriangle className="mr-0.5 h-2.5 w-2.5" />
+                Deck seul
+              </Badge>
+            ) : null}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">{founder.role}</p>
         </div>
@@ -661,6 +666,12 @@ function MemberCard({
             <ScoreMiniBar label="Execution" value={scores.executionCapability ?? 0} icon={Zap} />
             <ScoreMiniBar label="Network" value={scores.networkStrength ?? 0} icon={Network} />
           </div>
+          {isAnalyzed && !vi?.linkedinVerified && !isLinkedInEnriched && (
+            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              <span>Scores estimes depuis le deck. <button onClick={onEdit} className="underline font-medium hover:text-amber-900">Ajoutez le LinkedIn</button> pour une analyse verifiee.</span>
+            </div>
+          )}
         </div>
       )}
 

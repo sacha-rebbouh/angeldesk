@@ -4,15 +4,42 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 
 // ============================================================================
-// RATE LIMITING
+// RATE LIMITING (with bounded Map to prevent memory exhaustion)
 // ============================================================================
 
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
 const RATE_LIMIT_MAX = 20; // 20 requests per minute (less than facts as it's heavier)
+const MAX_RATE_LIMIT_ENTRIES = 10000; // Prevent unbounded growth
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
+
+function lazyCleanup(now: number): void {
+  // Only cleanup if map is getting large
+  if (requestCounts.size <= MAX_RATE_LIMIT_ENTRIES * 0.8) return;
+
+  // Remove expired entries
+  for (const [key, record] of requestCounts) {
+    if (now > record.resetAt) {
+      requestCounts.delete(key);
+    }
+  }
+
+  // If still too large, remove oldest 20%
+  if (requestCounts.size > MAX_RATE_LIMIT_ENTRIES * 0.8) {
+    const entries = Array.from(requestCounts.entries())
+      .sort((a, b) => a[1].resetAt - b[1].resetAt);
+    const toRemove = Math.floor(entries.length * 0.2);
+    for (let i = 0; i < toRemove; i++) {
+      requestCounts.delete(entries[i][0]);
+    }
+  }
+}
 
 function checkRateLimit(identifier: string): boolean {
   const now = Date.now();
+
+  // Lazy cleanup to prevent memory exhaustion
+  lazyCleanup(now);
+
   const record = requestCounts.get(identifier);
 
   if (!record || now > record.resetAt) {
@@ -64,10 +91,11 @@ export async function GET(
 
     const { dealId } = await params;
 
-    // Validate dealId format
-    if (!dealId || dealId.length < 10) {
+    // Validate dealId format using standard CUID validation
+    // CUIDs are 25 chars starting with 'c', e.g., 'cljrxyz123456789012345678'
+    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
       return NextResponse.json(
-        { error: "Invalid deal ID" },
+        { error: "Invalid deal ID format" },
         { status: 400 }
       );
     }
@@ -139,7 +167,9 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("Error fetching founder responses:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error fetching founder responses:", error);
+    }
     return NextResponse.json(
       { error: "Failed to fetch founder responses" },
       { status: 500 }
@@ -170,10 +200,11 @@ export async function POST(
     const { dealId } = await params;
     const body = await request.json();
 
-    // Validate dealId format
-    if (!dealId || dealId.length < 10) {
+    // Validate dealId format using standard CUID validation
+    // CUIDs are 25 chars starting with 'c', e.g., 'cljrxyz123456789012345678'
+    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
       return NextResponse.json(
-        { error: "Invalid deal ID" },
+        { error: "Invalid deal ID format" },
         { status: 400 }
       );
     }
@@ -204,125 +235,125 @@ export async function POST(
       );
     }
 
-    // Process responses in a transaction
+    // Process responses in a transaction with batched operations (avoid N+1)
     const result = await prisma.$transaction(async (tx) => {
-      const createdFacts: Array<{
-        id: string;
-        questionId: string;
-        answer: string;
-        category: string;
-        createdAt: Date;
-      }> = [];
+      // Collect all questionIds including free notes if present
+      const allFactKeys = responses.map(r => r.questionId);
+      if (freeNotes && freeNotes.trim().length > 0) {
+        allFactKeys.push('founder.free_notes');
+      }
 
-      // For each response, supersede existing and create new
-      for (const response of responses) {
-        // Find existing response for this question
-        const existingFact = await tx.factEvent.findFirst({
-          where: {
-            dealId,
-            factKey: response.questionId,
-            source: 'FOUNDER_RESPONSE',
-            eventType: {
-              notIn: ['DELETED', 'SUPERSEDED'],
-            },
-          },
-          orderBy: {
-            createdAt: 'desc',
-          },
-        });
+      // BATCH FETCH: Get all existing facts for these questionIds in one query
+      const existingFacts = await tx.factEvent.findMany({
+        where: {
+          dealId,
+          factKey: { in: allFactKeys },
+          source: 'FOUNDER_RESPONSE',
+          eventType: { notIn: ['DELETED', 'SUPERSEDED'] },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
 
-        // Supersede existing if present
-        if (existingFact) {
-          await tx.factEvent.update({
-            where: { id: existingFact.id },
-            data: { eventType: 'SUPERSEDED' },
-          });
+      // Build a map of factKey -> most recent fact
+      const existingFactsByKey = new Map<string, typeof existingFacts[0]>();
+      for (const fact of existingFacts) {
+        if (!existingFactsByKey.has(fact.factKey)) {
+          existingFactsByKey.set(fact.factKey, fact);
         }
+      }
 
-        // Determine category from questionId
-        // Format: "category.subcategory" or just use OTHER
-        const categoryFromKey = response.questionId.split('.')[0]?.toUpperCase();
-        const validCategories = ['FINANCIAL', 'TEAM', 'MARKET', 'PRODUCT', 'LEGAL', 'COMPETITION', 'TRACTION'];
-        const category = validCategories.includes(categoryFromKey) ? categoryFromKey : 'OTHER';
-
-        // Create new fact event
-        const newFact = await tx.factEvent.create({
-          data: {
-            dealId,
-            factKey: response.questionId,
-            category,
-            value: response.answer,
-            displayValue: response.answer,
-            source: 'FOUNDER_RESPONSE',
-            sourceConfidence: 90, // Founder responses have high confidence
-            eventType: 'CREATED',
-            supersedesEventId: existingFact?.id,
-            createdBy: 'system',
-            reason: 'Founder response submitted',
-          },
-        });
-
-        createdFacts.push({
-          id: newFact.id,
-          questionId: newFact.factKey,
-          answer: newFact.displayValue,
-          category: newFact.category,
-          createdAt: newFact.createdAt,
+      // BATCH UPDATE: Supersede all existing facts at once
+      const idsToSupersede = Array.from(existingFactsByKey.values()).map(f => f.id);
+      if (idsToSupersede.length > 0) {
+        await tx.factEvent.updateMany({
+          where: { id: { in: idsToSupersede } },
+          data: { eventType: 'SUPERSEDED' },
         });
       }
 
-      // Handle free notes if provided
-      let freeNotesResult = null;
-      if (freeNotes && freeNotes.trim().length > 0) {
-        // Find existing free notes
-        const existingNotes = await tx.factEvent.findFirst({
-          where: {
-            dealId,
-            factKey: 'founder.free_notes',
-            source: 'FOUNDER_RESPONSE',
-            eventType: {
-              notIn: ['DELETED', 'SUPERSEDED'],
-            },
-          },
-          orderBy: {
-            createdAt: 'desc',
-          },
-        });
+      // Prepare data for batch create
+      const validCategories = ['FINANCIAL', 'TEAM', 'MARKET', 'PRODUCT', 'LEGAL', 'COMPETITION', 'TRACTION'];
+      const factsToCreate = responses.map(response => {
+        const categoryFromKey = response.questionId.split('.')[0]?.toUpperCase();
+        const category = validCategories.includes(categoryFromKey) ? categoryFromKey : 'OTHER';
+        const existingFact = existingFactsByKey.get(response.questionId);
 
-        // Supersede existing if present
-        if (existingNotes) {
-          await tx.factEvent.update({
-            where: { id: existingNotes.id },
-            data: { eventType: 'SUPERSEDED' },
-          });
-        }
-
-        // Create new free notes fact
-        const notesFact = await tx.factEvent.create({
-          data: {
-            dealId,
-            factKey: 'founder.free_notes',
-            category: 'OTHER',
-            value: freeNotes,
-            displayValue: freeNotes,
-            source: 'FOUNDER_RESPONSE',
-            sourceConfidence: 90,
-            eventType: 'CREATED',
-            supersedesEventId: existingNotes?.id,
-            createdBy: 'system',
-            reason: 'Founder free notes submitted',
-          },
-        });
-
-        freeNotesResult = {
-          id: notesFact.id,
-          content: notesFact.displayValue,
-          createdAt: notesFact.createdAt,
+        return {
+          dealId,
+          factKey: response.questionId,
+          category,
+          value: response.answer,
+          displayValue: response.answer,
+          source: 'FOUNDER_RESPONSE' as const,
+          sourceConfidence: 90,
+          eventType: 'CREATED' as const,
+          supersedesEventId: existingFact?.id ?? null,
+          createdBy: 'system',
+          reason: 'Founder response submitted',
         };
+      });
+
+      // Add free notes to batch if provided
+      let hasFreeNotes = false;
+      if (freeNotes && freeNotes.trim().length > 0) {
+        hasFreeNotes = true;
+        const existingNotes = existingFactsByKey.get('founder.free_notes');
+        factsToCreate.push({
+          dealId,
+          factKey: 'founder.free_notes',
+          category: 'OTHER',
+          value: freeNotes,
+          displayValue: freeNotes,
+          source: 'FOUNDER_RESPONSE' as const,
+          sourceConfidence: 90,
+          eventType: 'CREATED' as const,
+          supersedesEventId: existingNotes?.id ?? null,
+          createdBy: 'system',
+          reason: 'Founder free notes submitted',
+        });
+      }
+
+      // BATCH CREATE: Create all facts at once
+      await tx.factEvent.createMany({ data: factsToCreate });
+
+      // Fetch created facts to get their IDs and timestamps
+      const createdFacts = await tx.factEvent.findMany({
+        where: {
+          dealId,
+          factKey: { in: allFactKeys },
+          source: 'FOUNDER_RESPONSE',
+          eventType: 'CREATED',
+          reason: { in: ['Founder response submitted', 'Founder free notes submitted'] },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // Build result from created facts
+      const responseResults = createdFacts
+        .filter(f => f.factKey !== 'founder.free_notes')
+        .map(f => ({
+          id: f.id,
+          questionId: f.factKey,
+          answer: f.displayValue,
+          category: f.category,
+          createdAt: f.createdAt,
+        }));
+
+      // Extract free notes result if created
+      let freeNotesResult = null;
+      if (hasFreeNotes) {
+        const notesFact = createdFacts.find(f => f.factKey === 'founder.free_notes');
+        if (notesFact) {
+          freeNotesResult = {
+            id: notesFact.id,
+            content: notesFact.displayValue,
+            createdAt: notesFact.createdAt,
+          };
+        }
       }
 
       return {
-        responses: createdFacts,
+        responses: responseResults,
         freeNotes: freeNotesResult,
       };
     });
@@ -342,7 +373,9 @@ export async function POST(
       },
     });
   } catch (error) {
-    console.error("Error submitting founder responses:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error submitting founder responses:", error);
+    }
     return NextResponse.json(
       { error: "Failed to submit founder responses" },
       { status: 500 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import { ChevronDown, ChevronUp, Loader2, MessageSquare, StickyNote, AlertTriangle, CheckCircle2, XCircle, HelpCircle, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatAgentName } from "@/lib/format-utils";
@@ -47,8 +47,6 @@ interface FounderResponsesProps {
   onSaveOnly?: (responses: QuestionResponse[], freeNotes: string) => Promise<void>;
   isSubmitting?: boolean;
   isReanalyzing?: boolean;
-  previousScore?: number;
-  currentScore?: number;
 }
 
 // =============================================================================
@@ -327,7 +325,7 @@ function groupQuestionsByPriority(
 // Main Component
 // =============================================================================
 
-export function FounderResponses({
+export const FounderResponses = memo(function FounderResponses({
   dealId,
   questions,
   existingResponses = [],
@@ -335,9 +333,9 @@ export function FounderResponses({
   onSaveOnly,
   isSubmitting = false,
   isReanalyzing = false,
-  previousScore,
-  currentScore,
 }: FounderResponsesProps) {
+  // dealId is available for future use (e.g., saving responses)
+  void dealId;
   // Initialize responses from existing data
   const initialResponses = useMemo(() => {
     const map: Record<string, { answer: string; status: ResponseStatus }> = {};
@@ -488,19 +486,6 @@ export function FounderResponses({
             </span>
           </div>
 
-          {/* Score diff if available */}
-          {previousScore !== undefined && currentScore !== undefined && previousScore !== currentScore && (
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <span>Score:</span>
-              <span className="text-muted-foreground">{previousScore}</span>
-              <span>→</span>
-              <span className={cn(
-                currentScore > previousScore ? "text-green-600" : "text-red-600"
-              )}>
-                {currentScore} ({currentScore > previousScore ? "+" : ""}{currentScore - previousScore})
-              </span>
-            </div>
-          )}
         </CardDescription>
       </CardHeader>
 
@@ -593,4 +578,4 @@ export function FounderResponses({
       </CardContent>
     </Card>
   );
-}
+});

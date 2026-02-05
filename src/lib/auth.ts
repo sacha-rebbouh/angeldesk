@@ -2,7 +2,12 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma } from "./prisma";
 
 // Dev mode: bypass Clerk auth with a test user
-const DEV_MODE = process.env.NODE_ENV === "development" && process.env.BYPASS_AUTH === "true";
+// Triple-check to prevent accidental auth bypass in production (matches middleware.ts)
+const DEV_MODE =
+  process.env.NODE_ENV === "development" &&
+  process.env.BYPASS_AUTH === "true" &&
+  process.env.VERCEL_ENV !== "production" &&
+  !process.env.VERCEL;
 
 const DEV_USER = {
   id: "dev-user-001",

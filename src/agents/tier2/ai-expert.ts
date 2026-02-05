@@ -535,7 +535,7 @@ function transformOutput(raw: AIExpertOutput, cappedScore: number, cappedFitScor
     sectorName: "AI/ML",
     sectorMaturity: "growing",
 
-    keyMetrics: raw.primaryMetrics.map(m => ({
+    keyMetrics: (raw.primaryMetrics ?? []).map(m => ({
       metricName: m.metricName,
       value: m.dealValue,
       sectorBenchmark: m.benchmark,
@@ -543,13 +543,13 @@ function transformOutput(raw: AIExpertOutput, cappedScore: number, cappedFitScor
       sectorContext: m.insight,
     })),
 
-    sectorRedFlags: raw.redFlags.map(rf => ({
+    sectorRedFlags: (raw.redFlags ?? []).map(rf => ({
       flag: rf.flag,
       severity: rf.severity,
       sectorReason: `${rf.evidence}. Impact: ${rf.impact}. Question: ${rf.questionToAsk}`,
     })),
 
-    sectorOpportunities: raw.greenFlags.map(gf => ({
+    sectorOpportunities: (raw.greenFlags ?? []).map(gf => ({
       opportunity: gf.flag,
       potential: gf.strength === "strong" ? "high" as const : "medium" as const,
       reasoning: `${gf.evidence}. ${gf.implication}`,
@@ -565,12 +565,12 @@ function transformOutput(raw: AIExpertOutput, cappedScore: number, cappedFitScor
     sectorDynamics: {
       competitionIntensity: "intense",
       consolidationTrend: "consolidating",
-      barrierToEntry: raw.moatAnalysis.overallMoatScore > 50 ? "high" : "medium",
+      barrierToEntry: (raw.moatAnalysis?.overallMoatScore ?? 0) > 50 ? "high" : "medium",
       typicalExitMultiple: 12, // Placeholder - multiples actuels via recherche web
       recentExits: [], // Exits recents via recherche web, pas hardcodes
     },
 
-    sectorQuestions: raw.sectorQuestions.map(q => ({
+    sectorQuestions: (raw.sectorQuestions ?? []).map(q => ({
       question: q.question,
       category: q.category === "technical" || q.category === "infrastructure" ? "technical" as const :
                 q.category === "moat" || q.category === "data" ? "competitive" as const : "business" as const,
@@ -581,8 +581,8 @@ function transformOutput(raw: AIExpertOutput, cappedScore: number, cappedFitScor
 
     sectorFit: {
       score: cappedFitScore,
-      strengths: raw.greenFlags.map(gf => gf.flag),
-      weaknesses: raw.redFlags.map(rf => rf.flag),
+      strengths: (raw.greenFlags ?? []).map(gf => gf.flag),
+      weaknesses: (raw.redFlags ?? []).map(rf => rf.flag),
       sectorTiming: "optimal", // AI market is hot
     },
 
@@ -596,65 +596,72 @@ function transformOutput(raw: AIExpertOutput, cappedScore: number, cappedFitScor
 // ============================================================================
 
 function buildExtendedData(raw: AIExpertOutput, completenessLevel: string, rawScore: number, cappedScore: number, limitations: string[]): Partial<ExtendedSectorData> {
+  // Defensive: provide defaults for all nested objects that LLM might not return
+  const infraAnalysis = raw.infraAnalysis ?? {};
+  const modelApproach = raw.modelApproach ?? {};
+  const technicalDepth = raw.technicalDepth ?? {};
+  const aiMetrics = raw.aiMetrics ?? {};
+  const moatAnalysis = raw.moatAnalysis ?? {};
+
   return {
     subSector: {
-      primary: raw.subSector,
-      secondary: [raw.aiCategory],
-      rationale: `AI Category: ${raw.aiCategory}`,
+      primary: raw.subSector ?? "AI/ML",
+      secondary: [raw.aiCategory ?? "general"],
+      rationale: `AI Category: ${raw.aiCategory ?? "unknown"}`,
     },
     aiInfraCosts: {
-      gpuProvider: raw.infraAnalysis.gpuProvider || "Unknown",
-      monthlyComputeCost: raw.infraAnalysis.monthlyComputeCost,
-      costPerInference: raw.infraAnalysis.costPerInference,
-      scalingModel: raw.infraAnalysis.scalingModel,
-      projectedCostAtScale: raw.infraAnalysis.projectedCostAtScale,
-      costAssessment: raw.infraAnalysis.costAssessment,
+      gpuProvider: infraAnalysis.gpuProvider || "Unknown",
+      monthlyComputeCost: infraAnalysis.monthlyComputeCost,
+      costPerInference: infraAnalysis.costPerInference,
+      scalingModel: infraAnalysis.scalingModel,
+      projectedCostAtScale: infraAnalysis.projectedCostAtScale,
+      costAssessment: infraAnalysis.costAssessment,
     },
     aiModelApproach: {
-      type: raw.modelApproach.type,
-      baseModel: raw.modelApproach.baseModel,
-      proprietaryComponents: raw.modelApproach.proprietaryComponents,
-      moatLevel: raw.modelApproach.moatLevel,
-      moatRationale: raw.modelApproach.moatRationale,
+      type: modelApproach.type,
+      baseModel: modelApproach.baseModel,
+      proprietaryComponents: modelApproach.proprietaryComponents,
+      moatLevel: modelApproach.moatLevel,
+      moatRationale: modelApproach.moatRationale,
     },
     aiTechnicalDepth: {
-      teamMLExperience: raw.technicalDepth.teamMLExperience,
-      hasMLPhD: raw.technicalDepth.hasMLPhD,
-      papersPublished: raw.technicalDepth.papersPublished,
-      openSourceContributions: raw.technicalDepth.openSourceContributions,
-      previousAICompanies: raw.technicalDepth.previousAICompanies,
-      depthAssessment: raw.technicalDepth.depthAssessment,
-      depthRationale: raw.technicalDepth.depthRationale,
+      teamMLExperience: technicalDepth.teamMLExperience,
+      hasMLPhD: technicalDepth.hasMLPhD,
+      papersPublished: technicalDepth.papersPublished,
+      openSourceContributions: technicalDepth.openSourceContributions,
+      previousAICompanies: technicalDepth.previousAICompanies,
+      depthAssessment: technicalDepth.depthAssessment,
+      depthRationale: technicalDepth.depthRationale,
     },
     aiMetrics: {
-      modelLatency: raw.aiMetrics.modelLatency,
-      accuracy: raw.aiMetrics.accuracy,
-      datasetSize: raw.aiMetrics.datasetSize,
-      datasetQuality: raw.aiMetrics.datasetQuality,
-      evaluationMethodology: raw.aiMetrics.evaluationMethodology,
-      metricsAssessment: raw.aiMetrics.metricsAssessment,
+      modelLatency: aiMetrics.modelLatency,
+      accuracy: aiMetrics.accuracy,
+      datasetSize: aiMetrics.datasetSize,
+      datasetQuality: aiMetrics.datasetQuality,
+      evaluationMethodology: aiMetrics.evaluationMethodology,
+      metricsAssessment: aiMetrics.metricsAssessment,
     },
     aiMoat: {
-      dataFlywheel: raw.moatAnalysis.dataFlywheel,
-      networkEffects: raw.moatAnalysis.networkEffects,
-      switchingCosts: raw.moatAnalysis.switchingCosts,
-      apiDependency: raw.modelApproach.apiDependency,
-      reproducibility: raw.modelApproach.reproducibilityRisk,
-      overallMoatScore: raw.moatAnalysis.overallMoatScore,
-      moatAssessment: raw.moatAnalysis.moatAssessment,
+      dataFlywheel: moatAnalysis.dataFlywheel,
+      networkEffects: moatAnalysis.networkEffects,
+      switchingCosts: moatAnalysis.switchingCosts,
+      apiDependency: modelApproach.apiDependency,
+      reproducibility: modelApproach.reproducibilityRisk,
+      overallMoatScore: moatAnalysis.overallMoatScore,
+      moatAssessment: moatAnalysis.moatAssessment,
     },
     aiRedFlags: {
-      noMLTeam: raw.technicalDepth.depthAssessment === "insufficient",
-      justAPIWrapper: raw.modelApproach.type === "api_wrapper",
-      noProprietaryData: raw.aiMetrics.datasetQuality === "public",
-      unrealisticAccuracyClaims: raw.aiMetrics.evaluationMethodology === "unclear" || raw.aiMetrics.evaluationMethodology === "none",
-      noEvaluation: raw.aiMetrics.evaluationMethodology === "none",
-      highAPIDependency: raw.modelApproach.apiDependency === "full",
-      redFlagSummary: raw.redFlags.filter(rf => rf.aiSpecific).map(rf => rf.flag).join("; "),
+      noMLTeam: technicalDepth.depthAssessment === "insufficient",
+      justAPIWrapper: modelApproach.type === "api_wrapper",
+      noProprietaryData: aiMetrics.datasetQuality === "public",
+      unrealisticAccuracyClaims: aiMetrics.evaluationMethodology === "unclear" || aiMetrics.evaluationMethodology === "none",
+      noEvaluation: aiMetrics.evaluationMethodology === "none",
+      highAPIDependency: modelApproach.apiDependency === "full",
+      redFlagSummary: (raw.redFlags ?? []).filter(rf => rf.aiSpecific).map(rf => rf.flag).join("; "),
     },
     aiVerdict: raw.aiVerdict,
     scoreBreakdown: {
-      ...raw.scoreBreakdown,
+      ...(raw.scoreBreakdown ?? {}),
       justification: raw.executiveSummary,
     },
     dbComparison: raw.dbComparison,

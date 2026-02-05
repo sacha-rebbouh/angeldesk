@@ -9,6 +9,9 @@ const updateFounderSchema = z.object({
   linkedinUrl: z.string().url("URL LinkedIn invalide").optional().or(z.literal("")).nullable(),
 });
 
+// CUID validation
+const cuidSchema = z.string().cuid();
+
 interface RouteParams {
   params: Promise<{ dealId: string; founderId: string }>;
 }
@@ -18,6 +21,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { dealId, founderId } = await params;
+
+    // Validate CUID format
+    const dealCuidResult = cuidSchema.safeParse(dealId);
+    const founderCuidResult = cuidSchema.safeParse(founderId);
+    if (!dealCuidResult.success || !founderCuidResult.success) {
+      return NextResponse.json({ error: "Invalid ID format" }, { status: 400 });
+    }
 
     // Verify deal belongs to user
     const deal = await prisma.deal.findFirst({
@@ -38,7 +48,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ founder });
   } catch (error) {
-    console.error("Error fetching founder:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error fetching founder:", error);
+    }
     return NextResponse.json(
       { error: "Failed to fetch founder" },
       { status: 500 }
@@ -51,6 +63,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { dealId, founderId } = await params;
+
+    // Validate CUID format
+    const dealCuidResult = cuidSchema.safeParse(dealId);
+    const founderCuidResult = cuidSchema.safeParse(founderId);
+    if (!dealCuidResult.success || !founderCuidResult.success) {
+      return NextResponse.json({ error: "Invalid ID format" }, { status: 400 });
+    }
 
     // Verify deal belongs to user
     const deal = await prisma.deal.findFirst({
@@ -92,7 +111,9 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         { status: 400 }
       );
     }
-    console.error("Error updating founder:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error updating founder:", error);
+    }
     return NextResponse.json(
       { error: "Failed to update founder" },
       { status: 500 }
@@ -105,6 +126,13 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { dealId, founderId } = await params;
+
+    // Validate CUID format
+    const dealCuidResult = cuidSchema.safeParse(dealId);
+    const founderCuidResult = cuidSchema.safeParse(founderId);
+    if (!dealCuidResult.success || !founderCuidResult.success) {
+      return NextResponse.json({ error: "Invalid ID format" }, { status: 400 });
+    }
 
     // Verify deal belongs to user
     const deal = await prisma.deal.findFirst({
@@ -130,7 +158,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error deleting founder:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error deleting founder:", error);
+    }
     return NextResponse.json(
       { error: "Failed to delete founder" },
       { status: 500 }

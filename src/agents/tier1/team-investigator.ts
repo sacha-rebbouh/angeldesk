@@ -906,12 +906,25 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       ? data.meta.dataCompleteness
       : "minimal";
 
+    // Check if any founder has verified LinkedIn
+    const hasAnyLinkedInVerified = Array.isArray(data.findings?.founderProfiles)
+      && data.findings.founderProfiles.some(f => f.linkedinVerified === true);
+
+    const baseLimitations = Array.isArray(data.meta?.limitations) ? data.meta.limitations : [];
+    const limitations = !hasAnyLinkedInVerified
+      ? [...baseLimitations, "Aucun profil LinkedIn verifie — scores fondes uniquement sur les claims du pitch deck."]
+      : baseLimitations;
+
+    // Cap confidence when no LinkedIn is verified
+    const rawConfidence = Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50));
+    const confidenceLevel = !hasAnyLinkedInVerified ? Math.min(rawConfidence, 60) : rawConfidence;
+
     const meta: AgentMeta = {
       agentName: "team-investigator",
       analysisDate: new Date().toISOString(),
       dataCompleteness,
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
-      limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
+      confidenceLevel,
+      limitations,
     };
 
     // Calculate grade from score
@@ -942,6 +955,11 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
     const noVesting = data.findings?.cofounderDynamics?.vestingInPlace === false;
     if (noVesting) {
       cappedScore = Math.min(cappedScore, 50);
+    }
+
+    // Cap overall score when no LinkedIn verified (CV non vérifiable = score max 55)
+    if (!hasAnyLinkedInVerified) {
+      cappedScore = Math.min(cappedScore, 55);
     }
 
     const score: AgentScore = {
@@ -1098,13 +1116,21 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
             totalVentures: f.entrepreneurialTrack?.totalVentures ?? 0,
             successfulExits: f.entrepreneurialTrack?.successfulExits ?? 0,
           },
-          scores: {
-            domainExpertise: Math.min(100, Math.max(0, f.scores?.domainExpertise ?? 50)),
-            entrepreneurialExperience: Math.min(100, Math.max(0, f.scores?.entrepreneurialExperience ?? 30)),
-            executionCapability: Math.min(100, Math.max(0, f.scores?.executionCapability ?? 50)),
-            networkStrength: Math.min(100, Math.max(0, f.scores?.networkStrength ?? 40)),
-            overallFounderScore: Math.min(100, Math.max(0, f.scores?.overallFounderScore ?? 45)),
-          },
+          scores: (() => {
+            const linkedinVerified = f.linkedinVerified ?? false;
+            // Cap scores when LinkedIn is not verified (deck-only analysis)
+            const capScore = (val: number, defaultVal: number, cap?: number) => {
+              const clamped = Math.min(100, Math.max(0, val ?? defaultVal));
+              return cap !== undefined && !linkedinVerified ? Math.min(clamped, cap) : clamped;
+            };
+            return {
+              domainExpertise: capScore(f.scores?.domainExpertise ?? 50, 50),
+              entrepreneurialExperience: capScore(f.scores?.entrepreneurialExperience ?? 30, 30, 60),
+              executionCapability: capScore(f.scores?.executionCapability ?? 50, 50, 70),
+              networkStrength: capScore(f.scores?.networkStrength ?? 40, 40, 30),
+              overallFounderScore: capScore(f.scores?.overallFounderScore ?? 45, 45, 65),
+            };
+          })(),
           redFlags: Array.isArray(f.redFlags)
             ? f.redFlags.map(rf => ({
                 type: rf.type ?? "unknown",
@@ -1116,7 +1142,17 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
               }))
             : [],
           strengths: Array.isArray(f.strengths) ? f.strengths : [],
-          concerns: Array.isArray(f.concerns) ? f.concerns : [],
+          concerns: (() => {
+            const baseConcerns = Array.isArray(f.concerns) ? f.concerns : [];
+            const linkedinVerified = f.linkedinVerified ?? false;
+            if (!linkedinVerified) {
+              const noLinkedInConcern = "Profil LinkedIn non verifie \u2014 scores bases uniquement sur le pitch deck (fiabilite limitee).";
+              if (!baseConcerns.some(c => c.includes("LinkedIn"))) {
+                return [noLinkedInConcern, ...baseConcerns];
+              }
+            }
+            return baseConcerns;
+          })(),
         }))
       : [];
 

@@ -37,6 +37,8 @@ import { getFactKeyDefinition, FACT_KEYS } from './fact-keys';
 export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFact[]> {
   try {
     // Try to use the materialized view
+    // SECURITY NOTE: Using Prisma's tagged template literal which auto-parameterizes ${dealId}
+    // This is NOT string interpolation - Prisma handles SQL injection prevention
     const rows = await prisma.$queryRaw<
       Array<{
         id: string;

@@ -42,14 +42,8 @@ export const MODELS = {
     capabilities: ["balanced", "reasoning", "analysis"],
   },
 
-  SONNET_4: {
-    id: "anthropic/claude-3.5-sonnet", // Using 3.5 Sonnet (claude-sonnet-4 not available on OpenRouter)
-    name: "Claude 3.5 Sonnet (as SONNET_4)",
-    inputCost: 0.003,
-    outputCost: 0.015,
-    contextWindow: 200000,
-    capabilities: ["balanced", "reasoning", "analysis", "best-quality"],
-  },
+  // SONNET_4 alias removed - was duplicating SONNET with confusing name
+  // If Claude Sonnet 4 becomes available on OpenRouter, add it here with correct model ID
 
   GPT4O_MINI: {
     id: "openai/gpt-4o-mini",
@@ -155,6 +149,16 @@ export const MODELS = {
     outputCost: 0.009,
     contextWindow: 128000,
     capabilities: ["powerful", "european", "board-member"],
+  },
+
+  // Mistral Small - cheap option for testing
+  MISTRAL_SMALL: {
+    id: "mistralai/mistral-small-2503",
+    name: "Mistral Small",
+    inputCost: 0.0001, // $0.10/M
+    outputCost: 0.0003, // $0.30/M
+    contextWindow: 32000,
+    capabilities: ["fast", "cheap", "european", "board-member"],
   },
 } as const;
 

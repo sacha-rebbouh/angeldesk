@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import {
   analyzeFounderLinkedIn,
   isCoresignalLinkedInConfigured,
 } from "@/services/context-engine/connectors/coresignal-linkedin";
+
+// CUID validation
+const cuidSchema = z.string().cuid();
 
 interface RouteParams {
   params: Promise<{ dealId: string; founderId: string }>;
@@ -64,6 +68,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const user = await requireAuth();
     const { dealId, founderId } = await params;
 
+    // Validate CUID format
+    const dealCuidResult = cuidSchema.safeParse(dealId);
+    const founderCuidResult = cuidSchema.safeParse(founderId);
+    if (!dealCuidResult.success || !founderCuidResult.success) {
+      return NextResponse.json({ error: "Invalid ID format" }, { status: 400 });
+    }
+
     // Check if Apify is configured
     if (!isCoresignalLinkedInConfigured()) {
       return NextResponse.json(
@@ -99,7 +110,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     // Call Apify LinkedIn scraper
-    console.log(`[Enrich] Scraping LinkedIn for ${founder.name}: ${founder.linkedinUrl}`);
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[Enrich] Scraping LinkedIn for ${founder.name}: ${founder.linkedinUrl}`);
+    }
 
     const result = await analyzeFounderLinkedIn(
       founder.linkedinUrl,
@@ -108,7 +121,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
 
     if (!result.success) {
-      console.error(`[Enrich] Failed to scrape LinkedIn for ${founder.name}:`, result.error);
+      if (process.env.NODE_ENV === "development") {
+        console.error(`[Enrich] Failed to scrape LinkedIn for ${founder.name}:`, result.error);
+      }
       return NextResponse.json(
         { error: result.error ?? "Failed to scrape LinkedIn profile" },
         { status: 502 }
@@ -198,7 +213,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
     });
 
-    console.log(`[Enrich] Successfully enriched ${founder.name}'s profile`);
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[Enrich] Successfully enriched ${founder.name}'s profile`);
+    }
 
     return NextResponse.json({
       founder: updatedFounder,
@@ -210,7 +227,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error) {
-    console.error("Error enriching founder:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error enriching founder:", error);
+    }
     return NextResponse.json(
       { error: "Failed to enrich founder profile" },
       { status: 500 }

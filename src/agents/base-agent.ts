@@ -2,13 +2,17 @@ import {
   complete,
   completeJSON,
   completeJSONWithFallback,
+  completeJSONStreaming,
   stream,
   setAgentContext,
   type TaskComplexity,
   type StreamCallbacks,
+  type StreamingJSONOptions,
+  type StreamingJSONResult,
 } from "@/services/openrouter/router";
 import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed } from "./types";
 import { createHash } from "crypto";
+import { sanitizeForLLM, sanitizeName } from "@/lib/sanitize";
 
 // Generic type for agent results with data
 export interface AgentResultWithData<T> extends AgentResult {
@@ -446,6 +450,63 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     };
   }
 
+  // Helper to call LLM with streaming JSON response + auto-continuation on truncation
+  // Use this for agents that produce large JSON outputs to prevent truncation
+  protected async llmCompleteJSONStreaming<T>(
+    prompt: string,
+    options: LLMStreamOptions & { maxContinuations?: number } = {}
+  ): Promise<{ data: T; cost: number; wasTruncated: boolean }> {
+    const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
+    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt();
+    const temperature = options.temperature ?? 0.2;
+    const callStartTime = Date.now();
+
+    const result = await this.withTimeout(
+      completeJSONStreaming<T>(prompt, {
+        complexity: this.config.modelComplexity as TaskComplexity,
+        systemPrompt,
+        temperature,
+        maxTokens: options.maxTokens,
+        model: options.model,
+        maxContinuations: options.maxContinuations ?? 3,
+        onToken: options.onToken,
+      }),
+      timeoutMs,
+      `LLM streaming JSON call timed out after ${timeoutMs}ms`
+    );
+
+    const latencyMs = Date.now() - callStartTime;
+
+    // Accumulate cost with trace data
+    this.recordLLMCost(
+      result.cost,
+      result.usage?.inputTokens,
+      result.usage?.outputTokens,
+      this._enableTrace ? {
+        systemPrompt,
+        userPrompt: prompt,
+        response: result.rawContent,
+        parsedResponse: result.data,
+        model: result.model ?? "unknown",
+        temperature,
+        latencyMs,
+      } : undefined
+    );
+
+    if (!result.data) {
+      throw new Error(
+        `Failed to parse LLM streaming response after ${result.continuationAttempts} continuation attempts. ` +
+        `Response was ${result.wasTruncated ? "truncated" : "malformed"}.`
+      );
+    }
+
+    return {
+      data: result.data,
+      cost: result.cost,
+      wasTruncated: result.wasTruncated,
+    };
+  }
+
   // ============================================================================
   // TIMEOUT UTILITY
   // ============================================================================
@@ -478,17 +539,30 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   // CONTEXT FORMATTERS
   // ============================================================================
 
-  // Format deal info for prompts
+  // Format deal info for prompts (with sanitization to prevent prompt injection)
   protected formatDealContext(context: AgentContext): string {
     const { deal, documents } = context;
 
+    // Sanitize all user-provided fields to prevent prompt injection
+    const sanitizedDeal = {
+      name: sanitizeName(deal.name),
+      companyName: deal.companyName ? sanitizeName(deal.companyName) : "Not specified",
+      sector: deal.sector ? sanitizeName(deal.sector) : "Not specified",
+      stage: deal.stage ? sanitizeName(deal.stage) : "Not specified",
+      geography: deal.geography ? sanitizeName(deal.geography) : "Not specified",
+      website: deal.website ? sanitizeName(deal.website) : "Not specified",
+      description: deal.description
+        ? sanitizeForLLM(deal.description, { maxLength: 10000 })
+        : "No description provided",
+    };
+
     let text = `## Deal Information
-- Name: ${deal.name}
-- Company: ${deal.companyName ?? "Not specified"}
-- Sector: ${deal.sector ?? "Not specified"}
-- Stage: ${deal.stage ?? "Not specified"}
-- Geography: ${deal.geography ?? "Not specified"}
-- Website: ${deal.website ?? "Not specified"}
+- Name: ${sanitizedDeal.name}
+- Company: ${sanitizedDeal.companyName}
+- Sector: ${sanitizedDeal.sector}
+- Stage: ${sanitizedDeal.stage}
+- Geography: ${sanitizedDeal.geography}
+- Website: ${sanitizedDeal.website}
 
 ## Financial Metrics
 - ARR: ${deal.arr ? `€${Number(deal.arr).toLocaleString()}` : "Not specified"}
@@ -497,17 +571,25 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 - Pre-money Valuation: ${deal.valuationPre ? `€${Number(deal.valuationPre).toLocaleString()}` : "Not specified"}
 
 ## Description
-${deal.description ?? "No description provided"}
+${sanitizedDeal.description}
 `;
 
     if (documents && documents.length > 0) {
       text += `\n## Documents\n`;
       for (const doc of documents) {
-        text += `\n### ${doc.name} (${doc.type})\n`;
+        // Sanitize document name and type
+        const sanitizedDocName = sanitizeName(doc.name);
+        const sanitizedDocType = sanitizeName(doc.type);
+        text += `\n### ${sanitizedDocName} (${sanitizedDocType})\n`;
         if (doc.extractedText) {
           // Financial models need more content (multiple sheets)
           const limit = doc.type === "FINANCIAL_MODEL" ? 50000 : 10000;
-          text += doc.extractedText.substring(0, limit);
+          // Sanitize extracted text content
+          const sanitizedContent = sanitizeForLLM(doc.extractedText.substring(0, limit), {
+            maxLength: limit,
+            preserveNewlines: true,
+          });
+          text += sanitizedContent;
           if (doc.extractedText.length > limit) {
             text += `\n[... truncated, ${doc.extractedText.length - limit} chars remaining ...]`;
           }
@@ -521,6 +603,7 @@ ${deal.description ?? "No description provided"}
   }
 
   // Get financial model document content specifically (for financial-auditor)
+  // Sanitized to prevent prompt injection
   protected getFinancialModelContent(context: AgentContext): string | null {
     const { documents } = context;
     if (!documents) return null;
@@ -528,7 +611,11 @@ ${deal.description ?? "No description provided"}
     const financialModel = documents.find(d => d.type === "FINANCIAL_MODEL");
     if (!financialModel?.extractedText) return null;
 
-    return financialModel.extractedText;
+    // Sanitize financial model content (preserve structure for analysis)
+    return sanitizeForLLM(financialModel.extractedText, {
+      maxLength: 100000,
+      preserveNewlines: true,
+    });
   }
 
   // Format Context Engine data for prompts (Tier 1 agents)
@@ -687,6 +774,7 @@ ${deal.description ?? "No description provided"}
   }
 
   // Get extracted info from previous document-extractor run
+  // NOTE: Returns raw data - use sanitizeDataForPrompt() when embedding in prompts
   protected getExtractedInfo(context: AgentContext): Record<string, unknown> | null {
     const extractionResult = context.previousResults?.["document-extractor"];
     if (extractionResult?.success && "data" in extractionResult) {
@@ -696,12 +784,35 @@ ${deal.description ?? "No description provided"}
     return null;
   }
 
+  // Sanitize any data object for safe embedding in LLM prompts
+  // Use this when injecting JSON.stringify() data into prompts
+  protected sanitizeDataForPrompt(data: unknown, maxLength = 50000): string {
+    if (!data) return "";
+
+    try {
+      const jsonString = JSON.stringify(data, null, 2);
+      return sanitizeForLLM(jsonString, {
+        maxLength,
+        preserveNewlines: true,
+      });
+    } catch {
+      return "Invalid data";
+    }
+  }
+
   // Format Fact Store data for injection into prompts
   // Returns empty string if no fact store available (conditional injection)
+  // Sanitized to prevent prompt injection from extracted facts
   protected formatFactStoreData(context: EnrichedAgentContext): string {
     if (!context.factStoreFormatted) {
       return "";
     }
+
+    // Sanitize the fact store data as it contains user-provided content from documents
+    const sanitizedFactStore = sanitizeForLLM(context.factStoreFormatted, {
+      maxLength: 50000,
+      preserveNewlines: true,
+    });
 
     return `
 ## DONNÉES EXTRAITES (Fact Store)
@@ -711,7 +822,7 @@ Les données ci-dessous ont été extraites des documents du deal.
 du fondateur, PAS des faits vérifiés. Ne les utilise JAMAIS comme preuves dans ton analyse.
 Base-toi sur les faits vérifiés (✅). Si un fait important manque, signale-le.
 
-${context.factStoreFormatted}
+${sanitizedFactStore}
 `;
   }
 

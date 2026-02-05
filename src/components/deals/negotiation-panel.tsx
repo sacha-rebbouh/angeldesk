@@ -12,6 +12,8 @@ import {
   Shield,
   TrendingUp,
   Lightbulb,
+  ClipboardList,
+  RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,7 +32,10 @@ import type {
 
 interface NegotiationPanelProps {
   strategy: NegotiationStrategy;
-  onUpdatePointStatus?: (pointId: string, status: NegotiationPoint["status"]) => void;
+  onUpdatePointStatus?: (pointId: string, status: NegotiationPoint["status"], compromiseValue?: string) => void;
+  onReanalyzeWithTerms?: () => void;
+  isUpdating?: boolean;
+  isReanalyzing?: boolean;
   className?: string;
 }
 
@@ -124,22 +129,42 @@ const CategoryIcon = memo(function CategoryIcon({
 
 interface NegotiationPointCardProps {
   point: NegotiationPoint;
-  onUpdateStatus?: (pointId: string, status: NegotiationPoint["status"]) => void;
+  onUpdateStatus?: (pointId: string, status: NegotiationPoint["status"], compromiseValue?: string) => void;
+  isUpdating?: boolean;
 }
 
 const NegotiationPointCard = memo(function NegotiationPointCard({
   point,
   onUpdateStatus,
+  isUpdating,
 }: NegotiationPointCardProps) {
   const [isExpanded, setIsExpanded] = useState(point.priority === "must_have");
+  const [showCompromiseInput, setShowCompromiseInput] = useState(false);
+  const [compromiseInput, setCompromiseInput] = useState(point.compromiseValue || "");
 
   const handleToggle = useCallback(() => {
     setIsExpanded(prev => !prev);
   }, []);
 
   const handleStatusChange = useCallback((status: NegotiationPoint["status"]) => {
-    onUpdateStatus?.(point.id, status);
+    if (status === "compromised") {
+      setShowCompromiseInput(true);
+    } else {
+      onUpdateStatus?.(point.id, status);
+    }
   }, [onUpdateStatus, point.id]);
+
+  const handleCompromiseSubmit = useCallback(() => {
+    if (compromiseInput.trim()) {
+      onUpdateStatus?.(point.id, "compromised", compromiseInput.trim());
+      setShowCompromiseInput(false);
+    }
+  }, [onUpdateStatus, point.id, compromiseInput]);
+
+  const handleCompromiseCancel = useCallback(() => {
+    setShowCompromiseInput(false);
+    setCompromiseInput(point.compromiseValue || "");
+  }, [point.compromiseValue]);
 
   return (
     <div className={cn(
@@ -207,6 +232,14 @@ const NegotiationPointCard = memo(function NegotiationPointCard({
             </div>
           )}
 
+          {/* Compromise value - displayed when status is compromised */}
+          {point.status === "compromised" && point.compromiseValue && (
+            <div className="p-2 rounded bg-yellow-50 border border-yellow-200">
+              <p className="text-xs font-medium text-yellow-800 mb-1">Compromis obtenu:</p>
+              <p className="text-sm text-yellow-700 font-medium">{point.compromiseValue}</p>
+            </div>
+          )}
+
           {/* Estimated impact */}
           {point.estimatedImpact && (
             <div className="text-xs text-muted-foreground">
@@ -215,14 +248,48 @@ const NegotiationPointCard = memo(function NegotiationPointCard({
             </div>
           )}
 
+          {/* Compromise input modal */}
+          {showCompromiseInput && (
+            <div className="p-3 rounded bg-yellow-50 border border-yellow-200 space-y-2">
+              <p className="text-xs font-medium text-yellow-800">Quel compromis avez-vous obtenu ?</p>
+              <textarea
+                value={compromiseInput}
+                onChange={(e) => setCompromiseInput(e.target.value)}
+                placeholder="Ex: 800K€ au lieu de 600K€ demandé, avec clause de ratchet"
+                className="w-full text-sm p-2 border rounded resize-none h-20 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="text-xs bg-yellow-600 hover:bg-yellow-700"
+                  onClick={handleCompromiseSubmit}
+                  disabled={!compromiseInput.trim() || isUpdating}
+                >
+                  {isUpdating ? "Sauvegarde..." : "Valider"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={handleCompromiseCancel}
+                  disabled={isUpdating}
+                >
+                  Annuler
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Status buttons */}
-          {onUpdateStatus && (
+          {onUpdateStatus && !showCompromiseInput && (
             <div className="flex flex-wrap gap-2 pt-2 border-t">
               <Button
                 size="sm"
                 variant={point.status === "obtained" ? "default" : "outline"}
                 className={cn("text-xs", point.status === "obtained" && "bg-green-600")}
                 onClick={() => handleStatusChange("obtained")}
+                disabled={isUpdating}
               >
                 <CheckCircle className="h-3 w-3 mr-1" />
                 Obtenu
@@ -232,6 +299,7 @@ const NegotiationPointCard = memo(function NegotiationPointCard({
                 variant={point.status === "refused" ? "default" : "outline"}
                 className={cn("text-xs", point.status === "refused" && "bg-red-600")}
                 onClick={() => handleStatusChange("refused")}
+                disabled={isUpdating}
               >
                 <XCircle className="h-3 w-3 mr-1" />
                 Refuse
@@ -241,6 +309,7 @@ const NegotiationPointCard = memo(function NegotiationPointCard({
                 variant={point.status === "compromised" ? "default" : "outline"}
                 className={cn("text-xs", point.status === "compromised" && "bg-yellow-600")}
                 onClick={() => handleStatusChange("compromised")}
+                disabled={isUpdating}
               >
                 <ArrowRightLeft className="h-3 w-3 mr-1" />
                 Compromis
@@ -251,6 +320,7 @@ const NegotiationPointCard = memo(function NegotiationPointCard({
                   variant="ghost"
                   className="text-xs"
                   onClick={() => handleStatusChange("to_negotiate")}
+                  disabled={isUpdating}
                 >
                   Reset
                 </Button>
@@ -268,14 +338,42 @@ const DealbreakerCard = memo(function DealbreakerCard({
 }: {
   dealbreaker: Dealbreaker
 }) {
+  const isResolved = dealbreaker.resolved === true;
+
   return (
-    <div className="border border-red-200 rounded-lg p-3 bg-red-50/50">
+    <div className={cn(
+      "border rounded-lg p-3",
+      isResolved
+        ? "border-green-200 bg-green-50/50"
+        : "border-red-200 bg-red-50/50"
+    )}>
       <div className="flex items-start gap-2">
-        <XCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-        <div>
-          <p className="font-medium text-sm text-red-800">{dealbreaker.condition}</p>
-          <p className="text-xs text-red-700 mt-1">{dealbreaker.description}</p>
-          {dealbreaker.resolvable && dealbreaker.resolutionPath && (
+        {isResolved ? (
+          <CheckCircle className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />
+        ) : (
+          <XCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+        )}
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <p className={cn(
+              "font-medium text-sm",
+              isResolved ? "text-green-800 line-through" : "text-red-800"
+            )}>
+              {dealbreaker.condition}
+            </p>
+            {isResolved && (
+              <Badge variant="outline" className="text-xs bg-green-100 text-green-700">
+                Resolu
+              </Badge>
+            )}
+          </div>
+          <p className={cn(
+            "text-xs mt-1",
+            isResolved ? "text-green-700" : "text-red-700"
+          )}>
+            {dealbreaker.description}
+          </p>
+          {!isResolved && dealbreaker.resolvable && dealbreaker.resolutionPath && (
             <p className="text-xs text-red-600 mt-2">
               <span className="font-medium">Resolution possible:</span> {dealbreaker.resolutionPath}
             </p>
@@ -327,6 +425,9 @@ const TradeOffCard = memo(function TradeOffCard({
 export function NegotiationPanel({
   strategy,
   onUpdatePointStatus,
+  onReanalyzeWithTerms,
+  isUpdating,
+  isReanalyzing,
   className,
 }: NegotiationPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
@@ -346,6 +447,11 @@ export function NegotiationPanel({
     const refused = strategy.negotiationPoints.filter(p => p.status === "refused").length;
     const compromised = strategy.negotiationPoints.filter(p => p.status === "compromised").length;
     return { total, obtained, refused, compromised };
+  }, [strategy.negotiationPoints]);
+
+  // Calculate negotiated terms recap (only points that have been actioned)
+  const negotiatedTerms = useMemo(() => {
+    return strategy.negotiationPoints.filter(p => p.status !== "to_negotiate");
   }, [strategy.negotiationPoints]);
 
   const handleToggle = useCallback(() => {
@@ -408,19 +514,6 @@ export function NegotiationPanel({
             </div>
           </div>
 
-          {/* Improved Deal Score */}
-          {strategy.improvedDealScore && (
-            <div className="p-3 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200">
-              <p className="text-xs font-medium text-green-800 mb-2">Score du deal si points obtenus:</p>
-              <div className="flex items-center gap-3">
-                <div className="text-2xl font-bold text-gray-600">{strategy.improvedDealScore.before}</div>
-                <TrendingUp className="h-5 w-5 text-green-600" />
-                <div className="text-2xl font-bold text-green-600">{strategy.improvedDealScore.after}</div>
-                <Badge className="bg-green-600">+{strategy.improvedDealScore.improvement}</Badge>
-              </div>
-            </div>
-          )}
-
           {/* Key Arguments */}
           {strategy.keyArguments.length > 0 && (
             <div>
@@ -466,6 +559,7 @@ export function NegotiationPanel({
                     key={point.id}
                     point={point}
                     onUpdateStatus={onUpdatePointStatus}
+                    isUpdating={isUpdating}
                   />
                 ))}
               </div>
@@ -483,6 +577,7 @@ export function NegotiationPanel({
                     key={point.id}
                     point={point}
                     onUpdateStatus={onUpdatePointStatus}
+                    isUpdating={isUpdating}
                   />
                 ))}
               </div>
@@ -500,6 +595,7 @@ export function NegotiationPanel({
                     key={point.id}
                     point={point}
                     onUpdateStatus={onUpdatePointStatus}
+                    isUpdating={isUpdating}
                   />
                 ))}
               </div>
@@ -526,6 +622,67 @@ export function NegotiationPanel({
             <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
               <p className="text-xs font-medium text-blue-800 mb-1">Approche recommandee:</p>
               <p className="text-sm text-blue-700">{strategy.suggestedApproach}</p>
+            </div>
+          )}
+
+          {/* Recap of Negotiated Terms */}
+          {negotiatedTerms.length > 0 && (
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+                <ClipboardList className="h-4 w-4 text-indigo-600" />
+                Recap des termes negocies ({negotiatedTerms.length})
+              </h4>
+              <div className="space-y-2">
+                {negotiatedTerms.map((point) => (
+                  <div
+                    key={point.id}
+                    className={cn(
+                      "p-2 rounded border text-sm",
+                      point.status === "obtained" && "bg-green-50 border-green-200",
+                      point.status === "compromised" && "bg-yellow-50 border-yellow-200",
+                      point.status === "refused" && "bg-red-50 border-red-200"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      {point.status === "obtained" && <CheckCircle className="h-3 w-3 text-green-600" />}
+                      {point.status === "compromised" && <ArrowRightLeft className="h-3 w-3 text-yellow-600" />}
+                      {point.status === "refused" && <XCircle className="h-3 w-3 text-red-600" />}
+                      <span className="font-medium">{point.topic}</span>
+                    </div>
+                    <p className={cn(
+                      "text-xs",
+                      point.status === "obtained" && "text-green-700",
+                      point.status === "compromised" && "text-yellow-700",
+                      point.status === "refused" && "text-red-700 line-through"
+                    )}>
+                      {point.status === "obtained" && point.ask}
+                      {point.status === "compromised" && (point.compromiseValue || "Compromis non specifie")}
+                      {point.status === "refused" && point.ask}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Re-analyze button */}
+              {onReanalyzeWithTerms && (
+                <Button
+                  className="w-full mt-4"
+                  onClick={onReanalyzeWithTerms}
+                  disabled={isReanalyzing}
+                >
+                  {isReanalyzing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Re-analyse en cours...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Re-analyser avec les termes negocies
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
           )}
         </CardContent>

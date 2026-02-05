@@ -1,6 +1,6 @@
 import { put, del } from "@vercel/blob";
 import { writeFile, mkdir, unlink } from "fs/promises";
-import { join } from "path";
+import { join, resolve, normalize } from "path";
 
 export interface UploadResult {
   url: string;
@@ -8,6 +8,29 @@ export interface UploadResult {
 }
 
 const isVercelBlobConfigured = !!process.env.BLOB_READ_WRITE_TOKEN;
+
+/**
+ * Sanitize path to prevent path traversal attacks
+ * Ensures the path stays within the uploads directory
+ */
+function sanitizePath(basePath: string, userPath: string): string {
+  // Normalize and resolve the user path
+  const normalizedPath = normalize(userPath).replace(/^(\.\.[\/\\])+/, '');
+
+  // Remove any leading slashes
+  const cleanPath = normalizedPath.replace(/^[\/\\]+/, '');
+
+  // Build full path and verify it's within base
+  const fullPath = resolve(basePath, cleanPath);
+  const resolvedBase = resolve(basePath);
+
+  // Security check: ensure the resolved path starts with the base path
+  if (!fullPath.startsWith(resolvedBase + '/') && fullPath !== resolvedBase) {
+    throw new Error('Invalid path: path traversal attempt detected');
+  }
+
+  return fullPath;
+}
 
 /**
  * Upload a file to storage (Vercel Blob in prod, local in dev)
@@ -30,9 +53,15 @@ export async function deleteFile(urlOrPath: string): Promise<void> {
   if (isVercelBlobConfigured) {
     await del(urlOrPath);
   } else {
-    const localPath = urlOrPath.startsWith("/uploads/")
-      ? join(process.cwd(), "public", urlOrPath)
+    const baseDir = join(process.cwd(), "public", "uploads");
+
+    // Extract the path part after /uploads/ if present
+    const pathPart = urlOrPath.startsWith("/uploads/")
+      ? urlOrPath.substring("/uploads/".length)
       : urlOrPath;
+
+    // Sanitize to prevent path traversal
+    const localPath = sanitizePath(baseDir, pathPart);
     await unlink(localPath).catch(() => {});
   }
 }
@@ -47,9 +76,15 @@ export async function downloadFile(urlOrPath: string): Promise<Buffer> {
     return Buffer.from(await res.arrayBuffer());
   }
   const { readFile } = await import("fs/promises");
-  const localPath = urlOrPath.startsWith("/uploads/")
-    ? join(process.cwd(), "public", urlOrPath)
-    : join(process.cwd(), "public", "uploads", urlOrPath);
+  const baseDir = join(process.cwd(), "public", "uploads");
+
+  // Extract the path part after /uploads/ if present
+  const pathPart = urlOrPath.startsWith("/uploads/")
+    ? urlOrPath.substring("/uploads/".length)
+    : urlOrPath;
+
+  // Sanitize to prevent path traversal
+  const localPath = sanitizePath(baseDir, pathPart);
   return readFile(localPath);
 }
 
@@ -86,7 +121,9 @@ async function uploadToLocal(
   file: File | Buffer
 ): Promise<UploadResult> {
   const uploadsDir = join(process.cwd(), "public", "uploads");
-  const fullPath = join(uploadsDir, path);
+
+  // Sanitize path to prevent path traversal
+  const fullPath = sanitizePath(uploadsDir, path);
   const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
 
   // Ensure directory exists
@@ -104,11 +141,13 @@ async function uploadToLocal(
   // Write file
   await writeFile(fullPath, buffer);
 
-  const publicUrl = `/uploads/${path}`;
+  // Extract relative path for URL
+  const relativePath = fullPath.replace(uploadsDir + "/", "");
+  const publicUrl = `/uploads/${relativePath}`;
 
   return {
     url: publicUrl,
-    pathname: path,
+    pathname: relativePath,
   };
 }
 

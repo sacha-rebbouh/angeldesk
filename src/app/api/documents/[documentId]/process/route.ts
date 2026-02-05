@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
 import { extractTextFromPDFUrl, type ExtractionWarning } from "@/services/pdf/extractor";
+
+// CUID validation schema
+const cuidSchema = z.string().cuid();
 
 interface RouteParams {
   params: Promise<{ documentId: string }>;
@@ -13,6 +17,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { documentId } = await params;
+
+    // Validate CUID format
+    const cuidResult = cuidSchema.safeParse(documentId);
+    if (!cuidResult.success) {
+      return NextResponse.json({ error: "Invalid document ID format" }, { status: 400 });
+    }
 
     // Find document and verify ownership through deal
     const document = await prisma.document.findUnique({
@@ -115,7 +125,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
   } catch (error) {
-    console.error("Error processing document:", error);
+    if (process.env.NODE_ENV === "development") {
+      console.error("Error processing document:", error);
+    }
     return NextResponse.json(
       { error: "Failed to process document" },
       { status: 500 }

@@ -334,6 +334,29 @@ JSON structuré avec:
 - Si Context Engine vide: Mentionner l'absence de benchmarks externes
 - Si contradictions majeures: Baisser le score de confiance de 10-20%
 
+# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
+
+**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
+
+1. **LIMITES STRICTES sur les arrays**:
+   - investmentHighlights: MAX 4 items
+   - keyRisks: MAX 5 items
+   - termsAnalysis: MAX 4 items
+   - competitors: MAX 4 items
+   - nextSteps: MAX 5 items
+   - questionsForFounder: MAX 6 items
+   - keyStrengths/keyRisks: MAX 3 items chacun
+   - breakdown (score): 5 items exactement
+
+2. **BREVITE dans les textes**:
+   - oneLiner: 20 mots MAX
+   - verdict: 2 phrases MAX
+   - justification: 1-2 phrases MAX
+   - each highlight/risk: 1 phrase
+   - keyInsights: MAX 4 items, 10 mots chacun
+
+3. **Structure > Contenu**: Mieux vaut un memo complet et concis qu'un memo tronque
+
 # EXEMPLE DE BON OUTPUT
 
 \`\`\`json
@@ -550,7 +573,15 @@ Réponds en JSON avec cette structure exacte:
     "justification": "Justification de la recommandation"
   }
 }
-\`\`\``;
+\`\`\`
+
+**CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
+- investmentHighlights: MAX 4, keyRisks: MAX 5
+- termsAnalysis: MAX 4, competitors: MAX 4
+- nextSteps: MAX 5, questionsForFounder: MAX 6
+- keyStrengths/keyRisks: MAX 3 chacun
+- oneLiner: 20 mots MAX, verdict: 2 phrases MAX
+- PRIORITE: JSON complet > detail`;
 
     const { data } = await this.llmCompleteJSON<LLMMemoResponse>(prompt);
 

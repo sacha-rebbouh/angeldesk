@@ -7,13 +7,40 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getLatestAnalysisStaleness, getUnanalyzedDocuments } from "@/services/analysis-versioning";
+import { requireAuth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ dealId: string }> }
 ) {
   try {
+    const user = await requireAuth();
     const { dealId } = await params;
+
+    // Validate dealId format (CUID)
+    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+      return NextResponse.json(
+        { error: "Invalid deal ID format" },
+        { status: 400 }
+      );
+    }
+
+    // Verify deal ownership (IDOR protection)
+    const deal = await prisma.deal.findFirst({
+      where: {
+        id: dealId,
+        userId: user.id,
+      },
+      select: { id: true },
+    });
+
+    if (!deal) {
+      return NextResponse.json(
+        { error: "Deal not found or access denied" },
+        { status: 404 }
+      );
+    }
 
     // Get staleness info for the latest analysis
     const staleness = await getLatestAnalysisStaleness(dealId);

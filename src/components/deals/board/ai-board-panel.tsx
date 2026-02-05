@@ -62,15 +62,18 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
   });
 
   // Fetch existing session for this deal (if any)
-  const { data: existingSession } = useQuery({
-    queryKey: queryKeys.board.dealSessions(dealId),
-    queryFn: async () => {
-      // Get sessions for this deal from the list
-      // For now we'll check if there's a completed session
-      return null; // TODO: implement session history
-    },
-    enabled: false, // Disabled for now
-  });
+  // Session history feature - disabled for now, enable when implementing session replay
+  // const { data: existingSession } = useQuery({
+  //   queryKey: queryKeys.board.dealSessions(dealId),
+  //   queryFn: async () => {
+  //     const res = await fetch(`/api/board/sessions?dealId=${dealId}`);
+  //     if (!res.ok) return null;
+  //     const { data } = await res.json();
+  //     return data?.find((s: { status: string }) => s.status === "COMPLETED") ?? null;
+  //   },
+  //   enabled: true,
+  // });
+  const existingSession = null; // Session history disabled for now
 
   const startBoard = useCallback(async () => {
     setIsRunning(true);
@@ -109,7 +112,13 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
-            const eventData = JSON.parse(line.slice(6)) as BoardProgressEvent;
+            let eventData: BoardProgressEvent;
+            try {
+              eventData = JSON.parse(line.slice(6)) as BoardProgressEvent;
+            } catch {
+              // Skip malformed SSE events
+              continue;
+            }
 
             if (eventData.sessionId && !currentSessionIdRef.current) {
               currentSessionIdRef.current = eventData.sessionId;
