@@ -9,6 +9,7 @@ import {
   getCreditsStatus,
 } from "@/services/board-credits";
 import { boardRequestSchema, checkRateLimit } from "@/lib/sanitize";
+import { handleApiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes max (Vercel limit)
@@ -166,13 +167,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Board API error:", error);
-    }
-    return NextResponse.json(
-      { error: "Erreur serveur" },
-      { status: 500 }
-    );
+    return handleApiError(error, "start board session");
   }
 }
 
@@ -242,12 +237,6 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ status, latestSession });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Board credits API error:", error);
-    }
-    return NextResponse.json(
-      { error: "Erreur serveur" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch board status");
   }
 }

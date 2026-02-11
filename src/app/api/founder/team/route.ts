@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/sanitize";
 import { buildPeopleGraph, type FounderInput } from "@/services/context-engine";
+import { handleApiError } from "@/lib/api-error";
+
+const teamSchema = z.object({
+  founders: z.array(z.object({
+    name: z.string().min(1).max(200),
+    role: z.string().max(200).optional(),
+    linkedinUrl: z.string().url().optional(),
+  })).min(1).max(20),
+  startupSector: z.string().max(200).optional(),
+});
 
 /**
  * POST /api/founder/team - Analyze a founding team
@@ -31,35 +43,22 @@ import { buildPeopleGraph, type FounderInput } from "@/services/context-engine";
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
+
+    const rateLimit = checkRateLimit(`founder-team:${user.id}`, { maxRequests: 5, windowMs: 60000 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
 
     const body = await request.json();
-    const { founders, startupSector } = body;
-
-    // Validate input
-    if (!founders || !Array.isArray(founders) || founders.length === 0) {
-      return NextResponse.json(
-        { error: "founders array is required and must not be empty" },
-        { status: 400 }
-      );
+    const parsed = teamSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
     }
-
-    // Validate each founder has at least a name
-    for (const founder of founders) {
-      if (!founder.name || typeof founder.name !== "string") {
-        return NextResponse.json(
-          { error: "Each founder must have a name" },
-          { status: 400 }
-        );
-      }
-    }
+    const { founders, startupSector } = parsed.data;
 
     // Convert to FounderInput format
-    const founderInputs: FounderInput[] = founders.map((f: {
-      name: string;
-      role?: string;
-      linkedinUrl?: string;
-    }) => ({
+    const founderInputs: FounderInput[] = founders.map((f) => ({
       name: f.name,
       role: f.role,
       linkedinUrl: f.linkedinUrl,
@@ -82,10 +81,6 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error analyzing founding team:", error);
-    return NextResponse.json(
-      { error: "Failed to analyze founding team" },
-      { status: 500 }
-    );
+    return handleApiError(error, "analyze founding team");
   }
 }

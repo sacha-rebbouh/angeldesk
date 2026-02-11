@@ -172,11 +172,19 @@ export function sanitizeDocumentText(
  * Zod schema for CUID/CUID2 IDs (Prisma default)
  * CUID format: c + 20-28 alphanumeric characters (lowercase)
  */
+/** Regex for CUID/CUID2 format validation */
+export const CUID_PATTERN = /^c[a-z0-9]{20,29}$/;
+
+/** Quick boolean check for CUID validity */
+export function isValidCuid(id: string | null | undefined): id is string {
+  return typeof id === "string" && CUID_PATTERN.test(id);
+}
+
 export const cuidSchema = z
   .string()
   .min(21, "ID too short")
   .max(30, "ID too long")
-  .regex(/^c[a-z0-9]{20,29}$/, "Invalid ID format");
+  .regex(CUID_PATTERN, "Invalid ID format");
 
 /**
  * Zod schema for board API request body

@@ -11,7 +11,8 @@ import React, {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Send, MessageSquare, Loader2, Sparkles } from "lucide-react";
 
-import Markdown from "react-markdown";
+import dynamic from "next/dynamic";
+const Markdown = dynamic(() => import("react-markdown"), { ssr: false });
 
 import { cn } from "@/lib/utils";
 import { queryKeys } from "@/lib/query-keys";
@@ -478,8 +479,8 @@ export const DealChatPanel = memo(function DealChatPanel({
   return (
     <Card
       className={cn(
-        "fixed right-4 top-20 bottom-4 w-[40%] min-w-[360px] max-w-[600px]",
-        "flex flex-col z-50 shadow-lg border bg-background py-0 gap-0"
+        "fixed inset-0 md:inset-auto md:right-4 md:top-20 md:bottom-4 md:w-[40%] md:min-w-[360px] md:max-w-[600px]",
+        "flex flex-col z-50 shadow-lg border bg-background py-0 gap-0 rounded-none md:rounded-xl"
       )}
     >
       {/* Header */}

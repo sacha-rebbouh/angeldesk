@@ -1,5 +1,4 @@
-export const dynamic = "force-dynamic";
-
+import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
@@ -15,6 +14,7 @@ import { Plus } from "lucide-react";
 import { DealsTable } from "@/components/deals/deals-table";
 
 async function getDeals(userId: string) {
+  noStore();
   const deals = await prisma.deal.findMany({
     where: { userId },
     orderBy: { updatedAt: "desc" },

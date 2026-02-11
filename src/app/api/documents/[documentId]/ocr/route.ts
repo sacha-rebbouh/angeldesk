@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { downloadFile } from "@/services/storage";
+import { handleApiError } from "@/lib/api-error";
 
 export const maxDuration = 120;
 
@@ -105,7 +106,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error) {
-    console.error("OCR processing error:", error);
-    return NextResponse.json({ error: "OCR processing failed" }, { status: 500 });
+    return handleApiError(error, "process OCR");
   }
 }

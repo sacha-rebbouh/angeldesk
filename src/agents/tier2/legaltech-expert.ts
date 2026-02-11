@@ -32,7 +32,7 @@ import { z } from "zod";
 import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertResult, SectorExpertData, SectorExpertType } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
 
 // ============================================================================
 // SCHEMA DE SORTIE
@@ -743,11 +743,7 @@ export const legaltechExpert = {
       // Parse and validate response
       let parsedOutput: LegaltechExpertOutput;
       try {
-        const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error("No JSON found in response");
-        }
-        const rawJson = JSON.parse(jsonMatch[0]);
+        const rawJson = JSON.parse(extractFirstJSON(response.content));
         const parseResult = LegaltechExpertOutputSchema.safeParse(rawJson);
         if (parseResult.success) {
           parsedOutput = parseResult.data;

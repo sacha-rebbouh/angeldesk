@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { cuidSchema } from "@/lib/sanitize";
+import { handleApiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -95,11 +96,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error("Get board session error:", error);
-    return NextResponse.json(
-      { error: "Erreur serveur" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch board session");
   }
 }
 
@@ -160,10 +157,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       message: "Session arretee",
     });
   } catch (error) {
-    console.error("Stop board session error:", error);
-    return NextResponse.json(
-      { error: "Erreur serveur" },
-      { status: 500 }
-    );
+    return handleApiError(error, "stop board session");
   }
 }

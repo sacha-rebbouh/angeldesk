@@ -1,7 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/sanitize";
 import { enrichDeal, getFounderContext, getConfiguredConnectors } from "@/services/context-engine";
 import type { ConnectorQuery } from "@/services/context-engine/types";
+import { handleApiError } from "@/lib/api-error";
+
+const contextSchema = z.object({
+  companyName: z.string().max(500).optional(),
+  sector: z.string().max(200).optional(),
+  subSector: z.string().max(200).optional(),
+  stage: z.string().max(100).optional(),
+  geography: z.string().max(200).optional(),
+  founderNames: z.array(z.string().max(200)).max(10).optional(),
+  keywords: z.array(z.string().max(200)).max(20).optional(),
+});
 
 /**
  * GET /api/context - Get configured connectors info
@@ -23,11 +36,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("Error getting context info:", error);
-    return NextResponse.json(
-      { error: "Failed to get context info" },
-      { status: 500 }
-    );
+    return handleApiError(error, "get context info");
   }
 }
 
@@ -47,18 +56,27 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
+
+    const rateLimit = checkRateLimit(`context:${user.id}`, { maxRequests: 10, windowMs: 60000 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
 
     const body = await request.json();
+    const parsed = contextSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
+    }
 
     const query: ConnectorQuery = {
-      companyName: body.companyName,
-      sector: body.sector,
-      subSector: body.subSector,
-      stage: body.stage,
-      geography: body.geography,
-      founderNames: body.founderNames,
-      keywords: body.keywords,
+      companyName: parsed.data.companyName,
+      sector: parsed.data.sector,
+      subSector: parsed.data.subSector,
+      stage: parsed.data.stage,
+      geography: parsed.data.geography,
+      founderNames: parsed.data.founderNames,
+      keywords: parsed.data.keywords,
     };
 
     // Enrich deal with context
@@ -84,10 +102,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: context });
   } catch (error) {
-    console.error("Error enriching deal:", error);
-    return NextResponse.json(
-      { error: "Failed to enrich deal" },
-      { status: 500 }
-    );
+    return handleApiError(error, "enrich deal");
   }
 }

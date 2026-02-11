@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, MessageSquare, Handshake, ShieldAlert } from "lucide-react";
+import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, MessageSquare, Handshake, ShieldAlert, Download, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -14,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { queryKeys } from "@/lib/query-keys";
@@ -341,6 +342,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const { data: quotaData } = useQuery({
     queryKey: queryKeys.quota.all,
     queryFn: fetchQuota,
+    staleTime: 5 * 60 * 1000,
   });
 
   const quota = quotaData?.data;
@@ -870,6 +872,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   // Re-analyze with negotiated terms
   const [isReanalyzingWithTerms, setIsReanalyzingWithTerms] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const handleReanalyzeWithNegotiatedTerms = useCallback(async () => {
     if (!negotiationStrategy) return;
@@ -921,6 +924,45 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       setIsReanalyzingWithTerms(false);
     }
   }, [negotiationStrategy, dealId, mutation]);
+
+  // Handle PDF export
+  const handleExportPdf = useCallback(async (format: "full" | "summary" = "full") => {
+    const analysisId = selectedAnalysisId ?? completedAnalyses[0]?.id;
+    if (!analysisId) return;
+
+    setIsExportingPdf(true);
+    try {
+      const response = await fetch(`/api/deals/${dealId}/export-pdf?analysisId=${analysisId}&format=${format}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 403) {
+          toast.error("L'export PDF est reserve aux utilisateurs PRO", {
+            action: { label: "Passer PRO", onClick: () => router.push("/pricing") },
+          });
+          return;
+        }
+        throw new Error(errorData.error || "Erreur lors de l'export");
+      }
+
+      // Download the PDF
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = response.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ?? "rapport-dd.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast.success(format === "summary" ? "Resume PDF exporte" : "Rapport complet PDF exporte");
+    } catch (error) {
+      console.error("[AnalysisPanel] PDF export error:", error);
+      toast.error(error instanceof Error ? error.message : "Erreur lors de l'export PDF");
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [dealId, selectedAnalysisId, completedAnalyses, router]);
 
   return (
     <div className="space-y-4">
@@ -1063,6 +1105,48 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {displayedResult.success && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isExportingPdf}
+                          className="gap-1.5"
+                        >
+                          {isExportingPdf ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
+                          Export PDF
+                          {subscriptionPlan === "FREE" && (
+                            <Badge variant="secondary" className="ml-1 bg-gradient-to-r from-amber-100 to-orange-100 text-amber-800 text-[10px] px-1 py-0">
+                              <Crown className="mr-0.5 h-2.5 w-2.5" />
+                              PRO
+                            </Badge>
+                          )}
+                          <ChevronDown className="h-3 w-3 ml-0.5 opacity-60" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-64">
+                        <DropdownMenuItem onClick={() => handleExportPdf("summary")} className="flex flex-col items-start gap-0.5 py-2.5">
+                          <div className="flex items-center gap-2 font-medium">
+                            <FileText className="h-4 w-4 text-blue-600" />
+                            Resume executif
+                          </div>
+                          <span className="text-xs text-muted-foreground ml-6">5-7 pages — Score, red flags, questions cles</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleExportPdf("full")} className="flex flex-col items-start gap-0.5 py-2.5">
+                          <div className="flex items-center gap-2 font-medium">
+                            <Download className="h-4 w-4 text-blue-600" />
+                            Rapport complet
+                          </div>
+                          <span className="text-xs text-muted-foreground ml-6">30-50 pages — DD exhaustive, tous les agents</span>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                   {displayedResult.success ? (
                     <Badge variant="default" className="bg-green-500">Reussi</Badge>
                   ) : (

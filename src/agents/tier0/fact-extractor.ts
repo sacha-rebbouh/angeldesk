@@ -95,6 +95,13 @@ interface LLMExtractedFact {
   validAt?: string; // ISO date string
   periodType?: 'POINT_IN_TIME' | 'QUARTER' | 'YEAR' | 'MONTH';
   periodLabel?: string; // "Q4 2024", "FY2024", "Dec 2024"
+  // Data Reliability Classification
+  reliability: 'AUDITED' | 'VERIFIED' | 'DECLARED' | 'PROJECTED' | 'ESTIMATED' | 'UNVERIFIABLE';
+  reliabilityReasoning: string; // Why this classification
+  isProjection: boolean; // true if data includes future projections
+  documentDate?: string; // ISO date of document creation
+  dataPeriodEnd?: string; // End of the data period (e.g., "2025-12-31" for annual 2025)
+  projectionPercent?: number; // % of the period that is projected
 }
 
 interface LLMContradiction {
@@ -190,6 +197,62 @@ Exemples:
 - "Revenue 2024: 1.2M EUR" -> validAt: "2024-12-31", periodType: "YEAR", periodLabel: "FY2024"
 - Si pas de date mentionnee, utiliser la date du document si disponible, sinon omettre ces champs
 
+# CLASSIFICATION DE FIABILITE DES DONNEES (CRITIQUE)
+
+CHAQUE fait extrait DOIT etre classifie selon sa fiabilite. C'est NON NEGOCIABLE.
+L'objectif: ne JAMAIS traiter une projection comme un fait avere.
+
+## Niveaux de fiabilite (du plus au moins fiable)
+
+| Niveau | Description | Exemple |
+|--------|-------------|---------|
+| AUDITED | Confirme par audit externe, releves bancaires, comptes certifies | "Rapport CAC certifie: CA 2024 = 1.2M EUR" |
+| VERIFIED | Recoupe par plusieurs sources independantes | ARR mentionne dans le deck ET confirme par Context Engine |
+| DECLARED | Annonce dans un document sans verification independante possible | "Notre ARR est de 500K" dans le pitch deck |
+| PROJECTED | Projection explicite ou implicite (Business Plan, forecast, periode future) | "CA 2025: 570K" dans un BP date d'aout 2025 |
+| ESTIMATED | Calcule/deduit par l'IA a partir de donnees partielles | MRR 42K → ARR calcule = 504K |
+| UNVERIFIABLE | Impossible a verifier ou falsifier | "Nous avons le meilleur produit du marche" |
+
+## Regles de detection des PROJECTIONS (CRITIQUE)
+
+### Detection temporelle automatique
+1. Identifier la DATE DU DOCUMENT: metadata PDF, mention explicite ("BP Septembre 2025"), date d'upload
+2. Identifier la PERIODE DES DONNEES: "CA 2025", "ARR Q4 2025", "Revenue FY2025"
+3. Si la fin de la periode des donnees est APRES la date du document → c'est une PROJECTION
+
+### Exemples concrets
+- Document date aout 2025, "CA annuel 2025: 570K€" → La periode couvre jan-dec 2025, le doc date d'aout
+  → 4 mois sur 12 sont dans le futur = 33% projection
+  → reliability: "PROJECTED", projectionPercent: 33, isProjection: true
+  → reasoning: "Document date d'aout 2025. Le CA 2025 couvre jan-dec. Sept-Dec (4 mois/12 = 33%) sont des projections."
+
+- Document date mars 2026, "CA 2025: 1.2M€" → Toute la periode est dans le passe
+  → reliability: "DECLARED" (pas de verification externe possible)
+  → isProjection: false
+
+- Document avec un tableau "Projections" ou "Business Plan" ou "Forecast"
+  → TOUT ce qui est dans cette section = reliability: "PROJECTED"
+
+- Chiffres ronds parfaits (100K, 500K, 1M) dans un deck pre-seed sans historique
+  → Forte suspicion de projection, reliability: "PROJECTED" ou "ESTIMATED"
+
+### Signaux de projection (meme sans date explicite)
+- Mots: "prevu", "projete", "objectif", "target", "forecast", "budget", "plan"
+- Colonnes: "2025E", "2026P", "Prev.", "Budget"
+- Taux de croissance >100% sustenu = probablement des projections
+- Chiffres qui augmentent de facon parfaitement lineaire ou exponentielle
+- Section "Business Plan", "Plan financier", "Projections financieres"
+
+## Champs obligatoires pour la classification
+
+Pour CHAQUE fait extrait:
+- reliability: AUDITED | VERIFIED | DECLARED | PROJECTED | ESTIMATED | UNVERIFIABLE
+- reliabilityReasoning: Explication de pourquoi cette classification (1-2 phrases)
+- isProjection: true si la donnee inclut des projections futures
+- documentDate: date ISO du document source (si identifiable)
+- dataPeriodEnd: date ISO de fin de la periode couverte par cette donnee
+- projectionPercent: % de la periode qui est projetee (0 si historique pur, 100 si projection pure)
+
 # REGLES D'EXTRACTION
 
 ## OBLIGATOIRE - extractedText
@@ -237,7 +300,13 @@ Produis un JSON avec cette structure exacte.
       "extractedText": "[Source: Pitch Deck, Slide 8] Notre ARR atteint 500K EUR a fin Q4 2024",
       "validAt": "2024-12-31",
       "periodType": "QUARTER",
-      "periodLabel": "Q4 2024"
+      "periodLabel": "Q4 2024",
+      "reliability": "DECLARED",
+      "reliabilityReasoning": "Chiffre annonce dans le pitch deck sans verification externe. Pas de releve bancaire ou audit.",
+      "isProjection": false,
+      "documentDate": "2025-01-15",
+      "dataPeriodEnd": "2024-12-31",
+      "projectionPercent": 0
     }
   ],
   "contradictions": [
@@ -282,7 +351,7 @@ Produis un JSON avec cette structure exacte.
 
 # EXEMPLES (IDs illustratifs - utiliser les vrais IDs du deal)
 
-## BON - Extraction avec haute confidence
+## BON - Donnee historique verifiee
 {
   "factKey": "financial.mrr",
   "category": "FINANCIAL",
@@ -291,10 +360,16 @@ Produis un JSON avec cette structure exacte.
   "unit": "EUR",
   "sourceDocumentId": "<UTILISER_VRAI_ID_DU_DOCUMENT>",
   "sourceConfidence": 98,
-  "extractedText": "[Source: Financial Model, Onglet Dashboard] MRR Dec 2024: 42,000 EUR"
+  "extractedText": "[Source: Financial Model, Onglet Dashboard] MRR Dec 2024: 42,000 EUR",
+  "reliability": "DECLARED",
+  "reliabilityReasoning": "Chiffre explicite dans le financial model. Source unique, pas d'audit externe.",
+  "isProjection": false,
+  "documentDate": "2025-01-10",
+  "dataPeriodEnd": "2024-12-31",
+  "projectionPercent": 0
 }
 
-## BON - Extraction calculee
+## BON - Extraction calculee (ESTIMATED)
 {
   "factKey": "financial.arr",
   "category": "FINANCIAL",
@@ -303,7 +378,35 @@ Produis un JSON avec cette structure exacte.
   "unit": "EUR",
   "sourceDocumentId": "<UTILISER_VRAI_ID_DU_DOCUMENT>",
   "sourceConfidence": 90,
-  "extractedText": "[Source: Financial Model, Onglet Dashboard] MRR Dec 2024: 42,000 EUR. ARR calcule = MRR x 12 = 504K EUR"
+  "extractedText": "[Source: Financial Model, Onglet Dashboard] MRR Dec 2024: 42,000 EUR. ARR calcule = MRR x 12 = 504K EUR",
+  "reliability": "ESTIMATED",
+  "reliabilityReasoning": "ARR calcule a partir du MRR (42K x 12). Le MRR source est DECLARED, le calcul ajoute une couche d'incertitude.",
+  "isProjection": false,
+  "documentDate": "2025-01-10",
+  "dataPeriodEnd": "2024-12-31",
+  "projectionPercent": 0
+}
+
+## BON - Detection de projection (CAS SENSAI)
+{
+  "factKey": "financial.revenue",
+  "category": "FINANCIAL",
+  "value": 570000,
+  "displayValue": "570K EUR",
+  "unit": "EUR",
+  "sourceDocumentId": "<UTILISER_VRAI_ID_DU_DOCUMENT>",
+  "sourceConfidence": 85,
+  "extractedText": "[Source: BP, Page 5] CA previsionnel 2025: 570K EUR",
+  "validAt": "2025-12-31",
+  "periodType": "YEAR",
+  "periodLabel": "FY2025",
+  "reliability": "PROJECTED",
+  "reliabilityReasoning": "Business Plan date d'aout 2025. Le CA 2025 couvre jan-dec mais le BP est date d'aout. Sept-Dec (4 mois sur 12 = 33%) sont des projections. De plus, le document est un BP (forward-looking par nature).",
+  "isProjection": true,
+  "documentDate": "2025-08-15",
+  "dataPeriodEnd": "2025-12-31",
+  "projectionPercent": 33
+}
 }
 
 ## MAUVAIS - A NE PAS FAIRE
@@ -727,6 +830,10 @@ Produis le JSON avec:
           }
         }
 
+        // Build reliability classification
+        const reliabilityLevel = this.normalizeReliability(fact.reliability);
+        const isProjection = fact.isProjection === true || reliabilityLevel === 'PROJECTED';
+
         validFacts.push({
           factKey: fact.factKey,
           category: factKeyDef.category,
@@ -740,6 +847,19 @@ Produis le JSON avec:
           validAt: fact.validAt ? new Date(fact.validAt) : undefined,
           periodType: fact.periodType,
           periodLabel: fact.periodLabel,
+          reliability: {
+            reliability: reliabilityLevel,
+            reasoning: fact.reliabilityReasoning || `Source: ${source}, classification automatique`,
+            isProjection,
+            temporalAnalysis: (fact.documentDate || fact.dataPeriodEnd) ? {
+              documentDate: fact.documentDate,
+              dataPeriodEnd: fact.dataPeriodEnd,
+              projectionPercent: fact.projectionPercent,
+              monthsOfProjection: fact.projectionPercent != null && fact.periodType === 'YEAR'
+                ? Math.round((fact.projectionPercent / 100) * 12)
+                : undefined,
+            } : undefined,
+          },
         });
       }
     }
@@ -795,6 +915,21 @@ Produis le JSON avec:
 
     const uniqueFactKeys = new Set(validFacts.map(f => f.factKey));
 
+    // Log reliability stats
+    const projectedFacts = validFacts.filter(f => f.reliability?.isProjection);
+    const declaredFacts = validFacts.filter(f => f.reliability?.reliability === 'DECLARED');
+
+    if (projectedFacts.length > 0) {
+      console.warn(
+        `[FactExtractor] ${projectedFacts.length} facts classified as PROJECTED: ${projectedFacts.map(f => f.factKey).join(', ')}`
+      );
+    }
+    if (declaredFacts.length > 0) {
+      console.info(
+        `[FactExtractor] ${declaredFacts.length} facts classified as DECLARED (unverified): ${declaredFacts.map(f => f.factKey).join(', ')}`
+      );
+    }
+
     return {
       facts: validFacts,
       contradictions: validContradictions,
@@ -809,6 +944,17 @@ Produis le JSON avec:
         ignoredDetails: ignoredFacts,
       },
     };
+  }
+
+  /** Normalize reliability string from LLM to valid DataReliability */
+  private normalizeReliability(value: string | undefined): import('@/services/fact-store/types').DataReliability {
+    const valid = ['AUDITED', 'VERIFIED', 'DECLARED', 'PROJECTED', 'ESTIMATED', 'UNVERIFIABLE'] as const;
+    const upper = (value || '').toUpperCase().trim();
+    if (valid.includes(upper as typeof valid[number])) {
+      return upper as typeof valid[number];
+    }
+    // Default: if we can't classify, assume DECLARED (stated without proof)
+    return 'DECLARED';
   }
 }
 

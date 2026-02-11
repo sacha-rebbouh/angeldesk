@@ -36,7 +36,7 @@ import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { applyTier3Coherence, injectCoherenceIntoContext } from "../orchestration/tier3-coherence";
 import { costMonitor } from "@/services/cost-monitor";
 import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
-import { setAgentContext, setAnalysisContext } from "@/services/openrouter/router";
+import { setAgentContext, setAnalysisContext, runWithLLMContext } from "@/services/openrouter/router";
 import { runJob } from "@/services/jobs";
 
 // Fact Store imports for Tier 0 fact extraction
@@ -130,7 +130,7 @@ export { ANALYSIS_CONFIGS, AGENT_COUNTS };
 
 // Type alias for deal with relations
 type DealWithDocs = Deal & {
-  documents: { id: string; name: string; type: string; extractedText: string | null }[];
+  documents: { id: string; name: string; type: string; extractedText: string | null; uploadedAt: Date }[];
   founders?: { id: string; name: string; role: string; linkedinUrl: string | null }[];
 };
 
@@ -142,16 +142,23 @@ export class AgentOrchestrator {
    * A cached result is valid if:
    * 1. The deal fingerprint matches (deal hasn't changed)
    * 2. The cache hasn't expired (24h TTL)
-   * 3. The analysis mode and useReAct setting match
+   * 3. The analysis mode matches
    *
    * Use forceRefresh: true to bypass cache and force re-analysis.
    */
   async runAnalysis(options: AnalysisOptions): Promise<AnalysisResult> {
+    // Wrap entire analysis in request-scoped LLM context (thread-safe)
+    return runWithLLMContext(
+      { agentName: null, analysisId: null },
+      () => this._runAnalysisImpl(options)
+    );
+  }
+
+  private async _runAnalysisImpl(options: AnalysisOptions): Promise<AnalysisResult> {
     const {
       dealId,
       type,
       onProgress,
-      useReAct = false, // Deprecated: always use Standard agents
       enableTrace = true, // Enable traces by default for transparency
       forceRefresh = false,
       mode = "full",
@@ -177,7 +184,7 @@ export class AgentOrchestrator {
     const cacheableTypes: AnalysisType[] = ["tier1_complete", "tier3_synthesis", "tier2_sector", "full_analysis"];
 
     if (!forceRefresh && cacheableTypes.includes(type)) {
-      const cachedResult = await this.checkAnalysisCache(dealId, type, useReAct);
+      const cachedResult = await this.checkAnalysisCache(dealId, type);
       if (cachedResult) {
         console.log(`[Orchestrator] Returning cached analysis for deal ${dealId}, type=${type}`);
         onProgress?.({
@@ -195,7 +202,7 @@ export class AgentOrchestrator {
 
     switch (type) {
       case "tier1_complete":
-        result = await this.runTier1Analysis(deal as DealWithDocs, dealId, onProgress, false, {
+        result = await this.runTier1Analysis(deal as DealWithDocs, dealId, onProgress, {
           mode,
           failFastOnCritical,
           maxCostUsd,
@@ -206,7 +213,7 @@ export class AgentOrchestrator {
         });
         break;
       case "full_analysis":
-        result = await this.runFullAnalysis(deal as DealWithDocs, dealId, onProgress, false, {
+        result = await this.runFullAnalysis(deal as DealWithDocs, dealId, onProgress, {
           mode,
           failFastOnCritical,
           maxCostUsd,
@@ -220,7 +227,7 @@ export class AgentOrchestrator {
         result = await this.runTier3Synthesis(deal as DealWithDocs, dealId, onProgress, onEarlyWarning);
         break;
       case "tier2_sector":
-        result = await this.runTier2SectorAnalysis(deal as DealWithDocs, dealId, onProgress, useReAct);
+        result = await this.runTier2SectorAnalysis(deal as DealWithDocs, dealId, onProgress);
         break;
       default:
         result = await this.runBaseAnalysis(deal as DealWithDocs, dealId, type, onProgress, onEarlyWarning, startTime);
@@ -228,7 +235,7 @@ export class AgentOrchestrator {
 
     // === STORE FINGERPRINT FOR CACHE ===
     if (cacheableTypes.includes(type) && result.success) {
-      await this.storeAnalysisFingerprint(dealId, result.sessionId, useReAct);
+      await this.storeAnalysisFingerprint(dealId, result.sessionId);
     }
 
     return result;
@@ -286,7 +293,6 @@ export class AgentOrchestrator {
   private async checkAnalysisCache(
     dealId: string,
     type: AnalysisType,
-    useReAct: boolean
   ): Promise<AnalysisResult | null> {
     try {
       // Get deal for fingerprint
@@ -298,7 +304,7 @@ export class AgentOrchestrator {
 
       // Lookup cached analysis
       const mode = type; // mode in DB matches type
-      const cached = await lookupCachedAnalysis(dealId, mode, fingerprint, useReAct);
+      const cached = await lookupCachedAnalysis(dealId, mode, fingerprint);
 
       if (!cached.found || !cached.analysis) return null;
 
@@ -329,7 +335,6 @@ export class AgentOrchestrator {
   private async storeAnalysisFingerprint(
     dealId: string,
     analysisId: string,
-    useReAct: boolean
   ): Promise<void> {
     try {
       const dealForFingerprint = await getDealForFingerprint(dealId);
@@ -343,7 +348,6 @@ export class AgentOrchestrator {
         where: { id: analysisId },
         data: {
           dealFingerprint: fingerprint,
-          useReAct,
         },
       });
 
@@ -470,7 +474,6 @@ export class AgentOrchestrator {
     deal: DealWithDocs,
     dealId: string,
     onProgress: AnalysisOptions["onProgress"],
-    _useReAct: boolean, // Deprecated: always use Standard agents
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
     const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, enableTrace = true, isUpdate = false } = advancedOptions;
@@ -508,11 +511,13 @@ export class AgentOrchestrator {
     // This extracts structured facts that will be available to all agents
     let factStore: CurrentFact[] = [];
     let factStoreFormatted = "";
+    let founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }> = [];
 
     if (deal.documents.length > 0) {
       const tier0Result = await this.runTier0FactExtraction(deal, isUpdate, onProgress);
       factStore = tier0Result.factStore;
       factStoreFormatted = tier0Result.factStoreFormatted;
+      founderResponses = tier0Result.founderResponses;
       totalCost += tier0Result.cost;
 
       if (tier0Result.extractionResult) {
@@ -621,10 +626,11 @@ export class AgentOrchestrator {
       factStore,
       factStoreFormatted,
       deckCoherenceReport: deckCoherenceReport ?? undefined,
+      founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
     };
 
     // STEP 3: Run Tier 1 agents in 4 sequential phases (A→B→C→D)
-    const tier1AgentMap = await getTier1Agents(false);
+    const tier1AgentMap = await getTier1Agents();
     let completedCount = deal.documents.length > 0 ? 1 : 0;
 
     const phasesResult = await this.runTier1Phases({
@@ -729,12 +735,29 @@ export class AgentOrchestrator {
     // Load BA preferences for Tier 3 personalization
     const baPreferences = await this.loadBAPreferences(deal.userId);
 
+    // Load founder responses for Tier 3 context (chronology awareness)
+    const founderResponseFacts = await prisma.factEvent.findMany({
+      where: {
+        dealId,
+        source: "FOUNDER_RESPONSE",
+        eventType: { notIn: ["DELETED", "SUPERSEDED"] },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const founderResponses = founderResponseFacts.map(fact => ({
+      questionId: fact.id,
+      question: fact.reason || "Question non specifiee",
+      answer: fact.displayValue,
+      category: fact.category,
+    }));
+
     const context: EnrichedAgentContext = {
       dealId,
       deal,
       documents: deal.documents,
       previousResults: tier1Results ?? {},
       baPreferences, // Only passed to Tier 3 agents
+      founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
     };
 
     const tier3AgentMap = await getTier3Agents();
@@ -903,7 +926,6 @@ export class AgentOrchestrator {
     deal: DealWithDocs,
     dealId: string,
     onProgress: AnalysisOptions["onProgress"],
-    _useReAct: boolean,
     previousResults?: Record<string, AgentResult>
   ): Promise<AnalysisResult> {
     const startTime = Date.now();
@@ -965,12 +987,29 @@ export class AgentOrchestrator {
 
     const contextEngineData = await this.enrichContext(deal, extractedData);
 
+    // Load founder responses for Tier 2 context
+    const founderResponseFacts = await prisma.factEvent.findMany({
+      where: {
+        dealId,
+        source: "FOUNDER_RESPONSE",
+        eventType: { notIn: ["DELETED", "SUPERSEDED"] },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const founderResponses = founderResponseFacts.map(fact => ({
+      questionId: fact.id,
+      question: fact.reason || "Question non specifiee",
+      answer: fact.displayValue,
+      category: fact.category,
+    }));
+
     const context: EnrichedAgentContext = {
       dealId,
       deal,
       documents: deal.documents,
       previousResults: previousResults ?? {},
       contextEngine: contextEngineData,
+      founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
     };
 
     onProgress?.({
@@ -1035,7 +1074,6 @@ export class AgentOrchestrator {
     deal: DealWithDocs,
     dealId: string,
     onProgress: AnalysisOptions["onProgress"],
-    useReAct: boolean,
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
     const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false, userPlan = "FREE" } = advancedOptions;
@@ -1082,7 +1120,6 @@ export class AgentOrchestrator {
       dealId,
       userId: deal.userId,
       type: "full_analysis",
-      useReAct,
     });
 
     // Initialize State Machine
@@ -1108,6 +1145,7 @@ export class AgentOrchestrator {
     // Variables for fact store (will be populated in Tier 0)
     let factStore: CurrentFact[] = [];
     let factStoreFormatted = "";
+    let founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }> = [];
 
     try {
       await stateMachine.start();
@@ -1125,6 +1163,7 @@ export class AgentOrchestrator {
         const tier0Result = await this.runTier0FactExtraction(deal, isUpdate, onProgress);
         factStore = tier0Result.factStore;
         factStoreFormatted = tier0Result.factStoreFormatted;
+        founderResponses = tier0Result.founderResponses;
         totalCost += tier0Result.cost;
         completedCount++;
 
@@ -1243,6 +1282,7 @@ export class AgentOrchestrator {
         factStore,
         factStoreFormatted,
         deckCoherenceReport: deckCoherenceReport ?? undefined,
+        founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
       };
 
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases
@@ -1252,7 +1292,7 @@ export class AgentOrchestrator {
       // Phase D: remaining 8 agents (parallel) → using all validated facts
       await stateMachine.startAnalysis();
 
-      const tier1AgentMap = await getTier1Agents(useReAct);
+      const tier1AgentMap = await getTier1Agents();
 
       const phasesResult = await this.runTier1Phases({
         enrichedContext,
@@ -1990,6 +2030,7 @@ export class AgentOrchestrator {
     factStore: CurrentFact[];
     factStoreFormatted: string;
     extractionResult: FactExtractorOutput | null;
+    founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
     cost: number;
     executionTimeMs: number;
   }> {
@@ -2003,6 +2044,7 @@ export class AgentOrchestrator {
         factStore: [],
         factStoreFormatted: "",
         extractionResult: null,
+        founderResponses: [],
         cost: 0,
         executionTimeMs: Date.now() - startTime,
       };
@@ -2085,6 +2127,7 @@ export class AgentOrchestrator {
           factStore: existingFacts,
           factStoreFormatted: formatFactStoreForAgents(existingFacts),
           extractionResult: null,
+          founderResponses,
           cost: 0,
           executionTimeMs: Date.now() - startTime,
         };
@@ -2098,6 +2141,7 @@ export class AgentOrchestrator {
           factStore: existingFacts,
           factStoreFormatted: formatFactStoreForAgents(existingFacts),
           extractionResult: null,
+          founderResponses,
           cost: result.cost,
           executionTimeMs: Date.now() - startTime,
         };
@@ -2158,6 +2202,7 @@ export class AgentOrchestrator {
         factStore: currentFacts,
         factStoreFormatted: formattedFacts,
         extractionResult: extractionData,
+        founderResponses,
         cost: result.cost,
         executionTimeMs: Date.now() - startTime,
       };
@@ -2171,6 +2216,7 @@ export class AgentOrchestrator {
         factStore: existingFacts,
         factStoreFormatted: formatFactStoreForAgents(existingFacts),
         extractionResult: null,
+        founderResponses: [],
         cost: 0,
         executionTimeMs: Date.now() - startTime,
       };
@@ -2962,7 +3008,7 @@ export class AgentOrchestrator {
             totalAgents: analysis.totalAgents,
           });
 
-          const tier1AgentMap = await getTier1Agents(false);
+          const tier1AgentMap = await getTier1Agents();
 
           // Use Promise.all with restored factStore for remaining agents.
           // NOTE: We don't re-run the full 4-phase pipeline here because determining

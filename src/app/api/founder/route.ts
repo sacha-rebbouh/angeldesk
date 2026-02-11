@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/sanitize";
 import { analyzeFounderLinkedIn, findLinkedInProfile } from "@/services/context-engine/connectors/proxycurl";
 import { buildPeopleGraph, type FounderInput } from "@/services/context-engine";
+import { handleApiError } from "@/lib/api-error";
+
+const founderSchema = z.object({
+  linkedinUrl: z.string().url().optional(),
+  firstName: z.string().max(200).optional(),
+  lastName: z.string().max(200).optional(),
+  startupSector: z.string().max(200).optional(),
+});
 
 /**
  * POST /api/founder - Analyze a single founder via LinkedIn
@@ -34,10 +44,19 @@ import { buildPeopleGraph, type FounderInput } from "@/services/context-engine";
  */
 export async function POST(request: NextRequest) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
+
+    const rateLimit = checkRateLimit(`founder:${user.id}`, { maxRequests: 5, windowMs: 60000 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
 
     const body = await request.json();
-    const { linkedinUrl, firstName, lastName, startupSector } = body;
+    const parsed = founderSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
+    }
+    const { linkedinUrl, firstName, lastName, startupSector } = parsed.data;
 
     // Validate LinkedIn URL to prevent SSRF
     if (linkedinUrl) {
@@ -58,7 +77,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get LinkedIn URL - either direct or via lookup
-    let finalUrl = linkedinUrl;
+    let finalUrl: string | undefined | null = linkedinUrl;
 
     if (!finalUrl && firstName && lastName) {
       finalUrl = await findLinkedInProfile(firstName, lastName);
@@ -95,11 +114,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error analyzing founder:", error);
-    return NextResponse.json(
-      { error: "Failed to analyze founder" },
-      { status: 500 }
-    );
+    return handleApiError(error, "analyze founder");
   }
 }
 

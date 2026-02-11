@@ -29,7 +29,7 @@ import {
 import type { SectorExpertResult, SectorExpertData } from "./types";
 import { BIOTECH_STANDARDS } from "./sector-standards";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
 
 // =============================================================================
 // BIOTECH-SPECIFIC BENCHMARK DATA (Using Standards)
@@ -820,12 +820,7 @@ export const biotechExpert = {
       });
 
       // Parse JSON from response
-      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error("No JSON found in response");
-      }
-
-      const parsedOutput = JSON.parse(jsonMatch[0]) as SectorExpertOutput;
+      const parsedOutput = JSON.parse(extractFirstJSON(response.content)) as SectorExpertOutput;
 
       // -- Data completeness assessment and score capping --
       const completenessData = (parsedOutput as unknown as { dataCompleteness?: { level: "complete" | "partial" | "minimal"; availableDataPoints: number; expectedDataPoints: number; missingCritical: string[]; limitations: string[] } }).dataCompleteness ?? {

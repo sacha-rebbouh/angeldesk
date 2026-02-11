@@ -842,7 +842,7 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
         )}
 
         {/* Claim Verification */}
-        {data.findings?.claimVerification && (
+        {Array.isArray(data.findings?.claimVerification) && (
           <ExpandableSection title={`Vérification des claims (${data.findings.claimVerification.length})`}>
             <div className="space-y-2 mt-2">
               {data.findings.claimVerification.map((c: { claim: string; status: string; investorImplication: string; location: string }, i: number) => (
@@ -871,7 +871,7 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
         )}
 
         {/* Inconsistencies */}
-        {data.findings?.inconsistencies && data.findings.inconsistencies.length > 0 && (
+        {Array.isArray(data.findings?.inconsistencies) && data.findings.inconsistencies.length > 0 && (
           <div className="pt-2 border-t">
             <p className="text-sm font-medium text-orange-600 mb-1">Incohérences</p>
             <ul className="text-sm text-muted-foreground space-y-1">
@@ -1653,7 +1653,7 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
         )}
 
         {/* Founders Detail (v2.0) */}
-        {ownership?.founders && ownership.founders.length > 0 && (
+        {Array.isArray(ownership?.founders) && ownership.founders.length > 0 && (
           <ExpandableSection title={`Fondateurs (${ownership.founders.length})`}>
             <div className="space-y-2 mt-2">
               {ownership.founders.map((f: { name: string; percentage: number; vesting: string; accelerationClause: boolean }, i: number) => (
@@ -1779,7 +1779,7 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
         )}
 
         {/* Investors Analysis (v2.0) */}
-        {ownership?.investors && ownership.investors.length > 0 && (
+        {Array.isArray(ownership?.investors) && ownership.investors.length > 0 && (
           <ExpandableSection title={`Investisseurs (${ownership.investors.length})`}>
             <div className="space-y-2 mt-2">
               {ownership.investors.map((inv: { name: string; percentage: number; round: string; type: string; hasProRata: boolean; hasBoard: boolean }, i: number) => (

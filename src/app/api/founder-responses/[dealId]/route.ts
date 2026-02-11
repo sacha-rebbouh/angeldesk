@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isValidCuid } from "@/lib/sanitize";
+import { handleApiError } from "@/lib/api-error";
 
 // ============================================================================
 // RATE LIMITING (with bounded Map to prevent memory exhaustion)
@@ -93,7 +95,7 @@ export async function GET(
 
     // Validate dealId format using standard CUID validation
     // CUIDs are 25 chars starting with 'c', e.g., 'cljrxyz123456789012345678'
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -167,13 +169,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error fetching founder responses:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to fetch founder responses" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch founder responses");
   }
 }
 
@@ -202,7 +198,7 @@ export async function POST(
 
     // Validate dealId format using standard CUID validation
     // CUIDs are 25 chars starting with 'c', e.g., 'cljrxyz123456789012345678'
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -373,12 +369,6 @@ export async function POST(
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error submitting founder responses:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to submit founder responses" },
-      { status: 500 }
-    );
+    return handleApiError(error, "submit founder responses");
   }
 }

@@ -100,8 +100,6 @@ export type UserPlan = "FREE" | "PRO";
 export interface AnalysisOptions {
   dealId: string;
   type: AnalysisType;
-  /** @deprecated ReAct agents are no longer used. Standard agents provide better results. */
-  useReAct?: boolean;
   /** Enable detailed traces for transparency and reproducibility (default: true) */
   enableTrace?: boolean;
   forceRefresh?: boolean; // Bypass cache and force re-analysis

@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isValidCuid } from "@/lib/sanitize";
 import type { Prisma } from "@prisma/client";
+import { handleApiError } from "@/lib/api-error";
 
 // ============================================================================
 // VALIDATION SCHEMAS
@@ -29,7 +31,7 @@ export async function GET(
     const { dealId } = await params;
 
     // Validate dealId format
-    if (!dealId || dealId.length < 10) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID" },
         { status: 400 }
@@ -53,43 +55,49 @@ export async function GET(
       orderBy: { createdAt: "desc" },
     });
 
-    // For each pending review, get the conflicting current fact
-    const reviewsWithContext = await Promise.all(
-      pendingReviews.map(async (review) => {
-        const currentFact = await prisma.factEvent.findFirst({
+    // Batch-fetch all current facts for the pending review keys (avoids N+1)
+    const factKeys = [...new Set(pendingReviews.map((r) => r.factKey))];
+    const currentFacts = factKeys.length > 0
+      ? await prisma.factEvent.findMany({
           where: {
             dealId,
-            factKey: review.factKey,
+            factKey: { in: factKeys },
             eventType: { notIn: ["DELETED", "SUPERSEDED", "PENDING_REVIEW"] },
           },
           orderBy: { createdAt: "desc" },
-        });
+        })
+      : [];
 
-        return {
-          id: review.id,
-          factKey: review.factKey,
-          category: review.category,
-          newValue: review.value,
-          newDisplayValue: review.displayValue,
-          newSource: review.source,
-          newConfidence: review.sourceConfidence,
-          existingValue: currentFact?.value ?? null,
-          existingDisplayValue: currentFact?.displayValue ?? null,
-          existingSource: currentFact?.source ?? null,
-          existingConfidence: currentFact?.sourceConfidence ?? null,
-          contradictionReason: review.reason,
-          createdAt: review.createdAt,
-        };
-      })
-    );
+    // Build a map: factKey -> most recent current fact
+    const currentFactMap = new Map<string, typeof currentFacts[0]>();
+    for (const fact of currentFacts) {
+      if (!currentFactMap.has(fact.factKey)) {
+        currentFactMap.set(fact.factKey, fact);
+      }
+    }
+
+    const reviewsWithContext = pendingReviews.map((review) => {
+      const currentFact = currentFactMap.get(review.factKey) ?? null;
+      return {
+        id: review.id,
+        factKey: review.factKey,
+        category: review.category,
+        newValue: review.value,
+        newDisplayValue: review.displayValue,
+        newSource: review.source,
+        newConfidence: review.sourceConfidence,
+        existingValue: currentFact?.value ?? null,
+        existingDisplayValue: currentFact?.displayValue ?? null,
+        existingSource: currentFact?.source ?? null,
+        existingConfidence: currentFact?.sourceConfidence ?? null,
+        contradictionReason: review.reason,
+        createdAt: review.createdAt,
+      };
+    });
 
     return NextResponse.json({ data: reviewsWithContext });
   } catch (error) {
-    console.error("Error fetching reviews:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch reviews" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch reviews");
   }
 }
 
@@ -107,7 +115,7 @@ export async function POST(
     const body = await request.json();
 
     // Validate dealId format
-    if (!dealId || dealId.length < 10) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID" },
         { status: 400 }
@@ -206,10 +214,6 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error resolving review:", error);
-    return NextResponse.json(
-      { error: "Failed to resolve review" },
-      { status: 500 }
-    );
+    return handleApiError(error, "resolve review");
   }
 }

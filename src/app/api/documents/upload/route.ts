@@ -9,6 +9,7 @@ import { extractFromExcel, summarizeForLLM } from "@/services/excel";
 import { extractFromDocx } from "@/services/docx";
 import { extractFromPptx } from "@/services/pptx";
 import { uploadFile } from "@/services/storage";
+import { handleApiError } from "@/lib/api-error";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -490,12 +491,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error uploading document:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to upload document" },
-      { status: 500 }
-    );
+    return handleApiError(error, "upload document");
   }
 }

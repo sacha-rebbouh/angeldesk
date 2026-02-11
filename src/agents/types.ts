@@ -18,6 +18,8 @@ export interface AgentContext {
     name: string;
     type: string;
     extractedText?: string | null;
+    /** Date of upload/import — used for document chronology awareness */
+    uploadedAt?: Date;
   }[];
   previousResults?: Record<string, AgentResult>;
 }
@@ -144,6 +146,17 @@ export interface ExtractedDealInfo {
   financialDataAsOf?: string; // Date of the most recent REAL data (not projections)
   projectionReliability?: "very_low" | "low" | "medium" | "high";
   financialRedFlags?: string[]; // Detected issues: absurd growth, inconsistencies, etc.
+
+  // Per-field reliability classification (CRITICAL - prevents treating projections as facts)
+  // Maps field names to their reliability classification
+  dataClassifications?: Record<string, {
+    reliability: "AUDITED" | "VERIFIED" | "DECLARED" | "PROJECTED" | "ESTIMATED" | "UNVERIFIABLE";
+    isProjection: boolean;
+    reasoning: string; // Why this classification
+    documentDate?: string; // When the document was created
+    dataPeriodEnd?: string; // End of the period this data covers
+    projectionPercent?: number; // % of the period that is projected
+  }>;
 
   // Fundraising
   amountRaising?: number;
@@ -382,10 +395,11 @@ export interface DeckClaimVerification {
   category: "market" | "traction" | "financials" | "tech" | "timing" | "competition" | "team";
   claim: string; // Citation EXACTE du deck
   location: string; // "Slide 5" ou "Executive Summary, p.2"
-  status: "VERIFIED" | "UNVERIFIED" | "CONTRADICTED" | "EXAGGERATED" | "MISLEADING";
+  status: "VERIFIED" | "UNVERIFIED" | "CONTRADICTED" | "EXAGGERATED" | "MISLEADING" | "PROJECTION_AS_FACT";
   evidence: string; // POURQUOI ce status
-  sourceUsed: string; // "Context Engine", "Calcul: X/Y = Z", etc.
+  sourceUsed: string; // "Context Engine", "Calcul: X/Y = Z", "Analyse temporelle", etc.
   investorImplication: string;
+  dataReliability?: "AUDITED" | "VERIFIED" | "DECLARED" | "PROJECTED" | "ESTIMATED" | "UNVERIFIABLE";
 }
 
 /** Inconsistance narrative détectée */
@@ -457,6 +471,7 @@ export interface FinancialAuditFindings {
     percentile?: number;
     source: string;
     assessment: string;
+    dataReliability?: "AUDITED" | "VERIFIED" | "DECLARED" | "PROJECTED" | "ESTIMATED" | "UNVERIFIABLE";
   }[];
   projections: {
     realistic: boolean;

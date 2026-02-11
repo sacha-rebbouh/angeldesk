@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
 import { extractTextFromPDFUrl, type ExtractionWarning } from "@/services/pdf/extractor";
+import { handleApiError } from "@/lib/api-error";
 
 // CUID validation schema
 const cuidSchema = z.string().cuid();
@@ -125,12 +126,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error processing document:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to process document" },
-      { status: 500 }
-    );
+    return handleApiError(error, "process document");
   }
 }

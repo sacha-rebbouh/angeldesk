@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import type { BAPreferences } from "@/services/benchmarks";
 import { DEFAULT_BA_PREFERENCES } from "@/services/benchmarks";
+import { handleApiError } from "@/lib/api-error";
 
 /**
  * GET /api/user/preferences
@@ -21,11 +22,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("Error fetching preferences:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch preferences" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch preferences");
   }
 }
 
@@ -111,10 +108,6 @@ export async function PUT(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error updating preferences:", error);
-    return NextResponse.json(
-      { error: "Failed to update preferences" },
-      { status: 500 }
-    );
+    return handleApiError(error, "update preferences");
   }
 }

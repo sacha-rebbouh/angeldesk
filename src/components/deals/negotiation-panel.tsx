@@ -422,7 +422,7 @@ const TradeOffCard = memo(function TradeOffCard({
 // Main Component
 // =============================================================================
 
-export function NegotiationPanel({
+export const NegotiationPanel = memo(function NegotiationPanel({
   strategy,
   onUpdatePointStatus,
   onReanalyzeWithTerms,
@@ -689,4 +689,4 @@ export function NegotiationPanel({
       )}
     </Card>
   );
-}
+});

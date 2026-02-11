@@ -98,8 +98,7 @@ export function generateDealFingerprint(deal: DealWithRelations): string {
 export async function lookupCachedAnalysis(
   dealId: string,
   mode: string,
-  fingerprint: string,
-  useReAct: boolean
+  fingerprint: string
 ): Promise<AnalysisCacheLookupResult> {
   // Find most recent completed analysis for this deal + mode
   const analysis = await prisma.analysis.findFirst({
@@ -107,7 +106,6 @@ export async function lookupCachedAnalysis(
       dealId,
       mode,
       status: "COMPLETED",
-      useReAct,
     },
     orderBy: {
       completedAt: "desc",
@@ -216,7 +214,6 @@ export async function getDealCacheStats(dealId: string) {
       completedAt: true,
       totalCost: true,
       totalTimeMs: true,
-      useReAct: true,
     },
     orderBy: {
       completedAt: "desc",
@@ -229,7 +226,7 @@ export async function getDealCacheStats(dealId: string) {
     totalAnalyses: analyses.length,
     byMode: analyses.reduce(
       (acc, a) => {
-        const key = `${a.mode}${a.useReAct ? "_react" : ""}`;
+        const key = `${a.mode ?? "unknown"}`;
         if (!acc[key]) {
           acc[key] = {
             count: 0,

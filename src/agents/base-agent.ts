@@ -574,13 +574,94 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 ${sanitizedDeal.description}
 `;
 
+    // Inject data reliability classifications from document-extractor
+    const extractedInfo = this.getExtractedInfo(context);
+    if (extractedInfo) {
+      const classifications = extractedInfo.dataClassifications as Record<string, {
+        reliability: string;
+        isProjection: boolean;
+        reasoning: string;
+        documentDate?: string;
+        projectionPercent?: number;
+      }> | undefined;
+
+      if (classifications && Object.keys(classifications).length > 0) {
+        text += `\n## CLASSIFICATION DE FIABILITÉ DES DONNÉES\n`;
+        text += `**CRITIQUE:** Les données ci-dessous sont classifiées par niveau de fiabilité.\n`;
+        text += `Ne JAMAIS traiter une donnée [PROJECTED] comme un fait avéré.\n\n`;
+
+        const projectedFields: string[] = [];
+        for (const [field, classif] of Object.entries(classifications)) {
+          const tag = `[${classif.reliability}]`;
+          const projectionNote = classif.isProjection && classif.projectionPercent
+            ? ` (${classif.projectionPercent}% projeté)`
+            : classif.isProjection ? ' (projection)' : '';
+          text += `- **${field}**: ${tag}${projectionNote} — ${classif.reasoning}\n`;
+          if (classif.isProjection) projectedFields.push(field);
+        }
+
+        if (projectedFields.length > 0) {
+          text += `\n**ALERTE:** Les champs suivants sont des PROJECTIONS, pas des faits: ${projectedFields.join(', ')}\n`;
+        }
+        text += `\n`;
+      }
+
+      // Also inject financial data type summary
+      const financialDataType = extractedInfo.financialDataType as string | undefined;
+      const financialDataAsOf = extractedInfo.financialDataAsOf as string | undefined;
+      if (financialDataType) {
+        text += `## Qualification des données financières\n`;
+        text += `- Type: **${financialDataType.toUpperCase()}**\n`;
+        if (financialDataAsOf) {
+          text += `- Dernier chiffre réel: ${financialDataAsOf}\n`;
+        }
+        const redFlags = extractedInfo.financialRedFlags as string[] | undefined;
+        if (redFlags && redFlags.length > 0) {
+          text += `- Alertes: ${redFlags.join('; ')}\n`;
+        }
+        text += `\n`;
+      }
+    }
+
+    // Add founders/team from DB (always available via deal.founders relation)
+    const dealWithFounders = deal as unknown as {
+      founders?: Array<{ name: string; role: string; linkedinUrl?: string | null }>;
+    };
+    if (dealWithFounders.founders && dealWithFounders.founders.length > 0) {
+      text += `\n## Équipe Fondatrice (${dealWithFounders.founders.length} membre${dealWithFounders.founders.length > 1 ? "s" : ""})\n`;
+      for (const f of dealWithFounders.founders) {
+        const name = sanitizeName(f.name);
+        const role = f.role ? sanitizeName(f.role) : "Rôle non spécifié";
+        text += `- **${name}** — ${role}`;
+        if (f.linkedinUrl) {
+          text += ` | LinkedIn: ${sanitizeName(f.linkedinUrl)}`;
+        }
+        text += "\n";
+      }
+    }
+
     if (documents && documents.length > 0) {
-      text += `\n## Documents\n`;
-      for (const doc of documents) {
+      // Sort documents by uploadedAt (oldest first) for chronological context
+      const sortedDocs = [...documents].sort((a, b) => {
+        const dateA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
+        const dateB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
+        return dateA - dateB;
+      });
+
+      text += `\n## Documents (par ordre chronologique d'import)\n`;
+      text += `**IMPORTANT — CHRONOLOGIE:** Les documents sont listés du plus ancien au plus récent.\n`;
+      text += `Les documents ajoutés après le deck initial peuvent contenir des clarifications,\n`;
+      text += `mises à jour ou réponses à des questions. En cas de divergence entre un document\n`;
+      text += `récent et le deck initial, le document récent fait foi (sauf preuve contraire).\n\n`;
+
+      for (const doc of sortedDocs) {
         // Sanitize document name and type
         const sanitizedDocName = sanitizeName(doc.name);
         const sanitizedDocType = sanitizeName(doc.type);
-        text += `\n### ${sanitizedDocName} (${sanitizedDocType})\n`;
+        const dateLabel = doc.uploadedAt
+          ? new Date(doc.uploadedAt).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+          : "date inconnue";
+        text += `\n### ${sanitizedDocName} (${sanitizedDocType}) — importé le ${dateLabel}\n`;
         if (doc.extractedText) {
           // Financial models need more content (multiple sheets)
           const limit = doc.type === "FINANCIAL_MODEL" ? 50000 : 10000;
@@ -814,16 +895,80 @@ ${sanitizedDeal.description}
       preserveNewlines: true,
     });
 
-    return `
+    let output = `
 ## DONNÉES EXTRAITES (Fact Store)
 
 Les données ci-dessous ont été extraites des documents du deal.
-**ATTENTION:** Les faits marqués "⚠️ UNVERIFIED CLAIM" ou avec confidence < 80% sont des DÉCLARATIONS
-du fondateur, PAS des faits vérifiés. Ne les utilise JAMAIS comme preuves dans ton analyse.
-Base-toi sur les faits vérifiés (✅). Si un fait important manque, signale-le.
+Chaque donnée est classifiée par niveau de fiabilité (voir légende dans le Fact Store).
+
+**RÈGLES CRITIQUES D'UTILISATION DES DONNÉES:**
+1. [AUDITED] et [VERIFIED] → Utilisables comme faits établis
+2. [DECLARED] → Écrire "le fondateur déclare X", JAMAIS "X est de..."
+3. [PROJECTED] → Écrire "le BP projette X" ou "selon les projections, X". JAMAIS traiter comme un fait avéré.
+4. [ESTIMATED] → Mentionner que c'est un calcul/estimation
+5. [UNVERIFIABLE] → Ne PAS utiliser comme base d'analyse
+
+Si une donnée clé (CA, ARR, clients) est [PROJECTED], tu DOIS:
+- Le signaler explicitement dans ton analyse
+- Générer une question au fondateur pour obtenir les chiffres réels
+- Ajuster ton évaluation en conséquence (score pénalisé si données non vérifiées)
 
 ${sanitizedFactStore}
 `;
+
+    // Append founder Q&A responses if available
+    const founderQA = this.formatFounderResponses(context);
+    if (founderQA) {
+      output += founderQA;
+    }
+
+    return output;
+  }
+
+  /**
+   * Format founder Q&A responses for injection into agent prompts.
+   * This gives agents chronological context: these are ANSWERS to questions
+   * raised by previous analyses — NOT contradictions or new claims.
+   */
+  protected formatFounderResponses(context: EnrichedAgentContext): string {
+    const responses = context.founderResponses;
+    if (!responses || responses.length === 0) {
+      return "";
+    }
+
+    let text = `
+## CLARIFICATIONS DU FONDATEUR (Q&A)
+
+**IMPORTANT — CHRONOLOGIE:**
+Les réponses ci-dessous ont été fournies par le fondateur EN RÉPONSE à des questions
+soulevées lors d'analyses précédentes. Ces informations CLARIFIENT ou COMPLÈTENT
+les données du deck initial. Ne les traite PAS comme des incohérences ou contradictions
+avec le deck — ce sont des réponses à des questions posées APRÈS le deck.
+
+Si une réponse du fondateur contredit des données vérifiées par ailleurs, signale-le.
+Mais si une réponse apporte simplement une information nouvelle ou précise un point
+du deck, intègre-la comme clarification.
+
+`;
+
+    // Group by category for readability
+    const byCategory = new Map<string, typeof responses>();
+    for (const r of responses) {
+      const cat = r.category || "general";
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat)!.push(r);
+    }
+
+    for (const [category, items] of byCategory) {
+      text += `### ${category}\n`;
+      for (const item of items) {
+        const sanitizedQ = sanitizeForLLM(item.question, { maxLength: 500, preserveNewlines: false });
+        const sanitizedA = sanitizeForLLM(item.answer, { maxLength: 2000, preserveNewlines: true });
+        text += `- **Q:** ${sanitizedQ}\n  **R:** ${sanitizedA}\n\n`;
+      }
+    }
+
+    return text;
   }
 
   // Standard guidance for confidence calculation - use in agent prompts

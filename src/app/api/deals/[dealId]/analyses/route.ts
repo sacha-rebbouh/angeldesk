@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-
-// CUID validation pattern
-const CUID_PATTERN = /^c[a-z0-9]{20,30}$/;
+import { isValidCuid } from "@/lib/sanitize";
+import { handleApiError } from "@/lib/api-error";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -18,7 +17,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     const user = await requireAuth();
     const { dealId } = await context.params;
 
-    if (!dealId || !CUID_PATTERN.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -77,10 +76,6 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       },
     });
   } catch (error) {
-    console.error("[Analyses API] Error fetching latest analysis:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch analysis status" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch analysis status");
   }
 }

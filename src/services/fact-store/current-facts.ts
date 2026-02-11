@@ -279,9 +279,21 @@ export function formatFactStoreForAgents(facts: CurrentFact[]): string {
   // Build formatted output
   const lines: string[] = ['## Fact Store'];
   lines.push('');
-  lines.push('The following facts have been extracted from documents.');
-  lines.push('**ATTENTION:** Facts with confidence < 80% or sourced from DECK are UNVERIFIED CLAIMS.');
-  lines.push('Do NOT treat unverified claims as established facts in your analysis.');
+  lines.push('Les donnees ci-dessous ont ete extraites des documents du deal.');
+  lines.push('');
+  lines.push('### LEGENDE FIABILITE DES DONNEES');
+  lines.push('');
+  lines.push('| Icone | Niveau | Signification | Comment utiliser |');
+  lines.push('|-------|--------|---------------|-----------------|');
+  lines.push('| [AUDITED] | AUDITE | Confirme par audit externe/releve bancaire | Fait etabli, utilisable comme preuve |');
+  lines.push('| [VERIFIED] | VERIFIE | Recoupe par plusieurs sources | Haute confiance, utilisable |');
+  lines.push('| [DECLARED] | DECLARE | Annonce dans le deck, non verifie | NE PAS traiter comme fait avere. Dire "le fondateur declare X" |');
+  lines.push('| [PROJECTED] | PROJETE | Projection/forecast/BP, inclut des donnees futures | CRITIQUE: ce n\'est PAS un fait. Dire "le BP projette X" |');
+  lines.push('| [ESTIMATED] | ESTIME | Calcule par l\'IA a partir de donnees partielles | Utiliser avec prudence, mentionner le calcul |');
+  lines.push('| [UNVERIFIABLE] | NON VERIFIABLE | Impossible a verifier | Ne PAS utiliser comme base d\'analyse |');
+  lines.push('');
+  lines.push('**REGLE CRITIQUE:** Ne JAMAIS ecrire "le CA est de X" si la fiabilite est PROJECTED ou DECLARED.');
+  lines.push('Ecrire a la place: "le fondateur declare/projette un CA de X" ou "selon le BP, le CA prevu est de X".');
   lines.push('');
 
   // Define category order for consistent output
@@ -309,11 +321,28 @@ export function formatFactStoreForAgents(facts: CurrentFact[]): string {
       const factDef = getFactKeyDefinition(fact.factKey);
       const label = factDef?.description || formatFactKeyAsLabel(fact.factKey);
 
-      // Build the fact line with verification status
-      const isUnverified = fact.currentConfidence < 80 || fact.currentSource === 'PITCH_DECK';
-      let factLine = isUnverified
-        ? `- **${label}**: ${fact.currentDisplayValue} ⚠️ UNVERIFIED CLAIM`
-        : `- **${label}**: ${fact.currentDisplayValue} ✅`;
+      // Build reliability tag
+      const rel = fact.reliability;
+      const reliabilityTag = rel ? `[${rel.reliability}]` : '[DECLARED]';
+      const isProjection = rel?.isProjection === true;
+      const projectionWarning = isProjection && rel?.temporalAnalysis?.projectionPercent
+        ? ` (${rel.temporalAnalysis.projectionPercent}% projete)`
+        : isProjection ? ' (projection)' : '';
+
+      // Build the fact line with reliability classification
+      let factLine: string;
+      if (rel?.reliability === 'AUDITED' || rel?.reliability === 'VERIFIED') {
+        factLine = `- **${label}**: ${fact.currentDisplayValue} ${reliabilityTag}`;
+      } else if (isProjection) {
+        factLine = `- **${label}**: ${fact.currentDisplayValue} ${reliabilityTag}${projectionWarning}`;
+      } else {
+        factLine = `- **${label}**: ${fact.currentDisplayValue} ${reliabilityTag}`;
+      }
+
+      // Add reliability reasoning if it's a projection or estimated
+      if (rel?.reasoning && (isProjection || rel.reliability === 'ESTIMATED')) {
+        factLine += ` — ${rel.reasoning}`;
+      }
 
       // Add confidence indicator for low confidence
       if (fact.currentConfidence < 80) {

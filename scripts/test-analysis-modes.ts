@@ -22,10 +22,8 @@ async function testAnalysisModes() {
   console.log("-".repeat(40));
 
   const estimates = {
-    tier1_standard: costMonitor.estimateCost("tier1_complete", false),
-    tier1_react: costMonitor.estimateCost("tier1_complete", true),
-    full_standard: costMonitor.estimateCost("full_analysis", false),
-    full_react: costMonitor.estimateCost("full_analysis", true),
+    tier1_standard: costMonitor.estimateCost("tier1_complete"),
+    full_standard: costMonitor.estimateCost("full_analysis"),
   };
 
   console.log("Estimated costs:");
@@ -56,7 +54,6 @@ async function testAnalysisModes() {
       dealId: DEAL_ID,
       type: "full_analysis",
       mode: "express",
-      useReAct: false, // Standard mode for speed
       forceRefresh: true,
       onProgress: (p) => {
         console.log(`  [${p.completedAgents}/${p.totalAgents}] ${p.currentAgent}${p.estimatedCostSoFar ? ` ($${p.estimatedCostSoFar.toFixed(4)})` : ""}`);
@@ -95,7 +92,6 @@ async function testAnalysisModes() {
       dealId: DEAL_ID,
       type: "full_analysis",
       mode: "lite",
-      useReAct: false,
       forceRefresh: true,
       maxCostUsd: 1.0, // Cost limit
       onProgress: (p) => {

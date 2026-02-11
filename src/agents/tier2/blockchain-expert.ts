@@ -27,7 +27,7 @@ import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertResult, SectorExpertData, SectorExpertType, ExtendedSectorData } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
 import { BLOCKCHAIN_STANDARDS } from "./sector-standards";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
 
 // ============================================================================
 // SCHEMA DE SORTIE
@@ -848,11 +848,7 @@ export const blockchainExpert = {
       let parsedOutput: BlockchainExpertOutput;
       let parseValidationIssues: string[] = [];
       try {
-        const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error("No JSON found in response");
-        }
-        const rawJson = JSON.parse(jsonMatch[0]);
+        const rawJson = JSON.parse(extractFirstJSON(response.content));
         const parseResult = BlockchainExpertOutputSchema.safeParse(rawJson);
         if (parseResult.success) {
           parsedOutput = parseResult.data;

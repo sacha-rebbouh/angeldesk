@@ -83,6 +83,7 @@ interface LLMFinancialAuditResponse {
       percentile?: number;
       source: string;
       assessment: string;
+      dataReliability?: "AUDITED" | "VERIFIED" | "DECLARED" | "PROJECTED" | "ESTIMATED" | "UNVERIFIABLE";
     }[];
     projections: {
       realistic: boolean;
@@ -187,14 +188,48 @@ Le BA doit pouvoir prendre une décision et avoir des arguments de négociation.
 
 # METHODOLOGIE D'ANALYSE
 
+## Etape 0: CLASSIFICATION DE FIABILITE (AVANT TOUTE ANALYSE)
+
+AVANT d'analyser les chiffres, tu DOIS classifier la fiabilite de CHAQUE donnee financiere:
+
+| Niveau | Description | Comment l'utiliser dans l'audit |
+|--------|-------------|--------------------------------|
+| AUDITED | Certifie par audit/releve bancaire | Base fiable pour l'analyse |
+| VERIFIED | Recoupe par 2+ sources | Bonne base d'analyse |
+| DECLARED | Annonce dans le deck, non verifie | Mentionner "le fondateur declare X" — PAS "X est de" |
+| PROJECTED | Projection/BP/forecast | CRITIQUE: ecrire "le BP projette X". Penaliser le score si metriques cles sont projetees |
+| ESTIMATED | Calcule par l'IA | Mentionner le calcul et la marge d'erreur |
+| UNVERIFIABLE | Impossible a verifier | Ne PAS baser d'analyse dessus |
+
+DETECTION TEMPORELLE AUTOMATIQUE:
+1. Identifier la DATE DU DOCUMENT (metadata, mention dans le doc, date d'upload)
+2. Pour chaque chiffre annuel/trimestriel: la fin de periode est-elle APRES la date du document?
+3. Si OUI → c'est une PROJECTION, meme si le fondateur le presente comme un fait
+
+EXEMPLE: Un BP date d'aout 2025 qui annonce "CA 2025: 570K€"
+→ Le CA 2025 couvre jan-dec, mais le doc date d'aout
+→ 4 mois sur 12 (33%) sont des projections
+→ Ce n'est PAS un CA realise de 570K€, c'est au mieux ~380K€ de realise + ~190K€ de projection
+→ Red flag + question obligatoire au fondateur
+
+IMPACT SUR LE SCORING:
+- Si l'ARR/Revenue est PROJECTED → penalite de -15 points sur "Data Transparency"
+- Si la valorisation est basee sur des projections → penalite de -20 points sur "Valuation Rationality"
+- Si les unit economics sont PROJECTED → penalite de -10 points sur "Unit Economics Viability"
+
+Pour chaque metrique dans "metrics", ajouter le champ "dataReliability":
+"AUDITED" | "VERIFIED" | "DECLARED" | "PROJECTED" | "ESTIMATED" | "UNVERIFIABLE"
+
 ## Etape 1: Extraction des données financières
 - Parcourir TOUS les documents fournis (pitch deck, financial model Excel)
 - Pour CHAQUE métrique: extraire le chiffre exact avec sa source ("Slide X", "Onglet Y")
-- Si un chiffre est calculable mais non fourni, CALCULER et montrer le calcul
+- Pour CHAQUE métrique: classifier la fiabilite (AUDITED/VERIFIED/DECLARED/PROJECTED/ESTIMATED/UNVERIFIABLE)
+- Si un chiffre est calculable mais non fourni, CALCULER et montrer le calcul (reliability: ESTIMATED)
 - Si vraiment absent, marquer "missing" avec impact sur l'analyse
 
 ## Etape 2: Benchmark vs marché
 - Comparer chaque métrique aux benchmarks fournis (P25, Median, P75)
+- ATTENTION: ne benchmarker que les donnees AUDITED/VERIFIED/DECLARED. Les PROJECTED ne peuvent PAS etre benchmarkees comme des faits.
 - Calculer le percentile exact du deal
 - Identifier les écarts significatifs (>20% de la médiane)
 
@@ -282,7 +317,7 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 
 # EXEMPLES
 
-## Exemple de BON output (métrique):
+## Exemple de BON output (métrique avec fiabilité):
 {
   "metric": "ARR",
   "status": "available",
@@ -292,7 +327,19 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
   "benchmarkMedian": 500000,
   "percentile": 65,
   "source": "Slide 8 + calcul",
-  "assessment": "ARR de 624K€ au-dessus de la médiane Seed (500K€). P65, correct pour le stage."
+  "assessment": "ARR de 624K€ au-dessus de la médiane Seed (500K€). P65, correct pour le stage.",
+  "dataReliability": "ESTIMATED"
+}
+
+## Exemple de BON output (projection détectée):
+{
+  "metric": "Revenue annuel",
+  "status": "suspicious",
+  "reportedValue": 570000,
+  "calculation": "Le BP date d'aout 2025 annonce 570K€ de CA 2025. 4 mois sur 12 sont dans le futur = 33% de projection.",
+  "source": "BP page 5",
+  "assessment": "ATTENTION: Ce chiffre inclut des projections. Le CA réalisé à date du document est probablement ~380K€ (8 mois). Les 190K€ restants sont projetés. Impossible de benchmarker ce chiffre comme un fait.",
+  "dataReliability": "PROJECTED"
 }
 
 ## Exemple de MAUVAIS output (à éviter):
@@ -302,7 +349,7 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
   "reportedValue": 600000,
   "assessment": "ARR correct"
 }
-→ Pas de source, pas de calcul, pas de benchmark, pas de percentile, assessment vague.
+→ Pas de source, pas de calcul, pas de benchmark, pas de percentile, pas de dataReliability, assessment vague.
 
 ## Exemple de BON red flag:
 {
@@ -439,7 +486,8 @@ MONTRE tes calculs.
         "benchmarkP75": number,
         "percentile": number,
         "source": "Slide X, Onglet Y",
-        "assessment": "Analyse détaillée"
+        "assessment": "Analyse détaillée",
+        "dataReliability": "AUDITED|VERIFIED|DECLARED|PROJECTED|ESTIMATED|UNVERIFIABLE — classification de la fiabilite de cette donnee"
       }
     ],
     "projections": {

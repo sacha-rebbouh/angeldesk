@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { generateWeeklyReport } from '@/agents/maintenance/supervisor'
+import { handleApiError } from "@/lib/api-error";
 
 export const runtime = 'nodejs'
 export const maxDuration = 120 // 2 minutes max
@@ -44,11 +45,7 @@ export async function GET(request: NextRequest) {
       totalCost: report.totalCost.toFixed(2),
     })
   } catch (error) {
-    console.error('Weekly report error:', error)
-    return NextResponse.json(
-      { error: 'Report generation failed' },
-      { status: 500 }
-    )
+    return handleApiError(error, "generate weekly report")
   }
 }
 
@@ -86,10 +83,6 @@ export async function POST(request: NextRequest) {
       totalCost: report.totalCost.toFixed(2),
     })
   } catch (error) {
-    console.error('Weekly report error:', error)
-    return NextResponse.json(
-      { error: 'Report generation failed' },
-      { status: 500 }
-    )
+    return handleApiError(error, "generate weekly report")
   }
 }

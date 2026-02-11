@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getLatestAnalysisStaleness, getUnanalyzedDocuments } from "@/services/analysis-versioning";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidCuid } from "@/lib/sanitize";
+import { handleApiError } from "@/lib/api-error";
 
 export async function GET(
   _request: NextRequest,
@@ -19,7 +21,7 @@ export async function GET(
     const { dealId } = await params;
 
     // Validate dealId format (CUID)
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -78,10 +80,6 @@ export async function GET(
       unanalyzedDocuments,
     });
   } catch (error) {
-    console.error("[API] Staleness check failed:", error);
-    return NextResponse.json(
-      { error: "Failed to check staleness" },
-      { status: 500 }
-    );
+    return handleApiError(error, "check staleness");
   }
 }

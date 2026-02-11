@@ -25,7 +25,7 @@ import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertData, SectorExpertResult, SectorExpertType, ExtendedSectorData } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
 import { AI_STANDARDS } from "./sector-standards";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { completeJSON, setAgentContext } from "@/services/openrouter/router";
 
 // ============================================================================
 // AI-SPECIFIC PATTERNS (Qualitative data - stable)
@@ -325,7 +325,10 @@ ${competitors.slice(0, 5).map((c: Record<string, unknown>) =>
 // ============================================================================
 
 function buildSystemPrompt(stage: string): string {
-  return `Tu es un EXPERT AI/ML avec 15 ans d'experience en Due Diligence pour des fonds Tier 1 specialises AI (a16z, Sequoia AI Fund, Greylock).
+  return `## REGLE ABSOLUE DE FORMAT
+Tu DOIS repondre UNIQUEMENT avec un objet JSON valide. Pas de texte, pas de markdown, pas d'introduction, pas de "Voici mon analyse". JUSTE le JSON.
+
+Tu es un EXPERT AI/ML avec 15 ans d'experience en Due Diligence pour des fonds Tier 1 specialises AI (a16z, Sequoia AI Fund, Greylock).
 
 ## TON PROFIL
 - Tu as analyse 300+ startups AI du Seed au Growth
@@ -390,7 +393,10 @@ Chaque dimension:
 - 15-19: Bon (Solide, investissable)
 - 10-14: Acceptable (Concerns mais manageable)
 - 5-9: Concernant (Red flags significatifs)
-- 0-4: Deal breaker (AI-washing ou model casse)`;
+- 0-4: Deal breaker (AI-washing ou model casse)
+
+## RAPPEL FORMAT
+Ta reponse DOIT etre un objet JSON valide et RIEN D'AUTRE. Commence directement par { et termine par }.`;
 }
 
 // ============================================================================
@@ -523,7 +529,34 @@ Verifie au minimum:
 - Score /100 avec breakdown par dimension
 - Executive Summary: 3-4 phrases max, actionnable
 
-IMPORTANT: Sois CRITIQUE. Beaucoup de startups font du AI-washing. Ton role est de proteger l'investisseur.`;
+IMPORTANT: Sois CRITIQUE. Beaucoup de startups font du AI-washing. Ton role est de proteger l'investisseur.
+
+## FORMAT DE SORTIE
+
+Tu DOIS repondre UNIQUEMENT en JSON valide (pas de texte avant/apres, pas de markdown).
+Le JSON doit suivre EXACTEMENT cette structure:
+{
+  "sectorConfidence": number (0-100),
+  "subSector": string,
+  "aiCategory": "application_layer" | "model_layer" | "infrastructure_layer" | "data_layer" | "unclear",
+  "infraAnalysis": { "gpuProvider": string|null, "monthlyComputeCost": number|null, "costPerInference": number|null, "scalingModel": "linear"|"sublinear"|"superlinear"|"unknown", "projectedCostAtScale": number|null, "costAssessment": string, "marginPressureRisk": "low"|"medium"|"high"|"critical" },
+  "modelApproach": { "type": "fine_tuned"|"rag"|"from_scratch"|"api_wrapper"|"hybrid"|"unknown", "baseModel": string|null, "proprietaryComponents": [string], "moatLevel": "none"|"weak"|"moderate"|"strong", "moatRationale": string, "apiDependency": "none"|"partial"|"full", "reproducibilityRisk": "easy"|"medium"|"hard" },
+  "technicalDepth": { "teamMLExperience": number|null, "hasMLPhD": boolean, "papersPublished": number, "topLabAlumni": [string], "openSourceContributions": [string], "previousAICompanies": [string], "depthAssessment": "expert"|"competent"|"basic"|"insufficient"|"unknown", "depthRationale": string },
+  "aiMetrics": { "modelLatency": { "p50": number|null, "p99": number|null }, "accuracy": { "metric": string, "value": number|null, "benchmark": number|null, "assessment": string }, "datasetSize": number|null, "datasetQuality": "proprietary"|"licensed"|"public"|"synthetic"|"unknown", "evaluationMethodology": "rigorous"|"basic"|"unclear"|"none", "metricsAssessment": string },
+  "moatAnalysis": { "dataFlywheel": boolean, "networkEffects": boolean, "switchingCosts": "high"|"medium"|"low", "overallMoatScore": number (0-100), "moatAssessment": string, "competitiveAdvantages": [string], "competitiveWeaknesses": [string] },
+  "primaryMetrics": [{ "metricName": string, "dealValue": number|string|null, "source": string, "benchmark": { "p25": number, "median": number, "p75": number, "topDecile": number }, "percentilePosition": number, "assessment": string, "insight": string }],
+  "redFlags": [{ "flag": string, "severity": "critical"|"major"|"minor", "evidence": string, "impact": string, "questionToAsk": string, "aiSpecific": boolean }],
+  "greenFlags": [{ "flag": string, "strength": "strong"|"moderate", "evidence": string, "implication": string }],
+  "dbComparison": { "similarDealsFound": number, "thisDealsPosition": string },
+  "sectorQuestions": [{ "question": string, "category": string, "priority": "must_ask"|"should_ask"|"nice_to_have", "why": string, "greenFlagAnswer": string, "redFlagAnswer": string }],
+  "aiVerdict": { "isRealAI": boolean, "technicalCredibility": "high"|"medium"|"low", "moatStrength": "strong"|"moderate"|"weak"|"none", "scalabilityRisk": "low"|"medium"|"high", "recommendation": "STRONG_AI_PLAY"|"SOLID_AI_PLAY"|"AI_CONCERNS"|"NOT_REAL_AI", "keyInsight": string },
+  "sectorScore": number (0-100),
+  "scoreBreakdown": { "technicalDepth": number (0-25), "moatStrength": number (0-25), "unitEconomics": number (0-25), "scalability": number (0-25) },
+  "executiveSummary": string,
+  "dbCrossReference": { "claims": [], "hiddenCompetitors": [] },
+  "sectorFitScore": number (0-100),
+  "dataCompleteness": { "level": "complete"|"partial"|"minimal", "availableDataPoints": number, "expectedDataPoints": number, "missingCritical": [string], "limitations": [string] }
+}`;
 }
 
 // ============================================================================
@@ -745,7 +778,7 @@ export const aiExpert = {
 
       setAgentContext("ai-expert");
 
-      const response = await complete(userPromptText, {
+      const response = await completeJSON<AIExpertOutput>(userPromptText, {
         systemPrompt: systemPromptText,
         complexity: "complex",
         temperature: 0.3,
@@ -753,29 +786,12 @@ export const aiExpert = {
 
       // Parse and validate response
       let parsedOutput: AIExpertOutput;
-      try {
-        const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error("No JSON found in response");
-        }
-        const rawJson = JSON.parse(jsonMatch[0]);
-        const parseResult = AIOutputSchema.safeParse(rawJson);
-        if (parseResult.success) {
-          parsedOutput = parseResult.data;
-        } else {
-          console.warn(`[ai-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
-          parsedOutput = rawJson as AIExpertOutput;
-        }
-      } catch (parseError) {
-        console.error("[ai-expert] Parse error:", parseError);
-        return {
-          agentName: "ai-expert",
-          success: false,
-          executionTimeMs: Date.now() - startTime,
-          cost: response.cost ?? 0,
-          error: `Failed to parse LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
-          data: getDefaultData(),
-        };
+      const parseResult = AIOutputSchema.safeParse(response.data);
+      if (parseResult.success) {
+        parsedOutput = parseResult.data;
+      } else {
+        console.warn(`[ai-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw data with defaults`);
+        parsedOutput = response.data as AIExpertOutput;
       }
 
       // ── Data completeness assessment & score capping ──

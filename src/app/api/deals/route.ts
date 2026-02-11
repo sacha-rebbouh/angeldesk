@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/sanitize";
 import { DealStage } from "@prisma/client";
+import { handleApiError } from "@/lib/api-error";
 
 const createDealSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -53,7 +54,14 @@ export async function GET(request: NextRequest) {
       prisma.deal.findMany({
         where,
         include: {
-          founders: true,
+          founders: {
+            select: {
+              id: true,
+              name: true,
+              role: true,
+              linkedinUrl: true,
+            },
+          },
           documents: {
             select: {
               id: true,
@@ -94,13 +102,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error fetching deals:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to fetch deals" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch deals");
   }
 }
 
@@ -129,26 +131,17 @@ export async function POST(request: NextRequest) {
         userId: user.id,
       },
       include: {
-        founders: true,
-        documents: true,
+        founders: {
+          select: { id: true, name: true, role: true, linkedinUrl: true },
+        },
+        documents: {
+          select: { id: true, name: true, type: true, processingStatus: true },
+        },
       },
     });
 
     return NextResponse.json({ data: deal }, { status: 201 });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation error", details: error.issues },
-        { status: 400 }
-      );
-    }
-
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error creating deal:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to create deal" },
-      { status: 500 }
-    );
+    return handleApiError(error, "create deal");
   }
 }

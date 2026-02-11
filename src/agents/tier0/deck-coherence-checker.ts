@@ -143,6 +143,30 @@ L'objectif: s'assurer que les chiffres tiennent debout mathematiquement et logiq
 | Timeline gaps | Chiffres de periodes differentes presentes comme actuels |
 | Rounding issues | 1.2M sur slide 5, 1.18M sur slide 12 |
 
+## 2b. PROJECTIONS PRESENTEES COMME DES FAITS (type: "inconsistency", severity: "critical")
+
+C'est l'un des problemes les plus graves et les plus courants dans les pitch decks.
+
+DETECTION:
+1. Identifier la DATE DU DOCUMENT (metadata, mention dans le texte, ou date d'upload)
+2. Pour chaque chiffre financier annuel (CA, ARR, revenue):
+   - La fin de la periode depasse-t-elle la date du document?
+   - Si OUI: le chiffre inclut des projections, ce n'est PAS un chiffre realise
+3. Pour les documents types "Business Plan", "BP", "Forecast", "Projections":
+   - TOUT chiffre futur est une projection par definition
+4. Signaux supplementaires:
+   - Mots: "prevu", "objectif", "target", "projete", "forecast", "budget"
+   - Colonnes: "2025E", "2026P", "Prev."
+   - Chiffres parfaitement ronds sans historique
+   - Croissance lineaire ou exponentielle parfaite
+
+EXEMPLE:
+- Document = BP aout 2025, chiffre = "CA 2025: 570K€"
+- Le CA 2025 couvre jan-dec, document date d'aout → 4 mois de projection
+- Issue: "Le CA annuel 2025 de 570K€ annonce dans le BP est presente comme un chiffre realise, mais le document date d'aout 2025. Sept-Dec (4 mois = 33%) sont des projections. Le CA reellement realise a date est probablement ~380K€."
+- Severity: critical
+- Recommendation: "Demander au fondateur les chiffres realises YTD et les projections separement"
+
 ## 3. DONNEES MANQUANTES CRITIQUES (type: "missing")
 
 Pour un deck Seed/Series A, ces donnees sont OBLIGATOIRES:

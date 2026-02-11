@@ -60,100 +60,105 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
 
   return (
     <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Nom</TableHead>
-            <TableHead>Secteur</TableHead>
-            <TableHead>Stade</TableHead>
-            <TableHead>Valorisation</TableHead>
-            <TableHead>Statut</TableHead>
-            <TableHead>Alerts</TableHead>
-            <TableHead>Mis à jour</TableHead>
-            <TableHead className="w-[100px]"></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {deals.map((deal) => {
-            const criticalFlags = deal.redFlags.filter(
-              (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
-            ).length;
+      <div className="overflow-x-auto -mx-4 sm:mx-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Nom</TableHead>
+              <TableHead className="hidden sm:table-cell">Secteur</TableHead>
+              <TableHead className="hidden lg:table-cell">Stade</TableHead>
+              <TableHead className="hidden md:table-cell">Valorisation</TableHead>
+              <TableHead>Statut</TableHead>
+              <TableHead>Alerts</TableHead>
+              <TableHead className="hidden md:table-cell">Mis à jour</TableHead>
+              <TableHead className="w-[80px]"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {deals.map((deal) => {
+              const criticalFlags = deal.redFlags.filter(
+                (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
+              ).length;
 
-            return (
-              <TableRow
-                key={deal.id}
-                className="cursor-pointer"
-                onClick={() => router.push(`/deals/${deal.id}`)}
-              >
-                <TableCell className="font-medium">
-                  {deal.name}
-                  {deal.website && (
-                    <a
-                      href={deal.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-2 inline-flex"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                    </a>
-                  )}
-                </TableCell>
-                <TableCell>{deal.sector ?? "-"}</TableCell>
-                <TableCell>{getStageLabel(deal.stage)}</TableCell>
-                <TableCell>{formatCurrencyEUR(deal.valuationPre)}</TableCell>
-                <TableCell>
-                  <Badge variant="secondary" className={getStatusColor(deal.status)}>
-                    {getStatusLabel(deal.status)}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  {criticalFlags > 0 ? (
-                    <div className="flex items-center gap-1 text-destructive">
-                      <AlertTriangle className="h-4 w-4" />
-                      <span>{criticalFlags}</span>
+              return (
+                <TableRow
+                  key={deal.id}
+                  className="cursor-pointer"
+                  tabIndex={0}
+                  role="link"
+                  onClick={() => router.push(`/deals/${deal.id}`)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); router.push(`/deals/${deal.id}`); } }}
+                >
+                  <TableCell className="font-medium max-w-[200px] truncate">
+                    {deal.name}
+                    {deal.website && (
+                      <a
+                        href={deal.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-2 inline-flex"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                      </a>
+                    )}
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">{deal.sector ?? "-"}</TableCell>
+                  <TableCell className="hidden lg:table-cell">{getStageLabel(deal.stage)}</TableCell>
+                  <TableCell className="hidden md:table-cell">{formatCurrencyEUR(deal.valuationPre)}</TableCell>
+                  <TableCell>
+                    <Badge variant="secondary" className={getStatusColor(deal.status)}>
+                      {getStatusLabel(deal.status)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {criticalFlags > 0 ? (
+                      <div className="flex items-center gap-1 text-destructive">
+                        <AlertTriangle className="h-4 w-4" />
+                        <span>{criticalFlags}</span>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell text-muted-foreground">
+                    {formatDistanceToNow(new Date(deal.updatedAt), {
+                      addSuffix: true,
+                      locale: fr,
+                    })}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-1">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={(e) => openRename(deal, e)}>
+                            <Pencil className="h-4 w-4 mr-2" />
+                            Renommer
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={(e) => openDelete(deal, e)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Supprimer
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     </div>
-                  ) : (
-                    <span className="text-muted-foreground">-</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {formatDistanceToNow(new Date(deal.updatedAt), {
-                    addSuffix: true,
-                    locale: fr,
-                  })}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center justify-end gap-1">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={(e) => openRename(deal, e)}>
-                          <Pencil className="h-4 w-4 mr-2" />
-                          Renommer
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={(e) => openDelete(deal, e)}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Supprimer
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
 
       <DealRenameDialog
         dealName={renameDeal?.name}

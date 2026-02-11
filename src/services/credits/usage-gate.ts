@@ -147,14 +147,9 @@ export async function getUserQuotaInfo(
 // ============================================================================
 
 async function getOrCreateUsage(userId: string) {
-  const existing = await prisma.userDealUsage.findUnique({
+  return prisma.userDealUsage.upsert({
     where: { userId },
-  });
-
-  if (existing) return existing;
-
-  return prisma.userDealUsage.create({
-    data: {
+    create: {
       userId,
       monthlyLimit: 3,
       usedThisMonth: 0,
@@ -163,6 +158,7 @@ async function getOrCreateUsage(userId: string) {
       tier3Count: 0,
       lastResetAt: new Date(),
     },
+    update: {},
   });
 }
 

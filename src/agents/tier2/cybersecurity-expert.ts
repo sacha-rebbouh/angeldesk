@@ -25,7 +25,7 @@ import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertData, SectorExpertResult, SectorExpertType, ExtendedSectorData } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
 import { CYBERSECURITY_STANDARDS } from "./sector-standards";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
 
 // ============================================================================
 // CYBERSECURITY-SPECIFIC PATTERNS (Qualitative data - stable)
@@ -739,11 +739,7 @@ export const cybersecurityExpert = {
       // Parse and validate response
       let parsedOutput: CybersecurityExpertOutput;
       try {
-        const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error("No JSON found in response");
-        }
-        const rawJson = JSON.parse(jsonMatch[0]);
+        const rawJson = JSON.parse(extractFirstJSON(response.content));
         const parseResult = CyberOutputSchema.safeParse(rawJson);
         if (parseResult.success) {
           parsedOutput = parseResult.data;

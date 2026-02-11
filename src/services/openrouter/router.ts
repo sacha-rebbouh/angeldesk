@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { openrouter, MODELS, type ModelKey } from "./client";
 import { getCircuitBreaker, CircuitOpenError } from "./circuit-breaker";
 import { costMonitor } from "@/services/cost-monitor";
@@ -11,38 +12,84 @@ import {
 
 export type TaskComplexity = "simple" | "medium" | "complex" | "critical";
 
-// Current agent context for cost tracking
-let currentAgentContext: string | null = null;
+// ============================================================================
+// REQUEST-SCOPED CONTEXT (thread-safe via AsyncLocalStorage)
+// ============================================================================
 
-// Current analysis context for LLM logging
+interface LLMContext {
+  agentName: string | null;
+  analysisId: string | null;
+}
+
+const llmContextStorage = new AsyncLocalStorage<LLMContext>();
+
+// Legacy globals kept as fallback for code not yet wrapped in runWithLLMContext
+let currentAgentContext: string | null = null;
 let currentAnalysisContext: string | null = null;
+
+/**
+ * Run a function with request-scoped LLM context (thread-safe).
+ * Use this in the orchestrator to wrap analysis execution.
+ */
+export function runWithLLMContext<T>(
+  context: { agentName?: string | null; analysisId?: string | null },
+  fn: () => T
+): T {
+  return llmContextStorage.run(
+    { agentName: context.agentName ?? null, analysisId: context.analysisId ?? null },
+    fn
+  );
+}
 
 /**
  * Set the current agent context for cost tracking
  */
 export function setAgentContext(agentName: string | null): void {
-  currentAgentContext = agentName;
+  const store = llmContextStorage.getStore();
+  if (store) {
+    store.agentName = agentName;
+  }
+  currentAgentContext = agentName; // Legacy fallback
 }
 
 /**
  * Get current agent context
  */
 export function getAgentContext(): string | null {
-  return currentAgentContext;
+  const store = llmContextStorage.getStore();
+  return store?.agentName ?? currentAgentContext;
 }
 
 /**
  * Set the current analysis context for LLM logging
  */
 export function setAnalysisContext(analysisId: string | null): void {
-  currentAnalysisContext = analysisId;
+  const store = llmContextStorage.getStore();
+  if (store) {
+    store.analysisId = analysisId;
+  }
+  currentAnalysisContext = analysisId; // Legacy fallback
 }
 
 /**
  * Get current analysis context
  */
 export function getAnalysisContext(): string | null {
-  return currentAnalysisContext;
+  const store = llmContextStorage.getStore();
+  return store?.analysisId ?? currentAnalysisContext;
+}
+
+// ============================================================================
+// LANGUAGE INSTRUCTION (injected into all system prompts)
+// ============================================================================
+
+const FRENCH_LANGUAGE_INSTRUCTION = `
+LANGUE DE SORTIE (OBLIGATOIRE): TOUTE ta réponse (texte libre, descriptions, analyses, commentaires, titres de sections, recommandations, questions, red flags) DOIT être rédigée en FRANÇAIS.
+Exceptions (restent en anglais): clés JSON, valeurs d'enum (CRITICAL, HIGH, PROCEED, FAIR, etc.), acronymes techniques (ARR, MRR, CAGR, CAC, LTV, TAM, etc.), noms propres.`;
+
+function withLanguageInstruction(systemPrompt: string | undefined): string | undefined {
+  if (!systemPrompt) return FRENCH_LANGUAGE_INSTRUCTION.trim();
+  return `${systemPrompt}\n\n${FRENCH_LANGUAGE_INSTRUCTION}`;
 }
 
 // ============================================================================
@@ -139,6 +186,7 @@ export interface CompletionOptions {
   temperature?: number;
   systemPrompt?: string;
   maxRetries?: number; // Override default retries (for Sonnet agents: 1 = 2 attempts)
+  responseFormat?: { type: "json_object" | "text" }; // Force JSON mode at API level
 }
 
 export interface CompletionResult {
@@ -163,6 +211,7 @@ export async function complete(
     temperature = 0.7,
     systemPrompt,
     maxRetries = RATE_LIMIT_CONFIG.maxRetries,
+    responseFormat,
   } = options;
   if (process.env.NODE_ENV === 'development') {
     console.log(`[complete] maxTokens=${maxTokens}`);
@@ -181,8 +230,9 @@ export async function complete(
 
   const messages: Array<{ role: "system" | "user"; content: string }> = [];
 
-  if (systemPrompt) {
-    messages.push({ role: "system", content: systemPrompt });
+  const effectiveSystemPrompt = withLanguageInstruction(systemPrompt);
+  if (effectiveSystemPrompt) {
+    messages.push({ role: "system", content: effectiveSystemPrompt });
   }
 
   messages.push({ role: "user", content: prompt });
@@ -222,6 +272,7 @@ export async function complete(
           messages,
           max_tokens: maxTokens,
           temperature,
+          ...(responseFormat ? { response_format: responseFormat } : {}),
         })
       );
 
@@ -342,7 +393,8 @@ export async function complete(
 }
 
 // Extract the first valid JSON object from a string (handles trailing text)
-function extractFirstJSON(content: string): string {
+// Exported for use by agents that call complete() instead of completeJSON()
+export function extractFirstJSON(content: string): string {
   // Try multiple approaches to extract JSON
 
   // Approach 1: Extract from markdown code blocks (handle different backtick styles)
@@ -526,11 +578,12 @@ export async function completeJSON<T>(
   usage?: { inputTokens: number; outputTokens: number };
 }> {
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[completeJSON] Calling complete with maxTokens=${options.maxTokens ?? 'default'}`);
+    console.log(`[completeJSON] Calling complete with maxTokens=${options.maxTokens ?? 'default'}, responseFormat=json_object`);
   }
   const result = await complete(prompt, {
     ...options,
     temperature: options.temperature ?? 0.3, // Lower temperature for structured output
+    responseFormat: { type: "json_object" }, // Force JSON output at API level
   });
 
   // Extract first valid JSON object (handles trailing text after JSON)
@@ -648,8 +701,9 @@ export async function stream(
 
   const messages: Array<{ role: "system" | "user"; content: string }> = [];
 
-  if (systemPrompt) {
-    messages.push({ role: "system", content: systemPrompt });
+  const effectiveSystemPrompt = withLanguageInstruction(systemPrompt);
+  if (effectiveSystemPrompt) {
+    messages.push({ role: "system", content: effectiveSystemPrompt });
   }
 
   messages.push({ role: "user", content: prompt });
@@ -862,7 +916,7 @@ export async function completeJSONStreaming<T>(
 
   // Current prompt (changes on continuation)
   let currentPrompt = prompt;
-  let currentSystemPrompt = systemPrompt;
+  let currentSystemPrompt = withLanguageInstruction(systemPrompt);
   let parser = new StreamingJSONParser<T>(prompt);
 
   // Main loop: stream and continue if truncated

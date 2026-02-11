@@ -63,7 +63,7 @@ export function CreditModal({
           <DialogFooter className="flex-col gap-2 sm:flex-col">
             <Button asChild className="w-full">
               <Link href="/pricing">
-                Passer a PRO - 279EUR/mois
+                Passer à PRO - 249 EUR/mois
               </Link>
             </Button>
             <Button variant="ghost" onClick={onClose} className="w-full">
@@ -99,7 +99,7 @@ export function CreditModal({
         <DialogFooter className="flex-col gap-2 sm:flex-col">
           <Button asChild className="w-full">
             <Link href="/pricing">
-              Passer a PRO - 279EUR/mois
+              Passer à PRO - 249 EUR/mois
             </Link>
           </Button>
           <Button variant="ghost" onClick={onClose} className="w-full">

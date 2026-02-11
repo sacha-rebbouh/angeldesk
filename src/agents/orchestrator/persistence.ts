@@ -518,6 +518,7 @@ export async function getDealWithRelations(dealId: string) {
           type: true,
           extractedText: true,
           processingStatus: true, // Required for document versioning/staleness detection
+          uploadedAt: true, // Required for document chronology awareness by agents
         },
       },
       founders: true,

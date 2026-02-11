@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { z } from "zod";
+import { handleApiError } from "@/lib/api-error";
 
 const updateFounderSchema = z.object({
   name: z.string().min(1, "Le nom est requis").optional(),
@@ -48,13 +49,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ founder });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error fetching founder:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to fetch founder" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch founder");
   }
 }
 
@@ -105,19 +100,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ founder });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation error", details: error.issues },
-        { status: 400 }
-      );
-    }
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error updating founder:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to update founder" },
-      { status: 500 }
-    );
+    return handleApiError(error, "update founder");
   }
 }
 
@@ -158,12 +141,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error deleting founder:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to delete founder" },
-      { status: 500 }
-    );
+    return handleApiError(error, "delete founder");
   }
 }

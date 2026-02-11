@@ -28,6 +28,7 @@ export const ExpandableSection = memo(function ExpandableSection({
     <div className="border rounded-lg">
       <button
         onClick={toggleOpen}
+        aria-expanded={isOpen}
         className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
       >
         <div className="flex items-center gap-2 font-medium text-sm">

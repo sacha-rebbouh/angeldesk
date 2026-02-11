@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/sanitize";
 import { getUserQuotaInfo, checkQuota } from "@/services/credits/usage-gate";
+import { handleApiError } from "@/lib/api-error";
 
 // GET /api/credits → user quota info
 export async function GET(request: NextRequest) {
@@ -22,10 +23,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ data: quotaInfo });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error fetching quota info:", error);
-    }
-    return NextResponse.json({ error: "Failed to fetch quota info" }, { status: 500 });
+    return handleApiError(error, "fetch quota info");
   }
 }
 
@@ -60,9 +58,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: result });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error checking quota:", error);
-    }
-    return NextResponse.json({ error: "Failed to check quota" }, { status: 500 });
+    return handleApiError(error, "check quota");
   }
 }

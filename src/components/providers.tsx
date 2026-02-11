@@ -14,6 +14,7 @@ export function Providers({ children }: ProvidersProps) {
         defaultOptions: {
           queries: {
             staleTime: 60 * 1000, // 1 minute
+            gcTime: 10 * 60 * 1000, // 10 minutes - prevent memory bloat from large analysis payloads
             refetchOnWindowFocus: false,
           },
         },

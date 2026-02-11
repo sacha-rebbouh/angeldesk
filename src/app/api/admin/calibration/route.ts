@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
 import { getCalibrationMetrics } from '@/services/fact-store/calibration';
+import { handleApiError } from "@/lib/api-error";
 
 export async function GET() {
   try {
@@ -10,7 +11,6 @@ export async function GET() {
 
     return NextResponse.json({ data: metrics });
   } catch (error) {
-    console.error('Error fetching calibration metrics:', error);
-    return NextResponse.json({ error: 'Failed to fetch calibration metrics' }, { status: 500 });
+    return handleApiError(error, "fetch calibration metrics");
   }
 }

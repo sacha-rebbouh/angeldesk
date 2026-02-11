@@ -5,14 +5,26 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { setWebhook, deleteWebhook, getBotInfo } from '@/services/notifications/telegram'
 
 export async function POST(request: NextRequest) {
-  // Verify authorization
+  // Verify authorization with constant-time comparison
   const authHeader = request.headers.get('authorization')
-  const expectedToken = process.env.CRON_SECRET || process.env.TELEGRAM_BOT_TOKEN
+  const expectedToken = process.env.CRON_SECRET
 
-  if (!authHeader || !authHeader.includes(expectedToken || '')) {
+  if (!authHeader || !expectedToken) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const expected = `Bearer ${expectedToken}`
+  try {
+    const isValid = authHeader.length === expected.length &&
+      timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))
+    if (!isValid) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+  } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

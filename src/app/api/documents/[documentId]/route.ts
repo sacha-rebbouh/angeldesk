@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { deleteFile } from "@/services/storage";
+import { handleApiError } from "@/lib/api-error";
 
 // CUID validation schema
 const cuidSchema = z.string().cuid();
@@ -51,10 +52,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ data: updated });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error renaming document:", error);
-    }
-    return NextResponse.json({ error: "Failed to rename document" }, { status: 500 });
+    return handleApiError(error, "rename document");
   }
 }
 
@@ -103,9 +101,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error deleting document:", error);
-    }
-    return NextResponse.json({ error: "Failed to delete document" }, { status: 500 });
+    return handleApiError(error, "delete document");
   }
 }

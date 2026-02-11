@@ -86,7 +86,7 @@ ADVISORS vs FONDATEURS:
 - Les entreprises des advisors NE DOIVENT JAMAIS être attribuées aux fondateurs
 
 ═══════════════════════════════════════════════════════════════
-REGLE #2: DONNEES FINANCIERES vs PROJECTIONS
+REGLE #2: DONNEES FINANCIERES vs PROJECTIONS + CLASSIFICATION PAR DONNEE
 ═══════════════════════════════════════════════════════════════
 
 La date d'aujourd'hui est ${today}. TOUTE colonne/ligne avec une date FUTURE est une PROJECTION.
@@ -109,6 +109,34 @@ EXTRAIRE UNIQUEMENT:
 - financialDataAsOf: date du dernier chiffre REEL
 - projectionReliability: "very_low" (pre-seed), "low" (seed), "medium" (series A), "high" (series B+)
 - financialRedFlags: liste des problemes detectes
+
+═══════════════════════════════════════════════════════════════
+REGLE #2b: CLASSIFICATION DE FIABILITE PAR DONNEE (CRITIQUE)
+═══════════════════════════════════════════════════════════════
+
+Pour CHAQUE champ financier et metrique de traction extrait (arr, mrr, revenue,
+growthRateYoY, burnRate, runway, customers, users, nrr, churnRate, cac, ltv,
+tam, sam, som), tu DOIS remplir dataClassifications avec:
+
+| Fiabilite | Description | Exemples |
+|-----------|-------------|----------|
+| AUDITED | Confirme par audit/releve bancaire | Rapport CAC, releve Qonto |
+| VERIFIED | Recoupe par 2+ sources independantes | Deck + Financial Model coherents |
+| DECLARED | Annonce sans verification possible | "Notre ARR est de 500K" dans un deck |
+| PROJECTED | Projection explicite ou temporellement future | BP, forecast, chiffre couvrant une periode future |
+| ESTIMATED | Calcule/deduit par l'IA | MRR × 12 = ARR |
+| UNVERIFIABLE | Impossible a verifier | "Notre NPS est de 85" sans preuve |
+
+DETECTION TEMPORELLE AUTOMATIQUE:
+- Identifier la DATE DU DOCUMENT (metadata, mention, date upload)
+- Pour chaque chiffre: la periode couverte depasse-t-elle la date du document?
+- Si OUI → c'est une PROJECTION, calculer le projectionPercent
+
+EXEMPLE CAS SENSAI:
+- Document = BP date aout 2025
+- Chiffre = "CA 2025: 570K€"
+- Analyse: le CA couvre jan-dec 2025, le doc date d'aout → 4 mois de projection sur 12
+- Classification: { reliability: "PROJECTED", isProjection: true, reasoning: "BP date aout 2025, le CA annuel 2025 inclut 4 mois de projections (sept-dec)", documentDate: "2025-08-15", dataPeriodEnd: "2025-12-31", projectionPercent: 33 }
 
 ═══════════════════════════════════════════════════════════════
 REGLE #3: CONCURRENTS vs ADVISORS/PARTENAIRES
@@ -225,6 +253,17 @@ Reponds en JSON avec cette structure exacte:
     "financialDataAsOf": "YYYY-MM-DD ou null - date du DERNIER chiffre REEL (pas projete)",
     "projectionReliability": "very_low|low|medium|high - very_low pour pre-seed, low pour seed, medium pour series A, high pour series B+",
     "financialRedFlags": ["Liste des problemes detectes: croissance irrealiste, incoherences temporelles, chiffres trop ronds, projections delirantes, etc."] ou [],
+
+    "dataClassifications": {
+      "CHAMP_FINANCIER (arr, mrr, revenue, growthRateYoY, burnRate, runway, customers, users, nrr, churnRate, cac, ltv, tam, sam, som, amountRaising, valuationPre)": {
+        "reliability": "AUDITED|VERIFIED|DECLARED|PROJECTED|ESTIMATED|UNVERIFIABLE",
+        "isProjection": true ou false,
+        "reasoning": "Explication en 1-2 phrases de pourquoi cette classification",
+        "documentDate": "YYYY-MM-DD ou null - date du document source",
+        "dataPeriodEnd": "YYYY-MM-DD ou null - fin de la periode couverte par la donnee",
+        "projectionPercent": "0-100 ou null - % de la periode qui est projete"
+      }
+    },
 
     "amountRaising": number ou null,
     "valuationPre": number ou null,

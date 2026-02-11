@@ -1,5 +1,4 @@
-export const dynamic = "force-dynamic";
-
+import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
@@ -20,6 +19,7 @@ import {
 import { RecentDealsList } from "@/components/deals/recent-deals-list";
 
 async function getDashboardStats(userId: string) {
+  noStore();
   const [totalDeals, activeDeals, recentDeals, redFlagsCount] =
     await Promise.all([
       prisma.deal.count({ where: { userId } }),

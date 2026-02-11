@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { handleTelegramCommand, sendToAdmin } from '@/services/notifications'
 
 // ============================================================================
@@ -48,8 +49,10 @@ export async function POST(request: NextRequest) {
 
   // Verify secret token (mandatory when configured)
   if (secretToken) {
-    const headerToken = request.headers.get("x-telegram-bot-api-secret-token");
-    if (headerToken !== secretToken) {
+    const headerToken = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
+    const isValid = headerToken.length === secretToken.length &&
+      timingSafeEqual(Buffer.from(headerToken), Buffer.from(secretToken));
+    if (!isValid) {
       if (process.env.NODE_ENV === "development") {
         console.warn("[Telegram] Invalid webhook secret token received");
       }

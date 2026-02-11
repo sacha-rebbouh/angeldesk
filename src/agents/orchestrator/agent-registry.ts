@@ -22,8 +22,7 @@ let tier3Agents: Record<string, DynamicAgent> | null = null;
  * Get Tier 1 agents (13 investigation agents)
  * Note: technical-dd has been split into tech-stack-dd and tech-ops-dd
  */
-export async function getTier1Agents(_useReAct = false): Promise<Record<string, DynamicAgent>> {
-  // Always return Standard agents (ReAct removed - better results, 20x cheaper)
+export async function getTier1Agents(): Promise<Record<string, DynamicAgent>> {
   if (!tier1Agents) {
     // Dynamic import to avoid circular dependencies
     const tier1Module = await import("../tier1");

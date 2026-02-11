@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { complete } from "@/services/openrouter/router";
+import { complete, extractFirstJSON } from "@/services/openrouter/router";
 
 export interface ValidationResult<T> {
   success: boolean;
@@ -43,17 +43,10 @@ export async function completeAndValidate<T>(
 
       totalTokens += response.usage?.totalTokens ?? 0;
 
-      // Extract JSON from response
-      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        lastError = "No JSON found in response";
-        continue;
-      }
-
-      // Parse JSON
+      // Extract and parse JSON from response
       let parsed: unknown;
       try {
-        parsed = JSON.parse(jsonMatch[0]);
+        parsed = JSON.parse(extractFirstJSON(response.content));
       } catch (e) {
         lastError = `JSON parse error: ${e}`;
         continue;

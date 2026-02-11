@@ -83,7 +83,6 @@ async function runVarianceTest(
       const result = await orchestrator.runAnalysis({
         dealId,
         type: "tier1_complete",
-        useReAct: true,
       });
 
       // Extract scores from each agent

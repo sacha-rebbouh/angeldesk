@@ -530,7 +530,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 // SCORE MINI BAR
 // ============================================================================
 
-function ScoreMiniBar({ label, value, icon: Icon }: { label: string; value: number; icon: React.ComponentType<{ className?: string }> }) {
+const ScoreMiniBar = memo(function ScoreMiniBar({ label, value, icon: Icon }: { label: string; value: number; icon: React.ComponentType<{ className?: string }> }) {
   return (
     <div className="flex items-center gap-2 min-w-0">
       <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -548,13 +548,13 @@ function ScoreMiniBar({ label, value, icon: Icon }: { label: string; value: numb
       </div>
     </div>
   );
-}
+});
 
 // ============================================================================
 // MEMBER CARD (unified: DB founder + analysis data)
 // ============================================================================
 
-function MemberCard({
+const MemberCard = memo(function MemberCard({
   founder,
   isEnriching,
   onEdit,
@@ -782,4 +782,4 @@ function MemberCard({
       )}
     </div>
   );
-}
+});

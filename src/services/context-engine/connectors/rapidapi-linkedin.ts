@@ -902,10 +902,6 @@ export const rapidapiLinkedInConnector: Connector = {
   },
 };
 
-// Backward-compatible aliases
-export const coresignalLinkedInConnector = rapidapiLinkedInConnector;
-export const apifyLinkedInConnector = rapidapiLinkedInConnector;
-
 // ============================================================================
 // EXPORTED ANALYSIS FUNCTIONS
 // ============================================================================

@@ -124,44 +124,8 @@ export const TIER3_AGENTS = [
   "memo-generator",
 ] as const;
 
-// Agent display names mapping
-export const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  // Base agents
-  "red-flag-detector": "Red Flag Detector",
-  "document-extractor": "Document Extractor",
-  "deal-scorer": "Deal Scorer",
-  // Tier 1 agents
-  "financial-auditor": "Financial Auditor",
-  "team-investigator": "Team Investigator",
-  "competitive-intel": "Competitive Intel",
-  "deck-forensics": "Deck Forensics",
-  "market-intelligence": "Market Intelligence",
-  "tech-stack-dd": "Tech Stack DD",
-  "tech-ops-dd": "Tech Ops DD",
-  "legal-regulatory": "Legal & Regulatory",
-  "cap-table-auditor": "Cap Table Auditor",
-  "gtm-analyst": "GTM Analyst",
-  "customer-intel": "Customer Intel",
-  "exit-strategist": "Exit Strategist",
-  "question-master": "Question Master",
-  // Tier 2 - Sector Experts
-  "saas-expert": "SaaS Expert",
-  "marketplace-expert": "Marketplace Expert",
-  "fintech-expert": "FinTech Expert",
-  "healthtech-expert": "HealthTech Expert",
-  "ai-expert": "AI Expert",
-  "deeptech-expert": "DeepTech Expert",
-  "climate-expert": "Climate Expert",
-  "hardware-expert": "Hardware Expert",
-  "gaming-expert": "Gaming Expert",
-  "consumer-expert": "Consumer Expert",
-  // Tier 3 - Synthesis agents
-  "contradiction-detector": "Contradiction Detector",
-  "scenario-modeler": "Scenario Modeler",
-  "synthesis-deal-scorer": "Synthesis Scorer",
-  "devils-advocate": "Devil's Advocate",
-  "memo-generator": "Memo Generator",
-};
+// Agent display names — canonical source is format-utils.ts
+export { AGENT_DISPLAY_NAMES, formatAgentName } from "@/lib/format-utils";
 
 // Analysis mode display names
 export const ANALYSIS_MODE_NAMES: Record<string, string> = {
@@ -178,10 +142,6 @@ export const ANALYSIS_MODE_NAMES: Record<string, string> = {
 // HELPER FUNCTIONS
 // Pure functions that don't need to be inside components
 // =============================================================================
-
-export function formatAgentName(name: string): string {
-  return AGENT_DISPLAY_NAMES[name] ?? name;
-}
 
 export function formatAnalysisMode(mode: string): string {
   return ANALYSIS_MODE_NAMES[mode] ?? mode;

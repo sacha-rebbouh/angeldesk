@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { complete, completeJSON, type TaskComplexity } from "@/services/openrouter/router";
 import { MODELS, type ModelKey } from "@/services/openrouter/client";
+import { handleApiError } from "@/lib/api-error";
 
 const completionSchema = z.object({
   prompt: z.string().min(1, "Prompt is required"),
@@ -58,18 +59,7 @@ export async function POST(request: NextRequest) {
       cost: result.cost,
     });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation error", details: error.issues },
-        { status: 400 }
-      );
-    }
-
-    console.error("Error in LLM completion:", error);
-    return NextResponse.json(
-      { error: "Failed to get LLM completion" },
-      { status: 500 }
-    );
+    return handleApiError(error, "get LLM completion");
   }
 }
 
@@ -88,10 +78,6 @@ export async function GET() {
 
     return NextResponse.json({ data: models });
   } catch (error) {
-    console.error("Error fetching models:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch models" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch models");
   }
 }

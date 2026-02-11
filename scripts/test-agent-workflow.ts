@@ -18,7 +18,6 @@
  *   --tier     Tier à tester (0, 1, 2, 3)
  *   --full     Lancer l'analyse complète (Tier 0 + 1 + 2 + 3)
  *   --board    Lancer le AI Board après l'analyse
- *   --react    Utiliser les agents ReAct (plus détaillés)
  *   --list     Lister tous les agents disponibles
  */
 
@@ -171,8 +170,7 @@ async function findDeal(dealName: string) {
 
 async function runSingleAgent(
   agentName: string,
-  context: EnrichedAgentContext,
-  useReAct: boolean
+  context: EnrichedAgentContext
 ): Promise<AgentResult> {
   logAgent(agentName, "start");
 
@@ -184,7 +182,7 @@ async function runSingleAgent(
   }
   // Check Tier 1 agents
   else if (TIER1_AGENTS.includes(agentName as typeof TIER1_AGENTS[number])) {
-    const tier1Agents = await getTier1Agents(useReAct);
+    const tier1Agents = await getTier1Agents();
     agent = tier1Agents[agentName];
   }
   // Check Tier 2 agents
@@ -307,12 +305,11 @@ async function runTier0(
 }
 
 async function runTier1(
-  context: EnrichedAgentContext,
-  useReAct: boolean
+  context: EnrichedAgentContext
 ): Promise<Record<string, AgentResult>> {
   logHeader("TIER 1: Investigation Agents (12 agents)");
 
-  const tier1Agents = await getTier1Agents(useReAct);
+  const tier1Agents = await getTier1Agents();
   const results: Record<string, AgentResult> = {};
 
   // Run all Tier 1 agents in PARALLEL
@@ -512,7 +509,6 @@ async function main() {
   let tier: number | null = null;
   let runFull = false;
   let runBoardFlag = false;
-  let useReAct = false;
   let listAgents = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -531,9 +527,6 @@ async function main() {
         break;
       case "--board":
         runBoardFlag = true;
-        break;
-      case "--react":
-        useReAct = true;
         break;
       case "--list":
         listAgents = true;
@@ -584,7 +577,6 @@ async function main() {
     log("  --tier <0|1|2|3> Test a specific tier", "dim");
     log("  --full           Run full analysis (all tiers)", "dim");
     log("  --board          Run AI Board after analysis", "dim");
-    log("  --react          Use ReAct agents", "dim");
     log("  --list           List all available agents", "dim");
     process.exit(1);
   }
@@ -669,7 +661,7 @@ async function main() {
           contextEngine,
         };
 
-        const result = await runSingleAgent(agentName, enrichedContext, useReAct);
+        const result = await runSingleAgent(agentName, enrichedContext);
         logDetailedResult(agentName, result);
         totalCost = result.cost;
       }
@@ -768,14 +760,14 @@ async function main() {
         case 1: {
           const { contextEngine } = await runTier0(deal, baseContext);
           const enrichedContext: EnrichedAgentContext = { ...baseContext, contextEngine };
-          const results = await runTier1(enrichedContext, useReAct);
+          const results = await runTier1(enrichedContext);
           totalCost = Object.values(results).reduce((sum, r) => sum + r.cost, 0);
           break;
         }
         case 2: {
           const { contextEngine } = await runTier0(deal, baseContext);
           const enrichedContext: EnrichedAgentContext = { ...baseContext, contextEngine };
-          const tier1Results = await runTier1(enrichedContext, useReAct);
+          const tier1Results = await runTier1(enrichedContext);
           const tier2Results = await runTier2(enrichedContext);
           totalCost = Object.values(tier1Results).reduce((sum, r) => sum + r.cost, 0);
           totalCost += Object.values(tier2Results).reduce((sum, r) => sum + r.cost, 0);
@@ -784,7 +776,7 @@ async function main() {
         case 3: {
           const { contextEngine } = await runTier0(deal, baseContext);
           const enrichedContext: EnrichedAgentContext = { ...baseContext, contextEngine };
-          const tier1Results = await runTier1(enrichedContext, useReAct);
+          const tier1Results = await runTier1(enrichedContext);
           const sectorResult = await runTier3(deal, enrichedContext);
           totalCost = Object.values(tier1Results).reduce((sum, r) => sum + r.cost, 0);
           if (sectorResult) totalCost += sectorResult.cost;
@@ -802,7 +794,6 @@ async function main() {
       const result = await orchestrator.runAnalysis({
         dealId: deal.id,
         type: "full_analysis",
-        useReAct,
         forceRefresh: true,
         mode: "full",
         onProgress: (progress) => {

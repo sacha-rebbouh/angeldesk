@@ -238,21 +238,15 @@ export async function recordDealAnalysis(
 // ============================================================================
 
 async function getOrCreateUsage(userId: string, monthlyLimit: number) {
-  let usage = await prisma.userDealUsage.findUnique({
+  return prisma.userDealUsage.upsert({
     where: { userId },
+    create: {
+      userId,
+      monthlyLimit,
+      usedThisMonth: 0,
+    },
+    update: {},
   });
-
-  if (!usage) {
-    usage = await prisma.userDealUsage.create({
-      data: {
-        userId,
-        monthlyLimit,
-        usedThisMonth: 0,
-      },
-    });
-  }
-
-  return usage;
 }
 
 function shouldResetMonthlyUsage(lastResetAt: Date): boolean {

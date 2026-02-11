@@ -18,6 +18,7 @@ import {
   Lightbulb,
   MessageSquare,
 } from "lucide-react";
+import { PricingCtaButton } from "./pricing-cta-button";
 
 export default async function PricingPage() {
   const user = await requireAuth();
@@ -114,9 +115,7 @@ export default async function PricingPage() {
                 Plan actuel
               </Button>
             ) : (
-              <Button className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700">
-                Passer au PRO
-              </Button>
+              <PricingCtaButton variant="card" />
             )}
           </CardContent>
         </Card>
@@ -389,10 +388,7 @@ export default async function PricingPage() {
             Rejoignez les Business Angels qui ne laissent plus rien au hasard.
             Essayez PRO pendant 30 jours, satisfait ou remboursé.
           </p>
-          <Button size="lg" variant="secondary" className="text-amber-600">
-            <Crown className="mr-2 h-5 w-5" />
-            Commencer l&apos;essai PRO
-          </Button>
+          <PricingCtaButton variant="banner" />
         </div>
       )}
     </div>

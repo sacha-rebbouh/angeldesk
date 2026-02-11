@@ -2,6 +2,630 @@
 
 ---
 
+## 2026-02-11 — Classification de fiabilite des donnees (Levier 2 — anti-projection-as-fact)
+
+**Probleme:**
+- L'analyse prenait toutes les donnees pour argent comptant (ex: un BP d'aout 2025 annoncant 570K€ de CA 2025 etait traite comme un CA realise, alors que 33% du chiffre est une projection)
+- Aucune distinction entre fait audite, declaration non verifiee, et projection
+- Les agents downstream basaient leurs scores et benchmarks sur des projections
+
+**Solution: Classification de fiabilite par donnee (6 niveaux)**
+
+| Niveau | Description |
+|--------|-------------|
+| AUDITED | Confirme par audit externe/releve bancaire |
+| VERIFIED | Recoupe par plusieurs sources independantes |
+| DECLARED | Annonce dans le deck, non verifie |
+| PROJECTED | Projection/forecast/BP, inclut des donnees futures |
+| ESTIMATED | Calcule/deduit par l'IA a partir de donnees partielles |
+| UNVERIFIABLE | Impossible a verifier |
+
+**Fichiers crees/modifies:**
+
+Types et infrastructure:
+- `src/services/fact-store/types.ts` — Ajout `DataReliability` type, `ReliabilityClassification` interface, `RELIABILITY_WEIGHTS`, champ `reliability` sur `ExtractedFact` et `CurrentFact`
+- `src/agents/types.ts` — Ajout `dataClassifications` map sur `ExtractedDealInfo`, `dataReliability` sur `DeckClaimVerification` et `FinancialAuditFindings.metrics`, status `PROJECTION_AS_FACT` sur claims
+
+Tier 0 (extraction):
+- `src/agents/tier0/fact-extractor.ts` — Classification de fiabilite par fait extrait, detection temporelle automatique (date document vs periode donnees), champs `reliability`/`reliabilityReasoning`/`isProjection`/`documentDate`/`dataPeriodEnd`/`projectionPercent` dans le prompt et la normalisation
+- `src/agents/document-extractor.ts` — Regle #2b: classification par champ financier, detection temporelle, `dataClassifications` dans le JSON de sortie, exemple cas SensAI
+- `src/agents/tier0/deck-coherence-checker.ts` — Detection projections-comme-faits (type 2b), analyse temporelle automatique, exemple concret
+
+Tier 1 (analyse):
+- `src/agents/tier1/deck-forensics.ts` — Etape 0 (detection projections avant toute analyse), status `PROJECTION_AS_FACT`, champ `dataReliability` par claim, red flag automatique sur projections
+- `src/agents/tier1/financial-auditor.ts` — Etape 0 (classification fiabilite), impact scoring (-15/-20/-10 pts selon metrique projetee), `dataReliability` par metrique, benchmarking restreint aux donnees non-projetees
+
+Base agent (propagation a TOUS les agents):
+- `src/agents/base-agent.ts` — Injection `dataClassifications` et `financialDataType` dans `formatDealContext()`, regles d'utilisation des donnees par niveau de fiabilite dans `formatFactStoreData()`
+- `src/services/fact-store/current-facts.ts` — Legende fiabilite dans `formatFactStoreForAgents()`, affichage `[RELIABILITY]` tag par fait, reasoning pour projections/estimations
+
+**Impact:**
+- Tous les 40 agents heritent automatiquement des warnings de fiabilite via base-agent
+- Le Fact Store affiche la classification pour chaque donnee
+- Les agents Tier 1 penalisent les scores quand les metriques cles sont des projections
+- Le cas SensAI serait maintenant detecte: "BP aout 2025, CA 2025 = 570K€ → [PROJECTED] (33% projection)"
+
+**TypeScript:** 0 erreurs
+
+---
+
+## 2026-02-10 — Forcer tous les outputs LLM en français
+
+**Fichiers modifiés:**
+- `src/services/openrouter/router.ts` — Ajout constante `FRENCH_LANGUAGE_INSTRUCTION` et helper `withLanguageInstruction()`, injection dans `complete()`, `stream()` et `completeJSONStreaming()` (les 3 points d'entrée LLM)
+
+**Problème:**
+- Les analyses mélangeaient anglais et français car aucune instruction de langue globale n'existait
+- Seulement 3 agents sur ~40 mentionnaient "en français" dans leur prompt
+- Les enums anglais (CRITICAL, PROCEED, etc.) dans les prompts "contaminaient" le texte libre
+
+**Solution:**
+- Injection centralisée au niveau du router OpenRouter (point unique par lequel TOUS les appels LLM passent)
+- Couvre: Tier 1 (via BaseAgent), Tier 2 (appels directs), Tier 3, Board, Chat, Consensus Engine, Reflexion
+- Exceptions préservées: clés JSON, enums, acronymes techniques, noms propres
+
+**TypeScript:** 0 erreurs
+
+---
+
+## 2026-02-08 — Fix PDF font italic crash + remaining '0' child warnings
+
+**Fichiers modifies:**
+- `src/lib/pdf/pdf-components.tsx` — Remplace `fontStyle: "italic"` par `color: colors.muted` (pas de font italic enregistree), fix cast TS double unknown
+- `src/lib/pdf/pdf-sections/cover.tsx` — `fontStyle: "italic"` → `color: colors.muted`
+- `src/lib/pdf/pdf-sections/tier2-expert.tsx` — `fontStyle: "italic"` → `color: colors.muted`, ajout import colors
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` — `comp.teamSize &&` → `comp.teamSize != null &&`
+- `src/lib/pdf/pdf-sections/tier3-synthesis.tsx` — `worstCase.lossAmount &&` → `!= null`, `breakEven.requiredGrowthRate &&` → `!= null`, `breakEven.monthsToBreakeven &&` → `!= null`
+- `src/lib/pdf/pdf-sections/score-breakdown.tsx` — `sup()` pour verdict
+- `src/lib/pdf/pdf-sections/red-flags.tsx` — `sup()` pour severity
+- `src/lib/pdf/pdf-sections/negotiation.tsx` — `sup()` pour overallLeverage et priority (4x)
+
+**Corrections:**
+- Fix crash "Could not resolve font for Inter, fontWeight 400, fontStyle italic" — Inter italic non enregistree, remplace par muted color
+- Fix "Invalid '0' string child outside Text" — tous les champs numeriques potentiellement 0 utilisent `!= null` au lieu de truthy check
+- TypeScript: 0 erreurs
+
+---
+
+## 2026-02-08 — Fix runtime errors PDF: sup() helper, LabelValue unknown, BodyText objects
+
+**Fichiers modifies:**
+- `src/lib/pdf/pdf-helpers.ts` — Ajout helper `sup()` (safe uppercase pour objets/nulls/numbers)
+- `src/lib/pdf/pdf-components.tsx` — LabelValue accepte `unknown` (auto-format via formatValue), BodyText gere objets React children, fix cast TS Record<string,unknown>
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` — 14 `.toUpperCase()` → `sup()`, fix `trends.dealCount != null`
+- `src/lib/pdf/pdf-sections/tier2-expert.tsx` — ~30 `.toUpperCase()` → `sup()`, ajout `!!` sur patterns unknown
+- `src/lib/pdf/pdf-sections/executive-summary.tsx` — `.toUpperCase()` → `sup()`, ajout `!!` sur tous les patterns unknown, wrapper View
+- `src/lib/pdf/pdf-sections/questions.tsx` — Fix `checklistRaw` unknown, wrapper View
+- `src/lib/pdf/pdf-sections/score-breakdown.tsx` — `.toUpperCase()` → `sup()`
+- `src/lib/pdf/pdf-sections/red-flags.tsx` — `.toUpperCase()` → `sup()`
+- `src/lib/pdf/pdf-sections/negotiation.tsx` — 4x `.toUpperCase()` → `sup()`
+
+**Corrections:**
+- Fix "Objects are not valid as a React child" (GtmFindings/LabelValue) — LabelValue auto-formate les objets
+- Fix "Invalid '0' string child outside Text" — `trends.dealCount != null` au lieu de truthy check
+- Fix crash `.toUpperCase()` sur objets LLM — helper `sup()` utilise partout (safe via `s()`)
+- Fix TS2322 unknown not assignable to ReactNode — `!!` devant tous les `&&` patterns avec unknown
+- Fix TS2352 cast Record<string,unknown> — double cast via unknown
+- TypeScript: 0 erreurs
+
+---
+
+## 2026-02-08 — Refonte totale PDF Export: migration jsPDF → @react-pdf/renderer
+
+**Fichiers crees:**
+- `src/lib/pdf/pdf-theme.ts` — Design system (Inter font, palette couleurs, spacing, StyleSheet)
+- `src/lib/pdf/pdf-helpers.ts` — Helpers partages (formatValue, s, n, fmtPct, fmtEur, scoreColor, severityColor, etc.)
+- `src/lib/pdf/pdf-components.tsx` — 18 composants partages (PdfPage, SectionTitle, PdfTable, ScoreCircle, ScoreBar, KpiBox, RedFlagCard, SeverityBadge, etc.)
+- `src/lib/pdf/generate-analysis-pdf.tsx` — Point d'entree principal (types + Document + renderToStream)
+- `src/lib/pdf/pdf-sections/cover.tsx` — Page de couverture
+- `src/lib/pdf/pdf-sections/early-warnings.tsx` — Alertes precoces
+- `src/lib/pdf/pdf-sections/executive-summary.tsx` — Executive Summary (memo-generator)
+- `src/lib/pdf/pdf-sections/score-breakdown.tsx` — Score & verdict + dimensions
+- `src/lib/pdf/pdf-sections/tier3-synthesis.tsx` — Contradictions, Devil's Advocate, Scenarios
+- `src/lib/pdf/pdf-sections/tier2-expert.tsx` — Expert sectoriel + extended data
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` — 13 agents Tier 1 avec renderers specifiques
+- `src/lib/pdf/pdf-sections/red-flags.tsx` — Red flags consolides (full + summary)
+- `src/lib/pdf/pdf-sections/questions.tsx` — Question Master + Founder Responses
+- `src/lib/pdf/pdf-sections/negotiation.tsx` — Strategie de negociation (full + summary)
+- `public/fonts/Inter-*.ttf` — 4 fichiers font (Regular, Medium, SemiBold, Bold)
+
+**Fichiers modifies:**
+- `package.json` — Ajoute @react-pdf/renderer, supprime jspdf + jspdf-autotable + @types/jspdf
+- `next.config.ts` — Ajoute @react-pdf/renderer aux serverExternalPackages
+- `src/app/api/deals/[dealId]/export-pdf/route.ts` — await generateAnalysisPdf (async)
+
+**Fichiers supprimes:**
+- `src/lib/pdf/generate-analysis-pdf.ts` — Ancien generateur jsPDF (3548 lignes)
+
+**Changements:**
+- Migration complete de jsPDF (imperatif, coordonnees manuelles) vers @react-pdf/renderer (React components, flexbox)
+- Design system Tech/VC moderne: palette bleue (#2563EB), Inter font, SVG score circles, tables avec header bleu et rows alternees
+- Architecture modulaire: 14 fichiers au lieu d'un seul de 3548 lignes
+- Deux modes: full (30-50 pages) et summary (5-7 pages)
+- generateAnalysisPdf() devient async (renderToStream → Buffer)
+- TypeScript: 0 erreurs
+
+---
+
+## 2026-02-08 — Fix PDF: audit complet 47 pages, tous les [object Object] et bugs data
+
+**Fichiers modifies:**
+- `src/lib/pdf/generate-analysis-pdf.ts`
+
+**Changements:**
+- Ajout helper `formatValue()` — extraction intelligente de texte depuis objets (assessment, description, range, stage+total funding, value wrapper, fallback key:value)
+- Ajout helper `fmtPct()` — formate % depuis n'importe quel type (number, object avec .value, fallback formatValue)
+- Fix `s()` pour gerer les objets via `formatValue` au lieu de `String(val)` → plus jamais `[object Object]`
+- Fix `writeText`, `writeBulletList`, `writeLabelValue` — `formatValue` partout
+- Fix `writeTable` — `overflow: 'linebreak'` explicite, cellPadding 3→2, fontSize 9→8.5
+- Buffers Unicode (-2mm) pour eviter le stretching
+- **Fix 13 renderers d'agents specifiques:**
+  - `renderTechStackFindings`: frontend/backend/infrastructure/bottlenecks sont des objets
+  - `renderTechOpsFindings`: patents, compliance, gaps sont des objets
+  - `renderGtmFindings`: contribution channels est objet pas number
+  - `renderCustomerFindings`: grossRetention objet, NRR null check, churn typeof
+  - `renderExitFindings`: probability/timeline/relevance/mna.activity objets
+  - `renderCapTableFindings`: ownershipBreakdown values objets
+  - `renderCompetitiveFindings`: competitorsMissedInDeck items objets
+  - `renderTeamFindings`: gaps/keyHires items objets
+  - `renderMarketFindings`: dealCount/trend objets
+- Fix Poids `3600%` → `36%` (weight deja en pct, pas en 0-1, ajout detection auto)
+- Fix meta `Confiance: null%` → check typeof number
+- TypeScript: 0 erreurs
+
+---
+
+## 2026-02-08 — Suppression de TOUS les .substring() restants dans le PDF
+
+**Fichiers modifies:**
+- `src/lib/pdf/generate-analysis-pdf.ts`
+
+**Changements:**
+- Suppression des 12 derniers `.substring(0, N)` qui tronquaient le texte dans les tableaux
+- Occurrences supprimees:
+  - DB cross-reference claims/evidence (Tier 1 + universal)
+  - Score breakdown justification
+  - Red flags impact
+  - Competitors differentiation
+  - Claim verification claim/evidence
+  - Inconsistencies issue
+  - Tech risks risk/mitigation (tech-stack-dd + tech-ops-dd)
+  - Red flags description (section red flags actifs)
+- `autoTable` gere nativement le word-wrap dans les cellules — pas besoin de tronquer
+- TypeScript: 0 erreurs
+
+---
+
+## 2026-02-08 — Audit round 3: correction de TOUS les bugs critiques et champs universels
+
+### Description
+Suite au troisieme audit (4 agents), correction de tous les TYPE MISMATCHES critiques + ajout champs universels manquants.
+18 corrections appliquees — 0 erreur TypeScript.
+
+### Bugs CRITIQUES corriges (type mismatches)
+
+1. **Tier 2 unitEconomics**: Les sous-champs (ltv, cac, ltvCacRatio, etc.) sont des objets `{value, calculation, confidence}`, pas des scalaires. Ajout helper `ueVal()`/`ueDetail()` pour extraire `.value` + colonne "Detail" + support Fintech (revenuePerTransaction, contributionMargin, lossReserveRatio)
+2. **Tier 2 valuationAnalysis.justifiedRange**: Etait lu comme string, c'est `{low, fair, high}`. Ajout support objet + `medianSectorMultiple`, `percentilePosition`, `negotiationLeverage`
+3. **Devil's advocate alternativeNarratives**: Champs `.narrative/.probability/.implication` corriges en `.currentNarrative/.alternativeNarrative/.plausibility/.implications` + `testToValidate`, `evidenceSupporting`
+4. **Devil's advocate concernsSummary**: Nombres corriges en `string[]` (`absolute`, `conditional`, `serious`, `minor`) avec rendering enrichi
+5. **Devil's advocate worstCaseScenario.lossAmount**: String corrige en objet `{totalLoss, estimatedLoss, calculation}` + `triggers` table + `cascadeEffects`
+6. **Memo investmentThesis**: Objet `{thesis, conviction, keyAssumptions}` corrige en `string` (avec fallback objet)
+7. **Memo dueDiligenceFindings**: Array plate corrigee en objet `{completed[], outstanding[], redFlags[]}` (avec fallback array)
+8. **Question master context**: `context.reasoning` corrige en `triggerData` + `whyItMatters`
+9. **Question master evaluation**: `evaluationGuidance` (string) corrige en `evaluation: {goodAnswer, badAnswer, redFlagIfBadAnswer, followUpIfBad}`
+10. **Question master referenceChecks.targetProfile**: String corrige en objet `{description, idealPerson, howToFind}` + `targetType`, `priority`
+11. **Question master referenceChecks.questions[]**: `string[]` corrige en `{question, whatToLookFor, redFlagAnswer}[]`
+12. **Question master diligenceChecklist**: Array plate corrigee en `{totalItems, doneItems, blockedItems, criticalPathItems, items[]}`
+13. **Scenario modeler expectedIRR**: Corrige `expectedIrr` → support `expectedIRR` (majuscules) + `expectedMultipleCalculation`, `expectedIRRCalculation`
+14. **Scenario modeler sensitivityAnalysis**: Shape V1 (flat) corrigee en V2 (`baseCase: {value, source}`, `impactOnValuation[]`, `impactLevel`) avec fallback V1
+15. **Contradiction detector aggregatedDbComparison**: `verifiedPercent`/`contradictedPercent` corriges en counts `verified`/`contradicted` avec calcul % + `partiallyVerified`, `notVerifiable`, `bySource[]`, `competitorComparison`
+
+### Champs universels ajoutes
+
+16. **Tier 1 meta**: Ajout `dataCompleteness` + `confidenceLevel` en en-tete de chaque agent
+17. **Tier 1 score.breakdown[]**: Table complete (critere, poids, score, justification) pour chaque agent
+18. **Tier 1 redFlags enrichis**: Ajout `impact`, `location`, `question`, `redFlagIfBadAnswer` + detail pour flags CRITICAL/HIGH
+19. **Tier 1 questions enrichies**: Ajout `whatToLookFor` en complement de chaque question
+20. **Tier 1 meta.limitations**: Section "Limitations" en pied de chaque agent
+21. **Cover page**: Ajout `deal.description` (300 chars) + `deal.website`
+22. **Red flags agreges**: Inclusion des `sectorRedFlags` Tier 2 dans la section consolidee
+23. **Tier 2 keyMetrics**: Ajout `sectorBenchmark` (P25/Median/P75/Top 10%) quand disponible
+
+### Fichiers modifies
+- `src/lib/pdf/generate-analysis-pdf.ts` — 18 corrections
+
+---
+
+## 2026-02-08 — Fix: texte coupe en plein milieu dans les PDF
+
+### Description
+Bug fondamental de pagination dans les 3 methodes de rendu texte du PDF.
+`writeText()`, `writeBulletList()`, `writeLabelValue()` ecrivaient TOUTES les lignes d'un coup
+avec un seul `checkPageBreak()` initial. Si le texte depassait le bas de page, il etait
+simplement invisible (coupe net sans suite sur la page suivante).
+
+### Corrections
+Les 3 methodes reecrites pour ecrire **ligne par ligne** avec `checkPageBreak(LINE_HEIGHT)` a chaque ligne:
+- **`writeText()`**: Boucle sur chaque ligne avec pagination automatique
+- **`writeBulletList()`**: Bullet sur la premiere ligne, continuation indentee, pagination par ligne
+- **`writeLabelValue()`**: Label sur la premiere ligne, valeur wrappee avec pagination (au lieu d'une seule ligne tronquee a droite)
+
+### Impact
+Affecte les DEUX formats (resume + complet) puisque les methodes sont partagees.
+Plus aucun texte coupe — tout le contenu est pagine correctement.
+
+### Fichiers modifies
+- `src/lib/pdf/generate-analysis-pdf.ts` — rewrite writeText, writeBulletList, writeLabelValue
+
+---
+
+## 2026-02-08 — Feature: 2 formats PDF (Resume executif + Rapport complet)
+
+### Description
+Ajout du choix entre 2 formats d'export PDF:
+- **Resume executif** (`format=summary`): 5-7 pages — cover, early warnings critiques, exec summary, score, top red flags + questions, negociation compacte
+- **Rapport complet** (`format=full`): 30-50 pages — DD exhaustive avec tous les agents, findings detailles, etc.
+
+### Backend
+- Route API accepte `?format=full|summary` (defaut: full)
+- Noms de fichiers distincts: `DD_Resume_...` vs `DD_Complet_...`
+
+### PDF Generator
+- Methode `generate()` branche sur le format
+- Nouvelles methodes summary:
+  - `buildSummaryRedFlagsAndQuestions()`: red flags tries par severite (max 10) + top questions fondateur (max 10) — 1-2 pages
+  - `buildSummaryNegotiation()`: levier, arguments cles, points de nego (max 8), dealbreakers — 1 page
+- Mode summary: cover → early warnings critiques (max 3) → exec summary → score → red flags/questions → nego
+
+### Frontend
+- Bouton "Export PDF" remplace par dropdown avec 2 options:
+  - "Resume executif" (FileText icon) — 5-7 pages
+  - "Rapport complet" (Download icon) — 30-50 pages
+- Toast de succes adapte au format choisi
+
+### Securisation jsPDF
+- `writeLabelValue()`, `writeText()`, `writeBulletList()` securises: convertissent automatiquement les objets en JSON au lieu de crasher
+
+### Fichiers modifies
+- `src/lib/pdf/generate-analysis-pdf.ts` — format summary + securisation
+- `src/app/api/deals/[dealId]/export-pdf/route.ts` — param format
+- `src/components/deals/analysis-panel.tsx` — dropdown 2 options
+
+---
+
+## 2026-02-08 — Fix: export PDF 403 pour users PRO (bug clerkId vs id)
+
+### Description
+Bug critique: `requireAuth()` retourne le User Prisma avec `user.id` = ID interne Prisma.
+La route PDF faisait ensuite `prisma.user.findUnique({ where: { clerkId: user.id } })` —
+`user.id` n'est PAS le clerkId, donc `dbUser = null` → 403 pour TOUS les users.
+
+### Correction
+Suppression de la requete inutile. `requireAuth()` retourne deja l'objet User Prisma
+avec `subscriptionStatus` — on verifie directement `user.subscriptionStatus === "FREE"`.
+
+### Fichiers modifies
+- `src/app/api/deals/[dealId]/export-pdf/route.ts` — fix verification subscription
+
+---
+
+## 2026-02-08 — Audit round 2: correction de TOUS les gaps restants du PDF
+
+### Description
+Suite au second audit (4 agents), correction de tous les gaps identifies:
+- 12 categories de corrections appliquees
+- Toutes les donnees sectorielles etendues maintenant rendues
+- Tous les sub-fields manquants ajoutes
+
+### Corrections appliquees
+
+#### Tier 1 — Corrections
+1. **Questions**: Suppression du `.slice(0, 8)` — toutes les questions rendues
+2. **tech-stack-dd**: Ajout `technicalRisks` (table risques, categorie, severite, mitigation) + `sectorBenchmark`
+3. **tech-ops-dd**: Ajout `technicalRisks` (ops) + `sectorBenchmark` + gaps equipe
+4. **deck-forensics**: Ajout `inconsistencies` (table inconsistances narratives) + `criticalMissingInfo` + `deckQuality.issues`
+5. **customer-intel**: Ajout `icp` (profil client ideal, segments, clarte) + `expansionSignals` + `qualityLevel`
+6. **financial-auditor**: Ajout `projections` (hypotheses, preoccupations) + enrichissement `burn` (monthlyBurn, burnMultiple, efficiency)
+7. **legal-regulatory**: Ajout `structureAnalysis` (entite, juridiction, vesting, pacte associes) + `contractualRisks` + `upcomingRegulations`
+8. **exit-strategist**: Ajout `liquidity` (marche secondaire, lock-up, risque) + `strategicPositioning`
+
+#### Tier 3 — Corrections
+9. **Devil's advocate**: Ajout `alternativeNarratives` (narratifs alternatifs avec probabilite)
+10. **Scenario modeler**: Ajout `sensitivityAnalysis` (table variables, base/best/worst case)
+11. **Contradiction detector**: Ajout `aggregatedDbComparison` (claims verifies, % contredits, concurrents caches)
+
+#### Executive Summary (Memo)
+12. Ajout `investmentThesis` (these, conviction, hypotheses cles) + `dueDiligenceFindings` (table domaine/constatation/recommandation)
+
+#### Tier 2 — Donnees sectorielles etendues (~250 lignes)
+Nouvelle methode `renderSectorSpecificExtended()` couvrant:
+- **AI**: aiVerdict, aiMoat, aiModelApproach, aiInfraCosts, aiRedFlags
+- **PropTech**: proptechCycleAnalysis, proptechCapitalIntensity, proptechMoat, proptechGeographicAnalysis
+- **EdTech**: edtechEngagement (completion, retention D7/D30), edtechRegulatory (COPPA/FERPA)
+- **Blockchain**: tokenomics, blockchainSecurity, decentralization
+- **Mobility**: mobilityBusinessModel, gigWorkerRisk
+- **HRTech**: hrtechCompliance, hrtechIntegrations, hrtechRetention
+- **Fintech**: regulatoryDetails (licences), bigTechThreat, businessModelFit
+- **Cybersecurity**: threatLandscape
+- **FoodTech**: supplyChain
+- **SpaceTech**: launchEconomics
+- **Biotech**: pipeline therapeutique
+- **SaaS commun**: cohortHealth, saasCompetitiveMoat, dbComparison, gtmAssessment, exitPotential
+- **Tous secteurs**: investmentImplication
+
+### Fichiers modifies
+- `src/lib/pdf/generate-analysis-pdf.ts` — ~2600 lignes (+900 lignes de renderers sectoriels et corrections)
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-08 — Enrichissement massif du PDF: audit complet + tous les findings
+
+### Description
+Suite a un audit exhaustif (4 agents en parallele: Tier 1, Tier 2, Tier 3, sections manquantes),
+le generateur PDF a ete entierement enrichi pour inclure TOUTES les donnees de l'analyse.
+Avant: ~20% des donnees agents rendues (score + narrative uniquement).
+Apres: ~90%+ des donnees agents rendues avec findings detailles.
+
+### Nouvelles sections ajoutees (2)
+1. **Early Warnings** — Alertes precoces/existentielles (dealbreakers, risques critiques)
+2. **Deck Coherence Report** — Score de coherence, problemes detectes, donnees manquantes
+
+### Enrichissements Tier 3
+- **Contradiction Detector**: consistencyAnalysis, dataGaps, redFlagConvergence, confidenceLevel par contradiction, resolutions
+- **Devil's Advocate**: killReasons (raisons de ne pas investir), worstCaseScenario, blindSpots, skepticismScore, concernsSummary, comparable failures
+- **Scenario Modeler**: investorReturn calculations (multiple, IRR, formules), probabilityWeightedOutcome, breakEvenAnalysis, basedOnComparable
+
+### Enrichissements Tier 2
+- Verdict sectoriel etendu (recommendation, confidence, keyInsight, topStrength, topConcern)
+- Score breakdown sectoriel avec justification
+- Unit economics sectoriels (CAC, LTV, LTV:CAC, payback, burn multiple, magic number)
+- Analyse valorisation (verdict, percentile, fourchette justifiee)
+- Environnement regulatoire (complexite, regulations, risques conformite)
+- Dynamiques sectorielles (concurrence, consolidation, barrieres, multiple exit)
+- Adequation sectorielle (score fit, timing, forces/faiblesses)
+- Completude des donnees (score plafonne, donnees manquantes critiques)
+- DB cross-reference (claims verifiees, concurrents caches)
+
+### Enrichissements Tier 1 (13 agents — findings detailles)
+- **financial-auditor**: metriques financieres, verdict valorisation, unit economics, burn/runway
+- **team-investigator**: profils fondateurs (expertise, score), composition equipe, dynamique cofondateurs
+- **competitive-intel**: table concurrents, analyse moat (verdict), structure marche, concurrents omis
+- **deck-forensics**: verification claims, analyse narrative (coherence), qualite deck
+- **market-intelligence**: TAM/SAM/SOM (annonce vs valide), tendances funding, timing marche
+- **exit-strategist**: scenarios exit (type, valo, multiple, IRR), exits comparables, resume retours, M&A
+- **tech-stack-dd**: stack (modernite), scalabilite, dette technique
+- **tech-ops-dd**: maturite produit, securite, protection IP, equipe technique
+- **legal-regulatory**: conformite par domaine, force IP, risques reglementaires, contentieux
+- **cap-table-auditor**: repartition capital, dilution fondateurs, termes du tour
+- **gtm-analyst**: canaux GTM (contribution, CAC, payback), sales motion, leviers croissance
+- **customer-intel**: retention (NRR), PMF score, concentration clients, base clients
+- DB cross-reference generique pour tous agents
+
+### Enrichissements Score & Verdict
+- Decomposition du score (forces, faiblesses, risque, opportunite)
+- Positionnement comparatif (percentile global/secteur/stage)
+- Risques critiques
+
+### Enrichissements Executive Summary (memo)
+- Termes du deal (valorisation, taille tour, termes cles)
+- Prochaines etapes
+- Strategie de sortie
+
+### Enrichissements Questions
+- Detail questions critiques avec agent source + guide d'evaluation
+- Verifications de references (profils, questions, rationale)
+- Dealbreakers identifies
+- Actions prioritaires
+- Checklist Due Diligence
+
+### Fichiers modifies
+- `src/lib/pdf/generate-analysis-pdf.ts` — Refonte complete (~1700 lignes, +500 lignes)
+- `src/app/api/deals/[dealId]/export-pdf/route.ts` — Extraction earlyWarnings depuis results JSON
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 — Feature: Export PDF complet de l'analyse (PRO)
+
+### Description
+Export PDF premium de l'analyse Due Diligence complete, incluant TOUS les onglets
+et sections. Feature gatee au plan PRO.
+
+### Fichiers crees
+- `src/lib/pdf/generate-analysis-pdf.ts` — Generateur PDF initial
+- `src/app/api/deals/[dealId]/export-pdf/route.ts` — API route GET
+
+### Fichiers modifies
+- `src/components/deals/analysis-panel.tsx` — Bouton "Export PDF" avec badge PRO pour FREE users
+- `package.json` — Ajout `jspdf` + `jspdf-autotable`
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 — Fix: ai-expert JSON output + response_format json_object global
+
+### Problème
+L'agent `ai-expert` (Tier 2) retournait du texte français ("Voici mon analyse...") au lieu
+de JSON, causant un crash `No JSON found in response`. Le LLM (Gemini Flash) ignorait les
+instructions JSON dans le user prompt car le system prompt ne les mentionnait jamais.
+
+### Root causes
+1. **System prompt sans instruction JSON** — Le system prompt de l'ai-expert décrivait
+   l'analyse à faire sans jamais mentionner le format de sortie
+2. **Pas de `response_format` API** — `completeJSON()` appelait `complete()` sans forcer
+   le mode JSON au niveau de l'API OpenRouter/Gemini
+3. **21 agents tier2 avec regex naive** — Tous utilisaient `response.content.match(/\{[\s\S]*\}/)`
+   au lieu de `extractFirstJSON()` (fixé dans session précédente)
+
+### Fixes appliqués
+- `src/agents/tier2/ai-expert.ts` — Instructions JSON en tête ET fin du system prompt
+- `src/services/openrouter/router.ts`:
+  - `CompletionOptions` : ajout `responseFormat?: { type: "json_object" | "text" }`
+  - `complete()` : passage de `response_format` à l'API si fourni
+  - `completeJSON()` : utilise `response_format: { type: "json_object" }` automatiquement
+- `scripts/resume-failed-agents.ts` — Skip agents déjà réussis dans les résultats actuels
+
+### Impact
+- Tous les appels via `completeJSON()` et `completeJSONWithFallback()` forcent maintenant le
+  mode JSON au niveau API (pas juste via prompt)
+- Le script de resume ne gaspille plus de tokens sur des agents déjà corrigés
+
+---
+
+## 2026-02-06 — Fix: Fondateurs DB visibles par tous les agents + chronologie documents
+
+### Problème fondateurs
+`formatDealContext()` dans `base-agent.ts` ne listait JAMAIS les fondateurs de la DB.
+Seul `team-investigator` y accédait via un cast custom. Si un fondateur n'était pas
+mentionné dans le deck ET que son enrichissement LinkedIn échouait, il était invisible
+pour 12/13 agents Tier 1 et tous les agents Tier 2/3.
+
+### Chronologie des documents
+Les agents reçoivent maintenant la date d'import de chaque document (`uploadedAt`).
+Les documents sont triés chronologiquement (plus ancien en premier) dans le prompt,
+avec une instruction expliquant que les documents récents font foi en cas de divergence.
+
+### Fichiers modifiés
+- `src/agents/orchestrator/persistence.ts` — `getDealWithRelations()` : ajout `uploadedAt` au select
+- `src/agents/orchestrator/index.ts` — Type `DealWithDocs` : ajout `uploadedAt: Date`
+- `src/agents/types.ts` — `AgentContext.documents` : ajout `uploadedAt?: Date`
+- `src/agents/base-agent.ts`
+  - `formatDealContext()` : nouvelle section "Équipe Fondatrice" listant TOUS les fondateurs
+    DB (nom, rôle, LinkedIn) — visible par tous les agents
+  - `formatDealContext()` : tri chronologique des docs, date affichée dans les headers,
+    instruction de chronologie pour les agents
+  - `formatFactStoreData()` : appel automatique de `formatFounderResponses()`
+  - Nouvelle méthode `formatFounderResponses()` : formate les Q&A fondateur
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 — Fix: Injection founderResponses dans agents Tier 1/2/3
+
+### Problème
+Les agents d'analyse (Tier 1, 2, 3) ne recevaient pas les réponses du fondateur (Q&A).
+Résultat : les agents traitaient les clarifications comme des incohérences ou contradictions
+au lieu de comprendre qu'il s'agit de réponses à des questions posées après le deck initial.
+
+### Cause racine
+`founderResponses` étaient chargées depuis la DB dans `runTier0FactExtraction()` mais
+uniquement passées au `fact-extractor` (Tier 0). Le champ n'était jamais inclus dans
+l'`enrichedContext` envoyé aux agents Tier 1/2/3.
+
+### Fichiers modifiés
+- `src/agents/orchestrator/index.ts`
+  - `runTier0FactExtraction()` : ajout `founderResponses` au return type + 5 chemins de retour
+  - `runTier1Analysis()` : capture + injection dans `enrichedContext`
+  - `runFullAnalysis()` : capture + injection dans `enrichedContext`
+  - `runTier3Synthesis()` : chargement depuis DB + injection dans context
+  - `runTier2SectorAnalysis()` : chargement depuis DB + injection dans context
+- `src/agents/base-agent.ts`
+  - `formatFactStoreData()` : appel automatique de `formatFounderResponses()`
+  - Nouvelle méthode `formatFounderResponses()` : formate les Q&A avec section
+    "CLARIFICATIONS DU FONDATEUR" expliquant la chronologie aux agents
+
+### Impact
+Tous les agents (13 Tier 1 + 22 Tier 2 + 5 Tier 3) reçoivent désormais automatiquement
+les réponses du fondateur via `formatFactStoreData()` dans base-agent.ts.
+Les agents comprennent que ces données sont des clarifications postérieures au deck.
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 — QA Batch 5: Agents orchestrés (useReAct, error handlers, frontend UX)
+
+### Agent 1: Suppression `useReAct` (7 fichiers)
+- `src/agents/orchestrator/index.ts` — Supprime `useReAct` de `runTier1Analysis`, `runTier2SectorAnalysis`, `runFullAnalysis`, et 3 appels `getTier1Agents()`
+- `src/agents/orchestrator/agent-registry.ts` — Supprime `_useReAct` param de `getTier1Agents()`
+- `src/services/analysis-cache/index.ts` — Supprime `useReAct` de `lookupCachedAnalysis()`, query filter, stats
+- `src/services/cost-monitor/index.ts` — Supprime `useReAct` des interfaces, `startAnalysis()`, `endAnalysis()`, `estimateCost()`, et les entrées mortes `_react`
+- `scripts/test-agent-workflow.ts` — Supprime param, variable, flag `--react`
+- `scripts/test-analysis-modes.ts` — Supprime `useReAct: false` des appels, tests cost `_react`
+- `scripts/test-variance.ts` — Supprime `useReAct: true`
+
+### Agent 2: Error handler standardisation (29 fichiers, 50 catch blocks)
+- `src/lib/api-error.ts` — Contient `handleApiError(error, context)`
+- 29 routes API migrees vers `handleApiError()` (deals, facts, credits, chat, founders, documents, board, preferences, admin, cron, llm, context, founder, negotiation)
+- 12 routes custom correctement ignorees (analyze, negotiation custom auth, admin auth checks, telegram, board SSE)
+
+### Agent 3 + finition manuelle: Frontend UX
+- `src/app/(dashboard)/pricing/page.tsx` — Boutons pricing remplaces par `PricingCtaButton` (toast "Bientot disponible")
+- `src/components/deals/team-management.tsx` — `ScoreMiniBar` et `MemberCard` wrappes avec `memo()`
+- `src/components/deals/board/vote-board.tsx` — `MemberCard` wrappe avec `memo()`
+- `src/components/deals/deals-table.tsx` — `tabIndex={0}`, `role="link"`, `onKeyDown` Enter/Space sur les `TableRow`
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 — QA Batch 4: P2 Quality & Maintainability
+
+### Fichiers modifies
+- `src/lib/sanitize.ts` — Ajout `CUID_PATTERN`, `isValidCuid()` (fonctions partagees pour valider les IDs CUID)
+- `src/app/api/deals/[dealId]/route.ts` — Remplace 3x regex inline par `isValidCuid()`
+- `src/app/api/facts/[dealId]/reviews/route.ts` — Remplace 2x regex inline par `isValidCuid()`
+- `src/app/api/facts/[dealId]/route.ts` — Remplace 2x regex inline par `isValidCuid()`
+- `src/app/api/founder-responses/[dealId]/route.ts` — Remplace 2x regex inline par `isValidCuid()`
+- `src/app/api/deals/[dealId]/analyses/route.ts` — Remplace local `CUID_PATTERN` par import de `isValidCuid`
+- `src/app/api/deals/[dealId]/staleness/route.ts` — Remplace regex inline par `isValidCuid()`
+- `src/app/api/chat/[dealId]/route.ts` — Remplace local `CUID_PATTERN` et 3x regex inline par imports de `isValidCuid`/`CUID_PATTERN`
+- `src/app/api/analyze/route.ts` — Remplace local `CUID_PATTERN` par import de `CUID_PATTERN`
+- `src/services/context-engine/connectors/rapidapi-linkedin.ts` — Supprime aliases `coresignalLinkedInConnector`/`apifyLinkedInConnector` (dead code)
+- `src/lib/format-utils.ts` — `AGENT_DISPLAY_NAMES` rendu `export`, complete (ajoute ai-expert, blockchain-expert, document-extractor, deal-scorer), renomme Synthesis Deal Scorer → Synthesis Scorer
+- `src/lib/analysis-constants.ts` — Supprime `AGENT_DISPLAY_NAMES` et `formatAgentName` dupliques, re-exporte depuis `format-utils.ts`
+- `src/components/chat/deal-chat-panel.tsx` — Chat panel full-screen sur mobile (`inset-0 md:inset-auto md:right-4 md:top-20...`)
+
+### Details
+- **CUID dedup**: 16 inline regex checks remplaces par 1 fonction partagee `isValidCuid()` (type guard) + `CUID_PATTERN` exporte pour Zod schemas
+- **Dead code cleanup**: Aliases de connecteurs LinkedIn (coresignal/apify → rapidapi) supprimes — aucun import les utilisait
+- **Agent names dedup**: `AGENT_DISPLAY_NAMES` et `formatAgentName` existaient en double dans `format-utils.ts` et `analysis-constants.ts` → source unique dans `format-utils.ts`, re-export dans `analysis-constants.ts`
+- **Mobile chat**: Le chat panel debordait sur mobile (min-w: 360px sur un viewport < 360px). Maintenant full-screen (`inset-0`) sur mobile avec `md:` breakpoint pour le positionnement desktop
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
+## 2026-02-06 — QA Batch 3: P1 Robustness & Performance (suite)
+
+### Fichiers modifies
+- `src/components/layout/sidebar.tsx` — Ajout `MobileNav` component (Sheet hamburger menu, memes nav items que la sidebar)
+- `src/app/(dashboard)/layout.tsx` — Import `MobileNav`, flex-col sur mobile, padding responsive (p-4 sm:p-6 lg:p-8)
+- `src/components/deals/deals-table.tsx` — Table responsive: colonnes masquees sur mobile (Secteur, Stade, Valorisation, Mis a jour), overflow-x-auto, truncate noms longs
+- `src/app/api/deals/[dealId]/route.ts` — `select` sur founders (exclut dealId/deal relation) et documents (exclut extractedText, ocrText, extractionMetrics, extractionWarnings, storagePath)
+- `src/app/api/deals/route.ts` — `select` sur founders (id/name/role/linkedinUrl) et documents (id/name/type/processingStatus) pour GET list et POST create
+- `src/components/deals/negotiation-panel.tsx` — Wrappe `NegotiationPanel` avec `memo()`
+- `src/components/chat/deal-chat-panel.tsx` — `react-markdown` converti en dynamic import (`next/dynamic`, ssr: false)
+- `src/components/credits/credit-badge.tsx` — Aligne staleTime a 5min (etait 30s)
+- `src/components/deals/analysis-panel.tsx` — Aligne staleTime quota a 5min (etait default 1min)
+- `src/app/(dashboard)/dashboard/loading.tsx` — **CREE** skeleton loading pour le dashboard
+- `src/app/(dashboard)/deals/loading.tsx` — **CREE** skeleton loading pour la liste des deals
+
+### Details
+- **Mobile nav**: La sidebar etait `hidden md:flex` sans alternative mobile. Le MobileNav affiche un header sticky avec hamburger qui ouvre un Sheet identique a la sidebar (nav, admin, plan, user/logout)
+- **Table responsive**: Les colonnes Secteur (sm+), Stade (lg+), Valorisation (md+), Mis a jour (md+) sont masquees progressivement. Mobile garde: Nom, Statut, Alerts, Actions
+- **Payload reduction**: Les champs `extractedText` et `ocrText` (potentiellement enormes) ne sont plus envoyes au client
+- **Bundle optimization**: react-markdown (30KB+) est charge en lazy via dynamic import
+- **staleTime alignment**: Toutes les queries quota utilisent 5 minutes (coherence sidebar/credit-badge/analysis-panel)
+- **Suspense**: loading.tsx pour dashboard et deals permettent un instant loading state au lieu d'un ecran blanc
+
+### Validation
+- `npx tsc --noEmit` : 0 errors
+
+---
+
 ## 2026-02-06 07:30 — AI Board: Retry + logging echecs debat et vote
 
 ### Fichiers modifies

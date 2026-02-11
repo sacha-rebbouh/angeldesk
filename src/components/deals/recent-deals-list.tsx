@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ChevronRight, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,7 @@ interface RecentDealsListProps {
   deals: Deal[];
 }
 
-export function RecentDealsList({ deals }: RecentDealsListProps) {
+export const RecentDealsList = memo(function RecentDealsList({ deals }: RecentDealsListProps) {
   const router = useRouter();
   const {
     renameDeal,
@@ -55,7 +56,10 @@ export function RecentDealsList({ deals }: RecentDealsListProps) {
           return (
             <div
               key={deal.id}
+              role="link"
+              tabIndex={0}
               onClick={() => router.push(`/deals/${deal.id}`)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); router.push(`/deals/${deal.id}`); } }}
               className="flex items-center justify-between rounded-lg border p-4 cursor-pointer hover:bg-muted/50 transition-colors"
             >
               <div className="space-y-1 min-w-0 flex-1">
@@ -124,4 +128,4 @@ export function RecentDealsList({ deals }: RecentDealsListProps) {
       />
     </>
   );
-}
+});

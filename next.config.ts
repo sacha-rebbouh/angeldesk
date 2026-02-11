@@ -32,7 +32,7 @@ const nextConfig: NextConfig = {
   },
   // Optimize barrel imports - reduces cold start by 200-800ms
   // See: https://vercel.com/blog/how-we-optimized-package-imports-in-next-js
-  serverExternalPackages: ["mammoth"],
+  serverExternalPackages: ["mammoth", "xlsx", "canvas", "pdf-to-img", "@react-pdf/renderer"],
   experimental: {
     middlewareClientMaxBodySize: "50mb",
     optimizePackageImports: [

@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isValidCuid } from "@/lib/sanitize";
 import { getCurrentFacts, getCurrentFactsByCategory } from "@/services/fact-store/current-facts";
 import type { FactCategory } from "@/services/fact-store/types";
 import type { Prisma } from "@prisma/client";
+import { handleApiError } from "@/lib/api-error";
 
 // ============================================================================
 // RATE LIMITING (with bounded Map to prevent memory exhaustion)
@@ -114,7 +116,7 @@ export async function GET(
 
     // Validate dealId format using standard CUID validation
     // CUIDs are 25 chars starting with 'c', e.g., 'cljrxyz123456789012345678'
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -178,11 +180,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("Error fetching facts:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch facts" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch facts");
   }
 }
 
@@ -211,7 +209,7 @@ export async function POST(
 
     // Validate dealId format using standard CUID validation
     // CUIDs are 25 chars starting with 'c', e.g., 'cljrxyz123456789012345678'
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -318,10 +316,6 @@ export async function POST(
       },
     });
   } catch (error) {
-    console.error("Error creating fact override:", error);
-    return NextResponse.json(
-      { error: "Failed to create fact override" },
-      { status: 500 }
-    );
+    return handleApiError(error, "create fact override");
   }
 }

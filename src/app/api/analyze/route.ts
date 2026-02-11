@@ -10,10 +10,7 @@ import {
   type AnalysisTier,
   type SubscriptionTier,
 } from "@/services/deal-limits";
-import { checkRateLimit } from "@/lib/sanitize";
-
-// CUID validation pattern
-const CUID_PATTERN = /^c[a-z0-9]{20,30}$/;
+import { checkRateLimit, CUID_PATTERN } from "@/lib/sanitize";
 
 const analyzeSchema = z.object({
   dealId: z.string().min(1, "Deal ID is required").regex(CUID_PATTERN, "Invalid deal ID format"),
@@ -26,8 +23,6 @@ const analyzeSchema = z.object({
     "tier3_synthesis",
     "full_analysis"
   ]).default("screening"),
-  // Legacy: useReAct is deprecated, traces are now always enabled on Standard agents
-  useReAct: z.boolean().optional(),
   enableTrace: z.boolean().default(true),
   // New: stream mode returns immediately with analysisId
   stream: z.boolean().default(true),
@@ -102,46 +97,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if there's already a running analysis
-    const runningAnalysis = await prisma.analysis.findFirst({
-      where: {
-        dealId,
-        status: "RUNNING",
-      },
+    // Atomic check: no running analysis + record usage in a single transaction
+    // Prevents race conditions (double analysis, double credit consumption)
+    const txResult = await prisma.$transaction(async (tx) => {
+      // Check if there's already a running analysis
+      const runningAnalysis = await tx.analysis.findFirst({
+        where: { dealId, status: "RUNNING" },
+      });
+
+      if (runningAnalysis) {
+        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+        if (runningAnalysis.createdAt < thirtyMinAgo) {
+          await tx.analysis.update({
+            where: { id: runningAnalysis.id },
+            data: { status: "FAILED" },
+          });
+        } else {
+          return { error: "ALREADY_RUNNING" as const };
+        }
+      }
+
+      // Record usage atomically (increment within transaction)
+      const usage = await tx.userDealUsage.findUnique({ where: { userId: user.id } });
+      if (usage && usage.monthlyLimit !== -1 && usage.usedThisMonth >= usage.monthlyLimit) {
+        return { error: "LIMIT_REACHED" as const };
+      }
+
+      await tx.userDealUsage.upsert({
+        where: { userId: user.id },
+        create: { userId: user.id, monthlyLimit: 3, usedThisMonth: 1, tier1Count: requestedTier >= 1 ? 1 : 0, tier2Count: requestedTier >= 2 ? 1 : 0, tier3Count: requestedTier >= 3 ? 1 : 0 },
+        update: { usedThisMonth: { increment: 1 }, tier1Count: requestedTier >= 1 ? { increment: 1 } : undefined, tier2Count: requestedTier >= 2 ? { increment: 1 } : undefined, tier3Count: requestedTier >= 3 ? { increment: 1 } : undefined },
+      });
+
+      const remaining = usage ? Math.max(0, (usage.monthlyLimit === -1 ? Infinity : usage.monthlyLimit) - usage.usedThisMonth - 1) : 2;
+      return { success: true as const, remainingDeals: remaining };
     });
 
-    if (runningAnalysis) {
-      // Auto-expire stuck analyses older than 30 minutes
-      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
-      if (runningAnalysis.createdAt < thirtyMinAgo) {
-        await prisma.analysis.update({
-          where: { id: runningAnalysis.id },
-          data: { status: "FAILED" },
-        });
-        if (process.env.NODE_ENV === "development") {
-          console.warn(`[analyze] Auto-expired stuck analysis ${runningAnalysis.id} (created ${runningAnalysis.createdAt.toISOString()})`);
-        }
-      } else {
-        return NextResponse.json(
-          { error: "An analysis is already running for this deal" },
-          { status: 409 }
-        );
+    if ("error" in txResult) {
+      if (txResult.error === "ALREADY_RUNNING") {
+        return NextResponse.json({ error: "An analysis is already running for this deal" }, { status: 409 });
       }
+      return NextResponse.json({ error: "Limite mensuelle atteinte", upgradeRequired: true, remainingDeals: 0 }, { status: 403 });
     }
 
-    // Record the analysis usage (consumes from limit for FREE users)
-    const usageResult = await recordDealAnalysis(user.id, requestedTier);
-
-    if (!usageResult.success) {
-      return NextResponse.json(
-        {
-          error: "Limite mensuelle atteinte",
-          upgradeRequired: true,
-          remainingDeals: 0,
-        },
-        { status: 403 }
-      );
-    }
+    const usageResult = txResult;
 
     // Update deal status
     await prisma.deal.update({
@@ -167,7 +166,6 @@ export async function POST(request: NextRequest) {
       .runAnalysis({
         dealId,
         type: effectiveType,
-        useReAct: false, // Always use Standard agents (better results, lower cost)
         enableTrace,
         userPlan: effectivePlan,
       })

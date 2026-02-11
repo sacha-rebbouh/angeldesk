@@ -13,8 +13,9 @@ import {
   getConversationHistoryForLLM,
 } from "@/services/chat-context/conversation";
 import { getChatContext, getFullChatContext } from "@/services/chat-context";
-import { checkRateLimit } from "@/lib/sanitize";
+import { checkRateLimit, isValidCuid, CUID_PATTERN } from "@/lib/sanitize";
 import { dealChatAgent, type FullChatContext } from "@/agents/chat";
+import { handleApiError } from "@/lib/api-error";
 
 // ============================================================================
 // SCHEMAS
@@ -23,9 +24,6 @@ import { dealChatAgent, type FullChatContext } from "@/agents/chat";
 const createConversationSchema = z.object({
   title: z.string().optional(),
 });
-
-// CUID regex pattern for validation
-const CUID_PATTERN = /^c[a-z0-9]{20,30}$/;
 
 const sendMessageSchema = z.object({
   conversationId: z
@@ -53,7 +51,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const { dealId } = await context.params;
 
     // Validate dealId format (CUID)
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -70,7 +68,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     // If conversationId is provided, return that conversation's messages
     const conversationId = request.nextUrl.searchParams.get("conversationId");
     if (conversationId) {
-      if (!/^c[a-z0-9]{20,30}$/.test(conversationId)) {
+      if (!isValidCuid(conversationId)) {
         return NextResponse.json(
           { error: "Invalid conversation ID format" },
           { status: 400 }
@@ -100,11 +98,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       },
     });
   } catch (error) {
-    console.error("[Chat API] Error listing conversations:", error);
-    return NextResponse.json(
-      { error: "Failed to list conversations" },
-      { status: 500 }
-    );
+    return handleApiError(error, "list conversations");
   }
 }
 
@@ -135,7 +129,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     // Validate dealId format (CUID)
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }

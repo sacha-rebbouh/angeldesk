@@ -34,10 +34,11 @@ interface ClaimVerification {
   category: "market" | "traction" | "financials" | "tech" | "timing" | "competition" | "team";
   claim: string; // Citation EXACTE du deck
   location: string; // "Slide 5" ou "Executive Summary, p.2"
-  status: "VERIFIED" | "UNVERIFIED" | "CONTRADICTED" | "EXAGGERATED" | "MISLEADING";
+  status: "VERIFIED" | "UNVERIFIED" | "CONTRADICTED" | "EXAGGERATED" | "MISLEADING" | "PROJECTION_AS_FACT";
   evidence: string; // POURQUOI ce status
   sourceUsed: string; // "Context Engine - DealIntelligence", "Calcul: X/Y = Z", etc.
   investorImplication: string; // Ce que ca signifie pour le BA
+  dataReliability?: "AUDITED" | "VERIFIED" | "DECLARED" | "PROJECTED" | "ESTIMATED" | "UNVERIFIABLE";
 }
 
 interface NarrativeInconsistency {
@@ -129,6 +130,7 @@ interface LLMDeckForensicsResponse {
       evidence: string;
       sourceUsed: string;
       investorImplication: string;
+      dataReliability?: string;
     }[];
     inconsistencies: {
       issue: string;
@@ -239,6 +241,24 @@ STANDARDS DE QUALITE (NON NEGOCIABLES)
 METHODOLOGIE D'ANALYSE
 ============================================================================
 
+ETAPE 0 - DETECTION DES PROJECTIONS PRESENTEES COMME DES FAITS (PRIORITE ABSOLUE)
+AVANT toute autre analyse, identifier les chiffres qui sont en realite des PROJECTIONS:
+1. Identifier la DATE DU DOCUMENT (metadata, mention, date d'upload fournie)
+2. Pour chaque chiffre financier/traction:
+   - La periode couverte depasse-t-elle la date du document? → PROJECTION
+   - Le document est-il un BP/forecast? → PROJECTION
+   - Le chiffre est dans une section "Projections"/"Forecast"/"Budget"? → PROJECTION
+   - Le langage est au futur/conditionnel? → PROJECTION
+3. Pour chaque projection detectee, utiliser le status "PROJECTION_AS_FACT"
+4. Chaque PROJECTION_AS_FACT genere automatiquement un RED FLAG
+
+EXEMPLE CONCRET:
+- Deck date aout 2025, claim "570K€ de CA en 2025"
+- Le CA annuel 2025 couvre jan-dec, mais le doc date d'aout → 4 mois sont projetes
+- Status: PROJECTION_AS_FACT
+- Evidence: "Le document date d'aout 2025. Le CA annuel 2025 inclut necessairement des projections pour sept-dec (33% du chiffre). Ce n'est PAS un CA realise."
+- dataReliability: "PROJECTED"
+
 ETAPE 1 - VERIFICATION DES CLAIMS (couvrir TOUTES les categories)
 Pour chaque claim important du deck:
 - MARKET: Taille marche, CAGR, sources citees → Comparer avec Context Engine
@@ -247,6 +267,10 @@ Pour chaque claim important du deck:
 - TECH: Avantage technique, brevets → Verifier credibilite
 - TIMING: "Pourquoi maintenant" → Evaluer pertinence
 - COMPETITION: Positionnement vs concurrents → Cross-ref avec DB concurrents
+
+POUR CHAQUE CLAIM FINANCIER: Classifier la fiabilite de la donnee:
+- dataReliability: "AUDITED" | "VERIFIED" | "DECLARED" | "PROJECTED" | "ESTIMATED" | "UNVERIFIABLE"
+- Si un chiffre annonce comme un fait est en realite une projection → PROJECTION_AS_FACT + RED FLAG
 
 ETAPE 2 - DETECTION DES INCONSISTANCES
 Chercher ACTIVEMENT:
@@ -428,10 +452,11 @@ FORMAT DE REPONSE JSON
         "category": "market|traction|financials|tech|timing|competition|team",
         "claim": "Citation EXACTE du deck entre guillemets",
         "location": "Slide X ou Document Y, page Z",
-        "status": "VERIFIED|UNVERIFIED|CONTRADICTED|EXAGGERATED|MISLEADING",
+        "status": "VERIFIED|UNVERIFIED|CONTRADICTED|EXAGGERATED|MISLEADING|PROJECTION_AS_FACT",
         "evidence": "POURQUOI ce status - avec calculs si applicable",
-        "sourceUsed": "Context Engine - DealIntelligence | Calcul: X/Y=Z | Coherence interne",
-        "investorImplication": "Ce que ca signifie pour la decision d'investissement"
+        "sourceUsed": "Context Engine - DealIntelligence | Calcul: X/Y=Z | Coherence interne | Analyse temporelle",
+        "investorImplication": "Ce que ca signifie pour la decision d'investissement",
+        "dataReliability": "AUDITED|VERIFIED|DECLARED|PROJECTED|ESTIMATED|UNVERIFIABLE - classification de la fiabilite de cette donnee"
       }
     ],
     "inconsistencies": [

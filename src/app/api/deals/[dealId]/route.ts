@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isValidCuid } from "@/lib/sanitize";
 import { DealStage, DealStatus } from "@prisma/client";
+import { handleApiError } from "@/lib/api-error";
 
 const updateDealSchema = z.object({
   name: z.string().min(1).optional(),
@@ -30,7 +32,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const { dealId } = await context.params;
 
     // Validate dealId format (CUID)
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -43,8 +45,33 @@ export async function GET(request: NextRequest, context: RouteContext) {
         userId: user.id,
       },
       include: {
-        founders: true,
-        documents: true,
+        founders: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+            linkedinUrl: true,
+            previousVentures: true,
+            verifiedInfo: true,
+            createdAt: true,
+          },
+        },
+        documents: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            customType: true,
+            comments: true,
+            storageUrl: true,
+            mimeType: true,
+            sizeBytes: true,
+            processingStatus: true,
+            extractionQuality: true,
+            requiresOCR: true,
+            ocrProcessed: true,
+          },
+        },
         redFlags: {
           orderBy: [{ severity: "asc" }, { detectedAt: "desc" }],
         },
@@ -72,11 +99,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ data: deal });
   } catch (error) {
-    console.error("Error fetching deal:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch deal" },
-      { status: 500 }
-    );
+    return handleApiError(error, "fetch deal");
   }
 }
 
@@ -87,7 +110,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const { dealId } = await context.params;
 
     // Validate dealId format (CUID)
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -117,8 +140,33 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         website: validatedData.website || null,
       },
       include: {
-        founders: true,
-        documents: true,
+        founders: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+            linkedinUrl: true,
+            previousVentures: true,
+            verifiedInfo: true,
+            createdAt: true,
+          },
+        },
+        documents: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            customType: true,
+            comments: true,
+            storageUrl: true,
+            mimeType: true,
+            sizeBytes: true,
+            processingStatus: true,
+            extractionQuality: true,
+            requiresOCR: true,
+            ocrProcessed: true,
+          },
+        },
         redFlags: true,
         analyses: {
           select: {
@@ -140,18 +188,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ data: deal });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation error", details: error.issues },
-        { status: 400 }
-      );
-    }
-
-    console.error("Error updating deal:", error);
-    return NextResponse.json(
-      { error: "Failed to update deal" },
-      { status: 500 }
-    );
+    return handleApiError(error, "update deal");
   }
 }
 
@@ -162,7 +199,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     const { dealId } = await context.params;
 
     // Validate dealId format (CUID)
-    if (!dealId || !/^c[a-z0-9]{20,30}$/.test(dealId)) {
+    if (!isValidCuid(dealId)) {
       return NextResponse.json(
         { error: "Invalid deal ID format" },
         { status: 400 }
@@ -187,10 +224,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ message: "Deal deleted successfully" });
   } catch (error) {
-    console.error("Error deleting deal:", error);
-    return NextResponse.json(
-      { error: "Failed to delete deal" },
-      { status: 500 }
-    );
+    return handleApiError(error, "delete deal");
   }
 }

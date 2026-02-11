@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { inngest } from '@/lib/inngest'
+import { handleApiError } from "@/lib/api-error";
 
 /**
  * Vérifie le secret cron pour sécuriser l'endpoint
@@ -40,11 +41,7 @@ export async function GET(request: NextRequest) {
       message: 'DB_CLEANER triggered via Inngest',
     })
   } catch (error) {
-    console.error('Failed to trigger DB_CLEANER:', error)
-    return NextResponse.json(
-      { error: 'Failed to trigger cleaner' },
-      { status: 500 }
-    )
+    return handleApiError(error, "trigger cleaner")
   }
 }
 
@@ -70,10 +67,6 @@ export async function POST(request: NextRequest) {
       runId,
     })
   } catch (error) {
-    console.error('Failed to trigger DB_CLEANER:', error)
-    return NextResponse.json(
-      { error: 'Failed to trigger cleaner' },
-      { status: 500 }
-    )
+    return handleApiError(error, "trigger cleaner")
   }
 }

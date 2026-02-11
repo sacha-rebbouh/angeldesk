@@ -6,6 +6,7 @@ import {
   analyzeFounderLinkedIn,
   isRapidAPILinkedInConfigured,
 } from "@/services/context-engine/connectors/rapidapi-linkedin";
+import { handleApiError } from "@/lib/api-error";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -261,12 +262,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error enriching founder:", error);
-    }
-    return NextResponse.json(
-      { error: "Failed to enrich founder profile" },
-      { status: 500 }
-    );
+    return handleApiError(error, "enrich founder profile");
   }
 }

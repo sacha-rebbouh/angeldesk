@@ -173,7 +173,7 @@ interface MemberCardProps {
   };
 }
 
-function MemberCard({ member }: MemberCardProps) {
+const MemberCard = memo(function MemberCard({ member }: MemberCardProps) {
   const verdict = member.vote?.verdict ?? member.analysis?.verdict;
   const confidence = member.vote?.confidence ?? member.analysis?.confidence;
   const justification = member.vote?.justification;
@@ -285,7 +285,7 @@ function MemberCard({ member }: MemberCardProps) {
       )}
     </div>
   );
-}
+});
 
 function VerdictBanner({ result }: { result: BoardVerdictResult }) {
   const colors = getVerdictColors(result.verdict);

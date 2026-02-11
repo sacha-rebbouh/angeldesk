@@ -2,7 +2,12 @@
  * Utility functions for formatting values across the application
  */
 
-const AGENT_DISPLAY_NAMES: Record<string, string> = {
+export const AGENT_DISPLAY_NAMES: Record<string, string> = {
+  // Base agents
+  "red-flag-detector": "Red Flag Detector",
+  "document-extractor": "Document Extractor",
+  "deal-scorer": "Deal Scorer",
+  // Tier 1 agents
   "financial-auditor": "Financial Auditor",
   "team-investigator": "Team Investigator",
   "competitive-intel": "Competitive Intel",
@@ -16,24 +21,24 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   "customer-intel": "Customer Intel",
   "exit-strategist": "Exit Strategist",
   "question-master": "Question Master",
-  // Tier 2 agents
-  "synthesis-deal-scorer": "Synthesis Deal Scorer",
-  "scenario-modeler": "Scenario Modeler",
-  "devils-advocate": "Devil's Advocate",
-  "contradiction-detector": "Contradiction Detector",
-  "memo-generator": "Memo Generator",
-  // Tier 3 sector experts
+  // Tier 2 - Sector Experts
   "saas-expert": "SaaS Expert",
   "marketplace-expert": "Marketplace Expert",
   "fintech-expert": "FinTech Expert",
   "healthtech-expert": "HealthTech Expert",
+  "ai-expert": "AI Expert",
   "deeptech-expert": "DeepTech Expert",
   "climate-expert": "Climate Expert",
   "hardware-expert": "Hardware Expert",
   "gaming-expert": "Gaming Expert",
   "consumer-expert": "Consumer Expert",
-  // Additional agents
-  "red-flag-detector": "Red Flag Detector",
+  "blockchain-expert": "Blockchain Expert",
+  // Tier 3 - Synthesis agents
+  "contradiction-detector": "Contradiction Detector",
+  "scenario-modeler": "Scenario Modeler",
+  "synthesis-deal-scorer": "Synthesis Scorer",
+  "devils-advocate": "Devil's Advocate",
+  "memo-generator": "Memo Generator",
 };
 
 /**

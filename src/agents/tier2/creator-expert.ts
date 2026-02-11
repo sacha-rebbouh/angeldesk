@@ -18,7 +18,7 @@ import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertType, SectorExpertResult, SectorExpertData, ExtendedSectorData } from "./types";
 import { CREATOR_STANDARDS } from "./sector-standards";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
 import { SectorExpertOutputSchema, getDefaultSectorData } from "./base-sector-expert";
 
 // ============================================================================
@@ -542,18 +542,13 @@ export const creatorExpert = {
       });
 
       // Parse and validate response
-      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error("No JSON found in Creator Expert response");
-      }
-
-      const parsed = SectorExpertOutputSchema.safeParse(JSON.parse(jsonMatch[0]));
+      const parsed = SectorExpertOutputSchema.safeParse(JSON.parse(extractFirstJSON(response.content)));
 
       if (!parsed.success) {
         console.warn("[creator-expert] Output validation warnings:", parsed.error.issues);
       }
 
-      const output = parsed.success ? parsed.data : JSON.parse(jsonMatch[0]);
+      const output = parsed.success ? parsed.data : JSON.parse(extractFirstJSON(response.content));
 
       
       // === SCORE CAPPING based on data completeness ===

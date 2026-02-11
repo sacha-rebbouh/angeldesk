@@ -66,7 +66,7 @@ import { blockchainExpert } from "./blockchain-expert";
 import { generalExpert } from "./general-expert";
 import type { SectorExpertType, SectorExpertResult, SectorExpertData } from "./types";
 import type { EnrichedAgentContext } from "../types";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
 import { SectorExpertOutputSchema, getDefaultSectorData } from "./base-sector-expert";
 
 // Type for any sector expert
@@ -108,19 +108,14 @@ function wrapWithRun(expert: BuildPromptExpert): AnySectorExpert {
         });
 
         // Parse and validate response
-        const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error("No JSON found in response");
-        }
-
-        const parsed = SectorExpertOutputSchema.safeParse(JSON.parse(jsonMatch[0]));
+        const parsed = SectorExpertOutputSchema.safeParse(JSON.parse(extractFirstJSON(response.content)));
 
         if (!parsed.success) {
           console.warn(`[${expertName}] Output validation failed:`, parsed.error.issues);
         }
 
         // Transform SectorExpertOutput to SectorExpertData
-        const output = parsed.success ? parsed.data : JSON.parse(jsonMatch[0]);
+        const output = parsed.success ? parsed.data : JSON.parse(extractFirstJSON(response.content));
         const sectorData: SectorExpertData = {
           sectorName: expertName.replace("-expert", ""),
           sectorMaturity: output.sectorFit?.sectorMaturity ?? "growing",

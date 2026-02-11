@@ -24,7 +24,6 @@ export interface AnalysisCostReport {
   dealId: string;
   userId?: string;
   type: string;
-  useReAct: boolean;
   totalCost: number;
   totalCalls: number;
   totalInputTokens: number;
@@ -130,7 +129,6 @@ interface AnalysisAccumulator {
   dealId: string;
   userId: string;
   type: string;
-  useReAct: boolean;
   startTime: number;
   boardSessionId?: string;
   calls: {
@@ -182,7 +180,6 @@ class CostMonitor {
     dealId: string;
     userId: string;
     type: string;
-    useReAct: boolean;
     boardSessionId?: string;
   }): void {
     this.currentAnalysis = {
@@ -281,7 +278,7 @@ class CostMonitor {
       return null;
     }
 
-    const { analysisId, dealId, type, useReAct, startTime, calls } = this.currentAnalysis;
+    const { analysisId, dealId, type, startTime, calls } = this.currentAnalysis;
     const duration = Date.now() - startTime;
 
     // Aggregate by model
@@ -330,7 +327,6 @@ class CostMonitor {
       analysisId,
       dealId,
       type,
-      useReAct,
       totalCost,
       totalCalls: calls.length,
       totalInputTokens,
@@ -696,23 +692,19 @@ class CostMonitor {
   /**
    * Estimate cost for an analysis type
    */
-  estimateCost(type: string, useReAct: boolean): { min: number; max: number; avg: number } {
+  estimateCost(type: string): { min: number; max: number; avg: number } {
     // Based on empirical data
     const estimates: Record<string, { min: number; max: number; avg: number }> = {
       screening: { min: 0.02, max: 0.05, avg: 0.03 },
       extraction: { min: 0.02, max: 0.05, avg: 0.03 },
       full_dd: { min: 0.08, max: 0.15, avg: 0.10 },
       tier1_complete: { min: 0.25, max: 0.45, avg: 0.34 },
-      tier1_complete_react: { min: 1.00, max: 1.80, avg: 1.35 },
       tier2_sector: { min: 0.02, max: 0.05, avg: 0.03 },
       tier3_synthesis: { min: 0.10, max: 0.18, avg: 0.13 },
       full_analysis: { min: 0.40, max: 0.65, avg: 0.50 },
-      full_analysis_react: { min: 1.50, max: 2.50, avg: 1.90 },
     };
 
-    const key = useReAct && (type === "tier1_complete" || type === "full_analysis")
-      ? `${type}_react`
-      : type;
+    const key = type;
 
     return estimates[key] ?? { min: 0.10, max: 0.50, avg: 0.25 };
   }
@@ -726,11 +718,9 @@ class CostMonitor {
       extraction: { min: 0.02, max: 0.05, avg: 0.03 },
       full_dd: { min: 0.08, max: 0.15, avg: 0.10 },
       tier1_complete: { min: 0.25, max: 0.45, avg: 0.34 },
-      tier1_complete_react: { min: 1.00, max: 1.80, avg: 1.35 },
       tier2_sector: { min: 0.02, max: 0.05, avg: 0.03 },
       tier3_synthesis: { min: 0.10, max: 0.18, avg: 0.13 },
       full_analysis: { min: 0.40, max: 0.65, avg: 0.50 },
-      full_analysis_react: { min: 1.50, max: 2.50, avg: 1.90 },
     };
   }
 

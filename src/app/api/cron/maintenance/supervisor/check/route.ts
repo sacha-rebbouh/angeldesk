@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supervisorCheck, checkRetryResult } from '@/agents/maintenance/supervisor'
 import { getPendingRetryChecks } from '@/agents/maintenance/supervisor/retry'
 import type { MaintenanceAgent } from '@prisma/client'
+import { handleApiError } from "@/lib/api-error";
 
 export const runtime = 'nodejs'
 export const maxDuration = 60 // 1 minute max
@@ -93,11 +94,7 @@ export async function GET(request: NextRequest) {
       results,
     })
   } catch (error) {
-    console.error('Supervisor check error:', error)
-    return NextResponse.json(
-      { error: 'Check failed' },
-      { status: 500 }
-    )
+    return handleApiError(error, "run supervisor check")
   }
 }
 
@@ -144,10 +141,6 @@ export async function POST(request: NextRequest) {
       details: result.details,
     })
   } catch (error) {
-    console.error('Supervisor check error:', error)
-    return NextResponse.json(
-      { error: 'Check failed' },
-      { status: 500 }
-    )
+    return handleApiError(error, "run supervisor check")
   }
 }

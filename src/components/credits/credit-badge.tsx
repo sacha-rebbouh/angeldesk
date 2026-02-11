@@ -35,7 +35,7 @@ export function CreditBadge({ className }: QuotaBadgeProps) {
       const json = await response.json();
       return json.data;
     },
-    staleTime: 30_000,
+    staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
   });
 

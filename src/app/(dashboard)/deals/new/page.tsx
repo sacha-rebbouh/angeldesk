@@ -139,6 +139,8 @@ export default function NewDealPage() {
     valuationPre: "",
   });
 
+  const [errors, setErrors] = useState({});
+
   const mutation = useMutation({
     mutationFn: createDeal,
     onSuccess: (response) => {

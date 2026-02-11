@@ -22,7 +22,7 @@
 import { z } from "zod";
 import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertData, SectorExpertResult } from "./types";
-import { complete, setAgentContext } from "@/services/openrouter/router";
+import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
 
 // ============================================================================
 // OUTPUT SCHEMA
@@ -964,11 +964,7 @@ export const generalExpert = {
       // Parse and validate response
       let parsedOutput: GeneralExpertOutput;
       try {
-        const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error("No JSON found in response");
-        }
-        const rawJson = JSON.parse(jsonMatch[0]);
+        const rawJson = JSON.parse(extractFirstJSON(response.content));
         const normalizedJson = normalizeOutput(rawJson);
         const parseResult = GeneralOutputSchema.safeParse(normalizedJson);
         if (parseResult.success) {
