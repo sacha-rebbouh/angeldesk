@@ -446,6 +446,7 @@ ${contextEngineData}
 ## PROFIL INVESTISSEUR BA
 ${baSection}
 ${this.formatFactStoreData(context) ?? ""}
+${this.buildAnchoredSection(context)}
 ---
 
 ## INSTRUCTIONS
@@ -458,6 +459,9 @@ IMPORTANT:
 - Chaque risque DOIT avoir une sévérité et une source
 - La recommandation DOIT être claire et assumée
 - Les questions DOIVENT être consolidées sans duplication
+- Les chiffres du Fact Store ancre ci-dessus DOIVENT etre utilises tels quels (F41)
+- Si un chiffre est marque [PROJECTION], tu DOIS le presenter comme tel dans le memo
+- Si un chiffre est marque [ESTIME], tu DOIS mentionner qu'il s'agit d'une estimation
 
 Réponds en JSON avec cette structure exacte:
 \`\`\`json
@@ -592,6 +596,27 @@ Réponds en JSON avec cette structure exacte:
   // ============================================================================
   // EXTRACTION DES INSIGHTS TIER 1
   // ============================================================================
+
+  // F41: Build anchored financial section from fact store
+  private buildAnchoredSection(context: EnrichedAgentContext): string {
+    const factStore = context.factStore;
+    if (!factStore || factStore.length === 0) return "";
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { buildAnchoredMemoData } = require("./memo-fact-anchoring") as typeof import("./memo-fact-anchoring");
+      const anchoredData = buildAnchoredMemoData(factStore);
+      if (!anchoredData.financialSectionTemplate) return "";
+
+      return `\n${anchoredData.financialSectionTemplate}\n
+REGLE ABSOLUE: Les chiffres ci-dessus proviennent du Fact Store verifie.
+Tu DOIS les utiliser tels quels dans le memo. Tu ne peux PAS les arrondir, les modifier, ou les ignorer.
+Si un chiffre est marque [PROJECTION], tu DOIS le presenter comme tel dans le memo.
+Si un chiffre est marque [ESTIME], tu DOIS mentionner qu'il s'agit d'une estimation.`;
+    } catch {
+      return "";
+    }
+  }
 
   private extractTier1Insights(context: EnrichedAgentContext): string {
     const results = context.previousResults ?? {};
@@ -1037,6 +1062,25 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
     );
     if (isPreferredStage) {
       lines.push(`- OK: Stage ${deal.stage} correspond à vos préférences`);
+    }
+
+    // Thèse d'investissement (F72)
+    if (prefs.investmentThesis) {
+      lines.push(`\n### Thèse d'investissement du BA`);
+      lines.push(`"${prefs.investmentThesis}"`);
+      lines.push(`\n**INSTRUCTION LLM:** Compare ce deal à la thèse ci-dessus. Indique clairement:`);
+      lines.push(`- Ce qui COLLE avec la thèse (avec preuves)`);
+      lines.push(`- Ce qui NE COLLE PAS (avec preuves)`);
+      lines.push(`- Score d'alignement thèse (0-100%)`);
+    }
+
+    // Must-Have Criteria (F72)
+    if (prefs.mustHaveCriteria && prefs.mustHaveCriteria.length > 0) {
+      lines.push(`\n### Critères obligatoires du BA`);
+      for (const criterion of prefs.mustHaveCriteria) {
+        lines.push(`- [ ] ${criterion}`);
+      }
+      lines.push(`\n**INSTRUCTION LLM:** Pour chaque critère, indique MET / NON MET / INDÉTERMINÉ avec justification.`);
     }
 
     return lines.join("\n");

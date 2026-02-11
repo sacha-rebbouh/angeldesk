@@ -11,6 +11,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ScoreBadge } from "@/components/shared/score-badge";
 import { ExpandableSection } from "@/components/shared/expandable-section";
 import {
@@ -76,11 +82,11 @@ const SkepticismBadge = memo(function SkepticismBadge({ score }: { score: number
 
 // Hoisted config
 const VERDICT_CONFIG: Record<string, { label: string; color: string }> = {
-  strong_pass: { label: "Strong Pass", color: "bg-green-100 text-green-800 border-green-300" },
-  pass: { label: "Pass", color: "bg-blue-100 text-blue-800 border-blue-300" },
-  conditional_pass: { label: "Conditional", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  weak_pass: { label: "Weak Pass", color: "bg-orange-100 text-orange-800 border-orange-300" },
-  no_go: { label: "No Go", color: "bg-red-100 text-red-800 border-red-300" },
+  strong_pass: { label: "Forte conviction", color: "bg-green-100 text-green-800 border-green-300" },
+  pass: { label: "Favorable", color: "bg-blue-100 text-blue-800 border-blue-300" },
+  conditional_pass: { label: "Conditionnel", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
+  weak_pass: { label: "Réservé", color: "bg-orange-100 text-orange-800 border-orange-300" },
+  no_go: { label: "Ne pas investir", color: "bg-red-100 text-red-800 border-red-300" },
 };
 
 const VerdictBadge = memo(function VerdictBadge({ verdict }: { verdict: string }) {
@@ -93,7 +99,7 @@ const RECOMMENDATION_CONFIG: Record<string, { label: string; color: string }> = 
   invest: { label: "Investir", color: "bg-green-500 text-white" },
   pass: { label: "Passer", color: "bg-red-500 text-white" },
   wait: { label: "Attendre", color: "bg-yellow-500 text-white" },
-  negotiate: { label: "Negocier", color: "bg-blue-500 text-white" },
+  negotiate: { label: "Négocier", color: "bg-blue-500 text-white" },
 };
 
 const RECOMMENDATION_ICONS: Record<string, React.ReactNode> = {
@@ -146,7 +152,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             <ScoreBadge score={data.overallScore} size="lg" />
           </div>
         </div>
-        <CardDescription>Score final — analyse multi-tiers avec consensus et reflexion</CardDescription>
+        <CardDescription>Score final — analyse multi-tiers avec consensus et réflexion</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Recommendation */}
@@ -154,6 +160,9 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           <div>
             <p className="text-sm text-muted-foreground">Recommandation</p>
             <p className="text-lg font-medium mt-1">{data.investmentRecommendation.rationale}</p>
+            <p className="text-xs text-muted-foreground mt-2 italic">
+              Analyse automatisee a titre informatif uniquement. Ne constitue pas un conseil en investissement.
+            </p>
           </div>
           <RecommendationBadge action={data.investmentRecommendation.action} />
         </div>
@@ -187,8 +196,8 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           </div>
         ) : (
           <ProTeaserSection
-            title="Score detaille par dimension"
-            description={`${data.dimensionScores.length} dimensions analysees avec benchmarks`}
+            title="Score détaillé par dimension"
+            description={`${data.dimensionScores.length} dimensions analysées avec benchmarks`}
             icon={Target}
             previewText={data.comparativeRanking.similarDealsAnalyzed > 0
               ? `Score global: ${data.overallScore}/100 - Top ${data.comparativeRanking.percentileSector}% du secteur`
@@ -203,11 +212,11 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             <div className="grid grid-cols-3 gap-3">
               <div className="p-3 rounded-lg bg-muted text-center">
                 <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
-                <p className="text-xs text-muted-foreground">Percentile Global</p>
+                <p className="text-xs text-muted-foreground">Position globale</p>
               </div>
               <div className="p-3 rounded-lg bg-muted text-center">
                 <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
-                <p className="text-xs text-muted-foreground">Percentile Secteur</p>
+                <p className="text-xs text-muted-foreground">Position dans le secteur</p>
               </div>
               <div className="p-3 rounded-lg bg-muted text-center">
                 <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
@@ -500,15 +509,28 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <BarChart3 className="h-5 w-5 text-indigo-600" />
-            <CardTitle className="text-lg">Modelisation Scenarios</CardTitle>
+            <CardTitle className="text-lg">Modélisation Scénarios</CardTitle>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-sm bg-white">
-              Confiance: {confidenceLevel}%
-            </Badge>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className="text-sm bg-white cursor-help">
+                    Fiabilité données : {confidenceLevel}%
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p className="font-medium">Qualité des données d&apos;entrée</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Ce score mesure la complétude et la fiabilité des données utilisées pour cette analyse.
+                    Ce n&apos;est PAS une probabilité de succès du deal.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
-        <CardDescription>{isNoGo ? "Scenarios de risque" : "4 scenarios avec calculs ROI detailles"}</CardDescription>
+        <CardDescription>{isNoGo ? "Scénarios de risque" : "4 scénarios avec calculs ROI détaillés"}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 pt-4">
         {/* Expected Return Summary */}
@@ -517,17 +539,17 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
             <div className="p-4 rounded-lg bg-gradient-to-r from-red-900 to-red-800 text-white">
               <div className="flex items-center gap-2 mb-2">
                 <AlertTriangle className="h-5 w-5 text-red-300" />
-                <span className="text-sm font-medium text-red-200">Retour Espere</span>
+                <span className="text-sm font-medium text-red-200">Retour Espéré</span>
               </div>
               <div className="text-3xl font-bold text-red-300">—</div>
               <p className="text-sm text-red-200 mt-2">
-                Deal evalue NO_GO (score {overallScore}/100). Seuls les scenarios de risque (BEAR, CATASTROPHIC) sont affiches.
+                Deal évalué NO_GO (score {overallScore}/100). Seuls les scénarios de risque (BEAR, CATASTROPHIC) sont affichés.
               </p>
             </div>
           ) : (
             <div className="p-4 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-indigo-100">Retour Espere</span>
+                <span className="text-sm font-medium text-indigo-100">Retour Theorique (estimatif)</span>
                 <Badge className="bg-white/20 text-white border-white/30">
                   {data.findings?.mostLikelyScenario ?? "BASE"} le plus probable
                 </Badge>
@@ -538,7 +560,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                     {Number(probabilityWeighted?.expectedMultiple ?? expectedReturn.multiple ?? 0).toFixed(1)}x
                   </div>
                   <div className="text-xs text-indigo-200 mt-1">
-                    Multiple pondere (tous scenarios)
+                    Multiple pondéré (tous scénarios)
                   </div>
                 </div>
                 <div>
@@ -552,7 +574,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
               </div>
               <div className="mt-3 pt-3 border-t border-white/20">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-indigo-200">IRR ajuste au risque (inclut echec total):</span>
+                  <span className="text-indigo-200">IRR ajusté au risque (inclut échec total):</span>
                   <span className={cn(
                     "font-semibold",
                     Number(expectedReturn.irr ?? 0) < 10 ? "text-amber-300" : "text-white"
@@ -561,7 +583,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                   </span>
                 </div>
                 <p className="text-xs text-indigo-300 mt-1">
-                  = Moyenne ponderee de tous les scenarios, y compris perte totale ({(100 - Number(expectedReturn.successProbability ?? 0)).toFixed(0)}% de risque)
+                  = Moyenne pondérée de tous les scénarios, y compris perte totale ({(100 - Number(expectedReturn.successProbability ?? 0)).toFixed(0)}% de risque)
                 </p>
               </div>
               {probabilityWeighted?.riskAdjustedAssessment && (
@@ -569,13 +591,17 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                   {probabilityWeighted.riskAdjustedAssessment}
                 </p>
               )}
+              <p className="text-xs text-indigo-200/70 mt-2 border-t border-white/10 pt-2">
+                Projection estimative basee sur des hypotheses. ~70% des startups early-stage echouent.
+                Le rendement reel peut etre significativement different.
+              </p>
             </div>
           )
         )}
 
         {/* Scenarios Grid */}
         {isNoGo && (
-          <p className="text-xs text-muted-foreground italic">Seuls les scenarios de risque sont affiches pour un deal NO_GO.</p>
+          <p className="text-xs text-muted-foreground italic">Seuls les scénarios de risque sont affichés pour un deal NO_GO.</p>
         )}
         <div className="space-y-3">
           {scenarios.filter((s: ScenarioV2) => !isNoGo || s.name === "CATASTROPHIC" || s.name === "BEAR").map((scenario: ScenarioV2, i: number) => {
@@ -657,9 +683,9 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                   )}
                 </div>
 
-                {/* Calcul ROI detaille (expandable) */}
+                {/* Calcul ROI détaillé (expandable) */}
                 {investorReturn && investment > 0 && (
-                  <ExpandableSection title="Calcul ROI detaille" count={1}>
+                  <ExpandableSection title="Calcul ROI détaillé" count={1}>
                     <div className="mt-2 p-3 bg-white/70 rounded border text-xs space-y-2">
                       <div className="grid grid-cols-2 gap-2">
                         <div><span className="text-muted-foreground">Investissement:</span> €{investment.toLocaleString()}</div>
@@ -698,7 +724,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
 
         {/* Comparables Used - hidden for NO_GO */}
         {!isNoGo && basedOnComparables.length > 0 && (
-          <ExpandableSection title="Comparables utilises" count={basedOnComparables.length}>
+          <ExpandableSection title="Comparables utilisés" count={basedOnComparables.length}>
             <div className="mt-2 space-y-2">
               {basedOnComparables.map((c, i) => (
                 <div key={i} className="p-3 border rounded bg-slate-50">
@@ -770,7 +796,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
 
         {/* Sensitivity Analysis - hidden for NO_GO */}
         {!isNoGo && sensitivityAnalysis.length > 0 && (
-          <ExpandableSection title="Analyse de sensibilite" count={sensitivityAnalysis.length}>
+          <ExpandableSection title="Analyse de sensibilité" count={sensitivityAnalysis.length}>
             <div className="space-y-2 mt-2">
               {sensitivityAnalysis.map((s: SensitivityAnalysisV2, i: number) => (
                 <div key={i} className="p-3 border rounded bg-white">
@@ -839,7 +865,7 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
   const questions = data.questions ?? [];
 
   // Skepticism score and breakdown
-  const skepticismScore = data.findings?.skepticismAssessment?.score ?? 50;
+  const skepticismScore = data.findings?.skepticismAssessment?.score ?? 0;
   const skepticismVerdict = data.findings?.skepticismAssessment?.verdict ?? "CAUTIOUS";
   const skepticismBreakdown = data.findings?.skepticismAssessment?.scoreBreakdown ?? [];
 
@@ -1328,7 +1354,7 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
 
         {/* Contradictions - Table format */}
         {contradictions.length > 0 ? (
-          <ExpandableSection title="Contradictions detectees" count={contradictions.length} defaultOpen>
+          <ExpandableSection title="Contradictions détectées" count={contradictions.length} defaultOpen>
             <div className="mt-3 border rounded-lg overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
@@ -1377,7 +1403,7 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
 
         {/* Data Gaps */}
         {dataGaps.length > 0 && (
-          <ExpandableSection title="Donnees manquantes" count={dataGaps.length}>
+          <ExpandableSection title="Données manquantes" count={dataGaps.length}>
             <div className="space-y-2 mt-3">
               {dataGaps.map((g: DataGap, i: number) => (
                 <div key={i} className={cn(
@@ -1476,7 +1502,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
         </ExpandableSection>
 
         {/* Key Risks */}
-        <ExpandableSection title="Risques cles" count={data.keyRisks.length} defaultOpen>
+        <ExpandableSection title="Risques clés" count={data.keyRisks.length} defaultOpen>
           <div className="space-y-2 mt-2">
             {data.keyRisks.map((r, i) => (
               <div key={i} className="p-2 border rounded">
@@ -1707,8 +1733,11 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             {/* Expected Return */}
             {expectedReturn && (
-              <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
-                <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Multiple Espere</div>
+              <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10 relative">
+                <Badge className="absolute -top-2 -right-2 bg-amber-500/90 text-white text-[10px] px-1.5 py-0.5 border-0">
+                  PROJECTION
+                </Badge>
+                <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Rendement Theorique (estimatif)</div>
                 {expectedReturn.expectedMultiple < 1 ? (
                   <>
                     <div className="text-3xl font-bold text-slate-500">—</div>
@@ -1730,12 +1759,15 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
 
             {/* Expected IRR */}
             {expectedReturn && expectedReturn.expectedIRR !== 0 && (
-              <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
-                <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">IRR Espere</div>
+              <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10 relative">
+                <Badge className="absolute -top-2 -right-2 bg-amber-500/90 text-white text-[10px] px-1.5 py-0.5 border-0">
+                  PROJECTION
+                </Badge>
+                <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">IRR Theorique (estimatif)</div>
                 <div className={cn("text-3xl font-bold", getIRRColorClass(Number(expectedReturn.expectedIRR ?? 0)))}>
                   {Number(expectedReturn.expectedIRR ?? 0).toFixed(0)}%
                 </div>
-                <div className="text-xs text-slate-400 mt-1">Moyenne ponderee</div>
+                <div className="text-xs text-slate-400 mt-1">Moyenne pondérée</div>
               </div>
             )}
 
@@ -1779,6 +1811,19 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
             </div>
           </div>
 
+          {/* Warning projection */}
+          {expectedReturn && expectedReturn.expectedMultiple >= 1 && (
+            <div className="flex items-start gap-2 px-4 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 mb-4">
+              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-200">
+                <strong>Attention :</strong> Ces projections sont <strong>theoriques et estimatives</strong>,
+                basees sur les claims du fondateur et des scenarios modelises.
+                En realite, <strong>~70% des startups early-stage echouent</strong> (source : CB Insights, Harvard Business School).
+                Le rendement reel peut etre significativement different, y compris une perte totale du capital.
+              </p>
+            </div>
+          )}
+
           {/* Recommendation Banner */}
           {scorerData && (
             <div className="flex items-center justify-between bg-white/5 rounded-lg p-4 border border-white/10">
@@ -1786,9 +1831,22 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
                 <RecommendationBadge action={scorerData.investmentRecommendation.action} />
                 <p className="text-sm text-slate-200 max-w-xl">{scorerData.investmentRecommendation.rationale}</p>
               </div>
-              <Badge variant="outline" className="border-white/20 text-white">
-                Confiance: {scorerData.confidence}%
-              </Badge>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge variant="outline" className="border-white/20 text-white cursor-help">
+                      Fiabilité données : {scorerData.confidence}%
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    <p className="font-medium">Qualité des données d&apos;entrée</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Ce score mesure la complétude et la fiabilité des données disponibles,
+                      pas la probabilité de succès du deal.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
           )}
         </CardContent>
@@ -1837,10 +1895,10 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
                 {/* Scenarios - PRO only */}
                 {isFree ? (
                   <ProTeaserSection
-                    title="Scenarios modelises"
+                    title="Scénarios modélisés"
                     description="3 scenarios Bull/Base/Bear avec projections ROI et IRR"
                     icon={BarChart3}
-                    previewText={scenarioData ? `Confiance: ${scenarioData.meta?.confidenceLevel ?? scenarioData.score?.value ?? 75}%` : undefined}
+                    previewText={scenarioData ? `Fiabilité : ${scenarioData.meta?.confidenceLevel ?? scenarioData.score?.value ?? 75}%` : undefined}
                   />
                 ) : (
                   scenarioData && <ScenarioModelerCard data={scenarioData} overallScore={scorerData?.overallScore} skepticism={devilsData?.findings?.skepticismAssessment?.score} />
@@ -1849,10 +1907,10 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
                 {/* Contradictions - PRO only (FREE sees count teaser) */}
                 {isFree ? (
                   <ProTeaserSection
-                    title="Contradictions detectees"
+                    title="Contradictions détectées"
                     description={contradictionData
                       ? `${contradictionData.findings?.contradictions?.length ?? 0} contradiction(s) identifiee(s) entre les analyses`
-                      : "Detection automatique des incoherences"}
+                      : "Détection automatique des incohérences"}
                     icon={Zap}
                     previewText={contradictionData ? `Score coherence: ${contradictionData.findings?.consistencyAnalysis?.overallScore ?? contradictionData.score?.value ?? 0}/100` : undefined}
                   />

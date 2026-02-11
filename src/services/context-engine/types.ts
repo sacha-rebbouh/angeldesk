@@ -211,6 +211,27 @@ export interface NewsSentiment {
 // COMBINED CONTEXT
 // ============================================================================
 
+/** F59: Detailed context quality scoring */
+export interface ContextQualityScore {
+  /** Score global 0-1 */
+  completeness: number;
+  /** Score de fiabilite 0-1 (% de connecteurs OK) */
+  reliability: number;
+  /** Score composite qualite = completeness * reliability */
+  qualityScore: number;
+  /** Alerte si qualite insuffisante */
+  degraded: boolean;
+  /** Raison de la degradation */
+  degradationReasons: string[];
+  /** Detail par categorie */
+  categories: {
+    similarDeals: { score: number; count: number; weight: number };
+    marketData: { score: number; available: boolean; weight: number };
+    competitors: { score: number; count: number; weight: number };
+    news: { score: number; count: number; weight: number };
+  };
+}
+
 export interface DealContext {
   dealIntelligence?: DealIntelligence;
   marketData?: MarketData;
@@ -224,6 +245,8 @@ export interface DealContext {
   enrichedAt: string;
   sources: DataSource[];
   completeness: number; // 0-1, how much data we found
+  /** F59: Detailed quality scoring (replaces simple completeness) */
+  contextQuality?: ContextQualityScore;
 }
 
 // ============================================================================

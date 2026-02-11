@@ -30,6 +30,7 @@ export class PromptInjectionError extends Error {
  * Patterns that could indicate prompt injection attempts
  */
 const SUSPICIOUS_PATTERNS = [
+  // === ANGLAIS ===
   /ignore\s+(all\s+)?(previous|above|prior)\s+(instructions?|prompts?|rules?)/i,
   /forget\s+(all\s+)?(previous|above|prior)/i,
   /disregard\s+(all\s+)?(previous|above|prior)/i,
@@ -44,10 +45,145 @@ const SUSPICIOUS_PATTERNS = [
   /<\|im_end\|>/i,
   /```\s*(system|assistant|user)\s*\n/i,
   /override\s+(system|previous|all)/i,
+
+  // === FRANCAIS ===
+  /ignore[rz]?\s+(toutes?\s+)?(les\s+)?(instructions?|consignes?|r[eè]gles?)\s+(pr[eé]c[eé]dentes?|ci-dessus|ant[eé]rieures?)/i,
+  /oublie[rz]?\s+(tout(es)?|les)\s+(instructions?|consignes?)/i,
+  /ne\s+tiens?\s+(pas\s+)?compte\s+d/i,
+  /tu\s+es\s+maintenant\s+un/i,
+  /fais\s+comme\s+si\s+tu\s+[eé]tais/i,
+  /nouvelles?\s+instructions?[\s:]/i,
+  /r[eé]initialise[rz]?\s+(tes?|les?)\s+(instructions?|param[eè]tres?)/i,
+
+  // === ESPAGNOL ===
+  /ignora[r]?\s+(todas?\s+)?(las?\s+)?(instrucciones|reglas)/i,
+  /olvida[r]?\s+(todas?\s+)?(las?\s+)?(instrucciones|reglas)/i,
+  /ahora\s+eres\s+un/i,
+  /nuevas?\s+instrucciones[\s:]/i,
+
+  // === ALLEMAND ===
+  /ignorier(e|en)?\s+(alle\s+)?(vorherigen?\s+)?(anweisungen|regeln)/i,
+  /vergiss\s+(alle\s+)?(vorherigen?\s+)/i,
+  /du\s+bist\s+jetzt\s+ein/i,
+  /neue\s+anweisungen[\s:]/i,
+
+  // === INJECTION INDIRECTE ===
+  /\bhidden\s+instructions?\b/i,
+  /\bsecret\s+instructions?\b/i,
+  /\bdo\s+not\s+follow\s+(the\s+)?(above|previous|system)/i,
+  /\bactual\s+instructions?\b/i,
+  /\breal\s+instructions?\b/i,
+  /\btrue\s+instructions?\b/i,
+  /\boverride\s+mode\b/i,
+  /\bdeveloper\s+mode\b/i,
+  /\bjailbreak/i,
+  /\bDAN\s*mode/i,
+
+  // === SEPARATEURS DE ROLE ===
+  /###\s*(system|assistant|user|human)\s*(message|prompt)?/i,
+  /---\s*(system|assistant|user|human)\s*(message|prompt)?/i,
+  /\*\*\*(system|assistant|user|human)/i,
+  /<(system|assistant|user)>/i,
 ];
 
 /**
- * Check if text contains suspicious prompt injection patterns
+ * Normalise le texte en remplacant les homoglyphes Unicode par leurs
+ * equivalents ASCII. Empeche le contournement des patterns via
+ * des caracteres visuellement identiques (ex: А cyrillique vs A latin).
+ */
+function normalizeUnicodeHomoglyphs(text: string): string {
+  const homoglyphMap: Record<string, string> = {
+    // Cyrillique -> Latin
+    '\u0410': 'A', '\u0412': 'B', '\u0421': 'C', '\u0415': 'E',
+    '\u041D': 'H', '\u041A': 'K', '\u041C': 'M', '\u041E': 'O',
+    '\u0420': 'P', '\u0422': 'T', '\u0425': 'X',
+    '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p',
+    '\u0441': 'c', '\u0443': 'u', '\u0445': 'x',
+    // Zero-width chars -> removed
+    '\u200B': '', '\u200C': '', '\u200D': '', '\u2060': '', '\uFEFF': '',
+    // Various spaces -> normal space
+    '\u00A0': ' ', '\u2000': ' ', '\u2001': ' ', '\u2002': ' ', '\u2003': ' ',
+    '\u2004': ' ', '\u2005': ' ', '\u2006': ' ', '\u2007': ' ',
+    '\u2008': ' ', '\u2009': ' ', '\u200A': ' ',
+    '\u202F': ' ', '\u205F': ' ', '\u3000': ' ',
+    // Fullwidth confusables
+    '\uFF1C': '<', '\uFF1E': '>', '\uFF3B': '[', '\uFF3D': ']',
+    '\uFF5B': '{', '\uFF5D': '}',
+  };
+
+  let normalized = text;
+  for (const [unicode, ascii] of Object.entries(homoglyphMap)) {
+    normalized = normalized.replaceAll(unicode, ascii);
+  }
+  return normalized;
+}
+
+/**
+ * Detecte les patterns suspects dans differents encodages.
+ */
+function detectEncodedInjection(text: string): string[] {
+  const detectedPatterns: string[] = [];
+
+  // 1. Detection base64 suspecte
+  const base64Regex = /(?:[A-Za-z0-9+/]{4}){3,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/g;
+  const base64Matches = text.match(base64Regex);
+  if (base64Matches) {
+    for (const b64 of base64Matches) {
+      if (b64.length < 20 || b64.length > 1000) continue;
+      try {
+        const decoded = Buffer.from(b64, 'base64').toString('utf-8');
+        // Verify it's actual text (not binary), then check patterns
+        if (/^[\x20-\x7E\s]+$/.test(decoded)) {
+          for (const pattern of SUSPICIOUS_PATTERNS) {
+            if (pattern.test(decoded)) {
+              detectedPatterns.push(`base64_encoded: ${decoded.substring(0, 80)}`);
+              break;
+            }
+          }
+        }
+      } catch {
+        // not valid base64, ignore
+      }
+    }
+  }
+
+  // 2. Detection URL encoding
+  if (/%[0-9A-Fa-f]{2}/.test(text)) {
+    const urlDecoded = text.replace(/%([0-9A-Fa-f]{2})/g, (_, hex) =>
+      String.fromCharCode(parseInt(hex, 16))
+    );
+    if (urlDecoded !== text) {
+      for (const pattern of SUSPICIOUS_PATTERNS) {
+        if (pattern.test(urlDecoded) && !pattern.test(text)) {
+          detectedPatterns.push(`url_encoded: ${pattern.source}`);
+        }
+      }
+    }
+  }
+
+  // 3. Detection HTML entities
+  if (/&[a-z]+;|&#x?[0-9a-f]+;/i.test(text)) {
+    const htmlDecoded = text
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec)));
+    if (htmlDecoded !== text) {
+      for (const pattern of SUSPICIOUS_PATTERNS) {
+        if (pattern.test(htmlDecoded) && !pattern.test(text)) {
+          detectedPatterns.push(`html_entity: ${pattern.source}`);
+        }
+      }
+    }
+  }
+
+  return detectedPatterns;
+}
+
+/**
+ * Check if text contains suspicious prompt injection patterns.
+ * Includes: multilingual patterns, Unicode homoglyph normalization,
+ * encoded injection detection (base64, URL encoding, HTML entities).
  */
 export function detectPromptInjection(text: string): {
   isSuspicious: boolean;
@@ -55,10 +191,35 @@ export function detectPromptInjection(text: string): {
 } {
   const detectedPatterns: string[] = [];
 
+  // Normalize homoglyphs before detection
+  const normalizedText = normalizeUnicodeHomoglyphs(text);
+
+  // Check patterns on normalized text
   for (const pattern of SUSPICIOUS_PATTERNS) {
-    if (pattern.test(text)) {
+    if (pattern.test(normalizedText)) {
       detectedPatterns.push(pattern.source);
     }
+  }
+
+  // Also check original text if different (in case normalization masks something)
+  if (text !== normalizedText) {
+    for (const pattern of SUSPICIOUS_PATTERNS) {
+      if (pattern.test(text) && !detectedPatterns.includes(pattern.source)) {
+        detectedPatterns.push(pattern.source);
+      }
+    }
+  }
+
+  // Detect encoded injections only if nothing found yet (avoid expensive checks)
+  if (detectedPatterns.length === 0) {
+    const encodedPatterns = detectEncodedInjection(normalizedText);
+    detectedPatterns.push(...encodedPatterns);
+  }
+
+  // Detection of excessive zero-width characters (even after normalization)
+  const zeroWidthCount = (text.match(/[\u200B\u200C\u200D\u2060\uFEFF]/g) || []).length;
+  if (zeroWidthCount > 5) {
+    detectedPatterns.push(`excessive_zero_width_chars: ${zeroWidthCount}`);
   }
 
   return {
@@ -88,7 +249,7 @@ export function sanitizeForLLM(
     maxLength = 10000,
     preserveNewlines = true,
     warnOnSuspicious = true,
-    blockOnSuspicious = false, // Default false for backward compatibility
+    blockOnSuspicious = true, // SECURITY: block prompt injection by default
   } = options;
 
   // Check for suspicious patterns
@@ -292,5 +453,32 @@ function cleanupRateLimitStore(): void {
     for (let i = 0; i < toRemove; i++) {
       rateLimitStore.delete(entries[i][0]);
     }
+  }
+}
+
+/**
+ * Distributed rate limiter using Redis (Upstash) for serverless compatibility.
+ * Falls back to in-memory checkRateLimit if Redis is unavailable.
+ */
+export async function checkRateLimitDistributed(
+  key: string,
+  options: { maxRequests?: number; windowMs?: number } = {}
+): Promise<RateLimitResult> {
+  const { maxRequests = 2, windowMs = 60000 } = options;
+
+  try {
+    const { getStore } = await import("@/services/distributed-state");
+    const store = getStore();
+    const redisKey = `rl:${key}`;
+    const count = await store.incr(redisKey, windowMs);
+    const resetIn = Math.ceil(windowMs / 1000);
+
+    if (count > maxRequests) {
+      return { allowed: false, remaining: 0, resetIn };
+    }
+    return { allowed: true, remaining: maxRequests - count, resetIn };
+  } catch {
+    // Fallback to in-memory if Redis unavailable
+    return checkRateLimit(key, options);
   }
 }

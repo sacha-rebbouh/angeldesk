@@ -766,6 +766,13 @@ const linkedinSource: DataSource = {
 
 /**
  * Fetch LinkedIn profile via RapidAPI Fresh LinkedIn (single GET call)
+ *
+ * RGPD NOTE:
+ * Ce fetch ne doit etre appele QUE si l'utilisateur a explicitement demande
+ * l'enrichissement LinkedIn (bouton "Enrichir" dans le UI).
+ * Les donnees recuperees sont publiques (profil LinkedIn public).
+ * Base legale: Interet legitime (Art. 6.1.f RGPD) + consentement utilisateur.
+ * Les donnees sont suppressibles via le dashboard ou sur demande DPO.
  */
 async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProfile | null> {
   const apiKey = getApiKey();

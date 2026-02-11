@@ -197,7 +197,7 @@ class ScoreAggregator implements IScoreAggregator {
       const metricWeight = metricDef?.weight ?? 0.1;
 
       // Get normalized value (0-100)
-      let score = finding.normalizedValue ?? 50;
+      let score = finding.normalizedValue ?? 0;
       if (finding.percentile !== undefined) {
         // Use percentile-based score if available
         score = metricRegistry.scoreValue(

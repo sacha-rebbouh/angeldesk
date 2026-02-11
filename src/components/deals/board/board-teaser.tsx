@@ -105,17 +105,17 @@ export function BoardTeaser({ dealName }: BoardTeaserProps) {
               <FeatureCard
                 icon={<MessageSquare className="h-4 w-4 text-blue-400" />}
                 title="Debat structure"
-                description="Les 4 modeles debattent jusqu'a consensus ou majorite stable"
+                description="Les 4 modèles débattent jusqu'à consensus ou majorité stable"
               />
               <FeatureCard
                 icon={<Scale className="h-4 w-4 text-emerald-400" />}
-                title="Vote argumente"
-                description="Chaque modele justifie son verdict avec des preuves"
+                title="Vote argumenté"
+                description="Chaque modèle justifie son verdict avec des preuves"
               />
               <FeatureCard
                 icon={<HelpCircle className="h-4 w-4 text-purple-400" />}
-                title="Questions cles"
-                description="Questions a poser au fondateur basees sur les concerns"
+                title="Questions clés"
+                description="Questions à poser au fondateur basées sur les concerns"
               />
               <FeatureCard
                 icon={<Users className="h-4 w-4 text-amber-400" />}

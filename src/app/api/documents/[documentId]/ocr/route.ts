@@ -5,6 +5,7 @@ import { requireAuth } from "@/lib/auth";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { downloadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
+import { encryptText } from "@/lib/encryption";
 
 export const maxDuration = 120;
 
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const updated = await prisma.document.update({
       where: { id: documentId },
       data: {
-        extractedText: result.text,
+        extractedText: result.text ? encryptText(result.text) : null,
         processingStatus: "COMPLETED",
         extractionQuality: result.quality,
         extractionMetrics: {

@@ -14,6 +14,11 @@ import type {
 } from "../types";
 import { benchmarkService } from "@/scoring";
 import { getBenchmarkFull } from "@/services/benchmarks";
+import { checkBenchmarkFreshness, formatFreshnessWarning } from "@/services/benchmarks/freshness-checker";
+import { verifyFinancialMetrics, extractRawInputsFromMetrics, type FinancialVerificationReport } from "../orchestration/utils/financial-verification";
+import { calculateAgentScore, normalizeMetricName, FINANCIAL_AUDITOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { z } from "zod";
+import { FinancialAuditResponseSchema } from "./schemas/financial-auditor-schema";
 
 /**
  * Financial Auditor Agent - REFONTE v2.0
@@ -399,6 +404,92 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
     // Fetch benchmarks
     const benchmarks = await this.fetchBenchmarks(sector, stage);
 
+    // =====================================================
+    // F07: VERIFICATION INDEPENDANTE VIA REGISTRES OFFICIELS
+    // =====================================================
+    const companyName = (deal as Record<string, unknown>).companyName as string || deal.name;
+    let registryVerification = "";
+    const registryRedFlags: AgentRedFlag[] = [];
+
+    try {
+      const { enrichFrenchCompany } = await import(
+        "@/services/context-engine/connectors/pappers"
+      );
+      const pappersData = await enrichFrenchCompany(companyName);
+
+      if (pappersData?.found && pappersData.finances?.length) {
+        const latestFinance = [...pappersData.finances]
+          .sort((a, b) => b.year - a.year)[0];
+
+        registryVerification = `\n## DONNEES REGISTRE OFFICIEL (Pappers.fr - Source: Greffe du Tribunal)
+**SIREN**: ${pappersData.siren}
+**Statut**: ${pappersData.status}
+**Date creation**: ${pappersData.dateCreation}
+**Effectif**: ${pappersData.effectif ?? "Non disponible"}
+**Capital social**: ${pappersData.capitalSocial ? pappersData.capitalSocial + "EUR" : "Non disponible"}
+
+### Dernieres donnees financieres (${latestFinance.year})
+- **CA officiel**: ${latestFinance.revenue ? latestFinance.revenue + "EUR" : "Non depose"}
+- **Resultat**: ${latestFinance.result ? latestFinance.result + "EUR" : "Non depose"}
+- **Effectif**: ${latestFinance.employees ?? "Non disponible"}
+
+**IMPORTANT**: Compare OBLIGATOIREMENT les chiffres du deck aux chiffres officiels ci-dessus.
+Si ecart CA > 20%, genere un red flag CRITICAL.
+Si les comptes n'ont pas ete deposes, genere un red flag HIGH "comptes non deposes".
+`;
+
+        // Automatic registry red flags
+        if (pappersData.redFlags && pappersData.redFlags.length > 0) {
+          for (const rf of pappersData.redFlags) {
+            registryRedFlags.push({
+              id: `RF-REGISTRY-${registryRedFlags.length + 1}`,
+              category: "verification",
+              severity: rf.includes("cessée") || rf.includes("collective") ? "CRITICAL" : "HIGH",
+              title: `Registre officiel: ${rf}`,
+              description: `Pappers.fr signale: ${rf}`,
+              location: "Registre du commerce (Pappers.fr)",
+              evidence: `Source: Pappers.fr SIREN ${pappersData.siren}`,
+              impact: "Information officielle non mentionnee dans le deck",
+              question: "Pouvez-vous expliquer ce point ?",
+              redFlagIfBadAnswer: "",
+            });
+          }
+        }
+
+        // Cross-reference dirigeants
+        if (pappersData.dirigeants && pappersData.dirigeants.length > 0) {
+          registryVerification += `\n### Dirigeants officiels (Registre)
+${pappersData.dirigeants.map(d => `- ${d.name} (${d.role}, depuis ${d.since || "N/A"})`).join("\n")}
+
+**CROSS-REFERENCE OBLIGATOIRE**: Compare avec les fondateurs du deck. Signale si un fondateur
+du deck N'EST PAS dirigeant officiel (possible red flag structurel).
+`;
+        }
+      } else if (pappersData && !pappersData.found) {
+        // Fallback: Societe.com
+        try {
+          const { validateFinancials } = await import(
+            "@/services/context-engine/connectors/societe-com"
+          );
+          const claimedRevenue = extractedInfo?.revenue as number | undefined;
+          const validation = await validateFinancials(companyName, claimedRevenue);
+
+          if (validation && (validation as Record<string, unknown>).validated === false) {
+            const discrepancies = (validation as Record<string, unknown>).discrepancies as string[] | undefined;
+            if (discrepancies?.length) {
+              registryVerification = `\n## VERIFICATION SOCIETE.COM
+${discrepancies.map((d: string) => `- ${d}`).join("\n")}
+`;
+            }
+          }
+        } catch {
+          // Societe.com fallback also failed, continue without
+        }
+      }
+    } catch (error) {
+      registryVerification = "\n## VERIFICATION REGISTRE\nVerification impossible (erreur technique). Fiabilite des donnees financieres NON confirmee.";
+    }
+
     // Build user prompt
     const prompt = `# ANALYSE FINANCIAL AUDITOR - ${deal.companyName || deal.name}
 
@@ -406,6 +497,7 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 ${dealContext}
 ${extractedSection}
 ${financialModelSection}
+${registryVerification}
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Aucune donnée Context Engine disponible pour ce deal."}
@@ -569,10 +661,99 @@ MONTRE tes calculs.
 }
 \`\`\``;
 
-    const { data } = await this.llmCompleteJSON<LLMFinancialAuditResponse>(prompt);
+    const { data, validationErrors } = await this.llmCompleteJSONValidated<LLMFinancialAuditResponse>(
+      prompt,
+      FinancialAuditResponseSchema as unknown as z.ZodSchema<LLMFinancialAuditResponse>,
+    );
+    if (validationErrors?.length) {
+      console.warn(`[financial-auditor] Zod validation: ${validationErrors.length} issues — using best-effort data`);
+    }
+
+    // SERVER-SIDE VERIFICATION: Recalculate financial metrics and flag discrepancies
+    let verificationReport: FinancialVerificationReport | null = null;
+    try {
+      const llmMetrics = data.findings?.metrics ?? [];
+      const rawInputs = extractRawInputsFromMetrics(llmMetrics);
+      verificationReport = verifyFinancialMetrics(llmMetrics, rawInputs, sector, stage);
+    } catch (err) {
+      console.error("[financial-auditor] Server-side verification failed:", err);
+    }
+
+    // F03: DETERMINISTIC SCORING - Extract metrics from LLM, score in code
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      for (const m of data.findings?.metrics ?? []) {
+        if (m.reportedValue != null || m.calculatedValue != null) {
+          extractedMetrics.push({
+            name: normalizeMetricName(m.metric),
+            value: m.calculatedValue ?? m.reportedValue ?? null,
+            unit: this.detectUnit(m.metric),
+            source: m.source ?? "Non specifie",
+            dataReliability: m.dataReliability ?? "DECLARED",
+            category: "financial",
+            calculation: m.calculation,
+          });
+        }
+      }
+
+      if (extractedMetrics.length > 0) {
+        const deterministicScore = await calculateAgentScore(
+          "financial-auditor",
+          extractedMetrics,
+          sector,
+          stage,
+          FINANCIAL_AUDITOR_CRITERIA,
+        );
+
+        // Override LLM score with deterministic score
+        data.score = {
+          value: deterministicScore.score,
+          breakdown: deterministicScore.breakdown,
+        };
+      }
+    } catch (err) {
+      console.error("[financial-auditor] Deterministic scoring failed, using LLM score:", err);
+    }
 
     // Validate and normalize response
-    return this.normalizeResponse(data, sector, stage);
+    const result = this.normalizeResponse(data, sector, stage);
+
+    // F07: Inject registry red flags
+    if (registryRedFlags.length > 0) {
+      result.redFlags = [...registryRedFlags, ...result.redFlags];
+    }
+
+    // F04: Inject verification discrepancies as red flags
+    if (verificationReport) {
+      for (const disc of verificationReport.discrepancies) {
+        if (disc.severity !== "OK" && disc.redFlag) {
+          result.redFlags.push({
+            id: `RF-CALC-${disc.metric.replace(/\s+/g, "-").toUpperCase()}`,
+            category: "inconsistency",
+            severity: disc.severity === "CRITICAL" ? "CRITICAL" : "HIGH",
+            title: disc.redFlag.title,
+            description: disc.redFlag.description,
+            location: "Financial calculations (server-side verification)",
+            evidence: `LLM: ${disc.llmValue} vs Serveur: ${disc.serverValue} (ecart ${disc.deviation.toFixed(1)}%). Calcul serveur: ${disc.serverCalculation}`,
+            impact: disc.redFlag.impact,
+            question: "Pouvez-vous confirmer le calcul exact de cette metrique ?",
+            redFlagIfBadAnswer: "Chiffres financiers non reconciliables - fiabilite des donnees en question.",
+          });
+        }
+      }
+
+      // Add verification reliability to limitations
+      if (verificationReport.overallReliability === "LOW") {
+        result.meta.limitations.push(
+          `Verification serveur: fiabilite FAIBLE. ${verificationReport.discrepancies.length} ecart(s) detecte(s) entre les calculs LLM et les recalculs serveur.`
+        );
+      }
+    }
+
+    // F56: Apply hard reliability penalties that the LLM might not consistently enforce
+    this.applyReliabilityPenalties(result, context);
+
+    return result;
   }
 
   private normalizeResponse(
@@ -580,22 +761,41 @@ MONTRE tes calculs.
     sector: string,
     stage: string
   ): FinancialAuditData {
+    // Check for truncation (F54)
+    this.checkTruncation(data as unknown as Record<string, unknown>);
+
     // Normalize meta
     const validCompleteness = ["complete", "partial", "minimal"] as const;
     const dataCompleteness = validCompleteness.includes(data.meta?.dataCompleteness as typeof validCompleteness[number])
       ? data.meta.dataCompleteness
       : "minimal";
 
+    const limitations = Array.isArray(data.meta?.limitations) ? [...data.meta.limitations] : [];
+    if (this.benchmarkFreshnessWarning) {
+      limitations.push(this.benchmarkFreshnessWarning);
+    }
+
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[financial-auditor] LLM did not return confidenceLevel — using 0`);
+    }
+
     const meta: AgentMeta = {
       agentName: "financial-auditor",
       analysisDate: new Date().toISOString(),
       dataCompleteness,
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
-      limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
+      limitations,
     };
 
     // Calculate grade from score
-    const scoreValue = Math.min(100, Math.max(0, data.score?.value ?? 50));
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[financial-auditor] LLM did not return score value — using 0`);
+    }
+    const scoreValue = scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue));
     const getGrade = (score: number): "A" | "B" | "C" | "D" | "F" => {
       if (score >= 80) return "A";
       if (score >= 65) return "B";
@@ -620,12 +820,13 @@ MONTRE tes calculs.
 
     const score: AgentScore = {
       value: cappedScore,
-      grade: getGrade(cappedScore),
+      grade: scoreIsFallback ? "F" : getGrade(cappedScore),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map(b => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 20,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "",
           }))
         : [],
@@ -664,7 +865,8 @@ MONTRE tes calculs.
       valuation: {
         requested: data.findings?.valuation?.requested,
         impliedMultiple: data.findings?.valuation?.impliedMultiple,
-        benchmarkMultiple: data.findings?.valuation?.benchmarkMultiple ?? 25,
+        benchmarkMultiple: data.findings?.valuation?.benchmarkMultiple ?? null,
+        benchmarkMultipleIsFallback: data.findings?.valuation?.benchmarkMultiple == null,
         percentile: data.findings?.valuation?.percentile,
         verdict: validVerdicts.includes(data.findings?.valuation?.verdict as typeof validVerdicts[number])
           ? data.findings.valuation.verdict
@@ -785,10 +987,24 @@ MONTRE tes calculs.
     };
   }
 
+  private benchmarkFreshnessWarning: string | null = null;
+
+  private detectUnit(metric: string): string {
+    const lower = metric.toLowerCase();
+    if (lower.includes("growth") || lower.includes("margin") || lower.includes("retention") || lower.includes("dilution")) return "%";
+    if (lower.includes("multiple") || lower.includes("ratio") || lower.includes("ltv/cac")) return "x";
+    if (lower.includes("months") || lower.includes("payback")) return "months";
+    return "EUR";
+  }
+
   private async fetchBenchmarks(
     sector: string,
     stage: string
   ): Promise<Record<string, { p25: number; median: number; p75: number; source: string }>> {
+    // Check benchmark freshness
+    const freshnessReport = checkBenchmarkFreshness();
+    this.benchmarkFreshnessWarning = formatFreshnessWarning(freshnessReport);
+
     const metricsToFetch = [
       "ARR Growth YoY",
       "Net Revenue Retention",
@@ -851,6 +1067,130 @@ MONTRE tes calculs.
       median: benchmark.median,
       p75: benchmark.p75,
     };
+  }
+
+  /**
+   * F56: Apply reliability-based penalties to the financial audit.
+   * Runs AFTER the LLM analysis to enforce hard rules that the LLM
+   * might not consistently apply.
+   */
+  private applyReliabilityPenalties(
+    result: FinancialAuditData,
+    context: EnrichedAgentContext
+  ): void {
+    const factStoreFormatted = context.factStoreFormatted ?? '';
+
+    // Detect reliability of key financial metrics
+    const keyMetrics = ['ARR', 'REVENUE', 'MRR'];
+    const unreliableKeyMetrics: string[] = [];
+
+    for (const metric of result.findings.metrics) {
+      const metricName = metric.metric?.toUpperCase() ?? '';
+      const isKeyMetric = keyMetrics.some(km => metricName.includes(km));
+      if (!isKeyMetric) continue;
+
+      const reliability = metric.dataReliability;
+      if (reliability === 'DECLARED' || reliability === 'PROJECTED' || reliability === 'ESTIMATED' || reliability === 'UNVERIFIABLE') {
+        unreliableKeyMetrics.push(`${metric.metric} (${reliability})`);
+      }
+    }
+
+    // Also check fact store for DECLARED/PROJECTED ARR
+    const hasProjectedARR = factStoreFormatted.includes('financial.arr') &&
+      (factStoreFormatted.includes('[PROJECTED]') || factStoreFormatted.includes('[DECLARED]'));
+
+    const hasUnreliableFinancials = unreliableKeyMetrics.length > 0 || hasProjectedARR;
+
+    if (!hasUnreliableFinancials) return;
+
+    // === APPLY PENALTIES ===
+
+    // 1. Penalty on Data Transparency score (-15 points)
+    const transparencyBreakdown = result.score.breakdown.find(
+      b => b.criterion.toLowerCase().includes('transparency') || b.criterion.toLowerCase().includes('data')
+    );
+    if (transparencyBreakdown) {
+      const penalty = 15;
+      transparencyBreakdown.score = Math.max(0, transparencyBreakdown.score - penalty);
+      transparencyBreakdown.justification += ` [PENALITE -${penalty}: metriques cles non verifiees (${unreliableKeyMetrics.join(', ')})]`;
+    }
+
+    // 2. Penalty on Valuation Rationality (-20 points if valuation based on unreliable data)
+    if (result.findings.valuation.impliedMultiple && result.findings.valuation.verdict !== 'CANNOT_ASSESS') {
+      const valuationBreakdown = result.score.breakdown.find(
+        b => b.criterion.toLowerCase().includes('valuation')
+      );
+      if (valuationBreakdown) {
+        const penalty = 20;
+        valuationBreakdown.score = Math.max(0, valuationBreakdown.score - penalty);
+        valuationBreakdown.justification += ` [PENALITE -${penalty}: multiple calcule sur donnees ${unreliableKeyMetrics.join(', ')} — le multiple reel peut etre 2-5x plus eleve]`;
+      }
+
+      // 3. Add worst-case multiple calculation
+      const currentMultiple = result.findings.valuation.impliedMultiple;
+      const worstCaseMultiple = currentMultiple * 3;
+      result.findings.valuation.comparables.push({
+        name: "PIRE CAS (si chiffres gonfles 3x)",
+        multiple: Math.round(worstCaseMultiple * 10) / 10,
+        stage: "Hypothese conservative",
+        source: "Calcul: multiple declare x3 (aucune verification independante des metriques)",
+      });
+
+      // 4. Upgrade verdict if unreliable
+      if (result.findings.valuation.verdict === 'FAIR' || result.findings.valuation.verdict === 'UNDERVALUED') {
+        result.findings.valuation.verdict = 'AGGRESSIVE';
+        result.findings.valuation.comparables.unshift({
+          name: "ATTENTION: Verdict degrade",
+          multiple: currentMultiple,
+          stage: "Multiple base sur donnees DECLARED/PROJECTED",
+          source: "Le verdict 'FAIR' a ete degrade en 'AGGRESSIVE' car les metriques financieres ne sont pas verifiees",
+        });
+      }
+    }
+
+    // 5. Recalculate overall score with penalties applied
+    let recalculatedScore = 0;
+    for (const b of result.score.breakdown) {
+      recalculatedScore += (b.score * b.weight) / 100;
+    }
+    result.score.value = Math.round(recalculatedScore);
+    result.score.grade = this.computeGradeFromScore(result.score.value);
+
+    // 6. Add a red flag if not already present
+    const hasReliabilityFlag = result.redFlags.some(rf =>
+      rf.id?.includes('reliability') || rf.title?.toLowerCase().includes('fiabilit')
+    );
+    if (!hasReliabilityFlag) {
+      result.redFlags.push({
+        id: 'RF-RELIABILITY-001',
+        category: 'missing_data',
+        severity: 'HIGH',
+        title: 'Metriques financieres cles non verifiees',
+        description: `Les metriques suivantes sont ${unreliableKeyMetrics.join(', ')}. ` +
+          `Aucune verification independante (audit, releves bancaires) n'est disponible. ` +
+          `Le multiple de valorisation est calcule sur des donnees potentiellement inexactes.`,
+        location: 'Financial Model / Pitch Deck',
+        evidence: `Metriques non verifiees: ${unreliableKeyMetrics.join(', ')}`,
+        contextEngineData: undefined,
+        impact: 'Le multiple reel pourrait etre 2-5x plus eleve que calcule si les chiffres sont gonfles',
+        question: 'Pouvez-vous fournir des releves bancaires ou un rapport d\'audit confirmant les metriques financieres declarees?',
+        redFlagIfBadAnswer: 'Refus de fournir des preuves = probabilite elevee de chiffres gonfles',
+      });
+    }
+
+    // 7. Add limitation
+    result.meta.limitations.push(
+      `FIABILITE DONNEES: Les metriques financieres cles (${unreliableKeyMetrics.join(', ')}) sont ${hasProjectedARR ? 'projetees/declarees' : 'non verifiees'}. ` +
+      `Les multiples et scores ont ete penalises en consequence.`
+    );
+  }
+
+  private computeGradeFromScore(score: number): "A" | "B" | "C" | "D" | "F" {
+    if (score >= 80) return "A";
+    if (score >= 65) return "B";
+    if (score >= 50) return "C";
+    if (score >= 35) return "D";
+    return "F";
   }
 }
 

@@ -10,13 +10,25 @@ import {
   type StreamingJSONOptions,
   type StreamingJSONResult,
 } from "@/services/openrouter/router";
-import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed } from "./types";
+import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed, AgentTraceMetrics } from "./types";
 import { createHash } from "crypto";
-import { sanitizeForLLM, sanitizeName } from "@/lib/sanitize";
+import { sanitizeForLLM, sanitizeName, PromptInjectionError } from "@/lib/sanitize";
+import { z } from "zod";
+import { formatGeographyCoverageForPrompt } from "@/services/context-engine/geography-coverage";
+import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
 
 // Generic type for agent results with data
 export interface AgentResultWithData<T> extends AgentResult {
   data: T;
+}
+
+/** F80: Max chars per trace field (prompt/response) to prevent DB bloat */
+const TRACE_FIELD_MAX_CHARS = 50_000;
+
+function truncateTraceField(content: string, fieldName: string): string {
+  if (content.length <= TRACE_FIELD_MAX_CHARS) return content;
+  return content.substring(0, TRACE_FIELD_MAX_CHARS) +
+    `\n\n[TRACE_TRUNCATED: ${fieldName} was ${content.length} chars, showing first ${TRACE_FIELD_MAX_CHARS}]`;
 }
 
 // ============================================================================
@@ -141,18 +153,40 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       extractedData,
     };
 
-    // Hash context for reproducibility
+    // F81: Hash includes document CONTENT (not just metadata), system prompt, and model
+    const docContentHashes = (context.documents ?? []).map(d => {
+      const contentHash = d.extractedText
+        ? createHash("sha256").update(d.extractedText).digest("hex").slice(0, 16)
+        : "empty";
+      return `${d.name}:${contentHash}`;
+    });
     const contextString = JSON.stringify({
-      documents: documents.map(d => ({ name: d.name, charCount: d.charCount })),
+      documents: docContentHashes,
       contextEngine,
       extractedFields: extractedData?.fields,
+      systemPrompt: createHash("sha256").update(this.buildSystemPrompt()).digest("hex").slice(0, 16),
+      model: this.config.modelComplexity,
     });
-    this._contextHash = createHash("sha256").update(contextString).digest("hex").slice(0, 16);
+    this._contextHash = createHash("sha256").update(contextString).digest("hex").slice(0, 32);
+  }
+
+  /**
+   * Compute a deterministic prompt version hash from the agent's
+   * system prompt content, model complexity, and default temperature.
+   * Changes whenever the prompt text or model config changes.
+   */
+  private computePromptVersionHash(): string {
+    const systemPrompt = this.buildSystemPrompt();
+    const configSignature = `${this.config.modelComplexity}|${this.config.timeoutMs}`;
+    const content = `${systemPrompt}||${configSignature}`;
+    return createHash("sha256").update(content).digest("hex").slice(0, 12);
   }
 
   // Build the complete trace
   private buildTrace(): StandardTrace | undefined {
     if (!this._enableTrace) return undefined;
+
+    const promptVersionHash = this.computePromptVersionHash();
 
     return {
       id: this._traceId,
@@ -169,7 +203,15 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         llmCallCount: this._llmCalls,
       },
       contextHash: this._contextHash,
-      promptVersion: "1.0", // Could be versioned per agent
+      promptVersion: promptVersionHash,
+      promptVersionDetails: {
+        systemPromptHash: createHash("sha256")
+          .update(this.buildSystemPrompt())
+          .digest("hex")
+          .slice(0, 16),
+        modelComplexity: this.config.modelComplexity as string,
+        agentName: this.config.name,
+      },
     };
   }
 
@@ -193,17 +235,17 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     if (inputTokens) this._totalInputTokens += inputTokens;
     if (outputTokens) this._totalOutputTokens += outputTokens;
 
-    // Capture trace if enabled
+    // Capture trace if enabled (F80: truncate large fields)
     if (this._enableTrace && traceData) {
       this._llmCallTraces.push({
         id: `${this._traceId}-call-${this._llmCalls}`,
         timestamp: new Date().toISOString(),
         prompt: {
-          system: traceData.systemPrompt,
-          user: traceData.userPrompt,
+          system: truncateTraceField(traceData.systemPrompt, 'systemPrompt'),
+          user: truncateTraceField(traceData.userPrompt, 'userPrompt'),
         },
         response: {
-          raw: traceData.response,
+          raw: truncateTraceField(traceData.response, 'response'),
           parsed: traceData.parsedResponse,
         },
         metrics: {
@@ -252,16 +294,39 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         trace.totalDurationMs = executionTimeMs;
       }
 
+      // F80: Always build lightweight metrics
+      const traceMetrics: AgentTraceMetrics = {
+        id: this._traceId,
+        agentName: this.config.name,
+        totalDurationMs: executionTimeMs,
+        llmCallCount: this._llmCalls,
+        totalInputTokens: this._totalInputTokens,
+        totalOutputTokens: this._totalOutputTokens,
+        totalCost: this._totalCost,
+        contextHash: this._contextHash || 'no-hash',
+        promptVersion: this.computePromptVersionHash(),
+        startedAt: this._traceStartedAt,
+        completedAt: new Date().toISOString(),
+      };
+
       return {
         agentName: this.config.name,
         success: true,
         executionTimeMs,
         cost: this._totalCost,
         data,
-        ...(trace && { _trace: trace }),
+        _traceMetrics: traceMetrics,
+        ...(trace && { _traceFull: trace }),
       } as unknown as TResult;
     } catch (error) {
       const executionTimeMs = Date.now() - startTime;
+
+      // Specific handling for prompt injection
+      if (error instanceof PromptInjectionError) {
+        console.error(
+          `[${this.config.name}] PROMPT INJECTION BLOCKED: ${error.patterns.join(", ")}`
+        );
+      }
 
       // Build trace even on failure
       const trace = this.buildTrace();
@@ -269,13 +334,29 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         trace.totalDurationMs = executionTimeMs;
       }
 
+      // F80: Always build lightweight metrics even on failure
+      const traceMetrics: AgentTraceMetrics = {
+        id: this._traceId,
+        agentName: this.config.name,
+        totalDurationMs: executionTimeMs,
+        llmCallCount: this._llmCalls,
+        totalInputTokens: this._totalInputTokens,
+        totalOutputTokens: this._totalOutputTokens,
+        totalCost: this._totalCost,
+        contextHash: this._contextHash || 'no-hash',
+        promptVersion: this.computePromptVersionHash(),
+        startedAt: this._traceStartedAt,
+        completedAt: new Date().toISOString(),
+      };
+
       return {
         agentName: this.config.name,
         success: false,
         executionTimeMs,
         cost: this._totalCost,
         error: error instanceof Error ? error.message : "Unknown error",
-        ...(trace && { _trace: trace }),
+        _traceMetrics: traceMetrics,
+        ...(trace && { _traceFull: trace }),
       } as unknown as TResult;
     } finally {
       // Clear agent context
@@ -293,7 +374,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     options: LLMCallOptions = {}
   ): Promise<{ content: string; cost: number }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
-    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt();
+    const systemPrompt = this.buildFullSystemPrompt(options.systemPrompt);
     const temperature = options.temperature ?? 0.3;
     const callStartTime = Date.now();
 
@@ -337,7 +418,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     options: LLMCallOptions = {}
   ): Promise<{ data: T; cost: number }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
-    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt();
+    const systemPrompt = this.buildFullSystemPrompt(options.systemPrompt);
     const temperature = options.temperature ?? 0.2;
     const callStartTime = Date.now();
 
@@ -374,6 +455,70 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     return result;
   }
 
+  /**
+   * Check if LLM response was truncated and add limitation (F54).
+   * Call at the beginning of normalizeResponse() with the raw LLM data.
+   */
+  protected checkTruncation(data: Record<string, unknown>): boolean {
+    if (data._wasTruncated === true) {
+      console.warn(`[${this.config.name}] Response was truncated — analysis may be incomplete`);
+      const meta = (data.meta ?? {}) as Record<string, unknown>;
+      if (!Array.isArray(meta.limitations)) {
+        meta.limitations = [];
+      }
+      (meta.limitations as string[]).push(
+        "⚠️ La reponse LLM a ete tronquee. Certaines donnees peuvent etre manquantes."
+      );
+      data.meta = meta;
+      delete data._wasTruncated;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Call LLM with JSON response + Zod validation.
+   * On validation failure: logs warnings but returns partial data with defaults.
+   * Progressive migration path - agents can opt-in without breaking.
+   */
+  protected async llmCompleteJSONValidated<T>(
+    prompt: string,
+    schema: z.ZodSchema<T>,
+    options: LLMCallOptions & { fallbackDefaults?: Partial<T> } = {}
+  ): Promise<{ data: T; cost: number; validationErrors?: string[] }> {
+    const result = await this.llmCompleteJSON<T>(prompt, options);
+
+    const parseResult = schema.safeParse(result.data);
+
+    if (parseResult.success) {
+      return { data: parseResult.data, cost: result.cost };
+    }
+
+    const errors = parseResult.error.issues.map(
+      (issue) => `${issue.path.join(".")}: ${issue.message}`
+    );
+    console.warn(
+      `[${this.config.name}] Zod validation failed (${errors.length} issues):`,
+      errors.slice(0, 5).join("; ")
+    );
+
+    // Try partial parse: merge raw data with defaults
+    if (options.fallbackDefaults) {
+      const merged = { ...options.fallbackDefaults, ...result.data } as T;
+      const retryParse = schema.safeParse(merged);
+      if (retryParse.success) {
+        return { data: retryParse.data, cost: result.cost, validationErrors: errors };
+      }
+    }
+
+    // Last resort: return raw data with TypeScript cast (backward compatible)
+    return {
+      data: result.data,
+      cost: result.cost,
+      validationErrors: errors,
+    };
+  }
+
   // Helper to call LLM with JSON response + fallback (Haiku 4.5 -> Haiku 3.5)
   // Used by agents that have issues with Haiku 4.5 via OpenRouter
   protected async llmCompleteJSONWithFallback<T>(
@@ -381,7 +526,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     options: LLMCallOptions = {}
   ): Promise<{ data: T; cost: number }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
-    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt();
+    const systemPrompt = this.buildFullSystemPrompt(options.systemPrompt);
     const temperature = options.temperature ?? 0.2;
     const callStartTime = Date.now();
 
@@ -433,7 +578,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     const result = await this.withTimeout(
       stream(prompt, {
         complexity: this.config.modelComplexity as TaskComplexity,
-        systemPrompt: options.systemPrompt ?? this.buildSystemPrompt(),
+        systemPrompt: this.buildFullSystemPrompt(options.systemPrompt),
         temperature: options.temperature ?? 0.3,
         maxTokens: options.maxTokens,
       }, callbacks),
@@ -457,7 +602,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     options: LLMStreamOptions & { maxContinuations?: number } = {}
   ): Promise<{ data: T; cost: number; wasTruncated: boolean }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
-    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt();
+    const systemPrompt = this.buildFullSystemPrompt(options.systemPrompt);
     const temperature = options.temperature ?? 0.2;
     const callStartTime = Date.now();
 
@@ -574,6 +719,14 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 ${sanitizedDeal.description}
 `;
 
+    // F82: Inject calibrated red flag thresholds if stage is known
+    if (deal.stage) {
+      const thresholds = formatThresholdsForPrompt(deal.stage, deal.sector ?? "default");
+      if (thresholds) {
+        text += `\n## ${thresholds}\n\n`;
+      }
+    }
+
     // Inject data reliability classifications from document-extractor
     const extractedInfo = this.getExtractedInfo(context);
     if (extractedInfo) {
@@ -665,14 +818,30 @@ ${sanitizedDeal.description}
         if (doc.extractedText) {
           // Financial models need more content (multiple sheets)
           const limit = doc.type === "FINANCIAL_MODEL" ? 50000 : 10000;
-          // Sanitize extracted text content
-          const sanitizedContent = sanitizeForLLM(doc.extractedText.substring(0, limit), {
-            maxLength: limit,
-            preserveNewlines: true,
-          });
-          text += sanitizedContent;
-          if (doc.extractedText.length > limit) {
-            text += `\n[... truncated, ${doc.extractedText.length - limit} chars remaining ...]`;
+          // F27: head+tail truncation to capture financial annexes
+          const tailReserve = Math.min(2000, Math.floor(limit * 0.15)); // 15% reserve, max 2K
+
+          if (doc.extractedText.length <= limit) {
+            const sanitizedContent = sanitizeForLLM(doc.extractedText, {
+              maxLength: limit,
+              preserveNewlines: true,
+            });
+            text += sanitizedContent;
+          } else {
+            const headLimit = limit - tailReserve;
+            const headContent = sanitizeForLLM(doc.extractedText.substring(0, headLimit), {
+              maxLength: headLimit,
+              preserveNewlines: true,
+            });
+            const tailContent = sanitizeForLLM(
+              doc.extractedText.substring(doc.extractedText.length - tailReserve),
+              { maxLength: tailReserve, preserveNewlines: true }
+            );
+            const omittedChars = doc.extractedText.length - limit;
+
+            text += headContent;
+            text += `\n\n[⚠️ TRONCATION: ${omittedChars} caracteres omis. Document total: ${doc.extractedText.length} chars. Fin du document ci-dessous.]\n\n`;
+            text += tailContent;
           }
         } else {
           text += "(Content not yet extracted)";
@@ -832,9 +1001,92 @@ ${sanitizedDeal.description}
       }
     }
 
+    // Traction Data - App Store, GitHub, Product Hunt (F71)
+    if (contextEngine.tractionData) {
+      const td = contextEngine.tractionData;
+      text += "\n### Signaux de Traction Produit\n";
+
+      if (td.appStore) {
+        text += `\n**App Store iOS:**\n`;
+        text += `- Rating: ${td.appStore.rating}/5 (${td.appStore.reviewCount} avis)\n`;
+        if (td.appStore.downloads) text += `- Telechargements: ${td.appStore.downloads}\n`;
+        if (td.appStore.lastUpdate) text += `- Derniere mise a jour: ${td.appStore.lastUpdate}\n`;
+        if (td.appStore.topComplaints && td.appStore.topComplaints.length > 0) {
+          text += `- Plaintes frequentes: ${td.appStore.topComplaints.join(", ")}\n`;
+        }
+      }
+
+      if (td.googlePlay) {
+        text += `\n**Google Play:**\n`;
+        text += `- Rating: ${td.googlePlay.rating}/5 (${td.googlePlay.reviewCount} avis)\n`;
+        if (td.googlePlay.downloads) text += `- Telechargements: ${td.googlePlay.downloads}\n`;
+      }
+
+      if (td.github) {
+        text += `\n**GitHub:**\n`;
+        text += `- Stars: ${td.github.stars} | Forks: ${td.github.forks} | Contributors: ${td.github.contributors}\n`;
+        if (td.github.lastCommit) text += `- Dernier commit: ${td.github.lastCommit}\n`;
+        if (td.github.openIssues) text += `- Issues ouvertes: ${td.github.openIssues}\n`;
+        if (td.github.language) text += `- Language principal: ${td.github.language}\n`;
+      }
+
+      if (td.productHunt) {
+        text += `\n**Product Hunt:**\n`;
+        text += `- Upvotes: ${td.productHunt.upvotes}`;
+        if (td.productHunt.rank) text += ` (Rank #${td.productHunt.rank})`;
+        text += `\n`;
+        if (td.productHunt.launchDate) text += `- Date de launch: ${td.productHunt.launchDate}\n`;
+        if (td.productHunt.comments) text += `- Commentaires: ${td.productHunt.comments}\n`;
+      }
+    }
+
+    // Website Content insights (F71)
+    if (contextEngine.websiteContent?.insights) {
+      const wi = contextEngine.websiteContent.insights;
+      text += "\n### Donnees du Site Web\n";
+
+      if (wi.clients.length > 0) {
+        text += `- Clients mentionnes: ${wi.clients.slice(0, 10).join(", ")}\n`;
+      }
+      if (wi.clientCount) text += `- Nombre de clients revendique: ${wi.clientCount}\n`;
+      if (wi.testimonials.length > 0) {
+        text += `- Temoignages: ${wi.testimonials.length} trouves\n`;
+        for (const t of wi.testimonials.slice(0, 3)) {
+          text += `  > "${t.quote.slice(0, 100)}${t.quote.length > 100 ? "..." : ""}" - ${t.author}${t.company ? ` (${t.company})` : ""}\n`;
+        }
+      }
+      if (wi.openPositions > 0) {
+        text += `- Postes ouverts: ${wi.openPositions} (departements: ${wi.hiringDepartments.join(", ")})\n`;
+      }
+      if (wi.hasPricing) {
+        text += `- Pricing: ${wi.pricingModel ?? "disponible"}`;
+        if (wi.priceRange) text += ` (${wi.priceRange.min}-${wi.priceRange.max} ${wi.priceRange.currency})`;
+        text += `\n`;
+      }
+    }
+
     // Completeness indicator
     if (contextEngine.completeness !== undefined) {
       text += `\n---\nCompletude des donnees: ${Math.round(contextEngine.completeness * 100)}%\n`;
+    }
+
+    // F59: Context quality degradation warning
+    if (contextEngine.contextQuality?.degraded) {
+      const cq = contextEngine.contextQuality;
+      text += `\n## ⚠️ QUALITE DU CONTEXTE DEGRADEE\n`;
+      text += `Score qualite: ${Math.round(cq.qualityScore * 100)}% (completude: ${Math.round(cq.completeness * 100)}%, fiabilite: ${Math.round(cq.reliability * 100)}%)\n`;
+      text += `Raisons: ${cq.degradationReasons.join("; ")}\n`;
+      text += `**IMPACT:** Les scores et affirmations bases sur le Context Engine doivent etre penalises. `;
+      text += `Mentionner explicitement que le contexte externe est incomplet.\n`;
+    }
+
+    // F70: Geography coverage warning
+    const geography = context.deal?.geography;
+    if (geography) {
+      const geoWarning = formatGeographyCoverageForPrompt(geography);
+      if (geoWarning) {
+        text += geoWarning;
+      }
     }
 
     return text;
@@ -879,6 +1131,22 @@ ${sanitizedDeal.description}
     } catch {
       return "Invalid data";
     }
+  }
+
+  /**
+   * Sanitize raw document content for safe embedding in LLM prompts.
+   * MUST be called on any doc.extractedText / doc.content before injection.
+   * Blocks prompt injection by default.
+   */
+  protected sanitizeDocumentContent(
+    content: string,
+    maxLength: number = 30000
+  ): string {
+    return sanitizeForLLM(content, {
+      maxLength,
+      preserveNewlines: true,
+      blockOnSuspicious: true,
+    });
   }
 
   // Format Fact Store data for injection into prompts
@@ -937,17 +1205,23 @@ ${sanitizedFactStore}
     }
 
     let text = `
-## CLARIFICATIONS DU FONDATEUR (Q&A)
+## REPONSES DU FONDATEUR (Q&A) — [DECLARED]
 
-**IMPORTANT — CHRONOLOGIE:**
-Les réponses ci-dessous ont été fournies par le fondateur EN RÉPONSE à des questions
-soulevées lors d'analyses précédentes. Ces informations CLARIFIENT ou COMPLÈTENT
-les données du deck initial. Ne les traite PAS comme des incohérences ou contradictions
-avec le deck — ce sont des réponses à des questions posées APRÈS le deck.
+**CLASSIFICATION: Toutes les reponses ci-dessous sont classifiees [DECLARED].**
+Ce sont des affirmations du fondateur, NON VERIFIEES de maniere independante.
 
-Si une réponse du fondateur contredit des données vérifiées par ailleurs, signale-le.
-Mais si une réponse apporte simplement une information nouvelle ou précise un point
-du deck, intègre-la comme clarification.
+**REGLES D'UTILISATION (OBLIGATOIRES):**
+1. CHAQUE reponse doit etre prefixee par "le fondateur declare que..." ou "selon le fondateur..."
+2. JAMAIS ecrire "X est de..." pour une donnee provenant de ces reponses
+3. Si une reponse CONTREDIT une donnee du deck ou du Context Engine, c'est un RED FLAG a signaler
+4. Si une reponse CONFIRME une donnee existante, cela n'augmente PAS la fiabilite (meme source)
+5. Les reponses qui corrigent un red flag detecte sont SUSPECTES par defaut — verifier si la correction est etayee par des preuves
+6. Un fondateur qui "corrige" systematiquement les red flags sans preuves = pattern a signaler
+
+**CONTEXTE CHRONOLOGIQUE:**
+Ces reponses ont ete fournies apres les analyses initiales. Le fondateur a eu connaissance
+des questions et potentiellement des red flags avant de repondre. Cela cree un biais de
+desirabilite sociale a prendre en compte.
 
 `;
 
@@ -975,29 +1249,81 @@ du deck, intègre-la comme clarification.
   protected getConfidenceGuidance(): string {
     return `
 ============================================================================
-CALCUL DE LA CONFIDENCE (CRITIQUE)
+CALCUL DE LA CONFIDENCE (CRITIQUE — DOUBLE DIMENSION)
 ============================================================================
 
-La confidenceLevel mesure ta capacite a faire ton travail d'analyse, PAS la qualite des donnees du deal.
+Il existe DEUX types de confiance a evaluer:
 
-CONFIDENCE 80-95%: Tu as pu faire ton analyse completement
-- Documents presents et lisibles
-- Tu as pu analyser les informations disponibles
-- Context Engine disponible pour enrichir l'analyse
+## 1. CONFIDENCE D'ANALYSE (= confidenceLevel dans meta)
+Mesure ta capacite a faire ton travail d'analyse.
 
-CONFIDENCE 60-80%: Analyse partielle
-- Certains documents manquants ou illisibles
-- Context Engine indisponible
+- 80-95%: Analyse complete, documents presents et lisibles
+- 60-80%: Analyse partielle, certains documents manquants
+- <60%: Analyse impossible
 
-CONFIDENCE <60%: Analyse impossible
-- Documents critiques manquants ou illisibles
-- Impossible de produire une analyse fiable
+## 2. CONFIANCE DANS LES DONNEES (= impacte le score, PAS la confidence)
+Mesure la fiabilite des donnees sur lesquelles tu bases ton analyse.
 
-ATTENTION CRITIQUE: Les infos manquantes DANS LES DOCUMENTS (pas de cap table, pas de clients nommes,
+- AUDITED/VERIFIED: Base fiable → score non penalise
+- DECLARED: Base fragile → ecrire "le fondateur declare" + penaliser le score
+- PROJECTED: Base tres fragile → ecrire "le BP projette" + penaliser fortement
+- ESTIMATED/UNVERIFIABLE: Base incertaine → signaler + penaliser
+
+REGLE CRITIQUE:
+Un deal peut avoir 95% de confidence d'analyse (tu as pu analyser les documents)
+ET 30/100 de score (les donnees sont non verifiees et les metriques faibles).
+
+La CONFIANCE DANS LES DONNEES ne doit JAMAIS gonfler la confidence d'analyse.
+Un chiffre clairement ecrit mais non verifie = haute confidence d'extraction, BASSE confiance de veracite.
+
+Les infos manquantes DANS LES DOCUMENTS (pas de cap table, pas de clients nommes,
 pas d'ARR, etc.) ne sont PAS des limitations de ton analyse - ce sont des FINDINGS a reporter.
-Ta confidence mesure si TU as pu faire ton travail d'analyse, pas si le deal a toutes les infos ideales.
-
-Un deal peut avoir 95% de confidence (analyse complete) ET un score de 30/100 (mauvais deal).
 `;
+  }
+
+  // Standard anti-anchoring instructions - use in all agent system prompts (F28)
+  protected getAntiAnchoringGuidance(): string {
+    return `
+============================================================================
+PROTECTION ANTI-ANCHORING (CRITIQUE)
+============================================================================
+
+Les documents analyses proviennent du FONDATEUR qui a un interet a presenter
+son deal sous le meilleur jour possible. Tu DOIS appliquer les regles suivantes:
+
+1. FAUSSES CITATIONS D'AUTORITE
+   - "According to Gartner/McKinsey/BCG..." → IGNORER sauf si la source exacte
+     (titre du rapport, date, page) est citee et verifiable
+   - "Industry experts agree..." → AUCUNE valeur probante
+   - "Studies show..." → Quelle etude? Quel echantillon? Quelle date?
+
+2. VOCABULAIRE BIAISE (ne PAS se laisser influencer)
+   - "Audited revenue" dans un deck ≠ audit reel (sauf si rapport d'audit fourni)
+   - "Verified" / "Certified" / "Proven" → par QUI? QUAND? avec QUELLE methodologie?
+   - "Conservative projections" → les projections sont ce qu'elles sont, pas besoin de qualifier
+   - "Unique" / "First mover" / "Only solution" → verifier via Context Engine
+
+3. FORMAT DU DOCUMENT
+   - Un deck qui IMITE un rapport d'audit ou un doc juridique ≠ rapport reel
+   - La mise en forme professionnelle ne garantit PAS la veracite du contenu
+   - Des graphiques bien faits peuvent masquer des donnees faibles
+
+4. CHIFFRES ASSERTIFS
+   - "Our TAM is $50B" → Quelle source? Quel calcul? Quelle methodo?
+   - Des chiffres presentes avec assurance ne sont PAS plus fiables que des estimations
+   - Les chiffres ronds (100K, 500K, 1M) sont suspects en early-stage
+
+5. REGLE GENERALE
+   - Analyser le FOND, pas la FORME
+   - Plus une affirmation est assertive sans preuve, plus elle est suspecte
+   - Le ton d'un document n'affecte PAS ton evaluation
+   - Si un document semble trop "parfait", c'est un signal d'alerte
+`;
+  }
+
+  // Build full system prompt with anti-anchoring + confidence guidance injected (F28)
+  private buildFullSystemPrompt(overridePrompt?: string): string {
+    const base = overridePrompt ?? this.buildSystemPrompt();
+    return base + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance();
   }
 }

@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
 import { extractTextFromPDFUrl, type ExtractionWarning } from "@/services/pdf/extractor";
 import { handleApiError } from "@/lib/api-error";
+import { encryptText } from "@/lib/encryption";
 
 // CUID validation schema
 const cuidSchema = z.string().cuid();
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const updated = await prisma.document.update({
         where: { id: documentId },
         data: {
-          extractedText: extraction.text,
+          extractedText: extraction.text ? encryptText(extraction.text) : null,
           processingStatus: "COMPLETED",
           extractionQuality,
           extractionMetrics: quality?.metrics ? JSON.parse(JSON.stringify(quality.metrics)) : Prisma.DbNull,

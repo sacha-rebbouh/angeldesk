@@ -451,7 +451,7 @@ export function applyTier3Coherence(
     warnings.push("devils-advocate n'a pas produit de score de scepticisme — cohérence partielle (règles T1 uniquement)");
   }
 
-  const effectiveScepticism = scepticism ?? 50; // Default neutral
+  const effectiveScepticism = scepticism ?? 0; // Default: no assessment available
 
   // Compute pre-adjustment coherence score
   const coherenceScore = computeCoherenceScore(scenarios, effectiveScepticism, t1Avg, criticalRedFlags);

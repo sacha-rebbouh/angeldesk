@@ -6,11 +6,11 @@
 // Analysis type options (kept for internal use / API compatibility)
 export const ANALYSIS_TYPES = [
   { value: "extraction", label: "Extraction documents", description: "~1min", tier: 1 },
-  { value: "tier1_complete", label: "Investigation Tier 1", description: "12 agents en parallele", tier: 1 },
+  { value: "tier1_complete", label: "Investigation Tier 1", description: "12 agents en parallèle", tier: 1 },
   { value: "tier2_sector", label: "Expert Sectoriel Tier 2", description: "1 expert selon secteur", tier: 2 },
-  { value: "full_dd", label: "Due Diligence complete", description: "~2min", tier: 2 },
-  { value: "tier3_synthesis", label: "Synthese Tier 3", description: "5 agents (necessite Tier 1)", tier: 3 },
-  { value: "full_analysis", label: "Analyse Complete", description: "18+ agents (Tier 1 + 2 + 3)", tier: 3 },
+  { value: "full_dd", label: "Due Diligence complète", description: "~2min", tier: 2 },
+  { value: "tier3_synthesis", label: "Synthèse Tier 3", description: "5 agents (nécessite Tier 1)", tier: 3 },
+  { value: "full_analysis", label: "Analyse Complète", description: "18+ agents (Tier 1 + 2 + 3)", tier: 3 },
 ] as const;
 
 export type AnalysisTypeValue = typeof ANALYSIS_TYPES[number]["value"];
@@ -29,14 +29,14 @@ export const PLAN_ANALYSIS_CONFIG = {
   },
   PRO: {
     analysisType: "full_analysis" as AnalysisTypeValue,
-    label: "Analyse complete",
-    description: "Due Diligence complete + Expert sectoriel",
+    label: "Analyse complète",
+    description: "Due Diligence complète + Expert sectoriel",
     includes: ["extraction", "tier1_complete", "tier2_sector", "tier3_synthesis", "full_analysis"],
   },
   ENTERPRISE: {
     analysisType: "full_analysis" as AnalysisTypeValue,
-    label: "Analyse complete",
-    description: "Due Diligence complete + Expert sectoriel",
+    label: "Analyse complète",
+    description: "Due Diligence complète + Expert sectoriel",
     includes: ["extraction", "tier1_complete", "tier2_sector", "tier3_synthesis", "full_analysis"],
   },
 } as const;
@@ -133,8 +133,8 @@ export const ANALYSIS_MODE_NAMES: Record<string, string> = {
   full_dd: "Due Diligence",
   tier1_complete: "Investigation Tier 1",
   tier2_sector: "Expert Sectoriel",
-  tier3_synthesis: "Synthese Tier 3",
-  full_analysis: "Analyse Complete",
+  tier3_synthesis: "Synthèse Tier 3",
+  full_analysis: "Analyse Complète",
   FULL_DD: "Due Diligence",
 };
 
@@ -155,7 +155,7 @@ export function formatDate(dateString: string): string {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 1) return "A l'instant";
+  if (diffMins < 1) return "À l'instant";
   if (diffMins < 60) return `Il y a ${diffMins}min`;
   if (diffHours < 24) return `Il y a ${diffHours}h`;
   if (diffDays < 7) return `Il y a ${diffDays}j`;
@@ -168,7 +168,7 @@ export function formatErrorMessage(error: string): string {
     return "Credits insuffisants";
   }
   if (error.includes("401") || error.includes("Unauthorized")) {
-    return "Non autorise";
+    return "Non autorisé";
   }
   if (error.includes("429") || error.includes("rate limit")) {
     return "Limite atteinte";
@@ -210,10 +210,10 @@ export type SectorExpertType = keyof typeof SECTOR_CONFIG;
 // =============================================================================
 
 export const MATURITY_CONFIG = {
-  emerging: { label: "Emerging", color: "bg-purple-100 text-purple-800" },
-  growing: { label: "Growing", color: "bg-green-100 text-green-800" },
+  emerging: { label: "Émergent", color: "bg-purple-100 text-purple-800" },
+  growing: { label: "En croissance", color: "bg-green-100 text-green-800" },
   mature: { label: "Mature", color: "bg-blue-100 text-blue-800" },
-  declining: { label: "Declining", color: "bg-red-100 text-red-800" },
+  declining: { label: "En déclin", color: "bg-red-100 text-red-800" },
 } as const;
 
 // =============================================================================
@@ -221,11 +221,11 @@ export const MATURITY_CONFIG = {
 // =============================================================================
 
 export const ASSESSMENT_CONFIG = {
-  exceptional: { label: "Exceptional", color: "text-green-600" },
-  above_average: { label: "Above Avg", color: "text-blue-600" },
-  average: { label: "Average", color: "text-gray-600" },
-  below_average: { label: "Below Avg", color: "text-orange-600" },
-  concerning: { label: "Concerning", color: "text-red-600" },
+  exceptional: { label: "Exceptionnel", color: "text-green-600" },
+  above_average: { label: "Au-dessus moy.", color: "text-blue-600" },
+  average: { label: "Dans la moyenne", color: "text-gray-600" },
+  below_average: { label: "En-dessous moy.", color: "text-orange-600" },
+  concerning: { label: "Préoccupant", color: "text-red-600" },
 } as const;
 
 // =============================================================================
@@ -233,9 +233,9 @@ export const ASSESSMENT_CONFIG = {
 // =============================================================================
 
 export const SEVERITY_CONFIG = {
-  critical: { label: "Critical", color: "bg-red-100 text-red-800" },
-  major: { label: "Major", color: "bg-orange-100 text-orange-800" },
-  minor: { label: "Minor", color: "bg-yellow-100 text-yellow-800" },
+  critical: { label: "Critique", color: "bg-red-100 text-red-800" },
+  major: { label: "Majeur", color: "bg-orange-100 text-orange-800" },
+  minor: { label: "Mineur", color: "bg-yellow-100 text-yellow-800" },
 } as const;
 
 // =============================================================================

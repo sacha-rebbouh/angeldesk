@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { formatPercentileShort } from "@/lib/format-utils";
 import { ScoreBadge } from "@/components/shared/score-badge";
 import { ExpandableSection } from "@/components/shared/expandable-section";
 import {
@@ -434,8 +435,8 @@ const ValuationAnalysisSection = memo(function ValuationAnalysisSection({
           <div className="text-2xl font-semibold text-slate-700">{valuation.medianSectorMultiple}x</div>
         </div>
         <div className="text-center">
-          <div className="text-sm text-slate-500">Percentile</div>
-          <div className="text-2xl font-semibold text-slate-700">P{valuation.percentilePosition}</div>
+          <div className="text-sm text-slate-500">Position marché</div>
+          <div className="text-2xl font-semibold text-slate-700">{formatPercentileShort(valuation.percentilePosition)}</div>
         </div>
         <Badge className={cn("text-sm px-3 py-1", verdictConfig.color)}>
           {verdictConfig.label}
@@ -762,7 +763,7 @@ const KeyMetricsSection = memo(function KeyMetricsSection({ metrics }: { metrics
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             <span>Value: <span className="font-mono">{metric.value ?? "N/A"}</span></span>
-            <span>Benchmark: P25={metric.sectorBenchmark.p25}, Median={metric.sectorBenchmark.median}, P75={metric.sectorBenchmark.p75}</span>
+            <span>Benchmark : Bas 25% = {metric.sectorBenchmark.p25}, Médiane = {metric.sectorBenchmark.median}, Top 25% = {metric.sectorBenchmark.p75}</span>
           </div>
           <p className="text-xs text-muted-foreground">{metric.sectorContext}</p>
         </div>

@@ -39,8 +39,21 @@ export interface PageOCRResult {
 // Use GPT-4o Mini for OCR - cheapest with vision + data privacy
 const OCR_MODEL = MODELS.GPT4O_MINI;
 
-// Maximum pages to OCR (cost control)
-const MAX_PAGES_TO_OCR = 20;
+// Maximum pages to OCR (cost control) - increased from 20 for better coverage
+const MAX_PAGES_TO_OCR = 30;
+
+/** Dynamic OCR page limit based on document type */
+export function getMaxOCRPages(documentType?: string): number {
+  switch (documentType) {
+    case 'FINANCIAL_MODEL':
+    case 'FINANCIAL_STATEMENTS':
+      return 40;
+    case 'PITCH_DECK':
+      return 30;
+    default:
+      return MAX_PAGES_TO_OCR;
+  }
+}
 
 // Batch size for parallel processing
 const BATCH_SIZE = 3;
@@ -348,7 +361,11 @@ export async function smartExtract(
     };
   }
 
-  const pagesToOCR = getPagesNeedingOCR(pageDistribution, maxOCRPages);
+  const pagesToOCR = getPagesNeedingOCR(
+    pageDistribution,
+    maxOCRPages,
+    regularResult.text  // Pass existing text for keyword-based prioritization
+  );
 
   if (pagesToOCR.length === 0) {
     return {

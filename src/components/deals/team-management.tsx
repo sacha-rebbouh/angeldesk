@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LinkedInConsentDialog } from "@/components/shared/linkedin-consent-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -185,6 +186,8 @@ async function deleteFounder(dealId: string, founderId: string) {
 async function enrichFounder(dealId: string, founderId: string) {
   const response = await fetch(`/api/deals/${dealId}/founders/${founderId}/enrich`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ consentLinkedIn: true }),
   });
   if (!response.ok) {
     const error = await response.json();
@@ -228,6 +231,7 @@ export const TeamManagement = memo(function TeamManagement({ dealId, founders }:
   const [editingFounder, setEditingFounder] = useState<Founder | null>(null);
   const [founderToDelete, setFounderToDelete] = useState<Founder | null>(null);
   const [enrichingFounderId, setEnrichingFounderId] = useState<string | null>(null);
+  const [consentFounder, setConsentFounder] = useState<Founder | null>(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -368,9 +372,20 @@ export const TeamManagement = memo(function TeamManagement({ dealId, founders }:
       toast.error("Ajoutez d'abord une URL LinkedIn");
       return;
     }
-    setEnrichingFounderId(founder.id);
-    enrichMutation.mutate(founder.id);
-  }, [enrichMutation]);
+    setConsentFounder(founder);
+  }, []);
+
+  const handleConsentConfirm = useCallback(() => {
+    if (consentFounder) {
+      setEnrichingFounderId(consentFounder.id);
+      enrichMutation.mutate(consentFounder.id);
+      setConsentFounder(null);
+    }
+  }, [consentFounder, enrichMutation]);
+
+  const handleConsentCancel = useCallback(() => {
+    setConsentFounder(null);
+  }, []);
 
   const isLoading = createMutation.isPending || updateMutation.isPending;
 
@@ -502,6 +517,14 @@ export const TeamManagement = memo(function TeamManagement({ dealId, founders }:
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* F14: RGPD consent dialog before LinkedIn enrichment */}
+      <LinkedInConsentDialog
+        open={consentFounder !== null}
+        founderName={consentFounder?.name ?? ""}
+        onConfirm={handleConsentConfirm}
+        onCancel={handleConsentCancel}
+      />
     </>
   );
 });

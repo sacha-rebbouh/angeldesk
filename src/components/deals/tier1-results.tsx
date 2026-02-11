@@ -11,10 +11,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { formatAgentName } from "@/lib/format-utils";
+import { formatAgentName, formatPercentileShort } from "@/lib/format-utils";
 import { ScoreBadge } from "@/components/shared/score-badge";
 import { ExpandableSection } from "@/components/shared/expandable-section";
+import { GlossaryTerm } from "@/components/shared/glossary-term";
+import { RedFlagsSummary } from "./red-flags-summary";
+import { SeverityLegend } from "@/components/shared/severity-legend";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { ReliabilityBadge } from "@/components/shared/reliability-badge";
 import {
   DollarSign,
   Users,
@@ -55,6 +59,7 @@ import type { ReasoningTrace } from "@/agents/react/types";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { ReActTraceViewer } from "./react-trace-viewer";
 import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-teaser";
+import { DataCompletenessGuide } from "@/components/shared/data-completeness-guide";
 import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
 import { BarChart3, FileText, Lightbulb } from "lucide-react";
 
@@ -100,22 +105,50 @@ const ReActIndicator = memo(function ReActIndicator({
     [reactData.findings]
   );
 
+  const iterationCount = reactData.reasoningTrace.totalIterations;
+
   return (
     <button
+      type="button"
       onClick={onShowTrace}
-      className="flex items-center gap-2 px-2 py-1 rounded-lg bg-primary/5 hover:bg-primary/10 border border-primary/20 transition-colors"
+      className={cn(
+        "group relative flex items-center gap-2 px-2.5 py-1.5 rounded-lg",
+        "bg-violet-50 hover:bg-violet-100 dark:bg-violet-500/10 dark:hover:bg-violet-500/20",
+        "border border-violet-200 dark:border-violet-500/30",
+        "transition-colors duration-200 hover:shadow-sm hover:shadow-violet-200/50"
+      )}
+      title="Voir la trace de raisonnement de l'agent"
     >
-      <Brain className="h-4 w-4 text-primary" />
-      <div className="flex items-center gap-1.5">
-        <Badge variant="outline" className={cn("text-xs", confidenceColor)}>
-          {reactData.confidence.score}%
-        </Badge>
-        {benchmarkedFindings > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {benchmarkedFindings} benchmarks
-          </span>
-        )}
-      </div>
+      {/* Pulse indicator — 3 pings then static */}
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-[ping_1s_ease-in-out_3] rounded-full bg-violet-400 opacity-40" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+      </span>
+
+      <Brain className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+
+      <span className="text-xs font-medium text-violet-700 dark:text-violet-300">
+        Trace IA
+      </span>
+
+      <Badge variant="outline" className={cn("text-xs", confidenceColor)}>
+        {reactData.confidence.score}%
+      </Badge>
+
+      {benchmarkedFindings > 0 && (
+        <span className="text-[11px] text-violet-500 dark:text-violet-400">
+          {benchmarkedFindings} bench.
+        </span>
+      )}
+
+      {iterationCount > 1 && (
+        <span className="text-[11px] text-violet-500 dark:text-violet-400">
+          {iterationCount} étapes
+        </span>
+      )}
+
+      {/* Underline hint on hover */}
+      <span className="absolute bottom-0 left-2 right-2 h-px bg-violet-300 opacity-0 group-hover:opacity-100 transition-opacity" />
     </button>
   );
 });
@@ -213,16 +246,12 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className={cn(
-              "text-xs",
-              data.meta?.dataCompleteness === "complete" ? "bg-green-100 text-green-800" :
-              data.meta?.dataCompleteness === "partial" ? "bg-yellow-100 text-yellow-800" :
-              "bg-red-100 text-red-800"
-            )}>
-              {data.meta?.dataCompleteness === "complete" ? "Données complètes" :
-               data.meta?.dataCompleteness === "partial" ? "Données partielles" :
-               "Données minimales"}
-            </Badge>
+            {data.meta?.dataCompleteness && (
+              <DataCompletenessGuide
+                completeness={data.meta.dataCompleteness}
+                limitations={data.meta?.limitations}
+              />
+            )}
             <ScoreBadge score={data.score?.value ?? 0} size="lg" />
           </div>
         </div>
@@ -257,16 +286,21 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
 
         {/* Key Metrics Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {availableMetrics.slice(0, 4).map((m: { metric: string; reportedValue?: number; percentile?: number }, i: number) => (
+          {availableMetrics.slice(0, 4).map((m: { metric: string; reportedValue?: number; percentile?: number; reliability?: string }, i: number) => (
             <div key={i} className="p-3 rounded-lg bg-muted">
-              <div className="text-xs text-muted-foreground truncate">{m.metric}</div>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-muted-foreground truncate">{m.metric}</span>
+                {m.reliability && (
+                  <ReliabilityBadge reliability={m.reliability as "AUDITED" | "VERIFIED" | "DECLARED" | "PROJECTED" | "ESTIMATED" | "UNVERIFIABLE"} compact />
+                )}
+              </div>
               <div className="text-lg font-bold mt-1">
                 {typeof m.reportedValue === "number"
                   ? formatAmount(m.reportedValue)
                   : m.reportedValue ?? "N/A"}
               </div>
               {m.percentile != null && (
-                <div className="text-xs text-muted-foreground">P{m.percentile}</div>
+                <div className="text-xs text-muted-foreground">{formatPercentileShort(m.percentile)}</div>
               )}
             </div>
           ))}
@@ -289,17 +323,17 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
             </div>
             <div className="grid grid-cols-3 gap-3 text-center">
               <div>
-                <div className="text-xs text-muted-foreground">Burn mensuel</div>
+                <div className="text-xs text-muted-foreground"><GlossaryTerm term="Burn mensuel" /></div>
                 <div className="font-semibold">{formatAmount(data.findings.burn.monthlyBurn)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">Runway</div>
+                <div className="text-xs text-muted-foreground"><GlossaryTerm term="Runway" /></div>
                 <div className="font-semibold">
                   {data.findings.burn.runway ? `${data.findings.burn.runway} mois` : "N/A"}
                 </div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">Burn Multiple</div>
+                <div className="text-xs text-muted-foreground"><GlossaryTerm term="Burn Multiple" /></div>
                 <div className="font-semibold">
                   {safeFixed(data.findings.burn.burnMultiple, 2)}
                 </div>
@@ -340,6 +374,28 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
                 </span>
               </div>
             </div>
+            {/* Deck vs marché synthesis */}
+            {data.findings.valuation.impliedMultiple != null && data.findings.valuation.benchmarkMultiple != null && data.findings.valuation.benchmarkMultiple > 0 && (
+              <div className={cn(
+                "mt-2 p-2 rounded text-sm font-medium",
+                data.findings.valuation.impliedMultiple > data.findings.valuation.benchmarkMultiple * 1.3
+                  ? "bg-red-50 text-red-800 border border-red-200"
+                  : data.findings.valuation.impliedMultiple > data.findings.valuation.benchmarkMultiple * 1.1
+                  ? "bg-orange-50 text-orange-800 border border-orange-200"
+                  : data.findings.valuation.impliedMultiple >= data.findings.valuation.benchmarkMultiple * 0.9
+                  ? "bg-green-50 text-green-800 border border-green-200"
+                  : "bg-blue-50 text-blue-800 border border-blue-200"
+              )}>
+                {(() => {
+                  const ratio = data.findings.valuation.impliedMultiple / data.findings.valuation.benchmarkMultiple;
+                  const diff = Math.round((ratio - 1) * 100);
+                  if (diff > 30) return `Ce deal demande un multiple ${diff}% au-dessus du marché. Valorisation agressive, négociez.`;
+                  if (diff > 10) return `Ce deal est ${diff}% au-dessus de la médiane du marché. Marge de négociation possible.`;
+                  if (diff >= -10) return `Ce deal est dans la fourchette du marché (écart ${diff > 0 ? "+" : ""}${diff}%). Valorisation cohérente.`;
+                  return `Ce deal est ${Math.abs(diff)}% en-dessous du marché. Opportunité potentielle ou signal de faiblesse.`;
+                })()}
+              </div>
+            )}
             {data.findings.valuation.comparables?.length > 0 && (
               <div className="text-xs text-muted-foreground mt-2">
                 Comparables: {data.findings.valuation.comparables.slice(0, 2).map((c: { name: string; multiple: number }) => `${c.name} (${c.multiple}x)`).join(", ")}
@@ -521,7 +577,7 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Users className="h-5 w-5 text-blue-600" />
-            <CardTitle className="text-lg">Team Investigation</CardTitle>
+            <CardTitle className="text-lg">Investigation équipe</CardTitle>
             {reactData && onShowTrace && (
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
@@ -674,7 +730,7 @@ const CompetitiveIntelCard = memo(function CompetitiveIntelCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Target className="h-5 w-5 text-purple-600" />
-            <CardTitle className="text-lg">Competitive Intel</CardTitle>
+            <CardTitle className="text-lg">Intelligence concurrentielle</CardTitle>
             {reactData && onShowTrace && (
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
@@ -802,7 +858,7 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2">
           <FileSearch className="h-5 w-5 text-indigo-600" />
-          <CardTitle className="text-lg">Deck Forensics</CardTitle>
+          <CardTitle className="text-lg">Analyse du pitch deck</CardTitle>
           {reactData && onShowTrace && (
             <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
           )}
@@ -975,7 +1031,7 @@ const MarketIntelCard = memo(function MarketIntelCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Globe className="h-5 w-5 text-cyan-600" />
-            <CardTitle className="text-lg">Market Intelligence</CardTitle>
+            <CardTitle className="text-lg">Intelligence marché</CardTitle>
             {reactData && onShowTrace && (
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
@@ -1568,16 +1624,11 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
           </div>
           <div className="flex items-center gap-2">
             {isV2 && data.meta?.dataCompleteness && (
-              <Badge variant="outline" className={cn(
-                "text-xs",
-                data.meta.dataCompleteness === "complete" ? "bg-green-100 text-green-800" :
-                data.meta.dataCompleteness === "partial" ? "bg-yellow-100 text-yellow-800" :
-                "bg-red-100 text-red-800"
-              )}>
-                {data.meta.dataCompleteness === "complete" ? "Données complètes" :
-                 data.meta.dataCompleteness === "partial" ? "Données partielles" :
-                 "Données minimales"}
-              </Badge>
+              <DataCompletenessGuide
+                completeness={data.meta.dataCompleteness}
+                limitations={data.meta?.limitations}
+
+              />
             )}
             <ScoreBadge score={scoreValue ?? 0} size="lg" />
           </div>
@@ -1984,15 +2035,11 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
           </div>
           <div className="flex items-center gap-2">
             {data.meta?.dataCompleteness && (
-              <Badge variant="outline" className={cn(
-                "text-xs",
-                data.meta.dataCompleteness === "complete" ? "bg-green-100 text-green-800" :
-                data.meta.dataCompleteness === "partial" ? "bg-yellow-100 text-yellow-800" :
-                "bg-red-100 text-red-800"
-              )}>
-                {data.meta.dataCompleteness === "complete" ? "Complètes" :
-                 data.meta.dataCompleteness === "partial" ? "Partielles" : "Minimales"}
-              </Badge>
+              <DataCompletenessGuide
+                completeness={data.meta.dataCompleteness}
+                limitations={data.meta?.limitations}
+
+              />
             )}
             <ScoreBadge score={scoreValue ?? 0} size="lg" />
           </div>
@@ -2380,15 +2427,11 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
           </div>
           <div className="flex items-center gap-2">
             {data.meta?.dataCompleteness && (
-              <Badge variant="outline" className={cn(
-                "text-xs",
-                data.meta.dataCompleteness === "complete" ? "bg-green-100 text-green-800" :
-                data.meta.dataCompleteness === "partial" ? "bg-yellow-100 text-yellow-800" :
-                "bg-red-100 text-red-800"
-              )}>
-                {data.meta.dataCompleteness === "complete" ? "Complètes" :
-                 data.meta.dataCompleteness === "partial" ? "Partielles" : "Minimales"}
-              </Badge>
+              <DataCompletenessGuide
+                completeness={data.meta.dataCompleteness}
+                limitations={data.meta?.limitations}
+
+              />
             )}
             <ScoreBadge score={scoreValue ?? 0} size="lg" />
           </div>
@@ -2502,7 +2545,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
               {retention.nrr?.reported && (
                 <div className="p-2 rounded bg-muted">
-                  <div className="text-xs text-muted-foreground">NRR</div>
+                  <div className="text-xs text-muted-foreground"><GlossaryTerm term="NRR" /></div>
                   <div className={cn(
                     "text-lg font-bold",
                     retention.nrr.reported >= 120 ? "text-green-600" :
@@ -2511,7 +2554,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
                     {retention.nrr.reported}%
                   </div>
                   {retention.nrr.percentile && (
-                    <div className="text-xs text-muted-foreground">P{retention.nrr.percentile}</div>
+                    <div className="text-xs text-muted-foreground">{formatPercentileShort(retention.nrr.percentile)}</div>
                   )}
                 </div>
               )}
@@ -2523,7 +2566,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
               )}
               {retention.grossRetention?.churnRate !== undefined && (
                 <div className="p-2 rounded bg-muted">
-                  <div className="text-xs text-muted-foreground">Churn</div>
+                  <div className="text-xs text-muted-foreground"><GlossaryTerm term="Churn" /></div>
                   <div className={cn(
                     "text-lg font-bold",
                     retention.grossRetention.churnRate <= 3 ? "text-green-600" :
@@ -3482,6 +3525,140 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
   );
 });
 
+// Summary View - Top-level digest of all agents (F50)
+const Tier1SummaryView = memo(function Tier1SummaryView({
+  scores,
+  avgScore,
+  results,
+}: {
+  scores: { name: string; score: number; icon: React.ReactNode }[];
+  avgScore: number;
+  results: Record<string, AgentResultWithReAct>;
+}) {
+  // Extract top red flags across all agents
+  const topRedFlags = useMemo(() => {
+    const allFlags: { title: string; severity: string; evidence: string; agent: string }[] = [];
+    for (const [agentName, result] of Object.entries(results)) {
+      if (!result.success || !result.data) continue;
+      const data = result.data as { redFlags?: Array<{ title: string; severity: string; evidence: string }> };
+      if (data.redFlags) {
+        for (const rf of data.redFlags) {
+          allFlags.push({ ...rf, agent: agentName });
+        }
+      }
+    }
+    const order: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+    allFlags.sort((a, b) => (order[a.severity] ?? 4) - (order[b.severity] ?? 4));
+    return allFlags.slice(0, 5);
+  }, [results]);
+
+  // Extract key insights across agents
+  const topInsights = useMemo(() => {
+    const insights: string[] = [];
+    for (const result of Object.values(results)) {
+      if (!result.success || !result.data) continue;
+      const data = result.data as { narrative?: { keyInsights?: string[] } };
+      if (data.narrative?.keyInsights) {
+        insights.push(...data.narrative.keyInsights.slice(0, 1));
+      }
+    }
+    return insights.slice(0, 5);
+  }, [results]);
+
+  // Extract weakest dimensions
+  const weakestDimensions = useMemo(() => {
+    return [...scores]
+      .filter(s => s.score < 60)
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 3);
+  }, [scores]);
+
+  return (
+    <div className="space-y-4">
+      {/* Score Overview */}
+      <div className="text-center py-4">
+        <div className={cn(
+          "text-5xl font-bold mb-1",
+          avgScore >= 70 ? "text-green-600" :
+          avgScore >= 50 ? "text-yellow-600" : "text-red-600"
+        )}>
+          {avgScore}/100
+        </div>
+        <p className="text-sm text-muted-foreground">Score moyen Tier 1</p>
+      </div>
+
+      {/* Weakest Dimensions */}
+      {weakestDimensions.length > 0 && (
+        <div className="p-4 rounded-lg border border-red-200 bg-red-50">
+          <p className="text-sm font-medium text-red-800 mb-2">Points faibles a investiguer</p>
+          <div className="space-y-2">
+            {weakestDimensions.map((dim, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {dim.icon}
+                  <span className="text-sm">{dim.name}</span>
+                </div>
+                <Badge variant="outline" className={cn(
+                  "text-xs",
+                  dim.score < 40 ? "bg-red-100 text-red-800" : "bg-yellow-100 text-yellow-800"
+                )}>
+                  {dim.score}/100
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Top Red Flags */}
+      {topRedFlags.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-red-600">
+            Top red flags ({topRedFlags.length})
+          </p>
+          {topRedFlags.map((rf, i) => (
+            <div key={i} className="flex items-start gap-2 p-2 rounded border bg-card">
+              <AlertTriangle className={cn(
+                "h-4 w-4 shrink-0 mt-0.5",
+                rf.severity === "CRITICAL" ? "text-red-600" :
+                rf.severity === "HIGH" ? "text-orange-500" : "text-yellow-500"
+              )} />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{rf.title}</span>
+                  <Badge variant="outline" className="text-xs">
+                    {formatAgentName(rf.agent)}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">{rf.evidence}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Top Insights */}
+      {topInsights.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-blue-600">Insights cles</p>
+          <ul className="space-y-1.5">
+            {topInsights.map((insight, i) => (
+              <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                <Lightbulb className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+                {insight}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="text-xs text-center text-muted-foreground pt-2 border-t">
+        Explorez les onglets ci-dessus pour le detail agent par agent
+      </p>
+    </div>
+  );
+});
+
 // Main Tier 1 Results Component
 export function Tier1Results({ results, subscriptionPlan = "FREE" }: Tier1ResultsProps) {
   // State for tracking which agent's trace panel is open
@@ -3570,8 +3747,42 @@ export function Tier1Results({ results, subscriptionPlan = "FREE" }: Tier1Result
   // Get the react data for the currently open panel
   const openReactData = openTraceAgent ? getReactData(openTraceAgent) : undefined;
 
+  // Collect all red flags from all agents for consolidated view
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allAgentRedFlags = useMemo(() => {
+    const agents: { agentName: string; redFlags: Array<{ severity: "CRITICAL" | "HIGH" | "MEDIUM"; title: string; evidence?: string; question?: string; impact?: string; id?: string }> }[] = [];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const addAgent = (name: string, data: any) => {
+      if (data?.redFlags && data.redFlags.length > 0) {
+        agents.push({ agentName: name, redFlags: data.redFlags });
+      }
+    };
+
+    addAgent("financial-auditor", financialData);
+    addAgent("team-investigator", teamData);
+    addAgent("competitive-intel", competitiveData);
+    addAgent("deck-forensics", deckData);
+    addAgent("market-intelligence", marketData);
+    addAgent("tech-stack-dd", techStackData);
+    addAgent("tech-ops-dd", techOpsData);
+    addAgent("legal-regulatory", legalData);
+    addAgent("cap-table-auditor", capTableData);
+    addAgent("gtm-analyst", gtmData);
+    addAgent("customer-intel", customerData);
+    addAgent("exit-strategist", exitData);
+
+    return agents;
+  }, [financialData, teamData, competitiveData, deckData, marketData, techStackData, techOpsData, legalData, capTableData, gtmData, customerData, exitData]);
+
   return (
     <div className="space-y-6">
+      {/* RED FLAGS SUMMARY - Consolidated view, displayed FIRST */}
+      <RedFlagsSummary agentResults={allAgentRedFlags} />
+
+      {/* Severity Legend (F30) */}
+      <SeverityLegend />
+
       {/* Summary Header */}
       <Card>
         <CardHeader className="pb-2">
@@ -3612,13 +3823,23 @@ export function Tier1Results({ results, subscriptionPlan = "FREE" }: Tier1Result
       </Card>
 
       {/* Tabbed Results */}
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+      <Tabs defaultValue="summary" className="w-full">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="summary">Resume</TabsTrigger>
           <TabsTrigger value="overview">Vue d&apos;ensemble</TabsTrigger>
           <TabsTrigger value="business">Business</TabsTrigger>
           <TabsTrigger value="technical">Technique</TabsTrigger>
-          <TabsTrigger value="strategic">Stratégique</TabsTrigger>
+          <TabsTrigger value="strategic">Strategique</TabsTrigger>
         </TabsList>
+
+        {/* Summary Tab - F50 */}
+        <TabsContent value="summary" className="mt-4">
+          <Tier1SummaryView
+            scores={scores}
+            avgScore={avgScore}
+            results={results}
+          />
+        </TabsContent>
 
         <TabsContent value="overview" className="space-y-4 mt-4">
           <div className="grid gap-4 md:grid-cols-2">

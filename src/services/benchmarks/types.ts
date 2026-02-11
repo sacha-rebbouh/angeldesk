@@ -28,6 +28,10 @@ export interface PercentileBenchmark {
   median: number;
   p75: number;
   source?: string; // Source de la donnée (ex: "OpenVC 2024", "First Round")
+  sourceUrl?: string;          // URL du rapport source
+  lastUpdated?: string;        // ISO date de la derniere mise a jour
+  expiresAt?: string;          // ISO date d'expiration (lastUpdated + 12 mois)
+  dataYear?: number;           // Annee des donnees (ex: 2024, 2025)
 }
 
 // Benchmarks financiers
@@ -95,6 +99,18 @@ export interface BAPreferences {
 
   // Time horizon for liquidity (years)
   expectedHoldingPeriod: number;
+
+  /** Thèse d'investissement libre du BA (F72) */
+  investmentThesis?: string;
+
+  /** Co-investissement préféré */
+  coInvestmentPreference?: "solo" | "syndicate" | "club_deal";
+
+  /** Portfolio actuel - noms des sociétés déjà investies (pour overlap detection) */
+  portfolioCompanies?: string[];
+
+  /** Critères "must-have" pour investir */
+  mustHaveCriteria?: string[];
 }
 
 // Valeurs par défaut pour un BA

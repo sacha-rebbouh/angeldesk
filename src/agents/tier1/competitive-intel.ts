@@ -15,6 +15,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { calculateAgentScore, COMPETITIVE_INTEL_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * COMPETITIVE INTEL AGENT - REFONTE v2.0
@@ -323,6 +324,62 @@ Réponds UNIQUEMENT en JSON valide, pas de texte avant ou après.`;
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
 
+    // =====================================================
+    // F10: RECHERCHE WEB ACTIVE DE CONCURRENTS
+    // =====================================================
+    let webSearchSection = "";
+
+    try {
+      const companyName = (context.deal as Record<string, unknown>).companyName as string || context.deal.name;
+      const sector = context.deal.sector || "tech";
+      const tagline = extractedInfo?.tagline as string || extractedInfo?.productDescription as string || "";
+
+      const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+      const apiKey = process.env.OPENROUTER_API_KEY;
+
+      if (apiKey) {
+        const searchQuery = `List the top 10 competitors and alternatives to "${companyName}" in the ${sector} space. ${tagline ? `The company does: ${tagline}.` : ""} For each competitor, include: company name, funding raised, number of employees, key differentiation. Focus on startups and scaleups, not only incumbents. Include both direct and indirect competitors. Current year: ${new Date().getFullYear()}.`;
+
+        const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://angeldesk.app",
+            "X-Title": "Angel Desk Competitor Search",
+          },
+          body: JSON.stringify({
+            model: "perplexity/sonar",
+            messages: [{ role: "user", content: searchQuery }],
+            temperature: 0.1,
+            max_tokens: 2000,
+          }),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          const searchContent = result.choices?.[0]?.message?.content || "";
+
+          if (searchContent) {
+            webSearchSection = `\n## RECHERCHE WEB ACTIVE (Perplexity - ${new Date().toISOString().split("T")[0]})
+**IMPORTANT**: Ces donnees viennent d'une recherche web en temps reel.
+Compare cette liste avec les concurrents mentionnes dans le deck.
+Tout concurrent MAJEUR absent du deck = RED FLAG.
+
+${searchContent}
+
+**INSTRUCTIONS**:
+1. Inclure TOUS les concurrents de cette recherche dans ton analyse
+2. Signaler les concurrents NON MENTIONNES dans le deck
+3. Pour les concurrents du deck NON TROUVES dans cette recherche, marquer comme "existence non confirmee"
+`;
+          }
+        }
+      }
+    } catch (error) {
+      webSearchSection = "\n## RECHERCHE WEB\nRecherche web echouee. Analyse basee uniquement sur le Context Engine et les connaissances generales.";
+    }
+
     // Extract competitors mentioned in deck
     let competitorsSection = "";
     if (extractedInfo?.competitors && Array.isArray(extractedInfo.competitors)) {
@@ -378,6 +435,7 @@ ${competitorsSection}
 ${advantageSection}
 ${differentiatorsSection}
 ${fundingSection}
+${webSearchSection}
 ${contextEngineData}
 ${this.formatFactStoreData(context)}
 
@@ -593,8 +651,118 @@ RAPPELS:
     // Call LLM
     const { data } = await this.llmCompleteJSON<LLMCompetitiveIntelResponse>(prompt);
 
+    // F03: DETERMINISTIC SCORING - Extract competitive metrics, score in code
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const findings = data.findings;
+
+      if (findings) {
+        // Moat strength (0-100) — from LLM structured output
+        if (findings.moatAnalysis?.overallMoatStrength != null) {
+          extractedMetrics.push({
+            name: "moat_strength", value: findings.moatAnalysis.overallMoatStrength,
+            unit: "score", source: "LLM moat analysis", dataReliability: "DECLARED", category: "competitive",
+          });
+        }
+
+        // Differentiation score — map enum to numeric
+        const diffMap = { strong: 85, moderate: 60, weak: 30, unclear: 15 };
+        if (findings.competitivePositioning?.differentiationStrength) {
+          extractedMetrics.push({
+            name: "differentiation_score",
+            value: diffMap[findings.competitivePositioning.differentiationStrength] ?? 0,
+            unit: "score", source: "LLM competitive positioning", dataReliability: "DECLARED", category: "competitive",
+          });
+        }
+
+        // Entry barriers — map to score
+        const barrierMap = { high: 80, medium: 50, low: 20 };
+        if (findings.marketStructure?.entryBarriers) {
+          extractedMetrics.push({
+            name: "entry_barriers", value: barrierMap[findings.marketStructure.entryBarriers] ?? 0,
+            unit: "score", source: "LLM market structure", dataReliability: "DECLARED", category: "competitive",
+          });
+        }
+
+        // Competitors missed in deck — factual count, inverted (more missed = worse)
+        const missedCount = findings.competitorsMissedInDeck?.length ?? 0;
+        extractedMetrics.push({
+          name: "competitors_missed_in_deck",
+          value: Math.max(0, 100 - missedCount * 25), // 0 missed = 100, 4+ = 0
+          unit: "score", source: "Deck vs DB/web comparison", dataReliability: "VERIFIED", category: "competitive",
+        });
+
+        // Direct threat density
+        const directCompetitors = (findings.competitors ?? []).filter(
+          c => c.overlap === "direct" && (c.threatLevel === "CRITICAL" || c.threatLevel === "HIGH")
+        ).length;
+        extractedMetrics.push({
+          name: "direct_threat_level",
+          value: Math.max(0, 100 - directCompetitors * 20), // 0 threats = 100, 5+ = 0
+          unit: "score", source: "LLM competitor analysis", dataReliability: "DECLARED", category: "competitive",
+        });
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "competitive-intel", extractedMetrics, sector, stage, COMPETITIVE_INTEL_CRITERIA,
+        );
+        data.score = { ...data.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[competitive-intel] Deterministic scoring failed, using LLM score:", err);
+    }
+
     // Transform and validate response
-    return this.transformResponse(data, amountRaising);
+    const transformed = this.transformResponse(data, amountRaising);
+
+    // F08: POST-PROCESSING - Verify entities against Funding DB
+    try {
+      const { verifyEntities, summarizeVerifications } = await import(
+        "../orchestration/utils/entity-verifier"
+      );
+
+      const competitorNames = transformed.findings.competitors.map(c => c.name);
+      const missedNames = (transformed.findings.competitorsMissedInDeck ?? []).map(c => c.name);
+      const allEntities = [...competitorNames, ...missedNames].filter(Boolean);
+
+      if (allEntities.length > 0) {
+        const verifications = await verifyEntities(allEntities);
+
+        // Annotate unverified competitors
+        for (const competitor of transformed.findings.competitors) {
+          const v = verifications.get(competitor.name);
+          if (v && !v.verified) {
+            competitor.name = `[NON VERIFIE] ${competitor.name}`;
+            competitor.funding.source = "LLM (non verifie en Funding DB)";
+          } else if (v?.verified && v.matchedEntity) {
+            competitor.funding.source = `Funding DB (${v.matchedEntity.name})`;
+            if (v.matchedEntity.lastFunding && !competitor.funding.total) {
+              competitor.funding.total = v.matchedEntity.lastFunding;
+            }
+          }
+        }
+
+        // Add limitation if unverified entities
+        const summary = summarizeVerifications(verifications);
+        if (summary.unverifiedCount > 0 && summary.warningMessage) {
+          transformed.meta.limitations = [
+            ...transformed.meta.limitations,
+            summary.warningMessage,
+          ];
+        }
+      }
+    } catch (err) {
+      console.error("[competitive-intel] Entity verification failed:", err);
+      transformed.meta.limitations = [
+        ...transformed.meta.limitations,
+        "Verification des entites en Funding DB echouee. Concurrents non verifies.",
+      ];
+    }
+
+    return transformed;
   }
 
   private transformResponse(
@@ -689,28 +857,39 @@ RAPPELS:
       fundingBenchmark: {
         ourFunding: amountRaising ?? data.findings?.fundingBenchmark?.ourFunding ?? 0,
         competitorsFunding: data.findings?.fundingBenchmark?.competitorsFunding ?? [],
-        percentileVsCompetitors: data.findings?.fundingBenchmark?.percentileVsCompetitors ?? 50,
+        percentileVsCompetitors: data.findings?.fundingBenchmark?.percentileVsCompetitors ?? 0,
         verdict: data.findings?.fundingBenchmark?.verdict ?? "",
       },
     };
 
     // Build meta
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[competitive-intel] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "competitive-intel",
       analysisDate: new Date().toISOString(),
       dataCompleteness: data.meta?.dataCompleteness ?? "partial",
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
       limitations: data.meta?.limitations ?? [],
     };
 
     // Build score
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[competitive-intel] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: this.validateGrade(data.score?.grade),
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : this.validateGrade(data.score?.grade),
+      isFallback: scoreIsFallback,
       breakdown: (data.score?.breakdown ?? []).map(b => ({
         criterion: b.criterion ?? "",
         weight: b.weight ?? 0,
-        score: Math.min(100, Math.max(0, b.score ?? 0)),
+        score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
         justification: b.justification ?? "",
       })),
     };

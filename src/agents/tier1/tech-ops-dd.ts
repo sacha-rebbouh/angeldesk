@@ -16,6 +16,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { calculateAgentScore, TECH_OPS_DD_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * Tech-Ops-DD Agent - Split from Technical DD v2.0
@@ -65,6 +66,26 @@ Tu sais que:
 - Une équipe 100% junior = problèmes garantis à moyen terme
 - Sécurité absente early stage = risque acceptable, mais pas en production avec données clients
 - L'IP peut être un avantage compétitif majeur ou une illusion coûteuse
+
+# TRANSPARENCE SUR LES LIMITATIONS (OBLIGATOIRE)
+
+## DISCLAIMER CRITIQUE:
+Tu n'as PAS acces au code source de la startup. Ton analyse est basee UNIQUEMENT sur:
+- Le pitch deck (slides techniques)
+- La documentation technique si fournie
+- Les claims du fondateur
+- Le Context Engine (donnees externes)
+
+## IMPACT SUR LE SCORING:
+- Toute evaluation de la maturite du produit est une INFERENCE, pas un fait
+- Le score global ne peut PAS depasser 75/100 sans acces au code
+- Si le deck ne mentionne AUCUN detail technique: score max 50/100
+
+## DANS LE NARRATIVE:
+TOUJOURS inclure un paragraphe de transparence:
+"Cette analyse est basee uniquement sur les documents fournis. Sans acces au code source,
+les evaluations de maturite produit, securite et IP sont des inferences.
+Une revue technique par un CTO externe est recommandee avant investissement."
 
 # MISSION POUR CE DEAL
 
@@ -459,28 +480,106 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
 
     const { data } = await this.llmCompleteJSON<LLMTechOpsDDResponse>(prompt, {});
 
-    return this.normalizeResponse(data, context);
+    const result = this.normalizeResponse(data, context);
+
+    // F03: DETERMINISTIC SCORING
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const bd = data.score?.breakdown ?? [];
+
+      // Extract sub-scores from LLM breakdown as metrics
+      for (const b of bd) {
+        const criterion = (b.criterion ?? "").toLowerCase();
+        if (criterion.includes("maturit") && b.score != null) {
+          extractedMetrics.push({
+            name: "product_maturity_score", value: b.score,
+            unit: "score", source: "LLM breakdown", dataReliability: "DECLARED", category: "technical",
+          });
+        }
+        if (criterion.includes("equipe") || criterion.includes("team")) {
+          if (b.score != null) {
+            extractedMetrics.push({
+              name: "team_completeness_tech", value: b.score,
+              unit: "score", source: "LLM breakdown", dataReliability: "DECLARED", category: "team",
+            });
+          }
+        }
+        if (criterion.includes("securit") || criterion.includes("security")) {
+          if (b.score != null) {
+            extractedMetrics.push({
+              name: "security_score", value: b.score,
+              unit: "score", source: "LLM breakdown", dataReliability: "DECLARED", category: "technical",
+            });
+          }
+        }
+        if (criterion.includes("ip") || criterion.includes("propriet")) {
+          if (b.score != null) {
+            extractedMetrics.push({
+              name: "ip_tech_score", value: b.score,
+              unit: "score", source: "LLM breakdown", dataReliability: "DECLARED", category: "technical",
+            });
+          }
+        }
+      }
+
+      // Sector benchmark position
+      const posMap: Record<string, number> = { above: 80, average: 55, below: 25 };
+      const overallPos = (data.findings?.sectorBenchmark as { overallPosition?: string })?.overallPosition?.toLowerCase() ?? "";
+      for (const [key, val] of Object.entries(posMap)) {
+        if (overallPos.includes(key)) {
+          extractedMetrics.push({
+            name: "product_stability", value: val,
+            unit: "score", source: "Sector benchmark", dataReliability: "DECLARED", category: "technical",
+          });
+          break;
+        }
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "tech-ops-dd", extractedMetrics, sector, stage, TECH_OPS_DD_CRITERIA,
+        );
+        result.score = { ...result.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[tech-ops-dd] Deterministic scoring failed, using LLM score:", err);
+    }
+
+    return result;
   }
 
   private normalizeResponse(data: LLMTechOpsDDResponse, _context: EnrichedAgentContext): TechOpsDDData {
     // Normalize meta
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[tech-ops-dd] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "tech-ops-dd",
       analysisDate: data.meta?.analysisDate || new Date().toISOString(),
       dataCompleteness: this.validateEnum(data.meta?.dataCompleteness, ["complete", "partial", "minimal"], "partial"),
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta!.confidenceLevel!)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Normalize score
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[tech-ops-dd] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: this.validateEnum(data.score?.grade, ["A", "B", "C", "D", "F"], "C"),
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : this.validateEnum(data.score?.grade, ["A", "B", "C", "D", "F"], "C"),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 0,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "Non spécifié",
           }))
         : this.getDefaultBreakdown(),
@@ -575,6 +674,16 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
       forNegotiation: Array.isArray(data.narrative?.forNegotiation) ? data.narrative.forNegotiation : [],
     };
 
+    // F38: Cap score without code access — tech analysis is inference-based
+    const hasCodeAccess = false; // Always false for now
+    if (!hasCodeAccess && !scoreIsFallback) {
+      score.value = Math.min(score.value, 75);
+      if (!meta.limitations.includes("Analyse basee uniquement sur les documents, pas d'acces au code source")) {
+        meta.limitations.push("Analyse basee uniquement sur les documents, pas d'acces au code source");
+      }
+      meta.confidenceLevel = Math.min(meta.confidenceLevel, 60);
+    }
+
     return {
       meta,
       score,
@@ -660,13 +769,13 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
       stage: this.validateEnum(d.stage, ["concept", "prototype", "mvp", "beta", "production", "scale"], "mvp"),
       stageEvidence: (d.stageEvidence as string) ?? "Non spécifié",
       stability: {
-        score: Math.min(100, Math.max(0, (stability.score as number) ?? 50)),
+        score: (stability.score as number) != null ? Math.min(100, Math.max(0, stability.score as number)) : 0,
         incidentFrequency: (stability.incidentFrequency as string) ?? "Unknown",
         uptimeEstimate: (stability.uptimeEstimate as string) ?? "Unknown",
         assessment: (stability.assessment as string) ?? "Non évalué",
       },
       featureCompleteness: {
-        score: Math.min(100, Math.max(0, (featureCompleteness.score as number) ?? 50)),
+        score: (featureCompleteness.score as number) != null ? Math.min(100, Math.max(0, featureCompleteness.score as number)) : 0,
         coreFeatures: Array.isArray(featureCompleteness.coreFeatures)
           ? (featureCompleteness.coreFeatures as Array<Record<string, unknown>>).map((f) => ({
               feature: (f.feature as string) ?? "Non spécifié",
@@ -723,7 +832,8 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
             rationale: (h.rationale as string) ?? "Non spécifié",
           }))
         : [],
-      overallCapabilityScore: Math.min(100, Math.max(0, (d.overallCapabilityScore as number) ?? 50)),
+      overallCapabilityScore: (d.overallCapabilityScore as number) != null
+        ? Math.min(100, Math.max(0, d.overallCapabilityScore as number)) : 0,
     };
   }
 
@@ -752,7 +862,8 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
           }))
         : [],
       assessment: (d.assessment as string) ?? "Non évalué - informations insuffisantes",
-      securityScore: Math.min(100, Math.max(0, (d.securityScore as number) ?? 50)),
+      securityScore: (d.securityScore as number) != null
+        ? Math.min(100, Math.max(0, d.securityScore as number)) : 0,
     };
   }
 
@@ -785,7 +896,8 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
         description: (proprietaryTech.description as string) ?? "Non spécifié",
         defensibility: (proprietaryTech.defensibility as string) ?? "Non évalué",
       },
-      ipScore: Math.min(100, Math.max(0, (d.ipScore as number) ?? 50)),
+      ipScore: (d.ipScore as number) != null
+        ? Math.min(100, Math.max(0, d.ipScore as number)) : 0,
     };
   }
 

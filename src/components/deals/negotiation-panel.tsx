@@ -19,6 +19,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { GlossaryTerm } from "@/components/shared/glossary-term";
 import type {
   NegotiationStrategy,
   NegotiationPoint,
@@ -44,21 +51,21 @@ interface NegotiationPanelProps {
 // =============================================================================
 
 const LEVERAGE_CONFIG = {
-  strong: { color: "bg-green-100 text-green-800 border-green-200", label: "Fort" },
-  moderate: { color: "bg-yellow-100 text-yellow-800 border-yellow-200", label: "Modere" },
-  weak: { color: "bg-red-100 text-red-800 border-red-200", label: "Faible" },
+  strong: { color: "bg-green-100 text-green-800 border-green-200", label: "Fort", tooltip: "Vous êtes en position de force : le deal a des faiblesses identifiées et/ou vous avez des alternatives. Négociez fermement." },
+  moderate: { color: "bg-yellow-100 text-yellow-800 border-yellow-200", label: "Modéré", tooltip: "Position équilibrée : le deal est correct mais pas exceptionnel. Vous pouvez négocier sur certains points." },
+  weak: { color: "bg-red-100 text-red-800 border-red-200", label: "Faible", tooltip: "Le deal est attractif et/ou très demandé. Votre marge de négociation est limitée." },
 } as const;
 
 const PRIORITY_CONFIG = {
-  must_have: { color: "bg-red-100 text-red-800", label: "Must Have" },
-  nice_to_have: { color: "bg-orange-100 text-orange-800", label: "Nice to Have" },
-  optional: { color: "bg-blue-100 text-blue-800", label: "Optionnel" },
+  must_have: { color: "bg-red-100 text-red-800", label: "Indispensable", tooltip: "Point non-négociable. Si vous ne l'obtenez pas, reconsidérez l'investissement." },
+  nice_to_have: { color: "bg-orange-100 text-orange-800", label: "Souhaitable", tooltip: "Point important mais sur lequel vous pouvez faire un compromis si nécessaire." },
+  optional: { color: "bg-blue-100 text-blue-800", label: "Optionnel", tooltip: "Bonus à obtenir si possible. Peut servir de monnaie d'échange dans la négociation." },
 } as const;
 
 const STATUS_CONFIG = {
-  to_negotiate: { color: "bg-gray-100 text-gray-800", label: "A negocier" },
+  to_negotiate: { color: "bg-gray-100 text-gray-800", label: "À négocier" },
   obtained: { color: "bg-green-100 text-green-800", label: "Obtenu" },
-  refused: { color: "bg-red-100 text-red-800", label: "Refuse" },
+  refused: { color: "bg-red-100 text-red-800", label: "Refusé" },
   compromised: { color: "bg-yellow-100 text-yellow-800", label: "Compromis" },
 } as const;
 
@@ -80,11 +87,20 @@ const LeverageBadge = memo(function LeverageBadge({
 }: {
   leverage: NegotiationStrategy["overallLeverage"]
 }) {
-  const { color, label } = LEVERAGE_CONFIG[leverage] ?? { color: "bg-gray-100 text-gray-800", label: "Inconnu" };
+  const config = LEVERAGE_CONFIG[leverage] ?? { color: "bg-gray-100 text-gray-800", label: "Inconnu", tooltip: "" };
   return (
-    <Badge variant="outline" className={cn("text-sm font-medium", color)}>
-      Leverage: {label}
-    </Badge>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="outline" className={cn("text-sm font-medium cursor-help", config.color)}>
+            Levier : {config.label}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs">
+          <p className="text-sm">{config.tooltip}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 });
 
@@ -93,11 +109,20 @@ const PriorityBadge = memo(function PriorityBadge({
 }: {
   priority: NegotiationPoint["priority"]
 }) {
-  const { color, label } = PRIORITY_CONFIG[priority] ?? { color: "bg-gray-100 text-gray-800", label: "Autre" };
+  const config = PRIORITY_CONFIG[priority] ?? { color: "bg-gray-100 text-gray-800", label: "Autre", tooltip: "" };
   return (
-    <Badge variant="outline" className={cn("text-xs", color)}>
-      {label}
-    </Badge>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="outline" className={cn("text-xs cursor-help", config.color)}>
+            {config.label}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs">
+          <p className="text-sm">{config.tooltip}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 });
 
@@ -176,7 +201,7 @@ const NegotiationPointCard = memo(function NegotiationPointCard({
       <button
         onClick={handleToggle}
         aria-expanded={isExpanded}
-        aria-label={`Point de negociation: ${point.topic}`}
+        aria-label={`Point de négociation: ${point.topic}`}
         className="w-full flex items-start gap-3 p-3 hover:bg-muted/50 transition-colors text-left"
       >
         <CategoryIcon category={point.category} />
@@ -243,7 +268,7 @@ const NegotiationPointCard = memo(function NegotiationPointCard({
           {/* Estimated impact */}
           {point.estimatedImpact && (
             <div className="text-xs text-muted-foreground">
-              <span className="font-medium">Impact estime:</span> {point.estimatedImpact.description}
+              <span className="font-medium">Impact estimé:</span> {point.estimatedImpact.description}
               {point.estimatedImpact.valueRange && ` (${point.estimatedImpact.valueRange})`}
             </div>
           )}
@@ -302,7 +327,7 @@ const NegotiationPointCard = memo(function NegotiationPointCard({
                 disabled={isUpdating}
               >
                 <XCircle className="h-3 w-3 mr-1" />
-                Refuse
+                Refusé
               </Button>
               <Button
                 size="sm"
@@ -363,7 +388,7 @@ const DealbreakerCard = memo(function DealbreakerCard({
             </p>
             {isResolved && (
               <Badge variant="outline" className="text-xs bg-green-100 text-green-700">
-                Resolu
+                Résolu
               </Badge>
             )}
           </div>
@@ -399,7 +424,7 @@ const TradeOffCard = memo(function TradeOffCard({
           tradeoff.netBenefit === "neutral" ? "bg-gray-100 text-gray-800" :
           "bg-red-100 text-red-800"
         )}>
-          {tradeoff.netBenefit === "positive" ? "Benefice +" :
+          {tradeoff.netBenefit === "positive" ? "Bénéfice +" :
            tradeoff.netBenefit === "neutral" ? "Neutre" : "Risque"}
         </Badge>
       </div>
@@ -464,12 +489,12 @@ export const NegotiationPanel = memo(function NegotiationPanel({
         <button
           onClick={handleToggle}
           aria-expanded={isExpanded}
-          aria-label="Afficher le plan de negociation"
+          aria-label="Afficher le plan de négociation"
           className="w-full flex items-center justify-between text-left"
         >
           <div className="flex items-center gap-2">
             <Handshake className="h-5 w-5 text-indigo-600" />
-            <CardTitle className="text-lg">Plan de Negociation</CardTitle>
+            <CardTitle className="text-lg">Plan de Négociation</CardTitle>
           </div>
           <div className="flex items-center gap-2">
             <LeverageBadge leverage={strategy.overallLeverage} />
@@ -483,7 +508,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
           </div>
         </button>
         <CardDescription className="text-left">
-          Strategie de negociation basee sur l&apos;analyse
+          Stratégie de négociation basée sur l&apos;analyse
         </CardDescription>
       </CardHeader>
 
@@ -510,7 +535,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
             </div>
             <div className="p-2 rounded-lg bg-red-50 border border-red-100 text-center">
               <div className="text-lg font-bold text-red-600">{progress.refused}</div>
-              <div className="text-xs text-red-500">Refuses</div>
+              <div className="text-xs text-red-500">Refusés</div>
             </div>
           </div>
 
@@ -519,7 +544,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
             <div>
               <h4 className="text-sm font-medium mb-2 flex items-center gap-1">
                 <Lightbulb className="h-4 w-4 text-amber-500" />
-                Arguments cles
+                Arguments clés
               </h4>
               <ul className="space-y-1">
                 {strategy.keyArguments.map((arg, i) => (
@@ -537,7 +562,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
             <div>
               <h4 className="text-sm font-medium mb-2 flex items-center gap-1 text-red-700">
                 <AlertTriangle className="h-4 w-4" />
-                Dealbreakers ({strategy.dealbreakers.length})
+                <GlossaryTerm term="Dealbreaker">Dealbreakers ({strategy.dealbreakers.length})</GlossaryTerm>
               </h4>
               <div className="space-y-2">
                 {strategy.dealbreakers.map((db) => (
@@ -607,7 +632,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
             <div>
               <h4 className="text-sm font-medium mb-2 flex items-center gap-1 text-purple-700">
                 <ArrowRightLeft className="h-4 w-4" />
-                Trade-offs suggeres ({strategy.tradeoffs.length})
+                Trade-offs suggérés ({strategy.tradeoffs.length})
               </h4>
               <div className="space-y-2">
                 {strategy.tradeoffs.map((to) => (
@@ -620,7 +645,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
           {/* Suggested Approach */}
           {strategy.suggestedApproach && (
             <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
-              <p className="text-xs font-medium text-blue-800 mb-1">Approche recommandee:</p>
+              <p className="text-xs font-medium text-blue-800 mb-1">Approche recommandée:</p>
               <p className="text-sm text-blue-700">{strategy.suggestedApproach}</p>
             </div>
           )}
@@ -630,7 +655,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
             <div className="border-t pt-4">
               <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
                 <ClipboardList className="h-4 w-4 text-indigo-600" />
-                Recap des termes negocies ({negotiatedTerms.length})
+                Récap des termes négociés ({negotiatedTerms.length})
               </h4>
               <div className="space-y-2">
                 {negotiatedTerms.map((point) => (
@@ -656,7 +681,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
                       point.status === "refused" && "text-red-700 line-through"
                     )}>
                       {point.status === "obtained" && point.ask}
-                      {point.status === "compromised" && (point.compromiseValue || "Compromis non specifie")}
+                      {point.status === "compromised" && (point.compromiseValue || "Compromis non spécifié")}
                       {point.status === "refused" && point.ask}
                     </p>
                   </div>
@@ -678,7 +703,7 @@ export const NegotiationPanel = memo(function NegotiationPanel({
                   ) : (
                     <>
                       <RefreshCw className="h-4 w-4 mr-2" />
-                      Re-analyser avec les termes negocies
+                      Re-analyser avec les termes négociés
                     </>
                   )}
                 </Button>

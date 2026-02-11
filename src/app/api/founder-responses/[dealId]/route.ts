@@ -281,7 +281,7 @@ export async function POST(
           value: response.answer,
           displayValue: response.answer,
           source: 'FOUNDER_RESPONSE' as const,
-          sourceConfidence: 90,
+          sourceConfidence: 60, // DECLARED — reponse fondateur non verifiee (F26)
           eventType: 'CREATED' as const,
           supersedesEventId: existingFact?.id ?? null,
           createdBy: 'system',
@@ -301,7 +301,7 @@ export async function POST(
           value: freeNotes,
           displayValue: freeNotes,
           source: 'FOUNDER_RESPONSE' as const,
-          sourceConfidence: 90,
+          sourceConfidence: 60, // DECLARED — reponse fondateur non verifiee (F26)
           eventType: 'CREATED' as const,
           supersedesEventId: existingNotes?.id ?? null,
           createdBy: 'system',

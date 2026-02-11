@@ -284,5 +284,46 @@ export const completerFunction = inngest.createFunction(
   }
 )
 
+/**
+ * DEAL ANALYSIS via Inngest
+ * Decouple l'analyse du request handler.
+ * Chaque tier est un step separe pour resilience et observabilite.
+ */
+export const dealAnalysisFunction = inngest.createFunction(
+  {
+    id: 'deal-analysis',
+    name: 'Deal Analysis',
+    retries: 1,
+    // Concurrency: max 3 analyses simultanées par user
+    concurrency: [{
+      key: "event.data.userId",
+      limit: 3,
+    }],
+  },
+  { event: 'analysis/deal.analyze' },
+  async ({ event, step }) => {
+    const { orchestrator } = await import("@/agents");
+    const { dealId, type, enableTrace, userPlan } = event.data as {
+      dealId: string;
+      type: string;
+      enableTrace: boolean;
+      userPlan: string;
+      userId: string;
+    };
+
+    // Run the analysis (orchestrator handles its own persistence)
+    const result = await step.run('run-analysis', async () => {
+      return await orchestrator.runAnalysis({
+        dealId,
+        type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
+        enableTrace,
+        userPlan: userPlan as "FREE" | "PRO",
+      });
+    });
+
+    return result;
+  }
+);
+
 // Export all functions for the serve handler
-export const functions = [cleanerFunction, sourcerFunction, completerFunction]
+export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction]

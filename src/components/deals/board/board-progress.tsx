@@ -70,7 +70,7 @@ export function BoardProgress({ events }: BoardProgressProps) {
       switch (event.type) {
         case "session_started":
           phase = "init";
-          message = "Session initialisee";
+          message = "Session initialisée";
           break;
         case "member_analysis_started":
           phase = "analysis";
@@ -79,14 +79,14 @@ export function BoardProgress({ events }: BoardProgressProps) {
           break;
         case "member_analysis_completed":
           if (event.memberId) status[event.memberId] = "done";
-          message = event.message ?? "Analyse terminee";
+          message = event.message ?? "Analyse terminée";
           break;
         case "member_analysis_failed":
           if (event.memberId) {
             status[event.memberId] = "failed";
             failed.add(event.memberId);
           }
-          message = event.message ?? "Analyse echouee";
+          message = event.message ?? "Analyse échouée";
           break;
         case "debate_round_started":
           phase = "debate";

@@ -19,6 +19,7 @@ import type {
   DbCrossReference,
 } from "../types";
 import { getBenchmark } from "@/services/benchmarks";
+import { calculateAgentScore, CUSTOMER_INTEL_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * Customer Intel Agent - REFONTE v2.0
@@ -322,6 +323,16 @@ Tu produis une analyse de la qualité qu'on présenterait à un comité d'invest
 | Churn < 5% (B2B) / < 10% (B2C) | Sticky product | Leaky bucket |
 | NPS > 50 | Promoteurs actifs | Détracteurs |
 
+### PROTOCOLE DE COLLECTE (OBLIGATOIRE POUR CHAQUE TEST NOT_TESTABLE) (F36)
+Pour CHAQUE test marque NOT_TESTABLE, tu DOIS generer un dataCollectionProtocol avec:
+- dataNeeded: Quelle donnee exacte est necessaire
+- howToRequest: Comment le BA peut l'obtenir (quel export, quel outil)
+- questionForFounder: Question non-confrontationnelle a poser
+- acceptableFormats: Quels formats sont acceptables
+- redFlagIfRefused: Ce que ca revele si le fondateur refuse
+- estimatedTimeToCollect: Delai raisonnable
+- alternativeProxy: Proxy acceptable si la donnee exacte n'est pas disponible
+
 ### Signaux PMF POSITIFS (à sourcer):
 - NRR > 120% avec historique > 6 mois
 - Churn < benchmark secteur
@@ -608,22 +619,34 @@ Réponds UNIQUEMENT en JSON avec cette structure exacte:
         {
           "test": "NRR > 120%",
           "result": "PASS|FAIL|PARTIAL|NOT_TESTABLE",
-          "evidence": "Résultat du test avec données"
+          "evidence": "Résultat du test avec données",
+          "dataCollectionProtocol": {
+            "dataNeeded": "OBLIGATOIRE si NOT_TESTABLE: Quelle donnee exacte est necessaire",
+            "howToRequest": "Comment le BA peut obtenir la donnee (quel export, quel outil)",
+            "questionForFounder": "Question non-confrontationnelle a poser au fondateur",
+            "acceptableFormats": ["Format 1 acceptable", "Format 2 acceptable"],
+            "redFlagIfRefused": "Ce que ca revele si le fondateur refuse de fournir la donnee",
+            "estimatedTimeToCollect": "Delai raisonnable (ex: 1-2 jours ouvrables)",
+            "alternativeProxy": "Proxy acceptable si la donnee exacte n'est pas disponible"
+          }
         },
         {
           "test": "Sean Ellis Test (>40% très déçus)",
           "result": "PASS|FAIL|PARTIAL|NOT_TESTABLE",
-          "evidence": "Données si disponibles"
+          "evidence": "Données si disponibles",
+          "dataCollectionProtocol": "OBLIGATOIRE si NOT_TESTABLE (meme structure que ci-dessus)"
         },
         {
           "test": "Organic/Referral > 20%",
           "result": "PASS|FAIL|PARTIAL|NOT_TESTABLE",
-          "evidence": "Données si disponibles"
+          "evidence": "Données si disponibles",
+          "dataCollectionProtocol": "OBLIGATOIRE si NOT_TESTABLE (meme structure que ci-dessus)"
         },
         {
           "test": "Churn < 5% (B2B)",
           "result": "PASS|FAIL|PARTIAL|NOT_TESTABLE",
-          "evidence": "Données si disponibles"
+          "evidence": "Données si disponibles",
+          "dataCollectionProtocol": "OBLIGATOIRE si NOT_TESTABLE (meme structure que ci-dessus)"
         }
       ]
     },
@@ -749,7 +772,76 @@ IMPORTANT:
     const { data } = await this.llmCompleteJSON<LLMCustomerIntelResponse>(prompt);
 
     // Validate and transform response
-    return this.transformResponse(data);
+    const result = this.transformResponse(data);
+
+    // F03: DETERMINISTIC SCORING
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const f = data.findings;
+
+      // Customer quality
+      const qualMap = { HIGH: 85, MEDIUM: 55, LOW: 25, UNKNOWN: 30 };
+      if (f?.customerBase?.customerQuality) {
+        extractedMetrics.push({
+          name: "customer_quality_score", value: qualMap[f.customerBase.customerQuality] ?? 30,
+          unit: "score", source: "LLM customer analysis", dataReliability: "DECLARED", category: "customer",
+        });
+      }
+
+      // ICP clarity
+      const icpMap = { CLEAR: 90, PARTIAL: 55, UNCLEAR: 20 };
+      if (f?.icp?.icpClarity) {
+        extractedMetrics.push({
+          name: "icp_clarity", value: icpMap[f.icp.icpClarity] ?? 30,
+          unit: "score", source: "LLM ICP analysis", dataReliability: "DECLARED", category: "customer",
+        });
+      }
+
+      // Retention
+      if (f?.retention?.nrr?.reported != null) {
+        extractedMetrics.push({
+          name: "nrr_customers", value: f.retention.nrr.reported,
+          unit: "%", source: "Customer retention data", dataReliability: "DECLARED", category: "customer",
+        });
+      }
+      if (f?.retention?.grossRetention?.reported != null) {
+        extractedMetrics.push({
+          name: "gross_retention_customers", value: f.retention.grossRetention.reported,
+          unit: "%", source: "Customer retention data", dataReliability: "DECLARED", category: "customer",
+        });
+      }
+
+      // PMF
+      const pmfMap = { STRONG: 85, EMERGING: 60, WEAK: 30, NOT_DEMONSTRATED: 10 };
+      if (f?.pmf?.pmfVerdict) {
+        extractedMetrics.push({
+          name: "pmf_score", value: pmfMap[f.pmf.pmfVerdict as keyof typeof pmfMap] ?? 30,
+          unit: "score", source: "LLM PMF analysis", dataReliability: "DECLARED", category: "customer",
+        });
+      }
+
+      // Concentration risk
+      if (f?.concentration?.topCustomerRevenue != null) {
+        const pct = f.concentration.topCustomerRevenue;
+        extractedMetrics.push({
+          name: "concentration_risk", value: Math.max(0, 100 - pct * 2),
+          unit: "score", source: "Revenue concentration", dataReliability: "DECLARED", category: "customer",
+        });
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "customer-intel", extractedMetrics, sector, stage, CUSTOMER_INTEL_CRITERIA,
+        );
+        result.score = { ...result.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[customer-intel] Deterministic scoring failed, using LLM score:", err);
+    }
+
+    return result;
   }
 
   // ============================================================================
@@ -762,27 +854,38 @@ IMPORTANT:
     const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
 
     // Meta
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[customer-intel] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "customer-intel",
       analysisDate: new Date().toISOString(),
       dataCompleteness: validDataCompleteness.includes(data.meta?.dataCompleteness as typeof validDataCompleteness[number])
         ? data.meta.dataCompleteness as "complete" | "partial" | "minimal"
         : "partial",
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Score
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[customer-intel] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: validGrades.includes(data.score?.grade as typeof validGrades[number])
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : (validGrades.includes(data.score?.grade as typeof validGrades[number])
         ? data.score.grade as "A" | "B" | "C" | "D" | "F"
-        : "C",
+        : "C"),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 25,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "Non spécifié",
           }))
         : [],
@@ -1082,13 +1185,29 @@ IMPORTANT:
           }))
         : [],
       pmfTests: Array.isArray(pmf?.pmfTests)
-        ? pmf.pmfTests.map((t) => ({
-            test: t.test ?? "",
-            result: validResults.includes(t.result as typeof validResults[number])
+        ? pmf.pmfTests.map((t) => {
+            const result = validResults.includes(t.result as typeof validResults[number])
               ? t.result as typeof validResults[number]
-              : "NOT_TESTABLE",
-            evidence: t.evidence ?? "",
-          }))
+              : "NOT_TESTABLE";
+            const dcp = (t as Record<string, unknown>).dataCollectionProtocol as Record<string, unknown> | undefined;
+            return {
+              test: t.test ?? "",
+              result,
+              evidence: t.evidence ?? "",
+              // F36: Data collection protocol for NOT_TESTABLE tests
+              dataCollectionProtocol: (result === "NOT_TESTABLE" && dcp)
+                ? {
+                    dataNeeded: (dcp.dataNeeded as string) ?? "Non specifie",
+                    howToRequest: (dcp.howToRequest as string) ?? "Demander directement au fondateur",
+                    questionForFounder: (dcp.questionForFounder as string) ?? "",
+                    acceptableFormats: Array.isArray(dcp.acceptableFormats) ? dcp.acceptableFormats as string[] : [],
+                    redFlagIfRefused: (dcp.redFlagIfRefused as string) ?? "",
+                    estimatedTimeToCollect: (dcp.estimatedTimeToCollect as string) ?? "Non estime",
+                    alternativeProxy: dcp.alternativeProxy as string | undefined,
+                  }
+                : undefined,
+            };
+          })
         : [],
     };
   }

@@ -24,7 +24,7 @@ async function getDeals(userId: string) {
       },
       redFlags: {
         where: { status: "OPEN" },
-        select: { severity: true },
+        select: { severity: true, title: true },
       },
     },
   });

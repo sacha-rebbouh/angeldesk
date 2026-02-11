@@ -195,18 +195,18 @@ export const ProTeaserBanner = memo(function ProTeaserBanner() {
         <div className="flex items-center gap-2 mb-3">
           <Crown className="h-6 w-6 text-amber-500" />
           <h3 className="text-lg font-bold text-amber-800 dark:text-amber-200">
-            Passez a PRO pour une analyse complete
+            Passez à PRO pour une analyse complète
           </h3>
         </div>
 
         <ul className="space-y-2 mb-4">
           {[
-            "Score detaille multi-dimensionnel",
-            "Toutes les contradictions detectees",
-            "3 scenarios modelises (Bull/Base/Bear)",
+            "Score détaillé multi-dimensionnel",
+            "Toutes les contradictions détectées",
+            "3 scénarios modélisés (Bull/Base/Bear)",
             "Analyse Expert Sectoriel",
             "Memo d'investissement PDF",
-            "Questions critiques completes",
+            "Questions critiques complètes",
           ].map((feature, i) => (
             <li key={i} className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
               <div className="h-1.5 w-1.5 rounded-full bg-amber-500" />

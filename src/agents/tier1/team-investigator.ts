@@ -13,6 +13,7 @@ import type {
   DbCrossReference,
   LinkedInEnrichedProfile,
 } from "../types";
+import { calculateAgentScore, TEAM_INVESTIGATOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * Team Investigator Agent - REFONTE v2.0
@@ -165,6 +166,37 @@ interface LLMTeamInvestigatorResponse {
       relationshipStrength: "strong" | "moderate" | "weak" | "unknown";
       potentialConflicts: string[];
       soloFounderRisk?: string;
+      // Decision-making dynamics (F35)
+      decisionMaking?: {
+        primaryDecisionMaker: string;
+        decisionProcess: string;
+        conflictResolutionHistory: string;
+        vetoRights: string;
+        riskIfDisagreement: string;
+      };
+    };
+    // Reference check template (F35)
+    referenceCheckTemplate?: {
+      whoToCall: {
+        name: string;
+        relationship: string;
+        contactMethod: string;
+        priority: "CRITICAL" | "HIGH" | "MEDIUM";
+      }[];
+      scriptTemplate: {
+        introduction: string;
+        questions: {
+          question: string;
+          whatToLookFor: string;
+          redFlagAnswer: string;
+        }[];
+        closingQuestion: string;
+      };
+      minimumReferencesNeeded: number;
+      founderSpecificQuestions: {
+        founderName: string;
+        specificQuestions: string[];
+      }[];
     };
     networkAnalysis: {
       overallNetworkStrength: "strong" | "moderate" | "weak";
@@ -311,6 +343,12 @@ IMPORTANT: Analyser TOUS les team members listés dans le deck (pas seulement le
 - Historique commun: ont-ils travaillé ensemble avant?
 - Signaux de conflit: qui répond aux questions? Tension visible?
 
+## Etape 4b: Decision-Making Dynamics (F35)
+- Qui prend les decisions strategiques? (CEO seul, consensus, vote?)
+- Comment gerent-ils les desaccords? (Historique visible dans interviews/articles)
+- Y a-t-il un desequilibre de pouvoir? (CEO dominant vs CTO silencieux)
+- Le BA doit savoir: que se passe-t-il si les fondateurs divergent sur la strategie?
+
 ## Etape 5: Network & Credibilité
 - Qualité des advisors (vrais ou "advisory board" fantoche)
 - Connections investisseurs (ont-ils accès au tier 1?)
@@ -320,6 +358,12 @@ IMPORTANT: Analyser TOUS les team members listés dans le deck (pas seulement le
 - Croiser les claims du deck avec les données LinkedIn/DB
 - Identifier les contradictions
 - Générer un dbCrossReference complet
+
+## Etape 7: Generation du Template Reference Check (F35)
+- Identifier 2-3 personnes a appeler (ex-collegues, anciens investisseurs, co-fondateurs precedents)
+- Generer un script d'appel avec questions specifiques par fondateur
+- Chaque question doit avoir un "redFlagAnswer" (ce qui serait inquietant)
+- Minimum: 2 references par fondateur principal
 
 # FRAMEWORK D'EVALUATION
 
@@ -535,6 +579,64 @@ ${JSON.stringify(teamMembers, null, 2)}`;
     const deal = context.deal;
     const sector = deal.sector || "Tech";
 
+    // =====================================================
+    // F09: CROSS-REFERENCE REGISTRE OFFICIEL (KBIS)
+    // =====================================================
+    const companyName = (deal as Record<string, unknown>).companyName as string || deal.name;
+    let registrySection = "";
+    const registryRedFlags: AgentRedFlag[] = [];
+
+    try {
+      const { verifyFrenchFounder, enrichFrenchCompany } = await import(
+        "@/services/context-engine/connectors/pappers"
+      );
+
+      const companyData = await enrichFrenchCompany(companyName);
+
+      if (companyData?.found) {
+        registrySection = `\n## DONNEES REGISTRE OFFICIEL (KBIS via Pappers.fr)
+**Entreprise**: ${companyData.siren ? `SIREN ${companyData.siren}` : "Non trouvee"}
+**Dirigeants officiels**:
+${(companyData.dirigeants ?? []).map(d => `- ${d.name} (${d.role}, depuis ${d.since || "N/A"})`).join("\n") || "Aucun dirigeant trouve"}
+**Beneficiaires effectifs**:
+${(companyData.beneficiaires ?? []).map(b => `- ${b.name} (${b.percentage ? b.percentage + "%" : "N/A"})`).join("\n") || "Non disponible"}
+
+**CROSS-REFERENCE OBLIGATOIRE**: Compare les fondateurs du deck avec les dirigeants officiels ci-dessus.
+Si un fondateur du deck N'APPARAIT PAS comme dirigeant officiel → RED FLAG HIGH.
+`;
+
+        // Verify each founder from the deal
+        const dealTyped = deal as unknown as { founders?: { name: string; role: string }[] };
+        if (dealTyped.founders) {
+          for (const founder of dealTyped.founders) {
+            try {
+              const verification = await verifyFrenchFounder(founder.name, companyName);
+              if (!verification.verified) {
+                registryRedFlags.push({
+                  id: `RF-FOUNDER-REGISTRY-${registryRedFlags.length + 1}`,
+                  category: "verification",
+                  severity: "HIGH",
+                  title: `Fondateur ${founder.name} non trouve au registre officiel`,
+                  description: `Le fondateur "${founder.name}" (${founder.role}) declare dans le deck n'apparait pas comme dirigeant ou beneficiaire effectif de ${companyName} au registre du commerce (Pappers.fr).`,
+                  location: "Deck - Section Team vs Registre du commerce",
+                  evidence: `Dirigeants officiels: ${(companyData.dirigeants ?? []).map(d => d.name).join(", ") || "aucun"}`,
+                  impact: "Risque structurel : fondateur sans mandat officiel = pas de pouvoir legal sur la societe",
+                  question: `Pouvez-vous confirmer votre role officiel dans la societe ${companyName} ? Avez-vous un mandat social ?`,
+                  redFlagIfBadAnswer: "Fondateur sans mandat social = risque juridique majeur pour les investisseurs",
+                });
+              } else {
+                registrySection += `\n**${founder.name}**: VERIFIE (${verification.role}, depuis ${verification.since || "N/A"}, ${verification.ownershipPercentage ? verification.ownershipPercentage + "% parts" : "parts N/A"})`;
+              }
+            } catch {
+              // Individual founder verification failed, continue
+            }
+          }
+        }
+      }
+    } catch {
+      registrySection = "\n## DONNEES REGISTRE\nVerification impossible (erreur technique ou entreprise non francaise).";
+    }
+
     // Build user prompt
     const prompt = `# ANALYSE TEAM INVESTIGATOR - ${deal.companyName || deal.name}
 
@@ -544,6 +646,7 @@ ${extractedSection}
 ${foundersSection}
 ${teamMembersSection}
 ${peopleGraphSection}
+${registrySection}
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Aucune donnée Context Engine disponible pour ce deal."}
@@ -727,7 +830,42 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       },
       "relationshipStrength": "strong|moderate|weak|unknown",
       "potentialConflicts": ["Conflits potentiels identifiés"],
-      "soloFounderRisk": "Si solo founder, évaluer le risque"
+      "soloFounderRisk": "Si solo founder, évaluer le risque",
+      "decisionMaking": {
+        "primaryDecisionMaker": "Qui tranche en dernier recours?",
+        "decisionProcess": "Consensus, vote, CEO decide?",
+        "conflictResolutionHistory": "Ont-ils deja eu un desaccord majeur? Comment resolu?",
+        "vetoRights": "Qui a un droit de veto (formel ou informel)?",
+        "riskIfDisagreement": "Que se passe-t-il si les fondateurs divergent?"
+      }
+    },
+    "referenceCheckTemplate": {
+      "whoToCall": [
+        {
+          "name": "Nom ou profil",
+          "relationship": "ex-collegue chez X, co-fondateur venture precedente",
+          "contactMethod": "LinkedIn, email via fondateur, publiquement disponible",
+          "priority": "CRITICAL|HIGH|MEDIUM"
+        }
+      ],
+      "scriptTemplate": {
+        "introduction": "Script d'introduction pour l'appel reference",
+        "questions": [
+          {
+            "question": "Question de reference check",
+            "whatToLookFor": "Ce qui constitue une bonne reponse",
+            "redFlagAnswer": "Ce qui serait inquietant"
+          }
+        ],
+        "closingQuestion": "Question de cloture"
+      },
+      "minimumReferencesNeeded": 2,
+      "founderSpecificQuestions": [
+        {
+          "founderName": "Nom du fondateur",
+          "specificQuestions": ["Questions specifiques a poser sur ce fondateur"]
+        }
+      ]
     },
     "networkAnalysis": {
       "overallNetworkStrength": "strong|moderate|weak",
@@ -814,8 +952,61 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
 
     const { data } = await this.llmCompleteJSON<LLMTeamInvestigatorResponse>(prompt);
 
+    // F03: DETERMINISTIC SCORING - Extract sub-scores from LLM, aggregate in code
+    try {
+      const founderProfiles = data.findings?.founderProfiles ?? [];
+      const extractedMetrics: ExtractedMetric[] = [];
+
+      // Average founder sub-scores across all profiles
+      if (founderProfiles.length > 0) {
+        const avg = (key: keyof typeof founderProfiles[0]["scores"]) =>
+          founderProfiles.reduce((sum, f) => sum + (f.scores?.[key] ?? 0), 0) / founderProfiles.length;
+
+        extractedMetrics.push(
+          { name: "domain_expertise", value: avg("domainExpertise"), unit: "score", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team" },
+          { name: "entrepreneurial_experience", value: avg("entrepreneurialExperience"), unit: "score", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team" },
+          { name: "execution_capability", value: avg("executionCapability"), unit: "score", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team" },
+          { name: "network_strength", value: avg("networkStrength"), unit: "score", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team" },
+        );
+
+        // LinkedIn verified ratio — factual, not LLM-estimated
+        const verifiedCount = founderProfiles.filter(f => f.linkedinVerified).length;
+        extractedMetrics.push({
+          name: "linkedin_verified_ratio",
+          value: Math.round((verifiedCount / founderProfiles.length) * 100),
+          unit: "%", source: "LinkedIn enrichment", dataReliability: "VERIFIED", category: "team",
+        });
+
+        // Successful exits count — factual
+        const totalExits = founderProfiles.reduce((sum, f) =>
+          sum + (f.entrepreneurialTrack?.successfulExits ?? 0), 0);
+        extractedMetrics.push({
+          name: "successful_exits", value: totalExits,
+          unit: "count", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team",
+        });
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "team-investigator", extractedMetrics, sector, stage, TEAM_INVESTIGATOR_CRITERIA,
+        );
+        data.score = { value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[team-investigator] Deterministic scoring failed, using LLM score:", err);
+    }
+
     // Validate and normalize response
-    return this.normalizeResponse(data);
+    const result = this.normalizeResponse(data);
+
+    // F09: Inject registry red flags
+    if (registryRedFlags.length > 0) {
+      result.redFlags = [...registryRedFlags, ...result.redFlags];
+    }
+
+    return result;
   }
 
   /**
@@ -902,6 +1093,7 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
           ...base,
           linkedinEnriched: true,
           linkedinScrapedAt: f.verifiedInfo.linkedinScrapedAt,
+          rgpdNote: "Donnees LinkedIn publiques, recuperees avec consentement utilisateur (Art. 6.1.f RGPD)",
           // Full profile data from RapidAPI
           fullName: f.verifiedInfo.fullName,
           headline: f.verifiedInfo.headline,
@@ -954,7 +1146,11 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       : baseLimitations;
 
     // Cap confidence when no LinkedIn is verified
-    const rawConfidence = Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50));
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[team-investigator] LLM did not return confidenceLevel — using 0`);
+    }
+    const rawConfidence = confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel));
     const confidenceLevel = !hasAnyLinkedInVerified ? Math.min(rawConfidence, 60) : rawConfidence;
 
     const meta: AgentMeta = {
@@ -962,11 +1158,17 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       analysisDate: new Date().toISOString(),
       dataCompleteness,
       confidenceLevel,
+      confidenceIsFallback,
       limitations,
     };
 
     // Calculate grade from score
-    const scoreValue = Math.min(100, Math.max(0, data.score?.value ?? 50));
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[team-investigator] LLM did not return score value — using 0`);
+    }
+    const scoreValue = scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue));
     const getGrade = (score: number): "A" | "B" | "C" | "D" | "F" => {
       if (score >= 80) return "A";
       if (score >= 65) return "B";
@@ -1002,12 +1204,13 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
 
     const score: AgentScore = {
       value: cappedScore,
-      grade: getGrade(cappedScore),
+      grade: scoreIsFallback ? "F" : getGrade(cappedScore),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map(b => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 20,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "",
           }))
         : [],
@@ -1157,16 +1360,16 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
           scores: (() => {
             const linkedinVerified = f.linkedinVerified ?? false;
             // Cap scores when LinkedIn is not verified (deck-only analysis)
-            const capScore = (val: number, defaultVal: number, cap?: number) => {
-              const clamped = Math.min(100, Math.max(0, val ?? defaultVal));
+            const capScore = (val: number | undefined | null, cap?: number) => {
+              const clamped = val != null ? Math.min(100, Math.max(0, val)) : 0;
               return cap !== undefined && !linkedinVerified ? Math.min(clamped, cap) : clamped;
             };
             return {
-              domainExpertise: capScore(f.scores?.domainExpertise ?? 50, 50),
-              entrepreneurialExperience: capScore(f.scores?.entrepreneurialExperience ?? 30, 30, 60),
-              executionCapability: capScore(f.scores?.executionCapability ?? 50, 50, 70),
-              networkStrength: capScore(f.scores?.networkStrength ?? 40, 40, 30),
-              overallFounderScore: capScore(f.scores?.overallFounderScore ?? 45, 45, 65),
+              domainExpertise: capScore(f.scores?.domainExpertise),
+              entrepreneurialExperience: capScore(f.scores?.entrepreneurialExperience, 60),
+              executionCapability: capScore(f.scores?.executionCapability, 70),
+              networkStrength: capScore(f.scores?.networkStrength, 30),
+              overallFounderScore: capScore(f.scores?.overallFounderScore, 65),
             };
           })(),
           redFlags: Array.isArray(f.redFlags)
@@ -1202,9 +1405,12 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       rolesMissing: Array.isArray(findings?.teamComposition?.rolesMissing)
         ? findings.teamComposition.rolesMissing
         : [],
-      technicalStrength: Math.min(100, Math.max(0, findings?.teamComposition?.technicalStrength ?? 50)),
-      businessStrength: Math.min(100, Math.max(0, findings?.teamComposition?.businessStrength ?? 50)),
-      complementarityScore: Math.min(100, Math.max(0, findings?.teamComposition?.complementarityScore ?? 50)),
+      technicalStrength: findings?.teamComposition?.technicalStrength != null
+        ? Math.min(100, Math.max(0, findings.teamComposition.technicalStrength)) : 0,
+      businessStrength: findings?.teamComposition?.businessStrength != null
+        ? Math.min(100, Math.max(0, findings.teamComposition.businessStrength)) : 0,
+      complementarityScore: findings?.teamComposition?.complementarityScore != null
+        ? Math.min(100, Math.max(0, findings.teamComposition.complementarityScore)) : 0,
       gaps: Array.isArray(findings?.teamComposition?.gaps)
         ? findings.teamComposition.gaps.map(g => ({
             gap: g.gap ?? "",
@@ -1249,7 +1455,52 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
         ? findings.cofounderDynamics.potentialConflicts
         : [],
       soloFounderRisk: findings?.cofounderDynamics?.soloFounderRisk,
+      decisionMaking: findings?.cofounderDynamics?.decisionMaking
+        ? {
+            primaryDecisionMaker: findings.cofounderDynamics.decisionMaking.primaryDecisionMaker ?? "Unknown",
+            decisionProcess: findings.cofounderDynamics.decisionMaking.decisionProcess ?? "Unknown",
+            conflictResolutionHistory: findings.cofounderDynamics.decisionMaking.conflictResolutionHistory ?? "Unknown",
+            vetoRights: findings.cofounderDynamics.decisionMaking.vetoRights ?? "Unknown",
+            riskIfDisagreement: findings.cofounderDynamics.decisionMaking.riskIfDisagreement ?? "Unknown",
+          }
+        : undefined,
     };
+
+    // Normalize reference check template (F35)
+    const referenceCheckTemplate = findings?.referenceCheckTemplate
+      ? {
+          whoToCall: Array.isArray(findings.referenceCheckTemplate.whoToCall)
+            ? findings.referenceCheckTemplate.whoToCall.map((w: Record<string, unknown>) => ({
+                name: (w.name as string) ?? "",
+                relationship: (w.relationship as string) ?? "",
+                contactMethod: (w.contactMethod as string) ?? "",
+                priority: (["CRITICAL", "HIGH", "MEDIUM"].includes(w.priority as string)
+                  ? w.priority
+                  : "MEDIUM") as "CRITICAL" | "HIGH" | "MEDIUM",
+              }))
+            : [],
+          scriptTemplate: {
+            introduction: (findings.referenceCheckTemplate.scriptTemplate as Record<string, unknown>)?.introduction as string ?? "",
+            questions: Array.isArray((findings.referenceCheckTemplate.scriptTemplate as Record<string, unknown>)?.questions)
+              ? ((findings.referenceCheckTemplate.scriptTemplate as Record<string, unknown>).questions as Record<string, unknown>[]).map((q) => ({
+                  question: (q.question as string) ?? "",
+                  whatToLookFor: (q.whatToLookFor as string) ?? "",
+                  redFlagAnswer: (q.redFlagAnswer as string) ?? "",
+                }))
+              : [],
+            closingQuestion: (findings.referenceCheckTemplate.scriptTemplate as Record<string, unknown>)?.closingQuestion as string ?? "",
+          },
+          minimumReferencesNeeded: typeof findings.referenceCheckTemplate.minimumReferencesNeeded === "number"
+            ? findings.referenceCheckTemplate.minimumReferencesNeeded
+            : 2,
+          founderSpecificQuestions: Array.isArray(findings.referenceCheckTemplate.founderSpecificQuestions)
+            ? findings.referenceCheckTemplate.founderSpecificQuestions.map((f: Record<string, unknown>) => ({
+                founderName: (f.founderName as string) ?? "",
+                specificQuestions: Array.isArray(f.specificQuestions) ? f.specificQuestions as string[] : [],
+              }))
+            : [],
+        }
+      : undefined;
 
     const networkAnalysis = {
       overallNetworkStrength: validNetworkStrengths.includes(
@@ -1271,7 +1522,7 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
             name: a.name ?? "",
             role: a.role ?? "",
             relevance: a.relevance ?? "",
-            credibilityScore: Math.min(100, Math.max(0, a.credibilityScore ?? 50)),
+            credibilityScore: a.credibilityScore != null ? Math.min(100, Math.max(0, a.credibilityScore)) : 0,
           }))
         : [],
       investorRelationships: Array.isArray(findings?.networkAnalysis?.investorRelationships)
@@ -1284,7 +1535,8 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
 
     const benchmarkComparison = {
       vsSuccessfulFounders: findings?.benchmarkComparison?.vsSuccessfulFounders ?? "",
-      percentileInSector: Math.min(100, Math.max(0, findings?.benchmarkComparison?.percentileInSector ?? 50)),
+      percentileInSector: findings?.benchmarkComparison?.percentileInSector != null
+        ? Math.min(100, Math.max(0, findings.benchmarkComparison.percentileInSector)) : 0,
       similarSuccessfulTeams: Array.isArray(findings?.benchmarkComparison?.similarSuccessfulTeams)
         ? findings.benchmarkComparison.similarSuccessfulTeams.map(t => ({
             company: t.company ?? "",
@@ -1300,6 +1552,7 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       cofounderDynamics,
       networkAnalysis,
       benchmarkComparison,
+      referenceCheckTemplate,
     };
   }
 }

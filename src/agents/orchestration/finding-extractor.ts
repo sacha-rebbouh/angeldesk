@@ -85,7 +85,7 @@ export function extractAgentData(result: AgentResult): ExtractedAgentData | null
 // ============================================================================
 
 function extractConfidence(data: AgentData, agentName: string): ConfidenceScore {
-  const confidenceLevel = data.meta?.confidenceLevel ?? 50;
+  const confidenceLevel = data.meta?.confidenceLevel ?? 0;
   const dataCompleteness = data.meta?.dataCompleteness ?? "minimal";
   const limitations = data.meta?.limitations ?? [];
 
@@ -117,7 +117,7 @@ function extractConfidence(data: AgentData, agentName: string): ConfidenceScore 
 
 function extractFindings(data: AgentData, agentName: string): ScoredFinding[] {
   const findings: ScoredFinding[] = [];
-  const baseConfidence = data.meta?.confidenceLevel ?? 50;
+  const baseConfidence = data.meta?.confidenceLevel ?? 0;
 
   // Extract from score breakdown (all agents have this)
   if (data.score?.breakdown) {

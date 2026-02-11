@@ -2,44 +2,10 @@
  * Utility functions for formatting values across the application
  */
 
-export const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  // Base agents
-  "red-flag-detector": "Red Flag Detector",
-  "document-extractor": "Document Extractor",
-  "deal-scorer": "Deal Scorer",
-  // Tier 1 agents
-  "financial-auditor": "Financial Auditor",
-  "team-investigator": "Team Investigator",
-  "competitive-intel": "Competitive Intel",
-  "deck-forensics": "Deck Forensics",
-  "market-intelligence": "Market Intelligence",
-  "tech-stack-dd": "Tech Stack DD",
-  "tech-ops-dd": "Tech Ops DD",
-  "legal-regulatory": "Legal & Regulatory",
-  "cap-table-auditor": "Cap Table Auditor",
-  "gtm-analyst": "GTM Analyst",
-  "customer-intel": "Customer Intel",
-  "exit-strategist": "Exit Strategist",
-  "question-master": "Question Master",
-  // Tier 2 - Sector Experts
-  "saas-expert": "SaaS Expert",
-  "marketplace-expert": "Marketplace Expert",
-  "fintech-expert": "FinTech Expert",
-  "healthtech-expert": "HealthTech Expert",
-  "ai-expert": "AI Expert",
-  "deeptech-expert": "DeepTech Expert",
-  "climate-expert": "Climate Expert",
-  "hardware-expert": "Hardware Expert",
-  "gaming-expert": "Gaming Expert",
-  "consumer-expert": "Consumer Expert",
-  "blockchain-expert": "Blockchain Expert",
-  // Tier 3 - Synthesis agents
-  "contradiction-detector": "Contradiction Detector",
-  "scenario-modeler": "Scenario Modeler",
-  "synthesis-deal-scorer": "Synthesis Scorer",
-  "devils-advocate": "Devil's Advocate",
-  "memo-generator": "Memo Generator",
-};
+import { AGENT_LABELS_FR } from "@/config/labels-fr";
+
+// F61: Use centralized French labels
+export const AGENT_DISPLAY_NAMES: Record<string, string> = AGENT_LABELS_FR;
 
 /**
  * Converts an agent slug (e.g., "financial-auditor") to a display name (e.g., "Financial Auditor")
@@ -194,4 +160,27 @@ export function getScoreBadgeColor(score: number): string {
   if (score >= 40) return "bg-yellow-100 text-yellow-800 border-yellow-200";
   if (score >= 20) return "bg-orange-100 text-orange-800 border-orange-200";
   return "bg-red-100 text-red-800 border-red-200";
+}
+
+/**
+ * Converts a percentile to clear language for a non-technical BA.
+ * P75 -> "Top 25% du marché"
+ */
+export function formatPercentile(percentile: number): string {
+  if (percentile >= 90) return "Top 10% du marché";
+  if (percentile >= 75) return "Top 25% du marché";
+  if (percentile >= 50) return "Au-dessus de la médiane";
+  if (percentile >= 25) return "En-dessous de la médiane";
+  return "Bas 25% du marché";
+}
+
+/**
+ * Short version for compact spaces
+ */
+export function formatPercentileShort(percentile: number): string {
+  if (percentile >= 90) return "Top 10%";
+  if (percentile >= 75) return "Top 25%";
+  if (percentile >= 50) return "> Médiane";
+  if (percentile >= 25) return "< Médiane";
+  return "Bas 25%";
 }

@@ -1,5 +1,6 @@
 import { BaseAgent } from "../base-agent";
 import type { AgentContext, ExtractedDealInfo, AgentResult } from "../types";
+import { sanitizeName } from "@/lib/sanitize";
 
 // =============================================================================
 // DECK COHERENCE CHECKER AGENT - TIER 0
@@ -267,9 +268,11 @@ Produis un JSON avec:
 `;
 
     for (const doc of documents) {
-      prompt += `### ${doc.name} (${doc.type})
+      const sanitizedDocName = sanitizeName(doc.name);
+      const sanitizedDocType = sanitizeName(doc.type);
+      prompt += `### ${sanitizedDocName} (${sanitizedDocType})
 
-${doc.content.slice(0, 30000)}
+${this.sanitizeDocumentContent(doc.content, 30000)}
 
 ---
 

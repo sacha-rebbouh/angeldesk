@@ -19,6 +19,7 @@ import type {
   AgentFindingsSummary,
   AgentResult,
 } from "../types";
+import { calculateAgentScore, QUESTION_MASTER_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * Question Master Agent - REFONTE v2.0
@@ -749,7 +750,59 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
     const { data } = await this.llmCompleteJSON<LLMQuestionMasterResponse>(prompt);
 
     // Validate and normalize response
-    return this.normalizeResponse(data);
+    const result = this.normalizeResponse(data);
+
+    // F03: DETERMINISTIC SCORING
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const f = data.findings;
+
+      // Questions relevance - based on count and priority mix
+      const questions = f?.founderQuestions ?? [];
+      const criticalQuestions = questions.filter(q => q.priority === "CRITICAL").length;
+      extractedMetrics.push({
+        name: "questions_relevance", value: Math.min(100, questions.length * 5),
+        unit: "score", source: "Question generation", dataReliability: "VERIFIED", category: "product",
+      });
+      extractedMetrics.push({
+        name: "critical_questions_count", value: Math.min(100, criticalQuestions * 20),
+        unit: "score", source: "Critical questions", dataReliability: "VERIFIED", category: "product",
+      });
+
+      // DD completeness
+      const checklistItems = f?.diligenceChecklist?.items ?? [];
+      extractedMetrics.push({
+        name: "dd_completeness", value: Math.min(100, checklistItems.length * 8),
+        unit: "score", source: "DD checklist", dataReliability: "VERIFIED", category: "product",
+      });
+
+      // Negotiation leverage
+      const negotiationPoints = f?.negotiationPoints ?? [];
+      extractedMetrics.push({
+        name: "negotiation_leverage", value: Math.min(100, negotiationPoints.length * 15),
+        unit: "score", source: "Negotiation points", dataReliability: "VERIFIED", category: "product",
+      });
+
+      // Dealbreakers
+      const dealbreakers = f?.dealbreakers ?? [];
+      extractedMetrics.push({
+        name: "dealbreakers_identified", value: dealbreakers.length > 0 ? Math.min(100, dealbreakers.length * 25) : 50,
+        unit: "score", source: "Dealbreaker analysis", dataReliability: "VERIFIED", category: "product",
+      });
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "question-master", extractedMetrics, sector, stage, QUESTION_MASTER_CRITERIA,
+        );
+        result.score = { ...result.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[question-master] Deterministic scoring failed, using LLM score:", err);
+    }
+
+    return result;
   }
 
   /**
@@ -854,16 +907,26 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       ? data.meta.dataCompleteness
       : "minimal";
 
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[question-master] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "question-master",
       analysisDate: new Date().toISOString(),
       dataCompleteness,
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Calculate grade from score
-    const scoreValue = Math.min(100, Math.max(0, data.score?.value ?? 50));
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[question-master] LLM did not return score value — using 0`);
+    }
+    const scoreValue = scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue));
     const getGrade = (score: number): "A" | "B" | "C" | "D" | "F" => {
       if (score >= 80) return "A";
       if (score >= 65) return "B";
@@ -874,12 +937,13 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
 
     const score: AgentScore = {
       value: scoreValue,
-      grade: getGrade(scoreValue),
+      grade: scoreIsFallback ? "F" : getGrade(scoreValue),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map(b => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 20,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "",
           }))
         : [],

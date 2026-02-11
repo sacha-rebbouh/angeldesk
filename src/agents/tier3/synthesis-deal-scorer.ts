@@ -322,17 +322,15 @@ Pour chaque dimension, tu dois COMBINER les insights de TOUS les tiers:
 Exemple: Si Tier 1 financial-auditor donne Market=70 mais que l'expert sectoriel Tier 2 révèle un marché en déclin et le devil's advocate identifie un risque de disruption, ton score Market final doit être inférieur à 70.
 
 ## Étape 2: PONDÉRATION DES DIMENSIONS
-Appliquer les poids suivants (total = 100%):
+Les poids sont ADAPTÉS AU STAGE et au SECTEUR du deal (fournis dans le user prompt).
+En l'absence de pondérations spécifiques, utiliser les poids par défaut:
+Team(25%) + Financials(20%) + Market(15%) + GTM(15%) + Product(15%) + Competitive(5%) + Exit(5%)
 
-| Dimension | Poids | Agents sources |
-|-----------|-------|----------------|
-| Team | 25% | team-investigator |
-| Market | 15% | market-intelligence |
-| Product/Tech | 15% | tech-stack-dd, tech-ops-dd, deck-forensics |
-| Financials | 20% | financial-auditor, cap-table-auditor |
-| GTM/Traction | 15% | gtm-analyst, customer-intel |
-| Competitive | 5% | competitive-intel |
-| Exit Potential | 5% | exit-strategist |
+IMPORTANT: Les poids varient SIGNIFICATIVEMENT selon le stage:
+- Pre-Seed: Team 40%, Market 20%, Product 15%, les autres se partagent le reste
+- Seed: Team 30%, plus equilibre
+- Series A: GTM/Traction monte a 20%, Financials monte a 20%
+- Series B+: Financials domine a 30-35%, Team descend a 10-15%
 
 ## Étape 3: AJUSTEMENTS DU SCORE
 Ajuster le score base selon:
@@ -662,6 +660,13 @@ Tu dois produire un JSON avec cette structure EXACTE:
 
   protected async execute(context: EnrichedAgentContext): Promise<SynthesisDealScorerData> {
     const deal = context.deal;
+    const { getWeightsForDeal, formatWeightsForPrompt } = await import('@/scoring/stage-weights');
+
+    // Get dynamic weights based on stage and sector
+    const dealStage = deal.stage || (context.previousResults?.['document-extractor'] as { data?: { extractedInfo?: { stage?: string } } })?.data?.extractedInfo?.stage;
+    const dealSector = deal.sector || (context.previousResults?.['document-extractor'] as { data?: { extractedInfo?: { sector?: string } } })?.data?.extractedInfo?.sector;
+    const weights = getWeightsForDeal(dealStage, dealSector);
+    const weightsTable = formatWeightsForPrompt(weights);
 
     // Build comprehensive prompt with all context
     const dealContext = this.formatDealContext(context);
@@ -673,6 +678,9 @@ Tu dois produire un JSON avec cette structure EXACTE:
     const baPrefsSection = this.formatBAPreferences(context.baPreferences, deal.sector, deal.stage);
     const contradictions = this.extractContradictions(context);
     const coherenceSection = this.formatCoherenceData(context);
+
+    // F23: Build deal source analysis section
+    const dealSourceSection = this.buildDealSourceSection(context);
 
     const prompt = `# ANALYSE SYNTHESIS DEAL SCORER - ${deal.companyName ?? deal.name}
 
@@ -716,6 +724,11 @@ ${fundingDbContext}
 
 ---
 
+## ANALYSE DE LA SOURCE DU DEAL (OBLIGATOIRE)
+${dealSourceSection}
+
+---
+
 ## PROFIL BUSINESS ANGEL
 ${baPrefsSection}
 ${this.formatFactStoreData(context)}
@@ -726,7 +739,11 @@ ${this.formatFactStoreData(context)}
 1. **CALCULE LE SCORE PONDÉRÉ** avec la formule:
    Score = Σ(dimension_weight × dimension_score) + adjustments
 
-   Pondérations: Team(25%) + Financials(20%) + Market(15%) + GTM(15%) + Product(15%) + Competitive(5%) + Exit(5%)
+   Pondérations ADAPTÉES AU STAGE (${dealStage || 'SEED'}) ET AU SECTEUR (${dealSector || 'General'}):
+
+${weightsTable}
+
+   **NOTE**: Ces poids ont été ajustés automatiquement selon le stage d'investissement et le secteur.
 
 2. **AJUSTE SELON LES RED FLAGS**:
    - CRITICAL: -10 à -20 pts
@@ -776,12 +793,105 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
     const { data } = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt);
 
     // Transform and validate the response
-    return this.transformResponse(data, context);
+    const result = this.transformResponse(data, context);
+
+    // F37: Override LLM percentiles with deterministic DB calculation
+    try {
+      const { calculateDealPercentile } = await import("@/services/funding-db/percentile-calculator");
+      const dbPercentile = await calculateDealPercentile(
+        result.overallScore,
+        context.deal.sector ?? null,
+        context.deal.stage ?? null,
+      );
+      result.comparativeRanking = {
+        percentileOverall: dbPercentile.percentileOverall,
+        percentileSector: dbPercentile.percentileSector,
+        percentileStage: dbPercentile.percentileStage,
+        similarDealsAnalyzed: dbPercentile.similarDealsAnalyzed,
+      };
+      if (dbPercentile.method === "INSUFFICIENT_DATA") {
+        console.warn(`[synthesis-deal-scorer] F37: Percentile based on ${dbPercentile.similarDealsAnalyzed} deals only (${dbPercentile.method})`);
+      }
+    } catch (err) {
+      console.warn("[synthesis-deal-scorer] F37 percentile calculation failed:", err);
+    }
+
+    return result;
   }
 
   // ===========================================================================
   // HELPER METHODS - Data extraction from previous agents
   // ===========================================================================
+
+  /**
+   * F23: Build deal source analysis section for the prompt.
+   * Analyzes why this deal arrived at a BA solo instead of a VC fund.
+   */
+  private buildDealSourceSection(context: EnrichedAgentContext): string {
+    const deal = context.deal as Record<string, unknown>;
+    const lines: string[] = [];
+
+    // Collect source info from deal data
+    const source = deal.source || deal.dealSource || "unknown";
+    const referral = deal.referralFrom || deal.referredBy;
+    const roundStartDate = deal.roundStartDate || deal.fundraisingStarted;
+
+    lines.push(`**Source du deal**: ${source}`);
+    if (referral) lines.push(`**Refere par**: ${referral}`);
+
+    // Calculate fundraising duration if available
+    if (roundStartDate) {
+      const start = new Date(roundStartDate as string);
+      if (!isNaN(start.getTime())) {
+        const durationMonths = Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24 * 30));
+        lines.push(`**Duree de la levee**: ${durationMonths} mois`);
+        if (durationMonths > 6) {
+          lines.push(`**WARNING**: Levee en cours depuis > 6 mois. Signal negatif potentiel.`);
+        }
+      }
+    }
+
+    // Check if VCs are in the round
+    const investors = deal.investors as string[] | undefined;
+    const hasVC = investors?.some((i: string) =>
+      i.toLowerCase().includes("venture") ||
+      i.toLowerCase().includes("capital") ||
+      i.toLowerCase().includes("partners") ||
+      i.toLowerCase().includes("fund")
+    );
+
+    if (investors && investors.length > 0) {
+      if (hasVC) {
+        lines.push(`**VC present dans le tour**: Oui → signal positif (validation institutionnelle)`);
+      } else {
+        lines.push(`**Aucun VC dans le tour**: Investisseurs: ${investors.join(", ")}. Pourquoi pas de VC ? A analyser.`);
+      }
+    } else {
+      lines.push(`**Investisseurs**: Information non disponible.`);
+    }
+
+    lines.push(`
+**QUESTIONS OBLIGATOIRES pour le scoring** :
+1. Pourquoi ce deal arrive a un BA solo plutot qu'un fonds VC ?
+2. Le fondateur a-t-il ete refuse par des VCs ? Si oui, quels retours ?
+3. Combien d'investisseurs ont ete contactes ?
+4. Depuis combien de temps dure la levee ?
+
+**IMPACT SUR LE SCORE** :
+- Si levee > 6 mois sans closing : -5 points sur le score global
+- Si aucun VC n'a regarde : -3 points (compense si stage trop early pour VC)
+- Si referral qualifie d'un investisseur connu : +3 points
+
+**AJOUTER DANS topWeaknesses OU topStrengths** :
+- "Deal source: [analyse de pourquoi ce deal arrive a un BA]"
+
+**AJOUTER DANS questions (TOUJOURS)** :
+- "Avez-vous presente ce deal a des fonds VC ? Si oui, quels retours avez-vous eus ?"
+- "Depuis combien de temps etes-vous en levee de fonds ?"
+`);
+
+    return lines.join("\n");
+  }
 
   private extractTier1Scores(context: EnrichedAgentContext): string {
     const results = context.previousResults ?? {};
@@ -1267,7 +1377,7 @@ Aucune incohérence majeure détectée entre les agents.`;
       // Handle both formats: breakdown (criterion/justification) and dimensionScores (dimension/keyFactors)
       const dAny = d as Record<string, unknown>;
       const dimensionName = (dAny.criterion ?? dAny.dimension ?? "Unknown") as string;
-      const scoreVal = Math.min(100, Math.max(0, (dAny.score as number) ?? 50));
+      const scoreVal = (dAny.score as number) != null ? Math.min(100, Math.max(0, dAny.score as number)) : 0;
       const weightVal = (dAny.weight as number) ?? 0;
       const justificationVal = dAny.justification as string | undefined;
 
@@ -1288,7 +1398,12 @@ Aucune incohérence majeure détectée entre les agents.`;
     const computedWeighted = dimensionScores.length > 0
       ? Math.round(dimensionScores.reduce((sum, d) => sum + d.weightedScore, 0))
       : null;
-    const overallScore = data.score?.value ?? data.overallScore ?? computedWeighted ?? 50;
+    const overallScoreRaw = data.score?.value ?? data.overallScore ?? computedWeighted;
+    const overallScoreIsFallback = overallScoreRaw === undefined || overallScoreRaw === null;
+    if (overallScoreIsFallback) {
+      console.warn(`[synthesis-deal-scorer] LLM did not return overall score — using 0`);
+    }
+    const overallScore = overallScoreIsFallback ? 0 : overallScoreRaw;
 
     if (computedWeighted !== null && Math.abs(overallScore - computedWeighted) > 15) {
       console.warn(
@@ -1336,7 +1451,9 @@ Aucune incohérence majeure détectée entre les agents.`;
     return {
       overallScore: Math.round(Math.min(100, Math.max(0, overallScore))),
       verdict: finalVerdict,
-      confidence: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? data.confidence ?? 50)),
+      confidence: (data.meta?.confidenceLevel ?? data.confidence) != null
+        ? Math.min(100, Math.max(0, (data.meta?.confidenceLevel ?? data.confidence)!))
+        : 0,
       dimensionScores,
       scoreBreakdown: {
         strengthsContribution: data.findings?.scoreBreakdown?.adjustments
@@ -1352,11 +1469,11 @@ Aucune incohérence majeure détectée entre les agents.`;
       },
       comparativeRanking: {
         percentileOverall: data.findings?.marketPosition?.percentileOverall ??
-                          data.comparativeRanking?.percentileOverall ?? 50,
+                          data.comparativeRanking?.percentileOverall ?? 0,
         percentileSector: data.findings?.marketPosition?.percentileSector ??
-                         data.comparativeRanking?.percentileSector ?? 50,
+                         data.comparativeRanking?.percentileSector ?? 0,
         percentileStage: data.findings?.marketPosition?.percentileStage ??
-                        data.comparativeRanking?.percentileStage ?? 50,
+                        data.comparativeRanking?.percentileStage ?? 0,
         similarDealsAnalyzed: data.findings?.marketPosition?.similarDealsAnalyzed ??
                              data.comparativeRanking?.similarDealsAnalyzed ?? 0,
       },

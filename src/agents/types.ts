@@ -6,6 +6,7 @@ import type {
   CompetitiveLandscape,
   NewsSentiment,
   PeopleGraph,
+  ContextQualityScore,
 } from "@/services/context-engine/types";
 import type { BAPreferences } from "@/services/benchmarks";
 
@@ -39,6 +40,51 @@ export interface EnrichedAgentContext extends AgentContext {
     peopleGraph?: PeopleGraph;
     enrichedAt?: string;
     completeness?: number;
+    /** F59: Detailed quality scoring with degradation detection */
+    contextQuality?: ContextQualityScore;
+    // Traction data from App Store, GitHub, Product Hunt connectors (F71)
+    tractionData?: {
+      appStore?: {
+        rating: number;
+        reviewCount: number;
+        downloads?: string;
+        lastUpdate?: string;
+        topComplaints?: string[];
+      };
+      googlePlay?: {
+        rating: number;
+        reviewCount: number;
+        downloads?: string;
+        lastUpdate?: string;
+      };
+      github?: {
+        stars: number;
+        forks: number;
+        contributors: number;
+        lastCommit?: string;
+        openIssues?: number;
+        language?: string;
+      };
+      productHunt?: {
+        upvotes: number;
+        rank?: number;
+        launchDate?: string;
+        comments?: number;
+      };
+    };
+    // Website content insights (F71)
+    websiteContent?: {
+      insights?: {
+        clients: string[];
+        clientCount?: number;
+        testimonials: { quote: string; author: string; company?: string }[];
+        openPositions: number;
+        hiringDepartments: string[];
+        hasPricing: boolean;
+        pricingModel?: string;
+        priceRange?: { min: number; max: number; currency: string };
+      };
+    };
   };
   // BA preferences for personalized analysis (Tier 3)
   baPreferences?: BAPreferences;
@@ -99,6 +145,34 @@ export interface EnrichedAgentContext extends AgentContext {
     };
     potentialCompetitors?: Array<Record<string, unknown>>;
   };
+
+  // Tier 1 cross-validation results (injected between Tier 1 and Tier 3) (F34/F39)
+  tier1CrossValidation?: {
+    validations: {
+      id: string;
+      type: "PROJECTION_VS_GTM" | "METRICS_VS_RETENTION" | "TEAM_VS_TECH";
+      severity: "CRITICAL" | "HIGH" | "MEDIUM";
+      agent1: string;
+      agent1Claim: string;
+      agent2: string;
+      agent2Data: string;
+      verdict: "COHERENT" | "MINOR_DIVERGENCE" | "MAJOR_DIVERGENCE" | "CONTRADICTION";
+      detail: string;
+      suggestedScoreAdjustment?: number;
+    }[];
+    adjustments: {
+      agentName: string;
+      field: string;
+      before: number;
+      after: number;
+      reason: string;
+      crossValidationId: string;
+    }[];
+    warnings: string[];
+  };
+
+  // F77: Consolidated red flags from all agents (unified taxonomy)
+  consolidatedRedFlags?: import("./red-flag-taxonomy").StandardizedRedFlag[];
 
   // Extracted data from document-extractor agent
   extractedData?: ExtractedDealInfo;
@@ -311,6 +385,7 @@ export interface AgentMeta {
   analysisDate: string;
   dataCompleteness: "complete" | "partial" | "minimal";
   confidenceLevel: number; // 0-100
+  confidenceIsFallback?: boolean; // true si le LLM n'a pas retourné de confidence (F43)
   limitations: string[]; // Ce qui n'a pas pu être analysé
 }
 
@@ -318,6 +393,7 @@ export interface AgentMeta {
 export interface AgentScore {
   value: number; // 0-100
   grade: "A" | "B" | "C" | "D" | "F";
+  isFallback?: boolean; // true si le LLM n'a pas retourné de score (F43)
   breakdown: {
     criterion: string;
     weight: number;
@@ -481,7 +557,8 @@ export interface FinancialAuditFindings {
   valuation: {
     requested?: number;
     impliedMultiple?: number;
-    benchmarkMultiple: number;
+    benchmarkMultiple: number | null;
+    benchmarkMultipleIsFallback?: boolean; // true si le LLM n'a pas retourné de benchmark (F43)
     percentile?: number;
     verdict: "UNDERVALUED" | "FAIR" | "AGGRESSIVE" | "VERY_AGGRESSIVE" | "CANNOT_ASSESS";
     comparables: { name: string; multiple: number; stage: string; source: string }[];
@@ -1022,6 +1099,38 @@ export interface TeamInvestigatorFindings {
     relationshipStrength: "strong" | "moderate" | "weak" | "unknown";
     potentialConflicts: string[];
     soloFounderRisk?: string;
+    // Decision-making dynamics (F35)
+    decisionMaking?: {
+      primaryDecisionMaker: string;
+      decisionProcess: string;
+      conflictResolutionHistory: string;
+      vetoRights: string;
+      riskIfDisagreement: string;
+    };
+  };
+
+  // Reference check template (F35)
+  referenceCheckTemplate?: {
+    whoToCall: {
+      name: string;
+      relationship: string;
+      contactMethod: string;
+      priority: "CRITICAL" | "HIGH" | "MEDIUM";
+    }[];
+    scriptTemplate: {
+      introduction: string;
+      questions: {
+        question: string;
+        whatToLookFor: string;
+        redFlagAnswer: string;
+      }[];
+      closingQuestion: string;
+    };
+    minimumReferencesNeeded: number;
+    founderSpecificQuestions: {
+      founderName: string;
+      specificQuestions: string[];
+    }[];
   };
 
   networkAnalysis: {
@@ -2059,6 +2168,16 @@ export interface PMFAnalysis {
     test: string; // "Sean Ellis Test", "NRR > 120%", "Organic Growth"
     result: "PASS" | "FAIL" | "PARTIAL" | "NOT_TESTABLE";
     evidence: string;
+    // F36: Data collection protocol for NOT_TESTABLE tests
+    dataCollectionProtocol?: {
+      dataNeeded: string;
+      howToRequest: string;
+      questionForFounder: string;
+      acceptableFormats: string[];
+      redFlagIfRefused: string;
+      estimatedTimeToCollect: string;
+      alternativeProxy?: string;
+    };
   }[];
 }
 
@@ -3537,14 +3656,40 @@ export interface StandardTrace {
   };
   /** Hash du contexte pour reproductibilité */
   contextHash: string;
-  /** Version du prompt utilisé */
+  /** Version du prompt utilisé (hash SHA-256 tronqué) */
   promptVersion: string;
+  /** Détails du prompt pour audit (optionnel) */
+  promptVersionDetails?: {
+    systemPromptHash: string;
+    modelComplexity: string;
+    agentName: string;
+  };
 }
 
 /**
- * Résultat d'agent avec trace optionnelle
+ * F80: Lightweight trace metrics, ALWAYS present on every agent result.
+ * Full trace (prompts/responses) remains optional.
+ */
+export interface AgentTraceMetrics {
+  id: string;
+  agentName: string;
+  totalDurationMs: number;
+  llmCallCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCost: number;
+  contextHash: string;
+  promptVersion: string;
+  startedAt: string;
+  completedAt: string;
+}
+
+/**
+ * Résultat d'agent avec trace
  */
 export interface AgentResultWithTrace extends AgentResult {
-  /** Trace Standard pour transparence (opt-in) */
-  _trace?: StandardTrace;
+  /** F80: Lightweight metrics (ALWAYS present) */
+  _traceMetrics: AgentTraceMetrics;
+  /** Full trace with prompts/responses (opt-in, can be large) */
+  _traceFull?: StandardTrace;
 }

@@ -75,24 +75,33 @@ interface ConversationWithMessages {
 // QUICK ACTIONS CONFIG
 // ============================================================================
 
-const QUICK_ACTIONS = [
-  {
-    label: "Explique-moi les red flags",
-    prompt: "Explique-moi les red flags identifies dans cette analyse.",
-  },
-  {
-    label: "Compare aux benchmarks",
-    prompt: "Compare ce deal aux benchmarks du secteur.",
-  },
-  {
-    label: "Questions au fondateur",
-    prompt: "Quelles questions devrais-je poser au fondateur?",
-  },
-  {
-    label: "Resume l'analyse",
-    prompt: "Resume les points cles de l'analyse de ce deal.",
-  },
-] as const;
+// Level-based quick actions (F31)
+type InvestorLevel = "beginner" | "intermediate" | "expert";
+
+const QUICK_ACTIONS_BY_LEVEL: Record<InvestorLevel, Array<{ label: string; prompt: string }>> = {
+  beginner: [
+    { label: "C'est quoi ce score ?", prompt: "Explique-moi simplement ce que signifie le score de ce deal et si c'est bien ou pas." },
+    { label: "Quels sont les risques ?", prompt: "Quels sont les principaux risques de cet investissement, expliques simplement ?" },
+    { label: "Que demander au fondateur ?", prompt: "Quelles questions simples mais importantes devrais-je poser au fondateur avant d'investir ?" },
+    { label: "Resume pour moi", prompt: "Resume cette analyse comme si tu l'expliquais a quelqu'un qui n'a jamais investi dans une startup." },
+  ],
+  intermediate: [
+    { label: "Explique les red flags", prompt: "Explique-moi les red flags identifies dans cette analyse et leur impact potentiel." },
+    { label: "Compare aux benchmarks", prompt: "Compare ce deal aux benchmarks du secteur. Les metriques sont-elles au-dessus ou en-dessous de la mediane ?" },
+    { label: "Questions au fondateur", prompt: "Quelles questions devrais-je poser au fondateur, classees par priorite ?" },
+    { label: "Points de negociation", prompt: "Quels sont mes leviers de negociation sur la valorisation et les termes ?" },
+  ],
+  expert: [
+    { label: "Red flags & dealbreakers", prompt: "Analyse les red flags detectes. Lesquels sont des dealbreakers absolus vs conditionnels ?" },
+    { label: "Benchmark & valo", prompt: "Compare les multiples de valorisation aux comparables. La valo est-elle justifiee ?" },
+    { label: "Due diligence gaps", prompt: "Quels points de la DD restent insuffisamment couverts ? Quelles donnees manquent ?" },
+    { label: "Structuration du deal", prompt: "Quels termes devrais-je negocier (liquidation pref, pro-rata, anti-dilution) ?" },
+  ],
+};
+
+function getQuickActions(level: InvestorLevel) {
+  return QUICK_ACTIONS_BY_LEVEL[level] ?? QUICK_ACTIONS_BY_LEVEL.beginner;
+}
 
 // ============================================================================
 // CHAT MESSAGE COMPONENT
@@ -157,11 +166,13 @@ const TypingIndicator = memo(function TypingIndicator() {
 interface QuickActionsProps {
   onSelect: (prompt: string) => void;
   disabled?: boolean;
+  investorLevel: InvestorLevel;
 }
 
 const QuickActions = memo(function QuickActions({
   onSelect,
   disabled,
+  investorLevel,
 }: QuickActionsProps) {
   const handleClick = useCallback(
     (prompt: string) => {
@@ -172,13 +183,15 @@ const QuickActions = memo(function QuickActions({
     [onSelect, disabled]
   );
 
+  const actions = useMemo(() => getQuickActions(investorLevel), [investorLevel]);
+
   return (
     <div className="flex flex-wrap gap-2 px-4 py-3 border-t bg-muted/30">
       <div className="flex w-full items-center gap-1.5 text-xs text-muted-foreground mb-1">
         <Sparkles className="size-3" />
         <span>Suggestions</span>
       </div>
-      {QUICK_ACTIONS.map((action) => (
+      {actions.map((action) => (
         <Button
           key={action.label}
           variant="outline"
@@ -326,6 +339,23 @@ export const DealChatPanel = memo(function DealChatPanel({
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<ChatMessageData[]>([]);
 
+  // Investor level for adapting chat behavior (F31)
+  const [investorLevel, setInvestorLevel] = useState<InvestorLevel>(
+    () => {
+      if (typeof window !== "undefined") {
+        return (localStorage.getItem("angeldesk-investor-level") as InvestorLevel) ?? "beginner";
+      }
+      return "beginner";
+    }
+  );
+
+  const handleLevelChange = useCallback((level: InvestorLevel) => {
+    setInvestorLevel(level);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("angeldesk-investor-level", level);
+    }
+  }, []);
+
   // Fetch conversations for this deal
   const { data: conversationsData, isLoading: isLoadingConversations } =
     useQuery<ConversationsResponse>({
@@ -397,6 +427,7 @@ export const DealChatPanel = memo(function DealChatPanel({
         body: JSON.stringify({
           conversationId: activeConversationId,
           message,
+          investorLevel,
         }),
       });
 
@@ -479,10 +510,17 @@ export const DealChatPanel = memo(function DealChatPanel({
   return (
     <Card
       className={cn(
-        "fixed inset-0 md:inset-auto md:right-4 md:top-20 md:bottom-4 md:w-[40%] md:min-w-[360px] md:max-w-[600px]",
-        "flex flex-col z-50 shadow-lg border bg-background py-0 gap-0 rounded-none md:rounded-xl"
+        // Mobile: bottom sheet (75vh, not full screen) (F91)
+        "fixed left-0 right-0 bottom-0 h-[75vh] rounded-t-2xl",
+        // Desktop: side panel
+        "md:inset-auto md:right-4 md:top-20 md:bottom-4 md:left-auto md:h-auto md:w-[40%] md:min-w-[360px] md:max-w-[600px] md:rounded-xl",
+        "flex flex-col z-50 shadow-lg border bg-background py-0 gap-0"
       )}
     >
+      {/* Mobile drag handle (F91) */}
+      <div className="md:hidden flex justify-center py-2">
+        <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+      </div>
       {/* Header */}
       <CardHeader className="border-b px-4 py-3 shrink-0">
         <div className="flex items-center justify-between">
@@ -499,11 +537,30 @@ export const DealChatPanel = memo(function DealChatPanel({
             <X className="size-4" />
           </Button>
         </div>
-        {dealName && (
-          <p className="text-xs text-muted-foreground mt-1 truncate">
-            {dealName}
-          </p>
-        )}
+        <div className="flex items-center justify-between mt-1.5">
+          {dealName && (
+            <p className="text-xs text-muted-foreground truncate">
+              {dealName}
+            </p>
+          )}
+          {/* Investor level selector (F31) */}
+          <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5 shrink-0">
+            {(["beginner", "intermediate", "expert"] as const).map((level) => (
+              <button
+                key={level}
+                onClick={() => handleLevelChange(level)}
+                className={cn(
+                  "px-2 py-1 text-xs rounded transition-colors",
+                  investorLevel === level
+                    ? "bg-background shadow-sm font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {level === "beginner" ? "Debutant" : level === "intermediate" ? "Intermediaire" : "Expert"}
+              </button>
+            ))}
+          </div>
+        </div>
       </CardHeader>
 
       {/* Messages area */}
@@ -530,6 +587,7 @@ export const DealChatPanel = memo(function DealChatPanel({
         <QuickActions
           onSelect={handleQuickActionSelect}
           disabled={isSending}
+          investorLevel={investorLevel}
         />
       )}
 

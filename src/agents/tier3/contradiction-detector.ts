@@ -383,6 +383,23 @@ POURQUOI C'EST NUL:
       sections.push(factStoreSection);
     }
 
+    // --- Section 7: Tier 1 Cross-Validation (deterministic divergences) (F34/F39) ---
+    const crossValidation = context.tier1CrossValidation;
+    if (crossValidation && (crossValidation.validations.length > 0 || crossValidation.warnings.length > 0)) {
+      const cvLines = [
+        "## DIVERGENCES TIER 1 PRE-DETECTEES (Deterministe)",
+        "Les divergences suivantes ont ete detectees par le module de cross-validation:",
+      ];
+      for (const v of crossValidation.validations) {
+        cvLines.push(`- [${v.severity}] ${v.agent1} vs ${v.agent2}: ${v.detail}`);
+      }
+      for (const w of crossValidation.warnings) {
+        cvLines.push(`- [WARNING] ${w}`);
+      }
+      cvLines.push("", "IMPORTANT: Confirme ou infirme ces divergences avec ton analyse approfondie.");
+      sections.push(cvLines.join("\n"));
+    }
+
     return sections.filter(s => s.length > 0).join("\n\n---\n\n");
   }
 
@@ -755,7 +772,7 @@ Produis un JSON avec cette structure:
       topic: c.topic ?? "Unknown",
       analysis: c.analysis ?? "",
       implication: c.implication ?? "",
-      confidenceLevel: c.confidenceLevel ?? 50,
+      confidenceLevel: c.confidenceLevel ?? 0,
       resolution: c.resolution ? {
         likely: (c.resolution.likely as "statement1" | "statement2" | "unknown") ?? "unknown",
         reasoning: c.resolution.reasoning ?? "",

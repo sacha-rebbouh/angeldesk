@@ -565,7 +565,7 @@ export const creatorExpert = {
       let scoreMax = 100;
       if (completenessLevel === "minimal") scoreMax = 50;
       else if (completenessLevel === "partial") scoreMax = 70;
-      const rawScore = output.sectorFit?.score ?? 50;
+      const rawScore = output.sectorFit?.score ?? 0;
       const cappedScore = Math.min(rawScore, scoreMax);
 
       // Transform to SectorExpertData

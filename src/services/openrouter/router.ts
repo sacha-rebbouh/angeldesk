@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { openrouter, MODELS, type ModelKey } from "./client";
-import { getCircuitBreaker, CircuitOpenError } from "./circuit-breaker";
+import { getCircuitBreaker, getCircuitBreakerDistributed, syncCircuitBreakerState, CircuitOpenError } from "./circuit-breaker";
 import { costMonitor } from "@/services/cost-monitor";
 import { logLLMCallAsync } from "@/services/llm-logger";
 import {
@@ -23,9 +23,8 @@ interface LLMContext {
 
 const llmContextStorage = new AsyncLocalStorage<LLMContext>();
 
-// Legacy globals kept as fallback for code not yet wrapped in runWithLLMContext
-let currentAgentContext: string | null = null;
-let currentAnalysisContext: string | null = null;
+// Legacy globals REMOVED (F96): were causing race conditions in parallel analyses.
+// All code must use runWithLLMContext() for thread-safe context tracking.
 
 /**
  * Run a function with request-scoped LLM context (thread-safe).
@@ -48,8 +47,12 @@ export function setAgentContext(agentName: string | null): void {
   const store = llmContextStorage.getStore();
   if (store) {
     store.agentName = agentName;
+  } else if (process.env.NODE_ENV === 'development') {
+    console.warn(
+      `[LLM Router] setAgentContext("${agentName}") called outside of runWithLLMContext. ` +
+      `Agent context will not be tracked. Wrap the calling code in runWithLLMContext().`
+    );
   }
-  currentAgentContext = agentName; // Legacy fallback
 }
 
 /**
@@ -57,7 +60,7 @@ export function setAgentContext(agentName: string | null): void {
  */
 export function getAgentContext(): string | null {
   const store = llmContextStorage.getStore();
-  return store?.agentName ?? currentAgentContext;
+  return store?.agentName ?? null;
 }
 
 /**
@@ -67,8 +70,11 @@ export function setAnalysisContext(analysisId: string | null): void {
   const store = llmContextStorage.getStore();
   if (store) {
     store.analysisId = analysisId;
+  } else if (process.env.NODE_ENV === 'development') {
+    console.warn(
+      `[LLM Router] setAnalysisContext called outside of runWithLLMContext.`
+    );
   }
-  currentAnalysisContext = analysisId; // Legacy fallback
 }
 
 /**
@@ -76,7 +82,28 @@ export function setAnalysisContext(analysisId: string | null): void {
  */
 export function getAnalysisContext(): string | null {
   const store = llmContextStorage.getStore();
-  return store?.analysisId ?? currentAnalysisContext;
+  return store?.analysisId ?? null;
+}
+
+/**
+ * Wrapper for LLM calls outside the orchestrator.
+ * Guarantees an AsyncLocalStorage context exists.
+ */
+export function ensureLLMContext<T>(
+  agentName: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const store = llmContextStorage.getStore();
+  if (store) {
+    store.agentName = agentName;
+    return fn();
+  }
+  return new Promise((resolve, reject) => {
+    llmContextStorage.run(
+      { agentName, analysisId: null },
+      () => fn().then(resolve).catch(reject)
+    );
+  });
 }
 
 // ============================================================================
@@ -103,46 +130,63 @@ const RATE_LIMIT_CONFIG = {
   requestsPerMinute: 60, // Conservative limit
 };
 
-// Simple in-memory rate limiter with bounded array
-class RateLimiter {
-  private timestamps: number[] = [];
-  private readonly windowMs = 60000; // 1 minute
-  private readonly maxTimestamps = 200; // Safety limit to prevent unbounded growth
+// Distributed rate limiter with in-memory fallback
+import { getStore } from '@/services/distributed-state';
 
-  canMakeRequest(): boolean {
-    const now = Date.now();
-    // Remove old timestamps
-    this.timestamps = this.timestamps.filter((t) => now - t < this.windowMs);
+class DistributedRateLimiter {
+  private readonly windowMs = 60000;
+  private readonly maxRequests: number;
+  private readonly keyPrefix: string;
 
-    // Safety: if array somehow grew too large, trim it
-    if (this.timestamps.length > this.maxTimestamps) {
-      this.timestamps = this.timestamps.slice(-RATE_LIMIT_CONFIG.requestsPerMinute);
-    }
+  // Local fallback for when Redis is unavailable
+  private localTimestamps: number[] = [];
 
-    return this.timestamps.length < RATE_LIMIT_CONFIG.requestsPerMinute;
+  constructor(maxRequests: number = 60, keyPrefix: string = 'angeldesk:ratelimit:llm') {
+    this.maxRequests = maxRequests;
+    this.keyPrefix = keyPrefix;
   }
 
-  recordRequest(): void {
-    this.timestamps.push(Date.now());
+  async canMakeRequest(): Promise<boolean> {
+    try {
+      const store = getStore();
+      const windowKey = `${this.keyPrefix}:${Math.floor(Date.now() / this.windowMs)}`;
+      const count = await store.get<number>(windowKey);
+      return (count ?? 0) < this.maxRequests;
+    } catch {
+      return this.localCanMakeRequest();
+    }
+  }
+
+  async recordRequest(): Promise<void> {
+    try {
+      const store = getStore();
+      const windowKey = `${this.keyPrefix}:${Math.floor(Date.now() / this.windowMs)}`;
+      await store.incr(windowKey, this.windowMs + 5000);
+    } catch {
+      this.localTimestamps.push(Date.now());
+    }
   }
 
   async waitForSlot(): Promise<void> {
-    const maxWaitMs = 60000; // Maximum total wait time: 1 minute
+    const maxWaitMs = 60000;
     const startTime = Date.now();
 
-    while (!this.canMakeRequest()) {
-      // Escape hatch: don't wait forever
+    while (!(await this.canMakeRequest())) {
       if (Date.now() - startTime > maxWaitMs) {
         throw new Error("Rate limit wait timeout exceeded");
       }
-
-      const waitTime = Math.min(1000, this.windowMs - (Date.now() - this.timestamps[0]));
-      await new Promise((r) => setTimeout(r, waitTime));
+      await new Promise((r) => setTimeout(r, 1000));
     }
+  }
+
+  private localCanMakeRequest(): boolean {
+    const now = Date.now();
+    this.localTimestamps = this.localTimestamps.filter(t => now - t < this.windowMs);
+    return this.localTimestamps.length < this.maxRequests;
   }
 }
 
-const rateLimiter = new RateLimiter();
+const rateLimiter = new DistributedRateLimiter(RATE_LIMIT_CONFIG.requestsPerMinute);
 
 /**
  * Check if an error is retryable
@@ -175,8 +219,38 @@ function calculateBackoff(attempt: number): number {
 // MODEL SELECTION
 // =============================================================================
 
-export function selectModel(_complexity: TaskComplexity, _agentName?: string): ModelKey {
-  return "GEMINI_3_FLASH";
+export function selectModel(complexity: TaskComplexity, agentName?: string): ModelKey {
+  // Agent-specific overrides (for agents with known model requirements)
+  const agentOverrides: Record<string, ModelKey> = {
+    // Tier 3 synthesis agents need stronger reasoning
+    "synthesis-deal-scorer": "GEMINI_PRO",
+    "contradiction-detector": "GEMINI_PRO",
+    "devils-advocate": "GEMINI_PRO",
+    "memo-generator": "GEMINI_PRO",
+    // Board members already specify their models via options.model
+  };
+
+  if (agentName && agentOverrides[agentName]) {
+    return agentOverrides[agentName];
+  }
+
+  // Complexity-based routing
+  switch (complexity) {
+    case "simple":
+      return "GEMINI_3_FLASH";
+
+    case "medium":
+      return "GEMINI_3_FLASH";
+
+    case "complex":
+      return "GEMINI_PRO";
+
+    case "critical":
+      return "SONNET";
+
+    default:
+      return "GEMINI_3_FLASH";
+  }
 }
 
 export interface CompletionOptions {
@@ -187,6 +261,20 @@ export interface CompletionOptions {
   systemPrompt?: string;
   maxRetries?: number; // Override default retries (for Sonnet agents: 1 = 2 attempts)
   responseFormat?: { type: "json_object" | "text" }; // Force JSON mode at API level
+  /** Active l'adaptation du prompt en cas d'echec (F95) */
+  adaptiveRetry?: boolean;
+  /** Callback pour adapter le prompt en cas d'erreur */
+  onRetryAdapt?: (params: {
+    attempt: number;
+    error: Error;
+    originalPrompt: string;
+    originalSystemPrompt?: string;
+  }) => {
+    prompt?: string;
+    systemPrompt?: string;
+    temperature?: number;
+    maxTokens?: number;
+  } | undefined;
 }
 
 export interface CompletionResult {
@@ -208,7 +296,7 @@ export async function complete(
     model: modelKey,
     complexity = "medium",
     maxTokens = 65000, // Gemini 3 Flash supports 65K
-    temperature = 0.7,
+    temperature = 0.2, // Defaut conservateur pour analyses. Utiliser 0.7 explicitement pour agents creatifs.
     systemPrompt,
     maxRetries = RATE_LIMIT_CONFIG.maxRetries,
     responseFormat,
@@ -217,7 +305,7 @@ export async function complete(
     console.log(`[complete] maxTokens=${maxTokens}`);
   }
 
-  const selectedModelKey = modelKey ?? selectModel(complexity, currentAgentContext ?? undefined);
+  const selectedModelKey = modelKey ?? selectModel(complexity, getAgentContext() ?? undefined);
   const model = MODELS[selectedModelKey];
 
   // Sonnet agents get fewer retries (2 attempts) to save cost
@@ -225,7 +313,7 @@ export async function complete(
     ? 1 // 2 attempts for Sonnet
     : maxRetries;
 
-  const circuitBreaker = getCircuitBreaker();
+  const circuitBreaker = await getCircuitBreakerDistributed();
   const startTime = Date.now();
 
   const messages: Array<{ role: "system" | "user"; content: string }> = [];
@@ -263,18 +351,63 @@ export async function complete(
     try {
       // Wait for rate limit slot
       await rateLimiter.waitForSlot();
-      rateLimiter.recordRequest();
+      await rateLimiter.recordRequest();
+
+      // F95: Adapt messages/params on retry if adaptiveRetry is enabled
+      let effectiveMessages = messages;
+      let effectiveTemperature = temperature;
+      let effectiveMaxTokens = maxTokens;
+
+      if (attempt > 0 && options.adaptiveRetry && lastError) {
+        const adaptation = options.onRetryAdapt?.({
+          attempt,
+          error: lastError,
+          originalPrompt: prompt,
+          originalSystemPrompt: systemPrompt,
+        });
+
+        if (adaptation) {
+          // Custom adaptation from callback
+          effectiveMessages = [];
+          if (adaptation.systemPrompt ?? systemPrompt) {
+            effectiveMessages.push({
+              role: "system",
+              content: withLanguageInstruction(adaptation.systemPrompt ?? systemPrompt)!,
+            });
+          }
+          effectiveMessages.push({
+            role: "user",
+            content: adaptation.prompt ?? prompt,
+          });
+          effectiveTemperature = adaptation.temperature ?? temperature;
+          effectiveMaxTokens = adaptation.maxTokens ?? maxTokens;
+        } else if (adaptation === undefined) {
+          // No callback or callback returned undefined: default adaptation
+          effectiveMessages = [
+            ...messages,
+            {
+              role: "user" as const,
+              content: `[RETRY ATTEMPT ${attempt}] Previous attempt failed with error: "${lastError.message}". Please try again, paying extra attention to producing valid JSON output.`,
+            },
+          ];
+          effectiveTemperature = Math.max(0, temperature - 0.1 * attempt);
+        }
+        // If adaptation === null or {}, keep original messages
+      }
 
       // Execute through circuit breaker
       const response = await circuitBreaker.execute(() =>
         openrouter.chat.completions.create({
           model: model.id,
-          messages,
-          max_tokens: maxTokens,
-          temperature,
+          messages: effectiveMessages,
+          max_tokens: effectiveMaxTokens,
+          temperature: effectiveTemperature,
           ...(responseFormat ? { response_format: responseFormat } : {}),
         })
       );
+
+      // Sync circuit breaker state to distributed store (fire-and-forget)
+      syncCircuitBreakerState(circuitBreaker.getStats()).catch(() => {});
 
       const content = response.choices[0]?.message?.content ?? "";
       const usage = response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
@@ -290,7 +423,7 @@ export async function complete(
       // Record cost for monitoring (total including retries)
       costMonitor.recordCall({
         model: model.id,
-        agent: currentAgentContext ?? "unknown",
+        agent: getAgentContext() ?? "unknown",
         inputTokens: usage.prompt_tokens,
         outputTokens: usage.completion_tokens,
         cost: totalCost,
@@ -298,8 +431,8 @@ export async function complete(
 
       // Log LLM call for debugging/audit (async, non-blocking)
       logLLMCallAsync({
-        analysisId: currentAnalysisContext ?? undefined,
-        agentName: currentAgentContext ?? "unknown",
+        analysisId: getAnalysisContext() ?? undefined,
+        agentName: getAgentContext() ?? "unknown",
         model: model.id,
         provider: "openrouter",
         systemPrompt,
@@ -344,8 +477,8 @@ export async function complete(
       // Log error call with estimated cost
       const durationMs = Date.now() - startTime;
       logLLMCallAsync({
-        analysisId: currentAnalysisContext ?? undefined,
-        agentName: currentAgentContext ?? "unknown",
+        analysisId: getAnalysisContext() ?? undefined,
+        agentName: getAgentContext() ?? "unknown",
         model: model.id,
         provider: "openrouter",
         systemPrompt,
@@ -368,7 +501,7 @@ export async function complete(
         if (accumulatedRetryCost > 0) {
           costMonitor.recordCall({
             model: model.id,
-            agent: currentAgentContext ?? "unknown",
+            agent: getAgentContext() ?? "unknown",
             inputTokens: estimatedInputTokens * (attempt + 1),
             outputTokens: 0,
             cost: accumulatedRetryCost,
@@ -515,23 +648,22 @@ function extractBracedJSON(text: string): string | null {
     }
   }
 
-  // Truncated JSON — attempt repair by closing open braces/brackets
+  // Truncated JSON detected — log warning and attempt repair WITH truncation flag (F54)
   if (startIndex !== -1 && braceCount > 0 && maxBraceCount >= 2) {
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[extractBracedJSON] Truncated JSON detected (${braceCount} unclosed braces), attempting repair`);
-    }
+    console.warn(
+      `[extractBracedJSON] ⚠️ TRUNCATED JSON DETECTED: ${braceCount} unclosed braces, ` +
+      `${text.length - startIndex} chars of partial JSON. ` +
+      `This may result in incomplete data.`
+    );
+
     let partial = text.substring(startIndex);
-    // Remove trailing incomplete string (unmatched quote)
     const quoteCount = (partial.match(/(?<!\\)"/g) || []).length;
     if (quoteCount % 2 !== 0) {
-      // Find last quote and truncate after it, adding closing quote
       const lastQuote = partial.lastIndexOf('"');
       partial = partial.substring(0, lastQuote + 1);
     }
-    // Remove trailing comma or colon
     partial = partial.replace(/[,:\s]+$/, "");
-    // Close remaining braces/brackets
-    // Count actual open braces/brackets
+
     let openBraces = 0;
     let openBrackets = 0;
     let inStr = false;
@@ -548,15 +680,25 @@ function extractBracedJSON(text: string): string | null {
     }
     partial += "]".repeat(Math.max(0, openBrackets)) + "}".repeat(Math.max(0, openBraces));
     try {
-      JSON.parse(partial); // Validate
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[extractBracedJSON] Repair succeeded (${partial.length} chars)`);
+      const parsed = JSON.parse(partial);
+
+      // INJECT truncation marker into the parsed object (F54)
+      if (typeof parsed === 'object' && parsed !== null) {
+        parsed.__truncated = true;
+        parsed.__truncationInfo = {
+          unclosedBraces: braceCount,
+          originalLength: text.length,
+          repairedLength: partial.length,
+          warning: "Ce JSON a ete tronque et repare automatiquement. Des donnees peuvent etre manquantes."
+        };
       }
-      return partial;
+
+      console.warn(
+        `[extractBracedJSON] Repair succeeded but data may be INCOMPLETE (${partial.length}/${text.length} chars)`
+      );
+      return JSON.stringify(parsed);
     } catch {
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[extractBracedJSON] Repair failed, returning null`);
-      }
+      console.error(`[extractBracedJSON] Repair failed — JSON is unrecoverable`);
     }
   }
 
@@ -584,6 +726,27 @@ export async function completeJSON<T>(
     ...options,
     temperature: options.temperature ?? 0.3, // Lower temperature for structured output
     responseFormat: { type: "json_object" }, // Force JSON output at API level
+    // F95: Adaptive retry enabled by default for JSON completions
+    adaptiveRetry: options.adaptiveRetry ?? true,
+    onRetryAdapt: options.onRetryAdapt ?? ((params) => {
+      const errorMsg = params.error.message;
+
+      // JSON parsing error: add explicit instruction
+      if (errorMsg.includes("Failed to parse") || errorMsg.includes("JSON") || errorMsg.includes("parse")) {
+        return {
+          prompt: `${params.originalPrompt}\n\n[IMPORTANT: Your previous response was not valid JSON. Error: "${errorMsg.substring(0, 200)}". Please respond with ONLY a valid JSON object, no text before or after.]`,
+          temperature: Math.max(0, (options.temperature ?? 0.3) - 0.1),
+        };
+      }
+
+      // Timeout: no prompt adaptation needed (LLM is just slow)
+      if (errorMsg.includes("timeout")) {
+        return {};
+      }
+
+      // Other errors: use default adaptation
+      return undefined;
+    }),
   });
 
   // Extract first valid JSON object (handles trailing text after JSON)
@@ -591,6 +754,21 @@ export async function completeJSON<T>(
 
   try {
     const data = JSON.parse(jsonString) as T;
+
+    // Check for truncation marker injected by extractBracedJSON (F54)
+    const dataObj = data as Record<string, unknown>;
+    if (dataObj.__truncated === true) {
+      console.warn(
+        `[completeJSON] ⚠️ Response was TRUNCATED and auto-repaired. ` +
+        `Data may be incomplete. Info: ${JSON.stringify(dataObj.__truncationInfo)}`
+      );
+      // Remove internal markers before passing to agent
+      delete dataObj.__truncated;
+      delete dataObj.__truncationInfo;
+      // Add a top-level warning that agents can check
+      dataObj._wasTruncated = true;
+    }
+
     return {
       data,
       cost: result.cost,
@@ -689,13 +867,13 @@ export async function stream(
     model: modelKey,
     complexity = "medium",
     maxTokens = 65000, // Gemini 3 Flash supports 65K
-    temperature = 0.7,
+    temperature = 0.2, // Defaut conservateur pour analyses. Utiliser 0.7 explicitement pour agents creatifs.
     systemPrompt,
   } = options;
 
-  const selectedModelKey = modelKey ?? selectModel(complexity, currentAgentContext ?? undefined);
+  const selectedModelKey = modelKey ?? selectModel(complexity, getAgentContext() ?? undefined);
   const model = MODELS[selectedModelKey];
-  const circuitBreaker = getCircuitBreaker();
+  const circuitBreaker = await getCircuitBreakerDistributed();
   const startTime = Date.now();
   let firstTokenTime: number | undefined;
 
@@ -721,7 +899,7 @@ export async function stream(
 
   // Wait for rate limit slot
   await rateLimiter.waitForSlot();
-  rateLimiter.recordRequest();
+  await rateLimiter.recordRequest();
 
   let content = "";
   let inputTokens = 0;
@@ -738,6 +916,9 @@ export async function stream(
         stream: true,
       })
     );
+
+    // Sync circuit breaker state to distributed store (fire-and-forget)
+    syncCircuitBreakerState(circuitBreaker.getStats()).catch(() => {});
 
     // Process stream
     for await (const chunk of streamResponse) {
@@ -773,7 +954,7 @@ export async function stream(
     // Record cost for monitoring
     costMonitor.recordCall({
       model: model.id,
-      agent: currentAgentContext ?? "unknown",
+      agent: getAgentContext() ?? "unknown",
       inputTokens,
       outputTokens,
       cost,
@@ -781,8 +962,8 @@ export async function stream(
 
     // Log LLM call for debugging/audit (async, non-blocking)
     logLLMCallAsync({
-      analysisId: currentAnalysisContext ?? undefined,
-      agentName: currentAgentContext ?? "unknown",
+      analysisId: getAnalysisContext() ?? undefined,
+      agentName: getAgentContext() ?? "unknown",
       model: model.id,
       provider: "openrouter",
       systemPrompt,
@@ -815,8 +996,8 @@ export async function stream(
     // Log error call
     const durationMs = Date.now() - startTime;
     logLLMCallAsync({
-      analysisId: currentAnalysisContext ?? undefined,
-      agentName: currentAgentContext ?? "unknown",
+      analysisId: getAnalysisContext() ?? undefined,
+      agentName: getAgentContext() ?? "unknown",
       model: model.id,
       provider: "openrouter",
       systemPrompt,
@@ -903,9 +1084,9 @@ export async function completeJSONStreaming<T>(
     onParseState,
   } = options;
 
-  const selectedModelKey = modelKey ?? selectModel(complexity, currentAgentContext ?? undefined);
+  const selectedModelKey = modelKey ?? selectModel(complexity, getAgentContext() ?? undefined);
   const model = MODELS[selectedModelKey];
-  const circuitBreaker = getCircuitBreaker();
+  const circuitBreaker = await getCircuitBreakerDistributed();
 
   // Accumulate stats across all calls
   let totalInputTokens = 0;
@@ -941,7 +1122,7 @@ export async function completeJSONStreaming<T>(
 
     // Wait for rate limit
     await rateLimiter.waitForSlot();
-    rateLimiter.recordRequest();
+    await rateLimiter.recordRequest();
 
     let finishReason: string | null = null;
 
@@ -956,6 +1137,9 @@ export async function completeJSONStreaming<T>(
           stream: true,
         })
       );
+
+      // Sync circuit breaker state to distributed store (fire-and-forget)
+      syncCircuitBreakerState(circuitBreaker.getStats()).catch(() => {});
 
       let inputTokens = 0;
       let outputTokens = 0;
@@ -1010,8 +1194,8 @@ export async function completeJSONStreaming<T>(
 
       // Log call
       logLLMCallAsync({
-        analysisId: currentAnalysisContext ?? undefined,
-        agentName: currentAgentContext ?? "unknown",
+        analysisId: getAnalysisContext() ?? undefined,
+        agentName: getAgentContext() ?? "unknown",
         model: model.id,
         provider: "openrouter",
         systemPrompt: currentSystemPrompt,
@@ -1036,7 +1220,7 @@ export async function completeJSONStreaming<T>(
         // Success! Complete JSON parsed
         costMonitor.recordCall({
           model: model.id,
-          agent: currentAgentContext ?? "unknown",
+          agent: getAgentContext() ?? "unknown",
           inputTokens: totalInputTokens,
           outputTokens: totalOutputTokens,
           cost: totalCost,
@@ -1088,7 +1272,7 @@ export async function completeJSONStreaming<T>(
         if (merged) {
           costMonitor.recordCall({
             model: model.id,
-            agent: currentAgentContext ?? "unknown",
+            agent: getAgentContext() ?? "unknown",
             inputTokens: totalInputTokens,
             outputTokens: totalOutputTokens,
             cost: totalCost,
@@ -1113,7 +1297,7 @@ export async function completeJSONStreaming<T>(
       // Return whatever we have
       costMonitor.recordCall({
         model: model.id,
-        agent: currentAgentContext ?? "unknown",
+        agent: getAgentContext() ?? "unknown",
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
         cost: totalCost,
@@ -1139,8 +1323,8 @@ export async function completeJSONStreaming<T>(
       // Log error
       const durationMs = Date.now() - startTime;
       logLLMCallAsync({
-        analysisId: currentAnalysisContext ?? undefined,
-        agentName: currentAgentContext ?? "unknown",
+        analysisId: getAnalysisContext() ?? undefined,
+        agentName: getAgentContext() ?? "unknown",
         model: model.id,
         provider: "openrouter",
         systemPrompt: currentSystemPrompt,

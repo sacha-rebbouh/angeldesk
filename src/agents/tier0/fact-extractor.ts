@@ -8,6 +8,7 @@ import type {
   FactCategory,
   FactSource,
 } from "@/services/fact-store/types";
+import { RELIABILITY_WEIGHTS } from "@/services/fact-store/types";
 import { sanitizeForLLM, sanitizeName } from "@/lib/sanitize";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -475,6 +476,27 @@ Produis un JSON avec cette structure exacte.
     // Normalize and validate response
     const result = this.normalizeResponse(data, input, startTime);
 
+    // Second pass: meta-evaluate reliability of critical facts (F24 - break circular bias)
+    const metaOverrides = await this.metaEvaluateReliability(result.facts, input.documents);
+
+    // Apply meta-evaluation overrides
+    if (metaOverrides.size > 0) {
+      for (const fact of result.facts) {
+        const override = metaOverrides.get(fact.factKey);
+        if (override && fact.reliability) {
+          const original = fact.reliability.reliability;
+          if (original !== override.reliability) {
+            console.warn(
+              `[FactExtractor:MetaOverride] ${fact.factKey}: ${original} -> ${override.reliability} (${override.reasoning})`
+            );
+            fact.reliability.reliability = override.reliability;
+            fact.reliability.reasoning = `${override.reasoning} [Original: ${original} - ${fact.reliability.reasoning}]`;
+            fact.reliability.isProjection = override.reliability === 'PROJECTED';
+          }
+        }
+      }
+    }
+
     return result;
   }
 
@@ -588,11 +610,22 @@ Produis un JSON avec cette structure exacte.
       const allocatedChars = Math.min(doc.content.length, fairShare, remainingBudget);
 
       const isTruncated = doc.content.length > allocatedChars;
-      const truncatedContent = isTruncated
-        ? doc.content.substring(0, allocatedChars) +
-          `\n\n[... TRONQUE: ${doc.content.length - allocatedChars} caracteres restants. ` +
-          `Priorisez les informations financieres et metriques cles. ...]`
-        : doc.content;
+      // F27: head+tail strategy for truncated documents
+      let truncatedContent: string;
+      if (!isTruncated) {
+        truncatedContent = doc.content;
+      } else {
+        const tailReserve = Math.min(3000, Math.floor(allocatedChars * 0.15));
+        const headChars = allocatedChars - tailReserve;
+        const head = doc.content.substring(0, headChars);
+        const tail = doc.content.substring(doc.content.length - tailReserve);
+        const omittedChars = doc.content.length - allocatedChars;
+
+        truncatedContent = head +
+          `\n\n[⚠️ TRONCATION: ${omittedChars} caracteres omis au milieu. ` +
+          `Document total: ${doc.content.length} chars. Fin du document ci-dessous.]\n\n` +
+          tail;
+      }
 
       results.push({ doc, truncatedContent, isTruncated });
       remainingBudget -= truncatedContent.length;
@@ -768,17 +801,17 @@ Produis le JSON avec:
         }
         seenFactKeys.add(fact.factKey);
 
-        // Map source document - CRITICAL: LLM may return incorrect sourceDocumentId
-        // We need to find the actual document by ID, or fallback to matching by type
+        // Validate sourceDocumentId against real document IDs (F53)
         let sourceDoc = input.documents.find(d => d.id === fact.sourceDocumentId);
+        let sourceVerified = true;
 
-        // If LLM returned an invalid ID (e.g. "doc-pitch-deck" from examples), try to match by type
         if (!sourceDoc && fact.sourceDocumentId) {
-          // Extract type hint from LLM's fake ID (e.g. "doc-pitch-deck" -> "PITCH_DECK")
+          sourceVerified = false;
+
+          // Attempt type-based matching as best-effort (but flag it)
           const typeHint = fact.sourceDocumentId.toUpperCase().replace(/^DOC[-_]?/, '').replace(/-/g, '_');
           sourceDoc = input.documents.find(d => d.type === typeHint);
 
-          // If still no match, use the first document of the inferred source type
           if (!sourceDoc) {
             const inferredType = typeHint.includes('FINANCIAL') ? 'FINANCIAL_MODEL' :
                                  typeHint.includes('DATA') ? 'DATA_ROOM' :
@@ -788,16 +821,16 @@ Produis le JSON avec:
             }
           }
 
-          // Last resort: use the first document
+          // Si toujours pas de match, prendre le premier doc MAIS flaguer
           if (!sourceDoc && input.documents.length > 0) {
             sourceDoc = input.documents[0];
           }
 
-          if (sourceDoc) {
-            console.warn(
-              `[FactExtractor] Corrected invalid sourceDocumentId "${fact.sourceDocumentId}" → "${sourceDoc.id}" for fact ${fact.factKey}`
-            );
-          }
+          console.warn(
+            `[FactExtractor] ⚠️ SOURCE NON VERIFIEE: LLM a retourne sourceDocumentId="${fact.sourceDocumentId}" ` +
+            `pour fact ${fact.factKey}, corrige vers "${sourceDoc?.id ?? 'AUCUN'}". ` +
+            `L'attribution de source est incertaine.`
+          );
         }
 
         // Determine the actual sourceDocumentId to use (must be a valid document ID)
@@ -830,9 +863,24 @@ Produis le JSON avec:
           }
         }
 
-        // Build reliability classification
-        const reliabilityLevel = this.normalizeReliability(fact.reliability);
-        const isProjection = fact.isProjection === true || reliabilityLevel === 'PROJECTED';
+        // Build reliability classification with programmatic validation
+        const llmReliability = this.normalizeReliability(fact.reliability);
+        const validated = this.validateReliabilityProgrammatically(fact, llmReliability);
+        const reliabilityLevel = validated.reliability;
+        const isProjection = validated.isProjection;
+
+        // Prefix extractedText with warning if source is not verified (F53)
+        const extractedTextWithWarning = sourceVerified
+          ? fact.extractedText
+          : `[⚠️ SOURCE NON VERIFIEE — document attribue par inference, pas par ID exact] ${fact.extractedText}`;
+
+        // Apply -15 confidence penalty if source is not verified (F53)
+        const baseConfidence = Math.min(100, Math.max(70, fact.sourceConfidence));
+        const adjustedConfidence = sourceVerified ? baseConfidence : Math.max(0, baseConfidence - 15);
+
+        // F57: Compute truthConfidence = sourceConfidence * reliability weight
+        const reliabilityWeight = RELIABILITY_WEIGHTS[reliabilityLevel] ?? 0.5;
+        const truthConfidence = Math.round(adjustedConfidence * reliabilityWeight);
 
         validFacts.push({
           factKey: fact.factKey,
@@ -842,19 +890,22 @@ Produis le JSON avec:
           unit: fact.unit || factKeyDef.unit,
           source,
           sourceDocumentId: validSourceDocumentId, // Use validated ID, not LLM's potentially fake ID
-          sourceConfidence: Math.min(100, Math.max(70, fact.sourceConfidence)),
-          extractedText: fact.extractedText,
+          sourceConfidence: adjustedConfidence,
+          truthConfidence, // F57: veracite = extraction confidence * reliability weight
+          extractedText: extractedTextWithWarning,
           validAt: fact.validAt ? new Date(fact.validAt) : undefined,
           periodType: fact.periodType,
           periodLabel: fact.periodLabel,
           reliability: {
             reliability: reliabilityLevel,
-            reasoning: fact.reliabilityReasoning || `Source: ${source}, classification automatique`,
+            reasoning: validated.overrideReason
+              ? `${fact.reliabilityReasoning || ''} [OVERRIDE PROGRAMMATIQUE: ${validated.overrideReason}]`
+              : (fact.reliabilityReasoning || `Source: ${source}, classification automatique`),
             isProjection,
             temporalAnalysis: (fact.documentDate || fact.dataPeriodEnd) ? {
               documentDate: fact.documentDate,
               dataPeriodEnd: fact.dataPeriodEnd,
-              projectionPercent: fact.projectionPercent,
+              projectionPercent: validated.projectionPercent ?? fact.projectionPercent,
               monthsOfProjection: fact.projectionPercent != null && fact.periodType === 'YEAR'
                 ? Math.round((fact.projectionPercent / 100) * 12)
                 : undefined,
@@ -869,6 +920,16 @@ Produis le JSON avec:
       console.warn(
         `[FactExtractor] ${ignoredFacts.length} facts ignored:`,
         ignoredFacts.map(f => `${f.factKey}: ${f.reason}`).join('; ')
+      );
+    }
+
+    // F53: Log unverified source stats
+    const unverifiedSourceCount = validFacts.filter(f =>
+      f.extractedText?.startsWith('[⚠️ SOURCE NON VERIFIEE')
+    ).length;
+    if (unverifiedSourceCount > 0) {
+      console.warn(
+        `[FactExtractor] ${unverifiedSourceCount}/${validFacts.length} facts ont une source non verifiee (sourceDocumentId fabrique par le LLM)`
       );
     }
 
@@ -946,6 +1007,117 @@ Produis le JSON avec:
     };
   }
 
+  /**
+   * Second-pass meta-evaluation of critical financial facts.
+   * Uses a DIFFERENT system prompt focused ONLY on reliability assessment.
+   * This breaks the circular bias by separating extraction from evaluation.
+   */
+  private async metaEvaluateReliability(
+    facts: ExtractedFact[],
+    documents: FactExtractorDocument[]
+  ): Promise<Map<string, { reliability: import('@/services/fact-store/types').DataReliability; reasoning: string }>> {
+    const criticalKeys = new Set([
+      'financial.arr', 'financial.mrr', 'financial.revenue',
+      'financial.growth_rate_yoy', 'financial.burn_rate', 'financial.runway',
+      'financial.valuation_pre', 'financial.amount_raising',
+      'traction.customers', 'traction.users', 'traction.nrr', 'traction.churn_monthly',
+    ]);
+
+    const criticalFacts = facts.filter(f => criticalKeys.has(f.factKey));
+
+    if (criticalFacts.length === 0) {
+      return new Map();
+    }
+
+    const factsForReview = criticalFacts.map(f => ({
+      factKey: f.factKey,
+      value: f.value,
+      displayValue: f.displayValue,
+      extractedText: f.extractedText,
+      currentReliability: f.reliability?.reliability,
+      documentDate: f.reliability?.temporalAnalysis?.documentDate,
+      dataPeriodEnd: f.reliability?.temporalAnalysis?.dataPeriodEnd,
+    }));
+
+    const docMetadata = documents.map(d => ({
+      name: d.name,
+      type: d.type,
+      contentPreview: d.content.substring(0, 500),
+    }));
+
+    const metaPrompt = `# META-EVALUATION DE FIABILITE
+
+Tu es un AUDITEUR EXTERNE charge d'evaluer la fiabilite de donnees extraites.
+Tu n'as PAS extrait ces donnees toi-meme. Tu dois les evaluer objectivement.
+
+## DOCUMENTS SOURCE
+${docMetadata.map(d => `- ${d.name} (${d.type}): ${d.contentPreview.substring(0, 200)}...`).join('\n')}
+
+## FAITS A EVALUER
+${JSON.stringify(factsForReview, null, 2)}
+
+## REGLES D'EVALUATION
+
+Pour CHAQUE fait, determine independamment:
+1. La fiabilite: AUDITED | VERIFIED | DECLARED | PROJECTED | ESTIMATED | UNVERIFIABLE
+2. Si c'est une projection (isProjection: true/false)
+3. Un raisonnement concis
+
+ATTENTION PARTICULIERE aux PROJECTIONS DEGUISEES:
+- Un chiffre annuel dans un BP date de mi-annee = PROJECTION
+- Un "objectif" ou "target" = PROJECTION
+- Des chiffres ronds parfaits sans historique = suspicion PROJECTION
+
+## OUTPUT
+\`\`\`json
+{
+  "evaluations": [
+    {
+      "factKey": "financial.arr",
+      "reliability": "DECLARED",
+      "isProjection": false,
+      "reasoning": "Chiffre explicite dans le deck, source unique, pas d'audit."
+    }
+  ]
+}
+\`\`\``;
+
+    try {
+      const { data } = await this.llmCompleteJSON<{
+        evaluations: Array<{
+          factKey: string;
+          reliability: string;
+          isProjection: boolean;
+          reasoning: string;
+        }>;
+      }>(metaPrompt, {
+        systemPrompt: 'Tu es un auditeur externe specialise en verification de donnees financieres. Tu evalues OBJECTIVEMENT la fiabilite de donnees deja extraites. Tu ne fais PAS d\'extraction. LANGUE: Francais.',
+        temperature: 0.1,
+        model: 'GEMINI_3_FLASH',
+      });
+
+      const overrides = new Map<string, { reliability: import('@/services/fact-store/types').DataReliability; reasoning: string }>();
+
+      if (Array.isArray(data.evaluations)) {
+        for (const evaluation of data.evaluations) {
+          const valid = ['AUDITED', 'VERIFIED', 'DECLARED', 'PROJECTED', 'ESTIMATED', 'UNVERIFIABLE'] as const;
+          const upper = evaluation.reliability?.toUpperCase().trim();
+          if (valid.includes(upper as typeof valid[number])) {
+            overrides.set(evaluation.factKey, {
+              reliability: upper as typeof valid[number],
+              reasoning: `[META-EVALUATION] ${evaluation.reasoning}`,
+            });
+          }
+        }
+      }
+
+      return overrides;
+    } catch (error) {
+      console.warn('[FactExtractor:MetaEvaluation] Failed, using original classifications:', error);
+      return new Map();
+    }
+  }
+
   /** Normalize reliability string from LLM to valid DataReliability */
   private normalizeReliability(value: string | undefined): import('@/services/fact-store/types').DataReliability {
     const valid = ['AUDITED', 'VERIFIED', 'DECLARED', 'PROJECTED', 'ESTIMATED', 'UNVERIFIABLE'] as const;
@@ -955,6 +1127,86 @@ Produis le JSON avec:
     }
     // Default: if we can't classify, assume DECLARED (stated without proof)
     return 'DECLARED';
+  }
+
+  /**
+   * Post-LLM programmatic validation of reliability classification.
+   * Overrides LLM classification when temporal analysis proves it wrong.
+   *
+   * Rules:
+   * 1. If dataPeriodEnd > documentDate => FORCED to PROJECTED
+   * 2. If dataPeriodEnd > today => FORCED to PROJECTED
+   * 3. If source is "Business Plan" / "BP" / "Forecast" => FORCED to PROJECTED
+   * 4. Compute projectionPercent from dates if not provided
+   */
+  private validateReliabilityProgrammatically(
+    fact: LLMExtractedFact,
+    llmReliability: import('@/services/fact-store/types').DataReliability
+  ): {
+    reliability: import('@/services/fact-store/types').DataReliability;
+    isProjection: boolean;
+    projectionPercent: number | undefined;
+    overrideReason: string | null;
+  } {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+
+    let reliability = llmReliability;
+    let isProjection = fact.isProjection === true;
+    let projectionPercent = fact.projectionPercent;
+    let overrideReason: string | null = null;
+
+    // Parse dates
+    const documentDate = fact.documentDate ? new Date(fact.documentDate) : null;
+    const dataPeriodEnd = fact.dataPeriodEnd ? new Date(fact.dataPeriodEnd) : null;
+
+    // Rule 1: dataPeriodEnd > documentDate => the data includes future projections
+    if (documentDate && dataPeriodEnd && dataPeriodEnd > documentDate) {
+      if (reliability !== 'PROJECTED' && reliability !== 'ESTIMATED') {
+        overrideReason = `Override: dataPeriodEnd (${fact.dataPeriodEnd}) > documentDate (${fact.documentDate}). ` +
+          `LLM classified as ${reliability}, forced to PROJECTED.`;
+        reliability = 'PROJECTED';
+        isProjection = true;
+      }
+
+      // Compute projectionPercent if not provided
+      if (projectionPercent == null && fact.periodType === 'YEAR') {
+        const periodStart = new Date(dataPeriodEnd);
+        periodStart.setFullYear(periodStart.getFullYear() - 1);
+        periodStart.setDate(periodStart.getDate() + 1);
+
+        const totalDays = (dataPeriodEnd.getTime() - periodStart.getTime()) / (1000 * 60 * 60 * 24);
+        const projectedDays = Math.max(0, (dataPeriodEnd.getTime() - documentDate.getTime()) / (1000 * 60 * 60 * 24));
+        projectionPercent = Math.min(100, Math.round((projectedDays / totalDays) * 100));
+      }
+    }
+
+    // Rule 2: dataPeriodEnd > today => definitely a projection
+    if (dataPeriodEnd && dataPeriodEnd > today) {
+      if (reliability !== 'PROJECTED') {
+        overrideReason = `Override: dataPeriodEnd (${fact.dataPeriodEnd}) is in the future (today: ${todayStr}). ` +
+          `Forced to PROJECTED.`;
+        reliability = 'PROJECTED';
+        isProjection = true;
+      }
+    }
+
+    // Rule 3: Detect projection sources from extractedText
+    const projectionKeywords = /\b(business\s*plan|BP|forecast|prevision|projete|objectif|target|budget|plan\s+financier)\b/i;
+    if (fact.extractedText && projectionKeywords.test(fact.extractedText)) {
+      if (reliability !== 'PROJECTED' && reliability !== 'ESTIMATED') {
+        overrideReason = `Override: extractedText contains projection keywords. ` +
+          `LLM classified as ${reliability}, forced to PROJECTED.`;
+        reliability = 'PROJECTED';
+        isProjection = true;
+      }
+    }
+
+    if (overrideReason) {
+      console.warn(`[FactExtractor:ReliabilityOverride] ${fact.factKey}: ${overrideReason}`);
+    }
+
+    return { reliability, isProjection, projectionPercent, overrideReason };
   }
 }
 

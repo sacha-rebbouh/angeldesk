@@ -57,6 +57,51 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       }
     }
 
+    // If RUNNING, extract agent-level progress from partial results
+    let agentDetails: { name: string; status: string; executionTimeMs?: number }[] | null = null;
+    if (effectiveStatus === "RUNNING" && latestAnalysis.results) {
+      try {
+        const results = latestAnalysis.results as Record<string, {
+          agentName?: string;
+          success?: boolean;
+          executionTimeMs?: number;
+        }>;
+        agentDetails = Object.entries(results).map(([name, r]) => ({
+          name,
+          status: r?.success ? "completed" : "failed",
+          executionTimeMs: r?.executionTimeMs,
+        }));
+      } catch {
+        // results may not be parseable yet
+      }
+    }
+
+    // F40/F55: Compute delta + variance if ?compare=true and 2+ analyses
+    let analysisDelta = null;
+    let varianceReport = null;
+    const compare = _request.nextUrl.searchParams.get("compare") === "true";
+    if (compare && latestAnalysis.status === "COMPLETED") {
+      const previousAnalysis = await prisma.analysis.findFirst({
+        where: { dealId, id: { not: latestAnalysis.id }, status: "COMPLETED" },
+        orderBy: { completedAt: "desc" },
+        select: { id: true },
+      });
+      if (previousAnalysis) {
+        try {
+          const [deltaModule, varianceModule] = await Promise.all([
+            import("@/services/analysis-delta"),
+            import("@/services/analysis-variance"),
+          ]);
+          [analysisDelta, varianceReport] = await Promise.all([
+            deltaModule.calculateAnalysisDelta(latestAnalysis.id, previousAnalysis.id),
+            varianceModule.detectVariance(latestAnalysis.id, previousAnalysis.id),
+          ]);
+        } catch (err) {
+          console.error("[analyses] Delta/Variance computation failed:", err);
+        }
+      }
+    }
+
     return NextResponse.json({
       data: {
         id: latestAnalysis.id,
@@ -73,6 +118,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         startedAt: latestAnalysis.startedAt?.toISOString() ?? null,
         completedAt: latestAnalysis.completedAt?.toISOString() ?? null,
         createdAt: latestAnalysis.createdAt.toISOString(),
+        agentDetails,
+        analysisDelta,
+        varianceReport,
       },
     });
   } catch (error) {

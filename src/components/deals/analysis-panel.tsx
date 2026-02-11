@@ -5,6 +5,7 @@ import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, MessageSquare, Handshake, ShieldAlert, Download, FileText } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,7 +37,7 @@ import {
 import { EarlyWarningsPanel } from "./early-warnings-panel";
 import type { EarlyWarning } from "@/types";
 import { ProTeaserBanner } from "@/components/shared/pro-teaser";
-import { AnalysisProgress } from "./analysis-progress";
+import { AnalysisProgress, type AgentStatus } from "./analysis-progress";
 import { TimelineVersions } from "./timeline-versions";
 import { FounderResponses, type AgentQuestion, type QuestionResponse } from "./founder-responses";
 import { DeltaIndicator } from "./delta-indicator";
@@ -44,8 +45,18 @@ import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
 import { NegotiationPanel } from "./negotiation-panel";
 import { DeckCoherenceReport as DeckCoherenceReportPanel } from "./deck-coherence-report";
+import { NextStepsGuide } from "./next-steps-guide";
+import { PartialAnalysisBanner } from "./partial-analysis-banner";
 import type { NegotiationStrategy } from "@/services/negotiation/strategist";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
+import { formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
+import { consolidateAndPrioritizeQuestions, type ConsolidatedQuestion } from "@/lib/question-consolidator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // Dynamic imports for heavy Tier components - reduces initial bundle by ~50KB
 const Tier1Results = dynamic(
@@ -271,40 +282,6 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
 }
 
 // Helper to map question category from LLM output to UI format
-function mapQuestionCategory(category: string): AgentQuestion["category"] {
-  const normalizedCategory = category.toUpperCase();
-  const validCategories: AgentQuestion["category"][] = [
-    "FINANCIAL",
-    "TEAM",
-    "MARKET",
-    "PRODUCT",
-    "LEGAL",
-    "TRACTION",
-    "OTHER",
-  ];
-  if (validCategories.includes(normalizedCategory as AgentQuestion["category"])) {
-    return normalizedCategory as AgentQuestion["category"];
-  }
-  return "OTHER";
-}
-
-// Helper to map question priority from LLM output to UI format
-// Supports both new priorities (CRITICAL/HIGH/MEDIUM/LOW) and legacy (MUST_ASK/SHOULD_ASK/NICE_TO_HAVE)
-function mapQuestionPriority(priority: string): AgentQuestion["priority"] {
-  const normalizedPriority = priority.toUpperCase();
-  if (normalizedPriority === "CRITICAL") {
-    return "CRITICAL";
-  }
-  if (normalizedPriority === "MUST_ASK" || normalizedPriority === "HIGH") {
-    return "HIGH";
-  }
-  if (normalizedPriority === "SHOULD_ASK" || normalizedPriority === "MEDIUM") {
-    return "MEDIUM";
-  }
-  // NICE_TO_HAVE or LOW or anything else
-  return "LOW";
-}
-
 export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: AnalysisPanelProps) {
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -407,7 +384,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         mutationTimestampRef.current = 0;
         lastProcessedAnalysisIdRef.current = id;
         loadCompletedAnalysis(polledAnalysis.data);
-        toast.success("Analyse terminee");
+        toast.success("Analyse terminée");
       } else if (status === "FAILED") {
         setIsPolling(false);
         mutationTimestampRef.current = 0;
@@ -428,7 +405,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       if (!isAlreadyDisplayed) {
         lastProcessedAnalysisIdRef.current = id;
         loadCompletedAnalysis(polledAnalysis.data);
-        toast.success("Analyse terminee");
+        toast.success("Analyse terminée");
       }
     }
   }, [polledAnalysis, isPolling, dealId, queryClient, analyses, loadCompletedAnalysis]);
@@ -560,6 +537,8 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     mutation.mutate();
   }, [subscriptionPlan, quota, mutation]);
 
+  const handleCloseCreditModal = useCallback(() => setShowCreditModal(false), []);
+
   const handleSelectAnalysis = useCallback((analysisId: string) => {
     setSelectedAnalysisId(analysisId);
     setLiveResult(null);
@@ -585,7 +564,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       try {
         await submitFounderResponses(dealId, responses, freeNotes);
         queryClient.invalidateQueries({ queryKey: queryKeys.founderResponses.byDeal(dealId) });
-        toast.success("Reponses enregistrees");
+        toast.success("Réponses enregistrées");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Erreur lors de l'enregistrement");
       } finally {
@@ -603,7 +582,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         // First save the responses
         await submitFounderResponses(dealId, responses, freeNotes);
         queryClient.invalidateQueries({ queryKey: queryKeys.founderResponses.byDeal(dealId) });
-        toast.success("Reponses enregistrees, relancement de l'analyse...");
+        toast.success("Réponses enregistrées, relancement de l'analyse...");
 
         // Then trigger a new analysis with onSettled to reset state
         mutation.mutate(undefined, {
@@ -685,6 +664,17 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       .reverse(); // Oldest first for timeline display
   }, [completedAnalyses]);
 
+  // Build agent statuses from live results for progress display
+  const agentStatuses = useMemo<AgentStatus[]>(() => {
+    if (!liveResult?.results) return [];
+    return Object.entries(liveResult.results).map(([name, result]) => ({
+      agentName: name,
+      status: result.success ? "completed" as const : result.error ? "error" as const : "running" as const,
+      executionTimeMs: result.executionTimeMs,
+      error: result.error,
+    }));
+  }, [liveResult?.results]);
+
   // Get current analysis ID for timeline selection
   const currentAnalysisId = useMemo(() => {
     if (selectedAnalysisId) return selectedAnalysisId;
@@ -721,31 +711,28 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const previousScore = useMemo(() => extractDealScore(previousAnalysis?.results), [previousAnalysis]);
 
   // Extract questions from question-master agent results
-  const founderQuestions = useMemo((): AgentQuestion[] => {
-    if (!displayedResult?.results) return [];
-    const questionMasterResult = displayedResult.results["question-master"];
-    if (!questionMasterResult?.success || !questionMasterResult.data) return [];
+  // Extract and consolidate questions from ALL agents (F73)
+  const { founderQuestions, top10Questions } = useMemo(() => {
+    if (!displayedResult?.results) return { founderQuestions: [] as AgentQuestion[], top10Questions: [] as ConsolidatedQuestion[] };
 
-    const data = questionMasterResult.data as {
-      findings?: {
-        founderQuestions?: Array<{
-          id: string;
-          question: string;
-          category: string;
-          priority: string;
-          context?: { sourceAgent?: string };
-        }>;
-      };
+    // Collect red flag titles for cross-referencing
+    const redFlagTitles: string[] = [];
+    for (const result of Object.values(displayedResult.results)) {
+      if (!result.success || !result.data) continue;
+      const data = result.data as Record<string, unknown>;
+      if (Array.isArray(data.redFlags)) {
+        for (const rf of data.redFlags as Array<{ title?: string }>) {
+          if (rf.title) redFlagTitles.push(rf.title);
+        }
+      }
+    }
+
+    const consolidated = consolidateAndPrioritizeQuestions(displayedResult.results, redFlagTitles);
+
+    return {
+      founderQuestions: consolidated as AgentQuestion[],
+      top10Questions: consolidated.slice(0, 10),
     };
-
-    const questions = data.findings?.founderQuestions ?? [];
-    return questions.map((q) => ({
-      id: q.id,
-      question: q.question,
-      category: mapQuestionCategory(q.category),
-      priority: mapQuestionPriority(q.priority),
-      agentSource: q.context?.sourceAgent ?? "question-master",
-    }));
   }, [displayedResult]);
 
   // Load or generate negotiation strategy (with cache support)
@@ -970,11 +957,13 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       {quota && (
         <CreditModal
           isOpen={showCreditModal}
-          onClose={() => setShowCreditModal(false)}
+          onClose={handleCloseCreditModal}
           type="LIMIT_REACHED"
           action={isUpdate ? "UPDATE" : "ANALYSIS"}
           current={quota.analyses.used}
           limit={quota.analyses.limit}
+          resetDate={quota.resetsAt}
+          planName={quota.plan}
         />
       )}
 
@@ -1072,7 +1061,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
             </CardTitle>
             {isPolling && polledAnalysis?.data && (
               <CardDescription>
-                {polledAnalysis.data.completedAgents}/{polledAnalysis.data.totalAgents} agents termines
+                {polledAnalysis.data.completedAgents}/{polledAnalysis.data.totalAgents} agents terminés
               </CardDescription>
             )}
           </CardHeader>
@@ -1080,6 +1069,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
             <AnalysisProgress
               isRunning={isAnalyzing}
               analysisType={analysisType === "tier1_complete" ? "tier1_complete" : "full_analysis"}
+              agentStatuses={agentStatuses}
             />
           </CardContent>
         </Card>
@@ -1093,7 +1083,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <CardTitle className="text-lg">
-                    {displayedResult.isLive ? "Resultats" : "Analyse sauvegardee"}
+                    {displayedResult.isLive ? "Résultats" : "Analyse sauvegardée"}
                   </CardTitle>
                   {/* Delta Indicator for score when previous version exists */}
                   {previousScore > 0 && currentScore > 0 && (
@@ -1159,11 +1149,11 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               </div>
               {/* Tabs Navigation */}
               <TabsList className="mt-3">
-                <TabsTrigger value="results">Resultats</TabsTrigger>
+                <TabsTrigger value="results">Résultats</TabsTrigger>
                 {deckCoherenceReport && (
                   <TabsTrigger value="coherence" className="flex items-center gap-1.5">
                     <ShieldAlert className="h-4 w-4" />
-                    Coherence
+                    Cohérence
                     {deckCoherenceReport.summary.criticalIssues > 0 && (
                       <Badge variant="destructive" className="ml-1 text-xs">
                         {deckCoherenceReport.summary.criticalIssues}
@@ -1203,6 +1193,43 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                   />
                 )}
 
+                {/* Error Summary Banner - Show if any agent failed (F85) */}
+                {displayedResult.results && (() => {
+                  const failedAgents = Object.entries(displayedResult.results).filter(([, r]) => !r.success);
+                  if (failedAgents.length === 0) return null;
+
+                  const criticalFailures = failedAgents.filter(([name]) =>
+                    getAgentErrorImpact(name).severity === "CRITICAL"
+                  );
+
+                  return (
+                    <Card className={criticalFailures.length > 0 ? "border-red-300 bg-red-50" : "border-amber-300 bg-amber-50"}>
+                      <CardContent className="py-3">
+                        <div className="flex items-start gap-3">
+                          <AlertTriangle className={cn("h-5 w-5 shrink-0 mt-0.5", criticalFailures.length > 0 ? "text-red-600" : "text-amber-600")} />
+                          <div>
+                            <p className="font-medium text-sm">
+                              {failedAgents.length} agent{failedAgents.length > 1 ? "s" : ""} en échec
+                              {criticalFailures.length > 0 && ` dont ${criticalFailures.length} critique${criticalFailures.length > 1 ? "s" : ""}`}
+                            </p>
+                            <ul className="mt-1 space-y-0.5">
+                              {failedAgents.map(([name]) => {
+                                const impact = getAgentErrorImpact(name);
+                                return (
+                                  <li key={name} className="text-xs text-muted-foreground">
+                                    <Badge variant="outline" className="text-[10px] mr-1">{impact.severity}</Badge>
+                                    <strong>{formatAgentName(name)}</strong> : {impact.missingAnalysis}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+
                 {/* Tier 3 Results - Synthesis Agents (Score, Scenarios, Devil's Advocate, Memo) */}
                 {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
                   <Tier3Results results={tier3Results} subscriptionPlan={subscriptionPlan} totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter(r => r.success).length : 0} />
@@ -1222,6 +1249,54 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                 {/* Tier 1 Results - 12 Investigation Agents (FREE sees limited items + teasers) */}
                 {isTier1Analysis && displayedResult.success && Object.keys(tier1Results).length > 0 && (
                   <Tier1Results results={tier1Results} subscriptionPlan={subscriptionPlan} />
+                )}
+
+                {/* Top 10 Questions Consolidées (F73) */}
+                {top10Questions.length > 0 && displayedResult.success && (
+                  <Card className="border-2 border-blue-100">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-lg flex items-center gap-2">
+                          <MessageSquare className="h-5 w-5 text-blue-600" />
+                          Top 10 Questions à Poser
+                        </CardTitle>
+                        <Badge variant="outline">{top10Questions.length} questions consolidées</Badge>
+                      </div>
+                      <CardDescription>
+                        Questions priorisées de {new Set(top10Questions.flatMap(q => q.sources)).size} agents
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {top10Questions.map((q, i) => (
+                          <div key={q.id} className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted/30 transition-colors">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-800 text-xs font-bold">
+                              {i + 1}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium">{q.question}</p>
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <Badge variant={q.priority === "CRITICAL" ? "destructive" : q.priority === "HIGH" ? "default" : "secondary"} className="text-xs">
+                                  {q.priority}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">
+                                  {q.sources.length > 1
+                                    ? `${q.sources.length} agents (${q.sources.map(s => formatAgentName(s)).join(", ")})`
+                                    : formatAgentName(q.agentSource)}
+                                </span>
+                                {q.linkedToRedFlag && (
+                                  <Badge variant="outline" className="text-xs text-red-600 border-red-200">
+                                    <AlertTriangle className="h-3 w-3 mr-1" />
+                                    Lié à un red flag
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
 
                 {/* Agent Results - Collapsible for Tier 1/2/3 */}
@@ -1257,11 +1332,45 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                               <span className="text-sm text-muted-foreground">
                                 {(agentResult.executionTimeMs / 1000).toFixed(1)}s
                               </span>
-                              {agentResult.error && (
-                                <Badge variant="destructive" className="max-w-[200px] truncate" title={agentResult.error}>
-                                  {formatErrorMessage(agentResult.error)}
-                                </Badge>
-                              )}
+                              {agentResult.error && (() => {
+                                const errorInfo = formatDetailedError(name, agentResult.error);
+                                return (
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Badge
+                                          variant="destructive"
+                                          className={cn(
+                                            "cursor-help",
+                                            errorInfo.impact.severity === "CRITICAL" && "bg-red-600 animate-pulse",
+                                            errorInfo.impact.severity === "HIGH" && "bg-orange-600",
+                                          )}
+                                        >
+                                          {errorInfo.shortMessage}
+                                        </Badge>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="left" className="max-w-sm p-3">
+                                        <div className="space-y-2">
+                                          <p className="font-semibold text-sm">
+                                            {formatAgentName(name)} — {errorInfo.shortMessage}
+                                          </p>
+                                          <p className="text-xs text-muted-foreground">
+                                            <strong>Impact :</strong> {errorInfo.impact.missingAnalysis}
+                                          </p>
+                                          <p className="text-xs">
+                                            {errorInfo.impact.recommendation}
+                                          </p>
+                                          {errorInfo.detailedMessage !== errorInfo.shortMessage && (
+                                            <p className="text-xs text-muted-foreground/70 font-mono">
+                                              {errorInfo.detailedMessage.slice(0, 200)}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                );
+                              })()}
                             </div>
                           </div>
                         ))}
@@ -1287,11 +1396,45 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                           <span className="text-sm text-muted-foreground">
                             {(agentResult.executionTimeMs / 1000).toFixed(1)}s
                           </span>
-                          {agentResult.error && (
-                            <Badge variant="destructive" className="max-w-[200px] truncate" title={agentResult.error}>
-                              {formatErrorMessage(agentResult.error)}
-                            </Badge>
-                          )}
+                          {agentResult.error && (() => {
+                            const errorInfo = formatDetailedError(name, agentResult.error);
+                            return (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      variant="destructive"
+                                      className={cn(
+                                        "cursor-help",
+                                        errorInfo.impact.severity === "CRITICAL" && "bg-red-600 animate-pulse",
+                                        errorInfo.impact.severity === "HIGH" && "bg-orange-600",
+                                      )}
+                                    >
+                                      {errorInfo.shortMessage}
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="left" className="max-w-sm p-3">
+                                    <div className="space-y-2">
+                                      <p className="font-semibold text-sm">
+                                        {formatAgentName(name)} — {errorInfo.shortMessage}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        <strong>Impact :</strong> {errorInfo.impact.missingAnalysis}
+                                      </p>
+                                      <p className="text-xs">
+                                        {errorInfo.impact.recommendation}
+                                      </p>
+                                      {errorInfo.detailedMessage !== errorInfo.shortMessage && (
+                                        <p className="text-xs text-muted-foreground/70 font-mono">
+                                          {errorInfo.detailedMessage.slice(0, 200)}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            );
+                          })()}
                         </div>
                       </div>
                     ))}
@@ -1304,6 +1447,31 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                     <h4 className="font-medium mb-2">Resume</h4>
                     <div className="text-sm whitespace-pre-wrap">{displayedResult.summary}</div>
                   </div>
+                )}
+
+                {/* Partial Analysis Banner for FREE users (F32) */}
+                <PartialAnalysisBanner
+                  subscriptionPlan={subscriptionPlan}
+                  isMissingTier3={!isTier3Analysis}
+                />
+
+                {/* Next Steps Guide (F29) */}
+                {displayedResult.success && (
+                  <NextStepsGuide
+                    criticalRedFlagCount={
+                      displayedResult.results
+                        ? Object.values(displayedResult.results).reduce((count, r) => {
+                            if (!r.success || !r.data) return count;
+                            const data = r.data as { redFlags?: Array<{ severity: string }> };
+                            return count + (data.redFlags?.filter(f => f.severity === "CRITICAL").length ?? 0);
+                          }, 0)
+                        : 0
+                    }
+                    questionsCount={founderQuestions.length}
+                    avgScore={currentScore}
+                    hasTier3={isTier3Analysis}
+                    subscriptionPlan={subscriptionPlan}
+                  />
                 )}
 
                 {/* PRO Upsell Banner for FREE users */}
@@ -1403,6 +1571,24 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                 )}
               </Button>
             </div>
+            {/* Cost estimation (F92) */}
+            {subscriptionPlan === "FREE" && quota && (
+              <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                <AlertCircle className="h-3 w-3 shrink-0" />
+                <span>
+                  Cette analyse utilisera <strong>1 crédit</strong> sur vos{" "}
+                  <strong>{quota.analyses.limit - quota.analyses.used} restants</strong> ce mois.
+                </span>
+              </div>
+            )}
+            {subscriptionPlan !== "FREE" && quota && (
+              <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                <span>
+                  {quota.analyses.used} analyse{quota.analyses.used !== 1 ? "s" : ""} effectuée{quota.analyses.used !== 1 ? "s" : ""} ce mois
+                  ({analysisType === "full_analysis" ? "18+ agents, ~2 min" : "12 agents, ~1 min"})
+                </span>
+              </div>
+            )}
           </CardHeader>
           {/* History Toggle */}
           {completedAnalyses.length > 1 && (

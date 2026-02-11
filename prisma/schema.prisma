@@ -23,6 +23,8 @@ model User {
   investmentPreferences Json?
 
   deals         Deal[]
+  apiKeys       ApiKey[]
+  webhooks      Webhook[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -139,10 +141,23 @@ model Document {
   ocrProcessed        Boolean   @default(false)
   ocrText             String?   @db.Text  // Text from OCR if processed
 
+  // F63: Content hash for dedup + cache invalidation
+  contentHash      String?   // SHA-256 hash of the file content
+
+  // F62: Document versioning
+  version          Int       @default(1)
+  parentDocumentId String?   // Points to the original document this replaces
+  parentDocument   Document? @relation("DocumentVersions", fields: [parentDocumentId], references: [id])
+  childVersions    Document[] @relation("DocumentVersions")
+  isLatest         Boolean   @default(true)
+  supersededAt     DateTime? // When this version was replaced by a newer one
+
   uploadedAt       DateTime @default(now())
 
   @@index([dealId])
   @@index([processingStatus])
+  @@index([contentHash])
+  @@index([parentDocumentId])
 }
 
 enum DocumentType {
@@ -1618,4 +1633,43 @@ enum ChatRole {
   USER
   ASSISTANT
   SYSTEM
+}
+
+// F83: API Keys for public API access
+model ApiKey {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String    // User-friendly name (e.g. "My Integration")
+  keyHash     String    @unique // bcrypt hash of the key (never store raw)
+  keyPrefix   String    // First 8 chars for identification (adk_live_xxxxxxxx)
+
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([keyPrefix])
+}
+
+// F83: Webhooks for event notifications
+model Webhook {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  url         String    // HTTPS endpoint
+  secret      String    // HMAC secret for signature verification
+  events      String[]  // List of event types (e.g. ["analysis.completed", "red_flag.detected"])
+  active      Boolean   @default(true)
+
+  lastTriggeredAt DateTime?
+  failureCount    Int       @default(0)
+
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
 }

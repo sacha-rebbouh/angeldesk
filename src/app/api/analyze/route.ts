@@ -10,7 +10,11 @@ import {
   type AnalysisTier,
   type SubscriptionTier,
 } from "@/services/deal-limits";
-import { checkRateLimit, CUID_PATTERN } from "@/lib/sanitize";
+import { CUID_PATTERN } from "@/lib/sanitize";
+
+// Vercel: Allow long-running analysis. Requires Pro plan (300s max).
+// Without this, the fire-and-forget promise may be killed after 10s.
+export const maxDuration = 300; // 5 minutes
 
 const analyzeSchema = z.object({
   dealId: z.string().min(1, "Deal ID is required").regex(CUID_PATTERN, "Invalid deal ID format"),
@@ -51,18 +55,18 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    // Rate limiting: 5 analyses per minute per user (analyses are expensive)
-    const rateLimit = checkRateLimit(`analyze:${user.id}`, {
-      maxRequests: 5,
-      windowMs: 60000,
+    // Rate limiting via DB: persistent across serverless instances
+    const recentAnalyses = await prisma.analysis.count({
+      where: {
+        deal: { userId: user.id },
+        createdAt: { gte: new Date(Date.now() - 60000) }, // last minute
+      },
     });
-    if (!rateLimit.allowed) {
+
+    if (recentAnalyses >= 5) {
       return NextResponse.json(
         { error: "Too many requests. Please try again later." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(rateLimit.resetIn) },
-        }
+        { status: 429, headers: { "Retry-After": "60" } }
       );
     }
 

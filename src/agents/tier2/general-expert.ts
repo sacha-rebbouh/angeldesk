@@ -592,7 +592,7 @@ function normalizeOutput(raw: unknown): unknown {
   } else {
     const sr = obj.sectorResearch as Record<string, unknown>;
     sr.identifiedSector = sr.identifiedSector || "Non identifie";
-    sr.sectorConfidence = sr.sectorConfidence ?? 50;
+    sr.sectorConfidence = sr.sectorConfidence ?? 0;
     sr.sectorRationale = sr.sectorRationale || "Non specifie";
     sr.subSector = sr.subSector || "General";
     sr.adjacentSectors = Array.isArray(sr.adjacentSectors) ? sr.adjacentSectors : [];
@@ -771,7 +771,7 @@ function normalizeOutput(raw: unknown): unknown {
   }
 
   // Ensure sectorScore exists
-  obj.sectorScore = obj.sectorScore ?? 50;
+  obj.sectorScore = obj.sectorScore ?? 0;
 
   // Ensure scoreBreakdown exists with all required fields
   if (!obj.scoreBreakdown || typeof obj.scoreBreakdown !== "object") {

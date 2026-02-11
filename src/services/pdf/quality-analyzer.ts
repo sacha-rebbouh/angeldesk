@@ -397,26 +397,113 @@ export function quickOCRCheck(text: string, pageCount: number): boolean {
 }
 
 /**
- * Get list of page indices that need OCR (0-indexed)
- * Returns pages with < MIN_CHARS_PER_PAGE characters
+ * Get prioritized list of pages needing OCR.
+ * Prioritizes pages likely to contain financial data/tables over decorative pages.
+ *
+ * Priority logic:
+ * 1. Pages with some text containing financial keywords but low char count (likely tables as images)
+ * 2. Pages in the middle of the document (more likely to be content)
+ * 3. Pages that are completely empty (may be image-only slides with charts)
+ * 4. First/last pages are deprioritized (usually cover/thank you)
+ *
+ * @param pageContentDistribution - Characters per page array
+ * @param maxPages - Maximum pages to return (default 20)
+ * @param existingText - Already extracted text (for keyword detection per page)
+ * @returns Prioritized array of page indices (0-indexed)
  */
 export function getPagesNeedingOCR(
   pageContentDistribution: number[],
-  maxPages: number = 20
+  maxPages: number = 20,
+  existingText?: string
 ): number[] {
-  const lowContentPages: { index: number; chars: number }[] = [];
+  const totalPages = pageContentDistribution.length;
+  if (totalPages === 0) return [];
 
-  for (let i = 0; i < pageContentDistribution.length; i++) {
-    if (pageContentDistribution[i] < MIN_CHARS_PER_PAGE) {
-      lowContentPages.push({ index: i, chars: pageContentDistribution[i] });
+  const FINANCIAL_KEYWORDS = [
+    'revenue', 'arr', 'mrr', 'ebitda', 'margin', 'growth',
+    'forecast', 'projection', 'budget', 'cost', 'expense',
+    'customer', 'churn', 'ltv', 'cac', 'cohort', 'unit',
+    'cap table', 'valuation', 'dilution', 'round', 'funding',
+    'total', 'q1', 'q2', 'q3', 'q4', 'fy', 'ytd',
+    '2023', '2024', '2025', '2026',
+  ];
+
+  const DECORATIVE_KEYWORDS = [
+    'thank you', 'merci', 'contact', 'appendix', 'annexe',
+    'confidential', 'confidentiel', 'disclaimer',
+  ];
+
+  // Split existing text into approximate per-page chunks for keyword matching
+  const pageTexts: string[] = [];
+  if (existingText) {
+    const sections = existingText.split(/\n{3,}|\f/);
+    const groupSize = Math.max(1, Math.ceil(sections.length / totalPages));
+    for (let i = 0; i < totalPages; i++) {
+      const start = i * groupSize;
+      const end = Math.min(start + groupSize, sections.length);
+      pageTexts.push(sections.slice(start, end).join('\n').toLowerCase());
     }
   }
 
-  // Sort by lowest content first (prioritize emptiest pages)
-  lowContentPages.sort((a, b) => a.chars - b.chars);
+  const priorities: { index: number; priority: number }[] = [];
 
-  // Return indices, limited to maxPages
-  return lowContentPages.slice(0, maxPages).map(p => p.index);
+  for (let i = 0; i < totalPages; i++) {
+    const chars = pageContentDistribution[i];
+
+    // Skip pages with good text extraction (>= MIN_CHARS_PER_PAGE)
+    if (chars >= MIN_CHARS_PER_PAGE) continue;
+
+    let priority = 50;
+    const pageText = pageTexts[i] || "";
+
+    // BOOST: Pages with financial keywords (partial extraction of tables)
+    const financialKeywordCount = FINANCIAL_KEYWORDS.filter(kw =>
+      pageText.includes(kw)
+    ).length;
+    if (financialKeywordCount > 0) {
+      priority += financialKeywordCount * 15;
+    }
+
+    // BOOST: Pages with numbers/percentages (likely data tables)
+    const numberDensity = (pageText.match(/\d+[%€$KMB,.]?\d*/g) || []).length;
+    if (numberDensity > 3) {
+      priority += Math.min(numberDensity * 5, 30);
+    }
+
+    // BOOST: Middle pages are more likely content (not cover/end)
+    const relativePosition = i / Math.max(totalPages - 1, 1);
+    if (relativePosition > 0.1 && relativePosition < 0.9) {
+      priority += 10;
+    }
+
+    // PENALTY: First page (usually cover)
+    if (i === 0) {
+      priority -= 30;
+    }
+
+    // PENALTY: Last page (usually thank you / contact)
+    if (i === totalPages - 1) {
+      priority -= 25;
+    }
+
+    // PENALTY: Decorative keywords detected
+    const isDecorative = DECORATIVE_KEYWORDS.some(kw => pageText.includes(kw));
+    if (isDecorative) {
+      priority -= 20;
+    }
+
+    // PENALTY: Completely empty with no extracted text at all
+    if (chars === 0 && pageText.length === 0) {
+      priority -= 10;
+    }
+
+    priorities.push({ index: i, priority });
+  }
+
+  // Sort by priority DESC (highest priority first)
+  priorities.sort((a, b) => b.priority - a.priority);
+
+  return priorities.slice(0, maxPages).map(p => p.index);
 }
 
 /**

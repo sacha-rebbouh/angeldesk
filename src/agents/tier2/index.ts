@@ -157,12 +157,12 @@ function wrapWithRun(expert: BuildPromptExpert): AnySectorExpert {
             redFlagAnswer: "",
           })) ?? [],
           sectorFit: {
-            score: output.sectorFit?.score ?? 50,
+            score: output.sectorFit?.score ?? 0,
             strengths: [],
             weaknesses: [],
             sectorTiming: output.sectorFit?.timingAssessment === "early_mover" ? "early" : output.sectorFit?.timingAssessment === "too_late" ? "late" : "optimal",
           },
-          sectorScore: output.sectorFit?.score ?? 50,
+          sectorScore: output.sectorFit?.score ?? 0,
           executiveSummary: output.sectorFit?.reasoning ?? "",
         };
 

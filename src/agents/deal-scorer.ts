@@ -151,7 +151,7 @@ IMPORTANT:
 
     // Validate and normalize scores
     const normalizeScore = (s: number | undefined): number =>
-      Math.min(100, Math.max(0, Math.round(s ?? 50)));
+      s != null ? Math.min(100, Math.max(0, Math.round(s))) : 0;
 
     const scores: DealScores = {
       global: normalizeScore(data.scores?.global),

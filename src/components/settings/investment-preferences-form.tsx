@@ -292,6 +292,33 @@ export function InvestmentPreferencesForm() {
           </p>
         </div>
 
+        {/* Investment Thesis (F72) */}
+        <div className="space-y-4">
+          <h3 className="text-sm font-medium">Thèse d&apos;investissement</h3>
+          <textarea
+            className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            placeholder="Ex: Je cible les SaaS B2B vertical en Europe, séries Seed/A, avec NRR > 120% et fondateurs techniques ayant déjà scalé un produit."
+            value={currentPrefs.investmentThesis ?? ""}
+            onChange={(e) => handleChange("investmentThesis", e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Décrivez vos critères d&apos;investissement. Le mémo sera personnalisé en fonction.
+          </p>
+        </div>
+
+        {/* Must-Have Criteria (F72) */}
+        <div className="space-y-4">
+          <h3 className="text-sm font-medium">Critères obligatoires (must-have)</h3>
+          <Input
+            placeholder="Ex: Fondateur technique, ARR > 200K, marché Europe"
+            value={(currentPrefs.mustHaveCriteria ?? []).join(", ")}
+            onChange={(e) => handleChange("mustHaveCriteria", e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean))}
+          />
+          <p className="text-xs text-muted-foreground">
+            Séparez par des virgules. Le mémo vérifiera ces critères.
+          </p>
+        </div>
+
         {/* Save Button */}
         <div className="flex items-center gap-4 pt-4 border-t">
           <Button

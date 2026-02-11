@@ -825,27 +825,38 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
     const validMarketSeverities = ["EXISTENTIAL", "SERIOUS", "MANAGEABLE"] as const;
 
     // Normalize meta
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[devils-advocate] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "devils-advocate",
       analysisDate: new Date().toISOString(),
       dataCompleteness: ["complete", "partial", "minimal"].includes(data.meta?.dataCompleteness)
         ? data.meta.dataCompleteness
         : "partial",
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 60)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Normalize score
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[devils-advocate] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: validGrades.includes(data.score?.grade as (typeof validGrades)[number])
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : (validGrades.includes(data.score?.grade as (typeof validGrades)[number])
         ? (data.score.grade as (typeof validGrades)[number])
-        : "C",
+        : "C"),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({
             criterion: b.criterion ?? "",
             weight: b.weight ?? 20,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "",
           }))
         : [],
@@ -1013,7 +1024,8 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
           }))
         : [],
       skepticismAssessment: {
-        score: Math.min(100, Math.max(0, data.findings?.skepticismAssessment?.score ?? 50)),
+        score: data.findings?.skepticismAssessment?.score != null
+          ? Math.min(100, Math.max(0, data.findings.skepticismAssessment.score)) : 0,
         scoreBreakdown: Array.isArray(data.findings?.skepticismAssessment?.scoreBreakdown)
           ? data.findings.skepticismAssessment.scoreBreakdown.map((s) => ({
               factor: s.factor ?? "",

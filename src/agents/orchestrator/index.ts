@@ -34,6 +34,8 @@ import {
 } from "../orchestration";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { applyTier3Coherence, injectCoherenceIntoContext } from "../orchestration/tier3-coherence";
+import { runTier1CrossValidation } from "../orchestration/tier1-cross-validation";
+import { sanitizeResultForDownstream } from "../orchestration/result-sanitizer";
 import { costMonitor } from "@/services/cost-monitor";
 import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
 import { setAgentContext, setAnalysisContext, runWithLLMContext } from "@/services/openrouter/router";
@@ -50,6 +52,7 @@ import {
   reformatFactStoreWithValidations,
 } from "@/services/fact-store";
 import type { CurrentFact, FactCategory } from "@/services/fact-store/types";
+import { replaceUnreliableWithPlaceholders, formatFactsForScoringAgents } from "@/services/fact-store/fact-filter";
 
 // Import modular components
 import {
@@ -620,11 +623,18 @@ export class AgentOrchestrator {
     const contextEngineData = await this.enrichContext(deal, extractedData);
 
     // Build enriched context for Tier 1 agents with Fact Store
+    // SECURITY: Replace PROJECTED/UNVERIFIABLE facts with placeholders
+    // to prevent scoring agents from treating projections as facts
+    const filteredFactStore = replaceUnreliableWithPlaceholders(factStore);
+    const filteredFactStoreFormatted = factStore.length > 0
+      ? formatFactsForScoringAgents(factStore)
+      : factStoreFormatted;
+
     const enrichedContext: EnrichedAgentContext = {
       ...baseContext,
       contextEngine: contextEngineData,
-      factStore,
-      factStoreFormatted,
+      factStore: filteredFactStore,
+      factStoreFormatted: filteredFactStoreFormatted,
       deckCoherenceReport: deckCoherenceReport ?? undefined,
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
     };
@@ -1415,6 +1425,50 @@ export class AgentOrchestrator {
         }, collectedWarnings);
       }
 
+      // STEP 4.5: TIER 1 CROSS-VALIDATION (deterministic, no LLM) (F34/F39)
+      const crossValidation = runTier1CrossValidation(allResults);
+      if (crossValidation.validations.length > 0 || crossValidation.warnings.length > 0) {
+        console.log(
+          `[Orchestrator] Tier 1 cross-validation: ${crossValidation.validations.length} divergences, ${crossValidation.adjustments.length} adjustments, ${crossValidation.warnings.length} warnings`
+        );
+
+        // Apply score adjustments
+        for (const adj of crossValidation.adjustments) {
+          const result = allResults[adj.agentName];
+          if (result?.success && "data" in result) {
+            const data = (result as { data?: Record<string, unknown> }).data;
+            const scoreObj = data?.score as { value?: number } | undefined;
+            if (scoreObj && typeof scoreObj.value === "number") {
+              scoreObj.value = adj.after;
+            }
+          }
+        }
+
+        // Inject into context for Tier 3 agents
+        enrichedContext.tier1CrossValidation = crossValidation;
+      }
+
+      // STEP 4.6: CONSOLIDATE RED FLAGS (F77 - unified taxonomy)
+      try {
+        const { consolidateRedFlags } = await import("../red-flag-taxonomy");
+        const agentRedFlagMap: Record<string, { redFlags?: Array<{ id: string; category: string; severity: string; [key: string]: unknown }> }> = {};
+        for (const [agentName, result] of Object.entries(allResults)) {
+          if (result.success && "data" in result) {
+            const data = (result as { data?: Record<string, unknown> }).data;
+            if (data?.redFlags && Array.isArray(data.redFlags)) {
+              agentRedFlagMap[agentName] = { redFlags: data.redFlags as Array<{ id: string; category: string; severity: string }> };
+            }
+          }
+        }
+        const consolidatedFlags = consolidateRedFlags(agentRedFlagMap);
+        if (consolidatedFlags.length > 0) {
+          enrichedContext.consolidatedRedFlags = consolidatedFlags;
+          console.log(`[Orchestrator] F77: Consolidated ${consolidatedFlags.length} red flags from ${Object.keys(agentRedFlagMap).length} agents`);
+        }
+      } catch (err) {
+        console.error("[Orchestrator] Red flag consolidation failed:", err);
+      }
+
       // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
       // Run contradiction-detector, scenario-modeler, devils-advocate in PARALLEL
       await stateMachine.startSynthesis();
@@ -1479,7 +1533,8 @@ export class AgentOrchestrator {
           allResults[agentName] = result;
           totalCost += result.cost;
           completedCount++;
-          enrichedContext.previousResults![agentName] = result;
+          // F97: Tier 3 results stored unsanitized (they contain synthesis/evaluations needed by later Tier 3 agents)
+          enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result, { skipSanitization: true });
 
           if (result.success) {
             stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
@@ -1614,6 +1669,14 @@ export class AgentOrchestrator {
       }
 
       // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
+      // Restore full (unsanitized) results for final synthesis agents.
+      // Sanitization (F52) was needed between Tier 1 agents to prevent confirmation bias.
+      // Final synthesis agents (synthesis-deal-scorer, memo-generator) NEED scores/verdicts
+      // to produce the global deal score and investment memo.
+      for (const [agentName, result] of Object.entries(allResults)) {
+        enrichedContext.previousResults![agentName] = result;
+      }
+
       // FREE plan: only synthesis-deal-scorer; PRO plan: synthesis-deal-scorer + memo-generator
       const finalSynthesisBatches = includeFullTier3
         ? TIER3_BATCHES_AFTER_TIER2
@@ -1721,8 +1784,42 @@ export class AgentOrchestrator {
       // console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
 
       await updateDealStatus(dealId, "IN_DD");
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.log("[Orchestrator:DEBUG] All done, returning result");
+
+      // F83: Dispatch webhook event (fire-and-forget)
+      try {
+        const { dispatchWebhookEvent } = await import("@/services/webhook-dispatcher");
+        dispatchWebhookEvent(deal.userId, allSuccess ? "analysis.completed" : "analysis.failed", {
+          dealId,
+          analysisId: analysis.id,
+          type: "full_analysis",
+          success: allSuccess,
+          totalTimeMs,
+          totalCost,
+        }).catch(err => console.error("[Webhook] Dispatch failed:", err));
+      } catch {
+        // Webhook dispatch is optional - don't block
+      }
+
+      // F40: Calculate analysis delta for re-analyses
+      let analysisDelta;
+      if (isUpdate) {
+        try {
+          const { calculateAnalysisDelta } = await import("@/services/analysis-delta");
+          const previousAnalysis = await prisma.analysis.findFirst({
+            where: { dealId, id: { not: analysis.id }, completedAt: { not: null } },
+            orderBy: { completedAt: "desc" },
+            select: { id: true },
+          });
+          if (previousAnalysis) {
+            analysisDelta = await calculateAnalysisDelta(analysis.id, previousAnalysis.id);
+            if (analysisDelta) {
+              console.log(`[Orchestrator] F40: Delta vs previous analysis: ${analysisDelta.scoreDelta.overall.delta >= 0 ? "+" : ""}${analysisDelta.scoreDelta.overall.delta} points`);
+            }
+          }
+        } catch (err) {
+          console.error("[Orchestrator] Analysis delta failed:", err);
+        }
+      }
 
       return this.addWarningsToResult({
         sessionId: analysis.id,
@@ -1734,6 +1831,7 @@ export class AgentOrchestrator {
         totalTimeMs,
         summary,
         tiersExecuted: availableTiers,
+        analysisDelta: analysisDelta ?? undefined,
       }, collectedWarnings);
     } catch (error) {
       // DEBUG log removed for production - uncomment for debugging:
@@ -1882,7 +1980,8 @@ export class AgentOrchestrator {
         allResults[agentName] = result;
         totalCost += result.cost;
         completedCount++;
-        enrichedContext.previousResults![agentName] = result;
+        // Sanitize to prevent confirmation bias in downstream agents (F52)
+        enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result);
 
         if (stateMachine) {
           if (result.success) {
@@ -1941,7 +2040,7 @@ export class AgentOrchestrator {
           const validations = extractValidatedClaims(result, agentName);
           if (validations.length > 0) {
             allValidations.push(...validations);
-            updateFactsInMemory(factStore, validations);
+            factStore = updateFactsInMemory(factStore, validations);
             factStoreFormatted = reformatFactStoreWithValidations(factStore, allValidations);
             enrichedContext.factStore = factStore;
             enrichedContext.factStoreFormatted = factStoreFormatted;
@@ -2434,6 +2533,7 @@ export class AgentOrchestrator {
         peopleGraph: contextResult.peopleGraph,
         enrichedAt: contextResult.enrichedAt,
         completeness: contextResult.completeness,
+        contextQuality: contextResult.contextQuality,
       };
     } catch (error) {
       console.error("Context Engine error:", error);
@@ -3039,7 +3139,8 @@ export class AgentOrchestrator {
             allResults[agentName] = result;
             totalCost += result.cost;
             completedCount++;
-            enrichedContext.previousResults![agentName] = result;
+            // Sanitize Tier 1 results to prevent bias in downstream agents (F52)
+            enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result);
             await processAgentResult(deal.id, agentName, result);
             this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
           }
@@ -3099,6 +3200,12 @@ export class AgentOrchestrator {
           enrichedContext.baPreferences = baPreferences;
 
           const tier3AgentMap = await getTier3Agents();
+
+          // Restore full (unsanitized) results for Tier 3 synthesis agents.
+          // Sanitization (F52) was only needed between Tier 1 agents to prevent confirmation bias.
+          for (const [name, result] of Object.entries(allResults)) {
+            enrichedContext.previousResults![name] = result;
+          }
 
           // Run remaining Tier 3 agents in dependency order
           for (const batch of TIER3_EXECUTION_BATCHES) {

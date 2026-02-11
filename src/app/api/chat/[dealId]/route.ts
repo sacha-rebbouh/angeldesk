@@ -13,7 +13,7 @@ import {
   getConversationHistoryForLLM,
 } from "@/services/chat-context/conversation";
 import { getChatContext, getFullChatContext } from "@/services/chat-context";
-import { checkRateLimit, isValidCuid, CUID_PATTERN } from "@/lib/sanitize";
+import { checkRateLimitDistributed, isValidCuid, CUID_PATTERN } from "@/lib/sanitize";
 import { dealChatAgent, type FullChatContext } from "@/agents/chat";
 import { handleApiError } from "@/lib/api-error";
 
@@ -31,6 +31,7 @@ const sendMessageSchema = z.object({
     .regex(CUID_PATTERN, "Invalid conversation ID format")
     .nullish(), // Accept null, undefined, or valid CUID
   message: z.string().min(1).max(10000),
+  investorLevel: z.enum(["beginner", "intermediate", "expert"]).optional(),
 });
 
 // ============================================================================
@@ -114,7 +115,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     console.log(`[Chat API] POST: dealId=${dealId}, userId=${user.id}`);
 
     // Rate limiting: 10 messages per minute per user
-    const rateLimit = checkRateLimit(`chat:${user.id}`, {
+    const rateLimit = await checkRateLimitDistributed(`chat:${user.id}`, {
       maxRequests: 10,
       windowMs: 60000,
     });
@@ -233,6 +234,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             mode: fullContextData.latestAnalysis.mode ?? "unknown",
           }
         : null,
+      investorLevel: validated.investorLevel,
     };
 
     // Generate response using DealChatAgent

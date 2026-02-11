@@ -143,6 +143,8 @@ export interface AnalysisResult {
   resumedFromCheckpoint?: boolean; // True if analysis was resumed after crash
   // Tier gating metadata
   tiersExecuted?: string[]; // Which tiers were executed (for UI gating display)
+  // F40: Analysis delta for re-analyses
+  analysisDelta?: import("@/services/analysis-delta").AnalysisDelta | null;
 }
 
 /**

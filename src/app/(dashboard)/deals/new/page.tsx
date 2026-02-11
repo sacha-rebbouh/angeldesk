@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Info } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,8 +23,45 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { queryKeys } from "@/lib/query-keys";
+
+function FieldLabel({ htmlFor, children, tooltip, recommended }: {
+  htmlFor: string;
+  children: React.ReactNode;
+  tooltip?: string;
+  recommended?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Label htmlFor={htmlFor}>{children}</Label>
+      {recommended && (
+        <Badge variant="outline" className="text-[10px] px-1 py-0 text-blue-600 border-blue-200">
+          Recommandé
+        </Badge>
+      )}
+      {tooltip && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              <p className="text-xs">{tooltip}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+    </div>
+  );
+}
 
 const STAGES = [
   { value: "PRE_SEED", label: "Pre-seed" },
@@ -141,6 +179,39 @@ export default function NewDealPage() {
 
   const [errors, setErrors] = useState({});
 
+  // Completeness tracking (F88)
+  const completeness = useMemo(() => {
+    const fields = {
+      name: { filled: !!formData.name.trim(), weight: 2, level: "minimum" as const },
+      sector: { filled: !!formData.sector, weight: 2, level: "minimum" as const },
+      stage: { filled: !!formData.stage, weight: 2, level: "minimum" as const },
+      description: { filled: !!formData.description.trim(), weight: 2, level: "minimum" as const },
+      companyName: { filled: !!formData.companyName.trim(), weight: 1, level: "optimal" as const },
+      website: { filled: !!formData.website.trim(), weight: 1, level: "optimal" as const },
+      geography: { filled: !!formData.geography.trim(), weight: 1, level: "optimal" as const },
+      arr: { filled: !!formData.arr, weight: 1.5, level: "optimal" as const },
+      growthRate: { filled: !!formData.growthRate, weight: 1, level: "optimal" as const },
+      amountRequested: { filled: !!formData.amountRequested, weight: 1.5, level: "optimal" as const },
+      valuationPre: { filled: !!formData.valuationPre, weight: 1.5, level: "optimal" as const },
+    };
+
+    const totalWeight = Object.values(fields).reduce((sum, f) => sum + f.weight, 0);
+    const filledWeight = Object.values(fields).reduce((sum, f) => sum + (f.filled ? f.weight : 0), 0);
+    const percentage = Math.round((filledWeight / totalWeight) * 100);
+
+    const minFields = Object.entries(fields).filter(([, f]) => f.level === "minimum");
+    const minFilled = minFields.filter(([, f]) => f.filled).length;
+    const isMinimumMet = minFilled === minFields.length;
+
+    return {
+      percentage,
+      isMinimumMet,
+      minFilled,
+      minTotal: minFields.length,
+      level: percentage >= 80 ? "optimal" as const : percentage >= 50 ? "good" as const : "basic" as const,
+    };
+  }, [formData]);
+
   const mutation = useMutation({
     mutationFn: createDeal,
     onSuccess: (response) => {
@@ -197,6 +268,44 @@ export default function NewDealPage() {
           </p>
         </div>
       </div>
+
+      {/* Completeness Bar (F88) */}
+      <Card className={cn(
+        "border-2",
+        completeness.level === "optimal" ? "border-green-200 bg-green-50" :
+        completeness.level === "good" ? "border-blue-200 bg-blue-50" :
+        "border-gray-200"
+      )}>
+        <CardContent className="py-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Complétude du deal</span>
+              <Badge variant={completeness.level === "optimal" ? "default" : "secondary"}>
+                {completeness.percentage}%
+              </Badge>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {completeness.isMinimumMet
+                ? "Données minimales OK — Ajoutez les financiers pour une meilleure analyse"
+                : `${completeness.minFilled}/${completeness.minTotal} champs minimaux remplis`}
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-gray-200 overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-300",
+                completeness.level === "optimal" ? "bg-green-500" :
+                completeness.level === "good" ? "bg-blue-500" : "bg-gray-400"
+              )}
+              style={{ width: `${completeness.percentage}%` }}
+            />
+          </div>
+          <div className="flex justify-between mt-1">
+            <span className="text-[10px] text-muted-foreground">Minimal</span>
+            <span className="text-[10px] text-muted-foreground">Optimal</span>
+          </div>
+        </CardContent>
+      </Card>
 
       <form onSubmit={handleSubmit}>
         <div className="grid gap-6 lg:grid-cols-2">
@@ -328,7 +437,13 @@ export default function NewDealPage() {
             <CardContent>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="space-y-2">
-                  <Label htmlFor="arr">ARR (EUR)</Label>
+                  <FieldLabel
+                    htmlFor="arr"
+                    tooltip="Annual Recurring Revenue — Revenu annuel récurrent. C'est la métrique clé pour les SaaS. Si la startup n'est pas SaaS, utilisez le CA annuel."
+                    recommended
+                  >
+                    ARR (EUR)
+                  </FieldLabel>
                   <Input
                     id="arr"
                     type="number"
@@ -338,7 +453,12 @@ export default function NewDealPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="growthRate">Croissance YoY (%)</Label>
+                  <FieldLabel
+                    htmlFor="growthRate"
+                    tooltip="Taux de croissance annuel du revenu (year-over-year). Un SaaS Seed typique croît de 100-200%/an."
+                  >
+                    Croissance YoY (%)
+                  </FieldLabel>
                   <Input
                     id="growthRate"
                     type="number"
@@ -348,7 +468,13 @@ export default function NewDealPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="amountRequested">Montant demandé (EUR)</Label>
+                  <FieldLabel
+                    htmlFor="amountRequested"
+                    tooltip="Montant total que la startup cherche à lever dans ce round. Inclut tous les investisseurs, pas seulement votre ticket."
+                    recommended
+                  >
+                    Montant demandé (EUR)
+                  </FieldLabel>
                   <Input
                     id="amountRequested"
                     type="number"
@@ -358,7 +484,13 @@ export default function NewDealPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="valuationPre">Valorisation pre-money (EUR)</Label>
+                  <FieldLabel
+                    htmlFor="valuationPre"
+                    tooltip="Valorisation de l'entreprise AVANT l'investissement (pre-money). Post-money = Pre-money + Montant levé. Votre % = Ticket / Post-money."
+                    recommended
+                  >
+                    Valorisation pre-money (EUR)
+                  </FieldLabel>
                   <Input
                     id="valuationPre"
                     type="number"

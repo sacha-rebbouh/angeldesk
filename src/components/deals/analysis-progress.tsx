@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, XCircle } from "lucide-react";
+import { formatAgentName } from "@/lib/format-utils";
 
 // Timing configuration (in seconds)
 // Realistic durations based on actual analysis times
@@ -20,10 +21,18 @@ const STEP_TIMINGS_FREE = {
   scoring: { duration: 30 }, // Basic scoring ~30s (will stay running until complete)
 } as const;
 
+export interface AgentStatus {
+  agentName: string;
+  status: "pending" | "running" | "completed" | "error";
+  executionTimeMs?: number;
+  error?: string;
+}
+
 export interface AnalysisProgressProps {
   isRunning: boolean;
   onComplete?: () => void;
   analysisType?: "tier1_complete" | "full_analysis";
+  agentStatuses?: AgentStatus[];
 }
 
 interface StepConfig {
@@ -35,6 +44,7 @@ interface StepConfig {
 export function AnalysisProgress({
   isRunning,
   analysisType = "full_analysis",
+  agentStatuses,
 }: AnalysisProgressProps) {
   // Build steps based on analysis type (FREE vs PRO)
   const steps = useMemo<StepConfig[]>(() => {
@@ -78,7 +88,7 @@ export function AnalysisProgress({
       },
       {
         id: "tier3",
-        label: "Synthese & Scoring",
+        label: "Synthèse & Scoring",
         duration: STEP_TIMINGS_PRO.tier3.duration,
       },
     ];
@@ -178,7 +188,7 @@ export function AnalysisProgress({
             <>
               <div className="h-2 w-2 rounded-full bg-green-500" />
               <span className="font-medium text-sm text-green-700">
-                Analyse terminee
+                Analyse terminée
               </span>
             </>
           ) : (
@@ -228,6 +238,48 @@ export function AnalysisProgress({
                   {step.label}
                 </span>
               </div>
+
+              {/* Agent details sub-listing */}
+              {agentStatuses && agentStatuses.length > 0 && (status === "running" || status === "completed") && (
+                <div className="ml-9 mt-0.5 mb-1 space-y-0.5">
+                  {agentStatuses
+                    .filter(a => {
+                      if (step.id === "tier1" || step.id === "investigation") return true;
+                      return false;
+                    })
+                    .map((agent) => (
+                      <div key={agent.agentName} className="flex items-center gap-2 text-xs">
+                        {agent.status === "completed" ? (
+                          <Check className="h-3 w-3 text-green-500" />
+                        ) : agent.status === "running" ? (
+                          <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />
+                        ) : agent.status === "error" ? (
+                          <XCircle className="h-3 w-3 text-red-500" />
+                        ) : (
+                          <div className="h-3 w-3 rounded-full border border-muted-foreground/30" />
+                        )}
+                        <span className={cn(
+                          agent.status === "completed" ? "text-muted-foreground" :
+                          agent.status === "running" ? "text-foreground" :
+                          agent.status === "error" ? "text-red-600" :
+                          "text-muted-foreground/50"
+                        )}>
+                          {formatAgentName(agent.agentName)}
+                        </span>
+                        {agent.executionTimeMs != null && agent.status === "completed" && (
+                          <span className="text-muted-foreground/50">
+                            ({(agent.executionTimeMs / 1000).toFixed(1)}s)
+                          </span>
+                        )}
+                        {agent.status === "error" && agent.error && (
+                          <span className="text-red-500 truncate max-w-[150px]" title={agent.error}>
+                            {agent.error}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
 
               {/* Connector line */}
               {index < steps.length - 1 && (

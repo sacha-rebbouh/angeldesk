@@ -15,6 +15,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { calculateAgentScore, GTM_ANALYST_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * GTM Analyst Agent - REFONTE v2.0
@@ -524,7 +525,63 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
     const { data } = await this.llmCompleteJSON<LLMGTMAnalystResponse>(prompt);
 
     // Valider et normaliser les données
-    return this.normalizeResponse(data, context);
+    const result = this.normalizeResponse(data, context);
+
+    // F03: DETERMINISTIC SCORING
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const channels = data.findings?.channels ?? [];
+
+      // Channel effectiveness from efficiency ratings
+      if (channels.length > 0) {
+        const effMap = { HIGH: 85, MEDIUM: 55, LOW: 25, UNKNOWN: 35 };
+        const avg = channels.reduce((s, c) => s + (effMap[c.efficiency as keyof typeof effMap] ?? 35), 0) / channels.length;
+        extractedMetrics.push({
+          name: "channel_effectiveness", value: Math.round(avg),
+          unit: "score", source: "GTM channel analysis", dataReliability: "DECLARED", category: "customer",
+        });
+
+        // Channel diversification
+        extractedMetrics.push({
+          name: "channel_diversification", value: Math.min(100, channels.length * 25),
+          unit: "score", source: "Channel count", dataReliability: "VERIFIED", category: "customer",
+        });
+      }
+
+      // CAC efficiency from channels
+      const cacsValid = channels.filter(c => c.economics?.cac != null && c.economics.cac > 0);
+      if (cacsValid.length > 0) {
+        const bestChannel = cacsValid.reduce((best, c) =>
+          (c.economics?.ltvCacRatio ?? 0) > (best.economics?.ltvCacRatio ?? 0) ? c : best, cacsValid[0]);
+        if (bestChannel.economics?.ltvCacRatio != null) {
+          extractedMetrics.push({
+            name: "ltv_cac_gtm", value: Math.min(100, bestChannel.economics.ltvCacRatio * 20),
+            unit: "score", source: "GTM LTV/CAC", dataReliability: "DECLARED", category: "customer",
+          });
+        }
+      }
+
+      // GTM scalability from channel health + diversification
+      if (data.findings?.channelSummary?.overallChannelHealth != null) {
+        extractedMetrics.push({
+          name: "gtm_scalability", value: Math.min(100, Math.max(0, data.findings.channelSummary.overallChannelHealth)),
+          unit: "score", source: "GTM channel health", dataReliability: "DECLARED", category: "customer",
+        });
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "gtm-analyst", extractedMetrics, sector, stage, GTM_ANALYST_CRITERIA,
+        );
+        result.score = { ...result.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[gtm-analyst] Deterministic scoring failed, using LLM score:", err);
+    }
+
+    return result;
   }
 
   private normalizeResponse(
@@ -534,23 +591,34 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
     const now = new Date().toISOString();
 
     // Normaliser meta
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[gtm-analyst] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "gtm-analyst",
       analysisDate: now,
       dataCompleteness: this.normalizeDataCompleteness(data.meta?.dataCompleteness),
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Normaliser score
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[gtm-analyst] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: this.normalizeGrade(data.score?.grade),
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : this.normalizeGrade(data.score?.grade),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map(b => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 0,
-            score: Math.min(100, Math.max(0, b.score ?? 0)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "",
           }))
         : [],
@@ -563,7 +631,8 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
         primaryChannel: data.findings?.channelSummary?.primaryChannel ?? "Not identified",
         channelDiversification: this.normalizeDiversification(data.findings?.channelSummary?.channelDiversification),
         diversificationRationale: data.findings?.channelSummary?.diversificationRationale ?? "",
-        overallChannelHealth: Math.min(100, Math.max(0, data.findings?.channelSummary?.overallChannelHealth ?? 50)),
+        overallChannelHealth: data.findings?.channelSummary?.overallChannelHealth != null
+          ? Math.min(100, Math.max(0, data.findings.channelSummary.overallChannelHealth)) : 0,
       },
       salesMotion: this.normalizeSalesMotion(data.findings?.salesMotion),
       expansion: this.normalizeExpansion(data.findings?.expansion),

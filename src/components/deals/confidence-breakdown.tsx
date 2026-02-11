@@ -145,7 +145,7 @@ function CompactConfidenceBadge({ confidence }: { confidence: ConfidenceScore })
         <TooltipContent side="bottom" className="w-72 p-0">
           <div className="p-3 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="font-medium">Confiance: {levelInfo.text}</span>
+              <span className="font-medium">Qualité des données : {levelInfo.text}</span>
               <span className={cn("font-bold", getScoreColor(confidence.score))}>
                 {confidence.score}%
               </span>

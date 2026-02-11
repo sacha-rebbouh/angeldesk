@@ -14,6 +14,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { calculateAgentScore, MARKET_INTELLIGENCE_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * MARKET INTELLIGENCE AGENT - REFONTE v2.0
@@ -343,11 +344,57 @@ ${di.fundingContext ? `
 ${di.verdict ? `**${di.verdict.toUpperCase()}**` : 'Non calcule'}`;
     }
 
+    // =====================================================
+    // F19: ESTIMATION BOTTOM-UP INDEPENDANTE
+    // =====================================================
+    let bottomUpSection = "";
+
+    const avgDealSize = extractedInfo?.avgDealSize as number | undefined
+      || extractedInfo?.arpu as number | undefined
+      || extractedInfo?.acv as number | undefined;
+    const targetCustomerCount = extractedInfo?.targetCustomers as number | undefined;
+    const conversionRate = extractedInfo?.conversionRate as number | undefined;
+    const tam = extractedInfo?.tam as number | undefined;
+    const sam = extractedInfo?.sam as number | undefined;
+    const som = extractedInfo?.som as number | undefined;
+
+    bottomUpSection = `\n## ESTIMATION BOTTOM-UP INDEPENDANTE (OBLIGATOIRE)
+
+Tu DOIS produire une estimation bottom-up INDEPENDANTE du deck, en plus de la validation top-down.
+
+### Methodologie bottom-up obligatoire :
+1. **Identifier le segment cible** : Quel type de client exactement ? (ex: PME SaaS B2B France 10-50 employes)
+2. **Estimer le nombre de clients potentiels** : Utilise les donnees INSEE/Eurostat disponibles
+   ${targetCustomerCount ? `- Le deck declare ${targetCustomerCount} clients potentiels. VERIFIE ce chiffre.` : "- Le deck ne donne PAS de nombre de clients potentiels. ESTIME-LE toi-meme."}
+3. **Determiner l'ACV (Annual Contract Value)** :
+   ${avgDealSize ? `- Le deck declare ACV = ${avgDealSize}EUR. Est-ce coherent avec le marche ?` : "- ACV non declare. ESTIME-LE base sur le positionnement prix."}
+4. **Taux de conversion realiste** :
+   ${conversionRate ? `- Le deck declare ${conversionRate}% de conversion.` : "- Utilise 1-5% pour early stage (sauf preuve contraire)."}
+
+### FORMULE OBLIGATOIRE :
+SAM bottom-up = Clients potentiels x ACV
+SOM bottom-up = SAM x Taux de conversion realiste (1-5% pour early stage)
+
+### COMPARAISON OBLIGATOIRE :
+${tam ? `- TAM deck: ${tam}EUR` : "- TAM deck: non fourni"}
+${sam ? `- SAM deck: ${sam}EUR` : "- SAM deck: non fourni"}
+${som ? `- SOM deck: ${som}EUR` : "- SOM deck: non fourni"}
+
+Compare tes estimations bottom-up avec les claims du deck.
+Si ecart > 3x sur le SAM ou > 5x sur le SOM → RED FLAG.
+
+### OUTPUT ATTENDU :
+Dans findings.marketSize, ajoute pour sam et som :
+- "calculation": "FORMULE COMPLETE avec chiffres"
+- Un "validated" qui est ton estimation bottom-up (PAS le chiffre du deck)
+`;
+
     const prompt = `# ANALYSE MARKET INTELLIGENCE - ${context.deal.name}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
 ${marketSection}
+${bottomUpSection}
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData}
@@ -364,11 +411,13 @@ ${this.formatFactStoreData(context)}
 6. Cross-referencer CHAQUE claim avec les donnees DB disponibles
 7. Generer des red flags pour toute contradiction ou exageration
 8. Produire des questions actionnables pour le BA
+9. OBLIGATOIRE: Produire une estimation bottom-up independante du SAM/SOM
 
 IMPORTANT:
 - Si les donnees Context Engine sont absentes ou limitees, l'indiquer clairement dans les limitations
 - Utiliser les deals similaires de la DB pour valider les tendances
 - Le score doit refleter la REALITE du marche, pas les claims du fondateur
+- L'estimation bottom-up est OBLIGATOIRE, meme si approximative
 
 ## OUTPUT ATTENDU
 
@@ -568,35 +617,130 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
 
     const { data } = await this.llmCompleteJSON<LLMMarketIntelResponse>(prompt);
 
+    // F03: DETERMINISTIC SCORING - Extract market metrics, score in code
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const findings = data.findings;
+
+      if (findings) {
+        // TAM validation — compare claimed vs validated
+        const tam = findings.marketSize?.tam;
+        if (tam?.claimed && tam?.validated) {
+          const tamRatio = tam.validated / tam.claimed;
+          // Close to 1.0 = validated, <0.5 = major overestimate
+          extractedMetrics.push({
+            name: "tam_validation", value: Math.min(100, Math.round(tamRatio * 100)),
+            unit: "score", source: tam.source, dataReliability: tam.confidence === "high" ? "VERIFIED" : "DECLARED", category: "market",
+          });
+        }
+
+        // Market CAGR
+        if (findings.marketSize?.growthRate?.cagr != null) {
+          const cagr = findings.marketSize.growthRate.cagr;
+          // Normalize: 0% = 20, 10% = 50, 30%+ = 90
+          const cagrScore = Math.min(100, Math.max(0, Math.round(20 + cagr * 2.3)));
+          extractedMetrics.push({
+            name: "market_cagr", value: cagrScore,
+            unit: "score", source: findings.marketSize.growthRate.source, dataReliability: "DECLARED", category: "market",
+          });
+        }
+
+        // Funding trend
+        const trendMap = { HEATING: 90, STABLE: 60, COOLING: 35, FROZEN: 10 };
+        if (findings.fundingTrends?.trend) {
+          extractedMetrics.push({
+            name: "funding_trend", value: trendMap[findings.fundingTrends.trend] ?? 0,
+            unit: "score", source: "Funding DB trends", dataReliability: "VERIFIED", category: "market",
+          });
+        }
+
+        // Discrepancy level — factual (deck claims vs reality)
+        const discMap = { NONE: 95, MINOR: 70, SIGNIFICANT: 40, MAJOR: 15 };
+        if (findings.marketSize?.discrepancyLevel) {
+          extractedMetrics.push({
+            name: "discrepancy_level", value: discMap[findings.marketSize.discrepancyLevel] ?? 0,
+            unit: "score", source: "Deck vs market data comparison", dataReliability: "DECLARED", category: "market",
+          });
+        }
+
+        // Timing score from LLM
+        const timingMap = { EXCELLENT: 95, GOOD: 75, NEUTRAL: 50, POOR: 25, TERRIBLE: 10 };
+        if (findings.timing?.assessment) {
+          extractedMetrics.push({
+            name: "timing_score", value: timingMap[findings.timing.assessment as keyof typeof timingMap] ?? 0,
+            unit: "score", source: "LLM timing analysis", dataReliability: "DECLARED", category: "market",
+          });
+        }
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "market-intelligence", extractedMetrics, sector, stage, MARKET_INTELLIGENCE_CRITERIA,
+        );
+        data.score = { ...data.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[market-intelligence] Deterministic scoring failed, using LLM score:", err);
+    }
+
     // Validate and normalize the response
-    return this.normalizeResponse(data);
+    const result = this.normalizeResponse(data);
+
+    // F19: Post-processing - Verify bottom-up estimation was produced
+    const samCalc = data.findings?.marketSize?.sam?.calculation || "";
+    const somCalc = data.findings?.marketSize?.som?.calculation || "";
+    const hasBottomUp = samCalc.includes("x") || samCalc.includes("*") || samCalc.includes("×") || somCalc.includes("x") || somCalc.includes("*");
+
+    if (!hasBottomUp) {
+      result.meta.limitations = [
+        ...(result.meta.limitations || []),
+        "Estimation bottom-up non produite. Les TAM/SAM/SOM sont bases uniquement sur les claims du deck (top-down).",
+      ];
+      result.meta.confidenceLevel = Math.min(result.meta.confidenceLevel, 40);
+    }
+
+    return result;
   }
 
   private normalizeResponse(data: LLMMarketIntelResponse): MarketIntelData {
     // Validate meta
     const validCompleteness = ["complete", "partial", "minimal"];
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[market-intelligence] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "market-intelligence",
       analysisDate: new Date().toISOString(),
       dataCompleteness: validCompleteness.includes(data.meta?.dataCompleteness)
         ? data.meta.dataCompleteness
         : "partial",
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Validate score
     const validGrades = ["A", "B", "C", "D", "F"];
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[market-intelligence] LLM did not return score value — using 0`);
+    }
+    const scoreValue = scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue));
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: validGrades.includes(data.score?.grade)
+      value: scoreValue,
+      grade: scoreIsFallback ? "F" : (validGrades.includes(data.score?.grade)
         ? data.score.grade as "A" | "B" | "C" | "D" | "F"
-        : "C",
+        : "C"),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map(b => ({
             criterion: b.criterion ?? "",
             weight: b.weight ?? 20,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "Non fourni",
           }))
         : [],

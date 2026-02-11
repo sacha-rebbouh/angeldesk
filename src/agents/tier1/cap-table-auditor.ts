@@ -10,6 +10,8 @@ import type {
   DbCrossReference,
 } from "../types";
 import { getBenchmark } from "@/services/benchmarks";
+import { simulateWaterfall, type WaterfallInput } from "@/services/waterfall-simulator";
+import { calculateAgentScore, CAP_TABLE_AUDITOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * CAP TABLE AUDITOR - REFONTE v2.0
@@ -646,6 +648,82 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
 
     const { data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(prompt);
 
+    // F76: Run waterfall simulation if cap table data is available from LLM response
+    let waterfallSection = "";
+    if (data.findings?.ownershipBreakdown && data.findings?.roundTerms?.liquidationPreference) {
+      try {
+        const ownership = data.findings.ownershipBreakdown;
+        const terms = data.findings.roundTerms;
+        const baInvestment = context.deal.amountRequested ? Number(context.deal.amountRequested) * 0.10 : 50000;
+        const postMoney = terms.postMoneyValuation ?? (
+          (terms.preMoneyValuation ?? 0) + (terms.roundSize ?? 0)
+        );
+        const baPct = postMoney > 0 ? (baInvestment / postMoney) * 100 : 0;
+
+        const waterfallInput: WaterfallInput = {
+          exitValuation: 0, // set per scenario
+          investors: [
+            ...(ownership.investors ?? []).map(inv => ({
+              name: inv.name,
+              investedAmount: inv.percentage > 0 && postMoney > 0
+                ? (inv.percentage / 100) * postMoney
+                : 0,
+              ownershipPercent: inv.percentage,
+              liquidationPreference: {
+                multiple: terms.liquidationPreference.multiple ?? 1,
+                type: terms.liquidationPreference.type === "unknown"
+                  ? "non_participating" as const
+                  : terms.liquidationPreference.type,
+              },
+              isBA: false,
+            })),
+            {
+              name: "Business Angel (vous)",
+              investedAmount: baInvestment,
+              ownershipPercent: baPct,
+              liquidationPreference: {
+                multiple: terms.liquidationPreference.multiple ?? 1,
+                type: terms.liquidationPreference.type === "unknown"
+                  ? "non_participating" as const
+                  : terms.liquidationPreference.type,
+              },
+              isBA: true,
+            },
+          ],
+          founders: (ownership.founders ?? []).map(f => ({
+            name: f.name,
+            ownershipPercent: f.percentage,
+          })),
+          esopPercent: ownership.optionPool?.size ?? 0,
+        };
+
+        // Simulate at 3 exit valuations: low, medium, high
+        const exitVals = postMoney > 0
+          ? [postMoney * 0.5, postMoney * 2, postMoney * 5]
+          : [1_000_000, 5_000_000, 15_000_000];
+
+        const waterfallResults = simulateWaterfall(waterfallInput, exitVals);
+
+        waterfallSection = "\n\n## SIMULATION WATERFALL (calcul pre-LLM)\n";
+        for (const scenario of waterfallResults) {
+          waterfallSection += `\n### Exit a ${(scenario.exitValuation / 1_000_000).toFixed(1)}M€ (${scenario.exitMultiple}x):\n`;
+          for (const d of scenario.distributions) {
+            waterfallSection += `- ${d.name}: ${(d.amount / 1_000).toFixed(0)}K€ (${d.percentOfExit.toFixed(1)}%)`;
+            if (d.returnMultiple !== null) waterfallSection += ` = ${d.returnMultiple.toFixed(1)}x`;
+            waterfallSection += `\n`;
+          }
+          if (scenario.baReturn) {
+            waterfallSection += `**Votre retour:** ${(scenario.baReturn.amount / 1_000).toFixed(0)}K€ = ${scenario.baReturn.multiple.toFixed(1)}x\n`;
+          }
+          if (scenario.warnings.length > 0) {
+            waterfallSection += `⚠️ ${scenario.warnings.join("; ")}\n`;
+          }
+        }
+      } catch (e) {
+        console.warn(`[cap-table-auditor] Waterfall simulation failed: ${e}`);
+      }
+    }
+
     // Build dbCrossReference
     const dbCrossReference: DbCrossReference = {
       claims: [],
@@ -697,6 +775,77 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       if (coherentGrade === "A" || coherentGrade === "B") coherentGrade = "C";
     }
 
+    // F03: DETERMINISTIC SCORING
+    let deterministicBreakdown: { criterion: string; weight: number; score: number; justification: string }[] | null = null;
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const ownership = data.findings?.ownershipBreakdown;
+      const dilution = data.findings?.dilutionProjection;
+      const roundTerms = data.findings?.roundTerms;
+
+      if (ownership) {
+        const founderOwn = (ownership as { totalFoundersOwnership?: number }).totalFoundersOwnership;
+        if (founderOwn != null) {
+          extractedMetrics.push({
+            name: "founder_ownership", value: Math.min(100, Math.max(0, founderOwn)),
+            unit: "%", source: "Cap table data", dataReliability: "DECLARED", category: "financial",
+          });
+        }
+        const checksumOk = (ownership as { checksumValid?: boolean }).checksumValid;
+        extractedMetrics.push({
+          name: "checksum_valid", value: checksumOk ? 100 : 20,
+          unit: "score", source: "Cap table checksum", dataReliability: checksumOk ? "VERIFIED" : "DECLARED", category: "financial",
+        });
+      }
+
+      if (dilution) {
+        const thisRoundDilution = (dilution as { postThisRound?: { dilution?: number } }).postThisRound?.dilution;
+        if (thisRoundDilution != null) {
+          extractedMetrics.push({
+            name: "dilution_projection", value: Math.max(0, 100 - thisRoundDilution * 2),
+            unit: "score", source: "Dilution calculation", dataReliability: "DECLARED", category: "financial",
+          });
+        }
+      }
+
+      if (roundTerms) {
+        const terms = roundTerms as { liquidationPreference?: { multiple?: number; assessment?: string } };
+        if (terms.liquidationPreference) {
+          const assessMap: Record<string, number> = { STANDARD: 80, INVESTOR_FRIENDLY: 50, TOXIC: 15, UNKNOWN: 40 };
+          const assessment = terms.liquidationPreference.assessment ?? "UNKNOWN";
+          extractedMetrics.push({
+            name: "terms_fairness", value: assessMap[assessment] ?? 40,
+            unit: "score", source: "Term sheet analysis", dataReliability: "DECLARED", category: "financial",
+          });
+        }
+      }
+
+      const esop = (ownership as { optionPool?: { size?: number } })?.optionPool?.size;
+      if (esop != null) {
+        extractedMetrics.push({
+          name: "esop_adequacy", value: esop >= 10 ? 80 : esop >= 5 ? 55 : 25,
+          unit: "score", source: "ESOP analysis", dataReliability: "DECLARED", category: "financial",
+        });
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "cap-table-auditor", extractedMetrics, sector, stage, CAP_TABLE_AUDITOR_CRITERIA,
+        );
+        // Apply data quality caps on top of deterministic score
+        let detScore = deterministicScore.score;
+        if (!capTableProvided || dataQuality === "NONE") detScore = Math.min(detScore, 15);
+        else if (dataQuality === "MINIMAL") detScore = Math.min(detScore, 30);
+        else if (dataQuality === "PARTIAL") detScore = Math.min(detScore, 50);
+        coherentScore = detScore;
+        deterministicBreakdown = deterministicScore.breakdown;
+      }
+    } catch (err) {
+      console.error("[cap-table-auditor] Deterministic scoring failed, using LLM score:", err);
+    }
+
     return {
       meta: {
         agentName: "cap-table-auditor",
@@ -704,20 +853,21 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
         dataCompleteness: validDataCompleteness.includes(data.meta?.dataCompleteness as typeof validDataCompleteness[number])
           ? data.meta.dataCompleteness as typeof validDataCompleteness[number]
           : "minimal",
-        confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+        confidenceLevel: data.meta?.confidenceLevel != null ? Math.min(100, Math.max(0, data.meta.confidenceLevel)) : 0,
+        confidenceIsFallback: data.meta?.confidenceLevel == null,
         limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
       },
       score: {
         value: coherentScore,
         grade: coherentGrade,
-        breakdown: Array.isArray(data.score?.breakdown)
+        breakdown: deterministicBreakdown ?? (Array.isArray(data.score?.breakdown)
           ? data.score.breakdown.map((b) => ({
               criterion: b.criterion ?? "Unknown",
               weight: b.weight ?? 0.2,
               score: Math.min(100, Math.max(0, b.score ?? 0)),
               justification: b.justification ?? "Non specifie",
             }))
-          : [],
+          : []),
       },
       findings: {
         dataAvailability: {
@@ -785,7 +935,8 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       },
       narrative: {
         oneLiner: data.narrative?.oneLiner ?? "Analyse cap table incomplete - donnees manquantes",
-        summary: data.narrative?.summary ?? "L'analyse de la cap table n'a pas pu etre completee faute de donnees suffisantes.",
+        summary: (data.narrative?.summary ?? "L'analyse de la cap table n'a pas pu etre completee faute de donnees suffisantes.")
+          + (waterfallSection ? "\n" + waterfallSection : ""),
         keyInsights: Array.isArray(data.narrative?.keyInsights) ? data.narrative.keyInsights : [],
         forNegotiation: Array.isArray(data.narrative?.forNegotiation) ? data.narrative.forNegotiation : [],
       },

@@ -128,13 +128,13 @@ export function transformToSectorData(
       redFlagAnswer: q.redFlagAnswer ?? "",
     })) ?? [],
     sectorFit: {
-      score: parsedOutput.sectorFit?.score ?? 50,
+      score: parsedOutput.sectorFit?.score ?? 0,
       strengths: parsedOutput.executiveSummary?.topStrengths ?? [],
       weaknesses: parsedOutput.executiveSummary?.topConcerns ?? [],
       sectorTiming: parsedOutput.sectorFit?.timingAssessment === "early_mover" ? "early" :
                     parsedOutput.sectorFit?.timingAssessment === "too_late" ? "late" : "optimal",
     },
-    sectorScore: parsedOutput.executiveSummary?.sectorScore ?? parsedOutput.sectorFit?.score ?? 50,
+    sectorScore: parsedOutput.executiveSummary?.sectorScore ?? parsedOutput.sectorFit?.score ?? 0,
     executiveSummary: parsedOutput.executiveSummary?.verdict ?? parsedOutput.sectorFit?.reasoning ?? "",
   };
 }

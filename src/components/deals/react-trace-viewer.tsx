@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { formatPercentileShort } from "@/lib/format-utils";
 import {
   Brain,
   Lightbulb,
@@ -99,7 +100,7 @@ function PercentileBadge({ percentile }: { percentile: number }) {
   return (
     <Badge variant="outline" className={cn("text-xs flex items-center gap-1", getColor(percentile))}>
       {getIcon(percentile)}
-      P{percentile}
+      {formatPercentileShort(percentile)}
     </Badge>
   );
 }
@@ -108,9 +109,9 @@ function ThoughtTypeBadge({ type }: { type: ThoughtType }) {
   const config: Record<ThoughtType, { label: string; color: string; icon: React.ReactNode }> = {
     planning: { label: "Planning", color: "bg-purple-100 text-purple-800", icon: <Target className="h-3 w-3" /> },
     analysis: { label: "Analyse", color: "bg-blue-100 text-blue-800", icon: <Search className="h-3 w-3" /> },
-    hypothesis: { label: "Hypothese", color: "bg-cyan-100 text-cyan-800", icon: <Lightbulb className="h-3 w-3" /> },
-    evaluation: { label: "Evaluation", color: "bg-amber-100 text-amber-800", icon: <BarChart3 className="h-3 w-3" /> },
-    synthesis: { label: "Synthese", color: "bg-green-100 text-green-800", icon: <Zap className="h-3 w-3" /> },
+    hypothesis: { label: "Hypothèse", color: "bg-cyan-100 text-cyan-800", icon: <Lightbulb className="h-3 w-3" /> },
+    evaluation: { label: "Évaluation", color: "bg-amber-100 text-amber-800", icon: <BarChart3 className="h-3 w-3" /> },
+    synthesis: { label: "Synthèse", color: "bg-green-100 text-green-800", icon: <Zap className="h-3 w-3" /> },
     self_critique: { label: "Critique", color: "bg-orange-100 text-orange-800", icon: <Eye className="h-3 w-3" /> },
   };
 
@@ -267,7 +268,7 @@ function ReasoningStepView({ step, isLast }: { step: ReasoningStep; isLast: bool
         {/* Confidence after step */}
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Target className="h-3 w-3" />
-          Confiance apres cette etape: {step.confidenceAfterStep}%
+          Confiance après cette étape: {step.confidenceAfterStep}%
         </div>
       </div>
     </div>

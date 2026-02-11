@@ -89,11 +89,11 @@ export function NegotiationSection({
               p.ask,
               p.fallback ?? "—",
               p.status === "to_negotiate"
-                ? "A negocier"
+                ? "À négocier"
                 : p.status === "obtained"
                   ? "Obtenu"
                   : p.status === "refused"
-                    ? "Refuse"
+                    ? "Refusé"
                     : `Compromis: ${p.compromiseValue ?? ""}`,
             ])}
           />

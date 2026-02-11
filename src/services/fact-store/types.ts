@@ -32,7 +32,7 @@ export const SOURCE_PRIORITY: Record<FactSource, number> = {
   DATA_ROOM: 100,
   BA_OVERRIDE: 100,
   FINANCIAL_MODEL: 95,
-  FOUNDER_RESPONSE: 90,
+  FOUNDER_RESPONSE: 65, // Donnees declarees non verifiees — inferieur au PITCH_DECK (F26)
   PITCH_DECK: 80,
   CONTEXT_ENGINE: 60,
 };
@@ -91,7 +91,10 @@ export interface ExtractedFact {
   unit?: string;
   source: FactSource;
   sourceDocumentId?: string;
+  /** Confidence d'extraction: certitude que la valeur a ete correctement lue/extraite (0-100) */
   sourceConfidence: number;
+  /** Confiance dans la veracite: sourceConfidence * RELIABILITY_WEIGHT (0-100) (F57) */
+  truthConfidence?: number;
   extractedText?: string;
 
   // Temporal fields - for facts that vary over time (ARR, MRR, headcount, etc.)

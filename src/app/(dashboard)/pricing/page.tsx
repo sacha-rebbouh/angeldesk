@@ -60,12 +60,12 @@ export default async function PricingPage() {
               Parfait pour découvrir la plateforme
             </p>
             <ul className="space-y-3">
-              <PricingFeature included>5 deals analysés/mois</PricingFeature>
-              <PricingFeature included>Tier 1: Screening rapide</PricingFeature>
+              <PricingFeature included>3 deals analysés/mois</PricingFeature>
+              <PricingFeature included>Tier 1 : Screening rapide</PricingFeature>
               <PricingFeature included>GO/NO-GO en 2 min</PricingFeature>
               <PricingFeature included>Red flags critiques</PricingFeature>
-              <PricingFeature>Tier 2: Deep Analysis</PricingFeature>
-              <PricingFeature>Tier 3: Expert Sectoriel</PricingFeature>
+              <PricingFeature>Tier 2 : Expert sectoriel</PricingFeature>
+              <PricingFeature>Tier 3 : Synthèse & scoring</PricingFeature>
               <PricingFeature>AI Board (4 LLMs)</PricingFeature>
             </ul>
             {!isPro && (
@@ -102,10 +102,10 @@ export default async function PricingPage() {
               Pour les BA sérieux qui veulent un edge
             </p>
             <ul className="space-y-3">
-              <PricingFeature included>Deals illimités</PricingFeature>
-              <PricingFeature included>Tier 1: Screening rapide</PricingFeature>
-              <PricingFeature included>Tier 2: Deep Analysis</PricingFeature>
-              <PricingFeature included>Tier 3: Expert Sectoriel</PricingFeature>
+              <PricingFeature included>20 deals analysés/mois</PricingFeature>
+              <PricingFeature included>Tier 1 : Screening rapide</PricingFeature>
+              <PricingFeature included>Tier 2 : Expert sectoriel</PricingFeature>
+              <PricingFeature included>Tier 3 : Synthèse & scoring</PricingFeature>
               <PricingFeature included>AI Board (5 sessions/mois)</PricingFeature>
               <PricingFeature included>Questions pour fondateurs</PricingFeature>
               <PricingFeature included>Arguments de négo chiffrés</PricingFeature>
@@ -200,10 +200,10 @@ export default async function PricingPage() {
               </div>
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  Tier 2: Deep Analysis
+                  Tier 2 : Expert sectoriel
                   <Badge className="bg-gradient-to-r from-amber-500 to-orange-600">PRO</Badge>
                 </CardTitle>
-                <p className="text-sm text-muted-foreground">5 agents de synthèse • +3 min</p>
+                <p className="text-sm text-muted-foreground">1 expert spécialisé selon le secteur • +2 min</p>
               </div>
             </div>
           </CardHeader>
@@ -256,10 +256,10 @@ export default async function PricingPage() {
               </div>
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  Tier 3: Expert Sectoriel
+                  Tier 3 : Synthèse & scoring
                   <Badge className="bg-gradient-to-r from-amber-500 to-orange-600">PRO</Badge>
                 </CardTitle>
-                <p className="text-sm text-muted-foreground">1 expert spécialisé • +2 min</p>
+                <p className="text-sm text-muted-foreground">5 agents de synthèse, scénarios, mémo • +3 min</p>
               </div>
             </div>
           </CardHeader>
@@ -335,19 +335,19 @@ export default async function PricingPage() {
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <div className="h-3 w-3 rounded-full bg-amber-500" />
-                    <span className="text-sm">Claude Opus - Anthropic</span>
+                    <span className="text-sm">Claude Sonnet - Anthropic</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="h-3 w-3 rounded-full bg-emerald-500" />
-                    <span className="text-sm">GPT-4 Turbo - OpenAI</span>
+                    <span className="text-sm">GPT-4o - OpenAI</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="h-3 w-3 rounded-full bg-blue-500" />
-                    <span className="text-sm">Gemini Ultra - Google</span>
+                    <span className="text-sm">Gemini Pro - Google</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded-full bg-violet-500" />
-                    <span className="text-sm">Mistral Large - Mistral AI</span>
+                    <div className="h-3 w-3 rounded-full" style={{ backgroundColor: "#FF6600" }} />
+                    <span className="text-sm">Grok 4 - xAI</span>
                   </div>
                 </div>
               </div>
@@ -372,7 +372,7 @@ export default async function PricingPage() {
             </div>
 
             <div className="mt-4 text-center text-sm text-muted-foreground">
-              <strong>5 sessions/mois incluses</strong> dans le plan PRO • Sessions supplémentaires : 79 €/session
+              <strong>5 sessions/mois incluses</strong> dans le plan PRO • Sessions supplémentaires : 59 €/session
             </div>
           </CardContent>
         </Card>

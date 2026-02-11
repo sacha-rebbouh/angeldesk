@@ -438,7 +438,7 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
             <>
               <SectionDivider
                 icon={<Lightbulb className="h-4 w-4" />}
-                label="Synthese"
+                label="Synthèse"
               />
               <KeyPointsSection
                 consensusPoints={result.consensusPoints}

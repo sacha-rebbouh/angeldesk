@@ -9,6 +9,31 @@ import type { ScoredFinding } from "@/scoring/types";
 import type { AnalysisType } from "./types";
 
 /**
+ * Log a persistence error in ALL environments.
+ * In development: console.error with full stack.
+ * In production: console.error with message + structured metadata for log aggregation.
+ */
+function logPersistenceError(
+  operation: string,
+  error: unknown,
+  metadata?: Record<string, unknown>
+): void {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+
+  // Always log in all environments
+  console.error(
+    `[Persistence] FAILED ${operation}: ${errorMessage}`,
+    metadata ? JSON.stringify(metadata) : "",
+  );
+
+  // In development, also log the full stack
+  if (process.env.NODE_ENV === "development" && errorStack) {
+    console.error(errorStack);
+  }
+}
+
+/**
  * Create a new analysis record
  * @param documentIds - IDs of documents being analyzed (for versioning/staleness detection)
  */
@@ -92,9 +117,9 @@ export async function persistStateTransition(
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Persistence] Failed to persist state transition:", error);
-    }
+    logPersistenceError("persistStateTransition", error, {
+      analysisId, fromState, toState, trigger,
+    });
   }
 }
 
@@ -129,9 +154,9 @@ export async function persistReasoningTrace(
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Persistence] Failed to persist reasoning trace:", error);
-    }
+    logPersistenceError("persistReasoningTrace", error, {
+      analysisId, agentName,
+    });
   }
 }
 
@@ -168,9 +193,9 @@ export async function persistScoredFindings(
 
     await prisma.scoredFinding.createMany({ data });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Persistence] Failed to persist scored findings:", error);
-    }
+    logPersistenceError("persistScoredFindings", error, {
+      analysisId, agentName, findingsCount: findings.length,
+    });
   }
 }
 
@@ -217,9 +242,9 @@ export async function persistDebateRecord(
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Persistence] Failed to persist debate record:", error);
-    }
+    logPersistenceError("persistDebateRecord", error, {
+      analysisId, contradictionId: debateResult.contradiction.id,
+    });
   }
 }
 
@@ -505,10 +530,13 @@ export async function updateDealStatus(
 }
 
 /**
- * Get deal with documents and founders
+ * Get deal with documents and founders.
+ * Decrypts extractedText on the fly (F48: application-level encryption).
  */
 export async function getDealWithRelations(dealId: string) {
-  return prisma.deal.findUnique({
+  const { safeDecrypt } = await import("@/lib/encryption");
+
+  const deal = await prisma.deal.findUnique({
     where: { id: dealId },
     include: {
       documents: {
@@ -524,6 +552,16 @@ export async function getDealWithRelations(dealId: string) {
       founders: true,
     },
   });
+
+  if (!deal) return null;
+
+  // Decrypt extracted text for each document (handles mixed encrypted/plaintext)
+  deal.documents = deal.documents.map(doc => ({
+    ...doc,
+    extractedText: doc.extractedText ? safeDecrypt(doc.extractedText) : null,
+  }));
+
+  return deal;
 }
 
 // ============================================================================
@@ -581,9 +619,7 @@ export async function saveCheckpoint(
 
     return saved.id;
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Checkpoint] Failed to save checkpoint:", error);
-    }
+    logPersistenceError("saveCheckpoint", error, { analysisId });
     throw error;
   }
 }
@@ -615,9 +651,7 @@ export async function loadLatestCheckpoint(
       startTime: checkpoint.createdAt.toISOString(),
     };
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Checkpoint] Failed to load checkpoint:", error);
-    }
+    logPersistenceError("loadLatestCheckpoint", error, { analysisId });
     return null;
   }
 }
@@ -686,9 +720,7 @@ export async function findInterruptedAnalyses(userId?: string): Promise<
       lastCheckpointAt: checkpointMap.get(analysis.id) ?? null,
     }));
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Checkpoint] Failed to find interrupted analyses:", error);
-    }
+    logPersistenceError("findInterruptedAnalyses", error, { userId });
     return [];
   }
 }
@@ -746,9 +778,7 @@ export async function loadAnalysisForRecovery(analysisId: string): Promise<{
       checkpoint,
     };
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Checkpoint] Failed to load analysis for recovery:", error);
-    }
+    logPersistenceError("loadAnalysisForRecovery", error, { analysisId });
     return null;
   }
 }
@@ -774,9 +804,7 @@ export async function markAnalysisAsFailed(
       console.log(`[Checkpoint] Marked analysis ${analysisId} as FAILED: ${reason}`);
     }
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Checkpoint] Failed to mark analysis as failed:", error);
-    }
+    logPersistenceError("markAnalysisAsFailed", error, { analysisId, reason });
   }
 }
 
@@ -810,9 +838,7 @@ export async function cleanupOldCheckpoints(
     }
     return toDelete.length;
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("[Checkpoint] Failed to cleanup checkpoints:", error);
-    }
+    logPersistenceError("cleanupOldCheckpoints", error, { analysisId, keepCount });
     return 0;
   }
 }

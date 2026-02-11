@@ -1,5 +1,7 @@
 import { BaseAgent } from "./base-agent";
 import type { AgentContext, ExtractionResult, ExtractedDealInfo } from "./types";
+import { sanitizeName } from "@/lib/sanitize";
+import type { FactExtractorOutput } from "./tier0/fact-extractor";
 
 interface ExtractionData {
   extractedInfo: ExtractedDealInfo;
@@ -197,8 +199,80 @@ REGLE #7: FICHIERS EXCEL
 OUTPUT: JSON structure uniquement, en francais.`;
   }
 
+  /**
+   * F94: Convertit les faits du fact-extractor en format ExtractionData
+   * pour eviter un appel LLM redondant
+   */
+  private convertFactsToExtractionData(
+    factData: FactExtractorOutput,
+    _context: AgentContext
+  ): ExtractionData {
+    const extractedInfo: Record<string, unknown> = {};
+    const confidence: Record<string, number> = {};
+    const sourceReferences: ExtractionData["sourceReferences"] = [];
+
+    const fieldMapping: Record<string, keyof ExtractedDealInfo> = {
+      "financial.arr": "arr",
+      "financial.mrr": "mrr",
+      "financial.revenue": "revenue",
+      "financial.burn_rate": "burnRate",
+      "financial.runway_months": "runway",
+      "financial.growth_rate_yoy": "growthRateYoY",
+      "financial.amount_raising": "amountRaising",
+      "financial.valuation_pre": "valuationPre",
+      "financial.valuation_post": "valuationPost",
+      "traction.customers_count": "customers",
+      "traction.users_count": "users",
+      "traction.churn_monthly": "churnRate",
+      "traction.nrr": "nrr",
+      "traction.cac": "cac",
+      "traction.ltv": "ltv",
+      "company.name": "companyName",
+      "company.sector": "sector",
+      "company.stage": "stage",
+      "company.geography": "geography",
+      "company.founded_year": "foundedYear",
+      "company.team_size": "teamSize",
+      "market.tam": "targetMarket",
+    };
+
+    for (const fact of factData.facts) {
+      const field = fieldMapping[fact.factKey];
+      if (field) {
+        extractedInfo[field] = fact.value;
+        confidence[field] = fact.sourceConfidence / 100;
+
+        if (fact.extractedText) {
+          sourceReferences.push({
+            field,
+            quote: fact.extractedText,
+            documentName: fact.source?.toString() ?? "fact-extractor",
+          });
+        }
+      }
+    }
+
+    return {
+      extractedInfo: extractedInfo as ExtractedDealInfo,
+      confidence: confidence as Partial<Record<keyof ExtractedDealInfo, number>>,
+      sourceReferences,
+    };
+  }
+
   protected async execute(context: AgentContext): Promise<ExtractionData> {
     const { documents } = context;
+
+    // F94: Reutiliser les resultats du fact-extractor s'il a deja tourne
+    const factExtractorResult = context.previousResults?.["fact-extractor"];
+    if (factExtractorResult?.success && "data" in factExtractorResult) {
+      const factData = factExtractorResult.data as FactExtractorOutput;
+      if (factData?.facts && factData.facts.length > 0) {
+        console.log(
+          `[DocumentExtractor] Reusing ${factData.facts.length} facts from fact-extractor (skipping LLM call)`
+        );
+        return this.convertFactsToExtractionData(factData, context);
+      }
+    }
 
     // Check if we have documents to extract from
     if (!documents || documents.length === 0) {
@@ -211,19 +285,54 @@ OUTPUT: JSON structure uniquement, en francais.`;
 
     // Build document content for the prompt
     // Limit: 30K chars per document to ensure quality extraction
+    // F27: head+tail strategy to capture financial annexes at end of documents
     const CHARS_PER_DOC = 30000;
+    const TAIL_RESERVE = 5000; // Reserve pour les dernieres pages (annexes financieres)
     let documentContent = "";
+    const truncationWarnings: string[] = [];
+
     for (const doc of documents) {
-      documentContent += `\n--- DOCUMENT: ${doc.name} (${doc.type}) ---\n`;
+      const sanitizedDocName = sanitizeName(doc.name);
+      const sanitizedDocType = sanitizeName(doc.type);
+      documentContent += `\n--- DOCUMENT: ${sanitizedDocName} (${sanitizedDocType}) ---\n`;
       if (doc.extractedText) {
-        documentContent += doc.extractedText.substring(0, CHARS_PER_DOC);
-        if (doc.extractedText.length > CHARS_PER_DOC) {
-          documentContent += `\n[... truncated, ${doc.extractedText.length - CHARS_PER_DOC} chars remaining ...]`;
+        if (doc.extractedText.length <= CHARS_PER_DOC) {
+          documentContent += this.sanitizeDocumentContent(doc.extractedText, CHARS_PER_DOC);
+        } else {
+          // Strategie head+tail: debut (25K) + fin (5K) pour capturer les annexes financieres
+          const headChars = CHARS_PER_DOC - TAIL_RESERVE;
+          const head = this.sanitizeDocumentContent(doc.extractedText.substring(0, headChars), headChars);
+          const tail = this.sanitizeDocumentContent(
+            doc.extractedText.substring(doc.extractedText.length - TAIL_RESERVE),
+            TAIL_RESERVE
+          );
+          const omittedChars = doc.extractedText.length - CHARS_PER_DOC;
+
+          documentContent += head;
+          documentContent += `\n\n[⚠️ TRONCATION: ${omittedChars} caracteres omis au milieu du document. `;
+          documentContent += `Le document fait ${doc.extractedText.length} caracteres au total. `;
+          documentContent += `Les informations omises peuvent contenir des donnees financieres critiques. `;
+          documentContent += `Les ${TAIL_RESERVE} derniers caracteres (annexes potentielles) sont inclus ci-dessous.]\n\n`;
+          documentContent += `--- FIN DU DOCUMENT (dernieres ${TAIL_RESERVE} chars) ---\n`;
+          documentContent += tail;
+
+          truncationWarnings.push(
+            `${sanitizedDocName}: ${doc.extractedText.length} chars, ${omittedChars} omis (${Math.round(omittedChars / doc.extractedText.length * 100)}%)`
+          );
         }
       } else {
         documentContent += "(Contenu non disponible)";
       }
       documentContent += "\n";
+    }
+
+    // Injecter un warning structure si des documents sont tronques (F27)
+    if (truncationWarnings.length > 0) {
+      documentContent = `⚠️ AVERTISSEMENT TRONCATION: ${truncationWarnings.length} document(s) ont ete tronques.\n` +
+        truncationWarnings.map(w => `  - ${w}`).join('\n') +
+        `\n\nCRITIQUE: Des informations financieres peuvent avoir ete perdues. ` +
+        `Signaler dans les limitations si des sections semblent incompletes.\n\n` +
+        documentContent;
     }
 
     const prompt = `Analyse ces documents et extrais les informations structurees:

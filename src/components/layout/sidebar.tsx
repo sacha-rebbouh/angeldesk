@@ -176,18 +176,42 @@ export const Sidebar = memo(function Sidebar() {
 
       {/* Bottom Section */}
       <div className="mt-auto p-4 space-y-3 border-t border-sidebar-border">
-        {/* Plan Card - Only show for free users */}
-        {!isPro && (
+        {/* Credits & Usage Card (F92) */}
+        {!isPro ? (
           <div className="rounded-xl bg-gradient-to-br from-sidebar-accent to-sidebar-accent/50 p-4 border border-sidebar-border">
             <div className="flex items-center gap-2 mb-2">
               <Crown className="h-4 w-4 text-amber-400" />
               <p className="text-sm font-semibold">Plan Gratuit</p>
             </div>
-            <p className="text-xs text-sidebar-foreground/70 mb-3">
-              {quotaData?.data?.analyses
-                ? `${quotaData.data.analyses.limit - quotaData.data.analyses.used} analyses restantes ce mois`
-                : "Chargement..."}
-            </p>
+            {quotaData?.data?.analyses ? (
+              <>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex-1 h-2 rounded-full bg-sidebar-border overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full rounded-full",
+                        quotaData.data.analyses.used >= quotaData.data.analyses.limit
+                          ? "bg-red-500"
+                          : quotaData.data.analyses.used >= quotaData.data.analyses.limit - 1
+                          ? "bg-amber-500"
+                          : "bg-emerald-500"
+                      )}
+                      style={{
+                        width: `${Math.min((quotaData.data.analyses.used / quotaData.data.analyses.limit) * 100, 100)}%`
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs font-medium">
+                    {quotaData.data.analyses.used}/{quotaData.data.analyses.limit}
+                  </span>
+                </div>
+                <p className="text-xs text-sidebar-foreground/70 mb-3">
+                  {quotaData.data.analyses.limit - quotaData.data.analyses.used} analyse{quotaData.data.analyses.limit - quotaData.data.analyses.used !== 1 ? "s" : ""} restante{quotaData.data.analyses.limit - quotaData.data.analyses.used !== 1 ? "s" : ""} ce mois
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-sidebar-foreground/70 mb-3">Chargement...</p>
+            )}
             <Button
               variant="secondary"
               size="sm"
@@ -199,13 +223,17 @@ export const Sidebar = memo(function Sidebar() {
               </Link>
             </Button>
           </div>
-        )}
-
-        {/* Pro Badge - Only show for pro users */}
-        {isPro && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-            <CheckCircle className="h-4 w-4 text-emerald-500" />
-            <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">Plan Pro</span>
+        ) : (
+          <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <CheckCircle className="h-4 w-4 text-emerald-500" />
+              <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">Plan Pro</span>
+            </div>
+            {quotaData?.data?.analyses && (
+              <p className="text-xs text-muted-foreground">
+                {quotaData.data.analyses.used} analyse{quotaData.data.analyses.used !== 1 ? "s" : ""} ce mois
+              </p>
+            )}
           </div>
         )}
 
@@ -357,26 +385,56 @@ export const MobileNav = memo(function MobileNav() {
 
             {/* Bottom */}
             <div className="mt-auto p-4 space-y-3 border-t">
-              {!isPro && (
+              {!isPro ? (
                 <div className="rounded-xl bg-accent/50 p-4 border">
                   <div className="flex items-center gap-2 mb-2">
                     <Crown className="h-4 w-4 text-amber-400" />
                     <p className="text-sm font-semibold">Plan Gratuit</p>
                   </div>
-                  <p className="text-xs text-muted-foreground mb-3">
-                    {quotaData?.data?.analyses
-                      ? `${quotaData.data.analyses.limit - quotaData.data.analyses.used} analyses restantes`
-                      : "Chargement..."}
-                  </p>
+                  {quotaData?.data?.analyses ? (
+                    <>
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={cn(
+                              "h-full rounded-full",
+                              quotaData.data.analyses.used >= quotaData.data.analyses.limit
+                                ? "bg-red-500"
+                                : quotaData.data.analyses.used >= quotaData.data.analyses.limit - 1
+                                ? "bg-amber-500"
+                                : "bg-emerald-500"
+                            )}
+                            style={{
+                              width: `${Math.min((quotaData.data.analyses.used / quotaData.data.analyses.limit) * 100, 100)}%`
+                            }}
+                          />
+                        </div>
+                        <span className="text-xs font-medium">
+                          {quotaData.data.analyses.used}/{quotaData.data.analyses.limit}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        {quotaData.data.analyses.limit - quotaData.data.analyses.used} analyse{quotaData.data.analyses.limit - quotaData.data.analyses.used !== 1 ? "s" : ""} restante{quotaData.data.analyses.limit - quotaData.data.analyses.used !== 1 ? "s" : ""} ce mois
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground mb-3">Chargement...</p>
+                  )}
                   <Button variant="secondary" size="sm" className="w-full" asChild>
                     <Link href="/pricing" onClick={handleLinkClick}>Passer au Pro</Link>
                   </Button>
                 </div>
-              )}
-              {isPro && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                  <CheckCircle className="h-4 w-4 text-emerald-500" />
-                  <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">Plan Pro</span>
+              ) : (
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle className="h-4 w-4 text-emerald-500" />
+                    <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">Plan Pro</span>
+                  </div>
+                  {quotaData?.data?.analyses && (
+                    <p className="text-xs text-muted-foreground">
+                      {quotaData.data.analyses.used} analyse{quotaData.data.analyses.used !== 1 ? "s" : ""} ce mois
+                    </p>
+                  )}
                 </div>
               )}
               {user && (

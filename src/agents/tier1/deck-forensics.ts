@@ -9,6 +9,8 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { detectFOMO } from "@/services/fomo-detector";
+import { calculateAgentScore, DECK_FORENSICS_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * Deck Forensics Agent - REFONTE v2.0
@@ -348,6 +350,24 @@ OBLIGATOIRE:
       valuationContext += `Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
     }
 
+    // F75: Pre-LLM FOMO / artificial urgency detection on document content
+    let fomoSection = "";
+    if (context.documents) {
+      for (const doc of context.documents) {
+        if (doc.extractedText) {
+          const fomoResult = detectFOMO(doc.extractedText, doc.name);
+          if (fomoResult.detected) {
+            fomoSection += `\n## ⚠️ TACTIQUES DE PRESSION DETECTEES (pre-analyse) — ${doc.name}\n`;
+            fomoSection += `Risque global: **${fomoResult.overallRisk}** (${fomoResult.patterns.length} pattern(s))\n`;
+            for (const p of fomoResult.patterns) {
+              fomoSection += `- [${p.severity}] "${p.pattern}" — ...${p.excerpt}...\n`;
+            }
+            fomoSection += `\n**INSTRUCTION:** Ces tactiques de pression DOIVENT etre signalees comme RED FLAGS.\n`;
+          }
+        }
+      }
+    }
+
     const prompt = `ANALYSE FORENSIQUE APPROFONDIE - Standard Big4/VC Partner
 
 ${dealContext}
@@ -355,6 +375,7 @@ ${extractedSection}
 ${contextEngineData}
 ${competitorContext}
 ${valuationContext}
+${fomoSection}
 ${this.formatFactStoreData(context)}
 
 ============================================================================
@@ -532,7 +553,79 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
     const { data } = await this.llmCompleteJSON<LLMDeckForensicsResponse>(prompt);
 
     // Validate and normalize response
-    return this.normalizeResponse(data);
+    const result = this.normalizeResponse(data);
+
+    // F03: DETERMINISTIC SCORING - Extract deck metrics, score in code
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const f = result.findings;
+
+      if (f.narrativeAnalysis?.storyCoherence != null) {
+        extractedMetrics.push({
+          name: "story_coherence", value: f.narrativeAnalysis.storyCoherence,
+          unit: "score", source: "LLM narrative analysis", dataReliability: "DECLARED", category: "product",
+        });
+      }
+
+      const claims = f.claimVerification ?? [];
+      if (claims.length > 0) {
+        const verified = claims.filter(c => c.status === "VERIFIED").length;
+        extractedMetrics.push({
+          name: "claims_verified_ratio", value: Math.round((verified / claims.length) * 100),
+          unit: "score", source: "Claim verification analysis", dataReliability: "VERIFIED", category: "product",
+        });
+        const contradicted = claims.filter(c => c.status === "CONTRADICTED" || c.status === "MISLEADING").length;
+        extractedMetrics.push({
+          name: "claims_contradicted_count", value: Math.max(0, 100 - contradicted * 25),
+          unit: "score", source: "Claim verification analysis", dataReliability: "VERIFIED", category: "product",
+        });
+      }
+
+      if (f.deckQuality) {
+        if (f.deckQuality.professionalismScore != null) {
+          extractedMetrics.push({
+            name: "professionalism_score", value: f.deckQuality.professionalismScore,
+            unit: "score", source: "Deck quality analysis", dataReliability: "DECLARED", category: "product",
+          });
+        }
+        if (f.deckQuality.completenessScore != null) {
+          extractedMetrics.push({
+            name: "completeness_score", value: f.deckQuality.completenessScore,
+            unit: "score", source: "Deck quality analysis", dataReliability: "DECLARED", category: "product",
+          });
+        }
+        if (f.deckQuality.transparencyScore != null) {
+          extractedMetrics.push({
+            name: "transparency_score", value: f.deckQuality.transparencyScore,
+            unit: "score", source: "Deck quality analysis", dataReliability: "DECLARED", category: "product",
+          });
+        }
+      }
+
+      const inconsistencies = f.inconsistencies ?? [];
+      extractedMetrics.push({
+        name: "inconsistency_count", value: Math.max(0, 100 - inconsistencies.length * 20),
+        unit: "score", source: "Inconsistency analysis", dataReliability: "VERIFIED", category: "product",
+      });
+      const criticalInc = inconsistencies.filter(i => i.severity === "CRITICAL").length;
+      extractedMetrics.push({
+        name: "inconsistency_severity", value: Math.max(0, 100 - criticalInc * 30),
+        unit: "score", source: "Inconsistency analysis", dataReliability: "VERIFIED", category: "product",
+      });
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "deck-forensics", extractedMetrics, sector, stage, DECK_FORENSICS_CRITERIA,
+        );
+        result.score = { ...result.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[deck-forensics] Deterministic scoring failed, using LLM score:", err);
+    }
+
+    return result;
   }
 
   private normalizeResponse(data: LLMDeckForensicsResponse): DeckForensicsDataV2 {
@@ -540,26 +633,37 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
 
     // Normalize meta
     const validCompleteness = ["complete", "partial", "minimal"];
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[deck-forensics] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "deck-forensics",
       analysisDate,
       dataCompleteness: validCompleteness.includes(data.meta?.dataCompleteness)
         ? (data.meta.dataCompleteness as "complete" | "partial" | "minimal")
         : "partial",
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Normalize score
-    const scoreValue = Math.min(100, Math.max(0, data.score?.value ?? 50));
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[deck-forensics] LLM did not return score value — using 0`);
+    }
+    const scoreValue = scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue));
     const score: AgentScore = {
       value: scoreValue,
-      grade: this.getGrade(scoreValue),
+      grade: scoreIsFallback ? "F" : this.getGrade(scoreValue),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({
             criterion: b.criterion ?? "",
             weight: b.weight ?? 25,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "",
           }))
         : [],
@@ -572,7 +676,8 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
 
     const findings: DeckForensicsFindings = {
       narrativeAnalysis: {
-        storyCoherence: Math.min(100, Math.max(0, data.findings?.narrativeAnalysis?.storyCoherence ?? 50)),
+        storyCoherence: data.findings?.narrativeAnalysis?.storyCoherence != null
+          ? Math.min(100, Math.max(0, data.findings.narrativeAnalysis.storyCoherence)) : 0,
         credibilityAssessment: data.findings?.narrativeAnalysis?.credibilityAssessment ?? "",
         narrativeStrengths: Array.isArray(data.findings?.narrativeAnalysis?.narrativeStrengths)
           ? data.findings.narrativeAnalysis.narrativeStrengths.map((s) => ({
@@ -624,9 +729,12 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
           }))
         : [],
       deckQuality: {
-        professionalismScore: Math.min(100, Math.max(0, data.findings?.deckQuality?.professionalismScore ?? 50)),
-        completenessScore: Math.min(100, Math.max(0, data.findings?.deckQuality?.completenessScore ?? 50)),
-        transparencyScore: Math.min(100, Math.max(0, data.findings?.deckQuality?.transparencyScore ?? 50)),
+        professionalismScore: data.findings?.deckQuality?.professionalismScore != null
+          ? Math.min(100, Math.max(0, data.findings.deckQuality.professionalismScore)) : 0,
+        completenessScore: data.findings?.deckQuality?.completenessScore != null
+          ? Math.min(100, Math.max(0, data.findings.deckQuality.completenessScore)) : 0,
+        transparencyScore: data.findings?.deckQuality?.transparencyScore != null
+          ? Math.min(100, Math.max(0, data.findings.deckQuality.transparencyScore)) : 0,
         issues: Array.isArray(data.findings?.deckQuality?.issues) ? data.findings.deckQuality.issues : [],
       },
     };

@@ -480,37 +480,49 @@ export interface AgentFactValidation {
 }
 
 /**
- * Updates facts in-memory based on agent validation results.
+ * Creates a NEW array of facts with validation updates applied.
+ * Does NOT mutate the input array (immutable pattern).
  * Does NOT persist to DB — used between sequential pipeline phases for speed.
  *
- * @param facts - Current facts array (mutated in place)
+ * @param facts - Current facts array (NOT mutated)
  * @param validations - Validation results from an agent
- * @returns Updated facts array (same reference, mutated)
+ * @returns NEW facts array with updates applied
  */
 export function updateFactsInMemory(
-  facts: CurrentFact[],
+  facts: ReadonlyArray<CurrentFact>,
   validations: AgentFactValidation[]
 ): CurrentFact[] {
+  // Build a Map of validations by factKey for O(1) lookup
+  const validationMap = new Map<string, AgentFactValidation>();
   for (const validation of validations) {
-    const fact = facts.find(f => f.factKey === validation.factKey);
-    if (!fact) continue;
+    validationMap.set(validation.factKey, validation);
+  }
+
+  // Create new array with new objects for changed facts
+  return facts.map(fact => {
+    const validation = validationMap.get(fact.factKey);
+    if (!validation) {
+      return fact;
+    }
+
+    // Create a new object (shallow clone + overrides)
+    const updatedFact: CurrentFact = { ...fact };
 
     if (validation.status === 'CONTRADICTED' && validation.correctedValue !== undefined) {
-      const previousValue = fact.currentValue;
-      const previousSource = fact.currentSource;
-      fact.currentValue = validation.correctedValue;
-      fact.currentDisplayValue = validation.correctedDisplayValue ?? String(validation.correctedValue);
-      fact.isDisputed = true;
-      fact.disputeDetails = {
-        conflictingValue: previousValue,
-        conflictingSource: previousSource,
+      updatedFact.currentValue = validation.correctedValue;
+      updatedFact.currentDisplayValue =
+        validation.correctedDisplayValue ?? String(validation.correctedValue);
+      updatedFact.isDisputed = true;
+      updatedFact.disputeDetails = {
+        conflictingValue: fact.currentValue,
+        conflictingSource: fact.currentSource,
       };
     }
 
-    fact.currentConfidence = validation.newConfidence;
-  }
+    updatedFact.currentConfidence = validation.newConfidence;
 
-  return facts;
+    return updatedFact;
+  });
 }
 
 /**

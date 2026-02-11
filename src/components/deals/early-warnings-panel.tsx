@@ -82,7 +82,7 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarni
               {categoryConfig.label}
             </span>
             <span>Source: {formatAgentName(warning.agentName)}</span>
-            <span>Confiance: {warning.confidence}%</span>
+            <span>Fiabilité : {warning.confidence}%</span>
           </div>
 
           {/* Recommendation badge */}

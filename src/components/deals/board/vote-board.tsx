@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, memo } from "react";
+import { useMemo, memo, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, XCircle, HelpCircle, Loader2, AlertCircle } from "lucide-react";
+import { CheckCircle2, XCircle, HelpCircle, Loader2, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   BoardVerdictResult,
@@ -178,6 +178,8 @@ const MemberCard = memo(function MemberCard({ member }: MemberCardProps) {
   const confidence = member.vote?.confidence ?? member.analysis?.confidence;
   const justification = member.vote?.justification;
   const verdictColors = verdict ? getVerdictColors(verdict) : null;
+  const [justificationExpanded, setJustificationExpanded] = useState(false);
+  const toggleJustification = useCallback(() => setJustificationExpanded(prev => !prev), []);
 
   // Failed state
   if (member.isFailed) {
@@ -272,7 +274,35 @@ const MemberCard = memo(function MemberCard({ member }: MemberCardProps) {
               <div className="flex-1 min-w-0">
                 <p className="text-[11px] text-slate-500 uppercase tracking-wider">Confiance</p>
                 {justification && (
-                  <p className="mt-0.5 text-xs text-slate-400 line-clamp-2">{justification}</p>
+                  <div className="mt-0.5">
+                    <p
+                      className={cn(
+                        "text-xs text-slate-400",
+                        !justificationExpanded && "line-clamp-2"
+                      )}
+                    >
+                      {justification}
+                    </p>
+                    {justification.length > 80 && (
+                      <button
+                        type="button"
+                        onClick={toggleJustification}
+                        aria-expanded={justificationExpanded}
+                        aria-label="Afficher la justification complète"
+                        className="mt-1 flex items-center gap-0.5 text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
+                      >
+                        {justificationExpanded ? (
+                          <>
+                            Réduire <ChevronUp className="h-3 w-3" />
+                          </>
+                        ) : (
+                          <>
+                            Lire la suite <ChevronDown className="h-3 w-3" />
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

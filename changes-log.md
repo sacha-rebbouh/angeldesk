@@ -2,6 +2,1092 @@
 
 ---
 
+## 2026-02-12 04:00 — Post-audit P3 fixes (structured logging, OpenAPI, removeConsole)
+
+### Fichiers modifies
+
+**P3-1: Structured logging sur API v1**
+- `src/lib/api-logger.ts` — refactor createApiTimer avec setContext(), console.warn pour prod (survit a removeConsole)
+- `src/app/api/v1/deals/route.ts` — integration createApiTimer sur GET + POST
+- `src/app/api/v1/deals/[dealId]/route.ts` — integration createApiTimer sur GET + PATCH + DELETE
+- `src/app/api/v1/deals/[dealId]/red-flags/route.ts` — integration createApiTimer sur GET
+- `src/app/api/v1/deals/[dealId]/analyses/route.ts` — integration createApiTimer sur GET + POST
+- `src/app/api/v1/webhooks/route.ts` — integration createApiTimer sur GET + POST + DELETE
+- `src/app/api/v1/keys/route.ts` — integration createApiTimer sur GET + POST + DELETE
+
+**P3-2: Documentation OpenAPI pour API v1**
+- `src/app/api/v1/openapi.ts` — NEW: spec OpenAPI 3.1 complete (schemas, paths, responses)
+- `src/app/api/v1/openapi.json/route.ts` — NEW: endpoint GET /api/v1/openapi.json
+
+**P3-3: Reduction console.log en production**
+- `next.config.ts` — ajout `compiler.removeConsole` (strip console.log/info/debug en prod, garde error + warn)
+
+### Description
+Implementation des 3 items P3 du post-audit:
+1. **Structured logging**: Chaque endpoint API v1 utilise `createApiTimer()` pour logger methode, path, userId, keyId, status, duration, metadata en JSON structure (production) ou format lisible (dev).
+2. **OpenAPI 3.1**: Spec complete servie a `/api/v1/openapi.json` avec tous les schemas (Deal, RedFlag, Analysis, Webhook, ApiKey), tous les paths, et documentation des erreurs.
+3. **removeConsole**: SWC strip automatiquement `console.log`, `console.info`, `console.debug` en build prod. `console.error` et `console.warn` preserves. L'api-logger utilise `console.warn` pour ses logs structures en prod.
+
+### Verification
+- `npx tsc --noEmit` : 0 erreurs
+
+---
+
+## 2026-02-12 03:00 — Post-audit P2 fixes (scoring deterministe, Zod schemas, red-flag taxonomy, dead code)
+
+### Fichiers modifies
+
+**Task #6: Scoring deterministe sur 13/13 agents Tier 1**
+- `src/scoring/services/agent-score-calculator.ts` — ajout 9 nouveaux ScoringCriteriaMap: DECK_FORENSICS, LEGAL_REGULATORY, TECH_OPS_DD, TECH_STACK_DD, CAP_TABLE_AUDITOR, CUSTOMER_INTEL, EXIT_STRATEGIST, GTM_ANALYST, QUESTION_MASTER
+- `src/agents/tier1/deck-forensics.ts` — integration calculateAgentScore (claims ratio, coherence, deck quality, inconsistencies)
+- `src/agents/tier1/legal-regulatory.ts` — integration calculateAgentScore (structure, compliance, IP, regulatory risks)
+- `src/agents/tier1/tech-ops-dd.ts` — integration calculateAgentScore (maturity, team, security, IP from breakdown)
+- `src/agents/tier1/tech-stack-dd.ts` — integration calculateAgentScore (stack, scalability, debt from breakdown)
+- `src/agents/tier1/cap-table-auditor.ts` — integration calculateAgentScore (ownership, dilution, terms, ESOP) + data quality caps
+- `src/agents/tier1/customer-intel.ts` — integration calculateAgentScore (quality, ICP, retention, PMF, concentration)
+- `src/agents/tier1/exit-strategist.ts` — integration calculateAgentScore (scenarios, multiples, liquidity, comparables)
+- `src/agents/tier1/gtm-analyst.ts` — integration calculateAgentScore (channels, economics, scalability, health)
+- `src/agents/tier1/question-master.ts` — integration calculateAgentScore (questions, checklist, negotiation, dealbreakers)
+
+**Task #7: Schemas Zod pour 17 agents (12 Tier 1 + 5 Tier 3)**
+- `src/agents/tier1/schemas/deck-forensics-schema.ts` — NEW
+- `src/agents/tier1/schemas/team-investigator-schema.ts` — NEW
+- `src/agents/tier1/schemas/competitive-intel-schema.ts` — NEW
+- `src/agents/tier1/schemas/market-intelligence-schema.ts` — NEW
+- `src/agents/tier1/schemas/legal-regulatory-schema.ts` — NEW
+- `src/agents/tier1/schemas/tech-ops-dd-schema.ts` — NEW
+- `src/agents/tier1/schemas/tech-stack-dd-schema.ts` — NEW
+- `src/agents/tier1/schemas/cap-table-auditor-schema.ts` — NEW
+- `src/agents/tier1/schemas/customer-intel-schema.ts` — NEW
+- `src/agents/tier1/schemas/exit-strategist-schema.ts` — NEW
+- `src/agents/tier1/schemas/gtm-analyst-schema.ts` — NEW
+- `src/agents/tier1/schemas/question-master-schema.ts` — NEW
+- `src/agents/tier3/schemas/common.ts` — NEW
+- `src/agents/tier3/schemas/contradiction-detector-schema.ts` — NEW
+- `src/agents/tier3/schemas/synthesis-deal-scorer-schema.ts` — NEW
+- `src/agents/tier3/schemas/devils-advocate-schema.ts` — NEW
+- `src/agents/tier3/schemas/scenario-modeler-schema.ts` — NEW
+- `src/agents/tier3/schemas/memo-generator-schema.ts` — NEW
+
+**Task #8: Red-flag taxonomy dans orchestrateur**
+- `src/agents/orchestrator/index.ts` — F77: appel consolidateRedFlags() apres cross-validation, injection dans enrichedContext
+- `src/agents/types.ts` — ajout `consolidatedRedFlags` sur EnrichedAgentContext
+
+**Task #9: Branchement dead code**
+- `src/agents/orchestrator/index.ts` — F83: dispatchWebhookEvent fire-and-forget apres completeAnalysis + F40: calculateAnalysisDelta pour re-analyses
+- `src/agents/orchestrator/types.ts` — ajout `analysisDelta` sur AnalysisResult
+- `src/app/api/deals/[dealId]/analyses/route.ts` — F40/F55: param `?compare=true` pour delta + variance entre analyses
+
+### Description
+Implementation des 4 items P2 du post-audit:
+1. **Scoring deterministe** (F03): Les 13 agents Tier 1 utilisent maintenant `calculateAgentScore()` pour calculer les scores en code (pas LLM). Le LLM extrait les metriques, le code les score via benchmarks/percentiles.
+2. **Schemas Zod** (F03): 18 nouveaux schemas prets a etre utilises avec `llmCompleteJSONValidated()` pour validation structurelle des outputs LLM.
+3. **Red-flag taxonomy** (F77): `consolidateRedFlags()` appele dans l'orchestrateur pour unifier les red flags de tous les agents dans une matrice unique.
+4. **Dead code branche**: webhook-dispatcher (F83), analysis-delta (F40), analysis-variance (F55) sont maintenant connectes au systeme.
+
+### Verification
+- `npx tsc --noEmit` : 0 erreurs
+
+---
+
+## 2026-02-12 01:30 — Post-audit fixes (P0 + P1 critiques et high)
+
+### Fichiers modifies
+- `src/app/api/documents/upload/route.ts` — P0: ajout `encryptText()` sur les 4 types de documents (PDF, Excel, Word, PPTX)
+- `src/lib/encryption.ts` — cache de la cle de chiffrement parsee (perf)
+- `src/components/deals/team-management.tsx` — branchement `LinkedInConsentDialog` + envoi `consentLinkedIn: true` a l'API
+- `src/app/api/v1/deals/[dealId]/route.ts` — validation CUID sur GET/PATCH/DELETE
+- `src/app/api/deals/compare/route.ts` — validation CUID sur les IDs
+- `src/app/api/v1/deals/route.ts` — schema Zod complet sur POST (name, stage enum, arr, etc.)
+- `src/app/api/v1/webhooks/route.ts` — anti-SSRF: blacklist IPs privees/internes sur URL webhook
+- `src/app/(dashboard)/legal/confidentialite/page.tsx` — RGPD complet: adresse, RCS, 7 droits, CNIL, cookies, securite, conservation
+- `src/lib/sanitize.ts` — `checkRateLimitDistributed()` via Redis Upstash
+- `src/app/api/chat/[dealId]/route.ts` — migration vers rate limiting distribue
+
+### Description
+Corrections issues de l'audit QA + Securite + Performance post-implementation des 102 failles:
+- **P0**: Chiffrement AES-256-GCM manquant sur la route upload (vuln critique)
+- **P1**: Dialog consentement LinkedIn (dead code branche), validation CUID sur API v1, schema Zod POST deals, anti-SSRF webhooks, RGPD complet, rate limiting distribue
+
+---
+
+## 2026-02-11 — Wave 4 QA fixes (8 corrections post-audit)
+
+### Fichiers modifiés
+- `src/components/credits/credit-modal.tsx` — `memo()` wrap, suppression prop morte `onUpgrade`, safe date parsing (`isValid`), bouton PRO conditionnel (`planName !== 'PRO'`)
+- `src/components/deals/analysis-panel.tsx` — `useCallback` sur `handleCloseCreditModal` (stabilité ref)
+- `src/components/deals/board/vote-board.tsx` — Accent "Réduire", `type="button"` + `aria-expanded` + `aria-label` sur toggle, suppression `transition-all` (layout thrashing)
+- `src/components/deals/tier1-results.tsx` — `type="button"` + `transition-colors` sur ReActIndicator, `animate-ping` → 3 itérations, suppression `agentName` des 4 appelants, guard harmonisé sur FinancialAuditCard
+- `src/components/shared/data-completeness-guide.tsx` — Suppression prop `agentName`, `type="button"` + `aria-label` sur trigger Popover, accents FR sur 6 suggestions
+
+### Détail des 8 corrections
+1. **Perf** : `CreditModal` wrappé `memo()` + `useCallback(onClose)` dans analysis-panel
+2. **QA** : Accents FR ("Réduire", "pré-money", "Sélectionnez", "géographie", "demandé", "marché", "données", "métriques", "témoignages")
+3. **Perf** : `animate-ping` → `animate-[ping_1s_ease-in-out_3]` (3 itérations puis statique)
+4. **QA** : Bouton "Passer à PRO" masqué si `planName === 'PRO'`
+5. **A11y** : `type="button"` + `aria-expanded` + `aria-label` sur boutons toggle (F99, F101, F102)
+6. **QA** : Props mortes supprimées (`onUpgrade`, `agentName`)
+7. **Sécu** : `formatResetDate()` avec `isValid()` — plus de crash si date invalide
+8. **QA** : Guard harmonisé FinancialAuditCard (`data.meta?.dataCompleteness &&`)
+
+### Vérification
+- `npx tsc --noEmit` : 0 erreurs
+
+---
+
+## 2026-02-11 — Wave 4 LOW (F99, F100, F101, F102) — 4/4 failles
+
+### Fichiers modifiés
+- `src/components/deals/board/vote-board.tsx` — F99: Justification expandable (line-clamp-2 → toggle "Lire la suite"/"Reduire")
+- `src/components/credits/credit-modal.tsx` — F100: Date de reset + options "Pour continuer" (PRO upgrade / attendre renouvellement)
+- `src/components/deals/analysis-panel.tsx` — F100: Passage des props `resetDate` et `planName` à CreditModal
+- `src/components/deals/tier1-results.tsx` — F101: ReActIndicator refonte visuelle (violet, pulse, label "Trace IA", étapes) | F102: Remplacement 4 badges dataCompleteness par DataCompletenessGuide
+- `src/components/ui/popover.tsx` — Nouveau composant shadcn (dependency F102)
+
+### Fichiers créés
+- `src/components/shared/data-completeness-guide.tsx` — F102: Composant popover avec limitations + suggestions d'amélioration contextuelles
+
+### Détail par faille
+- **F99** : Justification vote Board expand/collapse via `useState` + toggle chevron (seuil 80 chars)
+- **F100** : Modal enrichie avec date reset (format `d MMMM yyyy`), section "Options pour continuer" avec upgrade PRO + renouvellement
+- **F101** : Bouton violet distinct (`bg-violet-50`), dot pulse animé, label "Trace IA", compteur d'étapes, underline hover, support dark mode
+- **F102** : `DataCompletenessGuide` — badge "complete" = simple badge vert, "partial"/"minimal" = popover avec limitations, suggestions d'amélioration (pattern matching → actions), CTA Documents
+
+### Vérification
+- `npx tsc --noEmit` : 0 erreurs
+- `audit-failles-personas.md` : Wave 4 ✅ TERMINEE, F99-F102 cochées ✅
+
+---
+
+## 2026-02-12 03:30 — Branchement 6 modules orphelins Wave 3 (F59, F70, F75, F76, F78, F82)
+
+### Fichiers modifiés
+- `src/agents/types.ts` — F59: Import ContextQualityScore, ajout contextQuality dans EnrichedAgentContext.contextEngine
+- `src/agents/base-agent.ts` — F59: Warning qualite contexte degradee dans formatContextEngineData() | F70: Import + injection geography coverage warning | F82: Import + injection seuils calibres red flags dans formatDealContext()
+- `src/agents/orchestrator/index.ts` — F59: Pass-through contextQuality du Context Engine vers EnrichedAgentContext
+- `src/agents/tier1/deck-forensics.ts` — F75: Import detectFOMO + detection pre-LLM de tactiques de pression sur tous les documents, injection dans le prompt
+- `src/agents/tier1/cap-table-auditor.ts` — F76: Import simulateWaterfall + simulation waterfall post-LLM si cap table disponible (3 scenarios exit), injection dans narrative
+- `src/agents/tier3/scenario-modeler.ts` — F78: Import calculateIRR + remplacement formule simplifiee par Newton-Raphson dans sanitizeExitValuations() et recalculateWeightedOutcome()
+
+### Modules branchés (étaient dead code)
+- **F59** (Context quality penalty): `contextQuality.degraded` + `degradationReasons` maintenant passes aux agents et affiches dans le prompt
+- **F70** (Geography coverage): `formatGeographyCoverageForPrompt()` branche dans `base-agent.ts` — warning automatique pour geographies non-FR
+- **F75** (FOMO detector): `detectFOMO()` branche dans `deck-forensics.ts` — detection regex pre-LLM de tactiques de pression
+- **F76** (Waterfall simulator): `simulateWaterfall()` branche dans `cap-table-auditor.ts` — simulation payouts a 3 exit valuations
+- **F78** (IRR Newton-Raphson): `calculateIRR()` branche dans `scenario-modeler.ts` — remplace la formule simplifiee ((M)^(1/y)-1)
+- **F82** (Red flag thresholds): `formatThresholdsForPrompt()` branche dans `base-agent.ts` — seuils calibres par stage/secteur injectes dans chaque prompt
+
+### Verification
+- `npx tsc --noEmit` : 0 erreurs
+- `audit-failles-personas.md` mis a jour : note d'integration + annotation "(branche 02-12)" sur les 6 failles + statut Wave 3 TERMINEE
+
+---
+
+## 2026-02-12 01:00 — Wave 3 M3 restantes (5 failles) + F83 API publique
+
+### Fichiers modifiés
+- `src/agents/types.ts` — F71: Ajout tractionData + websiteContent dans EnrichedAgentContext
+- `src/agents/base-agent.ts` — F71: Formatage traction (App Store, GitHub, Product Hunt, website) dans formatContextEngineData()
+- `src/agents/tier3/scenario-modeler.ts` — F74: Ajout triggers[] dans LLMScenarioResponse, red flags comme triggers dans extractTier1Insights(), instructions triggers dans buildSystemPrompt()
+- `src/services/legal-registry-check.ts` — F79: NOUVEAU - Service de verification registres publics par geographie (FR/UK/US/DE)
+- `src/agents/tier1/legal-regulatory.ts` — F79: Injection registres publics dans le prompt, regles de verification obligatoires
+- `prisma/schema.prisma` — F62/F63: Ajout contentHash, version, parentDocumentId, isLatest, supersededAt sur Document + F83: Modeles ApiKey et Webhook + relations User
+- `src/services/document-hash.ts` — F63: NOUVEAU - SHA-256 hash, dedup check, cache invalidation
+- `src/app/api/documents/upload/route.ts` — F63: Hash a l'upload, detection duplicata same-deal (409), warning cross-deal + F62: Versioning auto (same filename = new version, old marked superseded)
+- `src/lib/api-key-auth.ts` — F83: NOUVEAU - Generation/validation API keys (PBKDF2), rate limiting, helpers apiError/apiSuccess
+- `src/app/api/v1/middleware.ts` — F83: NOUVEAU - Auth + rate limit middleware pour API v1
+- `src/app/api/v1/deals/route.ts` — F83: NOUVEAU - GET (list) + POST (create) deals
+- `src/app/api/v1/deals/[dealId]/route.ts` — F83: NOUVEAU - GET/PATCH/DELETE deal
+- `src/app/api/v1/deals/[dealId]/analyses/route.ts` — F83: NOUVEAU - GET (list) + POST (launch) analyses
+- `src/app/api/v1/deals/[dealId]/red-flags/route.ts` — F83: NOUVEAU - GET red flags
+- `src/app/api/v1/keys/route.ts` — F83: NOUVEAU - GET/POST/DELETE API keys
+- `src/app/api/v1/webhooks/route.ts` — F83: NOUVEAU - GET/POST/DELETE webhooks
+- `src/services/webhook-dispatcher.ts` — F83: NOUVEAU - Dispatch events avec HMAC signature, auto-disable apres 10 failures
+
+### Failles implementees
+- **F71** (Traction injection): Types + formatage pour App Store, Google Play, GitHub, Product Hunt, website content
+- **F74** (Scenario triggers): Red flags Tier 1 transmis comme triggers dans scenario-modeler, prompt enrichi
+- **F79** (Legal registries): Service registres par geographie, injection dans legal-regulatory avec regles de verification
+- **F63** (Cache hash): SHA-256 a l'upload, detection duplicata same-deal (erreur 409), warning cross-deal
+- **F62** (Document versioning): Auto-versioning meme filename, supersededAt, parentDocumentId, isLatest
+- **F83** (API publique): Implementation complete — API keys PBKDF2, endpoints v1 (deals CRUD, analyses, red flags), webhooks, rate limiting
+
+### Prochaines etapes
+- `npx prisma migrate dev` pour appliquer les changements schema (Document + ApiKey + Webhook)
+- Mettre a jour audit-failles-personas.md pour marquer les 6 failles completees
+- Wave 3 terminee (40/40 failles MEDIUM)
+
+---
+
+## 2026-02-11 23:30 — Wave 3 M2: UX Advanced (9/10 failles — F83 spec only)
+
+### Failles implémentées
+- **F85**: Agent error impact mapping — `src/lib/agent-error-impact.ts` (mapping sévérité/impact/recommandation pour 18 agents), badge d'erreur avec tooltip détaillé (impact + recommandation), bandeau résumé des erreurs en haut des résultats
+- **F88**: Formulaire création deal avec guidance — barre de complétude (minimal/good/optimal), tooltips sur champs financiers (ARR, Croissance, Montant, Valorisation) avec badge "Recommandé"
+- **F92**: Transparence coûts — sidebar: barre de progression crédits (FREE) + compteur analyses (PRO), analysis-panel: estimation "1 crédit sur X restants" avant analyse (FREE), info agents/durée (PRO)
+- **F89**: Table deals avancée — colonne Score avec ScoreBadge, tri cliquable sur toutes les colonnes (asc/desc), barre de recherche, filtres (secteur, stage, score min), vue cards mobile
+- **F87**: Dashboard enrichi — pipeline bar colorée par statut, carte "Score moyen" + métriques portfolio, top 5 red flags prioritaires avec liens, analyses récentes avec mode, grid 2x2 mobile
+- **F73**: Top 10 questions consolidées — `src/lib/question-consolidator.ts` (extraction cross-agents, déduplication, scoring: priorité + cross-agent + red flag link), bloc "Top 10 Questions à Poser" avec badges priorité et sources
+- **F72**: Mémo personnalisé au profil BA — champs investmentThesis + mustHaveCriteria dans BAPreferences, formulaire settings étendu, prompt memo-generator enrichi (thèse d'investissement + critères must-have + instructions LLM)
+- **F86**: Chat split view — ChatWrapper avec children pattern, padding droit conditionnel (42%) sur desktop quand chat ouvert, bottom sheet 75vh mobile avec drag handle
+- **F91**: Mobile UX — vue cards responsive dans deals-table, chat bottom sheet (75vh) avec drag handle, tabs scrollables (overflow-x-auto + whitespace-nowrap), stats cards 2x2 mobile
+- **F83**: API publique (spec only, pas d'implémentation) — spécification documentée dans specs/wave3-M2-ux-advanced.md
+
+### Fichiers créés
+- `src/lib/agent-error-impact.ts` — F85
+- `src/lib/question-consolidator.ts` — F73
+
+### Fichiers modifiés
+- `src/components/deals/analysis-panel.tsx` — F85 (error tooltips + banner), F73 (top10 questions), F92 (cost estimation)
+- `src/components/deals/deals-table.tsx` — F89 (score column, sort, filters, mobile cards)
+- `src/components/layout/sidebar.tsx` — F92 (credit progress bar FREE, counter PRO)
+- `src/app/(dashboard)/deals/new/page.tsx` — F88 (completeness bar, field tooltips)
+- `src/app/(dashboard)/dashboard/page.tsx` — F87 (pipeline, red flags, analyses, portfolio)
+- `src/app/(dashboard)/deals/page.tsx` — F89 (red flag title in select)
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — F86 (ChatWrapper children), F91 (tabs scroll, stats 2x2)
+- `src/components/chat/chat-wrapper.tsx` — F86 (split view pattern)
+- `src/components/chat/deal-chat-panel.tsx` — F91 (bottom sheet 75vh, drag handle)
+- `src/services/benchmarks/types.ts` — F72 (BAPreferences extended)
+- `src/agents/tier3/memo-generator.ts` — F72 (thesis + must-have in prompt)
+- `src/components/settings/investment-preferences-form.tsx` — F72 (thesis + must-have fields)
+
+---
+
+## 2026-02-11 21:30 — Wave 3 M1: UX Polish Core (10 failles COMPLETE)
+
+### Failles implementees
+- **F60**: Source de verite unique pricing — `config/plan-config.ts` (FREE 3 deals/mois, PRO 249€ 20 deals), page pricing corrigee (5→3 deals, nomenclature Tier 2/3, extra Board 79→59€)
+- **F61**: Labels FR centralises — `config/labels-fr.ts` (40+ agents, verdicts, maturite, assessments, severites, facteurs confiance), VERDICT_CONFIG FR, MATURITY_CONFIG FR, ASSESSMENT_CONFIG FR, SEVERITY_CONFIG FR, titres cartes Tier 1 en francais
+- **F90**: Accents manquants — ~60 chaines corrigees dans 11 fichiers (negotiation-panel, tier3-results, analysis-panel, analysis-progress, react-trace-viewer, board-progress, ai-board-panel, board-teaser, pro-teaser, analysis-constants, pdf/negotiation)
+- **F64**: ReliabilityBadge — composant tooltip avec 6 niveaux (Audite/Verifie/Declare/Projection/Estime/Non verifiable), integre dans tier1-results.tsx metriques
+- **F65**: Percentiles clairs — `formatPercentile()` et `formatPercentileShort()` ("P75" → "Top 25%"), applique dans tier1-results, react-trace-viewer, tier2-results, tier3-results
+- **F66**: Tooltip alertes — deals-table.tsx alert tooltip avec liste des 3 premiers red flags, header "Alerts" → "Alertes"
+- **F67**: Tooltips negociation — leverage ("Fort/Modere/Faible" avec tooltip explicatif), priorite ("Must Have" → "Indispensable" / "Nice to Have" → "Souhaitable"), "Leverage" → "Levier"
+- **F68**: Comparaison deck vs marche — phrase synthetique coloree sous les multiples (">30% au-dessus → rouge", "dans la fourchette → vert", etc.)
+- **F69**: Confiance → Fiabilite — renommage "Confiance: X%" → "Fiabilite donnees : X%" avec tooltip explicatif ("Ce n'est PAS une probabilite de succes"), applique dans tier3-results, early-warnings, confidence-breakdown
+- **F84**: Progression agents — nouveau prop `agentStatuses` dans AnalysisProgress, sous-listing individuel par agent (nom FR, spinner/check/erreur, temps d'execution), alimente depuis liveResult dans analysis-panel
+
+### Fichiers crees
+- `src/components/shared/reliability-badge.tsx` — F64
+- `src/config/plan-config.ts` — F60
+- `src/config/labels-fr.ts` — F61
+
+### Fichiers modifies
+- `src/app/(dashboard)/pricing/page.tsx` — F60
+- `src/lib/format-utils.ts` — F61, F65
+- `src/lib/analysis-constants.ts` — F61, F90
+- `src/components/deals/negotiation-panel.tsx` — F67, F90
+- `src/components/deals/tier3-results.tsx` — F61, F65, F69, F90
+- `src/components/deals/tier1-results.tsx` — F61, F64, F65, F68
+- `src/components/deals/tier2-results.tsx` — F65
+- `src/components/deals/analysis-panel.tsx` — F84, F90
+- `src/components/deals/analysis-progress.tsx` — F84, F90
+- `src/components/deals/deals-table.tsx` — F66
+- `src/components/deals/react-trace-viewer.tsx` — F65, F90
+- `src/components/deals/board/board-progress.tsx` — F90
+- `src/components/deals/board/ai-board-panel.tsx` — F90
+- `src/components/deals/board/board-teaser.tsx` — F90
+- `src/components/shared/pro-teaser.tsx` — F90
+- `src/components/deals/early-warnings-panel.tsx` — F69
+- `src/components/deals/confidence-breakdown.tsx` — F69
+- `src/lib/pdf/pdf-sections/negotiation.tsx` — F90
+
+---
+
+## 2026-02-11 20:00 — Wave 3 M3: Analyse Enhancements (5/11 failles)
+
+### Failles implementees
+- **F77**: Taxonomie red flags unifiee — 9 categories (TEAM, FINANCIAL, MARKET, PRODUCT, DEAL_STRUCTURE, LEGAL, CUSTOMERS, GTM, INTEGRITY), riskScore = severity × probability, consolidation multi-agents
+- **F78**: IRR Newton-Raphson — calcul financier precis (iteration + fallback simplifie), dilution cumulative multi-rounds avec trace
+- **F76**: Waterfall simulator — simulation liquidation preferences (non_participating, participating, capped), retour BA par scenario
+- **F70**: Couverture geographique — detection geographie, niveaux FR=FULL/UK=PARTIAL/US=LIMITED/DE=MINIMAL, warnings et recommandations
+- **F75**: Detection FOMO — 14 patterns regex (FR+EN) pour pression artificielle, scoring overall risk
+
+### Fichiers crees
+- `src/agents/red-flag-taxonomy.ts` — F77
+- `src/agents/orchestration/utils/financial-calculations.ts` — F78
+- `src/services/waterfall-simulator.ts` — F76
+- `src/services/context-engine/geography-coverage.ts` — F70
+- `src/services/fomo-detector.ts` — F75
+
+---
+
+## 2026-02-11 19:00 — Wave 3 M4: LLM Pipeline Hardening (10 failles COMPLETE)
+
+### Failles implementees
+- **F93**: Temperature default 0.7→0.2 dans router.ts (complete() et stream()) pour analyses deterministes
+- **F96**: Suppression variables globales mutables (currentAgentContext/currentAnalysisContext), AsyncLocalStorage obligatoire, ajout ensureLLMContext() helper
+- **F98**: Patterns injection multilingues (FR/ES/DE), Unicode homoglyph normalization, detection base64/URL/HTML entity encoding, zero-width char detection
+- **F95**: Retry adaptatif — adaptiveRetry + onRetryAdapt callback, temperature decroissante, message d'erreur injecte au LLM, actif par defaut sur completeJSON()
+- **F94**: document-extractor reutilise les faits du fact-extractor (skip LLM call si deja tourne), convertFactsToExtractionData()
+- **F97**: Enrichissement result-sanitizer avec 30+ champs evaluatifs, option skipSanitization pour Tier 3 (synthese a besoin des evaluations)
+- **F59**: Context Engine quality scoring pondere (similarDeals 35%, market 25%, competitors 25%, news 15%), reliability tracking, degradation detection
+- **F80**: Trace LLM obligatoire — AgentTraceMetrics TOUJOURS present (lightweight), truncation 50K chars par champ trace, _traceFull optionnel
+- **F81**: Context hash complet — inclut contenu documents (hash), system prompt, model; 32 chars au lieu de 16
+- **F82**: Seuils red flags parametriques par stage (PRE_SEED/SEED/SERIES_A/SERIES_B) et secteur (AI/ML, SaaS, Fintech, Biotech, Hardware), formatThresholdsForPrompt()
+
+### Fichiers crees
+- `src/agents/config/red-flag-thresholds.ts` — Configuration parametrique des seuils red flags (F82)
+
+### Fichiers modifies
+- `src/services/openrouter/router.ts` — F93 (temperature), F95 (adaptive retry), F96 (AsyncLocalStorage)
+- `src/lib/sanitize.ts` — F98 (injection patterns multilingues + Unicode + encodages)
+- `src/agents/document-extractor.ts` — F94 (reutilisation fact-extractor)
+- `src/agents/orchestration/result-sanitizer.ts` — F97 (champs evaluatifs + skipSanitization)
+- `src/services/context-engine/index.ts` — F59 (calculateContextQuality)
+- `src/services/context-engine/types.ts` — F59 (ContextQualityScore + DealContext)
+- `src/agents/base-agent.ts` — F80 (AgentTraceMetrics + truncation) + F81 (context hash complet)
+- `src/agents/types.ts` — F80 (AgentTraceMetrics interface)
+- `src/agents/orchestrator/index.ts` — F97 (skipSanitization pour Tier 3)
+
+---
+
+## 2026-02-11 17:35 — Fix: Tier 3 synthesis recoit les scores Tier 1 complets
+
+### Probleme
+Les agents Tier 3 finaux (synthesis-deal-scorer, memo-generator) recevaient des resultats Tier 1 sanitises (scores supprimes par F52). Le score global du deal etait calcule sans scores dimensionnels Tier 1.
+
+### Correction
+- Restauration des resultats complets (`allResults`) dans `enrichedContext.previousResults` juste avant STEP 7 (final synthesis)
+- Meme fix dans le flow `resumeAnalysis` avant la boucle Tier 3
+- La sanitisation F52 reste active entre les agents Tier 1 (anti-biais confirmation)
+
+### Fichiers modifies
+- `src/agents/orchestrator/index.ts` — 2 insertions (flow principal + resumeAnalysis)
+
+---
+
+## 2026-02-11 — Wave 2 H4: 8 failles UX/Guidance (COMPLETE)
+
+### Failles implementees
+- **F52**: Biais de confirmation — Result sanitizer strip les clefs evaluatives (score, verdict, narrative) des `previousResults` pour agents Tier 1 downstream
+- **F30**: Severity badges avec tooltip expliquant impact + action recommandee + legende depliable
+- **F50**: Surcharge informationnelle — Nouvel onglet "Resume" par defaut dans Tier1Results avec top red flags, points faibles, insights cles
+- **F33**: Onboarding premier deal — Guide 4 etapes sur le dashboard, dismiss persistant via localStorage
+- **F31**: Chat IA niveau utilisateur — System prompt adapte (debutant/intermediaire/expert), quick actions par niveau, selecteur dans le header du chat
+- **F32**: Partial Analysis Banner — Banniere d'alerte pour FREE users montrant les 5 agents PRO manquants
+- **F29**: Next Steps Guide — Actions recommandees dynamiques post-analyse (red flags, questions, documents, chat, PRO, negociation)
+- **F51**: Comparaison deals — Checkboxes dans DealsTable, barre flottante, composant de comparaison cote-a-cote, API endpoint
+
+### Fichiers crees
+- `src/agents/orchestration/result-sanitizer.ts` — Sanitizer anti-biais pour previousResults (F52)
+- `src/components/shared/severity-badge.tsx` — Badge severite avec tooltip impact+action (F30)
+- `src/components/shared/severity-legend.tsx` — Legende depliable des 4 niveaux de severite (F30)
+- `src/components/deals/partial-analysis-banner.tsx` — Banniere analyse partielle FREE (F32)
+- `src/components/deals/next-steps-guide.tsx` — Guide prochaines etapes dynamique (F29)
+- `src/components/onboarding/first-deal-guide.tsx` — Guide onboarding premier deal (F33)
+- `src/components/deals/deal-comparison.tsx` — Tableau comparatif de deals (F51)
+- `src/app/api/deals/compare/route.ts` — API endpoint comparaison deals (F51)
+
+### Fichiers modifies
+- `src/agents/orchestrator/index.ts` — Import + application result-sanitizer sur 3 injection points Tier 1 (F52)
+- `src/components/deals/tier1-results.tsx` — Ajout Tier1SummaryView + onglet Resume par defaut + SeverityLegend (F50, F30)
+- `src/agents/chat/deal-chat-agent.ts` — investorLevel dans FullChatContext + buildSystemPrompt adaptatif (F31)
+- `src/components/chat/deal-chat-panel.tsx` — Quick actions par niveau, selecteur de niveau, investorLevel dans API body (F31)
+- `src/app/api/chat/[dealId]/route.ts` — investorLevel dans schema + passage au FullChatContext (F31)
+- `src/components/deals/analysis-panel.tsx` — Import + integration NextStepsGuide + PartialAnalysisBanner (F29, F32)
+- `src/app/(dashboard)/dashboard/page.tsx` — Import + integration FirstDealGuide (F33)
+- `src/components/deals/deals-table.tsx` — Checkboxes, selection state, barre flottante, integration DealComparison (F51)
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H3: 8 failles Infra/DevOps (COMPLETE)
+
+### Failles implementees
+- **F45**: Erreurs de persistance — `logPersistenceError()` remplace les `if (dev)` dans 10 catch blocks
+- **F42**: Prompt version hash — SHA-256 du system prompt + config au lieu de "1.0" hardcode
+- **F44**: Mutation in-memory des faits — `updateFactsInMemory()` immutable avec `ReadonlyArray<CurrentFact>`
+- **F46**: SSE streaming + maxDuration — `maxDuration = 300`, endpoint SSE `/api/analyze/stream`, agentDetails dans polling
+- **F58**: OCR gameable — Priorisation intelligente des pages OCR (keywords financiers, penalite cover/end)
+- **F47**: Tests automatises — 59 tests (base-agent, current-facts, quality-analyzer), CI/CD GitHub Actions
+- **F49**: Scalabilite — Rate limiter DB-based, Inngest function avec concurrency control
+- **F48**: Chiffrement applicatif — AES-256-GCM pour extractedText, encryption/decryption dans routes + getDealWithRelations
+
+### Fichiers crees
+- `src/agents/__tests__/base-agent.test.ts` — 3 tests hash prompt (F47)
+- `src/services/fact-store/__tests__/current-facts.test.ts` — 5 tests immutabilite (F47)
+- `src/services/pdf/__tests__/quality-analyzer.test.ts` — 10 tests priorisation OCR (F47)
+- `.github/workflows/test.yml` — CI/CD tests + type check (F47)
+- `src/app/api/analyze/stream/route.ts` — Endpoint SSE (F46)
+- `src/lib/inngest.ts` — Inngest function deal analysis (F49)
+- `src/lib/encryption.ts` — AES-256-GCM encryption (F48)
+
+### Fichiers modifies
+- `src/agents/orchestrator/persistence.ts` — logPersistenceError + decryption getDealWithRelations (F45, F48)
+- `src/agents/base-agent.ts` — computePromptVersionHash SHA-256 (F42)
+- `src/agents/types.ts` — promptVersionDetails optionnel dans StandardTrace (F42)
+- `src/services/fact-store/current-facts.ts` — Immutable updateFactsInMemory (F44)
+- `src/agents/orchestrator/index.ts` — Reassignment factStore (F44)
+- `src/app/api/analyze/route.ts` — maxDuration + DB rate limiter (F46, F49)
+- `src/app/api/deals/[dealId]/analyses/route.ts` — agentDetails dans polling (F46)
+- `src/services/pdf/quality-analyzer.ts` — getPagesNeedingOCR smart (F58)
+- `src/services/pdf/ocr-service.ts` — MAX_PAGES_TO_OCR 30 + getMaxOCRPages (F58)
+- `src/app/api/documents/[documentId]/process/route.ts` — encryptText (F48)
+- `src/app/api/documents/[documentId]/ocr/route.ts` — encryptText (F48)
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H2: 9 failles Qualite d'Analyse (COMPLETE)
+
+### Failles implementees
+- **F34+F39**: Cross-validation Tier 1 + Detection divergences de scores
+- **F35**: Dynamique cofondateurs (decisionMaking) + Template reference check
+- **F36**: Protocole de collecte pour tests PMF NOT_TESTABLE
+- **F37**: Scoring comparatif deterministe via DB (percentile calculator)
+- **F38**: Transparence Tech DD (cap score 75, limitation code access)
+- **F40**: Service de delta re-analyse
+- **F41**: Memo fact anchoring (chiffres ancres du fact store)
+- **F55**: Service de detection de variance entre analyses
+
+### Fichiers crees
+- `src/agents/orchestration/tier1-cross-validation.ts` — Module deterministe cross-validation Tier 1 (F34/F39)
+- `src/services/funding-db/percentile-calculator.ts` — Calcul deterministe du percentile vs DB (F37)
+- `src/services/analysis-delta/index.ts` — Service de delta entre analyses (F40)
+- `src/agents/tier3/memo-fact-anchoring.ts` — Pre-processeur deterministe pour memo (F41)
+- `src/services/analysis-variance/index.ts` — Detecteur de variance entre runs (F55)
+
+### Fichiers modifies
+- `src/agents/types.ts` — Ajout `tier1CrossValidation` a EnrichedAgentContext, `decisionMaking`/`referenceCheckTemplate` a TeamInvestigatorFindings, `dataCollectionProtocol` a PMFAnalysis
+- `src/agents/orchestrator/index.ts` — Import + appel `runTier1CrossValidation()` entre Tier 1 et Tier 3, ajustements de score
+- `src/agents/tier3/contradiction-detector.ts` — Injection des divergences pre-detectees dans le prompt
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Integration percentile calculator deterministe (F37)
+- `src/agents/tier3/memo-generator.ts` — Integration fact anchoring + regles d'ancrage dans le prompt
+- `src/agents/tier1/tech-stack-dd.ts` — Transparence code access dans prompt + cap score 75 + cap confidence 60
+- `src/agents/tier1/tech-ops-dd.ts` — Idem
+- `src/agents/tier1/team-investigator.ts` — decisionMaking, referenceCheckTemplate dans prompt + normalization
+- `src/agents/tier1/customer-intel.ts` — dataCollectionProtocol pour PMF tests + instruction prompt
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H1: F56 Valorisation sur ARR declare sans penalite (COMPLETE)
+
+### Fichiers modifies
+- `src/agents/tier1/financial-auditor.ts` — Nouvelle methode `applyReliabilityPenalties()` + `computeGradeFromScore()`, appel apres normalizeResponse() dans execute()
+
+### Description
+F56 — La valorisation etait calculee sur un ARR DECLARED sans penalite, donnant des verdicts "FAIR" potentiellement trompeurs. Desormais: (1) detection automatique des metriques cles non verifiees (ARR, Revenue, MRR), (2) penalite -15 sur Data Transparency, (3) penalite -20 sur Valuation Rationality, (4) calcul pire-cas (multiple x3), (5) degradation verdict FAIR→AGGRESSIVE si donnees non verifiees, (6) red flag RF-RELIABILITY-001, (7) recalcul score global.
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H1: F26 Reponses fondateur injection privilegiee (COMPLETE)
+
+### Fichiers modifies
+- `src/agents/base-agent.ts` — Reformulation complete du prompt `formatFounderResponses()`: classification [DECLARED], regles d'utilisation obligatoires, biais desirabilite sociale
+- `src/app/api/founder-responses/[dealId]/route.ts` — sourceConfidence 90→60 (2 occurrences)
+- `src/services/fact-store/types.ts` — SOURCE_PRIORITY FOUNDER_RESPONSE 90→65
+
+### Description
+F26 — Les reponses fondateur etaient un canal d'injection privilegie: sourceConfidence 90 + prompt qui ordonnait de ne pas les traiter comme des contradictions. Desormais: (1) prompt reformule avec classification DECLARED, (2) regles obligatoires de prudence, (3) sourceConfidence baissee a 60, (4) SOURCE_PRIORITY baissee a 65 (inferieur au PITCH_DECK).
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H1: F28 Anti-anchoring protection (COMPLETE)
+
+### Fichiers modifies
+- `src/agents/base-agent.ts` — Nouvelle methode `getAntiAnchoringGuidance()` (fausses citations, vocabulaire biaise, format document, chiffres assertifs), nouvelle methode privee `buildFullSystemPrompt()`, injection automatique dans les 5 methodes LLM (llmComplete, llmCompleteJSON, llmCompleteJSONWithFallback, llmStream, llmCompleteJSONStreaming)
+
+### Description
+F28 — Aucune protection anti-anchoring existait. Le LLM etait vulnerable au framing linguistique (fausses citations d'autorite, vocabulaire biaise, format imitant un audit). Desormais: (1) instructions anti-anchoring centralisees, (2) injection automatique dans TOUS les appels LLM via `buildFullSystemPrompt()`, (3) guidance confidence double-dimension aussi injectee automatiquement.
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H1: F57 Confiance gameable double dimension (COMPLETE)
+
+### Fichiers modifies
+- `src/services/fact-store/types.ts` — Ajout `truthConfidence?: number` a `ExtractedFact` (sourceConfidence * reliabilityWeight)
+- `src/agents/tier0/fact-extractor.ts` — Import `RELIABILITY_WEIGHTS`, calcul `truthConfidence` dans `mapExtractedFacts()`
+- `src/agents/base-agent.ts` — Remplacement de `getConfidenceGuidance()` par version double dimension (confidence d'analyse vs confiance dans les donnees)
+
+### Description
+F57 — La confiance etait gameable: le LLM mettait 70%+ systematiquement. Desormais: (1) dissociation claire entre `sourceConfidence` (extraction) et `truthConfidence` (veracite = sourceConfidence * RELIABILITY_WEIGHT), (2) le prompt explique les deux dimensions, (3) les donnees DECLARED ont un truthConfidence plafonne a ~70%, PROJECTED a ~30%.
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H1: F27 Head+tail truncation (COMPLETE)
+
+### Fichiers modifies
+- `src/agents/document-extractor.ts` — Strategie head+tail (25K head + 5K tail pour limite 30K), warnings de troncature structures
+- `src/agents/base-agent.ts` — `formatDealContext()`: reserve 15% tail (max 2K), strategie head+tail
+- `src/agents/tier0/fact-extractor.ts` — `truncateDocumentsForPrompt()`: strategie head+tail
+
+### Description
+F27 — La troncature coupait la fin des documents, perdant les annexes financieres critiques. Desormais: strategie head+tail qui preserve le debut ET la fin du document (85% head + 15% tail), avec warning visible dans le texte indiquant les lignes omises.
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H1: F53 sourceDocumentId fabrication (COMPLETE)
+
+### Fichiers modifies
+- `src/agents/tier0/fact-extractor.ts` — Flag `sourceVerified`, warning prefix dans `extractedText`, penalite -15 confidence pour sources non verifiees, stats logging
+
+### Description
+F53 — Le champ `sourceDocumentId` pouvait etre fabrique par le LLM. Desormais: (1) verification que le documentId existe dans les documents fournis, (2) flag `sourceVerified`, (3) penalite -15 sur confidence si source non verifiee, (4) warning prefix dans extractedText.
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H1: F54 Reparation JSON tronque (COMPLETE)
+
+### Fichiers modifies
+- `src/services/openrouter/router.ts` — `extractBracedJSON()`: inject `__truncated` + `__truncationInfo` markers dans le JSON repare; `completeJSON()`: detecte `__truncated`, propage `_wasTruncated` aux agents, log warnings
+- `src/agents/base-agent.ts` — Nouvelle methode `checkTruncation()` pour detection centralisee + ajout limitation automatique
+- `src/agents/tier1/financial-auditor.ts` — Appel `checkTruncation()` en debut de `normalizeResponse()`
+
+### Description
+F54 — Le JSON tronque par le LLM etait repare silencieusement. Desormais: (1) warning log toujours actif, (2) marqueur `__truncated` injecte dans le JSON repare, (3) `completeJSON()` detecte et propage `_wasTruncated`, (4) les agents ajoutent une limitation visible pour l'utilisateur.
+
+### TypeScript
+Zero erreur
+
+---
+
+## 2026-02-11 — Wave 2 H1: F43 Fallback silencieux ?? 50 (COMPLETE)
+
+### Fichiers modifies (30+ fichiers)
+**Types:**
+- `src/agents/types.ts` — Ajout `confidenceIsFallback?: boolean` a `AgentMeta`, `isFallback?: boolean` a `AgentScore`, `benchmarkMultipleIsFallback?: boolean` a `FinancialAuditFindings.valuation`
+
+**Tier 1 (13 agents):**
+- `src/agents/tier1/financial-auditor.ts` — Remplace `?? 50` par 0 + flags isFallback sur score, confidence, benchmarkMultiple
+- `src/agents/tier1/deck-forensics.ts` — Idem + storyCoherence, professionalismScore, completenessScore, transparencyScore
+- `src/agents/tier1/team-investigator.ts` — Idem + capScore refactored, technicalStrength, businessStrength, complementarityScore, credibilityScore, percentileInSector
+- `src/agents/tier1/market-intelligence.ts` — Idem + funding_trend, discrepancy_level, timing_score map fallbacks
+- `src/agents/tier1/competitive-intel.ts` — Idem + differentiation_score, entry_barriers, percentileVsCompetitors
+- `src/agents/tier1/exit-strategist.ts` — Idem + relevance score
+- `src/agents/tier1/customer-intel.ts`
+- `src/agents/tier1/gtm-analyst.ts` — Idem + overallChannelHealth
+- `src/agents/tier1/question-master.ts`
+- `src/agents/tier1/tech-stack-dd.ts` — Idem + modernityScore frontend/backend, scalabilityScore
+- `src/agents/tier1/tech-ops-dd.ts` — Idem + stability score, featureCompleteness score, overallCapabilityScore, securityScore, ipScore
+- `src/agents/tier1/legal-regulatory.ts` — Idem + overallIPStrength
+- `src/agents/tier1/cap-table-auditor.ts`
+
+**Tier 2:**
+- `src/agents/tier2/index.ts` — sectorFit score ?? 0
+- `src/agents/tier2/output-mapper.ts` — sectorFit score, sectorScore ?? 0
+- `src/agents/tier2/creator-expert.ts` — rawScore ?? 0
+- `src/agents/tier2/general-expert.ts` — sectorConfidence, sectorScore ?? 0
+
+**Tier 3:**
+- `src/agents/tier3/devils-advocate.ts` — score + confidence + skepticismAssessment score
+- `src/agents/tier3/synthesis-deal-scorer.ts` — overallScore, confidence, percentiles, dimensionScores
+- `src/agents/tier3/scenario-modeler.ts` — score
+- `src/agents/tier3/contradiction-detector.ts` — confidenceLevel
+
+**Orchestration:**
+- `src/agents/orchestration/finding-extractor.ts` — confidenceLevel, baseConfidence
+- `src/agents/orchestration/tier3-coherence.ts` — effectiveScepticism
+
+**Scoring:**
+- `src/scoring/services/score-aggregator.ts` — normalizedValue
+- `src/scoring/services/agent-score-calculator.ts` — normalizedValue, fallback criterionScore
+- `src/agents/deal-scorer.ts` — normalizeScore
+
+**Frontend:**
+- `src/components/shared/score-badge.tsx` — Ajout prop `isFallback`, affiche "N/A" avec tooltip explicatif
+- `src/components/deals/tier3-results.tsx` — skepticismScore ?? 0
+
+### Description
+F43 — Elimination de TOUS les fallbacks silencieux `?? 50` qui faisaient passer des valeurs par defaut pour des evaluations reelles. Chaque score/confidence manquant est desormais explicitement 0 avec un flag `isFallback`/`confidenceIsFallback` pour que le frontend puisse afficher "Score non disponible" au lieu de "50/100".
+
+### TypeScript
+Zero erreur (`npx tsc --noEmit` OK)
+
+---
+
+## 2026-02-11 — Corrections post-audit QA/Securite/Performance (4 failles Wave 1 incompletes)
+
+### Fichiers modifies
+- `src/agents/tier1/financial-auditor.ts` — Branche `llmCompleteJSONValidated` avec schema Zod (F11)
+- `src/agents/tier1/schemas/financial-auditor-schema.ts` — Corrige champs source/assessment/percentile
+- `src/agents/tier1/team-investigator.ts` — Branche scoring deterministe (F03)
+- `src/agents/tier1/competitive-intel.ts` — Branche scoring deterministe (F03)
+- `src/agents/tier1/market-intelligence.ts` — Branche scoring deterministe (F03)
+- `src/scoring/services/agent-score-calculator.ts` — Ajoute criteres TEAM/COMPETITIVE/MARKET (F03)
+- `src/services/openrouter/router.ts` — Branche circuit breaker distribue + sync state (F20)
+- `src/app/api/deals/[dealId]/founders/[founderId]/enrich/route.ts` — Verification consentement RGPD backend (VULN-07)
+
+### Description
+Audit QA/Securite/Performance a identifie 4 elements Wave 1 crees mais non branches :
+1. **F11** : `llmCompleteJSONValidated` existait mais aucun agent ne l'appelait → branche dans financial-auditor
+2. **F20** : `getCircuitBreakerDistributed` existait mais router.ts utilisait la version in-memory → 3 occurrences remplacees + sync fire-and-forget
+3. **F03** : `calculateAgentScore` existait mais seul financial-auditor l'utilisait → etendu a team-investigator, competitive-intel, market-intelligence
+4. **VULN-07** : Route enrich LinkedIn n'exigeait pas de consentement → ajout schema Zod `consentLinkedIn: z.literal(true)`
+
+### TypeScript
+Zero erreur (`npx tsc --noEmit` OK)
+
+---
+
+## 2026-02-12 07:00 — Wave 1 C3 IMPLEMENTEE (8 failles CRITICAL)
+
+**Spec:** `specs/wave1-C3-ux-legal.md`
+**Failles implementees:** F13, F14, F15, F16, F17, F18, F21, F22
+
+**Fichiers crees:**
+- `src/lib/glossary.ts` — F16: dictionnaire 28 termes financiers/techniques BA, findGlossaryEntry()
+- `src/components/shared/glossary-term.tsx` — F16: composant GlossaryTerm avec tooltip
+- `src/components/shared/disclaimer-banner.tsx` — F13: banner legal permanent (dismissible par session)
+- `src/components/shared/linkedin-consent-dialog.tsx` — F14: dialog de consentement RGPD avant enrichissement LinkedIn
+- `src/app/(dashboard)/legal/cgu/page.tsx` — F13: page CGU (limitation responsabilite, nature service, PI)
+- `src/app/(dashboard)/legal/mentions-legales/page.tsx` — F13: mentions legales (AMF, hebergement, CIF)
+- `src/app/(dashboard)/legal/confidentialite/page.tsx` — F14: politique confidentialite RGPD (LinkedIn, DPO, droits)
+- `src/components/deals/red-flags-summary.tsx` — F22: vue consolidee red flags, trie par severite, agent source
+- `src/docs/moat-strategy.md` — F21: document strategique (data flywheel, partenariats, KPIs)
+
+**Fichiers modifies:**
+- `src/app/(dashboard)/layout.tsx` — F13: ajout DisclaimerBanner + restructuration flex
+- `src/components/deals/tier3-results.tsx` — F13: disclaimer inline recommandation, F18: badges PROJECTION, labels "Theorique (estimatif)", warning 70% echec
+- `src/app/(dashboard)/pricing/page.tsx` — F15: correction 4 modeles AI Board (Sonnet, GPT-4o, Gemini Pro, Grok 4)
+- `src/components/deals/tier1-results.tsx` — F16: GlossaryTerm sur Burn/Runway/NRR/Churn, F22: RedFlagsSummary en haut
+- `src/components/deals/negotiation-panel.tsx` — F16: GlossaryTerm sur Leverage et Dealbreakers
+- `src/components/shared/score-badge.tsx` — F17: tooltip riche avec echelle qualitative, barre position, percentiles
+- `src/services/context-engine/connectors/rapidapi-linkedin.ts` — F14: commentaire RGPD sur fetchLinkedInProfile
+- `src/agents/tier1/team-investigator.ts` — F14: note RGPD dans donnees LinkedIn
+
+**TypeScript:** 0 erreurs
+
+---
+
+## 2026-02-12 06:00 — Wave 1 C2 IMPLEMENTEE (9 failles CRITICAL)
+
+**Spec:** `specs/wave1-C2-verification-donnees.md`
+**Failles implementees:** F03, F04, F06, F07, F08, F09, F10, F19, F23
+
+**Fichiers modifies:**
+- `src/services/benchmarks/types.ts` — F06: ajout sourceUrl, lastUpdated, expiresAt, dataYear a PercentileBenchmark
+- `src/services/benchmarks/config.ts` — F06: dates/URLs sur TOUS les benchmarks (GENERIC + SAAS + FINTECH + MARKETPLACE + HEALTHTECH + DEEPTECH)
+- `src/agents/tier1/financial-auditor.ts` — F06: freshness check + warning, F04: verification serveur post-LLM, F07: verification registres Pappers/Societe.com, F03: scoring deterministe overridant le LLM
+- `src/agents/tier1/team-investigator.ts` — F09: cross-reference fondateurs via Pappers KBIS, verification dirigeants officiels
+- `src/agents/tier1/competitive-intel.ts` — F08: entity verifier post-LLM (Funding DB), F10: recherche web active Perplexity/Sonar
+- `src/agents/tier1/market-intelligence.ts` — F19: bottom-up TAM/SAM/SOM force, verification post-processing
+- `src/agents/tier3/synthesis-deal-scorer.ts` — F23: buildDealSourceSection(), analyse source/referral/duree levee
+
+**Fichiers crees:**
+- `src/services/benchmarks/freshness-checker.ts` — F06: checkBenchmarkFreshness(), formatFreshnessWarning()
+- `src/agents/orchestration/utils/financial-verification.ts` — F04: verifyFinancialMetrics(), recalcul serveur ARR/GM/LTV-CAC/Burn/Runway
+- `src/agents/orchestration/utils/entity-verifier.ts` — F08: verifyEntities() batch Prisma, summarizeVerifications()
+- `src/scoring/services/agent-score-calculator.ts` — F03: calculateAgentScore(), FINANCIAL_AUDITOR_CRITERIA, normalizeMetricName()
+
+**TypeScript:** 0 erreurs
+
+---
+
+## 2026-02-11 22:00 — Wave 1 C1 IMPLEMENTEE (8 failles CRITICAL)
+
+**Spec:** `specs/wave1-C1-llm-pipeline.md`
+**Failles implementees:** F01, F02, F05, F11, F12, F20, F24, F25
+
+**Fichiers modifies:**
+- `src/lib/sanitize.ts` — F01: blockOnSuspicious=true par defaut
+- `src/agents/base-agent.ts` — F01: sanitizeDocumentContent(), PromptInjectionError handling, F11: llmCompleteJSONValidated() avec Zod
+- `src/agents/document-extractor.ts` — F01: sanitization des documents avant injection LLM
+- `src/agents/tier0/deck-coherence-checker.ts` — F01: sanitization du contenu document
+- `src/services/openrouter/router.ts` — F02: selectModel() multi-modele (complexity-based routing), F20: DistributedRateLimiter
+- `src/agents/tier0/fact-extractor.ts` — F05: validateReliabilityProgrammatically(), F24: metaEvaluateReliability()
+- `src/services/openrouter/circuit-breaker.ts` — F20: getCircuitBreakerDistributed(), syncCircuitBreakerState()
+- `src/agents/orchestrator/index.ts` — F12: filtrage faits PROJECTED/UNVERIFIABLE via fact-filter
+- `src/agents/tier3/synthesis-deal-scorer.ts` — F25: poids dynamiques par stage/secteur
+
+**Fichiers crees:**
+- `src/services/distributed-state/index.ts` — F20: DistributedStore (Upstash Redis + fallback in-memory)
+- `src/services/fact-store/fact-filter.ts` — F12: filterFactsByReliability, replaceUnreliableWithPlaceholders, formatFactsForScoringAgents
+- `src/scoring/stage-weights.ts` — F25: STAGE_WEIGHTS, SECTOR_ADJUSTMENTS, getWeightsForDeal()
+- `src/agents/tier1/schemas/common.ts` — F11: schemas Zod reutilisables (RedFlag, Question, Meta, Score, Alert, Narrative)
+- `src/agents/tier1/schemas/financial-auditor-schema.ts` — F11: FinancialAuditResponseSchema
+
+**Dependance ajoutee:** @upstash/redis
+**TypeScript:** 0 erreurs
+
+---
+
+## 2026-02-11 19:30 — TOUTES LES SPECS TERMINEES (102/102 failles)
+
+**12 agents, 4 vagues, 102 failles specifiees.** Fichiers dans `specs/` :
+- wave1: C1 (8 CRITICAL), C2 (9 CRITICAL), C3 (8 CRITICAL)
+- wave2: H1 (8 HIGH), H2 (9 HIGH), H3 (8 HIGH), H4 (8 HIGH)
+- wave3: M1 (10 MEDIUM), M2 (10 MEDIUM), M3 (10 MEDIUM), M4 (10 MEDIUM)
+- wave4: L1 (4 LOW)
+
+**Prochaine etape :** Implementation sequentielle par severite (CRITICAL → HIGH → MEDIUM → LOW).
+
+---
+
+## 2026-02-11 — Spec Agent L1 "UI Polish" terminee
+
+**Fichier cree:** `specs/wave4-L1-ui-polish.md`
+
+**Contenu:** Spec de correction detaillee pour 4 failles LOW d'UI polish:
+- F99: Vote Board tronque — Justification expandable avec toggle "Lire la suite / Reduire" dans chaque MemberCard du VoteBoard.
+- F100: Credit modal peu informative — Ajout date de reset des credits + section "Options pour continuer" (PRO / attendre renouvellement).
+- F101: ReAct trace invisible — Refonte visuelle du ReActIndicator (fond violet, dot pulse anime, label "Trace IA", nombre d'etapes).
+- F102: Feedback donnees d'entree absent — Nouveau composant DataCompletenessGuide avec popover contextuel (limitations + suggestions d'amelioration priorisees).
+
+**Fichiers a creer:** 1 | **Fichiers a modifier:** 3 | **Effort estime:** ~4h
+
+---
+
+## 2026-02-12 04:30 — Spec Agent M4 "LLM Pipeline Hardening" terminee
+
+**Fichier cree:** `specs/wave3-M4-llm-hardening.md`
+
+**Contenu:** Spec de correction detaillee pour 10 failles MEDIUM du pipeline LLM:
+- F59: Context Engine fragile — Remplacement du `calculateCompleteness()` binaire par `calculateContextQuality()` pondere, ajout de `degraded` + `degradationReasons`, penalite de confidence.
+- F80: Trace LLM non garantie — `_traceMetrics` obligatoire + `_traceFull` optionnel. Troncation explicite avec marqueur `[TRACE_TRUNCATED]`.
+- F81: Context hash partiel — Hash SHA-256 etendu couvrant contenu reel des documents, prompt systeme, modele, Context Engine, Fact Store. 32 chars hex.
+- F82: Seuils red flags non calibres — Nouveau `config/red-flag-thresholds.ts` avec seuils parametriques par stage + secteur. References bibliographiques.
+- F93: Temperature 0.7 par defaut — Defaut de `complete()` et `stream()` passe de 0.7 a 0.2.
+- F94: Appels LLM redondants — `document-extractor` reutilise les faits du `fact-extractor`.
+- F95: Retry sans adaptation du prompt — Option `adaptiveRetry`, injection erreur precedente, reduction temperature progressive.
+- F96: Variables globales mutables — Suppression des globales mutables, tout via `AsyncLocalStorage`.
+- F97: Contamination inter-agents — Nouveau `result-sanitizer.ts` supprimant champs subjectifs des `previousResults`.
+- F98: Patterns injection basiques — 20+ patterns multilingues, normalisation homoglyphes Unicode, detection encodages.
+
+**Fichiers a creer:** 3 | **Fichiers a modifier:** 7 | **Effort estime:** ~18h
+
+---
+
+## 2026-02-12 04:00 — Spec Agent M2 "UX Advanced" terminee
+
+**Fichier cree:** `specs/wave3-M2-ux-advanced.md`
+
+**Contenu:** Spec de correction detaillee pour 10 failles MEDIUM d'UX avancee:
+- F72: Memo non personnalise au profil BA — Ajout these d'investissement, must-have checklist, portfolio overlap dans le memo-generator + formulaire preferences + section InvestorFit dans tier3-results
+- F73: Questions non priorisees — Nouvel algorithme de consolidation cross-agents dans `question-consolidator.ts`, scoring multi-criteres (priorite + cross-agent + red flag link), composant "Top 10 Questions a Poser"
+- F83: Pas d'API publique — Spec complete d'API REST v1 (endpoints deals/analyses/documents/red-flags/webhooks, auth par API key, rate limits FREE/PRO, format de reponse)
+- F85: Gestion erreur agent minimale — Mapping `agent-error-impact.ts` avec severity/impact/recommendation par agent, tooltips detailles, bandeau resume des erreurs
+- F86: Chat IA deconnecte du contexte visuel — Mode split view (resultats a gauche, chat a droite) sur desktop, variante "inline" pour DealChatPanel, bottom sheet sur mobile
+- F87: Dashboard pauvre — Pipeline overview par statut, top red flags prioritaires, analyses recentes, metriques portfolio (score moyen, secteurs couverts)
+- F88: Formulaire creation deal sans guidance — Barre de completude avec pourcentage, distinction minimal/optimal, tooltips explicatifs sur champs financiers (ARR, valorisation, etc.)
+- F89: Table deals sans score ni tri — Colonne globalScore avec ScoreBadge, filtres avances (secteur, stage, score min, recherche texte), tri multi-colonnes
+- F91: Mobile UX degradee — Vue cards pour mobile (remplace la table), chat en bottom sheet 75vh, tabs scrollables horizontalement, stats 2 colonnes
+- F92: Transparence couts unilaterale — Barre de progression credits dans sidebar, estimation de cout avant analyse, compteur PRO, composant UsageStatsCard dans settings
+
+**Fichiers source lus et analyses:** 20+ fichiers
+**Fichiers a creer:** 3 (lib/question-consolidator.ts, lib/agent-error-impact.ts, components/settings/usage-stats-card.tsx)
+**Fichiers a modifier:** 15+ fichiers
+**Effort estime:** ~18h, 18+ fichiers touches
+**Ordre d'implementation:** F85 -> F88 -> F92 -> F89 -> F87 -> F73 -> F72 -> F86 -> F91 -> F83
+
+---
+
+## 2026-02-12 03:30 — Spec Agent M3 "Analyse Enhancements" terminee
+
+**Fichier cree:** `specs/wave3-M3-analyse.md`
+
+**Contenu:** Spec de correction detaillee pour 10 failles MEDIUM d'analyse:
+- F62: Document recent "fait foi" — migration Prisma (version, parentDocumentId, isLatest), service de comparaison de versions avec detection de suppressions suspectes, injection de l'historique dans les agents
+- F63: Cache 24h exploitable — hash SHA-256 a l'upload, invalidation cache Context Engine sur re-upload, detection de duplicata, marquage des analyses obsoletes
+- F70: Biais geographique FR du Context Engine — service de detection geographique avec matrice de couverture (FR=FULL, UK=PARTIAL, US/DE=LIMITED), warning injecte dans les prompts agents, preparation connecteurs SEC/Handelsregister
+- F71: Traction produit non injectee — extension EnrichedAgentContext avec tractionData (App Store, GitHub, Product Hunt), nouvelle section dans formatContextEngineData() pour les signaux de traction et websiteContent
+- F74: Scenarios sans triggers specifiques — extraction des red flags individuels Tier 1 comme triggers contextuels, nouveau type "triggers" dans LLMScenarioResponse, modification du prompt pour exiger des triggers lies aux red flags
+- F75: Urgence artificielle / FOMO non detectee — service fomo-detector.ts avec 14 patterns regex (FR/EN), integration dans deck-forensics (nouvelle categorie "pressure_tactics"), red flag HIGH si detecte
+- F76: Pas de simulation waterfall de liquidation — service waterfall-simulator.ts complet (non-participating, participating, capped), simulation a 1x/3x/5x/10x exit, integration dans cap-table-auditor
+- F77: Risk framework non coherent — taxonomie unifiee red-flag-taxonomy.ts (9 categories, sous-categories), matrice probabilite x impact, consolidation cross-agents avec riskScore
+- F78: Dilution et IRR mal modelises — fonctions calculateIRR (Newton-Raphson) et calculateCumulativeDilution dans financial-calculations.ts, verification post-LLM dans scenario-modeler
+- F79: Legal-regulatory sans acces aux registres — service legal-registry-check.ts routant vers Pappers/CompaniesHouse selon geographie, flag "NON VERIFIE" obligatoire si registre non accessible
+
+**Fichiers source lus et analyses:** 22 fichiers (cap-table-auditor.ts, legal-regulatory.ts, customer-intel.ts, gtm-analyst.ts, scenario-modeler.ts, context-engine/index.ts, context-engine/types.ts, documents/upload/route.ts, base-agent.ts, types.ts, red-flag-detector.ts, deck-forensics.ts, financial-calculations.ts, orchestration/index.ts, companies-house.ts, schema.prisma, etc.)
+
+**Fichiers a creer:** 5 (document-versioning.ts, geography-coverage.ts, fomo-detector.ts, waterfall-simulator.ts, legal-registry-check.ts, red-flag-taxonomy.ts)
+**Fichiers a modifier:** 12+ (schema.prisma, upload/route.ts, base-agent.ts, types.ts, cap-table-auditor.ts, legal-regulatory.ts, scenario-modeler.ts, deck-forensics.ts, red-flag-detector.ts, financial-calculations.ts, customer-intel.ts, gtm-analyst.ts)
+
+**Effort estime:** ~20h, 17+ fichiers touches
+**Ordre d'implementation:** F77 -> F78 -> F76 -> F63 -> F62 -> F70 -> F79 -> F71 -> F75 -> F74
+
+---
+
+## 2026-02-11 23:45 — Spec Agent M1 "UX Polish Core" terminee
+
+**Fichier cree:** `specs/wave3-M1-ux-polish.md`
+
+**Contenu:** Spec de correction detaillee pour 10 failles MEDIUM d'UX polish:
+- F60: Pricing confus / quotas dupliques — "5 deals" sur pricing vs "3 deals" partout ailleurs, nomenclature Tier 2/3 inversee, prix extra Board inconsistant (79 vs 59 EUR). Creation `config/plan-config.ts` comme source de verite unique.
+- F61: Zero i18n / labels bilingues — tous les noms d'agents en anglais (Financial Auditor, Competitive Intel...). Creation `config/labels-fr.ts` centralise, mise a jour de 8+ fichiers.
+- F64: Projections vs faits insuffisamment visible — DataReliability existe mais jamais expose dans l'UI. Nouveau composant `ReliabilityBadge` avec badge colore + tooltip (AUDITED/DECLARED/PROJECTED).
+- F65: Percentiles sans contexte — "P75" affiche brut. Nouvelle fonction `formatPercentile()` ("Top 25% du marche"), correction dans 5 fichiers.
+- F66: Alerts dans la table sans explication — triangle rouge + chiffre sans contexte. Ajout tooltip avec resume des red flags.
+- F67: Termes de negociation sans aide — "Leverage: Fort", "Must Have" sans explication. Tooltips explicatifs + labels FR ("Indispensable", "Souhaitable").
+- F68: Pas de comparaison deck vs marche — multiples sans phrase de synthese. Ajout phrase coloree sous chaque comparaison ("Ce deal est X% au-dessus/en-dessous du marche").
+- F69: Confiance analyse non expliquee — "72% de confiance" ambigu. Renommer en "Fiabilite donnees" + tooltip explicatif ("Ce n'est PAS une probabilite de succes").
+- F84: Progression analyse opaque — compteur generique sans detail agent. Ajout listing agents avec statut individuel (pending/running/completed/error).
+- F90: Accents manquants — ~50 chaines sans accents dans 14 fichiers ("Resultats", "terminee", "negocier", "Synthese", etc.).
+
+**Fichiers source lus et analyses:** 18 fichiers (usage-gate.ts, deal-limits/index.ts, credits/types.ts, pricing/page.tsx, pricing-cta-button.tsx, format-utils.ts, analysis-constants.ts, tier1-results.tsx (3 chunks), tier2-results.tsx (2 chunks), tier3-results.tsx (3 chunks), negotiation-panel.tsx, deals-table.tsx, analysis-progress.tsx, confidence-breakdown.tsx, react-trace-viewer.tsx, fact-store/types.ts, dashboard/page.tsx)
+
+**Fichiers a creer:** 3 (config/plan-config.ts, config/labels-fr.ts, components/shared/reliability-badge.tsx)
+**Fichiers a modifier:** 23 fichiers listes dans le tableau recapitulatif de la spec
+
+**Effort estime:** ~14h, 26 fichiers touches
+**Ordre d'implementation:** F60 → F61 → F90 → F64 → F65 → F66 → F67 → F68 → F69 → F84
+
+---
+
+## 2026-02-12 01:15 — Spec Agent H2 "Qualite d'Analyse" terminee
+
+**Fichier cree:** `specs/wave2-H2-qualite-analyse.md`
+
+**Contenu:** Spec de correction detaillee pour 9 failles HIGH de qualite d'analyse:
+- F34: Projections non cross-validees avec GTM — nouveau module `tier1-cross-validation.ts` comparant projections financieres vs GTM analyst (coherence CAC, pipeline, growth rate)
+- F35: Dynamique cofondateurs superficielle — enrichissement `cofounderDynamics` avec `decisionMaking` + `referenceCheckTemplate` structure (6 questions ciblees)
+- F36: PMF sans protocole de collecte — `dataCollectionProtocol` pour chaque test NOT_TESTABLE (source, methode, template de question)
+- F37: Scoring comparatif non reel — nouveau service `percentile-calculator.ts` avec calcul deterministe depuis la DB (P25/Median/P75), remplacement des fallback `?? 50`
+- F38: Tech DD sans acces code — disclaimer de transparence + plafond de score a 75 sans acces code + section `dataAccessLimitations`
+- F39: Coherence inter-agents insuffisante — detecteur deterministe de divergences de scores > 20 points entre agents Tier 1 (pre-layer avant contradiction-detector LLM)
+- F40: Pas de delta re-analyse — nouveau service `analysis-delta` + champ `previousAnalysisId` dans Prisma + snapshot comparison + alimentation delta-indicator.tsx
+- F41: Memo genere depuis outputs LLM, pas fact store — nouveau pre-processeur `memo-fact-anchoring.ts` ancrant chaque section du memo sur les CurrentFact avec reliability
+- F55: Variance entre runs non detectee — nouveau service `analysis-variance` detectant les ecarts inacceptables entre deux runs consecutifs (>15% = warning, >30% = flag)
+
+**Fichiers source lus et analyses:** financial-auditor.ts (858L), team-investigator.ts (1308L), customer-intel.ts (1256L), synthesis-deal-scorer.ts (1504L), tech-stack-dd.ts (767L), contradiction-detector.ts (1190L), tier3-coherence.ts (538L), memo-generator.ts (1256L), orchestrator/index.ts (~2000L, lu en chunks), delta-indicator.tsx (82L), schema.prisma (Analysis model), fact-store/types.ts (173L)
+
+**Fichiers a creer:** 4 (tier1-cross-validation.ts, percentile-calculator.ts, analysis-delta.ts, memo-fact-anchoring.ts, analysis-variance.ts)
+**Fichiers a modifier:** 10+ (financial-auditor.ts, team-investigator.ts, customer-intel.ts, synthesis-deal-scorer.ts, tech-stack-dd.ts, contradiction-detector.ts, memo-generator.ts, orchestrator/index.ts, schema.prisma, delta-indicator.tsx)
+
+**Effort estime:** ~18h, 15+ fichiers touches
+**Ordre d'implementation:** F39 → F34 → F37 → F38 → F35 → F36 → F41 → F40 → F55
+
+---
+
+## 2026-02-12 00:30 — Spec Agent H4 "UX Guidance & Onboarding" terminee
+
+**Fichier cree:** `specs/wave2-H4-ux-guidance.md`
+
+**Contenu:** Spec de correction detaillee pour 8 failles HIGH d'UX, onboarding et biais:
+- F29: Pas de guide "Prochaines etapes" post-analyse — composant NextStepsGuide dynamique (red flags > questions > docs > chat), visible meme en FREE
+- F30: Severites des red flags sans explication d'impact — composant SeverityBadge avec tooltip (impact + action), SeverityLegend depliable
+- F31: Chat IA sans cadrage du niveau utilisateur — 3 niveaux (debutant/intermediaire/expert) dans le system prompt, quick actions adaptees, selecteur persistant
+- F32: Faux sentiment de securite plan FREE — banner PartialAnalysisBanner listant les 5 agents critiques manquants avec impact concret
+- F33: Zero onboarding pour premier deal — composant FirstDealGuide en 4 etapes, descriptions inline des champs financiers (ARR, valorisation...)
+- F50: Surcharge informationnelle — onglet "Resume" par defaut dans Tier1Results (score, top red flags, insights, points faibles)
+- F51: Aucune comparaison entre deals — checkboxes de selection, barre flottante, composant DealComparison + endpoint API /api/deals/compare
+- F52: Biais de confirmation via previousResults — result-sanitizer.ts qui strip les evaluations (scores, verdicts) mais garde les faits bruts. Exception pour Tier 3
+
+**Fichiers source lus et analyses:** tier1-results.tsx (~3700L, lu en 4 chunks), tier3-results.tsx (~1800L, lu en 3 chunks), analysis-panel.tsx (~1300L, lu en 3 chunks), deal-chat-agent.ts (~600L, lu en 3 chunks), deal-chat-panel.tsx (530L), context-retriever.ts (200L), orchestrator/index.ts (~2000L, lu en 4 chunks), orchestrator/types.ts (167L), base-agent.ts (930L), dashboard/page.tsx (155L), deals/new/page.tsx (389L), deals/page.tsx (88L), deals-table.tsx (100L), analysis-constants.ts (80L), agents/types.ts (50L)
+
+**Fichiers a creer:** 8 (next-steps-guide.tsx, severity-badge.tsx, severity-legend.tsx, partial-analysis-banner.tsx, first-deal-guide.tsx, deal-comparison.tsx, api/deals/compare/route.ts, result-sanitizer.ts)
+**Fichiers a modifier:** 8 (analysis-panel.tsx, tier1-results.tsx, deal-chat-agent.ts, deal-chat-panel.tsx, dashboard/page.tsx, deals/new/page.tsx, deals-table.tsx, orchestrator/index.ts)
+
+**Effort estime:** ~20h, 16 fichiers touches
+**Ordre d'implementation:** F52 → F30 → F50 → F33 → F31 → F32 → F29 → F51
+
+---
+
+## 2026-02-11 23:15 — Spec Agent H3 "Infrastructure & DevOps" terminee
+
+**Fichier cree:** `specs/wave2-H3-infra-devops.md`
+
+**Contenu:** Spec de correction detaillee pour 8 failles HIGH d'infrastructure et DevOps :
+- F42: Prompt version hardcodee "1.0" — remplacement par hash SHA-256 du system prompt + model complexity dans base-agent.ts buildTrace()
+- F44: Mutation in-memory des faits — remplacement de la mutation directe par pattern immutable (map + spread) dans current-facts.ts updateFactsInMemory()
+- F45: Erreurs de persistance avalees silencieusement — remplacement des 8 blocs catch dev-only par logPersistenceError() universel + compteur d'erreurs dans persistence.ts
+- F46: Analyse fire-and-forget sans SSE — ajout maxDuration=300, enrichissement du polling analyses, creation endpoint SSE /api/analyze/stream
+- F47: Zero test automatise — creation de 3 fichiers de tests (base-agent, current-facts, quality-analyzer) + CI/CD GitHub Actions
+- F48: Zero chiffrement applicatif — creation lib/encryption.ts (AES-256-GCM), integration dans upload/persistence/OCR, script de migration
+- F49: Scalabilite non concue pour le volume — rate limiter DB, integration Inngest pour deal analysis avec concurrency control
+- F58: OCR gameable (20 pages max) — priorisation intelligente des pages (financial keywords, position, decorative detection), limite dynamique par type de document
+
+**Fichiers source lus et analyses:** base-agent.ts (1003L), orchestrator.ts (re-export), orchestrator/index.ts (~2000L, lu en chunks), orchestrator/persistence.ts (818L), api/analyze/route.ts (253L), api/deals/[dealId]/analyses/route.ts (82L), inngest.ts (289L), schema.prisma (1622L), orchestration/memory.ts (463L), types.ts (~200L), fact-store/current-facts.ts (775L), fact-store/index.ts (79L), pdf/ocr-service.ts (403L), pdf/quality-analyzer.ts (433L), vitest.unit.config.ts (24L), 3 tests existants
+
+**Fichiers a creer:** 5 (lib/encryption.ts, api/analyze/stream/route.ts, __tests__/base-agent.test.ts, __tests__/current-facts.test.ts, __tests__/quality-analyzer.test.ts, .github/workflows/test.yml)
+**Fichiers a modifier:** 7 (base-agent.ts, current-facts.ts, persistence.ts, api/analyze/route.ts, api/deals/[dealId]/analyses/route.ts, inngest.ts, ocr-service.ts, quality-analyzer.ts)
+
+**Effort estime:** ~16h, 13 fichiers touches
+**Ordre d'implementation:** F45 → F42 → F44 → F46 → F58 → F47 → F49 → F48
+
+---
+
+## 2026-02-11 21:45 — Spec Agent H1 "Securite Input & Validation" terminee
+
+**Fichier cree:** `specs/wave2-H1-securite-input.md`
+
+**Contenu:** Spec de correction detaillee pour 8 failles HIGH de securite input & validation :
+- F26: Reponses fondateur = canal d'injection privilegiee — reformulation du prompt formatFounderResponses() dans base-agent.ts, baisse sourceConfidence 90→60, baisse SOURCE_PRIORITY 90→65
+- F27: Troncation documents exploitable — strategie debut+fin (head+tail) dans document-extractor.ts, base-agent.ts, fact-extractor.ts avec warnings structures
+- F28: Gaming du langage (anti-anchoring) — nouvelle methode getAntiAnchoringGuidance() dans base-agent.ts, injection automatique dans tous les system prompts via buildFullSystemPrompt()
+- F43: Fallback silencieux sur valeurs par defaut — remplacement de 30+ occurrences "?? 50" par null + flag isFallback dans AgentScore/AgentMeta
+- F53: LLM fabrique des sourceDocumentId — suppression du fallback silencieux sur documents[0], flag "[SOURCE NON VERIFIEE]" + penalite -15 points confidence
+- F54: Reparation JSON tronque = corruption silencieuse — injection marker __truncated dans extractBracedJSON(), propagation via _wasTruncated dans completeJSON()
+- F56: Valorisation calculee sur ARR declare sans penalite — nouvelle methode applyReliabilityPenalties() dans financial-auditor.ts, penalites forcees post-LLM, calcul "pire cas"
+- F57: Confiance minimale 70% gameable — dissociation sourceConfidence/truthConfidence dans ExtractedFact, reformulation getConfidenceGuidance(), calcul truthConfidence = sourceConfidence * RELIABILITY_WEIGHTS
+
+**Fichiers source lus et analyses:** base-agent.ts (1003L), founder-responses/[dealId]/route.ts (375L), document-extractor.ts (386L), router.ts (1168L), fact-extractor.ts (963L), financial-auditor.ts (858L), fact-store/types.ts (173L), fact-store/current-facts.ts (775L), sanitize.ts (50L), streaming-json-parser.ts (60L), + grep sur 30+ agents pour pattern "?? 50"
+
+**Fichiers a modifier:** 25+ (base-agent.ts, document-extractor.ts, fact-extractor.ts, financial-auditor.ts, router.ts, founder-responses/route.ts, fact-store/types.ts, agents/types.ts, 12 agents tier1, 3 agents tier2, 5 agents tier3, 2 orchestration)
+
+**Effort estime:** ~9h, 25+ fichiers touches
+**Ordre d'implementation:** F43 → F54 → F53 → F27 → F57 → F28 → F26 → F56
+
+---
+
+## 2026-02-11 20:30 — Spec Agent C2 "Verification & Donnees" terminee
+
+**Fichier cree:** `specs/wave1-C2-verification-donnees.md`
+
+**Contenu:** Spec de correction detaillee pour 9 failles CRITICAL de verification et donnees :
+- F03: Scoring 100% LLM non deterministe — nouveau `agent-score-calculator.ts` + modification de tous les agents Tier 1 et synthesis-deal-scorer pour scoring deterministe post-LLM
+- F04: Calculs financiers LLM jamais verifies — nouveau `financial-verification.ts` utilisant les fonctions existantes de `financial-calculations.ts`
+- F06: Benchmarks hard-codes obsoletes — enrichissement du type `PercentileBenchmark` avec `lastUpdated`/`expiresAt`/`dataYear` + service `freshness-checker.ts`
+- F07: Pas de verification independante financiere — integration Pappers/Societe.com dans `financial-auditor.ts` execute()
+- F08: Hallucination concurrents/benchmarks — nouveau `entity-verifier.ts` avec verification DB + annotation des entites non verifiees
+- F09: Verification fondateurs non croisee — cross-reference Pappers dans `team-investigator.ts` getFoundersData()
+- F10: Pas de recherche active concurrents — recherche Perplexity/web avant appel LLM dans `competitive-intel.ts`
+- F19: Analyse marche pure top-down — section bottom-up forcee dans prompt `market-intelligence.ts` + validation post-processing
+- F23: Deal source/sourcing bias non analyse — section analyse source dans `synthesis-deal-scorer.ts` + questions automatiques
+
+**Fichiers source lus et analyses:** financial-auditor.ts (857L), team-investigator.ts (1308L), competitive-intel.ts (863L), market-intelligence.ts (832L), synthesis-deal-scorer.ts (1504L), score-aggregator.ts (427L), benchmark-service.ts (385L), metric-registry.ts (589L), config.ts (289L), dynamic-benchmarks.ts (463L), types.ts (112L + 298L), index.ts (285L + 1175L), financial-calculations.ts (238L), pappers.ts (541L), societe-com.ts (422L)
+
+**Fichiers a creer:** 4 (agent-score-calculator.ts, financial-verification.ts, freshness-checker.ts, entity-verifier.ts)
+**Fichiers a modifier:** 8 (financial-auditor.ts, team-investigator.ts, competitive-intel.ts, market-intelligence.ts, synthesis-deal-scorer.ts, benchmarks/types.ts, benchmarks/config.ts, scoring/index.ts)
+
+**Effort estime:** ~20h, 12 fichiers touches
+
+---
+
+## 2026-02-11 20:15 — Spec Agent C3 "UX & Legal" terminee
+
+**Fichier cree:** `specs/wave1-C3-ux-legal.md`
+
+**Contenu:** Spec de correction detaillee pour 8 failles CRITICAL UX et juridiques :
+- F13: Zero disclaimer juridique — DisclaimerBanner permanent dans layout, pages CGU/Mentions legales/Confidentialite, disclaimer inline sur recommandations
+- F14: Non-conformite RGPD LinkedIn — Page politique de confidentialite, dialog de consentement pre-scraping, notes RGPD dans le code
+- F15: Modeles fantomes pricing — Remplacer Claude Opus/GPT-4 Turbo/Gemini Ultra/Mistral Large par Claude Sonnet/GPT-4o/Gemini Pro/Grok 4 (les vrais modeles de BOARD_MEMBERS_PROD)
+- F16: Absence de glossaire — Dictionnaire de 30+ termes financiers (glossary.ts) + composant GlossaryTerm avec tooltip
+- F17: Score sans echelle — ScoreBadge ameliore avec tooltip (echelle qualitative, barre gradient, percentiles optionnels)
+- F18: Projections comme certitudes — Labels "Theorique (estimatif)", badges PROJECTION, warning 70% echec startups
+- F21: Moat technique faible — Document strategique moat-strategy.md (data flywheel, partenariats, KPIs)
+- F22: Red flags disperses — Composant RedFlagsSummary consolide, trie par severite, affiche en haut de Tier 1
+
+**Fichiers source lus et analyses:** layout.tsx, tier1-results.tsx (3700+ lignes), tier3-results.tsx (1800+ lignes), negotiation-panel.tsx, score-badge.tsx, format-utils.ts, pricing/page.tsx, board/types.ts, team-investigator.ts, rapidapi-linkedin.ts, tooltip.tsx, expandable-section.tsx
+
+**Fichiers a creer:** 9 (disclaimer-banner.tsx, 3 pages legales, linkedin-consent-dialog.tsx, glossary.ts, glossary-term.tsx, red-flags-summary.tsx, moat-strategy.md)
+**Fichiers a modifier:** 8 (layout.tsx, tier3-results.tsx, pricing/page.tsx, tier1-results.tsx, negotiation-panel.tsx, score-badge.tsx, rapidapi-linkedin.ts, team-investigator.ts)
+
+**Effort estime:** ~18h, 17 fichiers touches
+
+---
+
+## 2026-02-11 19:30 — Spec Agent C1 "LLM Pipeline & Securite" terminee
+
+**Fichier cree:** `specs/wave1-C1-llm-pipeline.md`
+
+**Contenu:** Spec de correction detaillee pour 8 failles CRITICAL du pipeline LLM :
+- F01: Prompt injection (sanitize.ts, document-extractor.ts, deck-coherence-checker.ts) — activer blockOnSuspicious, centraliser sanitization dans base-agent
+- F02: selectModel() hardcode (router.ts L178-180) — restaurer routage par complexite (simple->Flash, complex->Pro, critical->Sonnet)
+- F05: Fiabilite 100% LLM (fact-extractor.ts normalizeReliability L950-958) — validation programmatique post-LLM (dates, keywords)
+- F11: Zero validation Zod Tier 1/3 (13+5 agents) — creer llmCompleteJSONValidated() + schemas Zod exemple (financial-auditor, team-investigator)
+- F12: Propagation faits non verifies — filtrage programmatique PROJECTED/UNVERIFIABLE avant injection dans agents scoring
+- F20: Circuit breaker in-memory (2 fichiers) — migration vers Upstash Redis avec fallback in-memory
+- F24: Biais circulaire extraction/fiabilite — second appel LLM meta-evaluation sur faits critiques
+- F25: Ponderation scoring fixe (synthesis-deal-scorer.ts L325-336) — table de poids par stage avec ajustements sectoriels
+
+**Fichiers source lus et analyses:** sanitize.ts, document-extractor.ts, deck-coherence-checker.ts, base-agent.ts, fact-extractor.ts, router.ts, circuit-breaker.ts (x2), llm-validation.ts, synthesis-deal-scorer.ts, base-sector-expert.ts, financial-auditor.ts, team-investigator.ts, client.ts, orchestrator/index.ts
+
+**Effort estime:** ~22h, 16 fichiers touches, 5 nouveaux fichiers
+
+---
+
+## 2026-02-11 18:15 — Lancement Vague 1 CRITICAL (3 agents specs en parallele)
+
+**Contexte:** Orchestration de la correction des 102 failles en 4 vagues (CRITICAL→HIGH→MEDIUM→LOW), 12 agents au total.
+
+**Plan complet:** `~/.claude/plans/harmonic-hopping-squid.md`
+
+**Mode:** Spec detaillee (read-only) — chaque agent lit le code et produit un plan de correction precis dans `specs/`.
+
+**Vague 1 en cours (CRITICAL, 25 failles, 3 agents paralleles):**
+- Agent C1 "LLM Pipeline & Securite" (8 failles: F01,F02,F05,F11,F12,F20,F24,F25) → `specs/wave1-C1-llm-pipeline.md`
+- Agent C2 "Verification & Donnees" (9 failles: F03,F04,F06,F07,F08,F09,F10,F19,F23) → `specs/wave1-C2-verification-donnees.md`
+- Agent C3 "UX & Legal" (8 failles: F13,F14,F15,F16,F17,F18,F21,F22) → `specs/wave1-C3-ux-legal.md`
+
+**Vagues suivantes (en attente):**
+- Vague 2 HIGH: 4 agents (H1-H4), 33 failles
+- Vague 3 MEDIUM: 4 agents (M1-M4), 40 failles
+- Vague 4 LOW: 1 agent (L1), 4 failles
+
+**Workflow post-specs:** Implementation sequentielle par l'orchestrateur, un commit par vague de severite.
+
+**Fichiers de reference:**
+- `audit-failles-personas.md` — Audit complet + liste deduplicee (F01-F102)
+- `specs/wave1-*.md` — Specs de correction Vague 1
+- `~/.claude/plans/harmonic-hopping-squid.md` — Plan d'orchestration
+
+---
+
+## 2026-02-11 17:30 — Ajout liste deduplicee exhaustive dans audit-failles-personas.md
+
+**Fichier modifie:** `audit-failles-personas.md`
+
+**Changement:** Ajout d'une section "Liste deduplicee exhaustive" dans la synthese globale, entre le Top 10 convergence et les corrections a impact maximal.
+
+**Contenu:** 142 failles brutes → **102 failles uniques** apres deduplication inter-personas :
+- CRITICAL: 25
+- HIGH: 33
+- MEDIUM: 40
+- LOW: 4
+
+Chaque faille porte un ID unique (F01→F102) avec refs aux items originaux et personas concernees. Les corrections a impact maximal sont maintenant liees aux IDs de faille.
+
+---
+
+## 2026-02-11 16:00 — Audit multi-personas complete (9/9 agents termines)
+
+**Fichier:** `audit-failles-personas.md` (800 lignes)
+
+**Contexte:** Audit exhaustif du codebase Angel Desk par 9 agents paralleles, chacun avec un angle different:
+1. Fondateur Roublard (18 failles) — Vecteurs de manipulation
+2. BA Novice (16 failles) — Protection utilisateur novice
+3. BA Expert (18 failles) — Profondeur d'analyse
+4. VC Partner (14 failles) — Standards professionnels VC
+5. Auditeur Big4 (13 failles) — Rigueur ISA, tracabilite
+6. Concurrent du Secteur (13 failles) — Faiblesses exploitables
+7. Utilisateur UX (20 failles) — Frictions ergonomiques
+8. Journaliste Investigation (12 failles) — Ethique, promesses vs realite
+9. Data Scientist QA (18 failles) — Hallucinations, calibration, validation
+
+**Total brut:** ~142 failles (recoupements significatifs entre personas)
+
+**Top 10 corrections prioritaires identifiees:**
+1. Restaurer selectModel() multi-modele
+2. Activer blockOnSuspicious + sanitizer les documents
+3. Schemas Zod + completeAndValidate() pour tous les agents
+4. Verification serveur des calculs financiers
+5. Classification fiabilite hybride (LLM + validation programmatique)
+6. Disclaimer juridique + CGU + RGPD
+7. Mettre a jour la page pricing (modeles reels AI Board)
+8. Tooltips/glossaire sur termes techniques
+9. Calibration empirique des scores
+10. Red flags consolides en panneau unique
+
+**Prochaines etapes:** Corrections a implementer dans une session future a partir du document d'audit.
+
+---
+
 ## 2026-02-11 — Classification de fiabilite des donnees (Levier 2 — anti-projection-as-fact)
 
 **Probleme:**

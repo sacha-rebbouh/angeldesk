@@ -19,6 +19,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { calculateAgentScore, LEGAL_REGULATORY_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * Legal & Regulatory Agent - REFONTE v2.0
@@ -400,6 +401,26 @@ Produis un JSON structuré avec:
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
 
+    // F79: Check legal registries based on geography
+    let registrySection = "";
+    const geography = context.deal.geography ?? "";
+    if (geography) {
+      try {
+        const { checkLegalRegistries, formatRegistryResults } = await import(
+          "@/services/legal-registry-check"
+        );
+        const registryResult = checkLegalRegistries(
+          context.deal.companyName ?? context.deal.name ?? "",
+          geography
+        );
+        registrySection = formatRegistryResults(registryResult);
+      } catch {
+        registrySection = "\n## VERIFICATION REGISTRES PUBLICS\nVerification des registres echouee. Toutes les conclusions legales sont NON VERIFIEES.\n";
+      }
+    } else {
+      registrySection = "\n## VERIFICATION REGISTRES PUBLICS\nGeographie du deal inconnue. AUCUN registre public n'a ete verifie.\n**TOUTES les conclusions legales doivent etre marquees 'NON VERIFIE'.**\n";
+    }
+
     const prompt = `# ANALYSE LEGAL & REGULATORY - ${context.deal.name}
 
 ## DOCUMENTS FOURNIS
@@ -410,6 +431,7 @@ ${extractedInfo ? JSON.stringify(extractedInfo, null, 2) : "Aucune donnée extra
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Aucune donnée Context Engine disponible"}
+${registrySection}
 ${this.formatFactStoreData(context)}
 ## SECTEUR DU DEAL
 ${context.deal.sector ?? "Non spécifié"} - Adapte ton analyse réglementaire en conséquence.
@@ -644,7 +666,83 @@ RAPPELS CRITIQUES:
     const { data } = await this.llmCompleteJSON<LLMLegalRegulatoryResponse>(prompt);
 
     // Validate and normalize the response
-    return this.normalizeResponse(data, context);
+    const result = this.normalizeResponse(data, context);
+
+    // F03: DETERMINISTIC SCORING
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const f = data.findings;
+
+      // Structure appropriateness
+      const structMap = { APPROPRIATE: 90, SUBOPTIMAL: 55, CONCERNING: 25, UNKNOWN: 30 };
+      if (f?.structureAnalysis?.appropriateness) {
+        extractedMetrics.push({
+          name: "structure_appropriateness", value: structMap[f.structureAnalysis.appropriateness] ?? 30,
+          unit: "score", source: "LLM structure analysis", dataReliability: "DECLARED", category: "legal",
+        });
+      }
+      if (f?.structureAnalysis?.vestingInPlace != null) {
+        extractedMetrics.push({
+          name: "vesting_status", value: f.structureAnalysis.vestingInPlace ? 90 : 20,
+          unit: "score", source: "LLM structure analysis", dataReliability: "DECLARED", category: "legal",
+        });
+      }
+      const shaMap = { YES: 90, NO: 15, UNKNOWN: 30 };
+      if (f?.structureAnalysis?.shareholderAgreement) {
+        extractedMetrics.push({
+          name: "shareholder_agreement", value: shaMap[f.structureAnalysis.shareholderAgreement] ?? 30,
+          unit: "score", source: "LLM structure analysis", dataReliability: "DECLARED", category: "legal",
+        });
+      }
+
+      // Compliance
+      const complianceAreas = f?.compliance ?? [];
+      if (complianceAreas.length > 0) {
+        const statusMap = { COMPLIANT: 100, PARTIAL: 55, NON_COMPLIANT: 15, UNKNOWN: 30 };
+        const avg = complianceAreas.reduce((s, c) => s + (statusMap[c.status] ?? 30), 0) / complianceAreas.length;
+        extractedMetrics.push({
+          name: "compliance_score", value: Math.round(avg),
+          unit: "score", source: "LLM compliance analysis", dataReliability: "DECLARED", category: "legal",
+        });
+        const gaps = complianceAreas.reduce((s, c) => s + (c.gaps?.length ?? 0), 0);
+        extractedMetrics.push({
+          name: "gaps_count", value: Math.max(0, 100 - gaps * 15),
+          unit: "score", source: "LLM compliance gaps", dataReliability: "DECLARED", category: "legal",
+        });
+      }
+
+      // IP
+      if (f?.ipStatus?.overallIPStrength != null) {
+        extractedMetrics.push({
+          name: "ip_protection_score", value: Math.min(100, Math.max(0, f.ipStatus.overallIPStrength)),
+          unit: "score", source: "LLM IP analysis", dataReliability: "DECLARED", category: "legal",
+        });
+      }
+
+      // Regulatory risks
+      const regRisks = f?.regulatoryRisks ?? [];
+      if (regRisks.length > 0) {
+        const riskMap: Record<string, number> = { HIGH: 20, MEDIUM: 55, LOW: 85 };
+        const avg = regRisks.reduce((s, r) => s + (riskMap[r.probability] ?? 50), 0) / regRisks.length;
+        extractedMetrics.push({
+          name: "regulatory_risk_level", value: Math.round(avg),
+          unit: "score", source: "LLM regulatory analysis", dataReliability: "DECLARED", category: "legal",
+        });
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "legal-regulatory", extractedMetrics, sector, stage, LEGAL_REGULATORY_CRITERIA,
+        );
+        result.score = { ...result.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[legal-regulatory] Deterministic scoring failed, using LLM score:", err);
+    }
+
+    return result;
   }
 
   private normalizeResponse(
@@ -652,26 +750,37 @@ RAPPELS CRITIQUES:
     context: EnrichedAgentContext
   ): LegalRegulatoryData {
     // Normalize meta
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[legal-regulatory] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "legal-regulatory",
       analysisDate: new Date().toISOString(),
       dataCompleteness: data.meta?.dataCompleteness ?? "minimal",
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Normalize score
     const validGrades = ["A", "B", "C", "D", "F"] as const;
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[legal-regulatory] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: validGrades.includes(data.score?.grade as (typeof validGrades)[number])
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : (validGrades.includes(data.score?.grade as (typeof validGrades)[number])
         ? (data.score.grade as (typeof validGrades)[number])
-        : "C",
+        : "C"),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 0,
-            score: Math.min(100, Math.max(0, b.score ?? 0)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "",
           }))
         : [],
@@ -909,7 +1018,7 @@ RAPPELS CRITIQUES:
         licenses: Array.isArray(data?.copyrights?.licenses) ? data.copyrights.licenses : [],
         concerns: Array.isArray(data?.copyrights?.concerns) ? data.copyrights.concerns : [],
       },
-      overallIPStrength: Math.min(100, Math.max(0, data?.overallIPStrength ?? 50)),
+      overallIPStrength: data?.overallIPStrength != null ? Math.min(100, Math.max(0, data.overallIPStrength)) : 0,
       ipVerdict: data?.ipVerdict ?? "Non évalué",
     };
   }

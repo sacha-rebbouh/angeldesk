@@ -39,6 +39,7 @@ import type {
   DbCrossReference,
 } from "../types";
 import { calculateBATicketSize, type BAPreferences } from "@/services/benchmarks";
+import { calculateIRR, calculateCumulativeDilution } from "@/agents/orchestration/utils/financial-calculations";
 
 // ============================================================================
 // LLM RESPONSE TYPES
@@ -97,6 +98,13 @@ interface LLMScenarioResponse {
     };
     keyRisks: { risk: string; source: string }[];
     keyDrivers: { driver: string; source: string }[];
+    triggers?: {
+      trigger: string;
+      source: string;
+      impactOnScenario: string;
+      probability: string;
+      mitigations: string[];
+    }[];
     basedOnComparable?: {
       company: string;
       trajectory: string;
@@ -319,6 +327,19 @@ IRR = ((Multiple)^(1/years) - 1) × 100
 3. Aucun comparable BEAR/CATASTROPHIC trouvé - MEDIUM (suspect)
 4. Dilution sous-estimée vs standard du marché - HIGH
 5. Multiple de sortie au-dessus de P90 - HIGH
+
+# TRIGGERS CONTEXTUELS OBLIGATOIRES (F74)
+
+Pour CHAQUE scenario, identifie les TRIGGERS SPECIFIQUES dans le champ "triggers":
+- Quels red flags Tier 1 se materialisent dans ce scenario?
+- Quel evenement externe pourrait declencher ce scenario? (concurrent leve 50M, regulation change)
+- Quel evenement interne pourrait declencher ce scenario? (CTO part, pivot force)
+
+Chaque trigger: { trigger, source, impactOnScenario, probability, mitigations[] }
+
+Exemples:
+- BEAR trigger: "Le CTO quitte" (source: "team-investigator: no vesting on CTO", impact: "BASE → BEAR", probability: "MEDIUM", mitigations: ["Mettre du vesting", "Recruter VP Engineering"])
+- BULL trigger: "Contrat enterprise signe" (source: "customer-intel: pipeline enterprise", impact: "BASE → BULL", probability: "LOW")
 
 # FORMAT DE SORTIE
 
@@ -650,15 +671,27 @@ RAPPEL CRITIQUE: NE JAMAIS INVENTER. Si tu n'as pas de données, écris "NON DIS
       }
     }
 
-    // Red flags count
+    // Red flags as scenario triggers (F74)
+    const triggerRedFlags: Array<{ agent: string; severity: string; title: string; description: string }> = [];
     let totalRedFlags = 0;
     let criticalRedFlags = 0;
-    for (const result of Object.values(results)) {
+
+    for (const [agentName, result] of Object.entries(results)) {
       if (result?.success && "data" in result) {
-        const d = result.data as { redFlags?: Array<{ severity?: string }> };
+        const d = result.data as { redFlags?: Array<{ severity?: string; title?: string; description?: string }> };
         if (Array.isArray(d.redFlags)) {
           totalRedFlags += d.redFlags.length;
-          criticalRedFlags += d.redFlags.filter((f) => f.severity === "CRITICAL").length;
+          for (const rf of d.redFlags) {
+            if (rf.severity === "CRITICAL") criticalRedFlags++;
+            if (rf.severity === "CRITICAL" || rf.severity === "HIGH") {
+              triggerRedFlags.push({
+                agent: agentName,
+                severity: rf.severity ?? "HIGH",
+                title: rf.title ?? "Unknown",
+                description: (rf.description ?? "").slice(0, 200),
+              });
+            }
+          }
         }
       }
     }
@@ -666,6 +699,15 @@ RAPPEL CRITIQUE: NE JAMAIS INVENTER. Si tu n'as pas de données, écris "NON DIS
     if (totalRedFlags > 0) {
       insights.push(`### Red Flags Tier 1`);
       insights.push(`- Total: ${totalRedFlags} (dont ${criticalRedFlags} CRITICAL)`);
+    }
+
+    if (triggerRedFlags.length > 0) {
+      insights.push(`\n### Red Flags comme Triggers de Scenarios`);
+      insights.push(`IMPORTANT: Utilise ces red flags comme TRIGGERS SPECIFIQUES dans chaque scenario.`);
+      insights.push(`Pour chaque scenario, indique quel(s) trigger(s) se materialisent et lesquels non.\n`);
+      for (const rf of triggerRedFlags.slice(0, 10)) {
+        insights.push(`- [${rf.severity}] (${rf.agent}) ${rf.title}: ${rf.description}`);
+      }
     }
 
     return insights.length > 0 ? insights.join("\n") : "Pas d'insights Tier 1 disponibles.";
@@ -904,11 +946,17 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
     };
 
     // Normalize score
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[scenario-modeler] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: validGrades.includes(data.score?.grade as typeof validGrades[number])
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : (validGrades.includes(data.score?.grade as typeof validGrades[number])
         ? (data.score.grade as typeof validGrades[number])
-        : "C",
+        : "C"),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({
             criterion: b.criterion ?? "",
@@ -1064,9 +1112,20 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
         ? Math.round((newProceeds / investment) * 10) / 10
         : 0;
       const years = s.investorReturn.holdingPeriodYears || 6;
-      const newIrr = newMultiple > 0
-        ? Math.round((Math.pow(newMultiple, 1 / years) - 1) * 1000) / 10
-        : -100;
+
+      // F78: Use Newton-Raphson IRR instead of simplified formula
+      let newIrr = -100;
+      if (investment > 0 && newProceeds > 0) {
+        const irrResult = calculateIRR([-investment, newProceeds], [0, years]);
+        if ("value" in irrResult) {
+          newIrr = irrResult.value;
+        } else {
+          // Fallback to simplified formula
+          newIrr = newMultiple > 0
+            ? Math.round((Math.pow(newMultiple, 1 / years) - 1) * 1000) / 10
+            : -100;
+        }
+      }
 
       return {
         ...s,
@@ -1110,9 +1169,12 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
     }
 
     const years = scenarios[0]?.investorReturn.holdingPeriodYears ?? 6;
-    const weightedIRR = weightedMultiple > 0
-      ? Math.round((Math.pow(weightedMultiple, 1 / years) - 1) * 1000) / 10
-      : -100;
+    // F78: Use Newton-Raphson IRR for weighted outcome
+    let weightedIRR = -100;
+    if (weightedMultiple > 0) {
+      const irrResult = calculateIRR([-1, weightedMultiple], [0, years]);
+      weightedIRR = "value" in irrResult ? irrResult.value : Math.round((Math.pow(weightedMultiple, 1 / years) - 1) * 1000) / 10;
+    }
 
     const calcParts = scenarios
       .map((s) => `${s.probability.value}% × ${s.investorReturn.multiple}x`)

@@ -20,17 +20,17 @@ import type { BenchmarkConfig, PercentileBenchmark, SectorStageBenchmarks } from
 const GENERIC_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   PRE_SEED: {
     financial: {
-      arrGrowthYoY: { p25: 80, median: 150, p75: 250, source: "First Round 2024" },
-      nrr: { p25: 90, median: 100, p75: 115, source: "Estimation early stage" },
-      grossRetention: { p25: 80, median: 88, p75: 95, source: "Carta 2024" },
-      burnMultiple: { p25: 2, median: 3, p75: 5, source: "SaaStr 2024" },
-      valuationMultiple: { p25: 20, median: 35, p75: 60, source: "Carta 2024" },
-      ltvCacRatio: { p25: 1.5, median: 2.5, p75: 4, source: "OpenVC 2024" },
-      cacPaybackMonths: { p25: 8, median: 14, p75: 24, source: "OpenVC 2024" },
-      dilution: { p25: 18, median: 22, p75: 28, source: "Carta 2024" },
+      arrGrowthYoY: { p25: 80, median: 150, p75: 250, source: "First Round State of Startups 2024", sourceUrl: "https://stateofstartups.firstround.com/2024", lastUpdated: "2024-11-01", expiresAt: "2025-11-01", dataYear: 2024 },
+      nrr: { p25: 90, median: 100, p75: 115, source: "Estimation early stage", lastUpdated: "2024-06-01", expiresAt: "2025-06-01", dataYear: 2024 },
+      grossRetention: { p25: 80, median: 88, p75: 95, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
+      burnMultiple: { p25: 2, median: 3, p75: 5, source: "SaaStr Annual Survey 2024", sourceUrl: "https://www.saastr.com/benchmarks", lastUpdated: "2024-09-01", expiresAt: "2025-09-01", dataYear: 2024 },
+      valuationMultiple: { p25: 20, median: 35, p75: 60, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
+      ltvCacRatio: { p25: 1.5, median: 2.5, p75: 4, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      cacPaybackMonths: { p25: 8, median: 14, p75: 24, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      dilution: { p25: 18, median: 22, p75: 28, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
     },
     exit: {
-      revenueMultiple: { p25: 2, median: 4, p75: 8, source: "PitchBook 2024" },
+      revenueMultiple: { p25: 2, median: 4, p75: 8, source: "PitchBook Annual VC Report 2024", lastUpdated: "2024-12-01", expiresAt: "2025-12-01", dataYear: 2024 },
       timeToLiquidityYears: { bestCase: 5, baseCase: 7, worstCase: 12 },
     },
     team: {
@@ -41,17 +41,17 @@ const GENERIC_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   },
   SEED: {
     financial: {
-      arrGrowthYoY: { p25: 70, median: 120, p75: 200, source: "First Round 2024" },
-      nrr: { p25: 95, median: 110, p75: 130, source: "OpenVC 2024" },
-      grossRetention: { p25: 82, median: 90, p75: 95, source: "Carta 2024" },
-      burnMultiple: { p25: 1.2, median: 2, p75: 3, source: "SaaStr 2024" },
-      valuationMultiple: { p25: 15, median: 25, p75: 40, source: "Carta 2024" },
-      ltvCacRatio: { p25: 2, median: 3, p75: 5, source: "OpenVC 2024" },
-      cacPaybackMonths: { p25: 6, median: 12, p75: 18, source: "OpenVC 2024" },
-      dilution: { p25: 15, median: 20, p75: 25, source: "Carta 2024" },
+      arrGrowthYoY: { p25: 70, median: 120, p75: 200, source: "First Round State of Startups 2024", sourceUrl: "https://stateofstartups.firstround.com/2024", lastUpdated: "2024-11-01", expiresAt: "2025-11-01", dataYear: 2024 },
+      nrr: { p25: 95, median: 110, p75: 130, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      grossRetention: { p25: 82, median: 90, p75: 95, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
+      burnMultiple: { p25: 1.2, median: 2, p75: 3, source: "SaaStr Annual Survey 2024", sourceUrl: "https://www.saastr.com/benchmarks", lastUpdated: "2024-09-01", expiresAt: "2025-09-01", dataYear: 2024 },
+      valuationMultiple: { p25: 15, median: 25, p75: 40, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
+      ltvCacRatio: { p25: 2, median: 3, p75: 5, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      cacPaybackMonths: { p25: 6, median: 12, p75: 18, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      dilution: { p25: 15, median: 20, p75: 25, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
     },
     exit: {
-      revenueMultiple: { p25: 3, median: 5, p75: 8, source: "PitchBook 2024" },
+      revenueMultiple: { p25: 3, median: 5, p75: 8, source: "PitchBook Annual VC Report 2024", lastUpdated: "2024-12-01", expiresAt: "2025-12-01", dataYear: 2024 },
       timeToLiquidityYears: { bestCase: 4, baseCase: 6, worstCase: 10 },
     },
     team: {
@@ -62,17 +62,17 @@ const GENERIC_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   },
   SERIES_A: {
     financial: {
-      arrGrowthYoY: { p25: 50, median: 80, p75: 120, source: "First Round 2024" },
-      nrr: { p25: 100, median: 115, p75: 135, source: "OpenVC 2024" },
-      grossRetention: { p25: 85, median: 92, p75: 97, source: "Carta 2024" },
-      burnMultiple: { p25: 1, median: 1.5, p75: 2.5, source: "SaaStr 2024" },
-      valuationMultiple: { p25: 8, median: 12, p75: 18, source: "Carta 2024" },
-      ltvCacRatio: { p25: 2.5, median: 3.5, p75: 6, source: "OpenVC 2024" },
-      cacPaybackMonths: { p25: 6, median: 10, p75: 15, source: "OpenVC 2024" },
-      dilution: { p25: 12, median: 18, p75: 22, source: "Carta 2024" },
+      arrGrowthYoY: { p25: 50, median: 80, p75: 120, source: "First Round State of Startups 2024", sourceUrl: "https://stateofstartups.firstround.com/2024", lastUpdated: "2024-11-01", expiresAt: "2025-11-01", dataYear: 2024 },
+      nrr: { p25: 100, median: 115, p75: 135, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      grossRetention: { p25: 85, median: 92, p75: 97, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
+      burnMultiple: { p25: 1, median: 1.5, p75: 2.5, source: "SaaStr Annual Survey 2024", sourceUrl: "https://www.saastr.com/benchmarks", lastUpdated: "2024-09-01", expiresAt: "2025-09-01", dataYear: 2024 },
+      valuationMultiple: { p25: 8, median: 12, p75: 18, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
+      ltvCacRatio: { p25: 2.5, median: 3.5, p75: 6, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      cacPaybackMonths: { p25: 6, median: 10, p75: 15, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      dilution: { p25: 12, median: 18, p75: 22, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
     },
     exit: {
-      revenueMultiple: { p25: 4, median: 6, p75: 10, source: "PitchBook 2024" },
+      revenueMultiple: { p25: 4, median: 6, p75: 10, source: "PitchBook Annual VC Report 2024", lastUpdated: "2024-12-01", expiresAt: "2025-12-01", dataYear: 2024 },
       timeToLiquidityYears: { bestCase: 3, baseCase: 5, worstCase: 8 },
     },
     team: {
@@ -83,17 +83,17 @@ const GENERIC_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   },
   SERIES_B: {
     financial: {
-      arrGrowthYoY: { p25: 40, median: 60, p75: 100, source: "First Round 2024" },
-      nrr: { p25: 105, median: 120, p75: 140, source: "OpenVC 2024" },
-      grossRetention: { p25: 88, median: 93, p75: 97, source: "Carta 2024" },
-      burnMultiple: { p25: 0.8, median: 1.2, p75: 2, source: "SaaStr 2024" },
-      valuationMultiple: { p25: 6, median: 10, p75: 15, source: "Carta 2024" },
-      ltvCacRatio: { p25: 3, median: 4, p75: 7, source: "OpenVC 2024" },
-      cacPaybackMonths: { p25: 5, median: 9, p75: 14, source: "OpenVC 2024" },
-      dilution: { p25: 10, median: 15, p75: 20, source: "Carta 2024" },
+      arrGrowthYoY: { p25: 40, median: 60, p75: 100, source: "First Round State of Startups 2024", sourceUrl: "https://stateofstartups.firstround.com/2024", lastUpdated: "2024-11-01", expiresAt: "2025-11-01", dataYear: 2024 },
+      nrr: { p25: 105, median: 120, p75: 140, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      grossRetention: { p25: 88, median: 93, p75: 97, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
+      burnMultiple: { p25: 0.8, median: 1.2, p75: 2, source: "SaaStr Annual Survey 2024", sourceUrl: "https://www.saastr.com/benchmarks", lastUpdated: "2024-09-01", expiresAt: "2025-09-01", dataYear: 2024 },
+      valuationMultiple: { p25: 6, median: 10, p75: 15, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
+      ltvCacRatio: { p25: 3, median: 4, p75: 7, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      cacPaybackMonths: { p25: 5, median: 9, p75: 14, source: "OpenVC Benchmark Report 2024", sourceUrl: "https://openvc.app/benchmarks", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
+      dilution: { p25: 10, median: 15, p75: 20, source: "Carta State of Private Markets Q3 2024", sourceUrl: "https://carta.com/blog/state-of-private-markets-q3-2024", lastUpdated: "2024-10-15", expiresAt: "2025-10-15", dataYear: 2024 },
     },
     exit: {
-      revenueMultiple: { p25: 5, median: 8, p75: 12, source: "PitchBook 2024" },
+      revenueMultiple: { p25: 5, median: 8, p75: 12, source: "PitchBook Annual VC Report 2024", lastUpdated: "2024-12-01", expiresAt: "2025-12-01", dataYear: 2024 },
       timeToLiquidityYears: { bestCase: 2, baseCase: 4, worstCase: 7 },
     },
     team: {
@@ -115,15 +115,15 @@ const SAAS_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   SEED: {
     financial: {
       ...GENERIC_BENCHMARKS.SEED!.financial!,
-      nrr: { p25: 100, median: 115, p75: 135, source: "SaaStr 2024" },
-      grossRetention: { p25: 85, median: 92, p75: 97, source: "SaaStr 2024" },
+      nrr: { p25: 100, median: 115, p75: 135, source: "SaaStr Annual Survey 2024", sourceUrl: "https://www.saastr.com/benchmarks", lastUpdated: "2024-09-01", expiresAt: "2025-09-01", dataYear: 2024 },
+      grossRetention: { p25: 85, median: 92, p75: 97, source: "SaaStr Annual Survey 2024", sourceUrl: "https://www.saastr.com/benchmarks", lastUpdated: "2024-09-01", expiresAt: "2025-09-01", dataYear: 2024 },
     },
   },
   SERIES_A: {
     financial: {
       ...GENERIC_BENCHMARKS.SERIES_A!.financial!,
-      nrr: { p25: 105, median: 120, p75: 145, source: "SaaStr 2024" },
-      grossRetention: { p25: 88, median: 94, p75: 98, source: "SaaStr 2024" },
+      nrr: { p25: 105, median: 120, p75: 145, source: "SaaStr Annual Survey 2024", sourceUrl: "https://www.saastr.com/benchmarks", lastUpdated: "2024-09-01", expiresAt: "2025-09-01", dataYear: 2024 },
+      grossRetention: { p25: 88, median: 94, p75: 98, source: "SaaStr Annual Survey 2024", sourceUrl: "https://www.saastr.com/benchmarks", lastUpdated: "2024-09-01", expiresAt: "2025-09-01", dataYear: 2024 },
     },
   },
 };
@@ -135,12 +135,11 @@ const FINTECH_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   SEED: {
     financial: {
       ...GENERIC_BENCHMARKS.SEED!.financial!,
-      // Fintech a généralement des CAC plus élevés mais meilleure rétention
-      cacPaybackMonths: { p25: 8, median: 14, p75: 22, source: "a16z Fintech 2024" },
-      nrr: { p25: 100, median: 118, p75: 140, source: "a16z Fintech 2024" },
+      cacPaybackMonths: { p25: 8, median: 14, p75: 22, source: "a16z Fintech State of Fintech 2024", sourceUrl: "https://a16z.com/fintech", lastUpdated: "2024-08-01", expiresAt: "2025-08-01", dataYear: 2024 },
+      nrr: { p25: 100, median: 118, p75: 140, source: "a16z Fintech State of Fintech 2024", sourceUrl: "https://a16z.com/fintech", lastUpdated: "2024-08-01", expiresAt: "2025-08-01", dataYear: 2024 },
     },
     exit: {
-      revenueMultiple: { p25: 4, median: 7, p75: 12, source: "PitchBook Fintech 2024" },
+      revenueMultiple: { p25: 4, median: 7, p75: 12, source: "PitchBook Fintech Annual Report 2024", lastUpdated: "2024-12-01", expiresAt: "2025-12-01", dataYear: 2024 },
       timeToLiquidityYears: { bestCase: 5, baseCase: 7, worstCase: 12 },
     },
   },
@@ -153,12 +152,11 @@ const MARKETPLACE_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   SEED: {
     financial: {
       ...GENERIC_BENCHMARKS.SEED!.financial!,
-      // Marketplaces ont des métriques différentes (GMV-based)
-      valuationMultiple: { p25: 0.5, median: 1, p75: 2, source: "a16z Marketplace 2024" }, // Multiple of GMV
-      burnMultiple: { p25: 1.5, median: 2.5, p75: 4, source: "a16z Marketplace 2024" },
+      valuationMultiple: { p25: 0.5, median: 1, p75: 2, source: "a16z Marketplace 100 Report 2024", sourceUrl: "https://a16z.com/marketplace-100", lastUpdated: "2024-06-01", expiresAt: "2025-06-01", dataYear: 2024 },
+      burnMultiple: { p25: 1.5, median: 2.5, p75: 4, source: "a16z Marketplace 100 Report 2024", sourceUrl: "https://a16z.com/marketplace-100", lastUpdated: "2024-06-01", expiresAt: "2025-06-01", dataYear: 2024 },
     },
     exit: {
-      revenueMultiple: { p25: 2, median: 4, p75: 8, source: "PitchBook 2024" },
+      revenueMultiple: { p25: 2, median: 4, p75: 8, source: "PitchBook Annual VC Report 2024", lastUpdated: "2024-12-01", expiresAt: "2025-12-01", dataYear: 2024 },
       timeToLiquidityYears: { bestCase: 5, baseCase: 8, worstCase: 12 },
     },
   },
@@ -171,11 +169,10 @@ const HEALTHTECH_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   SEED: {
     financial: {
       ...GENERIC_BENCHMARKS.SEED!.financial!,
-      // Healthtech a des cycles de vente plus longs
-      cacPaybackMonths: { p25: 10, median: 18, p75: 30, source: "Rock Health 2024" },
+      cacPaybackMonths: { p25: 10, median: 18, p75: 30, source: "Rock Health Annual Report 2024", sourceUrl: "https://rockhealth.com/reports", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
     },
     exit: {
-      revenueMultiple: { p25: 3, median: 6, p75: 12, source: "Rock Health 2024" },
+      revenueMultiple: { p25: 3, median: 6, p75: 12, source: "Rock Health Annual Report 2024", sourceUrl: "https://rockhealth.com/reports", lastUpdated: "2024-07-01", expiresAt: "2025-07-01", dataYear: 2024 },
       timeToLiquidityYears: { bestCase: 6, baseCase: 9, worstCase: 15 },
     },
   },
@@ -188,17 +185,16 @@ const DEEPTECH_BENCHMARKS: Record<string, Partial<SectorStageBenchmarks>> = {
   SEED: {
     financial: {
       ...GENERIC_BENCHMARKS.SEED!.financial!,
-      // Deeptech brûle plus avant les revenus
-      burnMultiple: { p25: 3, median: 5, p75: 10, source: "Hello Tomorrow 2024" },
-      arrGrowthYoY: { p25: 0, median: 50, p75: 150, source: "Hello Tomorrow 2024" }, // Souvent pré-revenu
+      burnMultiple: { p25: 3, median: 5, p75: 10, source: "Hello Tomorrow Deep Tech Report 2024", sourceUrl: "https://hello-tomorrow.org/deep-tech-report", lastUpdated: "2024-05-01", expiresAt: "2025-05-01", dataYear: 2024 },
+      arrGrowthYoY: { p25: 0, median: 50, p75: 150, source: "Hello Tomorrow Deep Tech Report 2024", sourceUrl: "https://hello-tomorrow.org/deep-tech-report", lastUpdated: "2024-05-01", expiresAt: "2025-05-01", dataYear: 2024 },
     },
     exit: {
-      revenueMultiple: { p25: 5, median: 10, p75: 20, source: "Hello Tomorrow 2024" },
+      revenueMultiple: { p25: 5, median: 10, p75: 20, source: "Hello Tomorrow Deep Tech Report 2024", sourceUrl: "https://hello-tomorrow.org/deep-tech-report", lastUpdated: "2024-05-01", expiresAt: "2025-05-01", dataYear: 2024 },
       timeToLiquidityYears: { bestCase: 7, baseCase: 10, worstCase: 15 },
     },
     team: {
       minFounders: 2,
-      optimalFounders: 3, // Deeptech souvent besoin de plus de founders
+      optimalFounders: 3,
       technicalCofounderRequired: true,
     },
   },

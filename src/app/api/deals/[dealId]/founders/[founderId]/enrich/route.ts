@@ -11,6 +11,11 @@ import { handleApiError } from "@/lib/api-error";
 // CUID validation
 const cuidSchema = z.string().cuid();
 
+// Request body validation — consent is REQUIRED (RGPD Art. 6.1.f)
+const enrichRequestSchema = z.object({
+  consentLinkedIn: z.literal(true),
+});
+
 interface RouteParams {
   params: Promise<{ dealId: string; founderId: string }>;
 }
@@ -74,6 +79,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const founderCuidResult = cuidSchema.safeParse(founderId);
     if (!dealCuidResult.success || !founderCuidResult.success) {
       return NextResponse.json({ error: "Invalid ID format" }, { status: 400 });
+    }
+
+    // RGPD: Verify explicit consent before LinkedIn scraping
+    let body: Record<string, unknown> = {};
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body is required with consentLinkedIn: true" },
+        { status: 400 }
+      );
+    }
+    const consentResult = enrichRequestSchema.safeParse(body);
+    if (!consentResult.success) {
+      return NextResponse.json(
+        { error: "Le consentement explicite pour le scraping LinkedIn est requis (RGPD Art. 6.1.f). Envoyez { consentLinkedIn: true } dans le body." },
+        { status: 403 }
+      );
     }
 
     // Check if RapidAPI LinkedIn is configured

@@ -4,6 +4,10 @@ import type { NextConfig } from "next";
 const isDev = process.env.NODE_ENV === "development";
 
 const nextConfig: NextConfig = {
+  // Strip console.log/info/debug in production builds (keep error + warn)
+  compiler: {
+    removeConsole: isDev ? false : { exclude: ["error", "warn"] },
+  },
   async headers() {
     // Security headers for all environments
     const securityHeaders = [

@@ -15,6 +15,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { calculateAgentScore, TECH_STACK_DD_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * Tech-Stack-DD Agent - Split from Technical DD v2.0
@@ -63,6 +64,28 @@ Tu sais que:
 - "On scale quand il faut" = pas de plan = problème
 - Les startups mentent souvent sur leur maturité technique
 - Over-engineering early stage = red flag (trop de microservices trop tôt)
+
+# TRANSPARENCE SUR LES LIMITATIONS (OBLIGATOIRE)
+
+## DISCLAIMER CRITIQUE:
+Tu n'as PAS acces au code source de la startup. Ton analyse est basee UNIQUEMENT sur:
+- Le pitch deck (slides techniques)
+- La documentation technique si fournie
+- Les claims du fondateur
+- Le Context Engine (donnees externes)
+
+## IMPACT SUR LE SCORING:
+- Toute evaluation de la qualite du code est une INFERENCE, pas un fait
+- Les scores de "Dette Technique" doivent etre marques comme "INFERRED_FROM_DECK"
+- Le score global ne peut PAS depasser 75/100 sans acces au code
+- Si le deck ne mentionne AUCUNE technologie: score max 50/100
+
+## DANS LE NARRATIVE:
+TOUJOURS inclure un paragraphe de transparence:
+"Cette analyse est basee uniquement sur les documents fournis. Sans acces au code source,
+les evaluations de dette technique et qualite de code sont des inferences basees sur
+les indices indirects (taille equipe vs features, technos mentionnees, etc.).
+Une revue de code par un CTO externe est recommandee avant investissement."
 
 # MISSION POUR CE DEAL
 
@@ -384,28 +407,82 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
 
     const { data } = await this.llmCompleteJSON<LLMTechStackDDResponse>(prompt, {});
 
-    return this.normalizeResponse(data, context);
+    const result = this.normalizeResponse(data, context);
+
+    // F03: DETERMINISTIC SCORING
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const bd = data.score?.breakdown ?? [];
+
+      for (const b of bd) {
+        const criterion = (b.criterion ?? "").toLowerCase();
+        if ((criterion.includes("stack") || criterion.includes("technolog")) && b.score != null) {
+          extractedMetrics.push({
+            name: "stack_modernity", value: b.score,
+            unit: "score", source: "LLM breakdown", dataReliability: "DECLARED", category: "technical",
+          });
+        }
+        if (criterion.includes("scalab") && b.score != null) {
+          extractedMetrics.push({
+            name: "scalability_score", value: b.score,
+            unit: "score", source: "LLM breakdown", dataReliability: "DECLARED", category: "technical",
+          });
+        }
+        if (criterion.includes("dette") || criterion.includes("debt")) {
+          if (b.score != null) {
+            extractedMetrics.push({
+              name: "tech_debt_score", value: b.score,
+              unit: "score", source: "LLM breakdown", dataReliability: "DECLARED", category: "technical",
+            });
+          }
+        }
+      }
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "tech-stack-dd", extractedMetrics, sector, stage, TECH_STACK_DD_CRITERIA,
+        );
+        result.score = { ...result.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[tech-stack-dd] Deterministic scoring failed, using LLM score:", err);
+    }
+
+    return result;
   }
 
   private normalizeResponse(data: LLMTechStackDDResponse, _context: EnrichedAgentContext): TechStackDDData {
     // Normalize meta
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[tech-stack-dd] LLM did not return confidenceLevel — using 0`);
+    }
     const meta: AgentMeta = {
       agentName: "tech-stack-dd",
       analysisDate: data.meta?.analysisDate || new Date().toISOString(),
       dataCompleteness: this.validateEnum(data.meta?.dataCompleteness, ["complete", "partial", "minimal"], "partial"),
-      confidenceLevel: Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50)),
+      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta!.confidenceLevel!)),
+      confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
     // Normalize score
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[tech-stack-dd] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: this.validateEnum(data.score?.grade, ["A", "B", "C", "D", "F"], "C"),
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : this.validateEnum(data.score?.grade, ["A", "B", "C", "D", "F"], "C"),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 0,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "Non spécifié",
           }))
         : this.getDefaultBreakdown(),
@@ -504,6 +581,16 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
       forNegotiation: Array.isArray(data.narrative?.forNegotiation) ? data.narrative.forNegotiation : [],
     };
 
+    // F38: Cap score without code access — tech analysis is inference-based
+    const hasCodeAccess = false; // Always false for now
+    if (!hasCodeAccess && !scoreIsFallback) {
+      score.value = Math.min(score.value, 75);
+      if (!meta.limitations.includes("Analyse basee uniquement sur les documents, pas d'acces au code source")) {
+        meta.limitations.push("Analyse basee uniquement sur les documents, pas d'acces au code source");
+      }
+      meta.confidenceLevel = Math.min(meta.confidenceLevel, 60);
+    }
+
     return {
       meta,
       score,
@@ -562,14 +649,16 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
       frontend: {
         technologies: Array.isArray(frontend.technologies) ? frontend.technologies as string[] : [],
         assessment: (frontend.assessment as string) ?? "Non évalué",
-        modernityScore: Math.min(100, Math.max(0, (frontend.modernityScore as number) ?? 50)),
+        modernityScore: (frontend.modernityScore as number) != null
+          ? Math.min(100, Math.max(0, frontend.modernityScore as number)) : 0,
       },
       backend: {
         technologies: Array.isArray(backend.technologies) ? backend.technologies as string[] : [],
         languages: Array.isArray(backend.languages) ? backend.languages as string[] : [],
         frameworks: Array.isArray(backend.frameworks) ? backend.frameworks as string[] : [],
         assessment: (backend.assessment as string) ?? "Non évalué",
-        modernityScore: Math.min(100, Math.max(0, (backend.modernityScore as number) ?? 50)),
+        modernityScore: (backend.modernityScore as number) != null
+          ? Math.min(100, Math.max(0, backend.modernityScore as number)) : 0,
       },
       infrastructure: {
         cloud: (infrastructure.cloud as string) ?? "Unknown",
@@ -638,7 +727,8 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
           blockers: Array.isArray(x100.blockers) ? x100.blockers as string[] : [],
         },
       },
-      scalabilityScore: Math.min(100, Math.max(0, (d.scalabilityScore as number) ?? 50)),
+      scalabilityScore: (d.scalabilityScore as number) != null
+        ? Math.min(100, Math.max(0, d.scalabilityScore as number)) : 0,
     };
   }
 

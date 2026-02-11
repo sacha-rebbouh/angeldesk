@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/sanitize";
+import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DocumentType, Prisma } from "@prisma/client";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { extractFromExcel, summarizeForLLM } from "@/services/excel";
@@ -10,6 +10,8 @@ import { extractFromDocx } from "@/services/docx";
 import { extractFromPptx } from "@/services/pptx";
 import { uploadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
+import { computeContentHash, checkDuplicateDocument } from "@/services/document-hash";
+import { encryptText } from "@/lib/encryption";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -21,8 +23,8 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    // Rate limiting: max 10 uploads per minute
-    const rateLimit = checkRateLimit(`upload:${user.id}`, { maxRequests: 10, windowMs: 60000 });
+    // Rate limiting: max 10 uploads per minute (distributed via Redis)
+    const rateLimit = await checkRateLimitDistributed(`upload:${user.id}`, { maxRequests: 10, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { error: "Rate limit exceeded", retryAfter: rateLimit.resetIn },
@@ -99,6 +101,27 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
+    // F63: Compute content hash for dedup + cache invalidation
+    const contentHash = computeContentHash(buffer);
+
+    // F63: Check for duplicate content
+    const duplicateCheck = await checkDuplicateDocument(contentHash, dealId, user.id);
+    if (duplicateCheck.isDuplicate && duplicateCheck.sameDeal) {
+      return NextResponse.json(
+        {
+          error: "Document identique deja uploade",
+          existingDocument: duplicateCheck.existingDocument,
+        },
+        { status: 409 }
+      );
+    }
+
+    // F62: Check if this is a new version of an existing document (same name, same deal)
+    const existingDoc = await prisma.document.findFirst({
+      where: { dealId, name: file.name, isLatest: true },
+      select: { id: true, version: true },
+    });
+
     // Sanitize filename: remove path traversal and special chars
     const sanitizedName = file.name
       .replace(/[/\\]/g, "_")
@@ -109,6 +132,14 @@ export async function POST(request: NextRequest) {
     const uploaded = await uploadFile(`deals/${dealId}/${sanitizedName}`, buffer, {
       access: "private",
     });
+
+    // F62: If re-uploading same filename, mark old as superseded
+    if (existingDoc) {
+      await prisma.document.update({
+        where: { id: existingDoc.id },
+        data: { isLatest: false, supersededAt: new Date() },
+      });
+    }
 
     // Create document record with PENDING status
     const document = await prisma.document.create({
@@ -123,6 +154,11 @@ export async function POST(request: NextRequest) {
         mimeType: file.type,
         sizeBytes: file.size,
         processingStatus: "PENDING",
+        contentHash,
+        // F62: Version tracking
+        version: existingDoc ? existingDoc.version + 1 : 1,
+        parentDocumentId: existingDoc?.id ?? undefined,
+        isLatest: true,
       },
     });
 
@@ -192,7 +228,7 @@ export async function POST(request: NextRequest) {
         await prisma.document.update({
           where: { id: document.id },
           data: {
-            extractedText: result.text,
+            extractedText: encryptText(result.text),
             processingStatus: "COMPLETED",
             extractionQuality,
             extractionMetrics: {
@@ -271,7 +307,7 @@ export async function POST(request: NextRequest) {
           await prisma.document.update({
             where: { id: document.id },
             data: {
-              extractedText: textContent,
+              extractedText: encryptText(textContent),
               processingStatus: "COMPLETED",
               extractionQuality,
               extractionMetrics: {
@@ -343,7 +379,7 @@ export async function POST(request: NextRequest) {
           await prisma.document.update({
             where: { id: document.id },
             data: {
-              extractedText: result.text,
+              extractedText: encryptText(result.text),
               processingStatus: "COMPLETED",
               extractionQuality,
               extractionMetrics: {
@@ -410,7 +446,7 @@ export async function POST(request: NextRequest) {
           await prisma.document.update({
             where: { id: document.id },
             data: {
-              extractedText: result.text,
+              extractedText: encryptText(result.text),
               processingStatus: "COMPLETED",
               extractionQuality,
               extractionMetrics: {
@@ -474,7 +510,26 @@ export async function POST(request: NextRequest) {
         pagesOCRd: number;
         ocrCost: number;
       };
+      // F62: version info
+      versioning?: { version: number; replacedDocumentId?: string };
+      // F63: duplicate warning (cross-deal)
+      duplicateWarning?: { existingDocument: NonNullable<typeof duplicateCheck.existingDocument> };
     } = { data: updatedDocument };
+
+    // F62: Include versioning info
+    if (existingDoc) {
+      response.versioning = {
+        version: existingDoc.version + 1,
+        replacedDocumentId: existingDoc.id,
+      };
+    }
+
+    // F63: Warn about cross-deal duplicate
+    if (duplicateCheck.isDuplicate && !duplicateCheck.sameDeal && duplicateCheck.existingDocument) {
+      response.duplicateWarning = {
+        existingDocument: duplicateCheck.existingDocument,
+      };
+    }
 
     // Include extraction info for PDFs
     if (file.type === "application/pdf") {

@@ -17,6 +17,7 @@ import type {
   DbCrossReference,
 } from "../types";
 import { getExitBenchmarkFull, getTimeToLiquidity } from "@/services/benchmarks";
+import { calculateAgentScore, EXIT_STRATEGIST_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
  * EXIT STRATEGIST AGENT - REFONTE v2.0
@@ -598,7 +599,59 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
     const { data } = await this.llmCompleteJSON<LLMExitStrategistResponse>(prompt);
 
     // Normalize and validate the response
-    return this.normalizeResponse(data, ticketSize, initialOwnership, arr);
+    const result = this.normalizeResponse(data, ticketSize, initialOwnership, arr);
+
+    // F03: DETERMINISTIC SCORING
+    try {
+      const extractedMetrics: ExtractedMetric[] = [];
+      const scenarios = data.findings?.scenarios ?? [];
+
+      // Number of viable exit scenarios
+      extractedMetrics.push({
+        name: "scenario_count", value: Math.min(100, scenarios.length * 25),
+        unit: "score", source: "Exit scenario analysis", dataReliability: "DECLARED", category: "financial",
+      });
+
+      // Best-case return multiple
+      const multiples = scenarios
+        .map(s => s.investorReturn?.multiple)
+        .filter((m): m is number => m != null && m > 0);
+      if (multiples.length > 0) {
+        const bestMultiple = Math.max(...multiples);
+        extractedMetrics.push({
+          name: "expected_multiple", value: Math.min(100, bestMultiple * 10),
+          unit: "score", source: "Exit scenario calculations", dataReliability: "DECLARED", category: "financial",
+        });
+      }
+
+      // Liquidity risks
+      const liquidityRisks = data.findings?.liquidityAnalysis?.risks ?? [];
+      const criticalRisks = liquidityRisks.filter(r => r.severity === "CRITICAL").length;
+      extractedMetrics.push({
+        name: "liquidity_risk_score", value: Math.max(0, 100 - criticalRisks * 25),
+        unit: "score", source: "Liquidity risk analysis", dataReliability: "DECLARED", category: "financial",
+      });
+
+      // Comparable exits
+      const comparables = data.findings?.comparableExits ?? [];
+      extractedMetrics.push({
+        name: "comparable_exits_count", value: Math.min(100, comparables.length * 20),
+        unit: "score", source: "Comparable exit analysis", dataReliability: "DECLARED", category: "financial",
+      });
+
+      if (extractedMetrics.length > 0) {
+        const sector = context.deal.sector ?? "general";
+        const stage = context.deal.stage ?? "seed";
+        const deterministicScore = await calculateAgentScore(
+          "exit-strategist", extractedMetrics, sector, stage, EXIT_STRATEGIST_CRITERIA,
+        );
+        result.score = { ...result.score, value: deterministicScore.score, breakdown: deterministicScore.breakdown };
+      }
+    } catch (err) {
+      console.error("[exit-strategist] Deterministic scoring failed, using LLM score:", err);
+    }
+
+    return result;
   }
 
   private normalizeResponse(
@@ -614,7 +667,11 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
       : null;
 
     // Adjust confidence if no financial data
-    const rawConfidence = Math.min(100, Math.max(0, data.meta?.confidenceLevel ?? 50));
+    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    if (confidenceIsFallback) {
+      console.warn(`[exit-strategist] LLM did not return confidenceLevel — using 0`);
+    }
+    const rawConfidence = confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel));
     const adjustedConfidence = hasFinancialData ? rawConfidence : Math.min(rawConfidence, 40);
 
     // Build limitations with disclaimer if needed
@@ -629,18 +686,25 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
       analysisDate: new Date().toISOString(),
       dataCompleteness: this.normalizeDataCompleteness(data.meta?.dataCompleteness),
       confidenceLevel: adjustedConfidence,
+      confidenceIsFallback,
       limitations,
     };
 
     // Normalize score
+    const rawScoreValue = data.score?.value;
+    const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    if (scoreIsFallback) {
+      console.warn(`[exit-strategist] LLM did not return score value — using 0`);
+    }
     const score: AgentScore = {
-      value: Math.min(100, Math.max(0, data.score?.value ?? 50)),
-      grade: this.normalizeGrade(data.score?.grade),
+      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback ? "F" : this.normalizeGrade(data.score?.grade),
+      isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({
             criterion: b.criterion ?? "Unknown",
             weight: b.weight ?? 20,
-            score: Math.min(100, Math.max(0, b.score ?? 50)),
+            score: b.score != null ? Math.min(100, Math.max(0, b.score)) : 0,
             justification: b.justification ?? "",
           }))
         : [],
@@ -714,7 +778,7 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
           multipleArr: c.multipleArr,
           source: c.source ?? "Unknown",
           relevance: {
-            score: c.relevance?.score ?? 50,
+            score: c.relevance?.score ?? 0,
             similarities: c.relevance?.similarities ?? [],
             differences: c.relevance?.differences ?? [],
           },

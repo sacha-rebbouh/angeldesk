@@ -235,3 +235,118 @@ export function validateAndCalculate(
     return { error: `Erreur de calcul: ${e}` };
   }
 }
+
+// ============================================
+// F78: IRR (Newton-Raphson) + DILUTION
+// ============================================
+
+/**
+ * Calculates IRR via Newton-Raphson iteration.
+ * Supports multiple cashflows (not just invest -> exit).
+ */
+export function calculateIRR(
+  cashflows: number[],
+  periods: number[],
+  maxIterations = 100
+): CalculationResult | { error: string } {
+  if (cashflows.length !== periods.length) {
+    return { error: "cashflows et periods doivent avoir la meme taille" };
+  }
+  if (cashflows.length < 2) {
+    return { error: "Au minimum 2 cashflows requis (investissement + sortie)" };
+  }
+
+  let rate = 0.1;
+  const tolerance = 1e-7;
+
+  for (let i = 0; i < maxIterations; i++) {
+    let npv = 0;
+    let derivative = 0;
+
+    for (let j = 0; j < cashflows.length; j++) {
+      const t = periods[j];
+      const discountFactor = Math.pow(1 + rate, -t);
+      npv += cashflows[j] * discountFactor;
+      derivative -= t * cashflows[j] * Math.pow(1 + rate, -(t + 1));
+    }
+
+    if (Math.abs(npv) < tolerance) {
+      const irr = rate * 100;
+      const cfStr = cashflows.map((cf, idx) => `Y${periods[idx]}:${cf >= 0 ? "+" : ""}${formatCurrency(cf)}`).join(", ");
+      return {
+        value: Math.round(irr * 10) / 10,
+        formula: "IRR via Newton-Raphson: NPV(r) = 0",
+        inputs: cashflows.map((cf, idx) => ({
+          name: `Cashflow Y${periods[idx]}`,
+          value: cf,
+          source: "Scenario projection",
+        })),
+        formatted: `${(Math.round(irr * 10) / 10).toFixed(1)}%`,
+        calculation: `IRR(${cfStr}) = ${(Math.round(irr * 10) / 10).toFixed(1)}% (${i + 1} iterations)`,
+      };
+    }
+
+    if (Math.abs(derivative) < 1e-10) {
+      rate += 0.05;
+      continue;
+    }
+
+    rate = rate - npv / derivative;
+    if (rate < -0.99) rate = -0.99;
+    if (rate > 10) rate = 10;
+  }
+
+  // Fallback: simplified formula if Newton-Raphson doesn't converge
+  const totalInvest = Math.abs(cashflows[0]);
+  const totalReturn = cashflows[cashflows.length - 1];
+  const years = periods[periods.length - 1] - periods[0];
+
+  if (totalInvest > 0 && totalReturn > 0 && years > 0) {
+    const multiple = totalReturn / totalInvest;
+    const approxIRR = (Math.pow(multiple, 1 / years) - 1) * 100;
+    return {
+      value: Math.round(approxIRR * 10) / 10,
+      formula: "IRR approx = ((Multiple)^(1/years) - 1) x 100",
+      inputs: [
+        { name: "Investment", value: totalInvest, source: "Scenario" },
+        { name: "Return", value: totalReturn, source: "Scenario" },
+        { name: "Years", value: years, source: "Scenario" },
+      ],
+      formatted: `~${(Math.round(approxIRR * 10) / 10).toFixed(1)}% (approx)`,
+      calculation: `((${(totalReturn / totalInvest).toFixed(1)}x)^(1/${years}) - 1) x 100 = ~${(Math.round(approxIRR * 10) / 10).toFixed(1)}%`,
+    };
+  }
+
+  return { error: "IRR non convergent et fallback impossible" };
+}
+
+/**
+ * Calculates cumulative dilution through multiple rounds.
+ */
+export function calculateCumulativeDilution(
+  initialOwnership: number,
+  rounds: { name: string; dilutionPercent: number; source: string }[]
+): CalculationResult {
+  let currentOwnership = initialOwnership;
+  const steps: string[] = [`Initial: ${initialOwnership.toFixed(2)}%`];
+
+  for (const round of rounds) {
+    const factor = 1 - round.dilutionPercent / 100;
+    const newOwnership = currentOwnership * factor;
+    steps.push(`Apres ${round.name} (-${round.dilutionPercent}%): ${currentOwnership.toFixed(2)}% x ${factor.toFixed(3)} = ${newOwnership.toFixed(3)}%`);
+    currentOwnership = newOwnership;
+  }
+
+  const totalDilution = ((initialOwnership - currentOwnership) / initialOwnership) * 100;
+
+  return {
+    value: currentOwnership,
+    formula: "Ownership = Initial x (1 - dil_1) x (1 - dil_2) x ...",
+    inputs: [
+      { name: "Initial ownership", value: initialOwnership, source: "Cap table" },
+      ...rounds.map(r => ({ name: r.name, value: r.dilutionPercent, source: r.source })),
+    ],
+    formatted: `${currentOwnership.toFixed(3)}% (dilution totale: ${totalDilution.toFixed(1)}%)`,
+    calculation: steps.join(" → "),
+  };
+}

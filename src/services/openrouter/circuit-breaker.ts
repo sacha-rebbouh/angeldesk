@@ -266,3 +266,53 @@ export function getCircuitBreaker(): CircuitBreaker {
 export function resetCircuitBreaker(): void {
   circuitBreakerInstance?.reset();
 }
+
+// ============================================================================
+// DISTRIBUTED CIRCUIT BREAKER (serverless-compatible)
+// ============================================================================
+
+import { getStore } from '@/services/distributed-state';
+
+const CB_STATE_KEY = 'angeldesk:circuit-breaker:openrouter';
+const CB_STATE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Distributed-aware circuit breaker that syncs state with Redis.
+ * Falls back to in-memory on Redis failure.
+ */
+export async function getCircuitBreakerDistributed(): Promise<CircuitBreaker> {
+  const cb = getCircuitBreaker();
+  const store = getStore();
+
+  try {
+    const remoteState = await store.get<{
+      state: CircuitState;
+      failures: number;
+      lastStateChange: number;
+    }>(CB_STATE_KEY);
+
+    if (remoteState && remoteState.state === 'OPEN') {
+      cb.forceOpen();
+    }
+  } catch (error) {
+    console.warn('[CircuitBreaker] Failed to sync with distributed store:', error);
+  }
+
+  return cb;
+}
+
+/**
+ * Sync circuit breaker state to distributed store after state changes.
+ */
+export async function syncCircuitBreakerState(stats: CircuitStats): Promise<void> {
+  try {
+    const store = getStore();
+    await store.set(CB_STATE_KEY, {
+      state: stats.state,
+      failures: stats.failures,
+      lastStateChange: Date.now(),
+    }, CB_STATE_TTL);
+  } catch (error) {
+    console.warn('[CircuitBreaker] Failed to sync state to distributed store:', error);
+  }
+}

@@ -12,6 +12,7 @@
 
 import type {
   DealContext,
+  ContextQualityScore,
   ConnectorQuery,
   Connector,
   SimilarDeal,
@@ -514,19 +515,14 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
   }
 
   // =========================================================================
-  // CALCULATE COMPLETENESS (weighted by importance)
+  // CALCULATE CONTEXT QUALITY (F59: weighted scoring + reliability)
   // =========================================================================
-  const completeness = calculateCompleteness({
-    similarDeals,
-    marketData,
-    competitors,
-    news,
-  });
-
-  // Calculate reliability (% of connectors that responded)
-  const reliability = metrics.totalConnectors > 0
-    ? metrics.successfulConnectors / metrics.totalConnectors
-    : 0;
+  const contextQuality = calculateContextQuality(
+    { similarDeals, marketData, competitors, news },
+    metrics
+  );
+  const completeness = contextQuality.completeness;
+  const reliability = contextQuality.reliability;
 
   // =========================================================================
   // BUILD ENRICHED CONTEXT
@@ -576,6 +572,7 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
     enrichedAt: new Date().toISOString(),
     sources,
     completeness,
+    contextQuality,
   };
 }
 
@@ -1147,21 +1144,80 @@ function buildNewsSentiment(news: NewsArticle[]): import("./types").NewsSentimen
   };
 }
 
-function calculateCompleteness(data: {
-  similarDeals: SimilarDeal[];
-  marketData: MarketData | null;
-  competitors: Competitor[];
-  news: NewsArticle[];
-}): number {
-  let score = 0;
-  const total = 4;
+/**
+ * F59: Weighted context quality scoring with reliability tracking.
+ * Replaces the binary 0/1 per-category approach.
+ */
+function calculateContextQuality(
+  data: {
+    similarDeals: SimilarDeal[];
+    marketData: MarketData | null;
+    competitors: Competitor[];
+    news: NewsArticle[];
+  },
+  metrics: FetchMetrics
+): ContextQualityScore {
+  // Weights by importance for a Business Angel
+  const WEIGHTS = {
+    similarDeals: 0.35,  // Critical for valuation benchmarks
+    marketData: 0.25,    // Important for market context
+    competitors: 0.25,   // Important for competitive landscape
+    news: 0.15,          // Useful but less critical
+  };
 
-  if (data.similarDeals.length > 0) score += 1;
-  if (data.marketData) score += 1;
-  if (data.competitors.length > 0) score += 1;
-  if (data.news.length > 0) score += 1;
+  // Graduated scores per category (0-1)
+  const dealScore = Math.min(1, data.similarDeals.length / 5);
+  const marketScore = data.marketData
+    ? Math.min(1, ((data.marketData.benchmarks?.length ?? 0) + (data.marketData.trends?.length ?? 0)) / 3)
+    : 0;
+  const competitorScore = Math.min(1, data.competitors.length / 3);
+  const newsScore = Math.min(1, data.news.length / 2);
 
-  return score / total;
+  const completeness =
+    dealScore * WEIGHTS.similarDeals +
+    marketScore * WEIGHTS.marketData +
+    competitorScore * WEIGHTS.competitors +
+    newsScore * WEIGHTS.news;
+
+  // Reliability = % of connectors that responded (excluding skipped)
+  const activeConnectors = metrics.totalConnectors - metrics.skippedConnectors;
+  const reliability = activeConnectors > 0
+    ? metrics.successfulConnectors / activeConnectors
+    : 0;
+
+  const qualityScore = completeness * reliability;
+
+  // Detect degradation
+  const degradationReasons: string[] = [];
+  if (reliability < 0.3) {
+    degradationReasons.push(
+      `Seulement ${metrics.successfulConnectors}/${activeConnectors} connecteurs ont repondu (${(reliability * 100).toFixed(0)}%)`
+    );
+  }
+  if (completeness < 0.25) {
+    degradationReasons.push(
+      `Donnees tres incompletes: deals=${data.similarDeals.length}, market=${data.marketData ? 'oui' : 'non'}, competitors=${data.competitors.length}, news=${data.news.length}`
+    );
+  }
+  if (metrics.failedConnectors > metrics.successfulConnectors) {
+    degradationReasons.push(
+      `Plus d'echecs (${metrics.failedConnectors}) que de succes (${metrics.successfulConnectors})`
+    );
+  }
+
+  return {
+    completeness,
+    reliability,
+    qualityScore,
+    degraded: degradationReasons.length > 0,
+    degradationReasons,
+    categories: {
+      similarDeals: { score: dealScore, count: data.similarDeals.length, weight: WEIGHTS.similarDeals },
+      marketData: { score: marketScore, available: !!data.marketData, weight: WEIGHTS.marketData },
+      competitors: { score: competitorScore, count: data.competitors.length, weight: WEIGHTS.competitors },
+      news: { score: newsScore, count: data.news.length, weight: WEIGHTS.news },
+    },
+  };
 }
 
 // Re-export types

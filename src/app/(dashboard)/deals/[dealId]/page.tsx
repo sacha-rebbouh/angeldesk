@@ -72,7 +72,7 @@ export default async function DealDetailPage({ params }: PageProps) {
   );
 
 
-  return (
+  const content = (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between">
@@ -111,7 +111,7 @@ export default async function DealDetailPage({ params }: PageProps) {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Valorisation</CardTitle>
@@ -172,22 +172,22 @@ export default async function DealDetailPage({ params }: PageProps) {
 
       {/* Tabs */}
       <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Vue d&apos;ensemble</TabsTrigger>
-          <TabsTrigger value="analysis">
+        <TabsList className="flex w-full overflow-x-auto">
+          <TabsTrigger value="overview" className="whitespace-nowrap">Vue d&apos;ensemble</TabsTrigger>
+          <TabsTrigger value="analysis" className="whitespace-nowrap">
             <Brain className="mr-1 h-4 w-4" />
             Analyse IA
           </TabsTrigger>
-          <TabsTrigger value="documents">
+          <TabsTrigger value="documents" className="whitespace-nowrap">
             Documents ({deal.documents.length})
           </TabsTrigger>
-          <TabsTrigger value="founders">
+          <TabsTrigger value="founders" className="whitespace-nowrap">
             Team ({deal.founders.length})
           </TabsTrigger>
-          <TabsTrigger value="redflags">
+          <TabsTrigger value="redflags" className="whitespace-nowrap">
             Red Flags ({openRedFlags.length})
           </TabsTrigger>
-          <TabsTrigger value="ai-board">
+          <TabsTrigger value="ai-board" className="whitespace-nowrap">
             <Users className="mr-1 h-4 w-4" />
             AI Board
             <Badge variant="secondary" className="ml-1 bg-gradient-to-r from-amber-100 to-orange-100 text-amber-800 text-[10px] px-1.5 py-0">
@@ -400,8 +400,13 @@ export default async function DealDetailPage({ params }: PageProps) {
         </TabsContent>
       </Tabs>
 
-      {/* Chat IA flottant - accessible sur tous les onglets */}
-      <ChatWrapper dealId={deal.id} dealName={deal.name} />
+      {/* Chat IA - split view on desktop (F86) */}
     </div>
+  );
+
+  return (
+    <ChatWrapper dealId={deal.id} dealName={deal.name}>
+      {content}
+    </ChatWrapper>
   );
 }
