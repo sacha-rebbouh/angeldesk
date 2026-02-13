@@ -2,6 +2,465 @@
 
 ---
 
+## 2026-02-13 — Fix: synthesis scoring, red flags dedup frontend, keyStrengths
+
+### 3 fixes
+
+**A. Synthesis scoring — forcer le LLM à montrer ses calculs**
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Validation post-LLM : si `dimensionScores` < 3 entrées, throw → retry automatique (BaseAgent). Plus de fallback déterministe — le LLM DOIT produire un breakdown par dimension. Quand il le fait, on vérifie la cohérence entre son `overallScore` et la moyenne pondérée de ses propres dimensions (si divergence > 25pts, on utilise la moyenne pondérée). Suppression de `computeDeterministicScore()` et `extractAgentScore()` — zéro code de fallback.
+
+**B. Red flags dedup côté frontend — de 28 à ~10**
+- `src/services/red-flag-dedup/dedup.ts` — Export de `inferRedFlagTopic()` : fonction qui mappe les titres de red flags vers des topics canoniques (churn, revenue_metrics, valuation, data_inconsistency, etc.). Étendue avec 4 patterns supplémentaires (scalability, gtm, margin, deal_structure).
+- `src/components/deals/red-flags-summary.tsx` — Refonte complète : les red flags sont consolidés par topic via `inferRedFlagTopic()`. Même sujet détecté par 5 agents = 1 seul red flag avec badge "5 agents". On garde la description la plus détaillée, l'impact le plus complet, la sévérité max. Bouton "Voir les N détections" pour expandre les doublons. Header affiche "28 bruts → 10 uniques".
+- `src/agents/tier3/synthesis-deal-scorer.ts` — `inferRedFlagTopic` importée depuis le service partagé (au lieu de méthode privée dupliquée).
+
+**C. "Points forts" qui affichaient des faiblesses**
+- `src/agents/tier3/synthesis-deal-scorer.ts` — `keyStrengths` priorise désormais `findings.topStrengths` (explicitement des forces) avant `narrative.keyInsights` (insights génériques, souvent négatifs). Avant : keyInsights était en premier choix → "L'absence de PMF est prouvée par le churn de 10%" listé comme point fort.
+
+- `src/agents/__tests__/agent-pipeline.test.ts` — T3 agents count : 5 → 6 (conditions-analyst).
+
+---
+
+## 2026-02-13 — Fix: conditions-analyst ne recevait pas les dealTerms en pipeline mode
+
+### Bug
+Le `conditions-analyst` retournait `termsSource: "none"` (score=0, fallback) en mode pipeline (full_analysis) alors que le BA avait rempli le formulaire conditions. Cause : le `enrichedContext` construit dans `runFullAnalysis()` n'injectait pas `dealTerms` ni `conditionsAnalystMode`. Seul `runTier3Synthesis()` (path standalone) le faisait.
+
+### Fichiers modifiés
+- `src/agents/orchestrator/index.ts` — Ajout du chargement `dealTerms` + `conditionsAnalystMode: "pipeline"` dans le contexte Tier 3 de `runFullAnalysis()` (2 endroits : path normal + path resume).
+- `src/agents/tier3/conditions-analyst.ts` — `hasFormData` prend désormais en compte `customConditions` et `notes` (un BA peut remplir uniquement le champ libre sans les champs structurés).
+
+---
+
+## 2026-02-12 — Test E2E conditions-analyst
+
+### Fichiers créés
+- `src/agents/__tests__/conditions-analyst-e2e.test.ts` — Test E2E du conditions-analyst (6 tests). Couvre : mode standalone (form data), mode pipeline (cross-ref Tier 1), fallback no-conditions (score=0, questions CRITICAL), constructor timeout, normalisation scores/grades, comparaison confidence pipeline vs standalone. Mock pattern identique à sequential-pipeline.test.ts.
+
+---
+
+## 2026-02-12 — QA + Perf fixes post-audit #2 conditions-analyst
+
+### Bugs corrigés
+- `src/app/api/deals/[dealId]/terms/route.ts` — Agent standalone timeout réduit à 50s (auto-terminate avant les 55s route). `clearTimeout` sur le timer de sécurité quand l'agent répond. `Prisma.InputJsonValue` cast au lieu de `JSON.parse(JSON.stringify())`. Détection "timed out" dans le message d'erreur de l'agent.
+- `src/agents/tier3/conditions-analyst.ts` — Constructeur accepte `{ standaloneTimeoutMs }` pour override le timeout en mode standalone (50s) vs pipeline (90s).
+- `src/agents/orchestrator/persistence.ts` — `conditionsScore` retiré du case `synthesis-deal-scorer` (conditions-analyst est la source de vérité). `Prisma.InputJsonValue` cast au lieu de `JSON.parse(JSON.stringify())`.
+- `src/components/deals/deal-terms-tab.tsx` — `handleSave` : destructure `mutate` pour deps stables dans `useCallback`.
+
+---
+
+## 2026-02-12 — QA + Perf fixes post-audit conditions-analyst
+
+### Bugs critiques corrigés
+- `src/agents/orchestrator/persistence.ts` — Ajout `case "conditions-analyst"` dans `processAgentResult()` : persiste `conditionsScore` + `conditionsAnalysis` en DB après le pipeline (C1).
+- `src/app/api/deals/[dealId]/terms/route.ts` — Normalisation severity/priority en lowercase pour le frontend (agent produit UPPERCASE). Conversion Prisma Decimal→number dans le GET. Timeout 55s avec `Promise.race` pour éviter le timeout Vercel. Distinction `analysisStatus: "success" | "failed" | "timeout"` dans la réponse. GET fusionné en 1 query (include dealTerms). PUT: `Promise.all` pour upsert + analysis summary. buildStandaloneContext synchrone.
+- `src/components/deals/deal-terms-tab.tsx` — Toast conditionnel selon `analysisStatus`. `handleSave` envoie tous les champs (y compris nulls). `useMemo` dépend de `data` seul (refs stables). Interface `TermsResponse` : ajout `analysisStatus`.
+- `src/components/deals/score-display.tsx` — Conditions en `col-span-2` (layout 5 items dans grid-cols-2).
+- `src/agents/tier3/conditions-analyst.ts` — `confidenceLevel` basé sur complétude des données (pas le score). Regex `\bloi\b` au lieu de `.includes("loi")`. `toLocaleString` protégé sur non-numbers. Findings agents : extraction champs clés au lieu de `JSON.stringify().substring(0, 2000)`.
+
+---
+
+## 2026-02-12 — Agent IA conditions-analyst (remplace le scorer déterministe)
+
+### Fichiers créés
+- `src/agents/tier3/conditions-analyst.ts` — Agent IA Tier 3 (~600 lignes). Deux modes : pipeline (contexte complet Tier 1/2) et standalone (save formulaire, ~3-5s). Résolution automatique des sources : form BA > term sheet > deck > none. Benchmarks statiques en fallback. Score 0-100 avec breakdown, red flags, conseils de négociation, insights cross-agents.
+- `src/agents/tier3/schemas/conditions-analyst-schema.ts` — Zod schema : meta, score (breakdown 4 critères), findings (valuation, instrument, protections, gouvernance, crossRef, negotiation), redFlags, questions, narrative.
+
+### Fichiers modifiés
+- `prisma/schema.prisma` — `conditionsScore` passe de ±15 à 0-100, ajout `conditionsAnalysis Json?` (cache agent), ajout `aiAnalysisAt DateTime?` sur DealTerms.
+- `src/agents/types.ts` — Ajout `dealTerms`, `conditionsAnalystMode`, `conditionsAnalystSummary` à EnrichedAgentContext. Ajout types `ConditionsAnalystFindings`, `ConditionsAnalystData`, `ConditionsAnalystResult`.
+- `src/agents/orchestrator/types.ts` — `conditions-analyst` ajouté en Tier 3 Batch 1. Dépendance de synthesis-deal-scorer et memo-generator. AGENT_COUNTS: 19→20.
+- `src/agents/stage-calibration.ts` — Ajout `"conditions-analyst": ["cap_table", "financial"]` dans AGENT_DIMENSION_MAP.
+- `src/agents/orchestrator/agent-registry.ts` — Enregistrement conditions-analyst dans getTier3Agents().
+- `src/agents/tier3/index.ts` — Exports classe + singleton conditions-analyst.
+- `src/agents/orchestrator/index.ts` — TIER3_AGENT_COUNT: 5→6. Chargement DealTerms depuis DB et injection dans context.dealTerms + conditionsAnalystMode: "pipeline".
+- `src/agents/orchestrator/persistence.ts` — globalScore = fundamentalsScore = synthesis output directement (plus d'addition ±15). conditionsScore extrait comme dimension du synthesis.
+- `src/agents/tier3/synthesis-deal-scorer.ts` — conditions-analyst en dépendance, injection section CONDITIONS D'INVESTISSEMENT dans le prompt, extraction via extractConditionsData().
+- `src/app/api/deals/[dealId]/terms/route.ts` — GET retourne l'analyse IA cachée. PUT: upsert terms → run ConditionsAnalystAgent standalone → cache résultat. Suppression du scorer déterministe.
+- `src/components/deals/deal-terms-tab.tsx` — Refonte complète : score 0-100 avec breakdown visuel, conseils de négociation (cards collapsibles), red flags avec sévérité/preuves/questions, insights IA cross-agents, narrative. Bouton "Sauvegarder et analyser" + loading "Analyse IA des conditions...".
+- `src/components/deals/score-display.tsx` — ScoreGrid: conditions affiché comme dimension standard 0-100 (à côté de team/market/product/financials). Suppression affichage spécial ±15 et de la décomposition fondamentaux+conditions.
+
+### Fichiers supprimés
+- `src/services/conditions-scorer/calculator.ts` — Scorer déterministe remplacé par l'agent IA.
+- `src/services/conditions-scorer/types.ts` — Types remplacés par le Zod schema de l'agent.
+- `src/services/conditions-scorer/index.ts` — Barrel export supprimé.
+
+### Architecture
+- **Avant** : `globalScore = fundamentalsScore + conditionsScore(-15/+15)` — scoring déterministe, déconnecté des agents
+- **Après** : `globalScore = synthesis output` — conditions est une dimension 0-100 pondérée dans le synthesis-deal-scorer, produite par un agent IA qui cross-référence les 13 agents Tier 1
+
+---
+
+## 2026-02-12 16:20 — Optimisation coût LLM : routing tiered
+
+### Fichier modifié
+- `src/services/openrouter/router.ts` — Routing tiered :
+  - 9 agents critiques en **Gemini 2.5 Pro** (overrides) : financial-auditor, deck-forensics, team-investigator, cap-table-auditor, legal-regulatory + 4 Tier 3
+  - Tous les autres (~12 agents) en **Gemini 3 Flash** (default pour toutes les complexités)
+  - Estimation : ~$1.30-1.50/analyse (réaliste avec retries) au lieu de $13-20
+
+---
+
+## ~~2026-02-12 16:15 — Optimisation coût LLM : Gemini 3 Flash par défaut~~ (remplacé par 16:20)
+
+### Fichier modifié
+- `src/services/openrouter/router.ts` — `selectModel()` : toutes les complexités (simple, medium, complex, critical) routées vers Gemini 3 Flash. Seuls les 4 agents Tier 3 en override gardent Gemini 2.5 Pro (synthesis-deal-scorer, contradiction-detector, devils-advocate, memo-generator). Estimation : ~$0.60/analyse au lieu de $13-20.
+
+---
+
+## 2026-02-12 16:00 — Revert Fix 1 (_guidanceInjected) — inutile
+
+### Fichier modifié
+- `src/agents/base-agent.ts` — Suppression du flag `_guidanceInjected`. Chaque agent ne fait qu'1 appel LLM, donc le flag n'économisait rien et risquait des régressions sur les agents singletons.
+
+---
+
+## 2026-02-12 15:45 — Fix bugs E2E : truthiness check sur score 0
+
+### Fichiers modifiés
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — `deal.globalScore ?` → `deal.globalScore != null ?` (score 0 masquait le ScoreGrid)
+- `src/agents/orchestrator/persistence.ts` — `synthResult.data?.overallScore` → `synthResult.data?.overallScore != null` (score 0 n'était pas persisté)
+
+---
+
+## 2026-02-12 15:30 — Post-audit fixes (QA + Performance)
+
+### Fichiers modifiés
+- `src/agents/base-agent.ts` — Anti-anchoring + confidence guidance injectés 1 seule fois par agent (flag `_guidanceInjected`), économie ~28K-47K tokens/analyse
+- `src/services/red-flag-dedup/dedup.ts` — Cache `_consolidatedCache` pour `getConsolidated()`, invalidé à chaque `register()`. Élimine le double calcul dans `formatForPrompt()`
+- `src/app/api/deals/[dealId]/terms/route.ts` — PUT wrappé dans `prisma.$transaction()` (upsert terms + update deal scores atomiques)
+- `src/agents/__tests__/agent-pipeline.test.ts` — Types mock corrigés : `any` pour tier1/tier3 module records, ajout `percentileRank`, `fairValueRange`, `downRoundCount`, `source`, `competitiveAdvantages`, `competitiveRisks`, `founderResponses: undefined`
+
+### Résultat
+- `npx tsc --noEmit` : 0 erreurs (y compris tests)
+
+---
+
+## 2026-02-12 — Refonte Scoring: Stage-Relative + Conditions + Red Flag Dedup
+
+### Phase 1: Fondations (6 fichiers crees)
+- `src/agents/stage-calibration.ts` — Matrices de calibration completes: 5 stages x 8 dimensions, ~200 situations calibrees. Exports: `getStageCalibrationBlock()`, `getCalibrationEntries()`, `getInvariants()`, `normalizeToCalibrationStage()`. Sources: Carta 2024, France Digitale, First Round, OpenView, Bessemer.
+- `src/services/red-flag-dedup/types.ts` — Types: `AgentRedFlagEntry`, `ConsolidatedRedFlag`, `DedupSummary`, `RedFlagSeverity`
+- `src/services/red-flag-dedup/dedup.ts` — Classe `RedFlagDedup`: register, getConsolidated (dedup par topic, severity = max, evidence = union), formatForPrompt
+- `src/services/red-flag-dedup/index.ts` — Barrel export
+- `src/services/conditions-scorer/types.ts` — Types: `DealTermsInput`, `ConditionsScoreResult`, `CategoryScore`, `StageBenchmarks`
+- `src/services/conditions-scorer/calculator.ts` — Scoring deterministe 100% (pas de LLM). 4 categories: Valorisation (-7/+7), Instrument (-4/+2), Protections (-4/+3), Gouvernance (-3/+3). Total plafonne ±15.
+- `src/services/conditions-scorer/index.ts` — Barrel export
+
+### Phase 2: Schema + API + Persistence
+- `prisma/schema.prisma` — Ajout `fundamentalsScore Int?` et `conditionsScore Int?` sur Deal. Nouveau modele `DealTerms` (20+ champs: valorisation, instrument, protections, gouvernance, clauses speciales, champ libre).
+- `src/app/api/deals/[dealId]/terms/route.ts` — GET et PUT. Le PUT upsert les termes, recalcule le conditionsScore (deterministe), et met a jour le globalScore = fundamentals + conditions.
+- `src/agents/orchestrator/persistence.ts` — Case `synthesis-deal-scorer`: sauvegarde `fundamentalsScore` separement, calcule `globalScore = fundamentals + conditions`.
+
+### Phase 3: Stage Calibration dans tous les agents (18 fichiers modifies)
+- `src/agents/base-agent.ts` — Import `getStageCalibrationBlock`, ajout `protected _dealStage`, injection auto dans `buildFullSystemPrompt()`. Chaque agent recoit la calibration stage dans son system prompt.
+- 13 Tier 1 agents modifies (1 ligne chacun: `this._dealStage = context.deal.stage`):
+  - financial-auditor, deck-forensics, team-investigator, market-intelligence, competitive-intel, exit-strategist, tech-stack-dd, tech-ops-dd, legal-regulatory, gtm-analyst, customer-intel, cap-table-auditor, question-master
+- 5 Tier 3 agents modifies (idem):
+  - synthesis-deal-scorer, scenario-modeler, contradiction-detector, devils-advocate, memo-generator
+
+### Phase 4: Red Flag Dedup dans synthesis-deal-scorer
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Remplacement de `extractTier1RedFlags()` par version avec `RedFlagDedup`. Les red flags sont consolides par topic (meme probleme detecte par 8 agents → 1 seul red flag avec severity=max et sources consolidees). Ajout `inferRedFlagTopic()` pour mapper les titres aux topics canoniques.
+
+### Phase 5: Frontend
+- `src/components/deals/score-display.tsx` — `ScoreGrid` enrichi: affiche Score Final + decomposition (Fondamentaux stage-relative + Conditions du deal ±15).
+- `src/components/deals/deal-terms-tab.tsx` — Nouvel onglet "Conditions" complet: formulaire term sheet (valorisation, instrument, protections, gouvernance, clauses speciales, champ libre), affichage du score conditions avec breakdown par categorie, bouton "Sauvegarder et recalculer".
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Import `DealTermsTab`, ajout onglet "Conditions" avec icone Handshake. ScoreGrid recoit `fundamentals`, `conditions` et `stage`.
+- `src/lib/query-keys.ts` — Ajout `dealTerms.byDeal(dealId)` pour React Query.
+
+### Architecture finale
+```
+Score Final = Fondamentaux (0-100, stage-relative) + Conditions (-15 a +15, deterministe)
+```
+- Les agents LLM recoivent des instructions calibrees au stage (Pre-Seed vs Seed vs Series A, etc.)
+- Les red flags sont dedupliques AVANT le scoring (8 agents detectent le meme pb → 1 seule penalite)
+- Le BA peut saisir les conditions du deal et le score se recalcule sans re-run de l'analyse
+
+---
+
+## 2026-02-13 01:20 — Fix: polling frontend ignore le COMPLETED d'une analyse resumee
+
+### Fichiers modifies
+- `src/components/deals/analysis-panel.tsx` — Ajout `isResumingRef` pour skipper le race-condition guard lors d'un resume. Le guard comparait `createdAt` (ancien) avec le timestamp du clic → ignorait le status COMPLETED car il pensait que c'etait une vieille analyse.
+
+### Probleme resolu
+Apres un resume, le frontend affichait indefiniment "Analyse en cours (20/21 agents — 95%)" meme si le backend avait termine avec succes. Le polling recevait `status: "COMPLETED"` mais le guard le rejetait car `createdAt < mutationTimestamp`.
+
+---
+
+## 2026-02-13 01:00 — Fix CRITIQUE: checkpoint ecrase les resultats du resume (15→20 resultats perdus)
+
+### Fichiers modifies
+- `src/agents/orchestrator/persistence.ts`:
+  - **Bug principal**: `saveCheckpoint()` ecrasait les `results` de l'Analysis avec les donnees du checkpoint (15 agents) APRES que `completeAnalysis` ait sauvegarde les 20 resultats. Fix: `saveCheckpoint` ne touche plus aux results si l'analyse est deja COMPLETED.
+  - `completeAnalysis()` met status=COMPLETED (defaut) au lieu de FAILED quand l'analyse termine. FAILED reserve aux crash reels via `statusOverride: "FAILED"`.
+  - `completeAnalysis()` met a jour `completedAgents` avec le vrai decompte des agents success.
+- `src/agents/orchestrator/index.ts` — Les catch blocks passent `statusOverride: "FAILED"` pour distinguer crash vs completion partielle.
+
+### Cause racine
+`stateMachine.complete()` → `transition("COMPLETED")` → fire-and-forget `createCheckpoint()` → `saveCheckpoint()` → **ecrase `results` de l'Analysis** avec les 15 resultats du state machine (qui ne connait pas les 5 nouveaux du resume). Resultat: les 5 agents relances avec succes etaient perdus.
+
+### Impact
+- Les futures reprises (resume) conserveront tous les resultats
+- Status COMPLETED meme si 2/21 agents echouent → plus de banniere "interrompue" incorrecte
+- L'analyse actuelle (cmljid4e80006itbstx9id3m2) a ete remise en FAILED pour permettre une reprise avec le code corrige
+
+---
+
+## 2026-02-13 00:15 — Feat: cache DB persistant pour profils LinkedIn (evite appels RapidAPI redondants)
+
+### Fichiers modifies
+- `prisma/schema.prisma` — Ajout modele `LinkedInProfileCache` (linkedinUrl unique, profileData JSON, fetchedAt)
+- `src/services/context-engine/connectors/rapidapi-linkedin.ts` — `fetchLinkedInProfile()` check la DB avant d'appeler RapidAPI. Si le profil existe et a < 7 jours → retourne le cache. Sinon → fetch RapidAPI + upsert en DB.
+
+### Probleme resolu
+Chaque analyse appelait RapidAPI pour chaque fondateur, meme si le profil avait deja ete fetche la veille. A $0.02/profil et 2-3 fondateurs par deal, ca s'accumulait inutilement.
+
+### Fonctionnement
+1. Normalise l'URL LinkedIn (lowercase, sans trailing slash, sans query params)
+2. Cherche dans `LinkedInProfileCache` par URL normalisee
+3. Si cache < 7 jours → retourne directement (0 appel API)
+4. Si cache expire ou absent → fetch RapidAPI → upsert en DB
+5. Erreurs DB non-bloquantes (fallback sur RapidAPI direct)
+
+---
+
+## 2026-02-12 23:30 — Fix: 3 causes racines des echecs d'analyse ($7+ cout, 5/21 agents timeout)
+
+### Fichiers modifies
+- `src/agents/tier1/competitive-intel.ts` — timeout 120s → 180s
+- `src/agents/tier1/tech-stack-dd.ts` — timeout 120s → 180s
+- `src/agents/tier1/cap-table-auditor.ts` — timeout 120s → 180s
+- `src/agents/tier1/gtm-analyst.ts` — timeout 120s → 180s
+- `src/agents/tier1/exit-strategist.ts` — timeout 120s → 180s
+- `src/agents/orchestration/reflexion.ts` — seuils 70%→60%, ALWAYS_REFLECT desactive, dataRequests desactive
+- `src/agents/orchestrator/index.ts` — supprime forced reflexion Phase A/B, resume retry failed agents
+- `src/agents/orchestration/state-machine.ts` — ANALYZING timeout 10min→20min, SYNTHESIZING 5min→10min
+- `src/app/api/deals/[dealId]/analyses/route.ts` — auto-expire 90min→3h (evite de marquer FAILED pendant que le process tourne)
+
+### Problemes resolus
+1. **5 agents timeout** (competitive-intel, tech-stack-dd, cap-table-auditor, gtm-analyst, exit-strategist) — tous a 120s, insuffisant pour les gros JSON. Passe a 180s.
+2. **Reflexion Engine trop couteuse** — tournait sur 7+ agents avec 2 iterations, ajoutant ~$4 et ~50 min. Reduit a 1 iteration, seuil confidence 50% au lieu de 70%, suppression du ALWAYS_REFLECT.
+3. **Resume ne retryait pas les echecs** — `failedSet` etait exclu du `pendingTier1`, donc les 5 agents en echec n'etaient jamais relances.
+4. **Auto-expire premature** — l'API marquait FAILED a 90min pendant que le Node.js process continuait, causant un conflit d'etat.
+
+### Impact attendu
+- Analyse ~15-25 min au lieu de 80 min
+- Cout ~$2-3 au lieu de $7+
+- 21/21 agents (les 5 qui timeout devraient passer avec 180s)
+- Resume relance les agents echoues
+
+---
+
+## 2026-02-12 20:15 — Fix: progression frontend basee sur vraies donnees backend + timeout 45 min
+
+### Fichiers modifies
+- `src/components/deals/analysis-progress.tsx` — **Rewrite**: remplace le timer cosmétique (durees hardcodees 3.5 min) par un affichage base sur `completedAgents/totalAgents` du backend. Les steps avancent en fonction des vrais seuils d'agents (extraction=2, tier1=15, tier2=16, tier3=21). Barre de progression reelle. Timer base sur `startedAt` du backend (survit aux reloads).
+- `src/components/deals/analysis-panel.tsx` — Passe `completedAgents`, `totalAgents`, `startedAt` au composant AnalysisProgress. Polling timeout: 30min → 45min. Toast "semble bloquee" → message informatif non-alarmiste.
+- `src/app/api/deals/[dealId]/analyses/route.ts` — Auto-expire des analyses RUNNING: 30min → 45min (aligne avec le polling frontend).
+
+### Probleme resolu
+L'UI affichait "Synthese en cours" au bout de 2.5 min alors que l'analyse etait encore en phase Tier 1 (duree reelle 15-30 min). Au bout de 30 min, un toast "L'analyse semble bloquee" effrayait l'utilisateur alors que l'analyse tournait normalement en backend.
+
+---
+
+## 2026-02-12 19:40 — Test sequentiel end-to-end: simulation complete de runFullAnalysis()
+
+### Fichiers modifies
+- `src/agents/__tests__/sequential-pipeline.test.ts` — **CREE** — 12 tests simulant le flux exact de production de `runFullAnalysis()` avec 21 agents
+
+### Description
+Test sequentiel end-to-end qui reproduit fidelement le parcours de `runFullAnalysis()` en production, sans appeler OpenRouter. Chaque step du test correspond a une etape reelle du pipeline:
+
+**Structure des tests (12 tests, 7 etapes) :**
+- **Step 0** : Tier 0 — fact-extractor (extraction + meta-evaluation = 2 appels LLM)
+- **Step 1** : document-extractor (reutilise les facts via F94)
+- **Step 2** : Construction du contexte enrichi (EnrichedAgentContext avec factStore, previousResults)
+- **Step 3a** : Phase A — deck-forensics (ground truth)
+- **Step 3b** : Phase B — financial-auditor (avec resultats Phase A)
+- **Step 3c** : Phase C — team-investigator, competitive-intel, market-intelligence (parallele)
+- **Step 3d** : Phase D — 8 agents restants (parallele)
+- **Step 4** : Tier 2 — saas-expert (analyse sectorielle)
+- **Step 5a** : Tier 3 Batch 1 — contradiction-detector, scenario-modeler, devils-advocate (parallele)
+- **Step 5b** : Tier 3 Batch 2 — synthesis-deal-scorer
+- **Step 5c** : Tier 3 Batch 3 — memo-generator
+- **Final** : Scorecard 21/21 agents SUCCESS
+
+**Mock strategy :**
+- Mock unique de `completeJSON`/`completeJSONWithFallback` au niveau `@/services/openrouter/router`
+- Detection de l'agent par mots-cles du prompt (system + user) — ordre des patterns critique (saas-expert avant les Tier 1 generiques pour eviter faux match)
+- 22 patterns de reponses JSON specifiques a chaque agent
+- Mocks complets: Prisma, benchmarkService, calculateAgentScore, FOMO detector, fact-checking, waterfall-simulator, sector-standards (20+ exports), benchmark-injector, sanitize
+
+**Bug identifie et corrige :**
+- Le pattern saas-expert matchait incorrectement sur le pattern competitive-intel (`"concurrents"` present dans le prompt SaaS) car les `if` sont sequentiels (first-match-wins). Deplace le pattern saas-expert avant tous les patterns Tier 1.
+
+**Resultats :** 12/12 tests passed, 21/21 agents SUCCESS.
+
+---
+
+## 2026-02-12 18:30 — Tests unitaires: pipeline complet des 21 agents (smoke tests)
+
+### Fichiers modifies
+- `src/agents/__tests__/agent-pipeline.test.ts` — **CREE** — 34 tests couvrant les 21 agents du pipeline d'analyse (Tier 0, 1, 2, 3)
+
+### Description
+Suite de tests unitaires exhaustive pour le pipeline d'agents IA. Mock complet d'OpenRouter au niveau du router (`@/services/openrouter/router`) avec une factory de reponses qui detecte l'agent appelant via les mots-cles du prompt et retourne un JSON adapte a chaque agent.
+
+**Structure des tests (34 tests, 4 parties) :**
+- **Part 1 — Individual Agent Smoke Tests (21 tests)** : Chaque agent est instancie et execute avec un `EnrichedAgentContext` mocke. Verification: `agentName` correct, `data` non null, `cost >= 0`.
+  - Tier 0 : fact-extractor, document-extractor
+  - Tier 1 (13) : deck-forensics, financial-auditor, team-investigator, competitive-intel, market-intelligence, tech-stack-dd, tech-ops-dd, legal-regulatory, cap-table-auditor, gtm-analyst, customer-intel, exit-strategist, question-master
+  - Tier 2 : saas-expert (via getSectorExpertForDeal)
+  - Tier 3 (5) : contradiction-detector, scenario-modeler, devils-advocate, synthesis-deal-scorer, memo-generator
+- **Part 2 — Context Building (5 tests)** : Validation de la structure `EnrichedAgentContext` (champs obligatoires, factStore, fundingContext, contextEngine)
+- **Part 3 — Pipeline Integration (5 tests)** : Agent registry (13 Tier 1, 5 Tier 3), getTier2SectorExpert, methode `run()` presente
+- **Part 4 — Error Handling (3 tests)** : Resilience aux erreurs LLM, contexte manquant, timeout
+
+**Mocks en place :**
+- `@/services/openrouter/router` (factory de reponses par agent)
+- `@/scoring/services/agent-score-calculator` (score deterministe)
+- `@/scoring` (benchmarkService)
+- `@/services/benchmarks`, `@/services/benchmarks/freshness-checker`
+- `@/services/funding-db`, `@/services/funding-db/percentile-calculator`
+- `@/services/fact-store/*` (getFactStore, FactStore class)
+- `@/lib/prisma`
+- `@/scoring/types`, `@/agents/red-flag-taxonomy`
+
+**Resultats :** 34/34 tests passed, 257/257 total (0 regression).
+
+---
+
+## 2026-02-12 17:55 — Tests unitaires: circuit-breaker, state-machine, prisma-pool
+
+### Fichiers modifies
+- `src/services/openrouter/__tests__/circuit-breaker.test.ts` — **CREE** — 19 tests pour le circuit breaker per-model (isolation instances, transitions CLOSED->OPEN->HALF_OPEN->CLOSED, seuil 10 failures, resetCircuitBreaker, forceOpen, canExecute)
+- `src/agents/orchestration/__tests__/state-machine-timeouts.test.ts` — **CREE** — 14 tests pour les timeouts de la state machine (valeurs par defaut, checkpointInterval=120000, conditional checkpoints force=false skip, transition checkpoints force=true always persist, isCurrentStateTimedOut)
+- `src/lib/__tests__/prisma-pool.test.ts` — **CREE** — 5 tests pour buildDatasourceUrl (URL sans params, avec pgbouncer, avec params existants, sans DATABASE_URL, duplication)
+- `src/lib/prisma.ts` — Export de `buildDatasourceUrl()` (etait locale, maintenant exportee pour testabilite)
+
+### Description
+Ajout de 38 tests unitaires validant les 6 fixes recentes sans appeler OpenRouter ni Prisma. Tous les mocks sont en place (persistence, message-bus, PrismaClient, distributed-state).
+
+---
+
+## 2026-02-12 — Fix: 0 findings extracted + misleading phase logs in orchestrator
+
+### Fichiers modifies
+- `src/agents/orchestrator/index.ts` — 3 fixes dans `runTier1Phases` et `applyReflexion`
+
+### Bugs corriges
+
+1. **Phase completion log trompeur** — Le log `[Orchestrator] Phase A complete (1 agents)` s'affichait meme quand tous les agents de la phase echouaient. Maintenant affiche: `Phase A complete (1 agents: 0 succeeded, 1 failed)`.
+
+2. **Pas d'early abort quand Phase A/B echouent** — Si deck-forensics (Phase A) ou financial-auditor (Phase B) echouent, les phases suivantes (C, D) continuaient a tourner et a consommer du budget LLM inutilement. Ajout d'un `break` qui arrete le pipeline des phases si un agent critique echoue.
+
+3. **Reflexion pouvait corrompre les resultats** — `applyReflexion` injectait le `revisedResult` (dont le champ `revisedOutput` est type `z.unknown()`) directement dans `allResults`, ecrasant le resultat original valide. Si le LLM retournait un `revisedOutput` malformed (pas de `meta`, `score`), l'extraction de findings trouvait 0 findings. Fix: validation que le revised result preserve les champs essentiels (`meta`, `score`) avant injection. En bonus, le revised result est maintenant sanitize avant injection dans `previousResults` (coherence avec F52).
+
+4. **Log diagnostic ameliore** — Le log "Extracted N findings from M agents" affiche maintenant le breakdown success/fail des Tier 1 agents avec les noms des agents echoues.
+
+### Impact
+- Analyses qui coutaient $0.50 sans produire de resultats echouent maintenant proprement et rapidement
+- Les logs permettent maintenant d'identifier exactement quel agent echoue et pourquoi
+
+---
+
+## 2026-02-12 12:50 — Neon consumption limit 20 CPH/mois
+
+### Fichiers modifies
+- `.env.local` — Ajout `NEON_API_KEY`, `NEON_PROJECT_ID`, commentaires quota
+
+### Description
+- Quota Neon posé via API: `compute_time_seconds: 72000` = 20 CPH/mois (~2.20 USD)
+- Project ID: `crimson-tooth-32900265`
+- Au-delà du quota, les compute endpoints sont suspendus jusqu'au prochain cycle de facturation
+
+---
+
+## 2026-02-12 16:00 — Fix Prisma connection pool exhaustion (P2024) during analysis
+
+### Fichiers modifies
+
+- `src/lib/prisma.ts` — Ajout `buildDatasourceUrl()` qui append `connection_limit=15&pool_timeout=30` au DATABASE_URL (previent l'epuisement du pool Neon). Suppression du handler `process.on("beforeExit")` qui causait des erreurs "Connection Closed" sur les writes async en cours.
+- `src/agents/orchestration/state-machine.ts` — `checkpointInterval` passe de 30s a 120s. `createCheckpoint(force)` accepte un parametre `force`: les checkpoints periodiques (timer) passent `force=false` et sont ignores si l'etat n'a pas change (`lastPersistedState`), les transitions passent `force=true`. Cleanup des vieux checkpoints passe de tous les 5 a tous les 3. Nouveau champ `lastPersistedState` pour le dedup.
+
+### Probleme resolu
+- Erreur Prisma P2024 "Timed out fetching a new connection from the connection pool" (timeout 10s, limit 29 connections) pendant les analyses longues (600s+).
+- 14x "Error in PostgreSQL connection: Error { kind: Closed, cause: None }" apres la fin de l'analyse.
+- Causes: checkpoint spam (toutes les 30s + chaque transition = 20+ writes DB), pas de config pool Prisma, et `$disconnect()` premature via `beforeExit`.
+
+---
+
+## 2026-02-12 15:00 — Fix state machine timeouts (valeurs realistes)
+
+### Fichiers modifies
+
+- `src/agents/orchestration/state-machine.ts` — Mise a jour des `stateTimeouts` dans le constructeur: EXTRACTING 60s->120s, GATHERING 120s->180s, ANALYZING 180s->600s, DEBATING 120s->180s, REFLECTING 60s->120s, SYNTHESIZING 240s->300s. Les anciens timeouts etaient systematiquement depasses (ex: EXTRACTING actual 121s vs 60s configure, ANALYZING actual 626s vs 180s configure).
+
+### Probleme resolu
+- Les timeouts etaient irrealistes et genereraient des warnings a chaque analyse. Bien que les timeouts ne tuent pas les agents actuellement, ils polluaient les logs et pourraient devenir dangereux si la logique evolue.
+
+---
+
+## 2026-02-12 14:30 — Fix circuit breaker: per-model isolation + seuils ajustes
+
+### Fichiers modifies
+
+- `src/services/openrouter/circuit-breaker.ts` — Circuit breaker desormais per-model (Map<string, CircuitBreaker> au lieu de singleton global). `getCircuitBreaker(modelKey?)`, `resetCircuitBreaker(modelKey?)`, `getCircuitBreakerDistributed(modelKey?)`, `syncCircuitBreakerState(stats, modelKey?)` acceptent un modelKey optionnel (defaut "global" pour backward compat). failureThreshold: 5 -> 10 (20+ agents par analyse). recoveryTimeout: 30000 -> 15000 (recuperation plus rapide). Redis keys prefixees par modele.
+- `src/services/openrouter/router.ts` — `complete()`, `stream()`, `completeJSONStreaming()` passent `selectedModelKey` a `getCircuitBreakerDistributed()` et `syncCircuitBreakerState()`. Import `getCircuitBreaker` retire (non utilise dans router). Messages d'erreur CircuitOpenError incluent le nom du modele. `completeJSONWithFallback()` beneficie automatiquement de l'isolation per-model (Gemini et Haiku ont chacun leur breaker).
+
+### Probleme resolu
+- Le circuit breaker etait un singleton global partage par tous les modeles (Gemini, Haiku, Sonnet). Avec failureThreshold=5 et 20+ agents par analyse, le breaker s'ouvrait rapidement et bloquait TOUS les modeles, y compris la chaine de fallback (completeJSONWithFallback: Gemini -> Haiku impossible car meme breaker).
+- Desormais chaque modele a son propre breaker independant. Les echecs sur Gemini n'empechent plus Haiku de fonctionner.
+
+---
+
+## 2026-02-12 12:20 — Fix performance page deal + nettoyage DB analyses zombies
+
+### Fichiers modifies
+
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — `getDeal` n'inclut plus `results` dans les analyses (select metadata only). Nouvelle fonction `getLatestAnalysisResults` charge les results uniquement pour la derniere analyse COMPLETED. `Promise.all` pour paralleliser les 2 requetes.
+- `src/components/deals/analysis-panel.tsx` — Ajout `onDemandResults` cache pour charger les results a la demande quand l'utilisateur navigue dans l'historique. Loading state. `completedAnalyses` ne requiert plus `a.results`. `timelineVersions` et `previousAnalysis` utilisent `onDemandResults`.
+- `src/app/api/deals/[dealId]/analyses/route.ts` — Support `?id=xxx` pour charger une analyse specifique (histoire navigation). Retourne results quand `specificId` est fourni.
+
+### Nettoyage DB
+- Zombie RUNNING analyse (5h+) → FAILED
+- 10 analyses FAILED resumables → neutralisees (completedAgents=0)
+- Deal status → IN_DD (reset)
+
+### Impact performance
+- Avant: ~20 analyses × ~200KB results JSON chacune = ~4MB serialises par le serveur
+- Apres: metadata seule (~2KB par analyse) + 1 seul results JSON pour l'analyse affichee
+
+---
+
+## 2026-02-12 05:10 — Tests unitaires complets (9 fichiers, 89 tests, verification 33 HIGH)
+
+### Fichiers modifies
+
+**Nouveaux tests (9 fichiers, 89 tests)**
+- `src/lib/__tests__/sanitize.test.ts` — 13 tests: prompt injection EN/FR/DE/ES, homoglyphes Unicode, zero-width, role separators, jailbreak, DAN, blockOnSuspicious, truncation, patterns
+- `src/lib/__tests__/encryption.test.ts` — 11 tests: AES-256-GCM round-trip, IV unique, empty/unicode/large text, tamper detection, isEncrypted, safeDecrypt
+- `src/lib/__tests__/api-logger.test.ts` — 6 tests: logApi console routing, timer duration, setContext optionnel
+- `src/lib/__tests__/question-consolidator.test.ts` — 10 tests: extraction multi-agent, dedup, priority scoring, red flag boost, cross-agent boost, category inference, sort, cap 100
+- `src/services/fomo-detector/__tests__/fomo-detector.test.ts` — 10 tests: clean text, patterns FR/EN, severity, overall risk, excerpts
+- `src/services/waterfall-simulator/__tests__/waterfall-simulator.test.ts` — 8 tests: multi-scenarios, distribution totale, BA return, participating preferred, capped, zero exit, below pref, ESOP
+- `src/agents/orchestration/__tests__/result-sanitizer.test.ts` — 7 tests: strip evaluative keys, keep factual data, extractors unchanged, skipSanitization Tier 3, failed results, map sanitization
+- `src/agents/tier1/schemas/__tests__/schemas.test.ts` — 17 tests: validation 13 schemas Tier 1 (meta, score, findings, alertSignal, narrative) + boundary tests
+- `src/agents/tier3/schemas/__tests__/schemas.test.ts` — 7 tests: validation 5 schemas Tier 3 (ContradictionDetector, SynthesisDealScorer, DevilsAdvocate, ScenarioModeler, MemoGenerator) + boundary
+
+**Fix test pre-existant**
+- `src/services/credits/__tests__/usage-gate.test.ts` — fix mock Prisma: remplace `findUnique`/`create` par `upsert` (le code avait ete refactore pour utiliser upsert mais le mock n'avait pas suivi)
+
+### Description
+- Verification systematique des 33 failles HIGH (F26-F58): toutes confirmees implementees par grep
+- Ecriture de 9 fichiers de tests couvrant les modules critiques de securite et logique metier
+- Fix du test usage-gate pre-existant (mock Prisma desynchronise avec le code)
+- **15/15 fichiers tests passent, 185/185 tests passent, 0 echec**
+- `npx tsc --noEmit` : 0 erreurs
+
+---
+
 ## 2026-02-12 04:00 — Post-audit P3 fixes (structured logging, OpenAPI, removeConsole)
 
 ### Fichiers modifies

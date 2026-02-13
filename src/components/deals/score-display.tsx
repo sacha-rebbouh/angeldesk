@@ -86,22 +86,55 @@ export const ScoreDisplay = React.memo(function ScoreDisplay({
 interface ScoreGridProps {
   scores: {
     global: number | null;
+    fundamentals?: number | null;
+    conditions?: number | null;
     team: number | null;
     market: number | null;
     product: number | null;
     financials: number | null;
   };
+  stage?: string | null;
 }
 
-export const ScoreGrid = React.memo(function ScoreGrid({ scores }: ScoreGridProps) {
+function getStageFrench(stage: string | null | undefined): string {
+  const map: Record<string, string> = {
+    PRE_SEED: "Pre-Seed",
+    SEED: "Seed",
+    SERIES_A: "Series A",
+    SERIES_B: "Series B",
+    SERIES_C: "Series C",
+    LATER: "Later",
+  };
+  return stage ? (map[stage] ?? stage) : "";
+}
+
+export const ScoreGrid = React.memo(function ScoreGrid({ scores, stage }: ScoreGridProps) {
   return (
     <div className="space-y-4">
-      <ScoreDisplay label="Score Global" score={scores.global} size="lg" />
+      <ScoreDisplay label="Score Final" score={scores.global} size="lg" />
+
+      {scores.fundamentals != null && (
+        <div className="rounded-lg bg-muted/50 p-3 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">
+              Fondamentaux
+              {stage && <span className="text-xs ml-1">({getStageFrench(stage)}-relative)</span>}
+            </span>
+            <span className="font-semibold">
+              {scores.fundamentals}/100
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-4 pt-2 border-t">
         <ScoreDisplay label="Equipe" score={scores.team} size="sm" />
         <ScoreDisplay label="Marche" score={scores.market} size="sm" />
         <ScoreDisplay label="Produit" score={scores.product} size="sm" />
         <ScoreDisplay label="Financiers" score={scores.financials} size="sm" />
+        <div className="col-span-2">
+          <ScoreDisplay label="Conditions" score={scores.conditions ?? null} size="sm" />
+        </div>
       </div>
     </div>
   );

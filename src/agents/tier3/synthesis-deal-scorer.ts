@@ -46,6 +46,9 @@ import type {
   AgentResult,
 } from "../types";
 import type { BAPreferences } from "@/services/benchmarks";
+import { RedFlagDedup, inferRedFlagTopic } from "@/services/red-flag-dedup";
+import type { RedFlagSeverity } from "@/services/red-flag-dedup";
+import { getWeightsForDeal, formatWeightsForPrompt } from "@/scoring/stage-weights";
 
 // =============================================================================
 // OUTPUT TYPES - Synthesis Deal Scorer v2.0
@@ -278,6 +281,7 @@ export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData,
         // Tier 2 - Sector expert (dynamique)
         // Tier 3 - Other synthesis agents
         "contradiction-detector",
+        "conditions-analyst",
       ],
     });
   }
@@ -660,8 +664,7 @@ Tu dois produire un JSON avec cette structure EXACTE:
 
   protected async execute(context: EnrichedAgentContext): Promise<SynthesisDealScorerData> {
     const deal = context.deal;
-    const { getWeightsForDeal, formatWeightsForPrompt } = await import('@/scoring/stage-weights');
-
+    this._dealStage = deal.stage;
     // Get dynamic weights based on stage and sector
     const dealStage = deal.stage || (context.previousResults?.['document-extractor'] as { data?: { extractedInfo?: { stage?: string } } })?.data?.extractedInfo?.stage;
     const dealSector = deal.sector || (context.previousResults?.['document-extractor'] as { data?: { extractedInfo?: { sector?: string } } })?.data?.extractedInfo?.sector;
@@ -677,6 +680,7 @@ Tu dois produire un JSON avec cette structure EXACTE:
     const fundingDbContext = this.formatFundingDbContext(context);
     const baPrefsSection = this.formatBAPreferences(context.baPreferences, deal.sector, deal.stage);
     const contradictions = this.extractContradictions(context);
+    const conditionsSection = this.extractConditionsData(context);
     const coherenceSection = this.formatCoherenceData(context);
 
     // F23: Build deal source analysis section
@@ -711,6 +715,11 @@ ${tier2Data}
 
 ## INCOHÉRENCES DÉTECTÉES (contradiction-detector)
 ${contradictions}
+
+---
+
+## CONDITIONS D'INVESTISSEMENT (conditions-analyst)
+${conditionsSection}
 
 ---
 
@@ -790,7 +799,21 @@ ${weightsTable}
 
 Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
-    const { data } = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt);
+    // Call LLM with retry: if dimensional scores are missing, retry once with explicit instruction.
+    let data: LLMSynthesisResponse;
+    const firstAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt);
+    const firstBreakdown = firstAttempt.data.score?.breakdown ?? firstAttempt.data.dimensionScores ?? [];
+
+    if (firstBreakdown.length >= 3) {
+      data = firstAttempt.data;
+    } else {
+      console.warn(
+        `[synthesis-deal-scorer] LLM returned ${firstBreakdown.length} dimension scores — retrying with explicit instruction`
+      );
+      const retryPrompt = prompt + `\n\n---\n\n**INSTRUCTION CRITIQUE**: Ta réponse DOIT inclure "score.breakdown" avec AU MINIMUM 7 dimensions (Team, Financials, Market, Product/Tech, GTM/Traction, Competitive, Exit Potential), chacune avec "criterion", "weight", "score" et "justification". Sans ce breakdown, l'analyse est inutilisable.`;
+      const retryAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(retryPrompt);
+      data = retryAttempt.data;
+    }
 
     // Transform and validate the response
     const result = this.transformResponse(data, context);
@@ -1006,7 +1029,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
   private extractTier1RedFlags(context: EnrichedAgentContext): string {
     const results = context.previousResults ?? {};
-    const allRedFlags: { agent: string; severity: string; flag: string }[] = [];
+    const dedup = new RedFlagDedup();
 
     for (const [agentName, result] of Object.entries(results)) {
       if (result.success && "data" in result && result.data) {
@@ -1018,12 +1041,25 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
         for (const field of redFlagFields) {
           if (Array.isArray(data[field])) {
             for (const rf of data[field] as Array<Record<string, unknown>>) {
-              const severity = rf.severity ?? rf.level ?? "MEDIUM";
-              const flag = rf.title ?? rf.flag ?? rf.description ?? JSON.stringify(rf);
-              allRedFlags.push({
-                agent: agentName,
-                severity: String(severity).toUpperCase(),
-                flag: String(flag),
+              const rawSeverity = String(rf.severity ?? rf.level ?? "MEDIUM").toUpperCase();
+              const severity: RedFlagSeverity = (["CRITICAL", "HIGH", "MEDIUM", "LOW"].includes(rawSeverity)
+                ? rawSeverity
+                : "MEDIUM") as RedFlagSeverity;
+              const title = String(rf.title ?? rf.flag ?? rf.description ?? "Unknown");
+              const category = String(rf.category ?? field);
+              const topic = inferRedFlagTopic(title, category);
+
+              dedup.register({
+                id: `${agentName}::${topic}`,
+                agentSource: agentName,
+                topic,
+                title,
+                severity,
+                description: rf.description ? String(rf.description) : title,
+                evidence: rf.evidence
+                  ? [{ source: agentName, quote: String(rf.evidence) }]
+                  : [{ source: agentName }],
+                category,
               });
             }
           }
@@ -1031,52 +1067,12 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
       }
     }
 
-    if (allRedFlags.length === 0) {
+    const summary = dedup.getSummary();
+    if (summary.totalConsolidated === 0) {
       return "Aucun red flag détecté par les agents Tier 1.";
     }
 
-    // Sort by severity
-    const severityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 };
-    allRedFlags.sort((a, b) => {
-      const orderA = severityOrder[a.severity as keyof typeof severityOrder] ?? 3;
-      const orderB = severityOrder[b.severity as keyof typeof severityOrder] ?? 3;
-      return orderA - orderB;
-    });
-
-    // Group by severity
-    const critical = allRedFlags.filter(rf => rf.severity === "CRITICAL");
-    const high = allRedFlags.filter(rf => rf.severity === "HIGH");
-    const medium = allRedFlags.filter(rf => rf.severity === "MEDIUM");
-
-    let output = `**Total: ${allRedFlags.length} red flags** (${critical.length} CRITICAL, ${high.length} HIGH, ${medium.length} MEDIUM)\n\n`;
-
-    if (critical.length > 0) {
-      output += "### 🚨 CRITICAL\n";
-      critical.forEach(rf => {
-        output += `- [${rf.agent}] ${rf.flag}\n`;
-      });
-      output += "\n";
-    }
-
-    if (high.length > 0) {
-      output += "### ⚠️ HIGH\n";
-      high.forEach(rf => {
-        output += `- [${rf.agent}] ${rf.flag}\n`;
-      });
-      output += "\n";
-    }
-
-    if (medium.length > 0) {
-      output += "### ℹ️ MEDIUM\n";
-      medium.slice(0, 5).forEach(rf => {
-        output += `- [${rf.agent}] ${rf.flag}\n`;
-      });
-      if (medium.length > 5) {
-        output += `... et ${medium.length - 5} autres\n`;
-      }
-    }
-
-    return output;
+    return dedup.formatForPrompt();
   }
 
   private buildTier1Synthesis(context: EnrichedAgentContext): string {
@@ -1248,6 +1244,87 @@ Aucune incohérence majeure détectée entre les agents.`;
     return output;
   }
 
+  private extractConditionsData(context: EnrichedAgentContext): string {
+    const results = context.previousResults ?? {};
+    const conditionsResult = results["conditions-analyst"];
+
+    if (!conditionsResult?.success || !("data" in conditionsResult) || !conditionsResult.data) {
+      return "Conditions analyst non exécuté. Les conditions ne sont pas intégrées dans le scoring.";
+    }
+
+    const data = conditionsResult.data as Record<string, unknown>;
+    const score = data.score as { value?: number; breakdown?: { criterion: string; score: number; justification: string }[] } | undefined;
+    const findings = data.findings as Record<string, unknown> | undefined;
+    const redFlags = data.redFlags as { severity?: string; title?: string }[] | undefined;
+    const narrative = data.narrative as { oneLiner?: string } | undefined;
+
+    const lines: string[] = [];
+
+    // Score
+    if (score?.value != null) {
+      lines.push(`**Score conditions: ${score.value}/100**`);
+      if (score.breakdown) {
+        for (const b of score.breakdown) {
+          lines.push(`- ${b.criterion}: ${b.score}/100 — ${b.justification}`);
+        }
+      }
+    }
+
+    // Source
+    if (findings?.termsSource) {
+      lines.push(`\n**Source des conditions**: ${findings.termsSource}`);
+    }
+
+    // Key findings
+    if (findings?.valuation && typeof findings.valuation === "object") {
+      const val = findings.valuation as Record<string, unknown>;
+      lines.push(`\n**Valorisation**: ${val.verdict ?? "?"} — ${val.rationale ?? ""}`);
+      if (val.percentileVsDB != null) lines.push(`  Percentile vs DB: P${val.percentileVsDB}`);
+    }
+    if (findings?.instrument && typeof findings.instrument === "object") {
+      const inst = findings.instrument as Record<string, unknown>;
+      lines.push(`**Instrument**: ${inst.assessment ?? "?"} — ${inst.rationale ?? ""}`);
+    }
+    if (findings?.protections && typeof findings.protections === "object") {
+      const prot = findings.protections as Record<string, unknown>;
+      lines.push(`**Protections**: ${prot.overallAssessment ?? "?"}`);
+      const missing = prot.missingCritical as string[] | undefined;
+      if (missing && missing.length > 0) {
+        lines.push(`  Manquantes: ${missing.join(", ")}`);
+      }
+    }
+    if (findings?.governance && typeof findings.governance === "object") {
+      const gov = findings.governance as Record<string, unknown>;
+      lines.push(`**Gouvernance**: ${gov.overallAssessment ?? "?"}`);
+    }
+
+    // Red flags
+    if (redFlags && redFlags.length > 0) {
+      lines.push(`\n**Red Flags conditions (${redFlags.length}):**`);
+      for (const rf of redFlags.slice(0, 3)) {
+        lines.push(`- [${rf.severity ?? "?"}] ${rf.title ?? "?"}`);
+      }
+    }
+
+    // Narrative
+    if (narrative?.oneLiner) {
+      lines.push(`\n**Résumé**: ${narrative.oneLiner}`);
+    }
+
+    // Negotiation advice (summarized)
+    const negoAdvice = (findings?.negotiationAdvice as { point: string; priority: string }[]) ?? [];
+    if (negoAdvice.length > 0) {
+      lines.push(`\n**Conseils de négociation (${negoAdvice.length}):**`);
+      for (const a of negoAdvice.slice(0, 3)) {
+        lines.push(`- [${a.priority}] ${a.point}`);
+      }
+    }
+
+    return lines.length > 0
+      ? lines.join("\n")
+      : "Aucune donnée conditions disponible.";
+  }
+
   private formatFundingDbContext(context: EnrichedAgentContext): string {
     const fundingDb = context.fundingDbContext ?? context.fundingContext;
 
@@ -1392,29 +1469,51 @@ Aucune incohérence majeure détectée entre les agents.`;
     });
 
     // Score logic:
-    // 1. Use LLM overall score (includes red flag adjustments the dimensions don't capture)
-    // 2. Fallback to computed weighted average if LLM didn't provide a score
-    // 3. Log divergence for debugging but trust the LLM's holistic judgment
-    const computedWeighted = dimensionScores.length > 0
-      ? Math.round(dimensionScores.reduce((sum, d) => sum + d.weightedScore, 0))
-      : null;
-    const overallScoreRaw = data.score?.value ?? data.overallScore ?? computedWeighted;
-    const overallScoreIsFallback = overallScoreRaw === undefined || overallScoreRaw === null;
-    if (overallScoreIsFallback) {
-      console.warn(`[synthesis-deal-scorer] LLM did not return overall score — using 0`);
-    }
-    const overallScore = overallScoreIsFallback ? 0 : overallScoreRaw;
+    // 1. If LLM produced dimensions, compute weighted average from them
+    // 2. Compare LLM's overall score with its own dimensional breakdown
+    // 3. If divergence is too large, prefer the dimensional computation (LLM showed its work)
+    // 4. If no dimensions at all (retry also failed), use LLM's raw score
+    const llmScore = data.score?.value ?? data.overallScore;
+    let overallScore: number;
 
-    if (computedWeighted !== null && Math.abs(overallScore - computedWeighted) > 15) {
-      console.warn(
-        `[SynthesisDealScorer] Overall score (${overallScore}) diverges from weighted dimensions (${computedWeighted}) by ${Math.abs(overallScore - computedWeighted)} pts — red flag adjustments likely applied`
+    if (dimensionScores.length > 0) {
+      const computedWeighted = Math.round(
+        dimensionScores.reduce((sum, d) => sum + d.weightedScore, 0)
       );
+
+      if (llmScore != null) {
+        const divergence = Math.abs(llmScore - computedWeighted);
+        if (divergence > 25) {
+          console.warn(
+            `[SynthesisDealScorer] LLM score (${llmScore}) diverges from its own dimensions (${computedWeighted}) by ${divergence} pts — using weighted average`
+          );
+          overallScore = computedWeighted;
+        } else {
+          overallScore = llmScore;
+          if (divergence > 10) {
+            console.warn(
+              `[SynthesisDealScorer] LLM score (${llmScore}) diverges from dimensions (${computedWeighted}) by ${divergence} pts — red flag adjustments likely`
+            );
+          }
+        }
+      } else {
+        overallScore = computedWeighted;
+      }
+    } else {
+      // No dimensions even after retry — use LLM's raw score (last resort)
+      overallScore = llmScore ?? 0;
+      if (overallScore === 0 && llmScore == null) {
+        console.warn(`[SynthesisDealScorer] No dimensions and no LLM score — defaulting to 0`);
+      }
     }
 
     // Extract key strengths/weaknesses
-    const keyStrengths = data.narrative?.keyInsights?.filter((_, i) => i < 3) ??
-                        data.findings?.topStrengths?.map(s => typeof s === "string" ? s : s.strength) ??
-                        data.keyStrengths ?? [];
+    // IMPORTANT: topStrengths is explicitly "strengths" from the LLM.
+    // keyInsights are generic insights (can be negative) — only use as last resort.
+    const keyStrengths = data.findings?.topStrengths?.map(s => typeof s === "string" ? s : s.strength) ??
+                        data.keyStrengths ??
+                        data.narrative?.keyInsights?.slice(0, 3) ??
+                        [];
 
     const keyWeaknesses = data.findings?.topWeaknesses?.map(w => typeof w === "string" ? w : w.weakness) ??
                          data.keyWeaknesses ?? [];

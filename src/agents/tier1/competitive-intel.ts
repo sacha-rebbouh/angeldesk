@@ -197,7 +197,7 @@ export class CompetitiveIntelAgent extends BaseAgent<CompetitiveIntelData, Compe
       description: "Cartographie le paysage concurrentiel et évalue le moat",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000, // 2 min - analyse approfondie
+      timeoutMs: 240000, // 4 min
     });
   }
 
@@ -319,6 +319,7 @@ Réponds UNIQUEMENT en JSON valide, pas de texte avant ou après.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<CompetitiveIntelData> {
+    this._dealStage = context.deal.stage;
     // Build comprehensive context
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);

@@ -5,20 +5,20 @@ import { cn } from "@/lib/utils";
 import { Check, Loader2, XCircle } from "lucide-react";
 import { formatAgentName } from "@/lib/format-utils";
 
-// Timing configuration (in seconds)
-// Realistic durations based on actual analysis times
-// The last step is intentionally longer because it stays "running" until the analysis completes
-const STEP_TIMINGS_PRO = {
-  extraction: { duration: 15 }, // Document extraction ~15s
-  tier1: { duration: 90 }, // 13 Tier1 agents in parallel ~90s
-  tier2: { duration: 45 }, // Sector expert ~45s
-  tier3: { duration: 60 }, // 5 Tier3 agents ~60s (will stay running until complete)
+// Agent count thresholds for mapping completedAgents → current step
+// PRO: fact-extractor(1) + document-extractor(1) + 13 Tier1 + 1 Tier2 + 5 Tier3 = 21
+// These thresholds represent the cumulative agent count at the END of each step
+const STEP_THRESHOLDS_PRO = {
+  extraction: 2,   // fact-extractor + document-extractor
+  tier1: 15,       // + 13 Tier1 agents
+  tier2: 16,       // + 1 sector expert
+  tier3: 21,       // + 5 Tier3 agents
 } as const;
 
-const STEP_TIMINGS_FREE = {
-  extraction: { duration: 15 }, // Document extraction ~15s
-  investigation: { duration: 60 }, // Simplified investigation ~60s
-  scoring: { duration: 30 }, // Basic scoring ~30s (will stay running until complete)
+const STEP_THRESHOLDS_FREE = {
+  extraction: 2,   // fact-extractor + document-extractor
+  investigation: 15, // + 13 Tier1 agents
+  scoring: 16,     // + synthesis-deal-scorer
 } as const;
 
 export interface AgentStatus {
@@ -33,119 +33,65 @@ export interface AnalysisProgressProps {
   onComplete?: () => void;
   analysisType?: "tier1_complete" | "full_analysis";
   agentStatuses?: AgentStatus[];
+  /** Real-time completed agent count from backend polling */
+  completedAgents?: number;
+  /** Total agent count from backend */
+  totalAgents?: number;
+  /** Analysis start time (ISO string) from backend */
+  startedAt?: string | null;
 }
 
 interface StepConfig {
   id: string;
   label: string;
-  duration: number;
+  /** Cumulative agent count threshold: step is complete when completedAgents >= threshold */
+  threshold: number;
 }
 
 export function AnalysisProgress({
   isRunning,
   analysisType = "full_analysis",
   agentStatuses,
+  completedAgents = 0,
+  totalAgents = 0,
+  startedAt,
 }: AnalysisProgressProps) {
   // Build steps based on analysis type (FREE vs PRO)
   const steps = useMemo<StepConfig[]>(() => {
     if (analysisType === "tier1_complete") {
-      // FREE plan - 3 steps
       return [
-        {
-          id: "extraction",
-          label: "Extraction des documents",
-          duration: STEP_TIMINGS_FREE.extraction.duration,
-        },
-        {
-          id: "investigation",
-          label: "Investigation",
-          duration: STEP_TIMINGS_FREE.investigation.duration,
-        },
-        {
-          id: "scoring",
-          label: "Scoring",
-          duration: STEP_TIMINGS_FREE.scoring.duration,
-        },
+        { id: "extraction", label: "Extraction des documents", threshold: STEP_THRESHOLDS_FREE.extraction },
+        { id: "investigation", label: "Investigation", threshold: STEP_THRESHOLDS_FREE.investigation },
+        { id: "scoring", label: "Scoring", threshold: STEP_THRESHOLDS_FREE.scoring },
       ];
     }
 
-    // PRO plan (full_analysis) - 4 steps
     return [
-      {
-        id: "extraction",
-        label: "Extraction des documents",
-        duration: STEP_TIMINGS_PRO.extraction.duration,
-      },
-      {
-        id: "tier1",
-        label: "Investigation approfondie",
-        duration: STEP_TIMINGS_PRO.tier1.duration,
-      },
-      {
-        id: "tier2",
-        label: "Expert sectoriel",
-        duration: STEP_TIMINGS_PRO.tier2.duration,
-      },
-      {
-        id: "tier3",
-        label: "Synthèse & Scoring",
-        duration: STEP_TIMINGS_PRO.tier3.duration,
-      },
+      { id: "extraction", label: "Extraction des documents", threshold: STEP_THRESHOLDS_PRO.extraction },
+      { id: "tier1", label: "Investigation approfondie", threshold: STEP_THRESHOLDS_PRO.tier1 },
+      { id: "tier2", label: "Expert sectoriel", threshold: STEP_THRESHOLDS_PRO.tier2 },
+      { id: "tier3", label: "Synthese & Scoring", threshold: STEP_THRESHOLDS_PRO.tier3 },
     ];
   }, [analysisType]);
 
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
-  const startTimeRef = useRef<number>(Date.now());
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Calculate step statuses based on elapsed time
-  // CRITICAL: The last step NEVER becomes "completed" while isRunning is true
-  const stepStatuses = useMemo(() => {
-    const statuses: Record<string, "pending" | "running" | "completed"> = {};
-
-    let accumulatedTime = 0;
-
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      const isLastStep = i === steps.length - 1;
-      const stepStartTime = accumulatedTime;
-      const stepEndTime = stepStartTime + step.duration;
-
-      if (isComplete) {
-        // Analysis is done - mark all steps as completed
-        statuses[step.id] = "completed";
-      } else if (elapsedTime < stepStartTime) {
-        // Haven't reached this step yet
-        statuses[step.id] = "pending";
-      } else if (isLastStep) {
-        // Last step: stays "running" until analysis completes (never auto-completes)
-        statuses[step.id] = "running";
-      } else if (elapsedTime >= stepEndTime) {
-        // Non-last step and past its duration: completed
-        statuses[step.id] = "completed";
-      } else {
-        // Currently in this step
-        statuses[step.id] = "running";
-      }
-
-      accumulatedTime = stepEndTime;
-    }
-
-    return statuses;
-  }, [elapsedTime, steps, isComplete]);
-
-  // Start timer on mount, stop when isRunning becomes false
+  // Compute elapsed time from backend startedAt (survives page reloads)
   useEffect(() => {
-    // Start the timer immediately
-    startTimeRef.current = Date.now();
-    setElapsedTime(0);
-    setIsComplete(false);
+    const computeElapsed = () => {
+      if (startedAt) {
+        const start = new Date(startedAt).getTime();
+        setElapsedTime((Date.now() - start) / 1000);
+      }
+    };
 
-    intervalRef.current = setInterval(() => {
-      const newElapsed = (Date.now() - startTimeRef.current) / 1000;
-      setElapsedTime(newElapsed);
-    }, 500);
+    computeElapsed();
+
+    if (isRunning) {
+      intervalRef.current = setInterval(computeElapsed, 1000);
+    }
 
     return () => {
       if (intervalRef.current) {
@@ -153,18 +99,53 @@ export function AnalysisProgress({
         intervalRef.current = null;
       }
     };
-  }, []); // Empty deps = run once on mount
+  }, [isRunning, startedAt]);
 
   // When isRunning becomes false, mark as complete
   useEffect(() => {
-    if (!isRunning) {
+    if (!isRunning && completedAgents > 0) {
       setIsComplete(true);
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     }
-  }, [isRunning]);
+  }, [isRunning, completedAgents]);
+
+  // Calculate step statuses based on REAL completedAgents from backend
+  const stepStatuses = useMemo(() => {
+    const statuses: Record<string, "pending" | "running" | "completed"> = {};
+
+    if (isComplete) {
+      for (const step of steps) {
+        statuses[step.id] = "completed";
+      }
+      return statuses;
+    }
+
+    let previousThreshold = 0;
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+
+      if (completedAgents >= step.threshold) {
+        // Past this step's threshold → completed
+        statuses[step.id] = "completed";
+      } else if (completedAgents > previousThreshold) {
+        // Between previous and current threshold → running
+        statuses[step.id] = "running";
+      } else if (completedAgents === 0 && i === 0 && isRunning) {
+        // No agents completed yet but analysis is running → first step running
+        statuses[step.id] = "running";
+      } else {
+        statuses[step.id] = "pending";
+      }
+
+      previousThreshold = step.threshold;
+    }
+
+    return statuses;
+  }, [completedAgents, steps, isComplete, isRunning]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -172,7 +153,10 @@ export function AnalysisProgress({
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const displayTime = elapsedTime;
+  // Progress percentage based on real agent count
+  const progressPercent = totalAgents > 0
+    ? Math.round((completedAgents / totalAgents) * 100)
+    : 0;
 
   return (
     <div className="rounded-lg border bg-card p-4 shadow-sm">
@@ -182,13 +166,20 @@ export function AnalysisProgress({
           {isRunning ? (
             <>
               <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-              <span className="font-medium text-sm">Analyse en cours</span>
+              <span className="font-medium text-sm">
+                Analyse en cours
+                {totalAgents > 0 && (
+                  <span className="text-muted-foreground font-normal ml-1">
+                    ({completedAgents}/{totalAgents} agents — {progressPercent}%)
+                  </span>
+                )}
+              </span>
             </>
           ) : isComplete ? (
             <>
               <div className="h-2 w-2 rounded-full bg-green-500" />
               <span className="font-medium text-sm text-green-700">
-                Analyse terminée
+                Analyse terminee
               </span>
             </>
           ) : (
@@ -199,9 +190,19 @@ export function AnalysisProgress({
           )}
         </div>
         <span className="text-sm text-muted-foreground font-mono tabular-nums">
-          {formatTime(displayTime)}
+          {formatTime(elapsedTime)}
         </span>
       </div>
+
+      {/* Progress bar */}
+      {isRunning && totalAgents > 0 && (
+        <div className="mb-4 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+          <div
+            className="h-full rounded-full bg-blue-500 transition-all duration-700 ease-out"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      )}
 
       {/* Steps */}
       <div className="space-y-0">
@@ -243,7 +244,7 @@ export function AnalysisProgress({
               {agentStatuses && agentStatuses.length > 0 && (status === "running" || status === "completed") && (
                 <div className="ml-9 mt-0.5 mb-1 space-y-0.5">
                   {agentStatuses
-                    .filter(a => {
+                    .filter(() => {
                       if (step.id === "tier1" || step.id === "investigation") return true;
                       return false;
                     })

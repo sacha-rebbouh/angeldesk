@@ -223,9 +223,12 @@ async function submitFounderResponses(
 
 interface StartAnalysisResponse {
   data: {
-    status: "RUNNING";
+    status: "RUNNING" | "RESUMING";
     dealId: string;
     remainingDeals?: number;
+    resumedFrom?: string;
+    completedAgents?: number;
+    totalAgents?: number;
   };
 }
 
@@ -295,6 +298,9 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const [negotiationStrategy, setNegotiationStrategy] = useState<NegotiationStrategy | null>(null);
   const [isLoadingNegotiation, setIsLoadingNegotiation] = useState(false);
   const isGeneratingNegotiationRef = useRef(false); // Sync ref to prevent race conditions
+  // On-demand results cache for historical analyses (loaded when user navigates history)
+  const [onDemandResults, setOnDemandResults] = useState<Record<string, Record<string, AgentResult>>>({});
+  const [isLoadingResults, setIsLoadingResults] = useState(false);
 
   // Background analysis polling: detect if there's a RUNNING analysis (from mutation or page reload)
   const hasRunningAnalysisFromProps = useMemo(
@@ -305,7 +311,9 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const pollingStartRef = useRef<number>(hasRunningAnalysisFromProps ? Date.now() : 0);
   // Tracks when mutation was triggered — used to ignore stale analyses from before the mutation
   const mutationTimestampRef = useRef<number>(0);
-  const POLLING_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max (aligned with server auto-expire)
+  // Tracks if current polling is for a resumed analysis (old createdAt, reused ID)
+  const isResumingRef = useRef<boolean>(false);
+  const POLLING_TIMEOUT_MS = 90 * 60 * 1000; // 90 min max
 
   // Fetch usage status
   const { data: usageData, isLoading: isUsageLoading } = useQuery({
@@ -367,12 +375,14 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       // Safety timeout: stop polling after 30 minutes
       if (pollingStartRef.current > 0 && Date.now() - pollingStartRef.current > POLLING_TIMEOUT_MS) {
         setIsPolling(false);
-        toast.error("L'analyse semble bloquee. Rechargez la page pour verifier.");
+        toast.info("L'analyse prend plus de temps que prevu. Elle continue en arriere-plan — la page se mettra a jour automatiquement.");
         return;
       }
 
       // Race condition guard: ignore analyses created BEFORE the mutation fired.
-      if (mutationTimestampRef.current > 0 && createdAt) {
+      // Skip this check for resumed analyses (isResuming=true) since they reuse
+      // old analysis IDs with old createdAt timestamps.
+      if (mutationTimestampRef.current > 0 && createdAt && !isResumingRef.current) {
         const analysisCreatedAt = new Date(createdAt).getTime();
         if (analysisCreatedAt < mutationTimestampRef.current - 5000) {
           return;
@@ -382,12 +392,14 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       if (status === "COMPLETED") {
         setIsPolling(false);
         mutationTimestampRef.current = 0;
+        isResumingRef.current = false;
         lastProcessedAnalysisIdRef.current = id;
         loadCompletedAnalysis(polledAnalysis.data);
         toast.success("Analyse terminée");
       } else if (status === "FAILED") {
         setIsPolling(false);
         mutationTimestampRef.current = 0;
+        isResumingRef.current = false;
         lastProcessedAnalysisIdRef.current = id;
         toast.error("L'analyse a echoue. Relancez pour reessayer.");
         queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
@@ -462,9 +474,10 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
     if (selectedAnalysisId) {
       const saved = analyses.find(a => a.id === selectedAnalysisId);
-      if (saved?.results) {
+      const results = saved?.results ?? onDemandResults[selectedAnalysisId] ?? null;
+      if (saved && results) {
         return {
-          results: saved.results,
+          results,
           success: saved.status === "COMPLETED",
           summary: saved.summary ?? "",
           totalTimeMs: saved.totalTimeMs ?? 0,
@@ -477,27 +490,30 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     }
 
     // Auto-select the most recent completed analysis with results
-    const latestWithResults = analyses.find(a => a.status === "COMPLETED" && a.results);
-    if (latestWithResults?.results) {
-      return {
-        results: latestWithResults.results,
-        success: true,
-        summary: latestWithResults.summary ?? "",
-        totalTimeMs: latestWithResults.totalTimeMs ?? 0,
-        totalCost: parseFloat(latestWithResults.totalCost ?? "0"),
-        isLive: false,
-        analysisId: latestWithResults.id,
-        earlyWarnings: undefined,
-        hasCriticalWarnings: undefined,
-      };
+    const latestCompleted = analyses.find(a => a.status === "COMPLETED");
+    if (latestCompleted) {
+      const results = latestCompleted.results ?? onDemandResults[latestCompleted.id] ?? null;
+      if (results) {
+        return {
+          results,
+          success: true,
+          summary: latestCompleted.summary ?? "",
+          totalTimeMs: latestCompleted.totalTimeMs ?? 0,
+          totalCost: parseFloat(latestCompleted.totalCost ?? "0"),
+          isLive: false,
+          analysisId: latestCompleted.id,
+          earlyWarnings: undefined,
+          hasCriticalWarnings: undefined,
+        };
+      }
     }
 
     return null;
-  }, [liveResult, selectedAnalysisId, analyses]);
+  }, [liveResult, selectedAnalysisId, analyses, onDemandResults]);
 
   const mutation = useMutation({
     mutationFn: () => startAnalysis(dealId, analysisType),
-    onSuccess: () => {
+    onSuccess: (response) => {
       // Analysis is now running in the background - start polling
       const now = Date.now();
       pollingStartRef.current = now;
@@ -505,7 +521,13 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       setIsPolling(true);
       setSelectedAnalysisId(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
-      toast.success("Analyse lancee en arriere-plan");
+      if (response.data.status === "RESUMING") {
+        isResumingRef.current = true;
+        toast.success(`Reprise de l'analyse (${response.data.completedAgents ?? 0}/${response.data.totalAgents ?? 0} agents deja termines)`);
+      } else {
+        isResumingRef.current = false;
+        toast.success("Analyse lancee en arriere-plan");
+      }
     },
     onError: (error: Error & { upgradeRequired?: boolean }) => {
       if (error.upgradeRequired) {
@@ -537,12 +559,39 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     mutation.mutate();
   }, [subscriptionPlan, quota, mutation]);
 
+  // Resume interrupted analysis — bypasses quota check (already paid)
+  const handleResumeClick = useCallback(() => {
+    setLiveResult(null);
+    setSelectedAnalysisId(null);
+    mutation.mutate();
+  }, [mutation]);
+
   const handleCloseCreditModal = useCallback(() => setShowCreditModal(false), []);
 
-  const handleSelectAnalysis = useCallback((analysisId: string) => {
+  const handleSelectAnalysis = useCallback(async (analysisId: string) => {
     setSelectedAnalysisId(analysisId);
     setLiveResult(null);
-  }, []);
+
+    // If results are already available in props or cache, no need to fetch
+    const inProps = analyses.find(a => a.id === analysisId);
+    if (inProps?.results || onDemandResults[analysisId]) return;
+
+    // Fetch results on demand
+    setIsLoadingResults(true);
+    try {
+      const response = await fetch(`/api/deals/${dealId}/analyses?id=${analysisId}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.data?.results) {
+          setOnDemandResults(prev => ({ ...prev, [analysisId]: data.data.results }));
+        }
+      }
+    } catch {
+      // Silent fail - user can retry by clicking again
+    } finally {
+      setIsLoadingResults(false);
+    }
+  }, [analyses, onDemandResults, dealId]);
 
   const toggleAgentDetails = useCallback(() => {
     setShowAgentDetails(prev => !prev);
@@ -634,20 +683,36 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     };
   }, [displayedResult]);
 
-  // Filter completed analyses for history
+  // Filter completed analyses for history (results loaded on-demand, not required here)
   const completedAnalyses = useMemo(() => {
-    return analyses.filter(a => a.status === "COMPLETED" && a.results);
+    return analyses.filter(a => a.status === "COMPLETED");
   }, [analyses]);
 
   // Can run analysis if user has remaining deals AND usage is loaded
   const canRunAnalysis = isUsageLoading ? false : (usage ? usage.canAnalyze : true);
+
+  // Detect interrupted analysis (FAILED with partial results, < 6h old)
+  // Pick the one with the MOST completed agents (best progress to resume from)
+  const interruptedAnalysis = useMemo(() => {
+    const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000;
+    const candidates = analyses.filter(a =>
+      a.status === "FAILED" &&
+      a.completedAgents > 0 &&
+      a.completedAgents < a.totalAgents &&
+      a.completedAt &&
+      new Date(a.completedAt).getTime() > sixHoursAgo
+    );
+    if (candidates.length === 0) return null;
+    return candidates.reduce((best, a) => a.completedAgents > best.completedAgents ? a : best);
+  }, [analyses]);
 
   // Prepare timeline versions data (for multi-version display)
   const timelineVersions = useMemo(() => {
     return completedAnalyses
       .map((analysis, index) => {
         // Extract global score from synthesis-deal-scorer if available
-        const scorerResult = analysis.results?.["synthesis-deal-scorer"];
+        const results = analysis.results ?? onDemandResults[analysis.id] ?? null;
+        const scorerResult = results?.["synthesis-deal-scorer"];
         const scorerData = scorerResult?.success && scorerResult.data
           ? scorerResult.data as { overallScore?: number; score?: { value?: number } }
           : null;
@@ -662,7 +727,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         };
       })
       .reverse(); // Oldest first for timeline display
-  }, [completedAnalyses]);
+  }, [completedAnalyses, onDemandResults]);
 
   // Build agent statuses from live results for progress display
   const agentStatuses = useMemo<AgentStatus[]>(() => {
@@ -698,13 +763,18 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     prevAnalysesCountRef.current = completedAnalyses.length;
   }, [completedAnalyses, liveResult]);
 
-  // Get previous analysis for delta comparison
+  // Get previous analysis for delta comparison (use onDemandResults if available)
   const previousAnalysis = useMemo(() => {
     if (completedAnalyses.length < 2) return null;
     const currentIndex = completedAnalyses.findIndex((a) => a.id === currentAnalysisId);
     if (currentIndex === -1 || currentIndex === completedAnalyses.length - 1) return null;
-    return completedAnalyses[currentIndex + 1];
-  }, [completedAnalyses, currentAnalysisId]);
+    const prev = completedAnalyses[currentIndex + 1];
+    // Merge on-demand results if available
+    if (prev && !prev.results && onDemandResults[prev.id]) {
+      return { ...prev, results: onDemandResults[prev.id] };
+    }
+    return prev;
+  }, [completedAnalyses, currentAnalysisId, onDemandResults]);
 
   // Extract current and previous scores for DeltaIndicator
   const currentScore = useMemo(() => extractDealScore(displayedResult?.results), [displayedResult]);
@@ -985,6 +1055,36 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         </Card>
       )}
 
+      {/* Interrupted Analysis Banner - Resume from checkpoint */}
+      {interruptedAnalysis && !isAnalyzing && (
+        <Card className="border-blue-300 bg-blue-50">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 text-blue-600" />
+                <div>
+                  <p className="font-medium text-blue-800">
+                    Analyse interrompue ({interruptedAnalysis.completedAgents}/{interruptedAnalysis.totalAgents} agents terminés)
+                  </p>
+                  <p className="text-sm text-blue-700">
+                    L&apos;analyse récente la plus aboutie a été interrompue. Cliquez pour reprendre là où elle s&apos;est arrêtée sans repayer les agents déjà terminés.
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                className="bg-blue-600 text-white hover:bg-blue-700"
+                onClick={handleResumeClick}
+                disabled={isRunning || mutation.isPending}
+              >
+                <Play className="mr-2 h-4 w-4" />
+                Reprendre l&apos;analyse
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Stale Analysis Warning Banner */}
       {isAnalysisStale && staleness && (
         <Card className="border-amber-300 bg-amber-50">
@@ -1070,7 +1170,20 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
               isRunning={isAnalyzing}
               analysisType={analysisType === "tier1_complete" ? "tier1_complete" : "full_analysis"}
               agentStatuses={agentStatuses}
+              completedAgents={polledAnalysis?.data?.completedAgents ?? 0}
+              totalAgents={polledAnalysis?.data?.totalAgents ?? 0}
+              startedAt={polledAnalysis?.data?.startedAt ?? polledAnalysis?.data?.createdAt ?? null}
             />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Loading state when fetching historical analysis results */}
+      {isLoadingResults && !displayedResult && (
+        <Card>
+          <CardContent className="flex items-center justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mr-3" />
+            <span className="text-muted-foreground">Chargement des résultats...</span>
           </CardContent>
         </Card>
       )}

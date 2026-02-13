@@ -84,6 +84,9 @@ export class AnalysisStateMachine {
   private stateStartTime: Date | null = null;
   private checkpointTimer: NodeJS.Timeout | null = null;
 
+  // Checkpoint dedup: skip periodic DB writes when state hasn't changed
+  private lastPersistedState: AnalysisState | null = null;
+
   // Callbacks
   private onStateChangeCallbacks: ((
     from: AnalysisState,
@@ -99,15 +102,15 @@ export class AnalysisStateMachine {
       mode: "full_analysis",
       agents: [],
       enableCheckpointing: true,
-      checkpointInterval: 30000, // 30 seconds
+      checkpointInterval: 120000, // 120 seconds — reduces DB writes during long analyses
       maxRetries: 2,
       stateTimeouts: {
-        EXTRACTING: 60000,
-        GATHERING: 120000,
-        ANALYZING: 180000,
-        DEBATING: 120000,
-        REFLECTING: 60000,
-        SYNTHESIZING: 240000,
+        EXTRACTING: 180000,     // 3 min - LLM extraction + fact-extractor
+        GATHERING: 300000,      // 5 min - LinkedIn API + context engine + enrichment
+        ANALYZING: 1200000,     // 20 min - 13 Tier 1 agents (3 min each) + occasional reflexion
+        DEBATING: 300000,       // 5 min - consensus engine
+        REFLECTING: 180000,     // 3 min
+        SYNTHESIZING: 600000,   // 10 min - Tier 2 + Tier 3 (5 agents) + scorer + memo
       },
       ...config,
     };
@@ -228,9 +231,9 @@ export class AnalysisStateMachine {
       callback(from, to, trigger);
     }
 
-    // Create checkpoint if enabled (async, don't await to not block transitions)
+    // Create checkpoint if enabled (force=true: always persist on transitions)
     if (this.config.enableCheckpointing) {
-      this.createCheckpoint().catch((err) => {
+      this.createCheckpoint(true).catch((err) => {
         console.error("[StateMachine] Checkpoint failed during transition:", err);
       });
     }
@@ -271,10 +274,10 @@ export class AnalysisStateMachine {
     this.startTime = new Date();
     await this.transition("INITIALIZING", "analysis_started");
 
-    // Start checkpoint timer if enabled
+    // Start checkpoint timer if enabled (force=false: skip if state unchanged)
     if (this.config.enableCheckpointing) {
       this.checkpointTimer = setInterval(() => {
-        this.createCheckpoint().catch((err) => {
+        this.createCheckpoint(false).catch((err) => {
           console.error("[StateMachine] Periodic checkpoint failed:", err);
         });
       }, this.config.checkpointInterval);
@@ -361,6 +364,18 @@ export class AnalysisStateMachine {
     if (this.onErrorCallback) {
       this.onErrorCallback(error);
     }
+  }
+
+  /**
+   * Force state without transition validation (for crash recovery only).
+   * This bypasses the normal transition rules so that a FAILED analysis
+   * can be moved back to ANALYZING/SYNTHESIZING before resuming.
+   */
+  forceState(state: AnalysisState, reason: string): void {
+    const from = this.state;
+    console.log(`[StateMachine] Force state: ${from} → ${state} (${reason})`);
+    this.state = state;
+    this.stateStartTime = new Date();
   }
 
   /**
@@ -454,9 +469,16 @@ export class AnalysisStateMachine {
 
   /**
    * Create a checkpoint and persist to DB
-   * Called on every state transition and periodically via timer
+   * Called on every state transition (force=true) and periodically via timer (force=false).
+   * When force=false, skips the DB write if the state hasn't changed since the last persist,
+   * preventing unnecessary connection pool usage during long-running analyses.
    */
-  private async createCheckpoint(): Promise<void> {
+  private async createCheckpoint(force: boolean = false): Promise<void> {
+    // Skip periodic checkpoints when state hasn't changed (no new data to persist)
+    if (!force && this.state === this.lastPersistedState) {
+      return;
+    }
+
     const checkpoint: AnalysisCheckpoint = {
       id: crypto.randomUUID(),
       state: this.state,
@@ -498,9 +520,10 @@ export class AnalysisStateMachine {
       };
 
       await saveCheckpoint(this.config.analysisId, checkpointData);
+      this.lastPersistedState = this.state;
 
-      // Cleanup old checkpoints periodically (every 5th checkpoint)
-      if (this.checkpoints.length % 5 === 0) {
+      // Cleanup old checkpoints periodically (every 3rd checkpoint)
+      if (this.checkpoints.length % 3 === 0) {
         await cleanupOldCheckpoints(this.config.analysisId, 5);
       }
     } catch (error) {

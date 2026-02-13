@@ -80,6 +80,12 @@ export const queryKeys = {
     all: ["userPreferences"] as const,
   },
 
+  // Deal terms queries
+  dealTerms: {
+    all: ["dealTerms"] as const,
+    byDeal: (dealId: string) => ["dealTerms", dealId] as const,
+  },
+
   // Facts queries
   facts: {
     all: ["facts"] as const,

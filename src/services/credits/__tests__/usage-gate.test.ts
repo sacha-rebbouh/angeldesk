@@ -12,8 +12,7 @@ import { PLAN_LIMITS } from '../types';
 // ============================================================================
 
 const mockUserDealUsage = {
-  findUnique: vi.fn(),
-  create: vi.fn(),
+  upsert: vi.fn(),
   update: vi.fn(),
 };
 
@@ -28,8 +27,7 @@ const mockAIBoardSession = {
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     userDealUsage: {
-      findUnique: (...args: unknown[]) => mockUserDealUsage.findUnique(...args),
-      create: (...args: unknown[]) => mockUserDealUsage.create(...args),
+      upsert: (...args: unknown[]) => mockUserDealUsage.upsert(...args),
       update: (...args: unknown[]) => mockUserDealUsage.update(...args),
     },
     analysis: {
@@ -108,7 +106,7 @@ describe('checkQuota', () => {
   });
 
   it('should allow ANALYSIS when under limit', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(
+    mockUserDealUsage.upsert.mockResolvedValue(
       createMockUsage({ tier1Count: 1 })
     );
 
@@ -122,7 +120,7 @@ describe('checkQuota', () => {
   });
 
   it('should deny ANALYSIS when limit reached', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(
+    mockUserDealUsage.upsert.mockResolvedValue(
       createMockUsage({ tier1Count: 3 })
     );
 
@@ -135,7 +133,7 @@ describe('checkQuota', () => {
   });
 
   it('should allow PRO users more analyses', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(
+    mockUserDealUsage.upsert.mockResolvedValue(
       createMockUsage({ tier1Count: 10 })
     );
 
@@ -146,7 +144,7 @@ describe('checkQuota', () => {
   });
 
   it('should allow unlimited updates for PRO', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(createMockUsage());
+    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
 
     const result = await checkQuota('user-123', 'PRO', 'UPDATE', 'deal-123');
 
@@ -155,7 +153,7 @@ describe('checkQuota', () => {
   });
 
   it('should deny BOARD for FREE users', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(createMockUsage());
+    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
 
     const result = await checkQuota('user-123', 'FREE', 'BOARD');
 
@@ -164,7 +162,7 @@ describe('checkQuota', () => {
   });
 
   it('should allow BOARD for PRO users under limit', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(createMockUsage());
+    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
     mockAIBoardSession.count.mockResolvedValue(2);
 
     const result = await checkQuota('user-123', 'PRO', 'BOARD');
@@ -174,18 +172,22 @@ describe('checkQuota', () => {
     expect(result.limit).toBe(5);
   });
 
-  it('should create usage record if not found', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(null);
-    mockUserDealUsage.create.mockResolvedValue(createMockUsage());
+  it('should use upsert to get or create usage record', async () => {
+    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
 
-    const result = await checkQuota('user-123', 'FREE', 'ANALYSIS');
+    await checkQuota('user-123', 'FREE', 'ANALYSIS');
 
-    expect(mockUserDealUsage.create).toHaveBeenCalled();
-    expect(result.allowed).toBe(true);
+    expect(mockUserDealUsage.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: 'user-123' },
+        create: expect.objectContaining({ userId: 'user-123' }),
+        update: {},
+      })
+    );
   });
 
   it('should treat ENTERPRISE as PRO', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(createMockUsage());
+    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
 
     const result = await checkQuota('user-123', 'ENTERPRISE', 'ANALYSIS');
 
@@ -204,7 +206,7 @@ describe('getUserQuotaInfo', () => {
   });
 
   it('should return quota info for FREE user', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(
+    mockUserDealUsage.upsert.mockResolvedValue(
       createMockUsage({ tier1Count: 2 })
     );
     mockAIBoardSession.count.mockResolvedValue(0);
@@ -220,7 +222,7 @@ describe('getUserQuotaInfo', () => {
   });
 
   it('should return quota info for PRO user', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(
+    mockUserDealUsage.upsert.mockResolvedValue(
       createMockUsage({ tier1Count: 5 })
     );
     mockAIBoardSession.count.mockResolvedValue(2);
@@ -246,7 +248,7 @@ describe('recordUsage', () => {
   });
 
   it('should increment counters for ANALYSIS', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(
+    mockUserDealUsage.upsert.mockResolvedValue(
       createMockUsage({ usedThisMonth: 1, tier1Count: 1 })
     );
 
@@ -262,7 +264,7 @@ describe('recordUsage', () => {
   });
 
   it('should increment only usedThisMonth for non-ANALYSIS actions', async () => {
-    mockUserDealUsage.findUnique.mockResolvedValue(
+    mockUserDealUsage.upsert.mockResolvedValue(
       createMockUsage({ usedThisMonth: 3 })
     );
 

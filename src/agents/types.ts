@@ -184,6 +184,37 @@ export interface EnrichedAgentContext extends AgentContext {
     answer: string;
     category: string;
   }>;
+
+  // Deal terms for conditions-analyst (loaded from DealTerms DB model)
+  dealTerms?: {
+    valuationPre: number | null;
+    amountRaised: number | null;
+    dilutionPct: number | null;
+    instrumentType: string | null;
+    instrumentDetails: string | null;
+    liquidationPref: string | null;
+    antiDilution: string | null;
+    proRataRights: boolean | null;
+    informationRights: boolean | null;
+    boardSeat: string | null;
+    founderVesting: boolean | null;
+    vestingDurationMonths: number | null;
+    vestingCliffMonths: number | null;
+    esopPct: number | null;
+    dragAlong: boolean | null;
+    tagAlong: boolean | null;
+    ratchet: boolean | null;
+    payToPlay: boolean | null;
+    milestoneTranches: boolean | null;
+    nonCompete: boolean | null;
+    customConditions: string | null;
+    notes: string | null;
+  } | null;
+
+  // Conditions analyst execution mode
+  conditionsAnalystMode?: "pipeline" | "standalone";
+  // Condensed summary of previous analysis (for standalone mode)
+  conditionsAnalystSummary?: string | null;
 }
 
 // Base result structure for all agents
@@ -2945,6 +2976,69 @@ export interface ContradictionDetectorFindings {
   }[];
 }
 
+// ============================================================================
+// CONDITIONS ANALYST AGENT - AI-powered deal terms analysis
+// ============================================================================
+
+export interface ConditionsAnalystFindings {
+  termsSource: "form" | "term_sheet" | "deck" | "none";
+
+  valuation: {
+    assessedValue: number | null;
+    percentileVsDB: number | null;
+    verdict: "UNDERVALUED" | "FAIR" | "AGGRESSIVE" | "VERY_AGGRESSIVE";
+    rationale: string;
+    benchmarkUsed: string;
+  };
+
+  instrument: {
+    type: string | null;
+    assessment: "STANDARD" | "FAVORABLE" | "UNFAVORABLE" | "TOXIC";
+    rationale: string;
+    stageAppropriate: boolean;
+  };
+
+  protections: {
+    overallAssessment: "STRONG" | "ADEQUATE" | "WEAK" | "NONE";
+    keyProtections: { item: string; present: boolean; assessment: string }[];
+    missingCritical: string[];
+  };
+
+  governance: {
+    vestingAssessment: string;
+    esopAssessment: string;
+    overallAssessment: "STRONG" | "ADEQUATE" | "WEAK" | "CONCERNING";
+  };
+
+  crossReferenceInsights: {
+    insight: string;
+    sourceAgent: string;
+    impact: "positive" | "negative" | "neutral";
+  }[];
+
+  negotiationAdvice: {
+    point: string;
+    priority: "CRITICAL" | "HIGH" | "MEDIUM";
+    suggestedArgument: string;
+    leverageSource: string;
+  }[];
+}
+
+export interface ConditionsAnalystData {
+  meta: AgentMeta;
+  score: AgentScore;
+  findings: ConditionsAnalystFindings;
+  redFlags: AgentRedFlag[];
+  questions: AgentQuestion[];
+  alertSignal: AgentAlertSignal;
+  narrative: AgentNarrative;
+}
+
+export interface ConditionsAnalystResult extends AgentResult {
+  agentName: "conditions-analyst";
+  data: ConditionsAnalystData;
+}
+
 /** Contradiction Detector Data v2.0 - Structure standardisee */
 export interface ContradictionDetectorData {
   // === META ===
@@ -3513,6 +3607,7 @@ export type AnalysisAgentResult =
   | CustomerIntelResult
   | ExitStrategistResult
   | QuestionMasterResult
+  | ConditionsAnalystResult
   | ContradictionDetectorResult
   | ScenarioModelerResult
   | SynthesisDealScorerResult

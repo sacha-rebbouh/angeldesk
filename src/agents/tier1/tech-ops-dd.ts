@@ -180,6 +180,7 @@ Le format JSON détaillé est spécifié dans le user prompt. Respecter strictem
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechOpsDDData> {
+    this._dealStage = context.deal.stage;
     // Filter documents: exclude FINANCIAL_MODEL (not relevant for tech-ops, saves ~50k chars)
     const filteredContext = {
       ...context,

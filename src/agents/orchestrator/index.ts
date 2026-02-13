@@ -721,7 +721,7 @@ export class AgentOrchestrator {
     maxCostUsd?: number
   ): Promise<AnalysisResult> {
     const startTime = Date.now();
-    const TIER3_AGENT_COUNT = 5;
+    const TIER3_AGENT_COUNT = 6;
     const collectedWarnings: EarlyWarning[] = [];
 
     // Get document IDs for versioning
@@ -761,6 +761,35 @@ export class AgentOrchestrator {
       category: fact.category,
     }));
 
+    // Load DealTerms for conditions-analyst
+    const rawDealTerms = await prisma.dealTerms.findUnique({
+      where: { dealId },
+    });
+    const dealTerms = rawDealTerms ? {
+      valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
+      amountRaised: rawDealTerms.amountRaised ? Number(rawDealTerms.amountRaised) : null,
+      dilutionPct: rawDealTerms.dilutionPct ? Number(rawDealTerms.dilutionPct) : null,
+      instrumentType: rawDealTerms.instrumentType,
+      instrumentDetails: rawDealTerms.instrumentDetails,
+      liquidationPref: rawDealTerms.liquidationPref,
+      antiDilution: rawDealTerms.antiDilution,
+      proRataRights: rawDealTerms.proRataRights,
+      informationRights: rawDealTerms.informationRights,
+      boardSeat: rawDealTerms.boardSeat,
+      founderVesting: rawDealTerms.founderVesting,
+      vestingDurationMonths: rawDealTerms.vestingDurationMonths,
+      vestingCliffMonths: rawDealTerms.vestingCliffMonths,
+      esopPct: rawDealTerms.esopPct ? Number(rawDealTerms.esopPct) : null,
+      dragAlong: rawDealTerms.dragAlong,
+      tagAlong: rawDealTerms.tagAlong,
+      ratchet: rawDealTerms.ratchet,
+      payToPlay: rawDealTerms.payToPlay,
+      milestoneTranches: rawDealTerms.milestoneTranches,
+      nonCompete: rawDealTerms.nonCompete,
+      customConditions: rawDealTerms.customConditions,
+      notes: rawDealTerms.notes,
+    } : null;
+
     const context: EnrichedAgentContext = {
       dealId,
       deal,
@@ -768,6 +797,8 @@ export class AgentOrchestrator {
       previousResults: tier1Results ?? {},
       baPreferences, // Only passed to Tier 3 agents
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
+      dealTerms,
+      conditionsAnalystMode: "pipeline",
     };
 
     const tier3AgentMap = await getTier3Agents();
@@ -1344,9 +1375,15 @@ export class AgentOrchestrator {
         await persistScoredFindings(analysis.id, "tier1-aggregate", allFindings);
       }
 
+      // Diagnostic log: show tier1 success/failure breakdown
+      const tier1SuccessCount = TIER1_AGENT_NAMES.filter(n => allResults[n]?.success).length;
+      const tier1FailCount = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success).length;
+      const tier1FailedNames = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success);
       console.log(
-        `[Orchestrator] Extracted ${allFindings.length} findings from ${Object.keys(allResults).length} agents. ` +
-        `Low confidence agents: ${lowConfidenceAgents.join(", ") || "none"}`
+        `[Orchestrator] Tier 1 results: ${tier1SuccessCount}/${TIER1_AGENT_NAMES.length} succeeded, ${tier1FailCount} failed. ` +
+        `Extracted ${allFindings.length} findings. ` +
+        `Low confidence: ${lowConfidenceAgents.join(", ") || "none"}` +
+        (tier1FailedNames.length > 0 ? `. Failed: ${tier1FailedNames.join(", ")}` : "")
       );
 
       // FAIL-FAST: Check for critical warnings after Tier 1
@@ -1478,6 +1515,36 @@ export class AgentOrchestrator {
       // Load BA preferences for Tier 3 personalization (does NOT affect Tier 1/2)
       const baPreferences = await this.loadBAPreferences(deal.userId);
       enrichedContext.baPreferences = baPreferences;
+
+      // Load DealTerms for conditions-analyst (Tier 3)
+      const rawDealTerms = await prisma.dealTerms.findUnique({ where: { dealId } });
+      if (rawDealTerms) {
+        enrichedContext.dealTerms = {
+          valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
+          amountRaised: rawDealTerms.amountRaised ? Number(rawDealTerms.amountRaised) : null,
+          dilutionPct: rawDealTerms.dilutionPct ? Number(rawDealTerms.dilutionPct) : null,
+          instrumentType: rawDealTerms.instrumentType,
+          instrumentDetails: rawDealTerms.instrumentDetails,
+          liquidationPref: rawDealTerms.liquidationPref,
+          antiDilution: rawDealTerms.antiDilution,
+          proRataRights: rawDealTerms.proRataRights,
+          informationRights: rawDealTerms.informationRights,
+          boardSeat: rawDealTerms.boardSeat,
+          founderVesting: rawDealTerms.founderVesting,
+          vestingDurationMonths: rawDealTerms.vestingDurationMonths,
+          vestingCliffMonths: rawDealTerms.vestingCliffMonths,
+          esopPct: rawDealTerms.esopPct ? Number(rawDealTerms.esopPct) : null,
+          dragAlong: rawDealTerms.dragAlong,
+          tagAlong: rawDealTerms.tagAlong,
+          ratchet: rawDealTerms.ratchet,
+          payToPlay: rawDealTerms.payToPlay,
+          milestoneTranches: rawDealTerms.milestoneTranches,
+          nonCompete: rawDealTerms.nonCompete,
+          customConditions: rawDealTerms.customConditions,
+          notes: rawDealTerms.notes,
+        };
+      }
+      enrichedContext.conditionsAnalystMode = "pipeline";
 
       // Cost check before Tier 3 (pre-Tier2 batch: contradiction-detector, scenario-modeler, devils-advocate)
       // Skip for FREE plan (these are TIER_3 agents, not SYNTHESIS)
@@ -1857,6 +1924,7 @@ export class AgentOrchestrator {
         summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
         results: allResults,
         mode: "full_analysis",
+        statusOverride: "FAILED",
       });
 
       return this.addWarningsToResult({
@@ -2007,14 +2075,13 @@ export class AgentOrchestrator {
       allFindings.push(...phaseFindings);
 
       // Inline reflexion for this phase
-      // Phases A and B: ALWAYS apply reflexion (critical foundation agents)
-      // Phases C and D: only apply if agent confidence < 70%
+      // Only apply if agent confidence < 50% (threshold set in ReflexionConfig)
+      // REMOVED: Phase A/B forced reflexion — was doubling cost for no measurable quality gain
       for (const { agentName, result } of phaseResults) {
         if (!result.success) continue;
 
         const confidence = phaseConfidences.get(agentName);
-        const alwaysReflect = (TIER1_ALWAYS_REFLECT_PHASES as ReadonlyArray<string>).includes(agentName);
-        const needsReflect = alwaysReflect || (confidence && confidence.score < 70);
+        const needsReflect = confidence && confidence.score < 60;
 
         if (needsReflect) {
           const agentFindings = allFindings.filter(f => f.agentName === agentName);
@@ -2068,7 +2135,28 @@ export class AgentOrchestrator {
 
       await updateAnalysisProgress(analysisId, completedCount, params.initialTotalCost + totalCost);
 
-      console.log(`[Orchestrator] ${phase.name} complete (${phase.agents.length} agents)`);
+      const phaseSuccessCount = phaseResults.filter(r => r.result.success).length;
+      const phaseFailCount = phaseResults.length - phaseSuccessCount;
+      console.log(
+        `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
+      );
+
+      // EARLY ABORT: If Phase A (deck-forensics) or Phase B (financial-auditor) fail,
+      // subsequent phases depend on their output and will produce low-quality results.
+      // Stop early to avoid wasting LLM cost on phases that can't produce value.
+      if (
+        (phase.name.includes("Phase A") || phase.name.includes("Phase B")) &&
+        phaseFailCount > 0
+      ) {
+        const failedNames = phaseResults
+          .filter(r => !r.result.success)
+          .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
+          .join(", ");
+        console.error(
+          `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
+        );
+        break;
+      }
     }
 
     // Persist validated facts to DB (event sourcing)
@@ -2733,13 +2821,33 @@ export class AgentOrchestrator {
         `[Reflexion] ${agentName}: ${reflexionResult.critiques.length} critiques, ${reflexionResult.confidenceChange} confidence change`
       );
 
-      // Re-inject revised result into allResults so downstream agents get the improved version
+      // Re-inject revised result into allResults so downstream agents get the improved version.
+      // SAFETY: Only inject if the revised result preserves essential data structure.
+      // The reflexion engine's revisedOutput is z.unknown() and the LLM can return
+      // malformed data that would corrupt the agent's findings/scores.
       if (reflexionResult.revisedResult && allResults) {
-        allResults[agentName] = reflexionResult.revisedResult;
-        if (enrichedContext?.previousResults) {
-          enrichedContext.previousResults[agentName] = reflexionResult.revisedResult;
+        const revisedData = (reflexionResult.revisedResult as { data?: unknown }).data;
+
+        // Validate that revised data preserves essential structure (meta, score, findings exist)
+        const hasEssentialFields =
+          revisedData != null &&
+          typeof revisedData === "object" &&
+          "meta" in (revisedData as Record<string, unknown>) &&
+          "score" in (revisedData as Record<string, unknown>);
+
+        if (hasEssentialFields) {
+          allResults[agentName] = reflexionResult.revisedResult;
+          if (enrichedContext?.previousResults) {
+            enrichedContext.previousResults[agentName] = sanitizeResultForDownstream(reflexionResult.revisedResult);
+          }
+          console.log(`[Reflexion] ${agentName}: revised result injected into allResults`);
+        } else {
+          console.warn(
+            `[Reflexion] ${agentName}: revised result REJECTED — missing essential fields (meta/score). ` +
+            `Keeping original result. revisedData type=${typeof revisedData}, ` +
+            `keys=${revisedData && typeof revisedData === "object" ? Object.keys(revisedData as Record<string, unknown>).join(",") : "N/A"}`
+          );
         }
-        console.log(`[Reflexion] ${agentName}: revised result injected into allResults`);
       }
 
       return { tokensUsed: reflexionResult.tokensUsed ?? 0 };
@@ -3020,14 +3128,37 @@ export class AgentOrchestrator {
     const startTime = new Date(checkpoint.startTime).getTime();
     const collectedWarnings: EarlyWarning[] = [];
 
-    // Calculate which agents still need to run
-    const completedSet = new Set(checkpoint.completedAgents);
+    // Restore results: merge checkpoint results with analysis DB results (DB may have more)
+    const checkpointResults = (checkpoint.results ?? {}) as Record<string, AgentResult>;
+    const analysisDbResults = await prisma.analysis.findUnique({
+      where: { id: analysisId },
+      select: { results: true, totalCost: true },
+    });
+    const rawDbResults = analysisDbResults?.results;
+    const dbResults = (rawDbResults != null && typeof rawDbResults === "object" && !Array.isArray(rawDbResults))
+      ? rawDbResults as unknown as Record<string, AgentResult>
+      : {};
+
+    console.log(
+      `[Orchestrator:Resume] Merge: checkpoint=${Object.keys(checkpointResults).length} results, ` +
+      `db=${Object.keys(dbResults).length} results, dbType=${typeof rawDbResults}, dbNull=${rawDbResults == null}`
+    );
+
+    // Merge: DB results take priority (may contain agents completed after checkpoint)
+    const allResults: Record<string, AgentResult> = { ...checkpointResults, ...dbResults };
+
+    // Build completed set from actual results (more reliable than checkpoint.completedAgents)
+    const completedFromResults = Object.entries(allResults)
+      .filter(([, r]) => r && r.success)
+      .map(([name]) => name);
+    const completedSet = new Set([
+      ...checkpoint.completedAgents,
+      ...completedFromResults,
+    ]);
     const failedSet = new Set(checkpoint.failedAgents.map((f) => f.agent));
 
-    // Restore results from checkpoint
-    const allResults = checkpoint.results as Record<string, AgentResult>;
-    let totalCost = checkpoint.totalCost;
-    let completedCount = checkpoint.completedAgents.length;
+    let totalCost = Number(analysisDbResults?.totalCost ?? checkpoint.totalCost ?? 0);
+    let completedCount = completedSet.size;
 
     // Initialize state machine with recovery
     const stateMachine = new AnalysisStateMachine({
@@ -3053,15 +3184,38 @@ export class AgentOrchestrator {
     messageBus.clear();
 
     // Determine what phase we were in and what to do next
-    const currentState = stateMachine.getState();
+    let currentState = stateMachine.getState();
+
+    // If state machine is FAILED/COMPLETED, force back to ANALYZING so resume continues
+    if (currentState === "FAILED" || currentState === "COMPLETED") {
+      console.log(`[Orchestrator:Resume] State machine was ${currentState}, forcing back to ANALYZING`);
+      stateMachine.forceState("ANALYZING", "resume_from_failed");
+      currentState = "ANALYZING";
+    }
 
     try {
+      // Set analysis context for LLM cost tracking (was missing in resume mode)
+      setAnalysisContext(analysis.id);
+
+      // Log actual completed agents for debugging
+      console.log(
+        `[Orchestrator:Resume] Completed agents (${completedSet.size}): ${[...completedSet].join(", ")}`
+      );
+
       // Build context (we need to re-enrich since context engine data is not persisted)
+      // Sanitize restored results to prevent bias in downstream agents (F52)
+      const sanitizedPreviousResults: Record<string, AgentResult> = {};
+      for (const [name, result] of Object.entries(allResults)) {
+        if (result && result.success) {
+          sanitizedPreviousResults[name] = sanitizeResultForDownstream(result);
+        }
+      }
+
       const baseContext: AgentContext = {
         dealId: deal.id,
         deal,
         documents: deal.documents,
-        previousResults: allResults,
+        previousResults: sanitizedPreviousResults,
       };
 
       // Re-run context engine enrichment
@@ -3096,9 +3250,10 @@ export class AgentOrchestrator {
 
       // Resume based on current state
       if (currentState === "ANALYZING" || currentState === "GATHERING") {
-        // Need to run remaining Tier 1 agents
+        // Need to run remaining AND previously failed Tier 1 agents
+        // Previously failed agents are retried (they may succeed with fresh LLM calls)
         const pendingTier1 = TIER1_AGENT_NAMES.filter(
-          (name) => !completedSet.has(name) && !failedSet.has(name)
+          (name) => !completedSet.has(name)
         );
 
         if (pendingTier1.length > 0) {
@@ -3199,6 +3354,38 @@ export class AgentOrchestrator {
           const baPreferences = await this.loadBAPreferences(deal.userId);
           enrichedContext.baPreferences = baPreferences;
 
+          // Load DealTerms for conditions-analyst (Tier 3)
+          if (!enrichedContext.dealTerms) {
+            const rawDealTerms = await prisma.dealTerms.findUnique({ where: { dealId: deal.id } });
+            if (rawDealTerms) {
+              enrichedContext.dealTerms = {
+                valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
+                amountRaised: rawDealTerms.amountRaised ? Number(rawDealTerms.amountRaised) : null,
+                dilutionPct: rawDealTerms.dilutionPct ? Number(rawDealTerms.dilutionPct) : null,
+                instrumentType: rawDealTerms.instrumentType,
+                instrumentDetails: rawDealTerms.instrumentDetails,
+                liquidationPref: rawDealTerms.liquidationPref,
+                antiDilution: rawDealTerms.antiDilution,
+                proRataRights: rawDealTerms.proRataRights,
+                informationRights: rawDealTerms.informationRights,
+                boardSeat: rawDealTerms.boardSeat,
+                founderVesting: rawDealTerms.founderVesting,
+                vestingDurationMonths: rawDealTerms.vestingDurationMonths,
+                vestingCliffMonths: rawDealTerms.vestingCliffMonths,
+                esopPct: rawDealTerms.esopPct ? Number(rawDealTerms.esopPct) : null,
+                dragAlong: rawDealTerms.dragAlong,
+                tagAlong: rawDealTerms.tagAlong,
+                ratchet: rawDealTerms.ratchet,
+                payToPlay: rawDealTerms.payToPlay,
+                milestoneTranches: rawDealTerms.milestoneTranches,
+                nonCompete: rawDealTerms.nonCompete,
+                customConditions: rawDealTerms.customConditions,
+                notes: rawDealTerms.notes,
+              };
+            }
+            enrichedContext.conditionsAnalystMode = "pipeline";
+          }
+
           const tier3AgentMap = await getTier3Agents();
 
           // Restore full (unsanitized) results for Tier 3 synthesis agents.
@@ -3276,22 +3463,62 @@ export class AgentOrchestrator {
         }
       }
 
-      // Complete the analysis
+      // Complete the analysis — ensure state machine is in SYNTHESIZING
+      // (the only state that allows transition to COMPLETED)
+      const preCompleteState = stateMachine.getState();
+      if (preCompleteState !== "SYNTHESIZING") {
+        stateMachine.forceState("SYNTHESIZING", "resume_pre_complete");
+      }
       await stateMachine.complete();
 
       const summary = generateFullAnalysisSummary(allResults);
       const totalTimeMs = Date.now() - startTime;
       const allSuccess = Object.values(allResults).every((r) => r.success);
 
-      await completeAnalysis({
-        analysisId: analysis.id,
-        success: allSuccess,
-        totalCost,
-        totalTimeMs,
-        summary: `${summary}\n\n**Resumed from checkpoint** - Analysis recovered after interruption`,
-        results: allResults,
-        mode: analysis.mode ?? "full_analysis",
+      const successCount = Object.values(allResults).filter((r) => r.success).length;
+      const failCount = Object.values(allResults).filter((r) => !r.success).length;
+      console.log(
+        `[Orchestrator:Resume] Saving final results: ${Object.keys(allResults).length} total ` +
+        `(${successCount} success, ${failCount} failed), completedCount=${completedCount}, allSuccess=${allSuccess}`
+      );
+
+      // SAFETY: Never overwrite existing results with fewer entries
+      const existingResults = await prisma.analysis.findUnique({
+        where: { id: analysis.id },
+        select: { results: true },
       });
+      const existingCount = existingResults?.results ? Object.keys(existingResults.results as Record<string, unknown>).length : 0;
+      if (Object.keys(allResults).length < existingCount) {
+        console.error(
+          `[Orchestrator:Resume] ABORT SAVE: allResults (${Object.keys(allResults).length}) < existing DB results (${existingCount}). Keeping existing results.`
+        );
+        // Merge: keep existing, add new
+        const existing = existingResults!.results as unknown as Record<string, AgentResult>;
+        for (const [key, val] of Object.entries(allResults)) {
+          if (val && val.success) {
+            existing[key] = val; // only overwrite with successful results
+          }
+        }
+        await completeAnalysis({
+          analysisId: analysis.id,
+          success: allSuccess,
+          totalCost,
+          totalTimeMs,
+          summary: `${summary}\n\n**Resumed from checkpoint** - Analysis recovered after interruption`,
+          results: existing,
+          mode: analysis.mode ?? "full_analysis",
+        });
+      } else {
+        await completeAnalysis({
+          analysisId: analysis.id,
+          success: allSuccess,
+          totalCost,
+          totalTimeMs,
+          summary: `${summary}\n\n**Resumed from checkpoint** - Analysis recovered after interruption`,
+          results: allResults,
+          mode: analysis.mode ?? "full_analysis",
+        });
+      }
 
       await updateDealStatus(deal.id, "IN_DD");
 
@@ -3317,20 +3544,48 @@ export class AgentOrchestrator {
       // Handle failure during resume
       const currentStateAfterError = stateMachine.getState();
       if (currentStateAfterError !== "COMPLETED" && currentStateAfterError !== "FAILED") {
-        await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
+        try {
+          await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
+        } catch (_smErr) {
+          console.error("[Orchestrator:Resume] State machine fail() also threw:", _smErr);
+        }
       }
 
       const totalTimeMs = Date.now() - startTime;
 
-      await completeAnalysis({
-        analysisId: analysis.id,
-        success: false,
-        totalCost,
-        totalTimeMs,
-        summary: `Resume failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        results: allResults,
-        mode: analysis.mode ?? "full_analysis",
-      });
+      // SAFETY: Never overwrite existing results with fewer entries on failure
+      try {
+        const existingOnError = await prisma.analysis.findUnique({
+          where: { id: analysis.id },
+          select: { results: true },
+        });
+        const existingCountOnError = existingOnError?.results ? Object.keys(existingOnError.results as Record<string, unknown>).length : 0;
+
+        let resultsToSave = allResults;
+        if (Object.keys(allResults).length < existingCountOnError) {
+          console.error(
+            `[Orchestrator:Resume] CATCH SAFETY: allResults (${Object.keys(allResults).length}) < existing (${existingCountOnError}). Merging into existing.`
+          );
+          const existing = existingOnError!.results as unknown as Record<string, AgentResult>;
+          for (const [key, val] of Object.entries(allResults)) {
+            if (val && val.success) existing[key] = val;
+          }
+          resultsToSave = existing;
+        }
+
+        await completeAnalysis({
+          analysisId: analysis.id,
+          success: false,
+          totalCost,
+          totalTimeMs,
+          summary: `Resume failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          results: resultsToSave,
+          mode: analysis.mode ?? "full_analysis",
+          statusOverride: "FAILED",
+        });
+      } catch (saveErr) {
+        console.error("[Orchestrator:Resume] Failed to save results on error:", saveErr);
+      }
 
       throw error;
     }

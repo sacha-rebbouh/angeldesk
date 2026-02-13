@@ -80,7 +80,7 @@ function stripEvaluativeData(data: unknown, depth = 0): unknown {
     // For nested objects within findings, strip score-like subkeys
     if (typeof value === "object" && value !== null && !Array.isArray(value)) {
       const nested = value as Record<string, unknown>;
-      if ("score" in nested && "value" in ((nested.score as Record<string, unknown>) ?? {})) {
+      if ("score" in nested && typeof nested.score === "object" && nested.score !== null && "value" in (nested.score as Record<string, unknown>)) {
         const { score: _score, ...rest } = nested;
         result[key] = stripEvaluativeData(rest, depth + 1);
         continue;

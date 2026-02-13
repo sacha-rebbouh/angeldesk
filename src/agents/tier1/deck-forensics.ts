@@ -319,6 +319,7 @@ OBLIGATOIRE:
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DeckForensicsDataV2> {
+    this._dealStage = context.deal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);

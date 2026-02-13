@@ -40,8 +40,8 @@ export interface CircuitStats {
 // ============================================================================
 
 const DEFAULT_CONFIG: CircuitBreakerConfig = {
-  failureThreshold: 5,       // Open after 5 failures
-  recoveryTimeout: 30000,    // Wait 30s before trying again
+  failureThreshold: 10,      // Open after 10 failures (an analysis makes 20+ calls)
+  recoveryTimeout: 15000,    // Wait 15s before trying again (recover faster)
   successThreshold: 2,       // 2 successes to close
   failureWindow: 60000,      // Count failures in last 60s
   requestTimeout: 180000,    // 3 min timeout per request (for complex agents)
@@ -251,20 +251,36 @@ export class CircuitOpenError extends Error {
 }
 
 // ============================================================================
-// SINGLETON INSTANCE
+// PER-MODEL INSTANCES
 // ============================================================================
 
-let circuitBreakerInstance: CircuitBreaker | null = null;
+const circuitBreakerInstances = new Map<string, CircuitBreaker>();
 
-export function getCircuitBreaker(): CircuitBreaker {
-  if (!circuitBreakerInstance) {
-    circuitBreakerInstance = new CircuitBreaker();
+/**
+ * Get a circuit breaker for a specific model (or "global" by default).
+ * Each model gets its own independent circuit breaker so that failures
+ * on one model (e.g. Gemini) don't block another (e.g. Haiku).
+ */
+export function getCircuitBreaker(modelKey: string = "global"): CircuitBreaker {
+  let instance = circuitBreakerInstances.get(modelKey);
+  if (!instance) {
+    instance = new CircuitBreaker();
+    circuitBreakerInstances.set(modelKey, instance);
   }
-  return circuitBreakerInstance;
+  return instance;
 }
 
-export function resetCircuitBreaker(): void {
-  circuitBreakerInstance?.reset();
+/**
+ * Reset a specific model's circuit breaker, or all breakers if no key given.
+ */
+export function resetCircuitBreaker(modelKey?: string): void {
+  if (modelKey) {
+    circuitBreakerInstances.get(modelKey)?.reset();
+  } else {
+    for (const cb of circuitBreakerInstances.values()) {
+      cb.reset();
+    }
+  }
 }
 
 // ============================================================================
@@ -273,29 +289,31 @@ export function resetCircuitBreaker(): void {
 
 import { getStore } from '@/services/distributed-state';
 
-const CB_STATE_KEY = 'angeldesk:circuit-breaker:openrouter';
+const CB_STATE_KEY_PREFIX = 'angeldesk:circuit-breaker:openrouter';
 const CB_STATE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Distributed-aware circuit breaker that syncs state with Redis.
  * Falls back to in-memory on Redis failure.
+ * @param modelKey - Model identifier for per-model circuit breaking (default: "global")
  */
-export async function getCircuitBreakerDistributed(): Promise<CircuitBreaker> {
-  const cb = getCircuitBreaker();
+export async function getCircuitBreakerDistributed(modelKey: string = "global"): Promise<CircuitBreaker> {
+  const cb = getCircuitBreaker(modelKey);
   const store = getStore();
 
   try {
+    const stateKey = `${CB_STATE_KEY_PREFIX}:${modelKey}`;
     const remoteState = await store.get<{
       state: CircuitState;
       failures: number;
       lastStateChange: number;
-    }>(CB_STATE_KEY);
+    }>(stateKey);
 
     if (remoteState && remoteState.state === 'OPEN') {
       cb.forceOpen();
     }
   } catch (error) {
-    console.warn('[CircuitBreaker] Failed to sync with distributed store:', error);
+    console.warn(`[CircuitBreaker:${modelKey}] Failed to sync with distributed store:`, error);
   }
 
   return cb;
@@ -303,16 +321,19 @@ export async function getCircuitBreakerDistributed(): Promise<CircuitBreaker> {
 
 /**
  * Sync circuit breaker state to distributed store after state changes.
+ * @param stats - Current circuit breaker stats
+ * @param modelKey - Model identifier for per-model state (default: "global")
  */
-export async function syncCircuitBreakerState(stats: CircuitStats): Promise<void> {
+export async function syncCircuitBreakerState(stats: CircuitStats, modelKey: string = "global"): Promise<void> {
   try {
     const store = getStore();
-    await store.set(CB_STATE_KEY, {
+    const stateKey = `${CB_STATE_KEY_PREFIX}:${modelKey}`;
+    await store.set(stateKey, {
       state: stats.state,
       failures: stats.failures,
       lastStateChange: Date.now(),
     }, CB_STATE_TTL);
   } catch (error) {
-    console.warn('[CircuitBreaker] Failed to sync state to distributed store:', error);
+    console.warn(`[CircuitBreaker:${modelKey}] Failed to sync state to distributed store:`, error);
   }
 }

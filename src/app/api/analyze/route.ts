@@ -101,6 +101,91 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ================================================================
+    // CHECK FOR RESUMABLE ANALYSIS (FAILED with checkpoints < 1h old)
+    // If found, resume from checkpoint instead of starting fresh.
+    // This saves LLM cost by not re-running already completed agents.
+    // ================================================================
+    // Pick the FAILED analysis with the MOST completed agents (best progress)
+    const resumableAnalysis = await prisma.analysis.findFirst({
+      where: {
+        dealId,
+        status: "FAILED",
+        completedAgents: { gt: 0 },
+        // Only resume recent failures (< 6 hours)
+        completedAt: { gte: new Date(Date.now() - 6 * 60 * 60 * 1000) },
+      },
+      orderBy: { completedAgents: "desc" },
+      include: {
+        checkpoints: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
+    });
+
+    // Resume is possible if we have an analysis with results in DB (even without checkpoints,
+    // the resume logic merges DB results with checkpoint data)
+    const canResume = resumableAnalysis && (
+      resumableAnalysis.checkpoints.length > 0 || resumableAnalysis.completedAgents > 0
+    );
+
+    if (canResume) {
+      console.log(
+        `[analyze] Found resumable analysis ${resumableAnalysis.id} ` +
+        `(${resumableAnalysis.completedAgents}/${resumableAnalysis.totalAgents} agents). Resuming from checkpoint.`
+      );
+
+      // Set analysis back to RUNNING for resumeAnalysis to work
+      await prisma.analysis.update({
+        where: { id: resumableAnalysis.id },
+        data: { status: "RUNNING", completedAt: null },
+      });
+
+      // Update deal status
+      await prisma.deal.update({
+        where: { id: dealId },
+        data: { status: "ANALYZING" },
+      });
+
+      // Fire-and-forget: resume analysis in background
+      orchestrator
+        .resumeAnalysis(resumableAnalysis.id)
+        .then((result) => {
+          console.log(
+            `[analyze] Resumed analysis completed for deal ${dealId}: success=${result.success}, time=${result.totalTimeMs}ms`
+          );
+        })
+        .catch(async (error) => {
+          console.error(
+            `[analyze] Resumed analysis failed for deal ${dealId}:`,
+            error
+          );
+          try {
+            await prisma.deal.update({
+              where: { id: dealId },
+              data: { status: "IN_DD" },
+            });
+          } catch (e) {
+            console.error(`[analyze] Failed to reset deal status:`, e);
+          }
+        });
+
+      return NextResponse.json({
+        data: {
+          status: "RESUMING",
+          dealId,
+          resumedFrom: resumableAnalysis.id,
+          completedAgents: resumableAnalysis.completedAgents,
+          totalAgents: resumableAnalysis.totalAgents,
+        },
+      });
+    }
+
+    // ================================================================
+    // NEW ANALYSIS (no resumable analysis found)
+    // ================================================================
+
     // Atomic check: no running analysis + record usage in a single transaction
     // Prevents race conditions (double analysis, double credit consumption)
     const txResult = await prisma.$transaction(async (tx) => {

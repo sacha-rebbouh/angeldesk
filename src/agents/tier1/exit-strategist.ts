@@ -258,7 +258,7 @@ export class ExitStrategistAgent extends BaseAgent<ExitStrategistData, ExitStrat
       description: "Modélise les scénarios de sortie et calcule les retours potentiels pour le BA",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      timeoutMs: 240000, // 4 min
     });
   }
 
@@ -436,6 +436,7 @@ Produis un JSON structuré avec:
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<ExitStrategistData> {
+    this._dealStage = context.deal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);

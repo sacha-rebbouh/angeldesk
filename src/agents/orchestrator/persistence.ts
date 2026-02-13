@@ -83,12 +83,18 @@ export async function completeAnalysis(params: {
   summary: string;
   results: Record<string, AgentResult>;
   mode?: string;
+  /** Override status — use "FAILED" only for actual crashes, not partial agent failures */
+  statusOverride?: "COMPLETED" | "FAILED";
 }) {
+  // Count successful agents for completedAgents field
+  const successfulCount = Object.values(params.results).filter((r) => r.success).length;
+
   return prisma.analysis.update({
     where: { id: params.analysisId },
     data: {
-      status: params.success ? "COMPLETED" : "FAILED",
+      status: params.statusOverride ?? "COMPLETED",
       completedAt: new Date(),
+      completedAgents: successfulCount,
       totalCost: params.totalCost,
       totalTimeMs: params.totalTimeMs,
       summary: params.summary,
@@ -391,7 +397,7 @@ export async function processAgentResult(
 
     case "synthesis-deal-scorer": {
       const synthResult = result as SynthesisDealScorerResult;
-      if (synthResult.data?.overallScore) {
+      if (synthResult.data?.overallScore != null) {
         // Extract dimension sub-scores from dimensionScores array
         const dimensionScores = synthResult.data.dimensionScores ?? [];
         const findDimensionScore = (keywords: string[]): number | null => {
@@ -401,17 +407,43 @@ export async function processAgentResult(
           return match ? Math.round(match.score) : null;
         };
 
+        const fundamentals = Math.round(synthResult.data.overallScore);
+
+        // globalScore = fundamentalsScore = synthesis output (conditions is now a dimension inside synthesis)
         await prisma.deal.update({
           where: { id: dealId },
           data: {
-            globalScore: Math.round(synthResult.data.overallScore),
+            fundamentalsScore: fundamentals,
+            globalScore: fundamentals,
             teamScore: findDimensionScore(["team", "equipe", "équipe"]),
             marketScore: findDimensionScore(["market", "marché", "marche"]),
             productScore: findDimensionScore(["product", "produit", "tech"]),
             financialsScore: findDimensionScore(["financial", "financ"]),
+            // conditionsScore is NOT set here — conditions-analyst is the source of truth (case below)
           },
         });
       }
+      break;
+    }
+
+    case "conditions-analyst": {
+      // Persist conditions score + full analysis cache
+      const caResult = result as AgentResult & {
+        data?: {
+          score?: { value?: number };
+          [key: string]: unknown;
+        };
+      };
+      const caScore = caResult.data?.score?.value;
+      await prisma.deal.update({
+        where: { id: dealId },
+        data: {
+          conditionsScore: caScore != null ? Math.round(caScore) : null,
+          conditionsAnalysis: caResult.data
+            ? (caResult.data as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+        },
+      });
       break;
     }
 
@@ -601,14 +633,22 @@ export async function saveCheckpoint(
     });
 
     // Also update the analysis record with partial results for visibility
-    await prisma.analysis.update({
+    // BUT: never overwrite if analysis is already COMPLETED (the final completeAnalysis
+    // save has more accurate results — checkpoint data may be stale/incomplete)
+    const currentAnalysis = await prisma.analysis.findUnique({
       where: { id: analysisId },
-      data: {
-        completedAgents: checkpoint.completedAgents.length,
-        totalCost: checkpoint.totalCost,
-        results: checkpoint.results as Prisma.InputJsonValue,
-      },
+      select: { status: true },
     });
+    if (currentAnalysis?.status !== "COMPLETED") {
+      await prisma.analysis.update({
+        where: { id: analysisId },
+        data: {
+          completedAgents: checkpoint.completedAgents.length,
+          totalCost: checkpoint.totalCost,
+          results: checkpoint.results as Prisma.InputJsonValue,
+        },
+      });
+    }
 
     if (process.env.NODE_ENV === "development") {
       console.log(
@@ -631,6 +671,7 @@ export async function loadLatestCheckpoint(
   analysisId: string
 ): Promise<CheckpointData | null> {
   try {
+    // Get latest checkpoint (even FAILED ones have valid completedAgents/results data)
     const checkpoint = await prisma.analysisCheckpoint.findFirst({
       where: { analysisId },
       orderBy: { createdAt: "desc" },

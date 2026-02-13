@@ -47,7 +47,7 @@ export class TechStackDDAgent extends BaseAgent<TechStackDDData, TechStackDDResu
       description: "Due diligence technique - stack, scalabilité, dette technique",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000, // 2 min - Haiku-compatible output
+      timeoutMs: 240000, // 4 min
       dependencies: ["document-extractor"],
     });
   }
@@ -186,6 +186,7 @@ Dette technique: HIGH
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechStackDDData> {
+    this._dealStage = context.deal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);

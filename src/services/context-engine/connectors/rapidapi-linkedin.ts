@@ -17,6 +17,7 @@ import type {
   FounderBackground,
   DataSource,
 } from "../types";
+import { prisma } from "@/lib/prisma";
 
 // ============================================================================
 // TYPES - Internal normalized format
@@ -136,6 +137,9 @@ interface RapidAPIProfile {
 // ============================================================================
 
 const RAPIDAPI_HOST = "fresh-linkedin-profile-data.p.rapidapi.com";
+
+// LinkedIn profile cache TTL — 7 days (profiles don't change often)
+const LINKEDIN_CACHE_TTL_DAYS = 7;
 
 // Notable companies for DD (indicates quality experience)
 const NOTABLE_COMPANIES = new Set([
@@ -774,6 +778,19 @@ const linkedinSource: DataSource = {
  * Base legale: Interet legitime (Art. 6.1.f RGPD) + consentement utilisateur.
  * Les donnees sont suppressibles via le dashboard ou sur demande DPO.
  */
+/**
+ * Normalize a LinkedIn URL to a consistent format for cache key.
+ */
+function normalizeLinkedInUrl(url: string): string {
+  let normalized = url.trim().toLowerCase();
+  if (!normalized.startsWith("http")) {
+    normalized = `https://www.linkedin.com/in/${normalized}`;
+  }
+  // Remove trailing slashes and query params for consistent cache key
+  normalized = normalized.split("?")[0].replace(/\/+$/, "");
+  return normalized;
+}
+
 async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProfile | null> {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -781,13 +798,32 @@ async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProf
     return null;
   }
 
-  try {
-    // Normalize LinkedIn URL
-    let normalizedUrl = linkedinUrl.trim();
-    if (!normalizedUrl.startsWith("http")) {
-      normalizedUrl = `https://www.linkedin.com/in/${normalizedUrl}`;
-    }
+  const normalizedUrl = normalizeLinkedInUrl(linkedinUrl);
 
+  // --- DB CACHE CHECK ---
+  try {
+    const cached = await prisma.linkedInProfileCache.findUnique({
+      where: { linkedinUrl: normalizedUrl },
+    });
+
+    if (cached) {
+      const ageMs = Date.now() - cached.fetchedAt.getTime();
+      const ageDays = ageMs / (1000 * 60 * 60 * 24);
+
+      if (ageDays < LINKEDIN_CACHE_TTL_DAYS) {
+        console.log(`[RapidAPI LinkedIn] DB cache HIT: ${normalizedUrl} (${ageDays.toFixed(1)}d old)`);
+        return cached.profileData as unknown as NormalizedProfile;
+      }
+
+      console.log(`[RapidAPI LinkedIn] DB cache EXPIRED: ${normalizedUrl} (${ageDays.toFixed(1)}d old, TTL=${LINKEDIN_CACHE_TTL_DAYS}d)`);
+    }
+  } catch (err) {
+    // Cache miss or DB error — proceed to RapidAPI
+    console.warn("[RapidAPI LinkedIn] DB cache lookup failed, fetching fresh:", err);
+  }
+
+  // --- RAPIDAPI FETCH ---
+  try {
     console.log(`[RapidAPI LinkedIn] Fetching profile: ${normalizedUrl}`);
 
     const params = new URLSearchParams({
@@ -831,6 +867,25 @@ async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProf
 
     const normalized = normalizeRapidAPIProfile(json.data, normalizedUrl);
     console.log(`[RapidAPI LinkedIn] Successfully fetched: ${normalized.full_name} (${normalized.experiences.length} exp, ${normalized.education.length} edu)`);
+
+    // --- STORE IN DB CACHE ---
+    try {
+      await prisma.linkedInProfileCache.upsert({
+        where: { linkedinUrl: normalizedUrl },
+        update: {
+          profileData: JSON.parse(JSON.stringify(normalized)),
+          fetchedAt: new Date(),
+        },
+        create: {
+          linkedinUrl: normalizedUrl,
+          profileData: JSON.parse(JSON.stringify(normalized)),
+        },
+      });
+      console.log(`[RapidAPI LinkedIn] Cached profile in DB: ${normalized.full_name}`);
+    } catch (err) {
+      // Non-blocking — if cache write fails, the profile is still returned
+      console.warn("[RapidAPI LinkedIn] Failed to cache profile in DB:", err);
+    }
 
     return normalized;
   } catch (error) {

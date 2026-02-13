@@ -218,7 +218,7 @@ export class ScenarioModelerAgent extends BaseAgent<ScenarioModelerData, Scenari
       description: "Modélise 4 scénarios (BASE/BULL/BEAR/CATASTROPHIC) basés sur trajectoires réelles",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      timeoutMs: 180000,
       dependencies: ["financial-auditor", "market-intelligence", "exit-strategist"],
     });
   }
@@ -394,6 +394,7 @@ Scénario BASE (40% probabilité):
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<ScenarioModelerData> {
+    this._dealStage = context.deal.stage;
     const deal = context.deal;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
@@ -553,7 +554,7 @@ RAPPEL CRITIQUE: NE JAMAIS INVENTER. Si tu n'as pas de données, écris "NON DIS
 - redFlags MAX 5, questions MAX 5
 - PRIORITE: JSON complet > detail`;
 
-    const { data } = await this.llmCompleteJSON<LLMScenarioResponse>(prompt);
+    const { data } = await this.llmCompleteJSONWithFallback<LLMScenarioResponse>(prompt);
 
     // Validate, normalize, and apply sanity caps
     const normalized = this.normalizeResponse(data, context);

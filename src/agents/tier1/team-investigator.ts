@@ -538,6 +538,7 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TeamInvestigatorData> {
+    this._dealStage = context.deal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);

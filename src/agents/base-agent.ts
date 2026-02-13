@@ -16,6 +16,7 @@ import { sanitizeForLLM, sanitizeName, PromptInjectionError } from "@/lib/saniti
 import { z } from "zod";
 import { formatGeographyCoverageForPrompt } from "@/services/context-engine/geography-coverage";
 import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
+import { getStageCalibrationBlock } from "@/agents/stage-calibration";
 
 // Generic type for agent results with data
 export interface AgentResultWithData<T> extends AgentResult {
@@ -61,6 +62,9 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   private _llmCalls = 0;
   private _totalInputTokens = 0;
   private _totalOutputTokens = 0;
+
+  // Stage calibration — set in execute() to inject stage-relative scoring into LLM prompts
+  protected _dealStage: string | null = null;
 
   // Trace tracking - enabled by default for transparency
   private _enableTrace = true;
@@ -1321,9 +1325,12 @@ son deal sous le meilleur jour possible. Tu DOIS appliquer les regles suivantes:
 `;
   }
 
-  // Build full system prompt with anti-anchoring + confidence guidance injected (F28)
+  // Build full system prompt with stage calibration + anti-anchoring + confidence guidance injected (F28)
   private buildFullSystemPrompt(overridePrompt?: string): string {
     const base = overridePrompt ?? this.buildSystemPrompt();
-    return base + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance();
+    const stageCalibration = this._dealStage
+      ? getStageCalibrationBlock(this._dealStage, this.config.name)
+      : "";
+    return base + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance();
   }
 }

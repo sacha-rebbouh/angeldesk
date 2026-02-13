@@ -46,12 +46,13 @@ export async function getTier1Agents(): Promise<Record<string, DynamicAgent>> {
 }
 
 /**
- * Get Tier 3 agents (5 synthesis agents)
+ * Get Tier 3 agents (6 synthesis agents)
  */
 export async function getTier3Agents(): Promise<Record<string, DynamicAgent>> {
   if (!tier3Agents) {
     const tier3Module = await import("../tier3");
     tier3Agents = {
+      "conditions-analyst": tier3Module.conditionsAnalyst,
       "contradiction-detector": tier3Module.contradictionDetector,
       "scenario-modeler": tier3Module.scenarioModeler,
       "synthesis-deal-scorer": tier3Module.synthesisDealScorer,

@@ -337,7 +337,7 @@ export class CapTableAuditorAgent extends BaseAgent<CapTableAuditDataV2> {
       description: "Audite la cap table et les terms du round - Standard Big4 + Partner VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      timeoutMs: 240000, // 4 min
       dependencies: ["document-extractor"],
     });
   }
@@ -478,6 +478,7 @@ Produis un JSON avec la structure v2.0 complete incluant:
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<CapTableAuditDataV2> {
+    this._dealStage = context.deal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);

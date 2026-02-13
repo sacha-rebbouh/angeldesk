@@ -342,6 +342,7 @@ POURQUOI C'EST NUL:
   // ============================================================================
 
   protected async execute(context: EnrichedAgentContext): Promise<ContradictionDetectorData> {
+    this._dealStage = context.deal.stage;
     // 1. Formater tous les inputs
     const formattedInputs = this.formatAllInputs(context);
 

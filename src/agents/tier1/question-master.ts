@@ -243,8 +243,8 @@ export class QuestionMasterAgent extends BaseAgent<QuestionMasterData, QuestionM
       name: "question-master",
       description: "Synthetise tous les findings Tier 1 en questions et actions pour le BA",
       modelComplexity: "complex",
-      maxRetries: 2,
-      timeoutMs: 120000,
+      maxRetries: 3,
+      timeoutMs: 300000,
       dependencies: [
         "document-extractor",
         "deck-forensics",
@@ -483,6 +483,7 @@ Le Business Angel ne peut pas re-analyser le deal tant qu'il n'a pas repondu a T
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<QuestionMasterData> {
+    this._dealStage = context.deal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
 
@@ -747,7 +748,7 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
 }
 \`\`\``;
 
-    const { data } = await this.llmCompleteJSON<LLMQuestionMasterResponse>(prompt);
+    const { data } = await this.llmCompleteJSONWithFallback<LLMQuestionMasterResponse>(prompt);
 
     // Validate and normalize response
     const result = this.normalizeResponse(data);

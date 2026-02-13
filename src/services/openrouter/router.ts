@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { openrouter, MODELS, type ModelKey } from "./client";
-import { getCircuitBreaker, getCircuitBreakerDistributed, syncCircuitBreakerState, CircuitOpenError } from "./circuit-breaker";
+import { getCircuitBreakerDistributed, syncCircuitBreakerState, CircuitOpenError } from "./circuit-breaker";
 import { costMonitor } from "@/services/cost-monitor";
 import { logLLMCallAsync } from "@/services/llm-logger";
 import {
@@ -222,6 +222,13 @@ function calculateBackoff(attempt: number): number {
 export function selectModel(complexity: TaskComplexity, agentName?: string): ModelKey {
   // Agent-specific overrides (for agents with known model requirements)
   const agentOverrides: Record<string, ModelKey> = {
+    // Tier 1 critical — scoring pillars, quality non-negotiable
+    "financial-auditor": "GEMINI_PRO",
+    "deck-forensics": "GEMINI_PRO",
+    "team-investigator": "GEMINI_PRO",
+    // Tier 1 conditions — term sheet & legal analysis, feeds conditionsScore
+    "cap-table-auditor": "GEMINI_PRO",
+    "legal-regulatory": "GEMINI_PRO",
     // Tier 3 synthesis agents need stronger reasoning
     "synthesis-deal-scorer": "GEMINI_PRO",
     "contradiction-detector": "GEMINI_PRO",
@@ -235,6 +242,7 @@ export function selectModel(complexity: TaskComplexity, agentName?: string): Mod
   }
 
   // Complexity-based routing
+  // Cost optimization: Gemini 3 Flash for all tiers except Tier 3 overrides above
   switch (complexity) {
     case "simple":
       return "GEMINI_3_FLASH";
@@ -243,10 +251,10 @@ export function selectModel(complexity: TaskComplexity, agentName?: string): Mod
       return "GEMINI_3_FLASH";
 
     case "complex":
-      return "GEMINI_PRO";
+      return "GEMINI_3_FLASH";
 
     case "critical":
-      return "SONNET";
+      return "GEMINI_3_FLASH";
 
     default:
       return "GEMINI_3_FLASH";
@@ -313,7 +321,7 @@ export async function complete(
     ? 1 // 2 attempts for Sonnet
     : maxRetries;
 
-  const circuitBreaker = await getCircuitBreakerDistributed();
+  const circuitBreaker = await getCircuitBreakerDistributed(selectedModelKey);
   const startTime = Date.now();
 
   const messages: Array<{ role: "system" | "user"; content: string }> = [];
@@ -325,11 +333,11 @@ export async function complete(
 
   messages.push({ role: "user", content: prompt });
 
-  // Check circuit breaker before attempting
+  // Check circuit breaker before attempting (per-model)
   if (!circuitBreaker.canExecute()) {
     const stats = circuitBreaker.getStats();
     throw new CircuitOpenError(
-      `Circuit breaker is OPEN. Too many failures. Recovery in progress.`,
+      `Circuit breaker is OPEN for ${selectedModelKey}. Too many failures. Recovery in progress.`,
       stats
     );
   }
@@ -407,7 +415,7 @@ export async function complete(
       );
 
       // Sync circuit breaker state to distributed store (fire-and-forget)
-      syncCircuitBreakerState(circuitBreaker.getStats()).catch(() => {});
+      syncCircuitBreakerState(circuitBreaker.getStats(), selectedModelKey).catch(() => {});
 
       const content = response.choices[0]?.message?.content ?? "";
       const usage = response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
@@ -873,7 +881,7 @@ export async function stream(
 
   const selectedModelKey = modelKey ?? selectModel(complexity, getAgentContext() ?? undefined);
   const model = MODELS[selectedModelKey];
-  const circuitBreaker = await getCircuitBreakerDistributed();
+  const circuitBreaker = await getCircuitBreakerDistributed(selectedModelKey);
   const startTime = Date.now();
   let firstTokenTime: number | undefined;
 
@@ -886,11 +894,11 @@ export async function stream(
 
   messages.push({ role: "user", content: prompt });
 
-  // Check circuit breaker before attempting
+  // Check circuit breaker before attempting (per-model)
   if (!circuitBreaker.canExecute()) {
     const stats = circuitBreaker.getStats();
     const error = new CircuitOpenError(
-      `Circuit breaker is OPEN. Too many failures. Recovery in progress.`,
+      `Circuit breaker is OPEN for ${selectedModelKey}. Too many failures. Recovery in progress.`,
       stats
     );
     callbacks.onError?.(error);
@@ -918,7 +926,7 @@ export async function stream(
     );
 
     // Sync circuit breaker state to distributed store (fire-and-forget)
-    syncCircuitBreakerState(circuitBreaker.getStats()).catch(() => {});
+    syncCircuitBreakerState(circuitBreaker.getStats(), selectedModelKey).catch(() => {});
 
     // Process stream
     for await (const chunk of streamResponse) {
@@ -1086,7 +1094,7 @@ export async function completeJSONStreaming<T>(
 
   const selectedModelKey = modelKey ?? selectModel(complexity, getAgentContext() ?? undefined);
   const model = MODELS[selectedModelKey];
-  const circuitBreaker = await getCircuitBreakerDistributed();
+  const circuitBreaker = await getCircuitBreakerDistributed(selectedModelKey);
 
   // Accumulate stats across all calls
   let totalInputTokens = 0;
@@ -1111,11 +1119,11 @@ export async function completeJSONStreaming<T>(
     }
     messages.push({ role: "user", content: currentPrompt });
 
-    // Check circuit breaker
+    // Check circuit breaker (per-model)
     if (!circuitBreaker.canExecute()) {
       const stats = circuitBreaker.getStats();
       throw new CircuitOpenError(
-        `Circuit breaker is OPEN. Too many failures.`,
+        `Circuit breaker is OPEN for ${selectedModelKey}. Too many failures.`,
         stats
       );
     }
@@ -1139,7 +1147,7 @@ export async function completeJSONStreaming<T>(
       );
 
       // Sync circuit breaker state to distributed store (fire-and-forget)
-      syncCircuitBreakerState(circuitBreaker.getStats()).catch(() => {});
+      syncCircuitBreakerState(circuitBreaker.getStats(), selectedModelKey).catch(() => {});
 
       let inputTokens = 0;
       let outputTokens = 0;

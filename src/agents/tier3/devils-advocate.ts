@@ -449,6 +449,7 @@ Produis un JSON avec la structure exacte demandee. CHAQUE element doit etre:
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DevilsAdvocateData> {
+    this._dealStage = context.deal.stage;
     const deal = context.deal;
     const tier1Results = this.formatTier1Results(context);
     const tier2Results = this.formatTier2Results(context);

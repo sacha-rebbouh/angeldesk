@@ -245,7 +245,7 @@ export class GTMAnalystAgent extends BaseAgent<GTMAnalystData, GTMAnalystResult>
       description: "Analyse approfondie de la strategie Go-to-Market",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      timeoutMs: 240000, // 4 min
     });
   }
 
@@ -440,6 +440,7 @@ Tu DOIS retourner un JSON avec EXACTEMENT cette structure:
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<GTMAnalystData> {
+    this._dealStage = context.deal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);

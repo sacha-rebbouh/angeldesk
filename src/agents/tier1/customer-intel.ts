@@ -396,6 +396,7 @@ Tu DOIS produire un JSON structuré avec:
   // ============================================================================
 
   protected async execute(context: EnrichedAgentContext): Promise<CustomerIntelData> {
+    this._dealStage = context.deal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);

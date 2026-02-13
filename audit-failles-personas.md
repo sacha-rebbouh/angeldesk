@@ -1030,7 +1030,7 @@ Mettre a jour ce tableau au fur et a mesure de l'implementation :
 
 | # | Faille | Spec | Impl | Teste |
 |---|--------|------|------|-------|
-| F01 | Sanitization + blockOnSuspicious | C1 | ✅ | ⬜ |
+| F01 | Sanitization + blockOnSuspicious | C1 | ✅ | ✅ |
 | F02 | selectModel() multi-modele | C1 | ✅ | ⬜ |
 | F03 | Scoring deterministe | C2 | ✅ | ⬜ |
 | F04 | Calculs financiers serveur | C2 | ✅ | ⬜ |
@@ -1040,7 +1040,7 @@ Mettre a jour ce tableau au fur et a mesure de l'implementation :
 | F08 | Hallucination entites verification | C2 | ✅ | ⬜ |
 | F09 | Verification fondateurs croisee | C2 | ✅ | ⬜ |
 | F10 | Recherche active concurrents | C2 | ✅ | ⬜ |
-| F11 | Validation Zod Tier 1/3 | C1 | ✅ | ⬜ |
+| F11 | Validation Zod Tier 1/3 | C1 | ✅ | ✅ |
 | F12 | Filtrage faits non verifies | C1 | ✅ | ⬜ |
 | F13 | Disclaimer juridique + CGU | C3 | ✅ | ⬜ |
 | F14 | RGPD consentement | C3 | ✅ | ⬜ |
@@ -1060,39 +1060,39 @@ Mettre a jour ce tableau au fur et a mesure de l'implementation :
 
 | # | Faille | Spec | Impl | Teste |
 |---|--------|------|------|-------|
-| F26 | Reponses fondateur DECLARED | H1 | ⬜ | ⬜ |
-| F27 | Troncation head+tail | H1 | ⬜ | ⬜ |
-| F28 | Anti-anchoring prompts | H1 | ⬜ | ⬜ |
-| F29 | Guide prochaines etapes | H4 | ⬜ | ⬜ |
-| F30 | Severites explication impact | H4 | ⬜ | ⬜ |
-| F31 | Chat cadrage niveau | H4 | ⬜ | ⬜ |
-| F32 | Banner analyse partielle FREE | H4 | ⬜ | ⬜ |
-| F33 | Onboarding premier deal | H4 | ⬜ | ⬜ |
-| F34 | Cross-validation projections/GTM | H2 | ⬜ | ⬜ |
-| F35 | Dynamique cofondateurs | H2 | ⬜ | ⬜ |
-| F36 | PMF protocole validation | H2 | ⬜ | ⬜ |
-| F37 | Scoring comparatif DB | H2 | ⬜ | ⬜ |
-| F38 | DD technique disclaimer | H2 | ⬜ | ⬜ |
-| F39 | Coherence inter-agents deterministe | H2 | ⬜ | ⬜ |
-| F40 | Delta re-analyse | H2 | ⬜ | ⬜ |
-| F41 | Memo depuis fact store | H2 | ⬜ | ⬜ |
-| F42 | Prompt versioning hash | H3 | ⬜ | ⬜ |
-| F43 | Fallback null + warning | H1 | ⬜ | ⬜ |
-| F44 | Immutabilite faits | H3 | ⬜ | ⬜ |
-| F45 | Erreurs persistance throw | H3 | ⬜ | ⬜ |
-| F46 | Streaming SSE | H3 | ⬜ | ⬜ |
-| F47 | Tests CI/CD | H3 | ⬜ | ⬜ |
-| F48 | Chiffrement AES-256 | H3 | ⬜ | ⬜ |
-| F49 | Scalabilite Inngest | H3 | ⬜ | ⬜ |
-| F50 | Vue Resume par defaut | H4 | ⬜ | ⬜ |
-| F51 | Comparaison deals | H4 | ⬜ | ⬜ |
-| F52 | Sanitization previousResults | H4 | ⬜ | ⬜ |
-| F53 | sourceDocumentId validation | H1 | ⬜ | ⬜ |
-| F54 | JSON truncation detection | H1 | ⬜ | ⬜ |
-| F55 | Test variance | H2 | ⬜ | ⬜ |
-| F56 | Penalite DECLARED valorisation | H1 | ⬜ | ⬜ |
-| F57 | Dissociation source/truth confidence | H1 | ⬜ | ⬜ |
-| F58 | OCR priorisation intelligente | H3 | ⬜ | ⬜ |
+| F26 | Reponses fondateur DECLARED | H1 | ✅ | ⬜ |
+| F27 | Troncation head+tail | H1 | ✅ | ⬜ |
+| F28 | Anti-anchoring prompts | H1 | ✅ | ⬜ |
+| F29 | Guide prochaines etapes | H4 | ✅ | ⬜ |
+| F30 | Severites explication impact | H4 | ✅ | ⬜ |
+| F31 | Chat cadrage niveau | H4 | ✅ | ⬜ |
+| F32 | Banner analyse partielle FREE | H4 | ✅ | ⬜ |
+| F33 | Onboarding premier deal | H4 | ✅ | ⬜ |
+| F34 | Cross-validation projections/GTM | H2 | ✅ | ⬜ |
+| F35 | Dynamique cofondateurs | H2 | ✅ | ⬜ |
+| F36 | PMF protocole validation | H2 | ✅ | ⬜ |
+| F37 | Scoring comparatif DB | H2 | ✅ | ⬜ |
+| F38 | DD technique disclaimer | H2 | ✅ | ⬜ |
+| F39 | Coherence inter-agents deterministe | H2 | ✅ | ⬜ |
+| F40 | Delta re-analyse | H2 | ✅ | ⬜ |
+| F41 | Memo depuis fact store | H2 | ✅ | ⬜ |
+| F42 | Prompt versioning hash | H3 | ✅ | ⬜ |
+| F43 | Fallback null + warning | H1 | ✅ | ⬜ |
+| F44 | Immutabilite faits | H3 | ✅ | ⬜ |
+| F45 | Erreurs persistance throw | H3 | ✅ | ⬜ |
+| F46 | Streaming SSE | H3 | ✅ | ⬜ |
+| F47 | Tests CI/CD | H3 | ✅ | ⬜ |
+| F48 | Chiffrement AES-256 | H3 | ✅ | ✅ |
+| F49 | Scalabilite Inngest | H3 | ✅ | ⬜ |
+| F50 | Vue Resume par defaut | H4 | ✅ | ⬜ |
+| F51 | Comparaison deals | H4 | ✅ | ⬜ |
+| F52 | Sanitization previousResults | H4 | ✅ | ✅ |
+| F53 | sourceDocumentId validation | H1 | ✅ | ⬜ |
+| F54 | JSON truncation detection | H1 | ✅ | ⬜ |
+| F55 | Test variance | H2 | ✅ | ⬜ |
+| F56 | Penalite DECLARED valorisation | H1 | ✅ | ⬜ |
+| F57 | Dissociation source/truth confidence | H1 | ✅ | ⬜ |
+| F58 | OCR priorisation intelligente | H3 | ✅ | ⬜ |
 
 #### MEDIUM (40)
 
@@ -1112,10 +1112,10 @@ Mettre a jour ce tableau au fur et a mesure de l'implementation :
 | F70 | Context Engine multi-geo | M3 | ✅ (branché 02-12) | ⬜ |
 | F71 | Traction produit injection | M3 | ✅ | ⬜ |
 | F72 | Memo personnalise profil BA | M2 | ✅ | ⬜ |
-| F73 | Questions Top 10 consolidees | M2 | ✅ | ⬜ |
+| F73 | Questions Top 10 consolidees | M2 | ✅ | ✅ |
 | F74 | Scenarios triggers contextuels | M3 | ✅ | ⬜ |
-| F75 | Detection FOMO | M3 | ✅ (branché 02-12) | ⬜ |
-| F76 | Simulation waterfall liquidation | M3 | ✅ (branché 02-12) | ⬜ |
+| F75 | Detection FOMO | M3 | ✅ (branché 02-12) | ✅ |
+| F76 | Simulation waterfall liquidation | M3 | ✅ (branché 02-12) | ✅ |
 | F77 | Taxonomie red flags unifiee | M3 | ✅ | ⬜ |
 | F78 | IRR Newton-Raphson + dilution | M3 | ✅ (branché 02-12) | ⬜ |
 | F79 | Legal registres publics | M3 | ✅ | ⬜ |
@@ -1136,8 +1136,8 @@ Mettre a jour ce tableau au fur et a mesure de l'implementation :
 | F94 | Dedup appels LLM | M4 | ✅ | ⬜ |
 | F95 | Retry adaptatif | M4 | ✅ | ⬜ |
 | F96 | AsyncLocalStorage | M4 | ✅ | ⬜ |
-| F97 | previousResults sanitized | M4 | ✅ | ⬜ |
-| F98 | Patterns Unicode multilingue | M4 | ✅ | ⬜ |
+| F97 | previousResults sanitized | M4 | ✅ | ✅ |
+| F98 | Patterns Unicode multilingue | M4 | ✅ | ✅ |
 
 #### LOW (4)
 

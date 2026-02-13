@@ -112,12 +112,12 @@ export interface ReflexionConfig {
 const DEFAULT_CONFIG: ReflexionConfig = {
   maxIterations: 2,
   minConfidenceGain: 5,
-  enableDataRequests: true,
-  critiqueThreshold: 75,
-  tier1ConfidenceThreshold: 70,
-  tier2ConfidenceThreshold: 60,
+  enableDataRequests: false,  // Disabled — data requests add LLM calls for no value
+  critiqueThreshold: 60,
+  tier1ConfidenceThreshold: 60, // was 70
+  tier2ConfidenceThreshold: 50, // was 60
   tier3Enabled: false,
-  criticalRedFlagAlwaysReflect: true,
+  criticalRedFlagAlwaysReflect: false, // was true — forced reflexion on every critical red flag, too expensive
 };
 
 // ============================================================================

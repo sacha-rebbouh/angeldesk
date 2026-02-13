@@ -396,6 +396,7 @@ JSON structuré avec:
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<MemoGeneratorData> {
+    this._dealStage = context.deal.stage;
     const deal = context.deal;
 
     // Formater le contexte de manière exhaustive

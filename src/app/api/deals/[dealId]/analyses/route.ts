@@ -34,24 +34,34 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
-    const latestAnalysis = await prisma.analysis.findFirst({
-      where: { dealId },
-      orderBy: { createdAt: "desc" },
-    });
+    // Support ?id=xxx to load a specific analysis (for history navigation)
+    const specificId = _request.nextUrl.searchParams.get("id");
+
+    const latestAnalysis = specificId
+      ? await prisma.analysis.findFirst({
+          where: { dealId, id: specificId },
+        })
+      : await prisma.analysis.findFirst({
+          where: { dealId },
+          orderBy: { createdAt: "desc" },
+        });
 
     if (!latestAnalysis) {
       return NextResponse.json({ data: null });
     }
 
-    // Auto-expire stuck RUNNING analyses older than 30 minutes
-    // Only expire if no progress (completedAgents == 0) or absolute timeout (30 min)
+    // Auto-expire stuck RUNNING analyses older than 3 hours
+    // With reflexion (now capped at 1 iteration), analyses take 15-30 min max.
+    // 3h threshold is a safety net for truly stuck processes only.
+    // DO NOT set this lower — the API route was marking analyses as FAILED
+    // while the Node.js process was still actively running, causing data loss.
     let effectiveStatus = latestAnalysis.status;
     if (latestAnalysis.status === "RUNNING") {
-      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
-      if (latestAnalysis.createdAt < thirtyMinAgo) {
+      const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+      if (latestAnalysis.createdAt < threeHoursAgo) {
         await prisma.analysis.update({
           where: { id: latestAnalysis.id },
-          data: { status: "FAILED", summary: "Analysis timed out" },
+          data: { status: "FAILED", summary: "Analysis timed out after 3 hours" },
         });
         effectiveStatus = "FAILED";
       }
@@ -111,7 +121,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         completedAgents: latestAnalysis.completedAgents,
         totalAgents: latestAnalysis.totalAgents,
         results:
-          latestAnalysis.status === "COMPLETED" ? latestAnalysis.results : null,
+          (latestAnalysis.status === "COMPLETED" || specificId) ? latestAnalysis.results : null,
         summary: latestAnalysis.summary,
         totalCost: latestAnalysis.totalCost?.toString() ?? null,
         totalTimeMs: latestAnalysis.totalTimeMs,

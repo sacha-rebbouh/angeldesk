@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, memo } from "react";
-import { AlertTriangle, ShieldAlert, ChevronRight } from "lucide-react";
+import { useMemo, memo, useState } from "react";
+import { AlertTriangle, ShieldAlert, ChevronRight, ChevronDown, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatAgentName, getSeverityColor } from "@/lib/format-utils";
+import { inferRedFlagTopic } from "@/services/red-flag-dedup";
 
 // Red flag structure from agents
 interface RedFlag {
@@ -64,50 +65,115 @@ const SEVERITY_STYLES: Record<string, {
   },
 };
 
+/** A consolidated red flag with dedup info */
+interface ConsolidatedFlag {
+  topic: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM";
+  title: string;
+  description?: string;
+  evidence?: string;
+  impact?: string;
+  question?: string;
+  detectedBy: string[];
+  /** All individual red flags that were merged into this one */
+  duplicates: (RedFlag & { agentName: string })[];
+}
+
 /**
- * RedFlagsSummary - Vue consolidee de TOUS les red flags de tous les agents.
+ * RedFlagsSummary - Vue consolidee et DEDUPLIQUEE de tous les red flags.
  *
- * Affichee en HAUT des resultats Tier 1, avant les cartes individuelles.
- * Trie par severite (CRITICAL en premier).
- * Affiche l'agent source pour chaque flag.
+ * Utilise inferRedFlagTopic() pour regrouper les red flags qui parlent du meme sujet
+ * (ex: ARR/MRR inconsistency detectee par 5 agents differents = 1 seul red flag).
+ * Affiche le nombre d'agents qui ont detecte chaque red flag comme signal de confiance.
  */
 export const RedFlagsSummary = memo(function RedFlagsSummary({
   agentResults,
 }: RedFlagsSummaryProps) {
-  // Consolider et trier tous les red flags
+  const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
+
+  // Consolidate and deduplicate red flags by topic
   const consolidatedFlags = useMemo(() => {
-    const allFlags: (RedFlag & { agentName: string })[] = [];
+    const topicMap = new Map<string, ConsolidatedFlag>();
 
     for (const agent of agentResults) {
       for (const rf of agent.redFlags) {
-        allFlags.push({ ...rf, agentName: agent.agentName });
+        const topic = inferRedFlagTopic(rf.title, rf.category);
+        const existing = topicMap.get(topic);
+
+        if (existing) {
+          // Merge: keep highest severity, longest description, all agents
+          if (SEVERITY_ORDER[rf.severity] < SEVERITY_ORDER[existing.severity]) {
+            existing.severity = rf.severity;
+          }
+          if (!existing.detectedBy.includes(agent.agentName)) {
+            existing.detectedBy.push(agent.agentName);
+          }
+          // Keep the most detailed description
+          if (rf.description && (!existing.description || rf.description.length > existing.description.length)) {
+            existing.description = rf.description;
+          }
+          // Keep evidence if more specific
+          if (rf.evidence && (!existing.evidence || rf.evidence.length > existing.evidence.length)) {
+            existing.evidence = rf.evidence;
+          }
+          // Keep impact if more detailed
+          if (rf.impact && (!existing.impact || rf.impact.length > existing.impact.length)) {
+            existing.impact = rf.impact;
+          }
+          // Keep question if better
+          if (rf.question && (!existing.question || rf.question.length > existing.question.length)) {
+            existing.question = rf.question;
+          }
+          existing.duplicates.push({ ...rf, agentName: agent.agentName });
+        } else {
+          topicMap.set(topic, {
+            topic,
+            severity: rf.severity,
+            title: rf.title,
+            description: rf.description,
+            evidence: rf.evidence,
+            impact: rf.impact,
+            question: rf.question,
+            detectedBy: [agent.agentName],
+            duplicates: [{ ...rf, agentName: agent.agentName }],
+          });
+        }
       }
     }
 
-    // Trier par severite (CRITICAL > HIGH > MEDIUM)
-    allFlags.sort((a, b) => {
-      const orderA = SEVERITY_ORDER[a.severity] ?? 3;
-      const orderB = SEVERITY_ORDER[b.severity] ?? 3;
-      return orderA - orderB;
+    // Sort: severity first, then detection count (more agents = higher confidence)
+    return Array.from(topicMap.values()).sort((a, b) => {
+      const severityDiff = (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3);
+      if (severityDiff !== 0) return severityDiff;
+      return b.detectedBy.length - a.detectedBy.length;
     });
-
-    return allFlags;
   }, [agentResults]);
 
-  // Compteurs par severite
-  const counts = useMemo(() => ({
-    CRITICAL: consolidatedFlags.filter(f => f.severity === "CRITICAL").length,
-    HIGH: consolidatedFlags.filter(f => f.severity === "HIGH").length,
-    MEDIUM: consolidatedFlags.filter(f => f.severity === "MEDIUM").length,
-    total: consolidatedFlags.length,
-  }), [consolidatedFlags]);
+  // Counts
+  const counts = useMemo(() => {
+    const rawTotal = agentResults.reduce((sum, a) => sum + a.redFlags.length, 0);
+    return {
+      CRITICAL: consolidatedFlags.filter(f => f.severity === "CRITICAL").length,
+      HIGH: consolidatedFlags.filter(f => f.severity === "HIGH").length,
+      MEDIUM: consolidatedFlags.filter(f => f.severity === "MEDIUM").length,
+      consolidated: consolidatedFlags.length,
+      raw: rawTotal,
+    };
+  }, [consolidatedFlags, agentResults]);
 
-  // Ne rien afficher s'il n'y a aucun red flag
-  if (counts.total === 0) return null;
+  if (counts.consolidated === 0) return null;
 
-  // Determiner le niveau d'alerte global
   const hasCritical = counts.CRITICAL > 0;
   const hasHigh = counts.HIGH > 0;
+
+  const toggleTopic = (topic: string) => {
+    setExpandedTopics(prev => {
+      const next = new Set(prev);
+      if (next.has(topic)) next.delete(topic);
+      else next.add(topic);
+      return next;
+    });
+  };
 
   return (
     <Card className={cn(
@@ -124,10 +190,15 @@ export const RedFlagsSummary = memo(function RedFlagsSummary({
               hasCritical ? "text-red-600" : hasHigh ? "text-orange-500" : "text-yellow-500"
             )} />
             <CardTitle className="text-lg">
-              Red Flags ({counts.total})
+              Red Flags ({counts.consolidated})
             </CardTitle>
           </div>
           <div className="flex items-center gap-2">
+            {counts.raw > counts.consolidated && (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                {counts.raw} bruts → {counts.consolidated} uniques
+              </Badge>
+            )}
             {counts.CRITICAL > 0 && (
               <Badge className="bg-red-500 text-white border-0">
                 {counts.CRITICAL} Critique{counts.CRITICAL > 1 ? "s" : ""}
@@ -150,11 +221,14 @@ export const RedFlagsSummary = memo(function RedFlagsSummary({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
-        {consolidatedFlags.map((flag, i) => {
+        {consolidatedFlags.map((flag) => {
           const style = SEVERITY_STYLES[flag.severity] ?? SEVERITY_STYLES.MEDIUM;
+          const isExpanded = expandedTopics.has(flag.topic);
+          const hasMultiple = flag.detectedBy.length > 1;
+
           return (
             <div
-              key={`${flag.agentName}-${flag.id ?? i}`}
+              key={flag.topic}
               className={cn(
                 "p-3 rounded-lg border",
                 style.bg,
@@ -174,9 +248,17 @@ export const RedFlagsSummary = memo(function RedFlagsSummary({
                     >
                       {style.label}
                     </Badge>
-                    <Badge variant="outline" className="text-[10px] shrink-0 bg-muted">
-                      {formatAgentName(flag.agentName)}
-                    </Badge>
+                    {flag.detectedBy.map(agent => (
+                      <Badge key={agent} variant="outline" className="text-[10px] shrink-0 bg-muted">
+                        {formatAgentName(agent)}
+                      </Badge>
+                    ))}
+                    {hasMultiple && (
+                      <Badge variant="secondary" className="text-[10px] shrink-0 gap-0.5">
+                        <Users className="h-3 w-3" />
+                        {flag.detectedBy.length} agents
+                      </Badge>
+                    )}
                   </div>
                   {flag.evidence && (
                     <p className="text-xs text-muted-foreground">{flag.evidence}</p>
@@ -191,6 +273,26 @@ export const RedFlagsSummary = memo(function RedFlagsSummary({
                       <ChevronRight className="h-3 w-3 text-blue-500" />
                       <span className="text-blue-700">{flag.question}</span>
                     </p>
+                  )}
+                  {/* Show duplicate details when expanded */}
+                  {hasMultiple && (
+                    <button
+                      onClick={() => toggleTopic(flag.topic)}
+                      className="text-xs text-muted-foreground mt-2 flex items-center gap-1 hover:text-foreground transition-colors"
+                    >
+                      <ChevronDown className={cn("h-3 w-3 transition-transform", isExpanded && "rotate-180")} />
+                      {isExpanded ? "Masquer" : "Voir"} les {flag.duplicates.length} detections
+                    </button>
+                  )}
+                  {isExpanded && (
+                    <div className="mt-2 pl-2 border-l-2 border-muted space-y-1">
+                      {flag.duplicates.map((dup, i) => (
+                        <div key={`${dup.agentName}-${i}`} className="text-xs text-muted-foreground">
+                          <span className="font-medium">{formatAgentName(dup.agentName)}:</span>{" "}
+                          {dup.title !== flag.title ? dup.title : dup.evidence ?? dup.description ?? "—"}
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>

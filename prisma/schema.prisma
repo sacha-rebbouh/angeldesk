@@ -59,17 +59,23 @@ model Deal {
   status          DealStatus @default(SCREENING)
 
   // Scores (after analysis)
-  globalScore     Int?
+  globalScore        Int?    // Score final (synthesis-deal-scorer, 0-100)
+  fundamentalsScore  Int?    // Score fondamentaux seul (stage-relative, 0-100)
+  conditionsScore    Int?    // Score conditions (0-100, AI conditions-analyst)
   teamScore       Int?
   marketScore     Int?
   productScore    Int?
   financialsScore Int?
+
+  // Conditions analysis cache (full AI output)
+  conditionsAnalysis Json?   // Cache résultat complet conditions-analyst
 
   documents       Document[]
   founders        Founder[]
   redFlags        RedFlag[]
   analyses        Analysis[]
   factEvents      FactEvent[]
+  dealTerms       DealTerms?
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -112,6 +118,17 @@ model Founder {
   createdAt       DateTime @default(now())
 
   @@index([dealId])
+}
+
+// LINKEDIN PROFILE CACHE — avoid redundant RapidAPI calls
+model LinkedInProfileCache {
+  id              String   @id @default(cuid())
+  linkedinUrl     String   @unique  // normalized URL (lowercase, trimmed)
+  profileData     Json     // NormalizedProfile from RapidAPI
+  fetchedAt       DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([linkedinUrl])
 }
 
 // DOCUMENT
@@ -1672,4 +1689,55 @@ model Webhook {
   createdAt   DateTime  @default(now())
 
   @@index([userId])
+}
+
+// DEAL TERMS — Conditions du deal renseignées par le BA
+// Relation 1:1 avec Deal. Le BA remplit ce qu'il a (null = pas d'info = neutre).
+model DealTerms {
+  id                    String   @id @default(cuid())
+  dealId                String   @unique
+  deal                  Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  // ── Valorisation ──
+  valuationPre          Decimal? @db.Decimal(14, 2)  // Pre-money
+  amountRaised          Decimal? @db.Decimal(12, 2)
+  dilutionPct           Decimal? @db.Decimal(5, 2)
+
+  // ── Instrument ──
+  instrumentType        String?  // BSA_AIR, CONVERTIBLE_NOTE, EQUITY_ORDINARY, EQUITY_PREFERRED, LOAN, MIXED, OTHER
+  instrumentDetails     String?  // Détails libres si OTHER/MIXED
+
+  // ── Protections investisseur ──
+  liquidationPref       String?  // 1x_non_participating, 1x_participating, 2x_participating, none
+  antiDilution          String?  // full_ratchet, weighted_average_broad, weighted_average_narrow, none
+  proRataRights         Boolean?
+  informationRights     Boolean?
+  boardSeat             String?  // full_seat, observer, none
+
+  // ── Gouvernance / Fondateurs ──
+  founderVesting        Boolean?
+  vestingDurationMonths Int?
+  vestingCliffMonths    Int?
+  esopPct               Decimal? @db.Decimal(5, 2)
+  dragAlong             Boolean?
+  tagAlong              Boolean?
+
+  // ── Clauses spéciales ──
+  ratchet               Boolean?
+  payToPlay             Boolean?
+  milestoneTranches     Boolean?
+  nonCompete            Boolean?
+
+  // ── Champ libre ──
+  customConditions      String?  @db.Text  // Le BA met ce qu'il veut
+  notes                 String?  @db.Text
+
+  // ── Source tracking ──
+  source                String   @default("manual") // manual, extracted, negotiated
+
+  // ── AI analysis tracking ──
+  aiAnalysisAt          DateTime?  // Timestamp dernière analyse IA conditions
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }

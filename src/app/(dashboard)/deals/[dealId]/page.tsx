@@ -23,12 +23,14 @@ import {
   TrendingUp,
   Brain,
   Crown,
+  Handshake,
 } from "lucide-react";
 import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
 import { ScoreGrid } from "@/components/deals/score-display";
 import { BoardPanelWrapper } from "@/components/deals/board-panel-wrapper";
 import { DocumentsTab } from "@/components/deals/documents-tab";
 import { TeamManagement } from "@/components/deals/team-management";
+import { DealTermsTab } from "@/components/deals/deal-terms-tab";
 import { ChatWrapper } from "@/components/chat/chat-wrapper";
 import { getStatusColor, getStatusLabel, getStageLabel, getSeverityColor, formatCurrencyEUR } from "@/lib/format-utils";
 
@@ -48,19 +50,49 @@ async function getDeal(dealId: string, userId: string) {
       },
       analyses: {
         orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          type: true,
+          mode: true,
+          status: true,
+          totalAgents: true,
+          completedAgents: true,
+          summary: true,
+          startedAt: true,
+          completedAt: true,
+          totalCost: true,
+          totalTimeMs: true,
+          createdAt: true,
+          // results excluded — loaded separately for the latest completed analysis only
+        },
       },
     },
   });
 }
 
-interface PageProps {
-  params: Promise<{ dealId: string }>;
+/** Load full results for the latest COMPLETED analysis only (avoids loading all analysis results) */
+async function getLatestAnalysisResults(dealId: string) {
+  const analysis = await prisma.analysis.findFirst({
+    where: { dealId, status: "COMPLETED" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, results: true },
+  });
+  return analysis;
 }
 
-export default async function DealDetailPage({ params }: PageProps) {
+interface PageProps {
+  params: Promise<{ dealId: string }>;
+  searchParams: Promise<{ tab?: string }>;
+}
+
+export default async function DealDetailPage({ params, searchParams }: PageProps) {
   const user = await requireAuth();
   const { dealId } = await params;
-  const deal = await getDeal(dealId, user.id);
+  const { tab } = await searchParams;
+  const [deal, latestResults] = await Promise.all([
+    getDeal(dealId, user.id),
+    getLatestAnalysisResults(dealId),
+  ]);
 
   if (!deal) {
     notFound();
@@ -171,7 +203,7 @@ export default async function DealDetailPage({ params }: PageProps) {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="overview" className="space-y-4">
+      <Tabs defaultValue={tab || "overview"} className="space-y-4">
         <TabsList className="flex w-full overflow-x-auto">
           <TabsTrigger value="overview" className="whitespace-nowrap">Vue d&apos;ensemble</TabsTrigger>
           <TabsTrigger value="analysis" className="whitespace-nowrap">
@@ -183,6 +215,10 @@ export default async function DealDetailPage({ params }: PageProps) {
           </TabsTrigger>
           <TabsTrigger value="founders" className="whitespace-nowrap">
             Team ({deal.founders.length})
+          </TabsTrigger>
+          <TabsTrigger value="conditions" className="whitespace-nowrap">
+            <Handshake className="mr-1 h-4 w-4" />
+            Conditions
           </TabsTrigger>
           <TabsTrigger value="redflags" className="whitespace-nowrap">
             Red Flags ({openRedFlags.length})
@@ -251,21 +287,24 @@ export default async function DealDetailPage({ params }: PageProps) {
               <CardHeader>
                 <CardTitle>Scores</CardTitle>
                 <CardDescription>
-                  {deal.globalScore
+                  {deal.globalScore != null
                     ? "Scores calculés par l'analyse IA"
                     : "Lancez une analyse pour obtenir les scores"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {deal.globalScore ? (
+                {deal.globalScore != null ? (
                   <ScoreGrid
                     scores={{
                       global: deal.globalScore,
+                      fundamentals: deal.fundamentalsScore,
+                      conditions: deal.conditionsScore,
                       team: deal.teamScore,
                       market: deal.marketScore,
                       product: deal.productScore,
                       financials: deal.financialsScore,
                     }}
+                    stage={deal.stage}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -289,14 +328,17 @@ export default async function DealDetailPage({ params }: PageProps) {
             currentStatus={deal.status}
             analyses={deal.analyses.map(a => ({
               ...a,
-              results: a.results as Record<string, {
-                agentName: string;
-                success: boolean;
-                executionTimeMs: number;
-                cost: number;
-                error?: string;
-                data?: unknown;
-              }> | null,
+              // Only inject results for the latest completed analysis (loaded separately)
+              results: (latestResults && a.id === latestResults.id
+                ? latestResults.results as Record<string, {
+                    agentName: string;
+                    success: boolean;
+                    executionTimeMs: number;
+                    cost: number;
+                    error?: string;
+                    data?: unknown;
+                  }>
+                : null),
               startedAt: a.startedAt?.toISOString() ?? null,
               completedAt: a.completedAt?.toISOString() ?? null,
               totalCost: a.totalCost?.toString() ?? null,
@@ -325,6 +367,10 @@ export default async function DealDetailPage({ params }: PageProps) {
               createdAt: f.createdAt.toISOString(),
             }))}
           />
+        </TabsContent>
+
+        <TabsContent value="conditions">
+          <DealTermsTab dealId={deal.id} stage={deal.stage} />
         </TabsContent>
 
         <TabsContent value="redflags">
