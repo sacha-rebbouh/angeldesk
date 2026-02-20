@@ -83,6 +83,17 @@ interface LLMConditionsResponse {
       suggestedArgument: string;
       leverageSource: string;
     }[];
+    structuredAssessment?: {
+      overallStructureVerdict: string;
+      trancheAssessments: {
+        trancheLabel: string;
+        assessment: string;
+        risks: string[];
+        score: number;
+      }[];
+      blendedEffectiveValuation: number | null;
+      triggerRiskLevel: string;
+    };
   };
   redFlags: {
     id: string;
@@ -334,9 +345,13 @@ CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):
     termSheetText: string | null;
     deckMentions: string | null;
   } {
+    // 0. Check structured deal data (multi-tranche mode)
+    const hasStructuredData = context.dealStructure?.mode === "STRUCTURED"
+      && context.dealStructure.tranches.length > 0;
+
     // 1. Check BA form data
     const terms = context.dealTerms;
-    const hasFormData = terms && (
+    const hasFormData = hasStructuredData || (terms && (
       terms.valuationPre != null ||
       terms.amountRaised != null ||
       terms.instrumentType != null ||
@@ -345,11 +360,14 @@ CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):
       terms.founderVesting != null ||
       (terms.customConditions != null && terms.customConditions.trim().length > 0) ||
       (terms.notes != null && terms.notes.trim().length > 0)
-    );
+    ));
 
     let formData: string | null = null;
-    if (hasFormData && terms) {
-      formData = this.formatFormData(terms);
+    if (hasFormData) {
+      const parts: string[] = [];
+      if (terms) parts.push(this.formatFormData(terms));
+      if (hasStructuredData) parts.push(this.formatStructuredTerms(context.dealStructure!));
+      formData = parts.filter(Boolean).join("\n\n");
     }
 
     // 2. Check for term sheet document
@@ -426,6 +444,24 @@ CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):
     // Notes
     if (terms.customConditions) lines.push(`\nConditions supplementaires: ${terms.customConditions}`);
     if (terms.notes) lines.push(`Notes BA: ${terms.notes}`);
+
+    return lines.join("\n");
+  }
+
+  private formatStructuredTerms(structure: NonNullable<EnrichedAgentContext["dealStructure"]>): string {
+    const lines: string[] = [
+      `## STRUCTURE MULTI-TRANCHE (${structure.tranches.length} tranches, total: €${structure.totalInvestment.toLocaleString()})`,
+    ];
+
+    for (const t of structure.tranches) {
+      const parts: string[] = [`### ${t.label || "Tranche"} — ${t.trancheType}`];
+      if (t.amount != null) parts.push(`  Montant: €${t.amount.toLocaleString()}`);
+      if (t.valuationPre != null) parts.push(`  Valorisation pre-money: €${t.valuationPre.toLocaleString()}`);
+      if (t.equityPct != null) parts.push(`  Equity: ${t.equityPct}%`);
+      if (t.triggerType) parts.push(`  Trigger: ${t.triggerType}${t.triggerDetails ? ` — ${t.triggerDetails}` : ""}`);
+      if (t.status !== "PENDING") parts.push(`  Statut: ${t.status}`);
+      lines.push(parts.join("\n"));
+    }
 
     return lines.join("\n");
   }
@@ -556,6 +592,32 @@ Produis un JSON avec cette structure exacte:
 \`\`\`
 
 **CONCISION OBLIGATOIRE:** breakdown=4 items, crossReferenceInsights MAX 5, negotiationAdvice MAX 5, redFlags MAX 5, questions MAX 5.`);
+
+    // Structured deals: add extra section + output schema for structuredAssessment
+    if (context.dealStructure?.mode === "STRUCTURED") {
+      sections.push(`## DEAL STRUCTURE / MULTI-TRANCHE
+
+Ce deal est STRUCTURE en ${context.dealStructure.tranches.length} tranche(s). En plus du scoring standard, tu dois produire un champ "structuredAssessment" dans findings:
+
+\`\`\`json
+"structuredAssessment": {
+  "overallStructureVerdict": "1-2 phrases: verdict global sur la structure multi-tranche",
+  "trancheAssessments": [
+    { "trancheLabel": "Tranche 1", "assessment": "verdict court", "risks": ["risque 1"], "score": 0-100 }
+  ],
+  "blendedEffectiveValuation": number|null,
+  "triggerRiskLevel": "LOW"|"MEDIUM"|"HIGH"
+}
+\`\`\`
+
+POINTS D'ATTENTION MULTI-TRANCHE:
+- CCA (Compte Courant d'Associe) = pret remboursable. Le BA est creancier, PAS actionnaire sur cette partie
+- Actions au nominal = dilution future quasi-certaine si la boite leve
+- Option conditionnelle = risque de non-exercice. Evaluer la probabilite des milestones
+- Calculer la valorisation effective BLENDED (somme investie / % equity total)
+- Verifier la coherence entre tranches (ex: CCA 30K + 10% nominal = valorisation implicite de 10K pour l'equity... mais option a 1M post-money)
+- Les triggers (milestones, dates) sont-ils realistes et mesurables?`);
+    }
 
     return sections.join("\n\n---\n\n");
   }
@@ -773,6 +835,22 @@ Produis un JSON avec cette structure exacte:
       })),
     };
 
+    // Structured assessment (multi-tranche mode)
+    if (data.findings?.structuredAssessment) {
+      const sa = data.findings.structuredAssessment;
+      findings.structuredAssessment = {
+        overallStructureVerdict: sa.overallStructureVerdict ?? "",
+        trancheAssessments: (sa.trancheAssessments ?? []).map(ta => ({
+          trancheLabel: ta.trancheLabel ?? "",
+          assessment: ta.assessment ?? "",
+          risks: ta.risks ?? [],
+          score: Math.min(100, Math.max(0, Math.round(ta.score ?? 50))),
+        })),
+        blendedEffectiveValuation: sa.blendedEffectiveValuation ?? null,
+        triggerRiskLevel: this.validateTriggerRisk(sa.triggerRiskLevel),
+      };
+    }
+
     // Red flags
     const redFlags: AgentRedFlag[] = (data.redFlags ?? []).map((rf, i) => ({
       id: rf.id ?? `RF-CA-${String(i + 1).padStart(3, "0")}`,
@@ -866,6 +944,13 @@ Produis un JSON avec cette structure exacte:
     if (upper.includes("ADEQUATE") || upper.includes("CORRECT")) return "ADEQUATE";
     if (upper.includes("WEAK") || upper.includes("FAIBLE")) return "WEAK";
     return "CONCERNING";
+  }
+
+  private validateTriggerRisk(r: string | undefined): "LOW" | "MEDIUM" | "HIGH" {
+    const upper = (r ?? "").toUpperCase();
+    if (upper.includes("HIGH")) return "HIGH";
+    if (upper.includes("LOW")) return "LOW";
+    return "MEDIUM";
   }
 
   private validateImpact(i: string | undefined): "positive" | "negative" | "neutral" {

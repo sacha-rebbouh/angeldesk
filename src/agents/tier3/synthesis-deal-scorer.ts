@@ -262,7 +262,7 @@ export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData,
       description: "Synthèse finale: score pondéré + recommandation d'investissement basée sur tous les agents",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      timeoutMs: 240000,
       dependencies: [
         // Tier 1 - Analysis agents
         "deck-forensics",
@@ -800,19 +800,31 @@ ${weightsTable}
 Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
     // Call LLM with retry: if dimensional scores are missing, retry once with explicit instruction.
+    // Time-budget aware: only retry if we have enough time left (< 50% of timeout used).
     let data: LLMSynthesisResponse;
+    const callStart = Date.now();
     const firstAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt);
+    const firstCallMs = Date.now() - callStart;
     const firstBreakdown = firstAttempt.data.score?.breakdown ?? firstAttempt.data.dimensionScores ?? [];
 
     if (firstBreakdown.length >= 3) {
       data = firstAttempt.data;
     } else {
-      console.warn(
-        `[synthesis-deal-scorer] LLM returned ${firstBreakdown.length} dimension scores — retrying with explicit instruction`
-      );
-      const retryPrompt = prompt + `\n\n---\n\n**INSTRUCTION CRITIQUE**: Ta réponse DOIT inclure "score.breakdown" avec AU MINIMUM 7 dimensions (Team, Financials, Market, Product/Tech, GTM/Traction, Competitive, Exit Potential), chacune avec "criterion", "weight", "score" et "justification". Sans ce breakdown, l'analyse est inutilisable.`;
-      const retryAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(retryPrompt);
-      data = retryAttempt.data;
+      const timeRemaining = this.config.timeoutMs - firstCallMs;
+      const canRetry = timeRemaining > firstCallMs * 1.2; // need ~120% of first call for retry + post-processing
+      if (canRetry) {
+        console.warn(
+          `[synthesis-deal-scorer] LLM returned ${firstBreakdown.length} dimension scores — retrying (${Math.round(timeRemaining / 1000)}s remaining)`
+        );
+        const retryPrompt = prompt + `\n\n---\n\n**INSTRUCTION CRITIQUE**: Ta réponse DOIT inclure "score.breakdown" avec AU MINIMUM 7 dimensions (Team, Financials, Market, Product/Tech, GTM/Traction, Competitive, Exit Potential), chacune avec "criterion", "weight", "score" et "justification". Sans ce breakdown, l'analyse est inutilisable.`;
+        const retryAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(retryPrompt);
+        data = retryAttempt.data;
+      } else {
+        console.warn(
+          `[synthesis-deal-scorer] LLM returned ${firstBreakdown.length} dimension scores — skipping retry (only ${Math.round(timeRemaining / 1000)}s left, first call took ${Math.round(firstCallMs / 1000)}s)`
+        );
+        data = firstAttempt.data;
+      }
     }
 
     // Transform and validate the response

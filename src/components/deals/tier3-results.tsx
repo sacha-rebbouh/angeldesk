@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback, memo } from "react";
+import { useMemo, useCallback, memo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
@@ -49,6 +50,11 @@ import type {
 } from "@/agents/types";
 import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-teaser";
 import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
+import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
+import { ResolutionBadge } from "./resolution-badge";
+import { ResolutionDialog } from "./resolution-dialog";
+import { AdjustedScoreBadge } from "./adjusted-score-badge";
+import type { AlertResolution, CreateResolutionInput } from "@/hooks/use-resolutions";
 
 interface Tier3ResultsProps {
   results: Record<string, {
@@ -61,6 +67,11 @@ interface Tier3ResultsProps {
   }>;
   subscriptionPlan?: SubscriptionPlan;
   totalAgentsRun?: number;
+  resolutionMap?: Record<string, import("@/hooks/use-resolutions").AlertResolution>;
+  resolutions?: import("@/hooks/use-resolutions").AlertResolution[];
+  onResolve?: (input: import("@/hooks/use-resolutions").CreateResolutionInput) => Promise<unknown>;
+  onUnresolve?: (alertKey: string) => Promise<unknown>;
+  isResolving?: boolean;
 }
 
 // Hoisted color function - pure, no need for useCallback
@@ -127,12 +138,14 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
   weaknessesLimit = Infinity,
   showFullScore = true,
   hideCriticalRisks = false,
+  resolutions,
 }: {
   data: SynthesisDealScorerData;
   strengthsLimit?: number;
   weaknessesLimit?: number;
   showFullScore?: boolean;
   hideCriticalRisks?: boolean;
+  resolutions?: AlertResolution[];
 }) {
   const visibleStrengths = data.keyStrengths.slice(0, strengthsLimit);
   const hiddenStrengthsCount = Math.max(0, data.keyStrengths.length - strengthsLimit);
@@ -150,6 +163,9 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           <div className="flex items-center gap-3">
             <VerdictBadge verdict={data.verdict} />
             <ScoreBadge score={data.overallScore} size="lg" />
+            {resolutions && resolutions.length > 0 && (
+              <AdjustedScoreBadge originalScore={data.overallScore} resolutions={resolutions} />
+            )}
           </div>
         </div>
         <CardDescription>Score final — analyse multi-tiers avec consensus et réflexion</CardDescription>
@@ -456,6 +472,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
   const isNoGo = (overallScore ?? 100) < 35;
 
   // Calculate expected return (with and without failure scenario)
+  // IRR DERIVED from multiple + holding period — never trust LLM IRR output
   const expectedReturn = useMemo(() => {
     if (!scenarios.length) return null;
 
@@ -471,7 +488,11 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
     for (const s of scenarios) {
       const prob = (s.probability?.value ?? 0) / 100;
       const multiple = s.investorReturn?.multiple ?? 0;
-      const irr = s.investorReturn?.irr ?? 0;
+      const years = s.investorReturn?.holdingPeriodYears ?? 6;
+      // IRR derived from multiple: (mult^(1/years) - 1) * 100
+      const irr = multiple > 0
+        ? (Math.pow(multiple, 1 / years) - 1) * 100
+        : -100;
 
       expMult += prob * multiple;
       expIRR += prob * irr;
@@ -557,7 +578,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-3xl font-bold">
-                    {Number(probabilityWeighted?.expectedMultiple ?? expectedReturn.multiple ?? 0).toFixed(1)}x
+                    {Number(expectedReturn.multiple ?? 0).toFixed(1)}x
                   </div>
                   <div className="text-xs text-indigo-200 mt-1">
                     Multiple pondéré (tous scénarios)
@@ -579,7 +600,7 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
                     "font-semibold",
                     Number(expectedReturn.irr ?? 0) < 10 ? "text-amber-300" : "text-white"
                   )}>
-                    {Number(probabilityWeighted?.expectedIRR ?? expectedReturn.irr ?? 0).toFixed(0)}%
+                    {Number(expectedReturn.irr ?? 0).toFixed(0)}%
                   </span>
                 </div>
                 <p className="text-xs text-indigo-300 mt-1">
@@ -837,10 +858,29 @@ const ScenarioModelerCard = memo(function ScenarioModelerCard({ data, overallSco
 const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
   data,
   objectionsLimit = Infinity,
+  resolutionMap,
+  onResolve,
+  onUnresolve,
+  isResolving = false,
 }: {
   data: DevilsAdvocateData;
   objectionsLimit?: number;
+  resolutionMap?: Record<string, import("@/hooks/use-resolutions").AlertResolution>;
+  onResolve?: (input: import("@/hooks/use-resolutions").CreateResolutionInput) => Promise<unknown>;
+  onUnresolve?: (alertKey: string) => Promise<unknown>;
+  isResolving?: boolean;
 }) {
+  const [daDialogState, setDaDialogState] = useState<{
+    alertKey: string; title: string; severity: string; description?: string;
+  } | null>(null);
+
+  const handleDAResolve = useCallback(async (
+    alertKey: string, title: string, severity: string, status: "RESOLVED" | "ACCEPTED", justification: string,
+  ) => {
+    if (!onResolve) return;
+    await onResolve({ alertKey, alertType: "DEVILS_ADVOCATE", status, justification, alertTitle: title, alertSeverity: severity });
+  }, [onResolve]);
+
   // Map new structure to display elements
   const allConcerns = [
     ...(data.findings?.concernsSummary?.absolute ?? []).map(c => ({ text: c, level: "absolute" as const })),
@@ -873,6 +913,7 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
   const worstCase = data.findings?.worstCaseScenario;
 
   return (
+    <>
     <Card className="border-2 border-purple-100">
       {/* Header with Skepticism Gauge */}
       <CardHeader className="pb-2 bg-gradient-to-r from-purple-50 to-pink-50">
@@ -947,21 +988,45 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
               DEALBREAKERS ABSOLUS ({absoluteKillReasons.length})
             </p>
             <ul className="space-y-3">
-              {absoluteKillReasons.map((kr, i) => (
-                <li key={i} className="p-3 bg-white/10 rounded backdrop-blur">
-                  <span className="font-medium">{kr.reason}</span>
-                  {kr.evidence && (
-                    <p className="text-sm mt-1 text-red-100">
-                      <span className="font-medium">Evidence:</span> {kr.evidence}
-                    </p>
-                  )}
-                  {kr.sourceAgent && (
-                    <Badge className="mt-2 bg-white/20 text-white border-white/30 text-xs">
-                      Source: {kr.sourceAgent}
-                    </Badge>
-                  )}
-                </li>
-              ))}
+              {absoluteKillReasons.map((kr, i) => {
+                const key = devilsAdvocateAlertKey("killReason", kr.reason);
+                const resolution = resolutionMap?.[key];
+                return (
+                  <li key={i} className={cn("p-3 rounded backdrop-blur", resolution ? "bg-white/5 opacity-60" : "bg-white/10")}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className={cn("font-medium", resolution && "line-through")}>{kr.reason}</span>
+                      {resolution ? (
+                        <ResolutionBadge
+                          status={resolution.status as "RESOLVED" | "ACCEPTED"}
+                          justification={resolution.justification}
+                          onRevert={onUnresolve ? () => onUnresolve(key) : undefined}
+                          compact
+                        />
+                      ) : onResolve ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs gap-1 border-red-300 text-red-100 hover:bg-red-800 hover:text-white shrink-0"
+                          onClick={() => setDaDialogState({ alertKey: key, title: kr.reason, severity: "CRITICAL", description: kr.evidence })}
+                        >
+                          <CheckCircle className="h-3 w-3" />
+                          Traiter
+                        </Button>
+                      ) : null}
+                    </div>
+                    {!resolution && kr.evidence && (
+                      <p className="text-sm mt-1 text-red-100">
+                        <span className="font-medium">Evidence:</span> {kr.evidence}
+                      </p>
+                    )}
+                    {!resolution && kr.sourceAgent && (
+                      <Badge className="mt-2 bg-white/20 text-white border-white/30 text-xs">
+                        Source: {kr.sourceAgent}
+                      </Badge>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -973,22 +1038,49 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
               <ShieldAlert className="h-5 w-5" /> Top Concerns ({allConcerns.length})
             </p>
             <ul className="space-y-2">
-              {visibleConcerns.map((c, i) => (
-                <li key={i} className="p-2 bg-white/70 rounded border border-orange-100 flex items-start gap-2">
-                  <span className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shrink-0">
-                    {i + 1}
-                  </span>
-                  <span className="flex-1 text-sm text-orange-900">{c.text}</span>
-                  <Badge variant="outline" className={cn(
-                    "text-xs shrink-0",
-                    c.level === "absolute" ? "bg-red-100 text-red-800 border-red-300" :
-                    c.level === "conditional" ? "bg-orange-100 text-orange-800 border-orange-300" :
-                    "bg-yellow-100 text-yellow-800 border-yellow-300"
-                  )}>
-                    {c.level}
-                  </Badge>
-                </li>
-              ))}
+              {visibleConcerns.map((c, i) => {
+                const key = devilsAdvocateAlertKey("concern", c.text);
+                const resolution = resolutionMap?.[key];
+                const levelSeverity = c.level === "absolute" ? "CRITICAL" : c.level === "conditional" ? "HIGH" : "MEDIUM";
+                return (
+                  <li key={i} className={cn("p-2 bg-white/70 rounded border border-orange-100 flex items-start gap-2", resolution && "opacity-60")}>
+                    <span className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shrink-0">
+                      {i + 1}
+                    </span>
+                    <span className={cn("flex-1 text-sm text-orange-900", resolution && "line-through")}>{c.text}</span>
+                    {resolution ? (
+                      <ResolutionBadge
+                        status={resolution.status as "RESOLVED" | "ACCEPTED"}
+                        justification={resolution.justification}
+                        onRevert={onUnresolve ? () => onUnresolve(key) : undefined}
+                        compact
+                      />
+                    ) : (
+                      <>
+                        <Badge variant="outline" className={cn(
+                          "text-xs shrink-0",
+                          c.level === "absolute" ? "bg-red-100 text-red-800 border-red-300" :
+                          c.level === "conditional" ? "bg-orange-100 text-orange-800 border-orange-300" :
+                          "bg-yellow-100 text-yellow-800 border-yellow-300"
+                        )}>
+                          {c.level}
+                        </Badge>
+                        {onResolve && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 px-2 text-xs gap-1 shrink-0"
+                            onClick={() => setDaDialogState({ alertKey: key, title: c.text, severity: levelSeverity })}
+                          >
+                            <CheckCircle className="h-3 w-3" />
+                            Traiter
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
             {hiddenConcernsCount > 0 && (
               <div className="mt-3">
@@ -1005,23 +1097,47 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
               <AlertTriangle className="h-5 w-5" /> Dealbreakers Conditionnels ({conditionalKillReasons.length})
             </p>
             <ul className="space-y-3">
-              {conditionalKillReasons.slice(0, 5).map((kr, i) => (
-                <li key={i} className="p-3 bg-white/70 rounded border border-amber-100">
-                  <span className="font-medium text-amber-900">{kr.reason}</span>
-                  {kr.condition && (
-                    <div className="mt-2 p-2 bg-amber-100/50 rounded text-xs">
-                      <span className="font-medium text-amber-800">Condition:</span>{" "}
-                      <span className="text-amber-700">{kr.condition}</span>
+              {conditionalKillReasons.slice(0, 5).map((kr, i) => {
+                const key = devilsAdvocateAlertKey("killReason", kr.reason);
+                const resolution = resolutionMap?.[key];
+                return (
+                  <li key={i} className={cn("p-3 bg-white/70 rounded border border-amber-100", resolution && "opacity-60")}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className={cn("font-medium text-amber-900", resolution && "line-through")}>{kr.reason}</span>
+                      {resolution ? (
+                        <ResolutionBadge
+                          status={resolution.status as "RESOLVED" | "ACCEPTED"}
+                          justification={resolution.justification}
+                          onRevert={onUnresolve ? () => onUnresolve(key) : undefined}
+                          compact
+                        />
+                      ) : onResolve ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs gap-1 shrink-0"
+                          onClick={() => setDaDialogState({ alertKey: key, title: kr.reason, severity: "HIGH", description: kr.condition })}
+                        >
+                          <CheckCircle className="h-3 w-3" />
+                          Traiter
+                        </Button>
+                      ) : null}
                     </div>
-                  )}
-                  {kr.questionToFounder && (
-                    <div className="mt-2 p-2 bg-blue-50 rounded text-xs flex items-start gap-2">
-                      <Lightbulb className="h-4 w-4 text-blue-500 shrink-0" />
-                      <span className="text-blue-700">{kr.questionToFounder}</span>
-                    </div>
-                  )}
-                </li>
-              ))}
+                    {!resolution && kr.condition && (
+                      <div className="mt-2 p-2 bg-amber-100/50 rounded text-xs">
+                        <span className="font-medium text-amber-800">Condition:</span>{" "}
+                        <span className="text-amber-700">{kr.condition}</span>
+                      </div>
+                    )}
+                    {!resolution && kr.questionToFounder && (
+                      <div className="mt-2 p-2 bg-blue-50 rounded text-xs flex items-start gap-2">
+                        <Lightbulb className="h-4 w-4 text-blue-500 shrink-0" />
+                        <span className="text-blue-700">{kr.questionToFounder}</span>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -1254,6 +1370,22 @@ const DevilsAdvocateCard = memo(function DevilsAdvocateCard({
         )}
       </CardContent>
     </Card>
+
+    {/* DA Resolution Dialog */}
+    {daDialogState && (
+      <ResolutionDialog
+        open={!!daDialogState}
+        onOpenChange={(open) => { if (!open) setDaDialogState(null); }}
+        alertTitle={daDialogState.title}
+        alertSeverity={daDialogState.severity}
+        alertDescription={daDialogState.description}
+        onSubmit={(status, justification) =>
+          handleDAResolve(daDialogState.alertKey, daDialogState.title, daDialogState.severity, status, justification)
+        }
+        isSubmitting={isResolving}
+      />
+    )}
+    </>
   );
 });
 
@@ -1592,6 +1724,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
 });
 
 // Calculate expected return from scenarios
+// IRR is DERIVED from multiple + holding period (not LLM output) to guarantee mathematical consistency
 function calculateExpectedReturn(scenarios: ScenarioV2[]): {
   expectedMultiple: number;
   expectedIRR: number;
@@ -1606,7 +1739,11 @@ function calculateExpectedReturn(scenarios: ScenarioV2[]): {
   for (const s of scenarios) {
     const prob = (s.probability?.value ?? 0) / 100;
     const mult = s.investorReturn?.multiple ?? 0;
-    const irr = s.investorReturn?.irr ?? 0;
+    const years = s.investorReturn?.holdingPeriodYears ?? 6;
+    // IRR derived from multiple: (mult^(1/years) - 1) * 100 — guarantees consistency
+    const irr = mult > 0
+      ? (Math.pow(mult, 1 / years) - 1) * 100
+      : -100;
 
     expectedMultiple += prob * mult;
     expectedIRR += prob * irr;
@@ -1633,7 +1770,7 @@ function getIRRColorClass(irr: number): string {
 }
 
 // Main Tier 3 Results Component - Synthesis Agents
-export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRun }: Tier3ResultsProps) {
+export const Tier3Results = memo(function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRun, resolutionMap, resolutions, onResolve, onUnresolve, isResolving }: Tier3ResultsProps) {
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
     if (!result?.success || !result.data) return null;
@@ -1659,32 +1796,44 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
     if (!scenarioData?.findings?.scenarios) return null;
     const raw = calculateExpectedReturn(scenarioData.findings.scenarios);
 
-    // Apply skepticism adjustment — confidence-weighted expected return
-    // A skepticism score IS a probability of failure. If devil's advocate says 88/100,
-    // there's roughly an 88% chance the deal goes wrong.
-    // We use skepticism directly as a loss probability:
-    //   skepticism 50 → multiply by 0.50 (2.2x from 4.4x)
-    //   skepticism 70 → multiply by 0.30 (1.3x from 4.4x)
-    //   skepticism 88 → multiply by 0.12 (0.5x from 4.4x)
-    //   skepticism 95 → multiply by 0.05 (0.2x from 4.4x)
-    const skepticism = devilsData?.findings?.skepticismAssessment?.score ?? 0;
+    // Determine effective skepticism:
+    // 1. Use DA score if DA ran (even if fallback-derived by DA itself)
+    // 2. Otherwise, derive from overall score (a 19/100 deal = high skepticism)
+    // 3. Default to 50 if nothing available
+    const daSkepticism = devilsData?.findings?.skepticismAssessment != null
+      ? devilsData.findings.skepticismAssessment.score
+      : undefined;
+    const derivedSkepticism = scorerData
+      ? Math.max(0, Math.min(100, 100 - scorerData.overallScore))
+      : 50;
+    const skepticism = daSkepticism ?? derivedSkepticism;
+
+    // Always apply skepticism adjustment — confidence-weighted expected return
+    //   skepticism 50 → survivalRate 0.25 (multiply by 25%)
+    //   skepticism 70 → survivalRate 0.09
+    //   skepticism 88 → survivalRate 0.014
     if (skepticism > 0) {
-      const survivalRate = Math.pow(1 - skepticism / 100, 2); // squared for extra pessimism
+      const survivalRate = Math.pow(1 - skepticism / 100, 2);
       raw.expectedMultiple = raw.expectedMultiple * survivalRate;
       raw.expectedIRR = raw.expectedIRR * survivalRate;
-      if (skepticism > 40) {
-        raw.calculation = raw.calculation + ` (×${(survivalRate * 100).toFixed(0)}% survie)`;
-      }
+      raw.calculation = raw.calculation + ` (×${(survivalRate * 100).toFixed(0)}% survie)`;
     }
 
     return raw;
-  }, [scenarioData, devilsData]);
+  }, [scenarioData, devilsData, scorerData]);
 
   // Get key metrics for impactful header
   const headerMetrics = useMemo(() => {
     const baseScenario = scenarioData?.findings?.scenarios?.find(s => s.name === "BASE");
     const bullScenario = scenarioData?.findings?.scenarios?.find(s => s.name === "BULL");
-    const skepticism = devilsData?.findings?.skepticismAssessment?.score ?? 0;
+    const daSkepticism = devilsData?.findings?.skepticismAssessment != null
+      ? devilsData.findings.skepticismAssessment.score
+      : undefined;
+    const daIsFallback = devilsData?.findings?.skepticismAssessment?.isFallback ?? false;
+    // If DA has no data, derive skepticism from overall score
+    const derivedSkepticism = scorerData
+      ? Math.max(0, Math.min(100, 100 - scorerData.overallScore))
+      : null;
     const killReasons = devilsData?.findings?.killReasons?.filter(kr => kr.dealBreakerLevel === "ABSOLUTE")?.length ?? 0;
     const contradictions = contradictionData?.findings?.contradictions?.filter(c => c.severity === "CRITICAL" || c.severity === "HIGH")?.length ?? 0;
 
@@ -1693,11 +1842,14 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
       bullIRR: bullScenario?.investorReturn?.irr ?? 0,
       baseMultiple: baseScenario?.investorReturn?.multiple ?? 0,
       bullMultiple: bullScenario?.investorReturn?.multiple ?? 0,
-      skepticism,
+      skepticism: daSkepticism ?? derivedSkepticism ?? 0,
+      skepticismSource: daSkepticism != null
+        ? (daIsFallback ? "da-derived" as const : "da" as const)
+        : derivedSkepticism != null ? "derived" as const : "none" as const,
       killReasons,
       contradictions,
     };
-  }, [scenarioData, devilsData, contradictionData]);
+  }, [scenarioData, devilsData, contradictionData, scorerData]);
 
   return (
     <div className="space-y-6">
@@ -1730,18 +1882,26 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
         </CardHeader>
         <CardContent className="relative">
           {/* Key Metrics Grid - The WOW factor */}
+          {/* Coherence guard: if score < 40 with dealbreakers, deal is NO_GO — don't show optimistic projections */}
+          {(() => {
+            // If scorer timed out but DA found dealbreakers → assume NO_GO (pessimistic default)
+            const effectiveScore = scorerData?.overallScore ?? (headerMetrics.killReasons > 0 ? 0 : 100);
+            const isNoGo = effectiveScore < 40 && headerMetrics.killReasons > 0;
+            return (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             {/* Expected Return */}
             {expectedReturn && (
               <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10 relative">
-                <Badge className="absolute -top-2 -right-2 bg-amber-500/90 text-white text-[10px] px-1.5 py-0.5 border-0">
-                  PROJECTION
-                </Badge>
+                {!isNoGo && (
+                  <Badge className="absolute -top-2 -right-2 bg-amber-500/90 text-white text-[10px] px-1.5 py-0.5 border-0">
+                    PROJECTION
+                  </Badge>
+                )}
                 <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Rendement Theorique (estimatif)</div>
-                {expectedReturn.expectedMultiple < 1 ? (
+                {isNoGo || expectedReturn.expectedMultiple < 1 ? (
                   <>
                     <div className="text-3xl font-bold text-slate-500">—</div>
-                    <div className="text-xs text-slate-500 mt-1">Retour improbable</div>
+                    <div className="text-xs text-slate-500 mt-1">{isNoGo ? "Deal non-investissable" : "Retour improbable"}</div>
                   </>
                 ) : (
                   <>
@@ -1758,7 +1918,7 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
             )}
 
             {/* Expected IRR */}
-            {expectedReturn && expectedReturn.expectedIRR !== 0 && (
+            {expectedReturn && !isNoGo && expectedReturn.expectedIRR !== 0 && expectedReturn.expectedMultiple >= 1 && (
               <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10 relative">
                 <Badge className="absolute -top-2 -right-2 bg-amber-500/90 text-white text-[10px] px-1.5 py-0.5 border-0">
                   PROJECTION
@@ -1774,15 +1934,28 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
             {/* Skepticism Score */}
             <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
               <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Scepticisme</div>
-              <div className={cn(
-                "text-3xl font-bold",
-                headerMetrics.skepticism <= 30 ? "text-green-400" :
-                headerMetrics.skepticism <= 50 ? "text-yellow-400" :
-                headerMetrics.skepticism <= 70 ? "text-orange-400" : "text-red-400"
-              )}>
-                {headerMetrics.skepticism}/100
-              </div>
-              <div className="text-xs text-slate-400 mt-1">Devil&apos;s Advocate</div>
+              {headerMetrics.skepticismSource === "none" ? (
+                <>
+                  <div className="text-3xl font-bold text-slate-500">—</div>
+                  <div className="text-xs text-slate-500 mt-1">Donnees indisponibles</div>
+                </>
+              ) : (
+                <>
+                  <div className={cn(
+                    "text-3xl font-bold",
+                    headerMetrics.skepticism <= 30 ? "text-green-400" :
+                    headerMetrics.skepticism <= 50 ? "text-yellow-400" :
+                    headerMetrics.skepticism <= 70 ? "text-orange-400" : "text-red-400"
+                  )}>
+                    {headerMetrics.skepticism}/100
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    {headerMetrics.skepticismSource === "da" ? "Devil's Advocate" :
+                     headerMetrics.skepticismSource === "da-derived" ? "Devil's Advocate (estime)" :
+                     "Estime depuis le score"}
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Risk Indicators */}
@@ -1810,9 +1983,11 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
               </div>
             </div>
           </div>
+            );
+          })()}
 
           {/* Warning projection */}
-          {expectedReturn && expectedReturn.expectedMultiple >= 1 && (
+          {expectedReturn && expectedReturn.expectedMultiple >= 1 && !((scorerData?.overallScore ?? (headerMetrics.killReasons > 0 ? 0 : 100)) < 40 && headerMetrics.killReasons > 0) && (
             <div className="flex items-start gap-2 px-4 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 mb-4">
               <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-200">
@@ -1873,6 +2048,7 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
                       weaknessesLimit={displayLimits.weaknesses}
                       showFullScore={displayLimits.score}
                       hideCriticalRisks={!!showNoGo}
+                      resolutions={resolutions}
                     />
                   )}
                 </div>
@@ -1928,6 +2104,10 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
               <DevilsAdvocateCard
                 data={devilsData}
                 objectionsLimit={displayLimits.devilsAdvocate}
+                resolutionMap={resolutionMap}
+                onResolve={onResolve}
+                onUnresolve={onUnresolve}
+                isResolving={isResolving}
               />
             )}
           </div>
@@ -1951,4 +2131,4 @@ export function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRu
       </Tabs>
     </div>
   );
-}
+});

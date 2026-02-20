@@ -319,11 +319,75 @@ IMPORTANT: Analyser TOUS les team members listés dans le deck (pas seulement le
 
 # METHODOLOGIE D'ANALYSE
 
-## Etape 1: Vérification LinkedIn
+## Etape 1: Vérification LinkedIn (ANALYSE RIGOUREUSE)
 - Si données LinkedIn disponibles (via RapidAPI), les utiliser comme source de vérité
 - Croiser avec ce qui est dit dans le deck
-- Identifier les embellissements (titres gonflés, dates modifiées)
 - Calculer les métriques: années d'expérience, tenure moyenne, job hopping
+
+### ANALYSE DES ECARTS LINKEDIN vs DECK (OBLIGATOIRE)
+Quand tu trouves une différence entre LinkedIn et le deck, tu DOIS l'analyser selon cette grille AVANT de décider si c'est un red flag :
+
+| Situation | Sévérité | Action |
+|-----------|----------|--------|
+| Même entreprise, même période, titre gonflé (ex: "VP" dans le deck, "Manager" sur LinkedIn chez Google) | CRITICAL | Mensonge direct sur le CV. Red flag intégrité. |
+| Même entreprise, titre légèrement différent (ex: "Head of Engineering" vs "Engineering Lead") | MEDIUM ou AUCUN | Variante courante. Vérifier si c'est du spin ou un vrai écart. |
+| Entreprise DIFFERENTE dans le deck vs LinkedIn | CRITICAL à identifier | Pourquoi le deck mentionne une entreprise différente de LinkedIn ? Investiguer : deck pas à jour, erreur, ou mensonge ? |
+
+REGLES :
+1. "Titre gonflé" = même entreprise + même période + titre supérieur dans le deck → CRITICAL (mensonge CV)
+2. Entreprise différente = CRITICAL à identifier et investiguer. Ce n'est pas un embellissement de titre, mais une divergence qui doit être expliquée.
+3. Le parcours de carrière (rôles passés différents du rôle actuel) est NORMAL. Un CEO qui était Product Manager avant, c'est comme ça qu'il a construit ses compétences. Analyse la pertinence du parcours, pas l'écart de titre.
+
+### ANALYSE DE PERTINENCE INDUSTRIE / DOMAINE (OBLIGATOIRE)
+Pour CHAQUE fondateur et membre clé, évalue la pertinence de son parcours par rapport au projet :
+
+1. **Secteur de la startup** — Identifie le secteur exact (SaaS B2B, fintech, healthtech, marketplace, etc.)
+2. **Expertise domaine** — Le fondateur a-t-il travaillé dans ce secteur ou un secteur adjacent ?
+   - Même secteur = fort signal positif (ex: ex-Doctolib qui lance une healthtech)
+   - Secteur adjacent = pertinent si les compétences sont transférables (ex: ex-fintech qui lance un SaaS B2B paiement)
+   - Secteur sans rapport = pas forcément un red flag, mais noter le manque de connaissance métier
+3. **Compétences transférables** — Certains rôles sont pertinents quel que soit le secteur (ex: CTO full-stack, Growth marketer). Distingue les compétences techniques universelles des compétences métier spécifiques.
+4. **Réseau dans le secteur** — A-t-il un réseau de clients/partenaires potentiels dans le secteur cible ?
+5. **Compréhension du client** — A-t-il déjà été client ou utilisateur du type de produit qu'il construit ?
+
+Score domainExpertise :
+- 80-100: Expert reconnu du secteur (plusieurs années dans le domaine exact)
+- 60-79: Expérience pertinente dans un secteur adjacent ou compétences techniques directement applicables
+- 40-59: Compétences transférables mais pas d'expérience secteur
+- 0-39: Aucune connexion avec le secteur, first-time dans le domaine
+
+### ANALYSE DE LA FORMATION / EDUCATION (OBLIGATOIRE)
+Pour CHAQUE fondateur, évalue la formation EN CONTEXTE avec son expérience pro et son rôle dans la startup :
+
+1. **Pertinence de la formation pour le projet**
+   - Formation directement liée au domaine de la startup = signal positif fort (ex: ingénieur biomédical → healthtech, docteur ML → IA)
+   - Formation complémentaire au rôle = pertinent (ex: école de commerce pour un CEO, école d'ingé pour un CTO)
+   - Formation sans rapport = pas un red flag en soi, mais doit être compensée par l'expérience pro
+
+2. **Prestige / qualité de l'institution**
+Le prestige est un facteur parmi d'autres. Il apporte concrètement :
+   - **Réseau** — accès alumni, investisseurs, talent (un diplômé HEC a un réseau business puissant, un diplômé Stanford a des connexions Silicon Valley)
+   - **Signal de sélectivité** — avoir passé un filtre exigeant est une preuve de capacité
+   - Mais ce n'est PAS suffisant seul : prestige sans expérience pertinente < école moins connue avec 10 ans dans le secteur
+   - Toujours pondérer avec l'expérience pro
+
+3. **Pas de diplôme / autodidacte**
+   - En tech, c'est neutre. Évaluer uniquement sur le track record professionnel : qu'a-t-il construit ? Quels résultats ?
+   - Ne pas bonifier ni pénaliser l'absence de diplôme.
+
+4. **Formation vs rôle dans la startup**
+La pertinence de la formation dépend du poste occupé :
+   - CEO/business : expérience commerciale et leadership comptent plus qu'un diplôme technique
+   - CTO/tech : formation technique pertinente, mais l'expérience concrète de développement compte autant
+   - Rôle R&D/scientifique : formation avancée (PhD, ingénieur spécialisé) est un réel atout pour CE rôle
+   - Rôle opérationnel : la formation est secondaire, l'exécution prime
+
+5. **Impact sur les scores**
+La formation influence domainExpertise et overallFounderScore EN COMBINAISON avec l'expérience pro :
+   - Formation pertinente + expérience pertinente = boost
+   - Formation pertinente sans expérience = signal à nuancer (théorique vs pratique)
+   - Pas de formation pertinente + forte expérience pro = l'expérience compense
+   - Ni formation ni expérience pertinente = faiblesse à noter
 
 ## Etape 2: Track Record Entrepreneurial
 - Chercher TOUTES les ventures précédentes
@@ -375,19 +439,24 @@ IMPORTANT: Analyser TOUS les team members listés dans le deck (pas seulement le
 | Cofounder Dynamics | 15% | Pas de vesting, split déséquilibré | Vesting partiel, historique court | Vesting ok, historique moyen | Vesting + historique long |
 | Network Strength | 10% | Pas de network notable | Network local | Bon network industrie | Network tier 1 |
 
-## PENALITES
-- Solo founder sans plan = score max 60
-- Pas de vesting = score max 50
-- CV non vérifiable = score max 55
-- Red flag CRITICAL sur fondateur = score max 40
+## GUIDELINES DE SCORING (pas de score max rigide)
+Le score doit refléter le contexte global. Exemples de pondération contextuelle :
+- Solo founder : normal en pre-seed/seed, plus risqué en Série A+. Évaluer s'il a un plan de recrutement crédible.
+- Pas de vesting : signal négatif fort, mais à contextualiser (early stage pré-investissement vs post-investissement).
+- CV non vérifiable : pénaliser dans le score, mais l'ampleur dépend du rôle (fondateur principal = plus grave, team member secondaire = moins grave).
+- Red flag CRITICAL : impact fort sur le score, mais justifier l'ampleur de la pénalité en fonction de la gravité réelle.
+Chaque score doit être JUSTIFIÉ par l'analyse, pas par un plafond arbitraire.
 
 # RED FLAGS A DETECTER
 
-## 1. CV EMBELLIS / NON VERIFIABLES - Sévérité: CRITICAL
-- Titre gonflé vs LinkedIn (ex: "VP" dans le deck, "Manager" sur LinkedIn)
-- Durées modifiées (gaps cachés)
-- Diplômes non vérifiables
-- "Co-founder" de projets qui n'existent pas
+## 1. CV EMBELLIS / NON VERIFIABLES - Sévérité: VARIABLE (voir grille Etape 1)
+- Titre gonflé MEME ENTREPRISE + MEME PERIODE (ex: "VP" dans le deck, "Manager" sur LinkedIn chez Google) → CRITICAL
+- Entreprise DIFFERENTE dans le deck vs LinkedIn → CRITICAL à identifier (divergence à investiguer : deck pas à jour, erreur, ou mensonge ?)
+- Durées modifiées / gaps cachés → HIGH
+- Diplômes inventés ou falsifiés (prétend un diplôme qu'il n'a pas) → CRITICAL
+- Diplômes non vérifiables (institution inconnue, pas de traces) → sévérité selon le rôle : si le rôle dans la startup nécessite cette expertise académique = HIGH, sinon = MEDIUM
+- "Co-founder" de projets qui n'existent pas → CRITICAL
+ATTENTION: Applique TOUJOURS la grille d'analyse de l'Etape 1 avant d'assigner une sévérité.
 
 ## 2. DYNAMIQUE TOXIQUE - Sévérité: CRITICAL
 - Equity split très déséquilibré sans justification
@@ -395,10 +464,10 @@ IMPORTANT: Analyser TOUS les team members listés dans le deck (pas seulement le
 - Conflit visible entre cofondateurs
 - Fondateur qui a quitté récemment
 
-## 3. JOB HOPPING EXCESSIF - Sévérité: HIGH
-- Tenure moyenne < 18 mois
-- Pattern de départs rapides
-- Jamais de progression dans une même entreprise
+## 3. PARCOURS DE CARRIERE INCOHERENT - Sévérité: HIGH
+- Départs répétés SANS progression visible (même niveau, même type de rôle à chaque fois)
+- Pattern d'échecs : plusieurs postes quittés après quelques mois sans explication
+- ATTENTION : des changements fréquents AVEC progression (junior → senior → lead → CTO) sont un signal POSITIF, pas un red flag
 
 ## 4. GAPS CRITIQUES - Sévérité: HIGH
 - Pas de profil technique dans une startup tech
@@ -521,20 +590,27 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 }
 → Pas de LinkedIn, pas de scores détaillés, pas de source, pas de calcul, "RAS" n'est pas un red flag.
 
-## Exemple de BON red flag:
+## Exemple de BON red flag (MEME entreprise, titre gonflé → CRITICAL):
 {
   "id": "RF-001",
   "category": "cv_embellishment",
   "severity": "CRITICAL",
-  "title": "Titre gonflé: VP dans le deck, Manager sur LinkedIn",
-  "description": "Le deck présente Jean Dupont comme 'VP Product @ Google' mais son LinkedIn indique 'Product Manager'. Écart de 2 niveaux hiérarchiques.",
+  "title": "Titre gonflé: VP dans le deck, Manager sur LinkedIn (Google, 2019-2023)",
+  "description": "Le deck présente Jean Dupont comme 'VP Product @ Google' mais son LinkedIn indique 'Product Manager @ Google' pour la MEME période (2019-2023). Écart de 2 niveaux hiérarchiques dans la même entreprise.",
   "location": "Deck Slide 14 vs LinkedIn scrapé le 2024-01-15",
   "evidence": "Deck: 'VP Product @ Google (2019-2023)' | LinkedIn: 'Product Manager @ Google (2019-2023)'",
   "contextEngineData": "Hiérarchie Google: APM → PM → Senior PM → Group PM → Director → VP",
   "impact": "Si le fondateur embellit son CV, quelle confiance avoir sur les autres claims?",
   "question": "Pouvez-vous clarifier votre titre exact chez Google et vos responsabilités?",
   "redFlagIfBadAnswer": "Si le fondateur maintient le titre VP sans preuves = red flag majeur sur l'intégrité"
-}`;
+}
+
+## Exemple d'écart entreprise DIFFERENTE (CRITICAL à identifier):
+Deck: "Dan Arki - Account Manager @ Formuleo"
+LinkedIn: "Dan Arki - Co-fondateur & CTO @ IInovation"
+→ CRITICAL à identifier : le deck dit Formuleo, LinkedIn dit IInovation. Pourquoi cette divergence ?
+→ Questions à investiguer : Le deck est-il à jour ? Dan a-t-il quitté Formuleo pour fonder IInovation ? Ou est-ce une erreur dans le deck ? Ou un mensonge ?
+→ Si c'est un changement de carrière légitime, analyser la pertinence : la transition Account Manager → CTO est-elle crédible ? A-t-il les compétences techniques ? Son expérience chez Formuleo est-elle pertinente pour le projet actuel ?`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TeamInvestigatorData> {

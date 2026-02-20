@@ -30,22 +30,22 @@ export function TimelineVersions({
   currentAnalysisId,
   onSelectVersion,
 }: TimelineVersionsProps) {
-  const visibleAnalyses = useMemo(() => {
+  const sorted = useMemo(() => {
     return [...analyses].sort((a, b) => a.version - b.version);
   }, [analyses]);
 
-  if (visibleAnalyses.length === 0) {
+  if (sorted.length === 0) {
     return null;
   }
 
   return (
     <TooltipProvider>
-      <div className="flex items-center justify-center py-1.5 overflow-x-auto">
-        <div className="flex items-center gap-0 min-w-max">
-          {visibleAnalyses.map((analysis, index) => {
+      <div className="py-1.5 overflow-x-auto">
+        <div className="flex items-center gap-0 w-max mx-auto">
+          {sorted.map((analysis, index) => {
             const isCurrent = analysis.id === currentAnalysisId;
             const isFirst = index === 0;
-            const isLast = index === visibleAnalyses.length - 1;
+            const isLast = index === sorted.length - 1;
 
             return (
               <div key={analysis.id} className="flex items-center">

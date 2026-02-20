@@ -1024,23 +1024,40 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
             comparableFailure: c.comparableFailure,
           }))
         : [],
-      skepticismAssessment: {
-        score: data.findings?.skepticismAssessment?.score != null
-          ? Math.min(100, Math.max(0, data.findings.skepticismAssessment.score)) : 0,
-        scoreBreakdown: Array.isArray(data.findings?.skepticismAssessment?.scoreBreakdown)
-          ? data.findings.skepticismAssessment.scoreBreakdown.map((s) => ({
-              factor: s.factor ?? "",
-              contribution: s.contribution ?? 0,
-              rationale: s.rationale ?? "",
-            }))
-          : [],
-        verdict: validVerdicts.includes(
-          data.findings?.skepticismAssessment?.verdict as (typeof validVerdicts)[number]
-        )
-          ? (data.findings.skepticismAssessment.verdict as (typeof validVerdicts)[number])
-          : "CAUTIOUS",
-        verdictRationale: data.findings?.skepticismAssessment?.verdictRationale ?? "",
-      },
+      skepticismAssessment: (() => {
+        const rawScore = data.findings?.skepticismAssessment?.score;
+        const hasScore = rawScore != null;
+        // If LLM didn't return a score, derive from kill reasons + concerns
+        const fallbackScore = !hasScore
+          ? Math.min(100, Math.max(20,
+              (killReasons.filter(kr => kr.dealBreakerLevel === "ABSOLUTE").length * 25) +
+              (killReasons.filter(kr => kr.dealBreakerLevel === "CONDITIONAL").length * 15) +
+              (counterArguments.filter(ca => ca.probability === "HIGH").length * 10) +
+              20 // base skepticism (DA is inherently skeptical)
+            ))
+          : 0; // unused
+        if (!hasScore) {
+          console.warn(`[devils-advocate] LLM did not return skepticismAssessment.score — derived ${fallbackScore} from kill reasons/concerns`);
+        }
+        return {
+          score: hasScore
+            ? Math.min(100, Math.max(0, rawScore)) : fallbackScore,
+          isFallback: !hasScore,
+          scoreBreakdown: Array.isArray(data.findings?.skepticismAssessment?.scoreBreakdown)
+            ? data.findings.skepticismAssessment.scoreBreakdown.map((s: { factor?: string; contribution?: number; rationale?: string }) => ({
+                factor: s.factor ?? "",
+                contribution: s.contribution ?? 0,
+                rationale: s.rationale ?? "",
+              }))
+            : [],
+          verdict: validVerdicts.includes(
+            data.findings?.skepticismAssessment?.verdict as (typeof validVerdicts)[number]
+          )
+            ? (data.findings.skepticismAssessment.verdict as (typeof validVerdicts)[number])
+            : "CAUTIOUS",
+          verdictRationale: data.findings?.skepticismAssessment?.verdictRationale ?? "",
+        };
+      })(),
       concernsSummary: {
         absolute: Array.isArray(data.findings?.concernsSummary?.absolute)
           ? data.findings.concernsSummary.absolute

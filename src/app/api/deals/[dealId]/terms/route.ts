@@ -7,13 +7,38 @@ import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { ConditionsAnalystAgent } from "@/agents/tier3/conditions-analyst";
 import type { EnrichedAgentContext, ConditionsAnalystData } from "@/agents/types";
-import type { Deal } from "@prisma/client";
+import type { Deal, DealTranche } from "@prisma/client";
+import type { DealMode, TrancheData } from "@/components/deals/conditions/types";
+
+// Normalize a Prisma DealTranche to frontend TrancheData
+function normalizeTranche(t: DealTranche): TrancheData {
+  return {
+    id: t.id,
+    orderIndex: t.orderIndex,
+    label: t.label ?? "",
+    trancheType: t.trancheType,
+    typeDetails: t.typeDetails,
+    amount: t.amount != null ? Number(t.amount) : null,
+    valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+    equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+    triggerType: t.triggerType,
+    triggerDetails: t.triggerDetails,
+    triggerDeadline: t.triggerDeadline?.toISOString() ?? null,
+    instrumentTerms: t.instrumentTerms as Record<string, unknown> | null,
+    liquidationPref: t.liquidationPref,
+    antiDilution: t.antiDilution,
+    proRataRights: t.proRataRights,
+    status: t.status,
+  };
+}
 
 // Normalize analysis data for frontend (lowercase severity/priority, convert Decimals)
 function buildTermsResponse(
   terms: Record<string, unknown> | null,
   cached: ConditionsAnalystData | null,
   conditionsScore: number | null,
+  mode: DealMode = "SIMPLE",
+  tranches: TrancheData[] | null = null,
 ) {
   // Convert Prisma Decimal fields to numbers
   const normalizedTerms = terms ? {
@@ -36,6 +61,8 @@ function buildTermsResponse(
 
   return {
     terms: normalizedTerms,
+    mode,
+    tranches,
     conditionsScore,
     conditionsBreakdown: cached?.score?.breakdown ?? null,
     conditionsAnalysis: cached?.findings ?? null,
@@ -99,7 +126,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Invalid deal ID" }, { status: 400 });
     }
 
-    // Single query: deal + dealTerms in one round-trip
+    // Single query: deal + dealTerms + dealStructure with tranches in one round-trip
     const deal = await prisma.deal.findFirst({
       where: { id: dealId, userId: user.id },
       select: {
@@ -109,6 +136,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
         conditionsScore: true,
         conditionsAnalysis: true,
         dealTerms: true,
+        dealStructure: {
+          include: {
+            tranches: { orderBy: { orderIndex: "asc" } },
+          },
+        },
       },
     });
 
@@ -117,18 +149,51 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     const cached = deal.conditionsAnalysis as ConditionsAnalystData | null;
+    const mode: DealMode = deal.dealStructure?.mode ?? "SIMPLE";
+    const tranches: TrancheData[] | null = deal.dealStructure?.tranches
+      ? deal.dealStructure.tranches.map(normalizeTranche)
+      : null;
 
     return NextResponse.json(
       buildTermsResponse(
         deal.dealTerms as unknown as Record<string, unknown> | null,
         cached,
         deal.conditionsScore ?? null,
+        mode,
+        tranches,
       )
     );
   } catch (error) {
     return handleApiError(error, "GET /api/deals/[dealId]/terms");
   }
 }
+
+// Schema for structured tranches
+const trancheSchema = z.object({
+  id: z.string().optional(), // existing tranche ID (for updates)
+  orderIndex: z.number().int().min(0),
+  label: z.string().default(""),
+  trancheType: z.string(),
+  typeDetails: z.string().nullable().optional(),
+  amount: z.number().positive().nullable().optional(),
+  valuationPre: z.number().positive().nullable().optional(),
+  equityPct: z.number().min(0).max(100).nullable().optional(),
+  triggerType: z.string().nullable().optional(),
+  triggerDetails: z.string().nullable().optional(),
+  triggerDeadline: z.string().nullable().optional(), // ISO date
+  instrumentTerms: z.record(z.string(), z.unknown()).nullable().optional(),
+  liquidationPref: z.string().nullable().optional(),
+  antiDilution: z.string().nullable().optional(),
+  proRataRights: z.boolean().nullable().optional(),
+  status: z.string().default("PENDING"),
+});
+
+// Wrapper schema: accepts { terms, mode, tranches? }
+const putBodySchema = z.object({
+  terms: dealTermsSchema,
+  mode: z.enum(["SIMPLE", "STRUCTURED"]).default("SIMPLE"),
+  tranches: z.array(trancheSchema).max(10).optional(),
+});
 
 // PUT /api/deals/[dealId]/terms — Save terms + run AI conditions analysis
 export async function PUT(request: NextRequest, context: RouteContext) {
@@ -140,45 +205,123 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Invalid deal ID" }, { status: 400 });
     }
 
-    const body = await request.json();
-    const parsed = dealTermsSchema.parse(body);
+    const body = await putBodySchema.parse(await request.json());
+    const { terms: parsed, mode, tranches: inputTranches } = body;
 
-    // Verify deal ownership and load deal data
+    // Verify deal ownership and load deal data + existing terms for versioning snapshot
     const deal = await prisma.deal.findFirst({
       where: { id: dealId, userId: user.id },
-      include: { documents: true },
+      include: {
+        documents: true,
+        dealTerms: true,
+        dealStructure: { include: { tranches: true } },
+      },
     });
 
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
-    // 1. Upsert deal terms + load latest analysis summary in parallel
-    const [upsertedTerms, latestAnalysis] = await Promise.all([
-      prisma.dealTerms.upsert({
-        where: { dealId },
-        create: {
+    // --- 0. Create a DealTermsVersion snapshot of the current state (before saving) ---
+    const existingTerms = deal.dealTerms;
+    if (existingTerms) {
+      // Count existing versions to set next version number
+      const versionCount = await prisma.dealTermsVersion.count({ where: { dealId } });
+      const snapshot: Record<string, unknown> = {
+        terms: existingTerms,
+        mode: deal.dealStructure?.mode ?? "SIMPLE",
+        tranches: deal.dealStructure?.tranches?.map(t => ({
+          label: t.label,
+          trancheType: t.trancheType,
+          amount: t.amount != null ? Number(t.amount) : null,
+          valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+          equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+          triggerType: t.triggerType,
+          status: t.status,
+        })) ?? null,
+      };
+      await prisma.dealTermsVersion.create({
+        data: {
           dealId,
-          ...parsed,
-          source: parsed.source ?? "manual",
+          version: versionCount + 1,
+          termsSnapshot: snapshot as Prisma.InputJsonValue,
+          conditionsScore: deal.conditionsScore,
+          analysisSnapshot: deal.conditionsAnalysis as Prisma.InputJsonValue | undefined,
+          source: existingTerms.source ?? "manual",
         },
-        update: {
-          ...parsed,
-        },
-      }),
-      prisma.analysis.findFirst({
-        where: { dealId, status: "COMPLETED" },
-        orderBy: { completedAt: "desc" },
-        select: { summary: true },
-      }),
+      });
+    }
+
+    // --- 1. Upsert DealTerms + handle structured mode + load latest analysis ---
+    const upsertTermsPromise = prisma.dealTerms.upsert({
+      where: { dealId },
+      create: { dealId, ...parsed, source: parsed.source ?? "manual" },
+      update: { ...parsed },
+    });
+
+    const latestAnalysisPromise = prisma.analysis.findFirst({
+      where: { dealId, status: "COMPLETED" },
+      orderBy: { completedAt: "desc" },
+      select: { summary: true },
+    });
+
+    // Handle structured mode: upsert DealStructure + replace tranches
+    let structurePromise: Promise<unknown> = Promise.resolve();
+    if (mode === "STRUCTURED" && inputTranches && inputTranches.length > 0) {
+      const totalInvestment = inputTranches.reduce(
+        (sum, t) => sum + (t.amount ?? 0), 0
+      );
+      structurePromise = prisma.$transaction(async (tx) => {
+        // Upsert the DealStructure
+        const structure = await tx.dealStructure.upsert({
+          where: { dealId },
+          create: { dealId, mode: "STRUCTURED", totalInvestment },
+          update: { mode: "STRUCTURED", totalInvestment },
+        });
+        // Delete existing tranches and recreate (simpler than diffing)
+        await tx.dealTranche.deleteMany({ where: { structureId: structure.id } });
+        // Create new tranches
+        await tx.dealTranche.createMany({
+          data: inputTranches.map((t, idx) => ({
+            structureId: structure.id,
+            orderIndex: t.orderIndex ?? idx,
+            label: t.label || null,
+            trancheType: t.trancheType,
+            typeDetails: t.typeDetails ?? null,
+            amount: t.amount ?? null,
+            valuationPre: t.valuationPre ?? null,
+            equityPct: t.equityPct ?? null,
+            triggerType: t.triggerType ?? null,
+            triggerDetails: t.triggerDetails ?? null,
+            triggerDeadline: t.triggerDeadline ? new Date(t.triggerDeadline) : null,
+            instrumentTerms: t.instrumentTerms as Prisma.InputJsonValue ?? Prisma.JsonNull,
+            liquidationPref: t.liquidationPref ?? null,
+            antiDilution: t.antiDilution ?? null,
+            proRataRights: t.proRataRights ?? null,
+            status: (t.status as "PENDING" | "ACTIVE" | "CONVERTED" | "EXPIRED" | "CANCELLED") ?? "PENDING",
+          })),
+        });
+      });
+    } else if (mode === "SIMPLE" && deal.dealStructure) {
+      // Switching back to SIMPLE: update mode but keep structure data
+      structurePromise = prisma.dealStructure.update({
+        where: { dealId },
+        data: { mode: "SIMPLE" },
+      });
+    }
+
+    const [upsertedTerms, latestAnalysis] = await Promise.all([
+      upsertTermsPromise,
+      latestAnalysisPromise,
+      structurePromise,
     ]);
 
-    // 2. Run AI conditions analysis (standalone mode)
-    // Agent internal timeout = 50s (self-terminates), route guard = 55s (safety net)
-    // This prevents orphan agents: the agent kills its own LLM call at 50s,
-    // so no background process continues after the route responds.
+    // --- 2. Run AI conditions analysis (standalone mode) ---
     const agent = new ConditionsAnalystAgent({ standaloneTimeoutMs: 50_000 });
-    const standaloneContext = buildStandaloneContextSync(deal, upsertedTerms, latestAnalysis?.summary ?? null);
+    const standaloneContext = buildStandaloneContextSync(
+      deal, upsertedTerms, latestAnalysis?.summary ?? null,
+      mode === "STRUCTURED" ? inputTranches : undefined,
+    );
 
     let analysisResult: ConditionsAnalystData | null = null;
     let analysisStatus: "success" | "failed" | "timeout" = "failed";
@@ -202,7 +345,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       console.error(`[conditions-analyst] Standalone analysis ${analysisStatus}:`, msg);
     }
 
-    // 3. Update deal scores
+    // --- 3. Update deal scores ---
     const conditionsScore = analysisResult?.score?.value ?? null;
     await prisma.$transaction([
       prisma.deal.update({
@@ -220,10 +363,22 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       }),
     ]);
 
+    // --- 4. Reload tranches for response (fresh from DB) ---
+    let responseTranches: TrancheData[] | null = null;
+    if (mode === "STRUCTURED") {
+      const structure = await prisma.dealStructure.findUnique({
+        where: { dealId },
+        include: { tranches: { orderBy: { orderIndex: "asc" } } },
+      });
+      responseTranches = structure?.tranches.map(normalizeTranche) ?? null;
+    }
+
     const response = buildTermsResponse(
       upsertedTerms as unknown as Record<string, unknown>,
       analysisResult,
       conditionsScore != null ? Math.round(conditionsScore) : null,
+      mode as DealMode,
+      responseTranches,
     );
 
     return NextResponse.json({
@@ -251,8 +406,9 @@ function buildStandaloneContextSync(
     customConditions: string | null; notes: string | null;
   },
   analysisSummary: string | null,
+  structuredTranches?: Array<z.infer<typeof trancheSchema>>,
 ): EnrichedAgentContext {
-  return {
+  const ctx: EnrichedAgentContext = {
     dealId: deal.id,
     deal,
     documents: deal.documents,
@@ -284,4 +440,24 @@ function buildStandaloneContextSync(
     conditionsAnalystMode: "standalone",
     conditionsAnalystSummary: analysisSummary,
   };
+
+  // Pass structured tranches to the agent if in STRUCTURED mode
+  if (structuredTranches && structuredTranches.length > 0) {
+    ctx.dealStructure = {
+      mode: "STRUCTURED",
+      totalInvestment: structuredTranches.reduce((s, t) => s + (t.amount ?? 0), 0),
+      tranches: structuredTranches.map(t => ({
+        label: t.label || "Tranche",
+        trancheType: t.trancheType,
+        amount: t.amount ?? null,
+        valuationPre: t.valuationPre ?? null,
+        equityPct: t.equityPct ?? null,
+        triggerType: t.triggerType ?? null,
+        triggerDetails: t.triggerDetails ?? null,
+        status: t.status ?? "PENDING",
+      })),
+    };
+  }
+
+  return ctx;
 }

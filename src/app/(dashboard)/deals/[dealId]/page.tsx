@@ -30,7 +30,10 @@ import { ScoreGrid } from "@/components/deals/score-display";
 import { BoardPanelWrapper } from "@/components/deals/board-panel-wrapper";
 import { DocumentsTab } from "@/components/deals/documents-tab";
 import { TeamManagement } from "@/components/deals/team-management";
-import { DealTermsTab } from "@/components/deals/deal-terms-tab";
+import { ConditionsTab } from "@/components/deals/conditions/conditions-tab";
+import type { TermsResponse, TrancheData, ConditionsFindings } from "@/components/deals/conditions/types";
+import type { ConditionsAnalystData } from "@/agents/types";
+import { DealInfoCard } from "@/components/deals/deal-info-card";
 import { ChatWrapper } from "@/components/chat/chat-wrapper";
 import { getStatusColor, getStatusLabel, getStageLabel, getSeverityColor, formatCurrencyEUR } from "@/lib/format-utils";
 
@@ -65,6 +68,11 @@ async function getDeal(dealId: string, userId: string) {
           createdAt: true,
           // results excluded — loaded separately for the latest completed analysis only
         },
+      },
+      // Conditions tab: prefetch to avoid extra API roundtrip on tab click
+      dealTerms: true,
+      dealStructure: {
+        include: { tranches: { orderBy: { orderIndex: "asc" } } },
       },
     },
   });
@@ -102,6 +110,80 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
   const criticalFlags = openRedFlags.filter(
     (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
   );
+
+  // Build initialData for ConditionsTab (avoids extra API roundtrip on tab click)
+  const conditionsInitialData: TermsResponse = (() => {
+    const rawTerms = deal.dealTerms;
+    const cached = deal.conditionsAnalysis as ConditionsAnalystData | null;
+    const mode = deal.dealStructure?.mode ?? "SIMPLE";
+    const tranches: TrancheData[] | null = deal.dealStructure?.tranches
+      ? deal.dealStructure.tranches.map(t => ({
+          id: t.id,
+          orderIndex: t.orderIndex,
+          label: t.label ?? "",
+          trancheType: t.trancheType,
+          typeDetails: t.typeDetails,
+          amount: t.amount != null ? Number(t.amount) : null,
+          valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+          equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+          triggerType: t.triggerType,
+          triggerDetails: t.triggerDetails,
+          triggerDeadline: t.triggerDeadline?.toISOString() ?? null,
+          instrumentTerms: t.instrumentTerms as Record<string, unknown> | null,
+          liquidationPref: t.liquidationPref,
+          antiDilution: t.antiDilution,
+          proRataRights: t.proRataRights,
+          status: t.status,
+        }))
+      : null;
+
+    const normalizedTerms = rawTerms ? {
+      valuationPre: rawTerms.valuationPre != null ? Number(rawTerms.valuationPre) : null,
+      amountRaised: rawTerms.amountRaised != null ? Number(rawTerms.amountRaised) : null,
+      dilutionPct: rawTerms.dilutionPct != null ? Number(rawTerms.dilutionPct) : null,
+      instrumentType: rawTerms.instrumentType,
+      instrumentDetails: rawTerms.instrumentDetails,
+      liquidationPref: rawTerms.liquidationPref,
+      antiDilution: rawTerms.antiDilution,
+      proRataRights: rawTerms.proRataRights,
+      informationRights: rawTerms.informationRights,
+      boardSeat: rawTerms.boardSeat,
+      founderVesting: rawTerms.founderVesting,
+      vestingDurationMonths: rawTerms.vestingDurationMonths,
+      vestingCliffMonths: rawTerms.vestingCliffMonths,
+      esopPct: rawTerms.esopPct != null ? Number(rawTerms.esopPct) : null,
+      dragAlong: rawTerms.dragAlong,
+      tagAlong: rawTerms.tagAlong,
+      ratchet: rawTerms.ratchet,
+      payToPlay: rawTerms.payToPlay,
+      milestoneTranches: rawTerms.milestoneTranches,
+      nonCompete: rawTerms.nonCompete,
+      customConditions: rawTerms.customConditions,
+      notes: rawTerms.notes,
+    } : null;
+
+    const advice = (cached?.findings?.negotiationAdvice ?? []).map(a => ({
+      ...a,
+      priority: (a.priority?.toLowerCase() ?? "medium") as "critical" | "high" | "medium" | "low",
+    }));
+    const flags = (cached?.redFlags ?? []).map(rf => ({
+      ...rf,
+      severity: (rf.severity?.toLowerCase() ?? "medium") as "critical" | "high" | "medium" | "low",
+    }));
+
+    return {
+      terms: normalizedTerms,
+      mode: mode as "SIMPLE" | "STRUCTURED",
+      tranches,
+      conditionsScore: deal.conditionsScore ?? null,
+      conditionsBreakdown: cached?.score?.breakdown ?? null,
+      conditionsAnalysis: (cached?.findings ?? null) as ConditionsFindings | null,
+      negotiationAdvice: advice.length > 0 ? advice : null,
+      redFlags: flags.length > 0 ? flags : null,
+      narrative: cached?.narrative ?? null,
+      analysisStatus: cached ? "success" as const : null,
+    };
+  })();
 
 
   const content = (
@@ -235,53 +317,19 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
 
         <TabsContent value="overview" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Informations</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">
-                      Secteur
-                    </p>
-                    <p>{deal.sector ?? "Non défini"}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">
-                      Stade
-                    </p>
-                    <p>{getStageLabel(deal.stage, "Non d\u00e9fini")}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">
-                      Géographie
-                    </p>
-                    <p>{deal.geography ?? "Non défini"}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">
-                      Montant demande
-                    </p>
-                    <p>
-                      {formatCurrencyEUR(
-                        deal.amountRequested
-                          ? Number(deal.amountRequested)
-                          : null
-                      )}
-                    </p>
-                  </div>
-                </div>
-                {deal.description && (
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">
-                      Description
-                    </p>
-                    <p className="mt-1 text-sm">{deal.description}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <DealInfoCard
+              deal={{
+                id: deal.id,
+                sector: deal.sector,
+                stage: deal.stage,
+                geography: deal.geography,
+                description: deal.description,
+                amountRequested: deal.amountRequested ? Number(deal.amountRequested) : null,
+                arr: deal.arr ? Number(deal.arr) : null,
+                growthRate: deal.growthRate ? Number(deal.growthRate) : null,
+                valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
+              }}
+            />
 
             <Card>
               <CardHeader>
@@ -370,7 +418,19 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
         </TabsContent>
 
         <TabsContent value="conditions">
-          <DealTermsTab dealId={deal.id} stage={deal.stage} />
+          <ConditionsTab
+            dealId={deal.id}
+            stage={deal.stage}
+            initialData={conditionsInitialData}
+            termSheetDoc={(() => {
+              const ts = deal.documents.find(d =>
+                d.type === "TERM_SHEET" ||
+                d.name.toLowerCase().includes("term sheet") ||
+                d.name.toLowerCase().includes("termsheet")
+              );
+              return ts ? { id: ts.id, name: ts.name } : null;
+            })()}
+          />
         </TabsContent>
 
         <TabsContent value="redflags">

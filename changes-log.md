@@ -2,6 +2,370 @@
 
 ---
 
+## 2026-02-15 — fix: dedup cross-type alertes (RF + DA + COND)
+
+### Description
+Les alertes portant sur le meme sujet (ex: churn detecte par 7 agents en Red Flag ET par le Devil's Advocate en kill reason) sont maintenant fusionnees en une seule carte enrichie. Le merge ajoute les infos DA (dealbreaker, piste de resolution, question) au red flag existant. Badge type affiche "RF + DA" pour les cartes fusionnees.
+
+### Fichiers modifies
+- `src/components/deals/suivi-dd/use-unified-alerts.ts` — logique de merge cross-type via `inferRedFlagTopic`, import dedup
+- `src/components/deals/suivi-dd/unified-alert.ts` — champ `mergedFrom` ajoute au type
+- `src/components/deals/suivi-dd/suivi-dd-alert-card.tsx` — badge type affiche les types merges
+
+### Autres corrections cette session
+- `src/services/red-flag-dedup/consolidate.ts` — filtre red flags sans titre
+- `src/components/deals/suivi-dd/use-unified-alerts.ts` — fallback titre sur topic, cartes ouvertes par defaut
+- `src/components/deals/suivi-dd/suivi-dd-alert-card.tsx` — `useState(true)` pour expanded
+- `src/components/deals/resolution-dialog.tsx` — min justification 10 → 1
+- `src/app/api/deals/[dealId]/resolutions/route.ts` — Zod min 10 → 1
+- `src/hooks/use-resolutions.ts` — erreur API detaillee (lecture body), prisma generate
+
+---
+
+## 2026-02-15 — fix: justification min 10 → 1 caractere
+
+### Description
+Abaissement du minimum de justification pour resoudre une alerte de 10 a 1 caractere. Un simple "oui" ou "ok" suffit desormais.
+
+### Fichiers modifies
+- `src/components/deals/resolution-dialog.tsx` — validation frontend: `length < 10` → `length < 1`
+- `src/app/api/deals/[dealId]/resolutions/route.ts` — Zod schema backend: `z.string().min(10)` → `.min(1)`
+
+---
+
+## 2026-02-15 — fix: Audit Round 3 — 7 corrections residuelles
+
+### Description
+Dernier round de corrections : badge Suivi DD compte maintenant red flags + DA kill reasons, type="button" sur boutons natifs manquants, compteur LOW ajoute, key stable sur trancheAssessments, import direct au lieu de barrel, toggleTopic memoize.
+
+### Fichiers modifies
+- `src/components/deals/analysis-panel.tsx` — openAlertCount inclut DA kill reasons + import devilsAdvocateAlertKey
+- `src/components/deals/red-flags-summary.tsx` — counts.LOW, type="button" x2, toggleTopic useCallback
+- `src/components/deals/resolution-badge.tsx` — type="button" sur bouton reouvrir
+- `src/components/deals/conditions/conditions-analysis-cards.tsx` — key={ta.trancheLabel} au lieu de key={idx}
+- `src/services/alert-resolution/alert-keys.ts` — import direct depuis dedup.ts
+
+---
+
+## 2026-02-15 — fix: Audit Round 2 — 20 corrections (7 MEDIUM + 13 LOW)
+
+### Description
+Second round de corrections d'audit qualite. Tous les problemes residuels identifies ont ete corriges. 0 erreur TypeScript apres correction.
+
+### MEDIUM
+- **M1** `use-resolutions.ts` — `useCallback` resolve/unresolve wrappaient `mutation.mutateAsync` avec `[createMutation]` en dep (objet instable). Migration vers ref pattern (`useRef` + deps vides).
+- **M2** `suivi-dd-tab.tsx` — `filterCounts` useMemo dependait de `counts.byType` (nouvel objet a chaque render). Deps changees pour les valeurs individuelles (`counts.byType.RED_FLAG`, `.DEVILS_ADVOCATE`, `.CONDITIONS`).
+- **M3** `suivi-dd-tab.tsx` — `handleResponseChange` et `responseEdits` utilisaient `string` au lieu du union type `ResponseStatus`. Type `ResponseStatus` cree et utilise partout, suppression des casts `as`.
+- **M4** `consolidate.ts` — `RawRedFlag.severity` et `ConsolidatedFlag.severity` excluaient `"LOW"`. Ajoute `"LOW"` aux deux types.
+- **M5** `dedup.ts` — Fonction `maxSeverity` jamais appelee supprimee.
+- **M6** `adjusted-score.ts` — `normalizeSeverityKey` ne mappait pas les labels FR (Critique, Eleve, etc.) vers les cles EN. Ajout table `SEVERITY_ALIASES` avec mapping FR -> EN.
+- **M7** `analysis-panel.tsx` — `openAlertCount` comptait les red flags bruts (non dedupliques). Migration vers `consolidateRedFlagsFromResults` pour compter les flags consolides.
+
+### LOW
+- **L1** `[alertKey]/route.ts` — Ajout validation min length 5 sur alertKey dans DELETE.
+- **L2** Routes resolutions — `checkRateLimit` (in-memory) remplace par `checkRateLimitDistributed` (Redis avec fallback) dans les 3 handlers.
+- **L3** `resolutions/route.ts` — `req.json()` wrappe dans try/catch retournant 400 si JSON invalide.
+- **L4** `suivi-dd-tab.tsx`, `suivi-dd-alert-card.tsx` — `type="button"` ajoute sur les 3 boutons natifs toggle.
+- **L5** `suivi-dd-tab.tsx`, `suivi-dd-alert-card.tsx` — `aria-expanded` ajoute sur les boutons toggle (`showUnlinked`, `showNotes`, `expanded`).
+- **L6** `conditions-analysis-cards.tsx` — `NegotiationAdviceCard` utilisait `key={idx}` (index), change en `key={key}` (alertKey stable).
+- **L7** `consolidate.ts` — 2 imports depuis `./dedup` fusionnes en un seul.
+- **L8** `red-flags-summary.tsx` — Interfaces locales `RedFlag` et `AgentRedFlags` supprimees, remplacement par imports depuis `@/services/red-flag-dedup/consolidate` (`RawRedFlag`, `AgentRedFlagsInput`).
+- **L9** `red-flags-summary.tsx` — Entree `LOW` ajoutee dans `SEVERITY_STYLES` et `SEVERITY_ORDER`.
+- **L10** `suivi-dd-alert-card.tsx` — `hasDetails` wrappe dans `useMemo`.
+- **L11** `suivi-dd-alert-card.tsx` — `handleResolve` deps changees de `[onResolve, alert]` (objet entier) vers champs stables individuels.
+- **L12** `use-unified-alerts.ts` — `flag.detectedBy[0]` protege avec fallback `?? "unknown"`.
+- **L13** `[alertKey]/route.ts` — `deleteMany` remplace par `delete` avec contrainte composite `dealId_alertKey` + try/catch Prisma P2025 retournant 404.
+
+### Fichiers modifies
+- `src/hooks/use-resolutions.ts`
+- `src/components/deals/suivi-dd/suivi-dd-tab.tsx`
+- `src/components/deals/suivi-dd/suivi-dd-alert-card.tsx`
+- `src/components/deals/suivi-dd/use-unified-alerts.ts`
+- `src/services/red-flag-dedup/consolidate.ts`
+- `src/services/red-flag-dedup/dedup.ts`
+- `src/services/alert-resolution/adjusted-score.ts`
+- `src/components/deals/analysis-panel.tsx`
+- `src/components/deals/red-flags-summary.tsx`
+- `src/components/deals/conditions/conditions-analysis-cards.tsx`
+- `src/app/api/deals/[dealId]/resolutions/route.ts`
+- `src/app/api/deals/[dealId]/resolutions/[alertKey]/route.ts`
+
+---
+
+## 2026-02-15 — fix: Audit qualite code — 30+ corrections (CRITICAL/HIGH/MEDIUM/LOW)
+
+### Description
+Audit et correction systematique de tous les bugs identifies dans le systeme de resolution d'alertes et l'onglet Suivi DD. 0 erreur TypeScript apres correction.
+
+### CRITICAL
+- **C1+C2** `resolution-dialog.tsx` — State stale (`useState` initial non re-synchro quand props changent) : ajout `useEffect` de resync sur `open/existingStatus/existingJustification`. `handleSubmit` sans try/catch : wrap dans try/catch, dialog ne se ferme pas en cas d'erreur + affichage message d'erreur.
+- **C3** `use-unified-alerts.ts` — IDs instables (`ua-1`, `ua-2`...) recalcules a chaque render : remplacement par `alertKey` (stable et unique).
+- **C4** `use-resolutions.ts` — `resolutionMap` converti de `Map<string, AlertResolution>` en `Record<string, AlertResolution>` (objet plain, reference stable pour React). `resolve`/`unresolve` wrappees dans `useCallback`. Tous les consommateurs (7+ fichiers) migres de `.get()`/`.has()` vers `[]`/`in`.
+- **C5+C6** `dedup.ts`, `red-flags-summary.tsx`, `use-unified-alerts.ts` — `TOPIC_AUTHORITY` exporte depuis `dedup.ts`, copies supprimees. Consolidation red flags extraite dans `src/services/red-flag-dedup/consolidate.ts` (shared entre 2 consommateurs).
+
+### HIGH
+- **H1** `suivi-dd-alert-card.tsx` — Dialog ne se fermait pas apres resolution : ajout `setDialogOpen(false)` apres `onResolve`.
+- **H2** `suivi-dd-tab.tsx` — `freeNotes` jamais reinitialise apres save/reanalyze : ajout `setFreeNotes("")`.
+- **H3** `use-unified-alerts.ts` — `severity.toUpperCase()` crash si undefined : ajout guard avec fallback "MEDIUM".
+- **H6** `suivi-dd-filters.tsx` — `useCallback` avec `filters` en dep (reference instable) : migration vers updater pattern (`onChange(prev => ...)`) + type `React.Dispatch<React.SetStateAction<FilterState>>`.
+- **H8** `adjusted-score.ts` — `SEVERITY_WEIGHT` ne couvrait pas variantes FR/lowercase : ajout `normalizeSeverityKey()` (toUpperCase + strip accents), table reduite aux cles uppercase uniquement.
+- **H9** `[alertKey]/route.ts` — `decodeURIComponent` non protege : wrap dans try/catch, retour 400 si URIError.
+- **H10** `suivi-dd-tab.tsx` — Objet inline `{ byType: counts.byType }` casse memo : memoise via `useMemo`.
+- **H11** `suivi-dd-tab.tsx` — `AgentResult` renomme `AgentResultFull` pour eviter collision.
+- **H12** `tier3-results.tsx` — `Tier3Results` wrappe dans `memo()`.
+
+### MEDIUM
+- **M1** Routes resolutions — Rate limiting ajoute (`checkRateLimit`) sur GET/POST/DELETE.
+- **M3** `[alertKey]/route.ts` — Validation alertKey (non vide, max 200 chars).
+- **M5** `use-unified-alerts.ts` — DA `CONCERN` dealBreakerLevel mappe correctement (ABSOLUTE→CRITICAL, CONDITIONAL→HIGH, CONCERN→MEDIUM).
+- **M6** `use-unified-alerts.ts` — DA `minor` concerns ajoutes (severity LOW).
+- **M7** `analysis-panel.tsx` — `hasCriticalOpen` verifie maintenant les resolutions via `redFlagAlertKey`.
+- **M8** `suivi-dd-alert-card.tsx` — Details et questions affichees meme quand alerte resolue (collapsibles + read-only si resolved).
+- **M10** `suivi-dd-tab.tsx` — `hasEdits` memoise via `useMemo`.
+- **M11** `use-unified-alerts.ts` — Validation severity avec `VALID_SEVERITIES` Set + fallback "MEDIUM".
+- **M12** `suivi-dd-dashboard.tsx` — `currentScore > 0` remplace par `typeof currentScore === "number"`.
+- **M13** `suivi-dd-alert-card.tsx`, `suivi-dd-tab.tsx` — Auto-change status ne ecrase plus N/A/Refused.
+- **M14** `suivi-dd-alert-card.tsx` — Callback `onRevert` extrait dans `useCallback` (`handleUnresolve`).
+- **M16** — Composant `FounderResponseInput` extrait dans `founder-response-input.tsx`, utilise dans alert-card et tab.
+- **M17** `unified-alert.ts` — Signatures helpers changees de `string` a `Severity` union type.
+- **M18** `suivi-dd-tab.tsx`, `analysis-panel.tsx` — `subscriptionPlan` prop supprimee (inutilisee).
+
+### LOW
+- **L1** `analysis-panel.tsx` — Import inutilise `formatErrorMessage` supprime.
+- **L2** `red-flags-summary.tsx` — `displayName` inutile supprime.
+- **L4** `suivi-dd-alert-card.tsx` — Separateur `·` ajoute entre noms d'agents.
+- **L7** `analysis-panel.tsx` — `console.log` en prod supprime.
+- **L8** `suivi-dd-filters.tsx` — `aria-pressed` ajoute sur tous les boutons filtres.
+- **L9** `alert-keys.ts` — `DASubType` sous-types confirmes utilises (skip).
+
+### Nouveaux fichiers
+- `src/services/red-flag-dedup/consolidate.ts` — Consolidation red flags partagee (2 fonctions: `consolidateRedFlagsFromAgents`, `consolidateRedFlagsFromResults`)
+- `src/components/deals/suivi-dd/founder-response-input.tsx` — Composant reutilisable Textarea+Select pour reponses fondateur
+
+### Fichiers modifies
+- `src/components/deals/resolution-dialog.tsx`
+- `src/components/deals/suivi-dd/use-unified-alerts.ts`
+- `src/hooks/use-resolutions.ts`
+- `src/services/red-flag-dedup/dedup.ts`
+- `src/services/red-flag-dedup/index.ts`
+- `src/components/deals/red-flags-summary.tsx`
+- `src/components/deals/tier3-results.tsx`
+- `src/components/deals/tier1-results.tsx`
+- `src/components/deals/conditions/conditions-analysis-cards.tsx`
+- `src/components/deals/suivi-dd/suivi-dd-tab.tsx`
+- `src/components/deals/suivi-dd/suivi-dd-alert-card.tsx`
+- `src/components/deals/suivi-dd/suivi-dd-filters.tsx`
+- `src/components/deals/suivi-dd/suivi-dd-dashboard.tsx`
+- `src/components/deals/suivi-dd/unified-alert.ts`
+- `src/components/deals/analysis-panel.tsx`
+- `src/services/alert-resolution/adjusted-score.ts`
+- `src/app/api/deals/[dealId]/resolutions/route.ts`
+- `src/app/api/deals/[dealId]/resolutions/[alertKey]/route.ts`
+
+---
+
+## 2026-02-15 — feat: Onglet unifie "Suivi DD" + boutons resolve visibles
+
+### Description
+Nouvel onglet "Suivi DD" qui fusionne "Reponses Fondateur" et centralise toutes les alertes (red flags, DA, conditions) + questions + reponses + progression dans une seule vue. Le "Top 10 Questions" est retire de l'onglet Results et integre dans Suivi DD (questions liees inline, questions independantes en section separee). Tous les boutons "Resoudre" inline dans Results/Conditions transformes de `text-[10px]` gris invisible en `Button variant="outline"` avec icone.
+
+### Nouveaux fichiers
+- `src/components/deals/suivi-dd/unified-alert.ts` — Types `UnifiedAlert`, `AlertCounts` + helpers (severityRank, labels, colors)
+- `src/components/deals/suivi-dd/use-unified-alerts.ts` — Hook extraction unifiee (3 sources), consolidation red flags, liaison questions/reponses
+- `src/components/deals/suivi-dd/suivi-dd-tab.tsx` — Composant orchestrateur (dashboard + filtres + liste + questions + notes + actions)
+- `src/components/deals/suivi-dd/suivi-dd-dashboard.tsx` — Barre progression, badges severite, score ajuste, stats questions
+- `src/components/deals/suivi-dd/suivi-dd-filters.tsx` — Filtres horizontaux (severite, type, statut)
+- `src/components/deals/suivi-dd/suivi-dd-alert-card.tsx` — Carte alerte individuelle avec boutons visibles, details, question inline
+
+### Fichiers modifies
+- `src/components/deals/analysis-panel.tsx` — Remplacement onglet "Reponses Fondateur" par "Suivi DD" + dynamic import + badge compteur alertes ouvertes + suppression Top 10 Questions du tab Results
+- `src/components/deals/red-flags-summary.tsx` — Bouton "Traiter" visible (Button outline + icone au lieu de text-[10px] gris)
+- `src/components/deals/tier3-results.tsx` — Boutons DA visibles (kill reasons absolus, concerns, kill reasons conditionnels)
+- `src/components/deals/conditions/conditions-analysis-cards.tsx` — Boutons conditions visibles (NegotiationAdviceCard + RedFlagsCard)
+
+---
+
+## 2026-02-13 — fix: Flash de donnees obsoletes + comptage agents 22/21
+
+### Description
+1. Correction du flash de l'ancienne analyse (22/21, 105%) pendant 5-7s au lancement d'une nouvelle analyse — le cache polledAnalysis n'etait pas vide.
+2. Correction du compteur totalAgents : `tier3AgentCount` etait hardcode a 5 alors que `TIER3_AGENT_NAMES` contient 6 agents depuis l'ajout de conditions-analyst. Remplace par `TIER3_AGENT_NAMES.length`.
+
+### Fichiers modifies
+- `src/components/deals/analysis-panel.tsx` — Ajout `onMutate` pour vider le cache, guard `status === "RUNNING"`
+- `src/agents/orchestrator/index.ts` — `tier3AgentCount` dynamique via `TIER3_AGENT_NAMES.length`
+
+---
+
+## 2026-02-15 — feat: Systeme de resolution d'alertes (Red Flags, DA, Conditions)
+
+### Description
+Les BA peuvent maintenant "resoudre" ou "accepter" n'importe quelle alerte IA (red flags, objections Devil's Advocate, conditions). Deux statuts : **Resolu** (verifie/invalide) et **Accepte** (risque connu). Score ajuste dynamique affiche a cote du score IA original.
+
+### Nouveaux fichiers
+- `prisma/schema.prisma` — Enums `AlertType`, `ResolutionStatus` + modele `AlertResolution` (relation Deal cascade)
+- `src/services/alert-resolution/alert-keys.ts` — Generation de cles stables par type d'alerte (red flag, DA, conditions)
+- `src/services/alert-resolution/adjusted-score.ts` — Calcul du score ajuste (poids par severite + credit par statut)
+- `src/app/api/deals/[dealId]/resolutions/route.ts` — GET + POST (upsert) resolutions
+- `src/app/api/deals/[dealId]/resolutions/[alertKey]/route.ts` — DELETE (revert a OPEN)
+- `src/hooks/use-resolutions.ts` — Hook React Query CRUD + resolutionMap + counts
+- `src/components/deals/resolution-dialog.tsx` — Dialog partage (RadioGroup RESOLVED/ACCEPTED + justification)
+- `src/components/deals/resolution-badge.tsx` — Badge inline (vert/bleu) avec tooltip justification + bouton reouvrir
+- `src/components/deals/adjusted-score-badge.tsx` — Badge score ajuste avec tooltip detail par alerte
+
+### Fichiers modifies
+- `src/lib/query-keys.ts` — +resolutions query key factory
+- `src/components/deals/analysis-panel.tsx` — useResolutions(dealId), props passees a Tier1Results et Tier3Results
+- `src/components/deals/tier1-results.tsx` — Resolution props passees a RedFlagsSummary
+- `src/components/deals/red-flags-summary.tsx` — Bouton resoudre, dimming, ResolutionBadge, toggle afficher resolus
+- `src/components/deals/tier3-results.tsx` — Resolution dans DevilsAdvocateCard (kill reasons, concerns, counter args) + AdjustedScoreBadge dans SynthesisScorerCard
+- `src/components/deals/conditions/conditions-analysis-cards.tsx` — Resolution dans RedFlagsCard + NegotiationAdviceCard
+- `src/components/deals/conditions/conditions-tab.tsx` — useResolutions + props passees aux cards conditions
+
+---
+
+## 2026-02-14 — Fix: synthesis-deal-scorer timeout + DA skepticism fallback + time-budget retry
+
+### Problemes corriges
+1. **synthesis-deal-scorer timeout** — Timeout 120s trop court quand le LLM rate les dimension scores au 1er essai (retry = 2 appels LLM + percentile DB). Augmente a 180s.
+2. **DA skepticismAssessment.score fallback a 0** — Quand le LLM ne retourne pas `skepticismAssessment.score`, le DA mettait 0 (= aucun scepticisme). Maintenant il derive un score depuis les kill reasons et counter-arguments : `(ABSOLUTE×25 + CONDITIONAL×15 + HIGH_PROB×10 + 20 base)`.
+3. **Frontend distingue la source du scepticisme** — 4 etats : "da" (LLM direct), "da-derived" (DA a derive depuis kill reasons), "derived" (frontend derive depuis le score global), "none" (aucune donnee).
+
+### Fichiers modifies
+- `src/agents/tier3/synthesis-deal-scorer.ts` — timeoutMs 120000 → 180000
+- `src/agents/tier3/devils-advocate.ts` — skepticismAssessment derive depuis killReasons/counterArguments quand le LLM ne retourne pas le score
+- `src/agents/types.ts` — ajout `isFallback?: boolean` sur skepticismAssessment
+- `src/components/deals/tier3-results.tsx` — headerMetrics et expectedReturn utilisent la source avec fallback chain
+
+---
+
+## 2026-02-14 — Fix: coherence logique header Synthese DD (4 bugs)
+
+### Problemes corriges
+1. **Scepticisme 0/100 fallback silencieux** — Quand le Devil's Advocate echoue ou ne retourne pas de data, `?? 0` affichait 0/100 (=tout va bien) au lieu de "—" ou d'une valeur derivee du score global.
+2. **Rendement non ajuste** — Le `survivalRate` n'etait applique que si `skepticism > 0`. Avec le fallback a 0 (bug 1), le rendement brut du scenario-modeler etait affiche sans correction (9.8x pour un deal a 19/100).
+3. **IRR vs Multiple incoherents** — L'IRR et le multiple etaient deux outputs LLM independants (9.8x mais 2% IRR = mathematiquement impossible). L'IRR est maintenant derive du multiple : `IRR = mult^(1/years) - 1`.
+4. **Pas de garde-fou score/rendement** — Un deal a 19/100 avec dealbreakers affichait quand meme un rendement en vert. Ajout d'un guard : si score < 40 + dealbreakers, le rendement affiche "—" et l'IRR est masque.
+
+### Corrections
+- Scepticisme derive du score global quand le DA echoue : `100 - overallScore`
+- Label "Estime depuis le score" vs "Devil's Advocate" pour la source
+- `calculateExpectedReturn()` et `ScenarioModelerCard.expectedReturn` : IRR derive du multiple + holding period
+- Suppression des references a `probabilityWeighted?.expectedIRR` et `probabilityWeighted?.expectedMultiple` (outputs LLM bruts)
+- Guard NO_GO dans le header metrics grid
+
+### Fichiers modifies
+- `src/components/deals/tier3-results.tsx` — 4 corrections (calculateExpectedReturn, expectedReturn useMemo, headerMetrics useMemo, header JSX)
+
+---
+
+## 2026-02-14 — Perf: onglet Conditions — SSR prefetch + lazy imports
+
+### Optimisations
+- **SSR prefetch** : `dealTerms` + `conditionsAnalysis` + `dealStructure` charges dans la requete principale `getDeal` et passes en `initialData` a React Query. Plus de spinner ni d'appel API supplementaire au clic sur l'onglet Conditions.
+- **Dynamic imports** : `DilutionSimulator` (Recharts), `PercentileComparator`, `VersionTimeline` charges en lazy via `next/dynamic` — ne bloquent plus le rendu initial.
+- **staleTime** augmente de 30s a 60s pour reduire les refetch inutiles.
+- **Migration DB** : `prisma db push` applique pour creer les tables `DealStructure`, `DealTranche`, `DealTermsVersion`.
+
+### Fichiers modifies
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — ajout includes `dealTerms` + `dealStructure` dans getDeal, construction `conditionsInitialData`, passage en prop
+- `src/components/deals/conditions/conditions-tab.tsx` — nouvelle prop `initialData`, dynamic imports pour 3 sous-onglets
+
+---
+
+## 2026-02-14 — Fix: pipeline analyse IA + rendu structuredAssessment
+
+### Problemes corriges
+- **Orchestrateur (3 emplacements)** : `dealStructure` (tranches multi-tranche) n'etait JAMAIS charge en mode pipeline. L'agent conditions-analyst ne recevait les tranches qu'en mode standalone (sauvegarde formulaire), pas lors d'une analyse complete.
+- **Frontend** : `structuredAssessment` (verdict global, evaluation par tranche, valo blended, risque triggers) etait calcule par l'IA mais jamais affiche au BA.
+
+### Fichiers modifies
+- `src/agents/orchestrator/index.ts` — 3 emplacements : ajout `prisma.dealStructure.findUnique()` en `Promise.all` avec `dealTerms`, injection de `ctx.dealStructure` quand mode STRUCTURED
+- `src/components/deals/conditions/conditions-analysis-cards.tsx` — Nouveau `StructuredAssessmentCard` : verdict, valo blended, score/risques par tranche, badge risque triggers
+- `src/components/deals/conditions/conditions-tab.tsx` — Branchement `StructuredAssessmentCard` dans `analysisSection` (entre ScoreCard et NegotiationAdviceCard)
+
+---
+
+## 2026-02-14 — Feat: refonte complete onglet Conditions (12 phases)
+
+### Vue d'ensemble
+Refonte complete de l'onglet Conditions pour BA : mode simple (formulaire plat) + mode structure (N tranches), simulateur de dilution interactif, comparateur percentile, versioning auto, extraction IA depuis term sheets.
+
+### Prisma (Phase 1)
+- `prisma/schema.prisma` — 3 nouveaux modeles : `DealStructure` (1:0..1 Deal), `DealTranche` (N:1 DealStructure), `DealTermsVersion` (N:1 Deal). Enums `DealMode`, `TrancheStatus`.
+
+### Composants frontend (Phases 2a-2d)
+- `src/components/deals/conditions/types.ts` — Types partages (DealTermsData, TrancheData, TermsResponse, etc.)
+- `src/components/deals/conditions/conditions-help.ts` — 20+ tooltips contextuels en francais
+- `src/components/deals/conditions/conditions-tab.tsx` — Container principal avec sub-tabs, mode switcher, save+analyse IA
+- `src/components/deals/conditions/simple-mode-form.tsx` — Formulaire mode simple (6 cards) avec HelpLabel tooltips
+- `src/components/deals/conditions/conditions-analysis-cards.tsx` — 4 cards IA (Score, Nego, RedFlags, Insights)
+- `src/components/deals/conditions/structured-mode-form.tsx` — Editeur multi-tranches avec resume
+- `src/components/deals/conditions/tranche-editor.tsx` — Card individuelle d'une tranche (collapsible)
+- `src/components/deals/conditions/dilution-simulator.tsx` — 3 sliders (pre-money, investment, ESOP) + Recharts cap table + 3 scenarios
+- `src/components/deals/conditions/percentile-comparator.tsx` — Barres percentiles P25/P50/P75 + scores protections/gouvernance
+- `src/components/deals/conditions/version-timeline.tsx` — Timeline verticale avec delta score, collapse > 6 versions
+- `src/components/deals/conditions/term-sheet-suggestions.tsx` — Bandeau extraction IA depuis term sheet + review
+- `src/components/ui/slider.tsx` — Radix slider (shadcn pattern)
+- `src/components/ui/collapsible.tsx` — Radix collapsible (shadcn pattern)
+
+### API (Phases 3a-3d)
+- `src/app/api/deals/[dealId]/terms/route.ts` — GET/PUT remanies : mode SIMPLE/STRUCTURED, tranches, auto-versioning
+- `src/app/api/deals/[dealId]/terms/versions/route.ts` — GET : liste versions avec delta score
+- `src/app/api/deals/[dealId]/terms/benchmarks/route.ts` — GET : positionnement percentile vs benchmarks statiques
+- `src/app/api/deals/[dealId]/terms/extract/route.ts` — POST : extraction LLM depuis term sheet
+
+### Agent IA (Phase 4)
+- `src/agents/types.ts` — `dealStructure?` dans EnrichedAgentContext + `structuredAssessment?` dans ConditionsAnalystFindings
+- `src/agents/tier3/conditions-analyst.ts` — Support mode STRUCTURED : `formatStructuredTerms()`, section systeme multi-tranche, `structuredAssessment` dans buildOutput
+- `src/agents/tier3/schemas/conditions-analyst-schema.ts` — `structuredAssessment` optionnel Zod
+
+### Services (Phase 5)
+- `src/services/waterfall-simulator/index.ts` — `simulateWaterfall()` + `simulateDilution()` (8 tests OK)
+- `src/services/term-sheet-extractor/index.ts` — Extraction LLM (Haiku) depuis texte de term sheet
+
+### Integration (Phase 6)
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Import ConditionsTab, detection term sheet pour prop
+- `src/lib/query-keys.ts` — Nouvelles cles : versions, benchmarks, simulation, extraction
+
+---
+
+## 2026-02-14 — Fix: red flags domain authority + team-investigator analyse nuancée
+
+### Probleme
+8 agents sur 13 generaient independamment un red flag CRITICAL pour un simple mismatch de titre LinkedIn/Deck (ex: "CTO @ IInovation" vs "Account Manager @ Formuleo"). La consolidation prenait la severite max de TOUS les agents et la description la plus longue (= la plus dramatique). Resultat : des red flags CRITICAL avec des impacts lunaires ("Credibilite financiere nulle") pour des incohérences mineures.
+
+### Solution : Domain Authority
+Chaque topic de red flag a maintenant un ou plusieurs agents autoritaires. Seul l'agent expert du domaine determine la severite, le titre, la description et l'impact. Les agents non-experts confirment la detection (detectedBy count) mais n'influencent plus la severite.
+
+### Fichiers modifies
+- `src/services/red-flag-dedup/dedup.ts` — Ajout du mapping `TOPIC_AUTHORITY` (topic → agents autoritaires). `getConsolidated()` utilise l'agent autoritaire pour severite/titre/description/impact au lieu du max aveugle. Ajout de `findAuthorityEntry()`. Topics plus specifiques : `title_mismatch` et `financial_inconsistency` separes de `data_inconsistency`. Fix regex accents (incohéren, propriété, modèle).
+- `src/components/deals/red-flags-summary.tsx` — Meme mapping `TOPIC_AUTHORITY` duplique cote frontend. La consolidation utilise l'agent autoritaire : severite + contenu viennent de l'agent expert, pas du max/plus long de tous les agents.
+- `src/agents/tier1/team-investigator.ts` — Refonte complète du prompt (6 changements) :
+  1. **Grille écarts LinkedIn vs Deck** — Réduite à 3 cas clairs : titre gonflé même entreprise (CRITICAL), variante courante (MEDIUM/AUCUN), entreprise différente (CRITICAL à identifier). Supprimé les cas "rôle actuel vs précédent" et "titre startup vs ancien employeur" — le parcours de carrière est normal, c'est comme ça qu'on construit ses compétences.
+  2. **Analyse industrie/domaine** — Bloc obligatoire : évaluer pour chaque fondateur la pertinence de son parcours pour le secteur (expertise, compétences transférables, réseau, compréhension client). Scoring domainExpertise 0-100.
+  3. **Analyse formation/éducation** — Réécriture complète. Prestige = réseau + sélectivité, facteur parmi d'autres (pas dominant, toujours pondéré avec l'expérience pro). Autodidacte = neutre en tech, évaluer sur track record. Formation influence les scores EN COMBINAISON avec l'expérience pro (pas en isolation). Pertinence dépend du rôle (R&D = formation avancée est un atout, CEO = leadership prime).
+  4. **Job hopping → Parcours incohérent** — Renommé et reformulé. "Tenure < 18 mois" n'est plus un red flag automatique. Seuls les départs répétés SANS progression visible sont un signal. Des changements avec progression sont un signal POSITIF.
+  5. **Pénalités** — Supprimé tous les score max rigides (solo founder max 60, pas de vesting max 50, etc.). Remplacé par des guidelines souples : le score dépend du contexte (solo founder pre-seed = normal, solo founder Série B = risqué). Chaque score doit être justifié par l'analyse.
+  6. **Red flags diplômes** — Sévérité selon le rôle (si le rôle nécessite l'expertise académique = HIGH, sinon = MEDIUM). Contre-exemples réécrits pour illustrer le cas entreprise différente = CRITICAL à identifier.
+
+---
+
+## 2026-02-13 — Feat: édition deal info + fix timeline versioning overflow
+
+### A. Édition des informations d'un deal
+Le stage, secteur, géographie et métriques financières d'un deal ne pouvaient pas être modifiés après création. Le BA devait recréer le deal from scratch.
+
+- `src/components/deals/deal-info-card.tsx` (créé) — Composant client avec bouton "Modifier" ouvrant un dialog (stage, secteur, géographie, description, ARR, croissance, montant demandé, valorisation). PATCH API + `router.refresh()`.
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Import `DealInfoCard`, remplacement de la card statique.
+
+### B. Timeline versioning — collapse des versions intermédiaires
+Avec 10+ analyses, la timeline débordait et devenait illisible.
+
+- `src/components/deals/timeline-versions.tsx` — Quand > 6 versions : affiche les 2 premières + 3 dernières + bouton "..." cliquable pour expand. La version sélectionnée est toujours visible même si elle est dans la zone collapsed.
+
+---
+
 ## 2026-02-13 — Fix: synthesis scoring, red flags dedup frontend, keyStrengths
 
 ### 3 fixes

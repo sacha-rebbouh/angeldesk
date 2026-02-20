@@ -761,10 +761,14 @@ export class AgentOrchestrator {
       category: fact.category,
     }));
 
-    // Load DealTerms for conditions-analyst
-    const rawDealTerms = await prisma.dealTerms.findUnique({
-      where: { dealId },
-    });
+    // Load DealTerms + DealStructure for conditions-analyst
+    const [rawDealTerms, rawDealStructure] = await Promise.all([
+      prisma.dealTerms.findUnique({ where: { dealId } }),
+      prisma.dealStructure.findUnique({
+        where: { dealId },
+        include: { tranches: { orderBy: { orderIndex: "asc" } } },
+      }),
+    ]);
     const dealTerms = rawDealTerms ? {
       valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
       amountRaised: rawDealTerms.amountRaised ? Number(rawDealTerms.amountRaised) : null,
@@ -800,6 +804,26 @@ export class AgentOrchestrator {
       dealTerms,
       conditionsAnalystMode: "pipeline",
     };
+
+    // Inject structured deal data for conditions-analyst (multi-tranche mode)
+    if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
+      context.dealStructure = {
+        mode: "STRUCTURED",
+        totalInvestment: rawDealStructure.tranches.reduce(
+          (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
+        ),
+        tranches: rawDealStructure.tranches.map(t => ({
+          label: t.label || "Tranche",
+          trancheType: t.trancheType,
+          amount: t.amount != null ? Number(t.amount) : null,
+          valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+          equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+          triggerType: t.triggerType,
+          triggerDetails: t.triggerDetails,
+          status: t.status,
+        })),
+      };
+    }
 
     const tier3AgentMap = await getTier3Agents();
     let completedCount = 0;
@@ -1135,9 +1159,9 @@ export class AgentOrchestrator {
     const hasSectorExpert = sectorExpert !== null;
 
     // Adjust total agent count based on plan
-    // FREE: 12 Tier1 + 1 extractor + 1 fact-extractor + 1 synthesis-deal-scorer = 15
-    // PRO:  12 Tier1 + 5 Tier3 + 1 extractor + 1 fact-extractor + (0-1 sector expert) = 19-20
-    const tier3AgentCount = includeFullTier3 ? 5 : 1; // Only synthesis-deal-scorer for FREE
+    // FREE: 13 Tier1 + 1 extractor + 1 fact-extractor + 1 synthesis-deal-scorer = 16
+    // PRO:  13 Tier1 + 6 Tier3 + 1 extractor + 1 fact-extractor + (0-1 sector expert) = 21-22
+    const tier3AgentCount = includeFullTier3 ? TIER3_AGENT_NAMES.length : 1; // Only synthesis-deal-scorer for FREE
     const TOTAL_AGENTS = TIER1_AGENT_NAMES.length + tier3AgentCount + 1 + 1 + (hasSectorExpert ? 1 : 0);
 
     // Get document IDs for versioning
@@ -1516,8 +1540,14 @@ export class AgentOrchestrator {
       const baPreferences = await this.loadBAPreferences(deal.userId);
       enrichedContext.baPreferences = baPreferences;
 
-      // Load DealTerms for conditions-analyst (Tier 3)
-      const rawDealTerms = await prisma.dealTerms.findUnique({ where: { dealId } });
+      // Load DealTerms + DealStructure for conditions-analyst (Tier 3)
+      const [rawDealTerms, rawDealStructure] = await Promise.all([
+        prisma.dealTerms.findUnique({ where: { dealId } }),
+        prisma.dealStructure.findUnique({
+          where: { dealId },
+          include: { tranches: { orderBy: { orderIndex: "asc" } } },
+        }),
+      ]);
       if (rawDealTerms) {
         enrichedContext.dealTerms = {
           valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
@@ -1542,6 +1572,24 @@ export class AgentOrchestrator {
           nonCompete: rawDealTerms.nonCompete,
           customConditions: rawDealTerms.customConditions,
           notes: rawDealTerms.notes,
+        };
+      }
+      if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
+        enrichedContext.dealStructure = {
+          mode: "STRUCTURED",
+          totalInvestment: rawDealStructure.tranches.reduce(
+            (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
+          ),
+          tranches: rawDealStructure.tranches.map(t => ({
+            label: t.label || "Tranche",
+            trancheType: t.trancheType,
+            amount: t.amount != null ? Number(t.amount) : null,
+            valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+            equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+            triggerType: t.triggerType,
+            triggerDetails: t.triggerDetails,
+            status: t.status,
+          })),
         };
       }
       enrichedContext.conditionsAnalystMode = "pipeline";
@@ -3354,9 +3402,15 @@ export class AgentOrchestrator {
           const baPreferences = await this.loadBAPreferences(deal.userId);
           enrichedContext.baPreferences = baPreferences;
 
-          // Load DealTerms for conditions-analyst (Tier 3)
+          // Load DealTerms + DealStructure for conditions-analyst (Tier 3)
           if (!enrichedContext.dealTerms) {
-            const rawDealTerms = await prisma.dealTerms.findUnique({ where: { dealId: deal.id } });
+            const [rawDealTerms, rawDealStructure] = await Promise.all([
+              prisma.dealTerms.findUnique({ where: { dealId: deal.id } }),
+              prisma.dealStructure.findUnique({
+                where: { dealId: deal.id },
+                include: { tranches: { orderBy: { orderIndex: "asc" } } },
+              }),
+            ]);
             if (rawDealTerms) {
               enrichedContext.dealTerms = {
                 valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
@@ -3381,6 +3435,24 @@ export class AgentOrchestrator {
                 nonCompete: rawDealTerms.nonCompete,
                 customConditions: rawDealTerms.customConditions,
                 notes: rawDealTerms.notes,
+              };
+            }
+            if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
+              enrichedContext.dealStructure = {
+                mode: "STRUCTURED",
+                totalInvestment: rawDealStructure.tranches.reduce(
+                  (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
+                ),
+                tranches: rawDealStructure.tranches.map(t => ({
+                  label: t.label || "Tranche",
+                  trancheType: t.trancheType,
+                  amount: t.amount != null ? Number(t.amount) : null,
+                  valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+                  equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+                  triggerType: t.triggerType,
+                  triggerDetails: t.triggerDetails,
+                  status: t.status,
+                })),
               };
             }
             enrichedContext.conditionsAnalystMode = "pipeline";

@@ -51,6 +51,18 @@ export const ConditionsAnalystResponseSchema = z.object({
       suggestedArgument: z.string(),
       leverageSource: z.string(),
     })),
+
+    structuredAssessment: z.object({
+      overallStructureVerdict: z.string(),
+      trancheAssessments: z.array(z.object({
+        trancheLabel: z.string(),
+        assessment: z.string(),
+        risks: z.array(z.string()),
+        score: z.number().min(0).max(100),
+      })),
+      blendedEffectiveValuation: z.number().nullable(),
+      triggerRiskLevel: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    }).optional(),
   }),
 
   redFlags: z.array(z.object({

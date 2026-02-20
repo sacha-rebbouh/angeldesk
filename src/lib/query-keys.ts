@@ -84,6 +84,10 @@ export const queryKeys = {
   dealTerms: {
     all: ["dealTerms"] as const,
     byDeal: (dealId: string) => ["dealTerms", dealId] as const,
+    versions: (dealId: string) => ["dealTerms", dealId, "versions"] as const,
+    benchmarks: (dealId: string) => ["dealTerms", dealId, "benchmarks"] as const,
+    simulation: (dealId: string) => ["dealTerms", dealId, "simulation"] as const,
+    extraction: (dealId: string) => ["dealTerms", dealId, "extraction"] as const,
   },
 
   // Facts queries
@@ -129,6 +133,12 @@ export const queryKeys = {
     users: () => [...queryKeys.admin.all, "users"] as const,
     usersList: (params?: { limit?: number; offset?: number }) =>
       [...queryKeys.admin.users(), "list", params] as const,
+  },
+
+  // Alert resolutions
+  resolutions: {
+    all: ["resolutions"] as const,
+    byDeal: (dealId: string) => ["resolutions", dealId] as const,
   },
 
   // Chat queries

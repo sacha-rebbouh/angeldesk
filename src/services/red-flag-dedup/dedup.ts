@@ -6,9 +6,10 @@
  *
  * Règles de dédup :
  * - Même `topic` → consolidé en 1 finding
- * - Severity = max des sévérités détectées
+ * - Severity = celle de l'agent autoritaire (domain authority), pas le max aveugle
  * - Evidence = union des evidences
  * - Sources = liste de tous les agents qui l'ont détecté
+ * - Description/impact = ceux de l'agent autoritaire (pas le plus long/dramatique)
  */
 
 import type {
@@ -26,8 +27,66 @@ const SEVERITY_ORDER: Record<RedFlagSeverity, number> = {
   LOW: 1,
 };
 
-function maxSeverity(a: RedFlagSeverity, b: RedFlagSeverity): RedFlagSeverity {
-  return SEVERITY_ORDER[a] >= SEVERITY_ORDER[b] ? a : b;
+// ============================================================================
+// DOMAIN AUTHORITY — quel agent fait foi pour quel topic
+// ============================================================================
+
+/**
+ * Map topic → agent(s) autoritaire(s).
+ * L'agent autoritaire détermine la sévérité, le titre, la description et l'impact.
+ * Les autres agents ne font que confirmer la détection (detectedBy count).
+ * Si aucun agent autoritaire n'a détecté le topic, fallback au premier agent qui l'a signalé.
+ */
+export const TOPIC_AUTHORITY: Record<string, string[]> = {
+  // Equipe & fondateurs → team-investigator
+  churn: ["team-investigator", "customer-intel"],
+  vesting: ["team-investigator", "cap-table-auditor"],
+  team: ["team-investigator"],
+  founder_integrity: ["team-investigator", "deck-forensics"],
+  title_mismatch: ["team-investigator", "deck-forensics"],
+  data_inconsistency: ["deck-forensics", "financial-auditor"],
+  financial_inconsistency: ["financial-auditor", "deck-forensics"],
+  // Financier → financial-auditor
+  valuation: ["financial-auditor", "cap-table-auditor"],
+  burn_rate: ["financial-auditor"],
+  revenue_metrics: ["financial-auditor", "deck-forensics"],
+  unit_economics: ["financial-auditor", "gtm-analyst"],
+  margin: ["financial-auditor"],
+  // Marché & concurrence
+  competition: ["competitive-intel"],
+  market_size: ["market-intelligence"],
+  // Produit & tech
+  tech_debt: ["tech-stack-dd", "tech-ops-dd"],
+  scalability: ["tech-stack-dd", "tech-ops-dd"],
+  // Deal structure
+  esop: ["cap-table-auditor"],
+  dilution: ["cap-table-auditor"],
+  deal_structure: ["cap-table-auditor", "legal-regulatory"],
+  // Legal
+  legal_compliance: ["legal-regulatory"],
+  ip_ownership: ["legal-regulatory", "tech-ops-dd"],
+  // Clients
+  customer_concentration: ["customer-intel"],
+  // GTM
+  gtm: ["gtm-analyst"],
+};
+
+/**
+ * Retourne l'entrée de l'agent autoritaire pour un topic donné.
+ * Si aucun agent autoritaire n'est présent, retourne null (fallback au premier).
+ */
+function findAuthorityEntry(
+  topic: string,
+  entries: AgentRedFlagEntry[]
+): AgentRedFlagEntry | null {
+  const authorities = TOPIC_AUTHORITY[topic];
+  if (!authorities) return null;
+
+  for (const authAgent of authorities) {
+    const entry = entries.find((e) => e.agentSource === authAgent);
+    if (entry) return entry;
+  }
+  return null;
 }
 
 export class RedFlagDedup {
@@ -62,6 +121,11 @@ export class RedFlagDedup {
   /**
    * Retourne les red flags consolidés après déduplication.
    * Triés par sévérité (CRITICAL > HIGH > MEDIUM > LOW).
+   *
+   * DOMAIN AUTHORITY: la sévérité, le titre, la description et l'impact
+   * sont déterminés par l'agent autoritaire du topic (ex: team-investigator
+   * pour les topics équipe). Les agents non-autoritaires ne font que confirmer
+   * la détection (ils apparaissent dans detectedBy mais n'influencent pas la sévérité).
    */
   getConsolidated(): ConsolidatedRedFlag[] {
     if (this._consolidatedCache) return this._consolidatedCache;
@@ -70,14 +134,11 @@ export class RedFlagDedup {
     for (const [topic, entries] of this.entries) {
       if (entries.length === 0) continue;
 
-      // Sévérité = max de toutes les détections
-      let highestSeverity: RedFlagSeverity = "LOW";
       const detectedBy: string[] = [];
       const allEvidence: RedFlagEvidence[] = [];
       const questions: string[] = [];
 
       for (const entry of entries) {
-        highestSeverity = maxSeverity(highestSeverity, entry.severity);
         if (!detectedBy.includes(entry.agentSource)) {
           detectedBy.push(entry.agentSource);
         }
@@ -87,28 +148,28 @@ export class RedFlagDedup {
         }
       }
 
-      // Prendre le titre/description le plus détaillé (le plus long)
-      const bestEntry = entries.reduce((best, e) =>
-        e.description.length > best.description.length ? e : best
-      );
+      // Domain authority: l'agent expert détermine sévérité + contenu
+      const authorityEntry = findAuthorityEntry(topic, entries);
+      // Fallback: premier agent qui a signalé (pas le plus dramatique)
+      const referenceEntry = authorityEntry ?? entries[0];
 
-      // Consolider les impacts
-      const impacts = entries
-        .filter((e) => e.impact)
-        .map((e) => e.impact!)
-        .filter((impact, i, arr) => arr.indexOf(impact) === i);
+      // Sévérité de l'agent autoritaire (pas le max aveugle de tous les agents)
+      const severity = referenceEntry.severity;
+
+      // Impact de l'agent autoritaire uniquement (pas concat de tous)
+      const impact = referenceEntry.impact ?? undefined;
 
       consolidated.push({
         topic,
-        category: bestEntry.category,
-        subcategory: bestEntry.subcategory,
-        title: bestEntry.title,
-        description: bestEntry.description,
-        severity: highestSeverity,
+        category: referenceEntry.category,
+        subcategory: referenceEntry.subcategory,
+        title: referenceEntry.title,
+        description: referenceEntry.description,
+        severity,
         detectedBy,
         detectionCount: detectedBy.length,
         evidence: deduplicateEvidence(allEvidence),
-        impact: impacts.length > 0 ? impacts.join(" | ") : undefined,
+        impact,
         questionsForFounder: questions,
       });
     }
@@ -228,17 +289,22 @@ export function inferRedFlagTopic(title: string, category?: string): string {
     [/burn.*rate|cash.*burn|runway/, "burn_rate"],
     [/arr|mrr|revenue|chiffre.*affaire|reporting.*financ/, "revenue_metrics"],
     [/unit.*eco|ltv.*cac|cac|ltv/, "unit_economics"],
-    [/incohéren|inconsisten|contradict|écart|divergen/, "data_inconsistency"],
-    [/fondateur.*men|mensonge|falsif|intégrité/, "founder_integrity"],
-    [/ip|propriété.*intellectuel|brevet|patent/, "ip_ownership"],
+    // Titre/CV/LinkedIn mismatches → spécifique, séparé des incohérences financières
+    [/titre.*gonfl|title.*inflat|cv.*embelli|linkedin.*deck|deck.*linkedin|titre.*linkedin|incoh[eé]ren.*titre/, "title_mismatch"],
+    // Incohérences financières
+    [/incoh[eé]ren.*financ|incoh[eé]ren.*chiffr|inconsisten.*financ|inconsisten.*metric/, "financial_inconsistency"],
+    // Incohérences données génériques (fallback)
+    [/incoh[eé]ren|inconsisten|contradict|[eé]cart|divergen/, "data_inconsistency"],
+    [/fondateur.*men|mensonge|falsif|int[eé]grit/, "founder_integrity"],
+    [/ip|propri[eé]t[eé].*intellectuel|brevet|patent/, "ip_ownership"],
     [/concurrent|competi/, "competition"],
-    [/marché|market.*size|tam|sam/, "market_size"],
+    [/march[eé]|market.*size|tam|sam/, "market_size"],
     [/equipe|team.*size|fondateur.*solo/, "team"],
     [/dilution/, "dilution"],
     [/dette.*tech|technical.*debt/, "tech_debt"],
     [/concentration.*client|customer.*concentration/, "customer_concentration"],
     [/legal|juridique|rgpd|gdpr/, "legal_compliance"],
-    [/scalab|non.*scalable|modèle.*service/, "scalability"],
+    [/scalab|non.*scalable|mod[eè]le.*service/, "scalability"],
     [/gtm|go.*to.*market|croissance|growth/, "gtm"],
     [/marge|margin/, "margin"],
     [/structure.*invest|toxique|ratchet|liquidat/, "deal_structure"],

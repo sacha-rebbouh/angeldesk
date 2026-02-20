@@ -83,6 +83,10 @@ interface AgentResultWithReAct {
 interface Tier1ResultsProps {
   results: Record<string, AgentResultWithReAct>;
   subscriptionPlan?: SubscriptionPlan;
+  resolutionMap?: Record<string, import("@/hooks/use-resolutions").AlertResolution>;
+  onResolve?: (input: import("@/hooks/use-resolutions").CreateResolutionInput) => Promise<unknown>;
+  onUnresolve?: (alertKey: string) => Promise<unknown>;
+  isResolving?: boolean;
 }
 
 // ReAct Badge Component - Shows when agent has ReAct metadata
@@ -3660,7 +3664,7 @@ const Tier1SummaryView = memo(function Tier1SummaryView({
 });
 
 // Main Tier 1 Results Component
-export function Tier1Results({ results, subscriptionPlan = "FREE" }: Tier1ResultsProps) {
+export function Tier1Results({ results, subscriptionPlan = "FREE", resolutionMap, onResolve, onUnresolve, isResolving }: Tier1ResultsProps) {
   // State for tracking which agent's trace panel is open
   const [openTraceAgent, setOpenTraceAgent] = useState<string | null>(null);
 
@@ -3778,7 +3782,13 @@ export function Tier1Results({ results, subscriptionPlan = "FREE" }: Tier1Result
   return (
     <div className="space-y-6">
       {/* RED FLAGS SUMMARY - Consolidated view, displayed FIRST */}
-      <RedFlagsSummary agentResults={allAgentRedFlags} />
+      <RedFlagsSummary
+        agentResults={allAgentRedFlags}
+        resolutionMap={resolutionMap}
+        onResolve={onResolve}
+        onUnresolve={onUnresolve}
+        isResolving={isResolving}
+      />
 
       {/* Severity Legend (F30) */}
       <SeverityLegend />

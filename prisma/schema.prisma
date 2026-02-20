@@ -76,6 +76,9 @@ model Deal {
   analyses        Analysis[]
   factEvents      FactEvent[]
   dealTerms       DealTerms?
+  dealStructure   DealStructure?
+  dealTermsVersions DealTermsVersion[]
+  alertResolutions  AlertResolution[]
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -1740,4 +1743,144 @@ model DealTerms {
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+}
+
+// DEAL STRUCTURE — Mode structuré avec N tranches (1:0..1 avec Deal)
+// Coexiste avec DealTerms. Le champ `mode` détermine quelle source est active.
+model DealStructure {
+  id              String   @id @default(cuid())
+  dealId          String   @unique
+  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  mode            DealMode @default(SIMPLE) // SIMPLE = DealTerms, STRUCTURED = tranches
+  totalInvestment Decimal? @db.Decimal(14, 2)
+  notes           String?  @db.Text
+
+  tranches        DealTranche[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([dealId])
+}
+
+enum DealMode {
+  SIMPLE
+  STRUCTURED
+}
+
+// DEAL TRANCHE — Une tranche d'investissement dans un deal structuré
+// Ex: Tranche 1 = CCA 30k, Tranche 2 = Equity 10% sur valo 1M si milestone atteint
+model DealTranche {
+  id              String   @id @default(cuid())
+  structureId     String
+  structure       DealStructure @relation(fields: [structureId], references: [id], onDelete: Cascade)
+
+  // Ordering
+  orderIndex      Int      @default(0)
+  label           String?  // "Tranche 1 - CCA", "Tranche 2 - Equity Option"
+
+  // Type
+  trancheType     String   // CCA, EQUITY_ORDINARY, EQUITY_PREFERRED, BSA_AIR, CONVERTIBLE_NOTE, OPTION, LOAN, OTHER
+  typeDetails     String?  // Détails libres si OTHER
+
+  // Financial
+  amount          Decimal? @db.Decimal(14, 2)
+  valuationPre    Decimal? @db.Decimal(14, 2)
+  equityPct       Decimal? @db.Decimal(5, 2)
+
+  // Conditions / Triggers
+  triggerType     String?  // UNCONDITIONAL, MILESTONE, DATE, OPTION, CONVERSION
+  triggerDetails  String?  @db.Text  // "Phase 1 success", "12 months from closing"
+  triggerDeadline DateTime?
+
+  // Instrument-specific fields (flexible JSON)
+  instrumentTerms Json?    // { interestRate, maturityMonths, conversionDiscount, conversionCap, ... }
+
+  // Protections per-tranche (can differ between tranches)
+  liquidationPref String?
+  antiDilution    String?
+  proRataRights   Boolean?
+
+  // Status
+  status          TrancheStatus @default(PENDING)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([structureId])
+  @@index([structureId, orderIndex])
+}
+
+enum TrancheStatus {
+  PENDING       // Not yet executed
+  ACTIVE        // Currently active
+  CONVERTED     // Converted (for CCA/convertibles)
+  EXPIRED       // Trigger not met, expired
+  CANCELLED     // Cancelled by parties
+}
+
+// ============================================================================
+// ALERT RESOLUTION - BA decisions on red flags, DA concerns, conditions issues
+// ============================================================================
+
+enum AlertType {
+  RED_FLAG
+  DEVILS_ADVOCATE
+  CONDITIONS
+}
+
+enum ResolutionStatus {
+  RESOLVED
+  ACCEPTED
+}
+
+model AlertResolution {
+  id            String           @id @default(cuid())
+  dealId        String
+  deal          Deal             @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  userId        String
+
+  alertKey      String           // Stable key: "{TYPE}::{identifier}"
+  alertType     AlertType
+  status        ResolutionStatus
+  justification String           @db.Text
+
+  // Snapshot for audit trail
+  alertTitle    String
+  alertSeverity String
+  alertCategory String?
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([dealId, alertKey])
+  @@index([dealId])
+}
+
+// DEAL TERMS VERSION — Historique des conditions pour suivi de négociation
+// Chaque save crée une version. Permet de visualiser l'évolution de la négo.
+model DealTermsVersion {
+  id              String   @id @default(cuid())
+  dealId          String
+  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  version         Int      @default(1)
+  label           String?  // "Offre initiale", "Contre-proposition", "Accord final"
+
+  // Full state snapshot (DealTermsData or { mode: "structured", tranches: [...] })
+  termsSnapshot   Json
+
+  // AI analysis at this version
+  conditionsScore Int?
+  analysisSnapshot Json?
+
+  // Metadata
+  source          String   @default("manual") // manual, extracted, negotiated
+  changeNote      String?  @db.Text // "Pre-money baissé de 2M à 1.5M"
+
+  createdAt       DateTime @default(now())
+
+  @@index([dealId])
+  @@index([dealId, version])
 }

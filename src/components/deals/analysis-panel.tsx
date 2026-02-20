@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, MessageSquare, Handshake, ShieldAlert, Download, FileText } from "lucide-react";
+import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, Handshake, ShieldAlert, Download, FileText, ClipboardCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,11 +19,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { queryKeys } from "@/lib/query-keys";
+import { useResolutions } from "@/hooks/use-resolutions";
 import {
   formatAgentName,
   formatAnalysisMode,
   formatDate,
-  formatErrorMessage,
   categorizeResults,
   PLAN_ANALYSIS_CONFIG,
   getAnalysisTypeForPlan,
@@ -39,7 +39,7 @@ import type { EarlyWarning } from "@/types";
 import { ProTeaserBanner } from "@/components/shared/pro-teaser";
 import { AnalysisProgress, type AgentStatus } from "./analysis-progress";
 import { TimelineVersions } from "./timeline-versions";
-import { FounderResponses, type AgentQuestion, type QuestionResponse } from "./founder-responses";
+import { type AgentQuestion, type QuestionResponse } from "./founder-responses";
 import { DeltaIndicator } from "./delta-indicator";
 import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
@@ -50,7 +50,9 @@ import { PartialAnalysisBanner } from "./partial-analysis-banner";
 import type { NegotiationStrategy } from "@/services/negotiation/strategist";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 import { formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
-import { consolidateAndPrioritizeQuestions, type ConsolidatedQuestion } from "@/lib/question-consolidator";
+import { consolidateAndPrioritizeQuestions } from "@/lib/question-consolidator";
+import { consolidateRedFlagsFromResults } from "@/services/red-flag-dedup/consolidate";
+import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
 import {
   Tooltip,
   TooltipContent,
@@ -72,6 +74,11 @@ const Tier2Results = dynamic(
 const Tier3Results = dynamic(
   () => import("./tier3-results").then((mod) => ({ default: mod.Tier3Results })),
   { loading: () => <Tier3ResultsSkeleton /> }
+);
+
+const SuiviDDTab = dynamic(
+  () => import("./suivi-dd/suivi-dd-tab").then((mod) => ({ default: mod.SuiviDDTab })),
+  { loading: () => <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div> }
 );
 
 interface AgentResult {
@@ -288,12 +295,19 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
 export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: AnalysisPanelProps) {
   const queryClient = useQueryClient();
   const router = useRouter();
+  const {
+    resolutions,
+    resolutionMap,
+    resolve: resolveAlert,
+    unresolve: unresolveAlert,
+    isResolving,
+  } = useResolutions(dealId);
   const [liveResult, setLiveResult] = useState<AnalysisResult | null>(null);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
   const [showAgentDetails, setShowAgentDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCreditModal, setShowCreditModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<"results" | "founder-responses" | "negotiation" | "coherence">("results");
+  const [activeTab, setActiveTab] = useState<"results" | "suivi-dd" | "negotiation" | "coherence">("results");
   const [isSubmittingResponses, setIsSubmittingResponses] = useState(false);
   const [negotiationStrategy, setNegotiationStrategy] = useState<NegotiationStrategy | null>(null);
   const [isLoadingNegotiation, setIsLoadingNegotiation] = useState(false);
@@ -513,6 +527,10 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   const mutation = useMutation({
     mutationFn: () => startAnalysis(dealId, analysisType),
+    onMutate: () => {
+      // Clear stale polled analysis data immediately to prevent flash of old completed analysis
+      queryClient.setQueryData(queryKeys.analyses.latest(dealId), null);
+    },
     onSuccess: (response) => {
       // Analysis is now running in the background - start polling
       const now = Date.now();
@@ -603,7 +621,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   // Memoized tab change handler (extracted from inline callback)
   const handleTabChange = useCallback((value: string) => {
-    setActiveTab(value as "results" | "founder-responses" | "negotiation" | "coherence");
+    setActiveTab(value as "results" | "suivi-dd" | "negotiation" | "coherence");
   }, []);
 
   // Handle founder responses - save only (without re-analyze)
@@ -782,8 +800,8 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   // Extract questions from question-master agent results
   // Extract and consolidate questions from ALL agents (F73)
-  const { founderQuestions, top10Questions } = useMemo(() => {
-    if (!displayedResult?.results) return { founderQuestions: [] as AgentQuestion[], top10Questions: [] as ConsolidatedQuestion[] };
+  const { founderQuestions } = useMemo(() => {
+    if (!displayedResult?.results) return { founderQuestions: [] as AgentQuestion[] };
 
     // Collect red flag titles for cross-referencing
     const redFlagTitles: string[] = [];
@@ -801,9 +819,36 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
     return {
       founderQuestions: consolidated as AgentQuestion[],
-      top10Questions: consolidated.slice(0, 10),
     };
   }, [displayedResult]);
+
+  // Quick count of open alerts for Suivi DD tab badge (red flags + DA kill reasons)
+  const { openAlertCount, hasCriticalOpen } = useMemo(() => {
+    if (!displayedResult?.results) return { openAlertCount: 0, hasCriticalOpen: false };
+    let openCount = 0;
+    let criticalOpen = 0;
+    // Red flags (deduplicated)
+    const consolidated = consolidateRedFlagsFromResults(displayedResult.results);
+    for (const flag of consolidated) {
+      if (!resolutionMap[flag.alertKey]) {
+        openCount++;
+        if (flag.severity === "CRITICAL") criticalOpen++;
+      }
+    }
+    // DA kill reasons
+    const daResult = displayedResult.results["devils-advocate"];
+    if (daResult?.success && daResult.data) {
+      const daData = daResult.data as { findings?: { killReasons?: Array<{ reason: string; dealBreakerLevel: string }> } };
+      for (const kr of daData.findings?.killReasons ?? []) {
+        const key = devilsAdvocateAlertKey("killReason", kr.reason);
+        if (!resolutionMap[key]) {
+          openCount++;
+          if (kr.dealBreakerLevel === "ABSOLUTE") criticalOpen++;
+        }
+      }
+    }
+    return { openAlertCount: openCount, hasCriticalOpen: criticalOpen > 0 };
+  }, [displayedResult, resolutionMap]);
 
   // Load or generate negotiation strategy (with cache support)
   const loadOrGenerateNegotiation = useCallback(async () => {
@@ -837,10 +882,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       const data = await response.json();
       setNegotiationStrategy(data.strategy);
 
-      // Log if it was cached for debugging
-      if (data.cached) {
-        console.log("[AnalysisPanel] Negotiation strategy loaded from cache");
-      }
+      // Cache loaded — no log in production
     } catch (error) {
       console.error("[AnalysisPanel] Error loading negotiation strategy:", error);
       toast.error(error instanceof Error ? error.message : "Erreur lors du chargement de la strategie");
@@ -1041,15 +1083,13 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       {timelineVersions.length > 1 && currentAnalysisId && (
         <Card>
           <CardContent className="py-2">
-            <div className="grid grid-cols-[auto_1fr] items-center">
-              <span className="text-base font-bold text-foreground">Versions</span>
-              <div className="flex justify-center">
-                <TimelineVersions
-                  analyses={timelineVersions}
-                  currentAnalysisId={currentAnalysisId}
-                  onSelectVersion={handleSelectAnalysis}
-                />
-              </div>
+            <div className="min-w-0">
+              <span className="text-sm font-semibold text-muted-foreground">Versions</span>
+              <TimelineVersions
+                analyses={timelineVersions}
+                currentAnalysisId={currentAnalysisId}
+                onSelectVersion={handleSelectAnalysis}
+              />
             </div>
           </CardContent>
         </Card>
@@ -1152,31 +1192,35 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
       )}
 
       {/* Analysis Progress - shown during active analysis (mutation + polling) */}
-      {isAnalyzing && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Analyse en cours...
-            </CardTitle>
-            {isPolling && polledAnalysis?.data && (
-              <CardDescription>
-                {polledAnalysis.data.completedAgents}/{polledAnalysis.data.totalAgents} agents terminés
-              </CardDescription>
-            )}
-          </CardHeader>
-          <CardContent>
-            <AnalysisProgress
-              isRunning={isAnalyzing}
-              analysisType={analysisType === "tier1_complete" ? "tier1_complete" : "full_analysis"}
-              agentStatuses={agentStatuses}
-              completedAgents={polledAnalysis?.data?.completedAgents ?? 0}
-              totalAgents={polledAnalysis?.data?.totalAgents ?? 0}
-              startedAt={polledAnalysis?.data?.startedAt ?? polledAnalysis?.data?.createdAt ?? null}
-            />
-          </CardContent>
-        </Card>
-      )}
+      {isAnalyzing && (() => {
+        // Only use polled data when analysis is actually RUNNING — prevents flash of stale completed data
+        const polledProgress = polledAnalysis?.data?.status === "RUNNING" ? polledAnalysis.data : null;
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                Analyse en cours...
+              </CardTitle>
+              {isPolling && polledProgress && (
+                <CardDescription>
+                  {polledProgress.completedAgents}/{polledProgress.totalAgents} agents terminés
+                </CardDescription>
+              )}
+            </CardHeader>
+            <CardContent>
+              <AnalysisProgress
+                isRunning={isAnalyzing}
+                analysisType={analysisType === "tier1_complete" ? "tier1_complete" : "full_analysis"}
+                agentStatuses={agentStatuses}
+                completedAgents={polledProgress?.completedAgents ?? 0}
+                totalAgents={polledProgress?.totalAgents ?? 0}
+                startedAt={polledProgress?.startedAt ?? polledProgress?.createdAt ?? null}
+              />
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Loading state when fetching historical analysis results */}
       {isLoadingResults && !displayedResult && (
@@ -1274,12 +1318,12 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                     )}
                   </TabsTrigger>
                 )}
-                <TabsTrigger value="founder-responses" className="flex items-center gap-1.5">
-                  <MessageSquare className="h-4 w-4" />
-                  Reponses Fondateur
-                  {founderQuestions.length > 0 && (
-                    <Badge variant="secondary" className="ml-1 text-xs">
-                      {founderQuestions.length}
+                <TabsTrigger value="suivi-dd" className="flex items-center gap-1.5">
+                  <ClipboardCheck className="h-4 w-4" />
+                  Suivi DD
+                  {openAlertCount > 0 && (
+                    <Badge variant={hasCriticalOpen ? "destructive" : "secondary"} className="ml-1 text-xs">
+                      {openAlertCount}
                     </Badge>
                   )}
                 </TabsTrigger>
@@ -1345,7 +1389,16 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
                 {/* Tier 3 Results - Synthesis Agents (Score, Scenarios, Devil's Advocate, Memo) */}
                 {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
-                  <Tier3Results results={tier3Results} subscriptionPlan={subscriptionPlan} totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter(r => r.success).length : 0} />
+                  <Tier3Results
+                    results={tier3Results}
+                    subscriptionPlan={subscriptionPlan}
+                    totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter(r => r.success).length : 0}
+                    resolutionMap={resolutionMap}
+                    resolutions={resolutions}
+                    onResolve={resolveAlert}
+                    onUnresolve={unresolveAlert}
+                    isResolving={isResolving}
+                  />
                 )}
 
                 {/* Tier 2 Results - Sector Expert Analysis (PRO only) */}
@@ -1361,55 +1414,14 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
                 {/* Tier 1 Results - 12 Investigation Agents (FREE sees limited items + teasers) */}
                 {isTier1Analysis && displayedResult.success && Object.keys(tier1Results).length > 0 && (
-                  <Tier1Results results={tier1Results} subscriptionPlan={subscriptionPlan} />
-                )}
-
-                {/* Top 10 Questions Consolidées (F73) */}
-                {top10Questions.length > 0 && displayedResult.success && (
-                  <Card className="border-2 border-blue-100">
-                    <CardHeader className="pb-2">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-lg flex items-center gap-2">
-                          <MessageSquare className="h-5 w-5 text-blue-600" />
-                          Top 10 Questions à Poser
-                        </CardTitle>
-                        <Badge variant="outline">{top10Questions.length} questions consolidées</Badge>
-                      </div>
-                      <CardDescription>
-                        Questions priorisées de {new Set(top10Questions.flatMap(q => q.sources)).size} agents
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {top10Questions.map((q, i) => (
-                          <div key={q.id} className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted/30 transition-colors">
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-800 text-xs font-bold">
-                              {i + 1}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium">{q.question}</p>
-                              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                <Badge variant={q.priority === "CRITICAL" ? "destructive" : q.priority === "HIGH" ? "default" : "secondary"} className="text-xs">
-                                  {q.priority}
-                                </Badge>
-                                <span className="text-xs text-muted-foreground">
-                                  {q.sources.length > 1
-                                    ? `${q.sources.length} agents (${q.sources.map(s => formatAgentName(s)).join(", ")})`
-                                    : formatAgentName(q.agentSource)}
-                                </span>
-                                {q.linkedToRedFlag && (
-                                  <Badge variant="outline" className="text-xs text-red-600 border-red-200">
-                                    <AlertTriangle className="h-3 w-3 mr-1" />
-                                    Lié à un red flag
-                                  </Badge>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
+                  <Tier1Results
+                    results={tier1Results}
+                    subscriptionPlan={subscriptionPlan}
+                    resolutionMap={resolutionMap}
+                    onResolve={resolveAlert}
+                    onUnresolve={unresolveAlert}
+                    isResolving={isResolving}
+                  />
                 )}
 
                 {/* Agent Results - Collapsible for Tier 1/2/3 */}
@@ -1593,16 +1605,23 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                 )}
               </TabsContent>
 
-              {/* Founder Responses Tab Content */}
-              <TabsContent value="founder-responses" className="mt-0">
-                <FounderResponses
+              {/* Suivi DD Tab Content */}
+              <TabsContent value="suivi-dd" className="mt-0">
+                <SuiviDDTab
                   dealId={dealId}
-                  questions={founderQuestions}
+                  displayedResult={displayedResult}
+                  resolutionMap={resolutionMap}
+                  resolutions={resolutions}
+                  onResolve={resolveAlert}
+                  onUnresolve={unresolveAlert}
+                  isResolving={isResolving}
+                  founderQuestions={founderQuestions}
                   existingResponses={existingResponses}
+                  onSaveResponses={handleSaveFounderResponses}
                   onSubmitAndReanalyze={handleSubmitAndReanalyze}
-                  onSaveOnly={handleSaveFounderResponses}
-                  isSubmitting={isSubmittingResponses}
+                  isSubmittingResponses={isSubmittingResponses}
                   isReanalyzing={mutation.isPending}
+                  currentScore={currentScore}
                 />
               </TabsContent>
 

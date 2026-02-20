@@ -215,6 +215,22 @@ export interface EnrichedAgentContext extends AgentContext {
   conditionsAnalystMode?: "pipeline" | "standalone";
   // Condensed summary of previous analysis (for standalone mode)
   conditionsAnalystSummary?: string | null;
+
+  // Structured deal data (multi-tranche mode)
+  dealStructure?: {
+    mode: "SIMPLE" | "STRUCTURED";
+    totalInvestment: number;
+    tranches: Array<{
+      label: string;
+      trancheType: string;
+      amount: number | null;
+      valuationPre: number | null;
+      equityPct: number | null;
+      triggerType: string | null;
+      triggerDetails: string | null;
+      status: string;
+    }>;
+  };
 }
 
 // Base result structure for all agents
@@ -3022,6 +3038,19 @@ export interface ConditionsAnalystFindings {
     suggestedArgument: string;
     leverageSource: string;
   }[];
+
+  // Multi-tranche structured assessment (optional, only in STRUCTURED mode)
+  structuredAssessment?: {
+    overallStructureVerdict: string;
+    trancheAssessments: {
+      trancheLabel: string;
+      assessment: string;
+      risks: string[];
+      score: number;
+    }[];
+    blendedEffectiveValuation: number | null;
+    triggerRiskLevel: "LOW" | "MEDIUM" | "HIGH";
+  };
 }
 
 export interface ConditionsAnalystData {
@@ -3472,6 +3501,7 @@ export interface DevilsAdvocateFindings {
   // Score de scepticisme global
   skepticismAssessment: {
     score: number; // 0-100 (higher = more skeptical)
+    isFallback?: boolean; // true if LLM did not return this score
     scoreBreakdown: {
       factor: string;
       contribution: number; // Points ajoutes au scepticisme
