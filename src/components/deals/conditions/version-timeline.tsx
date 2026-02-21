@@ -189,7 +189,7 @@ export const VersionTimeline = React.memo(function VersionTimeline({ dealId }: V
 });
 
 // Render a snapshot as key-value pairs
-function VersionDetails({ snapshot }: { snapshot: Record<string, unknown> }) {
+const VersionDetails = React.memo(function VersionDetails({ snapshot }: { snapshot: Record<string, unknown> }) {
   const terms = (snapshot.terms ?? snapshot) as Record<string, unknown>;
   const mode = snapshot.mode as string | undefined;
   const tranches = snapshot.tranches as Array<Record<string, unknown>> | null | undefined;
@@ -208,7 +208,7 @@ function VersionDetails({ snapshot }: { snapshot: Record<string, unknown> }) {
       )}
 
       {entries.length > 0 && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
           {entries.slice(0, 20).map(([key, val]) => (
             <div key={key} className="flex items-center gap-1">
               <ArrowRight className="h-2.5 w-2.5 text-muted-foreground/50" />
@@ -218,6 +218,11 @@ function VersionDetails({ snapshot }: { snapshot: Record<string, unknown> }) {
               </span>
             </div>
           ))}
+          {entries.length > 20 && (
+            <p className="text-xs text-muted-foreground/60 col-span-full mt-1">
+              + {entries.length - 20} champ(s) supplementaire(s)
+            </p>
+          )}
         </div>
       )}
 
@@ -237,4 +242,4 @@ function VersionDetails({ snapshot }: { snapshot: Record<string, unknown> }) {
       )}
     </div>
   );
-}
+});

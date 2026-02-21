@@ -42,9 +42,23 @@ function getPercentileColor(pct: number): string {
   return "bg-red-500";
 }
 
+function getPercentileTextColor(pct: number): string {
+  if (pct <= 25) return "text-green-600";
+  if (pct <= 50) return "text-blue-600";
+  if (pct <= 75) return "text-yellow-600";
+  return "text-red-600";
+}
+
+function getPercentileLabel(pct: number): string {
+  if (pct <= 25) return "Favorable";
+  if (pct <= 50) return "Marche";
+  if (pct <= 75) return "Eleve";
+  return "Tres eleve";
+}
+
 function getScoreColor(score: number): string {
-  if (score >= 70) return "text-green-600";
-  if (score >= 40) return "text-yellow-600";
+  if (score >= 80) return "text-green-600";
+  if (score >= 60) return "text-yellow-600";
   return "text-red-600";
 }
 
@@ -69,12 +83,12 @@ function PercentileBar({
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium">{label}</span>
         {percentile != null && (
-          <Badge variant="outline" className={cn("text-xs", getPercentileColor(percentile).replace("bg-", "text-"))}>
-            P{percentile}
+          <Badge variant="outline" className={cn("text-xs", getPercentileTextColor(percentile))}>
+            P{percentile} ({getPercentileLabel(percentile)})
           </Badge>
         )}
       </div>
-      <div className="relative h-6 rounded-full bg-gradient-to-r from-green-100 via-blue-100 via-yellow-100 to-red-100 overflow-visible">
+      <div className="relative h-6 rounded-full bg-gradient-to-r from-green-100 via-blue-100 via-yellow-100 to-red-100 dark:from-green-900/40 dark:via-blue-900/40 dark:via-yellow-900/40 dark:to-red-900/40 overflow-visible">
         {/* Tick markers at P25, P50, P75 */}
         {[25, 50, 75].map(p => (
           <div

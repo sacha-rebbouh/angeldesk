@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,10 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
   const [preMoney, setPreMoney] = useState(initialPreMoney ?? 2_000_000);
   const [investment, setInvestment] = useState(initialInvestment ?? 200_000);
   const [esop, setEsop] = useState(initialEsop ?? 10);
+
+  const handlePreMoneyChange = useCallback((value: number) => setPreMoney(value), []);
+  const handleInvestmentChange = useCallback((value: number) => setInvestment(value), []);
+  const handleEsopChange = useCallback((value: number) => setEsop(value), []);
 
   const result: DilutionResult = useMemo(() => {
     return simulateDilution({
@@ -92,7 +96,7 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
         postMoney: pessimistic.postMoneyValuation,
       },
     ];
-  }, [preMoney, investment, esop, result]);
+  }, [preMoney, investment, esop]);
 
   // Chart data for cap table stacked bar
   const chartData: ChartItem[] = useMemo(() => {
@@ -124,19 +128,20 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
               <div className="flex items-center gap-2">
                 <Input
                   type="number"
-                  className="w-32 h-8 text-right text-sm"
+                  className="w-24 sm:w-32 h-8 text-right text-sm"
                   value={preMoney}
-                  onChange={e => setPreMoney(Number(e.target.value) || 0)}
+                  onChange={e => handlePreMoneyChange(Number(e.target.value) || 0)}
                 />
                 <span className="text-xs text-muted-foreground">EUR</span>
               </div>
             </div>
             <Slider
               value={[preMoney]}
-              onValueChange={([v]) => setPreMoney(v)}
+              onValueChange={([v]) => handlePreMoneyChange(v)}
               min={100_000}
               max={50_000_000}
               step={100_000}
+              aria-label="Valorisation pre-money"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>100K</span>
@@ -151,19 +156,20 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
               <div className="flex items-center gap-2">
                 <Input
                   type="number"
-                  className="w-32 h-8 text-right text-sm"
+                  className="w-24 sm:w-32 h-8 text-right text-sm"
                   value={investment}
-                  onChange={e => setInvestment(Number(e.target.value) || 0)}
+                  onChange={e => handleInvestmentChange(Number(e.target.value) || 0)}
                 />
                 <span className="text-xs text-muted-foreground">EUR</span>
               </div>
             </div>
             <Slider
               value={[investment]}
-              onValueChange={([v]) => setInvestment(v)}
+              onValueChange={([v]) => handleInvestmentChange(v)}
               min={5_000}
               max={5_000_000}
               step={5_000}
+              aria-label="Montant investi"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>5K</span>
@@ -178,21 +184,22 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
               <div className="flex items-center gap-2">
                 <Input
                   type="number"
-                  className="w-20 h-8 text-right text-sm"
+                  className="w-16 sm:w-20 h-8 text-right text-sm"
                   value={esop}
                   min={0}
                   max={30}
-                  onChange={e => setEsop(Number(e.target.value) || 0)}
+                  onChange={e => handleEsopChange(Number(e.target.value) || 0)}
                 />
                 <span className="text-xs text-muted-foreground">%</span>
               </div>
             </div>
             <Slider
               value={[esop]}
-              onValueChange={([v]) => setEsop(v)}
+              onValueChange={([v]) => handleEsopChange(v)}
               min={0}
               max={30}
               step={1}
+              aria-label="Pool ESOP"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>0%</span>
@@ -247,7 +254,7 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[200px]">
+            <div className="h-[160px] sm:h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} layout="vertical" barSize={24}>
                   <XAxis type="number" domain={[0, 100]} tickFormatter={v => `${v}%`} fontSize={11} />
@@ -290,7 +297,7 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {scenarios.map((s, idx) => (
               <div
                 key={s.name}

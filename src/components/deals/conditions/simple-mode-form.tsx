@@ -171,6 +171,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.proRataRights ?? false}
                 onCheckedChange={v => updateField("proRataRights", v)}
+                aria-label="Pro-rata rights"
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -178,6 +179,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.informationRights ?? false}
                 onCheckedChange={v => updateField("informationRights", v)}
+                aria-label="Information rights"
               />
             </div>
             <div className="space-y-2">
@@ -212,6 +214,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.founderVesting ?? false}
                 onCheckedChange={v => updateField("founderVesting", v)}
+                aria-label="Founder vesting"
               />
             </div>
             <div className="space-y-2">
@@ -252,6 +255,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.dragAlong ?? false}
                 onCheckedChange={v => updateField("dragAlong", v)}
+                aria-label="Drag-along"
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -259,6 +263,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.tagAlong ?? false}
                 onCheckedChange={v => updateField("tagAlong", v)}
+                aria-label="Tag-along"
               />
             </div>
           </div>
@@ -280,6 +285,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.ratchet ?? false}
                 onCheckedChange={v => updateField("ratchet", v)}
+                aria-label="Ratchet"
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -290,6 +296,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.payToPlay ?? false}
                 onCheckedChange={v => updateField("payToPlay", v)}
+                aria-label="Pay-to-play"
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -300,6 +307,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.milestoneTranches ?? false}
                 onCheckedChange={v => updateField("milestoneTranches", v)}
+                aria-label="Tranches / Milestones"
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -310,6 +318,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               <Switch
                 checked={form.nonCompete ?? false}
                 onCheckedChange={v => updateField("nonCompete", v)}
+                aria-label="Non-compete"
               />
             </div>
           </div>

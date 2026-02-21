@@ -232,6 +232,7 @@ export const TrancheEditor = React.memo(function TrancheEditor({
                   <Switch
                     checked={tranche.proRataRights ?? false}
                     onCheckedChange={v => update("proRataRights", v)}
+                    aria-label="Pro-rata rights"
                   />
                 </div>
               </div>

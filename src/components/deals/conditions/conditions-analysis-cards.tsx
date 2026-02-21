@@ -19,6 +19,7 @@ import type {
   RedFlagItem,
   NarrativeData,
   ConditionsFindings,
+  QuestionItem,
 } from "./types";
 
 // ── Color helpers ──
@@ -100,7 +101,7 @@ export const ConditionsScoreCard = React.memo(function ConditionsScoreCard({
               <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
                   className={cn("h-full rounded-full transition-all", getScoreBarColor(item.score))}
-                  style={{ width: `${item.score}%` }}
+                  style={{ width: `${Math.min(item.score, 100)}%` }}
                 />
               </div>
               {item.justification && (
@@ -391,7 +392,7 @@ export const StructuredAssessmentCard = React.memo(function StructuredAssessment
             <div className="h-1.5 rounded-full bg-muted overflow-hidden">
               <div
                 className={cn("h-full rounded-full transition-all", getScoreBarColor(ta.score))}
-                style={{ width: `${ta.score}%` }}
+                style={{ width: `${Math.min(ta.score, 100)}%` }}
               />
             </div>
             <p className="text-sm text-muted-foreground">{ta.assessment}</p>
@@ -460,6 +461,191 @@ export const InsightsCard = React.memo(function InsightsCard({
             ))}
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+});
+
+// ── Verdict Summary (Top of analysis — TL;DR for BA) ──
+
+function getVerdictConfig(score: number): { label: string; color: string; bgColor: string; borderColor: string } {
+  if (score >= 80) return { label: "Conditions favorables", color: "text-green-700", bgColor: "bg-green-50 dark:bg-green-950/30", borderColor: "border-green-200 dark:border-green-800" };
+  if (score >= 60) return { label: "Conditions acceptables", color: "text-blue-700", bgColor: "bg-blue-50 dark:bg-blue-950/30", borderColor: "border-blue-200 dark:border-blue-800" };
+  if (score >= 40) return { label: "Conditions a negocier", color: "text-yellow-700", bgColor: "bg-yellow-50 dark:bg-yellow-950/30", borderColor: "border-yellow-200 dark:border-yellow-800" };
+  return { label: "Conditions defavorables", color: "text-red-700", bgColor: "bg-red-50 dark:bg-red-950/30", borderColor: "border-red-200 dark:border-red-800" };
+}
+
+function getValuationLabel(verdict: string): { label: string; color: string } {
+  switch (verdict) {
+    case "UNDERVALUED": return { label: "Sous-evalue", color: "text-green-600" };
+    case "FAIR": return { label: "Fair market", color: "text-blue-600" };
+    case "AGGRESSIVE": return { label: "Agressif", color: "text-orange-600" };
+    case "VERY_AGGRESSIVE": return { label: "Tres agressif", color: "text-red-600" };
+    default: return { label: verdict, color: "text-muted-foreground" };
+  }
+}
+
+export const ConditionsVerdictSummary = React.memo(function ConditionsVerdictSummary({
+  score,
+  narrative,
+  topAdvice,
+  valuation,
+  redFlagCount,
+  onOpenSimulator,
+  onOpenComparator,
+}: {
+  score: number;
+  narrative: NarrativeData | null;
+  topAdvice: NegotiationAdviceItem[];
+  valuation: { assessedValue: number | null; percentileVsDB: number | null; verdict: string; rationale: string; benchmarkUsed: string } | null;
+  redFlagCount: number;
+  onOpenSimulator: () => void;
+  onOpenComparator: () => void;
+}) {
+  const verdict = getVerdictConfig(score);
+
+  return (
+    <Card className={cn("border-2", verdict.borderColor, verdict.bgColor)}>
+      <CardContent className="pt-5 pb-4 space-y-4">
+        {/* Header: Score + Verdict */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className={cn("text-3xl font-bold", verdict.color)}>
+              {score}<span className="text-sm font-normal text-muted-foreground">/100</span>
+            </div>
+            <div>
+              <p className={cn("font-semibold", verdict.color)}>{verdict.label}</p>
+              {narrative?.oneLiner && (
+                <p className="text-sm text-muted-foreground mt-0.5">{narrative.oneLiner}</p>
+              )}
+            </div>
+          </div>
+          {redFlagCount > 0 && (
+            <Badge variant="destructive" className="text-xs">
+              {redFlagCount} red flag{redFlagCount > 1 ? "s" : ""}
+            </Badge>
+          )}
+        </div>
+
+        {/* Valuation quick view */}
+        {valuation && valuation.verdict && (
+          <div className="rounded-lg bg-background/60 border p-3 space-y-1">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground font-medium">Valorisation</span>
+              <span className={cn("font-semibold", getValuationLabel(valuation.verdict).color)}>
+                {getValuationLabel(valuation.verdict).label}
+                {valuation.percentileVsDB != null && (
+                  <span className="text-muted-foreground font-normal ml-1.5">
+                    (P{valuation.percentileVsDB})
+                  </span>
+                )}
+              </span>
+            </div>
+            {valuation.rationale && (
+              <p className="text-xs text-muted-foreground">{valuation.rationale}</p>
+            )}
+          </div>
+        )}
+
+        {/* Top 3 negotiation priorities */}
+        {topAdvice.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Points cles a negocier</p>
+            {topAdvice.map((advice, idx) => (
+              <div key={idx} className="flex items-start gap-2 text-sm">
+                <Badge variant="outline" className={cn("shrink-0 text-[10px] mt-0.5", getSeverityColor(advice.priority))}>
+                  {getPriorityLabel(advice.priority)}
+                </Badge>
+                <span className="text-foreground">{advice.point}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* forNegotiation talking points */}
+        {narrative?.forNegotiation && narrative.forNegotiation.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Arguments de negociation</p>
+            {narrative.forNegotiation.map((point, idx) => (
+              <p key={idx} className="text-sm text-foreground flex items-start gap-1.5">
+                <span className="text-primary mt-0.5 shrink-0">•</span>
+                {point}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {/* Quick action links */}
+        <div className="flex gap-2 pt-1">
+          <Button variant="outline" size="sm" className="text-xs h-7" onClick={onOpenSimulator}>
+            Simuler la dilution
+          </Button>
+          <Button variant="outline" size="sm" className="text-xs h-7" onClick={onOpenComparator}>
+            Comparer au marche
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
+// ── Questions to Ask ──
+
+export const ConditionsQuestionsCard = React.memo(function ConditionsQuestionsCard({
+  questions,
+}: {
+  questions: QuestionItem[];
+}) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  if (questions.length === 0) return null;
+
+  return (
+    <Card className="border-amber-200/50">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Lightbulb className="h-4 w-4 text-amber-500" />
+          <CardTitle className="text-base">Questions a poser au fondateur</CardTitle>
+          <Badge variant="outline" className="text-xs border-amber-200 text-amber-700">
+            {questions.length}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0 space-y-2">
+        {questions.map((q, idx) => {
+          const isExpanded = expandedIdx === idx;
+          return (
+            <div
+              key={q.id ?? idx}
+              className="rounded-lg border p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+              onClick={() => setExpandedIdx(isExpanded ? null : idx)}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2 flex-1">
+                  <Badge variant="outline" className={cn("shrink-0 text-xs", getSeverityColor(q.priority))}>
+                    {getPriorityLabel(q.priority)}
+                  </Badge>
+                  <span className="text-sm font-medium">{q.question}</span>
+                </div>
+                {isExpanded
+                  ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                  : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />}
+              </div>
+              {isExpanded && (q.context || q.whatToLookFor) && (
+                <div className="mt-2 pl-2 border-l-2 border-amber-200/50 space-y-1.5">
+                  {q.context && (
+                    <p className="text-sm text-muted-foreground">{q.context}</p>
+                  )}
+                  {q.whatToLookFor && (
+                    <p className="text-xs text-muted-foreground/70">
+                      <span className="font-medium">A surveiller :</span> {q.whatToLookFor}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </CardContent>
     </Card>
   );

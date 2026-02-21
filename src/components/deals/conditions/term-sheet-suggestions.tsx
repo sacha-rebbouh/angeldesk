@@ -64,9 +64,10 @@ function formatValue(key: string, value: unknown): string {
 }
 
 function getConfidenceColor(confidence: number): string {
-  if (confidence >= 80) return "text-green-600 bg-green-100";
-  if (confidence >= 50) return "text-yellow-600 bg-yellow-100";
-  return "text-red-600 bg-red-100";
+  if (confidence >= 85) return "text-green-600 bg-green-100 dark:text-green-400 dark:bg-green-900/30";
+  if (confidence >= 65) return "text-blue-600 bg-blue-100 dark:text-blue-400 dark:bg-blue-900/30";
+  if (confidence >= 45) return "text-yellow-600 bg-yellow-100 dark:text-yellow-400 dark:bg-yellow-900/30";
+  return "text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-900/30";
 }
 
 export const TermSheetSuggestions = React.memo(function TermSheetSuggestions({
@@ -211,7 +212,7 @@ export const TermSheetSuggestions = React.memo(function TermSheetSuggestions({
         </Button>
       </div>
 
-      <div className="grid gap-1.5 max-h-[300px] overflow-y-auto">
+      <div className="grid gap-1.5 max-h-[250px] sm:max-h-[350px] overflow-y-auto">
         {extractedFields.map((field: SuggestionField) => (
           <label
             key={field.key}

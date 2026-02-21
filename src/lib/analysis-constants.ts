@@ -122,6 +122,7 @@ export const TIER3_AGENTS = [
   "devils-advocate",
   "contradiction-detector",
   "memo-generator",
+  "conditions-analyst",
 ] as const;
 
 // Agent display names — canonical source is format-utils.ts
@@ -237,13 +238,6 @@ export const SEVERITY_CONFIG = {
   major: { label: "Majeur", color: "bg-orange-100 text-orange-800" },
   minor: { label: "Mineur", color: "bg-yellow-100 text-yellow-800" },
 } as const;
-
-// =============================================================================
-// SCORE COLOR HELPER
-// Re-exported from format-utils for backward compatibility
-// =============================================================================
-
-export { getScoreBadgeColor as getScoreColor } from "@/lib/format-utils";
 
 // =============================================================================
 // RESULT CATEGORIZATION HELPERS

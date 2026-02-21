@@ -121,8 +121,40 @@ export interface NarrativeData {
   forNegotiation?: string[];
 }
 
+export interface QuestionItem {
+  id?: string;
+  question: string;
+  priority: "critical" | "high" | "medium" | "low";
+  context?: string;
+  whatToLookFor?: string;
+}
+
+export interface ValuationFindings {
+  assessedValue: number | null;
+  percentileVsDB: number | null;
+  verdict: "UNDERVALUED" | "FAIR" | "AGGRESSIVE" | "VERY_AGGRESSIVE";
+  rationale: string;
+  benchmarkUsed: string;
+}
+
+export interface InstrumentFindings {
+  type: string | null;
+  assessment: "STANDARD" | "FAVORABLE" | "UNFAVORABLE" | "TOXIC";
+  rationale: string;
+  stageAppropriate: boolean;
+}
+
+export interface ProtectionsFindings {
+  overallAssessment: "STRONG" | "ADEQUATE" | "WEAK" | "NONE";
+  keyProtections: Array<{ item: string; present: boolean; assessment: string }>;
+  missingCritical: string[];
+}
+
 export interface ConditionsFindings {
   termsSource?: string;
+  valuation?: ValuationFindings;
+  instrument?: InstrumentFindings;
+  protections?: ProtectionsFindings;
   negotiationAdvice?: NegotiationAdviceItem[];
   crossReferenceInsights?: Array<{ insight: string; sourceAgent: string; impact: string }>;
   structuredAssessment?: {
@@ -144,6 +176,7 @@ export interface TermsResponse {
   negotiationAdvice: NegotiationAdviceItem[] | null;
   redFlags: RedFlagItem[] | null;
   narrative: NarrativeData | null;
+  questions: QuestionItem[] | null;
   analysisStatus?: "success" | "failed" | "timeout" | null;
 }
 

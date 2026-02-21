@@ -7,88 +7,26 @@ import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { ConditionsAnalystAgent } from "@/agents/tier3/conditions-analyst";
 import type { EnrichedAgentContext, ConditionsAnalystData } from "@/agents/types";
-import type { Deal, DealTranche } from "@prisma/client";
+import type { Deal } from "@prisma/client";
 import type { DealMode, TrancheData } from "@/components/deals/conditions/types";
-
-// Normalize a Prisma DealTranche to frontend TrancheData
-function normalizeTranche(t: DealTranche): TrancheData {
-  return {
-    id: t.id,
-    orderIndex: t.orderIndex,
-    label: t.label ?? "",
-    trancheType: t.trancheType,
-    typeDetails: t.typeDetails,
-    amount: t.amount != null ? Number(t.amount) : null,
-    valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
-    equityPct: t.equityPct != null ? Number(t.equityPct) : null,
-    triggerType: t.triggerType,
-    triggerDetails: t.triggerDetails,
-    triggerDeadline: t.triggerDeadline?.toISOString() ?? null,
-    instrumentTerms: t.instrumentTerms as Record<string, unknown> | null,
-    liquidationPref: t.liquidationPref,
-    antiDilution: t.antiDilution,
-    proRataRights: t.proRataRights,
-    status: t.status,
-  };
-}
-
-// Normalize analysis data for frontend (lowercase severity/priority, convert Decimals)
-function buildTermsResponse(
-  terms: Record<string, unknown> | null,
-  cached: ConditionsAnalystData | null,
-  conditionsScore: number | null,
-  mode: DealMode = "SIMPLE",
-  tranches: TrancheData[] | null = null,
-) {
-  // Convert Prisma Decimal fields to numbers
-  const normalizedTerms = terms ? {
-    ...terms,
-    valuationPre: terms.valuationPre != null ? Number(terms.valuationPre) : null,
-    amountRaised: terms.amountRaised != null ? Number(terms.amountRaised) : null,
-    dilutionPct: terms.dilutionPct != null ? Number(terms.dilutionPct) : null,
-    esopPct: terms.esopPct != null ? Number(terms.esopPct) : null,
-  } : null;
-
-  // Lowercase severity/priority for frontend (agent outputs UPPERCASE)
-  const advice = (cached?.findings?.negotiationAdvice ?? []).map(a => ({
-    ...a,
-    priority: a.priority?.toLowerCase() ?? "medium",
-  }));
-  const flags = (cached?.redFlags ?? []).map(rf => ({
-    ...rf,
-    severity: rf.severity?.toLowerCase() ?? "medium",
-  }));
-
-  return {
-    terms: normalizedTerms,
-    mode,
-    tranches,
-    conditionsScore,
-    conditionsBreakdown: cached?.score?.breakdown ?? null,
-    conditionsAnalysis: cached?.findings ?? null,
-    negotiationAdvice: advice.length > 0 ? advice : null,
-    redFlags: flags.length > 0 ? flags : null,
-    narrative: cached?.narrative ?? null,
-    analysisStatus: cached ? "success" as const : null,
-  };
-}
+import { normalizeTranche, buildTermsResponse } from "@/services/terms-normalization";
 
 const dealTermsSchema = z.object({
   // Valorisation
-  valuationPre: z.number().positive().nullable().optional(),
-  amountRaised: z.number().positive().nullable().optional(),
+  valuationPre: z.number().positive().max(1e15).nullable().optional(),
+  amountRaised: z.number().positive().max(1e15).nullable().optional(),
   dilutionPct: z.number().min(0).max(100).nullable().optional(),
 
   // Instrument
-  instrumentType: z.string().nullable().optional(),
-  instrumentDetails: z.string().nullable().optional(),
+  instrumentType: z.string().max(100).nullable().optional(),
+  instrumentDetails: z.string().max(500).nullable().optional(),
 
   // Protections investisseur
-  liquidationPref: z.string().nullable().optional(),
-  antiDilution: z.string().nullable().optional(),
+  liquidationPref: z.string().max(100).nullable().optional(),
+  antiDilution: z.string().max(100).nullable().optional(),
   proRataRights: z.boolean().nullable().optional(),
   informationRights: z.boolean().nullable().optional(),
-  boardSeat: z.string().nullable().optional(),
+  boardSeat: z.string().max(100).nullable().optional(),
 
   // Gouvernance / Fondateurs
   founderVesting: z.boolean().nullable().optional(),
@@ -105,8 +43,8 @@ const dealTermsSchema = z.object({
   nonCompete: z.boolean().nullable().optional(),
 
   // Champ libre
-  customConditions: z.string().nullable().optional(),
-  notes: z.string().nullable().optional(),
+  customConditions: z.string().max(2000).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
 
   // Source
   source: z.enum(["manual", "extracted", "negotiated"]).optional(),
@@ -172,20 +110,20 @@ export async function GET(request: NextRequest, context: RouteContext) {
 const trancheSchema = z.object({
   id: z.string().optional(), // existing tranche ID (for updates)
   orderIndex: z.number().int().min(0),
-  label: z.string().default(""),
-  trancheType: z.string(),
-  typeDetails: z.string().nullable().optional(),
+  label: z.string().max(200).default(""),
+  trancheType: z.string().max(100),
+  typeDetails: z.string().max(500).nullable().optional(),
   amount: z.number().positive().nullable().optional(),
   valuationPre: z.number().positive().nullable().optional(),
   equityPct: z.number().min(0).max(100).nullable().optional(),
   triggerType: z.string().nullable().optional(),
-  triggerDetails: z.string().nullable().optional(),
+  triggerDetails: z.string().max(1000).nullable().optional(),
   triggerDeadline: z.string().nullable().optional(), // ISO date
   instrumentTerms: z.record(z.string(), z.unknown()).nullable().optional(),
-  liquidationPref: z.string().nullable().optional(),
-  antiDilution: z.string().nullable().optional(),
+  liquidationPref: z.string().max(100).nullable().optional(),
+  antiDilution: z.string().max(100).nullable().optional(),
   proRataRights: z.boolean().nullable().optional(),
-  status: z.string().default("PENDING"),
+  status: z.enum(["PENDING", "ACTIVE", "CONVERTED", "EXPIRED", "CANCELLED"]).default("PENDING"),
 });
 
 // Wrapper schema: accepts { terms, mode, tranches? }
@@ -226,7 +164,12 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const existingTerms = deal.dealTerms;
     if (existingTerms) {
       // Count existing versions to set next version number
-      const versionCount = await prisma.dealTermsVersion.count({ where: { dealId } });
+      const lastVersion = await prisma.dealTermsVersion.findFirst({
+        where: { dealId },
+        orderBy: { version: "desc" },
+        select: { version: true },
+      });
+      const versionCount = lastVersion?.version ?? 0;
       const snapshot: Record<string, unknown> = {
         terms: existingTerms,
         mode: deal.dealStructure?.mode ?? "SIMPLE",
@@ -330,7 +273,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       const result = await Promise.race([
         agent.run(standaloneContext),
         new Promise<never>((_, reject) => {
-          routeTimerId = setTimeout(() => reject(new Error("Timeout 55s")), 55_000);
+          routeTimerId = setTimeout(() => reject(new Error("Timeout 52s")), 52_000);
         }),
       ]);
       clearTimeout(routeTimerId);
@@ -414,9 +357,9 @@ function buildStandaloneContextSync(
     documents: deal.documents,
     previousResults: {},
     dealTerms: {
-      valuationPre: terms.valuationPre ? Number(terms.valuationPre) : null,
-      amountRaised: terms.amountRaised ? Number(terms.amountRaised) : null,
-      dilutionPct: terms.dilutionPct ? Number(terms.dilutionPct) : null,
+      valuationPre: terms.valuationPre != null ? Number(terms.valuationPre) : null,
+      amountRaised: terms.amountRaised != null ? Number(terms.amountRaised) : null,
+      dilutionPct: terms.dilutionPct != null ? Number(terms.dilutionPct) : null,
       instrumentType: terms.instrumentType,
       instrumentDetails: terms.instrumentDetails,
       liquidationPref: terms.liquidationPref,
@@ -427,7 +370,7 @@ function buildStandaloneContextSync(
       founderVesting: terms.founderVesting,
       vestingDurationMonths: terms.vestingDurationMonths,
       vestingCliffMonths: terms.vestingCliffMonths,
-      esopPct: terms.esopPct ? Number(terms.esopPct) : null,
+      esopPct: terms.esopPct != null ? Number(terms.esopPct) : null,
       dragAlong: terms.dragAlong,
       tagAlong: terms.tagAlong,
       ratchet: terms.ratchet,

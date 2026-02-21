@@ -4,7 +4,7 @@ import React, { useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Save, Brain, Layers, BarChart3, Clock, Handshake,
+  Loader2, Save, Brain, Layers, TrendingDown, Target, Clock, Handshake,
   FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,8 @@ import { StructuredModeForm } from "./structured-mode-form";
 import { TermSheetSuggestions } from "./term-sheet-suggestions";
 import {
   ConditionsScoreCard,
+  ConditionsVerdictSummary,
+  ConditionsQuestionsCard,
   NegotiationAdviceCard,
   RedFlagsCard,
   InsightsCard,
@@ -126,13 +128,43 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
     setHasChanges(true);
   }, []);
 
+  const validateTerms = useCallback((formData: DealTermsData): string | null => {
+    if (formData.dilutionPct != null && (formData.dilutionPct < 0 || formData.dilutionPct > 100)) {
+      return "La dilution doit etre entre 0% et 100%";
+    }
+    if (formData.vestingCliffMonths != null && formData.vestingDurationMonths != null
+        && formData.vestingCliffMonths > formData.vestingDurationMonths) {
+      return "Le cliff ne peut pas depasser la duree du vesting";
+    }
+    if (formData.esopPct != null && (formData.esopPct < 0 || formData.esopPct > 100)) {
+      return "L'ESOP doit etre entre 0% et 100%";
+    }
+    if (formData.valuationPre != null && formData.valuationPre <= 0) {
+      return "La valorisation doit etre positive";
+    }
+    if (formData.amountRaised != null && formData.amountRaised <= 0) {
+      return "Le montant leve doit etre positif";
+    }
+    return null;
+  }, []);
+
   const handleSave = useCallback(() => {
+    const error = validateTerms(form);
+    if (error) {
+      toast.error(error);
+      return;
+    }
     if (mode === "STRUCTURED") {
       saveMutation.mutate({ terms: form, mode, tranches });
     } else {
       saveMutation.mutate({ terms: form, mode });
     }
-  }, [form, mode, tranches, saveMutation]);
+  }, [form, mode, tranches, saveMutation, validateTerms]);
+
+  const handleApplyTermSheet = useCallback((suggestions: Partial<DealTermsData>) => {
+    setForm(prev => ({ ...prev, ...suggestions }));
+    setHasChanges(true);
+  }, []);
 
   // AI Analysis section (memoized)
   const analysisSection = useMemo(() => {
@@ -145,11 +177,33 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
     const crossRefInsights = data?.conditionsAnalysis?.crossReferenceInsights ?? [];
     const narrative = data?.narrative ?? null;
     const structuredAssessment = data?.conditionsAnalysis?.structuredAssessment ?? null;
+    const questions = data?.questions ?? [];
+    const valuation = data?.conditionsAnalysis?.valuation ?? null;
+
+    // Top negotiation priorities (max 3)
+    const topAdvice = negotiationAdvice
+      .filter(a => a.priority === "critical" || a.priority === "high")
+      .slice(0, 3);
 
     return (
       <div className="space-y-4">
+        {/* Verdict Summary — always first */}
+        <ConditionsVerdictSummary
+          score={conditionsScore}
+          narrative={narrative}
+          topAdvice={topAdvice}
+          valuation={valuation}
+          redFlagCount={redFlags.length}
+          onOpenSimulator={() => setActiveSubTab("simulator")}
+          onOpenComparator={() => setActiveSubTab("comparator")}
+        />
+
         <ConditionsScoreCard score={conditionsScore} breakdown={breakdown} narrative={narrative} />
         {structuredAssessment && <StructuredAssessmentCard assessment={structuredAssessment} />}
+
+        {/* Questions to ask the founder */}
+        {questions.length > 0 && <ConditionsQuestionsCard questions={questions} />}
+
         {negotiationAdvice.length > 0 && (
           <NegotiationAdviceCard
             advice={negotiationAdvice}
@@ -197,15 +251,31 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
               pour obtenir une analyse IA complete avec score, red flags et conseils de negociation.
             </p>
           </div>
-          <div className="flex gap-3">
-            <Button onClick={() => { setMode("SIMPLE"); setHasChanges(true); }}>
-              <FileText className="mr-2 h-4 w-4" />
-              Remplir les conditions
-            </Button>
-            <Button variant="outline" onClick={() => { setMode("STRUCTURED"); setHasChanges(true); }}>
-              <Layers className="mr-2 h-4 w-4" />
-              Deal structure (multi-tranches)
-            </Button>
+          <div className="grid gap-3 sm:grid-cols-2 max-w-lg">
+            <button
+              className="flex flex-col items-start gap-2 rounded-lg border-2 border-primary/20 p-4 text-left hover:border-primary/50 hover:bg-primary/5 transition-colors"
+              onClick={() => { setMode("SIMPLE"); setHasChanges(true); }}
+            >
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />
+                <span className="font-medium text-sm">Conditions simples</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Un seul instrument, protections standard. Ideal pour la majorite des deals early stage.
+              </p>
+            </button>
+            <button
+              className="flex flex-col items-start gap-2 rounded-lg border-2 border-muted p-4 text-left hover:border-primary/30 hover:bg-muted/50 transition-colors"
+              onClick={() => { setMode("STRUCTURED"); setHasChanges(true); }}
+            >
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium text-sm">Deal structure</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Multi-tranches avec conditions differentes (CCA + equity, options, milestones).
+              </p>
+            </button>
           </div>
         </div>
       </TooltipProvider>
@@ -261,11 +331,11 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
               Conditions
             </TabsTrigger>
             <TabsTrigger value="simulator">
-              <BarChart3 className="mr-1.5 h-3.5 w-3.5" />
+              <TrendingDown className="mr-1.5 h-3.5 w-3.5" />
               Simulateur
             </TabsTrigger>
             <TabsTrigger value="comparator">
-              <BarChart3 className="mr-1.5 h-3.5 w-3.5" />
+              <Target className="mr-1.5 h-3.5 w-3.5" />
               Comparateur
             </TabsTrigger>
             <TabsTrigger value="history">
@@ -276,20 +346,26 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
 
           <TabsContent value="conditions" className="space-y-6">
             {/* Term sheet suggestions banner */}
-            {termSheetDoc && isEmpty && (
+            {termSheetDoc && (
               <TermSheetSuggestions
                 dealId={dealId}
                 termSheetDocId={termSheetDoc.id}
                 termSheetDocName={termSheetDoc.name}
-                onApply={(suggestions) => {
-                  setForm(prev => ({ ...prev, ...suggestions }));
-                  setHasChanges(true);
-                }}
+                onApply={handleApplyTermSheet}
               />
             )}
 
             {/* AI Analysis */}
             {analysisSection}
+            {!analysisSection && data?.terms && (
+              <div className="rounded-lg border border-dashed border-primary/20 bg-primary/5 p-6 text-center space-y-2">
+                <Brain className="mx-auto h-8 w-8 text-primary/30" />
+                <p className="text-sm font-medium">Analyse IA non disponible</p>
+                <p className="text-xs text-muted-foreground">
+                  Cliquez &quot;Sauvegarder et analyser&quot; pour obtenir le score, les red flags et les conseils de negociation.
+                </p>
+              </div>
+            )}
 
             {/* Form based on mode */}
             {mode === "SIMPLE" ? (
@@ -304,6 +380,8 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
               />
             )}
 
+            {/* Spacer for sticky button */}
+            {hasChanges && <div className="h-16" />}
             {/* Bottom save button (sticky) */}
             {hasChanges && (
               <div className="sticky bottom-4 flex justify-end">

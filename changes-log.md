@@ -2,6 +2,357 @@
 
 ---
 
+## 2026-02-21 — fix: security hardening — Zod schema constraints on terms route
+
+- **route.ts (terms)** : ajout `.max(100)` sur `instrumentType`, `liquidationPref`, `antiDilution`, `boardSeat` — `.max(500)` sur `instrumentDetails` — `.max(2000)` sur `customConditions`, `notes`
+- **route.ts (terms)** : ajout `.max(1e15)` sur `valuationPre`, `amountRaised` pour borner les valeurs numeriques
+- **route.ts (terms)** : trancheSchema — remplacement `z.string().default("PENDING")` par `z.enum(["PENDING", "ACTIVE", "CONVERTED", "EXPIRED", "CANCELLED"])` pour le champ `status`
+- **route.ts (terms)** : trancheSchema — ajout `.max(200)` sur `label`, `.max(100)` sur `trancheType`, `.max(500)` sur `typeDetails`, `.max(1000)` sur `triggerDetails`, `.max(100)` sur `liquidationPref`/`antiDilution`
+
+### Fichiers modifies
+- `src/app/api/deals/[dealId]/terms/route.ts`
+
+---
+
+## 2026-02-21 — perf: React.memo + useCallback — conditions components
+
+- **version-timeline.tsx** : `VersionDetails` enveloppe dans `React.memo` pour eviter re-renders inutiles quand le snapshot n'a pas change
+- **conditions-tab.tsx** : inline `onApply` callback extrait en `handleApplyTermSheet` via `useCallback` (reference stable pour `TermSheetSuggestions`)
+- **dilution-simulator.tsx** : ajout `useCallback` pour `handlePreMoneyChange`, `handleInvestmentChange`, `handleEsopChange` — remplacement des setters inline dans les 6 handlers (Input onChange + Slider onValueChange)
+
+### Fichiers modifies
+- `src/components/deals/conditions/version-timeline.tsx`
+- `src/components/deals/conditions/conditions-tab.tsx`
+- `src/components/deals/conditions/dilution-simulator.tsx`
+
+---
+
+## 2026-02-21 — fix: dark mode + empty state — conditions components
+
+- **percentile-comparator.tsx** : ajout dark mode variants sur le gradient de la barre percentile (`dark:from-green-900/40 dark:via-blue-900/40 dark:via-yellow-900/40 dark:to-red-900/40`)
+- **term-sheet-suggestions.tsx** : ajout dark mode variants sur les badges de confidence (`dark:text-green-400 dark:bg-green-900/30`, etc.)
+- **conditions-tab.tsx** : ajout empty state quand l'analyse IA n'a pas encore ete lancee (icone Brain + message invitant a cliquer "Sauvegarder et analyser")
+
+### Fichiers modifies
+- `src/components/deals/conditions/percentile-comparator.tsx`
+- `src/components/deals/conditions/term-sheet-suggestions.tsx`
+- `src/components/deals/conditions/conditions-tab.tsx`
+
+---
+
+## 2026-02-21 — fix: conditions tab — types, validation, icons, verdict, questions
+
+- **types.ts** : ajout types `QuestionItem`, `ValuationFindings`, `InstrumentFindings`, `ProtectionsFindings` — enrichissement `ConditionsFindings` avec champs types (valuation, instrument, protections) — ajout champ `questions` dans `TermsResponse`
+- **terms-normalization.ts** : ajout mapping `questions` (lowercase priority) dans `buildTermsResponse`, retourne `questions` dans la reponse
+- **conditions-tab.tsx** : fix icones dupliquees Simulateur/Comparateur (`BarChart3` remplace par `TrendingDown`/`Target`) — term sheet suggestions affiches meme si formulaire non vide — validation client-side avant sauvegarde (dilution 0-100%, cliff <= vesting, ESOP 0-100%, valo/montant positifs) — ajout `ConditionsVerdictSummary` en haut de l'analyse + `ConditionsQuestionsCard` — spacer `h-16` pour le bouton sticky
+
+### Fichiers modifies
+- `src/components/deals/conditions/types.ts`
+- `src/services/terms-normalization.ts`
+- `src/components/deals/conditions/conditions-tab.tsx`
+
+---
+
+## 2026-02-21 — feat: ConditionsVerdictSummary + ConditionsQuestionsCard + progress bar clamp
+
+- **conditions-analysis-cards.tsx** : ajout composant `ConditionsVerdictSummary` — carte TL;DR en haut de l'analyse (score/verdict, valuation quick view, top 3 nego priorities, arguments de nego, boutons simulateur/comparateur)
+- **conditions-analysis-cards.tsx** : ajout composant `ConditionsQuestionsCard` — carte expandable des questions a poser au fondateur (priority badge, context, whatToLookFor)
+- **conditions-analysis-cards.tsx** : clamp progress bar width a `Math.min(score, 100)` dans `ConditionsScoreCard` et `StructuredAssessmentCard` pour eviter overflow
+- **conditions-analysis-cards.tsx** : ajout import `QuestionItem` depuis `./types`
+- **types.ts** : type `QuestionItem` deja present (id?, question, priority, context?, whatToLookFor?)
+
+### Fichiers modifies
+- `src/components/deals/conditions/conditions-analysis-cards.tsx`
+
+---
+
+## 2026-02-21 — fix: accessibility, responsive, performance — conditions components
+
+- **simple-mode-form.tsx** : `aria-label` ajouté sur les 9 Switch (pro-rata, information rights, founder vesting, drag-along, tag-along, ratchet, pay-to-play, milestones, non-compete)
+- **tranche-editor.tsx** : `aria-label="Pro-rata rights"` ajouté sur le Switch
+- **dilution-simulator.tsx** : `aria-label` sur les 3 Sliders (pre-money, montant investi, ESOP)
+- **dilution-simulator.tsx** : suppression dependance redondante `result` dans le `useMemo` scenarios
+- **dilution-simulator.tsx** : hauteur chart responsive (`h-[160px] sm:h-[200px]`), largeurs Input responsive
+- **percentile-comparator.tsx** : remplacement `.replace("bg-", "text-")` fragile par fonctions dediees `getPercentileTextColor` et `getPercentileLabel`
+- **version-timeline.tsx** : indicateur de troncature quand > 20 champs affiches
+
+### Fichiers modifies
+- `src/components/deals/conditions/simple-mode-form.tsx`
+- `src/components/deals/conditions/tranche-editor.tsx`
+- `src/components/deals/conditions/dilution-simulator.tsx`
+- `src/components/deals/conditions/percentile-comparator.tsx`
+- `src/components/deals/conditions/version-timeline.tsx`
+
+---
+
+## 2026-02-21 — fix: UX conditions tab — empty state, extraction list, confidence colors
+
+- **conditions-tab.tsx** : empty state redesigne avec grid de 2 cartes explicatives (Simple vs Structure) au lieu de 2 boutons generiques
+- **term-sheet-suggestions.tsx** : max-height extraction list responsive (250px mobile / 350px desktop)
+- **term-sheet-suggestions.tsx** : seuils `getConfidenceColor` plus granulaires (85/65/45) avec ajout niveau bleu intermediaire
+- **conditions-help.ts** : audit tooltips — tous terminent deja par un point, aucun fix necessaire
+
+### Fichiers modifies
+- `src/components/deals/conditions/conditions-tab.tsx`
+- `src/components/deals/conditions/term-sheet-suggestions.tsx`
+
+---
+
+## 2026-02-21 — fix: backend conditions-analyst + terms route race condition + timeout
+
+- **analysis-constants.ts** : ajout `"conditions-analyst"` dans `TIER3_AGENTS` pour que `categorizeResults` classe correctement ses résultats en Tier 3
+- **terms/route.ts** : timeout route aligné de 55s à 52s (2s buffer après le 50s agent timeout)
+- **terms/route.ts** : fix race condition version numbering — `count()` remplacé par `findFirst(orderBy: desc)` pour éviter les conflits de numéro de version en cas de requêtes concurrentes
+- **terms-normalization.ts** : ajout import `QuestionItem` depuis les types conditions
+
+### Fichiers modifiés
+- `src/lib/analysis-constants.ts`
+- `src/app/api/deals/[dealId]/terms/route.ts`
+- `src/services/terms-normalization.ts`
+
+---
+
+## 2026-02-20 — refonte Vue d'ensemble : suppression VerdictPanel, Scores en premier
+
+- **VerdictPanel supprimé** de la Vue d'ensemble (redondant avec la card Scores)
+- **Card Scores remontée** en première position (gauche), DealInfo à droite
+- Variables mortes nettoyées : verdictScore, verdictRecommendation, verdictRedFlags, conditionIssues, pendingQuestionsCount
+- Imports morts supprimés : VerdictPanel, extractDealScore, extractDealRecommendation
+- Fichier modifié : `deals/[dealId]/page.tsx`
+
+---
+
+## 2026-02-20 — feat: AI Board en sous-onglet à côté de Suivi DD
+
+- **AI Board** intégré comme sous-onglet dans l'AnalysisPanel : Résultats | Cohérence | Suivi DD | **AI Board**
+- Dynamic import du AIBoardPanel directement dans analysis-panel.tsx (ssr: false, lazy-loaded)
+- Suppression du BoardPanelWrapper standalone de la page deal (plus de composant séparé en bas)
+- Props `dealName` ajoutée à AnalysisPanelWrapper → AnalysisPanel pour le board
+- Fichiers modifiés : `analysis-panel.tsx`, `analysis-panel-wrapper.tsx`, `deals/[dealId]/page.tsx`
+
+---
+
+## 2026-02-20 — refonte UI: Verdict, Scores, DealInfo — design pro fintech
+
+### Composants redesignés
+- **VerdictPanel** — Score ring SVG animé, accent line colorée, layout horizontal score+détails, typographie uppercase tracking-wider pour labels, spacing et hiérarchie visuelle améliorés
+- **ScoreDisplay/ScoreGrid** — Barres gradient avec fond teinté, mini score ring pour le score global, labels uppercase, meilleur espacement grid
+- **DealInfoCard** — Layout avec icônes par champ (MapPin, Target, Banknote...), header séparé avec bordure, InfoRow component, suppression de la Card shadcn basique
+- **Deal page** — Suppression des stat cards redondants (Valorisation/ARR dupliqués), section Scores custom container au lieu de Card générique, nettoyage imports inutilisés
+
+### Fichiers modifiés
+- `src/components/deals/verdict-panel.tsx`
+- `src/components/deals/score-display.tsx`
+- `src/components/deals/deal-info-card.tsx`
+- `src/app/(dashboard)/deals/[dealId]/page.tsx`
+
+---
+
+## 2026-02-21 — fix: Eradication Decimal truthy (40+ fichiers) + memo wraps (12 composants)
+
+### Performance — memo wraps supplémentaires (12 composants)
+- **AnalysisPanel** (1506 lignes), **AIBoardPanel** (509 lignes) — composants les plus lourds
+- **AnalysisPanelWrapper**, **BoardPanelWrapper** — wrappers qui isolent les re-renders
+- **DocumentPreviewDialog**, **DocumentUploadDialog**, **DealRenameDialog**, **DealDeleteDialog** — dialogs
+- **DeltaIndicator**, **ChangedSection**, **KeyPointsSection**, **BoardTeaser** — composants purs
+- **CreditBadge** — dans le header, re-rendu à chaque navigation
+
+### Decimal truthy — éradication complète dans toute la codebase
+
+### Description
+Scan exhaustif de tous les patterns `Decimal ? Number(Decimal)` (Prisma Decimal est un objet JS, toujours truthy même si valeur = 0). Remplacement systématique par `!= null ? Number()` dans 40+ fichiers.
+
+### Agents Tier 2 (19 fichiers)
+- **7 agents** (hrtech, marketplace, foodtech, edtech, creator, general, proptech): `deal.growthRate ?` → `!= null ?` + `Number()` wrapping
+- **12 agents** (biotech, hardware, healthtech, cybersecurity, saas, deeptech, ai, gaming, consumer, spacetech, base-sector, climate): `deal.valuationPre ?` et `deal.amountRequested ?` → `!= null ?`
+- **3 agents** (cybersecurity, ai, saas): `deal.arr ?` → `!= null ?` (ajouté)
+
+### Agents Tier 3 (3 fichiers)
+- **memo-generator.ts**: 6 fixes (valuationPre, amountRequested, arr, growthRate) dans 3 méthodes
+- **scenario-modeler.ts**: 8 fixes (arr, growthRate, valuationPre, amountRequested) dans 4 méthodes
+- **devils-advocate.ts**: 2 fixes (valuationPre, arr)
+
+### Agents Tier 1 + Base (3 fichiers)
+- **base-agent.ts**: 4 fixes (arr, growthRate, amountRequested, valuationPre) — affecte tous les agents
+- **exit-strategist.ts**: 3 fixes (amountRequested, valuationPre, arr)
+- **cap-table-auditor.ts**: 1 fix (amountRequested)
+
+### Chat + Context (2 fichiers)
+- **deal-chat-agent.ts**: 4 fixes (arr, growthRate, amountRequested, valuationPre)
+- **context-retriever.ts**: 4 fixes (arr, growthRate, valuationPre, amountRequested)
+
+### API Routes (5 fichiers)
+- **v1/deals/route.ts**: 5 fixes (2 blocs: liste + création)
+- **v1/deals/[dealId]/route.ts**: 6 fixes (2 blocs: GET + PATCH)
+- **v1/deals/[dealId]/analyses/route.ts**: 1 fix (totalCost)
+- **deals/compare/route.ts**: 3 fixes (valuationPre, arr, growthRate)
+- **chat/[dealId]/route.ts**: 4 fixes (arr, growthRate, amountRequested, valuationPre)
+
+### Services + Orchestrator (6 fichiers)
+- **funding-db.ts**: 4 fixes (amount, amountUsd × 2 blocs)
+- **cost-monitor/index.ts**: 2 fixes (cost sum, monthlyBudget)
+- **telegram-commands.ts**: 1 fix (totalCost)
+- **conversation.ts**: 1 fix (totalCost)
+- **orchestrator/index.ts**: 4 fixes (amountUsd, valuationPre, amountRaised, dilutionPct)
+- **entity-verifier.ts**: 1 fix (amount)
+
+### Maintenance DB (2 fichiers)
+- **db-sourcer/dedup.ts**: 2 fixes (amountUsd, amount)
+- **db-cleaner/duplicates.ts**: 6 fixes (amountUsd × 6 via replace_all)
+
+### PDF + inngest (2 fichiers)
+- **pdf/cover.tsx**: 1 fix (growthRate)
+- **inngest.ts**: 1 fix (totalCost)
+
+### Fichiers modifiés (40+)
+`src/agents/tier2/{hrtech,marketplace,foodtech,edtech,creator,general,proptech,biotech,hardware,healthtech,cybersecurity,saas,deeptech,ai,gaming,consumer,spacetech,base-sector,climate}-expert.ts`, `src/agents/tier3/{memo-generator,scenario-modeler,devils-advocate}.ts`, `src/agents/tier1/{exit-strategist,cap-table-auditor}.ts`, `src/agents/base-agent.ts`, `src/agents/chat/{deal-chat-agent,context-retriever}.ts`, `src/agents/orchestrator/index.ts`, `src/agents/orchestration/utils/entity-verifier.ts`, `src/agents/maintenance/db-{sourcer/dedup,cleaner/duplicates}.ts`, `src/app/api/{v1/deals/route,v1/deals/[dealId]/route,v1/deals/[dealId]/analyses/route,deals/compare/route,chat/[dealId]/route}.ts`, `src/services/{context-engine/connectors/funding-db,cost-monitor/index,notifications/telegram-commands,chat-context/conversation}.ts`, `src/lib/{pdf/pdf-sections/cover,inngest}.ts`
+
+---
+
+## 2026-02-21 — fix: Audit QA wave 4+5 (final) — memo, thresholds, grids, VERDICT_CONFIG centralisé
+
+### Corrections finales
+- **memo()**: ExtractionQualityBadge, ExtractionWarningBanner, ReActTraceViewer, ReActBadge, DealInfoCard, FileUpload
+- **threshold**: deal-comparison `< 50` → `< 40`, percentile-comparator `70/40` → `80/60`
+- **labels FR**: tier3-results tabs "Verdict" / "Mémo", RECOMMENDATION_CONFIG "NEGOCIER" → "NÉGOCIER"
+- **VERDICT_CONFIG centralisé**: Déplacé dans `ui-configs.ts` avec aliases (invest→strong_pass, etc.), importé dans tier3-results
+- **Responsive grids** (8 fixes supplémentaires): tier1-results (5 grids: burn, team, narrative, customer, overview), tier2-results (cohort), team-management (scores), conditions/dilution-simulator (déjà fait)
+
+### Fichiers modifiés (10)
+`src/lib/ui-configs.ts`, `src/components/deals/{extraction-quality-badge,react-trace-viewer,deal-info-card,file-upload,deal-comparison,tier3-results,tier1-results,tier2-results,team-management}.tsx`, `src/components/deals/conditions/percentile-comparator.tsx`
+
+---
+
+## 2026-02-20 — fix: Audit QA wave 3 — Decimal safety, memo wraps, labels FR, thresholds, grids
+
+### Description
+3e vague d'audit (4 agents: performance, dead code, data flow, UI coherence). ~50 corrections supplémentaires.
+
+### Data Flow (Decimal truthy checks)
+- **5 agents tier2** (blockchain, fintech, legaltech, mobility, saas): `deal.arr.toLocaleString()` → `Number(deal.arr).toLocaleString()`, truthy → `!= null` (13 fixes)
+- **orchestrator/index.ts**: 2 blocs (lignes 772 et 1552) — `rawDealTerms.valuationPre ?` → `!= null ?` pour valuationPre, amountRaised, dilutionPct, esopPct (8 fixes)
+- **conditions-analyst.ts**: `ext.valuationPre.toLocaleString()` → `Number(ext.valuationPre).toLocaleString()` + truthy → `!= null` (3 fixes)
+
+### Performance (memo wraps)
+- **8 composants** wrappés dans `React.memo()`: DebateViewer, ArenaView, ChatView, ColumnsView, TimelineView, BoardProgress, AnalysisProgress, TimelineVersions
+- **Inline style** extrait en constante: `GRID_PATTERN_STYLE` dans ai-board-panel.tsx
+
+### staleTime manquants
+- `documents-tab.tsx`: staleness query → 30s
+- `ai-board-panel.tsx`: board sessions query → 30s
+- `deal-comparison.tsx`: compare query → 60s
+- `investment-preferences-form.tsx`: preferences query → 60s
+- `costs-dashboard-v2.tsx`: userDetail + dealDetail → 30s
+
+### Labels FR (accents + traductions)
+- **verdict-panel.tsx**: Résoudre, Négocier, défavorable, étapes, effectuée (6 fixes)
+- **tier2-results.tsx**: "Sector Score" → "Score Secteur", "Unknown error" → "Erreur inconnue", "Sector Analysis" → "Analyse", métriques/analysées/spécifiques (5 fixes)
+- **tier3-results.tsx**: "Coherence" → "Cohérence", "Investment Memo" → "Memo d'investissement" (4 fixes)
+- **deck-coherence-report.tsx**: "Coherence du Deck" → "Cohérence du Deck" + aria-label (2 fixes)
+- **early-warnings-panel.tsx**: "details" → "détails" (1 fix)
+- **suivi-dd-alert-card.tsx**: "Details" → "Détails" (1 fix)
+
+### Score thresholds (alignement canonical 80/60/40/20)
+- **tier1-results.tsx**: 3 occurrences 70/50 → 80/60
+- **timeline-versions.tsx**: 70/50 → 80/60
+- **team-management.tsx**: 75/50/30 → 80/60/40
+
+### Responsive grids
+- **columns-view.tsx**: `grid-cols-4` → `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`
+- **dilution-simulator.tsx**: `grid-cols-3` → `grid-cols-1 sm:grid-cols-3`
+- **version-timeline.tsx**: `grid-cols-2` → `grid-cols-1 sm:grid-cols-2`
+- **deck-coherence-report.tsx**: `grid-cols-4` → `grid-cols-2 sm:grid-cols-4`
+- **react-trace-viewer.tsx**: `grid-cols-3` → `grid-cols-1 sm:grid-cols-3`
+- **deal-info-card.tsx**: `grid-cols-2` → `grid-cols-1 sm:grid-cols-2` (edit form)
+
+### Dead code cleanup
+- **query-keys.ts**: Supprimé `queryKeys.user` et `queryKeys.benchmarks` (non utilisés)
+- **format-utils.ts**: Supprimé `formatPercent`, `formatMultiple`, `getScoreBgColor` (non importés)
+- **analysis-constants.ts**: Supprimé re-export `getScoreBadgeColor as getScoreColor` (non importé)
+
+### Fichiers modifiés (29)
+`src/agents/tier2/{blockchain,fintech,legaltech,mobility,saas}-expert.ts`, `src/agents/orchestrator/index.ts`, `src/agents/tier3/conditions-analyst.ts`, `src/components/deals/board/{debate-viewer,board-progress,ai-board-panel}.tsx`, `src/components/deals/board/views/{arena-view,chat-view,columns-view,timeline-view}.tsx`, `src/components/deals/{analysis-progress,timeline-versions,verdict-panel,tier1-results,tier2-results,tier3-results,deck-coherence-report,early-warnings-panel,documents-tab,deal-comparison,deal-info-card,react-trace-viewer,team-management}.tsx`, `src/components/deals/conditions/{dilution-simulator,version-timeline}.tsx`, `src/components/deals/suivi-dd/suivi-dd-alert-card.tsx`, `src/components/settings/investment-preferences-form.tsx`, `src/components/admin/costs-dashboard-v2.tsx`, `src/lib/{query-keys,format-utils,analysis-constants}.ts`
+
+---
+
+## 2026-02-20 — fix: Audit QA complet — corrections data flow, performance, UI coherence
+
+### Description
+4 agents d'audit en parallele (performance, dead code, data flow, UI coherence) ont identifie ~60 issues. Corrections systematiques appliquees.
+
+### Data Flow
+- `src/lib/score-utils.ts` — `extractDealScore` retourne `number | null` au lieu de `number` (fix ambiguite 0 vs null)
+- `src/app/api/deals/[dealId]/terms/route.ts` — Fix truthy check `? Number()` → `!= null ? Number()` pour valuationPre, amountRaised, dilutionPct, esopPct
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Fix 6x truthy checks Decimal→Number (amountRequested, arr, growthRate, valuationPre, confidenceScore)
+- `src/app/(dashboard)/deals/page.tsx` — Fix truthy check valuationPre
+- `src/app/api/deals/[dealId]/export-pdf/route.ts` — Fix 5x truthy checks Decimal→Number
+- `src/hooks/use-resolutions.ts` — Ajout invalidation `deals.detail(dealId)` sur create/delete mutation
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Remplace `pendingQuestions={0}` hardcode par calcul reel depuis question-master
+- `src/components/deals/analysis-panel.tsx` — Fix types `currentScore`/`previousScore` (number | null)
+
+### Performance
+- `src/components/deals/tier2-results.tsx` — Wrap `Tier2Results` en `memo()`
+- `src/components/deals/confidence-breakdown.tsx` — Wrap `ConfidenceBreakdown` en `memo()`
+- `src/components/deals/deck-coherence-report.tsx` — Wrap `DeckCoherenceReport` en `memo()`
+- `src/components/deals/tier3-results.tsx` — Memoize `absoluteKillReasons`, `conditionalKillReasons`, `allConcerns`, `visibleStrengths`, `visibleWeaknesses` avec `useMemo`
+- `src/components/deals/analysis-panel.tsx` — Ajout `staleTime: 60_000` sur usage.analyze() et founderResponses, `staleTime: 30_000` sur staleness
+
+### Dead Code
+- `src/components/deals/tier1-results.tsx` — Suppression imports inutilises (BarChart3, FileText)
+- `src/components/deals/early-warnings-panel.tsx` — Suppression `export default` redondant
+- `src/components/deals/negotiation-panel.tsx` — Fichier orphelin supprime (717 lignes)
+
+### UI Coherence
+- `src/lib/ui-configs.ts` — Ajout `getScoreColor()`, `getScoreLabel()`, `getScoreBarColor()`, `RECOMMENDATION_CONFIG` centralises (echelle canonique 80/60/40/20)
+- `src/components/deals/verdict-panel.tsx` — Import centralisé depuis ui-configs (score thresholds + recommendation config aligns)
+- `src/components/deals/tier3-results.tsx` — Alignement dimension scores sur echelle canonique 80/60/40 (etait 70/50), consistency summary 80/60 (etait 70/50)
+- `src/components/deals/tier3-results.tsx` — Fix responsive: grids 3-4 cols avec `sm:` breakpoints
+- `src/components/deals/deal-info-card.tsx` — Grid responsive `grid-cols-1 md:grid-cols-2`
+- `src/app/(dashboard)/dashboard/page.tsx` — Suppression score moyen duplique dans Portfolio Metrics
+- `src/components/deals/tier3-results.tsx` — Fix index-as-key: dimension scores, kill reasons, concerns utilisent des cles naturelles
+
+### Fichiers modifies (20)
+`score-utils.ts`, `terms/route.ts`, `use-resolutions.ts`, `page.tsx` (deal detail), `deals/page.tsx`, `export-pdf/route.ts`, `analysis-panel.tsx`, `tier1-results.tsx`, `tier2-results.tsx`, `tier3-results.tsx`, `confidence-breakdown.tsx`, `deck-coherence-report.tsx`, `early-warnings-panel.tsx`, `verdict-panel.tsx`, `deal-info-card.tsx`, `dashboard/page.tsx`, `ui-configs.ts`, `query-keys.ts`
+
+### Fichiers supprimes (1)
+`negotiation-panel.tsx`
+
+---
+
+## 2026-02-20 — feat: Refonte UX — deduplication, unification, simplification (6 phases)
+
+### Description
+Audit UX complet (9 agents) a revele que l'app fragmente sa valeur: meme info repetee 4-6x, 7 tabs paralysent la navigation, aucun verdict unifie. Refonte complete en 6 phases.
+
+### Phase 1 — Quick Wins
+- `src/lib/ui-configs.ts` — **NOUVEAU** : SEVERITY_STYLES centralise (remplace 4 definitions dupliquees)
+- `src/lib/score-utils.ts` — **NOUVEAU** : extractDealScore + extractDealRecommendation centralises
+- `src/services/terms-normalization.ts` — **NOUVEAU** : normalizeTranche + buildTermsResponse centralises
+- `src/components/deals/red-flags-summary.tsx` — import severity depuis ui-configs
+- `src/components/deals/early-warnings-panel.tsx` — utilise getSeverityStyle centralise
+- `src/components/deals/analysis-panel.tsx` — import extractDealScore depuis score-utils
+- `src/app/api/deals/[dealId]/terms/route.ts` — utilise normalization centralisee
+- `src/components/deals/tier1-results.tsx` — React.memo() wrapping (5500 lignes)
+
+### Phase 2 — Verdict Panel
+- `src/components/deals/verdict-panel.tsx` — **NOUVEAU** : composant verdict unifie (score, recommandation, red flags critiques, conditions a negocier, prochaines etapes)
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — header enrichi (stage, secteur, valorisation), VerdictPanel ajoute dans overview
+
+### Phase 3 — Reorganisation 4 tabs
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — de 7 tabs a 4: Vue d'ensemble | Analyse IA (+ AI Board) | Documents & Team | Conditions. Onglet Red Flags supprime, Documents+Team fusionnes.
+
+### Phase 4 — Consolidation Tier 3 (5→3 cartes)
+- `src/components/deals/tier3-results.tsx` — Devil's Advocate fusionne dans SynthesisScorerCard (kill reasons, concerns, skepticism avec resolution). ScenarioModelerCard supprime (trop speculatif). DevilsAdvocateCard supprime. Header simplifie (retrait projections IRR/rendement). Tabs: Verdict & Score | Coherence | Memo. De 2135 a 1176 lignes (-45%).
+
+### Phase 5 — Ameliorer Analysis Panel
+- `src/components/deals/analysis-panel.tsx` — Bouton "Lancer l'analyse" deplace en haut (sticky). Sous-tab Negociation supprime (deplace dans tab Conditions). Banniere Usage supprimee. ~200 lignes de code negotiation retirees.
+
+### Phase 6 — Correctifs secondaires
+- `src/components/deals/deal-info-card.tsx` — ARR, valorisation pre-money, croissance YoY affiches en lecture
+- `changes-log.md` — mise a jour
+
+---
+
 ## 2026-02-15 — fix: dedup cross-type alertes (RF + DA + COND)
 
 ### Description
