@@ -72,8 +72,8 @@ export async function GET(request: NextRequest) {
     return apiSuccess({
       deals: deals.map((d) => ({
         ...d,
-        valuationPre: d.valuationPre ? Number(d.valuationPre) : null,
-        arr: d.arr ? Number(d.arr) : null,
+        valuationPre: d.valuationPre != null ? Number(d.valuationPre) : null,
+        arr: d.arr != null ? Number(d.arr) : null,
         documentsCount: d._count.documents,
         redFlagsCount: d._count.redFlags,
         _count: undefined,
@@ -133,9 +133,9 @@ export async function POST(request: NextRequest) {
     return apiSuccess(
       {
         ...deal,
-        valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
-        arr: deal.arr ? Number(deal.arr) : null,
-        amountRequested: deal.amountRequested ? Number(deal.amountRequested) : null,
+        valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+        arr: deal.arr != null ? Number(deal.arr) : null,
+        amountRequested: deal.amountRequested != null ? Number(deal.amountRequested) : null,
       },
       201
     );

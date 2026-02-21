@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { memo, useCallback, useState } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import {
   Upload,
@@ -80,7 +80,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileUpload({
+export const FileUpload = memo(function FileUpload({
   dealId,
   onUploadComplete,
   onError,
@@ -319,4 +319,4 @@ export function FileUpload({
       )}
     </div>
   );
-}
+});

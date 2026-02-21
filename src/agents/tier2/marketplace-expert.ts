@@ -440,8 +440,8 @@ Tu DOIS répondre avec un JSON valide correspondant exactement au schema fourni.
 
 ## DONNÉES FINANCIÈRES (du deck/data room)
 
-- **ARR/Revenue:** ${deal.arr ? `€${Number(deal.arr).toLocaleString()}` : "Non spécifié"}
-- **Growth Rate:** ${deal.growthRate ? `${deal.growthRate}%` : "Non spécifié"}
+- **ARR/Revenue:** ${deal.arr != null ? `€${Number(deal.arr).toLocaleString()}` : "Non spécifié"}
+- **Growth Rate:** ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Non spécifié"}
 
 ${enrichedContext.factStoreFormatted ? `
 ## DONNÉES VÉRIFIÉES (Fact Store)

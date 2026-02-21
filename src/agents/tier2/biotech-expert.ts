@@ -501,8 +501,8 @@ CHAQUE champ doit contenir des donnees concretes et sourcees, jamais de placehol
 **Sector:** ${deal.sector ?? "BioTech (a confirmer)"}
 **Stage:** ${stage}
 **Geography:** ${deal.geography ?? "Non specifie"}
-**Valorisation demandee:** ${deal.valuationPre ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non specifiee"}
-**Montant leve:** ${deal.amountRequested ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non specifie"}
+**Valorisation demandee:** ${deal.valuationPre != null ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non specifiee"}
+**Montant leve:** ${deal.amountRequested != null ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non specifie"}
 
 ---
 

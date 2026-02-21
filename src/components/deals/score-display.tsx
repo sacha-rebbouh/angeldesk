@@ -3,6 +3,7 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 import { getScoreColor } from "@/lib/format-utils";
+import { ScoreRing } from "@/components/ui/score-ring";
 
 interface ScoreDisplayProps {
   label: string;
@@ -12,15 +13,23 @@ interface ScoreDisplayProps {
   showBar?: boolean;
 }
 
-function getBarColor(score: number): string {
-  if (score >= 80) return "bg-green-500";
-  if (score >= 60) return "bg-blue-500";
-  if (score >= 40) return "bg-yellow-500";
-  if (score >= 20) return "bg-orange-500";
-  return "bg-red-500";
+function getBarGradient(score: number): string {
+  if (score >= 80) return "from-emerald-500 to-emerald-400";
+  if (score >= 60) return "from-blue-500 to-blue-400";
+  if (score >= 40) return "from-amber-500 to-amber-400";
+  if (score >= 20) return "from-orange-500 to-orange-400";
+  return "from-red-500 to-red-400";
 }
 
-export const ScoreDisplay = React.memo(function ScoreDisplay({
+function getBarBg(score: number): string {
+  if (score >= 80) return "bg-emerald-500/10";
+  if (score >= 60) return "bg-blue-500/10";
+  if (score >= 40) return "bg-amber-500/10";
+  if (score >= 20) return "bg-orange-500/10";
+  return "bg-red-500/10";
+}
+
+const ScoreDisplay = React.memo(function ScoreDisplay({
   label,
   score,
   maxScore = 100,
@@ -31,50 +40,53 @@ export const ScoreDisplay = React.memo(function ScoreDisplay({
   const percentage = (displayScore / maxScore) * 100;
 
   const sizeClasses = {
-    sm: "text-sm",
-    md: "text-base",
-    lg: "text-lg",
+    sm: "text-[13px]",
+    md: "text-sm",
+    lg: "text-base",
   };
 
   const scoreSizeClasses = {
-    sm: "text-lg font-semibold",
-    md: "text-2xl font-bold",
-    lg: "text-4xl font-bold",
+    sm: "text-base font-bold",
+    md: "text-xl font-bold",
+    lg: "text-3xl font-bold",
   };
 
   if (score === null) {
     return (
-      <div className="space-y-1">
+      <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <span className={cn("text-muted-foreground", sizeClasses[size])}>
+          <span className={cn("text-muted-foreground font-medium", sizeClasses[size])}>
             {label}
           </span>
-          <span className={cn("text-muted-foreground", sizeClasses[size])}>
-            -
+          <span className={cn("text-muted-foreground/50", sizeClasses[size])}>
+            --
           </span>
         </div>
         {showBar && (
-          <div className="h-2 rounded-full bg-muted" />
+          <div className="h-1.5 rounded-full bg-muted/50" />
         )}
       </div>
     );
   }
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <span className={cn("text-muted-foreground", sizeClasses[size])}>
+    <div className="space-y-2">
+      <div className="flex items-baseline justify-between">
+        <span className={cn("text-foreground/65 font-medium", sizeClasses[size])}>
           {label}
         </span>
-        <span className={cn(getScoreColor(displayScore), scoreSizeClasses[size])}>
+        <span className={cn(getScoreColor(displayScore), scoreSizeClasses[size], "tabular-nums tracking-tight")}>
           {displayScore}
-          <span className="text-muted-foreground text-sm font-normal">/{maxScore}</span>
+          <span className="text-muted-foreground/40 text-xs font-normal ml-0.5">/{maxScore}</span>
         </span>
       </div>
       {showBar && (
-        <div className="h-2 rounded-full bg-muted overflow-hidden">
+        <div className={cn("h-1.5 rounded-full overflow-hidden", getBarBg(displayScore))}>
           <div
-            className={cn("h-full rounded-full transition-all", getBarColor(displayScore))}
+            className={cn(
+              "h-full rounded-full bg-gradient-to-r transition-all duration-700 ease-out",
+              getBarGradient(displayScore),
+            )}
             style={{ width: `${percentage}%` }}
           />
         </div>
@@ -108,28 +120,45 @@ function getStageFrench(stage: string | null | undefined): string {
   return stage ? (map[stage] ?? stage) : "";
 }
 
+// ScoreRing replaced by shared ScoreRing from @/components/ui/score-ring
+
 export const ScoreGrid = React.memo(function ScoreGrid({ scores, stage }: ScoreGridProps) {
   return (
-    <div className="space-y-4">
-      <ScoreDisplay label="Score Final" score={scores.global} size="lg" />
+    <div className="space-y-5">
+      {/* Global score - hero display */}
+      <div className="flex items-center gap-5">
+        {scores.global != null && (
+          <ScoreRing score={scores.global} size={64} strokeWidth={3} />
+        )}
+        <div className="flex-1">
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+            Score Final
+          </div>
+          <div className={cn("text-2xl font-bold tabular-nums tracking-tight", scores.global != null ? getScoreColor(scores.global) : "text-muted-foreground")}>
+            {scores.global ?? "--"}<span className="text-muted-foreground/40 text-sm font-normal">/100</span>
+          </div>
+        </div>
+      </div>
 
+      {/* Fundamentals */}
       {scores.fundamentals != null && (
-        <div className="rounded-lg bg-muted/50 p-3 text-sm">
+        <div className="rounded-lg bg-foreground/[0.03] border border-border/40 px-4 py-3">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">
+            <span className="text-[13px] text-foreground/60 font-medium">
               Fondamentaux
-              {stage && <span className="text-xs ml-1">({getStageFrench(stage)}-relative)</span>}
+              {stage && <span className="text-[11px] ml-1.5 text-muted-foreground/60">({getStageFrench(stage)}-relative)</span>}
             </span>
-            <span className="font-semibold">
+            <span className="text-sm font-bold tabular-nums">
               {scores.fundamentals}/100
             </span>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4 pt-2 border-t">
+      {/* Sub-scores grid */}
+      <div className="grid grid-cols-2 gap-x-6 gap-y-4 pt-4 border-t border-border/40">
         <ScoreDisplay label="Equipe" score={scores.team} size="sm" />
-        <ScoreDisplay label="Marche" score={scores.market} size="sm" />
+        <ScoreDisplay label="Marché" score={scores.market} size="sm" />
         <ScoreDisplay label="Produit" score={scores.product} size="sm" />
         <ScoreDisplay label="Financiers" score={scores.financials} size="sm" />
         <div className="col-span-2">

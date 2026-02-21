@@ -4,38 +4,26 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft,
   ExternalLink,
-  FileText,
-  Users,
-  AlertTriangle,
-  TrendingUp,
   Brain,
-  Crown,
   Handshake,
 } from "lucide-react";
 import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
 import { ScoreGrid } from "@/components/deals/score-display";
-import { BoardPanelWrapper } from "@/components/deals/board-panel-wrapper";
 import { DocumentsTab } from "@/components/deals/documents-tab";
 import { TeamManagement } from "@/components/deals/team-management";
 import { ConditionsTab } from "@/components/deals/conditions/conditions-tab";
-import type { TermsResponse, TrancheData, ConditionsFindings } from "@/components/deals/conditions/types";
+import type { TermsResponse } from "@/components/deals/conditions/types";
 import type { ConditionsAnalystData } from "@/agents/types";
+import { normalizeTranche, buildTermsResponse } from "@/services/terms-normalization";
 import { DealInfoCard } from "@/components/deals/deal-info-card";
 import { ChatWrapper } from "@/components/chat/chat-wrapper";
-import { getStatusColor, getStatusLabel, getStageLabel, getSeverityColor, formatCurrencyEUR } from "@/lib/format-utils";
+import { getStatusColor, getStatusLabel, getStageLabel, formatCurrencyEUR } from "@/lib/format-utils";
 
 async function getDeal(dealId: string, userId: string) {
   return prisma.deal.findFirst({
@@ -106,89 +94,27 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
     notFound();
   }
 
-  const openRedFlags = deal.redFlags.filter((f) => f.status === "OPEN");
-  const criticalFlags = openRedFlags.filter(
-    (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
-  );
-
   // Build initialData for ConditionsTab (avoids extra API roundtrip on tab click)
   const conditionsInitialData: TermsResponse = (() => {
-    const rawTerms = deal.dealTerms;
     const cached = deal.conditionsAnalysis as ConditionsAnalystData | null;
-    const mode = deal.dealStructure?.mode ?? "SIMPLE";
-    const tranches: TrancheData[] | null = deal.dealStructure?.tranches
-      ? deal.dealStructure.tranches.map(t => ({
-          id: t.id,
-          orderIndex: t.orderIndex,
-          label: t.label ?? "",
-          trancheType: t.trancheType,
-          typeDetails: t.typeDetails,
-          amount: t.amount != null ? Number(t.amount) : null,
-          valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
-          equityPct: t.equityPct != null ? Number(t.equityPct) : null,
-          triggerType: t.triggerType,
-          triggerDetails: t.triggerDetails,
-          triggerDeadline: t.triggerDeadline?.toISOString() ?? null,
-          instrumentTerms: t.instrumentTerms as Record<string, unknown> | null,
-          liquidationPref: t.liquidationPref,
-          antiDilution: t.antiDilution,
-          proRataRights: t.proRataRights,
-          status: t.status,
-        }))
+    const mode = (deal.dealStructure?.mode ?? "SIMPLE") as "SIMPLE" | "STRUCTURED";
+    const tranches = deal.dealStructure?.tranches
+      ? deal.dealStructure.tranches.map(normalizeTranche)
       : null;
 
-    const normalizedTerms = rawTerms ? {
-      valuationPre: rawTerms.valuationPre != null ? Number(rawTerms.valuationPre) : null,
-      amountRaised: rawTerms.amountRaised != null ? Number(rawTerms.amountRaised) : null,
-      dilutionPct: rawTerms.dilutionPct != null ? Number(rawTerms.dilutionPct) : null,
-      instrumentType: rawTerms.instrumentType,
-      instrumentDetails: rawTerms.instrumentDetails,
-      liquidationPref: rawTerms.liquidationPref,
-      antiDilution: rawTerms.antiDilution,
-      proRataRights: rawTerms.proRataRights,
-      informationRights: rawTerms.informationRights,
-      boardSeat: rawTerms.boardSeat,
-      founderVesting: rawTerms.founderVesting,
-      vestingDurationMonths: rawTerms.vestingDurationMonths,
-      vestingCliffMonths: rawTerms.vestingCliffMonths,
-      esopPct: rawTerms.esopPct != null ? Number(rawTerms.esopPct) : null,
-      dragAlong: rawTerms.dragAlong,
-      tagAlong: rawTerms.tagAlong,
-      ratchet: rawTerms.ratchet,
-      payToPlay: rawTerms.payToPlay,
-      milestoneTranches: rawTerms.milestoneTranches,
-      nonCompete: rawTerms.nonCompete,
-      customConditions: rawTerms.customConditions,
-      notes: rawTerms.notes,
-    } : null;
-
-    const advice = (cached?.findings?.negotiationAdvice ?? []).map(a => ({
-      ...a,
-      priority: (a.priority?.toLowerCase() ?? "medium") as "critical" | "high" | "medium" | "low",
-    }));
-    const flags = (cached?.redFlags ?? []).map(rf => ({
-      ...rf,
-      severity: (rf.severity?.toLowerCase() ?? "medium") as "critical" | "high" | "medium" | "low",
-    }));
-
-    return {
-      terms: normalizedTerms,
-      mode: mode as "SIMPLE" | "STRUCTURED",
+    return buildTermsResponse(
+      deal.dealTerms as Record<string, unknown> | null,
+      cached,
+      deal.conditionsScore ?? null,
+      mode,
       tranches,
-      conditionsScore: deal.conditionsScore ?? null,
-      conditionsBreakdown: cached?.score?.breakdown ?? null,
-      conditionsAnalysis: (cached?.findings ?? null) as ConditionsFindings | null,
-      negotiationAdvice: advice.length > 0 ? advice : null,
-      redFlags: flags.length > 0 ? flags : null,
-      narrative: cached?.narrative ?? null,
-      analysisStatus: cached ? "success" as const : null,
-    };
+    );
   })();
 
 
   const content = (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header — enriched with stage, sector, amount */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" asChild>
@@ -206,85 +132,39 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                 {getStatusLabel(deal.status)}
               </Badge>
             </div>
-            <p className="text-muted-foreground">
-              {deal.companyName ?? deal.name}
+            <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
+              {deal.companyName && deal.companyName !== deal.name && (
+                <span>{deal.companyName}</span>
+              )}
+              {deal.stage && (
+                <Badge variant="outline" className="text-xs">
+                  {getStageLabel(deal.stage, deal.stage)}
+                </Badge>
+              )}
+              {deal.sector && <span>{deal.sector}</span>}
+              {deal.valuationPre != null && (
+                <>
+                  <span className="text-muted-foreground/50">·</span>
+                  <span>{formatCurrencyEUR(Number(deal.valuationPre))}</span>
+                </>
+              )}
               {deal.website && (
                 <a
                   href={deal.website}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="ml-2 inline-flex items-center text-primary hover:underline"
+                  className="inline-flex items-center text-primary hover:underline"
                 >
                   <ExternalLink className="mr-1 h-3 w-3" />
                   Site web
                 </a>
               )}
-            </p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Valorisation</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {formatCurrencyEUR(
-                deal.valuationPre ? Number(deal.valuationPre) : null
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Pre-money • {getStageLabel(deal.stage, "Non d\u00e9fini")}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">ARR</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {formatCurrencyEUR(deal.arr ? Number(deal.arr) : null)}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {deal.growthRate
-                ? `+${Number(deal.growthRate)}% YoY`
-                : "Croissance non définie"}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Documents</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{deal.documents.length}</div>
-            <p className="text-xs text-muted-foreground">Fichiers uploadés</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Red Flags</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{openRedFlags.length}</div>
-            <p className="text-xs text-muted-foreground">
-              {criticalFlags.length > 0
-                ? `${criticalFlags.length} critique${criticalFlags.length > 1 ? "s" : ""}`
-                : "Aucun critique"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Tabs */}
+      {/* 4 Tabs: Vue d'ensemble | Analyse IA | Documents & Team | Conditions */}
       <Tabs defaultValue={tab || "overview"} className="space-y-4">
         <TabsList className="flex w-full overflow-x-auto">
           <TabsTrigger value="overview" className="whitespace-nowrap">Vue d&apos;ensemble</TabsTrigger>
@@ -292,55 +172,31 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
             <Brain className="mr-1 h-4 w-4" />
             Analyse IA
           </TabsTrigger>
-          <TabsTrigger value="documents" className="whitespace-nowrap">
-            Documents ({deal.documents.length})
-          </TabsTrigger>
-          <TabsTrigger value="founders" className="whitespace-nowrap">
-            Team ({deal.founders.length})
+          <TabsTrigger value="docs-team" className="whitespace-nowrap">
+            Documents & Team
           </TabsTrigger>
           <TabsTrigger value="conditions" className="whitespace-nowrap">
             <Handshake className="mr-1 h-4 w-4" />
             Conditions
           </TabsTrigger>
-          <TabsTrigger value="redflags" className="whitespace-nowrap">
-            Red Flags ({openRedFlags.length})
-          </TabsTrigger>
-          <TabsTrigger value="ai-board" className="whitespace-nowrap">
-            <Users className="mr-1 h-4 w-4" />
-            AI Board
-            <Badge variant="secondary" className="ml-1 bg-gradient-to-r from-amber-100 to-orange-100 text-amber-800 text-[10px] px-1.5 py-0">
-              <Crown className="mr-0.5 h-2.5 w-2.5" />
-              PRO
-            </Badge>
-          </TabsTrigger>
         </TabsList>
 
+        {/* Tab 1: Vue d'ensemble — Scores + DealInfo */}
         <TabsContent value="overview" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
-            <DealInfoCard
-              deal={{
-                id: deal.id,
-                sector: deal.sector,
-                stage: deal.stage,
-                geography: deal.geography,
-                description: deal.description,
-                amountRequested: deal.amountRequested ? Number(deal.amountRequested) : null,
-                arr: deal.arr ? Number(deal.arr) : null,
-                growthRate: deal.growthRate ? Number(deal.growthRate) : null,
-                valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
-              }}
-            />
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Scores</CardTitle>
-                <CardDescription>
-                  {deal.globalScore != null
-                    ? "Scores calculés par l'analyse IA"
-                    : "Lancez une analyse pour obtenir les scores"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
+            <div className="rounded-xl border border-border/60 bg-card shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border/40">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-foreground/5">
+                    <Brain className="h-4 w-4 text-foreground/70" />
+                  </div>
+                  <h3 className="text-[15px] font-semibold tracking-tight">Scores</h3>
+                </div>
+                {deal.globalScore != null && (
+                  <span className="text-[11px] text-muted-foreground/60 font-medium">Analyse IA</span>
+                )}
+              </div>
+              <div className="px-6 py-5">
                 {deal.globalScore != null ? (
                   <ScoreGrid
                     scores={{
@@ -355,28 +211,43 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                     stage={deal.stage}
                   />
                 ) : (
-                  <div className="flex flex-col items-center justify-center py-8 text-center">
-                    <Brain className="h-12 w-12 text-muted-foreground/50" />
-                    <p className="mt-4 text-sm text-muted-foreground">
-                      Aucune analyse effectuée
-                    </p>
-                    <p className="text-xs text-muted-foreground">
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <div className="rounded-2xl bg-muted/50 p-4">
+                      <Brain className="h-10 w-10 text-muted-foreground/40" />
+                    </div>
+                    <p className="mt-5 text-sm font-semibold">Aucune analyse effectuée</p>
+                    <p className="mt-1.5 text-xs text-muted-foreground max-w-xs">
                       Allez dans l&apos;onglet &quot;Analyse IA&quot; pour lancer une analyse
                     </p>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
+
+            <DealInfoCard
+              deal={{
+                id: deal.id,
+                sector: deal.sector,
+                stage: deal.stage,
+                geography: deal.geography,
+                description: deal.description,
+                amountRequested: deal.amountRequested != null ? Number(deal.amountRequested) : null,
+                arr: deal.arr != null ? Number(deal.arr) : null,
+                growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
+                valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+              }}
+            />
           </div>
         </TabsContent>
 
-        <TabsContent value="analysis" className="space-y-4">
+        {/* Tab 2: Analyse IA — Analysis Panel (includes AI Board as sub-tab) */}
+        <TabsContent value="analysis" className="space-y-6">
           <AnalysisPanelWrapper
             dealId={deal.id}
+            dealName={deal.name}
             currentStatus={deal.status}
             analyses={deal.analyses.map(a => ({
               ...a,
-              // Only inject results for the latest completed analysis (loaded separately)
               results: (latestResults && a.id === latestResults.id
                 ? latestResults.results as Record<string, {
                     agentName: string;
@@ -395,7 +266,8 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           />
         </TabsContent>
 
-        <TabsContent value="documents">
+        {/* Tab 3: Documents & Team */}
+        <TabsContent value="docs-team" className="space-y-6">
           <DocumentsTab
             dealId={deal.id}
             documents={deal.documents.map((doc) => ({
@@ -403,9 +275,6 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
               extractionWarnings: doc.extractionWarnings as { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null,
             }))}
           />
-        </TabsContent>
-
-        <TabsContent value="founders">
           <TeamManagement
             dealId={deal.id}
             founders={deal.founders.map((f) => ({
@@ -417,6 +286,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           />
         </TabsContent>
 
+        {/* Tab 4: Conditions & Negociation */}
         <TabsContent value="conditions">
           <ConditionsTab
             dealId={deal.id}
@@ -431,78 +301,6 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
               return ts ? { id: ts.id, name: ts.name } : null;
             })()}
           />
-        </TabsContent>
-
-        <TabsContent value="redflags">
-          <Card>
-            <CardHeader>
-              <CardTitle>Red Flags</CardTitle>
-              <CardDescription>
-                Points d&apos;attention detectes par l&apos;analyse
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {openRedFlags.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-center">
-                  <AlertTriangle className="h-12 w-12 text-muted-foreground/50" />
-                  <h3 className="mt-4 text-lg font-semibold">Aucun red flag</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Lancez une analyse pour detecter les points d&apos;attention.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {openRedFlags.map((flag) => (
-                    <div key={flag.id} className="rounded-lg border p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-3">
-                          <AlertTriangle
-                            className={`h-5 w-5 ${
-                              flag.severity === "CRITICAL"
-                                ? "text-red-500"
-                                : flag.severity === "HIGH"
-                                  ? "text-orange-500"
-                                  : "text-yellow-500"
-                            }`}
-                          />
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium">{flag.title}</p>
-                              <Badge className={getSeverityColor(flag.severity)}>
-                                {flag.severity}
-                              </Badge>
-                            </div>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                              {flag.description}
-                            </p>
-                            {flag.questionsToAsk.length > 0 && (
-                              <div className="mt-3">
-                                <p className="text-sm font-medium">
-                                  Questions à poser :
-                                </p>
-                                <ul className="mt-1 list-inside list-disc text-sm text-muted-foreground">
-                                  {flag.questionsToAsk.map((q, i) => (
-                                    <li key={i}>{q}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <Badge variant="outline">
-                          {Math.round(Number(flag.confidenceScore) * 100)}%
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="ai-board">
-          <BoardPanelWrapper dealId={deal.id} dealName={deal.name} />
         </TabsContent>
       </Tabs>
 

@@ -1,16 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { memo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Loader2 } from "lucide-react";
+import { Pencil, Loader2, MapPin, Target, Banknote, TrendingUp, BarChart3, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -77,7 +71,21 @@ interface DealInfoCardProps {
   deal: DealInfo;
 }
 
-export function DealInfoCard({ deal }: DealInfoCardProps) {
+function InfoRow({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) {
+  return (
+    <div className="flex items-start gap-3 py-2.5">
+      <div className="flex items-center justify-center w-7 h-7 rounded-md bg-foreground/[0.04] shrink-0 mt-0.5">
+        <Icon className="h-3.5 w-3.5 text-foreground/40" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">{label}</p>
+        <p className="text-[14px] font-medium text-foreground/85 mt-0.5">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+export const DealInfoCard = memo(function DealInfoCard({ deal }: DealInfoCardProps) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,7 +100,6 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
   const [valuationPre, setValuationPre] = useState(deal.valuationPre != null ? String(deal.valuationPre) : "");
 
   const openDialog = useCallback(() => {
-    // Reset form to current deal values
     setSector(deal.sector ?? "");
     setStage(deal.stage ?? "");
     setGeography(deal.geography ?? "");
@@ -109,7 +116,6 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
     try {
       const body: Record<string, unknown> = {};
 
-      // Only send changed fields
       if (sector !== (deal.sector ?? "")) body.sector = sector || undefined;
       if (stage !== (deal.stage ?? "")) body.stage = stage || undefined;
       if (geography !== (deal.geography ?? "")) body.geography = geography || undefined;
@@ -157,46 +163,48 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
     }
   }, [deal, sector, stage, geography, description, arr, growthRate, amountRequested, valuationPre, router]);
 
-  // Check if sector is a custom one (not in SECTORS list)
   const isCustomSector = sector && !SECTORS.includes(sector as typeof SECTORS[number]);
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Informations</CardTitle>
-          <Button variant="ghost" size="sm" onClick={openDialog}>
-            <Pencil className="mr-1.5 h-3.5 w-3.5" />
+      <div className="rounded-xl border border-border/60 bg-card shadow-sm overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border/40">
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-foreground/5">
+              <Building2 className="h-4 w-4 text-foreground/70" />
+            </div>
+            <h3 className="text-[15px] font-semibold tracking-tight">Informations</h3>
+          </div>
+          <Button variant="ghost" size="sm" onClick={openDialog} className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <Pencil className="h-3 w-3" />
             Modifier
           </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Secteur</p>
-              <p>{deal.sector ?? "Non défini"}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Stade</p>
-              <p>{getStageLabel(deal.stage, "Non défini")}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Géographie</p>
-              <p>{deal.geography ?? "Non défini"}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Montant demandé</p>
-              <p>{formatCurrencyEUR(deal.amountRequested)}</p>
-            </div>
+        </div>
+
+        {/* Content */}
+        <div className="px-6 py-2">
+          <div className="grid grid-cols-2 gap-x-6">
+            <InfoRow icon={Target} label="Secteur" value={deal.sector ?? "Non défini"} />
+            <InfoRow icon={BarChart3} label="Stade" value={getStageLabel(deal.stage, "Non défini")} />
+            <InfoRow icon={MapPin} label="Géographie" value={deal.geography ?? "Non défini"} />
+            <InfoRow icon={Banknote} label="Montant demandé" value={formatCurrencyEUR(deal.amountRequested)} />
+            <InfoRow icon={TrendingUp} label="Valorisation pre-money" value={formatCurrencyEUR(deal.valuationPre)} />
+            <InfoRow icon={Banknote} label="ARR" value={formatCurrencyEUR(deal.arr)} />
           </div>
-          {deal.description && (
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Description</p>
-              <p className="mt-1 text-sm">{deal.description}</p>
+          {deal.growthRate != null && (
+            <div className="border-t border-border/30 mt-1">
+              <InfoRow icon={TrendingUp} label="Croissance YoY" value={`+${deal.growthRate}%`} />
             </div>
           )}
-        </CardContent>
-      </Card>
+          {deal.description && (
+            <div className="border-t border-border/30 mt-1 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70 mb-1.5">Description</p>
+              <p className="text-[13px] text-foreground/70 leading-relaxed">{deal.description}</p>
+            </div>
+          )}
+        </div>
+      </div>
 
       <Dialog open={isOpen} onOpenChange={(open) => !open && setIsOpen(false)}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
@@ -205,7 +213,6 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {/* Stage */}
             <div className="space-y-1.5">
               <Label htmlFor="edit-stage">Stade</Label>
               <Select value={stage} onValueChange={setStage}>
@@ -222,7 +229,6 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
               </Select>
             </div>
 
-            {/* Sector */}
             <div className="space-y-1.5">
               <Label htmlFor="edit-sector">Secteur</Label>
               {isCustomSector ? (
@@ -248,7 +254,6 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
               )}
             </div>
 
-            {/* Geography */}
             <div className="space-y-1.5">
               <Label htmlFor="edit-geography">Géographie</Label>
               <Input
@@ -259,7 +264,6 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
               />
             </div>
 
-            {/* Description */}
             <div className="space-y-1.5">
               <Label htmlFor="edit-description">Description</Label>
               <textarea
@@ -271,8 +275,7 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
               />
             </div>
 
-            {/* Financial fields */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-arr">ARR (EUR)</Label>
                 <Input
@@ -329,4 +332,4 @@ export function DealInfoCard({ deal }: DealInfoCardProps) {
       </Dialog>
     </>
   );
-}
+});

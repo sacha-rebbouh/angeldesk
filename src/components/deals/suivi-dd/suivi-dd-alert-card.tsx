@@ -182,7 +182,7 @@ export const SuiviDDAlertCard = memo(function SuiviDDAlertCard({
               className="mt-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
             >
               {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-              {expanded ? "Masquer" : "Details"}
+              {expanded ? "Masquer" : "Détails"}
             </button>
           </>
         )}

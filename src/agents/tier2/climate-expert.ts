@@ -476,8 +476,8 @@ INSTRUCTIONS DB:
 **Sub-sector:** ${deal.sector ?? "À déterminer (Carbon Tech, Renewable, Storage, etc.)"}
 **Stage:** ${stage}
 **Geography:** ${deal.geography ?? "Non spécifié"}
-**Valorisation demandée:** ${deal.valuationPre ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non spécifiée"}
-**Montant levé:** ${deal.amountRequested ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non spécifié"}
+**Valorisation demandée:** ${deal.valuationPre != null ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non spécifiée"}
+**Montant levé:** ${deal.amountRequested != null ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non spécifié"}
 
 ---
 

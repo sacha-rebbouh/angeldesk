@@ -714,10 +714,10 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 - Website: ${sanitizedDeal.website}
 
 ## Financial Metrics
-- ARR: ${deal.arr ? `€${Number(deal.arr).toLocaleString()}` : "Not specified"}
-- Growth Rate: ${deal.growthRate ? `${Number(deal.growthRate)}%` : "Not specified"}
-- Amount Requested: ${deal.amountRequested ? `€${Number(deal.amountRequested).toLocaleString()}` : "Not specified"}
-- Pre-money Valuation: ${deal.valuationPre ? `€${Number(deal.valuationPre).toLocaleString()}` : "Not specified"}
+- ARR: ${deal.arr != null ? `€${Number(deal.arr).toLocaleString()}` : "Not specified"}
+- Growth Rate: ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Not specified"}
+- Amount Requested: ${deal.amountRequested != null ? `€${Number(deal.amountRequested).toLocaleString()}` : "Not specified"}
+- Pre-money Valuation: ${deal.valuationPre != null ? `€${Number(deal.valuationPre).toLocaleString()}` : "Not specified"}
 
 ## Description
 ${sanitizedDeal.description}

@@ -14,7 +14,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDown, ChevronUp, GripVertical, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import type { TrancheData } from "./types";
 import { TRANCHE_TYPES, TRIGGER_TYPES, TRANCHE_STATUSES, isEquityTranche } from "./types";
 
@@ -52,7 +52,6 @@ export const TrancheEditor = React.memo(function TrancheEditor({
           <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <GripVertical className="h-4 w-4 text-muted-foreground/50" />
                 <div>
                   <CardTitle className="text-sm font-medium flex items-center gap-2">
                     <Badge variant="outline" className="text-xs font-normal">

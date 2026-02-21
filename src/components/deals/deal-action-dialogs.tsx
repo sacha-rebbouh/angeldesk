@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -30,7 +31,7 @@ interface DealRenameDialogProps {
   isLoading: boolean;
 }
 
-export function DealRenameDialog({
+export const DealRenameDialog = memo(function DealRenameDialog({
   isOpen,
   onClose,
   newName,
@@ -61,7 +62,7 @@ export function DealRenameDialog({
       </DialogContent>
     </Dialog>
   );
-}
+});
 
 interface DealDeleteDialogProps {
   dealName: string | undefined;
@@ -71,7 +72,7 @@ interface DealDeleteDialogProps {
   isLoading: boolean;
 }
 
-export function DealDeleteDialog({
+export const DealDeleteDialog = memo(function DealDeleteDialog({
   dealName,
   isOpen,
   onClose,
@@ -100,4 +101,4 @@ export function DealDeleteDialog({
       </AlertDialogContent>
     </AlertDialog>
   );
-}
+});

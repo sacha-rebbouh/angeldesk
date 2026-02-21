@@ -52,7 +52,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return apiSuccess(
       analyses.map((a) => ({
         ...a,
-        totalCost: a.totalCost ? Number(a.totalCost) : null,
+        totalCost: a.totalCost != null ? Number(a.totalCost) : null,
       }))
     );
   } catch (error) {

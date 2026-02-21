@@ -35,8 +35,6 @@ import {
   Building2,
   Users,
   ArrowRight,
-  ChevronRight,
-  Percent,
   Clock,
   Award,
   AlertCircle,
@@ -212,7 +210,7 @@ const VerdictHero = memo(function VerdictHero({
         {/* Score */}
         <div className="text-center">
           <div className="text-4xl font-bold text-slate-800">{sectorScore}</div>
-          <div className="text-xs text-slate-500 uppercase tracking-wide">Sector Score</div>
+          <div className="text-xs text-slate-500 uppercase tracking-wide">Score Secteur</div>
         </div>
       </div>
     </div>
@@ -646,7 +644,7 @@ const CohortHealthSection = memo(function CohortHealthSection({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {metrics.map((m) => {
           const Icon = trendIcons[m.trend] ?? Minus;
           return (
@@ -977,7 +975,7 @@ const SectorFitSection = memo(function SectorFitSection({ fit }: { fit: SectorEx
 // MAIN COMPONENT
 // =============================================================================
 
-export function Tier2Results({ results, subscriptionPlan = "FREE" }: Tier2ResultsProps) {
+export const Tier2Results = memo(function Tier2Results({ results, subscriptionPlan = "FREE" }: Tier2ResultsProps) {
   const isFree = subscriptionPlan === "FREE";
 
   // Find the sector expert result (there should only be one)
@@ -1007,7 +1005,7 @@ export function Tier2Results({ results, subscriptionPlan = "FREE" }: Tier2Result
           <ProTeaserSection
             title={`Analyse ${config?.displayName ?? "Expert Sectoriel"}`}
             description={data
-              ? `Score secteur: ${data.sectorScore}/100 - ${data.keyMetrics.length} metriques sectorielles analysees, ${data.sectorQuestions.length} questions DD specifiques`
+              ? `Score secteur: ${data.sectorScore}/100 - ${data.keyMetrics.length} métriques sectorielles analysées, ${data.sectorQuestions.length} questions DD spécifiques`
               : "Analyse approfondie par un expert sectoriel avec benchmarks et recommandations"}
             icon={Compass}
             previewText={data?.executiveSummary?.slice(0, 100) + "..."}
@@ -1049,12 +1047,12 @@ export function Tier2Results({ results, subscriptionPlan = "FREE" }: Tier2Result
             <span className="text-xl">{config?.emoji ?? "🔍"}</span>
             {config?.displayName ?? agentName}
           </CardTitle>
-          <CardDescription>Sector analysis failed</CardDescription>
+          <CardDescription>Échec de l&apos;analyse sectorielle</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-2 text-red-600">
             <XCircle className="h-4 w-4" />
-            <span className="text-sm">{result.error ?? "Unknown error"}</span>
+            <span className="text-sm">{result.error ?? "Erreur inconnue"}</span>
           </div>
         </CardContent>
       </Card>
@@ -1073,11 +1071,11 @@ export function Tier2Results({ results, subscriptionPlan = "FREE" }: Tier2Result
             <span className="text-4xl">{config?.emoji ?? "🔍"}</span>
             <div>
               <h2 className="text-xl font-bold">{config?.displayName ?? agentName}</h2>
-              <p className="text-sm opacity-90">{data.sectorName} Sector Analysis</p>
+              <p className="text-sm opacity-90">Analyse {data.sectorName}</p>
             </div>
           </div>
           <div className="text-right">
-            <p className="text-sm opacity-75">Sector Score</p>
+            <p className="text-sm opacity-75">Score Secteur</p>
             <p className="text-4xl font-bold">{data.sectorScore}</p>
           </div>
         </div>
@@ -1234,4 +1232,4 @@ export function Tier2Results({ results, subscriptionPlan = "FREE" }: Tier2Result
       </CardContent>
     </Card>
   );
-}
+});

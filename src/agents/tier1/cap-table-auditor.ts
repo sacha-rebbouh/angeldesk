@@ -655,7 +655,7 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       try {
         const ownership = data.findings.ownershipBreakdown;
         const terms = data.findings.roundTerms;
-        const baInvestment = context.deal.amountRequested ? Number(context.deal.amountRequested) * 0.10 : 50000;
+        const baInvestment = context.deal.amountRequested != null ? Number(context.deal.amountRequested) * 0.10 : 50000;
         const postMoney = terms.postMoneyValuation ?? (
           (terms.preMoneyValuation ?? 0) + (terms.roundSize ?? 0)
         );

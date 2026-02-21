@@ -463,9 +463,9 @@ function buildUserPrompt(context: EnrichedAgentContext): string {
 **Sector declare**: ${deal.sector || "Cybersecurity"}
 **Stage**: ${stage}
 **Geographie**: ${deal.geography || "Unknown"}
-**Valorisation demandee**: ${deal.valuationPre ? `${Number(deal.valuationPre)}€` : "Non specifiee"}
-**Montant du round**: ${deal.amountRequested ? `${Number(deal.amountRequested)}€` : "Non specifie"}
-**ARR declare**: ${deal.arr ? `${Number(deal.arr)}€` : "Non specifie"}
+**Valorisation demandee**: ${deal.valuationPre != null ? `${Number(deal.valuationPre)}€` : "Non specifiee"}
+**Montant du round**: ${deal.amountRequested != null ? `${Number(deal.amountRequested)}€` : "Non specifie"}
+**ARR declare**: ${deal.arr != null ? `${Number(deal.arr)}€` : "Non specifie"}
 
 ${formatFundingDbContext(context)}
 

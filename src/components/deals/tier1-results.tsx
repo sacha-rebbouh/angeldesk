@@ -61,7 +61,7 @@ import { ReActTraceViewer } from "./react-trace-viewer";
 import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-teaser";
 import { DataCompletenessGuide } from "@/components/shared/data-completeness-guide";
 import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
-import { BarChart3, FileText, Lightbulb } from "lucide-react";
+import { Lightbulb } from "lucide-react";
 
 interface ReActMetadata {
   reasoningTrace: ReasoningTrace;
@@ -325,7 +325,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
                 {data.findings.burn.efficiency}
               </Badge>
             </div>
-            <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
               <div>
                 <div className="text-xs text-muted-foreground"><GlossaryTerm term="Burn mensuel" /></div>
                 <div className="font-semibold">{formatAmount(data.findings.burn.monthlyBurn)}</div>
@@ -598,7 +598,7 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
 
         {/* Team Composition */}
         {teamComposition && (
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
             <div className="p-2 rounded-lg bg-muted">
               <div className="text-lg font-bold">{teamComposition.technicalStrength}</div>
               <div className="text-xs text-muted-foreground">Tech</div>
@@ -881,7 +881,7 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
 
         {/* Narrative Analysis */}
         {data.findings?.narrativeAnalysis && (
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
             <div className="p-2 rounded-lg bg-muted">
               <div className="text-lg font-bold">{data.findings.narrativeAnalysis.storyCoherence}</div>
               <div className="text-xs text-muted-foreground">Cohérence</div>
@@ -2602,7 +2602,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
 
         {/* Customer Base */}
         {customerBase && (
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
             {customerBase.totalCustomers && (
               <div className="p-2 rounded-lg bg-muted">
                 <div className="text-xs text-muted-foreground">Total clients</div>
@@ -3156,8 +3156,8 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                     <div className="truncate text-muted-foreground">{a.agentName.replace("-", " ").slice(0, 10)}</div>
                     <div className={cn(
                       "font-bold",
-                      a.score >= 70 ? "text-green-600" :
-                      a.score >= 50 ? "text-yellow-600" : "text-red-600"
+                      a.score >= 80 ? "text-green-600" :
+                      a.score >= 60 ? "text-yellow-600" : "text-red-600"
                     )}>
                       {a.grade} ({a.score})
                     </div>
@@ -3583,8 +3583,8 @@ const Tier1SummaryView = memo(function Tier1SummaryView({
       <div className="text-center py-4">
         <div className={cn(
           "text-5xl font-bold mb-1",
-          avgScore >= 70 ? "text-green-600" :
-          avgScore >= 50 ? "text-yellow-600" : "text-red-600"
+          avgScore >= 80 ? "text-green-600" :
+          avgScore >= 60 ? "text-yellow-600" : "text-red-600"
         )}>
           {avgScore}/100
         </div>
@@ -3664,7 +3664,7 @@ const Tier1SummaryView = memo(function Tier1SummaryView({
 });
 
 // Main Tier 1 Results Component
-export function Tier1Results({ results, subscriptionPlan = "FREE", resolutionMap, onResolve, onUnresolve, isResolving }: Tier1ResultsProps) {
+export const Tier1Results = memo(function Tier1Results({ results, subscriptionPlan = "FREE", resolutionMap, onResolve, onUnresolve, isResolving }: Tier1ResultsProps) {
   // State for tracking which agent's trace panel is open
   const [openTraceAgent, setOpenTraceAgent] = useState<string | null>(null);
 
@@ -3814,13 +3814,13 @@ export function Tier1Results({ results, subscriptionPlan = "FREE", resolutionMap
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-5 md:grid-cols-10 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-10 gap-2">
             {scores.map((s, i) => (
               <div key={i} className="flex flex-col items-center p-2 rounded-lg bg-muted">
                 <div className={cn(
                   "mb-1",
-                  s.score >= 70 ? "text-green-600" :
-                  s.score >= 50 ? "text-yellow-600" : "text-red-600"
+                  s.score >= 80 ? "text-green-600" :
+                  s.score >= 60 ? "text-yellow-600" : "text-red-600"
                 )}>
                   {s.icon}
                 </div>
@@ -3974,4 +3974,4 @@ export function Tier1Results({ results, subscriptionPlan = "FREE", resolutionMap
       )}
     </div>
   );
-}
+});

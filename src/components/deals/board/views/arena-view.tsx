@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { BOARD_MEMBERS_PROD } from "@/agents/board/types";
@@ -16,7 +16,7 @@ interface ArenaViewProps {
   }[];
 }
 
-export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
+export const ArenaView = memo(function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
 
   const memberPositions = useMemo(() => {
@@ -242,4 +242,4 @@ export function ArenaView({ memberAnalyses, debateResponses }: ArenaViewProps) {
       </div>
     </div>
   );
-}
+});

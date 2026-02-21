@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { memo, useMemo, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ChevronDown } from "lucide-react";
@@ -21,7 +21,7 @@ const PREVIEW_ARGS = 3;
 const PREVIEW_CONCERNS = 2;
 const PREVIEW_JUSTIFICATION_CHARS = 180;
 
-export function ColumnsView({ memberAnalyses, debateResponses }: ColumnsViewProps) {
+export const ColumnsView = memo(function ColumnsView({ memberAnalyses, debateResponses }: ColumnsViewProps) {
   const memberData = useMemo(() => {
     return BOARD_MEMBERS_PROD.map((config) => {
       const analysis = memberAnalyses[config.id]?.analysis;
@@ -42,7 +42,7 @@ export function ColumnsView({ memberAnalyses, debateResponses }: ColumnsViewProp
   }, [debateResponses]);
 
   return (
-    <div className="grid grid-cols-4 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
       {memberData.map((member) => (
         <div key={member.id} className="space-y-3">
           {/* Column header */}
@@ -76,7 +76,7 @@ export function ColumnsView({ memberAnalyses, debateResponses }: ColumnsViewProp
       ))}
     </div>
   );
-}
+});
 
 function AnalysisCard({ analysis }: { analysis: InitialAnalysis }) {
   const [expanded, setExpanded] = useState(false);

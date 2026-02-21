@@ -463,8 +463,8 @@ Produis un JSON avec la structure exacte demandee. CHAQUE element doit etre:
 - Secteur: ${deal.sector ?? "Non specifie"}
 - Stage: ${deal.stage ?? "Non specifie"}
 - Description: ${deal.description ?? "Non fournie"}
-- Valorisation demandee: ${deal.valuationPre ? `€${Number(deal.valuationPre).toLocaleString()}` : "Non specifiee"}
-- ARR: ${deal.arr ? `€${Number(deal.arr).toLocaleString()}` : "Non specifie"}
+- Valorisation demandee: ${deal.valuationPre != null ? `€${Number(deal.valuationPre).toLocaleString()}` : "Non specifiee"}
+- ARR: ${deal.arr != null ? `€${Number(deal.arr).toLocaleString()}` : "Non specifie"}
 
 ## RESULTATS TIER 1 A CHALLENGER
 ${tier1Results}

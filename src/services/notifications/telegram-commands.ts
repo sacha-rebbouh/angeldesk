@@ -309,7 +309,7 @@ async function handleLast(ctx: TelegramCommandContext): Promise<string> {
     startedAt: lastRun.startedAt!,
     durationMs: lastRun.durationMs || 0,
     stats,
-    cost: lastRun.totalCost ? Number(lastRun.totalCost) : undefined,
+    cost: lastRun.totalCost != null ? Number(lastRun.totalCost) : undefined,
     errors: errors.map((e) => e.message),
   })
 }

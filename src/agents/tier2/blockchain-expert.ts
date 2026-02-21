@@ -719,9 +719,9 @@ INSTRUCTIONS DB:
 - **Sector**: ${deal.sector ?? "Blockchain / Web3"}
 - **Stage**: ${stage}
 - **Geography**: ${deal.geography ?? "Unknown"}
-- **ARR**: ${deal.arr ? `€${deal.arr.toLocaleString()}` : "Not provided"}
-- **Amount Raising**: ${deal.amountRequested ? `€${deal.amountRequested.toLocaleString()}` : "Not provided"}
-- **Valuation**: ${deal.valuationPre ? `€${deal.valuationPre.toLocaleString()} pre-money` : "Not provided"}
+- **ARR**: ${deal.arr != null ? `€${Number(deal.arr).toLocaleString()}` : "Not provided"}
+- **Amount Raising**: ${deal.amountRequested != null ? `€${Number(deal.amountRequested).toLocaleString()}` : "Not provided"}
+- **Valuation**: ${deal.valuationPre != null ? `€${Number(deal.valuationPre).toLocaleString()} pre-money` : "Not provided"}
 
 ### Documents disponibles
 ${context.documents?.map(d => `- ${d.name} (${d.type})`).join("\n") || "Aucun document fourni"}

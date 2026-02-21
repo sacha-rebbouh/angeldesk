@@ -270,10 +270,10 @@ ${levelInstructions[level] ?? levelInstructions.beginner}
 - **Site web**: ${deal.website ?? "Non specifie"}
 
 ## Metriques financieres
-- **ARR**: ${deal.arr ? `${this.formatMoneyValue(Number(deal.arr))}` : "Non specifie"}
-- **Croissance**: ${deal.growthRate ? `${Number(deal.growthRate)}%` : "Non specifie"}
-- **Montant demande**: ${deal.amountRequested ? `${this.formatMoneyValue(Number(deal.amountRequested))}` : "Non specifie"}
-- **Valorisation pre-money**: ${deal.valuationPre ? `${this.formatMoneyValue(Number(deal.valuationPre))}` : "Non specifie"}
+- **ARR**: ${deal.arr != null ? `${this.formatMoneyValue(Number(deal.arr))}` : "Non specifie"}
+- **Croissance**: ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Non specifie"}
+- **Montant demande**: ${deal.amountRequested != null ? `${this.formatMoneyValue(Number(deal.amountRequested))}` : "Non specifie"}
+- **Valorisation pre-money**: ${deal.valuationPre != null ? `${this.formatMoneyValue(Number(deal.valuationPre))}` : "Non specifie"}
 
 ## Scores d'analyse (si disponibles)
 - **Score global**: ${deal.globalScore ?? "Non calcule"}/100

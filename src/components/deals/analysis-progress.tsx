@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { memo, useEffect, useState, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Check, Loader2, XCircle } from "lucide-react";
 import { formatAgentName } from "@/lib/format-utils";
@@ -48,7 +48,7 @@ interface StepConfig {
   threshold: number;
 }
 
-export function AnalysisProgress({
+export const AnalysisProgress = memo(function AnalysisProgress({
   isRunning,
   analysisType = "full_analysis",
   agentStatuses,
@@ -299,4 +299,4 @@ export function AnalysisProgress({
       </div>
     </div>
   );
-}
+});

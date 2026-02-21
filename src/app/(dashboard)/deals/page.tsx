@@ -32,7 +32,7 @@ async function getDeals(userId: string) {
   // Serialize Decimal fields for client component
   return deals.map((deal) => ({
     ...deal,
-    valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
+    valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
   }));
 }
 

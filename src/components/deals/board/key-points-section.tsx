@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import {
   CheckCircle2,
   AlertTriangle,
@@ -13,7 +14,7 @@ interface KeyPointsSectionProps {
   questionsForFounder: string[];
 }
 
-export function KeyPointsSection({
+export const KeyPointsSection = memo(function KeyPointsSection({
   consensusPoints,
   frictionPoints,
   questionsForFounder,
@@ -111,4 +112,4 @@ export function KeyPointsSection({
       </div>
     </div>
   );
-}
+});

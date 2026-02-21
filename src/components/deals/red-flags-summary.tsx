@@ -20,49 +20,7 @@ interface RedFlagsSummaryProps {
   isResolving?: boolean;
 }
 
-const SEVERITY_ORDER: Record<string, number> = {
-  CRITICAL: 0,
-  HIGH: 1,
-  MEDIUM: 2,
-  LOW: 3,
-};
-
-const SEVERITY_STYLES: Record<string, {
-  bg: string;
-  border: string;
-  text: string;
-  icon: string;
-  label: string;
-}> = {
-  CRITICAL: {
-    bg: "bg-red-50",
-    border: "border-red-200",
-    text: "text-red-800",
-    icon: "text-red-600",
-    label: "Critique",
-  },
-  HIGH: {
-    bg: "bg-orange-50",
-    border: "border-orange-200",
-    text: "text-orange-800",
-    icon: "text-orange-500",
-    label: "Eleve",
-  },
-  MEDIUM: {
-    bg: "bg-yellow-50",
-    border: "border-yellow-200",
-    text: "text-yellow-800",
-    icon: "text-yellow-500",
-    label: "Moyen",
-  },
-  LOW: {
-    bg: "bg-blue-50",
-    border: "border-blue-200",
-    text: "text-blue-800",
-    icon: "text-blue-400",
-    label: "Bas",
-  },
-};
+import { SEVERITY_STYLES, SEVERITY_ORDER } from "@/lib/ui-configs";
 
 // ConsolidatedFlag imported from @/services/red-flag-dedup/consolidate
 

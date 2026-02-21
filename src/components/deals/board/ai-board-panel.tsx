@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useReducer, useMemo, useEffect } from "react";
+import { useState, useCallback, useRef, useReducer, useMemo, useEffect, memo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,11 @@ interface BoardCreditsStatus {
   subscriptionStatus: "FREE" | "PRO" | "ENTERPRISE";
   nextResetDate: string;
 }
+
+const GRID_PATTERN_STYLE: React.CSSProperties = {
+  backgroundImage: "linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)",
+  backgroundSize: "40px 40px",
+};
 
 // Saved session shape from API
 interface SavedBoardSession {
@@ -145,7 +150,7 @@ function hydrateSavedSession(session: SavedBoardSession) {
   return { memberAnalyses, debateResponses, result };
 }
 
-export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
+export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
   const queryClient = useQueryClient();
   const [isRunning, setIsRunning] = useState(false);
   const currentSessionIdRef = useRef<string | null>(null);
@@ -165,6 +170,7 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
         savedSession: data.latestSession as SavedBoardSession | null,
       };
     },
+    staleTime: 30_000,
   });
 
   const creditsData = boardData?.credits;
@@ -344,10 +350,7 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
         {/* Subtle grid pattern overlay */}
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.03]"
-          style={{
-            backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`,
-            backgroundSize: "40px 40px",
-          }}
+          style={GRID_PATTERN_STYLE}
         />
 
         <div className="relative px-6 py-5">
@@ -490,7 +493,7 @@ export function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
       )}
     </div>
   );
-}
+});
 
 /** Visual separator between board phases */
 function SectionDivider({ icon, label }: { icon: React.ReactNode; label: string }) {

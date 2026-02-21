@@ -265,7 +265,7 @@ const IssueCard = memo(function IssueCard({ issue }: IssueCardProps) {
 // Main Component
 // =============================================================================
 
-export function DeckCoherenceReport({
+export const DeckCoherenceReport = memo(function DeckCoherenceReport({
   report,
   className,
   defaultExpanded = false,
@@ -297,12 +297,12 @@ export function DeckCoherenceReport({
         <button
           onClick={handleToggle}
           aria-expanded={isExpanded}
-          aria-label="Afficher le rapport de coherence"
+          aria-label="Afficher le rapport de cohérence"
           className="w-full flex items-center justify-between text-left"
         >
           <div className="flex items-center gap-2">
             <FileWarning className="h-5 w-5 text-purple-600" />
-            <CardTitle className="text-lg">Coherence du Deck</CardTitle>
+            <CardTitle className="text-lg">Cohérence du Deck</CardTitle>
           </div>
           <div className="flex items-center gap-2">
             <GradeBadge grade={report.reliabilityGrade} />
@@ -323,7 +323,7 @@ export function DeckCoherenceReport({
             <RecommendationBanner recommendation={report.recommendation} />
 
             {/* Summary Stats */}
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <div className="p-2 rounded-lg bg-red-50 border border-red-100 text-center">
                 <div className="text-lg font-bold text-red-600">{report.summary.criticalIssues}</div>
                 <div className="text-xs text-red-700">Critiques</div>
@@ -419,4 +419,4 @@ export function DeckCoherenceReport({
       )}
     </Card>
   );
-}
+});

@@ -57,20 +57,6 @@ export function formatCurrencyEUR(value: number | string | null | undefined): st
 }
 
 /**
- * Formats a percentage value
- */
-export function formatPercent(value: number, decimals = 0): string {
-  return `${value.toFixed(decimals)}%`;
-}
-
-/**
- * Formats a multiple (e.g., 2.5x)
- */
-export function formatMultiple(value: number, decimals = 1): string {
-  return `${value.toFixed(decimals)}x`;
-}
-
-/**
  * Returns Tailwind classes for deal status badge colors
  */
 export function getStatusColor(status: string): string {
@@ -138,17 +124,6 @@ export function getScoreColor(score: number): string {
   if (score >= 40) return "text-yellow-600";
   if (score >= 20) return "text-orange-600";
   return "text-red-600";
-}
-
-/**
- * Returns background Tailwind color class for a score (0-100)
- */
-export function getScoreBgColor(score: number): string {
-  if (score >= 80) return "bg-green-100";
-  if (score >= 60) return "bg-blue-100";
-  if (score >= 40) return "bg-yellow-100";
-  if (score >= 20) return "bg-orange-100";
-  return "bg-red-100";
 }
 
 /**

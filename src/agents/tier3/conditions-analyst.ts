@@ -203,13 +203,20 @@ Analyser les conditions d'investissement du deal en les cross-referencant avec:
 ## 1. VALORISATION (poids ~35%)
 Compare la valorisation pre-money aux benchmarks du stage/secteur.
 
-| Percentile vs benchmark | Score |
-|------------------------|-------|
-| < P25 (tres bon marche) | 85-100 |
-| P25-P50 (bon prix) | 65-85 |
-| P50-P75 (fair market) | 45-65 |
-| P75-P90 (cher) | 25-45 |
-| > P90 (excessif) | 0-25 |
+| Percentile vs benchmark | Score | Interpretation pour le BA |
+|------------------------|-------|---------------------------|
+| < P25 (tres bon marche) | 85-100 | FAVORABLE: le BA achete a bon prix, fort upside potentiel |
+| P25-P50 (bon prix) | 65-85 | POSITIF: conditions de marche attractives |
+| P50-P75 (fair market) | 45-65 | NEUTRE: prix de marche, ni bon ni mauvais |
+| P75-P90 (cher) | 25-45 | DEFAVORABLE: le BA surpaye, upside limite |
+| > P90 (excessif) | 0-25 | TOXIQUE: valorisation injustifiee, risque de perte |
+
+REGLE CRITIQUE DE TONALITE:
+- Score ELEVE (85-100) = BONNE NOUVELLE pour le BA. Le rationale et la narrative DOIVENT etre formules POSITIVEMENT.
+  Exemple correct: "Valorisation attractive (P10): le BA entre a un prix tres favorable, avec un potentiel de revalorisation important."
+  Exemple INTERDIT: "Montant derisoire", "Valorisation anormalement basse", "Sous-evaluation inquietante" — ces formulations ALARMENT le BA alors que c'est favorable pour lui.
+- Score FAIBLE (0-45) = MAUVAISE NOUVELLE. Formuler comme un risque/cout excessif.
+- La perspective est TOUJOURS celle du BA-investisseur: sous-evalue = bon pour lui, surevalue = mauvais pour lui.
 
 IMPORTANT: Moduler avec le contexte des agents:
 - Traction exceptionnelle (financial-auditor) → valorisation elevee justifiee (+10-15 pts)
@@ -282,6 +289,7 @@ Pour chaque conseil:
 - Citer un LEVIER concret (donnees d'un agent, benchmark DB, clause specifique)
 - Proposer un ARGUMENT de negociation formulable au fondateur
 - Donner la PRIORITE (CRITICAL si bloquant, HIGH si important, MEDIUM si nice-to-have)
+- VERIFIER que le conseil BENEFICIE economiquement au BA: il doit reduire le cout d'acquisition, augmenter les protections, ou ameliorer les droits. Ne JAMAIS proposer un conseil qui augmente le cout pour le BA (ex: convertir un instrument bon marche en instrument plus cher)
 
 # SOURCES DE CONDITIONS - RESOLUTION
 
@@ -389,12 +397,12 @@ CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):
     // 3. Check for conditions in deck (extractedData)
     let deckMentions: string | null = null;
     const ext = context.extractedData;
-    if (ext && (ext.valuationPre || ext.amountRaising)) {
+    if (ext && (ext.valuationPre != null || ext.amountRaising != null)) {
       const lines: string[] = [];
-      if (ext.valuationPre) lines.push(`Valorisation pre-money: €${ext.valuationPre.toLocaleString()}`);
-      if (ext.amountRaising) lines.push(`Montant demande: €${ext.amountRaising.toLocaleString()}`);
+      if (ext.valuationPre != null) lines.push(`Valorisation pre-money: €${Number(ext.valuationPre).toLocaleString()}`);
+      if (ext.amountRaising != null) lines.push(`Montant demande: €${Number(ext.amountRaising).toLocaleString()}`);
       if (ext.previousRounds?.length) {
-        lines.push(`Rounds precedents: ${ext.previousRounds.map(r => `${r.date}: €${r.amount.toLocaleString()}`).join(", ")}`);
+        lines.push(`Rounds precedents: ${ext.previousRounds.map(r => `${r.date}: €${Number(r.amount).toLocaleString()}`).join(", ")}`);
       }
       if (lines.length > 0) {
         deckMentions = lines.join("\n");
@@ -616,7 +624,14 @@ POINTS D'ATTENTION MULTI-TRANCHE:
 - Option conditionnelle = risque de non-exercice. Evaluer la probabilite des milestones
 - Calculer la valorisation effective BLENDED (somme investie / % equity total)
 - Verifier la coherence entre tranches (ex: CCA 30K + 10% nominal = valorisation implicite de 10K pour l'equity... mais option a 1M post-money)
-- Les triggers (milestones, dates) sont-ils realistes et mesurables?`);
+- Les triggers (milestones, dates) sont-ils realistes et mesurables?
+
+REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
+- CCA avec conversion en equity au NOMINAL = cout d'acquisition tres bas (prix par action = valeur nominale, souvent quelques centimes). C'est FAVORABLE au BA.
+- BSA-AIR avec cap de valorisation = cout d'acquisition plus eleve (prix par action = cap / nombre d'actions). Le cap est souvent 1M+.
+- DONC: convertir un CCA-au-nominal en BSA-AIR-au-cap AUGMENTE le cout d'acquisition pour le BA. Ne JAMAIS recommander cette conversion.
+- La seule raison de preferer un BSA-AIR au CCA serait des droits d'actionnaire (vote, info, liquidation pref) — mais le BA PERD en prix. Mentionner ce trade-off explicitement si tu en parles.
+- Regle generale pour les conseils de negociation: chaque conseil doit REDUIRE le cout ou AUGMENTER les protections du BA. Si un conseil fait l'inverse, ne le propose PAS.`);
     }
 
     return sections.join("\n\n---\n\n");

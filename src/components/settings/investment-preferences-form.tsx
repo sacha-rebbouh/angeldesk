@@ -69,6 +69,7 @@ export function InvestmentPreferencesForm() {
   const { data: preferences, isLoading, error } = useQuery({
     queryKey: queryKeys.userPreferences.all,
     queryFn: fetchPreferences,
+    staleTime: 60_000,
   });
 
   const mutation = useMutation({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -11,7 +11,7 @@ interface DeltaIndicatorProps {
   showPercentage?: boolean;
 }
 
-export function DeltaIndicator({
+export const DeltaIndicator = memo(function DeltaIndicator({
   currentValue,
   previousValue,
   unit = "",
@@ -78,4 +78,4 @@ export function DeltaIndicator({
       </span>
     </span>
   );
-}
+});

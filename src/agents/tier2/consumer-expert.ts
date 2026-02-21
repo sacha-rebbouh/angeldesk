@@ -427,8 +427,8 @@ The team has relevant experience."
 **Category:** À déterminer (Beauty, Fashion, Food, etc.)
 **Stage:** ${stage}
 **Geography:** ${deal.geography ?? "Non spécifié"}
-**Valorisation demandée:** ${deal.valuationPre ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non spécifiée"}
-**Montant recherché:** ${deal.amountRequested ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non spécifié"}
+**Valorisation demandée:** ${deal.valuationPre != null ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non spécifiée"}
+**Montant recherché:** ${deal.amountRequested != null ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non spécifié"}
 
 ---
 

@@ -329,11 +329,7 @@ export default async function DashboardPage() {
             <CardTitle className="text-base">Métriques Portfolio</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="text-center p-3 rounded-lg bg-muted/50">
-                <div className="text-2xl font-bold">{avgScore}/100</div>
-                <p className="text-xs text-muted-foreground">Score moyen</p>
-              </div>
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="text-center p-3 rounded-lg bg-muted/50">
                 <div className="text-2xl font-bold">{sectorDistribution.length}</div>
                 <p className="text-xs text-muted-foreground">Secteurs couverts</p>

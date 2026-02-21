@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { Loader2, CheckCircle2, Circle, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BoardProgressEvent } from "@/agents/board/types";
@@ -54,7 +54,7 @@ function ProviderIcon({ provider, className }: { provider: string; className?: s
   }
 }
 
-export function BoardProgress({ events }: BoardProgressProps) {
+export const BoardProgress = memo(function BoardProgress({ events }: BoardProgressProps) {
   const { currentPhase, memberStatus, currentRound, lastMessage, failedMembers } = useMemo(() => {
     let phase: PhaseKey = "init";
     let round = 0;
@@ -252,4 +252,4 @@ export function BoardProgress({ events }: BoardProgressProps) {
       </div>
     </div>
   );
-}
+});

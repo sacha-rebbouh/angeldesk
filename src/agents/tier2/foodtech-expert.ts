@@ -474,10 +474,10 @@ function buildUserPrompt(context: EnrichedAgentContext): string {
 **Sector déclaré**: ${deal.sector || "FoodTech"}
 **Stage**: ${stage}
 **Géographie**: ${deal.geography || "Unknown"}
-**Valorisation demandée**: ${deal.valuationPre ? `${Number(deal.valuationPre)}€` : "Non spécifiée"}
-**Montant du round**: ${deal.amountRequested ? `${Number(deal.amountRequested)}€` : "Non spécifié"}
-**Revenue déclaré**: ${deal.arr ? `${Number(deal.arr)}€ ARR` : "Non spécifié"}
-**Croissance déclarée**: ${deal.growthRate ? `${deal.growthRate}%` : "Non spécifiée"}
+**Valorisation demandée**: ${deal.valuationPre != null ? `${Number(deal.valuationPre)}€` : "Non spécifiée"}
+**Montant du round**: ${deal.amountRequested != null ? `${Number(deal.amountRequested)}€` : "Non spécifié"}
+**Revenue déclaré**: ${deal.arr != null ? `${Number(deal.arr)}€ ARR` : "Non spécifié"}
+**Croissance déclarée**: ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Non spécifiée"}
 
 ${formatFundingDbContext(context)}
 

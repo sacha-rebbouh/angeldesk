@@ -448,10 +448,10 @@ Tu dois donc effectuer une analyse complete en recherchant toi-meme les benchmar
 **Secteur declare**: ${deal.sector || "Non specifie"}
 **Stage**: ${stage}
 **Geographie**: ${deal.geography || "Non specifie"}
-**Valorisation demandee**: ${deal.valuationPre ? `${Number(deal.valuationPre)}€` : "Non specifiee"}
-**Montant du round**: ${deal.amountRequested ? `${Number(deal.amountRequested)}€` : "Non specifie"}
-**ARR declare**: ${deal.arr ? `${Number(deal.arr)}€` : "Non specifie"}
-**Croissance declaree**: ${deal.growthRate ? `${deal.growthRate}%` : "Non specifiee"}
+**Valorisation demandee**: ${deal.valuationPre != null ? `${Number(deal.valuationPre)}€` : "Non specifiee"}
+**Montant du round**: ${deal.amountRequested != null ? `${Number(deal.amountRequested)}€` : "Non specifie"}
+**ARR declare**: ${deal.arr != null ? `${Number(deal.arr)}€` : "Non specifie"}
+**Croissance declaree**: ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Non specifiee"}
 
 ---
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -55,7 +56,7 @@ function ProviderIcon({ provider, className }: { provider: string; className?: s
   }
 }
 
-export function BoardTeaser({ dealName }: BoardTeaserProps) {
+export const BoardTeaser = memo(function BoardTeaser({ dealName }: BoardTeaserProps) {
   const router = useRouter();
 
   return (
@@ -198,7 +199,7 @@ export function BoardTeaser({ dealName }: BoardTeaserProps) {
       </div>
     </div>
   );
-}
+});
 
 function FeatureCard({
   icon,

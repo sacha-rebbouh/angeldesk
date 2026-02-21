@@ -612,9 +612,9 @@ function buildLegaltechUserPrompt(
 - **Sector**: ${deal.sector ?? "LegalTech"}
 - **Stage**: ${stage}
 - **Geography**: ${deal.geography ?? "Unknown"}
-- **ARR**: ${deal.arr ? `EUR${deal.arr.toLocaleString()}` : "Not provided"}
-- **Amount Raising**: ${deal.amountRequested ? `EUR${deal.amountRequested.toLocaleString()}` : "Not provided"}
-- **Valuation**: ${deal.valuationPre ? `EUR${deal.valuationPre.toLocaleString()} pre-money` : "Not provided"}
+- **ARR**: ${deal.arr != null ? `€${Number(deal.arr).toLocaleString()}` : "Not provided"}
+- **Amount Raising**: ${deal.amountRequested != null ? `€${Number(deal.amountRequested).toLocaleString()}` : "Not provided"}
+- **Valuation**: ${deal.valuationPre != null ? `€${Number(deal.valuationPre).toLocaleString()} pre-money` : "Not provided"}
 
 ### Documents disponibles
 ${context.documents?.map(d => `- ${d.name} (${d.type})`).join("\n") || "Aucun document fourni"}

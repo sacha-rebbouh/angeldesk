@@ -69,7 +69,7 @@ export async function verifyEntities(
             id: match.id,
             name: match.companyName,
             sector: match.sector ?? undefined,
-            lastFunding: match.amount ? Number(match.amount) : undefined,
+            lastFunding: match.amount != null ? Number(match.amount) : undefined,
           },
         });
       } else {

@@ -2,13 +2,16 @@
 
 import React, { useState, useCallback } from "react";
 import {
-  Brain, ChevronDown, ChevronUp, CheckCircle,
+  ChevronDown, ChevronUp, CheckCircle,
   AlertTriangle, Lightbulb, MessageSquare, Shield, Layers,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { getScoreColor, getScoreBarColor, getScoreLabel, getSeverityStyle } from "@/lib/ui-configs";
+import { ScoreRing } from "@/components/ui/score-ring";
 import { conditionsAlertKey } from "@/services/alert-resolution/alert-keys";
 import { ResolutionBadge } from "@/components/deals/resolution-badge";
 import { ResolutionDialog } from "@/components/deals/resolution-dialog";
@@ -20,98 +23,180 @@ import type {
   NarrativeData,
   ConditionsFindings,
   QuestionItem,
+  ValuationFindings,
 } from "./types";
 
-// ── Color helpers ──
+// ── Conditions-specific helpers (not duplicating ui-configs) ──
 
-function getScoreBarColor(score: number): string {
-  if (score >= 80) return "bg-green-500";
-  if (score >= 60) return "bg-blue-500";
-  if (score >= 40) return "bg-yellow-500";
-  if (score >= 20) return "bg-orange-500";
-  return "bg-red-500";
+function getVerdictConfig(score: number) {
+  if (score >= 80) return { label: "Conditions favorables", color: "text-green-700", accentColor: "bg-emerald-500" };
+  if (score >= 60) return { label: "Conditions acceptables", color: "text-blue-700", accentColor: "bg-blue-500" };
+  if (score >= 40) return { label: "Conditions a negocier", color: "text-amber-700", accentColor: "bg-amber-500" };
+  return { label: "Conditions defavorables", color: "text-red-700", accentColor: "bg-red-500" };
 }
 
-function getScoreTextColor(score: number): string {
-  if (score >= 80) return "text-green-600";
-  if (score >= 60) return "text-blue-600";
-  if (score >= 40) return "text-yellow-600";
-  if (score >= 20) return "text-orange-600";
-  return "text-red-600";
-}
-
-function getSeverityColor(severity: string): string {
-  switch (severity) {
-    case "critical": return "bg-red-100 text-red-800 border-red-200";
-    case "high": return "bg-orange-100 text-orange-800 border-orange-200";
-    case "medium": return "bg-yellow-100 text-yellow-800 border-yellow-200";
-    default: return "bg-blue-100 text-blue-800 border-blue-200";
+function getValuationLabel(verdict: string): { label: string; color: string } {
+  switch (verdict) {
+    case "UNDERVALUED": return { label: "Sous-evalue", color: "text-green-600" };
+    case "FAIR": return { label: "Fair market", color: "text-blue-600" };
+    case "AGGRESSIVE": return { label: "Agressif", color: "text-orange-600" };
+    case "VERY_AGGRESSIVE": return { label: "Tres agressif", color: "text-red-600" };
+    default: return { label: verdict, color: "text-muted-foreground" };
   }
 }
 
-function getPriorityLabel(priority: string): string {
-  switch (priority) {
-    case "critical": return "Critique";
-    case "high": return "Haute";
-    case "medium": return "Moyenne";
-    default: return "Basse";
-  }
+/** Compact horizontal bar for dimension scores (pattern from verdict-panel MiniBar) */
+function MiniBar({ score }: { score: number }) {
+  return (
+    <div className="w-16 h-1.5 rounded-full bg-muted/60 overflow-hidden">
+      <div
+        className={cn("h-full rounded-full", getScoreBarColor(score))}
+        style={{ width: `${Math.min(score, 100)}%` }}
+      />
+    </div>
+  );
 }
 
-// ── Score Card ──
+// ── Hero Card (replaces VerdictSummary + ScoreCard) ──
 
-export const ConditionsScoreCard = React.memo(function ConditionsScoreCard({
+export const ConditionsHeroCard = React.memo(function ConditionsHeroCard({
   score,
   breakdown,
   narrative,
+  valuation,
+  redFlagCount,
+  onOpenSimulator,
+  onOpenComparator,
 }: {
   score: number;
   breakdown: ScoreBreakdownItem[] | null;
   narrative: NarrativeData | null;
+  valuation: ValuationFindings | null;
+  redFlagCount: number;
+  onOpenSimulator: () => void;
+  onOpenComparator: () => void;
 }) {
+  const [showMore, setShowMore] = useState(false);
+  const verdict = getVerdictConfig(score);
+  const hasMoreInfo = !!(narrative?.summary || (narrative?.keyInsights && narrative.keyInsights.length > 0));
+
   return (
-    <Card className="border-2 border-primary/20">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Brain className="h-5 w-5 text-primary" />
-            <CardTitle className="text-base">Analyse IA des conditions</CardTitle>
+    <div className="relative overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+      {/* Top accent line */}
+      <div className={cn("absolute top-0 left-0 right-0 h-[2px]", verdict.accentColor)} />
+
+      <div className="p-6">
+        {/* Main row: ScoreRing left, details right */}
+        <div className="flex items-start gap-6 sm:gap-8">
+          {/* Score Ring */}
+          <div className="shrink-0">
+            <ScoreRing score={score} />
+            <p className="text-center mt-2">
+              <Badge variant="outline" className="text-[10px] font-medium tracking-wide uppercase">
+                {getScoreLabel(score)}
+              </Badge>
+            </p>
           </div>
-          <span className={cn("text-3xl font-bold", getScoreTextColor(score))}>
-            {score}<span className="text-sm font-normal text-muted-foreground">/100</span>
-          </span>
-        </div>
-        {narrative?.oneLiner && (
-          <CardDescription className="mt-1">{narrative.oneLiner}</CardDescription>
-        )}
-      </CardHeader>
-      {breakdown && breakdown.length > 0 && (
-        <CardContent className="pt-0 space-y-3">
-          {breakdown.map((item) => (
-            <div key={item.criterion} className="space-y-1">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">
-                  {item.criterion}
-                  <span className="text-xs ml-1 text-muted-foreground/60">({Math.round(item.weight * 100)}%)</span>
-                </span>
-                <span className={cn("font-semibold", getScoreTextColor(item.score))}>
-                  {item.score}/100
-                </span>
+
+          {/* Right column */}
+          <div className="flex-1 min-w-0 space-y-4">
+            {/* Verdict + one-liner */}
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className={cn("text-lg font-semibold", verdict.color)}>{verdict.label}</p>
+                {narrative?.oneLiner && (
+                  <p className="text-sm text-muted-foreground mt-0.5">{narrative.oneLiner}</p>
+                )}
               </div>
-              <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={cn("h-full rounded-full transition-all", getScoreBarColor(item.score))}
-                  style={{ width: `${Math.min(item.score, 100)}%` }}
-                />
-              </div>
-              {item.justification && (
-                <p className="text-xs text-muted-foreground/80 leading-relaxed">{item.justification}</p>
+              {redFlagCount > 0 && (
+                <Badge variant="destructive" className="text-xs shrink-0">
+                  {redFlagCount} red flag{redFlagCount > 1 ? "s" : ""}
+                </Badge>
               )}
             </div>
-          ))}
-        </CardContent>
-      )}
-    </Card>
+
+            {/* Dimension breakdown (compact MiniBar rows) */}
+            {breakdown && breakdown.length > 0 && (
+              <div className="space-y-2">
+                {breakdown.map((item) => (
+                  <div key={item.criterion} className="flex items-center gap-3 text-[13px]">
+                    <span className="w-28 shrink-0 text-foreground/65 font-medium truncate">
+                      {item.criterion}
+                      <span className="text-[10px] ml-1 text-muted-foreground/50">
+                        ({Math.round(item.weight * 100)}%)
+                      </span>
+                    </span>
+                    <MiniBar score={item.score} />
+                    <span className={cn("font-bold tabular-nums text-xs", getScoreColor(item.score))}>
+                      {item.score}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Valuation quick view */}
+            {valuation && valuation.verdict && (
+              <div className="rounded-lg bg-muted/30 border border-border/40 p-3 space-y-1">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground font-medium">Valorisation</span>
+                  <span className={cn("font-semibold", getValuationLabel(valuation.verdict).color)}>
+                    {getValuationLabel(valuation.verdict).label}
+                    {valuation.percentileVsDB != null && (
+                      <span className="text-muted-foreground font-normal ml-1.5">
+                        (P{valuation.percentileVsDB})
+                      </span>
+                    )}
+                  </span>
+                </div>
+                {valuation.rationale && (
+                  <p className="text-xs text-muted-foreground">{valuation.rationale}</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex gap-2 mt-5 pt-4 border-t border-border/40">
+          <Button variant="outline" size="sm" className="text-xs h-7" onClick={onOpenSimulator}>
+            Simuler la dilution
+          </Button>
+          <Button variant="outline" size="sm" className="text-xs h-7" onClick={onOpenComparator}>
+            Comparer au marche
+          </Button>
+        </div>
+
+        {/* Collapsible "En savoir plus" (absorbs old InsightsCard narrative content) */}
+        {hasMoreInfo && (
+          <Collapsible open={showMore} onOpenChange={setShowMore}>
+            <CollapsibleTrigger asChild>
+              <button className="flex items-center gap-1.5 mt-3 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                {showMore ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                En savoir plus
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-3 pt-3 border-t border-border/40 space-y-2">
+                {narrative?.summary && (
+                  <p className="text-sm text-muted-foreground leading-relaxed">{narrative.summary}</p>
+                )}
+                {narrative?.keyInsights && narrative.keyInsights.length > 0 && (
+                  <ul className="space-y-1.5">
+                    {narrative.keyInsights.map((insight, idx) => (
+                      <li key={idx} className="flex items-start gap-2 text-sm">
+                        <span className="text-primary mt-1">•</span>
+                        <span className="text-muted-foreground">{insight}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+      </div>
+    </div>
   );
 });
 
@@ -119,12 +204,14 @@ export const ConditionsScoreCard = React.memo(function ConditionsScoreCard({
 
 export const NegotiationAdviceCard = React.memo(function NegotiationAdviceCard({
   advice,
+  talkingPoints,
   resolutionMap,
   onResolve,
   onUnresolve,
   isResolving = false,
 }: {
   advice: NegotiationAdviceItem[];
+  talkingPoints?: string[];
   resolutionMap?: Record<string, AlertResolution>;
   onResolve?: (input: CreateResolutionInput) => Promise<unknown>;
   onUnresolve?: (alertKey: string) => Promise<unknown>;
@@ -142,7 +229,7 @@ export const NegotiationAdviceCard = React.memo(function NegotiationAdviceCard({
     await onResolve({ alertKey, alertType: "CONDITIONS", status, justification, alertTitle: title, alertSeverity: severity });
   }, [onResolve]);
 
-  if (advice.length === 0) return null;
+  if (advice.length === 0 && (!talkingPoints || talkingPoints.length === 0)) return null;
 
   return (
     <>
@@ -151,12 +238,30 @@ export const NegotiationAdviceCard = React.memo(function NegotiationAdviceCard({
         <div className="flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-blue-500" />
           <CardTitle className="text-base">Conseils de negociation</CardTitle>
+          {advice.length > 0 && (
+            <Badge variant="outline" className="text-xs">{advice.length}</Badge>
+          )}
         </div>
       </CardHeader>
       <CardContent className="pt-0 space-y-2">
+        {/* Talking points from narrative.forNegotiation */}
+        {talkingPoints && talkingPoints.length > 0 && (
+          <div className="space-y-1.5 pb-3 border-b mb-3">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Arguments cles</p>
+            {talkingPoints.map((point, idx) => (
+              <p key={idx} className="text-sm text-foreground flex items-start gap-1.5">
+                <span className="text-primary mt-0.5 shrink-0">•</span>
+                {point}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {/* Advice items with resolution tracking */}
         {advice.map((item, idx) => {
           const key = conditionsAlertKey("negotiation", item.point);
           const resolution = resolutionMap?.[key];
+          const style = getSeverityStyle(item.priority);
           return (
             <div
               key={key}
@@ -165,8 +270,8 @@ export const NegotiationAdviceCard = React.memo(function NegotiationAdviceCard({
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-start gap-2 flex-1">
-                  <Badge variant="outline" className={cn("shrink-0 text-xs", getSeverityColor(item.priority))}>
-                    {getPriorityLabel(item.priority)}
+                  <Badge variant="outline" className={cn("shrink-0 text-xs", style.badge)}>
+                    {style.label}
                   </Badge>
                   <span className={cn("text-sm font-medium", resolution && "line-through")}>{item.point}</span>
                 </div>
@@ -270,11 +375,12 @@ export const RedFlagsCard = React.memo(function RedFlagsCard({
         {redFlags.map((flag) => {
           const key = conditionsAlertKey("redFlag", flag.title, flag.category);
           const resolution = resolutionMap?.[key];
+          const style = getSeverityStyle(flag.severity);
           return (
             <div key={flag.id} className={cn("rounded-lg border border-red-200/50 p-3 space-y-1.5", resolution && "opacity-60")}>
               <div className="flex items-start gap-2">
-                <Badge variant="outline" className={cn("shrink-0 text-xs", getSeverityColor(flag.severity))}>
-                  {getPriorityLabel(flag.severity)}
+                <Badge variant="outline" className={cn("shrink-0 text-xs", style.badge)}>
+                  {style.label}
                 </Badge>
                 <span className={cn("text-sm font-medium flex-1", resolution && "line-through")}>{flag.title}</span>
                 {resolution ? (
@@ -385,7 +491,7 @@ export const StructuredAssessmentCard = React.memo(function StructuredAssessment
           <div key={ta.trancheLabel} className="rounded-lg border p-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">{ta.trancheLabel}</span>
-              <span className={cn("text-sm font-semibold", getScoreTextColor(ta.score))}>
+              <span className={cn("text-sm font-semibold", getScoreColor(ta.score))}>
                 {ta.score}/100
               </span>
             </div>
@@ -413,44 +519,36 @@ export const StructuredAssessmentCard = React.memo(function StructuredAssessment
   );
 });
 
-// ── Insights ──
+// ── Cross-Reference Insights (collapsible, replaces old InsightsCard) ──
 
-export const InsightsCard = React.memo(function InsightsCard({
+export const CrossReferenceInsightsCard = React.memo(function CrossReferenceInsightsCard({
   insights,
-  narrative,
 }: {
   insights: Array<{ insight: string; sourceAgent: string; impact: string }>;
-  narrative: NarrativeData | null;
 }) {
-  const hasInsights = insights.length > 0;
-  const hasNarrative = narrative?.keyInsights && narrative.keyInsights.length > 0;
-  if (!hasInsights && !hasNarrative) return null;
+  const [isOpen, setIsOpen] = useState(false);
+
+  if (insights.length === 0) return null;
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <Shield className="h-4 w-4 text-purple-500" />
-          <CardTitle className="text-base">Insights IA</CardTitle>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0 space-y-3">
-        {narrative?.summary && (
-          <p className="text-sm text-muted-foreground leading-relaxed">{narrative.summary}</p>
-        )}
-        {hasNarrative && (
-          <ul className="space-y-1.5">
-            {narrative!.keyInsights!.map((insight, idx) => (
-              <li key={idx} className="flex items-start gap-2 text-sm">
-                <span className="text-primary mt-1">•</span>
-                <span className="text-muted-foreground">{insight}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {hasInsights && (
-          <div className="space-y-2 pt-2 border-t">
-            <p className="text-xs font-medium text-muted-foreground">Cross-references agents :</p>
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <Card>
+        <CollapsibleTrigger asChild>
+          <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-purple-500" />
+                <CardTitle className="text-base">Cross-references IA</CardTitle>
+                <Badge variant="outline" className="text-xs">{insights.length}</Badge>
+              </div>
+              {isOpen
+                ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            </div>
+          </CardHeader>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className="pt-0 space-y-2">
             {insights.map((item, idx) => (
               <div key={idx} className="text-sm rounded bg-muted/50 p-2">
                 <p className="text-muted-foreground">{item.insight}</p>
@@ -459,133 +557,10 @@ export const InsightsCard = React.memo(function InsightsCard({
                 </p>
               </div>
             ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-});
-
-// ── Verdict Summary (Top of analysis — TL;DR for BA) ──
-
-function getVerdictConfig(score: number): { label: string; color: string; bgColor: string; borderColor: string } {
-  if (score >= 80) return { label: "Conditions favorables", color: "text-green-700", bgColor: "bg-green-50 dark:bg-green-950/30", borderColor: "border-green-200 dark:border-green-800" };
-  if (score >= 60) return { label: "Conditions acceptables", color: "text-blue-700", bgColor: "bg-blue-50 dark:bg-blue-950/30", borderColor: "border-blue-200 dark:border-blue-800" };
-  if (score >= 40) return { label: "Conditions a negocier", color: "text-yellow-700", bgColor: "bg-yellow-50 dark:bg-yellow-950/30", borderColor: "border-yellow-200 dark:border-yellow-800" };
-  return { label: "Conditions defavorables", color: "text-red-700", bgColor: "bg-red-50 dark:bg-red-950/30", borderColor: "border-red-200 dark:border-red-800" };
-}
-
-function getValuationLabel(verdict: string): { label: string; color: string } {
-  switch (verdict) {
-    case "UNDERVALUED": return { label: "Sous-evalue", color: "text-green-600" };
-    case "FAIR": return { label: "Fair market", color: "text-blue-600" };
-    case "AGGRESSIVE": return { label: "Agressif", color: "text-orange-600" };
-    case "VERY_AGGRESSIVE": return { label: "Tres agressif", color: "text-red-600" };
-    default: return { label: verdict, color: "text-muted-foreground" };
-  }
-}
-
-export const ConditionsVerdictSummary = React.memo(function ConditionsVerdictSummary({
-  score,
-  narrative,
-  topAdvice,
-  valuation,
-  redFlagCount,
-  onOpenSimulator,
-  onOpenComparator,
-}: {
-  score: number;
-  narrative: NarrativeData | null;
-  topAdvice: NegotiationAdviceItem[];
-  valuation: { assessedValue: number | null; percentileVsDB: number | null; verdict: string; rationale: string; benchmarkUsed: string } | null;
-  redFlagCount: number;
-  onOpenSimulator: () => void;
-  onOpenComparator: () => void;
-}) {
-  const verdict = getVerdictConfig(score);
-
-  return (
-    <Card className={cn("border-2", verdict.borderColor, verdict.bgColor)}>
-      <CardContent className="pt-5 pb-4 space-y-4">
-        {/* Header: Score + Verdict */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={cn("text-3xl font-bold", verdict.color)}>
-              {score}<span className="text-sm font-normal text-muted-foreground">/100</span>
-            </div>
-            <div>
-              <p className={cn("font-semibold", verdict.color)}>{verdict.label}</p>
-              {narrative?.oneLiner && (
-                <p className="text-sm text-muted-foreground mt-0.5">{narrative.oneLiner}</p>
-              )}
-            </div>
-          </div>
-          {redFlagCount > 0 && (
-            <Badge variant="destructive" className="text-xs">
-              {redFlagCount} red flag{redFlagCount > 1 ? "s" : ""}
-            </Badge>
-          )}
-        </div>
-
-        {/* Valuation quick view */}
-        {valuation && valuation.verdict && (
-          <div className="rounded-lg bg-background/60 border p-3 space-y-1">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground font-medium">Valorisation</span>
-              <span className={cn("font-semibold", getValuationLabel(valuation.verdict).color)}>
-                {getValuationLabel(valuation.verdict).label}
-                {valuation.percentileVsDB != null && (
-                  <span className="text-muted-foreground font-normal ml-1.5">
-                    (P{valuation.percentileVsDB})
-                  </span>
-                )}
-              </span>
-            </div>
-            {valuation.rationale && (
-              <p className="text-xs text-muted-foreground">{valuation.rationale}</p>
-            )}
-          </div>
-        )}
-
-        {/* Top 3 negotiation priorities */}
-        {topAdvice.length > 0 && (
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Points cles a negocier</p>
-            {topAdvice.map((advice, idx) => (
-              <div key={idx} className="flex items-start gap-2 text-sm">
-                <Badge variant="outline" className={cn("shrink-0 text-[10px] mt-0.5", getSeverityColor(advice.priority))}>
-                  {getPriorityLabel(advice.priority)}
-                </Badge>
-                <span className="text-foreground">{advice.point}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* forNegotiation talking points */}
-        {narrative?.forNegotiation && narrative.forNegotiation.length > 0 && (
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Arguments de negociation</p>
-            {narrative.forNegotiation.map((point, idx) => (
-              <p key={idx} className="text-sm text-foreground flex items-start gap-1.5">
-                <span className="text-primary mt-0.5 shrink-0">•</span>
-                {point}
-              </p>
-            ))}
-          </div>
-        )}
-
-        {/* Quick action links */}
-        <div className="flex gap-2 pt-1">
-          <Button variant="outline" size="sm" className="text-xs h-7" onClick={onOpenSimulator}>
-            Simuler la dilution
-          </Button>
-          <Button variant="outline" size="sm" className="text-xs h-7" onClick={onOpenComparator}>
-            Comparer au marche
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 });
 
@@ -614,6 +589,7 @@ export const ConditionsQuestionsCard = React.memo(function ConditionsQuestionsCa
       <CardContent className="pt-0 space-y-2">
         {questions.map((q, idx) => {
           const isExpanded = expandedIdx === idx;
+          const style = getSeverityStyle(q.priority);
           return (
             <div
               key={q.id ?? idx}
@@ -622,8 +598,8 @@ export const ConditionsQuestionsCard = React.memo(function ConditionsQuestionsCa
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-start gap-2 flex-1">
-                  <Badge variant="outline" className={cn("shrink-0 text-xs", getSeverityColor(q.priority))}>
-                    {getPriorityLabel(q.priority)}
+                  <Badge variant="outline" className={cn("shrink-0 text-xs", style.badge)}>
+                    {style.label}
                   </Badge>
                   <span className="text-sm font-medium">{q.question}</span>
                 </div>

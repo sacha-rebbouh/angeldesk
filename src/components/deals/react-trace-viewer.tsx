@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { memo, useState, useCallback, useMemo } from "react";
 import {
   Card,
   CardContent,
@@ -38,7 +38,6 @@ import type {
   ReasoningTrace,
   ReasoningStep,
   ThoughtType,
-  SelfCritiqueResult,
 } from "@/agents/react/types";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 
@@ -332,7 +331,7 @@ function FindingCard({ finding }: { finding: ScoredFinding }) {
             <span className="text-xs font-medium">Benchmark</span>
             <span className="text-xs text-muted-foreground">({finding.benchmarkData.source})</span>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
             <div>
               <span className="text-muted-foreground">P25:</span>{" "}
               <span className="font-medium">{finding.benchmarkData.p25}</span>
@@ -396,7 +395,7 @@ function FindingCard({ finding }: { finding: ScoredFinding }) {
 // MAIN COMPONENT
 // ============================================================================
 
-export function ReActTraceViewer({ agentName, data, defaultExpanded = false }: ReActTraceViewerProps) {
+export const ReActTraceViewer = memo(function ReActTraceViewer({ agentName, data, defaultExpanded = false }: ReActTraceViewerProps) {
   const { reasoningTrace, findings, confidence, expectedVariance } = data;
 
   const findingsWithBenchmark = useMemo(
@@ -502,7 +501,7 @@ export function ReActTraceViewer({ agentName, data, defaultExpanded = false }: R
       </CardContent>
     </Card>
   );
-}
+});
 
 // ============================================================================
 // COMPACT VERSION FOR INLINE DISPLAY
@@ -514,7 +513,7 @@ interface ReActBadgeProps {
   onClick?: () => void;
 }
 
-export function ReActBadge({ confidence, findingsCount, onClick }: ReActBadgeProps) {
+export const ReActBadge = memo(function ReActBadge({ confidence, findingsCount, onClick }: ReActBadgeProps) {
   return (
     <button
       onClick={onClick}
@@ -538,4 +537,4 @@ export function ReActBadge({ confidence, findingsCount, onClick }: ReActBadgePro
       <span className="text-xs text-muted-foreground">{findingsCount} findings</span>
     </button>
   );
-}
+});

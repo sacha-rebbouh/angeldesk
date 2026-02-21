@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef, memo } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, Handshake, ShieldAlert, Download, FileText, ClipboardCheck } from "lucide-react";
+import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, ShieldAlert, Download, FileText, ClipboardCheck, MessageSquareText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,11 +43,9 @@ import { type AgentQuestion, type QuestionResponse } from "./founder-responses";
 import { DeltaIndicator } from "./delta-indicator";
 import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
-import { NegotiationPanel } from "./negotiation-panel";
 import { DeckCoherenceReport as DeckCoherenceReportPanel } from "./deck-coherence-report";
 import { NextStepsGuide } from "./next-steps-guide";
 import { PartialAnalysisBanner } from "./partial-analysis-banner";
-import type { NegotiationStrategy } from "@/services/negotiation/strategist";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 import { formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
 import { consolidateAndPrioritizeQuestions } from "@/lib/question-consolidator";
@@ -79,6 +77,11 @@ const Tier3Results = dynamic(
 const SuiviDDTab = dynamic(
   () => import("./suivi-dd/suivi-dd-tab").then((mod) => ({ default: mod.SuiviDDTab })),
   { loading: () => <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div> }
+);
+
+const AIBoardPanel = dynamic(
+  () => import("./board/ai-board-panel").then((mod) => ({ default: mod.AIBoardPanel })),
+  { loading: () => <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>, ssr: false }
 );
 
 interface AgentResult {
@@ -119,6 +122,7 @@ interface SavedAnalysis {
 
 interface AnalysisPanelProps {
   dealId: string;
+  dealName: string;
   currentStatus: string;
   analyses?: SavedAnalysis[];
 }
@@ -191,14 +195,7 @@ async function fetchApi<T>(url: string, errorMessage: string): Promise<T> {
   }
 }
 
-// Helper: Extract deal score from analysis results
-function extractDealScore(results: Record<string, AgentResult> | null | undefined): number {
-  if (!results) return 0;
-  const scorerResult = results["synthesis-deal-scorer"];
-  if (!scorerResult?.success || !scorerResult.data) return 0;
-  const d = scorerResult.data as { overallScore?: number; score?: { value?: number } };
-  return d.overallScore ?? d.score?.value ?? 0;
-}
+import { extractDealScore } from "@/lib/score-utils";
 
 async function fetchQuota(): Promise<{ data: QuotaData }> {
   return fetchApi("/api/credits", "Failed to fetch quota");
@@ -292,7 +289,7 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
 }
 
 // Helper to map question category from LLM output to UI format
-export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: AnalysisPanelProps) {
+export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, currentStatus, analyses = [] }: AnalysisPanelProps) {
   const queryClient = useQueryClient();
   const router = useRouter();
   const {
@@ -307,11 +304,8 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const [showAgentDetails, setShowAgentDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCreditModal, setShowCreditModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<"results" | "suivi-dd" | "negotiation" | "coherence">("results");
+  const [activeTab, setActiveTab] = useState<"results" | "suivi-dd" | "coherence">("results");
   const [isSubmittingResponses, setIsSubmittingResponses] = useState(false);
-  const [negotiationStrategy, setNegotiationStrategy] = useState<NegotiationStrategy | null>(null);
-  const [isLoadingNegotiation, setIsLoadingNegotiation] = useState(false);
-  const isGeneratingNegotiationRef = useRef(false); // Sync ref to prevent race conditions
   // On-demand results cache for historical analyses (loaded when user navigates history)
   const [onDemandResults, setOnDemandResults] = useState<Record<string, Record<string, AgentResult>>>({});
   const [isLoadingResults, setIsLoadingResults] = useState(false);
@@ -333,6 +327,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const { data: usageData, isLoading: isUsageLoading } = useQuery({
     queryKey: queryKeys.usage.analyze(),
     queryFn: fetchUsageStatus,
+    staleTime: 60_000,
   });
 
   const usage = usageData?.usage;
@@ -440,6 +435,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const { data: founderResponsesData } = useQuery({
     queryKey: queryKeys.founderResponses.byDeal(dealId),
     queryFn: () => fetchFounderResponses(dealId),
+    staleTime: 60_000,
   });
 
   const existingResponses = useMemo(() => {
@@ -455,7 +451,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
   const { data: stalenessData } = useQuery({
     queryKey: queryKeys.staleness.byDeal(dealId),
     queryFn: () => fetchStaleness(dealId),
-    // Refetch when analyses list changes
+    staleTime: 30_000,
     enabled: analyses.length > 0,
   });
 
@@ -621,7 +617,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
 
   // Memoized tab change handler (extracted from inline callback)
   const handleTabChange = useCallback((value: string) => {
-    setActiveTab(value as "results" | "suivi-dd" | "negotiation" | "coherence");
+    setActiveTab(value as "results" | "suivi-dd" | "coherence");
   }, []);
 
   // Handle founder responses - save only (without re-analyze)
@@ -850,179 +846,14 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
     return { openAlertCount: openCount, hasCriticalOpen: criticalOpen > 0 };
   }, [displayedResult, resolutionMap]);
 
-  // Load or generate negotiation strategy (with cache support)
-  const loadOrGenerateNegotiation = useCallback(async () => {
-    // Use ref for synchronous check to prevent race conditions
-    if (negotiationStrategy || isGeneratingNegotiationRef.current || !displayedResult?.results) return;
-
-    // Get analysis ID from current selection or first completed
-    const analysisId = selectedAnalysisId ?? completedAnalyses[0]?.id;
-    if (!analysisId) return;
-
-    // Set ref immediately (sync) to prevent double calls
-    isGeneratingNegotiationRef.current = true;
-    setIsLoadingNegotiation(true);
-
-    try {
-      // POST will return cached strategy if available, or generate a new one
-      const response = await fetch("/api/negotiation/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dealId,
-          analysisId,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to load negotiation strategy");
-      }
-
-      const data = await response.json();
-      setNegotiationStrategy(data.strategy);
-
-      // Cache loaded — no log in production
-    } catch (error) {
-      console.error("[AnalysisPanel] Error loading negotiation strategy:", error);
-      toast.error(error instanceof Error ? error.message : "Erreur lors du chargement de la strategie");
-    } finally {
-      isGeneratingNegotiationRef.current = false;
-      setIsLoadingNegotiation(false);
-    }
-  }, [negotiationStrategy, displayedResult, dealId, selectedAnalysisId, completedAnalyses]);
-
-  // Update negotiation point status (with API persistence)
-  const [isUpdatingNegotiation, setIsUpdatingNegotiation] = useState(false);
-
-  const handleUpdateNegotiationPointStatus = useCallback(
-    async (pointId: string, status: "to_negotiate" | "obtained" | "refused" | "compromised", compromiseValue?: string) => {
-      // Get analysisId from selected or most recent completed
-      const analysisId = selectedAnalysisId ?? completedAnalyses[0]?.id;
-      if (!negotiationStrategy || !analysisId || !dealId) return;
-
-      // Optimistic update for immediate feedback
-      const previousStrategy = negotiationStrategy;
-      setNegotiationStrategy({
-        ...negotiationStrategy,
-        negotiationPoints: negotiationStrategy.negotiationPoints.map(point =>
-          point.id === pointId ? { ...point, status, compromiseValue: status === "compromised" ? compromiseValue : undefined } : point
-        ),
-      });
-
-      setIsUpdatingNegotiation(true);
-      try {
-        const response = await fetch("/api/negotiation/update", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            dealId,
-            analysisId,
-            pointId,
-            status,
-            compromiseValue,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Erreur lors de la mise a jour");
-        }
-
-        const data = await response.json();
-        // Update with server response (includes auto-resolved dealbreakers)
-        if (data.strategy) {
-          setNegotiationStrategy(data.strategy);
-        }
-      } catch (error) {
-        // Rollback on error
-        setNegotiationStrategy(previousStrategy);
-        console.error("[AnalysisPanel] Error updating negotiation point:", error);
-        toast.error(error instanceof Error ? error.message : "Erreur lors de la mise a jour");
-      } finally {
-        setIsUpdatingNegotiation(false);
-      }
-    },
-    [negotiationStrategy, selectedAnalysisId, completedAnalyses, dealId]
-  );
-
-  // Reset negotiation strategy when selected analysis changes
-  useEffect(() => {
-    setNegotiationStrategy(null);
-  }, [selectedAnalysisId]);
-
   // Reset active tab if current tab is no longer available
   useEffect(() => {
     if (activeTab === "coherence" && !deckCoherenceReport) {
       setActiveTab("results");
     }
-    if (activeTab === "negotiation" && !isTier3Analysis) {
-      setActiveTab("results");
-    }
-  }, [activeTab, deckCoherenceReport, isTier3Analysis]);
+  }, [activeTab, deckCoherenceReport]);
 
-  // Auto-load negotiation strategy when Tier 3 analysis is displayed (background pre-load)
-  useEffect(() => {
-    if (isTier3Analysis && displayedResult?.success && !negotiationStrategy && !isLoadingNegotiation) {
-      // Pre-load in background - will be ready when user clicks the tab
-      loadOrGenerateNegotiation();
-    }
-  }, [isTier3Analysis, displayedResult?.success, negotiationStrategy, isLoadingNegotiation, loadOrGenerateNegotiation]);
-
-  // Re-analyze with negotiated terms
-  const [isReanalyzingWithTerms, setIsReanalyzingWithTerms] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
-
-  const handleReanalyzeWithNegotiatedTerms = useCallback(async () => {
-    if (!negotiationStrategy) return;
-
-    // Get negotiated terms to save to fact-store
-    const negotiatedTerms = negotiationStrategy.negotiationPoints
-      .filter(p => p.status !== "to_negotiate")
-      .map(p => ({
-        topic: p.topic,
-        status: p.status,
-        value: p.status === "obtained" ? p.ask :
-               p.status === "compromised" ? (p.compromiseValue || p.fallback || p.ask) :
-               null, // refused
-      }));
-
-    if (negotiatedTerms.length === 0) {
-      toast.error("Aucun terme negocie a prendre en compte");
-      return;
-    }
-
-    setIsReanalyzingWithTerms(true);
-    try {
-      // Save negotiated terms to fact-store for the orchestrator to pick up
-      await fetch("/api/facts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dealId,
-          facts: [{
-            factType: "negotiated_terms",
-            value: JSON.stringify(negotiatedTerms),
-            source: "user_negotiation",
-            confidence: 1,
-          }],
-        }),
-      });
-
-      toast.success("Termes negocies enregistres, relancement de l'analyse...");
-
-      // Trigger re-analysis
-      setLiveResult(null);
-      setSelectedAnalysisId(null);
-      mutation.mutate(undefined, {
-        onSettled: () => setIsReanalyzingWithTerms(false),
-      });
-    } catch (error) {
-      console.error("[AnalysisPanel] Error re-analyzing with terms:", error);
-      toast.error("Erreur lors du relancement de l'analyse");
-      setIsReanalyzingWithTerms(false);
-    }
-  }, [negotiationStrategy, dealId, mutation]);
 
   // Handle PDF export
   const handleExportPdf = useCallback(async (format: "full" | "summary" = "full") => {
@@ -1077,6 +908,89 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
           resetDate={quota.resetsAt}
           planName={quota.plan}
         />
+      )}
+
+      {/* Launch Analysis Card - sticky at top */}
+      {!isAnalyzing && (
+        <Card className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <CardHeader className="py-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base">
+                  {displayedResult ? "Relancer une analyse" : "Analyse IA"}
+                </CardTitle>
+                <CardDescription className="text-sm">
+                  {planConfig.description}
+                  {subscriptionPlan === "FREE" && quota && (
+                    <span className="ml-2 text-muted-foreground">
+                      ({quota.analyses.limit - quota.analyses.used} credit{quota.analyses.limit - quota.analyses.used !== 1 ? "s" : ""} restant{quota.analyses.limit - quota.analyses.used !== 1 ? "s" : ""})
+                    </span>
+                  )}
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                {completedAnalyses.length > 1 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={toggleHistory}
+                    aria-expanded={showHistory}
+                  >
+                    <History className="mr-1.5 h-3.5 w-3.5" />
+                    Historique ({completedAnalyses.length})
+                  </Button>
+                )}
+                <Button
+                  onClick={handleAnalyzeClick}
+                  disabled={!canRunAnalysis}
+                  size="default"
+                >
+                  {!canRunAnalysis ? (
+                    <>
+                      <AlertCircle className="mr-2 h-4 w-4" />
+                      Limite atteinte
+                    </>
+                  ) : (
+                    <>
+                      <Play className="mr-2 h-4 w-4" />
+                      {displayedResult ? "Relancer" : "Analyser"}
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          {/* History panel (expanded) */}
+          {showHistory && completedAnalyses.length > 1 && (
+            <CardContent className="pt-0 pb-3">
+              <div className="border rounded-lg p-3 space-y-2">
+                {completedAnalyses.map((analysis) => (
+                  <button
+                    key={analysis.id}
+                    onClick={() => handleSelectAnalysis(analysis.id)}
+                    className={`w-full flex items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors ${
+                      selectedAnalysisId === analysis.id ? "border-primary bg-primary/5" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-500" />
+                      <span className="font-medium text-sm">
+                        {formatAnalysisMode(analysis.mode ?? analysis.type)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      {formatDate(analysis.completedAt ?? analysis.createdAt)}
+                      {analysis.totalTimeMs && (
+                        <span>({(analysis.totalTimeMs / 1000).toFixed(0)}s)</span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+          )}
+        </Card>
       )}
 
       {/* Timeline Versions - show if multiple analyses */}
@@ -1156,41 +1070,6 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
         </Card>
       )}
 
-      {/* Usage Status Banner for FREE users */}
-      {usage && !usage.isUnlimited && (
-        <Card className={usage.remainingDeals === 0 ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}>
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {usage.remainingDeals === 0 ? (
-                  <AlertCircle className="h-5 w-5 text-red-500" />
-                ) : (
-                  <AlertCircle className="h-5 w-5 text-amber-500" />
-                )}
-                <div>
-                  <p className="font-medium">
-                    {usage.remainingDeals === 0
-                      ? "Limite mensuelle atteinte"
-                      : `${usage.remainingDeals} analyse${usage.remainingDeals > 1 ? "s" : ""} restante${usage.remainingDeals > 1 ? "s" : ""} ce mois`}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Plan FREE : {usage.monthlyLimit} deals/mois. PRO = analyses illimitees + synthese + expert sectoriel
-                  </p>
-                </div>
-              </div>
-              <Button
-                size="sm"
-                className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-                onClick={() => router.push("/pricing")}
-              >
-                <Crown className="mr-2 h-4 w-4" />
-                Passer PRO
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Analysis Progress - shown during active analysis (mutation + polling) */}
       {isAnalyzing && (() => {
         // Only use polled data when analysis is actually RUNNING — prevents flash of stale completed data
@@ -1243,10 +1122,10 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                     {displayedResult.isLive ? "Résultats" : "Analyse sauvegardée"}
                   </CardTitle>
                   {/* Delta Indicator for score when previous version exists */}
-                  {previousScore > 0 && currentScore > 0 && (
+                  {previousScore != null && previousScore > 0 && currentScore != null && currentScore > 0 && (
                     <DeltaIndicator
-                      currentValue={currentScore}
-                      previousValue={previousScore}
+                      currentValue={currentScore!}
+                      previousValue={previousScore!}
                       unit="/100"
                     />
                   )}
@@ -1327,15 +1206,10 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                     </Badge>
                   )}
                 </TabsTrigger>
-                {isTier3Analysis && displayedResult.success && (
-                  <TabsTrigger
-                    value="negotiation"
-                    className="flex items-center gap-1.5"
-                  >
-                    <Handshake className="h-4 w-4" />
-                    Negociation
-                  </TabsTrigger>
-                )}
+                <TabsTrigger value="ai-board" className="flex items-center gap-1.5">
+                  <MessageSquareText className="h-4 w-4" />
+                  AI Board
+                </TabsTrigger>
               </TabsList>
             </CardHeader>
 
@@ -1593,7 +1467,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                         : 0
                     }
                     questionsCount={founderQuestions.length}
-                    avgScore={currentScore}
+                    avgScore={currentScore ?? 0}
                     hasTier3={isTier3Analysis}
                     subscriptionPlan={subscriptionPlan}
                   />
@@ -1621,7 +1495,7 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                   onSubmitAndReanalyze={handleSubmitAndReanalyze}
                   isSubmittingResponses={isSubmittingResponses}
                   isReanalyzing={mutation.isPending}
-                  currentScore={currentScore}
+                  currentScore={currentScore ?? 0}
                 />
               </TabsContent>
 
@@ -1632,144 +1506,16 @@ export function AnalysisPanel({ dealId, currentStatus, analyses = [] }: Analysis
                 </TabsContent>
               )}
 
-              {/* Negotiation Tab Content */}
-              {isTier3Analysis && displayedResult.success && (
-                <TabsContent value="negotiation" className="mt-0">
-                  {isLoadingNegotiation ? (
-                    <div className="flex flex-col items-center justify-center py-12">
-                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                      <p className="mt-4 text-sm text-muted-foreground">
-                        Generation de la strategie de negociation...
-                      </p>
-                    </div>
-                  ) : negotiationStrategy ? (
-                    <NegotiationPanel
-                      strategy={negotiationStrategy}
-                      onUpdatePointStatus={handleUpdateNegotiationPointStatus}
-                      onReanalyzeWithTerms={handleReanalyzeWithNegotiatedTerms}
-                      isUpdating={isUpdatingNegotiation}
-                      isReanalyzing={isReanalyzingWithTerms}
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center py-12">
-                      <Handshake className="h-12 w-12 text-muted-foreground/50" />
-                      <p className="mt-4 text-sm text-muted-foreground">
-                        La strategie de negociation n&apos;a pas pu etre chargee
-                      </p>
-                      <Button
-                        variant="outline"
-                        className="mt-4"
-                        onClick={loadOrGenerateNegotiation}
-                      >
-                        Reessayer
-                      </Button>
-                    </div>
-                  )}
-                </TabsContent>
-              )}
+              {/* AI Board Tab Content */}
+              <TabsContent value="ai-board" className="mt-0">
+                <AIBoardPanel dealId={dealId} dealName={dealName} />
+              </TabsContent>
+
             </CardContent>
           </Card>
         </Tabs>
       )}
 
-      {/* Launch Analysis Card - AFTER results */}
-      {!isAnalyzing && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-base">
-                  {displayedResult ? "Relancer une analyse" : "Analyse IA"}
-                </CardTitle>
-                <CardDescription className="text-sm">
-                  {planConfig.description}
-                </CardDescription>
-              </div>
-              <Button
-                onClick={handleAnalyzeClick}
-                disabled={!canRunAnalysis}
-                size="default"
-              >
-                {!canRunAnalysis ? (
-                  <>
-                    <AlertCircle className="mr-2 h-4 w-4" />
-                    Limite atteinte
-                  </>
-                ) : (
-                  <>
-                    <Play className="mr-2 h-4 w-4" />
-                    {displayedResult ? "Relancer" : "Analyser"}
-                  </>
-                )}
-              </Button>
-            </div>
-            {/* Cost estimation (F92) */}
-            {subscriptionPlan === "FREE" && quota && (
-              <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                <AlertCircle className="h-3 w-3 shrink-0" />
-                <span>
-                  Cette analyse utilisera <strong>1 crédit</strong> sur vos{" "}
-                  <strong>{quota.analyses.limit - quota.analyses.used} restants</strong> ce mois.
-                </span>
-              </div>
-            )}
-            {subscriptionPlan !== "FREE" && quota && (
-              <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                <span>
-                  {quota.analyses.used} analyse{quota.analyses.used !== 1 ? "s" : ""} effectuée{quota.analyses.used !== 1 ? "s" : ""} ce mois
-                  ({analysisType === "full_analysis" ? "18+ agents, ~2 min" : "12 agents, ~1 min"})
-                </span>
-              </div>
-            )}
-          </CardHeader>
-          {/* History Toggle */}
-          {completedAnalyses.length > 1 && (
-            <CardContent className="pt-0">
-              <div className="border rounded-lg">
-                <button
-                  onClick={toggleHistory}
-                  aria-expanded={showHistory}
-                  aria-label="Afficher l'historique des analyses"
-                  className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
-                >
-                  <span className="font-medium text-sm flex items-center gap-2">
-                    <History className="h-4 w-4" />
-                    Historique ({completedAnalyses.length})
-                  </span>
-                  {showHistory ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </button>
-                {showHistory && (
-                  <div className="p-3 pt-0 border-t space-y-2">
-                    {completedAnalyses.map((analysis) => (
-                      <button
-                        key={analysis.id}
-                        onClick={() => handleSelectAnalysis(analysis.id)}
-                        className={`w-full flex items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors ${
-                          selectedAnalysisId === analysis.id ? "border-primary bg-primary/5" : ""
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <CheckCircle className="h-4 w-4 text-green-500" />
-                          <span className="font-medium text-sm">
-                            {formatAnalysisMode(analysis.mode ?? analysis.type)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Clock className="h-3 w-3" />
-                          {formatDate(analysis.completedAt ?? analysis.createdAt)}
-                          {analysis.totalTimeMs && (
-                            <span>({(analysis.totalTimeMs / 1000).toFixed(0)}s)</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          )}
-        </Card>
-      )}
     </div>
   );
-}
+});

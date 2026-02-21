@@ -57,7 +57,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return apiSuccess(
       redFlags.map((rf) => ({
         ...rf,
-        confidenceScore: rf.confidenceScore ? Number(rf.confidenceScore) : null,
+        confidenceScore: rf.confidenceScore != null ? Number(rf.confidenceScore) : null,
       }))
     );
   } catch (error) {

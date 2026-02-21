@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -26,7 +26,7 @@ interface QuotaBadgeProps {
   className?: string;
 }
 
-export function CreditBadge({ className }: QuotaBadgeProps) {
+export const CreditBadge = memo(function CreditBadge({ className }: QuotaBadgeProps) {
   const { data: quota, isLoading } = useQuery<UserQuotaInfo>({
     queryKey: queryKeys.quota.all,
     queryFn: async () => {
@@ -97,4 +97,4 @@ export function CreditBadge({ className }: QuotaBadgeProps) {
       </TooltipContent>
     </Tooltip>
   );
-}
+});

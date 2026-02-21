@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import type { NegotiationStrategy, NegotiationPoint } from "@/services/negotiation/strategist";
+import type { NegotiationStrategy } from "@/services/negotiation/strategist";
 
 export const maxDuration = 30;
 

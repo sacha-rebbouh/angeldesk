@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import { memo, useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
@@ -37,7 +37,7 @@ interface TimelineRound {
   members: TimelineMember[];
 }
 
-export function TimelineView({ memberAnalyses, debateResponses }: TimelineViewProps) {
+export const TimelineView = memo(function TimelineView({ memberAnalyses, debateResponses }: TimelineViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
@@ -162,7 +162,7 @@ export function TimelineView({ memberAnalyses, debateResponses }: TimelineViewPr
       </div>
     </div>
   );
-}
+});
 
 function TimelineMemberCard({
   member,

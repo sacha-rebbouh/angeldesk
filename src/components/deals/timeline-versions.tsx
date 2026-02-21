@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -25,7 +25,7 @@ interface TimelineVersionsProps {
   onSelectVersion: (id: string) => void;
 }
 
-export function TimelineVersions({
+export const TimelineVersions = memo(function TimelineVersions({
   analyses,
   currentAnalysisId,
   onSelectVersion,
@@ -87,9 +87,9 @@ export function TimelineVersions({
                           <span
                             className={cn(
                               "text-xs font-semibold",
-                              analysis.score >= 70
+                              analysis.score >= 80
                                 ? "text-green-600"
-                                : analysis.score >= 50
+                                : analysis.score >= 60
                                 ? "text-amber-600"
                                 : "text-red-600"
                             )}
@@ -140,4 +140,4 @@ export function TimelineVersions({
       </div>
     </TooltipProvider>
   );
-}
+});

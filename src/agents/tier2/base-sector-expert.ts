@@ -502,8 +502,8 @@ Chaque champ doit être rempli avec des données concrètes, pas de placeholders
 **Sector:** ${sanitizedSector || "Non spécifié"}
 **Stage:** ${stage}
 **Geography:** ${sanitizedGeography || "Non spécifié"}
-**Valorisation demandée:** ${deal.valuationPre ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non spécifiée"}
-**Montant levé:** ${deal.amountRequested ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non spécifié"}
+**Valorisation demandée:** ${deal.valuationPre != null ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non spécifiée"}
+**Montant levé:** ${deal.amountRequested != null ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non spécifié"}
 
 ---
 

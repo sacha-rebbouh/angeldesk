@@ -410,9 +410,9 @@ JSON structuré avec:
     const baSection = this.formatBAInvestmentSection(context.baPreferences, deal);
 
     // Métriques financières
-    const valuation = deal.valuationPre ? Number(deal.valuationPre) : 0;
-    const amount = deal.amountRequested ? Number(deal.amountRequested) : 0;
-    const arr = deal.arr ? Number(deal.arr) : 0;
+    const valuation = deal.valuationPre != null ? Number(deal.valuationPre) : 0;
+    const amount = deal.amountRequested != null ? Number(deal.amountRequested) : 0;
+    const arr = deal.arr != null ? Number(deal.arr) : 0;
 
     const prompt = `# GÉNÉRATION DU MEMO D'INVESTISSEMENT - ${deal.name}
 
@@ -423,7 +423,7 @@ ${dealContext}
 - Valorisation pre-money: ${valuation > 0 ? `€${valuation.toLocaleString()}` : "Non spécifié"}
 - Montant levé: ${amount > 0 ? `€${amount.toLocaleString()}` : "Non spécifié"}
 - ARR: ${arr > 0 ? `€${arr.toLocaleString()}` : "Non spécifié"}
-- Croissance: ${deal.growthRate ?? "Non spécifié"}%
+- Croissance: ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Non spécifié"}
 - Multiple implicite: ${arr > 0 && valuation > 0 ? `${(valuation / arr).toFixed(1)}x ARR` : "Non calculable"}
 
 ## ANALYSES TIER 1 (12 AGENTS)
@@ -1010,8 +1010,8 @@ Probabilité Bear: ${(d.scenarios as Array<{ name?: string; probability?: number
     prefs: BAPreferences | undefined,
     deal: EnrichedAgentContext["deal"]
   ): string {
-    const amount = deal.amountRequested ? Number(deal.amountRequested) : 0;
-    const valuation = deal.valuationPre ? Number(deal.valuationPre) : 0;
+    const amount = deal.amountRequested != null ? Number(deal.amountRequested) : 0;
+    const valuation = deal.valuationPre != null ? Number(deal.valuationPre) : 0;
     const postMoney = valuation + amount;
 
     if (!prefs) {
@@ -1112,8 +1112,8 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
       STRONG_PASS: "pass",
     };
 
-    const valuation = deal.valuationPre ? Number(deal.valuationPre) : 0;
-    const amount = deal.amountRequested ? Number(deal.amountRequested) : 0;
+    const valuation = deal.valuationPre != null ? Number(deal.valuationPre) : 0;
+    const amount = deal.amountRequested != null ? Number(deal.amountRequested) : 0;
 
     return {
       // Executive Summary (ancien format pour compatibilité)

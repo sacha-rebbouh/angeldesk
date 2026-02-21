@@ -13,29 +13,25 @@ interface EarlyWarningsPanelProps {
   hasCritical?: boolean;
 }
 
-const SEVERITY_CONFIG = {
-  critical: {
-    icon: AlertTriangle,
-    color: "text-red-600",
-    bg: "bg-red-50 border-red-200",
-    badge: "bg-red-100 text-red-800 border-red-300",
-    label: "Critique",
-  },
-  high: {
-    icon: AlertCircle,
-    color: "text-orange-600",
-    bg: "bg-orange-50 border-orange-200",
-    badge: "bg-orange-100 text-orange-800 border-orange-300",
-    label: "Important",
-  },
-  medium: {
-    icon: Info,
-    color: "text-yellow-600",
-    bg: "bg-yellow-50 border-yellow-200",
-    badge: "bg-yellow-100 text-yellow-800 border-yellow-300",
-    label: "Moyen",
-  },
-};
+import { getSeverityStyle } from "@/lib/ui-configs";
+
+const SEVERITY_ICON_MAP = {
+  critical: AlertTriangle,
+  high: AlertCircle,
+  medium: Info,
+} as const;
+
+function getSeverityConfig(severity: string) {
+  const style = getSeverityStyle(severity);
+  const icon = SEVERITY_ICON_MAP[severity as keyof typeof SEVERITY_ICON_MAP] ?? Info;
+  return {
+    icon,
+    color: style.icon,
+    bg: `${style.bg} ${style.border}`,
+    badge: style.badge,
+    label: style.label,
+  };
+}
 
 const CATEGORY_CONFIG: Record<EarlyWarning["category"], { icon: typeof Shield; label: string }> = {
   founder_integrity: { icon: Shield, label: "Integrite Fondateurs" },
@@ -56,7 +52,7 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarni
   const [isExpanded, setIsExpanded] = useState(false);
   const toggleExpand = useCallback(() => setIsExpanded(prev => !prev), []);
 
-  const severityConfig = SEVERITY_CONFIG[warning.severity] ?? SEVERITY_CONFIG.medium;
+  const severityConfig = getSeverityConfig(warning.severity);
   const categoryConfig = CATEGORY_CONFIG[warning.category] ?? { icon: Info, label: "Autre" };
   const SeverityIcon = severityConfig.icon;
   const CategoryIcon = categoryConfig.icon;
@@ -102,7 +98,7 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarni
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-2 transition-colors"
             >
               {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-              {isExpanded ? "Masquer details" : "Voir details"}
+              {isExpanded ? "Masquer détails" : "Voir détails"}
             </button>
           )}
 
@@ -202,5 +198,3 @@ export const EarlyWarningsPanel = memo(function EarlyWarningsPanel({
     </Card>
   );
 });
-
-export default EarlyWarningsPanel;

@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Download, ExternalLink, FileSpreadsheet, X } from "lucide-react";
 import {
   Dialog,
@@ -21,7 +22,7 @@ interface DocumentPreviewDialogProps {
   } | null;
 }
 
-export function DocumentPreviewDialog({
+export const DocumentPreviewDialog = memo(function DocumentPreviewDialog({
   open,
   onOpenChange,
   document,
@@ -107,4 +108,4 @@ export function DocumentPreviewDialog({
       </DialogContent>
     </Dialog>
   );
-}
+});

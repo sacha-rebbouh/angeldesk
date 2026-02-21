@@ -494,10 +494,10 @@ ${contextEngine.competitiveLandscape ? `Competitive Landscape: ${JSON.stringify(
 - **Startup**: ${deal.companyName || "Non specifie"}
 - **Secteur**: ${deal.sector || "Creator Economy"}
 - **Stage**: ${deal.stage || "Non specifie"}
-- **Valorisation demandee**: ${deal.valuationPre ? `€${(Number(deal.valuationPre) / 1000000).toFixed(1)}M` : "Non specifie"}
-- **Montant demande**: ${deal.amountRequested ? `€${(Number(deal.amountRequested) / 1000).toFixed(0)}K` : "Non specifie"}
-- **ARR**: ${deal.arr ? `€${Number(deal.arr).toLocaleString()}` : "Non specifie"}
-- **Growth Rate**: ${deal.growthRate ? `${deal.growthRate}%` : "Non specifie"}
+- **Valorisation demandee**: ${deal.valuationPre != null ? `€${(Number(deal.valuationPre) / 1000000).toFixed(1)}M` : "Non specifie"}
+- **Montant demande**: ${deal.amountRequested != null ? `€${(Number(deal.amountRequested) / 1000).toFixed(0)}K` : "Non specifie"}
+- **ARR**: ${deal.arr != null ? `€${Number(deal.arr).toLocaleString()}` : "Non specifie"}
+- **Growth Rate**: ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Non specifie"}
 
 ## DOCUMENTS DISPONIBLES
 ${documents?.map(d => `- ${d.name} (${d.type})`).join("\n") || "Aucun document fourni"}

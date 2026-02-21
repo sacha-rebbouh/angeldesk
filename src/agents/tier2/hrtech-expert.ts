@@ -529,10 +529,10 @@ function buildUserPrompt(context: EnrichedAgentContext): string {
 **Sector declare**: ${deal.sector || "HRTech"}
 **Stage**: ${stage}
 **Geographie**: ${deal.geography || "Unknown"}
-**Valorisation demandee**: ${deal.valuationPre ? `${Number(deal.valuationPre)}EUR` : "Non specifiee"}
-**Montant du round**: ${deal.amountRequested ? `${Number(deal.amountRequested)}EUR` : "Non specifie"}
-**ARR declare**: ${deal.arr ? `${Number(deal.arr)}EUR` : "Non specifie"}
-**Croissance declaree**: ${deal.growthRate ? `${deal.growthRate}%` : "Non specifiee"}
+**Valorisation demandee**: ${deal.valuationPre != null ? `${Number(deal.valuationPre)}EUR` : "Non specifiee"}
+**Montant du round**: ${deal.amountRequested != null ? `${Number(deal.amountRequested)}EUR` : "Non specifie"}
+**ARR declare**: ${deal.arr != null ? `${Number(deal.arr)}EUR` : "Non specifie"}
+**Croissance declaree**: ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Non specifiee"}
 
 ${formatFundingDbContext(context)}
 

@@ -770,9 +770,9 @@ export class AgentOrchestrator {
       }),
     ]);
     const dealTerms = rawDealTerms ? {
-      valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
-      amountRaised: rawDealTerms.amountRaised ? Number(rawDealTerms.amountRaised) : null,
-      dilutionPct: rawDealTerms.dilutionPct ? Number(rawDealTerms.dilutionPct) : null,
+      valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
+      amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
+      dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
       instrumentType: rawDealTerms.instrumentType,
       instrumentDetails: rawDealTerms.instrumentDetails,
       liquidationPref: rawDealTerms.liquidationPref,
@@ -783,7 +783,7 @@ export class AgentOrchestrator {
       founderVesting: rawDealTerms.founderVesting,
       vestingDurationMonths: rawDealTerms.vestingDurationMonths,
       vestingCliffMonths: rawDealTerms.vestingCliffMonths,
-      esopPct: rawDealTerms.esopPct ? Number(rawDealTerms.esopPct) : null,
+      esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
       dragAlong: rawDealTerms.dragAlong,
       tagAlong: rawDealTerms.tagAlong,
       ratchet: rawDealTerms.ratchet,
@@ -1550,9 +1550,9 @@ export class AgentOrchestrator {
       ]);
       if (rawDealTerms) {
         enrichedContext.dealTerms = {
-          valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
-          amountRaised: rawDealTerms.amountRaised ? Number(rawDealTerms.amountRaised) : null,
-          dilutionPct: rawDealTerms.dilutionPct ? Number(rawDealTerms.dilutionPct) : null,
+          valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
+          amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
+          dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
           instrumentType: rawDealTerms.instrumentType,
           instrumentDetails: rawDealTerms.instrumentDetails,
           liquidationPref: rawDealTerms.liquidationPref,
@@ -1563,7 +1563,7 @@ export class AgentOrchestrator {
           founderVesting: rawDealTerms.founderVesting,
           vestingDurationMonths: rawDealTerms.vestingDurationMonths,
           vestingCliffMonths: rawDealTerms.vestingCliffMonths,
-          esopPct: rawDealTerms.esopPct ? Number(rawDealTerms.esopPct) : null,
+          esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
           dragAlong: rawDealTerms.dragAlong,
           tagAlong: rawDealTerms.tagAlong,
           ratchet: rawDealTerms.ratchet,
@@ -2968,7 +2968,7 @@ export class AgentOrchestrator {
         fundingDbData = {
           similarDeals: similarDeals.map(d => ({
             company: d.companyName,
-            amount: d.amountUsd ? Number(d.amountUsd) : null,
+            amount: d.amountUsd != null ? Number(d.amountUsd) : null,
             stage: d.stageNormalized,
             sector: d.sectorNormalized,
             date: d.fundingDate,
@@ -3413,9 +3413,9 @@ export class AgentOrchestrator {
             ]);
             if (rawDealTerms) {
               enrichedContext.dealTerms = {
-                valuationPre: rawDealTerms.valuationPre ? Number(rawDealTerms.valuationPre) : null,
-                amountRaised: rawDealTerms.amountRaised ? Number(rawDealTerms.amountRaised) : null,
-                dilutionPct: rawDealTerms.dilutionPct ? Number(rawDealTerms.dilutionPct) : null,
+                valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
+                amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
+                dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
                 instrumentType: rawDealTerms.instrumentType,
                 instrumentDetails: rawDealTerms.instrumentDetails,
                 liquidationPref: rawDealTerms.liquidationPref,
@@ -3426,7 +3426,7 @@ export class AgentOrchestrator {
                 founderVesting: rawDealTerms.founderVesting,
                 vestingDurationMonths: rawDealTerms.vestingDurationMonths,
                 vestingCliffMonths: rawDealTerms.vestingCliffMonths,
-                esopPct: rawDealTerms.esopPct ? Number(rawDealTerms.esopPct) : null,
+                esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
                 dragAlong: rawDealTerms.dragAlong,
                 tagAlong: rawDealTerms.tagAlong,
                 ratchet: rawDealTerms.ratchet,

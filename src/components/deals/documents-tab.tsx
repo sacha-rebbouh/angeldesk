@@ -106,6 +106,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
   const { data: stalenessData } = useQuery({
     queryKey: queryKeys.staleness.byDeal(dealId),
     queryFn: () => fetchStaleness(dealId),
+    staleTime: 30_000,
   });
 
   // Set of document IDs that have been analyzed

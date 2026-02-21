@@ -604,8 +604,8 @@ INSTRUCTIONS DB:
 **Sub-sector:** ${deal.sector ?? "A determiner (Launch, EO, Comms, Components?)"}
 **Stage:** ${stage}
 **Geography:** ${deal.geography ?? "Non specifie"}
-**Valorisation demandee:** ${deal.valuationPre ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non specifiee"}
-**Montant leve:** ${deal.amountRequested ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non specifie"}
+**Valorisation demandee:** ${deal.valuationPre != null ? `${(Number(deal.valuationPre) / 1_000_000).toFixed(1)}M€` : "Non specifiee"}
+**Montant leve:** ${deal.amountRequested != null ? `${(Number(deal.amountRequested) / 1_000_000).toFixed(1)}M€` : "Non specifie"}
 
 ---
 

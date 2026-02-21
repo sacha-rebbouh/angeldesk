@@ -105,7 +105,7 @@ export async function getConversation(
     status: conversation.status,
     messageCount: conversation.messageCount,
     lastMessageAt: conversation.lastMessageAt,
-    totalCost: conversation.totalCost ? Number(conversation.totalCost) : null,
+    totalCost: conversation.totalCost != null ? Number(conversation.totalCost) : null,
     messages: conversation.messages,
     createdAt: conversation.createdAt,
   };

@@ -163,8 +163,8 @@ async function findComparableDeals(params: {
 
   return deals.map(d => ({
     companyName: d.companyName,
-    amount: d.amount ? Number(d.amount) : null,
-    amountUsd: d.amountUsd ? Number(d.amountUsd) : null,
+    amount: d.amount != null ? Number(d.amount) : null,
+    amountUsd: d.amountUsd != null ? Number(d.amountUsd) : null,
     currency: d.currency,
     stage: d.stage,
     geography: d.geography,
@@ -427,8 +427,8 @@ export async function searchCompanyFunding(companyName: string): Promise<Interna
 
   return deals.map(d => ({
     companyName: d.companyName,
-    amount: d.amount ? Number(d.amount) : null,
-    amountUsd: d.amountUsd ? Number(d.amountUsd) : null,
+    amount: d.amount != null ? Number(d.amount) : null,
+    amountUsd: d.amountUsd != null ? Number(d.amountUsd) : null,
     currency: d.currency,
     stage: d.stage,
     geography: d.geography,

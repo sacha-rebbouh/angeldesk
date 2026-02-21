@@ -77,10 +77,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     timer.success(200);
     return apiSuccess({
       ...deal,
-      valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
-      arr: deal.arr ? Number(deal.arr) : null,
-      amountRequested: deal.amountRequested ? Number(deal.amountRequested) : null,
-      growthRate: deal.growthRate ? Number(deal.growthRate) : null,
+      valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+      arr: deal.arr != null ? Number(deal.arr) : null,
+      amountRequested: deal.amountRequested != null ? Number(deal.amountRequested) : null,
+      growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
     });
   } catch (error) {
     timer.error(500, error instanceof Error ? error.message : "Unknown");
@@ -133,8 +133,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     timer.success(200, { fields: Object.keys(data) });
     return apiSuccess({
       ...deal,
-      valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
-      arr: deal.arr ? Number(deal.arr) : null,
+      valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+      arr: deal.arr != null ? Number(deal.arr) : null,
     });
   } catch (error) {
     timer.error(500, error instanceof Error ? error.message : "Unknown");

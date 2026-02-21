@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, memo } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -22,7 +22,7 @@ interface DocumentUploadDialogProps {
   onUploadSuccess?: () => void;
 }
 
-export function DocumentUploadDialog({
+export const DocumentUploadDialog = memo(function DocumentUploadDialog({
   dealId,
   open,
   onOpenChange,
@@ -103,4 +103,4 @@ export function DocumentUploadDialog({
       </DialogContent>
     </Dialog>
   );
-}
+});

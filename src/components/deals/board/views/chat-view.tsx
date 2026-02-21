@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { memo, useMemo, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ChevronDown } from "lucide-react";
@@ -79,7 +79,7 @@ const severityColor: Record<string, string> = {
   low: "bg-slate-500/10 text-slate-500",
 };
 
-export function ChatView({ memberAnalyses, debateResponses }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ memberAnalyses, debateResponses }: ChatViewProps) {
   const memberMap = useMemo(() => {
     return BOARD_MEMBERS_PROD.reduce(
       (acc, m) => {
@@ -164,7 +164,7 @@ export function ChatView({ memberAnalyses, debateResponses }: ChatViewProps) {
       ))}
     </div>
   );
-}
+});
 
 function ChatBubble({ message }: { message: ChatMessage }) {
   return (

@@ -272,7 +272,7 @@ export const completerFunction = inngest.createFunction(
         await notifyAgentCompleted('DB_COMPLETER', {
           itemsProcessed: result.itemsProcessed,
           durationMs: result.durationMs,
-          cost: result.totalCost ? Number(result.totalCost) : undefined,
+          cost: result.totalCost != null ? Number(result.totalCost) : undefined,
         })
       } else {
         const errorMsg = result.errors?.[0]?.message || 'Unknown error'

@@ -52,9 +52,9 @@ export async function GET(request: NextRequest) {
       marketScore: deal.marketScore,
       productScore: deal.productScore,
       financialsScore: deal.financialsScore,
-      valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
-      arr: deal.arr ? Number(deal.arr) : null,
-      growthRate: deal.growthRate ? Number(deal.growthRate) : null,
+      valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+      arr: deal.arr != null ? Number(deal.arr) : null,
+      growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
       redFlagCount: deal.redFlags.length,
       criticalRedFlagCount: deal.redFlags.filter(
         (rf) => rf.severity === "CRITICAL" || rf.severity === "HIGH"

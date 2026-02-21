@@ -201,16 +201,16 @@ async function enrichFounder(dealId: string, founderId: string) {
 // ============================================================================
 
 function getScoreColor(score: number): string {
-  if (score >= 75) return "text-green-700 bg-green-50 border-green-200";
-  if (score >= 50) return "text-blue-700 bg-blue-50 border-blue-200";
-  if (score >= 30) return "text-orange-700 bg-orange-50 border-orange-200";
+  if (score >= 80) return "text-green-700 bg-green-50 border-green-200";
+  if (score >= 60) return "text-blue-700 bg-blue-50 border-blue-200";
+  if (score >= 40) return "text-orange-700 bg-orange-50 border-orange-200";
   return "text-red-700 bg-red-50 border-red-200";
 }
 
 function getScoreBg(score: number): string {
-  if (score >= 75) return "bg-green-500";
-  if (score >= 50) return "bg-blue-500";
-  if (score >= 30) return "bg-orange-500";
+  if (score >= 80) return "bg-green-500";
+  if (score >= 60) return "bg-blue-500";
+  if (score >= 40) return "bg-orange-500";
   return "bg-red-500";
 }
 
@@ -683,7 +683,7 @@ const MemberCard = memo(function MemberCard({
       {/* Analysis scores */}
       {scores && (
         <div className="px-4 pb-2">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <ScoreMiniBar label="Domain" value={scores.domainExpertise ?? 0} icon={Target} />
             <ScoreMiniBar label="Startup XP" value={scores.entrepreneurialExperience ?? 0} icon={TrendingUp} />
             <ScoreMiniBar label="Execution" value={scores.executionCapability ?? 0} icon={Zap} />

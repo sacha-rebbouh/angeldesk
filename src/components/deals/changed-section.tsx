@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, memo } from "react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -28,7 +28,7 @@ const changeStyles: Record<ChangeType, { bg: string; border: string }> = {
   },
 };
 
-export function ChangedSection({
+export const ChangedSection = memo(function ChangedSection({
   children,
   isChanged = false,
   isNew = false,
@@ -67,4 +67,4 @@ export function ChangedSection({
 
   // No change - render children without wrapper styling
   return <>{children}</>;
-}
+});

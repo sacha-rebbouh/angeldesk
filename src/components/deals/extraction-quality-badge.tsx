@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle,
@@ -39,7 +39,7 @@ interface ExtractionQualityBadgeProps {
   processingStatus: string;
 }
 
-export function ExtractionQualityBadge({
+export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
   quality,
   warnings,
   requiresOCR,
@@ -165,7 +165,7 @@ export function ExtractionQualityBadge({
       </Badge>
     </ExtractionWarningDialog>
   );
-}
+});
 
 interface ExtractionWarningDialogProps {
   quality: number;
@@ -298,7 +298,7 @@ interface ExtractionWarningBannerProps {
   onOCRComplete?: () => void;
 }
 
-export function ExtractionWarningBanner({
+export const ExtractionWarningBanner = memo(function ExtractionWarningBanner({
   quality,
   warnings,
   documentName,
@@ -362,4 +362,4 @@ export function ExtractionWarningBanner({
       </div>
     </div>
   );
-}
+});

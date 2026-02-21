@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import dynamic from "next/dynamic";
 import { BoardErrorBoundary } from "@/components/error-boundary";
 import { AIBoardPanelSkeleton } from "./loading-skeletons";
@@ -19,10 +20,10 @@ interface BoardPanelWrapperProps {
   dealName: string;
 }
 
-export function BoardPanelWrapper({ dealId, dealName }: BoardPanelWrapperProps) {
+export const BoardPanelWrapper = memo(function BoardPanelWrapper({ dealId, dealName }: BoardPanelWrapperProps) {
   return (
     <BoardErrorBoundary>
       <AIBoardPanel dealId={dealId} dealName={dealName} />
     </BoardErrorBoundary>
   );
-}
+});

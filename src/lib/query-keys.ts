@@ -2,13 +2,6 @@
 // Ensures consistent and type-safe query keys across the application
 
 export const queryKeys = {
-  // User queries
-  user: {
-    all: ["user"] as const,
-    current: () => [...queryKeys.user.all, "current"] as const,
-    byId: (id: string) => [...queryKeys.user.all, id] as const,
-  },
-
   // Deal queries
   deals: {
     all: ["deals"] as const,
@@ -43,13 +36,6 @@ export const queryKeys = {
     byId: (id: string) => [...queryKeys.documents.all, id] as const,
     byDeal: (dealId: string) =>
       [...queryKeys.documents.all, "deal", dealId] as const,
-  },
-
-  // Benchmark queries
-  benchmarks: {
-    all: ["benchmarks"] as const,
-    bySectorStage: (sector: string, stage: string) =>
-      [...queryKeys.benchmarks.all, sector, stage] as const,
   },
 
   // Quota queries

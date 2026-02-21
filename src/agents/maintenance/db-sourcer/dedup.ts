@@ -62,7 +62,7 @@ export async function checkDuplicate(funding: ParsedFunding): Promise<boolean> {
     const amountUsd = convertToUSD(funding.amount, funding.currency)
 
     for (const round of company.fundingRounds) {
-      const roundAmountUsd = round.amountUsd ? Number(round.amountUsd) : null
+      const roundAmountUsd = round.amountUsd != null ? Number(round.amountUsd) : null
 
       if (roundAmountUsd !== null) {
         const minAmount = Math.min(amountUsd, roundAmountUsd)
@@ -143,7 +143,7 @@ export async function createCompanyAndRound(
   }
 
   // Calculate USD amount
-  const amountUsd = funding.amount ? convertToUSD(funding.amount, funding.currency) : null
+  const amountUsd = funding.amount != null ? convertToUSD(funding.amount, funding.currency) : null
 
   // Create funding round
   const round = await prisma.fundingRound.create({

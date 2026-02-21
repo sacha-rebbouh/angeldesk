@@ -17,14 +17,23 @@ import { SimpleModeForm } from "./simple-mode-form";
 import { StructuredModeForm } from "./structured-mode-form";
 import { TermSheetSuggestions } from "./term-sheet-suggestions";
 import {
-  ConditionsScoreCard,
-  ConditionsVerdictSummary,
+  ConditionsHeroCard,
   ConditionsQuestionsCard,
   NegotiationAdviceCard,
   RedFlagsCard,
-  InsightsCard,
+  CrossReferenceInsightsCard,
   StructuredAssessmentCard,
 } from "./conditions-analysis-cards";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type {
   DealTermsData,
   DealMode,
@@ -64,6 +73,7 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
   const [tranches, setTranches] = useState<TrancheData[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState("conditions");
+  const [pendingMode, setPendingMode] = useState<DealMode | null>(null);
 
   // Fetch existing terms — uses SSR-prefetched initialData to avoid spinner on first render
   const { data, isLoading } = useQuery<TermsResponse>({
@@ -166,6 +176,15 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
     setHasChanges(true);
   }, []);
 
+  const handleModeSwitch = useCallback((newMode: DealMode) => {
+    if (newMode === mode) return;
+    if (hasChanges) {
+      setPendingMode(newMode);
+    } else {
+      setMode(newMode);
+    }
+  }, [mode, hasChanges]);
+
   // AI Analysis section (memoized)
   const analysisSection = useMemo(() => {
     const conditionsScore = data?.conditionsScore;
@@ -180,49 +199,41 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
     const questions = data?.questions ?? [];
     const valuation = data?.conditionsAnalysis?.valuation ?? null;
 
-    // Top negotiation priorities (max 3)
-    const topAdvice = negotiationAdvice
-      .filter(a => a.priority === "critical" || a.priority === "high")
-      .slice(0, 3);
-
     return (
       <div className="space-y-4">
-        {/* Verdict Summary — always first */}
-        <ConditionsVerdictSummary
+        {/* Hero — verdict at a glance (replaces VerdictSummary + ScoreCard) */}
+        <ConditionsHeroCard
           score={conditionsScore}
+          breakdown={breakdown}
           narrative={narrative}
-          topAdvice={topAdvice}
           valuation={valuation}
           redFlagCount={redFlags.length}
           onOpenSimulator={() => setActiveSubTab("simulator")}
           onOpenComparator={() => setActiveSubTab("comparator")}
         />
 
-        <ConditionsScoreCard score={conditionsScore} breakdown={breakdown} narrative={narrative} />
         {structuredAssessment && <StructuredAssessmentCard assessment={structuredAssessment} />}
 
-        {/* Questions to ask the founder */}
+        <NegotiationAdviceCard
+          advice={negotiationAdvice}
+          talkingPoints={narrative?.forNegotiation}
+          resolutionMap={resolutionMap}
+          onResolve={resolveAlert}
+          onUnresolve={unresolveAlert}
+          isResolving={isResolving}
+        />
+
         {questions.length > 0 && <ConditionsQuestionsCard questions={questions} />}
 
-        {negotiationAdvice.length > 0 && (
-          <NegotiationAdviceCard
-            advice={negotiationAdvice}
-            resolutionMap={resolutionMap}
-            onResolve={resolveAlert}
-            onUnresolve={unresolveAlert}
-            isResolving={isResolving}
-          />
-        )}
-        {redFlags.length > 0 && (
-          <RedFlagsCard
-            redFlags={redFlags}
-            resolutionMap={resolutionMap}
-            onResolve={resolveAlert}
-            onUnresolve={unresolveAlert}
-            isResolving={isResolving}
-          />
-        )}
-        <InsightsCard insights={crossRefInsights} narrative={narrative} />
+        <RedFlagsCard
+          redFlags={redFlags}
+          resolutionMap={resolutionMap}
+          onResolve={resolveAlert}
+          onUnresolve={unresolveAlert}
+          isResolving={isResolving}
+        />
+
+        <CrossReferenceInsightsCard insights={crossRefInsights} />
       </div>
     );
   }, [data, resolutionMap, resolveAlert, unresolveAlert, isResolving]);
@@ -291,7 +302,7 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
             <Button
               variant={mode === "SIMPLE" ? "default" : "outline"}
               size="sm"
-              onClick={() => { setMode("SIMPLE"); setHasChanges(true); }}
+              onClick={() => handleModeSwitch("SIMPLE")}
             >
               <FileText className="mr-1.5 h-3.5 w-3.5" />
               Simple
@@ -299,7 +310,7 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
             <Button
               variant={mode === "STRUCTURED" ? "default" : "outline"}
               size="sm"
-              onClick={() => { setMode("STRUCTURED"); setHasChanges(true); }}
+              onClick={() => handleModeSwitch("STRUCTURED")}
             >
               <Layers className="mr-1.5 h-3.5 w-3.5" />
               Structure
@@ -425,6 +436,30 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, 
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Mode switch confirmation dialog */}
+      <AlertDialog open={pendingMode !== null} onOpenChange={(open) => { if (!open) setPendingMode(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Modifications non sauvegardees</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vous avez des modifications non sauvegardees. Changer de mode les effacera.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              if (pendingMode) {
+                setMode(pendingMode);
+                setHasChanges(true);
+              }
+              setPendingMode(null);
+            }}>
+              Continuer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </TooltipProvider>
   );
 });

@@ -305,12 +305,14 @@ export const CostsDashboardV2 = memo(function CostsDashboardV2() {
     queryKey: queryKeys.costs.userDetail(selectedUser ?? "", effectiveDays),
     queryFn: () => fetchUserDetail(selectedUser!, effectiveDays),
     enabled: !!selectedUser,
+    staleTime: 30_000,
   });
 
   const { data: dealDetail, isLoading: isLoadingDealDetail } = useQuery({
     queryKey: queryKeys.costs.dealDetail(selectedDeal ?? ""),
     queryFn: () => fetchDealDetail(selectedDeal!),
     enabled: !!selectedDeal,
+    staleTime: 30_000,
   });
 
   // Mutations

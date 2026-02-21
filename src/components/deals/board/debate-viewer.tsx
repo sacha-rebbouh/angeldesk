@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { memo, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { MessageSquare, Columns, Clock, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,7 +29,7 @@ const VIEW_OPTIONS: { mode: ViewMode; label: string; icon: React.ElementType }[]
   { mode: "arena", label: "Arena", icon: CircleDot },
 ];
 
-export function DebateViewer({
+export const DebateViewer = memo(function DebateViewer({
   memberAnalyses,
   debateResponses,
 }: DebateViewerProps) {
@@ -100,4 +100,4 @@ export function DebateViewer({
       </div>
     </div>
   );
-}
+});

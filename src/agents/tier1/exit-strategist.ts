@@ -443,9 +443,9 @@ Produis un JSON structuré avec:
 
     // Extract key parameters
     const deal = context.deal;
-    const investmentAmount = Number(extractedInfo?.amountRaising) || (deal.amountRequested ? Number(deal.amountRequested) : 500000);
-    const valuation = Number(extractedInfo?.valuationPre) || (deal.valuationPre ? Number(deal.valuationPre) : 3000000);
-    const arr = Number(extractedInfo?.arr) || (deal.arr ? Number(deal.arr) : 0);
+    const investmentAmount = Number(extractedInfo?.amountRaising) || (deal.amountRequested != null ? Number(deal.amountRequested) : 500000);
+    const valuation = Number(extractedInfo?.valuationPre) || (deal.valuationPre != null ? Number(deal.valuationPre) : 3000000);
+    const arr = Number(extractedInfo?.arr) || (deal.arr != null ? Number(deal.arr) : 0);
     const sector = extractedInfo?.sector || deal.sector || "Technology";
     const stage = deal.stage || "SEED";
 

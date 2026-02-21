@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -42,6 +43,13 @@ const HelpLabel = React.memo(function HelpLabel({ fieldKey, fallbackLabel }: { f
 });
 
 export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateField }: SimpleModeFormProps) {
+  const autoDilution = useMemo(() => {
+    if (form.valuationPre && form.amountRaised && form.valuationPre > 0) {
+      return Math.round((form.amountRaised / (form.valuationPre + form.amountRaised)) * 10000) / 100;
+    }
+    return null;
+  }, [form.valuationPre, form.amountRaised]);
+
   return (
     <div className="space-y-6">
       {/* Valorisation */}
@@ -78,6 +86,24 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
               value={form.dilutionPct ?? ""}
               onChange={e => updateField("dilutionPct", e.target.value ? Number(e.target.value) : null)}
             />
+            {autoDilution !== null && form.dilutionPct == null && (
+              <p className="text-xs text-muted-foreground">
+                Calculee : {autoDilution}%
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 ml-1 text-xs"
+                  onClick={() => updateField("dilutionPct", autoDilution)}
+                >
+                  Appliquer
+                </Button>
+              </p>
+            )}
+            {autoDilution !== null && form.dilutionPct != null && Math.abs(form.dilutionPct - autoDilution) > 0.5 && (
+              <p className="text-xs text-yellow-600">
+                Ecart avec le calcul theorique ({autoDilution}%)
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

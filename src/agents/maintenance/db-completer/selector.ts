@@ -142,7 +142,7 @@ export async function selectCompaniesToEnrich(
 
   return companies.map((c) => ({
     ...c,
-    totalRaised: c.totalRaised ? Number(c.totalRaised) : null,
+    totalRaised: c.totalRaised != null ? Number(c.totalRaised) : null,
   }))
 }
 

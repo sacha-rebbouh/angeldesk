@@ -57,6 +57,7 @@ export const DealComparison = memo(function DealComparison({
     queryKey: [...queryKeys.deals.lists(), "compare", ...dealIds],
     queryFn: () => fetchComparisonData(dealIds),
     enabled: dealIds.length >= 2,
+    staleTime: 60_000,
   });
 
   const deals = data?.data ?? [];
@@ -145,7 +146,7 @@ export const DealComparison = memo(function DealComparison({
                             className={cn(
                               "font-medium",
                               isBest && "text-green-600 font-bold",
-                              val < 50 && !isBest && "text-red-600"
+                              val < 40 && !isBest && "text-red-600"
                             )}
                           >
                             {val}/100

@@ -205,14 +205,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
             geography: fullContextData.deal.geography,
             description: fullContextData.deal.description,
             website: fullContextData.deal.website,
-            arr: fullContextData.deal.arr ? Number(fullContextData.deal.arr) : null,
-            growthRate: fullContextData.deal.growthRate
+            arr: fullContextData.deal.arr != null ? Number(fullContextData.deal.arr) : null,
+            growthRate: fullContextData.deal.growthRate != null
               ? Number(fullContextData.deal.growthRate)
               : null,
-            amountRequested: fullContextData.deal.amountRequested
+            amountRequested: fullContextData.deal.amountRequested != null
               ? Number(fullContextData.deal.amountRequested)
               : null,
-            valuationPre: fullContextData.deal.valuationPre
+            valuationPre: fullContextData.deal.valuationPre != null
               ? Number(fullContextData.deal.valuationPre)
               : null,
             globalScore: fullContextData.deal.globalScore,

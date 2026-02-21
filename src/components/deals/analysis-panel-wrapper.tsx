@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { AnalysisErrorBoundary } from "@/components/error-boundary";
 import { AnalysisPanel } from "./analysis-panel";
 
@@ -30,12 +31,14 @@ interface SavedAnalysis {
 
 interface AnalysisPanelWrapperProps {
   dealId: string;
+  dealName: string;
   currentStatus: string;
   analyses?: SavedAnalysis[];
 }
 
-export function AnalysisPanelWrapper({
+export const AnalysisPanelWrapper = memo(function AnalysisPanelWrapper({
   dealId,
+  dealName,
   currentStatus,
   analyses,
 }: AnalysisPanelWrapperProps) {
@@ -43,9 +46,10 @@ export function AnalysisPanelWrapper({
     <AnalysisErrorBoundary dealId={dealId}>
       <AnalysisPanel
         dealId={dealId}
+        dealName={dealName}
         currentStatus={currentStatus}
         analyses={analyses}
       />
     </AnalysisErrorBoundary>
   );
-}
+});

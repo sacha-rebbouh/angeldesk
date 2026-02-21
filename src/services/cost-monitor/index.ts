@@ -976,7 +976,7 @@ class CostMonitor {
       const costEventData = costEventMap.get(user.id);
       const boardCount = boardSessionMap.get(user.id) ?? 0;
 
-      const totalCost = costEventData?._sum?.cost
+      const totalCost = costEventData?._sum?.cost != null
         ? Number(costEventData._sum.cost)
         : totalCostFromAnalyses;
 
@@ -1310,7 +1310,7 @@ class CostMonitor {
       userDailyCritical: Number(threshold.userDailyCritical),
       analysisMax: Number(threshold.analysisMax),
       boardMax: Number(threshold.boardMax),
-      monthlyBudget: threshold.monthlyBudget ? Number(threshold.monthlyBudget) : null,
+      monthlyBudget: threshold.monthlyBudget != null ? Number(threshold.monthlyBudget) : null,
     };
   }
 

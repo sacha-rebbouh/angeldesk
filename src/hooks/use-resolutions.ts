@@ -74,6 +74,9 @@ export function useResolutions(dealId: string) {
       queryClient.invalidateQueries({
         queryKey: queryKeys.resolutions.byDeal(dealId),
       });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.deals.detail(dealId),
+      });
     },
   });
 
@@ -93,6 +96,9 @@ export function useResolutions(dealId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.resolutions.byDeal(dealId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.deals.detail(dealId),
       });
     },
   });

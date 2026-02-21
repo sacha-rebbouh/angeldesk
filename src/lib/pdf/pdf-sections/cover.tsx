@@ -104,7 +104,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
             <KpiBox label="ARR" value={fmtEur(deal.arr)} />
             <KpiBox
               label="CROISSANCE"
-              value={deal.growthRate ? `+${deal.growthRate}% YoY` : "N/A"}
+              value={deal.growthRate != null ? `+${Number(deal.growthRate)}% YoY` : "N/A"}
             />
           </View>
         </View>

@@ -2,6 +2,33 @@
 
 ---
 
+## 2026-02-22 — fix: prompt engineering conditions-analyst — tonalité valorisation + logique CCA vs BSA-AIR
+
+**Fichiers modifies :**
+- `src/agents/tier3/conditions-analyst.ts` — 3 corrections dans le system prompt :
+  1. Section Valorisation : ajout tableau "Interprétation pour le BA" + règle de tonalité (score élevé = bonne nouvelle, formuler positivement). Interdit les formulations alarmantes pour une sous-évaluation favorable
+  2. Section Conseils de négociation : ajout règle de vérification économique — chaque conseil doit bénéficier au BA (réduire coût ou augmenter protections), jamais l'inverse
+  3. Section Multi-tranche : ajout règle critique comparaison CCA-nominal vs BSA-AIR-cap — le CCA au nominal est moins cher, convertir en BSA-AIR augmente le coût. Ne jamais recommander cette conversion
+
+**Raison :** L'agent produisait (1) des rationales alarmants pour des valorisations sous-évaluées (score 85 mais texte "montant dérisoire"), et (2) des conseils absurdes comme "convertir CCA en BSA-AIR" alors que ça augmente le coût d'acquisition pour le BA.
+
+---
+
+## 2026-02-21 — refactor: refonte onglet Conditions — suppression duplication, hero card, UX formulaire
+
+**Fichiers modifies :**
+- `src/components/ui/score-ring.tsx` — CREE : composant ScoreRing partagé (extrait de verdict-panel)
+- `src/components/deals/conditions/conditions-analysis-cards.tsx` — REECRIT : 7 cards → 5 cards consolidées (ConditionsHeroCard remplace VerdictSummary+ScoreCard, NegotiationAdviceCard+talkingPoints, CrossReferenceInsightsCard collapsible). Suppression 4 helpers de couleur locaux → imports ui-configs.ts
+- `src/components/deals/conditions/conditions-tab.tsx` — Nouvel ordre des cards, AlertDialog warning mode switch, suppression topAdvice dupliqué
+- `src/components/deals/conditions/simple-mode-form.tsx` — Auto-calcul dilution (formule + bouton Appliquer + avertissement écart)
+- `src/components/deals/conditions/tranche-editor.tsx` — Suppression GripVertical (pas de drag-to-reorder)
+- `src/components/deals/verdict-panel.tsx` — Import ScoreRing partagé
+- `src/components/deals/score-display.tsx` — Import ScoreRing partagé (remplace MiniScoreRing inline)
+
+**Raison :** Le score et le one-liner apparaissaient dans 2 cards distinctes, les top 3 négociation étaient dupliqués entre VerdictSummary et NegotiationAdviceCard. Information architecture repensée : Hero card unique (ScoreRing + verdict + breakdown compact + valuation) → Négociation → Questions → Red flags → Cross-refs collapsible.
+
+---
+
 ## 2026-02-21 — fix: security hardening — Zod schema constraints on terms route
 
 - **route.ts (terms)** : ajout `.max(100)` sur `instrumentType`, `liquidationPref`, `antiDilution`, `boardSeat` — `.max(500)` sur `instrumentDetails` — `.max(2000)` sur `customConditions`, `notes`

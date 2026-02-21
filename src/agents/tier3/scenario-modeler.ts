@@ -404,10 +404,10 @@ Scénario BASE (40% probabilité):
     const baInvestmentSection = this.formatBAInvestment(context.baPreferences, deal);
 
     // Extract key metrics
-    const currentARR = deal.arr ? Number(deal.arr) : 0;
-    const growthRate = deal.growthRate ? Number(deal.growthRate) : 0;
-    const valuation = deal.valuationPre ? Number(deal.valuationPre) : 0;
-    const amountRaising = deal.amountRequested ? Number(deal.amountRequested) : 0;
+    const currentARR = deal.arr != null ? Number(deal.arr) : 0;
+    const growthRate = deal.growthRate != null ? Number(deal.growthRate) : 0;
+    const valuation = deal.valuationPre != null ? Number(deal.valuationPre) : 0;
+    const amountRaising = deal.amountRequested != null ? Number(deal.amountRequested) : 0;
     const sector = deal.sector ?? "SaaS B2B";
     const stage = deal.stage ?? "SEED";
 
@@ -801,8 +801,8 @@ RAPPEL CRITIQUE: NE JAMAIS INVENTER. Si tu n'as pas de données, écris "NON DIS
   }
 
   private formatBAInvestment(prefs: BAPreferences | undefined, deal: EnrichedAgentContext["deal"]): string {
-    const amount = deal.amountRequested ? Number(deal.amountRequested) : 0;
-    const valuation = deal.valuationPre ? Number(deal.valuationPre) : 0;
+    const amount = deal.amountRequested != null ? Number(deal.amountRequested) : 0;
+    const valuation = deal.valuationPre != null ? Number(deal.valuationPre) : 0;
     const postMoney = valuation + amount;
 
     if (!prefs) {
@@ -1084,7 +1084,7 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
     scenarios: ScenarioV2[],
     context: EnrichedAgentContext
   ): ScenarioV2[] {
-    const currentARR = context.deal.arr ? Number(context.deal.arr) : 0;
+    const currentARR = context.deal.arr != null ? Number(context.deal.arr) : 0;
     if (currentARR <= 0) return scenarios;
 
     // CAGR annuel max et exit multiple max par scenario
@@ -1196,7 +1196,7 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
 
   private getDefaultScenarios(context: EnrichedAgentContext): ScenarioV2[] {
     const deal = context.deal;
-    const investment = deal.amountRequested ? Number(deal.amountRequested) * 0.1 : 50000;
+    const investment = deal.amountRequested != null ? Number(deal.amountRequested) * 0.1 : 50000;
 
     const defaultScenario = (
       name: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC",

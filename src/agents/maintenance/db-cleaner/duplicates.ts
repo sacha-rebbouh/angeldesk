@@ -608,12 +608,12 @@ export async function planFundingRoundDeduplication(): Promise<FundingRoundPlanR
 
         const similar = areFundingRoundsSimilar(
           {
-            amount: r1.amountUsd ? Number(r1.amountUsd) : null,
+            amount: r1.amountUsd != null ? Number(r1.amountUsd) : null,
             date: r1.fundingDate,
             stage: r1.stageNormalized,
           },
           {
-            amount: r2.amountUsd ? Number(r2.amountUsd) : null,
+            amount: r2.amountUsd != null ? Number(r2.amountUsd) : null,
             date: r2.fundingDate,
             stage: r2.stageNormalized,
           }
@@ -628,8 +628,8 @@ export async function planFundingRoundDeduplication(): Promise<FundingRoundPlanR
             keepId: keep.id,
             mergeId: merge.id,
             companyName: company.name,
-            keepAmount: keep.amountUsd ? Number(keep.amountUsd) : null,
-            mergeAmount: merge.amountUsd ? Number(merge.amountUsd) : null,
+            keepAmount: keep.amountUsd != null ? Number(keep.amountUsd) : null,
+            mergeAmount: merge.amountUsd != null ? Number(merge.amountUsd) : null,
             keepDate: keep.fundingDate,
             mergeDate: merge.fundingDate,
             reason: `Similar amount/date/stage for ${company.name}`,
@@ -676,12 +676,12 @@ export async function deduplicateFundingRounds(
 
         const similar = areFundingRoundsSimilar(
           {
-            amount: r1.amountUsd ? Number(r1.amountUsd) : null,
+            amount: r1.amountUsd != null ? Number(r1.amountUsd) : null,
             date: r1.fundingDate,
             stage: r1.stageNormalized,
           },
           {
-            amount: r2.amountUsd ? Number(r2.amountUsd) : null,
+            amount: r2.amountUsd != null ? Number(r2.amountUsd) : null,
             date: r2.fundingDate,
             stage: r2.stageNormalized,
           }
