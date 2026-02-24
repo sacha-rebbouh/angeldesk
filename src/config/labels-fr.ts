@@ -47,14 +47,6 @@ export const AGENT_LABELS_FR: Record<string, string> = {
   "deck-coherence-checker": "Vérification cohérence deck",
 };
 
-export const VERDICT_LABELS_FR: Record<string, string> = {
-  strong_pass: "Forte conviction",
-  pass: "Favorable",
-  conditional_pass: "Conditionnel",
-  weak_pass: "Réservé",
-  no_go: "Ne pas investir",
-};
-
 export const MATURITY_LABELS_FR: Record<string, string> = {
   emerging: "Émergent",
   growing: "En croissance",

@@ -97,8 +97,8 @@ export const GLOSSARY: Record<string, { short: string; full: string }> = {
     full: "Force de votre position dans la negociation. Fort = vous avez des alternatives, le deal est competitif. Faible = le fondateur a d'autres options.",
   },
   "Dealbreaker": {
-    short: "Condition eliminatoire",
-    full: "Condition non-negociable qui, si non remplie, justifie de passer le deal. Ex: pas de vesting, valorisation delirante, fraude.",
+    short: "Risque critique",
+    full: "Risque majeur identifie qui necessite une investigation approfondie avant toute decision. Ex: pas de vesting, valorisation hors normes, problemes d'integrite.",
   },
   "Moat": {
     short: "Avantage concurrentiel defensif",

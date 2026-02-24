@@ -26,7 +26,7 @@ const MISSING_AGENTS_FOR_FREE: MissingAgent[] = [
   {
     name: "Devil's Advocate",
     icon: <Brain className="h-4 w-4 text-purple-500" />,
-    impact: "Challenge la these d'investissement. Identifie les dealbreakers que les autres agents ne voient pas.",
+    impact: "Challenge la thèse d'investissement. Identifie les risques critiques que les autres agents ne voient pas.",
   },
   {
     name: "Detecteur de contradictions",

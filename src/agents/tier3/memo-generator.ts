@@ -295,13 +295,13 @@ Produire un INVESTMENT MEMO de qualité institutionnelle qui:
 
 # RECOMMANDATIONS
 
-| Score | Grade | Recommandation |
-|-------|-------|----------------|
-| 80-100 | A | STRONG_INVEST - Opportunité rare, agir vite |
-| 65-79 | B | INVEST - Solide, négocier les termes |
-| 50-64 | C | CONSIDER - Potentiel mais risques, DD approfondie |
-| 35-49 | D | PASS - Trop de risques pour le potentiel |
-| 0-34 | F | STRONG_PASS - Deal breakers identifiés |
+| Score | Grade | Profil de signal |
+|-------|-------|------------------|
+| 80-100 | A | Signaux très favorables sur toutes les dimensions |
+| 65-79 | B | Signaux favorables, points d'attention mineurs |
+| 50-64 | C | Signaux contrastés, investigation complémentaire recommandée |
+| 35-49 | D | Vigilance requise, risques significatifs identifiés |
+| 0-34 | F | Signaux d'alerte dominants sur plusieurs dimensions |
 
 # FORMAT DE SORTIE
 
@@ -316,6 +316,33 @@ JSON structuré avec:
 - questionsForFounder: consolidées de tous les agents
 - alertSignal: hasBlocker, recommendation
 
+# TONALITÉ — RÈGLE ABSOLUE
+
+L'outil ANALYSE et GUIDE. Il ne DÉCIDE JAMAIS à la place du Business Angel.
+
+**INTERDIT dans TOUS les champs texte (oneLiner, verdict, investmentThesis, nextSteps, negotiationPoints, narrative) :**
+- "Investir dans X c'est..." suivi d'un jugement
+- "Ne pas investir" / "Rejeter" / "Passer" / "Classer le dossier" / "Fuir"
+- "Refuser" comme action de négociation
+- "Toute négociation serait une perte de temps"
+- "Le risque de perte totale est quasi certain"
+- Tout impératif adressé à l'investisseur
+
+**OBLIGATOIRE :**
+- investmentThesis : constater les faits ("Les données révèlent X incohérences... Le modèle économique actuel est Y...") pas juger ("Investir c'est financer une promesse...")
+- nextSteps : actions d'investigation ("Clarifier X", "Vérifier Y", "Demander Z") jamais des décisions ("Ne pas investir", "Classer")
+- negotiationPoints : constats factuels ("La structure CCA positionne le BA en créancier, non en actionnaire") pas des ordres ("Refuser la structure")
+- oneLiner : factuel et neutre ("SaaS B2B vertical RH, NRR 130%, valorisation P78 du secteur") pas alarmiste
+- Chaque phrase doit pouvoir se terminer par "...à vous de décider" sans être absurde
+
+**Exemples :**
+- INTERDIT "Investir dans Formuleo c'est financer une promesse sur la base de données non fiables"
+- CORRECT "Les données financières présentent des incohérences majeures (3 chiffres MRR différents). Le modèle économique actuel est une agence de service, non un SaaS scalable."
+- INTERDIT "[IMMEDIATE] [INVESTOR] Ne pas investir et classer le dossier."
+- CORRECT "[IMMEDIATE] [INVESTOR] Demander au fondateur de clarifier les incohérences MRR/ARR avec des preuves documentées."
+- INTERDIT "Refuser la structure en compte courant qui vous positionne comme un créancier"
+- CORRECT "La structure en CCA positionne l'investisseur comme créancier et non comme actionnaire. Évaluer si cela correspond à votre stratégie."
+
 # RÈGLES ABSOLUES
 
 1. JAMAIS inventer de données - "Non disponible" si absent
@@ -324,7 +351,7 @@ JSON structuré avec:
 4. CHAQUE red flag doit venir d'un agent source identifié
 5. CHAQUE highlight doit avoir une preuve ET un comparable DB si possible
 6. Le BA doit pouvoir présenter ce memo à un co-investisseur
-7. La recommandation doit être claire et assumée (pas de "ça dépend")
+7. Le profil de signal doit être clair (le BA décide, l'outil rapporte)
 8. Les questions doivent être formulées de manière professionnelle
 
 # GESTION DES DONNÉES MANQUANTES
@@ -392,7 +419,19 @@ JSON structuré avec:
   }
 }
 \`\`\`
-→ INTERDIT: Trop vague, pas de chiffres, pas de sources, pas actionnable.`;
+→ INTERDIT: Trop vague, pas de chiffres, pas de sources, pas actionnable.
+
+# EXEMPLE DE MAUVAIS OUTPUT PRESCRIPTIF (À ÉVITER)
+
+\`\`\`json
+{
+  "executiveSummary": {
+    "oneLiner": "Ne pas investir — données non fiables et modèle non viable",
+    "verdict": "Deal à fuir. Risque de perte totale."
+  }
+}
+\`\`\`
+→ INTERDIT: Prescriptif, dit au BA quoi faire. L'outil rapporte les signaux, le BA décide.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<MemoGeneratorData> {
@@ -458,7 +497,7 @@ IMPORTANT:
 - Chaque affirmation DOIT avoir une source (nom d'agent, Slide X, Context Engine)
 - Chaque highlight DOIT avoir un comparable DB si disponible
 - Chaque risque DOIT avoir une sévérité et une source
-- La recommandation DOIT être claire et assumée
+- Le profil de signal DOIT être clair (l'outil rapporte, le BA décide)
 - Les questions DOIVENT être consolidées sans duplication
 - Les chiffres du Fact Store ancre ci-dessus DOIVENT etre utilises tels quels (F41)
 - Si un chiffre est marque [PROJECTION], tu DOIS le presenter comme tel dans le memo

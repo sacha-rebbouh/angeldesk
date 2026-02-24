@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { VERDICT_CONFIG } from "@/lib/ui-configs";
+import { VERDICT_CONFIG, getSeverityStyle } from "@/lib/ui-configs";
 import { ScoreBadge } from "@/components/shared/score-badge";
 import { ExpandableSection } from "@/components/shared/expandable-section";
 import {
@@ -69,10 +69,10 @@ const VerdictBadge = memo(function VerdictBadge({ verdict }: { verdict: string }
 
 // Hoisted config (without icons - they'll be resolved at render)
 const RECOMMENDATION_CONFIG: Record<string, { label: string; color: string }> = {
-  invest: { label: "Investir", color: "bg-green-500 text-white" },
-  pass: { label: "Passer", color: "bg-red-500 text-white" },
-  wait: { label: "Attendre", color: "bg-yellow-500 text-white" },
-  negotiate: { label: "Négocier", color: "bg-blue-500 text-white" },
+  invest: { label: "Signaux favorables", color: "bg-green-500 text-white" },
+  pass: { label: "Signaux d'alerte dominants", color: "bg-red-500 text-white" },
+  wait: { label: "Investigation complémentaire", color: "bg-yellow-500 text-white" },
+  negotiate: { label: "Signaux contrastés", color: "bg-blue-500 text-white" },
 };
 
 const RECOMMENDATION_ICONS: Record<string, React.ReactNode> = {
@@ -86,7 +86,7 @@ const RecommendationBadge = memo(function RecommendationBadge({ action }: { acti
   const c = RECOMMENDATION_CONFIG[action] ?? { label: action, color: "bg-gray-500 text-white" };
   const icon = RECOMMENDATION_ICONS[action] ?? null;
   return (
-    <Badge className={cn("text-sm px-3 py-1.5 flex items-center gap-1.5", c.color)}>
+    <Badge className={cn("text-sm px-3 py-1.5 flex items-center gap-1.5 shrink-0", c.color)}>
       {icon}
       {c.label}
     </Badge>
@@ -171,7 +171,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             <p className="text-sm text-muted-foreground">Recommandation</p>
             <p className="text-lg font-medium mt-1">{data.investmentRecommendation.rationale}</p>
             <p className="text-xs text-muted-foreground mt-2 italic">
-              Analyse automatisee a titre informatif uniquement. Ne constitue pas un conseil en investissement.
+              Analyse automatisée à titre informatif uniquement. Ne constitue pas un conseil en investissement.
             </p>
           </div>
           <RecommendationBadge action={data.investmentRecommendation.action} />
@@ -231,7 +231,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
               </div>
               <div className="p-3 rounded-lg bg-muted text-center">
                 <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
-                <p className="text-xs text-muted-foreground">Deals Compares</p>
+                <p className="text-xs text-muted-foreground">Deals Comparés</p>
               </div>
             </div>
           </div>
@@ -304,7 +304,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-medium flex items-center gap-2">
                 <Brain className="h-4 w-4 text-purple-500" />
-                Niveau de conviction
+                Niveau de scepticisme
               </p>
               <div className="flex items-center gap-2">
                 <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -337,7 +337,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             <div className="p-4 rounded-lg bg-gradient-to-r from-red-500 to-rose-600 text-white">
               <p className="font-bold mb-3 flex items-center gap-2">
                 <XCircle className="h-5 w-5" />
-                Dealbreakers ({absoluteKillReasons.length})
+                Risques critiques ({absoluteKillReasons.length})
               </p>
               <ul className="space-y-3">
                 {absoluteKillReasons.map((kr) => {
@@ -523,16 +523,16 @@ const NoGoReasonsCard = memo(function NoGoReasonsCard({
       <CardHeader className="pb-2 bg-gradient-to-r from-red-50 to-orange-50">
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-6 w-6 text-red-600" />
-          <CardTitle className="text-lg text-red-900">Pourquoi NO_GO</CardTitle>
+          <CardTitle className="text-lg text-red-900">Signaux d&apos;alerte dominants</CardTitle>
         </div>
-        <CardDescription>Raisons principales de passer ce deal</CardDescription>
+        <CardDescription>Risques majeurs identifiés sur ce deal</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 pt-4">
         {/* Absolute Kill Reasons */}
         {absoluteKills.length > 0 && (
           <div className="space-y-2">
             <p className="text-sm font-semibold text-red-700 flex items-center gap-1.5">
-              <XCircle className="h-4 w-4" /> Dealbreakers ({absoluteKills.length})
+              <XCircle className="h-4 w-4" /> Risques critiques ({absoluteKills.length})
             </p>
             <div className="space-y-2">
               {absoluteKills.map((kr, i) => (
@@ -659,7 +659,7 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
           </div>
         </div>
         <CardDescription>
-          Cross-validation de toutes les analyses - detection d&apos;incoherences
+          Cross-validation de toutes les analyses - détection d&apos;incohérences
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 pt-4">
@@ -748,7 +748,7 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
             <CheckCircle className="h-8 w-8 text-green-600" />
             <div>
               <p className="font-medium text-green-800">Aucune contradiction majeure</p>
-              <p className="text-sm text-green-700">Les analyses des 12 agents sont coherentes entre elles.</p>
+              <p className="text-sm text-green-700">Les analyses des 12 agents sont cohérentes entre elles.</p>
             </div>
           </div>
         )}
@@ -793,15 +793,54 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
   );
 });
 
+// Hoisted config for MemoGeneratorCard — distinct from RECOMMENDATION_CONFIG (which covers scorer actions)
+const MEMO_RECOMMENDATION_CONFIG: Record<string, { label: string; color: string }> = {
+  invest: { label: "Signaux favorables", color: "bg-green-500 text-white" },
+  pass: { label: "Signaux d'alerte dominants", color: "bg-red-500 text-white" },
+  more_dd_needed: { label: "Investigation complémentaire", color: "bg-yellow-500 text-white" },
+};
+
+// Parse red flag string: "[CRITICAL] Some text (agent-name)" → { severity, text, source }
+function parseRedFlag(raw: string): { severity: string; text: string; source: string | null } {
+  const match = raw.match(/^\[([A-Z]+)\]\s*(.+?)(?:\s*\(([^)]+)\))?\s*$/);
+  if (!match) return { severity: "MEDIUM", text: raw, source: null };
+  return { severity: match[1], text: match[2].trim(), source: match[3]?.trim() ?? null };
+}
+
+// Parse next step string: "[PRIORITY] [OWNER] Text" → { priority, owner, text }
+function parseNextStep(raw: string): { priority: string | null; owner: string | null; text: string } {
+  const match = raw.match(/^(?:\[([A-Z_]+)\])?\s*(?:\[([A-Z_]+)\])?\s*(.+)$/);
+  if (!match) return { priority: null, owner: null, text: raw };
+  return { priority: match[1] ?? null, owner: match[2] ?? null, text: match[3].trim() };
+}
+
+// Priority badge config for next steps
+const PRIORITY_BADGE_CONFIG: Record<string, { label: string; className: string }> = {
+  IMMEDIATE: { label: "Immédiat", className: "bg-red-100 text-red-800 border-red-300" },
+  BEFORE_TERM_SHEET: { label: "Avant term sheet", className: "bg-amber-100 text-amber-800 border-amber-300" },
+  DURING_DD: { label: "Pendant DD", className: "bg-blue-100 text-blue-800 border-blue-300" },
+};
+
+// Owner badge config for next steps
+const OWNER_BADGE_CONFIG: Record<string, { label: string; className: string }> = {
+  INVESTOR: { label: "Investisseur", className: "border-slate-300 text-slate-700" },
+  FOUNDER: { label: "Fondateur", className: "border-violet-300 text-violet-700" },
+};
+
 // Memo Generator Card
 const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: MemoGeneratorData }) {
-  const recommendationConfig = {
-    invest: { label: "Investir", color: "bg-green-500 text-white" },
-    pass: { label: "Passer", color: "bg-red-500 text-white" },
-    more_dd_needed: { label: "DD supplementaire", color: "bg-yellow-500 text-white" },
-  };
-  const rec = recommendationConfig[data.executiveSummary.recommendation] ??
+  const rec = MEMO_RECOMMENDATION_CONFIG[data.executiveSummary.recommendation] ??
     { label: data.executiveSummary.recommendation, color: "bg-gray-500 text-white" };
+
+  const parsedRedFlags = useMemo(
+    () => data.dueDiligenceFindings.redFlags.map(parseRedFlag),
+    [data.dueDiligenceFindings.redFlags],
+  );
+
+  const parsedNextSteps = useMemo(
+    () => data.nextSteps.map(parseNextStep),
+    [data.nextSteps],
+  );
 
   return (
     <Card className="md:col-span-2">
@@ -832,7 +871,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
         {/* Company Overview */}
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <p className="text-sm font-medium">Probleme</p>
+            <p className="text-sm font-medium">{`Probl\u00e8me`}</p>
             <p className="text-sm text-muted-foreground">{data.companyOverview.problem}</p>
           </div>
           <div className="space-y-2">
@@ -842,7 +881,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
         </div>
 
         {/* Investment Highlights */}
-        <ExpandableSection title="Investment Highlights" count={data.investmentHighlights.length} defaultOpen>
+        <ExpandableSection title="Points forts du deal" count={data.investmentHighlights.length} defaultOpen>
           <div className="space-y-2 mt-2">
             {data.investmentHighlights.map((h, i) => (
               <div key={i} className="p-2 border rounded bg-green-50">
@@ -877,7 +916,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
 
         {/* Investment Thesis */}
         <div className="p-4 rounded-lg bg-muted">
-          <p className="text-sm font-medium mb-2">These d&apos;investissement</p>
+          <p className="text-sm font-medium mb-2">{`Th\u00e8se d'investissement`}</p>
           <p className="text-sm text-muted-foreground whitespace-pre-wrap">{data.investmentThesis}</p>
         </div>
 
@@ -891,7 +930,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
             </div>
           </div>
           <div className="p-3 rounded-lg border">
-            <p className="text-sm font-medium mb-2">Points de negociation</p>
+            <p className="text-sm font-medium mb-2">{`Points de n\u00e9gociation`}</p>
             <ul className="text-sm text-muted-foreground list-disc list-inside">
               {data.dealTerms.negotiationPoints.slice(0, 3).map((n, i) => (
                 <li key={i}>{n}</li>
@@ -902,21 +941,40 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
 
         {/* Due Diligence Findings */}
         {(data.dueDiligenceFindings.outstanding.length > 0 || data.dueDiligenceFindings.redFlags.length > 0) && (
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-4">
             {data.dueDiligenceFindings.outstanding.length > 0 && (
-              <div className="p-3 rounded-lg border border-yellow-200 bg-yellow-50">
-                <p className="text-sm font-medium text-yellow-800 mb-2">DD a completer</p>
-                <ul className="text-sm text-yellow-700 list-disc list-inside">
-                  {data.dueDiligenceFindings.outstanding.map((o, i) => <li key={i}>{o}</li>)}
-                </ul>
+              <div>
+                <p className="text-sm font-medium text-yellow-800 mb-2">{`DD \u00e0 compl\u00e9ter`}</p>
+                <div className="space-y-2">
+                  {data.dueDiligenceFindings.outstanding.map((o, i) => (
+                    <div key={i} className="p-3 rounded-lg border border-yellow-200 bg-yellow-50">
+                      <p className="text-sm text-yellow-800">{o}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {data.dueDiligenceFindings.redFlags.length > 0 && (
-              <div className="p-3 rounded-lg border border-red-200 bg-red-50">
+              <div>
                 <p className="text-sm font-medium text-red-800 mb-2">Red Flags</p>
-                <ul className="text-sm text-red-700 list-disc list-inside">
-                  {data.dueDiligenceFindings.redFlags.map((r, i) => <li key={i}>{r}</li>)}
-                </ul>
+                <div className="space-y-2">
+                  {parsedRedFlags.map((rf, i) => {
+                    const style = getSeverityStyle(rf.severity);
+                    return (
+                      <div key={i} className={cn("p-3 rounded-lg border flex items-start gap-3", style.bg, style.border)}>
+                        <Badge variant="outline" className={cn("text-xs shrink-0 mt-0.5", style.badge)}>
+                          {style.label}
+                        </Badge>
+                        <div className="flex-1 min-w-0">
+                          <p className={cn("text-sm", style.text)}>{rf.text}</p>
+                          {rf.source && (
+                            <p className="text-xs text-muted-foreground mt-1">Source : {rf.source}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
@@ -925,17 +983,29 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
         {/* Next Steps */}
         {data.nextSteps.length > 0 && (
           <div className="pt-2 border-t">
-            <p className="text-sm font-medium mb-2">Prochaines etapes</p>
-            <ul className="space-y-1">
-              {data.nextSteps.map((s, i) => (
-                <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                  <span className="bg-primary text-primary-foreground rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0">
+            <p className="text-sm font-medium mb-2">{`Prochaines \u00e9tapes`}</p>
+            <div className="space-y-2">
+              {parsedNextSteps.map((step, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  <span className="bg-primary text-primary-foreground rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 mt-0.5">
                     {i + 1}
                   </span>
-                  {s}
-                </li>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {step.priority && PRIORITY_BADGE_CONFIG[step.priority] && (
+                      <Badge variant="outline" className={cn("text-xs", PRIORITY_BADGE_CONFIG[step.priority].className)}>
+                        {PRIORITY_BADGE_CONFIG[step.priority].label}
+                      </Badge>
+                    )}
+                    {step.owner && OWNER_BADGE_CONFIG[step.owner] && (
+                      <Badge variant="outline" className={cn("text-xs", OWNER_BADGE_CONFIG[step.owner].className)}>
+                        {OWNER_BADGE_CONFIG[step.owner].label}
+                      </Badge>
+                    )}
+                    <span className="text-muted-foreground">{step.text}</span>
+                  </div>
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
         )}
       </CardContent>
@@ -996,7 +1066,7 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
             <div>
               <CardTitle className="text-2xl font-bold text-white flex items-center gap-3">
                 <Target className="h-7 w-7 text-primary" />
-                Synthese Due Diligence
+                Synthèse Due Diligence
               </CardTitle>
               <CardDescription className="text-slate-300 mt-1">
                 {totalAgentsRun ?? successfulAgents} agents d&apos;analyse • Score, Risques, Memo
@@ -1065,14 +1135,14 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
                 )}
               </div>
               <div className="text-xs text-slate-400 mt-1">
-                {headerMetrics.killReasons > 0 ? "Dealbreakers" : headerMetrics.contradictions > 0 ? "Contradictions" : "Pas de blocage"}
+                {headerMetrics.killReasons > 0 ? "Risques critiques" : headerMetrics.contradictions > 0 ? "Contradictions" : "Pas de blocage"}
               </div>
             </div>
 
             {/* Data Reliability */}
             {scorerData && (
               <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
-                <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Fiabilite donnees</div>
+                <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Fiabilité données</div>
                 <div className="text-3xl font-bold text-white">{scorerData.confidence}%</div>
                 <div className="text-xs text-slate-400 mt-1">Completude des sources</div>
               </div>
@@ -1138,10 +1208,10 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
         <TabsContent value="coherence" className="space-y-4 mt-4">
           {isFree ? (
             <ProTeaserSection
-              title="Contradictions detectees"
+              title="Contradictions détectées"
               description={contradictionData
-                ? `${contradictionData.findings?.contradictions?.length ?? 0} contradiction(s) identifiee(s) entre les analyses`
-                : "Detection automatique des incoherences"}
+                ? `${contradictionData.findings?.contradictions?.length ?? 0} contradiction(s) identifiée(s) entre les analyses`
+                : "Détection automatique des incohérences"}
               icon={Zap}
               previewText={contradictionData ? `Score coherence: ${contradictionData.findings?.consistencyAnalysis?.overallScore ?? contradictionData.score?.value ?? 0}/100` : undefined}
             />

@@ -121,13 +121,13 @@ export function severityBgColor(severity: string): string {
   return colors.primaryLight;
 }
 
-/** Recommendation label in French */
+/** Recommendation label in French — analytical framing */
 export function recLabel(rec: string): string {
-  if (rec === "invest") return "INVESTIR";
-  if (rec === "pass") return "PASSER";
-  if (rec === "negotiate") return "NEGOCIER";
-  if (rec === "wait") return "ATTENDRE";
-  return "DD COMPLEMENTAIRE";
+  if (rec === "invest" || rec === "strong_invest") return "SIGNAUX FAVORABLES";
+  if (rec === "pass" || rec === "strong_pass" || rec === "no_go") return "SIGNAUX D'ALERTE DOMINANTS";
+  if (rec === "negotiate" || rec === "conditional_invest") return "SIGNAUX CONTRASTÉS";
+  if (rec === "wait") return "INVESTIGATION COMPLÉMENTAIRE";
+  return "INVESTIGATION COMPLÉMENTAIRE";
 }
 
 /** Priority order for sorting */

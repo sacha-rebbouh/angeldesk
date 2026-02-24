@@ -26,11 +26,15 @@ export function extractDealScore(results: Record<string, AgentResult> | null | u
 
 /**
  * Extract the recommendation from synthesis-deal-scorer agent results.
+ * Tries investmentRecommendation.action first (current schema), falls back to recommendation.
  */
 export function extractDealRecommendation(results: Record<string, AgentResult> | null | undefined): string | null {
   if (!results) return null;
   const scorerResult = results["synthesis-deal-scorer"];
   if (!scorerResult?.success || !scorerResult.data) return null;
-  const d = scorerResult.data as { recommendation?: string };
-  return d.recommendation ?? null;
+  const d = scorerResult.data as {
+    investmentRecommendation?: { action?: string };
+    recommendation?: string;
+  };
+  return d.investmentRecommendation?.action ?? d.recommendation ?? null;
 }

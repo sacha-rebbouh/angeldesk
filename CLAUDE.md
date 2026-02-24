@@ -16,6 +16,83 @@ En 5 min, un BA obtient : la DD qu'un analyste VC ferait en 2 jours, 50+ deals c
 3. **Zero faux positifs** - Chaque red flag : confidence score > 80%
 4. **Pas de probabilités** - Scores multi-dimensionnels
 
+---
+
+## POSITIONNEMENT PRODUIT — RÈGLE N°1 (s'applique à TOUT)
+
+### Le principe fondamental
+
+> **Angel Desk ANALYSE et GUIDE. Angel Desk ne DÉCIDE JAMAIS.**
+>
+> Le Business Angel est le seul décideur. L'outil rapporte des signaux, des faits, des comparaisons. Il ne dit jamais quoi faire.
+
+Ceci est la règle la plus importante du projet. Elle s'applique à **tout** : prompts agents, UI, PDF, chat, labels, textes générés par les LLM.
+
+### Ce qui est INTERDIT — tolérance zéro
+
+| Interdit | Pourquoi | Remplacer par |
+|----------|----------|---------------|
+| "Investir" / "Ne pas investir" | Prescriptif, on décide à la place du BA | "Signaux favorables" / "Signaux d'alerte dominants" |
+| "GO / NO-GO" | Binaire et directif | Profil de signal (voir grille ci-dessous) |
+| "Rejeter l'opportunité" | On ordonne au BA | "Les signaux d'alerte dominent sur X dimensions" |
+| "Passer ce deal" | Prescriptif | "Vigilance requise" / "Zone d'alerte" |
+| "Dealbreaker" | Trop définitif, on ferme la porte | "Risque critique" |
+| "Toute négociation serait une perte de temps" | Agressif et directif | "Les points de négociation identifiés sont limités compte tenu des signaux d'alerte" |
+| "Recommandation : PASS" | On recommande une action | "Signal : Signaux d'alerte dominants" |
+| Tout impératif adressé au BA ("Rejetez", "N'investissez pas", "Fuyez") | On commande | Constater les faits, laisser le BA conclure |
+
+### La grille de profils de signal (remplace les verdicts)
+
+| Score | Ancien verdict (INTERDIT) | Nouveau profil de signal |
+|-------|--------------------------|--------------------------|
+| 85-100 | ~~STRONG_PASS~~ / ~~INVESTIR~~ | **Signaux très favorables** |
+| 70-84 | ~~PASS~~ / ~~INVESTIR~~ | **Signaux favorables** |
+| 55-69 | ~~CONDITIONAL_PASS~~ / ~~NÉGOCIER~~ | **Signaux contrastés** |
+| 40-54 | ~~WEAK_PASS~~ / ~~ATTENDRE~~ | **Vigilance requise** |
+| 0-39 | ~~NO_GO~~ / ~~PASSER~~ | **Signaux d'alerte dominants** |
+
+### Labels de score (analytiques, jamais évaluatifs)
+
+| Score | Label |
+|-------|-------|
+| 80+ | Excellent |
+| 60-79 | Solide |
+| 40-59 | À approfondir |
+| 20-39 | Points d'attention |
+| 0-19 | Zone d'alerte |
+
+### Exemples de reformulation
+
+**Avant (INTERDIT) :**
+> "Recommandation : NE PAS INVESTIR. Ce deal présente trop de risques. Toute négociation serait une perte de temps. Rejeter l'opportunité."
+
+**Après (CORRECT) :**
+> "Profil de signal : Signaux d'alerte dominants sur 6 dimensions. 10 risques critiques identifiés dont 4 sur les financials. Les points de négociation sont limités par l'absence de données vérifiables. Questions prioritaires à poser au fondateur avant toute décision."
+
+**Règle d'or :** Chaque phrase doit pouvoir se terminer par "...à vous de décider" sans que ce soit absurde. Si une phrase ne passe pas ce test, elle est trop directive.
+
+### Où ça s'applique concrètement
+
+1. **Prompts agents (system prompts)** — Les LLM ne doivent JAMAIS générer de texte prescriptif dans les champs `narrative`, `nextSteps`, `forNegotiation`, `rationale`, `verdict`. Les instructions doivent explicitement demander un ton analytique.
+2. **UI (composants React)** — Tous les labels passent par `src/lib/ui-configs.ts` (RECOMMENDATION_CONFIG, VERDICT_CONFIG, ALERT_SIGNAL_LABELS, READINESS_LABELS). Ne jamais hardcoder de label prescriptif.
+3. **PDF** — Les labels passent par `src/lib/pdf/pdf-helpers.ts` (`recLabel()`). Même règle.
+4. **Chat IA** — Le system prompt du chat doit maintenir le ton analytique.
+5. **Landing / Pricing** — "Vos analystes IA font le travail, vous décidez."
+
+### État de l'implémentation (2026-02-22)
+
+**Fait :**
+- UI configs centrales (`ui-configs.ts`) — tous les labels relabelisés
+- Composants d'affichage (verdict-panel, tier1/2/3-results, early-warnings, severity-badge/legend)
+- PDF (tous les pdf-sections, pdf-helpers, pdf-components)
+- Orchestrator summary (`summary.ts`)
+- Landing + Pricing
+- Glossaire (`glossary.ts`)
+- Chat prompt
+
+**Reste à faire :**
+- Les **system prompts des agents Tier 3** génèrent encore du texte libre directif (le LLM écrit "Rejeter", "perte de temps", etc. dans `nextSteps`, `forNegotiation`, `narrative.summary`). Les prompts de `synthesis-deal-scorer.ts`, `memo-generator.ts`, `devils-advocate.ts` doivent être mis à jour pour interdire explicitement le langage prescriptif dans le contenu généré.
+
 ## Stack technique
 - **Frontend/Backend**: Next.js 16+ (App Router, TypeScript, Tailwind)
 - **Database**: PostgreSQL (Neon) + Prisma ORM

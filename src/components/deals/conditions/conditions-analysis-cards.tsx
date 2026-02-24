@@ -452,8 +452,8 @@ function getTriggerRiskColor(level: string): string {
 
 function getTriggerRiskLabel(level: string): string {
   switch (level) {
-    case "HIGH": return "Eleve";
-    case "MEDIUM": return "Modere";
+    case "HIGH": return "Élevé";
+    case "MEDIUM": return "Modéré";
     default: return "Faible";
   }
 }

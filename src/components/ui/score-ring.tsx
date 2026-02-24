@@ -27,8 +27,13 @@ export function ScoreRing({ score, size = 120, strokeWidth = 6, showLabel }: Sco
   const shouldShowLabel = showLabel ?? isLarge;
 
   return (
-    <div className="relative" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="-rotate-90">
+    <div
+      className="relative"
+      style={{ width: size, height: size }}
+      role="img"
+      aria-label={`Score: ${score} sur 100`}
+    >
+      <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
         <circle
           cx={size / 2}
           cy={size / 2}

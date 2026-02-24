@@ -62,6 +62,7 @@ import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-tease
 import { DataCompletenessGuide } from "@/components/shared/data-completeness-guide";
 import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
 import { Lightbulb } from "lucide-react";
+import { ALERT_SIGNAL_LABELS, READINESS_LABELS } from "@/lib/ui-configs";
 
 interface ReActMetadata {
   reasoningTrace: ReasoningTrace;
@@ -281,7 +282,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
                 data.alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
                 "bg-green-100 text-green-800"
               )}>
-                {data.alertSignal.recommendation?.replace(/_/g, " ")}
+                {ALERT_SIGNAL_LABELS[data.alertSignal.recommendation ?? ""] ?? data.alertSignal.recommendation}
               </Badge>
               <span className="text-sm">{data.alertSignal.justification}</span>
             </div>
@@ -1662,7 +1663,7 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
                 alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
                 "bg-green-100 text-green-800"
               )}>
-                {alertSignal.recommendation?.replace(/_/g, " ")}
+                {ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? alertSignal.recommendation}
               </Badge>
               <span className="text-sm">{alertSignal.justification}</span>
             </div>
@@ -2073,7 +2074,7 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
                 alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
                 "bg-green-100 text-green-800"
               )}>
-                {alertSignal.recommendation?.replace(/_/g, " ")}
+                {ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? alertSignal.recommendation}
               </Badge>
               <span className="text-sm">{alertSignal.justification}</span>
             </div>
@@ -2465,7 +2466,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
                 alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
                 "bg-green-100 text-green-800"
               )}>
-                {alertSignal.recommendation?.replace(/_/g, " ")}
+                {ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? alertSignal.recommendation}
               </Badge>
               <span className="text-sm">{alertSignal.justification}</span>
             </div>
@@ -3087,7 +3088,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                 "text-xs",
                 readinessColors[tier1Summary.overallReadiness] ?? "bg-gray-100 text-gray-800"
               )}>
-                {tier1Summary.overallReadiness.replace(/_/g, " ")}
+                {READINESS_LABELS[tier1Summary.overallReadiness] ?? tier1Summary.overallReadiness.replace(/_/g, " ")}
               </Badge>
             )}
             <ScoreBadge score={scoreValue ?? 0} size="lg" />
@@ -3118,7 +3119,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                 alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
                 "bg-green-100 text-green-800"
               )}>
-                {alertSignal.recommendation?.replace(/_/g, " ")}
+                {ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? alertSignal.recommendation}
               </Badge>
               <span className="text-sm">{alertSignal.justification}</span>
             </div>
@@ -3381,7 +3382,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
         {/* Dealbreakers */}
         {dealbreakers.length > 0 && (
           <div className="p-3 rounded-lg bg-red-50 border border-red-200">
-            <p className="text-sm font-medium text-red-800 mb-2">Dealbreakers identifiés ({dealbreakers.length})</p>
+            <p className="text-sm font-medium text-red-800 mb-2">Risques critiques identifiés ({dealbreakers.length})</p>
             <div className="space-y-2">
               {dealbreakers.map((d: {
                 id: string;

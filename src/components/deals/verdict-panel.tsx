@@ -37,7 +37,7 @@ interface VerdictPanelProps {
 // ScoreRing imported from @/components/ui/score-ring
 
 /** Small inline bar for dimension weaknesses */
-function MiniBar({ score }: { score: number }) {
+function MiniBar({ score, label }: { score: number; label?: string }) {
   const barColor = score >= 60
     ? "bg-blue-500"
     : score >= 40
@@ -46,7 +46,14 @@ function MiniBar({ score }: { score: number }) {
         ? "bg-orange-500"
         : "bg-red-500";
   return (
-    <div className="w-16 h-1.5 rounded-full bg-muted/60 overflow-hidden">
+    <div
+      role="progressbar"
+      aria-valuenow={score}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={label ? `${label}: ${score}/100` : `${score}/100`}
+      className="w-16 h-1.5 rounded-full bg-muted/60 overflow-hidden"
+    >
       <div className={cn("h-full rounded-full", barColor)} style={{ width: `${score}%` }} />
     </div>
   );
@@ -89,7 +96,7 @@ export const VerdictPanel = memo(function VerdictPanel({
           </div>
           <p className="mt-5 text-sm font-semibold">Aucune analyse effectuée</p>
           <p className="mt-1.5 text-xs text-muted-foreground max-w-xs">
-            Lancez une analyse IA pour obtenir le verdict complet du deal
+            Lancez une analyse IA pour obtenir l&apos;analyse complète du deal
           </p>
         </div>
       </div>
@@ -115,7 +122,7 @@ export const VerdictPanel = memo(function VerdictPanel({
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-foreground/5">
               <Brain className="h-4 w-4 text-foreground/70" />
             </div>
-            <h3 className="text-[15px] font-semibold tracking-tight">Verdict</h3>
+            <h3 className="text-[15px] font-semibold tracking-tight">Analyse globale</h3>
           </div>
           {recConfig && (
             <Badge className={cn(
@@ -157,7 +164,7 @@ export const VerdictPanel = memo(function VerdictPanel({
                   {weakDimensions.map((dim, i) => (
                     <div key={i} className="flex items-center gap-3 text-[13px]">
                       <span className="w-20 shrink-0 text-foreground/65 font-medium">{dim.label}</span>
-                      <MiniBar score={dim.score} />
+                      <MiniBar score={dim.score} label={dim.label} />
                       <span className={cn("font-bold tabular-nums text-xs", getScoreColor(dim.score))}>
                         {dim.score}
                       </span>

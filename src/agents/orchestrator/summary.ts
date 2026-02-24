@@ -6,6 +6,17 @@ import type {
 import type { AnalysisType } from "./types";
 import { TIER1_AGENT_NAMES, TIER3_AGENT_NAMES, TIER2_EXPERT_NAMES } from "./types";
 
+const ACTION_LABELS: Record<string, string> = {
+  invest: "Signaux favorables",
+  strong_invest: "Signaux favorables",
+  pass: "Signaux d'alerte dominants",
+  strong_pass: "Signaux d'alerte dominants",
+  no_go: "Signaux d'alerte dominants",
+  negotiate: "Signaux contrastés",
+  conditional_invest: "Signaux contrastés",
+  wait: "Investigation complémentaire",
+};
+
 /**
  * Generate summary for Tier 1 analysis
  */
@@ -60,7 +71,7 @@ export function generateTier1Summary(results: Record<string, AgentResult>): stri
   if (questionMaster?.success && "data" in questionMaster) {
     const data = questionMaster.data as { dealbreakers?: string[]; topPriorities?: string[] };
     if (data.dealbreakers && data.dealbreakers.length > 0) {
-      parts.push(`\n**Dealbreakers potentiels:** ${data.dealbreakers.length}`);
+      parts.push(`\n**Risques critiques potentiels:** ${data.dealbreakers.length}`);
     }
     if (data.topPriorities && data.topPriorities.length > 0) {
       parts.push(`**Top priorites:** ${data.topPriorities.slice(0, 3).join(", ")}`);
@@ -85,8 +96,8 @@ export function generateTier3Summary(results: Record<string, AgentResult>): stri
   if (scorer?.success && scorer.data) {
     const { overallScore, verdict, investmentRecommendation } = scorer.data;
     parts.push(`\n**Score Final**: ${overallScore}/100`);
-    parts.push(`**Verdict**: ${verdict.replace("_", " ").toUpperCase()}`);
-    parts.push(`**Recommandation**: ${investmentRecommendation.action.toUpperCase()}`);
+    parts.push(`**Profil**: ${verdict.replace("_", " ").toUpperCase()}`);
+    parts.push(`**Signal**: ${ACTION_LABELS[investmentRecommendation.action.toLowerCase()] ?? investmentRecommendation.action}`);
     parts.push(`> ${investmentRecommendation.rationale}`);
   }
 
@@ -131,9 +142,9 @@ export function generateFullAnalysisSummary(results: Record<string, AgentResult>
   const scorer = results["synthesis-deal-scorer"] as SynthesisDealScorerResult | undefined;
   if (scorer?.success && scorer.data) {
     const { overallScore, verdict, investmentRecommendation } = scorer.data;
-    parts.push(`\n**VERDICT FINAL**`);
+    parts.push(`\n**ANALYSE FINALE**`);
     parts.push(`Score: ${overallScore}/100 - ${verdict.replace("_", " ").toUpperCase()}`);
-    parts.push(`Action: ${investmentRecommendation.action.toUpperCase()}`);
+    parts.push(`Signal: ${ACTION_LABELS[investmentRecommendation.action.toLowerCase()] ?? investmentRecommendation.action}`);
     parts.push(`> ${investmentRecommendation.rationale}`);
   }
 

@@ -34,18 +34,18 @@ function getSeverityConfig(severity: string) {
 }
 
 const CATEGORY_CONFIG: Record<EarlyWarning["category"], { icon: typeof Shield; label: string }> = {
-  founder_integrity: { icon: Shield, label: "Integrite Fondateurs" },
-  legal_existential: { icon: Scale, label: "Risque Legal" },
+  founder_integrity: { icon: Shield, label: "Intégrité Fondateurs" },
+  legal_existential: { icon: Scale, label: "Risque Légal" },
   financial_critical: { icon: TrendingDown, label: "Financier Critique" },
-  market_dead: { icon: Target, label: "Marche" },
+  market_dead: { icon: Target, label: "Marché" },
   product_broken: { icon: Briefcase, label: "Produit" },
   deal_structure: { icon: FileQuestion, label: "Structure Deal" },
 };
 
 const RECOMMENDATION_LABELS = {
-  investigate: "A investiguer",
-  likely_dealbreaker: "Dealbreaker probable",
-  absolute_dealbreaker: "Dealbreaker absolu",
+  investigate: "À investiguer",
+  likely_dealbreaker: "Risque majeur détecté",
+  absolute_dealbreaker: "Risque critique détecté",
 };
 
 const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarning }) {
@@ -95,6 +95,7 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarni
           {(warning.evidence.length > 0 || (warning.questionsToAsk && warning.questionsToAsk.length > 0)) && (
             <button
               onClick={toggleExpand}
+              aria-expanded={isExpanded}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-2 transition-colors"
             >
               {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -123,7 +124,7 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarni
                 <div className="bg-background/50 rounded p-3">
                   <h5 className="text-xs font-medium mb-2 flex items-center gap-1">
                     <MessageSquare className="h-3 w-3" />
-                    Questions a poser
+                    Questions à poser
                   </h5>
                   <ul className="text-xs space-y-1">
                     {warning.questionsToAsk.map((q, idx) => (
@@ -168,14 +169,14 @@ export const EarlyWarningsPanel = memo(function EarlyWarningsPanel({
             "h-5 w-5",
             hasCritical ? "text-red-600" : "text-orange-600"
           )} />
-          Alertes Detectees
+          Alertes Détectées
           <Badge variant={hasCritical ? "destructive" : "secondary"}>
             {warnings.length}
           </Badge>
         </CardTitle>
         {hasCritical && (
           <p className="text-sm text-red-700 font-medium">
-            Des problemes critiques ont ete detectes. Investigation recommandee avant de poursuivre.
+            Risques critiques identifiés sur ce deal. Investigation approfondie recommandée.
           </p>
         )}
       </CardHeader>

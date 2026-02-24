@@ -30,7 +30,7 @@ export function NegotiationSection({
 
   return (
     <PdfPage dealName={dealName}>
-      <SectionTitle>Strategie de Negociation</SectionTitle>
+      <SectionTitle>Stratégie de Négociation</SectionTitle>
 
       {/* Leverage */}
       <LabelValue
@@ -41,13 +41,13 @@ export function NegotiationSection({
       <Spacer />
 
       {/* Suggested approach */}
-      <SubsectionTitle>Approche recommandee</SubsectionTitle>
+      <SubsectionTitle>Approche recommandée</SubsectionTitle>
       <BodyText>{negotiation.suggestedApproach}</BodyText>
 
       {/* Key arguments */}
       {negotiation.keyArguments.length > 0 && (
         <>
-          <H3>Arguments cles</H3>
+          <H3>Arguments clés</H3>
           <BulletList items={negotiation.keyArguments} />
         </>
       )}
@@ -61,11 +61,11 @@ export function NegotiationSection({
             value={`${negotiation.improvedDealScore.before}/100`}
           />
           <LabelValue
-            label="Apres"
+            label="Après"
             value={`${negotiation.improvedDealScore.after}/100`}
           />
           <LabelValue
-            label="Amelioration"
+            label="Amélioration"
             value={`+${negotiation.improvedDealScore.improvement} points`}
           />
         </>
@@ -74,10 +74,10 @@ export function NegotiationSection({
       {/* Negotiation points */}
       {negotiation.negotiationPoints.length > 0 && (
         <>
-          <SubsectionTitle>Points de negociation</SubsectionTitle>
+          <SubsectionTitle>Points de négociation</SubsectionTitle>
           <PdfTable
             columns={[
-              { header: "Priorite", width: 14 },
+              { header: "Priorité", width: 14 },
               { header: "Sujet", width: 20 },
               { header: "Demande", width: 26 },
               { header: "Fallback", width: 20 },
@@ -120,13 +120,13 @@ export function NegotiationSection({
       {/* Dealbreakers */}
       {negotiation.dealbreakers.length > 0 && (
         <>
-          <SubsectionTitle>Dealbreakers</SubsectionTitle>
+          <SubsectionTitle>Risques critiques</SubsectionTitle>
           <PdfTable
             columns={[
               { header: "Condition", width: 25 },
               { header: "Description", width: 35 },
-              { header: "Resolvable", width: 12 },
-              { header: "Resolution", width: 28 },
+              { header: "Résolvable", width: 12 },
+              { header: "Résolution", width: 28 },
             ]}
             rows={negotiation.dealbreakers.map((d) => [
               d.condition,
@@ -147,7 +147,7 @@ export function NegotiationSection({
               { header: "Donner", width: 25 },
               { header: "Obtenir", width: 25 },
               { header: "Justification", width: 30 },
-              { header: "Benefice net", width: 20 },
+              { header: "Bénéfice net", width: 20 },
             ]}
             rows={negotiation.tradeoffs.map((t) => [
               t.give,
@@ -175,7 +175,7 @@ export function SummaryNegotiationSection({
 
   return (
     <PdfPage dealName={dealName}>
-      <SectionTitle>Negociation — Resume</SectionTitle>
+      <SectionTitle>Négociation — Résumé</SectionTitle>
 
       <LabelValue
         label="Levier global"
@@ -186,17 +186,17 @@ export function SummaryNegotiationSection({
 
       {negotiation.keyArguments.length > 0 && (
         <>
-          <H3>Arguments cles</H3>
+          <H3>Arguments clés</H3>
           <BulletList items={negotiation.keyArguments} />
         </>
       )}
 
       {negotiation.negotiationPoints.length > 0 && (
         <>
-          <SubsectionTitle>Points de negociation</SubsectionTitle>
+          <SubsectionTitle>Points de négociation</SubsectionTitle>
           <PdfTable
             columns={[
-              { header: "Priorite", width: 15 },
+              { header: "Priorité", width: 15 },
               { header: "Sujet", width: 30 },
               { header: "Demande", width: 55 },
             ]}
@@ -211,7 +211,7 @@ export function SummaryNegotiationSection({
 
       {negotiation.dealbreakers.length > 0 && (
         <>
-          <H3>Dealbreakers</H3>
+          <H3>Risques critiques</H3>
           <BulletList
             items={negotiation.dealbreakers.map(
               (d) => `${d.condition}: ${d.description}`

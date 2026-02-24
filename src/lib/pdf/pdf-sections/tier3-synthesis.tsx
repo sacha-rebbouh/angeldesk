@@ -30,7 +30,7 @@ export function Tier3SynthesisSection({
 
   return (
     <PdfPage dealName={dealName}>
-      <SectionTitle>Synthese (Tier 3)</SectionTitle>
+      <SectionTitle>Synthèse (Tier 3)</SectionTitle>
 
       <ContradictionDetector result={tier3Results["contradiction-detector"]} />
       <DevilsAdvocate result={tier3Results["devils-advocate"]} />
@@ -87,7 +87,7 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
 
   return (
     <>
-      <SubsectionTitle>Contradictions detectees</SubsectionTitle>
+      <SubsectionTitle>Contradictions détectées</SubsectionTitle>
 
       {cScore?.value !== undefined && (
         <LabelValue
@@ -114,7 +114,7 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
           <PdfTable
             columns={[
               { header: "Sujet", width: 35 },
-              { header: "Severite", width: 15 },
+              { header: "Sévérité", width: 15 },
               { header: "Sources", width: 35 },
               { header: "Confiance", width: 15 },
             ]}
@@ -141,7 +141,7 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
                   {c.analysis && <BodyText>{c.analysis}</BodyText>}
                   {c.resolution?.reasoning && (
                     <LabelValue
-                      label="Resolution probable"
+                      label="Résolution probable"
                       value={c.resolution.reasoning}
                     />
                   )}
@@ -156,7 +156,7 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
 
       {dataGaps && dataGaps.length > 0 && (
         <>
-          <H3>Lacunes de donnees identifiees</H3>
+          <H3>Lacunes de données identifiées</H3>
           <PdfTable
             columns={[
               { header: "Domaine", width: 25 },
@@ -308,12 +308,12 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
 
       {killReasons && killReasons.length > 0 && (
         <>
-          <H3>Raisons de ne PAS investir</H3>
+          <H3>Signaux d&apos;alerte critiques</H3>
           <PdfTable
             columns={[
               { header: "Raison", width: 40 },
               { header: "Niveau", width: 25 },
-              { header: "Impact si ignore", width: 35 },
+              { header: "Impact si ignoré", width: 35 },
             ]}
             rows={killReasons.slice(0, 8).map((k) => [
               s(k.reason),
@@ -326,14 +326,14 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
 
       {worstCase && (
         <>
-          <H3>Scenario catastrophe</H3>
+          <H3>Scénario catastrophe</H3>
           {worstCase.name && <Text style={gs.bodyBold}>{worstCase.name}</Text>}
           {worstCase.description && (
             <BodyText>{worstCase.description}</BodyText>
           )}
           {worstCase.probability !== undefined && (
             <LabelValue
-              label="Probabilite"
+              label="Probabilité"
               value={
                 typeof worstCase.probability === "number"
                   ? `${worstCase.probability}%`
@@ -350,14 +350,14 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
                   )}
                   {worstCase.lossAmount.estimatedLoss && (
                     <LabelValue
-                      label="Perte estimee"
+                      label="Perte estimée"
                       value={worstCase.lossAmount.estimatedLoss}
                     />
                   )}
                 </>
               ) : (
                 <LabelValue
-                  label="Perte estimee"
+                  label="Perte estimée"
                   value={String(worstCase.lossAmount)}
                 />
               )}
@@ -366,9 +366,9 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
           {worstCase.triggers && worstCase.triggers.length > 0 && (
             <PdfTable
               columns={[
-                { header: "Declencheur", width: 50 },
-                { header: "Probabilite", width: 25 },
-                { header: "Delai", width: 25 },
+                { header: "Déclencheur", width: 50 },
+                { header: "Probabilité", width: 25 },
+                { header: "Délai", width: 25 },
               ]}
               rows={worstCase.triggers
                 .slice(0, 5)
@@ -387,7 +387,7 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
 
       {blindSpots && blindSpots.length > 0 && (
         <>
-          <H3>Angles morts identifies</H3>
+          <H3>Angles morts identifiés</H3>
           <BulletList
             items={blindSpots.slice(0, 5).map(
               (b) =>
@@ -399,7 +399,7 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
 
       {objections && objections.length > 0 && (
         <>
-          <H3>Objections detaillees</H3>
+          <H3>Objections détaillées</H3>
           {objections.slice(0, 8).map((obj, i) => (
             <View key={i} style={{ marginBottom: 6 }} wrap={false}>
               <Text style={gs.bodyBold}>{obj.title ?? "Objection"}</Text>
@@ -409,7 +409,7 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
               )}
               {obj.comparableFailure?.company && (
                 <LabelValue
-                  label="Echec comparable"
+                  label="Échec comparable"
                   value={`${obj.comparableFailure.company} — ${s(obj.comparableFailure.outcome)}`}
                 />
               )}
@@ -431,7 +431,7 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
               )}
               {(alt.alternativeNarrative || alt.narrative) && (
                 <>
-                  <Text style={gs.label}>Interpretation alternative:</Text>
+                  <Text style={gs.label}>Interprétation alternative:</Text>
                   <Text style={gs.bodyBold}>
                     {alt.alternativeNarrative ?? alt.narrative ?? ""}
                   </Text>
@@ -439,7 +439,7 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
               )}
               {alt.plausibility !== undefined && (
                 <LabelValue
-                  label="Plausibilite"
+                  label="Plausibilité"
                   value={`${alt.plausibility}%`}
                 />
               )}
@@ -459,7 +459,7 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
 
       {concerns && (
         <>
-          <H3>Synthese des preoccupations</H3>
+          <H3>Synthèse des préoccupations</H3>
           <ConcernsList concerns={concerns} />
         </>
       )}
@@ -508,22 +508,22 @@ function ConcernsList({
   return (
     <>
       {render(
-        "Dealbreakers absolus",
+        "Risques critiques",
         concerns.absolute,
         concerns.absoluteDealbreakers
       )}
       {render(
-        "Dealbreakers conditionnels",
+        "Risques conditionnels",
         concerns.conditional,
         concerns.conditionalDealbreakers
       )}
       {render(
-        "Preoccupations serieuses",
+        "Préoccupations sérieuses",
         concerns.serious,
         concerns.seriousConcerns
       )}
       {render(
-        "Preoccupations mineures",
+        "Préoccupations mineures",
         concerns.minor,
         concerns.minorConcerns
       )}
@@ -594,7 +594,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
 
   return (
     <>
-      <SubsectionTitle>Scenarios d&apos;investissement</SubsectionTitle>
+      <SubsectionTitle>Scénarios d&apos;investissement</SubsectionTitle>
 
       {sScore?.value !== undefined && (
         <LabelValue
@@ -607,7 +607,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
 
       {weighted && (
         <>
-          <H3>Resultat probabiliste</H3>
+          <H3>Résultat probabiliste</H3>
           {weighted.expectedMultiple !== undefined && (
             <LabelValue
               label="Multiple attendu"
@@ -631,7 +631,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
           })()}
           {weighted.riskAdjustedAssessment && (
             <LabelValue
-              label="Eval. risque-ajustee"
+              label="Eval. risque-ajustée"
               value={weighted.riskAdjustedAssessment}
             />
           )}
@@ -640,7 +640,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
 
       {mostLikely && (
         <>
-          <LabelValue label="Scenario le + probable" value={mostLikely} />
+          <LabelValue label="Scénario le + probable" value={mostLikely} />
           {mostLikelyRationale && (
             <BodyText>{mostLikelyRationale}</BodyText>
           )}
@@ -651,7 +651,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
         <>
           <PdfTable
             columns={[
-              { header: "Scenario", width: 25 },
+              { header: "Scénario", width: 25 },
               { header: "Prob.", width: 12 },
               { header: "Exit Valo", width: 20 },
               { header: "Multiple", width: 18 },
@@ -706,7 +706,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
 
       {sensitivity && sensitivity.length > 0 && (
         <>
-          <H3>Analyse de sensibilite</H3>
+          <H3>Analyse de sensibilité</H3>
           {sensitivity.some(
             (sv) => sv.impactOnValuation && Array.isArray(sv.impactOnValuation)
           )
@@ -789,7 +789,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
           )}
           {breakEven.burnAssessment && (
             <LabelValue
-              label="Evaluation burn"
+              label="Évaluation burn"
               value={breakEven.burnAssessment}
             />
           )}

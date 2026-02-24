@@ -19,26 +19,26 @@ const SEVERITY_CONFIG: Record<string, {
   CRITICAL: {
     label: "CRITIQUE",
     color: "bg-red-100 text-red-800 border-red-300",
-    impact: "Dealbreaker potentiel. Ce risque peut a lui seul justifier de passer le deal.",
-    action: "Investiguer IMMEDIATEMENT. Si confirme, envisager serieusement le NO GO.",
+    impact: "Risque potentiellement bloquant. Ce risque nécessite une investigation approfondie.",
+    action: "Investiguer IMMÉDIATEMENT. Si confirmé, évaluer l'impact sur la décision.",
   },
   HIGH: {
     label: "ELEVE",
     color: "bg-orange-100 text-orange-800 border-orange-300",
-    impact: "Risque serieux qui peut reduire significativement le retour attendu ou bloquer la croissance.",
-    action: "Poser la question au fondateur AVANT d'investir. Negocier une protection (clause, milestone).",
+    impact: "Risque sérieux qui peut réduire significativement le retour attendu ou bloquer la croissance.",
+    action: "Poser la question au fondateur AVANT d'investir. Négocier une protection (clause, milestone).",
   },
   MEDIUM: {
     label: "MOYEN",
     color: "bg-yellow-100 text-yellow-800 border-yellow-300",
-    impact: "Point de vigilance. Peut devenir critique si non adresse, surtout combine a d'autres risques.",
+    impact: "Point de vigilance. Peut devenir critique si non adressé, surtout combiné à d'autres risques.",
     action: "Aborder le sujet avec le fondateur. Suivre dans le temps post-investissement.",
   },
   LOW: {
     label: "FAIBLE",
     color: "bg-blue-100 text-blue-800 border-blue-300",
-    impact: "Risque mineur, commun a beaucoup de startups early stage. A noter, pas a prioriser.",
-    action: "Pas d'action immediate requise. Surveiller lors des board meetings.",
+    impact: "Risque mineur, commun à beaucoup de startups early stage. À noter, pas à prioriser.",
+    action: "Pas d'action immédiate requise. Surveiller lors des board meetings.",
   },
 };
 
@@ -56,8 +56,8 @@ export const SeverityBadge = memo(function SeverityBadge({
   const config = SEVERITY_CONFIG[severity.toUpperCase()] ?? {
     label: severity,
     color: "bg-gray-100 text-gray-800",
-    impact: "Niveau de severite inconnu.",
-    action: "Evaluer au cas par cas.",
+    impact: "Niveau de sévérité inconnu.",
+    action: "Évaluer au cas par cas.",
   };
 
   const badge = (

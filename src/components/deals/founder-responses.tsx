@@ -99,10 +99,10 @@ const PRIORITY_CONFIG: Record<QuestionPriority, {
 
 const CATEGORY_CONFIG: Record<QuestionCategory, { label: string; color: string }> = {
   FINANCIAL: { label: "Finances", color: "bg-emerald-100 text-emerald-800" },
-  TEAM: { label: "Equipe", color: "bg-blue-100 text-blue-800" },
-  MARKET: { label: "Marche", color: "bg-purple-100 text-purple-800" },
+  TEAM: { label: "Équipe", color: "bg-blue-100 text-blue-800" },
+  MARKET: { label: "Marché", color: "bg-purple-100 text-purple-800" },
   PRODUCT: { label: "Produit", color: "bg-orange-100 text-orange-800" },
-  LEGAL: { label: "Legal", color: "bg-slate-100 text-slate-800" },
+  LEGAL: { label: "Légal", color: "bg-slate-100 text-slate-800" },
   TRACTION: { label: "Traction", color: "bg-cyan-100 text-cyan-800" },
   OTHER: { label: "Autre", color: "bg-gray-100 text-gray-800" },
 };

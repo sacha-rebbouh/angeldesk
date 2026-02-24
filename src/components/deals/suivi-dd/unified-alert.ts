@@ -79,7 +79,7 @@ export function alertTypeLabel(type: "RED_FLAG" | "DEVILS_ADVOCATE" | "CONDITION
 export function severityLabel(severity: Severity): string {
   switch (severity) {
     case "CRITICAL": return "Critique";
-    case "HIGH": return "Eleve";
+    case "HIGH": return "Élevé";
     case "MEDIUM": return "Moyen";
     case "LOW": return "Bas";
     default: return severity;

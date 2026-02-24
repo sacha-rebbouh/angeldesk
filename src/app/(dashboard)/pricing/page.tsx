@@ -29,15 +29,15 @@ export default async function PricingPage() {
       {/* Header */}
       <div className="text-center space-y-4">
         <h1 className="text-4xl font-bold tracking-tight">
-          La DD d&apos;un fonds VC,
+          Votre équipe d&apos;analystes,
           <br />
           <span className="bg-gradient-to-r from-amber-500 to-orange-600 bg-clip-text text-transparent">
-            accessible à un Business Angel
+            toujours disponible
           </span>
         </h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
           En 5 minutes, obtenez l&apos;analyse qu&apos;un analyste VC ferait en 2 jours.
-          Plus de décisions au feeling.
+          Des décisions éclairées, pas des décisions au feeling.
         </p>
       </div>
 
@@ -62,7 +62,7 @@ export default async function PricingPage() {
             <ul className="space-y-3">
               <PricingFeature included>3 deals analysés/mois</PricingFeature>
               <PricingFeature included>Tier 1 : Screening rapide</PricingFeature>
-              <PricingFeature included>GO/NO-GO en 2 min</PricingFeature>
+              <PricingFeature included>Briefing express en 2 min</PricingFeature>
               <PricingFeature included>Red flags critiques</PricingFeature>
               <PricingFeature>Tier 2 : Expert sectoriel</PricingFeature>
               <PricingFeature>Tier 3 : Synthèse & scoring</PricingFeature>
@@ -99,7 +99,7 @@ export default async function PricingPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Pour les BA sérieux qui veulent un edge
+              Pour les BA qui veulent une analyse complète
             </p>
             <ul className="space-y-3">
               <PricingFeature included>20 deals analysés/mois</PricingFeature>
@@ -185,7 +185,7 @@ export default async function PricingPage() {
             <div className="mt-4 p-4 rounded-lg bg-blue-50 border border-blue-200">
               <p className="font-medium text-blue-800">Output Tier 1:</p>
               <p className="text-sm text-blue-700">
-                Verdict GO/NO-GO, scores 5 dimensions, red flags avec confidence, questions à poser
+                Briefing express : signaux clés, 5 dimensions analysées, red flags avec confidence, questions à poser
               </p>
             </div>
           </CardContent>
@@ -209,63 +209,7 @@ export default async function PricingPage() {
           </CardHeader>
           <CardContent>
             <p className="text-muted-foreground mb-4">
-              <strong>Objectif :</strong> Aller au-delà du screening - comprendre les nuances et préparer la négo
-            </p>
-            <div className="grid gap-4 md:grid-cols-3">
-              <AgentCard
-                icon={<Scale className="h-5 w-5" />}
-                title="Synthesis Scorer"
-                description="Croise les 12 analyses Tier 1, détecte les contradictions, score final pondéré"
-              />
-              <AgentCard
-                icon={<TrendingUp className="h-5 w-5" />}
-                title="Scenario Modeler"
-                description="Simule 3 scénarios (bear/base/bull) avec projections financières"
-              />
-              <AgentCard
-                icon={<AlertTriangle className="h-5 w-5" />}
-                title="Devil&apos;s Advocate"
-                description="Challenge systematiquement chaque point positif - trouve les failles"
-              />
-              <AgentCard
-                icon={<Target className="h-5 w-5" />}
-                title="Contradiction Detector"
-                description="Identifie les incohérences entre ce que dit le founder et les données"
-              />
-              <AgentCard
-                icon={<FileSearch className="h-5 w-5" />}
-                title="Memo Generator"
-                description="Génère un Investment Memo structuré prêt pour votre décision"
-              />
-            </div>
-            <div className="mt-4 p-4 rounded-lg bg-purple-50 border border-purple-200">
-              <p className="font-medium text-purple-800">Output Tier 2:</p>
-              <p className="text-sm text-purple-700">
-                Investment memo, scénarios chiffrés, points de négo, questions killer pour le founder
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Tier 3 */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-100">
-                <Lightbulb className="h-5 w-5 text-green-600" />
-              </div>
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  Tier 3 : Synthèse & scoring
-                  <Badge className="bg-gradient-to-r from-amber-500 to-orange-600">PRO</Badge>
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">5 agents de synthèse, scénarios, mémo • +3 min</p>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground mb-4">
-              <strong>Objectif:</strong> L&apos;avis d&apos;un expert qui connait VRAIMENT le secteur
+              <strong>Objectif :</strong> L&apos;analyse d&apos;un expert qui connaît VRAIMENT le secteur
             </p>
             <div className="grid gap-4 md:grid-cols-3">
               <AgentCard
@@ -295,14 +239,70 @@ export default async function PricingPage() {
               />
               <AgentCard
                 icon={<Lightbulb className="h-5 w-5" />}
-                title="+ 4 autres experts"
-                description="Climate, Hardware, Gaming, Consumer"
+                title="+ 16 autres experts"
+                description="Climate, Hardware, Gaming, Consumer, AI, Blockchain..."
+              />
+            </div>
+            <div className="mt-4 p-4 rounded-lg bg-purple-50 border border-purple-200">
+              <p className="font-medium text-purple-800">Output Tier 2:</p>
+              <p className="text-sm text-purple-700">
+                Analyse sectorielle profonde, benchmarks spécifiques, risques sectoriels, comparables pertinents
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Tier 3 */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-100">
+                <Lightbulb className="h-5 w-5 text-green-600" />
+              </div>
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  Tier 3 : Synthèse & scoring
+                  <Badge className="bg-gradient-to-r from-amber-500 to-orange-600">PRO</Badge>
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">5 agents de synthèse, scénarios, mémo • +3 min</p>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground mb-4">
+              <strong>Objectif :</strong> Croiser toutes les analyses, détecter les contradictions et préparer la négo
+            </p>
+            <div className="grid gap-4 md:grid-cols-3">
+              <AgentCard
+                icon={<Scale className="h-5 w-5" />}
+                title="Synthesis Scorer"
+                description="Croise les 12 analyses Tier 1, détecte les contradictions, score final pondéré"
+              />
+              <AgentCard
+                icon={<TrendingUp className="h-5 w-5" />}
+                title="Scenario Modeler"
+                description="Simule 3 scénarios (bear/base/bull) avec projections financières"
+              />
+              <AgentCard
+                icon={<AlertTriangle className="h-5 w-5" />}
+                title="Devil&apos;s Advocate"
+                description="Challenge systématiquement chaque point positif — trouve les failles"
+              />
+              <AgentCard
+                icon={<Target className="h-5 w-5" />}
+                title="Contradiction Detector"
+                description="Identifie les incohérences entre ce que dit le founder et les données"
+              />
+              <AgentCard
+                icon={<FileSearch className="h-5 w-5" />}
+                title="Memo Generator"
+                description="Génère un Investment Memo structuré prêt pour votre décision"
               />
             </div>
             <div className="mt-4 p-4 rounded-lg bg-green-50 border border-green-200">
               <p className="font-medium text-green-800">Output Tier 3:</p>
               <p className="text-sm text-green-700">
-                Analyse sectorielle profonde, benchmarks specifiques, risques sectoriels, comparables pertinents
+                Investment memo, scénarios chiffrés, signaux clés, questions killer pour le founder
               </p>
             </div>
           </CardContent>
@@ -357,8 +357,8 @@ export default async function PricingPage() {
                 <ol className="text-sm space-y-1 text-muted-foreground">
                   <li>1. Chaque LLM analyse le deal indépendamment</li>
                   <li>2. Ils débattent entre eux (2-3 rounds)</li>
-                  <li>3. Ils votent : GO / NO-GO / NEED MORE INFO</li>
-                  <li>4. Vous recevez le verdict + arguments</li>
+                  <li>3. Ils votent et rendent un avis argumenté</li>
+                  <li>4. Vous recevez l'analyse + arguments</li>
                 </ol>
               </div>
             </div>
@@ -382,10 +382,10 @@ export default async function PricingPage() {
       {!isPro && (
         <div className="text-center mt-12 p-8 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 text-white">
           <h2 className="text-2xl font-bold mb-2">
-            Prêt à investir comme un pro ?
+            Votre prochain deal, analysé en profondeur
           </h2>
           <p className="text-white/80 mb-6 max-w-lg mx-auto">
-            Rejoignez les Business Angels qui ne laissent plus rien au hasard.
+            Rejoignez les Business Angels qui prennent des décisions éclairées.
             Essayez PRO pendant 30 jours, satisfait ou remboursé.
           </p>
           <PricingCtaButton variant="banner" />

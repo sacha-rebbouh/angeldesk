@@ -59,7 +59,7 @@ export default async function Home() {
             <div className="animate-fade-in">
               <Badge variant="secondary" className="px-4 py-1.5 text-sm font-medium shadow-sm">
                 <Sparkles className="mr-1.5 h-3.5 w-3.5 text-amber-500" />
-                La DD VC accessible aux Business Angels
+                Votre équipe d&apos;analystes IA
               </Badge>
             </div>
 
@@ -85,7 +85,7 @@ export default async function Home() {
               </h1>
               <p className="mx-auto max-w-[680px] text-lg text-muted-foreground md:text-xl leading-relaxed">
                 50+ deals comparables, red flags détectés automatiquement, questions à poser au fondateur.
-                <span className="font-medium text-foreground"> Investissez avec confiance.</span>
+                <span className="font-medium text-foreground"> Vous décidez, vos analystes IA font le travail.</span>
               </p>
             </div>
 
@@ -212,7 +212,7 @@ export default async function Home() {
                   </div>
                   <h3 className="text-lg font-semibold mb-2">Décidez</h3>
                   <p className="text-muted-foreground text-sm">
-                    Recevez votre verdict avec scores, red flags et questions à poser.
+                    Recevez votre briefing : signaux clés, comparables, red flags et questions à poser au fondateur.
                   </p>
                 </div>
               </div>
@@ -258,10 +258,10 @@ export default async function Home() {
               <div className="relative">
                 <Users className="mx-auto h-12 w-12 mb-6 opacity-90" />
                 <h2 className="text-3xl font-bold tracking-tight sm:text-4xl mb-4 text-balance">
-                  Prêt à investir comme un pro ?
+                  Votre prochain deal, analysé en 5 minutes
                 </h2>
                 <p className="text-white/90 mb-8 max-w-xl mx-auto text-lg">
-                  Rejoignez les Business Angels qui ne laissent plus rien au hasard.
+                  Rejoignez les Business Angels qui prennent des décisions éclairées.
                   Essayez gratuitement, sans engagement.
                 </p>
                 <Button size="lg" variant="secondary" className="text-amber-600 font-semibold shadow-md hover:shadow-lg transition-all text-base px-8" asChild>

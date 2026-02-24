@@ -18,6 +18,7 @@ import {
 } from "../pdf-components";
 import { s, sup, formatValue, fmtPct, fmtWeight } from "../pdf-helpers";
 import { AGENT_DISPLAY_NAMES } from "@/lib/format-utils";
+import { ALERT_SIGNAL_LABELS } from "@/lib/ui-configs";
 import type { AgentResult } from "../generate-analysis-pdf";
 
 export function Tier1AgentsSection({
@@ -119,7 +120,7 @@ function AgentBlock({
       {meta && (
         <Text style={gs.small}>
           {[
-            meta.dataCompleteness ? `Donnees: ${meta.dataCompleteness}` : null,
+            meta.dataCompleteness ? `Données: ${meta.dataCompleteness}` : null,
             typeof meta.confidenceLevel === "number"
               ? `Confiance: ${meta.confidenceLevel}%`
               : null,
@@ -144,7 +145,7 @@ function AgentBlock({
           {score.breakdown && score.breakdown.length > 0 && (
             <PdfTable
               columns={[
-                { header: "Critere", width: 20 },
+                { header: "Critère", width: 20 },
                 { header: "Poids", width: 10 },
                 { header: "Score", width: 10 },
                 { header: "Justification", width: 60 },
@@ -171,7 +172,7 @@ function AgentBlock({
       )}
       {narrative?.keyInsights && narrative.keyInsights.length > 0 && (
         <>
-          <H3>Insights cles</H3>
+          <H3>Insights clés</H3>
           <BulletList items={narrative.keyInsights} />
         </>
       )}
@@ -185,7 +186,7 @@ function AgentBlock({
       {alert && (
         <LabelValue
           label="Signal"
-          value={`${alert.recommendation?.replace(/_/g, " ") ?? "N/A"}${alert.hasBlocker ? " (BLOQUANT)" : ""}`}
+          value={`${ALERT_SIGNAL_LABELS[alert.recommendation ?? ""] ?? alert.recommendation?.replace(/_/g, " ") ?? "N/A"}${alert.hasBlocker ? " (BLOQUANT)" : ""}`}
         />
       )}
       {alert?.justification && <BodyText>{alert.justification}</BodyText>}
@@ -193,7 +194,7 @@ function AgentBlock({
       {/* DB cross-reference */}
       {dbRef?.claims && dbRef.claims.length > 0 && (
         <>
-          <H3>Verification DB</H3>
+          <H3>Vérification DB</H3>
           <PdfTable
             columns={[
               { header: "Claim", width: 35 },
@@ -208,7 +209,7 @@ function AgentBlock({
       )}
       {dbRef?.hiddenCompetitors && dbRef.hiddenCompetitors.length > 0 && (
         <LabelValue
-          label="Concurrents caches (DB)"
+          label="Concurrents cachés (DB)"
           value={dbRef.hiddenCompetitors.join(", ")}
         />
       )}
@@ -220,7 +221,7 @@ function AgentBlock({
           <PdfTable
             columns={[
               { header: "Flag", width: 30 },
-              { header: "Severite", width: 12 },
+              { header: "Sévérité", width: 12 },
               { header: "Evidence", width: 30 },
               { header: "Impact", width: 28 },
             ]}
@@ -248,7 +249,7 @@ function AgentBlock({
                       <LabelValue label="Localisation" value={rf.location} />
                     )}
                     {rf.question && (
-                      <LabelValue label="Question a poser" value={rf.question} />
+                      <LabelValue label="Question à poser" value={rf.question} />
                     )}
                   </View>
                 )
@@ -282,7 +283,7 @@ function AgentBlock({
       {/* Negotiation arguments */}
       {narrative?.forNegotiation && narrative.forNegotiation.length > 0 && (
         <>
-          <H3>Arguments pour negociation</H3>
+          <H3>Arguments pour négociation</H3>
           <BulletList items={narrative.forNegotiation} />
         </>
       )}
@@ -377,7 +378,7 @@ function FinancialFindings({ f }: { f: Record<string, unknown> }) {
           )}
           {val.calculatedMultiple !== undefined && (
             <LabelValue
-              label="Multiple calcule"
+              label="Multiple calculé"
               value={`${val.calculatedMultiple}x`}
             />
           )}
@@ -392,10 +393,10 @@ function FinancialFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {metrics && metrics.length > 0 && (
         <>
-          <H3>Metriques financieres</H3>
+          <H3>Métriques financières</H3>
           <PdfTable
             columns={[
-              { header: "Metrique", width: 25 },
+              { header: "Métrique", width: 25 },
               { header: "Valeur", width: 20 },
               { header: "Benchmark", width: 30 },
               { header: "Statut", width: 25 },
@@ -421,7 +422,7 @@ function FinancialFindings({ f }: { f: Record<string, unknown> }) {
             <LabelValue label="Payback" value={`${ue.paybackMonths} mois`} />
           )}
           {ue.assessment && (
-            <LabelValue label="Evaluation" value={ue.assessment} />
+            <LabelValue label="Évaluation" value={ue.assessment} />
           )}
         </>
       )}
@@ -429,7 +430,7 @@ function FinancialFindings({ f }: { f: Record<string, unknown> }) {
         <>
           <H3>Projections</H3>
           <LabelValue
-            label="Realistes"
+            label="Réalistes"
             value={projections.realistic ? "OUI" : "NON"}
           />
           {projections.assumptions && projections.assumptions.length > 0 && (
@@ -460,7 +461,7 @@ function FinancialFindings({ f }: { f: Record<string, unknown> }) {
           )}
           {burn.efficiency && (
             <LabelValue
-              label="Efficacite"
+              label="Efficacité"
               value={sup(burn.efficiency)}
             />
           )}
@@ -515,13 +516,13 @@ function TeamFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {comp && (
         <>
-          <H3>Composition equipe</H3>
+          <H3>Composition équipe</H3>
           {comp.teamSize != null && (
             <LabelValue label="Taille" value={String(comp.teamSize)} />
           )}
           {comp.complementarityScore !== undefined && (
             <LabelValue
-              label="Complementarite"
+              label="Complémentarité"
               value={`${comp.complementarityScore}/100`}
             />
           )}
@@ -533,7 +534,7 @@ function TeamFindings({ f }: { f: Record<string, unknown> }) {
           )}
           {comp.keyHires && comp.keyHires.length > 0 && (
             <LabelValue
-              label="Recrutements cles"
+              label="Recrutements clés"
               value={comp.keyHires.map((h) => formatValue(h)).join(", ")}
             />
           )}
@@ -543,13 +544,13 @@ function TeamFindings({ f }: { f: Record<string, unknown> }) {
         <>
           {dyn.equitySplitAssessment && (
             <LabelValue
-              label="Repartition equity"
+              label="Répartition equity"
               value={dyn.equitySplitAssessment}
             />
           )}
           {dyn.relationshipStrength && (
             <LabelValue
-              label="Solidite relation"
+              label="Solidité relation"
               value={dyn.relationshipStrength}
             />
           )}
@@ -583,13 +584,13 @@ function CompetitiveFindings({ f }: { f: Record<string, unknown> }) {
     <>
       {comps && comps.length > 0 && (
         <>
-          <H3>Concurrents identifies</H3>
+          <H3>Concurrents identifiés</H3>
           <PdfTable
             columns={[
               { header: "Concurrent", width: 20 },
               { header: "Funding", width: 20 },
               { header: "Menace", width: 15 },
-              { header: "Differentiation", width: 45 },
+              { header: "Différentiation", width: 45 },
             ]}
             rows={comps
               .slice(0, 8)
@@ -622,10 +623,10 @@ function CompetitiveFindings({ f }: { f: Record<string, unknown> }) {
       {market && (
         <>
           {market.concentration && (
-            <LabelValue label="Structure marche" value={market.concentration} />
+            <LabelValue label="Structure marché" value={market.concentration} />
           )}
           {market.entryBarriers && (
-            <LabelValue label="Barrieres entree" value={market.entryBarriers} />
+            <LabelValue label="Barrières entrée" value={market.entryBarriers} />
           )}
         </>
       )}
@@ -671,13 +672,13 @@ function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
         <>
           {narr.storyCoherence !== undefined && (
             <LabelValue
-              label="Coherence narrative"
+              label="Cohérence narrative"
               value={`${narr.storyCoherence}/100`}
             />
           )}
           {narr.credibilityAssessment && (
             <LabelValue
-              label="Credibilite"
+              label="Crédibilité"
               value={narr.credibilityAssessment}
             />
           )}
@@ -685,7 +686,7 @@ function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {claims && claims.length > 0 && (
         <>
-          <H3>Verification des claims</H3>
+          <H3>Vérification des claims</H3>
           <PdfTable
             columns={[
               { header: "Claim", width: 35 },
@@ -700,13 +701,13 @@ function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {inconsistencies && inconsistencies.length > 0 && (
         <>
-          <H3>Inconsistances detectees</H3>
+          <H3>Inconsistances détectées</H3>
           <PdfTable
             columns={[
-              { header: "Probleme", width: 40 },
+              { header: "Problème", width: 40 },
               { header: "Ref. 1", width: 20 },
               { header: "Ref. 2", width: 20 },
-              { header: "Severite", width: 20 },
+              { header: "Sévérité", width: 20 },
             ]}
             rows={inconsistencies
               .slice(0, 10)
@@ -721,7 +722,7 @@ function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {quality && (
         <>
-          <H3>Qualite du deck</H3>
+          <H3>Qualité du deck</H3>
           {quality.professionalism !== undefined && (
             <LabelValue
               label="Professionnalisme"
@@ -730,7 +731,7 @@ function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
           )}
           {quality.completeness !== undefined && (
             <LabelValue
-              label="Completude"
+              label="Complétude"
               value={`${quality.completeness}/100`}
             />
           )}
@@ -785,12 +786,12 @@ function MarketFindings({ f }: { f: Record<string, unknown> }) {
     <>
       {market && (
         <>
-          <H3>Taille de marche (TAM/SAM/SOM)</H3>
+          <H3>Taille de marché (TAM/SAM/SOM)</H3>
           <PdfTable
             columns={[
               { header: "Segment", width: 15 },
-              { header: "Annonce", width: 25 },
-              { header: "Valide", width: 25 },
+              { header: "Annoncé", width: 25 },
+              { header: "Validé", width: 25 },
               { header: "Source", width: 35 },
             ]}
             rows={[
@@ -827,7 +828,7 @@ function MarketFindings({ f }: { f: Record<string, unknown> }) {
             ]}
           />
           {market.discrepancyLevel && (
-            <LabelValue label="Ecart" value={market.discrepancyLevel} />
+            <LabelValue label="Écart" value={market.discrepancyLevel} />
           )}
         </>
       )}
@@ -856,13 +857,13 @@ function MarketFindings({ f }: { f: Record<string, unknown> }) {
         <>
           {timing.assessment && (
             <LabelValue
-              label="Timing marche"
+              label="Timing marché"
               value={sup(timing.assessment)}
             />
           )}
           {timing.windowRemaining && (
             <LabelValue
-              label="Fenetre restante"
+              label="Fenêtre restante"
               value={timing.windowRemaining}
             />
           )}
@@ -910,7 +911,7 @@ function ExitFindings({ f }: { f: Record<string, unknown> }) {
     <>
       {exitScenarios && exitScenarios.length > 0 && (
         <>
-          <H3>Scenarios de sortie</H3>
+          <H3>Scénarios de sortie</H3>
           <PdfTable
             columns={[
               { header: "Type", width: 20 },
@@ -958,7 +959,7 @@ function ExitFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {ret && (
         <>
-          <H3>Resume des retours</H3>
+          <H3>Résumé des retours</H3>
           {ret.expectedMultiple !== undefined && (
             <LabelValue
               label="Multiple attendu"
@@ -989,33 +990,33 @@ function ExitFindings({ f }: { f: Record<string, unknown> }) {
         <>
           {mna.activity && (
             <LabelValue
-              label="Activite M&A"
+              label="Activité M&A"
               value={formatValue(mna.activity)}
             />
           )}
           {mna.exitWindow && (
-            <LabelValue label="Fenetre exit" value={mna.exitWindow} />
+            <LabelValue label="Fenêtre exit" value={mna.exitWindow} />
           )}
         </>
       )}
       {liquidity && (
         <>
-          <H3>Liquidite</H3>
+          <H3>Liquidité</H3>
           {liquidity.secondaryMarket && (
             <LabelValue
-              label="Marche secondaire"
+              label="Marché secondaire"
               value={liquidity.secondaryMarket}
             />
           )}
           {liquidity.timeToLiquidity && (
             <LabelValue
-              label="Delai liquidite"
+              label="Délai liquidité"
               value={liquidity.timeToLiquidity}
             />
           )}
           {liquidity.liquidityRisk && (
             <LabelValue
-              label="Risque liquidite"
+              label="Risque liquidité"
               value={sup(liquidity.liquidityRisk)}
             />
           )}
@@ -1025,7 +1026,7 @@ function ExitFindings({ f }: { f: Record<string, unknown> }) {
         <>
           {strategic.acquirability && (
             <LabelValue
-              label="Acquirabilite"
+              label="Acquirabilité"
               value={sup(strategic.acquirability)}
             />
           )}
@@ -1059,7 +1060,7 @@ function TechStackFindings({ f }: { f: Record<string, unknown> }) {
           <H3>Stack technique</H3>
           {stack.modernityScore !== undefined && (
             <LabelValue
-              label="Score modernite"
+              label="Score modernité"
               value={`${stack.modernityScore}/100`}
             />
           )}
@@ -1081,13 +1082,13 @@ function TechStackFindings({ f }: { f: Record<string, unknown> }) {
         <>
           {scale.score !== undefined && (
             <LabelValue
-              label="Score scalabilite"
+              label="Score scalabilité"
               value={`${scale.score}/100`}
             />
           )}
           {scale.x10Readiness && (
             <LabelValue
-              label="Pret x10"
+              label="Prêt x10"
               value={formatValue(scale.x10Readiness)}
             />
           )}
@@ -1114,8 +1115,8 @@ function TechStackFindings({ f }: { f: Record<string, unknown> }) {
           <PdfTable
             columns={[
               { header: "Risque", width: 30 },
-              { header: "Categorie", width: 15 },
-              { header: "Severite", width: 12 },
+              { header: "Catégorie", width: 15 },
+              { header: "Sévérité", width: 12 },
               { header: "Prob.", width: 12 },
               { header: "Mitigation", width: 31 },
             ]}
@@ -1159,7 +1160,7 @@ function TechOpsFindings({ f }: { f: Record<string, unknown> }) {
           )}
           {maturity.stabilityScore !== undefined && (
             <LabelValue
-              label="Score stabilite"
+              label="Score stabilité"
               value={`${maturity.stabilityScore}/100`}
             />
           )}
@@ -1169,20 +1170,20 @@ function TechOpsFindings({ f }: { f: Record<string, unknown> }) {
         <>
           {security.posture && (
             <LabelValue
-              label="Posture securite"
+              label="Posture sécurité"
               value={sup(security.posture)}
             />
           )}
           {security.securityScore !== undefined && (
             <LabelValue
-              label="Score securite"
+              label="Score sécurité"
               value={`${security.securityScore}/100`}
             />
           )}
           {Array.isArray(security.compliance) &&
             security.compliance.length > 0 && (
               <LabelValue
-                label="Conformite"
+                label="Conformité"
                 value={security.compliance
                   .map((c: unknown) => formatValue(c))
                   .join(", ")}
@@ -1204,13 +1205,13 @@ function TechOpsFindings({ f }: { f: Record<string, unknown> }) {
         <>
           {team.capabilityScore !== undefined && (
             <LabelValue
-              label="Score equipe tech"
+              label="Score équipe tech"
               value={`${team.capabilityScore}/100`}
             />
           )}
           {Array.isArray(team.gaps) && team.gaps.length > 0 && (
             <LabelValue
-              label="Gaps equipe"
+              label="Gaps équipe"
               value={team.gaps
                 .map((g: unknown) => formatValue(g))
                 .join(", ")}
@@ -1224,8 +1225,8 @@ function TechOpsFindings({ f }: { f: Record<string, unknown> }) {
           <PdfTable
             columns={[
               { header: "Risque", width: 35 },
-              { header: "Categorie", width: 15 },
-              { header: "Severite", width: 12 },
+              { header: "Catégorie", width: 15 },
+              { header: "Sévérité", width: 12 },
               { header: "Mitigation", width: 38 },
             ]}
             rows={techRisks
@@ -1272,14 +1273,14 @@ function LegalFindings({ f }: { f: Record<string, unknown> }) {
         <>
           <H3>Structure juridique</H3>
           {structure.entityType && (
-            <LabelValue label="Type d'entite" value={structure.entityType} />
+            <LabelValue label="Type d'entité" value={structure.entityType} />
           )}
           {structure.jurisdiction && (
             <LabelValue label="Juridiction" value={structure.jurisdiction} />
           )}
           {structure.appropriateness && (
             <LabelValue
-              label="Adequation"
+              label="Adéquation"
               value={structure.appropriateness.replace(/_/g, " ")}
             />
           )}
@@ -1296,7 +1297,7 @@ function LegalFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {compliance && compliance.length > 0 && (
         <>
-          <H3>Conformite reglementaire</H3>
+          <H3>Conformité réglementaire</H3>
           <PdfTable
             columns={[
               { header: "Domaine", width: 35 },
@@ -1311,13 +1312,13 @@ function LegalFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {upcoming && upcoming.length > 0 && (
         <>
-          <H3>Reglementations a venir</H3>
+          <H3>Réglementations à venir</H3>
           <PdfTable
             columns={[
-              { header: "Reglementation", width: 35 },
+              { header: "Réglementation", width: 35 },
               { header: "Date", width: 20 },
               { header: "Impact", width: 20 },
-              { header: "Preparation", width: 25 },
+              { header: "Préparation", width: 25 },
             ]}
             rows={upcoming
               .slice(0, 6)
@@ -1352,10 +1353,10 @@ function CapTableFindings({ f }: { f: Record<string, unknown> }) {
     <>
       {ownership && (
         <>
-          <H3>Repartition du capital</H3>
+          <H3>Répartition du capital</H3>
           <PdfTable
             columns={[
-              { header: "Categorie", width: 50 },
+              { header: "Catégorie", width: 50 },
               { header: "Part", width: 50 },
             ]}
             rows={Object.entries(ownership)
@@ -1369,19 +1370,19 @@ function CapTableFindings({ f }: { f: Record<string, unknown> }) {
           <H3>Dilution fondateurs</H3>
           {dilution.currentOwnership !== undefined && (
             <LabelValue
-              label="Detention actuelle"
+              label="Détention actuelle"
               value={`${dilution.currentOwnership}%`}
             />
           )}
           {dilution.projectedPostRound !== undefined && (
             <LabelValue
-              label="Post-round projete"
+              label="Post-round projeté"
               value={`${dilution.projectedPostRound}%`}
             />
           )}
           {dilution.concernLevel && (
             <LabelValue
-              label="Niveau inquietude"
+              label="Niveau inquiétude"
               value={sup(dilution.concernLevel)}
             />
           )}
@@ -1435,7 +1436,7 @@ function GtmFindings({ f }: { f: Record<string, unknown> }) {
               { header: "Contribution", width: 18 },
               { header: "CAC", width: 18 },
               { header: "Payback", width: 18 },
-              { header: "Efficacite", width: 21 },
+              { header: "Efficacité", width: 21 },
             ]}
             rows={channels.slice(0, 6).map((c) => [
               s(c.channel),
@@ -1503,7 +1504,7 @@ function CustomerFindings({ f }: { f: Record<string, unknown> }) {
     <>
       {retention && (
         <>
-          <H3>Retention</H3>
+          <H3>Rétention</H3>
           {typeof retention.nrr?.reported === "number" && (
             <LabelValue label="NRR" value={`${retention.nrr.reported}%`} />
           )}
@@ -1518,7 +1519,7 @@ function CustomerFindings({ f }: { f: Record<string, unknown> }) {
           )}
           {retention.grossRetention != null && (
             <LabelValue
-              label="Retention brute"
+              label="Rétention brute"
               value={fmtPct(retention.grossRetention)}
             />
           )}
@@ -1556,9 +1557,9 @@ function CustomerFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {icp && (
         <>
-          <H3>Profil Client Ideal (ICP)</H3>
+          <H3>Profil Client Idéal (ICP)</H3>
           {icp.clarity && (
-            <LabelValue label="Clarte ICP" value={sup(icp.clarity)} />
+            <LabelValue label="Clarté ICP" value={sup(icp.clarity)} />
           )}
           {icp.description && <BodyText>{icp.description}</BodyText>}
           {icp.segments && icp.segments.length > 0 && (

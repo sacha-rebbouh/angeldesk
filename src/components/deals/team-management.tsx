@@ -303,9 +303,9 @@ export const TeamManagement = memo(function TeamManagement({ dealId, founders }:
     onSuccess: (data) => {
       const redFlagsCount = data.enrichment?.redFlagsCount ?? 0;
       if (redFlagsCount > 0) {
-        toast.warning(`Profil enrichi - ${redFlagsCount} point(s) d'attention detecte(s)`);
+        toast.warning(`Profil enrichi - ${redFlagsCount} point(s) d'attention détecté(s)`);
       } else {
-        toast.success("Profil LinkedIn enrichi avec succes");
+        toast.success("Profil LinkedIn enrichi avec succès");
       }
       setEnrichingFounderId(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
@@ -539,7 +539,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
       <Users className="h-12 w-12 text-muted-foreground/30" />
       <h3 className="mt-4 text-base font-semibold">Aucun membre</h3>
       <p className="mt-1.5 text-sm text-muted-foreground max-w-xs">
-        Ajoutez les membres de l&apos;equipe ou lancez une analyse pour les detecter automatiquement.
+        Ajoutez les membres de l&apos;équipe ou lancez une analyse pour les détecter automatiquement.
       </p>
       <Button className="mt-4" size="sm" onClick={onAdd}>
         <Plus className="mr-1.5 h-3.5 w-3.5" />

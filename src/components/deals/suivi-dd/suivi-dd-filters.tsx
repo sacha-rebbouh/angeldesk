@@ -24,7 +24,7 @@ interface SuiviDDFiltersProps {
 
 const SEVERITY_ITEMS = [
   { key: "CRITICAL", label: "Critique", color: "data-[active=true]:bg-red-500 data-[active=true]:text-white data-[active=true]:border-red-500" },
-  { key: "HIGH", label: "Eleve", color: "data-[active=true]:bg-orange-500 data-[active=true]:text-white data-[active=true]:border-orange-500" },
+  { key: "HIGH", label: "Élevé", color: "data-[active=true]:bg-orange-500 data-[active=true]:text-white data-[active=true]:border-orange-500" },
   { key: "MEDIUM", label: "Moyen", color: "data-[active=true]:bg-yellow-500 data-[active=true]:text-black data-[active=true]:border-yellow-500" },
   { key: "LOW", label: "Bas", color: "data-[active=true]:bg-blue-400 data-[active=true]:text-white data-[active=true]:border-blue-400" },
 ];

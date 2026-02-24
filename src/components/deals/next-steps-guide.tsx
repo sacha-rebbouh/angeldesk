@@ -48,7 +48,7 @@ export const NextStepsGuide = memo(function NextStepsGuide({
       actions.push({
         id: "review-red-flags",
         label: "Examiner les red flags critiques",
-        description: `${criticalRedFlagCount} red flag${criticalRedFlagCount > 1 ? "s" : ""} necessitent votre attention immediate. Lisez les details et evaluez s'il s'agit de dealbreakers.`,
+        description: `${criticalRedFlagCount} red flag${criticalRedFlagCount > 1 ? "s" : ""} nécessitent votre attention immédiate. Lisez les détails et évaluez s'il s'agit de risques critiques.`,
         icon: <AlertTriangle className="h-5 w-5 text-red-500" />,
         priority: "critical",
       });
@@ -58,7 +58,7 @@ export const NextStepsGuide = memo(function NextStepsGuide({
       actions.push({
         id: "ask-founder",
         label: "Poser les questions au fondateur",
-        description: `${questionsCount} questions generees par l'analyse. Utilisez l'onglet "Reponses Fondateur" pour enregistrer ses reponses et relancer l'analyse.`,
+        description: `${questionsCount} questions générées par l'analyse. Utilisez l'onglet "Réponses Fondateur" pour enregistrer ses réponses et relancer l'analyse.`,
         icon: <MessageSquare className="h-5 w-5 text-blue-500" />,
         priority: "high",
       });
@@ -67,7 +67,7 @@ export const NextStepsGuide = memo(function NextStepsGuide({
     if (avgScore < 60) {
       actions.push({
         id: "add-documents",
-        label: "Ajouter des documents complementaires",
+        label: "Ajouter des documents complémentaires",
         description: "Le score moyen est bas. Ajoutez le pitch deck, le BP financier, ou la cap table pour affiner l'analyse.",
         icon: <FileText className="h-5 w-5 text-amber-500" />,
         priority: "high",
@@ -77,7 +77,7 @@ export const NextStepsGuide = memo(function NextStepsGuide({
     actions.push({
       id: "chat-deep-dive",
       label: "Approfondir avec le chat IA",
-      description: "Posez des questions specifiques sur les points d'ombre. Le chat connait tous les resultats de l'analyse.",
+      description: "Posez des questions spécifiques sur les points d'ombre. Le chat connaît tous les résultats de l'analyse.",
       icon: <Search className="h-5 w-5 text-purple-500" />,
       priority: "medium",
     });
@@ -85,8 +85,8 @@ export const NextStepsGuide = memo(function NextStepsGuide({
     if (isFree && !hasTier3) {
       actions.push({
         id: "run-full-analysis",
-        label: "Lancer l'analyse complete (PRO)",
-        description: "Obtenez le Devil's Advocate, les scenarios financiers, le detecteur de contradictions et le memo d'investissement.",
+        label: "Lancer l'analyse complète (PRO)",
+        description: "Obtenez le Devil's Advocate, les scénarios financiers, le détecteur de contradictions et le mémo d'investissement.",
         icon: <Crown className="h-5 w-5 text-amber-500" />,
         priority: "medium",
         proOnly: true,
@@ -96,8 +96,8 @@ export const NextStepsGuide = memo(function NextStepsGuide({
     if (avgScore >= 50) {
       actions.push({
         id: "prepare-negotiation",
-        label: "Preparer la negociation",
-        description: "Les agents ont identifie des points de negociation. Utilisez-les pour discuter la valorisation et les termes.",
+        label: "Préparer la négociation",
+        description: "Les agents ont identifié des points de négociation. Utilisez-les pour discuter la valorisation et les termes.",
         icon: <Handshake className="h-5 w-5 text-green-500" />,
         priority: "medium",
       });
@@ -113,10 +113,10 @@ export const NextStepsGuide = memo(function NextStepsGuide({
       <CardHeader className="pb-2">
         <CardTitle className="text-lg flex items-center gap-2">
           <ArrowRight className="h-5 w-5 text-primary" />
-          Prochaines etapes
+          Prochaines étapes
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Actions recommandees en fonction de votre analyse
+          Actions recommandées en fonction de votre analyse
         </p>
       </CardHeader>
       <CardContent>

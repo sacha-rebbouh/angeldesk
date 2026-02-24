@@ -43,8 +43,8 @@ async function fetchComparisonData(
 
 const DIMENSION_LABELS: Record<string, string> = {
   globalScore: "Score Global",
-  teamScore: "Equipe",
-  marketScore: "Marche",
+  teamScore: "Équipe",
+  marketScore: "Marché",
   productScore: "Produit",
   financialsScore: "Financier",
 };

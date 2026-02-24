@@ -93,8 +93,8 @@ export function QuestionsSection({
           <PdfTable
             columns={[
               { header: "#", width: 5 },
-              { header: "Priorite", width: 13 },
-              { header: "Categorie", width: 15 },
+              { header: "Priorité", width: 13 },
+              { header: "Catégorie", width: 15 },
               { header: "Question", width: 67 },
             ]}
             rows={sorted.map((q, i) => [
@@ -114,7 +114,7 @@ export function QuestionsSection({
             return (
               <>
                 <SubsectionTitle>
-                  Detail des questions critiques
+                  Détail des questions critiques
                 </SubsectionTitle>
                 {critical.slice(0, 10).map((q, i) => (
                   <View key={i} style={{ marginBottom: 6 }} wrap={false}>
@@ -130,7 +130,7 @@ export function QuestionsSection({
                     )}
                     {q.context?.triggerData && (
                       <LabelValue
-                        label="Declencheur"
+                        label="Déclencheur"
                         value={q.context.triggerData}
                       />
                     )}
@@ -143,19 +143,19 @@ export function QuestionsSection({
                       <>
                         {q.evaluation.goodAnswer && (
                           <LabelValue
-                            label="Bonne reponse"
+                            label="Bonne réponse"
                             value={q.evaluation.goodAnswer}
                           />
                         )}
                         {q.evaluation.badAnswer && (
                           <LabelValue
-                            label="Mauvaise reponse"
+                            label="Mauvaise réponse"
                             value={q.evaluation.badAnswer}
                           />
                         )}
                         {q.evaluation.redFlagIfBadAnswer && (
                           <LabelValue
-                            label="Red flag si mauvaise"
+                            label="Signal d'alerte si mauvaise réponse"
                             value={q.evaluation.redFlagIfBadAnswer}
                           />
                         )}
@@ -168,7 +168,7 @@ export function QuestionsSection({
                       </>
                     ) : q.evaluationGuidance ? (
                       <LabelValue
-                        label="Guide d'evaluation"
+                        label="Guide d'évaluation"
                         value={q.evaluationGuidance}
                       />
                     ) : null}
@@ -189,7 +189,7 @@ export function QuestionsSection({
       {/* Reference checks */}
       {refChecks && refChecks.length > 0 && (
         <>
-          <SubsectionTitle>Verifications de references</SubsectionTitle>
+          <SubsectionTitle>Vérifications de références</SubsectionTitle>
           {refChecks.slice(0, 6).map((ref, i) => {
             const header =
               typeof ref.targetProfile === "object" && ref.targetProfile
@@ -209,7 +209,7 @@ export function QuestionsSection({
                     <>
                       {ref.targetProfile.idealPerson && (
                         <LabelValue
-                          label="Personne ideale"
+                          label="Personne idéale"
                           value={ref.targetProfile.idealPerson}
                         />
                       )}
@@ -239,12 +239,12 @@ export function QuestionsSection({
       {/* Dealbreakers */}
       {dealbreakers && dealbreakers.length > 0 && (
         <>
-          <SubsectionTitle>Dealbreakers identifies</SubsectionTitle>
+          <SubsectionTitle>Risques critiques identifiés</SubsectionTitle>
           <PdfTable
             columns={[
-              { header: "Dealbreaker", width: 50 },
-              { header: "Severite", width: 25 },
-              { header: "Resolvabilite", width: 25 },
+              { header: "Risque critique", width: 50 },
+              { header: "Sévérité", width: 25 },
+              { header: "Résolvabilité", width: 25 },
             ]}
             rows={dealbreakers
               .slice(0, 8)
@@ -290,21 +290,21 @@ export function QuestionsSection({
                 return (
                   <>
                     <LabelValue
-                      label="Total elements"
-                      value={`${cl.doneItems ?? 0}/${cl.totalItems} completes`}
+                      label="Total éléments"
+                      value={`${cl.doneItems ?? 0}/${cl.totalItems} complétés`}
                     />
                     {cl.blockedItems ? (
                       <LabelValue
-                        label="Elements bloques"
+                        label="Éléments bloqués"
                         value={String(cl.blockedItems)}
                       />
                     ) : null}
                     {cl.items && cl.items.length > 0 && (
                       <PdfTable
                         columns={[
-                          { header: "Element", width: 50 },
+                          { header: "Élément", width: 50 },
                           { header: "Statut", width: 25 },
-                          { header: "Criticite", width: 25 },
+                          { header: "Criticité", width: 25 },
                         ]}
                         rows={cl.items
                           .slice(0, 15)
@@ -326,9 +326,9 @@ export function QuestionsSection({
             return (
               <PdfTable
                 columns={[
-                  { header: "Element", width: 50 },
+                  { header: "Élément", width: 50 },
                   { header: "Statut", width: 25 },
-                  { header: "Criticite", width: 25 },
+                  { header: "Criticité", width: 25 },
                 ]}
                 rows={items
                   .slice(0, 15)
@@ -367,9 +367,9 @@ export function FounderResponsesSection({
 
   return (
     <PdfPage dealName={dealName}>
-      <SectionTitle>Reponses du Fondateur</SectionTitle>
+      <SectionTitle>Réponses du Fondateur</SectionTitle>
       <BodyText>
-        {responses.length} reponse(s) enregistree(s) suite aux questions de
+        {responses.length} réponse(s) enregistrée(s) suite aux questions de
         l&apos;analyse.
       </BodyText>
       <Spacer />

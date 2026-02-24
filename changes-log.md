@@ -2,6 +2,286 @@
 
 ---
 
+## 2026-02-22 — refactor: enforcement complet du positionnement "analyse, pas décision" (UI + prompts Tier 3)
+
+**Contexte :** Les agents Tier 3 généraient encore du texte prescriptif ("Ne pas investir", "Rejeter", "perte de temps") malgré le relabeling UI. Le MemoGeneratorCard affichait des préfixes bruts ([CRITICAL], [IMMEDIATE] [INVESTOR]) et des headers sans accents.
+
+### UI — MemoGeneratorCard (tier3-results.tsx)
+- **Accents** : "Probleme" → "Problème", "These" → "Thèse", "negociation" → "négociation", "completer" → "compléter", "etapes" → "étapes"
+- **Red Flags stylés** : Parsing `[CRITICAL] texte (agent)` → Badge sévérité coloré + texte + source agent. Remplace les listes à puces brutes.
+- **Next Steps stylés** : Parsing `[IMMEDIATE] [INVESTOR] texte` → Badge priorité (rouge/ambre/bleu) + badge owner + texte. Remplace le texte brut.
+- **DD items** : Remplacement `list-disc list-inside` par cards individuelles full-width (plus de troncature)
+- **Layout** : Grid 2-cols DD/RedFlags → stack vertical pour lisibilité
+
+### Prompts agents Tier 3 — section TONALITÉ ajoutée aux 3 agents
+
+**synthesis-deal-scorer.ts :**
+- "PRODUIRE LA DÉCISION FINALE" → "PRODUIRE L'ANALYSE FINALE"
+- "GO/NO-GO clair" → "PROFIL DE SIGNAL clair"
+- Section TONALITÉ complète : interdits (Investir/Rejeter/GO/NO-GO/Dealbreaker), obligatoires (constater/rapporter/guider), exemples
+- Règles spécifiques nextSteps (investigation, pas rejet) et forNegotiation (constats, pas ordres)
+
+**memo-generator.ts :**
+- Grille recommandation → profils de signal
+- "Recommandation claire et assumée" → "Profil de signal clair, le BA décide"
+- Section TONALITÉ complète avec règles par champ (investmentThesis, nextSteps, negotiationPoints, oneLiner)
+- Ajout exemple "MAUVAIS OUTPUT PRESCRIPTIF"
+
+**devils-advocate.ts :**
+- Mission : "tu PROTEGES en INFORMANT — tu ne décides JAMAIS"
+- Section TONALITÉ : interdits + obligatoires + ton "analyste rigoureux, pas prophète de malheur"
+- Règle 8 : JAMAIS de langage prescriptif
+- forNegotiation : constats factuels, pas d'ordres
+
+### CLAUDE.md
+- Ajout section "POSITIONNEMENT PRODUIT — RÈGLE N°1" : principe fondamental, tableau interdits/remplacements, grille profils de signal, labels de score, exemples avant/après, règle d'or, état implémentation
+
+**Vérification :** `npx tsc --noEmit` = 0 erreurs
+
+---
+
+## 2026-02-22 — fix: devils-advocate prompt — langage analytique non-prescriptif
+
+**Fichiers modifiés :**
+- `src/agents/tier3/devils-advocate.ts` — Mise à jour du system prompt (`buildSystemPrompt()`) uniquement, aucune modification de types/interfaces/logique :
+  - **Mission** : reformulée de "PROTEGER L'INVESTISSEUR en challengeant" → "Tu PROTEGES l'investisseur en l'INFORMANT des risques — tu ne decides JAMAIS a sa place"
+  - **Nouvelle section TONALITE** : ajoutée après la mission — liste explicite des termes interdits ("Ne pas investir", "Fuir", "Ce deal est une arnaque", tout impératif), obligations (constater, questionner, condition sur chaque killReason, ton analyste rigoureux)
+  - **Règle 8** : ajoutée dans REGLES ABSOLUES — "JAMAIS de langage prescriptif" avec exemples interdit/correct
+  - **narrative.forNegotiation** : note ajoutée dans FORMAT DE SORTIE — "constats, pas d'ordres" avec exemple
+
+**Raison :** Angel Desk analyse et guide, ne décide jamais. Le Devil's Advocate est naturellement analytique mais certaines sections du prompt pouvaient encore produire du langage prescriptif.
+
+---
+
+## 2026-02-22 — refactor: synthesis-deal-scorer — langage analytique non-prescriptif
+
+**Fichier modifie :**
+- `src/agents/tier3/synthesis-deal-scorer.ts`
+
+**Changements dans le system prompt (`buildSystemPrompt`) :**
+1. **Role description** — "PRODUIRE LA DECISION FINALE D'INVESTISSEMENT" remplace par "PRODUIRE L'ANALYSE FINALE DU DEAL"
+2. **Verdict grid** — Descriptions reformulees en termes analytiques (signaux favorables, signaux contrastes, etc.)
+3. **Regle ABSOLUE n5** — "GO/NO-GO clair" remplace par "PROFIL DE SIGNAL clair / SOIS INFORMATIF"
+4. **Nouvelle section TONALITE** — Regle absolue anti-prescriptive ajoutee avant REGLES ABSOLUES : termes interdits (Investir/Rejeter/GO/NO-GO/Dealbreaker), formulations obligatoires (constats, signaux, questions), exemples BON/MAUVAIS
+5. **Nouvelle section NEXT STEPS** — Regles de formulation : jamais "Rejeter"/"Classer le dossier", toujours "Verifier X"/"Clarifier Z"
+6. **Nouvelle section FORNEGOTIATION** — Jamais "Refuser" comme action, points factuels uniquement
+7. **Mission step 3/4** — "deal-breakers" remplace par "signaux d'alerte majeurs", "GO/NO-GO" par "profil de signal"
+
+**Changements dans le user prompt (`execute`) :**
+- RAPPELS CRITIQUES : "SOIS ACTIONNABLE — GO/NO-GO clair" remplace par "SOIS INFORMATIF — Profil de signal clair, le BA decide"
+
+**Raison :** Angel Desk analyse et guide, il ne decide jamais a la place du Business Angel. Le scorer produisait du langage prescriptif ("Investir", "Ne pas investir", "GO/NO-GO"). Toutes les instructions prompt sont maintenant alignees avec le positionnement produit.
+
+---
+
+## 2026-02-22 — fix: memo-generator prompt — langage analytique non-prescriptif
+
+**Fichiers modifiés :**
+- `src/agents/tier3/memo-generator.ts` — Mise à jour du system prompt (`buildSystemPrompt`) et du prompt d'exécution (`execute`) pour imposer un ton analytique, jamais prescriptif :
+  - Grille de recommandation : descriptions changées en profils de signal factuels (ex: "Vigilance requise, risques significatifs identifiés" au lieu de label GO/NO-GO)
+  - Ajout section "TONALITE — REGLE ABSOLUE" avant REGLES ABSOLUES : liste exhaustive des formulations interdites (impératifs, jugements, ordres de ne pas investir) et obligatoires (constats factuels, actions d'investigation)
+  - Règle 7 : "La recommandation doit être claire et assumée" remplacée par "Le profil de signal doit être clair (le BA décide, l'outil rapporte)"
+  - Ajout exemple "MAUVAIS OUTPUT PRESCRIPTIF" (oneLiner/verdict prescriptifs) avec explication
+  - Prompt execute : "La recommandation DOIT être claire et assumée" remplacée par "Le profil de signal DOIT être clair (l'outil rapporte, le BA décide)"
+
+**Raison :** Angel Desk analyse et guide, il ne décide jamais à la place du Business Angel. Le memo-generator était le dernier agent Tier 3 à encore pouvoir générer du langage prescriptif ("Ne pas investir", "Deal à fuir", "Refuser la structure").
+
+---
+
+## 2026-02-22 — fix: MemoGeneratorCard — accents, red flags badges, next steps badges, layout DD
+
+**Fichiers modifiés :**
+- `src/components/deals/tier3-results.tsx` — MemoGeneratorCard uniquement :
+  - **Accents manquants** : "Probleme" → "Problème", "These d'investissement" → "Thèse d'investissement", "Points de negociation" → "Points de négociation", "DD a completer" → "DD à compléter", "Prochaines etapes" → "Prochaines étapes"
+  - **Red Flags parsés** : parsing du format `[SEVERITY] texte (agent-source)` → affichage avec severity badges colorés via `getSeverityStyle()` + source agent en sous-texte
+  - **Next Steps parsés** : parsing du format `[PRIORITY] [OWNER] texte` → badges priority (IMMEDIATE=rouge, BEFORE_TERM_SHEET=ambre, DURING_DD=bleu) + badges owner (INVESTOR=slate, FOUNDER=violet)
+  - **DD outstanding** : remplacement du `list-disc list-inside` tronqué par des cards individuelles avec padding correct
+  - **Layout DD/Red Flags** : passage de `grid md:grid-cols-2` cramé à `space-y-4` vertical pour meilleure lisibilité
+  - Import `getSeverityStyle` ajouté depuis `@/lib/ui-configs`
+  - Helpers `parseRedFlag()`, `parseNextStep()` + configs `PRIORITY_BADGE_CONFIG`, `OWNER_BADGE_CONFIG` hoistés hors du composant
+  - `useMemo` pour parsed arrays (pattern cohérent avec le reste du fichier)
+
+---
+
+## 2026-02-22 — doc: CLAUDE.md — ajout section positionnement produit (règle n°1)
+
+**Fichiers modifiés :**
+- `CLAUDE.md` — Ajout section "POSITIONNEMENT PRODUIT — RÈGLE N°1" entre les principes de développement et la stack technique. Contient : principe fondamental ("Angel Desk analyse et guide, ne décide jamais"), tableau des termes interdits avec remplacements, grille des profils de signal, labels de score, exemples de reformulation, règle d'or, liste des endroits d'application (prompts, UI, PDF, chat, landing), état de l'implémentation (fait vs reste à faire).
+
+**Raison :** Chaque nouvelle conversation Claude Code démarrait sans contexte sur cette orientation critique. Le CLAUDE.md est lu automatiquement — cette section garantit que le positionnement "conseil, pas décision" est respecté dès le départ.
+
+---
+
+## 2026-02-22 — fix: CRITICAL — derniers vestiges de langage prescriptif + 100+ accents manquants
+
+**Contexte :** Deuxième passe d'audit (2 agents audit parallèles) → 4 agents fix parallèles. Zéro CRITICAL restant, zéro prescriptif visible par l'utilisateur.
+
+**Dernières corrections composants (13 edits) :**
+- `deck-coherence-report.tsx` — "Equipe" → "Équipe", "Marche" → "Marché", "Metriques" → "Métriques", "Incoherence" → "Incohérence"
+- `deal-comparison.tsx` — "Equipe" → "Équipe", "Marche" → "Marché"
+- `score-display.tsx` — "Equipe" → "Équipe"
+- `founder-responses.tsx` — "Equipe" → "Équipe", "Marche" → "Marché", "Legal" → "Légal"
+- `conditions-analysis-cards.tsx` — "Eleve" → "Élevé", "Modere" → "Modéré"
+- `percentile-comparator.tsx` — "Marche" → "Marché", "Eleve" → "Élevé", "Tres eleve" → "Très élevé"
+- `suivi-dd-filters.tsx` — "Eleve" → "Élevé"
+- `unified-alert.ts` — "Eleve" → "Élevé"
+- `team-management.tsx` — "detecte(s)" → "détecté(s)", "succes" → "succès", "equipe" → "équipe", "detecter" → "détecter"
+
+**CRITICAL fixes (5) :**
+- `src/components/deals/partial-analysis-banner.tsx` — "dealbreakers" → "risques critiques" (teaser FREE users)
+- `src/components/chat/deal-chat-panel.tsx` — "Red flags & dealbreakers" → "Red flags & risques critiques" (chat prompt)
+- `src/components/deals/next-steps-guide.tsx` — "dealbreakers" → "risques critiques" + 8 accents manquants
+- `src/app/(dashboard)/pricing/page.tsx` — "GO / NO-GO / NEED MORE INFO" → "votent et rendent un avis argumenté"
+- `src/lib/pdf/pdf-sections/cover.tsx` — Raw verdict `verdict.replace(/_/g, " ")` → `recLabel(verdict)` + 4 accents
+
+**HIGH fixes (100+ accents) — PDF files :**
+- `negotiation.tsx` — 13 corrections (Stratégie, Négociation, Priorité, Amélioration, Résolution, Bénéfice, Résumé...)
+- `tier3-synthesis.tsx` — 26 corrections (Sévérité, Probabilité, Scénario, Déclencheur, Délai, Préoccupations, Plausibilité...)
+- `questions.tsx` — 16 corrections (Priorité, Catégorie, Déclencheur, réponse, évaluation, Criticité, Éléments...)
+- `tier1-agents.tsx` — ~55 corrections (Sévérité x4, Catégorie x3, Crédibilité, Cohérence, Qualité, Complétude...)
+- `tier2-expert.tsx` — ~45 corrections (Métriques clés, Préoccupation, IA véritable, Crédibilité technique, Dépendance API...)
+- `early-warnings.tsx` — 2 corrections (Catégorie, détectée)
+- `generate-analysis-pdf.tsx` — 2 corrections (Résumé dans métadonnées PDF)
+
+**HIGH fixes (accents) — Composants :**
+- `severity-badge.tsx` — 8 corrections (sérieux, réduire, Négocier, adressé, combiné, à d'autres, immédiate, sévérité)
+- `severity-legend.tsx` — 2 corrections (sérieux, sévérité)
+
+**Vérification :** `npx tsc --noEmit` = 0 erreurs. Grep global : 0 "dealbreaker" user-facing, 0 "GO/NO-GO" hors Board, 0 "INVESTIR"/"PASSER".
+
+---
+
+## 2026-02-22 — fix: accents manquants dans 3 fichiers PDF (questions, tier1-agents, tier2-expert)
+
+**Fichiers modifies :**
+
+- `src/lib/pdf/pdf-sections/questions.tsx` — "Priorite" -> "Priorite", "Categorie" -> "Categorie", "Declencheur" -> "Declencheur", "Bonne reponse" -> "Bonne reponse", "Mauvaise reponse" -> "Mauvaise reponse", "Guide d'evaluation" -> "Guide d'evaluation", "Personne ideale" -> "Personne ideale", "completes" -> "completes", "Elements bloques" -> "Elements bloques", "Criticite" -> "Criticite", "Reponses du Fondateur" -> "Reponses du Fondateur", "reponse(s) enregistree(s)" -> "reponse(s) enregistree(s)", "Verifications de references" -> "Verifications de references", "Total elements" -> "Total elements", "Element" -> "Element", "Detail" -> "Detail"
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` — Correction de ~50 accents manquants dans labels/headers : "Severite" -> "Severite" (x4), "Categorie" -> "Categorie" (x3), "Critere", "Metrique", "Donnees", "Realistes", "Efficacite", "Coherence", "Credibilite", "Completude", "Retention", "Liquidite", "Fenetre", "Scenarios", "Resume", "Repartition", "Detention", "Reglementations", etc.
+- `src/lib/pdf/pdf-sections/tier2-expert.tsx` — Correction de ~45 accents manquants : "Severite", "Categorie", "Priorite", "Preoccupation", "Metriques cles", "Metrique" (x3), "Median", "Detail", "Maturite", "Complexite", "Opportunites", "Modele", "Efficacite", "Completude", "Decentralisation", "Securite", "Sensibilite", "Resilience", etc.
+
+---
+
+## 2026-02-22 — fix: accents manquants dans 6 fichiers UI/PDF
+
+**Fichiers modifiés :**
+
+- `src/components/shared/severity-badge.tsx` — "serieux" → "sérieux", "reduire" → "réduire", "Negocier" → "Négocier", "adresse" → "adressé", "combine" → "combiné", "a d'autres" → "à d'autres", "A noter" → "À noter", "a prioriser" → "à prioriser", "immediate" → "immédiate", "severite" → "sévérité", "Evaluer" → "Évaluer"
+- `src/components/shared/severity-legend.tsx` — "serieux" → "sérieux", "severite" → "sévérité"
+- `src/components/deals/next-steps-guide.tsx` — "generees" → "générées", "Reponses" → "Réponses", "reponses" → "réponses", "complementaires" → "complémentaires", "specifiques" → "spécifiques", "connait" → "connaît", "resultats" → "résultats", "complete" → "complète", "scenarios" → "scénarios", "detecteur" → "détecteur", "memo" → "mémo", "Preparer" → "Préparer", "negociation" → "négociation", "identifie" → "identifié", "etapes" → "étapes", "recommandees" → "recommandées"
+- `src/lib/pdf/pdf-sections/early-warnings.tsx` — "detectee(s)" → "détectée(s)", "Categorie" → "Catégorie"
+- `src/lib/pdf/pdf-sections/cover.tsx` — "Analyse complete:" → "Analyse complète :", "Genere le" → "Généré le", "EQUIPE" → "ÉQUIPE", "DEMANDE" → "DEMANDÉ"
+- `src/lib/pdf/generate-analysis-pdf.tsx` — "DD Resume" → "DD Résumé", "Resume Due Diligence" → "Résumé Due Diligence"
+
+---
+
+## 2026-02-22 — fix: accents manquants dans pdf-sections/tier3-synthesis.tsx
+
+**Fichiers modifiés :**
+
+- `src/lib/pdf/pdf-sections/tier3-synthesis.tsx` — Correction de tous les accents manquants dans les labels/headers PDF français : "Synthese" → "Synthèse", "Contradictions detectees" → "Contradictions détectées", "Severite" → "Sévérité", "Resolution probable" → "Résolution probable", "Lacunes de donnees identifiees" → "Lacunes de données identifiées", "Impact si ignore" → "Impact si ignoré", "Scenario catastrophe" → "Scénario catastrophe", "Probabilite" → "Probabilité", "Perte estimee" → "Perte estimée", "Declencheur" → "Déclencheur", "Delai" → "Délai", "Angles morts identifies" → "Angles morts identifiés", "Objections detaillees" → "Objections détaillées", "Echec comparable" → "Échec comparable", "Interpretation alternative" → "Interprétation alternative", "Plausibilite" → "Plausibilité", "Synthese des preoccupations" → "Synthèse des préoccupations", "Preoccupations serieuses" → "Préoccupations sérieuses", "Preoccupations mineures" → "Préoccupations mineures", "Scenarios d'investissement" → "Scénarios d'investissement", "Resultat probabiliste" → "Résultat probabiliste", "risque-ajustee" → "risque-ajustée", "Scenario" (table header) → "Scénario", "Scenario le + probable" → "Scénario le + probable", "sensibilite" → "sensibilité", "Evaluation burn" → "Évaluation burn"
+
+---
+
+## 2026-02-22 — fix: accents manquants dans pdf-sections/negotiation.tsx
+
+**Fichiers modifiés :**
+
+- `src/lib/pdf/pdf-sections/negotiation.tsx` — Correction de tous les accents manquants dans les labels/headers PDF français : "Strategie de Negociation" → "Stratégie de Négociation", "Arguments cles" → "Arguments clés" (x2), "Apres" → "Après", "Amelioration" → "Amélioration", "Points de negociation" → "Points de négociation" (x2), "Priorite" → "Priorité" (x2), "Resolution" → "Résolution", "Resolvable" → "Résolvable", "Benefice net" → "Bénéfice net", "Negociation — Resume" → "Négociation — Résumé"
+
+---
+
+## 2026-02-22 — fix: accents et langage — corrections HIGH+MEDIUM à travers la codebase
+
+**Fichiers modifiés :**
+
+- `src/lib/ui-configs.ts` — "Eleve" → "Élevé" (label sévérité HIGH)
+- `src/components/deals/early-warnings-panel.tsx` — "Integrite Fondateurs" → "Intégrité Fondateurs", "Marche" → "Marché", "Questions a poser" → "Questions à poser", "Alertes Detectees" → "Alertes Détectées", phrase critique avec accents manquants corrigée
+- `src/components/deals/suivi-dd/suivi-dd-alert-card.tsx` — "Conditionnel" → "Risque conditionnel", "Resolu" → "Résolu", "Accepte" → "Accepté", "Piste de resolution" → "Piste de résolution", "Argument de nego" → "Argument de négociation"
+- `src/components/deals/tier3-results.tsx` — "Niveau de conviction" → "Niveau de scepticisme", "Investment Highlights" → "Points forts du deal", "Deals Compares" → "Deals Comparés", "Contradictions detectees" → "Contradictions détectées", "identifiee(s)" → "identifiée(s)", "incoherences" → "incohérences", "coherentes" → "cohérentes", "Analyse automatisee" → "Analyse automatisée", "Synthese Due Diligence" → "Synthèse Due Diligence", "Fiabilite donnees" → "Fiabilité données"
+- `src/components/shared/severity-legend.tsx` — "Dealbreaker potentiel" → "Risque potentiellement bloquant"
+- `src/components/shared/severity-badge.tsx` — CRITICAL: "Dealbreaker potentiel. Ce risque peut a lui seul justifier de passer le deal." → langage non-prescriptif avec accents
+- `src/lib/pdf/pdf-sections/early-warnings.tsx` — "Alertes Precoces (Early Warnings)" → "Alertes Précoces", "Questions a poser" → "Questions à poser"
+- `src/lib/pdf/pdf-sections/negotiation.tsx` — "Approche recommandee" → "Approche recommandée"
+- `src/lib/pdf/pdf-sections/questions.tsx` — "Risques critiques identifies" → "Risques critiques identifiés", "Resolvabilite" → "Résolvabilité", "Red flag si mauvaise" → "Signal d'alerte si mauvaise réponse"
+- `src/components/deals/tier2-results.tsx` — "Confidence:" → "Fiabilité :", "Top Strength" → "Point fort principal", "Top Concern" → "Point d'attention principal"
+
+---
+
+## 2026-02-22 — fix: CRITICAL+HIGH — prescriptive text, missing rec keys, raw internal keys in chat
+
+**Fichiers modifies :**
+
+- `src/lib/pdf/pdf-sections/tier3-synthesis.tsx` — "Raisons de ne PAS investir" -> "Signaux d'alerte critiques"
+- `src/lib/pdf/pdf-helpers.ts` — recLabel() : ajout cases strong_invest, strong_pass, no_go, conditional_invest
+- `src/lib/pdf/pdf-components.tsx` — RecommendationBadge : gestion complète de tous les keys (strong_invest, strong_pass, no_go, conditional_invest) avec bg/fg corrects
+- `src/agents/orchestrator/summary.ts` — Ajout ACTION_LABELS, remplacement .toUpperCase() par labels FR, "Dealbreakers potentiels" -> "Risques critiques potentiels"
+- `src/config/labels-fr.ts` — Suppression VERDICT_LABELS_FR (non utilisée, labels incorrects)
+- `src/components/deals/tier2-results.tsx` — Renommage VERDICT_CONFIG -> SECTOR_FIT_CONFIG + mise a jour ref avec keyof typeof
+- `src/lib/score-utils.ts` — extractDealRecommendation() : lit d'abord investmentRecommendation.action, fallback recommendation
+- `src/components/deals/verdict-panel.tsx` — "Verdict" -> "Analyse globale" (h3 + empty-state)
+
+---
+
+## 2026-02-22 — fix: accessibility + performance — score-ring, verdict-panel, early-warnings, tier3, tier1, ui-configs
+
+**Fichiers modifies :**
+
+### Accessibility
+- `src/components/ui/score-ring.tsx` — Ajout `role="img"` + `aria-label="Score: X sur 100"` sur le conteneur, `aria-hidden="true"` sur le SVG
+- `src/components/deals/verdict-panel.tsx` — MiniBar : ajout prop `label`, `role="progressbar"`, `aria-valuenow/min/max`, `aria-label`. Call sites mis a jour avec `label={dim.label}`
+- `src/components/deals/early-warnings-panel.tsx` — Bouton expand/collapse : ajout `aria-expanded={isExpanded}`
+
+### Performance
+- `src/components/deals/tier3-results.tsx` — Hoist `recommendationConfig` de `MemoGeneratorCard` vers module level (`MEMO_RECOMMENDATION_CONFIG`). Ajout `shrink-0` sur `RecommendationBadge` Badge className
+- `src/lib/ui-configs.ts` — Ajout exports `ALERT_SIGNAL_LABELS` et `READINESS_LABELS` (source de verite unique)
+- `src/components/deals/tier1-results.tsx` — Suppression constants locales `ALERT_SIGNAL_LABELS`/`READINESS_LABELS`, import depuis `@/lib/ui-configs`
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` — Import `ALERT_SIGNAL_LABELS` depuis `@/lib/ui-configs`, remplacement de la chaine ternaire inline
+
+---
+
+## 2026-02-22 — refactor: repositionnement produit — de conseil à analyse (profils de signal)
+
+**Contexte :** Réduction du risque juridique/réputationnel en éliminant le langage prescriptif (INVESTIR/PASSER/etc.) au profit de constats analytiques. Le BA reste le décideur, l'outil rapporte des signaux.
+
+**Fichiers modifies :**
+
+### Configs centrales
+- `src/lib/ui-configs.ts` — RECOMMENDATION_CONFIG: INVESTIR→"Signaux favorables", PASSER→"Signaux d'alerte dominants", NEGOCIER→"Signaux contrastés", ATTENDRE→"Investigation complémentaire". VERDICT_CONFIG: Forte conviction→"Signaux très favorables", Ne pas investir→"Signaux d'alerte dominants". getScoreLabel: Bon→"Solide", Moyen→"À approfondir", Faible→"Points d'attention", Critique→"Zone d'alerte"
+- `src/config/labels-fr.ts` — VERDICT_LABELS_FR aligné sur nouveau VERDICT_CONFIG
+
+### Composants d'affichage
+- `src/components/deals/early-warnings-panel.tsx` — "Dealbreaker probable/absolu"→"Risque majeur/critique détecté"
+- `src/components/deals/tier1-results.tsx` — AlertSignal mapping (STOP→"ANOMALIE MAJEURE", INVESTIGATE_FURTHER→"INVESTIGATION REQUISE", etc.), readiness labels (DO_NOT_PROCEED→"Alertes critiques"), "Dealbreakers identifiés"→"Risques critiques identifiés"
+- `src/components/deals/tier2-results.tsx` — Sector verdicts (NOT_RECOMMENDED→"Hors profil sectoriel"), valuation verdicts (excessive→"Nettement au-dessus")
+- `src/components/deals/tier3-results.tsx` — "Dealbreakers"→"Risques critiques", "Pourquoi NO_GO"→"Signaux d'alerte dominants", memo recommendation labels
+- `src/components/deals/suivi-dd/suivi-dd-alert-card.tsx` — "Dealbreaker"→"Risque critique"
+
+### PDF
+- `src/lib/pdf/pdf-helpers.ts` — recLabel() aligné sur profils de signal
+- `src/lib/pdf/pdf-components.tsx` — RecommendationBadge aligné
+- `src/lib/pdf/pdf-sections/early-warnings.tsx` — "DEALBREAKER ABSOLU/PROBABLE"→"RISQUE CRITIQUE/MAJEUR DÉTECTÉ"
+- `src/lib/pdf/pdf-sections/negotiation.tsx` — "Dealbreakers"→"Risques critiques"
+- `src/lib/pdf/pdf-sections/tier3-synthesis.tsx` — "Dealbreakers absolus/conditionnels"→"Risques critiques/conditionnels"
+- `src/lib/pdf/pdf-sections/questions.tsx` — "Dealbreakers identifies"→"Risques critiques identifies"
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` — alertSignal labels reformulés
+
+### Prompts agents
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Grille verdict reformulée en profils de signal
+- `src/agents/tier3/memo-generator.ts` — Grille recommandation reformulée
+- `src/agents/tier3/devils-advocate.ts` — Kill reasons : ajout obligation de condition d'atténuation
+- `src/agents/orchestrator/summary.ts` — "VERDICT FINAL"→"ANALYSE FINALE", "Recommandation"→"Signal"
+
+### Landing + Pricing
+- `src/app/page.tsx` — Badge: "Votre équipe d'analystes IA", CTA: "Vous décidez, vos analystes IA font le travail", "Votre prochain deal, analysé en 5 minutes"
+- `src/app/(dashboard)/pricing/page.tsx` — Header: "Votre équipe d'analystes, toujours disponible", "GO/NO-GO en 2 min"→"Briefing express en 2 min", Tiers 2/3 inversés corrigés
+
+### Divers
+- `src/lib/glossary.ts` — "Dealbreaker" redéfini comme "Risque critique"
+
+**Ce qui ne change PAS :** Types TS, Zod schemas, clés internes, Board GO/NO_GO, Prisma schema, logique de scoring
+
+---
+
 ## 2026-02-22 — fix: prompt engineering conditions-analyst — tonalité valorisation + logique CCA vs BSA-AIR
 
 **Fichiers modifies :**

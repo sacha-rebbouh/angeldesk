@@ -87,19 +87,19 @@ const TIMING_COLORS: Record<string, string> = {
   late: "bg-orange-100 text-orange-800",
 };
 
-const VERDICT_CONFIG = {
-  STRONG_FIT: { color: "bg-green-500", textColor: "text-green-700", label: "Strong Fit", icon: Award },
-  GOOD_FIT: { color: "bg-blue-500", textColor: "text-blue-700", label: "Good Fit", icon: CheckCircle },
-  MODERATE_FIT: { color: "bg-yellow-500", textColor: "text-yellow-700", label: "Moderate Fit", icon: Minus },
-  POOR_FIT: { color: "bg-orange-500", textColor: "text-orange-700", label: "Poor Fit", icon: AlertTriangle },
-  NOT_RECOMMENDED: { color: "bg-red-500", textColor: "text-red-700", label: "Not Recommended", icon: XCircle },
+const SECTOR_FIT_CONFIG = {
+  STRONG_FIT: { color: "bg-green-500", textColor: "text-green-700", label: "Forte adéquation sectorielle", icon: Award },
+  GOOD_FIT: { color: "bg-blue-500", textColor: "text-blue-700", label: "Bonne adéquation", icon: CheckCircle },
+  MODERATE_FIT: { color: "bg-yellow-500", textColor: "text-yellow-700", label: "Adéquation partielle", icon: Minus },
+  POOR_FIT: { color: "bg-orange-500", textColor: "text-orange-700", label: "Écarts significatifs", icon: AlertTriangle },
+  NOT_RECOMMENDED: { color: "bg-red-500", textColor: "text-red-700", label: "Hors profil sectoriel", icon: XCircle },
 };
 
 const VALUATION_VERDICT_CONFIG = {
-  attractive: { color: "bg-green-100 text-green-800 border-green-200", label: "Attractive" },
-  fair: { color: "bg-blue-100 text-blue-800 border-blue-200", label: "Fair" },
-  stretched: { color: "bg-yellow-100 text-yellow-800 border-yellow-200", label: "Stretched" },
-  excessive: { color: "bg-red-100 text-red-800 border-red-200", label: "Excessive" },
+  attractive: { color: "bg-green-100 text-green-800 border-green-200", label: "Sous les comparables" },
+  fair: { color: "bg-blue-100 text-blue-800 border-blue-200", label: "Dans la norme" },
+  stretched: { color: "bg-yellow-100 text-yellow-800 border-yellow-200", label: "Au-dessus des comparables" },
+  excessive: { color: "bg-red-100 text-red-800 border-red-200", label: "Nettement au-dessus" },
 };
 
 // =============================================================================
@@ -165,7 +165,7 @@ const VerdictHero = memo(function VerdictHero({
 }) {
   if (!verdict) return null;
 
-  const config = VERDICT_CONFIG[verdict.recommendation] ?? VERDICT_CONFIG.MODERATE_FIT;
+  const config = SECTOR_FIT_CONFIG[verdict.recommendation as keyof typeof SECTOR_FIT_CONFIG] ?? SECTOR_FIT_CONFIG.MODERATE_FIT;
   const Icon = config.icon;
 
   return (
@@ -183,7 +183,7 @@ const VerdictHero = memo(function VerdictHero({
               {config.label}
             </Badge>
             <Badge variant="outline" className="text-sm">
-              Confidence: {verdict.confidence}
+              Fiabilité : {verdict.confidence}
             </Badge>
           </div>
 
@@ -193,14 +193,14 @@ const VerdictHero = memo(function VerdictHero({
             <div className="flex items-start gap-2">
               <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wide">Top Strength</p>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Point fort principal</p>
                 <p className="text-sm text-slate-700">{verdict.topStrength}</p>
               </div>
             </div>
             <div className="flex items-start gap-2">
               <AlertCircle className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wide">Top Concern</p>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Point d'attention principal</p>
                 <p className="text-sm text-slate-700">{verdict.topConcern}</p>
               </div>
             </div>

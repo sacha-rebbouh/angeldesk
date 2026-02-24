@@ -597,26 +597,26 @@ export function TwoColumn({
 
 export function RecommendationBadge({ recommendation }: { recommendation: string }) {
   const rec = recommendation?.toLowerCase();
-  const bg =
-    rec === "invest" || rec === "investir"
-      ? colors.successLight
-      : rec === "pass" || rec === "passer"
-        ? colors.dangerLight
-        : colors.warningLight;
-  const fg =
-    rec === "invest" || rec === "investir"
-      ? colors.success
-      : rec === "pass" || rec === "passer"
-        ? colors.danger
-        : colors.warning;
-  const label =
-    rec === "invest" || rec === "investir"
-      ? "INVESTIR"
-      : rec === "pass" || rec === "passer"
-        ? "PASSER"
-        : rec === "negotiate" || rec === "negocier"
-          ? "NEGOCIER"
-          : "DD COMPLEMENTAIRE";
+  const isFavorable = rec === "invest" || rec === "investir" || rec === "strong_invest";
+  const isAlert = rec === "pass" || rec === "passer" || rec === "strong_pass" || rec === "no_go";
+  const isContrasted = rec === "negotiate" || rec === "negocier" || rec === "conditional_invest";
+  const bg = isFavorable
+    ? colors.successLight
+    : isAlert
+      ? colors.dangerLight
+      : colors.warningLight;
+  const fg = isFavorable
+    ? colors.success
+    : isAlert
+      ? colors.danger
+      : colors.warning;
+  const label = isFavorable
+    ? "SIGNAUX FAVORABLES"
+    : isAlert
+      ? "SIGNAUX D'ALERTE DOMINANTS"
+      : isContrasted
+        ? "SIGNAUX CONTRASTÉS"
+        : "INVESTIGATION COMPLÉMENTAIRE";
 
   return (
     <View

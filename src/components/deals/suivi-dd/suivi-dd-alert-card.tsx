@@ -84,7 +84,7 @@ export const SuiviDDAlertCard = memo(function SuiviDDAlertCard({
               </Badge>
               {alert.dealBreakerLevel && (
                 <Badge variant="outline" className="text-[10px] shrink-0 text-red-700 border-red-200">
-                  {alert.dealBreakerLevel === "ABSOLUTE" ? "Dealbreaker" : "Conditionnel"}
+                  {alert.dealBreakerLevel === "ABSOLUTE" ? "Risque critique" : "Risque conditionnel"}
                 </Badge>
               )}
               <span className={cn("font-medium text-sm", isResolved && "line-through text-muted-foreground")}>
@@ -134,7 +134,7 @@ export const SuiviDDAlertCard = memo(function SuiviDDAlertCard({
                   onClick={() => openDialog("RESOLVED")}
                 >
                   <CheckCircle className="h-3 w-3" />
-                  Resolu
+                  Résolu
                 </Button>
                 <Button
                   variant="outline"
@@ -143,7 +143,7 @@ export const SuiviDDAlertCard = memo(function SuiviDDAlertCard({
                   onClick={() => openDialog("ACCEPTED")}
                 >
                   <ShieldCheck className="h-3 w-3" />
-                  Accepte
+                  Accepté
                 </Button>
               </>
             )}
@@ -165,10 +165,10 @@ export const SuiviDDAlertCard = memo(function SuiviDDAlertCard({
                   <p>{alert.description}</p>
                 )}
                 {alert.resolutionPath && (
-                  <p className="text-blue-700"><span className="font-medium">Piste de resolution :</span> {alert.resolutionPath}</p>
+                  <p className="text-blue-700"><span className="font-medium">Piste de résolution :</span> {alert.resolutionPath}</p>
                 )}
                 {alert.suggestedArgument && (
-                  <p className="text-blue-700"><span className="font-medium">Argument de nego :</span> {alert.suggestedArgument}</p>
+                  <p className="text-blue-700"><span className="font-medium">Argument de négociation :</span> {alert.suggestedArgument}</p>
                 )}
                 {alert.leverageSource && (
                   <p className="text-xs text-muted-foreground/70"><span className="font-medium">Levier :</span> {alert.leverageSource}</p>

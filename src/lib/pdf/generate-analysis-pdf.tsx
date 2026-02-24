@@ -233,9 +233,9 @@ function SummaryReport({ data }: { data: PdfExportData }) {
 
   return (
     <Document
-      title={`DD Resume — ${dealName}`}
+      title={`DD Résumé — ${dealName}`}
       author="Angel Desk"
-      subject="Resume Due Diligence"
+      subject="Résumé Due Diligence"
     >
       {/* 1. Cover */}
       <CoverPage data={data} />

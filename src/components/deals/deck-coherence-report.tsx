@@ -37,14 +37,14 @@ const SEVERITY_CONFIG = {
 
 const CATEGORY_LABELS: Record<CoherenceIssue["category"], string> = {
   financial: "Financier",
-  team: "Equipe",
-  market: "Marche",
-  metrics: "Metriques",
+  team: "Équipe",
+  market: "Marché",
+  metrics: "Métriques",
   timeline: "Timeline",
 };
 
 const TYPE_CONFIG: Record<CoherenceIssue["type"], { color: string; label: string }> = {
-  inconsistency: { color: "bg-purple-100 text-purple-800", label: "Incoherence" },
+  inconsistency: { color: "bg-purple-100 text-purple-800", label: "Incohérence" },
   missing: { color: "bg-gray-100 text-gray-800", label: "Manquant" },
   implausible: { color: "bg-pink-100 text-pink-800", label: "Implausible" },
   contradiction: { color: "bg-red-100 text-red-800", label: "Contradiction" },

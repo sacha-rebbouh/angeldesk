@@ -29,7 +29,7 @@ export const SEVERITY_STYLES: Record<string, {
     text: "text-orange-800",
     icon: "text-orange-500",
     badge: "bg-orange-100 text-orange-800 border-orange-300",
-    label: "Eleve",
+    label: "Élevé",
   },
   MEDIUM: {
     bg: "bg-yellow-50",
@@ -87,10 +87,10 @@ export function getScoreColor(score: number): string {
  */
 export function getScoreLabel(score: number): string {
   if (score >= 80) return "Excellent";
-  if (score >= 60) return "Bon";
-  if (score >= 40) return "Moyen";
-  if (score >= 20) return "Faible";
-  return "Critique";
+  if (score >= 60) return "Solide";
+  if (score >= 40) return "À approfondir";
+  if (score >= 20) return "Points d'attention";
+  return "Zone d'alerte";
 }
 
 /**
@@ -109,28 +109,44 @@ export function getScoreBarColor(score: number): string {
 // =============================================================================
 
 export const RECOMMENDATION_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  invest: { label: "INVESTIR", color: "text-green-800", bg: "bg-green-50 border-green-300" },
-  strong_invest: { label: "INVESTIR", color: "text-green-800", bg: "bg-green-50 border-green-300" },
-  negotiate: { label: "NÉGOCIER", color: "text-amber-800", bg: "bg-amber-50 border-amber-300" },
-  conditional_invest: { label: "NÉGOCIER", color: "text-amber-800", bg: "bg-amber-50 border-amber-300" },
-  wait: { label: "ATTENDRE", color: "text-blue-800", bg: "bg-blue-50 border-blue-300" },
-  pass: { label: "PASSER", color: "text-red-800", bg: "bg-red-50 border-red-300" },
-  strong_pass: { label: "PASSER", color: "text-red-800", bg: "bg-red-50 border-red-300" },
-  no_go: { label: "PASSER", color: "text-red-800", bg: "bg-red-50 border-red-300" },
+  invest: { label: "Signaux favorables", color: "text-green-800", bg: "bg-green-50 border-green-300" },
+  strong_invest: { label: "Signaux favorables", color: "text-green-800", bg: "bg-green-50 border-green-300" },
+  negotiate: { label: "Signaux contrastés", color: "text-amber-800", bg: "bg-amber-50 border-amber-300" },
+  conditional_invest: { label: "Signaux contrastés", color: "text-amber-800", bg: "bg-amber-50 border-amber-300" },
+  wait: { label: "Investigation complémentaire", color: "text-blue-800", bg: "bg-blue-50 border-blue-300" },
+  pass: { label: "Signaux d'alerte dominants", color: "text-red-800", bg: "bg-red-50 border-red-300" },
+  strong_pass: { label: "Signaux d'alerte dominants", color: "text-red-800", bg: "bg-red-50 border-red-300" },
+  no_go: { label: "Signaux d'alerte dominants", color: "text-red-800", bg: "bg-red-50 border-red-300" },
 };
 
 // Verdict Config — maps synthesis scorer verdict values to badge display
 // Used by tier3-results VerdictBadge
 export const VERDICT_CONFIG: Record<string, { label: string; color: string }> = {
-  strong_pass: { label: "Forte conviction", color: "bg-green-100 text-green-800 border-green-300" },
-  pass: { label: "Favorable", color: "bg-blue-100 text-blue-800 border-blue-300" },
-  conditional_pass: { label: "Conditionnel", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  weak_pass: { label: "Réservé", color: "bg-orange-100 text-orange-800 border-orange-300" },
-  no_go: { label: "Ne pas investir", color: "bg-red-100 text-red-800 border-red-300" },
+  strong_pass: { label: "Signaux très favorables", color: "bg-green-100 text-green-800 border-green-300" },
+  pass: { label: "Signaux favorables", color: "bg-blue-100 text-blue-800 border-blue-300" },
+  conditional_pass: { label: "Signaux contrastés", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
+  weak_pass: { label: "Vigilance requise", color: "bg-orange-100 text-orange-800 border-orange-300" },
+  no_go: { label: "Signaux d'alerte dominants", color: "bg-red-100 text-red-800 border-red-300" },
   // Aliases for recommendation keys that might appear as verdict
-  invest: { label: "Forte conviction", color: "bg-green-100 text-green-800 border-green-300" },
-  strong_invest: { label: "Forte conviction", color: "bg-green-100 text-green-800 border-green-300" },
-  negotiate: { label: "Conditionnel", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  conditional_invest: { label: "Conditionnel", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  wait: { label: "Réservé", color: "bg-orange-100 text-orange-800 border-orange-300" },
+  invest: { label: "Signaux très favorables", color: "bg-green-100 text-green-800 border-green-300" },
+  strong_invest: { label: "Signaux très favorables", color: "bg-green-100 text-green-800 border-green-300" },
+  negotiate: { label: "Signaux contrastés", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
+  conditional_invest: { label: "Signaux contrastés", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
+  wait: { label: "Vigilance requise", color: "bg-orange-100 text-orange-800 border-orange-300" },
+};
+
+// Alert Signal Labels — analytical framing (no prescriptive language)
+export const ALERT_SIGNAL_LABELS: Record<string, string> = {
+  STOP: "ANOMALIE MAJEURE",
+  INVESTIGATE_FURTHER: "INVESTIGATION REQUISE",
+  PROCEED_WITH_CAUTION: "POINTS D'ATTENTION",
+  PROCEED: "CONFORME",
+};
+
+// Readiness Labels — analytical framing
+export const READINESS_LABELS: Record<string, string> = {
+  READY_TO_INVEST: "Données suffisantes",
+  NEEDS_MORE_DD: "Investigation complémentaire",
+  SIGNIFICANT_CONCERNS: "Points d'attention majeurs",
+  DO_NOT_PROCEED: "Alertes critiques",
 };

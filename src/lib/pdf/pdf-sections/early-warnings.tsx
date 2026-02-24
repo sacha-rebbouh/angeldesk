@@ -33,9 +33,9 @@ export function EarlyWarningsSection({
 
   return (
     <PdfPage dealName={dealName}>
-      <SectionTitle>Alertes Precoces (Early Warnings)</SectionTitle>
+      <SectionTitle>Alertes Précoces</SectionTitle>
       <Text style={[gs.bodyBold, { marginBottom: 8 }]}>
-        {warnings.length} alerte(s) detectee(s) pendant l&apos;analyse —
+        {warnings.length} alerte(s) détectée(s) pendant l&apos;analyse —
         risques existentiels potentiels.
       </Text>
 
@@ -48,14 +48,14 @@ export function EarlyWarningsSection({
               : "MOYEN";
         const recLabel =
           w.recommendation === "absolute_dealbreaker"
-            ? "DEALBREAKER ABSOLU"
+            ? "RISQUE CRITIQUE DÉTECTÉ"
             : w.recommendation === "likely_dealbreaker"
-              ? "DEALBREAKER PROBABLE"
-              : "A INVESTIGUER";
+              ? "RISQUE MAJEUR DÉTECTÉ"
+              : "À INVESTIGUER";
 
         return (
           <RedFlagCard key={i} title={w.title} severity={w.severity}>
-            <LabelValue label="Categorie" value={w.category.replace(/_/g, " ")} />
+            <LabelValue label="Catégorie" value={w.category.replace(/_/g, " ")} />
             <LabelValue label="Recommandation" value={recLabel} />
             <LabelValue label="Confiance" value={`${w.confidence}%`} />
             <LabelValue
@@ -72,7 +72,7 @@ export function EarlyWarningsSection({
             )}
             {w.questionsToAsk && w.questionsToAsk.length > 0 && (
               <>
-                <H3>Questions a poser</H3>
+                <H3>Questions à poser</H3>
                 <BulletList items={w.questionsToAsk} />
               </>
             )}

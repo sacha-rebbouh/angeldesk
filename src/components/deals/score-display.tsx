@@ -157,7 +157,7 @@ export const ScoreGrid = React.memo(function ScoreGrid({ scores, stage }: ScoreG
 
       {/* Sub-scores grid */}
       <div className="grid grid-cols-2 gap-x-6 gap-y-4 pt-4 border-t border-border/40">
-        <ScoreDisplay label="Equipe" score={scores.team} size="sm" />
+        <ScoreDisplay label="Équipe" score={scores.team} size="sm" />
         <ScoreDisplay label="Marché" score={scores.market} size="sm" />
         <ScoreDisplay label="Produit" score={scores.product} size="sm" />
         <ScoreDisplay label="Financiers" score={scores.financials} size="sm" />

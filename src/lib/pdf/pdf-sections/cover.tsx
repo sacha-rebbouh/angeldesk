@@ -6,7 +6,7 @@ import React from "react";
 import { Page, View, Text } from "@react-pdf/renderer";
 import { colors, styles as gs } from "../pdf-theme";
 import { ScoreCircle, KpiBox } from "../pdf-components";
-import { fmtEur } from "../pdf-helpers";
+import { fmtEur, recLabel } from "../pdf-helpers";
 import type { PdfExportData } from "../generate-analysis-pdf";
 
 export function CoverPage({ data }: { data: PdfExportData }) {
@@ -87,7 +87,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
                     textTransform: "uppercase",
                   }}
                 >
-                  {verdict.replace(/_/g, " ")}
+                  {recLabel(verdict)}
                 </Text>
               )}
             </View>
@@ -98,7 +98,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
         <View style={{ marginTop: 24 }}>
           <View style={{ flexDirection: "row" }}>
             <KpiBox label="VALORISATION PRE-MONEY" value={fmtEur(deal.valuationPre)} />
-            <KpiBox label="MONTANT DEMANDE" value={fmtEur(deal.amountRequested)} />
+            <KpiBox label="MONTANT DEMANDÉ" value={fmtEur(deal.amountRequested)} />
           </View>
           <View style={{ flexDirection: "row" }}>
             <KpiBox label="ARR" value={fmtEur(deal.arr)} />
@@ -113,7 +113,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
         {deal.founders.length > 0 && (
           <View style={{ marginTop: 20 }}>
             <Text style={[gs.label, { marginBottom: 6 }]}>
-              EQUIPE FONDATRICE
+              ÉQUIPE FONDATRICE
             </Text>
             {deal.founders.map((f, i) => (
               <Text key={i} style={[gs.body, { marginBottom: 2 }]}>
@@ -141,11 +141,11 @@ export function CoverPage({ data }: { data: PdfExportData }) {
         {/* Analysis meta */}
         <View style={{ marginTop: 20 }}>
           <Text style={gs.small}>
-            Analyse complete: {analysis.completedAgents}/{analysis.totalAgents}{" "}
+            Analyse complète : {analysis.completedAgents}/{analysis.totalAgents}{" "}
             agents • {analysis.type.replace(/_/g, " ")}
           </Text>
           <Text style={[gs.small, { marginTop: 2 }]}>
-            Genere le {formatDate()}
+            Généré le {formatDate()}
           </Text>
         </View>
       </View>

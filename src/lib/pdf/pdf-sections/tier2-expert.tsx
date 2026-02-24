@@ -56,7 +56,7 @@ export function Tier2ExpertSection({
               <LabelValue label="Score sectoriel" value={`${data.sectorScore}/100`} />
             )}
             {!!data.sectorMaturity && (
-              <LabelValue label="Maturite du secteur" value={s(data.sectorMaturity)} />
+              <LabelValue label="Maturité du secteur" value={s(data.sectorMaturity)} />
             )}
 
             {/* Extended verdict */}
@@ -131,7 +131,7 @@ function ExtendedVerdict({ ext }: { ext?: Record<string, unknown> }) {
       <LabelValue label="Confiance" value={s(verdict.confidence)} />
       {verdict.keyInsight && <BodyText>{verdict.keyInsight}</BodyText>}
       {verdict.topStrength && <LabelValue label="Force principale" value={verdict.topStrength} />}
-      {verdict.topConcern && <LabelValue label="Preoccupation" value={verdict.topConcern} />}
+      {verdict.topConcern && <LabelValue label="Préoccupation" value={verdict.topConcern} />}
     </>
   );
 }
@@ -149,15 +149,15 @@ function KeyMetrics({ keyMetrics }: { keyMetrics: unknown }) {
   const hasBenchmarks = metrics.some((m) => m.sectorBenchmark);
   return (
     <>
-      <H3>Metriques cles</H3>
+      <H3>Métriques clés</H3>
       {hasBenchmarks ? (
         <PdfTable
           columns={[
-            { header: "Metrique", width: 20 },
+            { header: "Métrique", width: 20 },
             { header: "Valeur", width: 13 },
             { header: "Eval.", width: 14 },
             { header: "P25", width: 10 },
-            { header: "Median", width: 13 },
+            { header: "Médian", width: 13 },
             { header: "P75", width: 10 },
             { header: "Top 10%", width: 10 },
           ]}
@@ -174,9 +174,9 @@ function KeyMetrics({ keyMetrics }: { keyMetrics: unknown }) {
       ) : (
         <PdfTable
           columns={[
-            { header: "Metrique", width: 25 },
+            { header: "Métrique", width: 25 },
             { header: "Valeur", width: 20 },
-            { header: "Evaluation", width: 20 },
+            { header: "Évaluation", width: 20 },
             { header: "Contexte", width: 35 },
           ]}
           rows={metrics.slice(0, 12).map((m) => [
@@ -237,9 +237,9 @@ function UnitEconomics({ unitEcon }: { unitEcon: unknown }) {
       {rows.length > 0 && (
         <PdfTable
           columns={[
-            { header: "Metrique", width: 25 },
+            { header: "Métrique", width: 25 },
             { header: "Valeur", width: 20 },
-            { header: "Detail", width: 55 },
+            { header: "Détail", width: 55 },
           ]}
           rows={rows}
         />
@@ -265,10 +265,10 @@ function ValuationAnalysis({ valuation }: { valuation: unknown }) {
     <>
       <H3>Analyse valorisation</H3>
       {v.verdict && <LabelValue label="Verdict" value={sup(v.verdict)} />}
-      {v.askMultiple !== undefined && <LabelValue label="Multiple demande" value={`${v.askMultiple}x`} />}
+      {v.askMultiple !== undefined && <LabelValue label="Multiple demandé" value={`${v.askMultiple}x`} />}
       {(() => {
         const m = v.medianSectorMultiple ?? v.medianMultiple;
-        return m !== undefined ? <LabelValue label="Multiple median secteur" value={`${m}x`} /> : null;
+        return m !== undefined ? <LabelValue label="Multiple médian secteur" value={`${m}x`} /> : null;
       })()}
       {(() => {
         const p = v.percentilePosition ?? v.percentile;
@@ -276,7 +276,7 @@ function ValuationAnalysis({ valuation }: { valuation: unknown }) {
       })()}
       {v.justifiedRange && (
         <LabelValue
-          label="Fourchette justifiee"
+          label="Fourchette justifiée"
           value={
             typeof v.justifiedRange === "object"
               ? `${v.justifiedRange.low ?? "?"}x — ${v.justifiedRange.fair ?? "?"}x — ${v.justifiedRange.high ?? "?"}x`
@@ -284,7 +284,7 @@ function ValuationAnalysis({ valuation }: { valuation: unknown }) {
           }
         />
       )}
-      {v.negotiationLeverage && <LabelValue label="Levier negociation" value={v.negotiationLeverage} />}
+      {v.negotiationLeverage && <LabelValue label="Levier négociation" value={v.negotiationLeverage} />}
     </>
   );
 }
@@ -299,12 +299,12 @@ function RegulatoryEnvironment({ regulatory }: { regulatory: unknown }) {
 
   return (
     <>
-      <H3>Environnement regulatoire</H3>
-      {r.complexity && <LabelValue label="Complexite" value={sup(r.complexity)} />}
+      <H3>Environnement régulatoire</H3>
+      {r.complexity && <LabelValue label="Complexité" value={sup(r.complexity)} />}
       {r.keyRegulations && r.keyRegulations.length > 0 && <BulletList items={r.keyRegulations.slice(0, 5)} />}
       {r.complianceRisks && r.complianceRisks.length > 0 && (
         <>
-          <H3>Risques de conformite</H3>
+          <H3>Risques de conformité</H3>
           <BulletList items={r.complianceRisks.slice(0, 5)} />
         </>
       )}
@@ -325,7 +325,7 @@ function SectorDynamics({ dynamics }: { dynamics: unknown }) {
       <H3>Dynamiques sectorielles</H3>
       {d.competitionIntensity && <LabelValue label="Concurrence" value={sup(d.competitionIntensity)} />}
       {d.consolidationTrend && <LabelValue label="Consolidation" value={d.consolidationTrend} />}
-      {d.barrierToEntry && <LabelValue label="Barriere entree" value={sup(d.barrierToEntry)} />}
+      {d.barrierToEntry && <LabelValue label="Barrière entrée" value={sup(d.barrierToEntry)} />}
       {d.typicalExitMultiple && <LabelValue label="Multiple exit typique" value={`${d.typicalExitMultiple}x`} />}
     </>
   );
@@ -341,7 +341,7 @@ function SectorFit({ fit }: { fit: unknown }) {
   if (!f) return null;
   return (
     <>
-      <H3>Adequation sectorielle</H3>
+      <H3>Adéquation sectorielle</H3>
       {f.score !== undefined && <LabelValue label="Score fit" value={`${f.score}/100`} />}
       {f.sectorTiming && <LabelValue label="Timing" value={sup(f.sectorTiming)} />}
       {f.strengths && f.strengths.length > 0 && <BulletList items={f.strengths.slice(0, 3).map((st) => `+ ${st}`)} />}
@@ -363,13 +363,13 @@ function DataCompleteness({ completeness }: { completeness: unknown }) {
   if (!c) return null;
   return (
     <>
-      <H3>Completude des donnees</H3>
+      <H3>Complétude des données</H3>
       <LabelValue label="Niveau" value={sup(c.level)} />
       {c.availableDataPoints && c.expectedDataPoints && (
-        <LabelValue label="Points de donnees" value={`${c.availableDataPoints}/${c.expectedDataPoints}`} />
+        <LabelValue label="Points de données" value={`${c.availableDataPoints}/${c.expectedDataPoints}`} />
       )}
       {c.scoreCapped && c.rawScore !== undefined && (
-        <LabelValue label="Score brut vs plafonne" value={`${c.rawScore} → ${c.cappedScore ?? "N/A"} (plafonne)`} />
+        <LabelValue label="Score brut vs plafonne" value={`${c.rawScore} → ${c.cappedScore ?? "N/A"} (plafonné)`} />
       )}
       {c.missingCritical && c.missingCritical.length > 0 && <BulletList items={c.missingCritical.slice(0, 5)} />}
     </>
@@ -385,7 +385,7 @@ function SectorRedFlags({ redFlags }: { redFlags: unknown }) {
       <PdfTable
         columns={[
           { header: "Red Flag", width: 35 },
-          { header: "Severite", width: 15 },
+          { header: "Sévérité", width: 15 },
           { header: "Raison", width: 50 },
         ]}
         rows={rf.map((r) => [r.flag, r.severity, r.sectorReason ?? ""])}
@@ -399,7 +399,7 @@ function SectorOpportunities({ opportunities }: { opportunities: unknown }) {
   if (!ops || ops.length === 0) return null;
   return (
     <>
-      <H3>Opportunites</H3>
+      <H3>Opportunités</H3>
       <BulletList items={ops.map((o) => `[${sup(o.potential)}] ${s(o.opportunity)}${o.reasoning ? ` — ${s(o.reasoning)}` : ""}`)} />
     </>
   );
@@ -414,8 +414,8 @@ function SectorQuestions({ questions }: { questions: unknown }) {
       <PdfTable
         columns={[
           { header: "Question", width: 55 },
-          { header: "Categorie", width: 25 },
-          { header: "Priorite", width: 20 },
+          { header: "Catégorie", width: 25 },
+          { header: "Priorité", width: 20 },
         ]}
         rows={qs.slice(0, 10).map((q) => [q.question, q.category, q.priority])}
       />
@@ -429,8 +429,8 @@ function GtmAssessment({ gtm }: { gtm: unknown }) {
   return (
     <>
       <H3>GTM Assessment</H3>
-      {g.model && <LabelValue label="Modele" value={sup(g.model).replace(/_/g, " ")} />}
-      {g.efficiency && <LabelValue label="Efficacite" value={sup(g.efficiency)} />}
+      {g.model && <LabelValue label="Modèle" value={sup(g.model).replace(/_/g, " ")} />}
+      {g.efficiency && <LabelValue label="Efficacité" value={sup(g.efficiency)} />}
       {g.salesCycleMonths !== undefined && <LabelValue label="Cycle de vente" value={`${g.salesCycleMonths} mois`} />}
       {g.keyInsight && <BodyText>{g.keyInsight}</BodyText>}
     </>
@@ -445,8 +445,8 @@ function ExitPotential({ exitPot }: { exitPot: unknown }) {
       <H3>Potentiel de sortie</H3>
       {e.typicalMultiple && <LabelValue label="Multiple typique" value={`${e.typicalMultiple}x`} />}
       {e.timeToExit && <LabelValue label="Horizon" value={e.timeToExit} />}
-      {e.exitReadiness && <LabelValue label="Maturite exit" value={sup(e.exitReadiness).replace(/_/g, " ")} />}
-      {e.likelyAcquirers && e.likelyAcquirers.length > 0 && <LabelValue label="Acquereurs potentiels" value={e.likelyAcquirers.join(", ")} />}
+      {e.exitReadiness && <LabelValue label="Maturité exit" value={sup(e.exitReadiness).replace(/_/g, " ")} />}
+      {e.likelyAcquirers && e.likelyAcquirers.length > 0 && <LabelValue label="Acquéreurs potentiels" value={e.likelyAcquirers.join(", ")} />}
     </>
   );
 }
@@ -483,7 +483,7 @@ function DbComparison({ dbComp }: { dbComp: unknown }) {
       {d.similarDealsFound !== undefined && <LabelValue label="Deals similaires" value={String(d.similarDealsFound)} />}
       {d.thisDealsPosition && <LabelValue label="Position" value={d.thisDealsPosition} />}
       {d.bestComparable?.name && <LabelValue label="Meilleur comparable" value={`${d.bestComparable.name} (${s(d.bestComparable.outcome)})`} />}
-      {d.concerningComparable?.name && <LabelValue label="Comparable preoccupant" value={`${d.concerningComparable.name}: ${s(d.concerningComparable.whatHappened)}`} />}
+      {d.concerningComparable?.name && <LabelValue label="Comparable préoccupant" value={`${d.concerningComparable.name}: ${s(d.concerningComparable.whatHappened)}`} />}
     </>
   );
 }
@@ -525,8 +525,8 @@ function AiExtended({ ext }: { ext: Record<string, unknown> }) {
       {verdict && (
         <>
           <H3>Verdict IA</H3>
-          <LabelValue label="IA veritable" value={verdict.isRealAI ? "OUI" : "NON"} />
-          {verdict.technicalCredibility && <LabelValue label="Credibilite technique" value={sup(verdict.technicalCredibility)} />}
+          <LabelValue label="IA véritable" value={verdict.isRealAI ? "OUI" : "NON"} />
+          {verdict.technicalCredibility && <LabelValue label="Crédibilité technique" value={sup(verdict.technicalCredibility)} />}
           {verdict.moatStrength && <LabelValue label="Force du moat" value={sup(verdict.moatStrength)} />}
           {verdict.keyInsight && <BodyText>{verdict.keyInsight}</BodyText>}
         </>
@@ -536,26 +536,26 @@ function AiExtended({ ext }: { ext: Record<string, unknown> }) {
           <H3>Moat IA</H3>
           {moat.overallMoatScore !== undefined && <LabelValue label="Score moat" value={`${moat.overallMoatScore}/100`} />}
           {moat.dataFlywheel !== undefined && <LabelValue label="Data flywheel" value={moat.dataFlywheel ? "OUI" : "NON"} />}
-          {moat.networkEffects !== undefined && <LabelValue label="Effets de reseau" value={moat.networkEffects ? "OUI" : "NON"} />}
-          {moat.apiDependency && <LabelValue label="Dependance API" value={sup(moat.apiDependency)} />}
+          {moat.networkEffects !== undefined && <LabelValue label="Effets de réseau" value={moat.networkEffects ? "OUI" : "NON"} />}
+          {moat.apiDependency && <LabelValue label="Dépendance API" value={sup(moat.apiDependency)} />}
           {moat.moatAssessment && <BodyText>{moat.moatAssessment}</BodyText>}
         </>
       )}
       {model && (
         <>
-          <H3>Approche modele</H3>
+          <H3>Approche modèle</H3>
           {model.type && <LabelValue label="Type" value={sup(model.type).replace(/_/g, " ")} />}
-          {model.baseModel && <LabelValue label="Modele de base" value={model.baseModel} />}
+          {model.baseModel && <LabelValue label="Modèle de base" value={model.baseModel} />}
           {model.moatLevel && <LabelValue label="Niveau moat" value={sup(model.moatLevel)} />}
-          {model.proprietaryComponents && model.proprietaryComponents.length > 0 && <LabelValue label="Composants proprietaires" value={model.proprietaryComponents.join(", ")} />}
+          {model.proprietaryComponents && model.proprietaryComponents.length > 0 && <LabelValue label="Composants propriétaires" value={model.proprietaryComponents.join(", ")} />}
         </>
       )}
       {infra && (
         <>
-          <H3>Infrastructure &amp; Couts IA</H3>
+          <H3>Infrastructure &amp; Coûts IA</H3>
           {infra.gpuProvider && <LabelValue label="Fournisseur GPU" value={infra.gpuProvider} />}
-          {infra.monthlyComputeCost !== undefined && <LabelValue label="Cout mensuel compute" value={`${infra.monthlyComputeCost}€`} />}
-          {infra.scalingModel && <LabelValue label="Modele de scaling" value={sup(infra.scalingModel)} />}
+          {infra.monthlyComputeCost !== undefined && <LabelValue label="Coût mensuel compute" value={`${infra.monthlyComputeCost}€`} />}
+          {infra.scalingModel && <LabelValue label="Modèle de scaling" value={sup(infra.scalingModel)} />}
           {infra.costAssessment && <BodyText>{infra.costAssessment}</BodyText>}
         </>
       )}
@@ -563,10 +563,10 @@ function AiExtended({ ext }: { ext: Record<string, unknown> }) {
         <>
           {(() => {
             const items: string[] = [];
-            if (redFlags.noMLTeam) items.push("Pas d'equipe ML");
+            if (redFlags.noMLTeam) items.push("Pas d'équipe ML");
             if (redFlags.justAPIWrapper) items.push("Simple wrapper API");
-            if (redFlags.noProprietaryData) items.push("Pas de donnees proprietaires");
-            if (redFlags.unrealisticAccuracyClaims) items.push("Claims de precision irrealistes");
+            if (redFlags.noProprietaryData) items.push("Pas de données propriétaires");
+            if (redFlags.unrealisticAccuracyClaims) items.push("Claims de précision irréalistes");
             if (items.length === 0) return null;
             return (
               <>
@@ -594,13 +594,13 @@ function BlockchainExtended({ ext }: { ext: Record<string, unknown> }) {
           <H3>Tokenomics</H3>
           {tokenomics.hasToken !== undefined && <LabelValue label="Token" value={tokenomics.hasToken ? "OUI" : "NON"} />}
           {tokenomics.tokenType && <LabelValue label="Type" value={sup(tokenomics.tokenType)} />}
-          {tokenomics.tokenUtility && <LabelValue label="Utilite" value={tokenomics.tokenUtility} />}
+          {tokenomics.tokenUtility && <LabelValue label="Utilité" value={tokenomics.tokenUtility} />}
           {tokenomics.distributionAssessment && <LabelValue label="Distribution" value={tokenomics.distributionAssessment} />}
         </>
       )}
       {security && (
         <>
-          <H3>Securite Blockchain</H3>
+          <H3>Sécurité Blockchain</H3>
           {security.auditStatus && <LabelValue label="Audit" value={sup(security.auditStatus)} />}
           {security.bugBounty !== undefined && <LabelValue label="Bug bounty" value={security.bugBounty ? "OUI" : "NON"} />}
           {security.smartContractRisk && <LabelValue label="Risque smart contract" value={sup(security.smartContractRisk)} />}
@@ -609,7 +609,7 @@ function BlockchainExtended({ ext }: { ext: Record<string, unknown> }) {
       )}
       {decentralization && (
         <>
-          <H3>Decentralisation</H3>
+          <H3>Décentralisation</H3>
           {decentralization.level && <LabelValue label="Niveau" value={sup(decentralization.level)} />}
           {decentralization.nodeCount !== undefined && <LabelValue label="Noeuds" value={String(decentralization.nodeCount)} />}
           {decentralization.governanceModel && <LabelValue label="Gouvernance" value={decentralization.governanceModel} />}
@@ -627,8 +627,8 @@ function FintechExtended({ ext }: { ext: Record<string, unknown> }) {
     <>
       {reg && (
         <>
-          <H3>Details regulatoires Fintech</H3>
-          {reg.overallRisk && <LabelValue label="Risque regulatoire" value={sup(reg.overallRisk)} />}
+          <H3>Détails régulatoires Fintech</H3>
+          {reg.overallRisk && <LabelValue label="Risque régulatoire" value={sup(reg.overallRisk)} />}
           {reg.verdict && <BodyText>{reg.verdict}</BodyText>}
           {reg.licenses && reg.licenses.length > 0 && (
             <PdfTable
@@ -662,8 +662,8 @@ function PropTechExtended({ ext }: { ext: Record<string, unknown> }) {
     <>
       <H3>Analyse du cycle immobilier</H3>
       {cycle.currentCyclePhase && <LabelValue label="Phase du cycle" value={sup(cycle.currentCyclePhase)} />}
-      {cycle.interestRateSensitivity && <LabelValue label="Sensibilite taux" value={sup(cycle.interestRateSensitivity)} />}
-      {cycle.resilienceScore !== undefined && <LabelValue label="Score resilience" value={`${cycle.resilienceScore}/100`} />}
+      {cycle.interestRateSensitivity && <LabelValue label="Sensibilité taux" value={sup(cycle.interestRateSensitivity)} />}
+      {cycle.resilienceScore !== undefined && <LabelValue label="Score résilience" value={`${cycle.resilienceScore}/100`} />}
       {cycle.cycleRiskAssessment && <BodyText>{cycle.cycleRiskAssessment}</BodyText>}
     </>
   );
@@ -674,12 +674,12 @@ function EdTechExtended({ ext }: { ext: Record<string, unknown> }) {
   if (!engagement) return null;
   return (
     <>
-      <H3>Engagement &amp; Resultats</H3>
-      {engagement.completionRate?.value !== undefined && <LabelValue label="Taux de completion" value={`${engagement.completionRate.value}% (${s(engagement.completionRate.vsIndustry)})`} />}
+      <H3>Engagement &amp; Résultats</H3>
+      {engagement.completionRate?.value !== undefined && <LabelValue label="Taux de complétion" value={`${engagement.completionRate.value}% (${s(engagement.completionRate.vsIndustry)})`} />}
       {engagement.activeUsersRatio?.ratio !== undefined && <LabelValue label="Ratio utilisateurs actifs" value={`${engagement.activeUsersRatio.ratio}%`} />}
-      {engagement.learningOutcomes?.assessment && <LabelValue label="Resultats apprentissage" value={sup(engagement.learningOutcomes.assessment)} />}
-      {engagement.retentionCohorts?.d7Retention !== undefined && <LabelValue label="Retention D7" value={`${engagement.retentionCohorts.d7Retention}%`} />}
-      {engagement.retentionCohorts?.d30Retention !== undefined && <LabelValue label="Retention D30" value={`${engagement.retentionCohorts.d30Retention}%`} />}
+      {engagement.learningOutcomes?.assessment && <LabelValue label="Résultats apprentissage" value={sup(engagement.learningOutcomes.assessment)} />}
+      {engagement.retentionCohorts?.d7Retention !== undefined && <LabelValue label="Rétention D7" value={`${engagement.retentionCohorts.d7Retention}%`} />}
+      {engagement.retentionCohorts?.d30Retention !== undefined && <LabelValue label="Rétention D30" value={`${engagement.retentionCohorts.d30Retention}%`} />}
     </>
   );
 }
@@ -689,12 +689,12 @@ function BiotechExtended({ ext }: { ext: Record<string, unknown> }) {
   if (!pipeline) return null;
   return (
     <>
-      <H3>Pipeline therapeutique</H3>
+      <H3>Pipeline thérapeutique</H3>
       {pipeline.stage && <LabelValue label="Phase" value={sup(pipeline.stage)} />}
-      {pipeline.compounds !== undefined && <LabelValue label="Composes" value={String(pipeline.compounds)} />}
+      {pipeline.compounds !== undefined && <LabelValue label="Composés" value={String(pipeline.compounds)} />}
       {pipeline.leadIndication && <LabelValue label="Indication principale" value={pipeline.leadIndication} />}
-      {pipeline.probabilityOfSuccess !== undefined && <LabelValue label="Prob. de succes" value={`${pipeline.probabilityOfSuccess}%`} />}
-      {pipeline.timeToMarket && <LabelValue label="Delai mise sur marche" value={pipeline.timeToMarket} />}
+      {pipeline.probabilityOfSuccess !== undefined && <LabelValue label="Prob. de succès" value={`${pipeline.probabilityOfSuccess}%`} />}
+      {pipeline.timeToMarket && <LabelValue label="Délai mise sur marché" value={pipeline.timeToMarket} />}
     </>
   );
 }
@@ -708,7 +708,7 @@ function SaasCohort({ ext }: { ext: Record<string, unknown> }) {
     <>
       {cohort && (
         <>
-          <H3>Sante des cohortes</H3>
+          <H3>Santé des cohortes</H3>
           {cohort.nrrTrend && <LabelValue label="Tendance NRR" value={sup(cohort.nrrTrend)} />}
           {cohort.churnTrend && <LabelValue label="Tendance churn" value={sup(cohort.churnTrend)} />}
           {cohort.expansionTrend && <LabelValue label="Tendance expansion" value={sup(cohort.expansionTrend)} />}
@@ -719,7 +719,7 @@ function SaasCohort({ ext }: { ext: Record<string, unknown> }) {
         <>
           <H3>Moat concurrentiel SaaS</H3>
           {compMoat.dataNetworkEffects !== undefined && <LabelValue label="Data network effects" value={compMoat.dataNetworkEffects ? "OUI" : "NON"} />}
-          {compMoat.switchingCostLevel && <LabelValue label="Couts de changement" value={sup(compMoat.switchingCostLevel)} />}
+          {compMoat.switchingCostLevel && <LabelValue label="Coûts de changement" value={sup(compMoat.switchingCostLevel)} />}
           {compMoat.categoryLeaderPotential !== undefined && <LabelValue label="Potentiel leader" value={compMoat.categoryLeaderPotential ? "OUI" : "NON"} />}
           {compMoat.moatAssessment && <BodyText>{compMoat.moatAssessment}</BodyText>}
         </>

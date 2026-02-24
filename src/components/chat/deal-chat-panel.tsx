@@ -92,7 +92,7 @@ const QUICK_ACTIONS_BY_LEVEL: Record<InvestorLevel, Array<{ label: string; promp
     { label: "Points de negociation", prompt: "Quels sont mes leviers de negociation sur la valorisation et les termes ?" },
   ],
   expert: [
-    { label: "Red flags & dealbreakers", prompt: "Analyse les red flags detectes. Lesquels sont des dealbreakers absolus vs conditionnels ?" },
+    { label: "Red flags & risques critiques", prompt: "Analyse les red flags détectés. Lesquels sont des risques critiques absolus vs conditionnels ?" },
     { label: "Benchmark & valo", prompt: "Compare les multiples de valorisation aux comparables. La valo est-elle justifiee ?" },
     { label: "Due diligence gaps", prompt: "Quels points de la DD restent insuffisamment couverts ? Quelles donnees manquent ?" },
     { label: "Structuration du deal", prompt: "Quels termes devrais-je negocier (liquidation pref, pro-rata, anti-dilution) ?" },

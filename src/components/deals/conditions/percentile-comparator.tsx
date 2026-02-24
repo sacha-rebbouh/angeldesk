@@ -51,9 +51,9 @@ function getPercentileTextColor(pct: number): string {
 
 function getPercentileLabel(pct: number): string {
   if (pct <= 25) return "Favorable";
-  if (pct <= 50) return "Marche";
-  if (pct <= 75) return "Eleve";
-  return "Tres eleve";
+  if (pct <= 50) return "Marché";
+  if (pct <= 75) return "Élevé";
+  return "Très élevé";
 }
 
 function getScoreColor(score: number): string {
