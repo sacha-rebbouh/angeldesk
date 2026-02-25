@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Brain,
   Handshake,
+  Radio,
 } from "lucide-react";
 import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
 import { ScoreGrid } from "@/components/deals/score-display";
@@ -23,6 +24,7 @@ import type { ConditionsAnalystData } from "@/agents/types";
 import { normalizeTranche, buildTermsResponse } from "@/services/terms-normalization";
 import { DealInfoCard } from "@/components/deals/deal-info-card";
 import { ChatWrapper } from "@/components/chat/chat-wrapper";
+import LiveTabLoader from "@/components/deals/live-tab-loader";
 import { getStatusColor, getStatusLabel, getStageLabel, formatCurrencyEUR } from "@/lib/format-utils";
 
 async function getDeal(dealId: string, userId: string) {
@@ -179,6 +181,10 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
             <Handshake className="mr-1 h-4 w-4" />
             Conditions
           </TabsTrigger>
+          <TabsTrigger value="live" className="whitespace-nowrap">
+            <Radio className="mr-1 h-4 w-4" />
+            Live
+          </TabsTrigger>
         </TabsList>
 
         {/* Tab 1: Vue d'ensemble — Scores + DealInfo */}
@@ -301,6 +307,11 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
               return ts ? { id: ts.id, name: ts.name } : null;
             })()}
           />
+        </TabsContent>
+
+        {/* Tab 5: Live Coaching */}
+        <TabsContent value="live">
+          <LiveTabLoader dealId={deal.id} dealName={deal.name} />
         </TabsContent>
       </Tabs>
 

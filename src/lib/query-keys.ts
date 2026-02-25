@@ -135,6 +135,16 @@ export const queryKeys = {
     messages: (dealId: string, conversationId: string) =>
       [...queryKeys.chat.all, "messages", dealId, conversationId] as const,
   },
+
+  // Live coaching queries
+  live: {
+    all: ["live"] as const,
+    sessions: (dealId: string) => ["live", "sessions", dealId] as const,
+    session: (sessionId: string) => ["live", "session", sessionId] as const,
+    cards: (sessionId: string) => ["live", "cards", sessionId] as const,
+    context: (dealId: string) => ["live", "context", dealId] as const,
+    summary: (sessionId: string) => ["live", "summary", sessionId] as const,
+  },
 } as const;
 
 // Type helper for extracting query key types

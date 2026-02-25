@@ -129,7 +129,7 @@ const WarningCard = memo(function WarningCard({ warning }: { warning: EarlyWarni
                   <ul className="text-xs space-y-1">
                     {warning.questionsToAsk.map((q, idx) => (
                       <li key={idx} className="text-muted-foreground">
-                        {idx + 1}. {q}
+                        {idx + 1}. {typeof q === "string" ? q : (q as { question?: string }).question ?? JSON.stringify(q)}
                       </li>
                     ))}
                   </ul>

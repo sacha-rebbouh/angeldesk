@@ -25,6 +25,7 @@ model User {
   deals         Deal[]
   apiKeys       ApiKey[]
   webhooks      Webhook[]
+  liveSessions  LiveSession[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -79,6 +80,7 @@ model Deal {
   dealStructure   DealStructure?
   dealTermsVersions DealTermsVersion[]
   alertResolutions  AlertResolution[]
+  liveSessions      LiveSession[]
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -172,6 +174,9 @@ model Document {
   isLatest         Boolean   @default(true)
   supersededAt     DateTime? // When this version was replaced by a newer one
 
+  // Live coaching session link (auto-generated post-call document)
+  liveSession      LiveSession?
+
   uploadedAt       DateTime @default(now())
 
   @@index([dealId])
@@ -190,6 +195,7 @@ enum DocumentType {
   LEGAL_DOCS
   MARKET_STUDY
   PRODUCT_DEMO
+  CALL_TRANSCRIPT
   OTHER
 }
 
@@ -1883,4 +1889,132 @@ model DealTermsVersion {
 
   @@index([dealId])
   @@index([dealId, version])
+}
+
+// ============================================================================
+// LIVE COACHING — Real-time coaching during BA/founder calls
+// ============================================================================
+
+model LiveSession {
+  id              String   @id @default(cuid())
+  dealId          String?
+  deal            Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Meeting info
+  meetingUrl      String
+  meetingPlatform String   // "zoom" | "meet" | "teams"
+  botId           String?  // Recall.ai bot ID
+  botJoinUrl      String?
+
+  // Session state
+  status          String   @default("created")
+  // Values: "created" | "bot_joining" | "live" | "processing" | "completed" | "failed"
+  errorMessage    String?  @db.Text
+
+  // Participants mapping (BA labels who is who)
+  participants    Json     @default("[]")
+  // Format: [{ name: string, role: string, speakerId: string }]
+
+  // Settings
+  language        String   @default("fr-en")
+  llmModel        String   @default("claude-sonnet-4-5")
+
+  // Cost tracking
+  totalCost       Decimal? @db.Decimal(8, 4)
+
+  // Timestamps
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  transcriptChunks  TranscriptChunk[]
+  coachingCards     CoachingCard[]
+  summary           SessionSummary?
+  documentId        String?          @unique
+  document          Document?        @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([dealId])
+  @@index([userId])
+  @@index([status])
+  @@index([botId])
+  @@index([userId, status])
+  @@index([userId, createdAt])
+}
+
+model TranscriptChunk {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  speaker     String   // Display name from meeting
+  speakerRole String   // "founder" | "co-founder" | "ba" | "investor" | etc.
+  text        String   @db.Text
+  isFinal     Boolean  @default(true)
+
+  timestampStart Float  // Seconds since call start
+  timestampEnd   Float
+
+  // Classification by Utterance Router
+  classification String? // "financial_claim" | "small_talk" | "filler" | etc.
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sessionId])
+  @@index([sessionId, speakerRole])
+  @@index([sessionId, isFinal, classification])
+}
+
+model CoachingCard {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  type        String   // "question" | "contradiction" | "new_info" | "negotiation"
+  priority    String   // "high" | "medium" | "low"
+  content     String   @db.Text  // The coaching suggestion text
+  context     String?  @db.Text  // What triggered this (founder utterance)
+  reference   String?  // Which part of the analysis is concerned
+  suggestedQuestion String? @db.Text // Naturally formulated question
+
+  // State
+  status      String   @default("active")
+  // "active" | "addressed" | "dismissed" | "expired"
+  addressedAt DateTime?
+  addressedBy String?  // "auto" (transcript detection) | "manual"
+
+  // Link to triggering transcript chunk
+  triggeredByChunkId String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sessionId])
+  @@index([sessionId, status])
+}
+
+model SessionSummary {
+  id          String   @id @default(cuid())
+  sessionId   String   @unique
+  session     LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Report content
+  executiveSummary  String   @db.Text
+  keyPoints         Json     // Array<{ topic, summary, speakerQuotes }>
+  actionItems       Json     // Array<{ description, owner, deadline? }>
+  newInformation    Json     // Array<{ fact, impact, agentsAffected }>
+  contradictions    Json     // Array<{ claimInDeck, claimInCall, severity }>
+  questionsAsked    Json     // Array<{ question, answer, wasFromCoaching }>
+  remainingQuestions Json    // string[]
+  confidenceDelta   Json     // { before, after, reason }
+  sessionStats      Json     // { duration, totalUtterances, coachingCards*, topics* }
+
+  // Full markdown report (for document creation)
+  markdownReport    String   @db.Text
+
+  createdAt   DateTime @default(now())
 }
