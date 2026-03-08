@@ -8,6 +8,8 @@ import type {
   AblyCardAddressedEvent,
   AblyCoachingCardEvent,
   AblySessionStatusEvent,
+  AblyVisualAnalysisEvent,
+  AblyScreenShareStateEvent,
 } from "@/lib/live/types";
 
 // ---------------------------------------------------------------------------
@@ -90,6 +92,26 @@ export async function publishParticipantLeft(
   const client = getAblyClient();
   const channel = client.channels.get(getChannelName(sessionId));
   await channel.publish("participant-left", data);
+}
+
+/** Publish a visual analysis result (new screen content analyzed). */
+export async function publishVisualAnalysis(
+  sessionId: string,
+  data: AblyVisualAnalysisEvent
+): Promise<void> {
+  const client = getAblyClient();
+  const channel = client.channels.get(getChannelName(sessionId));
+  await channel.publish("visual-analysis", data);
+}
+
+/** Publish screen share state change (active/inactive). */
+export async function publishScreenShareState(
+  sessionId: string,
+  data: AblyScreenShareStateEvent
+): Promise<void> {
+  const client = getAblyClient();
+  const channel = client.channels.get(getChannelName(sessionId));
+  await channel.publish("screenshare-state", data);
 }
 
 // ---------------------------------------------------------------------------

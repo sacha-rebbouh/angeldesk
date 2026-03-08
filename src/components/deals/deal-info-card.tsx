@@ -2,7 +2,7 @@
 
 import { memo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Loader2, MapPin, Target, Banknote, TrendingUp, BarChart3, Building2 } from "lucide-react";
+import { Pencil, Loader2, MapPin, Target, Banknote, TrendingUp, BarChart3, Building2, FileSignature } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getStageLabel, formatCurrencyEUR } from "@/lib/format-utils";
+import { getStageLabel, getInstrumentLabel, formatCurrencyEUR } from "@/lib/format-utils";
 
 const STAGES = [
   { value: "PRE_SEED", label: "Pre-seed" },
@@ -30,6 +30,14 @@ const STAGES = [
   { value: "SERIES_B", label: "Série B" },
   { value: "SERIES_C", label: "Série C" },
   { value: "LATER", label: "Later Stage" },
+] as const;
+
+const INSTRUMENTS = [
+  { value: "EQUITY", label: "Equity (round pricé)" },
+  { value: "SAFE", label: "SAFE" },
+  { value: "BSA_AIR", label: "BSA-AIR" },
+  { value: "CONVERTIBLE_NOTE", label: "Note convertible" },
+  { value: "BRIDGE", label: "Bridge" },
 ] as const;
 
 const SECTORS = [
@@ -59,6 +67,7 @@ interface DealInfo {
   id: string;
   sector: string | null;
   stage: string | null;
+  instrument: string | null;
   geography: string | null;
   description: string | null;
   amountRequested: number | null;
@@ -92,6 +101,7 @@ export const DealInfoCard = memo(function DealInfoCard({ deal }: DealInfoCardPro
 
   const [sector, setSector] = useState(deal.sector ?? "");
   const [stage, setStage] = useState(deal.stage ?? "");
+  const [instrument, setInstrument] = useState(deal.instrument ?? "");
   const [geography, setGeography] = useState(deal.geography ?? "");
   const [description, setDescription] = useState(deal.description ?? "");
   const [arr, setArr] = useState(deal.arr != null ? String(deal.arr) : "");
@@ -102,6 +112,7 @@ export const DealInfoCard = memo(function DealInfoCard({ deal }: DealInfoCardPro
   const openDialog = useCallback(() => {
     setSector(deal.sector ?? "");
     setStage(deal.stage ?? "");
+    setInstrument(deal.instrument ?? "");
     setGeography(deal.geography ?? "");
     setDescription(deal.description ?? "");
     setArr(deal.arr != null ? String(deal.arr) : "");
@@ -118,6 +129,7 @@ export const DealInfoCard = memo(function DealInfoCard({ deal }: DealInfoCardPro
 
       if (sector !== (deal.sector ?? "")) body.sector = sector || undefined;
       if (stage !== (deal.stage ?? "")) body.stage = stage || undefined;
+      if (instrument !== (deal.instrument ?? "")) body.instrument = instrument || undefined;
       if (geography !== (deal.geography ?? "")) body.geography = geography || undefined;
       if (description !== (deal.description ?? "")) body.description = description || undefined;
 
@@ -161,7 +173,7 @@ export const DealInfoCard = memo(function DealInfoCard({ deal }: DealInfoCardPro
     } finally {
       setIsLoading(false);
     }
-  }, [deal, sector, stage, geography, description, arr, growthRate, amountRequested, valuationPre, router]);
+  }, [deal, sector, stage, instrument, geography, description, arr, growthRate, amountRequested, valuationPre, router]);
 
   const isCustomSector = sector && !SECTORS.includes(sector as typeof SECTORS[number]);
 
@@ -187,6 +199,7 @@ export const DealInfoCard = memo(function DealInfoCard({ deal }: DealInfoCardPro
           <div className="grid grid-cols-2 gap-x-6">
             <InfoRow icon={Target} label="Secteur" value={deal.sector ?? "Non défini"} />
             <InfoRow icon={BarChart3} label="Stade" value={getStageLabel(deal.stage, "Non défini")} />
+            <InfoRow icon={FileSignature} label="Instrument" value={getInstrumentLabel(deal.instrument, "Non défini")} />
             <InfoRow icon={MapPin} label="Géographie" value={deal.geography ?? "Non défini"} />
             <InfoRow icon={Banknote} label="Montant demandé" value={formatCurrencyEUR(deal.amountRequested)} />
             <InfoRow icon={TrendingUp} label="Valorisation pre-money" value={formatCurrencyEUR(deal.valuationPre)} />
@@ -223,6 +236,22 @@ export const DealInfoCard = memo(function DealInfoCard({ deal }: DealInfoCardPro
                   {STAGES.map((s) => (
                     <SelectItem key={s.value} value={s.value}>
                       {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-instrument">Instrument</Label>
+              <Select value={instrument} onValueChange={setInstrument}>
+                <SelectTrigger id="edit-instrument">
+                  <SelectValue placeholder="Sélectionnez un instrument" />
+                </SelectTrigger>
+                <SelectContent>
+                  {INSTRUMENTS.map((inst) => (
+                    <SelectItem key={inst.value} value={inst.value}>
+                      {inst.label}
                     </SelectItem>
                   ))}
                 </SelectContent>

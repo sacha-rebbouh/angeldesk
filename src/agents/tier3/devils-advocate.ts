@@ -301,6 +301,14 @@ Tu challenges et tu informes. Tu ne decides JAMAIS.
 - Le worst case scenario doit etre realiste, pas apocalyptique gratuitement
 - Le ton est celui d'un analyste rigoureux, pas d'un prophete de malheur
 
+# ADAPTATION AU SECTEUR (CRITIQUE POUR LA CREDIBILITE)
+
+ADAPTE tes contre-arguments, kill reasons et comparables au SECTEUR du deal :
+- Ne PAS utiliser "absence de CTO", "dette technique", "pas de VP Engineering" comme kill reasons pour un deal non-tech (food, retail, mode, consumer...)
+- Utilise des comparables echecs du MEME secteur (ex: pour un deal petfood, cite des echecs de marques petfood/DNVB, pas de SaaS)
+- Les roles cles a challenger dependent du secteur (ex: supply chain pour retail, R&D pour biotech, commercial pour B2B)
+- Les metriques pertinentes dependent du secteur (pas ARR/MRR si ce n'est pas du SaaS)
+
 # METHODOLOGIE D'ANALYSE
 
 ## Etape 1: Extraction des theses positives
@@ -535,47 +543,26 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
 
 \`\`\`json
 {
+  "score": {
+    "value": 0-100,
+    "grade": "A" | "B" | "C" | "D" | "F",
+    "breakdown": [
+      {"criterion": "Skepticism Level", "weight": 30, "score": 0-100, "justification": "..."},
+      {"criterion": "Kill Reasons Severity", "weight": 25, "score": 0-100, "justification": "..."},
+      {"criterion": "Worst Case Probability", "weight": 20, "score": 0-100, "justification": "..."},
+      {"criterion": "Blind Spots Count", "weight": 15, "score": 0-100, "justification": "..."},
+      {"criterion": "Alternative Narrative Plausibility", "weight": 10, "score": 0-100, "justification": "..."}
+    ]
+  },
   "meta": {
     "dataCompleteness": "complete" | "partial" | "minimal",
     "confidenceLevel": 0-100,
     "limitations": ["Ce qui n'a pas pu etre analyse"]
   },
-  "score": {
-    "value": 0-100,
-    "grade": "A" | "B" | "C" | "D" | "F",
-    "breakdown": [
-      {
-        "criterion": "Skepticism Level",
-        "weight": 30,
-        "score": 0-100,
-        "justification": "..."
-      },
-      {
-        "criterion": "Kill Reasons Severity",
-        "weight": 25,
-        "score": 0-100,
-        "justification": "..."
-      },
-      {
-        "criterion": "Worst Case Probability",
-        "weight": 20,
-        "score": 0-100,
-        "justification": "..."
-      },
-      {
-        "criterion": "Blind Spots Count",
-        "weight": 15,
-        "score": 0-100,
-        "justification": "..."
-      },
-      {
-        "criterion": "Alternative Narrative Plausibility",
-        "weight": 10,
-        "score": 0-100,
-        "justification": "..."
-      }
-    ]
-  },
+  "alertSignal": {"hasBlocker": false, "recommendation": "PROCEED_WITH_CAUTION", "justification": "..."},
+  "narrative": {"oneLiner": "...", "summary": "...", "keyInsights": ["..."], "forNegotiation": ["..."]},
+  "redFlags": [{"id": "RF-DA-1", "category": "kill-reason", "severity": "CRITICAL", "title": "...", "description": "...", "location": "...", "evidence": "...", "impact": "...", "question": "...", "redFlagIfBadAnswer": "..."}],
+  "questions": [{"priority": "CRITICAL", "category": "devil", "question": "...", "context": "...", "whatToLookFor": "..."}],
   "findings": {
     "counterArguments": [...],
     "worstCaseScenario": {...},
@@ -592,11 +579,7 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
   "dbCrossReference": {
     "claims": [...],
     "uncheckedClaims": [...]
-  },
-  "redFlags": [...],
-  "questions": [...],
-  "alertSignal": {...},
-  "narrative": {...}
+  }
 }
 \`\`\``;
 
@@ -864,17 +847,30 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
-    // Normalize score
+    // Normalize score — derive from kill reasons/findings if LLM didn't return it
     const rawScoreValue = data.score?.value;
     const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    let derivedScore = 0;
     if (scoreIsFallback) {
-      console.warn(`[devils-advocate] LLM did not return score value — using 0`);
+      // Derive score from kill reasons severity and count
+      const killReasons = Array.isArray(data.findings?.killReasons) ? data.findings.killReasons : [];
+      const absoluteKills = killReasons.filter(k => k.dealBreakerLevel === "ABSOLUTE").length;
+      const conditionalKills = killReasons.filter(k => k.dealBreakerLevel === "CONDITIONAL").length;
+      const concerns = killReasons.filter(k => k.dealBreakerLevel === "CONCERN").length;
+      // More kill reasons = lower score (more skepticism = lower deal quality from DA perspective)
+      // DA score represents deal resilience: high = deal withstands scrutiny, low = many concerns
+      derivedScore = Math.max(10, Math.min(80,
+        70 - (absoluteKills * 20) - (conditionalKills * 10) - (concerns * 5)
+      ));
+      console.warn(`[devils-advocate] LLM did not return score value — derived ${derivedScore} from ${killReasons.length} kill reasons`);
     }
     const score: AgentScore = {
-      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
-      grade: scoreIsFallback ? "F" : (validGrades.includes(data.score?.grade as (typeof validGrades)[number])
-        ? (data.score.grade as (typeof validGrades)[number])
-        : "C"),
+      value: scoreIsFallback ? derivedScore : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback
+        ? (derivedScore >= 80 ? "A" : derivedScore >= 60 ? "B" : derivedScore >= 40 ? "C" : derivedScore >= 20 ? "D" : "F")
+        : (validGrades.includes(data.score?.grade as (typeof validGrades)[number])
+          ? (data.score.grade as (typeof validGrades)[number])
+          : "C"),
       isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({

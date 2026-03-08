@@ -608,7 +608,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
       {weighted && (
         <>
           <H3>Résultat probabiliste</H3>
-          {weighted.expectedMultiple !== undefined && (
+          {weighted.expectedMultiple != null && (
             <LabelValue
               label="Multiple attendu"
               value={`${weighted.expectedMultiple.toFixed(1)}x`}
@@ -622,7 +622,7 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
           )}
           {(() => {
             const irr = weighted.expectedIRR ?? weighted.expectedIrr;
-            return irr !== undefined ? (
+            return irr != null ? (
               <LabelValue
                 label="IRR attendu"
                 value={`${irr.toFixed(1)}%`}
@@ -669,10 +669,10 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
                 sc.exitOutcome?.exitValuation
                   ? `${(sc.exitOutcome.exitValuation / 1_000_000).toFixed(1)}M`
                   : "N/A",
-                ret?.multiple !== undefined
+                ret?.multiple != null
                   ? `${ret.multiple.toFixed(1)}x`
                   : "N/A",
-                ret?.irr !== undefined ? `${ret.irr.toFixed(1)}%` : "N/A",
+                ret?.irr != null ? `${ret.irr.toFixed(1)}%` : "N/A",
               ];
             })}
           />

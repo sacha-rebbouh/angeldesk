@@ -1579,10 +1579,6 @@ La DB doit etre exploitee par **39 agents** repartis en 3 tiers:
 | `consumer-expert` | CAC consumer, virality | IMPL |
 | `hardware-expert` | Marges, cycles production | IMPL |
 | `gaming-expert` | CPI, LTV gaming | IMPL |
-
-**A creer (10 secteurs):**
-| Agent | Usage DB | Status |
-| ----------------------- | ----------------------------------------- | ------------ |
 | `biotech-expert` | Timelines FDA, clinical trials, IP pharma | TODO |
 | `edtech-expert` | CAC schools vs B2C, LTV learners | TODO |
 | `proptech-expert` | Cycles immo, CapEx, regulations | TODO |

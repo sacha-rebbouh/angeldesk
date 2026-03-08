@@ -6,7 +6,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { DealStage } from "@prisma/client";
+import { DealStage, FundingInstrument } from "@prisma/client";
 import { authenticateApiRequest } from "../middleware";
 import { apiSuccess, apiError } from "@/lib/api-key-auth";
 import { handleApiError } from "@/lib/api-error";
@@ -17,6 +17,7 @@ const createDealSchema = z.object({
   companyName: z.string().max(200).nullish(),
   sector: z.string().max(100).nullish(),
   stage: z.nativeEnum(DealStage).nullish(),
+  instrument: z.nativeEnum(FundingInstrument).nullish(),
   geography: z.string().max(100).nullish(),
   description: z.string().max(5000).nullish(),
   website: z.string().url().max(500).nullish().or(z.literal("")),

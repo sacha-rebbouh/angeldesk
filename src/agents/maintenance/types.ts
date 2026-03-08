@@ -690,6 +690,12 @@ export const STAGE_NORMALIZATION: Record<string, string> = {
   // Other
   bridge: 'BRIDGE',
   convertible: 'CONVERTIBLE',
+  'convertible note': 'CONVERTIBLE',
+  'note convertible': 'CONVERTIBLE',
+  safe: 'SAFE',
+  'bsa-air': 'BSA_AIR',
+  'bsa air': 'BSA_AIR',
+  bsaair: 'BSA_AIR',
   debt: 'DEBT',
   grant: 'GRANT',
 }

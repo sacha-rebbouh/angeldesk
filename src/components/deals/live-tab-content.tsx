@@ -1,7 +1,10 @@
 "use client";
 
-import { useMemo, useCallback, useState } from "react";
+import { useMemo, useCallback, useState, useEffect, useRef, memo } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useChannel } from "ably/react";
+import type { Message } from "ably";
+import * as Ably from "ably";
 import {
   Radio,
   Loader2,
@@ -9,6 +12,10 @@ import {
   Clock,
   History,
   RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,6 +43,8 @@ import PostCallReanalysis from "@/app/(dashboard)/deals/[dealId]/live/components
 interface LiveTabContentProps {
   dealId: string;
   dealName: string;
+  userName?: string;
+  founderNames?: string[];
 }
 
 interface SessionData {
@@ -82,7 +91,7 @@ const ACTIVE_STATUSES: SessionStatus[] = ["created", "bot_joining", "live", "pro
 
 async function fetchSessions(dealId: string): Promise<SessionsResponse> {
   const res = await fetch(
-    `/api/live-sessions?dealId=${dealId}&includeSummary=true`
+    `/api/live-sessions?dealId=${dealId}&includeSummary=true&includeCards=true`
   );
   if (!res.ok) throw new Error("Impossible de charger les sessions");
   return res.json();
@@ -118,7 +127,7 @@ function formatSessionDate(dateStr: string): string {
 // Component
 // =============================================================================
 
-export default function LiveTabContent({ dealId, dealName }: LiveTabContentProps) {
+export default memo(function LiveTabContent({ dealId, dealName, userName, founderNames }: LiveTabContentProps) {
   const queryClient = useQueryClient();
 
   // Fetch all sessions for this deal
@@ -141,6 +150,8 @@ export default function LiveTabContent({ dealId, dealName }: LiveTabContentProps
       if (active.status === "live") return 15_000;
       return 10_000;
     },
+    // CRITICAL: keep polling even when tab is in background (user is on their meeting app)
+    refetchIntervalInBackground: true,
     staleTime: 2_000,
   });
 
@@ -158,13 +169,14 @@ export default function LiveTabContent({ dealId, dealName }: LiveTabContentProps
   const { activeSession, completedSessions } = useMemo(() => {
     const active = sessions.find((s) => ACTIVE_STATUSES.includes(s.status)) ?? null;
 
-    // If no active session, check for recently completed (within last 10 minutes)
+    // If no active session, check for recently completed/failed (within last 2 hours)
+    // Wide window so the user can reinvite the bot if the meeting is still going
     const recentlyCompleted = !active
       ? sessions.find(
           (s) =>
-            s.status === "completed" &&
+            (s.status === "completed" || s.status === "failed") &&
             new Date(s.updatedAt || s.createdAt).getTime() >
-              Date.now() - 10 * 60 * 1000
+              Date.now() - 2 * 60 * 60 * 1000
         ) ?? null
       : null;
 
@@ -225,6 +237,8 @@ export default function LiveTabContent({ dealId, dealName }: LiveTabContentProps
           session={activeSession}
           dealId={dealId}
           dealName={dealName}
+          userName={userName}
+          founderNames={founderNames}
         />
       ) : (
         <>
@@ -252,59 +266,136 @@ export default function LiveTabContent({ dealId, dealName }: LiveTabContentProps
       )}
     </div>
   );
+});
+
+// =============================================================================
+// useSessionRealtimeEvents — standalone Ably listener for bot_joining state
+// Provides instant status + participant detection before LiveAblyProvider mounts.
+// Creates its own Ably connection (separate from the coaching feed provider).
+// =============================================================================
+
+function useSessionRealtimeEvents(sessionId: string, enabled: boolean) {
+  const [realtimeStatus, setRealtimeStatus] = useState<SessionStatus | null>(null);
+  const [realtimeParticipants, setRealtimeParticipants] = useState<
+    Array<{ name: string; role: string }>
+  >([]);
+  const [liveDetectedAt, setLiveDetectedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      // Reset when disabled (session went live, LiveAblyProvider takes over)
+      setRealtimeStatus(null);
+      setRealtimeParticipants([]);
+      return;
+    }
+
+    let client: Ably.Realtime | null = null;
+    let channel: Ably.RealtimeChannel | null = null;
+    let disposed = false;
+
+    async function connect() {
+      try {
+        const res = await fetch(
+          `/api/coaching/ably-token?sessionId=${sessionId}`
+        );
+        if (!res.ok || disposed) return;
+        const { data: tokenDetails } = await res.json();
+        if (disposed) return;
+
+        client = new Ably.Realtime({ token: tokenDetails.token });
+        channel = client.channels.get(`live-session:${sessionId}`);
+
+        channel.subscribe("session-status", (msg: Ably.Message) => {
+          if (disposed || !msg.data?.status) return;
+          const status = msg.data.status as SessionStatus;
+          setRealtimeStatus(status);
+          if (status === "live") {
+            setLiveDetectedAt(new Date().toISOString());
+          }
+        });
+
+        channel.subscribe("participant-joined", (msg: Ably.Message) => {
+          if (disposed || !msg.data?.name) return;
+          const { name, role } = msg.data as { name: string; role: string };
+          setRealtimeParticipants((prev) => {
+            if (prev.some((p) => p.name === name)) return prev;
+            return [...prev, { name, role: role || "other" }];
+          });
+        });
+      } catch (err) {
+        console.warn("[useSessionRealtimeEvents] Connection failed:", err);
+      }
+    }
+
+    connect();
+
+    return () => {
+      disposed = true;
+      if (channel) {
+        try { channel.unsubscribe(); } catch {}
+      }
+      if (client) {
+        try { client.close(); } catch {}
+      }
+    };
+  }, [sessionId, enabled]);
+
+  return { realtimeStatus, realtimeParticipants, liveDetectedAt };
 }
 
 // =============================================================================
 // Active Session View — renders different components based on status
+// Uses standalone Ably listener for instant bot_joining → live transition.
 // =============================================================================
 
-function ActiveSessionView({
+const ActiveSessionView = memo(function ActiveSessionView({
   session,
   dealId,
   dealName,
+  userName,
+  founderNames,
 }: {
   session: SessionData;
   dealId: string;
   dealName: string;
+  userName?: string;
+  founderNames?: string[];
 }) {
-  const participants = Array.isArray(session.participants)
+  const polledParticipants = Array.isArray(session.participants)
     ? session.participants
     : [];
 
-  // --- Created / Bot Joining ---
-  if (session.status === "created" || session.status === "bot_joining") {
-    return (
-      <div className="space-y-4">
-        {/* Waiting indicator */}
-        <div className="rounded-lg border p-8 text-center">
-          <div className="animate-pulse mb-3">
-            <div className="mx-auto h-8 w-8 rounded-full bg-muted-foreground/20" />
-          </div>
-          <h3 className="text-lg font-medium mb-1">
-            {session.status === "created"
-              ? "Session créée..."
-              : "Bot en cours de connexion..."}
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Le bot rejoint votre réunion. Cela peut prendre quelques secondes.
-          </p>
-        </div>
+  // Standalone Ably listener — active only during bot_joining/created
+  const isWaiting =
+    session.status === "created" || session.status === "bot_joining";
+  const { realtimeStatus, realtimeParticipants, liveDetectedAt } =
+    useSessionRealtimeEvents(session.id, isWaiting);
 
-        {/* Participant mapper — show if any participants detected */}
-        {participants.length > 0 && (
-          <ParticipantMapper
-            sessionId={session.id}
-            participants={participants}
-            dealName={dealName}
-          />
-        )}
-      </div>
-    );
-  }
+  // Effective status: realtime event takes priority over polled status
+  const effectiveStatus = realtimeStatus ?? session.status;
 
-  // --- Live ---
-  if (session.status === "live") {
-    const initialCards = session.coachingCards?.map((card) => ({
+  // Merge polled + realtime participants (deduplicated by name)
+  const allParticipants = useMemo(() => {
+    const base = [...polledParticipants];
+    for (const rp of realtimeParticipants) {
+      if (!base.some((bp) => bp.name === rp.name)) {
+        base.push({
+          name: rp.name,
+          role: rp.role,
+          speakerId: `spk_${rp.name.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
+        });
+      }
+    }
+    return base;
+  }, [polledParticipants, realtimeParticipants]);
+
+  // Effective startedAt: use live detection timestamp if server hasn't synced yet
+  const effectiveStartedAt = session.startedAt ?? liveDetectedAt ?? undefined;
+
+  // Memoize initialCards to prevent re-creating on every render
+  const initialCards = useMemo(() => {
+    if (!session.coachingCards || session.coachingCards.length === 0) return undefined;
+    return session.coachingCards.map((card) => ({
       id: card.id,
       type: card.type as "question" | "contradiction" | "new_info" | "negotiation",
       priority: card.priority as "high" | "medium" | "low",
@@ -315,50 +406,68 @@ function ActiveSessionView({
       status: card.status as "active" | "addressed" | "dismissed" | "expired",
       createdAt: card.createdAt,
     }));
+  }, [session.coachingCards]);
 
+  // --- Created / Bot Joining ---
+  if (effectiveStatus === "created" || effectiveStatus === "bot_joining") {
     return (
-      <LiveAblyProvider sessionId={session.id}>
-        <div className="space-y-4">
-          {/* Status bar + controls row */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="flex-1">
-              <SessionStatusBar
-                sessionId={session.id}
-                dealName={dealName}
-                status={session.status}
-                startedAt={session.startedAt ?? undefined}
-              />
-            </div>
+      <div className="space-y-4">
+        {/* Waiting indicator */}
+        <div className="rounded-lg border p-8 text-center">
+          <div className="animate-pulse mb-3">
+            <div className="mx-auto h-8 w-8 rounded-full bg-muted-foreground/20" />
+          </div>
+          <h3 className="text-lg font-medium mb-1">
+            {effectiveStatus === "created"
+              ? "Session créée..."
+              : "Bot en cours de connexion..."}
+          </h3>
+          <p className="text-sm text-muted-foreground mb-3">
+            Le bot rejoint votre réunion. Cela peut prendre quelques secondes.
+          </p>
+          {effectiveStatus === "bot_joining" && (
             <SessionControls
               sessionId={session.id}
               dealId={dealId}
-              status={session.status}
-            />
-          </div>
-
-          {/* Participant mapper */}
-          {participants.length > 0 && (
-            <ParticipantMapper
-              sessionId={session.id}
-              participants={participants}
-              dealName={dealName}
+              status={effectiveStatus}
             />
           )}
-
-          {/* Coaching feed */}
-          <div className="rounded-lg border overflow-hidden" style={{ minHeight: 400 }}>
-            <CoachingFeed
-              sessionId={session.id}
-              initialCards={initialCards}
-            />
-          </div>
         </div>
+
+        {/* Participant mapper — show if any participants detected via Ably */}
+        {allParticipants.length > 0 && (
+          <ParticipantMapper
+            sessionId={session.id}
+            participants={allParticipants}
+            dealName={dealName}
+            userName={userName}
+            founderNames={founderNames}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // --- Live ---
+  if (effectiveStatus === "live") {
+    return (
+      <LiveAblyProvider sessionId={session.id}>
+        <LiveSessionView
+          session={session}
+          dealId={dealId}
+          dealName={dealName}
+          participants={allParticipants}
+          initialCards={initialCards}
+          userName={userName}
+          founderNames={founderNames}
+          startedAtOverride={effectiveStartedAt}
+        />
       </LiveAblyProvider>
     );
   }
 
   // --- Processing ---
-  if (session.status === "processing") {
+  if (effectiveStatus === "processing") {
     return (
       <div className="space-y-4">
         <div className="rounded-lg border p-8 text-center">
@@ -366,9 +475,17 @@ function ActiveSessionView({
           <h3 className="text-lg font-medium mb-1">
             Génération du rapport...
           </h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground mb-3">
             Analyse de la transcription et génération du rapport post-call.
           </p>
+          <p className="text-xs text-muted-foreground mb-3">
+            Le meeting est encore en cours ? Réinvitez le bot.
+          </p>
+          <SessionControls
+            sessionId={session.id}
+            dealId={dealId}
+            status={effectiveStatus}
+          />
         </div>
 
         {/* Show report placeholder during processing */}
@@ -377,35 +494,186 @@ function ActiveSessionView({
     );
   }
 
-  // --- Completed with summary ---
-  if (session.status === "completed") {
+  // --- Completed / Failed with summary ---
+  if (effectiveStatus === "completed" || effectiveStatus === "failed") {
     const summaryData = session.summary ?? undefined;
+    // Show reinvite if session is recent (< 2h)
+    const isRecent = new Date(session.updatedAt || session.createdAt).getTime() > Date.now() - 2 * 60 * 60 * 1000;
     return (
       <div className="space-y-4">
-        <PostCallReport
-          sessionId={session.id}
-          summary={summaryData}
-        />
-        <PostCallReanalysis
-          sessionId={session.id}
-          dealId={dealId}
-          summary={summaryData}
-        />
+        {isRecent && (
+          <div className="flex items-center justify-between rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 px-4 py-3">
+            <p className="text-sm text-amber-800 dark:text-amber-200">
+              Le meeting est encore en cours ? Réinvitez le bot pour reprendre le coaching.
+            </p>
+            <SessionControls
+              sessionId={session.id}
+              dealId={dealId}
+              status={effectiveStatus}
+            />
+          </div>
+        )}
+        {summaryData && (
+          <PostCallReport
+            sessionId={session.id}
+            summary={summaryData}
+          />
+        )}
+        {summaryData && (
+          <PostCallReanalysis
+            sessionId={session.id}
+            dealId={dealId}
+            summary={summaryData}
+          />
+        )}
       </div>
     );
   }
 
   // Fallback (should not happen, but safety net)
   return null;
-}
+});
 
 // =============================================================================
 // Session History
 // =============================================================================
 
-function SessionHistory({ sessions, dealId }: { sessions: SessionData[]; dealId: string }) {
+// =============================================================================
+// Live Session View — live status with collapsible participant mapper
+// =============================================================================
+
+const LiveSessionView = memo(function LiveSessionView({
+  session,
+  dealId,
+  dealName,
+  participants: initialParticipants,
+  initialCards,
+  userName,
+  founderNames,
+  startedAtOverride,
+}: {
+  session: SessionData;
+  dealId: string;
+  dealName: string;
+  participants: Array<{ name: string; role: string; speakerId: string }>;
+  initialCards?: Array<{
+    id: string;
+    type: "question" | "contradiction" | "new_info" | "negotiation";
+    priority: "high" | "medium" | "low";
+    content: string;
+    context: string | null;
+    reference: string | null;
+    suggestedQuestion: string | null;
+    status: "active" | "addressed" | "dismissed" | "expired";
+    createdAt: string;
+  }>;
+  userName?: string;
+  founderNames?: string[];
+  startedAtOverride?: string;
+}) {
+  const [showParticipants, setShowParticipants] = useState(false);
+  const [liveParticipants, setLiveParticipants] = useState(initialParticipants);
+
+  // Sync from polling (new participants from server)
+  useEffect(() => {
+    setLiveParticipants((prev) => {
+      const existingIds = new Set(prev.map((p) => p.speakerId));
+      const toAdd = initialParticipants.filter((p) => !existingIds.has(p.speakerId));
+      return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+    });
+  }, [initialParticipants]);
+
+  // Listen for real-time participant-joined Ably events
+  const handleParticipantJoined = useCallback((message: Message) => {
+    if (!message.data) return;
+    const { name, role } = message.data as { name: string; role: string };
+    setLiveParticipants((prev) => {
+      // Prevent duplicates
+      if (prev.some((p) => p.name === name)) return prev;
+      return [
+        ...prev,
+        {
+          name,
+          role,
+          speakerId: `spk_${name.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
+        },
+      ];
+    });
+  }, []);
+
+  useChannel(`live-session:${session.id}`, "participant-joined", handleParticipantJoined);
+
+  const toggleParticipants = useCallback(() => {
+    setShowParticipants((prev) => !prev);
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      {/* Status bar + controls + participants toggle */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex-1">
+          <SessionStatusBar
+            sessionId={session.id}
+            dealName={dealName}
+            status={session.status}
+            startedAt={startedAtOverride ?? session.startedAt ?? undefined}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleParticipants}
+            className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
+          >
+            <Users className="h-3.5 w-3.5" />
+            <span>
+              {liveParticipants.length > 0
+                ? `${liveParticipants.length} participant${liveParticipants.length > 1 ? "s" : ""}`
+                : "Participants"}
+            </span>
+            {showParticipants ? (
+              <ChevronUp className="h-3 w-3" />
+            ) : (
+              <ChevronDown className="h-3 w-3" />
+            )}
+          </button>
+          <SessionControls
+            sessionId={session.id}
+            dealId={dealId}
+            status={session.status}
+          />
+        </div>
+      </div>
+
+      {/* Collapsible participant mapper */}
+      {showParticipants && (
+        <ParticipantMapper
+          sessionId={session.id}
+          participants={liveParticipants}
+          dealName={dealName}
+          userName={userName}
+          founderNames={founderNames}
+        />
+      )}
+
+      {/* Coaching feed */}
+      <div className="rounded-lg border overflow-hidden" style={{ minHeight: 400 }}>
+        <CoachingFeed
+          sessionId={session.id}
+          initialCards={initialCards}
+        />
+      </div>
+    </div>
+  );
+});
+
+// =============================================================================
+// Session History
+// =============================================================================
+
+const SessionHistory = memo(function SessionHistory({ sessions, dealId }: { sessions: SessionData[]; dealId: string }) {
   const queryClient = useQueryClient();
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const retryMutation = useMutation({
     mutationFn: async (sessionId: string) => {
@@ -422,6 +690,10 @@ function SessionHistory({ sessions, dealId }: { sessions: SessionData[]; dealId:
     },
   });
 
+  const toggleExpand = useCallback((sessionId: string) => {
+    setExpandedId((prev) => (prev === sessionId ? null : sessionId));
+  }, []);
+
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
@@ -435,53 +707,74 @@ function SessionHistory({ sessions, dealId }: { sessions: SessionData[]; dealId:
           const duration = formatDurationShared(session.startedAt, session.endedAt);
           const isFailed = session.status === "failed";
           const isRetrying = retryingId === session.id;
+          const hasSummary = !!session.summary;
+          const isExpanded = expandedId === session.id;
 
           return (
-            <div
-              key={session.id}
-              className="flex items-center justify-between rounded-lg border px-4 py-3"
-            >
-              <div className="flex items-center gap-3">
-                <Badge variant="outline" className={colorClass}>
-                  {label}
-                </Badge>
-                <span className="text-sm text-muted-foreground">
-                  {formatSessionDate(session.createdAt)}
-                </span>
-                {duration !== "—" && (
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {duration}
+            <div key={session.id} className="rounded-lg border overflow-hidden">
+              <div
+                className={`flex items-center justify-between px-4 py-3 ${hasSummary ? "cursor-pointer hover:bg-muted/50 transition-colors" : ""}`}
+                onClick={hasSummary ? () => toggleExpand(session.id) : undefined}
+              >
+                <div className="flex items-center gap-3">
+                  <Badge variant="outline" className={colorClass}>
+                    {label}
+                  </Badge>
+                  <span className="text-sm text-muted-foreground">
+                    {formatSessionDate(session.createdAt)}
                   </span>
-                )}
+                  {duration !== "—" && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {duration}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {hasSummary && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <FileText className="h-3 w-3" />
+                      {isExpanded ? "Masquer le rapport" : "Voir le rapport"}
+                      {isExpanded ? (
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </span>
+                  )}
+                  {isFailed && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        retryMutation.mutate(session.id);
+                      }}
+                      disabled={isRetrying}
+                      className="text-xs"
+                    >
+                      {isRetrying ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3 mr-1" />
+                      )}
+                      Relancer le rapport
+                    </Button>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                {session.summary && (
-                  <span className="text-xs text-muted-foreground">
-                    Rapport disponible
-                  </span>
-                )}
-                {isFailed && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => retryMutation.mutate(session.id)}
-                    disabled={isRetrying}
-                    className="text-xs"
-                  >
-                    {isRetrying ? (
-                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                    ) : (
-                      <RefreshCw className="h-3 w-3 mr-1" />
-                    )}
-                    Relancer le rapport
-                  </Button>
-                )}
-              </div>
+              {isExpanded && hasSummary && (
+                <div className="border-t px-4 py-4">
+                  <PostCallReport
+                    sessionId={session.id}
+                    summary={session.summary!}
+                  />
+                </div>
+              )}
             </div>
           );
         })}
       </div>
     </div>
   );
-}
+});

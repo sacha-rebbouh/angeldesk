@@ -19,6 +19,7 @@ import type {
   KeyFact,
   AgentSummary,
   RedFlagContext,
+  LiveSessionContextData,
 } from "@/services/chat-context";
 import { sanitizeForLLM } from "@/lib/sanitize";
 import {
@@ -125,6 +126,9 @@ export interface FullChatContext {
     completedAt: Date | null;
     hasResults: boolean;
   } | null;
+
+  // Completed live coaching sessions with summaries
+  liveSessions?: LiveSessionContextData[];
 
   // Investor level for adapting responses (F31)
   investorLevel?: "beginner" | "intermediate" | "expert";
@@ -451,6 +455,64 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       contextPrompt += `- **Date**: ${latestAnalysis.completedAt?.toLocaleDateString("fr-FR") ?? "N/A"}\n`;
       if (latestAnalysis.summary) {
         contextPrompt += `- **Resume**: ${latestAnalysis.summary}\n`;
+      }
+    }
+
+    // Live coaching sessions
+    const liveSessions = this.chatContext.liveSessions;
+    if (liveSessions && liveSessions.length > 0) {
+      contextPrompt += `\n## Sessions de coaching live (${liveSessions.length} terminées)\n`;
+      for (const session of liveSessions) {
+        const date = session.endedAt
+          ? new Date(session.endedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+          : "Date inconnue";
+        contextPrompt += `\n### Session du ${date}\n`;
+        contextPrompt += `**Résumé**: ${session.executiveSummary}\n`;
+
+        const keyPoints = session.keyPoints as Array<{ topic?: string; summary?: string }>;
+        if (keyPoints.length > 0) {
+          contextPrompt += `**Points clés**:\n`;
+          for (const kp of keyPoints) {
+            contextPrompt += `- **${kp.topic ?? "Point"}**: ${kp.summary ?? ""}\n`;
+          }
+        }
+
+        const newInfo = session.newInformation as Array<{ fact?: string; impact?: string }>;
+        if (newInfo.length > 0) {
+          contextPrompt += `**Informations nouvelles révélées en call**:\n`;
+          for (const info of newInfo) {
+            contextPrompt += `- ${info.fact ?? ""}${info.impact ? ` — Impact: ${info.impact}` : ""}\n`;
+          }
+        }
+
+        const contradictions = session.contradictions as Array<{ claimInDeck?: string; claimInCall?: string; severity?: string }>;
+        if (contradictions.length > 0) {
+          contextPrompt += `**Contradictions deck vs call**:\n`;
+          for (const c of contradictions) {
+            contextPrompt += `- [${c.severity ?? "?"}] Deck: "${c.claimInDeck ?? ""}" vs Call: "${c.claimInCall ?? ""}"\n`;
+          }
+        }
+
+        const questionsAsked = session.questionsAsked as Array<{ question?: string; answer?: string }>;
+        if (questionsAsked.length > 0) {
+          contextPrompt += `**Questions posées et réponses**:\n`;
+          for (const qa of questionsAsked) {
+            contextPrompt += `- Q: ${qa.question ?? ""}\n  R: ${qa.answer ?? "Pas de réponse"}\n`;
+          }
+        }
+
+        const remaining = session.remainingQuestions as string[];
+        if (Array.isArray(remaining) && remaining.length > 0) {
+          contextPrompt += `**Questions restantes à poser**:\n`;
+          for (const q of remaining) {
+            contextPrompt += `- ${q}\n`;
+          }
+        }
+
+        const delta = session.confidenceDelta as { before?: number; after?: number; reason?: string } | null;
+        if (delta && delta.before != null && delta.after != null) {
+          contextPrompt += `**Évolution confiance**: ${delta.before}% → ${delta.after}%${delta.reason ? ` (${delta.reason})` : ""}\n`;
+        }
       }
     }
 

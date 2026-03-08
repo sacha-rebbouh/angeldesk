@@ -238,6 +238,14 @@ Construire 4 SCENARIOS de trajectoire pour ce deal, ANCRES sur des données rée
 - BEAR: Difficultés significatives, pivot possible, exit difficile
 - CATASTROPHIC: Échec partiel ou total (shutdown, acquihire, zombie)
 
+# ADAPTATION AU SECTEUR (CRITIQUE)
+
+ADAPTE tes scenarios, metriques et comparables au SECTEUR du deal:
+- Pour un deal non-tech (food, retail, mode, consumer...), utilise des metriques sectorielles: CA, marge brute, panier moyen, nombre de points de vente, LTV client (pas ARR/MRR/churn SaaS)
+- Les comparables doivent etre du MEME secteur (pas de comparaison SaaS pour un deal petfood)
+- Les triggers de scenario doivent etre pertinents: "rupture supply chain" pour un deal FMCG, pas "CTO qui part"
+- Les exit multiples doivent etre du secteur (retail/consumer ≠ SaaS)
+
 # METHODOLOGIE D'ANALYSE
 
 ## Etape 1: Collecter les données de base
@@ -333,13 +341,15 @@ IRR = ((Multiple)^(1/years) - 1) × 100
 Pour CHAQUE scenario, identifie les TRIGGERS SPECIFIQUES dans le champ "triggers":
 - Quels red flags Tier 1 se materialisent dans ce scenario?
 - Quel evenement externe pourrait declencher ce scenario? (concurrent leve 50M, regulation change)
-- Quel evenement interne pourrait declencher ce scenario? (CTO part, pivot force)
+- Quel evenement interne pourrait declencher ce scenario? (depart d'un fondateur/dirigeant cle, pivot force)
 
 Chaque trigger: { trigger, source, impactOnScenario, probability, mitigations[] }
 
 Exemples:
-- BEAR trigger: "Le CTO quitte" (source: "team-investigator: no vesting on CTO", impact: "BASE → BEAR", probability: "MEDIUM", mitigations: ["Mettre du vesting", "Recruter VP Engineering"])
+- BEAR trigger: "Un cofondateur cle quitte" (source: "team-investigator: no vesting", impact: "BASE → BEAR", probability: "MEDIUM", mitigations: ["Mettre du vesting", "Recruter un profil senior complementaire"])
 - BULL trigger: "Contrat enterprise signe" (source: "customer-intel: pipeline enterprise", impact: "BASE → BULL", probability: "LOW")
+
+IMPORTANT: Adapte les roles et termes au SECTEUR du deal. Ne pas utiliser "CTO", "VP Engineering", "tech team" etc. pour un deal non-tech (food, retail, mode, services...). Utilise les roles pertinents du secteur (ex: Directeur Commercial, Responsable Produit, Chef de Production...).
 
 # FORMAT DE SORTIE
 
@@ -465,69 +475,33 @@ Réponds en JSON avec la structure suivante:
 
 \`\`\`json
 {
+  "score": {
+    "value": 0-100,
+    "grade": "A" | "B" | "C" | "D" | "F",
+    "breakdown": [
+      {"criterion": "Return Potential", "weight": 30, "score": 0-100, "justification": "..."},
+      {"criterion": "Scenario Balance", "weight": 25, "score": 0-100, "justification": "..."},
+      {"criterion": "Data Quality", "weight": 20, "score": 0-100, "justification": "..."},
+      {"criterion": "Risk/Reward", "weight": 15, "score": 0-100, "justification": "..."},
+      {"criterion": "Comparable Anchoring", "weight": 10, "score": 0-100, "justification": "..."}
+    ]
+  },
+  "alertSignal": {"hasBlocker": false, "recommendation": "PROCEED_WITH_CAUTION", "justification": "..."},
+  "narrative": {"oneLiner": "...", "summary": "...", "keyInsights": ["..."], "forNegotiation": ["..."]},
+  "redFlags": [{"id": "RF-SM-1", "category": "scenario", "severity": "HIGH", "title": "...", "description": "...", "location": "...", "evidence": "...", "impact": "...", "question": "...", "redFlagIfBadAnswer": "..."}],
+  "questions": [{"priority": "HIGH", "category": "scenario", "question": "...", "context": "...", "whatToLookFor": "..."}],
   "scenarios": [
     {
       "name": "BASE",
       "description": "Description du scénario",
-      "probability": {
-        "value": 40,
-        "rationale": "Pourquoi cette probabilité",
-        "source": "DB: X% des Seed SaaS..."
-      },
-      "assumptions": [
-        {
-          "assumption": "Croissance Y1",
-          "value": "100%",
-          "source": "DB median Seed SaaS",
-          "confidence": "high"
-        }
-      ],
-      "metrics": [
-        {
-          "year": 1,
-          "revenue": 300000,
-          "revenueSource": "ARR actuel × (1 + 100%) = 150K × 2 = 300K",
-          "valuation": 6000000,
-          "valuationSource": "ARR × 20x (DB median Seed SaaS)",
-          "employeeCount": 8,
-          "employeeCountSource": "Actuel (5) + 3 (standard Seed)"
-        }
-      ],
-      "exitOutcome": {
-        "type": "acquisition_strategic",
-        "typeRationale": "70% des exits SaaS sont des acquisitions (DB)",
-        "timing": "5-6 ans",
-        "timingSource": "DB median time to exit",
-        "exitValuation": 50000000,
-        "exitValuationCalculation": "10M ARR × 5x (DB median) = 50M",
-        "exitMultiple": 5,
-        "exitMultipleSource": "DB median SaaS exits 2023-2024"
-      },
-      "investorReturn": {
-        "initialInvestment": 50000,
-        "initialInvestmentSource": "Ticket BA calculé",
-        "ownershipAtEntry": 2.0,
-        "ownershipCalculation": "50K / (2M pre + 500K round) = 2.0%",
-        "dilutionToExit": 60,
-        "dilutionSource": "Standard Seed→A→B = 60% (DB median)",
-        "ownershipAtExit": 0.8,
-        "ownershipAtExitCalculation": "2.0% × (1 - 0.60) = 0.8%",
-        "grossProceeds": 400000,
-        "proceedsCalculation": "0.8% × 50M = 400K",
-        "multiple": 8.0,
-        "multipleCalculation": "400K / 50K = 8.0x",
-        "irr": 41.4,
-        "irrCalculation": "((8.0)^(1/6) - 1) × 100 = 41.4%",
-        "holdingPeriodYears": 6
-      },
+      "probability": {"value": 40, "rationale": "Pourquoi", "source": "DB: X%..."},
+      "assumptions": [{"assumption": "Croissance Y1", "value": "100%", "source": "DB median", "confidence": "high"}],
+      "metrics": [{"year": 1, "revenue": 300000, "revenueSource": "...", "valuation": 6000000, "valuationSource": "...", "employeeCount": 8, "employeeCountSource": "..."}],
+      "exitOutcome": {"type": "acquisition_strategic", "typeRationale": "...", "timing": "5-6 ans", "timingSource": "...", "exitValuation": 50000000, "exitValuationCalculation": "...", "exitMultiple": 5, "exitMultipleSource": "..."},
+      "investorReturn": {"initialInvestment": 50000, "initialInvestmentSource": "...", "ownershipAtEntry": 2.0, "ownershipCalculation": "...", "dilutionToExit": 60, "dilutionSource": "...", "ownershipAtExit": 0.8, "ownershipAtExitCalculation": "...", "grossProceeds": 400000, "proceedsCalculation": "...", "multiple": 8.0, "multipleCalculation": "...", "irr": 41.4, "irrCalculation": "...", "holdingPeriodYears": 6},
       "keyRisks": [{"risk": "...", "source": "..."}],
       "keyDrivers": [{"driver": "...", "source": "..."}],
-      "basedOnComparable": {
-        "company": "DataWidget",
-        "trajectory": "Seed 2021 → Series A 2022 → Acquired 2024",
-        "relevance": "Même secteur, même taille au Seed",
-        "source": "Funding DB"
-      }
+      "basedOnComparable": {"company": "...", "trajectory": "...", "relevance": "...", "source": "Funding DB"}
     }
   ],
   "sensitivityAnalysis": [...],
@@ -536,11 +510,6 @@ Réponds en JSON avec la structure suivante:
   "probabilityWeightedOutcome": {...},
   "mostLikelyScenario": "BASE",
   "mostLikelyRationale": "...",
-  "score": {...},
-  "redFlags": [...],
-  "questions": [...],
-  "alertSignal": {...},
-  "narrative": {...},
   "dbCrossReference": {...}
 }
 \`\`\`
@@ -946,17 +915,35 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
       limitations: this.identifyLimitations(data, context),
     };
 
-    // Normalize score
+    // Normalize score — derive from scenarios if LLM didn't return it
     const rawScoreValue = data.score?.value;
     const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
+    let derivedScore = 0;
     if (scoreIsFallback) {
-      console.warn(`[scenario-modeler] LLM did not return score value — using 0`);
+      // Derive score from probability-weighted expected multiple
+      const expectedMultiple = data.probabilityWeightedOutcome?.expectedMultiple;
+      if (expectedMultiple != null && expectedMultiple > 0) {
+        // Map expected multiple to score: 1x=30, 3x=50, 5x=65, 10x=80, 20x+=95
+        derivedScore = Math.min(95, Math.max(15, Math.round(30 + Math.log2(expectedMultiple) * 15)));
+      } else if (scenarios.length > 0) {
+        // Fallback: use BASE scenario multiple if available
+        const baseScenario = scenarios.find(s => s.name === "BASE");
+        const baseMult = baseScenario?.investorReturn?.multiple ?? 0;
+        derivedScore = baseMult > 0
+          ? Math.min(90, Math.max(20, Math.round(25 + Math.log2(baseMult) * 15)))
+          : 40; // neutral default
+      } else {
+        derivedScore = 40;
+      }
+      console.warn(`[scenario-modeler] LLM did not return score value — derived ${derivedScore} from scenarios`);
     }
     const score: AgentScore = {
-      value: scoreIsFallback ? 0 : Math.min(100, Math.max(0, rawScoreValue)),
-      grade: scoreIsFallback ? "F" : (validGrades.includes(data.score?.grade as typeof validGrades[number])
-        ? (data.score.grade as typeof validGrades[number])
-        : "C"),
+      value: scoreIsFallback ? derivedScore : Math.min(100, Math.max(0, rawScoreValue)),
+      grade: scoreIsFallback
+        ? (derivedScore >= 80 ? "A" : derivedScore >= 60 ? "B" : derivedScore >= 40 ? "C" : derivedScore >= 20 ? "D" : "F")
+        : (validGrades.includes(data.score?.grade as typeof validGrades[number])
+          ? (data.score.grade as typeof validGrades[number])
+          : "C"),
       isFallback: scoreIsFallback,
       breakdown: Array.isArray(data.score?.breakdown)
         ? data.score.breakdown.map((b) => ({

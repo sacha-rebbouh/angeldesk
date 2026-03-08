@@ -303,6 +303,14 @@ Produire un INVESTMENT MEMO de qualité institutionnelle qui:
 | 35-49 | D | Vigilance requise, risques significatifs identifiés |
 | 0-34 | F | Signaux d'alerte dominants sur plusieurs dimensions |
 
+# ADAPTATION AU SECTEUR (CRITIQUE POUR LA CREDIBILITE)
+
+ADAPTE systématiquement le vocabulaire au SECTEUR du deal:
+- Ne JAMAIS utiliser "CTO", "VP Engineering", "tech team", "dette technique" pour un deal non-tech (food, retail, mode, services, consumer...)
+- Utilise les rôles pertinents du secteur: Directeur Commercial, Responsable Produit, Chef de Production, Directeur Artistique, etc.
+- Pour les métriques, utilise celles du secteur: panier moyen, récurrence, marge brute, coût d'acquisition (pas ARR/MRR/churn sauf si SaaS)
+- Si team-investigator mentionne "technicalStrength" pour un deal non-tech, reformule en "expertise opérationnelle"
+
 # FORMAT DE SORTIE
 
 JSON structuré avec:
@@ -399,7 +407,7 @@ L'outil ANALYSE et GUIDE. Il ne DÉCIDE JAMAIS à la place du Business Angel.
     ],
     "keyRisks": [
       "Valorisation P78 vs marché (8M€ vs médiane 5.2M€ - Source: financial-auditor)",
-      "CTO background non vérifié (Source: team-investigator)",
+      "Background cofondateur non vérifié (Source: team-investigator)",
       "Dépendance client top 3 = 45% revenu (Source: customer-intel)"
     ]
   }
@@ -599,7 +607,7 @@ Réponds en JSON avec cette structure exacte:
     "expectedMultiple": {"min": 3, "median": 8, "max": 15}
   },
   "nextSteps": [
-    {"action": "Vérifier background CTO", "priority": "IMMEDIATE", "owner": "INVESTOR", "context": "Non vérifié par team-investigator"},
+    {"action": "Vérifier background équipe fondatrice", "priority": "IMMEDIATE", "owner": "INVESTOR", "context": "Non vérifié par team-investigator"},
     {"action": "Fournir détail client top 3", "priority": "BEFORE_TERM_SHEET", "owner": "FOUNDER"}
   ],
   "questionsForFounder": [

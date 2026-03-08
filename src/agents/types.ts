@@ -248,6 +248,8 @@ export interface ExtractedDealInfo {
   tagline?: string;
   sector?: string;
   stage?: string;
+  /** Funding instrument: EQUITY, SAFE, BSA_AIR, CONVERTIBLE_NOTE, BRIDGE */
+  instrument?: string;
   geography?: string;
   foundedYear?: number;
   teamSize?: number;

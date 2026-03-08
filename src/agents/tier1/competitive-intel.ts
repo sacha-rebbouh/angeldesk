@@ -475,179 +475,38 @@ Score global 0-100 basé sur:
 - Barrières à l'entrée (15%)
 - Honnêteté du deck sur la concurrence (15%)
 
-Réponds en JSON avec EXACTEMENT cette structure:
+Réponds en JSON avec EXACTEMENT cette structure.
+
+**REGLE ANTI-TRONCATION: Le JSON DOIT etre COMPLET. Sois concis dans les justifications (1-2 phrases max). Limite competitors a 5 max, redFlags a 5 max, questions a 5 max.**
+
 \`\`\`json
 {
-  "meta": {
-    "dataCompleteness": "complete|partial|minimal",
-    "confidenceLevel": 0-100,
-    "limitations": ["string"]
-  },
-  "score": {
-    "value": 0-100,
-    "grade": "A|B|C|D|F",
-    "breakdown": [
-      {
-        "criterion": "string",
-        "weight": 0-100,
-        "score": 0-100,
-        "justification": "string"
-      }
-    ]
-  },
+  "score": {"value": 0-100, "grade": "A|B|C|D|F", "breakdown": [{"criterion": "Position vs concurrents", "weight": 40, "score": 0-100, "justification": "..."}, {"criterion": "Solidité du moat", "weight": 30, "score": 0-100, "justification": "..."}, {"criterion": "Barrières à l'entrée", "weight": 15, "score": 0-100, "justification": "..."}, {"criterion": "Honnêteté deck", "weight": 15, "score": 0-100, "justification": "..."}]},
+  "meta": {"dataCompleteness": "complete|partial|minimal", "confidenceLevel": 0-100, "limitations": ["..."]},
+  "alertSignal": {"hasBlocker": false, "blockerReason": null, "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP", "justification": "..."},
+  "narrative": {"oneLiner": "...", "summary": "...", "keyInsights": ["..."], "forNegotiation": ["..."]},
+  "redFlags": [{"category": "competition|moat|positioning|transparency", "severity": "CRITICAL|HIGH|MEDIUM", "title": "...", "description": "...", "location": "Slide X", "evidence": "...", "contextEngineData": null, "impact": "...", "question": "...", "redFlagIfBadAnswer": "..."}],
+  "questions": [{"priority": "CRITICAL|HIGH|MEDIUM", "category": "competition|moat|positioning|strategy", "question": "...", "context": "...", "whatToLookFor": "..."}],
   "findings": {
-    "competitors": [
-      {
-        "name": "string",
-        "website": "string|null",
-        "positioning": "string",
-        "targetCustomer": "string",
-        "overlap": "direct|indirect|adjacent|future_threat",
-        "overlapExplanation": "string",
-        "funding": {
-          "total": number|null,
-          "lastRound": number|null,
-          "lastRoundDate": "string|null",
-          "stage": "string|null",
-          "investors": ["string"],
-          "source": "Funding DB|Context Engine|News|Unknown"
-        },
-        "estimatedRevenue": {"value": number, "basis": "string"} | null,
-        "strengths": [{"point": "string", "evidence": "string"}],
-        "weaknesses": [{"point": "string", "evidence": "string"}],
-        "threatLevel": "CRITICAL|HIGH|MEDIUM|LOW",
-        "threatRationale": "string",
-        "timeToThreat": "string",
-        "differentiationVsUs": {
-          "ourAdvantage": "string",
-          "theirAdvantage": "string",
-          "verdict": "WE_WIN|THEY_WIN|PARITY|DIFFERENT_SEGMENT"
-        }
-      }
-    ],
-    "competitorsMissedInDeck": [
-      {
-        "name": "string",
-        "funding": number|null,
-        "whyRelevant": "string",
-        "severity": "CRITICAL|HIGH|MEDIUM"
-      }
-    ],
-    "marketStructure": {
-      "concentration": "fragmented|moderate|concentrated|monopolistic",
-      "totalPlayers": number,
-      "topPlayersMarketShare": "string",
-      "entryBarriers": "low|medium|high",
-      "entryBarriersExplanation": "string"
-    },
-    "moatAnalysis": {
-      "primaryMoatType": "network_effects|data_moat|brand|switching_costs|scale|technology|regulatory|none",
-      "secondaryMoatTypes": ["string"],
-      "moatScoring": [
-        {
-          "moatType": "string",
-          "score": 0-100,
-          "evidence": "string",
-          "sustainability": "strong|moderate|weak",
-          "timeframe": "string"
-        }
-      ],
-      "overallMoatStrength": 0-100,
-      "moatVerdict": "STRONG_MOAT|EMERGING_MOAT|WEAK_MOAT|NO_MOAT",
-      "moatJustification": "string (3-4 phrases)",
-      "moatRisks": [{"risk": "string", "probability": "HIGH|MEDIUM|LOW", "impact": "string"}]
-    },
-    "competitivePositioning": {
-      "ourPosition": "string",
-      "nearestCompetitor": "string",
-      "differentiationStrength": "strong|moderate|weak|unclear",
-      "sustainabilityOfPosition": "string"
-    },
-    "claimsAnalysis": [
-      {
-        "claim": "string (citation exacte)",
-        "location": "Slide X",
-        "claimType": "no_competition|market_leader|unique_tech|first_mover|better_product|cheaper|other",
-        "verificationStatus": "VERIFIED|CONTRADICTED|EXAGGERATED|UNVERIFIABLE",
-        "verificationEvidence": "string",
-        "sourceUsed": "string",
-        "investorImplication": "string",
-        "severityIfFalse": "CRITICAL|HIGH|MEDIUM"
-      }
-    ],
-    "competitiveThreats": [
-      {
-        "threat": "string",
-        "source": "string",
-        "probability": "HIGH|MEDIUM|LOW",
-        "timeframe": "string",
-        "potentialImpact": "string",
-        "mitigation": "string"
-      }
-    ],
-    "fundingBenchmark": {
-      "ourFunding": number,
-      "competitorsFunding": [{"name": "string", "funding": number}],
-      "percentileVsCompetitors": 0-100,
-      "verdict": "string"
-    }
+    "competitors": [{"name": "...", "website": null, "positioning": "...", "targetCustomer": "...", "overlap": "direct|indirect|adjacent|future_threat", "overlapExplanation": "...", "funding": {"total": null, "lastRound": null, "lastRoundDate": null, "stage": null, "investors": [], "source": "Funding DB|Context Engine|News|Unknown"}, "estimatedRevenue": null, "strengths": [{"point": "...", "evidence": "..."}], "weaknesses": [{"point": "...", "evidence": "..."}], "threatLevel": "CRITICAL|HIGH|MEDIUM|LOW", "threatRationale": "...", "timeToThreat": "...", "differentiationVsUs": {"ourAdvantage": "...", "theirAdvantage": "...", "verdict": "WE_WIN|THEY_WIN|PARITY|DIFFERENT_SEGMENT"}}],
+    "competitorsMissedInDeck": [{"name": "...", "funding": null, "whyRelevant": "...", "severity": "CRITICAL|HIGH|MEDIUM"}],
+    "marketStructure": {"concentration": "fragmented|moderate|concentrated|monopolistic", "totalPlayers": 0, "topPlayersMarketShare": "...", "entryBarriers": "low|medium|high", "entryBarriersExplanation": "..."},
+    "moatAnalysis": {"primaryMoatType": "network_effects|data_moat|brand|switching_costs|scale|technology|regulatory|none", "secondaryMoatTypes": [], "moatScoring": [{"moatType": "...", "score": 0, "evidence": "...", "sustainability": "strong|moderate|weak", "timeframe": "..."}], "overallMoatStrength": 0, "moatVerdict": "STRONG_MOAT|EMERGING_MOAT|WEAK_MOAT|NO_MOAT", "moatJustification": "...", "moatRisks": [{"risk": "...", "probability": "HIGH|MEDIUM|LOW", "impact": "..."}]},
+    "competitivePositioning": {"ourPosition": "...", "nearestCompetitor": "...", "differentiationStrength": "strong|moderate|weak|unclear", "sustainabilityOfPosition": "..."},
+    "claimsAnalysis": [{"claim": "...", "location": "Slide X", "claimType": "no_competition|market_leader|unique_tech|first_mover|better_product|cheaper|other", "verificationStatus": "VERIFIED|CONTRADICTED|EXAGGERATED|UNVERIFIABLE", "verificationEvidence": "...", "sourceUsed": "...", "investorImplication": "...", "severityIfFalse": "CRITICAL|HIGH|MEDIUM"}],
+    "competitiveThreats": [{"threat": "...", "source": "...", "probability": "HIGH|MEDIUM|LOW", "timeframe": "...", "potentialImpact": "...", "mitigation": "..."}],
+    "fundingBenchmark": {"ourFunding": 0, "competitorsFunding": [{"name": "...", "funding": 0}], "percentileVsCompetitors": 0, "verdict": "..."}
   },
-  "dbCrossReference": {
-    "claims": [
-      {
-        "claim": "string",
-        "location": "string",
-        "dbVerdict": "VERIFIED|CONTRADICTED|PARTIAL|NOT_VERIFIABLE",
-        "evidence": "string",
-        "severity": "CRITICAL|HIGH|MEDIUM"
-      }
-    ],
-    "uncheckedClaims": ["string"]
-  },
-  "redFlags": [
-    {
-      "category": "competition|moat|positioning|transparency",
-      "severity": "CRITICAL|HIGH|MEDIUM",
-      "title": "string (court et percutant)",
-      "description": "string (détaillé avec preuves)",
-      "location": "Slide X ou Section Y",
-      "evidence": "string (citation ou donnée)",
-      "contextEngineData": "string|null",
-      "impact": "string (pourquoi c'est un problème pour le BA)",
-      "question": "string (question à poser au fondateur)",
-      "redFlagIfBadAnswer": "string"
-    }
-  ],
-  "questions": [
-    {
-      "priority": "CRITICAL|HIGH|MEDIUM",
-      "category": "competition|moat|positioning|strategy",
-      "question": "string (question spécifique)",
-      "context": "string (pourquoi on pose cette question)",
-      "whatToLookFor": "string (ce qui révèlerait un problème)"
-    }
-  ],
-  "alertSignal": {
-    "hasBlocker": boolean,
-    "blockerReason": "string|null",
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
-    "justification": "string"
-  },
-  "narrative": {
-    "oneLiner": "string (résumé en 1 phrase)",
-    "summary": "string (3-4 phrases)",
-    "keyInsights": ["string (3-5 insights majeurs)"],
-    "forNegotiation": ["string (arguments pour négocier si on proceed)"]
-  }
+  "dbCrossReference": {"claims": [{"claim": "...", "location": "...", "dbVerdict": "VERIFIED|CONTRADICTED|PARTIAL|NOT_VERIFIABLE", "evidence": "...", "severity": "CRITICAL|HIGH|MEDIUM"}], "uncheckedClaims": ["..."]}
 }
 \`\`\`
 
 RAPPELS:
-- Minimum 5 concurrents analysés
-- Minimum 3 red flags si problèmes détectés
-- Minimum 5 questions pour le fondateur
+- 5 concurrents MAX (les plus pertinents)
+- Justifications COURTES (1-2 phrases)
 - Chaque claim vérifié vs DB/Context Engine
-- Moat PROUVÉ, pas juste revendiqué`;
+- Moat PROUVÉ, pas juste revendiqué
+- PRIORITE: JSON complet et valide > quantité de détails`;
 
     // Call LLM
     const { data } = await this.llmCompleteJSON<LLMCompetitiveIntelResponse>(prompt);

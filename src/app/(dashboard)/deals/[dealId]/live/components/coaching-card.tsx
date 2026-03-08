@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState, useEffect } from "react";
 import {
   HelpCircle,
   AlertTriangle,
@@ -57,7 +57,7 @@ const CARD_TYPE_CONFIG: Record<
 function relativeTime(dateStr: string): string {
   const now = Date.now();
   const then = new Date(dateStr).getTime();
-  const diffSec = Math.floor((now - then) / 1000);
+  const diffSec = Math.max(0, Math.floor((now - then) / 1000));
 
   if (diffSec < 10) return "à l'instant";
   if (diffSec < 60) return `il y a ${diffSec}s`;
@@ -107,7 +107,14 @@ export const CoachingCard = memo(function CoachingCard({
   const config = CARD_TYPE_CONFIG[card.type];
   const Icon = config.icon;
 
-  const timeLabel = relativeTime(card.createdAt);
+  // Auto-update relative time every 10s
+  const [timeLabel, setTimeLabel] = useState(() => relativeTime(card.createdAt));
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimeLabel(relativeTime(card.createdAt));
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [card.createdAt]);
 
   return (
     <div

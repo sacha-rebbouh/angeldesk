@@ -444,16 +444,16 @@ function FinancialFindings({ f }: { f: Record<string, unknown> }) {
       {burn && (
         <>
           <H3>Burn &amp; Runway</H3>
-          {burn.monthlyBurn !== undefined && (
+          {burn.monthlyBurn != null && (
             <LabelValue
               label="Burn mensuel"
               value={`${(burn.monthlyBurn / 1000).toFixed(0)}K€`}
             />
           )}
-          {burn.runway !== undefined && (
+          {burn.runway != null && (
             <LabelValue label="Runway" value={`${burn.runway} mois`} />
           )}
-          {burn.burnMultiple !== undefined && (
+          {burn.burnMultiple != null && (
             <LabelValue
               label="Burn Multiple"
               value={`${burn.burnMultiple.toFixed(1)}`}
@@ -928,10 +928,10 @@ function ExitFindings({ f }: { f: Record<string, unknown> }) {
               typeof sc.exitValuation === "number"
                 ? `${(sc.exitValuation / 1_000_000).toFixed(0)}M`
                 : s(sc.exitValuation),
-              sc.investorReturn?.multiple !== undefined
+              sc.investorReturn?.multiple != null
                 ? `${sc.investorReturn.multiple.toFixed(1)}x`
                 : "N/A",
-              sc.investorReturn?.irr !== undefined
+              sc.investorReturn?.irr != null
                 ? `${sc.investorReturn.irr.toFixed(1)}%`
                 : "N/A",
             ])}
@@ -960,25 +960,25 @@ function ExitFindings({ f }: { f: Record<string, unknown> }) {
       {ret && (
         <>
           <H3>Résumé des retours</H3>
-          {ret.expectedMultiple !== undefined && (
+          {ret.expectedMultiple != null && (
             <LabelValue
               label="Multiple attendu"
               value={`${ret.expectedMultiple.toFixed(1)}x`}
             />
           )}
-          {ret.expectedIrr !== undefined && (
+          {ret.expectedIrr != null && (
             <LabelValue
               label="IRR attendu"
               value={`${ret.expectedIrr.toFixed(1)}%`}
             />
           )}
-          {ret.downsideMultiple !== undefined && (
+          {ret.downsideMultiple != null && (
             <LabelValue
               label="Downside"
               value={`${ret.downsideMultiple.toFixed(1)}x`}
             />
           )}
-          {ret.upsideMultiple !== undefined && (
+          {ret.upsideMultiple != null && (
             <LabelValue
               label="Upside"
               value={`${ret.upsideMultiple.toFixed(1)}x`}

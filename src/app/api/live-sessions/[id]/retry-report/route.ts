@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { publishSessionStatus } from "@/lib/live/ably-server";
+import { generateAndSavePostCallReport } from "@/lib/live/post-call-generator";
 import { handleApiError } from "@/lib/api-error";
 
 export const maxDuration = 300;
@@ -52,30 +54,38 @@ export async function POST(request: NextRequest, context: RouteContext) {
       where: { sessionId: id },
     });
 
-    // Reset status to processing
-    await prisma.liveSession.update({
-      where: { id },
+    // Atomic status transition: only update if still failed/processing (prevents concurrent retries)
+    const result = await prisma.liveSession.updateMany({
+      where: {
+        id,
+        status: { in: ["failed", "processing"] },
+      },
       data: {
         status: "processing",
         errorMessage: null,
       },
     });
 
+    if (result.count === 0) {
+      return NextResponse.json(
+        { error: "Session already being retried or completed." },
+        { status: 409 }
+      );
+    }
+
     await publishSessionStatus(id, {
       status: "processing",
       message: "Relance de la génération du rapport...",
     });
 
-    // Fire-and-forget: generate report
-    try {
-      import("@/lib/live/post-call-generator").then((mod) => {
-        mod.generateAndSavePostCallReport(id).catch((err: unknown) => {
-          console.error(`[retry-report] Post-call report failed for session ${id}:`, err);
-        });
-      });
-    } catch (err) {
-      console.error(`[retry-report] Failed to import post-call-generator for session ${id}:`, err);
-    }
+    // Use after() to run report generation (survives response sending on Vercel)
+    after(async () => {
+      try {
+        await generateAndSavePostCallReport(id);
+      } catch (err) {
+        console.error(`[retry-report] Post-call report failed for session ${id}:`, err);
+      }
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

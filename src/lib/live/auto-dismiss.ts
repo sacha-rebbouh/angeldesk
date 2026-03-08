@@ -9,6 +9,7 @@
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { publishCardAddressed } from "@/lib/live/ably-server";
+import { sanitizeTranscriptText } from "@/lib/live/sanitize";
 
 // ============================================================================
 // TYPES
@@ -87,7 +88,7 @@ export async function checkAutoDismiss(
     .join("\n");
 
   const prompt = `## Ce que le BA vient de dire
-"${baUtterance}"
+"${sanitizeTranscriptText(baUtterance)}"
 
 ## Cartes de coaching actives
 ${cardDescriptions}

@@ -11,35 +11,14 @@
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { serializeContext } from "@/lib/live/context-compiler";
+import { getVisualContextWithFallback } from "@/lib/live/visual-processor";
 import type {
   CoachingInput,
   CoachingResponse,
   CoachingCardType,
   CardPriority,
 } from "@/lib/live/types";
-
-// ============================================================================
-// TRANSCRIPT SANITIZATION — strip prompt injection delimiters from user text
-// ============================================================================
-
-const MAX_UTTERANCE_LENGTH = 2000;
-
-/**
- * Sanitize transcript text before injecting into LLM prompts.
- * Strips common prompt injection delimiters and enforces max length.
- * This is lighter than the full sanitizeForLLM (which throws on suspicious
- * patterns) because transcript text may legitimately contain flagged phrases.
- */
-function sanitizeTranscriptText(text: string): string {
-  return text
-    .replace(/```/g, "")
-    .replace(/<\/?system>/gi, "")
-    .replace(/<\/?user>/gi, "")
-    .replace(/<\/?assistant>/gi, "")
-    .replace(/\[INST\]/gi, "")
-    .replace(/\[\/INST\]/gi, "")
-    .slice(0, MAX_UTTERANCE_LENGTH);
-}
+import { sanitizeTranscriptText } from "@/lib/live/sanitize";
 
 // ============================================================================
 // SYSTEM PROMPT
@@ -59,10 +38,16 @@ Ta carte DOIT être une réaction DIRECTE à ce qui vient d'être dit (l'utteran
 Tu ANALYSES, tu ne DÉCIDES JAMAIS. Ton analytique, factuel, concis.
 JAMAIS : "investir", "rejeter", "passer", "dealbreaker".
 
+## RÈGLE N°3 — CONTEXTE VISUEL
+Si un screen share est actif, tu as accès aux données extraites de l'écran partagé.
+- Utilise ces données pour enrichir tes réactions (chiffres visibles vs analyse, contradictions visuelles).
+- Si le fondateur dit "comme vous le voyez sur cette slide" → réagis aux données visuelles ET à l'utterance.
+- Les contradictions visuelles (slide vs analyse) sont des triggers de carte \`contradiction\` prioritaires.
+
 ## Types de cartes
-- \`contradiction\` : incohérence entre ce qui vient d'être dit et les données de l'analyse. CITE les deux chiffres.
+- \`contradiction\` : incohérence entre ce qui vient d'être dit/montré et les données de l'analyse. CITE les deux chiffres.
 - \`negotiation\` : le fondateur vient de mentionner un chiffre → compare au benchmark de l'analyse.
-- \`question\` : question de suivi DIRECTEMENT liée à ce qui vient d'être dit.
+- \`question\` : question de suivi DIRECTEMENT liée à ce qui vient d'être dit/montré.
 - \`new_info\` : info significative pas couverte par l'analyse existante.
 
 ## Priorité
@@ -114,6 +99,41 @@ function buildCoachingPrompt(input: CoachingInput): string {
   );
   sections.push(`Classification : ${input.currentUtterance.classification}`);
   sections.push("");
+
+  // ═══ Contexte visuel (screen share actif) ═══
+  // Note: visualContext is pre-fetched by generateCoachingSuggestion (with DB fallback)
+  const visualCtx = input.visualContext ?? null;
+
+  const hasVisualData = visualCtx && (
+    visualCtx.currentSlide ||
+    visualCtx.keyDataFromVisual.length > 0 ||
+    visualCtx.visualContradictions.length > 0
+  );
+  if (hasVisualData) {
+    sections.push("# CE QUI EST AFFICHÉ À L'ÉCRAN (screen share actif)");
+    if (visualCtx.currentSlide) {
+      sections.push(visualCtx.currentSlide);
+    }
+    if (visualCtx.keyDataFromVisual.length > 0) {
+      sections.push("Données extraites du visuel :");
+      for (const d of visualCtx.keyDataFromVisual) {
+        sections.push(`- ${d}`);
+      }
+    }
+    if (visualCtx.visualContradictions.length > 0) {
+      sections.push("CONTRADICTIONS VISUELLES :");
+      for (const c of visualCtx.visualContradictions) {
+        sections.push(`- ${c}`);
+      }
+    }
+    if (visualCtx.recentSlideHistory.length > 0) {
+      sections.push("Slides précédentes montrées :");
+      for (const s of visualCtx.recentSlideHistory) {
+        sections.push(`- ${s}`);
+      }
+    }
+    sections.push("");
+  }
 
   // ═══ Transcription récente pour le contexte conversationnel ═══
   if (input.recentTranscript.length > 0) {
@@ -168,13 +188,19 @@ function buildCoachingPrompt(input: CoachingInput): string {
 export async function generateCoachingSuggestion(
   input: CoachingInput
 ): Promise<CoachingResponse> {
+  // Pre-fetch visual context with DB fallback (for Vercel serverless cold starts)
+  if (!input.visualContext && input.sessionId) {
+    input.visualContext = (await getVisualContextWithFallback(input.sessionId)) ?? undefined;
+  }
+
   const prompt = buildCoachingPrompt(input);
 
-  // 5-second hard timeout via Promise.race — completeJSON does not support
+  // Hard timeout via Promise.race — completeJSON does not support
   // AbortController signals, so we race the LLM call against a timer.
   // If the timer wins, the LLM call continues in the background but its
   // result is discarded.
-  const TIMEOUT_MS = 5_000;
+  // Using HAIKU for speed (~1-2s vs ~6s for Sonnet) — critical for live coaching latency.
+  const TIMEOUT_MS = 8_000;
 
   try {
     const timeoutPromise = new Promise<"TIMEOUT">((resolve) =>
@@ -185,12 +211,15 @@ export async function generateCoachingSuggestion(
       { agentName: "coaching-engine" },
       () =>
         completeJSON<CoachingResponse>(prompt, {
-          model: "SONNET",
+          model: "HAIKU",
           systemPrompt: COACHING_SYSTEM_PROMPT,
-          maxTokens: 500,
-          temperature: 0.4,
+          maxTokens: 300,
+          temperature: 0.3,
         })
     );
+
+    // Prevent unhandled rejection if timeout wins and LLM fails after
+    llmPromise.catch(() => {});
 
     const raceResult = await Promise.race([llmPromise, timeoutPromise]);
 

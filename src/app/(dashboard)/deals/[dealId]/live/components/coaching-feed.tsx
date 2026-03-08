@@ -8,17 +8,26 @@ import {
   useEffect,
   useState,
 } from "react";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { useChannel } from "ably/react";
 import type { Message } from "ably";
-import { ExternalLink, Radio } from "lucide-react";
+import { ExternalLink, Radio, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   AblyCoachingCardEvent,
   AblyCardAddressedEvent,
 } from "@/lib/live/types";
 import { CoachingCard } from "./coaching-card";
-import AnalysisQuestionsTab from "./analysis-questions-tab";
+
+// Lazy-load AnalysisQuestionsTab (heavy component with its own data fetching)
+const AnalysisQuestionsTab = dynamic(() => import("./analysis-questions-tab"), {
+  loading: () => (
+    <div className="flex items-center justify-center py-12">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  ),
+});
 
 // ---------------------------------------------------------------------------
 // Reducer — active / addressed card state
@@ -32,7 +41,8 @@ type CardState = {
 type CardAction =
   | { type: "ADD_CARD"; card: AblyCoachingCardEvent }
   | { type: "ADDRESS_CARD"; cardId: string }
-  | { type: "INIT"; cards: AblyCoachingCardEvent[] };
+  | { type: "INIT"; cards: AblyCoachingCardEvent[] }
+  | { type: "MERGE"; cards: AblyCoachingCardEvent[] };
 
 function cardReducer(state: CardState, action: CardAction): CardState {
   switch (action.type) {
@@ -77,6 +87,54 @@ function cardReducer(state: CardState, action: CardAction): CardState {
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
       return { active, addressed };
+    }
+    case "MERGE": {
+      // Merge new cards without resetting existing state (prevents flickering from polling)
+      const existingIds = new Set([
+        ...state.active.map((c) => c.id),
+        ...state.addressed.map((c) => c.id),
+      ]);
+
+      let changed = false;
+      const newActive = [...state.active];
+      const newAddressed = [...state.addressed];
+
+      for (const card of action.cards) {
+        if (existingIds.has(card.id)) {
+          // Update status if card was addressed server-side but still active locally
+          if (
+            (card.status === "addressed" || card.status === "dismissed") &&
+            state.active.some((c) => c.id === card.id)
+          ) {
+            const idx = newActive.findIndex((c) => c.id === card.id);
+            if (idx !== -1) {
+              const [moved] = newActive.splice(idx, 1);
+              newAddressed.unshift({ ...moved, status: "addressed" as const });
+              changed = true;
+            }
+          }
+          continue;
+        }
+        // New card not in local state
+        if (card.status === "addressed" || card.status === "dismissed") {
+          newAddressed.push(card);
+        } else {
+          newActive.unshift(card);
+        }
+        changed = true;
+      }
+
+      if (!changed) return state;
+
+      newActive.sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      newAddressed.sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      return { active: newActive, addressed: newAddressed.slice(0, 20) };
     }
     default:
       return state;
@@ -146,15 +204,14 @@ export const CoachingFeed = memo(function CoachingFeed({
     prevActiveCountRef.current = state.active.length;
   }, [state.active.length]);
 
-  // ---- Reconnect: re-init from fresh initialCards ----
-  const initialCardsRef = useRef(initialCards);
+  // ---- Reconnect: merge new cards from polling without resetting state ----
+  const initialCardsIdsRef = useRef<string>("");
   useEffect(() => {
-    if (
-      initialCards &&
-      initialCards !== initialCardsRef.current
-    ) {
-      initialCardsRef.current = initialCards;
-      dispatch({ type: "INIT", cards: initialCards });
+    if (!initialCards || initialCards.length === 0) return;
+    const newIds = initialCards.map((c) => c.id).sort().join(",");
+    if (newIds !== initialCardsIdsRef.current) {
+      initialCardsIdsRef.current = newIds;
+      dispatch({ type: "MERGE", cards: initialCards });
     }
   }, [initialCards]);
 
@@ -253,7 +310,7 @@ export const CoachingFeed = memo(function CoachingFeed({
       </div>
 
       {/* Tab content */}
-      <div role="tabpanel">
+      <div role="tabpanel" className="flex-1 flex flex-col overflow-hidden">
       {activeTab === "coaching" ? (
         <div
           ref={scrollContainerRef}

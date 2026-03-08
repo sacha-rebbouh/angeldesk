@@ -8,6 +8,7 @@
 
 import type { SpeakerRole, UtteranceClassification } from "./types";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { sanitizeTranscriptText } from "@/lib/live/sanitize";
 
 // ============================================================================
 // REGEX PATTERNS — Fast-path classification (no LLM call)
@@ -95,14 +96,8 @@ export async function classifyUtterance(
     }
   }
 
-  // ── Step 2: Small talk (any length) ──
-  for (const pattern of SMALL_TALK_PATTERNS) {
-    if (pattern.test(trimmed)) {
-      return { classification: "small_talk", confidence: 0.9 };
-    }
-  }
-
-  // ── Step 3: Domain keyword detection ──
+  // ── Step 2: Domain keyword detection (checked before small talk to avoid
+  //    masking substantive content in mixed utterances like "Bonjour, notre MRR est 5M") ──
   if (FINANCIAL_PATTERN.test(trimmed)) {
     return { classification: "financial_claim", confidence: 0.8 };
   }
@@ -111,6 +106,13 @@ export async function classifyUtterance(
   }
   if (NEGOTIATION_PATTERN.test(trimmed)) {
     return { classification: "negotiation_point", confidence: 0.8 };
+  }
+
+  // ── Step 3: Small talk (any length, only if no domain keywords matched) ──
+  for (const pattern of SMALL_TALK_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return { classification: "small_talk", confidence: 0.9 };
+    }
   }
 
   // ── Step 4: LLM classification (Haiku) for ambiguous utterances ──
@@ -152,7 +154,7 @@ async function classifyWithLLM(
       { agentName: "utterance-router" },
       () =>
         completeJSON<{ classification: UtteranceClassification; confidence: number }>(
-          `Speaker role: ${speakerRole}\nUtterance: "${text}"`,
+          `Speaker role: ${speakerRole}\nUtterance: "${sanitizeTranscriptText(text)}"`,
           {
             model: "HAIKU",
             systemPrompt: CLASSIFICATION_SYSTEM_PROMPT,

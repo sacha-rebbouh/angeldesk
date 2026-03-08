@@ -262,7 +262,7 @@ export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData,
       description: "Synthèse finale: score pondéré + recommandation d'investissement basée sur tous les agents",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 240000,
+      timeoutMs: 300000,
       dependencies: [
         // Tier 1 - Analysis agents
         "deck-forensics",
@@ -390,7 +390,7 @@ Pour chaque verdict sauf NO_GO:
 | 80-100 | Serial founder avec exit, équipe complète, domain expertise 10+ ans |
 | 60-79 | Expérience pertinente, équipe core en place, backgrounds vérifiés |
 | 40-59 | First-time founders mais profils solides, gaps identifiés |
-| 20-39 | Gaps critiques (no CTO, no domain expertise), vesting absent |
+| 20-39 | Gaps critiques (rôle clé manquant selon le secteur, no domain expertise), vesting absent |
 | 0-19 | Red flags majeurs (fraude CV, conflits fondateurs, solo sans équipe) |
 
 ### FINANCIALS (20%)
@@ -487,14 +487,20 @@ Tu dois produire un JSON avec cette structure EXACTE:
     "limitations": ["limitation 1", "limitation 2"]
   },
   "score": {
-    "value": 0-100,
+    "value": 0-100,  // ENTIER entre 0 et 100, PAS une note sur 5 ou 10
     "grade": "A|B|C|D|F",
     "breakdown": [
       {
-        "criterion": "Dimension name",
+        "criterion": "Team",
         "weight": 0.25,
         "score": 72,
-        "justification": "Explication avec source agent"
+        "justification": "Source: team-investigator 75/100. CEO verifie..."
+      },
+      {
+        "criterion": "Financials",
+        "weight": 0.20,
+        "score": 58,
+        "justification": "Source: financial-auditor 58/100. ARR P35..."
       }
     ]
   },
@@ -583,7 +589,7 @@ L'outil ANALYSE et GUIDE. Il ne DECIDE JAMAIS a la place du Business Angel.
 
 1. **JAMAIS de score sans justification sourcée**
    - ❌ "Team score: 72"
-   - ✅ "Team score: 72 (team-investigator: 75, -3 pts pour gap CTO identifié)"
+   - ✅ "Team score: 72 (team-investigator: 75, -3 pts pour gap rôle clé identifié)"
 
 2. **TOUJOURS montrer les calculs**
    - ❌ "Score final: 68"
@@ -616,7 +622,7 @@ L'outil ANALYSE et GUIDE. Il ne DECIDE JAMAIS a la place du Business Angel.
         "criterion": "Team",
         "weight": 0.25,
         "score": 72,
-        "justification": "team-investigator: 72/100. CEO vérifié (8 ans Salesforce VP). CTO background non vérifiable (-5). Complementarité OK."
+        "justification": "team-investigator: 72/100. CEO vérifié (8 ans exp. secteur). Background co-fondateur non vérifiable (-5). Complementarité OK."
       },
       {
         "criterion": "Financials",
@@ -642,7 +648,7 @@ L'outil ANALYSE et GUIDE. Il ne DECIDE JAMAIS a la place du Business Angel.
       "rationale": "Deal intéressant (équipe + marché) mais valorisation trop agressive dans un marché froid. Investir SI valorisation réduite de 30%.",
       "conditions": [
         "Réduction valorisation à 5.5M€ max (vs 8M€ demandés)",
-        "Vérification background CTO avant closing",
+        "Vérification background équipe fondatrice avant closing",
         "Extension runway minimum 12 mois post-round"
       ]
     }
@@ -837,6 +843,7 @@ ${weightsTable}
 ⚠️ **CONSOLIDE LES RED FLAGS** - Ne répète pas, synthétise avec priorité
 ⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences
 ⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les scénarios ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal NO_GO avec scepticisme >80 ne peut pas avoir un score > 40.
+⚠️ **score.value = Σ(breakdown weights × breakdown scores)** — Le score.value DOIT être la moyenne pondérée de ton breakdown. Si ton breakdown donne 50, score.value DOIT être ~50, PAS 2 ou 5. C'est un entier 0-100.
 
 **CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
 - dimensionScores: 7 items, adjustments: MAX 5, comparableDeals: MAX 3
@@ -879,13 +886,19 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
     const result = this.transformResponse(data, context);
 
     // F37: Override LLM percentiles with deterministic DB calculation
+    // Use a 10s timeout to avoid blocking when Neon DB is unstable
     try {
       const { calculateDealPercentile } = await import("@/services/funding-db/percentile-calculator");
-      const dbPercentile = await calculateDealPercentile(
-        result.overallScore,
-        context.deal.sector ?? null,
-        context.deal.stage ?? null,
-      );
+      const dbPercentile = await Promise.race([
+        calculateDealPercentile(
+          result.overallScore,
+          context.deal.sector ?? null,
+          context.deal.stage ?? null,
+        ),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("F37 percentile DB timeout (10s)")), 10000)
+        ),
+      ]);
       result.comparativeRanking = {
         percentileOverall: dbPercentile.percentileOverall,
         percentileSector: dbPercentile.percentileSector,

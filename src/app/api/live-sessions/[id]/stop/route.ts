@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { leaveMeeting } from "@/lib/live/recall-client";
 import { publishSessionStatus } from "@/lib/live/ably-server";
+import { generateAndSavePostCallReport } from "@/lib/live/post-call-generator";
 import { handleApiError } from "@/lib/api-error";
 
 export const maxDuration = 300;
@@ -59,14 +61,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
     }
 
-    // Update session status
-    const updatedSession = await prisma.liveSession.update({
-      where: { id },
+    // Atomic status transition: only update if still live/bot_joining (prevents race with recall webhook)
+    const updatedSession = await prisma.liveSession.updateMany({
+      where: {
+        id,
+        status: { in: ["live", "bot_joining"] },
+      },
       data: {
         status: "processing",
         endedAt: new Date(),
       },
     });
+
+    if (updatedSession.count === 0) {
+      // Already transitioned by recall webhook — return current state
+      const current = await prisma.liveSession.findUnique({ where: { id } });
+      return NextResponse.json({ data: current });
+    }
 
     // Publish real-time status event
     await publishSessionStatus(id, {
@@ -74,18 +85,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
       message: "Session ended. Generating post-call report...",
     });
 
-    // Fire-and-forget: generate and save post-call report
-    try {
-      import("@/lib/live/post-call-generator").then((mod) => {
-        mod.generateAndSavePostCallReport(id).catch((err: unknown) => {
-          console.error(`[stop] Post-call report failed for session ${id}:`, err);
-        });
-      });
-    } catch (err) {
-      console.error(`[stop] Failed to import post-call-generator for session ${id}:`, err);
-    }
+    // Use after() to run post-call report generation (survives response sending on Vercel)
+    after(async () => {
+      try {
+        await generateAndSavePostCallReport(id);
+      } catch (err) {
+        console.error(`[stop] Post-call report failed for session ${id}:`, err);
+      }
+    });
 
-    return NextResponse.json({ data: updatedSession });
+    const current = await prisma.liveSession.findUnique({ where: { id } });
+    return NextResponse.json({ data: current });
   } catch (error) {
     return handleApiError(error, "stop live session");
   }

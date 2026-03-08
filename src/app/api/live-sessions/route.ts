@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimit, isValidCuid } from "@/lib/sanitize";
 import { detectPlatform } from "@/lib/live/recall-client";
+import { canStartLiveSession } from "@/services/live-session-limits";
 import { handleApiError } from "@/lib/api-error";
 
 const createSessionSchema = z.object({
@@ -41,32 +42,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check max 1 active session per user
-    const activeSession = await prisma.liveSession.findFirst({
-      where: {
-        userId: user.id,
-        status: { in: ["created", "bot_joining", "live"] },
-      },
-    });
-    if (activeSession) {
+    // Check session limits (max 1 active + max 3 per 24h)
+    const limitCheck = await canStartLiveSession(user.id);
+    if (!limitCheck.allowed) {
       return NextResponse.json(
-        { error: "You already have an active session. Stop it before creating a new one." },
-        { status: 400 }
-      );
-    }
-
-    // Check max 3 sessions per rolling 24h (consistent with live-session-limits.ts)
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentCount = await prisma.liveSession.count({
-      where: {
-        userId: user.id,
-        createdAt: { gte: twentyFourHoursAgo },
-      },
-    });
-    if (recentCount >= 50) {
-      return NextResponse.json(
-        { error: "Daily session limit reached (50 per 24h)." },
-        { status: 400 }
+        { error: limitCheck.reason },
+        { status: 429 }
       );
     }
 
@@ -143,11 +124,13 @@ export async function GET(request: NextRequest) {
       ...(status && { status }),
     };
 
+    const includeCards = searchParams.get("includeCards") === "true";
+
     const sessions = await prisma.liveSession.findMany({
       where,
       include: {
         summary: includeSummary ? true : undefined,
-        coachingCards: true, // Always include cards
+        coachingCards: includeCards ? true : undefined,
       },
       orderBy: { createdAt: "desc" },
     });

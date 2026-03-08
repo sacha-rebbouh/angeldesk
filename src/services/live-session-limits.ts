@@ -5,10 +5,10 @@ import { prisma } from "@/lib/prisma";
 // =============================================================================
 
 const MAX_ACTIVE_SESSIONS = 1;
-const MAX_SESSIONS_PER_DAY = 3;
+const MAX_SESSIONS_PER_DAY = process.env.NODE_ENV === "development" ? 50 : 3;
 
-/** Estimated cost per hour of live coaching (transcription + LLM) */
-const COST_PER_HOUR = 2.4;
+/** Estimated cost per hour of live coaching (Recall.ai ~$7.50 + LLM ~$2.60 + visual ~$1.10) */
+const COST_PER_HOUR = 11;
 
 // =============================================================================
 // canStartLiveSession
@@ -96,7 +96,7 @@ export async function getSessionUsage(
 
 /**
  * Update a session with cost estimate based on duration.
- * Cost formula: durationMinutes / 60 * $2.40/hour
+ * Cost formula: durationMinutes / 60 * $11/hour
  */
 export async function recordSessionDuration(
   sessionId: string,

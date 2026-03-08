@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
-import { DealStage, DealStatus } from "@prisma/client";
+import { DealStage, DealStatus, FundingInstrument } from "@prisma/client";
 import { handleApiError } from "@/lib/api-error";
 
 const updateDealSchema = z.object({
@@ -13,6 +13,7 @@ const updateDealSchema = z.object({
   description: z.string().optional(),
   sector: z.string().optional(),
   stage: z.nativeEnum(DealStage).optional(),
+  instrument: z.nativeEnum(FundingInstrument).optional(),
   geography: z.string().optional(),
   arr: z.number().positive().optional(),
   growthRate: z.number().optional(),

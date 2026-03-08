@@ -1,8 +1,8 @@
 # Live Coaching — Spécification Complète
 
-> **Statut** : Spécification validée (2026-02-24)
+> **Statut** : Implémentée — V2.1 (audio + visual + intelligence cumulative) (2026-02-25)
 > **Auteur** : Discussion produit/tech — spec exhaustive
-> **Objectif** : Permettre aux BA d'être coachés en temps réel pendant leurs calls avec les fondateurs, grâce à l'analyse IA existante d'AngelDesk.
+> **Objectif** : Permettre aux BA d'être coachés en temps réel pendant leurs calls avec les fondateurs, grâce à l'analyse IA existante d'AngelDesk + analyse visuelle du screen share.
 
 ---
 
@@ -81,28 +81,43 @@ L'architecture est **device-agnostic**. Le BA peut être sur desktop, iPad (spli
 │                                                        │
 │  ┌──────────────┐                                     │
 │  │  Recall.ai   │ Bot meeting + transcription         │
-│  │  ($0.65/h)   │ temps réel + diarization            │
+│  │  (~$7.50/h)  │ temps réel + diarization + vidéo    │
 │  └──────┬───────┘                                     │
-│         │ Webhook (transcript chunks)                  │
-│         ▼                                              │
-│  ┌──────────────┐    ┌──────────────────────────┐     │
-│  │  Utterance    │───▶│  Coaching Engine          │     │
-│  │  Router       │    │  (Claude Sonnet 4.5/4.6)  │     │
-│  │              │    │                           │     │
-│  │  Classifie   │    │  Input:                   │     │
-│  │  pertinent   │    │  • Utterance courante     │     │
-│  │  vs small    │    │  • Deal Context Engine    │     │
-│  │  talk        │    │  • Transcript buffer      │     │
-│  └──────────────┘    │                           │     │
-│                       │  Output:                  │     │
-│                       │  • Coaching card           │     │
-│                       └──────────┬───────────────┘     │
-│                                  │                      │
-│                                  ▼                      │
+│         │                                              │
+│         ├─ Webhook (transcript chunks)                 │
+│         │         ▼                                    │
+│         │  ┌──────────────┐    ┌─────────────────────┐│
+│         │  │  Utterance    │───▶│ Coaching Engine      ││
+│         │  │  Router       │    │ (Sonnet 4.5/4.6)    ││
+│         │  │  (regex +     │    │                      ││
+│         │  │   Haiku)      │    │ Input:               ││
+│         │  └──────────────┘    │ • Utterance           ││
+│         │                       │ • Deal Context        ││
+│         │                       │ • Visual Context ←──┐││
+│         │                       │ • Transcript buffer  │││
+│         │                       └─────────┬──────────┘││
+│         │                                 │            ││
+│         └─ Video frames (WebSocket)       │            ││
+│                   ▼                       │            ││
+│         ┌──────────────────┐              │            ││
+│         │ Fly.io WS Relay  │              │            ││
+│         │ (pHash dedup)    │              │            ││
+│         └────────┬─────────┘              │            ││
+│                  │ POST unique frames     │            ││
+│                  ▼                        │            ││
+│         ┌──────────────────┐              │            ││
+│         │ Visual Processor │              │            ││
+│         │ Haiku classify → │──────────────┘            ││
+│         │ Sonnet analyze   │                           ││
+│         │ (cache + DB)     │                           ││
+│         └──────────────────┘                           ││
+│                                                        │
 │                       ┌──────────────────────┐          │
 │                       │  Ably (realtime)      │          │
-│                       │  Publish coaching     │          │
-│                       │  card → BA            │          │
+│                       │  coaching-card         │          │
+│                       │  visual-analysis       │          │
+│                       │  screenshare-state     │          │
+│                       │  session-status        │          │
 │                       └──────────────────────┘          │
 │                                                        │
 │  ┌──────────────┐ (backup STT si qualité               │
@@ -121,6 +136,8 @@ L'architecture est **device-agnostic**. Le BA peut être sur desktop, iPad (spli
 | **Deepgram en backup** | Meilleure diarization que Recall.ai si besoin. Nova-3 excellent en FR/EN bilingue. |
 | **Ably (pas SSE)** | Vercel = serverless = timeouts sur SSE. Ably gère reconnexion native, messages manqués, présence. Mission-critique. |
 | **Claude Sonnet 4.5/4.6** | Meilleure qualité de raisonnement pour le coaching contextuel. Pas de compromis sur la qualité. |
+| **Fly.io WS Relay** | Recall.ai envoie les frames vidéo via WebSocket. Vercel serverless ne supporte pas WS → relay dédié sur Fly.io (~50 lignes). pHash dedup filtre ~95% des frames identiques côté relay (gratuit, CPU). |
+| **Pipeline visuel 2-stages** | Haiku classification (~$0.002/frame) filtre le contenu inchangé. Sonnet analyse profonde (~$0.02/frame) uniquement sur les nouvelles slides. Coût additionnel : ~$1.10/h. |
 | **Webapp (pas app native)** | Responsive = marche partout. Pas d'installation supplémentaire. Pop-out natif du navigateur. |
 
 ---
@@ -363,6 +380,59 @@ Le buffer se gère ainsi :
 - Small talk et fillers ne sont PAS inclus dans le buffer envoyé au LLM
 - Le buffer avance au fur et à mesure
 - Le deal context (pré-compilé) reste constant pendant toute la session
+
+#### 2.6 Analyse visuelle du screen share (V2)
+
+Le bot Recall.ai capture les frames vidéo du screen share en plus de l'audio. Un pipeline visuel en 2 étapes analyse le contenu partagé.
+
+**Flow :**
+
+```
+Recall.ai bot
+  └─ Video frames (2 FPS PNG, 1280x720 screenshare)
+       │ WebSocket
+       ▼
+  Fly.io WS Relay (~80 lignes Node.js)
+       │ pHash change detection (CPU, gratuit)
+       │ Filtre ~95% des frames identiques
+       │ POST frames uniques
+       ▼
+  Vercel API: POST /api/live-sessions/[id]/visual-frame
+       │
+       ├─ Haiku vision: "contenu nouveau ?" (~$0.002/frame)
+       │   └─ Si oui:
+       │       ├─ Sonnet vision: analyse profonde (~$0.02/frame)
+       │       ├─ Stocke ScreenCapture en DB
+       │       ├─ Met à jour le cache visual context
+       │       └─ Publie via Ably ("visual-analysis")
+       │
+       └─ Injecte dans le coaching engine au prochain appel
+```
+
+**Screen share detection** : event webhook natif `participant_events.screenshare_on/off` → le relay ne forwarde les frames QUE pendant le screen share.
+
+**Visual Processor** (`src/lib/live/visual-processor.ts`) :
+
+- Cache in-memory par session (même pattern que `context-compiler.ts`)
+- `classifyFrame()` — Haiku vision : est-ce du nouveau contenu ?
+- `analyzeFrame()` — Sonnet vision : extraction données, contradictions, insights
+- `processVisualFrame()` — Pipeline complet : lock → classify → analyze si nouveau → cache
+- `getVisualContext()` / `getVisualContextWithFallback()` — Retourne le `VisualContext` pour injection dans le coaching engine
+- `sanitizeLLMOutput()` — Prévention injection cross-stage (Haiku output → Sonnet prompt)
+
+**Coaching cards proactives visuelles** : Quand Sonnet détecte une contradiction visuelle (severity "high"), une coaching card est générée même sans utterance audio. Marquée `isVisualTrigger: true`.
+
+**Injection dans le coaching engine** : Le `VisualContext` est injecté dans `buildCoachingPrompt()` entre "CE QUI VIENT D'ÊTRE DIT" et "CONVERSATION RÉCENTE" :
+
+```
+# CE QUI EST AFFICHÉ À L'ÉCRAN (screen share actif)
+[description de la slide]
+Données extraites du visuel :
+- [financial] Revenue 5M
+- [market] TAM 2B
+⚠ CONTRADICTIONS VISUELLES :
+- Visuel: "MRR 80K" vs Analyse: "MRR 30K" (high)
+```
 
 ---
 
@@ -691,11 +761,12 @@ Si le BA lance une session sans deal lié :
 
 | Composant | Technologie | Rôle |
 |-----------|------------|------|
-| **Bot meeting** | [Recall.ai API](https://docs.recall.ai) | Rejoint Zoom/Meet/Teams, capture audio, transcription temps réel, speaker diarization |
+| **Bot meeting** | [Recall.ai API](https://docs.recall.ai) | Rejoint Zoom/Meet/Teams, capture audio + vidéo, transcription temps réel, speaker diarization |
 | **Backup STT** | [Deepgram Nova-3](https://deepgram.com) | Transcription streaming backup si qualité Recall.ai insuffisante. Excellent FR/EN bilingue. |
-| **Realtime messaging** | [Ably](https://ably.com) | Push des coaching cards vers le client. Reconnexion native. Compatible serverless Vercel. |
-| **Coaching LLM** | Claude Sonnet 4.5/4.6 via OpenRouter | Génération des suggestions contextuelles |
-| **Classification** | Claude Haiku 4.5 via OpenRouter | Utterance Router (classification rapide) |
+| **Realtime messaging** | [Ably](https://ably.com) | Push des coaching cards + visual analysis + screenshare state vers le client. Reconnexion native. Compatible serverless Vercel. |
+| **Coaching LLM** | Claude Sonnet 4.5/4.6 via OpenRouter | Génération des suggestions contextuelles + analyse visuelle profonde |
+| **Classification** | Claude Haiku 4.5 via OpenRouter | Utterance Router (classification rapide) + Visual classification (nouveau contenu ?) |
+| **WS Relay** | Node.js sur Fly.io | Reçoit les frames vidéo WebSocket de Recall.ai, pHash dedup, forwarde les frames uniques à Vercel. ~80 lignes. |
 | **Frontend** | React (Next.js existant) + Ably React SDK | Interface coaching temps réel |
 
 ### Nouvelles dépendances npm
@@ -739,6 +810,7 @@ model LiveSession {
   // Session state
   status          String   @default("created")
   // Valeurs: "created" | "bot_joining" | "live" | "processing" | "completed" | "failed"
+  errorMessage    String?  @db.Text
 
   // Participants
   participants    Json     @default("[]")
@@ -754,9 +826,16 @@ model LiveSession {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  // Cost tracking
+  totalCost       Decimal? @db.Decimal(8, 4)
+
+  // Visual analysis (V2)
+  screenShareActive Boolean @default(false)
+
   // Relations
   transcriptChunks  TranscriptChunk[]
   coachingCards     CoachingCard[]
+  screenCaptures    ScreenCapture[]
   summary           SessionSummary?
   document          Document?        @relation(fields: [documentId], references: [id])
   documentId        String?          @unique
@@ -811,11 +890,31 @@ model CoachingCard {
 
   // Trigger
   triggeredByChunkId String? // ID du TranscriptChunk qui a déclenché cette card
+  isVisualTrigger Boolean @default(false) // Carte générée par l'analyse visuelle (V2)
 
   createdAt   DateTime @default(now())
 
   @@index([sessionId])
   @@index([sessionId, status])
+}
+
+model ScreenCapture {
+  id             String      @id @default(cuid())
+  sessionId      String
+  session        LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  timestamp      Float       // secondes depuis début call
+  contentType    String      // "slide" | "dashboard" | "demo" | "code" | "spreadsheet" | "document" | "other"
+  description    String      @db.Text
+  keyData        Json        // Array<{ dataPoint, category, relevance }>
+  contradictions Json        // Array<{ visualClaim, analysisClaim, severity }>
+  newInsights    Json        // string[]
+  suggestedQuestion String?  @db.Text
+  perceptualHash String
+  analysisCost   Decimal     @db.Decimal(8, 6)
+  createdAt      DateTime    @default(now())
+
+  @@index([sessionId])
+  @@index([sessionId, timestamp])
 }
 
 model SessionSummary {
@@ -853,29 +952,32 @@ model SessionSummary {
 
 ```
 src/
-├── app/(dashboard)/deals/[id]/
+├── app/(dashboard)/deals/[dealId]/
 │   └── live/
 │       ├── page.tsx                      # Page principale coaching live
 │       └── components/
+│           ├── ably-provider.tsx          # Wrapper Ably avec token auth + reconnexion
 │           ├── live-session-launcher.tsx  # Formulaire de lancement (URL meeting)
 │           ├── participant-mapper.tsx     # Identification des participants + rôles
 │           ├── coaching-feed.tsx          # Flux de coaching cards (composant principal)
 │           ├── coaching-card.tsx          # Composant individuel d'une card
-│           ├── analysis-questions-tab.tsx # Onglet questions pré-analyse
-│           ├── session-status-bar.tsx     # Timer, speaker actif, statut
-│           ├── session-controls.tsx       # Pause / Terminer
+│           ├── analysis-questions-tab.tsx # Onglet questions pré-analyse (lazy-loaded)
+│           ├── session-status-bar.tsx     # Timer, speaker actif, statut, screen share
+│           ├── session-controls.tsx       # Pause / Terminer (double-click guard)
 │           ├── post-call-report.tsx       # Affichage du rapport post-call
 │           └── post-call-reanalysis.tsx   # Options de re-analyse
 │
 ├── app/api/
 │   ├── live-sessions/
-│   │   ├── route.ts                      # POST: créer session, GET: lister sessions
+│   │   ├── route.ts                      # POST: créer session (limit 3/jour), GET: lister
 │   │   └── [id]/
 │   │       ├── route.ts                  # GET: détail session, PATCH: update
-│   │       ├── start/route.ts            # POST: lancer le bot Recall.ai
-│   │       ├── stop/route.ts             # POST: arrêter session + déclencher post-call
+│   │       ├── start/route.ts            # POST: lancer le bot Recall.ai + config WS relay
+│   │       ├── stop/route.ts             # POST: arrêter session + post-call (atomic)
 │   │       ├── participants/route.ts     # PUT: mettre à jour les rôles
-│   │       └── webhook/route.ts          # POST: webhook Recall.ai (transcription)
+│   │       ├── webhook/route.ts          # POST: webhook Recall.ai (transcription + screenshare)
+│   │       ├── visual-frame/route.ts     # POST: réception frames visuelles du relay (V2)
+│   │       └── retry-report/route.ts     # POST: relancer génération rapport (failed/processing)
 │   │
 │   ├── coaching/
 │   │   ├── context/route.ts              # GET: compiler le Deal Context Engine
@@ -883,27 +985,46 @@ src/
 │   │   └── reanalyze/route.ts            # POST: déclencher re-analyse post-call
 │   │
 │   └── webhooks/
-│       └── recall/route.ts               # POST: webhook global Recall.ai (status events)
+│       └── recall/route.ts               # POST: webhook global Recall.ai (status events, atomic)
 │
 ├── lib/
 │   └── live/
 │       ├── recall-client.ts              # Client API Recall.ai (create bot, get status, etc.)
-│       ├── ably-server.ts                # Ably server-side publisher
-│       ├── coaching-engine.ts            # Logique LLM coaching (system prompt, appel Sonnet)
-│       ├── utterance-router.ts           # Classification des utterances (Haiku)
+│       ├── ably-server.ts                # Ably server-side publisher (5 events)
+│       ├── coaching-engine.ts            # Logique LLM coaching + injection visual context
+│       ├── utterance-router.ts           # Classification des utterances (regex + Haiku)
 │       ├── context-compiler.ts           # Compile le Deal Context depuis la DB
 │       ├── speaker-detector.ts           # Auto-détection BA + gestion speakers
 │       ├── auto-dismiss.ts               # Détection auto des sujets abordés
-│       ├── post-call-generator.ts        # Génération du rapport post-call
-│       ├── post-call-reanalyzer.ts       # Re-analyse ciblée post-call
+│       ├── post-call-generator.ts        # Génération du rapport post-call (truncation 80K)
+│       ├── post-call-reanalyzer.ts       # Re-analyse ciblée post-call (Phase 5 wired)
+│       ├── transcript-condenser.ts      # Condensation LLM du transcript (intelligence structurée)
+│       ├── visual-processor.ts           # Pipeline visuel 2-stages (Haiku + Sonnet) (V2)
+│       ├── monitoring.ts                 # Latency tracking, cost tracking, error logging
+│       ├── ui-constants.ts               # Constantes UI partagées
 │       ├── deepgram-client.ts            # Client Deepgram (backup STT)
-│       └── types.ts                      # Types TypeScript partagés
+│       ├── types.ts                      # Types TypeScript partagés
+│       └── __tests__/
+│           └── live-coaching.test.ts     # 112 tests unitaires
 │
 ├── components/deals/
-│   └── live-session-card.tsx             # Card "Session live" sur la page deal
+│   ├── live-session-card.tsx             # Card "Session live" sur la page deal
+│   ├── live-tab-content.tsx              # Contenu onglet Live (active + historique)
+│   └── live-tab-loader.tsx               # Loader onglet Live
+│
+├── services/
+│   └── live-session-limits.ts            # Limites sessions (max active, quotidien, coût)
 │
 └── prisma/
-    └── schema.prisma                     # + nouvelles tables
+    └── schema.prisma                     # + tables LiveSession, ScreenCapture, etc.
+
+services/
+└── ws-relay/                             # Relay WebSocket Fly.io (V2)
+    ├── index.js                          # Serveur WebSocket (~80 lignes)
+    ├── Dockerfile                        # Node.js Alpine
+    ├── fly.toml                          # Config Fly.io
+    ├── package.json
+    └── .env.example
 ```
 
 ---
@@ -918,16 +1039,18 @@ src/
 | `GET` | `/api/live-sessions` | Lister les sessions de l'utilisateur (query: dealId?, status?) |
 | `GET` | `/api/live-sessions/[id]` | Détail d'une session |
 | `PATCH` | `/api/live-sessions/[id]` | Mettre à jour une session (status, settings) |
-| `POST` | `/api/live-sessions/[id]/start` | Lancer le bot Recall.ai → rejoint le meeting |
-| `POST` | `/api/live-sessions/[id]/stop` | Arrêter la session → déclencher le post-call |
+| `POST` | `/api/live-sessions/[id]/start` | Lancer le bot Recall.ai → rejoint le meeting + config WS relay |
+| `POST` | `/api/live-sessions/[id]/stop` | Arrêter la session → déclencher le post-call (transition atomique) |
 | `PUT` | `/api/live-sessions/[id]/participants` | Mettre à jour les rôles des participants |
+| `POST` | `/api/live-sessions/[id]/visual-frame` | Réception frames visuelles du relay Fly.io (V2) |
+| `POST` | `/api/live-sessions/[id]/retry-report` | Relancer la génération du rapport (sessions failed/processing) |
 
 ### Webhooks
 
 | Méthode | Route | Description |
 |---------|-------|-------------|
-| `POST` | `/api/live-sessions/[id]/webhook` | Webhook Recall.ai : reçoit les chunks de transcription |
-| `POST` | `/api/webhooks/recall` | Webhook global Recall.ai : events de status (bot joined, bot left, error) |
+| `POST` | `/api/live-sessions/[id]/webhook` | Webhook Recall.ai : transcription + events screenshare (rate limited 30/10s, 2h auto-stop) |
+| `POST` | `/api/webhooks/recall` | Webhook global Recall.ai : events de status (transitions atomiques via allowedSourceStatuses) |
 
 ### Coaching
 
@@ -1002,26 +1125,21 @@ La feature Live Coaching est mise en avant :
 
 ## 10. Coûts détaillés
 
-### Coût par session d'1 heure
+### Coût par session d'1 heure (V2 — audio + visual)
 
 | Composant | Fournisseur | Coût unitaire | Coût/heure |
 |-----------|-------------|---------------|------------|
-| Bot meeting | Recall.ai | $0.50/h (proraté à la seconde) | **$0.50** |
-| Transcription temps réel | Recall.ai (intégrée) | $0.15/h | **$0.15** |
+| Bot meeting + vidéo + transcription | Recall.ai | Proraté à la seconde | **~$7.50** |
 | Utterance Router | Claude Haiku 4.5 (~120 calls/h) | ~$0.001/call | **$0.12** |
 | Coaching Engine | Claude Sonnet 4.5/4.6 (~60 calls/h, ~7500 tok in, ~150 tok out) | ~$0.025/call | **$1.49** |
 | Post-call summary | Claude Sonnet 4.5/4.6 (1 call, ~30K tok in, ~3K tok out) | | **$0.14** |
-| Ably messaging | ~200 messages/session | Inclus dans le plan gratuit/starter | **~$0.00** |
-| **TOTAL** | | | **$2.40/h** |
+| Haiku visual classification | ~200 frames/h | ~$0.002/frame | **~$0.30** |
+| Sonnet visual analysis | ~40 frames/h (après dedup) | ~$0.02/frame | **~$0.80** |
+| Fly.io WS Relay | Fly.io free tier | | **~$0.00** |
+| Ably messaging | ~300 messages/session | Inclus dans le plan starter | **~$0.00** |
+| **TOTAL** | | | **~$11/h** |
 
-### Avec Deepgram en backup (au lieu de Recall.ai transcription)
-
-| Composant | Coût/heure |
-|-----------|------------|
-| Recall.ai (bot uniquement) | $0.50 |
-| Deepgram Nova-3 (streaming) | $0.46 |
-| Reste identique | $1.75 |
-| **TOTAL** | **$2.71/h** |
+> Note : Le coût Recall.ai (~$7.50/h) inclut le bot, la transcription, la capture vidéo et le stockage temporaire. C'est le poste de coût dominant. Le `COST_PER_HOUR` dans `live-session-limits.ts` est aligné sur $11.
 
 ### Coût de re-analyse post-call
 
@@ -1033,16 +1151,17 @@ La feature Live Coaching est mise en avant :
 
 ### Projection de rentabilité
 
-Si pricing = $39/mois (add-on Live Coaching) :
+Si pricing = $79/mois (add-on Live Coaching) :
 - Un BA fait en moyenne 4-8 calls/mois de ~45 min
-- Coût par BA : 4 × $2.40 × 0.75 = **$7.20/mois** (sessions de 45 min)
-- Marge : ~$32/mois soit **~82%**
+- Coût par BA : 4 × $11 × 0.75 = **$33/mois** (sessions de 45 min)
+- Marge : ~$46/mois soit **~58%**
 
 ### Coûts d'infrastructure mensuels fixes
 
 | Service | Plan | Coût/mois |
 |---------|------|-----------|
 | Ably | Starter (6M messages/mois) | $29/mois |
+| Fly.io | Free tier (relay WS) | $0/mois |
 | Recall.ai | Pay-as-you-go | Variable (cf. ci-dessus) |
 | Deepgram | Pay-as-you-go | Variable (si utilisé comme backup) |
 
@@ -1096,6 +1215,37 @@ Si pricing = $39/mois (add-on Live Coaching) :
 - Recordings audio (Recall.ai) : 7 jours gratuits, puis supprimées (on ne garde que la transcription texte)
 - Le BA peut supprimer une session et toutes ses données (cascade delete)
 
+### 11.8 Prompt injection defense (implémenté)
+
+Trois niveaux de sanitization pour prévenir l'injection de prompt via les transcriptions ou les outputs LLM :
+
+1. **`sanitizeTranscriptText()`** — Appliquée avant toute injection de texte transcrit dans un prompt LLM (utterance-router, auto-dismiss, coaching-engine). Strips `<system>`, `<user>`, `<assistant>`, `` ``` ``, `[INST]`/`[/INST]`. Limite à 2000 chars.
+
+2. **`sanitizeLLMOutput()`** — Appliquée aux outputs de Haiku avant ré-injection dans Sonnet (visual processor cross-stage). Même regex que ci-dessus.
+
+3. **DB fallback sanitization** — Les données stockées en DB (ScreenCapture) sont re-sanitisées avant injection via `getVisualContextWithFallback()`.
+
+### 11.9 Relay authentication (V2)
+
+- Le relay Fly.io authentifie ses POST vers Vercel via `WS_RELAY_SECRET` dans le header `Authorization: Bearer`
+- Le sessionId est passé en query param (CUID, non devinable)
+- En production, le relay et Vercel partagent le même secret via variables d'env
+
+### 11.10 Transitions atomiques de statut (implémenté)
+
+Pour éviter les race conditions (webhook Recall.ai arrive en même temps que l'utilisateur clique "Stop") :
+
+- Toutes les transitions de statut utilisent `prisma.liveSession.updateMany()` avec `WHERE status IN [...]`
+- Le `count` du résultat détermine si la transition a réussi (0 = déjà transitionné par un autre handler)
+- Pattern `allowedSourceStatuses` dans le webhook Recall.ai : map de statut cible → statuts source autorisés
+- Empêche la génération de double rapport post-call
+
+### 11.11 Rate limiting webhook (implémenté)
+
+- Max 30 requêtes par 10 secondes par session (in-memory counter reset)
+- Au-delà → 429 silencieux (le webhook Recall.ai continuera de renvoyer)
+- Protège contre les bursts de transcription partielle
+
 ---
 
 ## 12. Gestion d'erreurs
@@ -1141,17 +1291,40 @@ Si pricing = $39/mois (add-on Live Coaching) :
 
 - Max 1 session live simultanée par BA (vérification à la création)
 - Max 3 sessions par jour par BA (éviter les abus)
-- Rate limit sur les webhooks : 100 req/s par session (largement suffisant)
+- Rate limit sur les webhooks : 30 req/10s par session (in-memory, reset automatique)
+- Max 2 heures par session (auto-stop avec génération rapport)
+
+### 12.6 Transcript truncation (implémenté)
+
+- Le post-call generator tronque les transcriptions > 80K caractères
+- Stratégie : 30% head + 70% tail (le début et la fin du call sont les plus importants)
+- Marqueur `[...TRANSCRIPTION TRONQUEE...]` inséré au milieu avec stats (nb interventions, taille originale)
+
+### 12.7 Retry report (implémenté)
+
+- Endpoint `POST /api/live-sessions/[id]/retry-report` pour relancer la génération de rapport sur sessions `failed` ou `processing`
+- Supprime le `SessionSummary` existant avant re-génération (évite violation contrainte unique)
+- Transition atomique (updateMany) avec retour 409 si déjà en cours de retry
+
+### 12.8 Double post-call prevention (implémenté)
+
+- Quand le webhook Recall.ai (call_ended) arrive en même temps que l'utilisateur clique "Stop", les deux handlers tentent de transitionner vers `processing`
+- Grâce aux transitions atomiques (§11.10), seul le premier handler réussit (count = 1)
+- Le second obtient count = 0 → ne déclenche PAS le post-call generator → pas de double rapport
 
 ---
 
 ## 13. Testing
 
-### 13.1 Tests unitaires
+### 13.1 Tests unitaires (112 tests — `src/lib/live/__tests__/live-coaching.test.ts`)
 
-- `context-compiler.ts` : vérifie que le contexte est correctement compilé depuis les données DB mock
-- `utterance-router.ts` : vérifie la classification (small talk → skip, financial claim → coaching)
-- `auto-dismiss.ts` : vérifie la détection des sujets abordés
+- Utterance Router : filler detection, small talk, financial claims, competitive claims, negotiation points, `shouldTriggerCoaching()` par rôle
+- Sanitization : `sanitizeTranscriptText()` (3 modules), `sanitizeLLMOutput()` (visual processor)
+- Post-call : truncation 80K chars, ratio 30/70, marqueur insertion
+- Card reducer : ADD_CARD (duplicates), ADDRESS_CARD (move + 20-limit), INIT (sort + split)
+- Rate limiter : window, threshold, key isolation, expiry
+- Session limits : `canStartLiveSession()` active count, daily limit, short-circuit, userId passing
+- Regex edge cases : FILLER_PATTERNS case sensitivity, anchoring ; SMALL_TALK_PATTERNS word boundaries
 - `post-call-generator.ts` : vérifie la génération du rapport
 
 ### 13.2 Tests d'intégration
@@ -1188,18 +1361,22 @@ Si pricing = $39/mois (add-on Live Coaching) :
 |--------|--------|--------|
 | Sessions simultanées par BA | 1 | Complexité + coût |
 | Sessions par jour par BA | 3 | Rate limiting, anti-abus |
-| Durée max d'une session | 2 heures | Coût + dégradation qualité contexte |
+| Durée max d'une session | 2 heures | Coût (~$22 à 2h) + auto-stop implémenté |
 | Participants max | 10 | Diarization dégrade au-delà |
 | Latence coaching | <3.5s (P95) | Au-delà, la suggestion n'est plus contextuelle |
 | Taille du deal context | ~10K tokens max | Optimisation coût LLM |
+| Transcript max post-call | 80K chars | Tronqué 30% head + 70% tail |
+| Webhook rate limit | 30 req/10s par session | Protection burst transcription partielle |
 
 ### 14.2 Limites fonctionnelles
 
-- **Pas de vidéo** : on capture uniquement l'audio. Pas d'analyse du langage corporel, des slides partagées, etc.
+- **~~Pas de vidéo~~ Screen share analysé (V2)** : les frames vidéo du screen share sont analysées en 2 étapes (Haiku + Sonnet). Le langage corporel n'est PAS analysé.
 - **Diarization imparfaite** : pour >5 speakers, la qualité d'attribution peut baisser. Le BA peut corriger manuellement dans le rapport post-call.
 - **Latence incompressible** : ~2-4 secondes entre ce que dit le fondateur et la suggestion. Le coaching est "quasi" temps réel, pas instantané.
+- **Visual latence** : ~3-5 secondes entre un changement de slide et l'analyse visuelle (relay pHash + Haiku + Sonnet).
 - **Coaching dépend de la qualité de l'analyse** : si l'analyse Tier 1/2/3 est incomplète (pas assez de documents uploadés), le coaching sera générique.
 - **Mode cold** : coaching générique uniquement, pas contextuel.
+- **In-memory state (Vercel serverless)** : les caches (rate limiter, utterance buffer, visual state) sont per-instance et perdus au cold start. Fallbacks DB implémentés pour le visual context.
 
 ### 14.3 Langues supportées
 
@@ -1223,69 +1400,101 @@ Si pricing = $39/mois (add-on Live Coaching) :
 
 ## 15. Phases d'implémentation
 
-### Phase 1 — Infrastructure de base
+### Phase 1 — Infrastructure de base ✅
 
 **Objectif** : Bot rejoint un meeting, transcrit, et stocke en DB.
 
-- [ ] Setup Recall.ai (compte, API key, webhook)
-- [ ] Setup Ably (compte, API key)
-- [ ] Schéma Prisma (nouvelles tables)
-- [ ] `recall-client.ts` : créer bot, gérer lifecycle
-- [ ] Routes API : CRUD sessions, webhook Recall.ai
-- [ ] Test : simuler un call et vérifier que la transcription arrive en DB
+- [x] Setup Recall.ai (compte, API key, webhook)
+- [x] Setup Ably (compte, API key)
+- [x] Schéma Prisma (nouvelles tables)
+- [x] `recall-client.ts` : créer bot, gérer lifecycle
+- [x] Routes API : CRUD sessions, webhook Recall.ai
+- [x] Test : simuler un call et vérifier que la transcription arrive en DB
 
-### Phase 2 — Coaching Engine
+### Phase 2 — Coaching Engine ✅
 
 **Objectif** : Suggestions contextuelles en temps réel.
 
-- [ ] `context-compiler.ts` : compiler le Deal Context depuis la DB
-- [ ] `utterance-router.ts` : classification des utterances (Haiku)
-- [ ] `coaching-engine.ts` : génération des suggestions (Sonnet)
-- [ ] `ably-server.ts` : publish des coaching cards
-- [ ] `auto-dismiss.ts` : détection auto des sujets abordés
-- [ ] Test : simuler un flux de transcription et vérifier les suggestions
+- [x] `context-compiler.ts` : compiler le Deal Context depuis la DB
+- [x] `utterance-router.ts` : classification des utterances (regex + Haiku fallback)
+- [x] `coaching-engine.ts` : génération des suggestions (Sonnet)
+- [x] `ably-server.ts` : publish des coaching cards
+- [x] `auto-dismiss.ts` : détection auto des sujets abordés
+- [x] Test : simuler un flux de transcription et vérifier les suggestions
 
-### Phase 3 — Interface utilisateur
+### Phase 3 — Interface utilisateur ✅
 
 **Objectif** : Le BA peut lancer une session et voir les suggestions.
 
-- [ ] Page `/deals/[id]/live` (layout complet)
-- [ ] `live-session-launcher.tsx` : formulaire de lancement
-- [ ] `participant-mapper.tsx` : identification des rôles
-- [ ] `coaching-feed.tsx` + `coaching-card.tsx` : flux de suggestions
-- [ ] `session-status-bar.tsx` + `session-controls.tsx`
-- [ ] Intégration Ably côté client (subscribe au channel)
-- [ ] Pop-out window
-- [ ] Responsive design (iPad, mobile)
+- [x] Page `/deals/[dealId]/live` (layout complet)
+- [x] `live-session-launcher.tsx` : formulaire de lancement
+- [x] `participant-mapper.tsx` : identification des rôles (debounce, sync new participants)
+- [x] `coaching-feed.tsx` + `coaching-card.tsx` : flux de suggestions (lazy-loaded tabs, content-based INIT)
+- [x] `session-status-bar.tsx` + `session-controls.tsx` (double-click guard)
+- [x] `ably-provider.tsx` : intégration Ably côté client (token auth, retryKey reconnexion)
+- [x] Pop-out window
+- [x] Responsive design (iPad, mobile)
 
-### Phase 4 — Post-call intelligence
+### Phase 4 — Post-call intelligence ✅
 
 **Objectif** : Rapport post-call + document auto-pushé + re-analyse.
 
-- [ ] `post-call-generator.ts` : génération du rapport
-- [ ] `post-call-reanalyzer.ts` : re-analyse ciblée
-- [ ] `post-call-report.tsx` + `post-call-reanalysis.tsx` : UI post-call
-- [ ] Auto-création du document rattaché au deal
-- [ ] Intégration avec l'onglet Documents existant
+- [x] `post-call-generator.ts` : génération du rapport (truncation 80K, after())
+- [x] `post-call-reanalyzer.ts` : re-analyse ciblée
+- [x] `post-call-report.tsx` + `post-call-reanalysis.tsx` : UI post-call
+- [x] `retry-report/route.ts` : retry pour sessions failed/processing
+- [x] Auto-création du document rattaché au deal
+- [x] Intégration avec l'onglet Documents existant
 
-### Phase 5 — Polish & production
+### Phase 5 — Polish & production ✅
 
 **Objectif** : Robustesse, monitoring, billing.
 
-- [ ] Gestion d'erreurs complète (cf. section 12)
-- [ ] Monitoring latence (alertes si >5s)
-- [ ] Usage tracking par utilisateur (nombre de sessions, durée)
-- [ ] Mode cold recording (sans deal)
+- [x] Gestion d'erreurs complète (cf. section 12)
+- [x] Monitoring latence (`monitoring.ts` — logCoachingLatency, trackCoachingCost)
+- [x] Usage tracking par utilisateur (`live-session-limits.ts` — canStartLiveSession, getSessionUsage, recordSessionDuration)
+- [x] Rate limiting webhook (30/10s) + 2h auto-stop
+- [x] Transitions atomiques de statut (stop, recall webhook, retry-report)
+- [x] Prompt injection defense (3 niveaux de sanitization)
+- [ ] Mode cold recording (sans deal) — partiel
+- [x] Tests unitaires (112 tests, 387 total suite)
 - [ ] Tests E2E avec scénarios mockés
-- [ ] Documentation utilisateur
+
+### Phase 6 — Analyse visuelle V2 ✅
+
+**Objectif** : Analyser le screen share en temps réel pour enrichir le coaching.
+
+- [x] `visual-processor.ts` : pipeline 2-stages Haiku classify + Sonnet analyze
+- [x] `visual-frame/route.ts` : endpoint réception frames du relay
+- [x] `services/ws-relay/` : relay WebSocket Fly.io (pHash dedup)
+- [x] `completeVisionJSON()` dans `router.ts` : support multimodal OpenAI format
+- [x] `ScreenCapture` model Prisma + relations
+- [x] Injection visual context dans coaching engine
+- [x] Coaching cards proactives visuelles (contradictions)
+- [x] Ably events : `visual-analysis`, `screenshare-state`
+- [x] DB fallback pour cold starts (`getVisualContextWithFallback`)
+- [x] Sanitization cross-stage (`sanitizeLLMOutput`)
+
+### Phase 7 — Intelligence cumulative des calls ✅
+
+**Objectif** : Chaque call enrichit la knowledge base du deal pour le coaching futur et les agents.
+
+- [x] `CondensedTranscriptIntel` type : intelligence structurée dense (~1-2K tokens) extraite de chaque call
+- [x] `transcript-condenser.ts` : moteur LLM (Sonnet, ~$0.07/session) — extrait faits, chiffres, engagements, insights, contradictions, données visuelles
+- [x] `SessionSummary.condensedIntel` (Json?) : stockage en DB
+- [x] Document `CALL_TRANSCRIPT` enrichi avec section "Intelligence structurée" pour consommation agents
+- [x] `DealContext.previousSessions` enrichi avec `duration` + `condensedIntel` (backward-compatible)
+- [x] `serializeContext()` rend le condensed intel en texte lisible pour le coaching LLM
+- [x] Phase 5 complétée : `triggerTargetedReanalysis()` connecté à `AgentOrchestrator.runAnalysis()`
+- [x] Re-analyse fire-and-forget : déclenche automatiquement un re-run des agents impactés après chaque call
 
 ### Phase future (non incluse dans le MVP)
 
 - Calendar integration (auto-join meetings programmés)
-- Analyse vidéo (slides partagées pendant le call)
 - Multi-langue étendu (DE, ES, IT, etc.)
 - Résumé vocal post-call (audio summary TTS)
 - Intégration CRM (push des rapports vers HubSpot, Pipedrive, etc.)
+- Mode cold recording complet (coaching générique + rattachement deal post-call)
 
 ---
 
@@ -1350,12 +1559,12 @@ GET    /api/v1/bot/{id}/transcript/ # Récupérer la transcription complète
 ```
 Channel naming: live-session:{sessionId}
 
-Events published:
-- "coaching-card"     → { type, priority, content, context, reference, suggestedQuestion }
-- "card-addressed"    → { cardId, addressedBy }
-- "session-status"    → { status, message }
-- "participant-joined" → { name, role }
-- "participant-left"   → { name }
+Events published (ably-server.ts — 5 fonctions):
+- "coaching-card"      → { id, type, priority, content, context, reference, suggestedQuestion, isVisualTrigger }
+- "card-addressed"     → { cardId, addressedBy }
+- "session-status"     → { status, message }
+- "visual-analysis"    → { frameId, contentType, description, keyData, contradictions, newInsights }  (V2)
+- "screenshare-state"  → { state: "active"|"inactive", participantName }  (V2)
 ```
 
 ### C. Exemple de coaching card (JSON)
@@ -1432,4 +1641,4 @@ Réponds en JSON strict :
 
 ---
 
-*Document rédigé le 2026-02-24. Toute modification doit être reflétée ici.*
+*Document rédigé le 2026-02-24. Mis à jour le 2026-02-25 (V2.1 intelligence cumulative, Phase 5 reanalysis, V2 visual, audit sécurité, tests). Toute modification doit être reflétée ici.*

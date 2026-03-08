@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
-import { createBot } from "@/lib/live/recall-client";
+import { createBot, leaveMeeting } from "@/lib/live/recall-client";
 import { publishSessionStatus } from "@/lib/live/ably-server";
 import { handleApiError } from "@/lib/api-error";
 
@@ -12,7 +12,8 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-// POST /api/live-sessions/[id]/start — Deploy bot to meeting
+// POST /api/live-sessions/[id]/reinvite — Re-deploy bot to the same meeting
+// Use case: bot left (everyone_left_timeout, error, etc.) but the meeting is still going.
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const user = await requireAuth();
@@ -40,21 +41,38 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
-    if (session.status !== "created") {
+    // Allow reinvite from any non-terminal status + recently completed/failed
+    const REINVITABLE_STATUSES = ["live", "bot_joining", "processing", "failed", "completed"];
+    if (!REINVITABLE_STATUSES.includes(session.status)) {
       return NextResponse.json(
-        { error: `Session cannot be started from status "${session.status}". Must be "created".` },
+        { error: `Cannot reinvite bot from status "${session.status}".` },
         { status: 400 }
       );
     }
 
-    // Deploy bot via Recall.ai with Deepgram Nova-3 transcription
-    // Deepgram handles multilingual (FR/EN) natively via language:"multi"
-    // Recall.ai pipes raw audio to Deepgram — no separate WebSocket needed
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-    const wsRelayUrl = process.env.WS_RELAY_URL; // e.g. wss://angeldesk-ws-relay.fly.dev
+    // Time guard: don't allow reinvite on sessions older than 2h (stale meeting)
+    const MAX_REINVITE_AGE_MS = 2 * 60 * 60_000; // 2 hours
+    const sessionAge = Date.now() - new Date(session.createdAt).getTime();
+    if (sessionAge > MAX_REINVITE_AGE_MS) {
+      return NextResponse.json(
+        { error: "Session trop ancienne pour réinviter le bot. Créez une nouvelle session." },
+        { status: 400 }
+      );
+    }
 
-    // Webhook for transcript + participant events (video NOT supported via webhook —
-    // Recall docs only list participant_events.* and transcript.* for webhooks)
+    // Try to remove the old bot first (best-effort, ignore failures)
+    if (session.botId) {
+      try {
+        await leaveMeeting(session.botId);
+      } catch {
+        // Bot probably already left — that's the whole point
+      }
+    }
+
+    // Deploy a new bot with the same config as start route
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    const wsRelayUrl = process.env.WS_RELAY_URL;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const realtimeEndpoints: any[] = [
       {
@@ -71,9 +89,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       },
     ];
 
-    // WebSocket for video frames — video_separate_png.data is WebSocket-only per Recall docs.
-    // CRITICAL: trailing "/" before query params is REQUIRED by Recall to avoid HTTP 400.
-    // See: https://docs.recall.ai/docs/real-time-websocket-endpoints
     if (wsRelayUrl) {
       realtimeEndpoints.push({
         type: "websocket",
@@ -98,8 +113,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       realtime_endpoints: realtimeEndpoints,
     };
 
-    // Enable video_separate_png when WS relay is configured
-    // gallery_view_v2 is required by Recall docs for video_separate_png
     if (wsRelayUrl) {
       recordingConfig.video_mixed_layout = "gallery_view_v2";
       recordingConfig.video_separate_png = {};
@@ -117,7 +130,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       recording_config: recordingConfig,
     };
 
-    // Try with video_separate_png, fallback without if Recall rejects it
+    // Try with video, fallback without
     let bot;
     try {
       bot = await createBot(botConfig);
@@ -127,10 +140,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         err.message.includes("gallery_view_v2") ||
         err.message.includes("artifact")
       )) {
-        console.warn(`[start][${id}] video_separate_png not supported, retrying without`);
+        console.warn(`[reinvite][${id}] video_separate_png not supported, retrying without`);
         delete recordingConfig.video_separate_png;
         delete recordingConfig.video_mixed_layout;
-        // Remove WS endpoint for video frames
         recordingConfig.realtime_endpoints = realtimeEndpoints.filter(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (ep: any) => ep.type !== "websocket"
@@ -141,27 +153,37 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
     }
 
-    // Update session status and store bot ID
+    // Delete any intermediate report generated when the bot left
+    // (so the final report after the full session can be generated fresh)
+    await prisma.sessionSummary.deleteMany({
+      where: { sessionId: id },
+    }).catch(() => {});
+
+    // Reset session to bot_joining with new botId
     const updatedSession = await prisma.liveSession.update({
       where: { id },
       data: {
         status: "bot_joining",
         botId: bot.id,
+        // Clear endedAt if it was set (session is being resumed)
+        endedAt: null,
       },
     });
 
-    // Publish real-time status event (best-effort — DB is source of truth)
+    console.log(`[reinvite][${id}] New bot ${bot.id} deployed (previous: ${session.botId})`);
+
+    // Publish real-time status event
     try {
       await publishSessionStatus(id, {
         status: "bot_joining",
-        message: "Bot is joining the meeting...",
+        message: "Bot is rejoining the meeting...",
       });
     } catch (ablyErr) {
-      console.warn(`[start][${id}] Ably publish failed (non-fatal):`, ablyErr);
+      console.warn(`[reinvite][${id}] Ably publish failed (non-fatal):`, ablyErr);
     }
 
     return NextResponse.json({ data: updatedSession });
   } catch (error) {
-    return handleApiError(error, "start live session");
+    return handleApiError(error, "reinvite bot to meeting");
   }
 }

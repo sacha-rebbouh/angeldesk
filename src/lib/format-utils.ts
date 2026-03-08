@@ -103,6 +103,21 @@ export function getStageLabel(stage: string | null, fallback = "-"): string {
 }
 
 /**
+ * Returns French label for funding instrument
+ */
+export function getInstrumentLabel(instrument: string | null, fallback = "-"): string {
+  if (!instrument) return fallback;
+  const labels: Record<string, string> = {
+    EQUITY: "Equity (round pric\u00e9)",
+    SAFE: "SAFE",
+    BSA_AIR: "BSA-AIR",
+    CONVERTIBLE_NOTE: "Note convertible",
+    BRIDGE: "Bridge",
+  };
+  return labels[instrument] ?? instrument;
+}
+
+/**
  * Returns Tailwind classes for red flag severity badge
  */
 export function getSeverityColor(severity: string): string {

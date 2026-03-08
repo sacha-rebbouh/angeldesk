@@ -301,11 +301,24 @@ Objectif: Permettre au BA de savoir si l'équipe a la crédibilité et la capaci
 Le BA doit pouvoir évaluer le risque "people" et avoir des questions pour les references.
 IMPORTANT: Analyser TOUS les team members listés dans le deck (pas seulement les "fondateurs"). Max 8 profils.
 
+# ADAPTATION AU SECTEUR (CRITIQUE)
+
+ADAPTE ton analyse au SECTEUR du deal. Les rôles clés attendus dépendent du secteur :
+- **Tech/SaaS** : CTO, VP Engineering, Lead Dev sont des rôles clés
+- **Consumer/DNVB/Mode** : Directeur Artistique, Responsable Produit, Directeur Supply Chain
+- **Food/FMCG** : Chef de Production, Responsable Qualité, Directeur Commercial
+- **Marketplace** : VP Growth, Responsable Ops, Category Manager
+- **Biotech/Deeptech** : CSO (Chief Scientific Officer), Directeur R&D
+- **Services** : Directeur des Opérations, Directeur Commercial
+
+Ne JAMAIS signaler "absence de CTO" comme red flag si le deal n'est PAS tech.
+Ne JAMAIS utiliser "technicalStrength" comme critère dominant pour un deal non-tech — utilise plutôt "operationalStrength" ou "domainExpertise".
+
 # PHILOSOPHIE D'ANALYSE
 
 ## Ce qui fait une équipe gagnante (pattern des licornes)
 1. **Founder-Market Fit**: Expertise PROFONDE du domaine (pas surface level)
-2. **Complémentarité**: CEO/CTO ou Business/Tech bien définis
+2. **Complémentarité**: Rôles clairement définis et complémentaires (ex: Business/Produit, Stratégie/Opérations, ou Business/Tech si pertinent)
 3. **Track record**: Pas nécessairement un exit, mais exécution prouvée
 4. **Résilience**: Ont déjà surmonté des difficultés ensemble
 5. **Network**: Accès à talent, clients, investisseurs
@@ -346,7 +359,7 @@ Pour CHAQUE fondateur et membre clé, évalue la pertinence de son parcours par 
    - Même secteur = fort signal positif (ex: ex-Doctolib qui lance une healthtech)
    - Secteur adjacent = pertinent si les compétences sont transférables (ex: ex-fintech qui lance un SaaS B2B paiement)
    - Secteur sans rapport = pas forcément un red flag, mais noter le manque de connaissance métier
-3. **Compétences transférables** — Certains rôles sont pertinents quel que soit le secteur (ex: CTO full-stack, Growth marketer). Distingue les compétences techniques universelles des compétences métier spécifiques.
+3. **Compétences transférables** — Certains rôles sont pertinents quel que soit le secteur (ex: Growth marketer, Directeur des opérations). Distingue les compétences universelles des compétences métier spécifiques.
 4. **Réseau dans le secteur** — A-t-il un réseau de clients/partenaires potentiels dans le secteur cible ?
 5. **Compréhension du client** — A-t-il déjà été client ou utilisateur du type de produit qu'il construit ?
 
@@ -361,7 +374,7 @@ Pour CHAQUE fondateur, évalue la formation EN CONTEXTE avec son expérience pro
 
 1. **Pertinence de la formation pour le projet**
    - Formation directement liée au domaine de la startup = signal positif fort (ex: ingénieur biomédical → healthtech, docteur ML → IA)
-   - Formation complémentaire au rôle = pertinent (ex: école de commerce pour un CEO, école d'ingé pour un CTO)
+   - Formation complémentaire au rôle = pertinent (ex: école de commerce pour un CEO, école d'ingé pour un rôle technique)
    - Formation sans rapport = pas un red flag en soi, mais doit être compensée par l'expérience pro
 
 2. **Prestige / qualité de l'institution**
@@ -378,9 +391,9 @@ Le prestige est un facteur parmi d'autres. Il apporte concrètement :
 4. **Formation vs rôle dans la startup**
 La pertinence de la formation dépend du poste occupé :
    - CEO/business : expérience commerciale et leadership comptent plus qu'un diplôme technique
-   - CTO/tech : formation technique pertinente, mais l'expérience concrète de développement compte autant
+   - Rôle technique (CTO, lead dev, etc.) : formation technique pertinente si le deal est tech, sinon ignorer
    - Rôle R&D/scientifique : formation avancée (PhD, ingénieur spécialisé) est un réel atout pour CE rôle
-   - Rôle opérationnel : la formation est secondaire, l'exécution prime
+   - Rôle opérationnel (COO, Dir. Production, etc.) : la formation est secondaire, l'exécution prime
 
 5. **Impact sur les scores**
 La formation influence domainExpertise et overallFounderScore EN COMBINAISON avec l'expérience pro :
@@ -410,7 +423,7 @@ La formation influence domainExpertise et overallFounderScore EN COMBINAISON ave
 ## Etape 4b: Decision-Making Dynamics (F35)
 - Qui prend les decisions strategiques? (CEO seul, consensus, vote?)
 - Comment gerent-ils les desaccords? (Historique visible dans interviews/articles)
-- Y a-t-il un desequilibre de pouvoir? (CEO dominant vs CTO silencieux)
+- Y a-t-il un desequilibre de pouvoir? (un fondateur dominant vs l'autre silencieux)
 - Le BA doit savoir: que se passe-t-il si les fondateurs divergent sur la strategie?
 
 ## Etape 5: Network & Credibilité
@@ -467,12 +480,12 @@ ATTENTION: Applique TOUJOURS la grille d'analyse de l'Etape 1 avant d'assigner u
 ## 3. PARCOURS DE CARRIERE INCOHERENT - Sévérité: HIGH
 - Départs répétés SANS progression visible (même niveau, même type de rôle à chaque fois)
 - Pattern d'échecs : plusieurs postes quittés après quelques mois sans explication
-- ATTENTION : des changements fréquents AVEC progression (junior → senior → lead → CTO) sont un signal POSITIF, pas un red flag
+- ATTENTION : des changements fréquents AVEC progression (junior → senior → lead → directeur) sont un signal POSITIF, pas un red flag
 
-## 4. GAPS CRITIQUES - Sévérité: HIGH
-- Pas de profil technique dans une startup tech
-- Pas d'expérience commerciale dans un deal B2B
-- Pas d'expérience secteur
+## 4. GAPS CRITIQUES - Sévérité: HIGH (ADAPTER AU SECTEUR)
+- Rôle clé manquant pour le secteur du deal (ex: profil technique si tech, profil commercial si B2B, profil produit/design si consumer, profil supply chain si retail/FMCG)
+- Pas d'expérience dans le secteur du deal
+- Ne PAS signaler l'absence de CTO/VP Eng si le deal n'est PAS tech
 
 ## 5. FIRST-TIME FOUNDERS SANS FILET - Sévérité: MEDIUM
 - Pas d'expérience startup
@@ -742,7 +755,7 @@ IMPORTANT: Analyse TOUS les team members présents dans le deck.
 - Analyse approfondie: background, entrepreneurial track, LinkedIn vérifié, scores détaillés
 
 **teamMemberProfiles** = TOUS les autres employés/collaborateurs listés dans le deck
-- Inclure: CTO (si non-fondateur), développeurs, marketing, business dev, operations, etc.
+- Inclure: tous les profils clés non-fondateurs (tech, marketing, commercial, opérations, production, design, etc.)
 - Analyse simplifiée: nom, rôle EXACT du deck, catégorie, niveau de séniorité, assessment
 - NE JAMAIS interpréter le titre: "Développeur web full-stack" reste "Développeur web full-stack", PAS "junior" ou "stagiaire"
 - Le fait que seul le prénom soit affiché ne signifie PAS que la personne est junior ou stagiaire
@@ -874,9 +887,9 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
     ],
     "teamComposition": {
       "size": number,
-      "rolesPresent": ["Rôles couverts"],
-      "rolesMissing": ["Rôles manquants critiques"],
-      "technicalStrength": 0-100,
+      "rolesPresent": ["Rôles couverts — utiliser les VRAIS titres du secteur"],
+      "rolesMissing": ["Rôles manquants critiques POUR CE SECTEUR — PAS de CTO/VP Eng si non-tech"],
+      "technicalStrength": 0-100,  // Pour tech: force technique. Pour non-tech: force opérationnelle/production
       "businessStrength": 0-100,
       "complementarityScore": 0-100,
       "gaps": [

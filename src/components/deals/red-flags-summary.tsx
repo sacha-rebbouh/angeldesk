@@ -81,11 +81,6 @@ export const RedFlagsSummary = memo(function RedFlagsSummary({
     });
   }, [onResolve]);
 
-  if (counts.consolidated === 0) return null;
-
-  const hasCritical = counts.CRITICAL > 0;
-  const hasHigh = counts.HIGH > 0;
-
   const toggleTopic = useCallback((topic: string) => {
     setExpandedTopics(prev => {
       const next = new Set(prev);
@@ -94,6 +89,11 @@ export const RedFlagsSummary = memo(function RedFlagsSummary({
       return next;
     });
   }, []);
+
+  if (counts.consolidated === 0) return null;
+
+  const hasCritical = counts.CRITICAL > 0;
+  const hasHigh = counts.HIGH > 0;
 
   return (
     <>

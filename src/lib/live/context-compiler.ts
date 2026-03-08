@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { prisma } from "@/lib/prisma";
-import type { DealContext } from "@/lib/live/types";
+import type { DealContext, CondensedTranscriptIntel } from "@/lib/live/types";
 
 // ---------------------------------------------------------------------------
 // In-memory cache — compileDealContext is called ~100-150 times per 30min
@@ -15,6 +15,7 @@ const contextCache = new Map<
   { context: DealContext; serialized: string; cachedAt: number }
 >();
 const CONTEXT_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
+const CONTEXT_CACHE_MAX_ENTRIES = 50;
 
 /**
  * Cached version of compileDealContext — returns cached result if available
@@ -29,6 +30,20 @@ export async function compileDealContextCached(
   }
   const context = await compileDealContext(dealId);
   const serialized = serializeContext(context);
+
+  // Evict stale/oldest entries when at capacity
+  if (contextCache.size >= CONTEXT_CACHE_MAX_ENTRIES) {
+    const now = Date.now();
+    for (const [key, entry] of contextCache) {
+      if (now - entry.cachedAt > CONTEXT_CACHE_TTL_MS) contextCache.delete(key);
+    }
+    // If still over limit, evict oldest entry
+    if (contextCache.size >= CONTEXT_CACHE_MAX_ENTRIES) {
+      const oldest = contextCache.keys().next().value;
+      if (oldest) contextCache.delete(oldest);
+    }
+  }
+
   contextCache.set(dealId, { context, serialized, cachedAt: Date.now() });
   return context;
 }
@@ -105,7 +120,15 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
           where: { isLatest: true },
           select: { id: true, name: true, type: true },
         },
-        founders: { select: { name: true, role: true } },
+        founders: {
+          select: {
+            name: true,
+            role: true,
+            linkedinUrl: true,
+            verifiedInfo: true,
+            previousVentures: true,
+          },
+        },
         factEvents: {
           where: { eventType: "CREATED" },
           select: { factKey: true, displayValue: true, sourceDocumentId: true },
@@ -117,7 +140,7 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     prisma.analysis.findFirst({
       where: { dealId, status: "COMPLETED" },
       orderBy: { createdAt: "desc" },
-      select: { id: true, results: true },
+      select: { id: true, results: true, negotiationStrategy: true },
     }),
     prisma.liveSession.findMany({
       where: { dealId, status: "completed" },
@@ -128,7 +151,11 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
           select: {
             executiveSummary: true,
             keyPoints: true,
+            newInformation: true,
+            contradictions: true,
             remainingQuestions: true,
+            condensedIntel: true,
+            sessionStats: true,
           },
         },
       },
@@ -180,6 +207,43 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
       teamData.concerns ?? teamData.risks ?? teamData.weaknesses
     );
   }
+
+  // --- Founder details (LinkedIn, parcours) ---
+  const founderDetails: DealContext["founderDetails"] = deal.founders.map((f) => {
+    const vi = f.verifiedInfo as Record<string, unknown> | null;
+    const experiences: Array<{ title: string; company: string; period: string }> = [];
+    const education: string[] = [];
+    let headline = "";
+
+    if (vi) {
+      headline = safeString(vi.headline);
+      const exps = vi.experiences as Array<Record<string, unknown>> | undefined;
+      if (exps) {
+        for (const exp of exps.slice(0, 5)) {
+          const period = exp.isCurrent
+            ? `${exp.startYear ?? "?"}–present`
+            : `${exp.startYear ?? "?"}–${exp.endYear ?? "?"}`;
+          experiences.push({
+            title: safeString(exp.title),
+            company: safeString(exp.company),
+            period,
+          });
+        }
+      }
+      const edus = vi.education as Array<Record<string, unknown>> | undefined;
+      if (edus) {
+        for (const edu of edus.slice(0, 3)) {
+          const degree = safeString(edu.degree ?? edu.degreeName);
+          const school = safeString(edu.school ?? edu.schoolName);
+          if (degree || school) education.push(`${degree} @ ${school}`.trim());
+        }
+      }
+    }
+
+    const previousVentures = safeStringArray(f.previousVentures);
+
+    return { name: f.name, role: f.role, headline, experiences, education, previousVentures };
+  });
 
   // --- Market summary ---
   const marketData = getAgentData(agentResults, "market-intelligence");
@@ -317,14 +381,59 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     );
   }
 
+  // --- ALL agent findings (iterate every agent, not just hand-picked ones) ---
+  const allAgentFindings: DealContext["allAgentFindings"] = {};
+  if (agentResults) {
+    for (const [agentName, result] of Object.entries(agentResults)) {
+      if (!result?.success || !result.data || typeof result.data !== "object") continue;
+      const data = result.data as Record<string, unknown>;
+
+      const summary = safeString(data.summary ?? data.recommendation ?? data.verdict ?? data.conclusion);
+      const keyFindings: string[] = [];
+
+      // Extract key findings from various structures
+      for (const key of ["keyFindings", "findings", "concerns", "insights", "highlights"]) {
+        const arr = data[key];
+        if (Array.isArray(arr)) {
+          for (const item of arr.slice(0, 5)) {
+            if (typeof item === "string") {
+              keyFindings.push(item);
+            } else if (item && typeof item === "object") {
+              const obj = item as Record<string, unknown>;
+              const text = safeString(obj.finding ?? obj.concern ?? obj.summary ?? obj.insight ?? obj.description);
+              if (text) keyFindings.push(text);
+            }
+          }
+        }
+      }
+
+      const score = typeof data.score === "number" ? data.score : undefined;
+
+      if (summary || keyFindings.length > 0) {
+        allAgentFindings[agentName] = { summary, keyFindings, score };
+      }
+    }
+  }
+
+  // --- Negotiation strategy ---
+  const negotiationStrategy = safeString(
+    (latestAnalysis?.negotiationStrategy as Record<string, unknown> | null)?.summary ??
+    (latestAnalysis?.negotiationStrategy as Record<string, unknown> | null)?.strategy ??
+    (typeof latestAnalysis?.negotiationStrategy === "string" ? latestAnalysis.negotiationStrategy : "")
+  );
+
   // --- Previous sessions ---
   const previousSessionsContext: DealContext["previousSessions"] =
     previousSessions.map((s) => {
       const summary = s.summary;
       const keyPoints = summary?.keyPoints;
       const remaining = summary?.remainingQuestions;
+      const newInfo = summary?.newInformation;
+      const contradictions = summary?.contradictions;
 
       const keyFindings: string[] = [];
+
+      // Key points from the call
       if (Array.isArray(keyPoints)) {
         for (const kp of keyPoints) {
           if (kp && typeof kp === "object") {
@@ -335,12 +444,69 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
         }
       }
 
+      // New information discovered during the call (includes visual findings)
+      if (Array.isArray(newInfo)) {
+        for (const ni of newInfo) {
+          if (ni && typeof ni === "object") {
+            const niObj = ni as Record<string, unknown>;
+            const fact = safeString(niObj.fact);
+            const impact = safeString(niObj.impact);
+            if (fact) {
+              keyFindings.push(
+                impact ? `[Nouveau] ${fact} — ${impact}` : `[Nouveau] ${fact}`
+              );
+            }
+          }
+        }
+      }
+
+      // Contradictions found during the call (audio + visual)
+      if (Array.isArray(contradictions)) {
+        for (const c of contradictions) {
+          if (c && typeof c === "object") {
+            const cObj = c as Record<string, unknown>;
+            const deck = safeString(cObj.claimInDeck);
+            const call = safeString(cObj.claimInCall);
+            const severity = safeString(cObj.severity, "medium");
+            if (deck && call) {
+              keyFindings.push(
+                `[Contradiction ${severity}] Avant: "${deck}" → Call: "${call}"`
+              );
+            }
+          }
+        }
+      }
+
+      // Parse duration from sessionStats
+      const stats = summary?.sessionStats as { duration?: number } | null;
+      const duration = stats?.duration ?? 0;
+
+      // Parse condensed intel (null for legacy sessions without it)
+      const rawIntel = summary?.condensedIntel as CondensedTranscriptIntel | null;
+
       return {
         date: (s.startedAt ?? s.createdAt).toISOString().split("T")[0],
-        keyFindings: keyFindings.slice(0, 5),
+        duration,
+        keyFindings: keyFindings.slice(0, 10),
         unresolvedQuestions: Array.isArray(remaining)
           ? remaining.filter((q): q is string => typeof q === "string").slice(0, 5)
           : [],
+        condensedIntel: rawIntel
+          ? {
+              keyFacts: (Array.isArray(rawIntel.keyFacts) ? rawIntel.keyFacts : []).slice(0, 8),
+              founderCommitments: (Array.isArray(rawIntel.founderCommitments) ? rawIntel.founderCommitments : []).map(
+                (c) => typeof c === "string" ? { commitment: c } : c
+              ).slice(0, 5),
+              financialDataPoints: (Array.isArray(rawIntel.financialDataPoints) ? rawIntel.financialDataPoints : []).slice(0, 6),
+              competitiveInsights: safeStringArray(rawIntel.competitiveInsights).slice(0, 4),
+              teamRevelations: safeStringArray(rawIntel.teamRevelations).slice(0, 4),
+              contradictionsWithAnalysis: (Array.isArray(rawIntel.contradictionsWithAnalysis) ? rawIntel.contradictionsWithAnalysis : []).slice(0, 5),
+              visualDataPoints: safeStringArray(rawIntel.visualDataPoints).slice(0, 4),
+              answersObtained: (Array.isArray(rawIntel.answersObtained) ? rawIntel.answersObtained : []).slice(0, 6),
+              actionItems: (Array.isArray(rawIntel.actionItems) ? rawIntel.actionItems : []).slice(0, 5),
+              confidenceDelta: rawIntel.confidenceDelta ?? { direction: "stable" as const, reason: "" },
+            }
+          : null,
       };
     });
 
@@ -349,8 +515,25 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     companyName: deal.companyName ?? deal.name,
     sector: deal.sector,
     stage: deal.stage,
+    dealBasics: {
+      arr: deal.arr ? Number(deal.arr) : null,
+      growthRate: deal.growthRate ? Number(deal.growthRate) : null,
+      amountRequested: deal.amountRequested ? Number(deal.amountRequested) : null,
+      valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
+      geography: deal.geography,
+      description: deal.description,
+      website: deal.website,
+    },
+    scores: {
+      global: deal.globalScore,
+      team: deal.teamScore,
+      market: deal.marketScore,
+      product: deal.productScore,
+      financials: deal.financialsScore,
+    },
     financialSummary,
     teamSummary,
+    founderDetails,
     marketSummary,
     techSummary,
     redFlags,
@@ -359,6 +542,8 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     overallScore: deal.globalScore,
     signalProfile: getSignalProfile(deal.globalScore),
     keyContradictions,
+    allAgentFindings,
+    negotiationStrategy,
     documentSummaries,
     previousSessions: previousSessionsContext,
   };
@@ -374,8 +559,11 @@ export function compileContextForColdMode(): DealContext {
     companyName: "Startup (non rattachée)",
     sector: null,
     stage: null,
+    dealBasics: { arr: null, growthRate: null, amountRequested: null, valuationPre: null, geography: null, description: null, website: null },
+    scores: { global: null, team: null, market: null, product: null, financials: null },
     financialSummary: { keyMetrics: {}, benchmarkPosition: "", redFlags: [] },
     teamSummary: { founders: [], keyStrengths: [], concerns: [] },
+    founderDetails: [],
     marketSummary: { size: "", competitors: [], positioning: "" },
     techSummary: { stack: "", maturity: "", concerns: [] },
     redFlags: [],
@@ -384,13 +572,15 @@ export function compileContextForColdMode(): DealContext {
     overallScore: null,
     signalProfile: "Aucune analyse disponible",
     keyContradictions: [],
+    allAgentFindings: {},
+    negotiationStrategy: "",
     documentSummaries: [],
     previousSessions: [],
   };
 }
 
 // ---------------------------------------------------------------------------
-// serializeContext — readable text for LLM prompt injection
+// serializeContext — full deal context for all LLM injections
 // ---------------------------------------------------------------------------
 
 export function serializeContext(context: DealContext): string {
@@ -402,19 +592,43 @@ export function serializeContext(context: DealContext): string {
     const parts = [context.sector, context.stage].filter(Boolean);
     lines.push(`Secteur/Stade : ${parts.join(" — ")}`);
   }
-  if (context.overallScore != null) {
-    lines.push(
-      `Score global : ${context.overallScore}/100 — ${context.signalProfile}`
-    );
+  if (context.dealBasics.geography) {
+    lines.push(`Géographie : ${context.dealBasics.geography}`);
+  }
+  if (context.dealBasics.description) {
+    lines.push(`Description : ${context.dealBasics.description}`);
+  }
+  if (context.dealBasics.website) {
+    lines.push(`Site web : ${context.dealBasics.website}`);
   }
   lines.push("");
 
-  // Financial
+  // Scores (all dimensions)
+  lines.push("## Scores d'analyse");
+  lines.push(`- Score global : ${context.scores.global ?? "N/A"}/100 — ${context.signalProfile}`);
+  if (context.scores.team != null) lines.push(`- Équipe : ${context.scores.team}/100`);
+  if (context.scores.market != null) lines.push(`- Marché : ${context.scores.market}/100`);
+  if (context.scores.product != null) lines.push(`- Produit : ${context.scores.product}/100`);
+  if (context.scores.financials != null) lines.push(`- Financials : ${context.scores.financials}/100`);
+  lines.push("");
+
+  // Deal basics (raw financial numbers)
+  const basics = context.dealBasics;
+  if (basics.arr != null || basics.valuationPre != null || basics.amountRequested != null) {
+    lines.push("## Données financières du deal");
+    if (basics.arr != null) lines.push(`- ARR : ${formatEuro(basics.arr)}`);
+    if (basics.growthRate != null) lines.push(`- Croissance : ${basics.growthRate}%`);
+    if (basics.amountRequested != null) lines.push(`- Montant demandé : ${formatEuro(basics.amountRequested)}`);
+    if (basics.valuationPre != null) lines.push(`- Valorisation pré-money : ${formatEuro(basics.valuationPre)}`);
+    lines.push("");
+  }
+
+  // Financial agent metrics
   if (
     Object.keys(context.financialSummary.keyMetrics).length > 0 ||
     context.financialSummary.benchmarkPosition
   ) {
-    lines.push("## Financier");
+    lines.push("## Métriques financières (analyse)");
     for (const [key, val] of Object.entries(
       context.financialSummary.keyMetrics
     )) {
@@ -428,6 +642,26 @@ export function serializeContext(context: DealContext): string {
     if (context.financialSummary.redFlags.length > 0) {
       lines.push(
         `- Alertes financières : ${context.financialSummary.redFlags.join("; ")}`
+      );
+    }
+    lines.push("");
+  }
+
+  // Benchmarks
+  if (
+    context.benchmarks.valuationRange ||
+    context.benchmarks.comparableDeals.length > 0
+  ) {
+    lines.push("## Benchmarks");
+    if (context.benchmarks.valuationRange) {
+      const vr = context.benchmarks.valuationRange;
+      lines.push(
+        `- Valorisation comparable : P25=${formatEuro(vr.p25)} | Médiane=${formatEuro(vr.p50)} | P75=${formatEuro(vr.p75)}`
+      );
+    }
+    if (context.benchmarks.comparableDeals.length > 0) {
+      lines.push(
+        `- Deals comparables : ${context.benchmarks.comparableDeals.join(", ")}`
       );
     }
     lines.push("");
@@ -451,6 +685,28 @@ export function serializeContext(context: DealContext): string {
       lines.push(
         `- Points d'attention : ${context.teamSummary.concerns.join("; ")}`
       );
+    }
+    lines.push("");
+  }
+
+  // Founder details (LinkedIn, parcours)
+  if (context.founderDetails.length > 0) {
+    lines.push("## Profils fondateurs");
+    for (const f of context.founderDetails) {
+      lines.push(`### ${f.name} (${f.role})`);
+      if (f.headline) lines.push(`Tagline : ${f.headline}`);
+      if (f.experiences.length > 0) {
+        lines.push("Parcours :");
+        for (const exp of f.experiences) {
+          lines.push(`- ${exp.title} @ ${exp.company} (${exp.period})`);
+        }
+      }
+      if (f.education.length > 0) {
+        lines.push(`Formation : ${f.education.join("; ")}`);
+      }
+      if (f.previousVentures.length > 0) {
+        lines.push(`Ventures précédentes : ${f.previousVentures.join("; ")}`);
+      }
     }
     lines.push("");
   }
@@ -514,6 +770,28 @@ export function serializeContext(context: DealContext): string {
     lines.push("");
   }
 
+  // All agent findings
+  const agentEntries = Object.entries(context.allAgentFindings);
+  if (agentEntries.length > 0) {
+    lines.push("## Résultats d'analyse par agent");
+    for (const [agentName, finding] of agentEntries) {
+      const scoreStr = finding.score != null ? ` (${finding.score}/100)` : "";
+      lines.push(`### ${agentName}${scoreStr}`);
+      if (finding.summary) lines.push(finding.summary);
+      for (const f of finding.keyFindings) {
+        lines.push(`- ${f}`);
+      }
+    }
+    lines.push("");
+  }
+
+  // Negotiation strategy
+  if (context.negotiationStrategy) {
+    lines.push("## Stratégie de négociation");
+    lines.push(context.negotiationStrategy);
+    lines.push("");
+  }
+
   // Questions to ask
   if (context.questionsToAsk.length > 0) {
     lines.push("## Questions prioritaires à poser");
@@ -524,26 +802,6 @@ export function serializeContext(context: DealContext): string {
     for (const q of sorted) {
       lines.push(
         `- [${q.priority}] ${q.question}${q.context ? ` (${q.context})` : ""}`
-      );
-    }
-    lines.push("");
-  }
-
-  // Benchmarks
-  if (
-    context.benchmarks.valuationRange ||
-    context.benchmarks.comparableDeals.length > 0
-  ) {
-    lines.push("## Benchmarks");
-    if (context.benchmarks.valuationRange) {
-      const vr = context.benchmarks.valuationRange;
-      lines.push(
-        `- Valorisation comparable : P25=${vr.p25}€ | Médiane=${vr.p50}€ | P75=${vr.p75}€`
-      );
-    }
-    if (context.benchmarks.comparableDeals.length > 0) {
-      lines.push(
-        `- Deals comparables : ${context.benchmarks.comparableDeals.join(", ")}`
       );
     }
     lines.push("");
@@ -566,7 +824,7 @@ export function serializeContext(context: DealContext): string {
   if (context.previousSessions.length > 0) {
     lines.push("## Sessions précédentes");
     for (const s of context.previousSessions) {
-      lines.push(`### Session du ${s.date}`);
+      lines.push(`### Session du ${s.date}${s.duration ? ` (${s.duration} min)` : ""}`);
       if (s.keyFindings.length > 0) {
         lines.push(`- Constats : ${s.keyFindings.join("; ")}`);
       }
@@ -575,9 +833,66 @@ export function serializeContext(context: DealContext): string {
           `- Questions non résolues : ${s.unresolvedQuestions.join("; ")}`
         );
       }
+
+      // Render condensed intel if available
+      if (s.condensedIntel) {
+        const ci = s.condensedIntel;
+        if (ci.keyFacts.length > 0) {
+          lines.push(
+            `- Faits clés : ${ci.keyFacts.map((f) => `[${f.category}] ${f.fact}`).join("; ")}`
+          );
+        }
+        if (ci.financialDataPoints.length > 0) {
+          lines.push(
+            `- Données financières : ${ci.financialDataPoints.map((f) => `${f.metric}=${f.value}`).join("; ")}`
+          );
+        }
+        if (ci.founderCommitments.length > 0) {
+          lines.push(
+            `- Engagements fondateur : ${ci.founderCommitments.map((c) => c.commitment + (c.deadline ? ` (${c.deadline})` : "")).join("; ")}`
+          );
+        }
+        if (ci.competitiveInsights.length > 0) {
+          lines.push(
+            `- Insights concurrentiels : ${ci.competitiveInsights.join("; ")}`
+          );
+        }
+        if (ci.teamRevelations.length > 0) {
+          lines.push(
+            `- Mouvements équipe : ${ci.teamRevelations.join("; ")}`
+          );
+        }
+        if (ci.answersObtained.length > 0) {
+          lines.push(
+            `- Réponses obtenues : ${ci.answersObtained.map((a) => `${a.topic}: ${a.answer}`).join("; ")}`
+          );
+        }
+        if (ci.visualDataPoints.length > 0) {
+          lines.push(
+            `- Données visuelles : ${ci.visualDataPoints.join("; ")}`
+          );
+        }
+        if (ci.contradictionsWithAnalysis.length > 0) {
+          lines.push(
+            `- Contradictions : ${ci.contradictionsWithAnalysis.map((c) => `"${c.analysisClaim}" vs "${c.callClaim}" [${c.severity}]`).join("; ")}`
+          );
+        }
+        if (ci.confidenceDelta) {
+          lines.push(
+            `- Confiance : ${ci.confidenceDelta.direction} — ${ci.confidenceDelta.reason}`
+          );
+        }
+      }
     }
     lines.push("");
   }
 
   return lines.join("\n");
+}
+
+// Helper for formatting euros
+function formatEuro(val: number): string {
+  if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M€`;
+  if (val >= 1_000) return `${(val / 1_000).toFixed(0)}K€`;
+  return `${val}€`;
 }

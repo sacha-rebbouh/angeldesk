@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { compileDealContext, serializeContext } from "@/lib/live/context-compiler";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { publishSessionStatus } from "@/lib/live/ably-server";
+import { recordSessionDuration } from "@/services/live-session-limits";
 import type { PostCallReport } from "@/lib/live/types";
 
 // ---------------------------------------------------------------------------
@@ -41,7 +42,7 @@ FORMAT DE SORTIE : JSON strict conforme au schéma PostCallReport.
 
 export async function generatePostCallReport(sessionId: string): Promise<PostCallReport> {
   // Fetch session data in parallel
-  const [session, transcriptChunks, coachingCards] = await Promise.all([
+  const [session, transcriptChunks, coachingCards, screenCaptures] = await Promise.all([
     prisma.liveSession.findUnique({
       where: { id: sessionId },
       include: { deal: { select: { id: true, companyName: true, name: true } } },
@@ -53,6 +54,19 @@ export async function generatePostCallReport(sessionId: string): Promise<PostCal
     prisma.coachingCard.findMany({
       where: { sessionId },
       orderBy: { createdAt: "asc" },
+    }),
+    prisma.screenCapture.findMany({
+      where: { sessionId },
+      orderBy: { timestamp: "asc" },
+      select: {
+        timestamp: true,
+        contentType: true,
+        description: true,
+        keyData: true,
+        contradictions: true,
+        newInsights: true,
+        suggestedQuestion: true,
+      },
     }),
   ]);
 
@@ -67,10 +81,22 @@ export async function generatePostCallReport(sessionId: string): Promise<PostCal
     dealContextText = serializeContext(dealContext);
   }
 
-  // Build full transcription text
-  const transcription = transcriptChunks
+  // Build transcription text (truncate if too long for LLM context)
+  const MAX_TRANSCRIPT_CHARS = 80_000; // ~20K tokens, safe for Sonnet context
+  let transcription = transcriptChunks
     .map((chunk) => `[${chunk.speaker} (${chunk.speakerRole})] ${chunk.text}`)
     .join("\n");
+
+  if (transcription.length > MAX_TRANSCRIPT_CHARS) {
+    // Keep first 30% + last 70% to capture intro and key discussion points
+    const headLen = Math.floor(MAX_TRANSCRIPT_CHARS * 0.3);
+    const tailLen = MAX_TRANSCRIPT_CHARS - headLen - 200; // 200 chars for separator
+    transcription =
+      transcription.slice(0, headLen) +
+      "\n\n[...TRANSCRIPTION TRONQUÉE — " +
+      `${transcriptChunks.length} interventions totales, ${Math.round(transcription.length / 1000)}K chars...]\n\n` +
+      transcription.slice(-tailLen);
+  }
 
   // Coaching cards summary
   const coachingCardsSummary = coachingCards.map((card) => ({
@@ -93,13 +119,49 @@ export async function generatePostCallReport(sessionId: string): Promise<PostCal
         )
       : 0;
 
+  // Screen capture analysis summary
+  let visualSection = "";
+  if (screenCaptures.length > 0) {
+    const visualLines = [`## Analyse visuelle (${screenCaptures.length} captures analysées)`];
+    for (const sc of screenCaptures) {
+      const mins = Math.floor(sc.timestamp / 60);
+      const secs = Math.round(sc.timestamp % 60);
+      visualLines.push(`\n### [${mins}:${String(secs).padStart(2, "0")}] ${sc.contentType} — ${sc.description}`);
+      const keyData = sc.keyData as Array<{ dataPoint: string; category: string; relevance: string }>;
+      if (Array.isArray(keyData) && keyData.length > 0) {
+        visualLines.push("Données extraites :");
+        for (const d of keyData) {
+          visualLines.push(`- [${d.category}/${d.relevance}] ${d.dataPoint}`);
+        }
+      }
+      const contradictions = sc.contradictions as Array<{ visualClaim: string; analysisClaim: string; severity: string }>;
+      if (Array.isArray(contradictions) && contradictions.length > 0) {
+        visualLines.push("Contradictions visuelles :");
+        for (const c of contradictions) {
+          visualLines.push(`- [${c.severity}] Slide: "${c.visualClaim}" vs Analyse: "${c.analysisClaim}"`);
+        }
+      }
+      const insights = sc.newInsights as string[];
+      if (Array.isArray(insights) && insights.length > 0) {
+        visualLines.push("Nouveaux insights :");
+        for (const i of insights) {
+          visualLines.push(`- ${i}`);
+        }
+      }
+      if (sc.suggestedQuestion) {
+        visualLines.push(`Question suggérée : ${sc.suggestedQuestion}`);
+      }
+    }
+    visualSection = visualLines.join("\n") + "\n\n";
+  }
+
   // Build the prompt
   const prompt = `Analyse cette transcription de call entre un Business Angel et un(e) fondateur(rice) et génère un compte-rendu structuré.
 
 ${dealContextText ? `## Contexte du deal (analyse pré-call)\n${dealContextText}\n\n` : "## Aucun deal rattaché — analyse le call sans contexte préalable.\n\n"}## Transcription complète du call
 ${transcription}
 
-## Coaching cards générées pendant le call
+${visualSection}## Coaching cards générées pendant le call
 ${JSON.stringify(coachingCardsSummary, null, 2)}
 
 ## Données de session
@@ -107,10 +169,12 @@ ${JSON.stringify(coachingCardsSummary, null, 2)}
 - Nombre d'utterances : ${transcriptChunks.length}
 - Coaching cards générées : ${coachingCards.length}
 - Coaching cards adressées : ${coachingCardsAddressed}
+- Captures d'écran analysées : ${screenCaptures.length}
 
 Génère le rapport post-call en JSON. Pour sessionStats, utilise les valeurs fournies ci-dessus.
 Pour confidenceDelta, estime l'évolution de confiance basée sur les informations nouvelles et contradictions identifiées (before = score pré-call si disponible, after = score ajusté, reason = justification).
-Pour wasFromCoaching dans questionsAsked, identifie si la question posée correspond à une suggestion de coaching card.`;
+Pour wasFromCoaching dans questionsAsked, identifie si la question posée correspond à une suggestion de coaching card.
+${screenCaptures.length > 0 ? "Intègre les findings visuels (données extraites des slides, contradictions visuelles) dans les sections correspondantes du rapport (newInformation, contradictions, etc.)." : ""}`;
 
   const { data: rawReport } = await runWithLLMContext(
     { agentName: "post-call-report" },
@@ -137,6 +201,7 @@ Pour wasFromCoaching dans questionsAsked, identifie si la question posée corres
       totalUtterances: transcriptChunks.length,
       coachingCardsGenerated: coachingCards.length,
       coachingCardsAddressed: coachingCardsAddressed,
+      screenCapturesAnalyzed: screenCaptures.length,
       topicsChecklist: rawReport.sessionStats?.topicsChecklist ?? {
         total: 0,
         covered: 0,
@@ -274,6 +339,17 @@ export function generateMarkdownReport(
     lines.push("");
   }
 
+  // Visual Analysis note — shown if screen captures were present
+  // (the visual findings are integrated into contradictions/newInformation by the LLM)
+  if (report.sessionStats.screenCapturesAnalyzed && report.sessionStats.screenCapturesAnalyzed > 0) {
+    lines.push("## Analyse visuelle");
+    lines.push("");
+    lines.push(
+      `${report.sessionStats.screenCapturesAnalyzed} capture(s) d'écran analysée(s). Les données visuelles et contradictions détectées sont intégrées dans les sections correspondantes ci-dessus.`
+    );
+    lines.push("");
+  }
+
   // Session Stats
   lines.push("## Statistiques de session");
   lines.push("");
@@ -383,6 +459,19 @@ export async function generateAndSavePostCallReport(
   sessionId: string
 ): Promise<void> {
   try {
+    // Idempotency guard: skip if a report already exists (prevents double execution
+    // from stop + recall webhook race condition)
+    const existingSummary = await prisma.sessionSummary.findUnique({
+      where: { sessionId },
+      select: { id: true },
+    });
+    if (existingSummary) {
+      console.log(
+        `[post-call-generator] Report already exists for session ${sessionId}, skipping.`
+      );
+      return;
+    }
+
     // 1. Generate the structured report
     const report = await generatePostCallReport(sessionId);
 
@@ -422,13 +511,92 @@ export async function generateAndSavePostCallReport(
     // 4. Persist report + document
     await saveReport(sessionId, report, markdown);
 
-    // 5. Update session status to completed
-    await prisma.liveSession.update({
-      where: { id: sessionId },
+    // 5. Generate condensed transcript intelligence (for future coaching + agent injection)
+    try {
+      const { generateCondensedIntel, enrichDocumentText } = await import(
+        "@/lib/live/transcript-condenser"
+      );
+      const condensedIntel = await generateCondensedIntel(sessionId, report);
+
+      // Persist condensed intel to SessionSummary
+      await prisma.sessionSummary.update({
+        where: { sessionId },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: { condensedIntel: condensedIntel as any },
+      });
+
+      // Enrich the CALL_TRANSCRIPT document with structured intelligence
+      if (session.dealId) {
+        const enrichedText = enrichDocumentText(markdown, condensedIntel);
+        await prisma.document.updateMany({
+          where: {
+            dealId: session.dealId,
+            type: "CALL_TRANSCRIPT",
+            storagePath: `live-sessions/${sessionId}/report.md`,
+          },
+          data: { extractedText: enrichedText },
+        });
+      }
+
+      console.log(
+        `[post-call-generator] Condensed intel generated for session ${sessionId}: ` +
+          `${condensedIntel.keyFacts.length} facts, ${condensedIntel.financialDataPoints.length} financials`
+      );
+    } catch (condenserError) {
+      // Non-fatal: condensation failure should not block the main report
+      console.warn(
+        `[post-call-generator] Condensation failed for session ${sessionId}:`,
+        condenserError
+      );
+    }
+
+    // 6. Trigger targeted reanalysis (fire-and-forget, non-blocking)
+    if (session.dealId) {
+      try {
+        const { identifyImpactedAgents, triggerTargetedReanalysis } =
+          await import("@/lib/live/post-call-reanalyzer");
+
+        const impactedAgents = identifyImpactedAgents(report);
+
+        if (impactedAgents.length > 0) {
+          // Fire and forget: doesn't block session completion
+          triggerTargetedReanalysis(
+            session.dealId,
+            impactedAgents,
+            sessionId
+          ).catch((err) => {
+            console.error(
+              `[post-call-generator] Reanalysis trigger failed for deal ${session.dealId}:`,
+              err
+            );
+          });
+        }
+      } catch (reanalysisError) {
+        console.warn(
+          `[post-call-generator] Reanalysis skipped for session ${sessionId}:`,
+          reanalysisError
+        );
+      }
+    }
+
+    // 7. Record session duration and cost estimate
+    if (durationMinutes > 0) {
+      await recordSessionDuration(sessionId, durationMinutes).catch((err) => {
+        console.warn(`[post-call-generator] Failed to record duration for session ${sessionId}:`, err);
+      });
+    }
+
+    // 8. Update session status to completed (only if still processing — guards against reinvite race)
+    const completionResult = await prisma.liveSession.updateMany({
+      where: { id: sessionId, status: "processing" },
       data: { status: "completed" },
     });
+    if (completionResult.count === 0) {
+      console.warn(`[post-call-generator] Session ${sessionId} no longer in processing — skipping completion (likely reinvited)`);
+      return;
+    }
 
-    // 6. Notify client via Ably
+    // 9. Notify client via Ably
     await publishSessionStatus(sessionId, {
       status: "completed",
       message: "Rapport prêt",

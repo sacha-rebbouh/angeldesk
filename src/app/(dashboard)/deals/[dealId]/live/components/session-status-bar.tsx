@@ -94,6 +94,11 @@ export default memo(function SessionStatusBar({
 }: SessionStatusBarProps) {
   const [currentStatus, setCurrentStatus] = useState<string>(initialStatus);
 
+  // Sync with prop changes (e.g., parent polling detects status change)
+  useEffect(() => {
+    setCurrentStatus(initialStatus);
+  }, [initialStatus]);
+
   // Listen for real-time status updates via Ably
   useChannel(`live-session:${sessionId}`, "session-status", useCallback(
     (message: Message) => {

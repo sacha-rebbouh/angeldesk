@@ -48,15 +48,12 @@ export async function extractTextFromPDF(
     const pdf: PDFDocumentProxy = await loadingTask.promise;
     const totalPages = pdf.numPages;
 
-    // Extract text from all pages
+    // Extract text from all pages using spatial layout reconstruction
     const pageTexts: string[] = [];
     for (let i = 1; i <= totalPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      const pageText = content.items
-        .filter((item) => "str" in item && typeof (item as Record<string, unknown>).str === "string")
-        .map((item) => (item as { str: string }).str)
-        .join(" ");
+      const pageText = reconstructTextFromItems(content.items);
       pageTexts.push(pageText);
     }
 
@@ -135,6 +132,81 @@ export async function extractTextFromPDFUrl(
       error: error instanceof Error ? error.message : "Unknown error",
     };
   }
+}
+
+interface TextItemWithTransform {
+  str: string;
+  transform: number[]; // [scaleX, skewX, skewY, scaleY, x, y]
+  width: number;
+  height: number;
+  hasEOL?: boolean;
+}
+
+/**
+ * Reconstruct readable text from pdfjs-dist text items using spatial positions.
+ * Keynote/Apple PDFs fragment text into many tiny pieces — naive .join(" ")
+ * produces gibberish. This uses (x, y) coordinates to detect line breaks
+ * and word boundaries.
+ */
+function reconstructTextFromItems(items: unknown[]): string {
+  // Filter to valid text items with transform data
+  const textItems: TextItemWithTransform[] = items.filter((item): item is TextItemWithTransform => {
+    const t = item as Record<string, unknown>;
+    return typeof t.str === "string" && Array.isArray(t.transform) && t.transform.length >= 6;
+  });
+
+  if (textItems.length === 0) return "";
+
+  // Sort by Y descending (PDF Y=0 is bottom), then X ascending
+  textItems.sort((a, b) => {
+    const yDiff = b.transform[5] - a.transform[5];
+    if (Math.abs(yDiff) > 2) return yDiff; // Different lines (2pt tolerance)
+    return a.transform[4] - b.transform[4]; // Same line: left to right
+  });
+
+  const lines: string[] = [];
+  let currentLine = "";
+  let prevY = textItems[0].transform[5];
+  let prevX = textItems[0].transform[4];
+  let prevWidth = 0;
+
+  for (const item of textItems) {
+    const x = item.transform[4];
+    const y = item.transform[5];
+    const fontSize = Math.abs(item.transform[0]) || Math.abs(item.transform[3]) || 12;
+    const lineThreshold = fontSize * 0.6; // Y gap > 60% of font size = new line
+
+    if (Math.abs(prevY - y) > lineThreshold) {
+      // New line detected
+      if (currentLine.trim()) lines.push(currentLine.trim());
+      currentLine = item.str;
+    } else {
+      // Same line — check horizontal gap for word boundary
+      const expectedX = prevX + prevWidth;
+      const gap = x - expectedX;
+      const spaceWidth = fontSize * 0.25;
+
+      if (currentLine.length > 0 && gap > spaceWidth) {
+        // Significant gap → insert space (if not already ending with one)
+        if (!currentLine.endsWith(" ") && !item.str.startsWith(" ")) {
+          currentLine += " ";
+        }
+      } else if (currentLine.length > 0 && gap < -spaceWidth * 2) {
+        // Large negative gap → probably overlapping/new section, add space
+        if (!currentLine.endsWith(" ")) currentLine += " ";
+      }
+      currentLine += item.str;
+    }
+
+    prevY = y;
+    prevX = x;
+    prevWidth = item.width || (item.str.length * fontSize * 0.5);
+  }
+
+  // Don't forget last line
+  if (currentLine.trim()) lines.push(currentLine.trim());
+
+  return lines.join("\n");
 }
 
 /**

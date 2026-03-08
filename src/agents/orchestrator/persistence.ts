@@ -273,6 +273,7 @@ export async function processAgentResult(
             companyName?: string;
             sector?: string;
             stage?: string;
+            instrument?: string;
             geography?: string;
             tagline?: string;
             arr?: number;
@@ -298,6 +299,7 @@ export async function processAgentResult(
             companyName: true,
             sector: true,
             stage: true,
+            instrument: true,
             geography: true,
             description: true,
             arr: true,
@@ -331,6 +333,20 @@ export async function processAgentResult(
           };
           if (stageMap[info.stage]) {
             updateData.stage = stageMap[info.stage];
+          }
+        }
+
+        // Update instrument if extracted (map to valid enum)
+        if (info.instrument && !deal.instrument) {
+          const instrumentMap: Record<string, string> = {
+            EQUITY: "EQUITY",
+            SAFE: "SAFE",
+            BSA_AIR: "BSA_AIR",
+            CONVERTIBLE_NOTE: "CONVERTIBLE_NOTE",
+            BRIDGE: "BRIDGE",
+          };
+          if (instrumentMap[info.instrument]) {
+            updateData.instrument = instrumentMap[info.instrument];
           }
         }
 

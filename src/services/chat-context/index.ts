@@ -160,6 +160,23 @@ export async function getChatContext(dealId: string): Promise<DealChatContextDat
 }
 
 /**
+ * Live session summary data for chat context
+ */
+export interface LiveSessionContextData {
+  sessionId: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  executiveSummary: string;
+  keyPoints: unknown[];
+  actionItems: unknown[];
+  newInformation: unknown[];
+  contradictions: unknown[];
+  questionsAsked: unknown[];
+  remainingQuestions: unknown;
+  confidenceDelta: unknown;
+}
+
+/**
  * Get full context for chat agent (includes raw data)
  * This is the comprehensive context used by DealChatAgent
  */
@@ -168,12 +185,14 @@ export async function getFullChatContext(dealId: string): Promise<{
   deal: Awaited<ReturnType<typeof getDealBasicInfo>>;
   documents: Awaited<ReturnType<typeof getDocumentSummaries>>;
   latestAnalysis: Awaited<ReturnType<typeof getLatestAnalysisResults>>;
+  liveSessions: LiveSessionContextData[];
 }> {
-  const [chatContext, deal, documents, latestAnalysis] = await Promise.all([
+  const [chatContext, deal, documents, latestAnalysis, liveSessions] = await Promise.all([
     getChatContext(dealId),
     getDealBasicInfo(dealId),
     getDocumentSummaries(dealId),
     getLatestAnalysisResults(dealId),
+    getCompletedLiveSessions(dealId),
   ]);
 
   return {
@@ -181,6 +200,7 @@ export async function getFullChatContext(dealId: string): Promise<{
     deal,
     documents,
     latestAnalysis,
+    liveSessions,
   };
 }
 
@@ -427,6 +447,59 @@ async function getLatestAnalysisResults(dealId: string) {
     completedAt: analysis.completedAt,
     hasResults: true,
   };
+}
+
+// ============================================================================
+// LIVE SESSION CONTEXT
+// ============================================================================
+
+/**
+ * Get completed live sessions with summaries for a deal
+ * Used to inject live coaching context into the chat agent
+ */
+async function getCompletedLiveSessions(dealId: string): Promise<LiveSessionContextData[]> {
+  const sessions = await prisma.liveSession.findMany({
+    where: {
+      dealId,
+      status: "completed",
+      summary: { isNot: null },
+    },
+    orderBy: { endedAt: "desc" },
+    take: 5, // Last 5 sessions max
+    select: {
+      id: true,
+      startedAt: true,
+      endedAt: true,
+      summary: {
+        select: {
+          executiveSummary: true,
+          keyPoints: true,
+          actionItems: true,
+          newInformation: true,
+          contradictions: true,
+          questionsAsked: true,
+          remainingQuestions: true,
+          confidenceDelta: true,
+        },
+      },
+    },
+  });
+
+  return sessions
+    .filter((s) => s.summary)
+    .map((s) => ({
+      sessionId: s.id,
+      startedAt: s.startedAt?.toISOString() ?? null,
+      endedAt: s.endedAt?.toISOString() ?? null,
+      executiveSummary: s.summary!.executiveSummary,
+      keyPoints: s.summary!.keyPoints as unknown[],
+      actionItems: s.summary!.actionItems as unknown[],
+      newInformation: s.summary!.newInformation as unknown[],
+      contradictions: s.summary!.contradictions as unknown[],
+      questionsAsked: s.summary!.questionsAsked as unknown[],
+      remainingQuestions: s.summary!.remainingQuestions,
+      confidenceDelta: s.summary!.confidenceDelta,
+    }));
 }
 
 // ============================================================================

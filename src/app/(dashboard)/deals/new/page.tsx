@@ -72,6 +72,14 @@ const STAGES = [
   { value: "LATER", label: "Later Stage" },
 ];
 
+const INSTRUMENTS = [
+  { value: "EQUITY", label: "Equity (round pricé)" },
+  { value: "SAFE", label: "SAFE" },
+  { value: "BSA_AIR", label: "BSA-AIR" },
+  { value: "CONVERTIBLE_NOTE", label: "Note convertible" },
+  { value: "BRIDGE", label: "Bridge" },
+];
+
 const SECTORS = [
   "AI / Machine Learning",
   "Blockchain / Web3",
@@ -104,6 +112,7 @@ interface CreateDealFormData {
   sector: string;
   customSector: string;
   stage: string;
+  instrument: string;
   geography: string;
   arr: string;
   growthRate: string;
@@ -138,6 +147,7 @@ async function createDeal(data: CreateDealFormData) {
       description: data.description || undefined,
       sector: effectiveSector,
       stage: data.stage || undefined,
+      instrument: data.instrument || undefined,
       geography: data.geography || undefined,
       arr: data.arr ? parseFloat(data.arr) : undefined,
       growthRate: data.growthRate ? parseFloat(data.growthRate) : undefined,
@@ -170,6 +180,7 @@ export default function NewDealPage() {
     sector: "",
     customSector: "",
     stage: "",
+    instrument: "",
     geography: "",
     arr: "",
     growthRate: "",
@@ -409,6 +420,29 @@ export default function NewDealPage() {
                     {STAGES.map((stage) => (
                       <SelectItem key={stage.value} value={stage.value}>
                         {stage.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <FieldLabel
+                  htmlFor="instrument"
+                  tooltip="Le véhicule d'investissement utilisé pour ce round. SAFE et BSA-AIR sont des instruments non-pricés courants en early-stage."
+                >
+                  Instrument
+                </FieldLabel>
+                <Select
+                  value={formData.instrument}
+                  onValueChange={handleSelectChange("instrument")}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionnez un instrument" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {INSTRUMENTS.map((inst) => (
+                      <SelectItem key={inst.value} value={inst.value}>
+                        {inst.label}
                       </SelectItem>
                     ))}
                   </SelectContent>

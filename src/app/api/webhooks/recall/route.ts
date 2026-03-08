@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifySvixSignature } from "@/lib/live/recall-client";
 import { publishSessionStatus } from "@/lib/live/ably-server";
+import { generateAndSavePostCallReport } from "@/lib/live/post-call-generator";
 import { handleApiError } from "@/lib/api-error";
 import type { SessionStatus } from "@/lib/live/types";
 
@@ -123,14 +125,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── Update session in DB ──
-    await prisma.liveSession.update({
-      where: { id: session.id },
+    // ── Atomic status transition: use updateMany with allowed source statuses ──
+    // This prevents overwriting terminal states (processing/completed) with earlier states
+    const allowedSourceStatuses: Record<string, string[]> = {
+      live: ["created", "bot_joining"],
+      processing: ["live", "bot_joining"],
+      failed: ["created", "bot_joining", "live"],
+    };
+    const allowedFrom = allowedSourceStatuses[newStatus] ?? [];
+
+    const result = await prisma.liveSession.updateMany({
+      where: {
+        id: session.id,
+        status: { in: allowedFrom },
+      },
       data: {
         status: newStatus,
         ...updateData,
       },
     });
+
+    if (result.count === 0) {
+      console.log(`[recall-webhook] Session ${session.id} already in terminal state, skipping ${newStatus} transition`);
+      return NextResponse.json({ ok: true });
+    }
 
     // ── Publish Ably session status event ──
     await publishSessionStatus(session.id, {
@@ -138,23 +156,18 @@ export async function POST(request: NextRequest) {
       message: ablyMessage,
     });
 
-    // ── Fire-and-forget: trigger post-call report on call end ──
+    // ── Trigger post-call report on call end (using after() for Vercel survival) ──
     if (newStatus === "processing") {
-      try {
-        import("@/lib/live/post-call-generator").then((mod) => {
-          mod.generateAndSavePostCallReport(session.id).catch((err: unknown) => {
-            console.error(
-              `[recall-webhook] Post-call report failed for session ${session.id}:`,
-              err
-            );
-          });
-        });
-      } catch (err) {
-        console.error(
-          `[recall-webhook] Failed to import post-call-generator for session ${session.id}:`,
-          err
-        );
-      }
+      after(async () => {
+        try {
+          await generateAndSavePostCallReport(session.id);
+        } catch (err) {
+          console.error(
+            `[recall-webhook] Post-call report failed for session ${session.id}:`,
+            err
+          );
+        }
+      });
     }
 
     return NextResponse.json({ ok: true });

@@ -65,6 +65,26 @@ export interface DealContext {
   sector: string | null;
   stage: string | null;
 
+  // Deal financial basics (raw numbers from the deal itself)
+  dealBasics: {
+    arr: number | null;
+    growthRate: number | null;
+    amountRequested: number | null;
+    valuationPre: number | null;
+    geography: string | null;
+    description: string | null;
+    website: string | null;
+  };
+
+  // All dimension scores
+  scores: {
+    global: number | null;
+    team: number | null;
+    market: number | null;
+    product: number | null;
+    financials: number | null;
+  };
+
   financialSummary: {
     keyMetrics: Record<string, number | string>;
     benchmarkPosition: string;
@@ -76,6 +96,16 @@ export interface DealContext {
     keyStrengths: string[];
     concerns: string[];
   };
+
+  // Founder details (LinkedIn, parcours, etc.)
+  founderDetails: Array<{
+    name: string;
+    role: string;
+    headline: string;
+    experiences: Array<{ title: string; company: string; period: string }>;
+    education: string[];
+    previousVentures: string[];
+  }>;
 
   marketSummary: {
     size: string;
@@ -112,6 +142,16 @@ export interface DealContext {
   signalProfile: string;
   keyContradictions: string[];
 
+  // All agent findings (key findings from ALL analysis agents)
+  allAgentFindings: Record<string, {
+    summary: string;
+    keyFindings: string[];
+    score?: number;
+  }>;
+
+  // Negotiation strategy from synthesis
+  negotiationStrategy: string;
+
   documentSummaries: Array<{
     name: string;
     type: string;
@@ -120,8 +160,10 @@ export interface DealContext {
 
   previousSessions: Array<{
     date: string;
+    duration: number;
     keyFindings: string[];
     unresolvedQuestions: string[];
+    condensedIntel: CondensedTranscriptIntel | null;
   }>;
 }
 
@@ -145,6 +187,8 @@ export interface CoachingInput {
     content: string;
   }>;
   addressedTopics: string[];
+  visualContext?: VisualContext;
+  sessionId?: string;
 }
 
 export interface CoachingResponse {
@@ -196,8 +240,42 @@ export interface PostCallReport {
     totalUtterances: number;
     coachingCardsGenerated: number;
     coachingCardsAddressed: number;
+    screenCapturesAnalyzed?: number;
     topicsChecklist: { total: number; covered: number };
   };
+}
+
+// --- Condensed Transcript Intelligence (generated post-call for agent injection + coaching enrichment) ---
+
+export interface CondensedTranscriptIntel {
+  /** Key factual claims with numbers (revenue, metrics, dates) */
+  keyFacts: Array<{
+    fact: string;
+    category: "financial" | "team" | "market" | "tech" | "legal" | "competitive" | "product";
+    confidence: "verbatim" | "inferred";
+  }>;
+  /** Explicit commitments/promises by the founder */
+  founderCommitments: Array<{ commitment: string; deadline?: string }>;
+  /** Financial data points mentioned (numbers only) */
+  financialDataPoints: Array<{ metric: string; value: string; context: string }>;
+  /** Competitive insights revealed during call */
+  competitiveInsights: string[];
+  /** Team revelations (new hires, departures, org changes) */
+  teamRevelations: string[];
+  /** Contradictions between call claims and existing analysis */
+  contradictionsWithAnalysis: Array<{
+    analysisClaim: string;
+    callClaim: string;
+    severity: "high" | "medium" | "low";
+  }>;
+  /** Visual data points extracted from screen share (if any) */
+  visualDataPoints: string[];
+  /** Questions asked and answers obtained (condensed) */
+  answersObtained: Array<{ topic: string; answer: string }>;
+  /** Open action items / next steps */
+  actionItems: Array<{ item: string; owner: "ba" | "founder" | "shared" }>;
+  /** Confidence delta summary */
+  confidenceDelta: { direction: "up" | "down" | "stable"; reason: string };
 }
 
 export interface DeltaReport {
@@ -212,6 +290,54 @@ export interface DeltaReport {
   confidenceChange: { before: number; after: number; reason: string };
 }
 
+// --- Visual Analysis (Screen Capture V2) ---
+
+export type ScreenShareState = "inactive" | "active";
+
+export type VisualContentType =
+  | "slide"
+  | "dashboard"
+  | "demo"
+  | "code"
+  | "spreadsheet"
+  | "document"
+  | "other";
+
+export interface VisualClassification {
+  isNewContent: boolean;
+  contentType: VisualContentType;
+  description: string;
+}
+
+export interface VisualAnalysis {
+  frameId: string;
+  sessionId: string;
+  timestamp: number;
+  contentType: VisualContentType;
+  description: string;
+  keyData: Array<{
+    dataPoint: string;
+    category: "financial" | "technical" | "market" | "team" | "other";
+    relevance: "high" | "medium" | "low";
+  }>;
+  contradictions: Array<{
+    visualClaim: string;
+    analysisClaim: string;
+    severity: "high" | "medium" | "low";
+    suggestedQuestion?: string | null;
+  }>;
+  newInsights: string[];
+  suggestedQuestion: string | null;
+  analysisCost: number;
+}
+
+export interface VisualContext {
+  currentSlide: string | null;
+  keyDataFromVisual: string[];
+  visualContradictions: string[];
+  recentSlideHistory: string[];
+}
+
 // --- Ably Events ---
 
 export type AblyEventName =
@@ -219,7 +345,9 @@ export type AblyEventName =
   | "card-addressed"
   | "session-status"
   | "participant-joined"
-  | "participant-left";
+  | "participant-left"
+  | "visual-analysis"
+  | "screenshare-state";
 
 export interface AblyCoachingCardEvent {
   id: string;
@@ -241,6 +369,20 @@ export interface AblyCardAddressedEvent {
 export interface AblySessionStatusEvent {
   status: SessionStatus;
   message: string;
+}
+
+export interface AblyVisualAnalysisEvent {
+  frameId: string;
+  contentType: VisualContentType;
+  description: string;
+  hasContradictions: boolean;
+  keyDataCount: number;
+  timestamp: number;
+}
+
+export interface AblyScreenShareStateEvent {
+  state: ScreenShareState;
+  participantName: string | null;
 }
 
 // --- Recall.ai Types ---
@@ -271,9 +413,9 @@ export interface RecallBotConfig {
           };
     };
     realtime_endpoints: Array<{
-      type: "webhook";
+      type: "webhook" | "websocket";
       url: string;
-      events: Array<"transcript.data" | "transcript.partial_data">;
+      events: Array<RecallRealtimeEvent | RecallMediaEvent>;
     }>;
   };
   automatic_leave?: {
@@ -306,7 +448,15 @@ export interface RecallBotStatus {
 
 export type RecallRealtimeEvent =
   | "transcript.data"
-  | "transcript.partial_data";
+  | "transcript.partial_data"
+  | "participant_events.screenshare_on"
+  | "participant_events.screenshare_off";
+
+export type RecallMediaEvent =
+  | "video_separate_png.data"
+  | "video_separate_h264.data"
+  | "audio_mixed_raw.data"
+  | "audio_separate_raw.data";
 
 export interface RecallWebhookEvent {
   event: string;

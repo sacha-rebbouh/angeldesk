@@ -14,6 +14,20 @@ const LiveTabContent = dynamic(
   }
 );
 
-export default function LiveTabLoader({ dealId, dealName }: { dealId: string; dealName: string }) {
-  return <LiveTabContent dealId={dealId} dealName={dealName} />;
+interface LiveTabLoaderProps {
+  dealId: string;
+  dealName: string;
+  userName?: string;
+  founderNames?: string[];
+}
+
+export default function LiveTabLoader({ dealId, dealName, userName, founderNames }: LiveTabLoaderProps) {
+  return (
+    <LiveTabContent
+      dealId={dealId}
+      dealName={dealName}
+      userName={userName}
+      founderNames={founderNames}
+    />
+  );
 }

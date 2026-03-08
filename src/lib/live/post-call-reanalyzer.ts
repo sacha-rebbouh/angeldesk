@@ -115,35 +115,88 @@ export async function triggerTargetedReanalysis(
   agentNames: string[],
   sessionId: string
 ): Promise<void> {
-  // Create a new Analysis record to track the re-analysis
-  // The actual agent execution will be wired in Phase 5 (orchestrator integration)
-  await prisma.analysis.create({
+  // Dynamic imports to avoid circular dependencies
+  const { AgentOrchestrator } = await import("@/agents/orchestrator");
+  const { clearContextCache } = await import("@/lib/live/context-compiler");
+
+  // 1. Invalidate the deal context cache (new call data is available)
+  clearContextCache(dealId);
+
+  // 2. Determine analysis type based on impacted agents
+  const tier3Names = [
+    "synthesis-deal-scorer", "memo-generator", "contradiction-detector",
+    "devils-advocate", "scenario-modeler", "conditions-analyst",
+  ];
+  const hasTier1Agents = agentNames.some((name) => !tier3Names.includes(name));
+  const analysisType = hasTier1Agents ? "full_analysis" : "tier3_synthesis";
+
+  // 3. Create Analysis record for tracking
+  const analysis = await prisma.analysis.create({
     data: {
       dealId,
       type: "FULL_DD",
       mode: "post_call_reanalysis",
-      status: "PENDING",
+      status: "RUNNING",
       totalAgents: agentNames.length,
       completedAgents: 0,
+      startedAt: new Date(),
       results: {
         triggeredBy: sessionId,
         targetedAgents: agentNames,
-        status: "awaiting_orchestrator_integration",
       },
     },
   });
 
-  // TODO (Phase 5): Wire into the orchestrator to actually re-run targeted agents.
-  // The orchestrator should:
-  // 1. Load the Analysis record
-  // 2. Run only the agents in agentNames (not all 40)
-  // 3. Merge results with the latest completed analysis
-  // 4. Update deal scores if synthesis agents ran
   console.log(
-    `[post-call-reanalyzer] Analysis record created for deal ${dealId}. ` +
-      `Targeted agents: ${agentNames.join(", ")}. ` +
-      `Orchestrator integration pending (Phase 5).`
+    `[post-call-reanalyzer] Starting reanalysis for deal ${dealId}. ` +
+      `Type: ${analysisType}. Targeted agents: ${agentNames.join(", ")}.`
   );
+
+  // 4. Run the orchestrator — the CALL_TRANSCRIPT document (enriched with condensed intel)
+  //    is automatically loaded via getDealWithRelations() in the orchestrator.
+  const orchestrator = new AgentOrchestrator();
+
+  try {
+    const result = await orchestrator.runAnalysis({
+      dealId,
+      type: analysisType as "full_analysis" | "tier3_synthesis",
+      forceRefresh: true,
+      isUpdate: true,
+    });
+
+    // 5. Update the tracking record
+    await prisma.analysis.update({
+      where: { id: analysis.id },
+      data: {
+        status: result.success ? "COMPLETED" : "FAILED",
+        completedAt: new Date(),
+        completedAgents: Object.values(result.results).filter((r) => r.success).length,
+        totalCost: result.totalCost,
+        totalTimeMs: result.totalTimeMs,
+        summary: result.summary,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        results: result.results as any,
+      },
+    });
+
+    console.log(
+      `[post-call-reanalyzer] Reanalysis completed for deal ${dealId}. ` +
+        `Success: ${result.success}. Cost: $${result.totalCost.toFixed(4)}.`
+    );
+  } catch (error) {
+    await prisma.analysis.update({
+      where: { id: analysis.id },
+      data: {
+        status: "FAILED",
+        completedAt: new Date(),
+        summary: `Reanalysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      },
+    });
+    console.error(
+      `[post-call-reanalyzer] Reanalysis failed for deal ${dealId}:`,
+      error
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

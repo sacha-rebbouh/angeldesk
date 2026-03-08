@@ -232,6 +232,7 @@ export function selectModel(complexity: TaskComplexity, agentName?: string): Mod
     // Tier 3 synthesis agents need stronger reasoning
     "synthesis-deal-scorer": "GEMINI_PRO",
     "contradiction-detector": "GEMINI_PRO",
+    "scenario-modeler": "GEMINI_PRO",
     "devils-advocate": "GEMINI_PRO",
     "memo-generator": "GEMINI_PRO",
     // Board members already specify their models via options.model
@@ -839,6 +840,156 @@ export async function completeJSONWithFallback<T>(
       throw new Error("Analyse indisponible après plusieurs tentatives");
     }
   }
+}
+
+// ============================================================================
+// VISION COMPLETION (multimodal image + text → structured JSON)
+// ============================================================================
+
+export interface VisionCompletionOptions {
+  model?: ModelKey;
+  maxTokens?: number;
+  temperature?: number;
+  systemPrompt?: string;
+  maxRetries?: number;
+}
+
+/**
+ * Multimodal completion: sends an image (base64 PNG/JPEG) alongside a text
+ * prompt and returns structured JSON. Uses the same circuit breaker, rate
+ * limiter, cost tracking and JSON extraction as `completeJSON`.
+ *
+ * Used by the visual analysis pipeline (Haiku classification + Sonnet deep
+ * analysis of screen-shared content during live coaching sessions).
+ */
+export async function completeVisionJSON<T>(
+  textPrompt: string,
+  imageBase64: string,
+  options: VisionCompletionOptions = {}
+): Promise<{ data: T; cost: number }> {
+  const {
+    model: modelKey = "HAIKU",
+    maxTokens = 1000,
+    temperature = 0.2,
+    systemPrompt,
+    maxRetries = 1,
+  } = options;
+
+  const model = MODELS[modelKey];
+  const circuitBreaker = await getCircuitBreakerDistributed(modelKey);
+  const startTime = Date.now();
+
+  if (!circuitBreaker.canExecute()) {
+    const stats = circuitBreaker.getStats();
+    throw new CircuitOpenError(
+      `Circuit breaker is OPEN for ${modelKey}. Too many failures.`,
+      stats
+    );
+  }
+
+  // Build multimodal messages (OpenAI vision format)
+  const messages: Array<{
+    role: "system" | "user";
+    content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+  }> = [];
+
+  const effectiveSystemPrompt = withLanguageInstruction(systemPrompt);
+  if (effectiveSystemPrompt) {
+    messages.push({ role: "system", content: effectiveSystemPrompt });
+  }
+
+  messages.push({
+    role: "user",
+    content: [
+      { type: "text", text: textPrompt },
+      {
+        type: "image_url",
+        image_url: {
+          url: `data:image/png;base64,${imageBase64}`,
+        },
+      },
+    ],
+  });
+
+  const estimatedInputTokens = Math.ceil(
+    ((systemPrompt?.length ?? 0) + textPrompt.length) / 4 + 1000
+  );
+  let accumulatedRetryCost = 0;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      await rateLimiter.waitForSlot();
+      await rateLimiter.recordRequest();
+
+      const response = await circuitBreaker.execute(() =>
+        openrouter.chat.completions.create({
+          model: model.id,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          messages: messages as any,
+          max_tokens: maxTokens,
+          temperature,
+          response_format: { type: "json_object" },
+        })
+      );
+
+      syncCircuitBreakerState(circuitBreaker.getStats(), modelKey).catch(() => {});
+
+      const content = response.choices[0]?.message?.content ?? "";
+      const usage = response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+      const durationMs = Date.now() - startTime;
+
+      const successCost =
+        (usage.prompt_tokens / 1000) * model.inputCost +
+        (usage.completion_tokens / 1000) * model.outputCost;
+      const totalCost = successCost + accumulatedRetryCost;
+
+      costMonitor.recordCall({
+        model: model.id,
+        agent: getAgentContext() ?? "visual-processor",
+        inputTokens: usage.prompt_tokens,
+        outputTokens: usage.completion_tokens,
+        cost: totalCost,
+      });
+
+      logLLMCallAsync({
+        analysisId: getAnalysisContext() ?? undefined,
+        agentName: getAgentContext() ?? "visual-processor",
+        model: model.id,
+        provider: "openrouter",
+        systemPrompt,
+        userPrompt: `[VISION] ${textPrompt.slice(0, 200)}...`,
+        temperature,
+        maxTokens,
+        response: content,
+        inputTokens: usage.prompt_tokens,
+        outputTokens: usage.completion_tokens,
+        cost: totalCost,
+        durationMs,
+        metadata: attempt > 0 ? { retriesCount: attempt } : undefined,
+      });
+
+      const jsonString = extractFirstJSON(content);
+      const data = JSON.parse(jsonString) as T;
+
+      return { data, cost: totalCost };
+    } catch (error) {
+      if (error instanceof CircuitOpenError) throw error;
+
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const estimatedInputCost = (estimatedInputTokens / 1000) * model.inputCost;
+      accumulatedRetryCost += estimatedInputCost;
+
+      if (!isRetryableError(error) || attempt === maxRetries) {
+        throw lastError;
+      }
+
+      const delay = calculateBackoff(attempt);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  throw lastError ?? new Error("Unknown error in vision completion");
 }
 
 // ============================================================================

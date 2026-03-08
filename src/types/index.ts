@@ -8,6 +8,7 @@ import type {
   Benchmark,
   DealStage,
   DealStatus,
+  FundingInstrument,
   DocumentType,
   ProcessingStatus,
   RedFlagCategory,
@@ -29,6 +30,7 @@ export type {
   Benchmark,
   DealStage,
   DealStatus,
+  FundingInstrument,
   DocumentType,
   ProcessingStatus,
   RedFlagCategory,
@@ -74,6 +76,7 @@ export interface CreateDealInput {
   description?: string;
   sector?: string;
   stage?: DealStage;
+  instrument?: FundingInstrument;
   geography?: string;
   arr?: number;
   growthRate?: number;

@@ -234,6 +234,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             mode: fullContextData.latestAnalysis.mode ?? "unknown",
           }
         : null,
+      liveSessions: fullContextData.liveSessions,
       investorLevel: validated.investorLevel,
     };
 

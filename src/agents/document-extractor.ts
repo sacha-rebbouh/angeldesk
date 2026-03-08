@@ -230,6 +230,7 @@ OUTPUT: JSON structure uniquement, en francais.`;
       "company.name": "companyName",
       "company.sector": "sector",
       "company.stage": "stage",
+      "company.instrument": "instrument",
       "company.geography": "geography",
       "company.founded_year": "foundedYear",
       "company.team_size": "teamSize",
@@ -346,7 +347,8 @@ Reponds en JSON avec cette structure exacte:
     "companyName": "string ou null",
     "tagline": "string ou null",
     "sector": "string ou null",
-    "stage": "PRE_SEED|SEED|SERIES_A|SERIES_B|SERIES_C|LATER ou null",
+    "stage": "PRE_SEED|SEED|SERIES_A|SERIES_B|SERIES_C|LATER ou null — Si pas explicite, INFERER a partir des signaux (montant leve, instrument, valuation cap, maturite produit, traction). Voir regles d'inference ci-dessous.",
+    "instrument": "EQUITY|SAFE|BSA_AIR|CONVERTIBLE_NOTE|BRIDGE ou null — Le vehicule d'investissement utilise pour ce round",
     "geography": "string ou null",
     "foundedYear": number ou null,
     "teamSize": number ou null,
@@ -478,7 +480,35 @@ REGLES CRITIQUES (TOUTES OBLIGATOIRES):
    - Tous les montants en EUR
    - Ne jamais inventer - extraire uniquement ce qui est explicitement present
    - Confidence 1.0 = citation exacte, 0.8 = deduit du contexte, 0.5 = incertain
-   - Pour founders.background: confidence 1.0 UNIQUEMENT si lien explicite nom-entreprise`;
+   - Pour founders.background: confidence 1.0 UNIQUEMENT si lien explicite nom-entreprise
+
+7. INSTRUMENT DE FINANCEMENT:
+   - Detecter le vehicule d'investissement: SAFE, BSA-AIR, note convertible, equity round, bridge
+   - Indices: "SAFE", "BSA-AIR", "convertible", "note", "valuation cap", "discount", "priced round", "equity round"
+   - Un round avec un "valuation cap" et "discount" sans prix par action = probablement SAFE ou BSA-AIR
+   - BSA-AIR = equivalent francais du SAFE. Si le deck est en francais avec "BSA-AIR" ou "BSA AIR" → BSA_AIR
+   - Si le deck mentionne un "prix par action" ou "price per share" → EQUITY
+   - Mapper vers: EQUITY, SAFE, BSA_AIR, CONVERTIBLE_NOTE, BRIDGE
+
+8. INFERENCE DU STADE (CRITIQUE — ne jamais laisser null si des signaux existent):
+   Si le deck ne dit pas explicitement "Seed round" ou "Pre-seed", INFERER le stade a partir de ces signaux:
+
+   | Signal | PRE_SEED | SEED | SERIES_A | SERIES_B+ |
+   |--------|----------|------|----------|-----------|
+   | Montant leve | <500K€ | 500K-3M€ | 3-15M€ | >15M€ |
+   | Instrument | SAFE/BSA-AIR | SAFE/Equity | Equity | Equity |
+   | Valuation cap | <5M€ | 5-15M€ | 15-50M€ | >50M€ |
+   | ARR | 0-100K€ | 100K-1M€ | 1-5M€ | >5M€ |
+   | Produit | MVP/beta | Lancement | Traction | Scale |
+   | Equipe | 1-3 pers | 3-10 | 10-50 | >50 |
+   | Min cheque | <10K€ | 10-50K€ | >100K€ | >500K€ |
+
+   Regles de decision:
+   - SAFE/BSA-AIR + <500K€ + cap <5M€ → PRE_SEED (confiance 0.8)
+   - SAFE/BSA-AIR + 500K-2M€ + objectif atteindre 1M ARR → SEED (confiance 0.8)
+   - Round price + 3-15M€ + ARR existant → SERIES_A (confiance 0.8)
+   - Si les signaux sont contradictoires, utiliser le montant leve comme signal principal
+   - Mettre confidence.stage = 0.8 pour une inference (pas 1.0)`;
 
     const { data } = await this.llmCompleteJSON<ExtractionData>(prompt);
 

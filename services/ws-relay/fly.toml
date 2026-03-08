@@ -1,0 +1,30 @@
+# fly.toml — AngelDesk WebSocket Relay
+# Receives video frames from Recall.ai and forwards to Vercel API.
+# See https://fly.io/docs/reference/configuration/
+
+app = 'angeldesk-ws-relay'
+primary_region = 'cdg'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+# Use [http_service] (modern format) instead of legacy [[services]]
+# for better WebSocket support and auto-start/stop control.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Machine MUST stay running — Recall.ai retries WS connection 30x at 3s intervals.
+  # If machine is stopped, cold start may exceed the 90s retry window → permanent failure.
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = 'connections'
+    hard_limit = 100
+    soft_limit = 50
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory_mb = 512
+  cpus = 1

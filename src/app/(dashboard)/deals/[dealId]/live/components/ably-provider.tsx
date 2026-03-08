@@ -101,6 +101,7 @@ export default function LiveAblyProvider({
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("initialized");
   const [isReady, setIsReady] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const clientRef = useRef<Ably.Realtime | null>(null);
 
   // Stable authCallback using sessionId ref to avoid recreating the client
@@ -165,7 +166,9 @@ export default function LiveAblyProvider({
       clientRef.current = null;
       setIsReady(false);
     };
-  }, [createClient]);
+    // retryKey triggers clean re-creation via useEffect lifecycle (no orphaned listeners)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createClient, retryKey]);
 
   const channelName = `live-session:${sessionId}`;
 
@@ -181,25 +184,9 @@ export default function LiveAblyProvider({
           <button
             type="button"
             onClick={() => {
-              // Close existing client and recreate
-              if (clientRef.current) {
-                clientRef.current.close();
-                clientRef.current = null;
-              }
-              const newClient = createClient();
-              clientRef.current = newClient;
+              setRetryKey((k) => k + 1);
               setIsReady(false);
               setConnectionStatus("connecting");
-
-              const handleStateChange = (stateChange: Ably.ConnectionStateChange) => {
-                const state = stateChange.current as ConnectionStatus;
-                setConnectionStatus(state);
-                if (state === "connected") {
-                  setIsReady(true);
-                }
-              };
-
-              newClient.connection.on(handleStateChange);
             }}
             className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
           >

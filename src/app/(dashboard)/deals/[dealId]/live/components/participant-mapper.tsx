@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useMemo, useEffect } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect, memo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Users, Check } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,6 +28,8 @@ interface ParticipantMapperProps {
   sessionId: string;
   participants: ParticipantData[];
   dealName?: string;
+  userName?: string;
+  founderNames?: string[];
 }
 
 interface ParticipantState {
@@ -125,18 +127,29 @@ function getCurrentUserName(): string {
 
 function initParticipants(
   participants: ParticipantData[],
-  currentUserName: string
+  currentUserName: string,
+  founderNames?: string[]
 ): ParticipantState[] {
   return participants.map((p) => {
     let role: SpeakerRole = (p.role as SpeakerRole) || "other";
 
+    // Already assigned a meaningful role — keep it
+    if (role !== "other") {
+      return { speakerId: p.speakerId, name: p.name, role };
+    }
+
     // Auto-detect BA if participant name fuzzy-matches current user
-    if (
-      currentUserName &&
-      role === "other" &&
-      fuzzyMatch(p.name, currentUserName)
-    ) {
+    if (currentUserName && fuzzyMatch(p.name, currentUserName)) {
       role = "ba";
+    }
+    // Auto-detect founder if participant name fuzzy-matches a founder
+    else if (founderNames && founderNames.length > 0) {
+      for (const fn of founderNames) {
+        if (fuzzyMatch(p.name, fn)) {
+          role = "founder";
+          break;
+        }
+      }
     }
 
     return {
@@ -178,18 +191,48 @@ async function saveParticipants(
 // Component
 // =============================================================================
 
-export default function ParticipantMapper({
+export default memo(function ParticipantMapper({
   sessionId,
   participants,
   dealName,
+  userName,
+  founderNames,
 }: ParticipantMapperProps) {
-  const currentUserName = useMemo(() => getCurrentUserName(), []);
+  const currentUserName = useMemo(
+    () => userName || getCurrentUserName(),
+    [userName]
+  );
 
   const [participantStates, setParticipantStates] = useState<
     ParticipantState[]
-  >(() => initParticipants(participants, currentUserName));
+  >(() => initParticipants(participants, currentUserName, founderNames));
+
+  // Sync new participants from prop (e.g., someone joins mid-session)
+  useEffect(() => {
+    setParticipantStates((prev) => {
+      const existingIds = new Set(prev.map((p) => p.speakerId));
+      const newParticipants = participants
+        .filter((p) => !existingIds.has(p.speakerId))
+        .map((p) => ({
+          speakerId: p.speakerId,
+          name: p.name,
+          role: ((p.role as SpeakerRole) || "other") as SpeakerRole,
+        }));
+      if (newParticipants.length === 0) return prev;
+      return [...prev, ...newParticipants];
+    });
+  }, [participants]);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear debounce timeout on unmount to prevent memory leak
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
 
   const saveMutation = useMutation({
     mutationFn: (updated: ParticipantState[]) =>
@@ -326,4 +369,4 @@ export default function ParticipantMapper({
       </CardContent>
     </Card>
   );
-}
+});

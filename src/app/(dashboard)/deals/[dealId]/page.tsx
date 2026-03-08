@@ -235,6 +235,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                 id: deal.id,
                 sector: deal.sector,
                 stage: deal.stage,
+                instrument: deal.instrument,
                 geography: deal.geography,
                 description: deal.description,
                 amountRequested: deal.amountRequested != null ? Number(deal.amountRequested) : null,
@@ -311,7 +312,12 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
 
         {/* Tab 5: Live Coaching */}
         <TabsContent value="live">
-          <LiveTabLoader dealId={deal.id} dealName={deal.name} />
+          <LiveTabLoader
+            dealId={deal.id}
+            dealName={deal.name}
+            userName={user.name ?? undefined}
+            founderNames={deal.founders.map((f) => f.name)}
+          />
         </TabsContent>
       </Tabs>
 

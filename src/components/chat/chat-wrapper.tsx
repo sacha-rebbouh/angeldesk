@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useState } from "react";
 import dynamic from "next/dynamic";
-import { Sparkles } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -51,10 +51,10 @@ export const ChatWrapper = memo(function ChatWrapper({
             onMouseEnter={prefetchChatPanel}
             size="lg"
             className="fixed right-4 bottom-4 z-40 h-12 rounded-full shadow-lg gap-2 px-5"
-            aria-label="Ouvrir l'analyste IA"
+            aria-label="Ouvrir le chat IA"
           >
-            <Sparkles className="size-5" />
-            <span className="text-sm font-medium">Analyste IA</span>
+            <MessageCircle className="size-5" />
+            <span className="text-sm font-medium">Chat IA</span>
           </Button>
         )}
         <DealChatPanel
@@ -75,10 +75,10 @@ export const ChatWrapper = memo(function ChatWrapper({
           onMouseEnter={prefetchChatPanel}
           size="lg"
           className="fixed right-4 bottom-4 z-40 h-12 rounded-full shadow-lg gap-2 px-5"
-          aria-label="Ouvrir l'analyste IA"
+          aria-label="Ouvrir le chat IA"
         >
-          <Sparkles className="size-5" />
-          <span className="text-sm font-medium">Analyste IA</span>
+          <MessageCircle className="size-5" />
+          <span className="text-sm font-medium">Chat IA</span>
         </Button>
       )}
       <DealChatPanel
