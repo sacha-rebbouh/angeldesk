@@ -1,6 +1,550 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-03-08 — fix: synthesis-deal-scorer timeout + score incohérent
+
+**Contexte :** Le scorer timeout a 240s quand il doit retry (0 dimensions 1er appel) et que le calcul percentile DB (F37) hang pendant instabilite Neon. Score LLM=2 vs dimensions=50 (divergence 48pts).
+
+**Fixes :**
+- Timeout augmente de 240s → 300s (2 appels LLM + DB necessitent plus de marge)
+- Calcul percentile DB (F37) enveloppe dans `Promise.race` avec timeout 10s — ne bloque plus quand Neon est instable
+- Template JSON : score.value annote "ENTIER entre 0 et 100, PAS une note sur 5 ou 10", breakdown avec 2 exemples concrets (Team 72, Financials 58)
+- Rappel ajouté : "score.value = Σ(breakdown weights × breakdown scores)"
+
+**Fichiers modifies :**
+- `src/agents/tier3/synthesis-deal-scorer.ts` — timeout 300s, Promise.race F37, template JSON clarifié, instruction score coherence
+
+---
+## 2026-03-08 — fix: extraction PDF Keynote (60% qualite → reconstruction spatiale)
+
+**Contexte :** Les PDFs generees par Keynote/Apple fragmentent le texte en dizaines de micro-morceaux par ligne. L'extraction naive (`.join(" ")`) produisait du texte fragmente (mots coupes, espaces parasites), score qualite 60% avec warning "Text appears fragmented".
+
+**Cause :** `pdfjs-dist` retourne chaque fragment avec ses coordonnees spatiales (x, y via `transform`), mais l'extracteur ignorait ces positions et concatenait tout avec un simple espace.
+
+**Fix :** Nouvelle fonction `reconstructTextFromItems()` qui :
+1. Trie les items par Y descendant (haut→bas) puis X croissant (gauche→droite)
+2. Detecte les sauts de ligne quand le Y change de plus de 60% de la taille de police
+3. Insere des espaces uniquement quand le gap horizontal depasse 25% de la taille de police
+4. Estime la largeur via `item.width` ou fallback (longueur × fontSize × 0.5)
+
+**Fichiers modifies :**
+- `src/services/pdf/extractor.ts` — Remplacement `.join(" ")` par `reconstructTextFromItems()` avec reconstruction spatiale complete
+
+---
+## 2026-03-08 — fix: export PDF crash (null.toFixed) + null guards PDF sections
+
+**Contexte :** L'export PDF crashait avec `Cannot read properties of null (reading 'toFixed')` sur `burn.burnMultiple` dans FinancialFindings. Le guard `!== undefined` ne protégeait pas contre `null` retourné par les agents.
+
+**Fichiers modifiés :**
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` — Remplacé tous les guards `!== undefined` par `!= null` avant `.toFixed()` (burn.monthlyBurn, burn.burnMultiple, burn.runway, investorReturn.multiple, investorReturn.irr, expectedMultiple, expectedIrr, downsideMultiple, upsideMultiple)
+- `src/lib/pdf/pdf-sections/tier3-synthesis.tsx` — Idem pour weighted.expectedMultiple, irr, ret.multiple, ret.irr
+
+---
+## 2026-03-08 — fix: terminologie sectorielle (CTO/tech pour deals non-tech)
+
+**Contexte :** Les agents utilisaient des termes tech (CTO, VP Engineering, dette technique) pour tous les deals, y compris non-tech (food, retail, mode). Perte de crédibilité quand l'analyse parle de "CTO inexistant" pour une marque de petfood.
+
+**Fichiers modifiés :**
+- `src/agents/tier1/team-investigator.ts` — Ajout section "ADAPTATION AU SECTEUR" avec rôles clés par secteur (tech, consumer, food, marketplace, biotech, services). "CEO/CTO" → "Rôles complémentaires". `rolesMissing` ne signale plus CTO si non-tech. Gaps critiques adaptés au secteur.
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Scoring rubric: "no CTO" → "rôle clé manquant selon le secteur". Exemples nettoyés.
+- `src/agents/tier3/scenario-modeler.ts` — Ajout section "ADAPTATION AU SECTEUR" (métriques, comparables, triggers). Exemples: "CTO part" → "cofondateur clé quitte".
+- `src/agents/tier3/devils-advocate.ts` — Ajout section "ADAPTATION AU SECTEUR" (kill reasons, comparables échecs du même secteur).
+- `src/agents/tier3/memo-generator.ts` — Ajout section "ADAPTATION AU SECTEUR" (vocabulaire, métriques, rôles). Exemples nettoyés.
+
+---
+## 2026-03-08 — fix: agents ignoraient la date actuelle (contexte temporel)
+
+**Contexte :** Les agents LLM n'avaient aucune notion de la date actuelle. Ils déduisaient la date depuis le contenu des documents analysés, ce qui causait des erreurs d'analyse (ex: penser qu'on est en sept 2025 alors qu'on est en mars 2026, considérer un CA annuel comme une projection alors qu'il est réalisé).
+
+**Fichiers modifiés :**
+- `src/agents/base-agent.ts` — Injection d'un bloc `CONTEXTE TEMPOREL` avec la date actuelle dans `buildFullSystemPrompt()`. Instruction explicite de ne jamais déduire la date depuis les documents. S'applique à TOUS les agents (Tier 1, 2, 3 + chat).
+
+---
+## 2026-03-08 — fix: competitive-intel JSON parse error + score=0 Tier 3
+
+**Contexte :** Trois problèmes liés aux templates JSON des agents LLM :
+1. `competitive-intel` crashait avec "Failed to parse LLM response" — template JSON trop verbeux (~160 lignes), le LLM générait du JSON invalide
+2. `scenario-modeler` et `devils-advocate` retournaient `score=0` — `score` en fin de template, tronqué avant génération
+3. `scenario-modeler` était sur `GEMINI_3_FLASH` au lieu de `GEMINI_PRO` (seul Tier 3 pas sur PRO)
+
+**Fichiers modifiés :**
+- `src/agents/tier1/competitive-intel.ts` — Template JSON compressé (160→30 lignes), `score` déplacé en 1er champ, ajout règle anti-troncation (5 competitors max, justifications courtes)
+- `src/agents/tier3/scenario-modeler.ts` — `score`, `alertSignal`, `narrative`, `redFlags`, `questions` déplacés en DEBUT du template (avant `scenarios`). Fallback score dérivé depuis `probabilityWeightedOutcome.expectedMultiple` au lieu de 0.
+- `src/agents/tier3/devils-advocate.ts` — `score` déplacé en 1er champ (avant `meta`). `alertSignal`, `narrative`, `redFlags`, `questions` aussi avant `findings`. Fallback score dérivé depuis kill reasons (count + severity).
+- `src/services/openrouter/router.ts` — Ajout `scenario-modeler` au mapping `GEMINI_PRO`.
+
+---
+## 2026-03-08 — feat: instrument de financement + inférence automatique du stade
+
+**Contexte :** Le stage du deal (Seed, Pre-seed...) et l'instrument de financement (SAFE, equity round...) sont deux concepts distincts. Le modèle ne distinguait pas les deux. De plus, beaucoup de decks ne mentionnent pas explicitement le stade — il faut l'inférer à partir des signaux (montant, instrument, cap, traction).
+
+**Fichiers modifiés :**
+- `prisma/schema.prisma` — Nouvel enum `FundingInstrument` (EQUITY, SAFE, BSA_AIR, CONVERTIBLE_NOTE, BRIDGE) + champ `instrument` sur `Deal`
+- `src/lib/format-utils.ts` — Nouvelle fonction `getInstrumentLabel()` pour labels FR
+- `src/types/index.ts` — Export `FundingInstrument`, ajout à `CreateDealInput`
+- `src/agents/types.ts` — Ajout `instrument` à `ExtractedDealInfo`
+- `src/app/api/deals/route.ts` — Validation `instrument` dans le schema de création
+- `src/app/api/deals/[dealId]/route.ts` — Validation `instrument` dans le schema de mise à jour
+- `src/app/api/v1/deals/route.ts` — Validation `instrument` dans l'API v1
+- `src/app/(dashboard)/deals/new/page.tsx` — Sélecteur d'instrument dans le formulaire de création
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Passage du champ `instrument` au DealInfoCard
+- `src/components/deals/deal-info-card.tsx` — Affichage + édition de l'instrument dans la fiche deal
+- `src/agents/base-agent.ts` — Injection du `Funding Instrument` dans le contexte LLM des agents
+- `src/agents/document-extractor.ts` — Extraction de l'instrument + règles d'inférence du stade (montant, instrument, valuation cap, traction, taille équipe)
+- `src/agents/orchestrator/persistence.ts` — Persist l'instrument extrait sur le deal (auto-enrichissement)
+- `src/agents/maintenance/types.ts` — Ajout SAFE, BSA-AIR et variantes dans `STAGE_NORMALIZATION`
+
+---
+## 2026-02-26 — feat: bouton "Réinviter le bot" + couverture complète scénarios
+
+**Fichiers créés :**
+- `src/app/api/live-sessions/[id]/reinvite/route.ts` — Redéploie un nouveau bot Recall sur le même meeting URL. Supprime le rapport intermédiaire. Autorisé depuis `live`, `bot_joining`, `processing`, `failed`, `completed`. Garde 2h max.
+
+**Fichiers modifiés :**
+- `src/app/api/live-sessions/[id]/start/route.ts` — Timeouts Recall plus tolérants : `waiting_room_timeout` 2min→5min, `noone_joined_timeout` 5min→10min, `everyone_left_timeout` 10s→30s
+- `src/app/(dashboard)/deals/[dealId]/live/components/session-controls.tsx` — Bouton "Réinviter le bot" visible sur tous les status (live, bot_joining, processing, failed, completed)
+- `src/components/deals/live-tab-content.tsx` — Fenêtre "recently completed" 10min→2h. Bandeau ambre "Le meeting est encore en cours ?" avec bouton réinviter sur les sessions completed/failed récentes. SessionControls rendu dans bot_joining et processing.
+- `src/lib/live/post-call-generator.ts` — Protection race condition reinvite : `updateMany` avec guard `status: "processing"`
+
+**Scénarios couverts :**
+- Personne n'est là, bot attend seul → 10 min de patience (avant 5)
+- Fondateur se déco 5 secondes → 30s de grace (avant 10s = mort)
+- BA décale de 20 min → session completed + bandeau réinviter
+- Waiting room Zoom → 5 min d'attente (avant 2)
+- Crash bot Recall → bouton réinviter en status failed
+- BA oublie de stop → auto-close quand tous les humains partent
+
+---
+## 2026-02-26 — fix: contexte COMPLET pour coaching + visual, auto-close session
+
+**Fichiers modifiés :**
+- `src/lib/live/types.ts` — `DealContext` enrichi : ajout `dealBasics` (ARR, valo, montant, croissance), `scores` (5 dimensions), `founderDetails` (LinkedIn, parcours, éducation, ventures), `allAgentFindings` (résultats de TOUS les agents), `negotiationStrategy`
+- `src/lib/live/context-compiler.ts` — **Suppression de `serializeContextCompact`**. `compileDealContext()` enrichi : query Prisma étendue (founders avec linkedinUrl/verifiedInfo/previousVentures, analysis avec negotiationStrategy), extraction de TOUS les résultats d'agents (pas juste 5), détails LinkedIn des fondateurs. `serializeContext()` enrichi : scores par dimension, données financières brutes du deal, profils fondateurs complets, résultats de tous les agents, stratégie de négo.
+- `src/lib/live/coaching-engine.ts` — Retour à `serializeContext` (contexte complet), timeout 5s→8s
+- `src/lib/live/visual-processor.ts` — Retour à `serializeContext` (contexte complet), revert pending-frame → simple lock, maxTokens 600→800
+- `src/app/api/live-sessions/[id]/webhook/route.ts` — Auto-close : quand tous les participants humains quittent le meeting (hors bot "AngelDesk Notes"), la session passe automatiquement en "processing" et le post-call report est généré. Le bot est aussi expulsé du meeting.
+- `src/lib/live/__tests__/live-coaching.test.ts` — Mise à jour du mock `DealContext` pour les nouveaux champs
+
+**Bugs corrigés :**
+1. Visual pipeline cassé — revert du pending-frame pattern (race condition)
+2. Coaching sans contexte — `serializeContextCompact` supprimé, retour au contexte COMPLET avec tous les agents, financials, LinkedIn, etc.
+3. Session restait ouverte si l'utilisateur oubliait de cliquer "Stop"
+
+---
+## 2026-02-26 — perf: live coaching latency reduction (7 fixes)
+
+**Fichiers modifiés :**
+- `src/lib/live/context-compiler.ts` — ajout `serializeContextCompact()` (~1500 tokens vs 5-8K)
+- `src/lib/live/coaching-engine.ts` — compact context, timeout 8s→5s
+- `src/lib/live/visual-processor.ts` — compact context, processing lock → pending-frame pattern, maxTokens 800→600
+- `src/lib/live/utterance-router.ts` — (inchangé, déjà optimisé)
+- `src/app/api/live-sessions/[id]/webhook/route.ts` — buffer 8→5 mots, gap 3s→1.5s, `partial_data` auto-promote, `participant_events.join` handling, imports cleanés
+- `src/app/api/live-sessions/[id]/start/route.ts` — ajout `transcript.partial_data`, `participant_events.join/leave` aux events per-bot
+- `src/app/api/live-sessions/[id]/visual-frame/route.ts` — rate limit 2s→3s (match processing time)
+- `src/components/deals/live-tab-content.tsx` — `useSessionRealtimeEvents` hook (Ably pendant bot_joining), `refetchIntervalInBackground: true`, `startedAtOverride` pour timer immédiat
+
+**Impact attendu :**
+- Transition bot_joining→live : ~20s → 2-5s (via participant.join + partial_data events + Ably instant)
+- Participants : visibles dès l'event Ably participant.join (vs 20s avant)
+- Coaching cards latence : 5-7s → 2-4s (compact context -70% tokens + buffer gap 1.5s)
+- Visual pipeline : 15-18s → 5-8s (compact context + pending-frame pattern + rate limit 3s)
+- Background tab : polling continue quand onglet inactif
+
+---
+## 2026-02-26 — perf+fix: visual pipeline single-stage HAIKU, per-contradiction questions, card quality
+
+**Fichiers modifiés :**
+- `src/lib/live/visual-processor.ts` — Fusion du pipeline 2-stage (Haiku classify 6s + Sonnet analyze 16s = 22s) en un seul appel HAIKU (~5-8s). Prompt remanié pour analyse BA-grade avec extraction chiffrée, contradictions avec question par écart, détection de nouveauté intégrée.
+- `src/lib/live/types.ts` — Ajout `suggestedQuestion` optionnel par contradiction dans `VisualAnalysis`.
+- `src/app/api/live-sessions/[id]/visual-frame/route.ts` — Fix bug : chaque carte contradiction utilise maintenant sa propre `suggestedQuestion` (au lieu de la question globale appliquée à toutes les cartes). Format carte professionnel ("Écart détecté — ...").
+
+**Impact latence :** ~22s → ~5-8s pour l'analyse visuelle complète.
+
+---
+## 2026-02-25 — fix: 3 root causes WS relay + deploy fiabilisé
+
+**Problème** : Recall.ai ne connectait jamais le WebSocket au relay Fly.io (0 connexions sur 12+ bots).
+
+**Root causes identifiées** (agents de recherche dédiés) :
+1. **Trailing `/` manquant dans l'URL WS** — les docs Recall exigent `wss://host/?param=value` (avec `/` avant `?`). Sans ça → HTTP 400 silencieux. Notre URL était `wss://host?param=value`.
+2. **`video_separate_png.data` non supporté via webhook** — les docs Recall listent UNIQUEMENT `participant_events.*` et `transcript.*` pour les webhooks. Les events vidéo sont WebSocket-only. L'approche webhook essayée puis revertée.
+3. **Fly.io machine auto-stop** — pas de `min_machines_running`, pas de `auto_stop_machines = "off"`. Recall retry 30× / 3s = 90s max. Si machine froide → toutes les retries échouent → endpoint marqué `failed` définitivement.
+4. **Dockerfile `vips-dev` conflit sharp** — `apk add vips-dev` installe un libvips système qui entre en conflit avec le libvips bundlé par sharp 0.33+ sur Alpine.
+
+**Fichiers modifiés** :
+- `src/app/api/live-sessions/[id]/start/route.ts` — URL WS avec trailing `/` (`${wsRelayUrl}/?sessionId=${id}`), `gallery_view_v2` requis, `transcript.partial_data` retiré du webhook (immédiatement jeté dans le handler = trafic inutile)
+- `services/ws-relay/fly.toml` — Migration `[[services]]` → `[http_service]`, `auto_stop_machines = "off"`, `min_machines_running = 1`, mémoire 256→512MB
+- `services/ws-relay/Dockerfile` — Suppression `apk add vips-dev`, ajout `SHARP_IGNORE_GLOBAL_LIBVIPS=1`, support `package-lock.json`
+- `services/ws-relay/package-lock.json` — Ajouté pour builds reproductibles
+
+Relay redéployé sur Fly.io (v6). Tests trailing slash confirmés OK.
+
+---
+## 2026-02-25 — fix: variant web_4_core requis pour video_separate_png
+
+**Fichiers modifiés** :
+- `src/app/api/live-sessions/[id]/start/route.ts` — Ajout de `variant: { zoom: "web_4_core", google_meet: "web_4_core", microsoft_teams: "web_4_core" }` au bot config. Le per-participant video (`video_separate_png`) nécessite des bots 4-core — sans ça, Recall accepte la config mais ne connecte jamais le WebSocket. Fallback étendu pour gérer le rejet de `variant`/`web_4_core`.
+
+**Source** : https://docs.recall.ai/docs/how-to-get-separate-videos-per-participant-realtime — "This is a compute heavy feature and we recommend using 4 core bots"
+
+---
+## 2026-02-25 — fix: réécriture complète relay WS (protocole Recall incorrect)
+
+**Fichiers modifiés** :
+- `services/ws-relay/index.js` — **Réécriture complète**. Le relay supposait un protocole binaire (`[4B participant_id][4B timestamp_ms][PNG brut]` + handshake init `{ protocol_version, bot_id }`) qui **n'existe pas**. Recall envoie des **messages JSON** : `{ event: "video_separate_png.data", data: { data: { buffer: "base64...", type: "webcam"|"screenshare", participant: {...}, timestamp: {...} } } }`. Changements :
+  1. Parsing JSON au lieu de lecture binaire (`readUInt32LE` sur du JSON = crash silencieux)
+  2. Suppression du handshake init (n'existe pas dans le protocole Recall)
+  3. Décodage base64 → Buffer pour pHash et forwarding
+  4. Filtrage `type === "screenshare"` uniquement (ignore webcam)
+  5. State par sessionId (URL query param) au lieu de botId (init message)
+  6. Logging amélioré (compteurs messages/forwards, log périodique)
+
+**Source de vérité** : https://github.com/recallai/participant-live-video + https://docs.recall.ai/docs/how-to-get-separate-videos-per-participant-realtime
+
+Relay redéployé sur Fly.io (`fly deploy`).
+
+---
+## 2026-02-25 — fix: coaching engine timeout + speed (HAIKU switch)
+
+**Fichiers modifiés** :
+- `src/lib/live/coaching-engine.ts` — **4 fixes critiques** :
+  1. Modèle `SONNET` → `HAIKU` : latence ~1-2s au lieu de ~6s (critique pour le live coaching)
+  2. Timeout de 5s → 8s : les cartes n'étaient JAMAIS publiées car Sonnet dépassait systématiquement le timeout de 5s
+  3. maxTokens de 500 → 300 : réponses plus rapides, suffisant pour 1-2 phrases
+  4. Temperature de 0.4 → 0.3 : réponses plus cohérentes
+
+**Contexte** : Les logs montraient `[coaching-engine] 5s timeout exceeded. Skipping card.` pour CHAQUE carte — le coaching engine jetait 100% des réponses LLM.
+
+**Note** : La limitation Recall (plan actuel ne supporte pas `video_separate_png` real-time streaming) bloque toujours l'analyse visuelle live. Le pipeline est prêt mais Recall ne connecte pas le WebSocket.
+
+---
+## 2026-02-25 — fix: pipeline visuel complet (3 bugs critiques)
+
+**Fichiers modifiés** :
+- `src/app/api/live-sessions/[id]/start/route.ts` — **Fix #1** : ajout de `video_mixed_layout: "gallery_view_v2"` dans `recording_config`. Requis par Recall pour activer le streaming `video_separate_png` via WebSocket. Sans ça, Recall accepte la config mais ne connecte jamais le WS. Doc : https://docs.recall.ai/docs/how-to-get-separate-videos-per-participant-realtime
+- `src/app/api/live-sessions/[id]/visual-frame/route.ts` — **Fix #2** : suppression de `after()` qui faisait échouer silencieusement les appels LLM en dev (même bug que coaching cards). Le traitement visuel (Haiku classify → Sonnet analyze → DB + Ably + coaching cards) est maintenant inline.
+- `services/ws-relay/index.js` — **Fix #3** : correction endianness de `readUInt32BE` → `readUInt32LE` pour participant_id et timestamp_ms (protocole Recall = little-endian). Relay redéployé sur Fly.io.
+- `src/lib/live/recall-client.ts` — Suppression de `takeBotScreenshot()` (dead code, l'API Recall `/screenshot/` n'existe pas).
+- Config Fly.io relay : `VERCEL_API_URL` mis à jour vers le tunnel ngrok dev, `RELAY_SECRET` synchronisé.
+
+---
+## 2026-02-25 — fix: capture slides/screen share via Recall API
+
+**Fichiers modifiés** :
+- `src/app/api/live-sessions/[id]/start/route.ts` — **Fix critique** : le champ `real_time_media.websocket_video_destination_url` n'existe pas dans l'API Recall. Remplacé par un endpoint `type: "websocket"` dans `realtime_endpoints` avec événement `video_separate_png.data` (format correct). Ajout fallback si Recall rejette `video_separate_png` (plan limitation).
+- `src/lib/live/types.ts` — Ajout type `RecallMediaEvent` (`video_separate_png.data`, etc.), type endpoint mis à jour pour supporter `"websocket"` en plus de `"webhook"`. Suppression du champ invalide `real_time_media`.
+
+---
+## 2026-02-25 — feat: auto-populate participants depuis transcripts en temps réel
+
+**Fichiers modifiés** :
+- `src/app/api/live-sessions/[id]/webhook/route.ts` — Détection automatique des speakers depuis les chunks de transcript Recall.ai. Chaque nouveau speaker est ajouté au champ `participants` en DB avec rôle "other" + publication Ably `participant-joined` pour mise à jour UI temps réel.
+- `src/components/deals/live-tab-content.tsx` — `LiveSessionView` écoute les événements Ably `participant-joined` et met à jour le compteur + le mapper en temps réel sans attendre le polling.
+
+---
+## 2026-02-25 — feat: participant mapper collapsible + auto-détection rôles
+
+**Fichiers modifiés** :
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Passe `userName` et `founderNames` au LiveTabLoader
+- `src/components/deals/live-tab-loader.tsx` — Accepte et forward `userName`/`founderNames`
+- `src/components/deals/live-tab-content.tsx` — Nouveau composant `LiveSessionView` avec bouton "Participants" collapsible dans la barre de contrôles, remplace le mapper inline
+- `src/app/(dashboard)/deals/[dealId]/live/components/participant-mapper.tsx` — Auto-détection : match nom Clerk → BA, match fondateurs deal → Fondateur, reste → Autre. Accepte props `userName`/`founderNames`
+
+---
+## 2026-02-25 — fix: coaching cards ne s'affichent pas en live
+
+**Fichiers modifiés** :
+- `src/app/api/live-sessions/[id]/webhook/route.ts` — Retrait de `after()` pour le processing des utterances. Les appels LLM (OpenRouter) ne fonctionnaient pas dans le contexte `after()` de Next.js, empêchant la génération de coaching cards. Processing inline maintenant.
+
+---
+## 2026-02-25 — fix: Recall API rejette real_time_media + croix disclaimer
+
+**Fichiers modifiés** :
+- `src/app/api/live-sessions/[id]/start/route.ts` — Fallback : si `real_time_media` rejeté par Recall API (400), retry sans. Permet de lancer le bot même sans support video frames.
+
+---
+## 2026-02-25 — fix: croix disclaimer cachée par bouton Chat IA
+
+**Fichiers modifiés** :
+- `src/components/shared/disclaimer-banner.tsx` — Croix de fermeture déplacée à gauche du bandeau + `pr-40` pour dégager le texte du FAB "Chat IA"
+
+---
+## 2026-02-25 — feat: chat IA enrichi avec contexte live sessions + UX bouton
+
+**Fichiers modifiés** :
+- `src/components/chat/chat-wrapper.tsx` — Bouton "Analyste IA" → "Chat IA" avec icône MessageCircle (plus clair que c'est un chat)
+- `src/services/chat-context/index.ts` — Ajout `getCompletedLiveSessions()` + type `LiveSessionContextData`, injecté dans `getFullChatContext()`
+- `src/agents/chat/deal-chat-agent.ts` — Nouveau bloc contexte "Sessions de coaching live" dans le prompt : résumé, points clés, nouvelles infos, contradictions deck/call, Q&A, questions restantes, delta confiance
+- `src/app/api/chat/[dealId]/route.ts` — Passe `liveSessions` au `FullChatContext`
+
+---
+## 2026-02-25 — fix: rapports sessions précédentes accessibles au clic
+
+**Fichiers modifiés** :
+- `src/components/deals/live-tab-content.tsx` — SessionHistory : "Rapport disponible" transformé en expand/collapse cliquable avec PostCallReport inline. Ajout état `expandedId`, icônes ChevronDown/Up/FileText, hover state.
+
+---
+## 2026-02-25 — fix: audit complet live coaching — 17 bugs corrigés + 47 tests ajoutés
+
+**Fichiers créés** : `src/lib/live/sanitize.ts`
+
+**Fichiers modifiés** :
+- `src/lib/live/__tests__/live-coaching.test.ts` — +47 tests (164 total) couvrant transcript-condenser, context-compiler enrichi, post-call reanalyzer, generateMarkdownReport, pipeline intégration
+- `src/lib/live/post-call-generator.ts` — idempotency guard (empêche double rapport stop+recall race)
+- `src/app/api/live-sessions/[id]/webhook/route.ts` — re-fetch session dans after() (fix stale closure), auto-stop vérifie updateMany result, parallélisation utterances, optimisation cards query
+- `src/lib/live/context-compiler.ts` — limite cache à 50 entrées avec eviction
+- `src/app/api/live-sessions/route.ts` — utilise canStartLiveSession() au lieu de checks inline dupliqués
+- `src/app/api/live-sessions/[id]/visual-frame/route.ts` — timingSafeCompare via HMAC-SHA256 (fix length oracle)
+- `src/lib/live/utterance-router.ts` — domain keywords avant small talk (fix masquage "Bonjour, MRR 5M")
+- `src/lib/live/coaching-engine.ts` — import sanitize depuis module partagé
+- `src/lib/live/auto-dismiss.ts` — import sanitize depuis module partagé
+- `src/app/(dashboard)/deals/[dealId]/live/components/coaching-feed.tsx` — MERGE action (fix INIT loop/flickering), fix scroll layout (flex chain)
+- `src/app/(dashboard)/deals/[dealId]/live/components/session-controls.tsx` — useRef guard double-click stop
+- `src/app/(dashboard)/deals/[dealId]/live/components/participant-mapper.tsx` — React.memo wrapper
+- `src/components/deals/live-tab-content.tsx` — React.memo wrapper
+- `src/app/api/live-sessions/[id]/start/route.ts` — Ably publish try/catch (non-fatal)
+- `services/ws-relay/index.js` — botState.delete dans error handler
+- `src/app/(dashboard)/deals/[dealId]/live/components/coaching-card.tsx` — clamp relativeTime négatif
+
+**Résumé des fixes** :
+- CRITICAL: idempotency guard post-call (race stop+recall), MERGE remplace INIT (stop flickering feed)
+- HIGH: stale session closure, unbounded cache, duplicated limit checks, timing side channel, scroll layout, React.memo, double-click stop
+- MEDIUM: auto-stop error handling, utterance parallelization, cards query optimization
+- LOW: shared sanitize module, small talk priority, Ably error handling, WS relay cleanup, negative time
+
+---
+## 2026-02-25 — feat: intelligence cumulative des calls + Phase 5 reanalysis
+
+**Fichiers créés** : `src/lib/live/transcript-condenser.ts`
+
+**Fichiers modifiés** : `src/lib/live/types.ts`, `src/lib/live/post-call-generator.ts`, `src/lib/live/context-compiler.ts`, `src/lib/live/post-call-reanalyzer.ts`, `prisma/schema.prisma`
+
+- Nouveau type `CondensedTranscriptIntel` : intelligence structurée dense extraite de chaque call (faits, chiffres, engagements fondateur, insights concurrentiels, données visuelles, contradictions, réponses obtenues, actions)
+- `transcript-condenser.ts` : moteur LLM (Sonnet) de condensation post-call (~$0.07/session)
+- `DealContext.previousSessions` enrichi avec `duration` et `condensedIntel` (backward-compatible : null pour sessions legacy)
+- `SessionSummary.condensedIntel` (Json?) ajouté au schema Prisma
+- Pipeline post-call enrichi : condensation → enrichissement du document CALL_TRANSCRIPT → trigger reanalysis
+- `context-compiler.ts` : charge et sérialise le condensedIntel des sessions précédentes pour le coaching live
+- Le document CALL_TRANSCRIPT est enrichi avec une section "Intelligence structurée" (faits, financials, engagements, contradictions, etc.) pour consommation par les agents lors d'un re-run
+- **Phase 5 complétée** : `triggerTargetedReanalysis()` connecté à l'orchestrator réel (`AgentOrchestrator.runAnalysis()` avec `forceRefresh: true, isUpdate: true`)
+- Re-analyse fire-and-forget : ne bloque pas la complétion de la session
+
+---
+## 2026-02-25 — infra: Fly.io WS relay déployé et optimisé (free tier)
+
+**Fichiers modifiés** : `services/ws-relay/fly.toml`
+
+- Relay WebSocket déployé sur `angeldesk-ws-relay.fly.dev` (région CDG)
+- fly.toml : `[http_service]` → `[[services]]` TCP pour support WebSocket
+- Scale optimisé : 1 machine × shared-cpu-1x × 256MB (free tier)
+- Secrets configurés : `RELAY_SECRET`, `VERCEL_API_URL` (ngrok dev)
+- Env vars ajoutées dans `.env.local` : `WS_RELAY_URL`, `WS_RELAY_SECRET`
+- Health check OK : `curl https://angeldesk-ws-relay.fly.dev/health` → `ok`
+
+---
+## 2026-02-25 — docs: LIVE-COACHING-SPEC.md mis à jour V2 (visual, sécurité, tests, coûts)
+
+**Fichiers modifiés** : `LIVE-COACHING-SPEC.md`, `src/services/live-session-limits.ts` (JSDoc)
+
+Ajouts/corrections dans la spec :
+- §2 Architecture : pipeline visuel (Relay → Haiku → Sonnet)
+- §3.2.6 Screen share analysis (nouveau)
+- §5 Stack : Fly.io WS relay, visual processing
+- §6 DB Schema : ScreenCapture model, screenShareActive, isVisualTrigger, totalCost, errorMessage
+- §7 Structure fichiers : +10 fichiers (visual-processor, monitoring, visual-frame, retry-report, ably-provider, ws-relay, etc.)
+- §8 Routes API : +visual-frame, +retry-report
+- §10 Coûts : $2.40/h → $11/h (Recall.ai ~$7.50 + LLM ~$2.60 + visual ~$1.10)
+- §11 Sécurité : +sanitization prompt injection (3 niveaux), +relay auth, +transitions atomiques, +rate limiting webhook
+- §12 Erreurs : +transcript truncation 80K, +retry report, +double post-call prevention
+- §13 Testing : 112 tests unitaires live coaching
+- §14 Limites : "Pas de vidéo" remplacé par screen share analysis, +visual latence, +in-memory state caveat
+- §15 Phases : toutes cochées ✅, +Phase 6 Visual V2
+- Annexe B Ably : +visual-analysis, +screenshare-state events
+- Date : 2026-02-24 → 2026-02-25
+
+---
+## 2026-02-25 — test: All 387 tests pass (22 files) including 112 Live Coaching tests
+
+**Verification run**: `vitest --config vitest.unit.config.ts` — 387/387 passed, 0 failures. TypeScript `tsc --noEmit` clean.
+
+---
+## 2026-02-25 — test: Comprehensive test suite for Live Coaching feature (112 tests)
+
+**Fichier** : `src/lib/live/__tests__/live-coaching.test.ts`
+
+Suite de tests couvrant les comportements critiques du Live Coaching :
+- **Utterance Router** (54 tests) : filler detection, small talk, financial/competitive/negotiation claims, shouldTriggerCoaching decision logic (role + classification matrix)
+- **Sanitization** (19 tests) : auto-dismiss, coaching-engine, visual-processor — strip injection markers, enforce char limits
+- **Post-call truncation** (3 tests) : head+tail strategy for >80K char transcripts
+- **Card reducer** (12 tests) : ADD_CARD (with dedup), ADDRESS_CARD (active->addressed), INIT (split by status, sort newest-first)
+- **Rate limiter** (4 tests) : sliding window 30 req/10s, per-key isolation, window expiry
+- **Session limits** (6 tests) : canStartLiveSession max 1 active, max 3/day, short-circuit logic
+- **Regex edge cases** (5 tests) : case insensitivity, trailing periods, word boundaries, embedded matches
+
+Mocks : Prisma, OpenRouter, Ably, context-compiler, visual-processor, monitoring.
+
+---
+## 2026-02-25 — fix: Re-audit Live Coaching — 6 bugs résiduels corrigés (Loop 2)
+
+Corrections post re-audit par 3 agents (backend, security, React UI).
+
+- `webhook/route.ts` : ajout cap 2h max par session → auto-stop + post-call report (prévient coûts LLM illimités)
+- `retry-report/route.ts` : transition atomique `updateMany WHERE status IN (failed, processing)` + guard count=0
+- `webhooks/recall/route.ts` : TOUTES les transitions (live, processing, failed) sont maintenant atomiques avec `allowedSourceStatuses` map
+- `participant-mapper.tsx` : useEffect sync pour nouveaux participants rejoignant mid-session
+- `visual-processor.ts` : `sanitizeLLMOutput()` sur toutes les re-injections cross-stage (description → stage 2, visual context → coaching engine)
+- `coaching-feed.tsx` : comparaison content-based (card IDs) au lieu de reference equality pour INIT dispatch — évite reset de state à chaque poll
+
+---
+## 2026-02-25 — fix: Audit complet Live Coaching — 25+ bugs corrigés (CRITICAL → MEDIUM)
+
+Audit full-feature Live Coaching (35 fichiers) par 6 agents experts. Corrections systématiques.
+
+### CRITICAL
+- `stop/route.ts`, `retry-report/route.ts`, `webhooks/recall/route.ts` : remplacement `import().then()` par `after()` (Next.js 15 — background work survit sur Vercel)
+- `stop/route.ts` + `webhooks/recall/route.ts` : transition atomique via `updateMany WHERE status IN (live, bot_joining)` — élimine la race condition double post-call report
+- `route.ts` (create) : limite quotidienne corrigée de 50 → 3 sessions/24h (cohérent avec `live-session-limits.ts`)
+- `utterance-router.ts` : ajout `sanitizeTranscriptText()` avant injection LLM (defense prompt injection)
+- `auto-dismiss.ts` : ajout `sanitizeTranscriptText()` avant injection LLM
+- `ably-provider.tsx` : correction memory leak retry — utilise `retryKey` + useEffect lifecycle au lieu de création manuelle dans onClick
+
+### HIGH
+- `webhook/route.ts` : ajout rate limiting per-session (30 req/10s) — prévient amplification coûts LLM
+- `webhook/route.ts` : transition bot_joining→live atomique (updateMany empêche publishes Ably multiples)
+- `webhook/route.ts` : correction champ `context` Ably — envoie l'utterance text (pas la reference)
+- `post-call-generator.ts` : truncation transcript à 80K chars pour calls longs (head 30% + tail 70%)
+- `post-call-generator.ts` : wire `recordSessionDuration()` pour suivi coûts
+- `visual-frame/route.ts` : `maxDuration` 15→30s (pipeline Haiku+Sonnet peut dépasser 15s)
+- `session-status-bar.tsx` : sync prop `initialStatus` via useEffect
+- `coaching-card.tsx` : `relativeTime()` auto-update toutes les 10s
+- `participant-mapper.tsx` : clear debounce timeout on unmount
+- `coaching-feed.tsx` : lazy-load `AnalysisQuestionsTab` via `next/dynamic`
+- `session-controls.tsx` : prévention double-click sur confirmation stop
+
+### MEDIUM
+- `route.ts` (list) : `coachingCards:true` conditionnel (`includeCards` query param) — réduit overfetch
+- `live-tab-content.tsx` : `React.memo` sur `ActiveSessionView` + `SessionHistory`, `useMemo` sur `initialCards`
+- `live-session-limits.ts` : `COST_PER_HOUR` corrigé $3.50→$11 (inclut Recall.ai ~$7.50)
+- `webhook/route.ts` : screenshare DB updates via `updateMany` (safe si session déjà closed)
+
+---
+## 2026-02-25 — fix: Audit complet pipeline visual V2 — 30+ bugs corrigés
+
+Corrections issues des 6 agents d'audit (sécurité, QA, backend, DevOps, data flow, Prisma).
+
+### SÉCURITÉ (CRITICAL + HIGH)
+- `src/middleware.ts` : ajout `/api/live-sessions/(.*)/visual-frame` aux routes publiques (bloqué par Clerk)
+- `visual-frame/route.ts` : `timingSafeEqual` pour la comparaison Bearer (anti timing attack)
+- `visual-frame/route.ts` : validation PNG magic bytes + limite taille 5MB
+- `ws-relay/index.js` : validation CUID sessionId via `verifyClient`, maxPayload 10MB
+
+### STABILITÉ (VERCEL SERVERLESS)
+- `visual-frame/route.ts` : `void async` → `after()` (Next.js 15) pour background work
+- `webhook/route.ts` : `void async` → `after()` — background work survit à la réponse HTTP
+- `visual-processor.ts` : `getVisualContextWithFallback()` — fallback DB quand le cache in-memory est vide (cold start Vercel)
+- `coaching-engine.ts` : pré-fetch async du visual context avec DB fallback
+
+### DATA FLOW
+- `visual-processor.ts` : coût classification Haiku inclus dans `totalCost` (était ignoré)
+- `visual-processor.ts` : `frameId` unique avec suffixe aléatoire (évite collisions)
+- `visual-processor.ts` : validation `contentType` contre la union VisualContentType
+- `coaching-engine.ts` : empty `currentSlide` n'empêche plus l'injection des keyData/contradictions
+- `coaching-engine.ts` : `.catch()` sur le promise leak du timeout 5s
+- `prisma/schema.prisma` : ajout `suggestedQuestion` sur `ScreenCapture`
+- `visual-frame/route.ts` : `suggestedQuestion` persisté en DB + inclus dans les cartes proactives
+- `visual-frame/route.ts` : dedup des cartes contradiction visuelles (vérifie les existantes avant création)
+- `types.ts` : ajout `screenCapturesAnalyzed?` dans `PostCallReport.sessionStats`
+
+### WEBHOOK
+- `webhook/route.ts` : fix bug buffer flush overwrite (array `toProcess[]` au lieu d'écraser `flushed`)
+- `webhook/route.ts` : `.catch()` logué pour DB screenshare update (au lieu de `.catch(() => {})`)
+
+### POST-CALL
+- `post-call-generator.ts` : fetch `suggestedQuestion` dans les screen captures
+- `post-call-generator.ts` : section visuelle markdown basée sur `screenCapturesAnalyzed` (remplace heuristique fragile `startsWith("Slide")`)
+
+### WS RELAY (Fly.io)
+- `index.js` : rate limiting (1 forward / 2s par session), retry avec backoff (2 tentatives), graceful shutdown SIGTERM/SIGINT
+- `index.js` : validation PNG magic bytes, ping/pong keepalive, AbortSignal.timeout(10s) sur fetch
+- `fly.toml` : `memory 256mb → 512mb`, `auto_stop "stop" → "suspend"`, `min_machines 0 → 1`
+- `Dockerfile` : ajout `vips-dev` pour sharp sur Alpine
+
+---
+## 2026-02-25 — feat: Screen Capture & Visual Analysis — Live Coaching V2
+
+Pipeline d'analyse visuelle en temps réel pour le screen share pendant les sessions de coaching live. Le bot voit maintenant ce qui est partagé à l'écran (slides, dashboards, demos).
+
+### src/lib/live/types.ts
+- Ajout types visuels : `ScreenShareState`, `VisualContentType`, `VisualClassification`, `VisualAnalysis`, `VisualContext`
+- Ajout events Ably : `AblyVisualAnalysisEvent`, `AblyScreenShareStateEvent`
+- Extension `CoachingInput` avec `visualContext?` et `sessionId?`
+- Extension `RecallBotConfig` avec `real_time_media` (WebSocket video frames)
+- Extension `RecallRealtimeEvent` avec `participant_events.screenshare_on/off`
+
+### prisma/schema.prisma
+- Nouveau modèle `ScreenCapture` (timestamp, contentType, description, keyData, contradictions, newInsights, perceptualHash, analysisCost)
+- `LiveSession` : +`screenShareActive`, +relation `screenCaptures`
+- `CoachingCard` : +`isVisualTrigger`
+
+### src/services/openrouter/router.ts
+- Nouvelle fonction `completeVisionJSON<T>()` : multimodal image+text → JSON structuré (même circuit breaker, rate limiter, cost tracking)
+
+### services/ws-relay/ (NEW — service Fly.io)
+- `index.js` : relay WebSocket Recall.ai → Vercel API avec pHash dedup (~95% frames identiques filtrées)
+- `package.json`, `Dockerfile`, `fly.toml`, `.env.example`
+
+### src/lib/live/visual-processor.ts (NEW)
+- Pipeline 2 étapes : Haiku classify (~$0.002/frame) → Sonnet deep analysis si nouveau (~$0.02/frame)
+- Cache in-memory du visual context par session (même pattern que context-compiler)
+- `processVisualFrame()`, `getVisualContext()`, `setScreenShareState()`, `clearVisualState()`
+
+### src/app/api/live-sessions/[id]/visual-frame/route.ts (NEW)
+- Réception PNG frames du relay Fly.io (auth Bearer WS_RELAY_SECRET)
+- Background processing → DB ScreenCapture + Ably publish + coaching cards proactives visuelles
+
+### src/lib/live/ably-server.ts
+- +`publishVisualAnalysis()`, +`publishScreenShareState()`
+
+### src/lib/live/coaching-engine.ts
+- System prompt étendu : RÈGLE N°3 — contexte visuel
+- `buildCoachingPrompt()` : injection visual context entre utterance et conversation récente
+- Import `getVisualContext` depuis visual-processor
+
+### src/app/api/live-sessions/[id]/webhook/route.ts
+- Handling events `participant_events.screenshare_on/off` : update DB + Ably + visual state
+- `coachingInput` inclut maintenant `sessionId` pour visual context
+
+### src/app/api/live-sessions/[id]/start/route.ts
+- Events screen share ajoutés dans realtime_endpoints
+- `real_time_media.websocket_video_destination_url` conditionnel (si `WS_RELAY_URL` défini)
+
+### src/lib/live/post-call-generator.ts
+- Fetch screenCaptures en parallèle dans `generatePostCallReport()`
+- Section "Analyse visuelle" injectée dans le prompt LLM
+- Section markdown "Analyse visuelle" dans le rapport
+
+### src/services/live-session-limits.ts
+- Coût/heure mis à jour : $2.40 → $3.50 (inclut analyse visuelle)
+
+---
+## 2026-02-25 — fix: 3 fuites de données visuelles dans le pipeline
+
+Audit du flux visual → coaching → rapport → prochaine analyse : 3 problèmes identifiés et corrigés.
+
+### src/lib/live/visual-processor.ts — getVisualContext()
+- `newInsights` (faits nouveaux non couverts par l'analyse) étaient extraits par Sonnet mais jamais injectés dans le coaching prompt → ajoutés dans `keyDataFromVisual` avec tag `[new]`
+- `suggestedQuestion` de l'analyse visuelle était perdue → ajoutée dans `keyDataFromVisual` avec tag `[question suggérée]`
+- `recentSlideHistory` excluait la slide courante (doublon) → filtre `a !== last`
+
+### src/lib/live/coaching-engine.ts — buildCoachingPrompt()
+- `recentSlideHistory` était remonté par getVisualContext mais jamais injecté dans le prompt → section "Slides précédentes montrées" ajoutée
+
+### src/lib/live/context-compiler.ts — compileDealContext()
+- Les sessions précédentes ne remontaient que `keyPoints` + `remainingQuestions` → ajout fetch de `newInformation` et `contradictions` depuis SessionSummary
+- Les nouvelles infos (y compris visuelles) sont maintenant injectées dans `keyFindings` avec tags `[Nouveau]` et `[Contradiction severity]`
+- Limite `keyFindings` relevée de 5 → 10 pour absorber les findings visuels
+
+---
 ## 2026-02-24 — fix: post-call report crash + retry + coaching pertinence + latence
 
 ### src/lib/live/post-call-generator.ts

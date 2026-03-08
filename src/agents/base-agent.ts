@@ -698,6 +698,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       companyName: deal.companyName ? sanitizeName(deal.companyName) : "Not specified",
       sector: deal.sector ? sanitizeName(deal.sector) : "Not specified",
       stage: deal.stage ? sanitizeName(deal.stage) : "Not specified",
+      instrument: deal.instrument ? sanitizeName(deal.instrument) : "Not specified",
       geography: deal.geography ? sanitizeName(deal.geography) : "Not specified",
       website: deal.website ? sanitizeName(deal.website) : "Not specified",
       description: deal.description
@@ -710,6 +711,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 - Company: ${sanitizedDeal.companyName}
 - Sector: ${sanitizedDeal.sector}
 - Stage: ${sanitizedDeal.stage}
+- Funding Instrument: ${sanitizedDeal.instrument}
 - Geography: ${sanitizedDeal.geography}
 - Website: ${sanitizedDeal.website}
 
@@ -1331,6 +1333,8 @@ son deal sous le meilleur jour possible. Tu DOIS appliquer les regles suivantes:
     const stageCalibration = this._dealStage
       ? getStageCalibrationBlock(this._dealStage, this.config.name)
       : "";
-    return base + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance();
+    const now = new Date();
+    const dateContext = `\n\n## CONTEXTE TEMPOREL (CRITIQUE)\nDate actuelle : ${now.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.\nUtilise TOUJOURS cette date comme reference pour evaluer la fraicheur des donnees, les projections vs le realise, et les timelines. Ne JAMAIS deduire la date actuelle du contenu des documents analyses.\n`;
+    return base + dateContext + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance();
   }
 }
