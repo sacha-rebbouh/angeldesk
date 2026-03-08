@@ -9,8 +9,67 @@ type RouteContext = {
 };
 
 /**
+ * Try to load results from local cache or Vercel Blob (fast, <1s).
+ * Falls back to DB if cache miss (old analyses before caching was added).
+ */
+async function loadResults(analysisId: string): Promise<unknown> {
+  const blobPath = `analysis-results/${analysisId}.json`;
+
+  // Try cache first
+  try {
+    const { storageConfig } = await import("@/services/storage");
+
+    if (!storageConfig.isConfigured) {
+      // Local dev: read from filesystem
+      const { readFile } = await import("fs/promises");
+      const { join } = await import("path");
+      const localPath = join(process.cwd(), "public", "uploads", blobPath);
+      const buffer = await readFile(localPath);
+      return JSON.parse(buffer.toString("utf-8"));
+    } else {
+      // Production: list blobs matching our path prefix to get the full URL
+      const { list } = await import("@vercel/blob");
+      const { blobs } = await list({ prefix: blobPath, limit: 1 });
+      if (blobs.length > 0) {
+        const res = await fetch(blobs[0].url);
+        if (res.ok) {
+          return await res.json();
+        }
+      }
+    }
+  } catch {
+    // Cache miss — fall through to DB
+  }
+
+  // DB fallback (slow for large results, but always works)
+  console.warn(`[analyses] Cache miss for ${analysisId}, falling back to DB`);
+  const start = Date.now();
+  const row = await prisma.analysis.findUnique({
+    where: { id: analysisId },
+    select: { results: true },
+  });
+  console.warn(`[analyses] DB fallback took ${Date.now() - start}ms`);
+
+  // Backfill cache for next time
+  if (row?.results) {
+    try {
+      const { uploadFile } = await import("@/services/storage");
+      const jsonBuffer = Buffer.from(JSON.stringify(row.results));
+      await uploadFile(blobPath, jsonBuffer);
+      console.log(`[analyses] Backfilled cache for ${analysisId}`);
+    } catch {
+      // Non-critical
+    }
+  }
+
+  return row?.results ?? null;
+}
+
+/**
  * GET /api/deals/[dealId]/analyses
- * Returns the latest analysis for a deal (used for polling during background analysis)
+ *
+ * Default (no params): Returns metadata only — NO results blob. Used for polling.
+ * ?id=xxx:             Returns metadata + full results for a specific analysis.
  */
 export async function GET(_request: NextRequest, context: RouteContext) {
   try {
@@ -24,7 +83,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Verify deal ownership + fetch latest analysis in one query
+    // Verify deal ownership
     const deal = await prisma.deal.findFirst({
       where: { id: dealId, userId: user.id },
       select: { id: true },
@@ -34,65 +93,66 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
-    // Support ?id=xxx to load a specific analysis (for history navigation)
     const specificId = _request.nextUrl.searchParams.get("id");
 
-    const latestAnalysis = specificId
+    // PERF: Always query metadata WITHOUT the results blob.
+    const metaSelect = {
+      id: true,
+      status: true,
+      type: true,
+      mode: true,
+      completedAgents: true,
+      totalAgents: true,
+      summary: true,
+      totalCost: true,
+      totalTimeMs: true,
+      startedAt: true,
+      completedAt: true,
+      createdAt: true,
+    } as const;
+
+    const analysisMeta = specificId
       ? await prisma.analysis.findFirst({
           where: { dealId, id: specificId },
+          select: metaSelect,
         })
       : await prisma.analysis.findFirst({
           where: { dealId },
           orderBy: { createdAt: "desc" },
+          select: metaSelect,
         });
 
-    if (!latestAnalysis) {
+    if (!analysisMeta) {
       return NextResponse.json({ data: null });
     }
 
     // Auto-expire stuck RUNNING analyses older than 3 hours
-    // With reflexion (now capped at 1 iteration), analyses take 15-30 min max.
-    // 3h threshold is a safety net for truly stuck processes only.
-    // DO NOT set this lower — the API route was marking analyses as FAILED
-    // while the Node.js process was still actively running, causing data loss.
-    let effectiveStatus = latestAnalysis.status;
-    if (latestAnalysis.status === "RUNNING") {
+    let effectiveStatus = analysisMeta.status;
+    if (analysisMeta.status === "RUNNING") {
       const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
-      if (latestAnalysis.createdAt < threeHoursAgo) {
+      if (analysisMeta.createdAt < threeHoursAgo) {
         await prisma.analysis.update({
-          where: { id: latestAnalysis.id },
+          where: { id: analysisMeta.id },
           data: { status: "FAILED", summary: "Analysis timed out after 3 hours" },
         });
         effectiveStatus = "FAILED";
       }
     }
 
-    // If RUNNING, extract agent-level progress from partial results
-    let agentDetails: { name: string; status: string; executionTimeMs?: number }[] | null = null;
-    if (effectiveStatus === "RUNNING" && latestAnalysis.results) {
-      try {
-        const results = latestAnalysis.results as Record<string, {
-          agentName?: string;
-          success?: boolean;
-          executionTimeMs?: number;
-        }>;
-        agentDetails = Object.entries(results).map(([name, r]) => ({
-          name,
-          status: r?.success ? "completed" : "failed",
-          executionTimeMs: r?.executionTimeMs,
-        }));
-      } catch {
-        // results may not be parseable yet
-      }
+    // Only load results when explicitly requested via ?id=xxx.
+    // The default poll NEVER loads the blob — it's several MB and takes 30s+ from Neon.
+    let results: unknown = null;
+    if (specificId) {
+      results = await loadResults(analysisMeta.id);
     }
 
     // F40/F55: Compute delta + variance if ?compare=true and 2+ analyses
     let analysisDelta = null;
     let varianceReport = null;
     const compare = _request.nextUrl.searchParams.get("compare") === "true";
-    if (compare && latestAnalysis.status === "COMPLETED") {
+    if (compare && effectiveStatus === "COMPLETED") {
       const previousAnalysis = await prisma.analysis.findFirst({
-        where: { dealId, id: { not: latestAnalysis.id }, status: "COMPLETED" },
+        where: { dealId, id: { not: analysisMeta.id }, status: "COMPLETED" },
         orderBy: { completedAt: "desc" },
         select: { id: true },
       });
@@ -103,8 +163,8 @@ export async function GET(_request: NextRequest, context: RouteContext) {
             import("@/services/analysis-variance"),
           ]);
           [analysisDelta, varianceReport] = await Promise.all([
-            deltaModule.calculateAnalysisDelta(latestAnalysis.id, previousAnalysis.id),
-            varianceModule.detectVariance(latestAnalysis.id, previousAnalysis.id),
+            deltaModule.calculateAnalysisDelta(analysisMeta.id, previousAnalysis.id),
+            varianceModule.detectVariance(analysisMeta.id, previousAnalysis.id),
           ]);
         } catch (err) {
           console.error("[analyses] Delta/Variance computation failed:", err);
@@ -114,21 +174,19 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({
       data: {
-        id: latestAnalysis.id,
+        id: analysisMeta.id,
         status: effectiveStatus,
-        type: latestAnalysis.type,
-        mode: latestAnalysis.mode,
-        completedAgents: latestAnalysis.completedAgents,
-        totalAgents: latestAnalysis.totalAgents,
-        results:
-          (latestAnalysis.status === "COMPLETED" || specificId) ? latestAnalysis.results : null,
-        summary: latestAnalysis.summary,
-        totalCost: latestAnalysis.totalCost?.toString() ?? null,
-        totalTimeMs: latestAnalysis.totalTimeMs,
-        startedAt: latestAnalysis.startedAt?.toISOString() ?? null,
-        completedAt: latestAnalysis.completedAt?.toISOString() ?? null,
-        createdAt: latestAnalysis.createdAt.toISOString(),
-        agentDetails,
+        type: analysisMeta.type,
+        mode: analysisMeta.mode,
+        completedAgents: analysisMeta.completedAgents,
+        totalAgents: analysisMeta.totalAgents,
+        results,
+        summary: analysisMeta.summary,
+        totalCost: analysisMeta.totalCost?.toString() ?? null,
+        totalTimeMs: analysisMeta.totalTimeMs,
+        startedAt: analysisMeta.startedAt?.toISOString() ?? null,
+        completedAt: analysisMeta.completedAt?.toISOString() ?? null,
+        createdAt: analysisMeta.createdAt.toISOString(),
         analysisDelta,
         varianceReport,
       },

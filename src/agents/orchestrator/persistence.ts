@@ -88,8 +88,9 @@ export async function completeAnalysis(params: {
 }) {
   // Count successful agents for completedAgents field
   const successfulCount = Object.values(params.results).filter((r) => r.success).length;
+  const serializedResults = JSON.parse(JSON.stringify(params.results));
 
-  return prisma.analysis.update({
+  const analysis = await prisma.analysis.update({
     where: { id: params.analysisId },
     data: {
       status: params.statusOverride ?? "COMPLETED",
@@ -98,10 +99,25 @@ export async function completeAnalysis(params: {
       totalCost: params.totalCost,
       totalTimeMs: params.totalTimeMs,
       summary: params.summary,
-      results: JSON.parse(JSON.stringify(params.results)),
+      results: serializedResults,
       mode: params.mode,
     },
   });
+
+  // PERF: Upload results to Blob storage for fast retrieval.
+  // The DB results blob (several MB) takes 30s+ to load from Neon over network.
+  // Blob/CDN serves the same data in <1s.
+  try {
+    const { uploadFile } = await import("@/services/storage");
+    const jsonBuffer = Buffer.from(JSON.stringify(serializedResults));
+    await uploadFile(`analysis-results/${params.analysisId}.json`, jsonBuffer);
+    console.log(`[Persistence] Results cached to blob: analysis-results/${params.analysisId}.json (${(jsonBuffer.length / 1024).toFixed(0)}KB)`);
+  } catch (err) {
+    // Non-blocking: DB has the data, blob is just a fast cache
+    console.warn("[Persistence] Failed to cache results to blob:", err);
+  }
+
+  return analysis;
 }
 
 /**

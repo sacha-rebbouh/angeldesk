@@ -354,7 +354,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     staleTime: isPolling ? 0 : 30_000,
   });
 
-  // Helper: load completed analysis results into UI + refresh SSR data (timeline, scores)
+  // Helper: populate live results into UI state (callers handle SSR refresh separately)
   const loadCompletedAnalysis = useCallback((polledData: NonNullable<LatestAnalysisResponse["data"]>) => {
     if (polledData.results) {
       setLiveResult({
@@ -366,12 +366,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
         results: polledData.results,
       });
     }
-    queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
-    queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
-    // Refresh Server Component data so timeline versions, scores, and status update
-    router.refresh();
-  }, [dealId, queryClient, router]);
+  }, []);
 
   // When polling detects COMPLETED or FAILED, stop polling and load results
   useEffect(() => {
@@ -403,7 +398,20 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
         mutationTimestampRef.current = 0;
         isResumingRef.current = false;
         lastProcessedAnalysisIdRef.current = id;
-        loadCompletedAnalysis(polledAnalysis.data);
+        // Poll no longer includes results (perf). Fetch via ?id=xxx (reads from Blob cache).
+        fetch(`/api/deals/${dealId}/analyses?id=${id}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data.data?.results) {
+              loadCompletedAnalysis({ ...polledAnalysis.data!, results: data.data.results });
+            }
+          })
+          .catch(() => {});
+        // Refresh SSR data (scores, timeline) immediately — don't wait for results
+        queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
+        queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+        router.refresh();
         toast.success("Analyse terminée");
       } else if (status === "FAILED") {
         setIsPolling(false);
@@ -421,15 +429,34 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     // --- Passive detection path (not actively polling) ---
     // Catches completed analyses on window focus / tab switch
     if (status === "COMPLETED" && id !== lastProcessedAnalysisIdRef.current) {
-      // Check if this is a NEW completed analysis we haven't shown yet
-      const isAlreadyDisplayed = analyses.some(a => a.id === id && a.status === "COMPLETED");
-      if (!isAlreadyDisplayed) {
-        lastProcessedAnalysisIdRef.current = id;
-        loadCompletedAnalysis(polledAnalysis.data);
+      const knownInProps = analyses.some(a => a.id === id && a.status === "COMPLETED");
+      if (!knownInProps) {
+        // Truly NEW completed analysis (not in SSR props) — refresh SSR + toast
+        queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
+        queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+        router.refresh();
         toast.success("Analyse terminée");
       }
+      // Fetch full results in background if not already loaded.
+      // The default poll never includes results (perf) — we fetch via ?id=xxx
+      // which reads from Blob cache (<1s) or DB fallback.
+      if (!onDemandResults[id]) {
+        lastProcessedAnalysisIdRef.current = id;
+        fetch(`/api/deals/${dealId}/analyses?id=${id}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data.data?.results) {
+              setOnDemandResults(prev => ({
+                ...prev,
+                [id]: data.data.results as Record<string, AgentResult>,
+              }));
+            }
+          })
+          .catch(() => {});
+      }
     }
-  }, [polledAnalysis, isPolling, dealId, queryClient, analyses, loadCompletedAnalysis]);
+  }, [polledAnalysis, isPolling, dealId, queryClient, analyses, loadCompletedAnalysis, onDemandResults, router]);
 
   // Fetch founder responses
   const { data: founderResponsesData } = useQuery({

@@ -68,15 +68,8 @@ async function getDeal(dealId: string, userId: string) {
   });
 }
 
-/** Load full results for the latest COMPLETED analysis only (avoids loading all analysis results) */
-async function getLatestAnalysisResults(dealId: string) {
-  const analysis = await prisma.analysis.findFirst({
-    where: { dealId, status: "COMPLETED" },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, results: true },
-  });
-  return analysis;
-}
+// PERF: Results are loaded client-side via /api/deals/[dealId]/analyses (on-demand).
+// Loading the multi-MB results blob in SSR was blocking page render for 35s+.
 
 interface PageProps {
   params: Promise<{ dealId: string }>;
@@ -87,10 +80,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
   const user = await requireAuth();
   const { dealId } = await params;
   const { tab } = await searchParams;
-  const [deal, latestResults] = await Promise.all([
-    getDeal(dealId, user.id),
-    getLatestAnalysisResults(dealId),
-  ]);
+  const deal = await getDeal(dealId, user.id);
 
   if (!deal) {
     notFound();
@@ -255,16 +245,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
             currentStatus={deal.status}
             analyses={deal.analyses.map(a => ({
               ...a,
-              results: (latestResults && a.id === latestResults.id
-                ? latestResults.results as Record<string, {
-                    agentName: string;
-                    success: boolean;
-                    executionTimeMs: number;
-                    cost: number;
-                    error?: string;
-                    data?: unknown;
-                  }>
-                : null),
+              results: null,
               startedAt: a.startedAt?.toISOString() ?? null,
               completedAt: a.completedAt?.toISOString() ?? null,
               totalCost: a.totalCost?.toString() ?? null,

@@ -1556,18 +1556,17 @@ Aucune incohérence majeure détectée entre les agents.`;
 
       if (llmScore != null) {
         const divergence = Math.abs(llmScore - computedWeighted);
-        if (divergence > 25) {
+        if (divergence > 15) {
+          // LLM score diverges significantly from its own dimensional breakdown.
+          // Always prefer the computed weighted average — the LLM showed its work
+          // in the dimensions, the overall score is often influenced by subjective
+          // "gut feeling" adjustments that create instability between runs.
           console.warn(
             `[SynthesisDealScorer] LLM score (${llmScore}) diverges from its own dimensions (${computedWeighted}) by ${divergence} pts — using weighted average`
           );
           overallScore = computedWeighted;
         } else {
           overallScore = llmScore;
-          if (divergence > 10) {
-            console.warn(
-              `[SynthesisDealScorer] LLM score (${llmScore}) diverges from dimensions (${computedWeighted}) by ${divergence} pts — red flag adjustments likely`
-            );
-          }
         }
       } else {
         overallScore = computedWeighted;
@@ -1627,17 +1626,17 @@ Aucune incohérence majeure détectée entre les agents.`;
         ? Math.min(100, Math.max(0, (data.meta?.confidenceLevel ?? data.confidence)!))
         : 0,
       dimensionScores,
+      // scoreBreakdown is DERIVED from dimensionScores — never trust LLM's self-reported
+      // adjustments (it fabricates post-hoc justifications for its gut-feeling score).
       scoreBreakdown: {
-        strengthsContribution: data.findings?.scoreBreakdown?.adjustments
-          ?.filter(a => a.impact > 0)
-          .reduce((sum, a) => sum + a.impact, 0) ??
-          data.scoreBreakdown?.strengthsContribution ?? 0,
-        weaknessesDeduction: Math.abs(data.findings?.scoreBreakdown?.adjustments
-          ?.filter(a => a.impact < 0)
-          .reduce((sum, a) => sum + a.impact, 0) ??
-          data.scoreBreakdown?.weaknessesDeduction ?? 0),
-        riskAdjustment: data.scoreBreakdown?.riskAdjustment ?? 0,
-        opportunityBonus: data.scoreBreakdown?.opportunityBonus ?? 0,
+        strengthsContribution: dimensionScores
+          .filter(d => d.score >= 60)
+          .reduce((sum, d) => sum + Math.round((d.score - 50) * d.weight), 0),
+        weaknessesDeduction: Math.abs(dimensionScores
+          .filter(d => d.score < 40)
+          .reduce((sum, d) => sum + Math.round((d.score - 50) * d.weight), 0)),
+        riskAdjustment: 0,
+        opportunityBonus: 0,
       },
       comparativeRanking: {
         percentileOverall: data.findings?.marketPosition?.percentileOverall ??

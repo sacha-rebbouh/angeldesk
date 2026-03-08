@@ -1,6 +1,33 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-03-09 — fix: score instable entre analyses (49 → 15 sans raison)
+
+**Contexte :** Le `synthesis-deal-scorer` donnait un score de 15 alors que ses propres dimensions pondérées donnaient 40. Le LLM appliquait un `weaknessesDeduction` de 25 points subjectif, et le garde-fou (seuil de divergence > 25) le laissait passer (25 n'est pas > 25).
+
+**Root cause :** Le LLM retourne un `overallScore` influencé par un "gut feeling" subjectif (scoreBreakdown.weaknessesDeduction) qui varie entre les runs. Le code faisait confiance au LLM si la divergence était ≤ 25 — trop permissif.
+
+**Fix :**
+- `src/agents/tier3/synthesis-deal-scorer.ts` — Seuil de divergence abaissé de 25 à 15. Au-delà de 15 points d'écart entre le score LLM et la somme pondérée de ses propres dimensions, on utilise toujours la somme pondérée (le LLM a "montré son travail" dans les dimensions, c'est plus fiable que son score global subjectif).
+
+---
+## 2026-03-09 — perf: page deal de 36s à ~2s + cache Blob pour résultats
+
+**Contexte :** La page deal mettait 36s à s'afficher car le blob JSON `results` (plusieurs MB, 20+ agents) était chargé depuis Neon à chaque requête. Le transfert réseau du TOAST PostgreSQL (~10MB) prenait 30-35s.
+
+**Architecture :**
+1. Le poll `/analyses` ne charge JAMAIS le blob results (metadata only = ~200ms)
+2. Les résultats sont uploadés en Vercel Blob / filesystem local à la fin de l'analyse
+3. Le fetch `?id=xxx` lit depuis le cache Blob (<1s) avec fallback DB + backfill automatique
+4. Le client fetch les résultats en background après détection de COMPLETED
+
+**Fichiers modifiés :**
+- `src/agents/orchestrator/persistence.ts` — `completeAnalysis()` upload les résultats en Blob après sauvegarde DB
+- `src/app/api/deals/[dealId]/analyses/route.ts` — Poll = metadata only. `?id=xxx` = Blob cache → DB fallback avec backfill
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` — Suppression de `getLatestAnalysisResults` du SSR
+- `src/components/deals/analysis-panel.tsx` — Fetch résultats via `?id=xxx` en background, `loadCompletedAnalysis` simplifié
+
+---
 ## 2026-03-08 — fix: synthesis-deal-scorer timeout + score incohérent
 
 **Contexte :** Le scorer timeout a 240s quand il doit retry (0 dimensions 1er appel) et que le calcul percentile DB (F37) hang pendant instabilite Neon. Score LLM=2 vs dimensions=50 (divergence 48pts).
