@@ -159,3 +159,68 @@ function inferCategory(agentName: string): string {
   if (agentName.includes("tech")) return "PRODUCT";
   return "OTHER";
 }
+
+/**
+ * Normalize a question text to a dedup key.
+ * Used for cross-analysis deduplication.
+ */
+function questionKey(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 60);
+}
+
+/**
+ * Consolidate questions across multiple analyses (cross-run persistence).
+ *
+ * Merges questions from the current analysis with those from previous analyses,
+ * deduplicating by normalized question text. Questions that appear in multiple
+ * analyses get a persistence bonus (+15).
+ *
+ * @param currentResults - Current analysis agent results
+ * @param previousResults - Previous analysis agent results (may be null/undefined)
+ * @param redFlagTitles - Red flag titles for cross-referencing
+ */
+export function consolidateAcrossAnalyses(
+  currentResults: Record<string, { success: boolean; data?: unknown }>,
+  previousResults: Record<string, { success: boolean; data?: unknown }> | null | undefined,
+  redFlagTitles: string[]
+): ConsolidatedQuestion[] {
+  // Get current analysis questions (already scored)
+  const currentQuestions = consolidateAndPrioritizeQuestions(currentResults, redFlagTitles);
+
+  if (!previousResults) return currentQuestions;
+
+  // Get previous analysis questions
+  const previousQuestions = consolidateAndPrioritizeQuestions(previousResults, []);
+
+  // Build dedup map from current questions
+  const currentKeys = new Set(currentQuestions.map((q) => questionKey(q.question)));
+
+  // Find questions from previous analysis that are NOT in the current one
+  const missingFromPrevious: ConsolidatedQuestion[] = [];
+  for (const prevQ of previousQuestions) {
+    const key = questionKey(prevQ.question);
+    if (!currentKeys.has(key)) {
+      missingFromPrevious.push({
+        ...prevQ,
+        id: `prev-${prevQ.id}`,
+        // Persistence bonus: questions that survive across analyses are important
+        priorityScore: Math.min(prevQ.priorityScore + 15, 100),
+        sources: [...prevQ.sources, "previous-analysis"],
+      });
+    } else {
+      // Question exists in both: boost the current one's score
+      const current = currentQuestions.find((q) => questionKey(q.question) === key);
+      if (current) {
+        current.priorityScore = Math.min(current.priorityScore + 10, 100);
+        if (!current.sources.includes("previous-analysis")) {
+          current.sources.push("previous-analysis");
+        }
+        current.crossAgentCount += 1;
+      }
+    }
+  }
+
+  // Merge and re-sort
+  const merged = [...currentQuestions, ...missingFromPrevious];
+  return merged.sort((a, b) => b.priorityScore - a.priorityScore);
+}

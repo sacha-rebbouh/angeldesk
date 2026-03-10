@@ -182,7 +182,10 @@ Dette technique: HIGH
 - Aucune technologie citée
 - Aucune source
 - "Quelques risques" = lesquels exactement?
-- Zéro actionnable pour le BA`;
+- Zéro actionnable pour le BA
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechStackDDData> {

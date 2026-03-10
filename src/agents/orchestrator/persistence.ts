@@ -881,6 +881,206 @@ export async function markAnalysisAsFailed(
   }
 }
 
+// ============================================================================
+// PREVIOUS ANALYSIS QUESTIONS (cross-run question persistence)
+// ============================================================================
+
+interface QuestionContext {
+  sourceAgent?: string;
+  redFlagId?: string;
+  triggerData?: string;
+  whyItMatters?: string;
+}
+
+interface QuestionEvaluation {
+  goodAnswer?: string;
+  badAnswer?: string;
+  redFlagIfBadAnswer?: string;
+  followUpIfBad?: string;
+}
+
+/**
+ * A deduplicated question accumulated across analyses.
+ * When the same question appears in multiple analyses/agents,
+ * all unique contexts and evaluations are merged into one entry.
+ */
+export interface PreviousAnalysisQuestion {
+  question: string;
+  priority: string;
+  category: string;
+  /** All agent sources that raised this question */
+  agentSources: string[];
+  /** All unique contexts (triggerData, whyItMatters) — one per source */
+  contexts: QuestionContext[];
+  /** All unique evaluations (goodAnswer, badAnswer) — one per source */
+  evaluations: QuestionEvaluation[];
+  timing?: string;
+  /** Number of analyses that contained this question */
+  occurrenceCount: number;
+}
+
+/**
+ * Load consolidated questions from ALL completed analyses for a deal.
+ * TEMPORARY: loads all analyses to bootstrap the chain. Will be reverted
+ * to findFirst (last analysis only) once the chain is seeded.
+ *
+ * Deduplicates across analyses — keeps the richest version of each question
+ * (the one with the most structured detail: context, evaluation, timing).
+ *
+ * Also loads founder responses to identify which questions have already been answered.
+ */
+export async function loadPreviousAnalysisQuestions(dealId: string): Promise<{
+  questions: PreviousAnalysisQuestion[];
+  answeredQuestionTexts: string[];
+}> {
+  try {
+    const [allAnalyses, founderResponseFacts] = await Promise.all([
+      prisma.analysis.findMany({
+        where: { dealId, status: "COMPLETED" },
+        orderBy: { completedAt: "desc" },
+        select: { id: true, results: true, completedAt: true },
+      }),
+      prisma.factEvent.findMany({
+        where: {
+          dealId,
+          source: "FOUNDER_RESPONSE",
+          eventType: { notIn: ["DELETED", "SUPERSEDED"] },
+        },
+        select: { displayValue: true, reason: true },
+      }),
+    ]);
+
+    if (allAnalyses.length === 0) {
+      return { questions: [], answeredQuestionTexts: [] };
+    }
+
+    // Answered question texts (from founder responses stored as FactEvent)
+    const answeredQuestionTexts = founderResponseFacts
+      .filter((f) => f.displayValue && f.displayValue.trim().length > 0)
+      .map((f) => f.reason ?? "") // reason stores the original question text
+      .filter(Boolean);
+
+    // Extract and deduplicate questions across ALL analyses
+    // Keep the richest version (most structured detail) of each question
+    const questions: PreviousAnalysisQuestion[] = [];
+    const seenKeys = new Map<string, number>(); // key → index in questions[]
+
+    // Priority ranking for upgrade logic
+    const prioRank: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+    for (const analysis of allAnalyses) {
+      if (!analysis.results) continue;
+      const results = analysis.results as Record<string, { success: boolean; data?: unknown }>;
+
+      for (const [agentName, result] of Object.entries(results)) {
+        if (!result.success || !result.data) continue;
+        const data = result.data as Record<string, unknown>;
+
+        const questionArrays = [
+          data.questions,
+          data.questionsForFounder,
+          data.criticalQuestions,
+          data.followUpQuestions,
+          (data.findings as Record<string, unknown> | undefined)?.founderQuestions,
+        ];
+
+        for (const qArray of questionArrays) {
+          if (!Array.isArray(qArray)) continue;
+          for (const q of qArray) {
+            const qText = typeof q === "string" ? q : q?.question;
+            if (!qText || typeof qText !== "string") continue;
+
+            const key = qText.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 60);
+
+            // Preserve full structured context and evaluation from question-master
+            const isObj = typeof q === "object" && q !== null;
+            const rawCtx = isObj ? q.context : undefined;
+            const rawEval = isObj ? q.evaluation : undefined;
+
+            const ctx: QuestionContext | undefined = rawCtx && typeof rawCtx === "object" ? {
+              sourceAgent: rawCtx.sourceAgent,
+              redFlagId: rawCtx.redFlagId,
+              triggerData: rawCtx.triggerData,
+              whyItMatters: rawCtx.whyItMatters,
+            } : undefined;
+
+            const evaln: QuestionEvaluation | undefined = rawEval && typeof rawEval === "object" ? {
+              goodAnswer: rawEval.goodAnswer,
+              badAnswer: rawEval.badAnswer,
+              redFlagIfBadAnswer: rawEval.redFlagIfBadAnswer,
+              followUpIfBad: rawEval.followUpIfBad,
+            } : undefined;
+
+            if (!seenKeys.has(key)) {
+              // New unique question
+              seenKeys.set(key, questions.length);
+              questions.push({
+                question: qText,
+                priority: (isObj ? q.priority : undefined) ?? "MEDIUM",
+                category: (isObj ? q.category : undefined) ?? "OTHER",
+                agentSources: [agentName],
+                contexts: ctx ? [ctx] : [],
+                evaluations: evaln ? [evaln] : [],
+                timing: isObj ? q.timing : undefined,
+                occurrenceCount: 1,
+              });
+            } else {
+              // Duplicate: merge contexts/evaluations + upgrade priority
+              const idx = seenKeys.get(key)!;
+              const existing = questions[idx];
+              existing.occurrenceCount += 1;
+
+              // Upgrade priority to highest seen
+              const existingRank = prioRank[existing.priority.toUpperCase()] ?? 2;
+              const newPrio = (isObj ? q.priority : undefined) ?? "MEDIUM";
+              const newRank = prioRank[newPrio.toUpperCase()] ?? 2;
+              if (newRank < existingRank) {
+                existing.priority = newPrio;
+              }
+
+              // Add agent source if not already present
+              if (!existing.agentSources.includes(agentName)) {
+                existing.agentSources.push(agentName);
+              }
+
+              // Merge context if it has unique triggerData
+              if (ctx?.triggerData) {
+                const isDupe = existing.contexts.some(
+                  (c) => c.triggerData && c.triggerData.toLowerCase().slice(0, 50) === ctx.triggerData!.toLowerCase().slice(0, 50)
+                );
+                if (!isDupe) {
+                  existing.contexts.push(ctx);
+                }
+              }
+
+              // Merge evaluation if it has unique goodAnswer/badAnswer
+              if (evaln?.goodAnswer || evaln?.badAnswer) {
+                const isDupe = existing.evaluations.some(
+                  (e) => e.goodAnswer && evaln.goodAnswer &&
+                    e.goodAnswer.toLowerCase().slice(0, 50) === evaln.goodAnswer.toLowerCase().slice(0, 50)
+                );
+                if (!isDupe) {
+                  existing.evaluations.push(evaln);
+                }
+              }
+
+              // Keep timing if not set
+              if (!existing.timing && (isObj ? q.timing : undefined)) {
+                existing.timing = q.timing;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { questions, answeredQuestionTexts };
+  } catch (error) {
+    logPersistenceError("loadPreviousAnalysisQuestions", error, { dealId });
+    return { questions: [], answeredQuestionTexts: [] };
+  }
+}
+
 /**
  * Clean up old checkpoints (keep only last N per analysis)
  * Call this periodically to prevent database bloat

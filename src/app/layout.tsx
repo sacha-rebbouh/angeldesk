@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Angel Desk - Due Diligence IA pour Business Angels",
   description:
-    "La DD d'un fonds VC, accessible à un Business Angel solo. Analysez vos deals en 5 minutes.",
+    "La DD d'un fonds VC, accessible à un Business Angel solo. Analysez vos deals en 1 heure.",
 };
 
 export default function RootLayout({

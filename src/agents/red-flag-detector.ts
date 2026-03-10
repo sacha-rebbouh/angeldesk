@@ -68,6 +68,9 @@ REGLES:
 - Pas de faux positifs - chaque flag doit etre justifie
 - Questions a poser = comment valider/invalider le red flag
 
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+
 OUTPUT: JSON structure uniquement.`;
   }
 

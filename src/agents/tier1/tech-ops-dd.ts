@@ -176,7 +176,10 @@ Tout ratio ou évaluation doit être MONTRÉ avec le calcul complet:
 
 # FORMAT DE SORTIE
 
-Le format JSON détaillé est spécifié dans le user prompt. Respecter strictement cette structure.`;
+Le format JSON détaillé est spécifié dans le user prompt. Respecter strictement cette structure.
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechOpsDDData> {

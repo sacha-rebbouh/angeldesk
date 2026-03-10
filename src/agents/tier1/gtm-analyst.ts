@@ -436,7 +436,10 @@ Tu DOIS retourner un JSON avec EXACTEMENT cette structure:
 ❌ "La stratégie GTM semble solide" → ✅ "PLG avec freemium, CAC estimé €50, 3 canaux actifs"
 ❌ "Le CAC est correct" → ✅ "CAC €800 vs benchmark secteur €600 (P50), soit P65"
 ❌ "Ils ont de bons canaux" → ✅ "SEO (45% traffic), Outbound (40% revenue), Referral (15%)"
-❌ Liste de risques génériques → ✅ Red flags spécifiques avec preuves du deck`;
+❌ Liste de risques génériques → ✅ Red flags spécifiques avec preuves du deck
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<GTMAnalystData> {

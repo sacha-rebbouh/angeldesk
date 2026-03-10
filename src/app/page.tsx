@@ -81,7 +81,7 @@ export default async function Home() {
                   </svg>
                 </span>.
                 <br />
-                <span className="text-muted-foreground/80">En 5 minutes.</span>
+                <span className="text-muted-foreground/80">En 1 heure.</span>
               </h1>
               <p className="mx-auto max-w-[680px] text-lg text-muted-foreground md:text-xl leading-relaxed">
                 50+ deals comparables, red flags détectés automatiquement, questions à poser au fondateur.
@@ -138,7 +138,7 @@ export default async function Home() {
                 <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-amber-100 to-orange-100 transition-transform group-hover:scale-110">
                   <Clock className="h-7 w-7 text-amber-600" />
                 </div>
-                <h3 className="text-xl font-semibold mb-3">5 minutes chrono</h3>
+                <h3 className="text-xl font-semibold mb-3">1 heure chrono</h3>
                 <p className="text-muted-foreground leading-relaxed">
                   Uploadez votre deck et recevez une analyse complète. Pas de formulaires interminables, pas d&apos;attente.
                 </p>
@@ -258,7 +258,7 @@ export default async function Home() {
               <div className="relative">
                 <Users className="mx-auto h-12 w-12 mb-6 opacity-90" />
                 <h2 className="text-3xl font-bold tracking-tight sm:text-4xl mb-4 text-balance">
-                  Votre prochain deal, analysé en 5 minutes
+                  Votre prochain deal, analysé en 1 heure
                 </h2>
                 <p className="text-white/90 mb-8 max-w-xl mx-auto text-lg">
                   Rejoignez les Business Angels qui prennent des décisions éclairées.

@@ -96,6 +96,7 @@ import {
   findInterruptedAnalyses,
   loadAnalysisForRecovery,
   markAnalysisAsFailed,
+  loadPreviousAnalysisQuestions,
 } from "./persistence";
 import {
   generateSummary,
@@ -630,6 +631,19 @@ export class AgentOrchestrator {
       ? formatFactsForScoringAgents(factStore)
       : factStoreFormatted;
 
+    // Load questions from previous analysis for cross-run persistence
+    const prevQuestions = await loadPreviousAnalysisQuestions(dealId);
+    const previousAnalysisQuestions = prevQuestions.questions.map((q) => ({
+      ...q,
+      answered: prevQuestions.answeredQuestionTexts.some(
+        (a) => a.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) ===
+          q.question.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40)
+      ),
+    }));
+    if (previousAnalysisQuestions.length > 0) {
+      console.log(`[Orchestrator:Tier1] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
+    }
+
     const enrichedContext: EnrichedAgentContext = {
       ...baseContext,
       contextEngine: contextEngineData,
@@ -637,6 +651,7 @@ export class AgentOrchestrator {
       factStoreFormatted: filteredFactStoreFormatted,
       deckCoherenceReport: deckCoherenceReport ?? undefined,
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
+      previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
     };
 
     // STEP 3: Run Tier 1 agents in 4 sequential phases (A→B→C→D)
@@ -1340,6 +1355,19 @@ export class AgentOrchestrator {
 
       const contextEngineData = await this.enrichContext(deal, extractedData);
 
+      // Load questions from previous analysis for cross-run persistence
+      const prevQuestions = await loadPreviousAnalysisQuestions(dealId);
+      const previousAnalysisQuestions = prevQuestions.questions.map((q) => ({
+        ...q,
+        answered: prevQuestions.answeredQuestionTexts.some(
+          (a) => a.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) ===
+            q.question.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40)
+        ),
+      }));
+      if (previousAnalysisQuestions.length > 0) {
+        console.log(`[Orchestrator:FullAnalysis] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
+      }
+
       // Build enriched context with Fact Store for all agents
       const enrichedContext: EnrichedAgentContext = {
         ...baseContext,
@@ -1348,6 +1376,7 @@ export class AgentOrchestrator {
         factStoreFormatted,
         deckCoherenceReport: deckCoherenceReport ?? undefined,
         founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
+        previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
       };
 
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases

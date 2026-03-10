@@ -334,7 +334,10 @@ POURQUOI C'EST NUL:
    - issues dans breakdown: MAX 2 items par dimension
    - keyInsights: MAX 4 items
 
-3. **Structure > Contenu**: Mieux vaut 5 contradictions completes que 10 tronquees`;
+3. **Structure > Contenu**: Mieux vaut 5 contradictions completes que 10 tronquees
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   // ============================================================================

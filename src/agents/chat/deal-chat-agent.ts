@@ -252,7 +252,10 @@ ${levelInstructions[level] ?? levelInstructions.beginner}
 - Tu ne peux pas acceder a des donnees externes en temps reel
 - Tu te bases uniquement sur les donnees de l'analyse
 - Tu ne fais pas de predictions de succes/echec
-- Tu ne donnes pas de conseil d'investissement definitif (decision finale = BA)`;
+- Tu ne donnes pas de conseil d'investissement definitif (decision finale = BA)
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   /**

@@ -36,7 +36,7 @@ export default async function PricingPage() {
           </span>
         </h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          En 5 minutes, obtenez l&apos;analyse qu&apos;un analyste VC ferait en 2 jours.
+          En 1 heure, obtenez l&apos;analyse qu&apos;un analyste VC ferait en 2 jours.
           Des décisions éclairées, pas des décisions au feeling.
         </p>
       </div>

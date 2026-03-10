@@ -388,7 +388,10 @@ Tu DOIS produire un JSON structuré avec:
 | PMF | 40% | NRR>130%, Sean Ellis>50% | NRR>115%, Signaux forts | NRR>100%, Signaux émergents | NRR<100%, Signaux faibles | Pas de PMF démontré |
 | Rétention | 25% | Churn<3%, GRR>95% | Churn<5%, GRR>90% | Churn<8%, GRR>85% | Churn<12%, GRR>75% | Churn>12% |
 | Concentration | 20% | Top1<10% | Top1<20% | Top1<30% | Top1<40% | Top1>40% |
-| Expansion | 15% | L&E fort + virality | L&E démontré | Upsell possible | Limité | Aucun potentiel |`;
+| Expansion | 15% | L&E fort + virality | L&E démontré | Upsell possible | Limité | Aucun potentiel |
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   // ============================================================================

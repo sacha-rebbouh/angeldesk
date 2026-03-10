@@ -296,7 +296,10 @@ Produis un JSON avec la structure exacte specifiee. Rappel:
 ## Exemple de MAUVAIS output (a eviter):
 "Le marche semble interessant avec une croissance attendue.
 Le TAM est probablement correct."
-→ AUCUNE source, AUCUNE verification, ZERO actionnable`;
+→ AUCUNE source, AUCUNE verification, ZERO actionnable
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<MarketIntelData> {

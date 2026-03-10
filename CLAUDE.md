@@ -8,7 +8,7 @@ Plateforme de Due Diligence IA **pour Business Angels** (95% de la cible).
 **Business Angels** - investisseurs individuels qui sont seuls, n'ont pas le temps (2-3h/semaine), n'ont pas accès aux données pro, et investissent souvent "au feeling".
 
 ## Value proposition
-En 5 min, un BA obtient : la DD qu'un analyste VC ferait en 2 jours, 50+ deals comparables, red flags détectés, questions à poser, arguments de négociation chiffrés.
+En 1h, un BA obtient : la DD qu'un analyste VC ferait en 2 jours, 50+ deals comparables, red flags détectés, questions à poser, arguments de négociation chiffrés.
 
 ## Principes de développement
 1. **Value-first** - L'utilisateur voit de la valeur dès le premier deal
@@ -92,6 +92,32 @@ Ceci est la règle la plus importante du projet. Elle s'applique à **tout** : p
 
 **Reste à faire :**
 - Les **system prompts des agents Tier 3** génèrent encore du texte libre directif (le LLM écrit "Rejeter", "perte de temps", etc. dans `nextSteps`, `forNegotiation`, `narrative.summary`). Les prompts de `synthesis-deal-scorer.ts`, `memo-generator.ts`, `devils-advocate.ts` doivent être mis à jour pour interdire explicitement le langage prescriptif dans le contenu généré.
+
+## ANTI-HALLUCINATION — 5 DIRECTIVES OBLIGATOIRES (s'applique à TOUS les prompts)
+
+Chaque system prompt d'agent (Tier 0, 1, 2, 3, Chat, Board, Orchestration) DOIT inclure les 5 directives anti-hallucination. C'est un standard non-négociable. Si un nouvel agent est créé ou un prompt modifié, les 5 directives doivent être présentes.
+
+### 1. Confidence Threshold
+> Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+
+### 2. Abstention Permission
+> It is perfectly acceptable (and preferred) for you to say "I don't know" or "I'm not confident enough to answer this." I would rather receive an honest "I'm unsure" than a confident answer that might be wrong. If you are uncertain about any part of your response, flag it clearly with [UNCERTAIN] so I know to verify it independently. Uncertainty is valued here, not penalised.
+
+### 3. Citation Demand
+> For every factual claim in your response: 1. Cite a specific, verifiable source (name, publication, date) 2. If you cannot cite a specific source, mark the claim as [UNVERIFIED] and explain why you believe it to be true 3. If you are relying on general training data rather than a specific source, say so explicitly. Do not present unverified information as established fact.
+
+### 4. Self-Audit
+> After completing your response, perform a self-audit: 1. Identify the 3 claims in your response that you are LEAST confident about 2. For each one, explain what could be wrong and what the alternative might be 3. Rate your overall response confidence: HIGH / MEDIUM / LOW. Be ruthlessly honest. I will not penalise you for uncertainty.
+
+### 5. Structured Uncertainty
+> Structure your response in three clearly labelled sections: **CONFIDENT:** Claims where you have strong evidence and high certainty (>90%) **PROBABLE:** Claims where you believe this is likely correct but acknowledge uncertainty (50-90%) **SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%). Every claim must be placed in one of these three categories. Do not present speculative claims as confident ones.
+
+### Implémentation
+- **Agents BaseAgent** (Tier 0, 1, 3, Chat) : prompts 2-5 via méthodes dans `base-agent.ts` (`getAbstentionPermission()`, `getCitationDemand()`, `getSelfAuditDirective()`, `getStructuredUncertaintyDirective()`). Prompt 1 directement dans chaque `buildSystemPrompt()`.
+- **Agents Tier 2** : les 5 directives directement dans chaque fichier expert + dans `base-sector-expert.ts`.
+- **Board, Consensus Engine, Reflexion** : les 5 directives directement dans chaque prompt (debater, arbitrator, critic, improver).
+
+---
 
 ## Stack technique
 - **Frontend/Backend**: Next.js 16+ (App Router, TypeScript, Tailwind)

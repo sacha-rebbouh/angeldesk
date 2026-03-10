@@ -1335,6 +1335,57 @@ son deal sous le meilleur jour possible. Tu DOIS appliquer les regles suivantes:
       : "";
     const now = new Date();
     const dateContext = `\n\n## CONTEXTE TEMPOREL (CRITIQUE)\nDate actuelle : ${now.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.\nUtilise TOUJOURS cette date comme reference pour evaluer la fraicheur des donnees, les projections vs le realise, et les timelines. Ne JAMAIS deduire la date actuelle du contenu des documents analyses.\n`;
-    return base + dateContext + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance();
+    return base + dateContext + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance() + this.getAbstentionPermission() + this.getCitationDemand() + this.getSelfAuditDirective() + this.getStructuredUncertaintyDirective();
+  }
+
+  // Anti-Hallucination Directive — Abstention Permission (Prompt 2/5)
+  protected getAbstentionPermission(): string {
+    return `
+
+## Anti-Hallucination Directive — Abstention Permission
+It is perfectly acceptable (and preferred) for you to say "I don't know" or "I'm not confident enough to answer this." I would rather receive an honest "I'm unsure" than a confident answer that might be wrong.
+If you are uncertain about any part of your response, flag it clearly with [UNCERTAIN] so I know to verify it independently.
+Uncertainty is valued here, not penalised.
+`;
+  }
+
+  // Anti-Hallucination Directive — Citation Demand (Prompt 3/5)
+  protected getCitationDemand(): string {
+    return `
+
+## Anti-Hallucination Directive — Citation Demand
+For every factual claim in your response:
+1. Cite a specific, verifiable source (name, publication, date)
+2. If you cannot cite a specific source, mark the claim as [UNVERIFIED] and explain why you believe it to be true
+3. If you are relying on general training data rather than a specific source, say so explicitly
+Do not present unverified information as established fact.
+`;
+  }
+
+  // Anti-Hallucination Directive — Self-Audit (Prompt 4/5)
+  protected getSelfAuditDirective(): string {
+    return `
+
+## Anti-Hallucination Directive — Self-Audit
+After completing your response, perform a self-audit:
+1. Identify the 3 claims in your response that you are LEAST confident about
+2. For each one, explain what could be wrong and what the alternative might be
+3. Rate your overall response confidence: HIGH / MEDIUM / LOW
+Be ruthlessly honest. I will not penalise you for uncertainty.
+`;
+  }
+
+  // Anti-Hallucination Directive — Structured Uncertainty (Prompt 5/5)
+  protected getStructuredUncertaintyDirective(): string {
+    return `
+
+## Anti-Hallucination Directive — Structured Uncertainty
+Structure your response in three clearly labelled sections:
+**CONFIDENT:** Claims where you have strong evidence and high certainty (>90%)
+**PROBABLE:** Claims where you believe this is likely correct but acknowledge uncertainty (50-90%)
+**SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%)
+Every claim must be placed in one of these three categories.
+Do not present speculative claims as confident ones.
+`;
   }
 }

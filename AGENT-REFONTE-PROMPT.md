@@ -46,7 +46,7 @@
 
 ### Ce que nous construisons
 
-Angel Desk doit fournir a un Business Angel solo **la meme qualite d'analyse qu'une equipe de 5 analystes VC seniors travaillant pendant 2 jours**. En 5 minutes.
+Angel Desk doit fournir a un Business Angel solo **la meme qualite d'analyse qu'une equipe de 5 analystes VC seniors travaillant pendant 2 jours**. En 1 heure.
 
 Ce n'est PAS:
 

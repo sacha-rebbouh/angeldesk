@@ -1,6 +1,335 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-03-10 — refonte: section MOAT & Différenciation (YAML + exec-summary)
+
+**Contexte :** L'ancien moat ("2 ans de data d'avance + complexité technique") était faible — arguments d'exécution, pas moats structurels. Refonte complète avec le framing validé : (1) IA augmentée, (2) Sublimation, (3) Moats de renforcement.
+
+**Fichiers modifiés (2) :**
+- `docs-private/reference.yaml` — Section 20 entièrement réécrite. Hiérarchie : primary_moat (IA augmentée — 5 composants : anti-hallucination, guardrails per model, data reliability, deterministic scoring, multi-tier orchestration), sublimation_moat (Board AI, Consensus Engine, Reflexion, Devil's Advocate, driving individuel vs collectif), reinforcement_moats (cycle complet, analyse vivante, track record, data network effect). Comparaison BA+ChatGPT vs Dev vs Angel Desk mise à jour. 10 écueils DIY enrichis.
+- `docs-private/exec-summary.md` — Section "Avantage défensif" renommée "Différenciation". Réécrite : IA augmentée (directives anti-hallucination, garde-fous, scoring déterministe), sublimation (4 modèles en tension, contradiction, devil's advocate), renforcement temporel (data, analyse vivante, track record).
+
+---
+## 2026-03-10 — feat: intégration données marché Gemini dans reference.yaml + exec-summary
+
+**Contexte :** Les champs TAM/SAM/SOM étaient "TBD" dans le YAML. Intégration des données du rapport Gemini deep research (89 sources) avec données concurrentielles complètes.
+
+**Fichiers modifiés (2) :**
+- `docs-private/reference.yaml` — TAM (2.5-4.5B€), SAM (565M€), SOM (Y1 468K€ → Y3 13M€ ARR) avec détail par segment et sources. Ajout segment Family Offices (10-15K structures, 1-5M€ ticket, WTP 2-5K€/mois). Ajout Harmonic ($1.45B valo), Hebbia ($700M), AlphaSense ($4B, 400M$ ARR) au paysage concurrentiel.
+- `docs-private/exec-summary.md` — Section Marché enrichie : TAM chiffré, SAM 565M€, SOM Y3 13M€, 850K BAs actifs, Family Offices, concurrents capitalisés (Harmonic/AlphaSense/Hebbia), positionnement différencié.
+
+---
+## 2026-03-10 — fix: "5 minutes" → "1 heure" partout (crédibilité marketing)
+
+**Contexte :** Le claim "analyse en 5 minutes" n'est pas crédible. Remplacement par "1 heure" dans tous les textes marketing et user-facing. Les timeouts techniques (cache TTL, API, circuit breaker) ne sont pas touchés.
+
+**Fichiers modifiés (14) :**
+- `src/app/page.tsx` — 3 occurrences (hero, feature card, CTA)
+- `src/app/layout.tsx` — meta description
+- `src/app/(dashboard)/pricing/page.tsx` — sous-titre
+- `src/components/onboarding/first-deal-guide.tsx` — guide premier deal
+- `src/agents/tier3/memo-generator.ts` — mission prompt
+- `CLAUDE.md` — value proposition
+- `AGENT-REFONTE-PROMPT.md` — vision
+- `docs-private/reference.yaml` — persona Marie
+- `docs-private/exec-summary.md` — intro (modifié par l'utilisateur)
+- `investor.md` — 4 occurrences (hero, persona, features, roadmap metrics)
+
+---
+## 2026-03-10 — feat: Executive Summary créé
+
+**Fichier créé :**
+- `docs-private/exec-summary.md` — Executive Summary 2 pages (9 sections). Problème, solution (44 agents, 4 tiers), différenciateurs (Board AI, Live Coaching, analyse vivante, pipeline complet), marché (4 segments), business model (crédits, 5 packs, marges 70-85%), MOAT (data network effect + complexité orchestration), fondateur, statut.
+
+**Fichier modifié :**
+- `docs-private/workinprogress.md` — Executive Summary marqué FAIT
+
+---
+## 2026-03-10 — feat: création du YAML de référence et du mega prompt Gemini TAM/SAM/SOM
+
+**Fichiers créés :**
+- `docs-private/reference.yaml` — Source de vérité unique pour tous les documents startup (~1800 lignes, 34 sections). Couvre : identité, fondateur, vision & positionnement, marché, problème, produit (44 agents détaillés), scoring, Board AI, live coaching, engines (consensus + reflexion), context engine, red flags, questions, négociation, chat, PDF export, API v1, anti-hallucination (5 directives texte exact), MOAT & différenciation (10 differentiators), pricing (crédits, 6 packs, marges), add-ons, stack technique, DB exploitation, DB maintenance (4 agents), règles de positionnement (table INTERDIT), persona, go-to-market, unit economics, legal/compliance, KPIs, roadmap.
+- `docs-private/gemini-market-research-prompt.md` — Mega prompt structuré pour deep research Gemini sur TAM/SAM/SOM. 7 sections : investisseurs par segment/géo, sizing TAM/SAM/SOM (top-down + bottom-up), paysage concurrentiel (30+ concurrents), dépense par segment, tendances (IA, réglementation, consolidation), startups comparables, sources obligatoires (EBAN, ACA, NVCA, Preqin, etc.).
+
+**Fichier modifié :**
+- `docs-private/workinprogress.md` — §7 mis à jour (YAML et mega prompt marqués FAIT)
+- `docs-private/reference.yaml` — Section `founder` enrichie via RapidAPI LinkedIn (éducation complète, 6 expériences détaillées, bio, skills, career summary)
+- `scripts/fetch-founder-linkedin.ts` — Script standalone pour fetch profil LinkedIn fondateur
+
+---
+## 2026-03-09 — fix: ajout des 5 Anti-Hallucination Directives dans 6 fichiers manquants (live coaching + negotiation)
+
+**Contexte :** 6 fichiers générant du contenu analytique visible par le Business Angel n'avaient pas les 5 directives anti-hallucination. Injection du bloc complet (Confidence Threshold, Abstention Permission, Citation Demand, Self-Audit, Structured Uncertainty) dans chaque system prompt.
+
+**Fichiers modifiés :**
+- `src/lib/live/coaching-engine.ts` — `COACHING_SYSTEM_PROMPT` (1 system prompt, avant `## Format JSON`)
+- `src/lib/live/post-call-generator.ts` — `POST_CALL_SYSTEM_PROMPT` (1 system prompt, avant `FORMAT DE SORTIE`)
+- `src/lib/live/post-call-reanalyzer.ts` — `DELTA_SYSTEM_PROMPT` (1 system prompt, avant `FORMAT DE SORTIE`)
+- `src/lib/live/transcript-condenser.ts` — `CONDENSER_SYSTEM_PROMPT` (1 system prompt, avant `FORMAT`)
+- `src/lib/live/visual-processor.ts` — `ANALYZE_PROMPT` (1 system prompt, avant `## Format JSON`)
+- `src/services/negotiation/strategist.ts` — `SYSTEM_PROMPT` (1 system prompt, avant `# FORMAT DE SORTIE`)
+
+---
+## 2026-03-09 — fix: ajout Confidence Threshold manquant dans meta-eval LLM call de fact-extractor
+
+**Fichier modifié :** `src/agents/tier0/fact-extractor.ts`
+
+**Description :** L'appel LLM inline de meta-evaluation (~ligne 1097) avait la directive Self-Audit mais il manquait la directive Confidence Threshold. Ajout de la directive "Answer only if you are >90% confident..." avant le Self-Audit dans le systemPrompt de cet appel.
+
+---
+## 2026-03-09 — feat: 5 Anti-Hallucination Directives injectées dans TOUS les agents (40+)
+
+**Contexte :** Injection de 5 directives anti-hallucination dans chaque system prompt de la codebase, basées sur la recherche sur le coût asymétrique des erreurs LLM. Standard non-négociable pour tous les agents présents et futurs.
+
+**Les 5 directives :**
+1. **Confidence Threshold** — Seuil 90%, pénalité 9:1 (erreur coûte 9x plus que répondre juste)
+2. **Abstention Permission** — Permission explicite de dire "I don't know" + tag [UNCERTAIN]
+3. **Citation Demand** — Chaque claim sourcé ou marqué [UNVERIFIED]
+4. **Self-Audit** — 3 claims les moins sûrs + alternatives + rating global HIGH/MEDIUM/LOW
+5. **Structured Uncertainty** — Claims classés CONFIDENT (>90%) / PROBABLE (50-90%) / SPECULATIVE (<50%)
+
+**Couverture :**
+- Tier 0 (2 agents), Tier 1 (13 agents), Tier 3 (6 agents), Chat : via `base-agent.ts` (méthodes héritées) + Confidence Threshold direct
+- Tier 2 (22 experts) : injection directe dans chaque fichier + `base-sector-expert.ts`
+- Board (board-member.ts) : injection directe (5/5)
+- Orchestration (consensus-engine.ts, reflexion.ts) : injection directe dans debater, arbitrator, critic, improver (5/5 chaque prompt)
+
+**Fichiers modifiés :** 51+ fichiers agents, `CLAUDE.md` mis à jour avec le standard permanent.
+
+---
+## 2026-03-09 — feat: Anti-Hallucination Directive — Abstention Permission (prompt 2/5) injecté dans tous les agents
+
+**Contexte :** Deuxième prompt anti-hallucination. Autorise explicitement les agents LLM à répondre "I don't know" ou "I'm not confident enough" plutôt que de fabriquer des réponses. Les réponses incertaines doivent être marquées [UNCERTAIN].
+
+**Architecture double :**
+
+1. **BaseAgent (23+ agents couverts)** — Méthode `getAbstentionPermission()` dans `base-agent.ts`, chaînée dans `buildFullSystemPrompt()`. Couvre automatiquement Tier 0, Tier 1, Tier 3, Chat, et marketplace-expert.
+
+2. **Tier 2 standalone (21 experts)** — Injection directe dans le system prompt de chaque expert (dans `buildSystemPrompt()` ou `buildXxxPrompt()` selon le pattern).
+
+3. **base-sector-expert.ts** — Injection dans `buildSectorExpertPrompt()` pour les futurs experts utilisant ce template.
+
+4. **board-member.ts** — Injection dans `buildSystemPrompt()` (ne hérite pas de BaseAgent).
+
+**Fichiers modifiés :**
+- `src/agents/base-agent.ts` — `getAbstentionPermission()` + chaînage dans `buildFullSystemPrompt()`
+- `src/agents/tier2/base-sector-expert.ts` — directive dans le template partagé
+- `src/agents/board/board-member.ts` — directive dans `buildSystemPrompt()`
+- 21 Tier 2 experts : saas, fintech, blockchain, ai, healthtech, deeptech, climate, consumer, hardware, gaming, biotech, edtech, proptech, mobility, foodtech, hrtech, legaltech, cybersecurity, spacetech, creator, general
+
+---
+## 2026-03-09 — feat: Anti-Hallucination Directive — Self-Audit (prompt 4/5) injecte dans tous les agents
+
+**Contexte :** Quatrieme prompt anti-hallucination. Oblige les agents a effectuer un auto-audit apres chaque reponse : identifier les 3 affirmations les moins fiables, expliquer les alternatives, et noter la confiance globale (HIGH / MEDIUM / LOW).
+
+**Architecture double :**
+
+1. **BaseAgent (26+ agents couverts)** — Methode `getSelfAuditDirective()` dans `base-agent.ts`, chainee dans `buildFullSystemPrompt()`. Couvre automatiquement Tier 0 (2), Tier 1 (13), Tier 3 (6), Chat (1), document-extractor, deal-scorer, red-flag-detector, marketplace-expert.
+
+2. **Tier 2 standalone (21 experts)** — Injection directe dans le system prompt de chaque expert (dans `buildSystemPrompt()` ou inline prompt selon le pattern).
+
+3. **base-sector-expert.ts** — Directive dans `buildSectorExpertPrompt()` pour les experts utilisant ce template.
+
+4. **tier2/index.ts** — Variable `selfAudit` ajoutee au fallback sector expert runner.
+
+5. **board-member.ts** — Directive dans `buildSystemPrompt()` (ne herite pas de BaseAgent).
+
+6. **Orchestration** — Directive dans les 4 system prompts de `consensus-engine.ts` (debater + arbitrator) et `reflexion.ts` (critic + improver).
+
+7. **fact-extractor.ts** — Directive dans le system prompt inline de meta-evaluation (en plus de la couverture BaseAgent pour le prompt principal).
+
+**Fichiers modifies (28) :**
+- `src/agents/base-agent.ts` — `getSelfAuditDirective()` + chainage
+- `src/agents/tier2/index.ts` — variable + append
+- `src/agents/tier2/base-sector-expert.ts` — directive dans template
+- `src/agents/tier2/saas-expert.ts`, `ai-expert.ts`, `fintech-expert.ts`, `blockchain-expert.ts`, `climate-expert.ts`, `consumer-expert.ts`, `creator-expert.ts`, `cybersecurity-expert.ts`, `deeptech-expert.ts`, `edtech-expert.ts`, `foodtech-expert.ts`, `gaming-expert.ts`, `general-expert.ts`, `hardware-expert.ts`, `healthtech-expert.ts`, `hrtech-expert.ts`, `legaltech-expert.ts`, `mobility-expert.ts`, `proptech-expert.ts`, `spacetech-expert.ts`, `biotech-expert.ts`
+- `src/agents/board/board-member.ts`
+- `src/agents/tier0/fact-extractor.ts` (prompt inline meta-evaluation)
+- `src/agents/orchestration/consensus-engine.ts` (2 prompts: debater + arbitrator)
+- `src/agents/orchestration/reflexion.ts` (2 prompts: critic + improver)
+
+**Fichiers couverts par BaseAgent (pas de modification separee) :**
+- Tier 0 : `deck-coherence-checker.ts`, `fact-extractor.ts` (prompt principal)
+- Tier 1 : `financial-auditor.ts`, `deck-forensics.ts`, `team-investigator.ts`, `market-intelligence.ts`, `competitive-intel.ts`, `exit-strategist.ts`, `tech-stack-dd.ts`, `tech-ops-dd.ts`, `legal-regulatory.ts`, `gtm-analyst.ts`, `customer-intel.ts`, `cap-table-auditor.ts`, `question-master.ts`
+- Tier 3 : `contradiction-detector.ts`, `synthesis-deal-scorer.ts`, `devils-advocate.ts`, `scenario-modeler.ts`, `memo-generator.ts`, `conditions-analyst.ts`
+- Chat : `deal-chat-agent.ts`
+- Autres : `document-extractor.ts`, `deal-scorer.ts`, `red-flag-detector.ts`, `marketplace-expert.ts`
+
+---
+## 2026-03-09 — feat: Anti-Hallucination Directive — Structured Uncertainty (prompt 5/5) injecte dans tous les agents
+
+**Contexte :** Cinquieme et dernier prompt anti-hallucination. Impose aux agents de structurer chaque reponse en trois categories de certitude : CONFIDENT (>90%), PROBABLE (50-90%), SPECULATIVE (<50%). Empeche les agents de presenter des inferences comme des certitudes.
+
+**Architecture double :**
+
+1. **BaseAgent (26+ agents couverts)** — Methode `getStructuredUncertaintyDirective()` dans `base-agent.ts`, chainee dans `buildFullSystemPrompt()`. Couvre automatiquement Tier 0 (2), Tier 1 (13), Tier 3 (6), Chat (1), document-extractor, deal-scorer, red-flag-detector, marketplace-expert.
+
+2. **Tier 2 standalone (21 experts)** — Variable `structuredUncertainty` ajoutee et appendue au `systemPrompt` au call site (`systemPrompt: ... + citationDemand + structuredUncertainty`).
+
+3. **base-sector-expert.ts** — Directive dans `buildSectorExpertPrompt()` pour les experts utilisant ce template.
+
+4. **tier2/index.ts** — Variable `structuredUncertainty` ajoutee au fallback sector expert runner.
+
+5. **board-member.ts** — Directive dans `buildSystemPrompt()` (ne herite pas de BaseAgent).
+
+6. **Orchestration** — Directive dans les 4 system prompts de `consensus-engine.ts` (debater + arbitrator) et `reflexion.ts` (critic + improver).
+
+**Fichiers modifies (28) :**
+- `src/agents/base-agent.ts` — `getStructuredUncertaintyDirective()` + chainage
+- `src/agents/tier2/index.ts` — variable + append
+- `src/agents/tier2/base-sector-expert.ts` — directive dans template
+- `src/agents/tier2/saas-expert.ts`, `ai-expert.ts`, `fintech-expert.ts`, `blockchain-expert.ts`, `climate-expert.ts`, `consumer-expert.ts`, `creator-expert.ts`, `cybersecurity-expert.ts`, `deeptech-expert.ts`, `edtech-expert.ts`, `foodtech-expert.ts`, `gaming-expert.ts`, `general-expert.ts`, `hardware-expert.ts`, `healthtech-expert.ts`, `hrtech-expert.ts`, `legaltech-expert.ts`, `mobility-expert.ts`, `proptech-expert.ts`, `spacetech-expert.ts`, `biotech-expert.ts`
+- `src/agents/board/board-member.ts`
+- `src/agents/orchestration/consensus-engine.ts` (2 prompts)
+- `src/agents/orchestration/reflexion.ts` (2 prompts)
+
+---
+## 2026-03-09 — feat: Anti-Hallucination Directive — Confidence Threshold (prompt 1/5) injecté dans tous les agents
+
+**Contexte :** Premier prompt anti-hallucination. Impose un seuil de confiance >90% avant de repondre. Le systeme de scoring asymetrique (erreur = -9pts, correct = +1pt, "I don't know" = 0pt) pousse les agents a s'abstenir plutot que risquer une hallucination.
+
+**Approche :** Injection directe du bloc dans le system prompt de chaque fichier agent (49 fichiers). Place avant les sections OUTPUT FORMAT / JSON quand elles existent, sinon en fin de prompt.
+
+**Fichiers modifies (49) :**
+- Tier 0 (2) : `deck-coherence-checker.ts`, `fact-extractor.ts`
+- Tier 1 (13) : `financial-auditor.ts`, `deck-forensics.ts`, `team-investigator.ts`, `market-intelligence.ts`, `competitive-intel.ts`, `exit-strategist.ts`, `tech-stack-dd.ts`, `tech-ops-dd.ts`, `legal-regulatory.ts`, `gtm-analyst.ts`, `customer-intel.ts`, `cap-table-auditor.ts`, `question-master.ts`
+- Tier 2 (24) : `saas-expert.ts`, `ai-expert.ts`, `marketplace-expert.ts`, `healthtech-expert.ts`, `deeptech-expert.ts`, `climate-expert.ts`, `consumer-expert.ts`, `hardware-expert.ts`, `gaming-expert.ts`, `biotech-expert.ts`, `edtech-expert.ts`, `proptech-expert.ts`, `foodtech-expert.ts`, `hrtech-expert.ts`, `cybersecurity-expert.ts`, `spacetech-expert.ts`, `creator-expert.ts`, `general-expert.ts`, `base-sector-expert.ts`, `fintech-expert.ts`, `blockchain-expert.ts`, `mobility-expert.ts`, `legaltech-expert.ts`, `marketplace-expert.ts`
+- Tier 3 (6) : `contradiction-detector.ts`, `synthesis-deal-scorer.ts`, `devils-advocate.ts`, `scenario-modeler.ts`, `memo-generator.ts`, `conditions-analyst.ts`
+- Chat (1) : `deal-chat-agent.ts`
+- Other (3) : `document-extractor.ts`, `deal-scorer.ts`, `red-flag-detector.ts`, `board-member.ts`
+
+---
+## 2026-03-09 — feat: Anti-Hallucination Directive — Abstention Permission (prompt 2/5) injecté dans tous les agents
+
+**Contexte :** Deuxième prompt anti-hallucination. Autorise explicitement les agents LLM à répondre "I don't know" ou "I'm not confident enough" plutôt que de fabriquer des réponses. Les réponses incertaines doivent être marquées [UNCERTAIN].
+
+**Architecture double :**
+
+1. **BaseAgent (23+ agents couverts)** — Méthode `getAbstentionPermission()` dans `base-agent.ts`, chaînée dans `buildFullSystemPrompt()`. Couvre automatiquement Tier 0, Tier 1, Tier 3, Chat, et marketplace-expert.
+
+2. **Tier 2 standalone (21 experts)** — Injection directe dans le system prompt de chaque expert (dans `buildSystemPrompt()` ou `buildXxxPrompt()` selon le pattern).
+
+3. **base-sector-expert.ts** — Injection dans `buildSectorExpertPrompt()` pour les futurs experts utilisant ce template.
+
+4. **board-member.ts** — Injection dans `buildSystemPrompt()` (ne hérite pas de BaseAgent).
+
+**Fichiers modifiés :**
+- `src/agents/base-agent.ts` — `getAbstentionPermission()` + chaînage dans `buildFullSystemPrompt()`
+- `src/agents/tier2/base-sector-expert.ts` — directive dans le template partagé
+- `src/agents/board/board-member.ts` — directive dans `buildSystemPrompt()`
+- `src/agents/tier2/saas-expert.ts`
+- `src/agents/tier2/fintech-expert.ts`
+- `src/agents/tier2/blockchain-expert.ts`
+- `src/agents/tier2/ai-expert.ts`
+- `src/agents/tier2/healthtech-expert.ts`
+- `src/agents/tier2/deeptech-expert.ts`
+- `src/agents/tier2/climate-expert.ts`
+- `src/agents/tier2/consumer-expert.ts`
+- `src/agents/tier2/hardware-expert.ts`
+- `src/agents/tier2/gaming-expert.ts`
+- `src/agents/tier2/biotech-expert.ts`
+- `src/agents/tier2/edtech-expert.ts`
+- `src/agents/tier2/proptech-expert.ts`
+- `src/agents/tier2/mobility-expert.ts`
+- `src/agents/tier2/foodtech-expert.ts`
+- `src/agents/tier2/hrtech-expert.ts`
+- `src/agents/tier2/legaltech-expert.ts`
+- `src/agents/tier2/cybersecurity-expert.ts`
+- `src/agents/tier2/spacetech-expert.ts`
+- `src/agents/tier2/creator-expert.ts`
+- `src/agents/tier2/general-expert.ts`
+
+---
+## 2026-03-09 — feat: Anti-Hallucination Directive — Citation Demand (prompt 3/5) injecté dans tous les agents
+
+**Contexte :** Troisième prompt anti-hallucination à injecter dans chaque agent LLM. Chaque claim factuel doit être sourcé (nom, publication, date), marqué [UNVERIFIED], ou explicitement identifié comme venant du training data.
+
+**Architecture double :**
+
+1. **BaseAgent (23 agents couverts)** — Ajout de `getCitationDemand()` dans `base-agent.ts`, chaîné dans `buildFullSystemPrompt()` après `getAbstentionPermission()` et avant `getSelfAuditDirective()`. Couvre automatiquement tous les agents Tier 0, Tier 1, Tier 3, Chat et marketplace-expert.
+
+2. **Tier 2 standalone (21 experts)** — Chaque expert a son propre `run()` avec appel direct à `complete()`/`completeJSON()`. Le `citationDemand` est défini comme constante et appendu au system prompt avant l'appel LLM.
+
+3. **Tier 2 index.ts (fallback)** — `wrapWithRun()` injecte aussi le directive pour tout futur expert qui n'aurait pas son propre `run()`.
+
+**Fichiers modifiés :**
+- `src/agents/base-agent.ts` — `getCitationDemand()` + chaînage dans `buildFullSystemPrompt()`
+- `src/agents/tier2/index.ts` — injection dans `wrapWithRun()` fallback
+- `src/agents/tier2/saas-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/fintech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/blockchain-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/ai-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/healthtech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/deeptech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/climate-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/consumer-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/hardware-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/gaming-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/biotech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/edtech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/proptech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/mobility-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/foodtech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/hrtech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/legaltech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/cybersecurity-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/spacetech-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/creator-expert.ts` — citationDemand dans `run()`
+- `src/agents/tier2/general-expert.ts` — citationDemand dans `run()`
+
+---
+## 2026-03-09 — feat: persistance cross-analyses des questions (plus de perte entre runs)
+
+**Contexte :** D'une analyse à l'autre sur le même deal, des questions pertinentes (ex: un concurrent identifié) disparaissaient car chaque run du question-master générait ses questions from scratch sans mémoire des runs précédents.
+
+**Solution — double mécanisme :**
+
+1. **Côté serveur (orchestrateur + question-master)** :
+   - `loadPreviousAnalysisQuestions()` charge les questions consolidées de la dernière analyse complétée
+   - Les questions non-répondues sont injectées dans le contexte du question-master
+   - Le system prompt du question-master interdit explicitement de perdre des questions non-répondues
+   - Les questions déjà répondues (via FounderResponse/FactEvent) sont marquées pour ne pas être re-posées
+
+2. **Côté UI (consolidation cross-analyses)** :
+   - `consolidateAcrossAnalyses()` fusionne les questions de l'analyse courante + précédente
+   - Déduplication par normalisation du texte (même clé = même question, pas de doublon)
+   - Questions présentes dans les deux analyses reçoivent un bonus de score (+10)
+   - Questions uniquement dans l'analyse précédente reçoivent un bonus de persistance (+15)
+
+**Fichiers modifiés :**
+- `src/agents/orchestrator/persistence.ts` — ajout `loadPreviousAnalysisQuestions()`
+- `src/agents/types.ts` — ajout `previousAnalysisQuestions` dans `EnrichedAgentContext`
+- `src/agents/orchestrator/index.ts` — injection dans les 2 code paths (tier1 + full analysis)
+- `src/agents/tier1/question-master.ts` — section prompt cross-run + `formatPreviousQuestions()`
+- `src/lib/question-consolidator.ts` — ajout `consolidateAcrossAnalyses()`
+- `src/components/deals/analysis-panel.tsx` — utilisation de `consolidateAcrossAnalyses` dans le useMemo
+
+---
+## 2026-03-09 — fix: questions cross-run perdaient le détail structuré (triggerData, evaluation)
+
+**Contexte :** Les questions précédentes étaient injectées dans le question-master avec seulement le texte, la priorité et la catégorie. Tout le détail qui fait la force de la question (triggerData, whyItMatters, goodAnswer, badAnswer, redFlagIfBadAnswer, followUpIfBad, timing) était perdu.
+
+**Fix :**
+- `PreviousAnalysisQuestion` enrichi avec `context` structuré (sourceAgent, redFlagId, triggerData, whyItMatters), `evaluation` (goodAnswer, badAnswer, redFlagIfBadAnswer, followUpIfBad), et `timing`
+- `loadPreviousAnalysisQuestions()` extrait et préserve toute la structure des founderQuestions
+- `formatPreviousQuestions()` injecte chaque question avec tout son détail dans le prompt
+
+**Fichiers modifiés :**
+- `src/agents/orchestrator/persistence.ts` — interface + extraction enrichies
+- `src/agents/types.ts` — `previousAnalysisQuestions` type mis à jour
+- `src/agents/tier1/question-master.ts` — formatage avec détail complet
+
+---
+## 2026-03-09 — fix: texte narratif incohérent avec le score corrigé (ex: score=46, texte dit "21/100")
+
+**Contexte :** Le garde-fou corrige le score numérique quand le LLM diverge de ses propres dimensions (ex: LLM dit 21, dimensions pondérées donnent 46). Mais le texte `rationale` est généré par le LLM AVANT la correction — il mentionne encore l'ancien score ("Le score final est de 21/100"), créant une incohérence visible.
+
+**Fix :** Après correction du score, `patchScoreInText()` remplace les mentions de l'ancien score LLM dans le texte rationale. Patterns patchés : "21/100", "score de 21", "score est de 21", "score final de 21".
+
+**Fichier modifié :**
+- `src/agents/tier3/synthesis-deal-scorer.ts` — `patchScoreInText()` dans `transformResponse()`
+
+---
 ## 2026-03-09 — fix: score instable entre analyses (49 → 15 sans raison)
 
 **Contexte :** Le `synthesis-deal-scorer` donnait un score de 15 alors que ses propres dimensions pondérées donnaient 40. Le LLM appliquait un `weaknessesDeduction` de 25 points subjectif, et le garde-fou (seuil de divergence > 25) le laissait passer (25 n'est pas > 25).

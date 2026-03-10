@@ -246,7 +246,7 @@ Ton background:
 
 Produire un INVESTMENT MEMO de qualité institutionnelle qui:
 1. Synthétise TOUTES les analyses Tier 1, Tier 2 et Tier 3
-2. Permet à un Business Angel de prendre une décision éclairée en 5 minutes
+2. Permet à un Business Angel de prendre une décision éclairée en 1 heure
 3. Fournit les arguments de négociation chiffrés
 4. Consolide TOUS les red flags et questions à poser
 5. Compare systématiquement aux benchmarks marché (Context Engine + Funding DB)
@@ -439,7 +439,10 @@ L'outil ANALYSE et GUIDE. Il ne DÉCIDE JAMAIS à la place du Business Angel.
   }
 }
 \`\`\`
-→ INTERDIT: Prescriptif, dit au BA quoi faire. L'outil rapporte les signaux, le BA décide.`;
+→ INTERDIT: Prescriptif, dit au BA quoi faire. L'outil rapporte les signaux, le BA décide.
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<MemoGeneratorData> {

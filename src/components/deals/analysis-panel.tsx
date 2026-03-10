@@ -48,7 +48,7 @@ import { NextStepsGuide } from "./next-steps-guide";
 import { PartialAnalysisBanner } from "./partial-analysis-banner";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 import { formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
-import { consolidateAndPrioritizeQuestions } from "@/lib/question-consolidator";
+import { consolidateAndPrioritizeQuestions, consolidateAcrossAnalyses } from "@/lib/question-consolidator";
 import { consolidateRedFlagsFromResults } from "@/services/red-flag-dedup/consolidate";
 import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
 import {
@@ -822,7 +822,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   const previousScore = useMemo(() => extractDealScore(previousAnalysis?.results), [previousAnalysis]);
 
   // Extract questions from question-master agent results
-  // Extract and consolidate questions from ALL agents (F73)
+  // Extract and consolidate questions from ALL agents across analyses (F73 + cross-run persistence)
   const { founderQuestions } = useMemo(() => {
     if (!displayedResult?.results) return { founderQuestions: [] as AgentQuestion[] };
 
@@ -838,12 +838,17 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       }
     }
 
-    const consolidated = consolidateAndPrioritizeQuestions(displayedResult.results, redFlagTitles);
+    // Cross-analysis consolidation: merge current + previous analysis questions with dedup
+    const consolidated = consolidateAcrossAnalyses(
+      displayedResult.results,
+      previousAnalysis?.results ?? null,
+      redFlagTitles,
+    );
 
     return {
       founderQuestions: consolidated as AgentQuestion[],
     };
-  }, [displayedResult]);
+  }, [displayedResult, previousAnalysis]);
 
   // Quick count of open alerts for Suivi DD tab badge (red flags + DA kill reasons)
   const { openAlertCount, hasCriticalOpen } = useMemo(() => {

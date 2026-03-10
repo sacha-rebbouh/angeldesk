@@ -38,7 +38,7 @@
 │                                                                                  │
 │   ┌─────────────────────────────────────────────────────────────────────┐      │
 │   │                                                                      │      │
-│   │   "Upload ton deck, en 5 minutes tu as:                             │      │
+│   │   "Upload ton deck, en 1 heure tu as:                             │      │
 │   │                                                                      │      │
 │   │    ✅ La DD qu'un analyste VC ferait en 2 jours                     │      │
 │   │    ✅ Le contexte marche (50+ deals comparables)                    │      │
@@ -82,7 +82,7 @@
 │  • Se sent en position de faiblesse face aux fondateurs tech                   │
 │                                                                                  │
 │  Ce qu'elle veut:                                                               │
-│  • "Je veux savoir en 5 min si ca vaut le coup de creuser"                     │
+│  • "Je veux savoir en 1h si ca vaut le coup de creuser"                     │
 │  • "Je veux des arguments solides pour negocier"                               │
 │  • "Je veux etre sure de ne pas rater un red flag evident"                     │
 │  • "Je veux avoir l'air pro face au fondateur"                                 │
@@ -99,7 +99,7 @@
 
 Une plateforme de Due Diligence IA **pour Business Angels** qui :
 
-1. **Fait le travail d'un analyste** - En 5 min, pas en 2 jours. Tu es seul mais tu as la puissance d'une equipe.
+1. **Fait le travail d'un analyste** - En 1h, pas en 2 jours. Tu es seul mais tu as la puissance d'une equipe.
 
 2. **Donne acces aux donnees pro** - 50K+ deals, benchmarks, comparables. Les memes donnees que les VCs, sans payer 20K€/an.
 
@@ -4945,7 +4945,7 @@ WEEK 19-20: Calibration & Polish
 
 | Metric | MVP | v1 | v2 |
 |--------|-----|----|----|
-| Time to Full DD | <20 min | <10 min | <5 min |
+| Time to Full DD | <2h | <1h30 | <1h |
 | Context coverage | 50% | 80% | 95% |
 | Claim verification rate | 60% | 80% | 95% |
 | Model routing accuracy | N/A | 70% | 85% |

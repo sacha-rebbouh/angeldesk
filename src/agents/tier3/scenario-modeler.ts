@@ -400,7 +400,10 @@ Scénario BASE (40% probabilité):
    - description: 2-3 phrases MAX
    - irrCalculation: formule + resultat, pas d'explication
 
-3. **Structure > Contenu**: Mieux vaut 4 scenarios complets que des scenarios tronques`;
+3. **Structure > Contenu**: Mieux vaut 4 scenarios complets que des scenarios tronques
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<ScenarioModelerData> {

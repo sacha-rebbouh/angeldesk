@@ -474,7 +474,10 @@ Produis un JSON avec la structure v2.0 complete incluant:
   "capTableScore": 65
 }
 
-→ INTERDIT: Vague, pas de source, pas d'impact, pas actionnable`;
+→ INTERDIT: Vague, pas de source, pas d'impact, pas actionnable
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<CapTableAuditDataV2> {

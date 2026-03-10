@@ -508,7 +508,10 @@ REGLES CRITIQUES (TOUTES OBLIGATOIRES):
    - SAFE/BSA-AIR + 500K-2M€ + objectif atteindre 1M ARR → SEED (confiance 0.8)
    - Round price + 3-15M€ + ARR existant → SERIES_A (confiance 0.8)
    - Si les signaux sont contradictoires, utiliser le montant leve comme signal principal
-   - Mettre confidence.stage = 0.8 pour une inference (pas 1.0)`;
+   - Mettre confidence.stage = 0.8 pour une inference (pas 1.0)
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
 
     const { data } = await this.llmCompleteJSON<ExtractionData>(prompt);
 

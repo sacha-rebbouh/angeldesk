@@ -376,6 +376,9 @@ ${getStandardsOnlyInjection("Marketplace", "SEED")}
 
 ## FORMAT DE RÉPONSE
 
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+
 Tu DOIS répondre avec un JSON valide correspondant exactement au schema fourni.`;
   }
 

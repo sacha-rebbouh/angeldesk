@@ -476,7 +476,10 @@ Note pour narrative.forNegotiation: points factuels pour la negociation (constat
   "impactIfIgnored": "Risque de fraude sur le CV technique. Si le CTO n'a pas l'experience revendiquee, la roadmap technique est a risque.",
   "questionToFounder": "Pouvez-vous fournir une preuve de l'emploi de votre CTO chez Google? Badge, contrat, ou contact d'un ancien manager?",
   "redFlagAnswer": "Reponse evasive, delai, ou refus de fournir des preuves"
-}`;
+}
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DevilsAdvocateData> {

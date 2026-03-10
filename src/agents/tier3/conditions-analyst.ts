@@ -312,7 +312,10 @@ CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):
 - questions: MAX 5 items
 - keyInsights: MAX 4 items
 - forNegotiation: MAX 4 items
-- Textes: 1-2 phrases MAX par champ`;
+- Textes: 1-2 phrases MAX par champ
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   // ============================================================================

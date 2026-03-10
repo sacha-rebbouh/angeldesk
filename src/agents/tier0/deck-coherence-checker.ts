@@ -220,7 +220,10 @@ Produis un JSON avec:
 2. CITER les sources - "Slide 5 vs Slide 12" ou "Page X"
 3. TOUJOURS fournir une recommandation actionnable
 4. Ne PAS inventer des problemes - si les donnees sont coherentes, le dire
-5. Etre CONSTRUCTIF - l'objectif est d'aider, pas de descendre le deck`;
+5. Etre CONSTRUCTIF - l'objectif est d'aider, pas de descendre le deck
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: AgentContext): Promise<DeckCoherenceReport> {

@@ -709,7 +709,10 @@ L'outil ANALYSE et GUIDE. Il ne DECIDE JAMAIS a la place du Business Angel.
    - summary: 3-4 phrases MAX
    - calculation strings: formule + resultat seulement
 
-3. **Structure > Contenu**: Mieux vaut un JSON complet et concis qu'un JSON tronque`;
+3. **Structure > Contenu**: Mieux vaut un JSON complet et concis qu'un JSON tronque
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   // ===========================================================================
@@ -1608,7 +1611,23 @@ Aucune incohérence majeure détectée entre les agents.`;
       if (score >= 40) return "weak_pass";
       return "no_go";
     };
-    const finalVerdict = scoreBasedVerdict(overallScore);
+    const finalOverallScore = Math.round(Math.min(100, Math.max(0, overallScore)));
+    const finalVerdict = scoreBasedVerdict(finalOverallScore);
+
+    // If the score was overridden by the guard-fou, patch any mention of the old
+    // LLM score in the narrative/rationale text fields to avoid contradictions
+    // between the displayed score and the text (e.g. score=46 but text says "21/100").
+    const scoreWasOverridden = llmScore != null && finalOverallScore !== llmScore;
+    const patchScoreInText = (text: string): string => {
+      if (!scoreWasOverridden || !text) return text;
+      // Replace patterns like "21/100", "score de 21", "score: 21", "score est de 21"
+      const llmStr = String(llmScore);
+      return text
+        .replace(new RegExp(`\\b${llmStr}/100\\b`, "g"), `${finalOverallScore}/100`)
+        .replace(new RegExp(`score\\s+(?:de|est de|final(?:\\s+est)?\\s+de|:)\\s+${llmStr}\\b`, "gi"), (match) =>
+          match.replace(llmStr, String(finalOverallScore))
+        );
+    };
 
     // Enforce action/verdict coherence — "wait" makes no sense for NO_GO
     if (finalVerdict === "no_go" && mappedAction !== "pass") {
@@ -1619,8 +1638,13 @@ Aucune incohérence majeure détectée entre les agents.`;
       mappedAction = "invest";
     }
 
+    // Extract rationale and patch score references if needed
+    const rawRationale = data.findings?.recommendation?.rationale ??
+                        data.investmentRecommendation?.rationale ??
+                        "Analyse en cours";
+
     return {
-      overallScore: Math.round(Math.min(100, Math.max(0, overallScore))),
+      overallScore: finalOverallScore,
       verdict: finalVerdict,
       confidence: (data.meta?.confidenceLevel ?? data.confidence) != null
         ? Math.min(100, Math.max(0, (data.meta?.confidenceLevel ?? data.confidence)!))
@@ -1650,9 +1674,7 @@ Aucune incohérence majeure détectée entre les agents.`;
       },
       investmentRecommendation: {
         action: mappedAction as "invest" | "pass" | "wait" | "negotiate",
-        rationale: data.findings?.recommendation?.rationale ??
-                  data.investmentRecommendation?.rationale ??
-                  "Analyse en cours",
+        rationale: patchScoreInText(rawRationale),
         conditions: data.findings?.recommendation?.conditions ??
                    data.investmentRecommendation?.conditions,
         suggestedTerms: data.findings?.recommendation?.suggestedTerms ??

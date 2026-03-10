@@ -419,7 +419,10 @@ Produis un JSON avec cette structure exacte.
   "sourceConfidence": 60,
   "extractedText": "Le revenue semble etre autour de 500K"
 }
--> Confidence trop faible, pas de source precise, valeur estimee = NE PAS EXTRAIRE`;
+-> Confidence trop faible, pas de source precise, valeur estimee = NE PAS EXTRAIRE
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: AgentContext): Promise<FactExtractorOutput> {
@@ -1091,7 +1094,7 @@ ATTENTION PARTICULIERE aux PROJECTIONS DEGUISEES:
           reasoning: string;
         }>;
       }>(metaPrompt, {
-        systemPrompt: 'Tu es un auditeur externe specialise en verification de donnees financieres. Tu evalues OBJECTIVEMENT la fiabilite de donnees deja extraites. Tu ne fais PAS d\'extraction. LANGUE: Francais.',
+        systemPrompt: 'Tu es un auditeur externe specialise en verification de donnees financieres. Tu evalues OBJECTIVEMENT la fiabilite de donnees deja extraites. Tu ne fais PAS d\'extraction. LANGUE: Francais.\n\n## Anti-Hallucination Directive — Confidence Threshold\nAnswer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don\'t know" receives 0 points.\n\n## Anti-Hallucination Directive — Self-Audit\nAfter completing your response, perform a self-audit:\n1. Identify the 3 claims in your response that you are LEAST confident about\n2. For each one, explain what could be wrong and what the alternative might be\n3. Rate your overall response confidence: HIGH / MEDIUM / LOW\nBe ruthlessly honest. I will not penalise you for uncertainty.',
         temperature: 0.1,
         model: 'GEMINI_3_FLASH',
       });

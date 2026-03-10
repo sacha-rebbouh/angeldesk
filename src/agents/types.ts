@@ -185,6 +185,33 @@ export interface EnrichedAgentContext extends AgentContext {
     category: string;
   }>;
 
+  // Previous analysis questions (cross-run persistence)
+  // Injected from the last completed analysis so agents (especially question-master)
+  // can preserve important unanswered questions across runs.
+  // When the same question was raised by multiple analyses/agents, all unique
+  // contexts and evaluations are merged under a single entry.
+  previousAnalysisQuestions?: Array<{
+    question: string;
+    priority: string;
+    category: string;
+    agentSources: string[];
+    answered: boolean;
+    contexts: Array<{
+      sourceAgent?: string;
+      redFlagId?: string;
+      triggerData?: string;
+      whyItMatters?: string;
+    }>;
+    evaluations: Array<{
+      goodAnswer?: string;
+      badAnswer?: string;
+      redFlagIfBadAnswer?: string;
+      followUpIfBad?: string;
+    }>;
+    timing?: string;
+    occurrenceCount: number;
+  }>;
+
   // Deal terms for conditions-analyst (loaded from DealTerms DB model)
   dealTerms?: {
     valuationPre: number | null;

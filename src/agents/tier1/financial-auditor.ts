@@ -377,7 +377,10 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
   "severity": "medium",
   "evidence": "Les projections semblent élevées"
 }
-→ Pas d'id, pas de location, pas de chiffres, pas de question, pas d'impact.`;
+→ Pas d'id, pas de location, pas de chiffres, pas de question, pas d'impact.
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<FinancialAuditData> {

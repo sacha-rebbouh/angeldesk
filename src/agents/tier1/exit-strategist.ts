@@ -432,7 +432,10 @@ Produis un JSON structuré avec:
   "exitValuation": 50000000,
   "investorReturn": { "multiple": 10 }
 }
-→ Aucun calcul montré, aucune source, probabilité non quantifiée.`;
+→ Aucun calcul montré, aucune source, probabilité non quantifiée.
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<ExitStrategistData> {

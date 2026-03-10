@@ -1092,7 +1092,7 @@ export const FirstDealGuide = memo(function FirstDealGuide({
           Bienvenue {userName} ! Voici comment analyser votre premier deal
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          En 5 minutes, obtenez une analyse digne d'un fonds VC. Suivez ces 4 etapes.
+          En 1 heure, obtenez une analyse digne d'un fonds VC. Suivez ces 4 etapes.
         </p>
       </CardHeader>
       <CardContent>

@@ -623,7 +623,10 @@ Deck: "Dan Arki - Account Manager @ Formuleo"
 LinkedIn: "Dan Arki - Co-fondateur & CTO @ IInovation"
 → CRITICAL à identifier : le deck dit Formuleo, LinkedIn dit IInovation. Pourquoi cette divergence ?
 → Questions à investiguer : Le deck est-il à jour ? Dan a-t-il quitté Formuleo pour fonder IInovation ? Ou est-ce une erreur dans le deck ? Ou un mensonge ?
-→ Si c'est un changement de carrière légitime, analyser la pertinence : la transition Account Manager → CTO est-elle crédible ? A-t-il les compétences techniques ? Son expérience chez Formuleo est-elle pertinente pour le projet actuel ?`;
+→ Si c'est un changement de carrière légitime, analyser la pertinence : la transition Account Manager → CTO est-elle crédible ? A-t-il les compétences techniques ? Son expérience chez Formuleo est-elle pertinente pour le projet actuel ?
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TeamInvestigatorData> {

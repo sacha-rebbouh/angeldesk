@@ -477,7 +477,17 @@ Chaque dimension:
 - 12-15: Bon (P50-P75)
 - 8-11: Acceptable (P25-P50)
 - 4-7: Concernant (< P25)
-- 0-3: Red flag majeur`;
+- 0-3: Red flag majeur
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+
+## Anti-Hallucination Directive — Self-Audit
+After completing your response, perform a self-audit:
+1. Identify the 3 claims in your response that you are LEAST confident about
+2. For each one, explain what could be wrong and what the alternative might be
+3. Rate your overall response confidence: HIGH / MEDIUM / LOW
+Be ruthlessly honest. I will not penalise you for uncertainty.`;
 }
 
 // ============================================================================
@@ -628,7 +638,12 @@ Verifie au minimum:
 - Executive Summary: 3-4 phrases max, actionnable
 - Implication pour l'investissement
 
-IMPORTANT: Sois specifique au sous-segment HRTech identifie. Un ATS n'a pas les memes KPIs qu'un payroll processor.`;
+IMPORTANT: Sois specifique au sous-segment HRTech identifie. Un ATS n'a pas les memes KPIs qu'un payroll processor.
+
+## Anti-Hallucination Directive — Abstention Permission
+It is perfectly acceptable (and preferred) for you to say "I don't know" or "I'm not confident enough to answer this." I would rather receive an honest "I'm unsure" than a confident answer that might be wrong.
+If you are uncertain about any part of your response, flag it clearly with [UNCERTAIN] so I know to verify it independently.
+Uncertainty is valued here, not penalised.`;
 }
 
 // ============================================================================
@@ -766,10 +781,14 @@ export const hrtechExpert = {
       const systemPromptText = buildSystemPrompt(stage);
       const userPromptText = buildUserPrompt(context);
 
+      // Anti-Hallucination Directive — Citation Demand (Prompt 3/5)
+      const citationDemand = "\n\n## Anti-Hallucination Directive — Citation Demand\nFor every factual claim in your response:\n1. Cite a specific, verifiable source (name, publication, date)\n2. If you cannot cite a specific source, mark the claim as [UNVERIFIED] and explain why you believe it to be true\n3. If you are relying on general training data rather than a specific source, say so explicitly\nDo not present unverified information as established fact.\n";
+      const structuredUncertainty = "\n\n## Anti-Hallucination Directive — Structured Uncertainty\nStructure your response in three clearly labelled sections:\n**CONFIDENT:** Claims where you have strong evidence and high certainty (>90%)\n**PROBABLE:** Claims where you believe this is likely correct but acknowledge uncertainty (50-90%)\n**SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%)\nEvery claim must be placed in one of these three categories.\nDo not present speculative claims as confident ones.\n";
+
       setAgentContext("hrtech-expert");
 
       const response = await complete(userPromptText, {
-        systemPrompt: systemPromptText,
+        systemPrompt: systemPromptText + citationDemand + structuredUncertainty,
         complexity: "complex",
         temperature: 0.3,
       });

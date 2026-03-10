@@ -384,6 +384,22 @@ Le Business Angel ne peut pas re-analyser le deal tant qu'il n'a pas repondu a T
 7. Minimum 5 reference checks
 8. Minimum 5 points de negociation
 
+# PRESERVATION DES QUESTIONS PRECEDENTES (CROSS-RUN)
+
+REGLE CRITIQUE: Si des questions d'une analyse precedente te sont fournies, tu DOIS les preserver.
+
+Pourquoi: Le BA peut lancer plusieurs analyses sur le meme deal (nouveaux documents, mise a jour).
+Les questions pertinentes identifiees dans une analyse precedente ne doivent JAMAIS disparaitre
+d'une analyse a l'autre. Le BA compte sur la continuite de l'analyse.
+
+Regles:
+1. TOUTE question non-repondue de l'analyse precedente DOIT etre incluse dans tes questions
+2. Tu peux reformuler une question precedente si le nouveau contexte le justifie
+3. Tu peux upgrader la priorite d'une question precedente si de nouveaux elements la renforcent
+4. Tu peux downgrader la priorite SEULEMENT si le fondateur a partiellement repondu ou si de nouvelles donnees la rendent moins pertinente
+5. Ne duplique PAS: si ta nouvelle analyse genere une question similaire a une precedente, fusionne-les en gardant la meilleure formulation
+6. Pour les questions deja repondues par le fondateur: ne les re-pose PAS, sauf si de nouvelles donnees contredisent la reponse
+
 # EXEMPLES
 
 ## Exemple de question CRITICAL (deal-breaking):
@@ -479,7 +495,10 @@ Le Business Angel ne peut pas re-analyser le deal tant qu'il n'a pas repondu a T
     "description": "Reduction de 40% de la valorisation",
     "valueRange": "Economie de 2-5K€ sur ticket 25K€ via dilution reduite"
   }
-}`;
+}
+
+## Anti-Hallucination Directive — Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<QuestionMasterData> {
@@ -489,6 +508,9 @@ Le Business Angel ne peut pas re-analyser le deal tant qu'il n'a pas repondu a T
 
     // Extract and format all Tier 1 agent results
     const tier1Summary = this.extractTier1Summary(context);
+
+    // Format previous analysis questions for injection
+    const previousQuestionsSection = this.formatPreviousQuestions(context);
 
     const deal = context.deal;
 
@@ -503,7 +525,7 @@ ${contextEngineData || "Aucune donnee Context Engine disponible pour ce deal."}
 ${this.formatFactStoreData(context)}
 ## RESULTATS DES AGENTS TIER 1
 ${tier1Summary}
-
+${previousQuestionsSection}
 ## INSTRUCTIONS SPECIFIQUES
 
 1. SYNTHETISE tous les findings des agents Tier 1 (red flags, scores, concerns)
@@ -804,6 +826,87 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
     }
 
     return result;
+  }
+
+  /**
+   * Format previous analysis questions for injection into the user prompt.
+   * Each question is deduplicated: if the same question was raised by multiple
+   * analyses/agents, all unique contexts (triggerData, whyItMatters) and
+   * evaluations (goodAnswer, badAnswer) are merged under a single entry.
+   * Returns empty string if no previous questions exist.
+   */
+  private formatPreviousQuestions(context: EnrichedAgentContext): string {
+    const prevQuestions = context.previousAnalysisQuestions;
+    if (!prevQuestions || prevQuestions.length === 0) return "";
+
+    const unanswered = prevQuestions.filter((q) => !q.answered);
+    const answered = prevQuestions.filter((q) => q.answered);
+
+    const lines: string[] = [
+      "## QUESTIONS DES ANALYSES PRECEDENTES (CROSS-RUN PERSISTENCE)",
+      "",
+      `Total: ${prevQuestions.length} questions uniques | ${unanswered.length} non-repondues | ${answered.length} repondues`,
+      "",
+    ];
+
+    if (unanswered.length > 0) {
+      lines.push("### QUESTIONS NON-REPONDUES (A PRESERVER OBLIGATOIREMENT)");
+      lines.push("Chaque question ci-dessous est UNIQUE — les donnees de plusieurs analyses/agents sont fusionnees.");
+      lines.push("Tu DOIS les inclure dans tes founderQuestions avec TOUT le detail (toutes les donnees declencheuses, tous les criteres d'evaluation).");
+      lines.push("Fusionne les elements de contexte dans un seul bloc context/evaluation riche. Ne fais PAS de doublons.");
+      lines.push("");
+
+      for (const q of unanswered) {
+        const sourceInfo = q.agentSources.length > 1
+          ? `${q.agentSources.length} sources: ${q.agentSources.join(", ")}`
+          : q.agentSources[0] ?? "unknown";
+        const occInfo = q.occurrenceCount > 1 ? ` (identifiee ${q.occurrenceCount}x)` : "";
+
+        lines.push(`#### [${q.priority}] [${q.category}] ${q.question}`);
+        lines.push(`  Sources: ${sourceInfo}${occInfo}`);
+
+        // All unique contexts — each brings different trigger data / reasoning
+        if (q.contexts.length > 0) {
+          for (let i = 0; i < q.contexts.length; i++) {
+            const c = q.contexts[i];
+            const prefix = q.contexts.length > 1 ? `  [Raison ${i + 1}]` : ` `;
+            if (c.triggerData) lines.push(`${prefix} Donnee declencheuse: ${c.triggerData}`);
+            if (c.whyItMatters) lines.push(`${prefix} Pourquoi c'est important: ${c.whyItMatters}`);
+            if (c.redFlagId) lines.push(`${prefix} Red flag: ${c.redFlagId}`);
+          }
+        }
+
+        // All unique evaluations — merge criteria from different analyses
+        if (q.evaluations.length > 0) {
+          // Collect unique good/bad answers across evaluations
+          const goodAnswers = [...new Set(q.evaluations.map(e => e.goodAnswer).filter(Boolean))];
+          const badAnswers = [...new Set(q.evaluations.map(e => e.badAnswer).filter(Boolean))];
+          const redFlagIfBad = [...new Set(q.evaluations.map(e => e.redFlagIfBadAnswer).filter(Boolean))];
+          const followUps = [...new Set(q.evaluations.map(e => e.followUpIfBad).filter(Boolean))];
+
+          if (goodAnswers.length > 0) lines.push(`  Bonne(s) reponse(s): ${goodAnswers.join(" / ")}`);
+          if (badAnswers.length > 0) lines.push(`  Mauvaise(s) reponse(s): ${badAnswers.join(" / ")}`);
+          if (redFlagIfBad.length > 0) lines.push(`  Red flag si mauvaise reponse: ${redFlagIfBad.join(" / ")}`);
+          if (followUps.length > 0) lines.push(`  Follow-up: ${followUps.join(" / ")}`);
+        }
+
+        if (q.timing) lines.push(`  Timing: ${q.timing}`);
+        lines.push("");
+      }
+    }
+
+    if (answered.length > 0) {
+      lines.push("### QUESTIONS DEJA REPONDUES (NE PAS RE-POSER)");
+      lines.push("Le fondateur a deja repondu a ces questions. Ne les re-pose PAS sauf si de nouvelles donnees contredisent la reponse.");
+      lines.push("");
+
+      for (const q of answered) {
+        lines.push(`- [${q.priority}] [${q.category}]: ${q.question}`);
+      }
+      lines.push("");
+    }
+
+    return lines.join("\n");
   }
 
   /**
