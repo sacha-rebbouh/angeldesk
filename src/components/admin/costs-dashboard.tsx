@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import {
   Card,
@@ -94,7 +94,6 @@ interface CostsDashboardProps {
 }
 
 export function CostsDashboard({ defaultDays = 30 }: CostsDashboardProps) {
-  const queryClient = useQueryClient();
   const [days, setDays] = useState(defaultDays);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({

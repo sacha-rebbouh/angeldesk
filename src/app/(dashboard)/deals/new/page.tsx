@@ -188,8 +188,6 @@ export default function NewDealPage() {
     valuationPre: "",
   });
 
-  const [errors, setErrors] = useState({});
-
   // Completeness tracking (F88)
   const completeness = useMemo(() => {
     const fields = {

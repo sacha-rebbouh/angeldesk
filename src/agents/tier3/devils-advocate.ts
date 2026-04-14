@@ -14,7 +14,7 @@
  * Outputs:
  * - Counter-arguments structures avec comparables echecs reels
  * - Worst case scenario detaille avec triggers et probabilites
- * - Kill reasons avec niveaux (ABSOLUTE, CONDITIONAL, CONCERN)
+ * - Kill reasons avec niveaux de severite (CRITICAL, HIGH, CONCERN)
  * - Blind spots identifies
  * - Score de scepticisme justifie
  * - Questions pour le fondateur (pieges constructifs)
@@ -39,7 +39,6 @@ import type {
   KillReason,
   BlindSpot,
   AlternativeNarrative,
-  AgentResult,
 } from "../types";
 
 interface LLMDevilsAdvocateResponse {
@@ -113,7 +112,7 @@ interface LLMDevilsAdvocateResponse {
       category: string;
       evidence: string;
       sourceAgent: string;
-      dealBreakerLevel: "ABSOLUTE" | "CONDITIONAL" | "CONCERN";
+      severityLevel: "CRITICAL" | "HIGH" | "CONCERN";
       condition?: string;
       resolutionPossible: boolean;
       resolutionPath?: string;
@@ -283,7 +282,7 @@ Tu n'es PAS la pour tuer le deal, mais pour t'assurer que l'investisseur:
 1. Comprend TOUS les risques avant de decider
 2. A des COMPARABLES d'echecs similaires pour calibrer son jugement
 3. Sait QUELLES QUESTIONS poser au fondateur
-4. Connait les DEALBREAKERS a ne pas franchir
+4. Connait les RISQUES CRITIQUES identifies
 
 # TONALITE — REGLE ABSOLUE
 
@@ -330,7 +329,7 @@ Pour CHAQUE these positive:
 - Trouver des catastrophes comparables reelles
 
 ## Etape 4: Identification des kill reasons
-- Classer les risques critiques: ABSOLUTE (risque structurel), CONDITIONAL (risque conditionnel), CONCERN (point d'attention)
+- Classer les risques critiques: CRITICAL (risque structurel), HIGH (risque conditionnel), CONCERN (point d'attention)
 - Sourcer chaque kill reason avec l'agent qui l'a detecte
 - Definir la question qui valide/invalide le risque
 - TOUJOURS fournir la condition d'attenuation (champ "condition"): dans quelles circonstances ce risque serait acceptable ou attenuable
@@ -358,8 +357,8 @@ Le score de scepticisme (0-100) mesure a quel point tu es inquiet pour ce deal.
 | VERY_SKEPTICAL | 80-100 | Deal tres risque, nombreux red flags |
 
 Facteurs qui AUGMENTENT le score:
-- Chaque kill reason ABSOLUTE: +15 points
-- Chaque kill reason CONDITIONAL: +8 points
+- Chaque kill reason CRITICAL: +15 points
+- Chaque kill reason HIGH: +8 points
 - Projections irrealistes: +10 points
 - Equipe non verifiable: +12 points
 - Marche en contraction: +10 points
@@ -407,7 +406,7 @@ Note pour narrative.forNegotiation: points factuels pour la negociation (constat
 
 1. **LIMITES STRICTES sur les arrays**:
    - counterArguments: MAX 4 items (les plus importants)
-   - killReasons: MAX 4 items (priorisés ABSOLUTE > CONDITIONAL > CONCERN)
+   - killReasons: MAX 4 items (priorisés CRITICAL > HIGH > CONCERN)
    - blindSpots: MAX 3 items
    - alternativeNarratives: MAX 2 items
    - additionalMarketRisks: MAX 3 items
@@ -469,7 +468,7 @@ Note pour narrative.forNegotiation: points factuels pour la negociation (constat
   "category": "team",
   "evidence": "team-investigator: 'LinkedIn CTO: AUCUN RESULTAT. Claim deck: Ex-Google Senior Engineer - AUCUNE preuve trouvee.'",
   "sourceAgent": "team-investigator",
-  "dealBreakerLevel": "CONDITIONAL",
+  "severityLevel": "HIGH",
   "condition": "Si le fondateur ne peut pas fournir de preuve d'emploi Google dans les 48h",
   "resolutionPossible": true,
   "resolutionPath": "Demander badge Google, contrat de travail, ou reference d'un ex-collegue Google",
@@ -479,7 +478,8 @@ Note pour narrative.forNegotiation: points factuels pour la negociation (constat
 }
 
 ## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DevilsAdvocateData> {
@@ -518,7 +518,7 @@ ${this.formatFactStoreData(context) ?? ""}
 
 2. **WORST CASE SCENARIO**: LE scenario catastrophe le plus probable. Specifique a CE deal. 2-3 triggers max, 2 comparables max.
 
-3. **KILL REASONS**: 2-4 risques critiques identifies, classes par niveau (ABSOLUTE > CONDITIONAL > CONCERN). Pour chaque risque, inclure la condition d'attenuation.
+3. **KILL REASONS**: 2-4 risques critiques identifies, classes par niveau (CRITICAL > HIGH > CONCERN). Pour chaque risque, inclure la condition d'attenuation.
 
 4. **BLIND SPOTS**: 2-3 angles morts critiques que les agents n'ont pas couvert.
 
@@ -826,7 +826,7 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
     const validPriorities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
     const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
     const validVerdicts = ["VERY_SKEPTICAL", "SKEPTICAL", "CAUTIOUS", "NEUTRAL", "CAUTIOUSLY_OPTIMISTIC"] as const;
-    const validDealBreakerLevels = ["ABSOLUTE", "CONDITIONAL", "CONCERN"] as const;
+    type KillReasonLevel = "ABSOLUTE" | "CONDITIONAL" | "CONCERN";
     const validProbabilities = ["HIGH", "MEDIUM", "LOW"] as const;
     const validDifficulties = ["EXTREME", "VERY_HARD", "HARD", "MODERATE"] as const;
     const validUrgencies = ["IMMEDIATE", "BEFORE_DECISION", "DURING_DD"] as const;
@@ -857,13 +857,14 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
     if (scoreIsFallback) {
       // Derive score from kill reasons severity and count
       const killReasons = Array.isArray(data.findings?.killReasons) ? data.findings.killReasons : [];
-      const absoluteKills = killReasons.filter(k => k.dealBreakerLevel === "ABSOLUTE").length;
-      const conditionalKills = killReasons.filter(k => k.dealBreakerLevel === "CONDITIONAL").length;
-      const concerns = killReasons.filter(k => k.dealBreakerLevel === "CONCERN").length;
+      const rawLevels: string[] = killReasons.map(k => k.severityLevel ?? "CONCERN");
+      const criticalKills = rawLevels.filter(l => l === "CRITICAL").length;
+      const highKills = rawLevels.filter(l => l === "HIGH").length;
+      const concerns = rawLevels.filter(l => l === "CONCERN").length;
       // More kill reasons = lower score (more skepticism = lower deal quality from DA perspective)
       // DA score represents deal resilience: high = deal withstands scrutiny, low = many concerns
       derivedScore = Math.max(10, Math.min(80,
-        70 - (absoluteKills * 20) - (conditionalKills * 10) - (concerns * 5)
+        70 - (criticalKills * 20) - (highKills * 10) - (concerns * 5)
       ));
       console.warn(`[devils-advocate] LLM did not return score value — derived ${derivedScore} from ${killReasons.length} kill reasons`);
     }
@@ -947,24 +948,33 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
         : [],
     };
 
-    // Normalize kill reasons
+    // Normalize kill reasons — map severityLevel to ABSOLUTE/CONDITIONAL/CONCERN
+    const severityToKillReasonLevel: Record<string, KillReasonLevel> = {
+      "ABSOLUTE": "ABSOLUTE",
+      "CONDITIONAL": "CONDITIONAL",
+      "CONCERN": "CONCERN",
+      // Legacy compat — map old LLM values to new type values
+      "CRITICAL": "ABSOLUTE",
+      "HIGH": "CONDITIONAL",
+    };
     const killReasons: KillReason[] = Array.isArray(data.findings?.killReasons)
-      ? data.findings.killReasons.map((kr, idx) => ({
-          id: kr.id ?? `kr-${idx + 1}`,
-          reason: kr.reason ?? "",
-          category: (kr.category ?? "other") as KillReason["category"],
-          evidence: kr.evidence ?? "",
-          sourceAgent: kr.sourceAgent ?? "unknown",
-          dealBreakerLevel: validDealBreakerLevels.includes(kr.dealBreakerLevel as (typeof validDealBreakerLevels)[number])
-            ? (kr.dealBreakerLevel as (typeof validDealBreakerLevels)[number])
-            : "CONCERN",
-          condition: kr.condition,
-          resolutionPossible: kr.resolutionPossible ?? false,
-          resolutionPath: kr.resolutionPath,
-          impactIfIgnored: kr.impactIfIgnored ?? "",
-          questionToFounder: kr.questionToFounder ?? "",
-          redFlagAnswer: kr.redFlagAnswer ?? "",
-        }))
+      ? data.findings.killReasons.map((kr, idx) => {
+          const rawLevel = kr.severityLevel ?? "CONCERN";
+          return {
+            id: kr.id ?? `kr-${idx + 1}`,
+            reason: kr.reason ?? "",
+            category: (kr.category ?? "other") as KillReason["category"],
+            evidence: kr.evidence ?? "",
+            sourceAgent: kr.sourceAgent ?? "unknown",
+            dealBreakerLevel: severityToKillReasonLevel[rawLevel as string] ?? "CONCERN",
+            condition: kr.condition,
+            resolutionPossible: kr.resolutionPossible ?? false,
+            resolutionPath: kr.resolutionPath,
+            impactIfIgnored: kr.impactIfIgnored ?? "",
+            questionToFounder: kr.questionToFounder ?? "",
+            redFlagAnswer: kr.redFlagAnswer ?? "",
+          };
+        })
       : [];
 
     // Normalize blind spots - filter out empty entries

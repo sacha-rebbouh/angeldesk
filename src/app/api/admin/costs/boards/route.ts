@@ -38,18 +38,34 @@ export async function GET(request: NextRequest) {
 
     // Calculate additional stats
     const verdictBreakdown = {
-      GO: 0,
-      NO_GO: 0,
-      NEED_MORE_INFO: 0,
+      very_favorable: 0,
+      favorable: 0,
+      contrasted: 0,
+      vigilance: 0,
+      alert_dominant: 0,
       pending: 0,
     };
 
     let totalRounds = 0;
     let totalMembers = 0;
 
+    // Map legacy verdict values to new signal profiles
+    const verdictMap: Record<string, keyof typeof verdictBreakdown> = {
+      very_favorable: "very_favorable",
+      favorable: "favorable",
+      contrasted: "contrasted",
+      vigilance: "vigilance",
+      alert_dominant: "alert_dominant",
+      // Legacy compat
+      GO: "favorable",
+      NO_GO: "alert_dominant",
+      NEED_MORE_INFO: "contrasted",
+    };
+
     for (const session of result.sessions) {
       if (session.verdict) {
-        verdictBreakdown[session.verdict as keyof typeof verdictBreakdown]++;
+        const mapped = verdictMap[session.verdict] ?? "pending";
+        verdictBreakdown[mapped as keyof typeof verdictBreakdown]++;
       } else {
         verdictBreakdown.pending++;
       }

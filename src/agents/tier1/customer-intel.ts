@@ -378,7 +378,7 @@ Tu DOIS produire un JSON structuré avec:
 4. **dbCrossReference**: Claims vérifiés vs Funding DB si disponible
 5. **redFlags**: Minimum 3 si problèmes, chacun avec evidence + question + impact
 6. **questions**: Minimum 5 questions prioritaires pour le fondateur
-7. **alertSignal**: GO/NO-GO avec justification
+7. **alertSignal**: Signal analytique (PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP) avec justification
 8. **narrative**: Résumé actionnable pour le BA
 
 ## BARÈME DE SCORING

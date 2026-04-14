@@ -1139,6 +1139,7 @@ export function isCircuitOpen(
 ): boolean {
   const state = getCircuitState(serviceName)
   const { resetTimeoutMs } = { ...DEFAULT_CIRCUIT_CONFIG, ...config }
+  void resetTimeoutMs
 
   if (!state.isOpen) {
     return false

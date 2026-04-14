@@ -483,8 +483,6 @@ export function formatHealthMessage(health: {
   stale: number
   lastEnrichment?: Date
 }): string {
-  const qualityEmoji = health.avgQuality >= 70 ? '✅' : health.avgQuality >= 50 ? '⚠️' : '❌'
-
   return `📈 *Santé de la DB*
 
 Companies: ${health.totalCompanies.toLocaleString()}

@@ -15,20 +15,8 @@ import { MAINTENANCE_CONSTANTS } from '../../types'
 
 const logger = createLogger('DB_SOURCER:hackernews')
 
-const HN_API_URL = 'https://hacker-news.firebaseio.com/v0'
 const HN_SEARCH_API = 'https://hn.algolia.com/api/v1'
 const MIN_DATE = MAINTENANCE_CONSTANTS.HISTORICAL_MIN_DATE
-
-interface HNItem {
-  id: number
-  title: string
-  url?: string
-  text?: string
-  time: number
-  score: number
-  by: string
-  type: string
-}
 
 interface AlgoliaHit {
   objectID: string

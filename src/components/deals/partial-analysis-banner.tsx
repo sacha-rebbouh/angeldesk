@@ -29,24 +29,24 @@ const MISSING_AGENTS_FOR_FREE: MissingAgent[] = [
     impact: "Challenge la thèse d'investissement. Identifie les risques critiques que les autres agents ne voient pas.",
   },
   {
-    name: "Detecteur de contradictions",
+    name: "Détecteur de contradictions",
     icon: <Zap className="h-4 w-4 text-amber-500" />,
-    impact: "Compare les affirmations du deck entre elles et avec les donnees reelles. Detecte les incoherences cachees.",
+    impact: "Compare les affirmations du deck entre elles et avec les données réelles. Détecte les incohérences cachées.",
   },
   {
-    name: "Modelisation de scenarios",
+    name: "Modélisation de scénarios",
     icon: <BarChart3 className="h-4 w-4 text-indigo-500" />,
-    impact: "Calcule votre retour potentiel (IRR, multiple) dans 4 scenarios avec probabilites.",
+    impact: "Calcule votre retour potentiel (IRR, multiple) dans 4 scénarios avec probabilités.",
   },
   {
     name: "Expert sectoriel",
     icon: <Shield className="h-4 w-4 text-cyan-500" />,
-    impact: "Analyse specialisee avec les KPIs et standards du secteur. Detecte les risques specifiques.",
+    impact: "Analyse spécialisée avec les KPIs et standards du secteur. Détecte les risques spécifiques.",
   },
   {
-    name: "Memo d'investissement",
+    name: "Mémo d'investissement",
     icon: <FileText className="h-4 w-4 text-green-500" />,
-    impact: "Document structure avec these d'investissement, risques mitiges, et prochaines etapes concretes.",
+    impact: "Document structuré avec thèse d'investissement, risques mitigés, et prochaines étapes concrètes.",
   },
 ];
 
@@ -78,7 +78,7 @@ export const PartialAnalysisBanner = memo(function PartialAnalysisBanner({
               </Badge>
             </div>
             <p className="text-sm text-amber-800 mb-3">
-              Les agents ci-dessous sont essentiels pour une decision d'investissement eclairee.
+              Les agents ci-dessous sont essentiels pour une decision d&apos;investissement eclairee.
               Sans eux, des risques critiques peuvent passer inapercus.
             </p>
 
@@ -104,10 +104,10 @@ export const PartialAnalysisBanner = memo(function PartialAnalysisBanner({
                 onClick={() => router.push("/pricing")}
               >
                 <Crown className="mr-2 h-4 w-4" />
-                Debloquer l'analyse complete
+                Debloquer l&apos;analyse complete
               </Button>
               <p className="text-xs text-amber-600">
-                Votre score actuel pourrait changer significativement avec l'analyse complete.
+                Votre score actuel pourrait changer significativement avec l&apos;analyse complete.
               </p>
             </div>
           </div>

@@ -219,6 +219,20 @@ function getVerifiedInfo(founder: Founder): VerifiedInfo | null {
   return founder.verifiedInfo as VerifiedInfo;
 }
 
+function isSafeLinkedInUrl(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    const hostname = url.hostname.toLowerCase();
+    return (
+      url.protocol === "https:" &&
+      (hostname === "linkedin.com" || hostname.endsWith(".linkedin.com")) &&
+      (url.pathname.toLowerCase().startsWith("/in/") || url.pathname.toLowerCase().startsWith("/pub/"))
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -443,8 +457,8 @@ export const TeamManagement = memo(function TeamManagement({ dealId, founders }:
             </DialogTitle>
             <DialogDescription>
               {editingFounder
-                ? "Modifiez les informations. Les modifications sont conservees pour les prochaines analyses."
-                : "Ajoutez un membre de l'equipe"}
+                ? "Modifiez les informations. Les modifications sont conservées pour les prochaines analyses."
+                : "Ajoutez un membre de l'équipe"}
             </DialogDescription>
           </DialogHeader>
 
@@ -501,7 +515,7 @@ export const TeamManagement = memo(function TeamManagement({ dealId, founders }:
           <AlertDialogHeader>
             <AlertDialogTitle>Supprimer ce membre ?</AlertDialogTitle>
             <AlertDialogDescription>
-              Supprimer {founderToDelete?.name} de l&apos;equipe ? Cette personne ne sera plus incluse dans les prochaines analyses.
+              Supprimer {founderToDelete?.name} de l&apos;équipe ? Cette personne ne sera plus incluse dans les prochaines analyses.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -605,6 +619,9 @@ const MemberCard = memo(function MemberCard({
     : undefined;
   const highlights = vi?.highlights;
   const overallScore = scores?.overallFounderScore;
+  const safeLinkedInUrl = founder.linkedinUrl && isSafeLinkedInUrl(founder.linkedinUrl)
+    ? founder.linkedinUrl
+    : null;
 
   return (
     <div className="rounded-lg border bg-card transition-colors hover:border-muted-foreground/20">
@@ -648,7 +665,7 @@ const MemberCard = memo(function MemberCard({
 
         {/* Actions */}
         <div className="flex items-center gap-0.5 shrink-0">
-          {founder.linkedinUrl && (
+          {safeLinkedInUrl && (
             <>
               <Button
                 variant="ghost"
@@ -665,7 +682,7 @@ const MemberCard = memo(function MemberCard({
                 )}
               </Button>
               <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
-                <a href={founder.linkedinUrl} target="_blank" rel="noopener noreferrer">
+                <a href={safeLinkedInUrl} target="_blank" rel="noopener noreferrer">
                   <Linkedin className="h-3.5 w-3.5 text-[#0077B5]" />
                 </a>
               </Button>

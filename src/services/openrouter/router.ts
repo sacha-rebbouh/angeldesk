@@ -7,7 +7,6 @@ import {
   StreamingJSONParser,
   buildContinuationPrompt,
   mergePartialResponses,
-  type StreamingParserResult,
 } from "./streaming-json-parser";
 
 export type TaskComplexity = "simple" | "medium" | "complex" | "critical";
@@ -268,6 +267,7 @@ export interface CompletionOptions {
   maxTokens?: number;
   temperature?: number;
   systemPrompt?: string;
+  timeoutMs?: number;
   maxRetries?: number; // Override default retries (for Sonnet agents: 1 = 2 attempts)
   responseFormat?: { type: "json_object" | "text" }; // Force JSON mode at API level
   /** Active l'adaptation du prompt en cas d'echec (F95) */
@@ -823,7 +823,7 @@ export async function completeJSONWithFallback<T>(
       model: "GEMINI_3_FLASH",
     });
     return result;
-  } catch (error) {
+  } catch {
     if (process.env.NODE_ENV === 'development') {
       console.log(`[completeJSONWithFallback] Gemini 3 Flash failed, falling back to Haiku 4.5...`);
     }
@@ -835,7 +835,7 @@ export async function completeJSONWithFallback<T>(
         model: "HAIKU",
       });
       return result;
-    } catch (fallbackError) {
+    } catch {
       // Both failed - throw generic error without mentioning models
       throw new Error("Analyse indisponible après plusieurs tentatives");
     }
@@ -1028,6 +1028,7 @@ export async function stream(
     maxTokens = 65000, // Gemini 3 Flash supports 65K
     temperature = 0.2, // Defaut conservateur pour analyses. Utiliser 0.7 explicitement pour agents creatifs.
     systemPrompt,
+    timeoutMs = 120_000,
   } = options;
 
   const selectedModelKey = modelKey ?? selectModel(complexity, getAgentContext() ?? undefined);
@@ -1065,36 +1066,46 @@ export async function stream(
   let outputTokens = 0;
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     // Execute through circuit breaker with streaming
-    const streamResponse = await circuitBreaker.execute(() =>
-      openrouter.chat.completions.create({
-        model: model.id,
-        messages,
-        max_tokens: maxTokens,
-        temperature,
-        stream: true,
-      })
-    );
+    try {
+      const streamResponse = await circuitBreaker.execute(() =>
+        openrouter.chat.completions.create(
+          {
+            model: model.id,
+            messages,
+            max_tokens: maxTokens,
+            temperature,
+            stream: true,
+          },
+          { signal: controller.signal }
+        )
+      );
 
-    // Sync circuit breaker state to distributed store (fire-and-forget)
-    syncCircuitBreakerState(circuitBreaker.getStats(), selectedModelKey).catch(() => {});
+      // Sync circuit breaker state to distributed store (fire-and-forget)
+      syncCircuitBreakerState(circuitBreaker.getStats(), selectedModelKey).catch(() => {});
 
-    // Process stream
-    for await (const chunk of streamResponse) {
-      const delta = chunk.choices[0]?.delta?.content;
-      if (delta) {
-        if (!firstTokenTime) {
-          firstTokenTime = Date.now() - startTime;
+      // Process stream
+      for await (const chunk of streamResponse) {
+        const delta = chunk.choices[0]?.delta?.content;
+        if (delta) {
+          if (!firstTokenTime) {
+            firstTokenTime = Date.now() - startTime;
+          }
+          content += delta;
+          callbacks.onToken?.(delta);
         }
-        content += delta;
-        callbacks.onToken?.(delta);
-      }
 
-      // Capture usage from final chunk if available
-      if (chunk.usage) {
-        inputTokens = chunk.usage.prompt_tokens;
-        outputTokens = chunk.usage.completion_tokens;
+        // Capture usage from final chunk if available
+        if (chunk.usage) {
+          inputTokens = chunk.usage.prompt_tokens;
+          outputTokens = chunk.usage.completion_tokens;
+        }
       }
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     // If no usage in stream, estimate tokens
@@ -1238,6 +1249,7 @@ export async function completeJSONStreaming<T>(
     maxTokens = 65000,
     temperature = 0.3, // Lower for structured output
     systemPrompt,
+    timeoutMs = 120_000,
     maxContinuations = 3,
     onToken,
     onParseState,
@@ -1286,51 +1298,61 @@ export async function completeJSONStreaming<T>(
     let finishReason: string | null = null;
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
       // Stream the response
-      const streamResponse = await circuitBreaker.execute(() =>
-        openrouter.chat.completions.create({
-          model: model.id,
-          messages,
-          max_tokens: maxTokens,
-          temperature,
-          stream: true,
-        })
-      );
-
-      // Sync circuit breaker state to distributed store (fire-and-forget)
-      syncCircuitBreakerState(circuitBreaker.getStats(), selectedModelKey).catch(() => {});
-
       let inputTokens = 0;
       let outputTokens = 0;
 
-      // Process stream
-      for await (const chunk of streamResponse) {
-        const delta = chunk.choices[0]?.delta?.content;
-        if (delta) {
-          parser.processToken(delta);
-          onToken?.(delta);
+      try {
+        const streamResponse = await circuitBreaker.execute(() =>
+          openrouter.chat.completions.create(
+            {
+              model: model.id,
+              messages,
+              max_tokens: maxTokens,
+              temperature,
+              stream: true,
+            },
+            { signal: controller.signal }
+          )
+        );
 
-          // Report parse state
-          if (onParseState) {
-            const state = parser.getState();
-            onParseState({
-              openBraces: state.openBraces,
-              openBrackets: state.openBrackets,
-              complete: parser.isComplete(),
-            });
+        // Sync circuit breaker state to distributed store (fire-and-forget)
+        syncCircuitBreakerState(circuitBreaker.getStats(), selectedModelKey).catch(() => {});
+
+        // Process stream
+        for await (const chunk of streamResponse) {
+          const delta = chunk.choices[0]?.delta?.content;
+          if (delta) {
+            parser.processToken(delta);
+            onToken?.(delta);
+
+            // Report parse state
+            if (onParseState) {
+              const state = parser.getState();
+              onParseState({
+                openBraces: state.openBraces,
+                openBrackets: state.openBrackets,
+                complete: parser.isComplete(),
+              });
+            }
+          }
+
+          // Capture finish reason
+          if (chunk.choices[0]?.finish_reason) {
+            finishReason = chunk.choices[0].finish_reason;
+          }
+
+          // Capture usage
+          if (chunk.usage) {
+            inputTokens = chunk.usage.prompt_tokens;
+            outputTokens = chunk.usage.completion_tokens;
           }
         }
-
-        // Capture finish reason
-        if (chunk.choices[0]?.finish_reason) {
-          finishReason = chunk.choices[0].finish_reason;
-        }
-
-        // Capture usage
-        if (chunk.usage) {
-          inputTokens = chunk.usage.prompt_tokens;
-          outputTokens = chunk.usage.completion_tokens;
-        }
+      } finally {
+        clearTimeout(timeoutId);
       }
 
       // Estimate tokens if not provided

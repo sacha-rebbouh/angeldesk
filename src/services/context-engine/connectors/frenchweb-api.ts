@@ -61,6 +61,14 @@ const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours (data doesn't change that fast)
 const MAX_PAGES = 100; // Fetch up to 100 pages = 10,000 posts max
 const PER_PAGE = 100; // Max allowed by WordPress API
 
+const frenchWebSource: DataSource = {
+  type: "news_api",
+  name: "FrenchWeb",
+  url: "https://www.frenchweb.fr",
+  retrievedAt: new Date().toISOString(),
+  confidence: 0.85,
+};
+
 // ============================================================================
 // PARSING FUNCTIONS
 // ============================================================================
@@ -259,9 +267,6 @@ function extractCompanyName(title: string): string | null {
   if (isNonFundingArticle(cleanTitle)) {
     return null;
   }
-
-  // TAG pattern regex - matches [SERIE A], [Série B], [SEED], [SCALE], [GROWTH], [IPO], [EARLY STAGE], [PRE SEED], etc.
-  const tagRegex = /^\[(?:SERI?E\s*[A-D]|S[ée]rie\s*[A-D]|SCALE|SEED|GROWTH|IPO|PRE[\s\-]?SEED|BRIDGE|EARLY\s*STAGE|LATE\s*STAGE)\]/i;
 
   // Pattern 1: "[TAG] X millions pour COMPANY" - amount before company (direct company name)
   // Examples: "[SERIE A] 11,3 millions d'euros pour HERO", "[Série B] 25 millions d'euros pour STOIK"
@@ -590,14 +595,6 @@ async function getFundingDeals(forceRefresh = false): Promise<ParsedFundingRound
 // ============================================================================
 // CONNECTOR IMPLEMENTATION
 // ============================================================================
-
-const frenchWebSource: DataSource = {
-  type: "news_api",
-  name: "FrenchWeb API",
-  url: "https://www.frenchweb.fr",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.9,
-};
 
 export const frenchWebApiConnector: Connector = {
   name: "FrenchWeb API",

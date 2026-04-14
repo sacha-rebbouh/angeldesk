@@ -3,8 +3,8 @@
 import {
   useEffect,
   useState,
-  useRef,
   useCallback,
+  useMemo,
   type ReactNode,
 } from "react";
 import * as Ably from "ably";
@@ -102,18 +102,13 @@ export default function LiveAblyProvider({
     useState<ConnectionStatus>("initialized");
   const [isReady, setIsReady] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  const clientRef = useRef<Ably.Realtime | null>(null);
-
-  // Stable authCallback using sessionId ref to avoid recreating the client
-  const sessionIdRef = useRef(sessionId);
-  sessionIdRef.current = sessionId;
 
   const createClient = useCallback(() => {
     const client = new Ably.Realtime({
       authCallback: async (_tokenParams, callback) => {
         try {
           const res = await fetch(
-            `/api/coaching/ably-token?sessionId=${sessionIdRef.current}`
+            `/api/coaching/ably-token?sessionId=${sessionId}&retry=${retryKey}`
           );
           if (!res.ok) {
             const errData = await res
@@ -137,12 +132,11 @@ export default function LiveAblyProvider({
     });
 
     return client;
-  }, []);
+  }, [sessionId, retryKey]);
+
+  const client = useMemo(() => createClient(), [createClient]);
 
   useEffect(() => {
-    const client = createClient();
-    clientRef.current = client;
-
     const handleStateChange = (stateChange: Ably.ConnectionStateChange) => {
       const state = stateChange.current as ConnectionStatus;
       setConnectionStatus(state);
@@ -154,21 +148,13 @@ export default function LiveAblyProvider({
 
     client.connection.on(handleStateChange);
 
-    // Set initial status
-    setConnectionStatus(client.connection.state as ConnectionStatus);
-    if (client.connection.state === "connected") {
-      setIsReady(true);
-    }
-
     return () => {
       client.connection.off(handleStateChange);
       client.close();
-      clientRef.current = null;
       setIsReady(false);
     };
     // retryKey triggers clean re-creation via useEffect lifecycle (no orphaned listeners)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [createClient, retryKey]);
+  }, [client]);
 
   const channelName = `live-session:${sessionId}`;
 
@@ -198,7 +184,7 @@ export default function LiveAblyProvider({
   }
 
   // Show status while connecting
-  if (!isReady || !clientRef.current) {
+  if (!isReady || !client) {
     return (
       <div className="space-y-3">
         <ConnectionStatusIndicator status={connectionStatus} />
@@ -215,7 +201,7 @@ export default function LiveAblyProvider({
   }
 
   return (
-    <AblyProvider client={clientRef.current}>
+    <AblyProvider client={client}>
       <ChannelProvider channelName={channelName}>
         <div className="space-y-2">
           <ConnectionStatusIndicator status={connectionStatus} />

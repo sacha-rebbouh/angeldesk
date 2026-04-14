@@ -8,12 +8,10 @@ import type {
   ExtractedFact,
   CurrentFact,
   MatchResult,
-  MatchResultType,
   ContradictionInfo,
   FactSource,
-  SOURCE_PRIORITY,
 } from './types';
-import { SOURCE_PRIORITY as PRIORITY } from './types';
+import { SOURCE_PRIORITY } from './types';
 import { getFactKeyDefinition } from './fact-keys';
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -297,7 +295,7 @@ export function detectAllContradictions(
  * @returns Priority number (higher = more authoritative)
  */
 export function getSourcePriority(source: FactSource): number {
-  return PRIORITY[source] ?? 0;
+  return SOURCE_PRIORITY[source] ?? 0;
 }
 
 /**
@@ -427,7 +425,7 @@ export function needsHumanReview(result: MatchResult): boolean {
  * @returns Array of sources sorted by priority
  */
 export function getSourcesByPriority(): FactSource[] {
-  return Object.entries(PRIORITY)
+  return Object.entries(SOURCE_PRIORITY)
     .sort(([, a], [, b]) => b - a)
     .map(([source]) => source as FactSource);
 }

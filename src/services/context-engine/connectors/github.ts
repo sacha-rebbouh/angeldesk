@@ -16,7 +16,6 @@ import type {
   Connector,
   ConnectorQuery,
   NewsArticle,
-  DataSource,
 } from "../types";
 
 // ============================================================================
@@ -140,14 +139,6 @@ async function rateLimitedFetch(url: string): Promise<Response | null> {
     return null;
   }
 }
-
-const githubSource: DataSource = {
-  type: "web_search",
-  name: "GitHub",
-  url: "https://github.com",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.95, // Direct from GitHub API
-};
 
 // ============================================================================
 // API FUNCTIONS

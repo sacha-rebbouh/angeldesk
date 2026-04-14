@@ -6,39 +6,42 @@
 // Analysis type options (kept for internal use / API compatibility)
 export const ANALYSIS_TYPES = [
   { value: "extraction", label: "Extraction documents", description: "~1min", tier: 1 },
-  { value: "tier1_complete", label: "Investigation Tier 1", description: "12 agents en parallèle", tier: 1 },
+  { value: "tier1_complete", label: "Investigation Tier 1", description: "13 agents en parallèle", tier: 1 },
   { value: "tier2_sector", label: "Expert Sectoriel Tier 2", description: "1 expert selon secteur", tier: 2 },
   { value: "full_dd", label: "Due Diligence complète", description: "~2min", tier: 2 },
-  { value: "tier3_synthesis", label: "Synthèse Tier 3", description: "5 agents (nécessite Tier 1)", tier: 3 },
-  { value: "full_analysis", label: "Analyse Complète", description: "18+ agents (Tier 1 + 2 + 3)", tier: 3 },
+  { value: "tier3_synthesis", label: "Synthèse Tier 3", description: "6 agents (nécessite Tier 1)", tier: 3 },
+  { value: "full_analysis", label: "Analyse Complète", description: "20 agents d'analyse + 2 étapes techniques", tier: 3 },
 ] as const;
 
 export type AnalysisTypeValue = typeof ANALYSIS_TYPES[number]["value"];
 
 // =============================================================================
-// PLAN-BASED ANALYSIS CONFIGURATION
-// Determines what analysis runs when user clicks "Analyser"
+// CREDIT-BASED ANALYSIS CONFIGURATION
+// Quick Scan = 1 credit (Tier 1), Deep Dive = 5 credits (Tier 1+2+3)
 // =============================================================================
 
-export const PLAN_ANALYSIS_CONFIG = {
-  FREE: {
+export const CREDIT_ANALYSIS_CONFIG = {
+  QUICK_SCAN: {
     analysisType: "tier1_complete" as AnalysisTypeValue,
-    label: "Analyse",
-    description: "Extraction + 12 agents d'investigation",
+    label: "Quick Scan",
+    description: "Screening rapide (13 agents Tier 1)",
+    credits: 1,
     includes: ["extraction", "tier1_complete"],
   },
-  PRO: {
+  DEEP_DIVE: {
     analysisType: "full_analysis" as AnalysisTypeValue,
-    label: "Analyse complète",
-    description: "Due Diligence complète + Expert sectoriel",
+    label: "Deep Dive",
+    description: "Analyse complète (Tier 1+2+3)",
+    credits: 5,
     includes: ["extraction", "tier1_complete", "tier2_sector", "tier3_synthesis", "full_analysis"],
   },
-  ENTERPRISE: {
-    analysisType: "full_analysis" as AnalysisTypeValue,
-    label: "Analyse complète",
-    description: "Due Diligence complète + Expert sectoriel",
-    includes: ["extraction", "tier1_complete", "tier2_sector", "tier3_synthesis", "full_analysis"],
-  },
+} as const;
+
+// Legacy aliases for backward compatibility
+export const PLAN_ANALYSIS_CONFIG = {
+  FREE: CREDIT_ANALYSIS_CONFIG.QUICK_SCAN,
+  PRO: CREDIT_ANALYSIS_CONFIG.DEEP_DIVE,
+  ENTERPRISE: CREDIT_ANALYSIS_CONFIG.DEEP_DIVE,
 } as const;
 
 export type SubscriptionPlan = keyof typeof PLAN_ANALYSIS_CONFIG;
@@ -48,28 +51,11 @@ export function getAnalysisTypeForPlan(plan: SubscriptionPlan): AnalysisTypeValu
 }
 
 // =============================================================================
-// FREE vs PRO DISPLAY LIMITS
-// Controls what FREE users see vs PRO users (with blur/teaser for rest)
+// DISPLAY LIMITS — Credit system: all users see full results for what they paid
+// No more blur/teaser — if you paid for a Deep Dive, you see everything
 // =============================================================================
 
-export const FREE_DISPLAY_LIMITS = {
-  // Items shown before blur
-  strengths: 2,           // Points forts visibles
-  weaknesses: 2,          // Faiblesses visibles
-  redFlags: 2,            // Red flags visibles
-  devilsAdvocate: 2,      // Objections Devil's Advocate visibles
-  criticalQuestions: 3,   // Questions critiques visibles
-
-  // Items completely hidden (teaser only)
-  score: false,           // Score détaillé masqué
-  contradictions: false,  // Détails contradictions masqués (count only)
-  scenarios: false,       // Aucun scénario affiché
-  sectorExpert: false,    // Expert sectoriel masqué
-  memo: false,            // Memo masqué
-} as const;
-
-// PRO has unlimited access
-export const PRO_DISPLAY_LIMITS = {
+export const FULL_DISPLAY_LIMITS = {
   strengths: Infinity,
   weaknesses: Infinity,
   redFlags: Infinity,
@@ -82,8 +68,13 @@ export const PRO_DISPLAY_LIMITS = {
   memo: true,
 } as const;
 
-export function getDisplayLimits(plan: SubscriptionPlan) {
-  return plan === "FREE" ? FREE_DISPLAY_LIMITS : PRO_DISPLAY_LIMITS;
+// Legacy aliases — with credits, everyone who paid sees full results
+export const FREE_DISPLAY_LIMITS = FULL_DISPLAY_LIMITS;
+export const PRO_DISPLAY_LIMITS = FULL_DISPLAY_LIMITS;
+
+export function getDisplayLimits(_plan: SubscriptionPlan) {
+  void _plan;
+  return FULL_DISPLAY_LIMITS;
 }
 
 // Agent lists for categorizing results

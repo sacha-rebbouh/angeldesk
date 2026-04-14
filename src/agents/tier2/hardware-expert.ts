@@ -33,8 +33,6 @@ import {
   mapCompetition,
   mapConsolidation,
   mapBarrier,
-  mapCategory,
-  mapPriority,
 } from "./output-mapper";
 import { HARDWARE_STANDARDS } from "./sector-standards";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
@@ -135,7 +133,7 @@ const HARDWARE_BENCHMARK_DATA: SectorBenchmarkData & {
       },
       sectorContext:
         "Hardware timelines are BRUTAL. La règle: multiplier par 2 toute estimation fondateur. " +
-        "> 24 mois = risque majeur de runway burnout. > 36 mois = dealbreaker. " +
+        "> 24 mois = risque majeur de runway burnout. > 36 mois = risque critique majeur." +
         "Causes fréquentes de delay: certifications (6-12mo), tooling (4-8mo), supply chain.",
       source: "HAX Accelerator data, Bolt Hardware timing studies",
     },
@@ -814,6 +812,7 @@ const HardwareExtendedOutputSchema = SectorExpertOutputSchema.extend({
     missingCritical: z.array(z.string()), limitations: z.array(z.string()),
   }),
 });
+void HardwareExtendedOutputSchema;
 
 // =============================================================================
 // HARDWARE-SPECIFIC PROMPT BUILDER
@@ -826,6 +825,7 @@ function buildHardwarePrompt(context: EnrichedAgentContext): {
   const deal = context.deal;
   const stage = deal.stage ?? "SEED";
   const benchmarks = HARDWARE_BENCHMARK_DATA;
+  void benchmarks;
 
   // Extract funding DB data
   const dbCompetitors = context.fundingContext?.competitors ?? [];
@@ -837,6 +837,7 @@ function buildHardwarePrompt(context: EnrichedAgentContext): {
     | "SEED"
     | "SERIES_A"
     | "SERIES_B";
+  void stageKey;
 
   // =============================================================================
   // SYSTEM PROMPT
@@ -1330,13 +1331,16 @@ export const hardwareExpert = {
 
     try {
       const { system, user } = buildHardwarePrompt(context);
+      // Data Reliability & Analytical Tone directives
+      const dataReliability = "\n\n## CLASSIFICATION DE FIABILITÉ DES DONNÉES (OBLIGATOIRE)\nChaque donnée que tu analyses a un niveau de fiabilité. Tu DOIS en tenir compte.\n\n**6 niveaux :** AUDITED (auditée) > VERIFIED (vérifiable) > DECLARED (déclarée, non vérifiée) > PROJECTED (projection future) > ESTIMATED (estimation dérivée) > UNVERIFIABLE (invérifiable).\n\n**Règles :** Ne JAMAIS traiter PROJECTED/ESTIMATED comme un fait. Signaler toute projection présentée comme fait (PROJECTION_AS_FACT). Indiquer le niveau de fiabilité pour chaque métrique clé. Respecter les classifications du Tier 0.\n";
+      const analyticalTone = "\n\n## TON ANALYTIQUE OBLIGATOIRE (RÈGLE N°1)\nAngel Desk ANALYSE et GUIDE, ne DÉCIDE JAMAIS. Le BA est le seul décideur.\n\n**INTERDIT :** \"Investir\", \"Ne pas investir\", \"Rejeter\", \"Passer\", \"GO/NO-GO\", \"Dealbreaker\", tout impératif.\n**OBLIGATOIRE :** Ton analytique (\"Les données montrent...\", \"Les signaux indiquent...\"). Constater des faits, laisser le BA conclure.\n";
       // Anti-Hallucination Directive — Citation Demand (Prompt 3/5)
       const citationDemand = "\n\n## Anti-Hallucination Directive — Citation Demand\nFor every factual claim in your response:\n1. Cite a specific, verifiable source (name, publication, date)\n2. If you cannot cite a specific source, mark the claim as [UNVERIFIED] and explain why you believe it to be true\n3. If you are relying on general training data rather than a specific source, say so explicitly\nDo not present unverified information as established fact.\n";
       const structuredUncertainty = "\n\n## Anti-Hallucination Directive — Structured Uncertainty\nStructure your response in three clearly labelled sections:\n**CONFIDENT:** Claims where you have strong evidence and high certainty (>90%)\n**PROBABLE:** Claims where you believe this is likely correct but acknowledge uncertainty (50-90%)\n**SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%)\nEvery claim must be placed in one of these three categories.\nDo not present speculative claims as confident ones.\n";
       setAgentContext("hardware-expert");
 
       const response = await complete(user, {
-        systemPrompt: system + citationDemand + structuredUncertainty,
+        systemPrompt: system + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
         complexity: "complex",
         temperature: 0.3,
       });

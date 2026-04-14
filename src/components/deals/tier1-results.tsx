@@ -25,7 +25,6 @@ import {
   Target,
   FileSearch,
   Globe,
-  Code,
   Scale,
   PieChart,
   Rocket,
@@ -62,7 +61,7 @@ import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-tease
 import { DataCompletenessGuide } from "@/components/shared/data-completeness-guide";
 import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
 import { Lightbulb } from "lucide-react";
-import { ALERT_SIGNAL_LABELS, READINESS_LABELS } from "@/lib/ui-configs";
+import { ALERT_SIGNAL_LABELS, READINESS_LABELS, BURN_EFFICIENCY_LABELS, MOAT_LABELS, PMF_LABELS, CONCENTRATION_LABELS, DIVERSIFICATION_LABELS, LEVEL_LABELS, getEnumLabel } from "@/lib/ui-configs";
 
 interface ReActMetadata {
   reasoningTrace: ReasoningTrace;
@@ -89,6 +88,8 @@ interface Tier1ResultsProps {
   onUnresolve?: (alertKey: string) => Promise<unknown>;
   isResolving?: boolean;
 }
+
+const EMPTY_FOUNDER_QUESTIONS: QuestionMasterData["findings"]["founderQuestions"] = [];
 
 // ReAct Badge Component - Shows when agent has ReAct metadata
 const ReActIndicator = memo(function ReActIndicator({
@@ -323,7 +324,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
                 data.findings.burn.efficiency === "INEFFICIENT" ? "bg-red-100 text-red-800" :
                 "bg-gray-100 text-gray-800"
               )}>
-                {data.findings.burn.efficiency}
+                {getEnumLabel(data.findings.burn.efficiency, BURN_EFFICIENCY_LABELS)}
               </Badge>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
@@ -774,7 +775,7 @@ const CompetitiveIntelCard = memo(function CompetitiveIntelCard({
               moatAnalysis.moatVerdict === "WEAK_MOAT" ? "bg-yellow-100 text-yellow-800" :
               "bg-red-100 text-red-800"
             )}>
-              {moatAnalysis.moatVerdict?.replace(/_/g, " ")}
+              {getEnumLabel(moatAnalysis.moatVerdict ?? "", MOAT_LABELS)}
             </Badge>
           </div>
         )}
@@ -1124,7 +1125,7 @@ const MarketIntelCard = memo(function MarketIntelCard({
         {/* Key Insights */}
         {narrative?.keyInsights?.length > 0 && (
           <div className="p-3 rounded-lg bg-cyan-50 border border-cyan-200">
-            <p className="text-sm font-medium text-cyan-700 mb-1">Insights cles</p>
+            <p className="text-sm font-medium text-cyan-700 mb-1">Insights clés</p>
             <ul className="text-xs text-muted-foreground space-y-1">
               {narrative.keyInsights.slice(0, 3).map((insight: string, i: number) => (
                 <li key={i} className="flex items-start gap-1">
@@ -2157,7 +2158,7 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
                 channelSummary.channelDiversification === "GOOD" ? "text-green-600" :
                 channelSummary.channelDiversification === "MODERATE" ? "text-yellow-600" : "text-red-600"
               )}>
-                {channelSummary.channelDiversification}
+                {getEnumLabel(channelSummary.channelDiversification, DIVERSIFICATION_LABELS)}
               </div>
             </div>
           </div>
@@ -2187,7 +2188,7 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
                         c.efficiency === "MEDIUM" ? "bg-yellow-100 text-yellow-800" :
                         "bg-red-100 text-red-800"
                       )}>
-                        {c.efficiency}
+                        {getEnumLabel(c.efficiency, LEVEL_LABELS)}
                       </Badge>
                     </div>
                   </div>
@@ -2415,7 +2416,6 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
   const retention = findings?.retention;
   const customerBase = findings?.customerBase;
   const concentration = findings?.concentration;
-  const icp = findings?.icp;
   const expansion = findings?.expansion;
   const claimsValidation = findings?.claimsValidation ?? [];
 
@@ -2485,7 +2485,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
                   pmf.pmfVerdict === "WEAK" ? "bg-orange-100 text-orange-800" :
                   "bg-red-100 text-red-800"
                 )}>
-                  {pmf.pmfVerdict}
+                  {getEnumLabel(pmf.pmfVerdict, PMF_LABELS)}
                 </Badge>
                 <span className="text-sm font-bold">{pmf.pmfScore}/100</span>
               </div>
@@ -2643,7 +2643,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
                 concentration.concentrationLevel === "HIGH" ? "bg-orange-100 text-orange-800" :
                 "bg-red-100 text-red-800"
               )}>
-                {concentration.concentrationLevel}
+                {getEnumLabel(concentration.concentrationLevel, CONCENTRATION_LABELS)}
               </Badge>
             </div>
             <div className="grid grid-cols-3 gap-2 text-xs">
@@ -2798,7 +2798,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
                   expansion.virality.verdict === "MODERATE" ? "text-yellow-600" :
                   expansion.virality.verdict === "WEAK" ? "text-orange-600" : "text-gray-600"
                 )}>
-                  {expansion.virality.verdict}
+                  {getEnumLabel(expansion.virality.verdict, PMF_LABELS)}
                 </div>
               </div>
             )}
@@ -3040,7 +3040,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
   const alertSignal = data.alertSignal;
 
   // Specific findings
-  const founderQuestions = findings?.founderQuestions ?? [];
+  const founderQuestions = findings?.founderQuestions ?? EMPTY_FOUNDER_QUESTIONS;
   const referenceChecks = findings?.referenceChecks ?? [];
   const negotiationPoints = findings?.negotiationPoints ?? [];
   const dealbreakers = findings?.dealbreakers ?? [];
@@ -3130,7 +3130,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
         {tier1Summary && (
           <div className="p-3 rounded-lg bg-violet-50 border border-violet-200">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-violet-800">Synthèse Tier 1</span>
+              <span className="text-sm font-medium text-violet-800">Synthèse analyse détaillée</span>
               <div className="flex gap-2">
                 {tier1Summary.totalCriticalRedFlags > 0 && (
                   <Badge variant="outline" className="bg-red-100 text-red-800 text-xs">
@@ -3398,7 +3398,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                     <XCircle className="h-4 w-4 text-red-600 shrink-0" />
                     <Badge variant="outline" className={cn(
                       "text-xs",
-                      d.severity === "ABSOLUTE" ? "bg-red-100 text-red-800" : "bg-orange-100 text-orange-800"
+                      d.severity === "CRITICAL" ? "bg-red-100 text-red-800" : "bg-orange-100 text-orange-800"
                     )}>
                       {d.severity}
                     </Badge>
@@ -3589,7 +3589,7 @@ const Tier1SummaryView = memo(function Tier1SummaryView({
         )}>
           {avgScore}/100
         </div>
-        <p className="text-sm text-muted-foreground">Score moyen Tier 1</p>
+        <p className="text-sm text-muted-foreground">Score moyen analyse détaillée</p>
       </div>
 
       {/* Weakest Dimensions */}
@@ -3645,7 +3645,7 @@ const Tier1SummaryView = memo(function Tier1SummaryView({
       {/* Top Insights */}
       {topInsights.length > 0 && (
         <div className="space-y-2">
-          <p className="text-sm font-medium text-blue-600">Insights cles</p>
+          <p className="text-sm font-medium text-blue-600">Insights clés</p>
           <ul className="space-y-1.5">
             {topInsights.map((insight, i) => (
               <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
@@ -3671,7 +3671,6 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
 
   // Get display limits based on plan
   const displayLimits = useMemo(() => getDisplayLimits(subscriptionPlan), [subscriptionPlan]);
-  const isFree = subscriptionPlan === "FREE";
 
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
@@ -3714,9 +3713,17 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
     if (techStackData) scoreList.push({ name: "Tech Stack", score: techStackData.score?.value ?? 0, icon: <Server className="h-4 w-4" /> });
     if (techOpsData) scoreList.push({ name: "Tech Ops", score: techOpsData.score?.value ?? 0, icon: <Shield className="h-4 w-4" /> });
     if (legalData) scoreList.push({ name: "Legal", score: legalData.score?.value ?? 0, icon: <Scale className="h-4 w-4" /> });
-    // v2.0 compatible with fallback to v1
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (capTableData) scoreList.push({ name: "Cap Table", score: (capTableData as any).score?.value ?? (capTableData as any).capTableScore ?? 0, icon: <PieChart className="h-4 w-4" /> });
+    if (capTableData) {
+      const capTable = capTableData as {
+        score?: { value?: number };
+        capTableScore?: number;
+      };
+      scoreList.push({
+        name: "Cap Table",
+        score: capTable.score?.value ?? capTable.capTableScore ?? 0,
+        icon: <PieChart className="h-4 w-4" />,
+      });
+    }
     if (gtmData) scoreList.push({ name: "GTM", score: gtmData.score?.value ?? 0, icon: <Rocket className="h-4 w-4" /> });
     if (customerData) scoreList.push({ name: "Customer", score: customerData.score?.value ?? 0, icon: <UserCheck className="h-4 w-4" /> });
     if (exitData) scoreList.push({ name: "Exit", score: exitData.score?.value ?? 0, icon: <TrendingUp className="h-4 w-4" /> });
@@ -3753,15 +3760,36 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
   const openReactData = openTraceAgent ? getReactData(openTraceAgent) : undefined;
 
   // Collect all red flags from all agents for consolidated view
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const allAgentRedFlags = useMemo(() => {
     const agents: { agentName: string; redFlags: Array<{ severity: "CRITICAL" | "HIGH" | "MEDIUM"; title: string; evidence?: string; question?: string; impact?: string; id?: string }> }[] = [];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const addAgent = (name: string, data: any) => {
-      if (data?.redFlags && data.redFlags.length > 0) {
-        agents.push({ agentName: name, redFlags: data.redFlags });
+    const addAgent = (
+      name: string,
+      data: unknown
+    ) => {
+      if (
+        !data ||
+        typeof data !== "object" ||
+        !("redFlags" in data) ||
+        !Array.isArray((data as { redFlags?: unknown }).redFlags) ||
+        (data as { redFlags: unknown[] }).redFlags.length === 0
+      ) {
+        return;
       }
+
+      agents.push({
+        agentName: name,
+        redFlags: (data as {
+          redFlags: Array<{
+            severity: "CRITICAL" | "HIGH" | "MEDIUM";
+            title: string;
+            evidence?: string;
+            question?: string;
+            impact?: string;
+            id?: string;
+          }>;
+        }).redFlags,
+      });
     };
 
     addAgent("financial-auditor", financialData);
@@ -3799,7 +3827,7 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <CardTitle>Synthèse Investigation Tier 1</CardTitle>
+              <CardTitle>Analyse détaillée</CardTitle>
               {reactAgentsCount > 0 && (
                 <Badge variant="outline" className="bg-primary/10 text-primary">
                   <Brain className="h-3 w-3 mr-1" />
@@ -3836,11 +3864,11 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
       {/* Tabbed Results */}
       <Tabs defaultValue="summary" className="w-full">
         <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="summary">Resume</TabsTrigger>
+          <TabsTrigger value="summary">Résumé</TabsTrigger>
           <TabsTrigger value="overview">Vue d&apos;ensemble</TabsTrigger>
           <TabsTrigger value="business">Business</TabsTrigger>
           <TabsTrigger value="technical">Technique</TabsTrigger>
-          <TabsTrigger value="strategic">Strategique</TabsTrigger>
+          <TabsTrigger value="strategic">Stratégique</TabsTrigger>
         </TabsList>
 
         {/* Summary Tab - F50 */}

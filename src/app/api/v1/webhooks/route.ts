@@ -11,6 +11,7 @@ import { authenticateApiRequest } from "../middleware";
 import { apiSuccess, apiError } from "@/lib/api-key-auth";
 import { handleApiError } from "@/lib/api-error";
 import { createApiTimer } from "@/lib/api-logger";
+import { validatePublicUrl } from "@/lib/url-validator";
 
 const VALID_EVENTS = [
   "analysis.completed",
@@ -64,25 +65,14 @@ export async function POST(request: NextRequest) {
       return apiError("VALIDATION_ERROR", "url must be a valid HTTPS URL", 400);
     }
 
-    // Anti-SSRF: reject private/internal URLs
-    try {
-      const parsed = new URL(url);
-      const hostname = parsed.hostname.toLowerCase();
-      const BLOCKED_HOSTS = [
-        "localhost", "127.0.0.1", "0.0.0.0", "::1",
-        "metadata.google.internal", "169.254.169.254",
-      ];
-      const BLOCKED_PREFIXES = ["10.", "172.16.", "172.17.", "172.18.", "172.19.",
-        "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
-        "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-        "192.168.", "0.", "fc00:", "fd00:", "fe80:"];
-      if (BLOCKED_HOSTS.includes(hostname) || BLOCKED_PREFIXES.some(p => hostname.startsWith(p)) || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
-        timer.error(400, "SSRF blocked");
-        return apiError("VALIDATION_ERROR", "Internal/private URLs are not allowed", 400);
-      }
-    } catch {
-      timer.error(400, "Invalid URL");
-      return apiError("VALIDATION_ERROR", "Invalid URL", 400);
+    const urlValidation = await validatePublicUrl(url);
+    if (!urlValidation.valid) {
+      timer.error(400, urlValidation.reason ?? "Invalid webhook URL");
+      return apiError(
+        "VALIDATION_ERROR",
+        urlValidation.reason ?? "Invalid webhook URL",
+        400
+      );
     }
 
     if (!Array.isArray(events) || events.length === 0) {

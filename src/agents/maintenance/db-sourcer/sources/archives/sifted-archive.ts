@@ -120,8 +120,8 @@ export const siftedArchiveConnector: PaginatedSourceConnector = {
 
   async fetch(cursor: string | null): Promise<PaginatedSourceResult> {
     const [sectorIndexStr, pageStr] = (cursor || '0:1').split(':')
-    let sectorIndex = parseInt(sectorIndexStr, 10)
-    let page = parseInt(pageStr, 10)
+    const sectorIndex = parseInt(sectorIndexStr, 10)
+    const page = parseInt(pageStr, 10)
 
     const items: ParsedFunding[] = []
 

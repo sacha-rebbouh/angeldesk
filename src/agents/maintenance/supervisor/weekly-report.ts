@@ -13,7 +13,7 @@ import type {
   DataQualityMetrics,
 } from '../types'
 import { getWeekStart, getWeekEnd, createLogger } from '../utils'
-import { captureQualitySnapshot, getLatestSnapshot, compareSnapshots } from './quality-snapshot'
+import { captureQualitySnapshot, compareSnapshots } from './quality-snapshot'
 import { notifyWeeklyReport } from '@/services/notifications'
 import { sendWeeklyReportEmail } from '@/services/notifications/email'
 
@@ -286,6 +286,7 @@ function determineHealthStatus(
 
   // Degraded if any run had partial success
   const allRuns = cleaner.totalRuns + sourcer.totalRuns + completer.totalRuns
+  void allRuns
   const partialRuns =
     (cleaner.successfulRuns - cleaner.failedRuns > cleaner.totalRuns ? 0 : 1) +
     (sourcer.successfulRuns - sourcer.failedRuns > sourcer.totalRuns ? 0 : 1) +

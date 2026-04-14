@@ -30,7 +30,6 @@ import type {
   AgentQuestion,
   AgentAlertSignal,
   AgentNarrative,
-  AgentResult,
 } from "../types";
 
 // ============================================================================
@@ -244,7 +243,7 @@ Evaluer les droits de l'investisseur.
 | Liquidation pref | 1x non-participating | 1x + participating capped | >1x, full ratchet |
 | Anti-dilution | Weighted average broad | Broad-based | Full ratchet |
 | Pro-rata | CRUCIAL en early stage | Oui | Non → dilution forcee |
-| Info rights | Minimum vital | Oui + board observer | Non → investir a l'aveugle |
+| Info rights | Minimum vital | Oui + board observer | Non → absence de visibilite |
 | Tag-along | Protection sortie | Oui | Non → BA bloque |
 
 Score:
@@ -315,7 +314,8 @@ CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):
 - Textes: 1-2 phrases MAX par champ
 
 ## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+`;
   }
 
   // ============================================================================
@@ -710,6 +710,7 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
   // ============================================================================
 
   private buildNoConditionsResult(context: EnrichedAgentContext): ConditionsAnalystData {
+    void context;
     const meta: AgentMeta = {
       agentName: "conditions-analyst",
       analysisDate: new Date().toISOString(),

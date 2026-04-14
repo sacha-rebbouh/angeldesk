@@ -30,21 +30,21 @@ const STEPS = [
   {
     id: 2,
     title: "Uploadez le pitch deck",
-    description: "Ajoutez le PDF du pitch deck. L'IA extraira automatiquement les metriques cles (valorisation, ARR, equipe...).",
+    description: "Ajoutez le PDF du pitch deck. L'IA extraira automatiquement les métriques clés (valorisation, ARR, équipe...).",
     icon: Upload,
     href: null,
   },
   {
     id: 3,
     title: "Lancez l'analyse",
-    description: "12 agents IA analysent le deal en parallele : finances, equipe, marche, tech, legal... En 2-3 minutes, c'est fait.",
+    description: "13 agents IA analysent le deal en parallèle : finances, équipe, marché, tech, legal... En 2-3 minutes, c'est fait.",
     icon: Play,
     href: null,
   },
   {
     id: 4,
-    title: "Explorez les resultats",
-    description: "Consultez le score, les red flags, et les questions a poser au fondateur. Utilisez le chat IA pour approfondir.",
+    title: "Explorez les résultats",
+    description: "Consultez le score, les red flags, et les questions à poser au fondateur. Utilisez le chat IA pour approfondir.",
     icon: MessageSquare,
     href: null,
   },
@@ -86,7 +86,7 @@ export const FirstDealGuide = memo(function FirstDealGuide({
           Bienvenue {userName} ! Voici comment analyser votre premier deal
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          En 1 heure, obtenez une analyse digne d'un fonds VC. Suivez ces 4 etapes.
+          En 1 heure, obtenez une analyse digne d&apos;un fonds VC. Suivez ces 4 étapes.
         </p>
       </CardHeader>
       <CardContent>

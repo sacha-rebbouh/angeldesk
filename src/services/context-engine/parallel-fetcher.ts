@@ -96,9 +96,37 @@ const CONNECTOR_TIER_MAP: Record<string, keyof typeof CONNECTOR_TIERS> = {
   indeed: "slow",
 };
 
+const MAX_CONNECTOR_CONCURRENCY = 4;
+
+class ConnectorTimeoutError extends Error {
+  constructor(connectorName: string, timeoutMs: number) {
+    super(`${connectorName} timed out after ${timeoutMs}ms`);
+    this.name = "ConnectorTimeoutError";
+  }
+}
+
 function getConnectorConfig(connectorName: string): FetchConfig {
   const tier = CONNECTOR_TIER_MAP[connectorName] || "fast";
   return CONNECTOR_TIERS[tier];
+}
+
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency = MAX_CONNECTOR_CONCURRENCY
+): Promise<T[]> {
+  const results: T[] = [];
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const currentIndex = nextIndex++;
+      results[currentIndex] = await tasks[currentIndex]();
+    }
+  }
+
+  const workerCount = Math.min(concurrency, tasks.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
 }
 
 // ============================================================================
@@ -114,7 +142,7 @@ async function withTimeout<T>(
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
-      reject(new Error(`${connectorName} timed out after ${timeoutMs}ms`));
+      reject(new ConnectorTimeoutError(connectorName, timeoutMs));
     }, timeoutMs);
   });
 
@@ -148,6 +176,13 @@ async function withRetry<T>(
       lastError = error instanceof Error ? error : new Error(String(error));
       retries = attempt;
 
+      // The legacy connector contract does not propagate AbortSignal into every
+      // underlying fetch. Do not start retries after timeout, because the timed
+      // out request may still be draining sockets/quotas in the background.
+      if (lastError instanceof ConnectorTimeoutError) {
+        break;
+      }
+
       if (attempt < config.maxRetries) {
         // Exponential backoff
         const delay = config.retryDelayMs * Math.pow(2, attempt);
@@ -176,7 +211,7 @@ export async function fetchSimilarDealsParallel(
   const relevantConnectors = connectors.filter((c) => c.searchSimilarDeals);
   const startTime = Date.now();
 
-  const promises = relevantConnectors.map(async (connector): Promise<ConnectorResult<SimilarDeal[]>> => {
+  const tasks = relevantConnectors.map((connector) => async (): Promise<ConnectorResult<SimilarDeal[]>> => {
     const connectorStart = Date.now();
     const config = getConnectorConfig(connector.name);
 
@@ -227,7 +262,7 @@ export async function fetchSimilarDealsParallel(
     }
   });
 
-  const results = await Promise.all(promises);
+  const results = await runWithConcurrency(tasks);
 
   // Aggregate all deals
   const allDeals: SimilarDeal[] = [];
@@ -269,7 +304,7 @@ export async function fetchMarketDataParallel(
   const relevantConnectors = connectors.filter((c) => c.getMarketData);
   const startTime = Date.now();
 
-  const promises = relevantConnectors.map(async (connector): Promise<ConnectorResult<MarketData>> => {
+  const tasks = relevantConnectors.map((connector) => async (): Promise<ConnectorResult<MarketData>> => {
     const connectorStart = Date.now();
     const config = getConnectorConfig(connector.name);
 
@@ -322,7 +357,7 @@ export async function fetchMarketDataParallel(
     }
   });
 
-  const results = await Promise.all(promises);
+  const results = await runWithConcurrency(tasks);
 
   // AGGREGATE market data from all sources (not just first one!)
   const aggregatedData: MarketData = {
@@ -376,7 +411,7 @@ export async function fetchCompetitorsParallel(
   const relevantConnectors = connectors.filter((c) => c.getCompetitors);
   const startTime = Date.now();
 
-  const promises = relevantConnectors.map(async (connector): Promise<ConnectorResult<Competitor[]>> => {
+  const tasks = relevantConnectors.map((connector) => async (): Promise<ConnectorResult<Competitor[]>> => {
     const connectorStart = Date.now();
     const config = getConnectorConfig(connector.name);
 
@@ -426,7 +461,7 @@ export async function fetchCompetitorsParallel(
     }
   });
 
-  const results = await Promise.all(promises);
+  const results = await runWithConcurrency(tasks);
 
   // Aggregate and deduplicate
   const allCompetitors: Competitor[] = [];
@@ -467,7 +502,7 @@ export async function fetchNewsParallel(
   const relevantConnectors = connectors.filter((c) => c.getNews);
   const startTime = Date.now();
 
-  const promises = relevantConnectors.map(async (connector): Promise<ConnectorResult<NewsArticle[]>> => {
+  const tasks = relevantConnectors.map((connector) => async (): Promise<ConnectorResult<NewsArticle[]>> => {
     const connectorStart = Date.now();
     const config = getConnectorConfig(connector.name);
 
@@ -517,7 +552,7 @@ export async function fetchNewsParallel(
     }
   });
 
-  const results = await Promise.all(promises);
+  const results = await runWithConcurrency(tasks);
 
   // Aggregate and sort by date
   const allNews: NewsArticle[] = [];

@@ -13,8 +13,6 @@ import {
   SAAS_BENCHMARKS,
   VALUATION_MULTIPLES,
   getBenchmark,
-  calculatePercentile as calcStaticPercentile,
-  getPercentileAssessment as getStaticAssessment,
   normalizeStage,
   type StageName,
 } from "@/data/benchmarks/saas-benchmarks";

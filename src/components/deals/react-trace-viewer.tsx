@@ -29,8 +29,6 @@ import {
   Zap,
   Search,
   Database,
-  Calculator,
-  FileText,
   AlertTriangle,
   Info,
 } from "lucide-react";
@@ -122,19 +120,6 @@ function ThoughtTypeBadge({ type }: { type: ThoughtType }) {
       {c.label}
     </Badge>
   );
-}
-
-function ToolIcon({ toolName }: { toolName: string }) {
-  const icons: Record<string, React.ReactNode> = {
-    searchBenchmarks: <Database className="h-4 w-4 text-indigo-500" />,
-    analyzeSection: <FileText className="h-4 w-4 text-blue-500" />,
-    crossReference: <Search className="h-4 w-4 text-purple-500" />,
-    calculateMetric: <Calculator className="h-4 w-4 text-green-500" />,
-    writeMemory: <Database className="h-4 w-4 text-amber-500" />,
-    readMemory: <Database className="h-4 w-4 text-amber-500" />,
-  };
-
-  return icons[toolName] ?? <Play className="h-4 w-4 text-gray-500" />;
 }
 
 function ExpandableSection({
@@ -395,7 +380,8 @@ function FindingCard({ finding }: { finding: ScoredFinding }) {
 // MAIN COMPONENT
 // ============================================================================
 
-export const ReActTraceViewer = memo(function ReActTraceViewer({ agentName, data, defaultExpanded = false }: ReActTraceViewerProps) {
+export const ReActTraceViewer = memo(function ReActTraceViewer({ agentName: _agentName, data, defaultExpanded = false }: ReActTraceViewerProps) {
+  void _agentName;
   const { reasoningTrace, findings, confidence, expectedVariance } = data;
 
   const findingsWithBenchmark = useMemo(

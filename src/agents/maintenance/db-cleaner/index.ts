@@ -20,11 +20,7 @@ import type {
   CleanerDetails,
   CleanerOptions,
   CleanerPlan,
-  CleanerPlanSummary,
   AgentError,
-  PlannedNormalization,
-  PlannedDeletion,
-  PlannedAberrantFix,
 } from '../types'
 import {
   createLogger,
@@ -53,14 +49,10 @@ import {
   removeOrphans,
   fixAberrantValues,
   planInvalidEntriesRemoval,
-  planOrphansRemoval,
   planAberrantValuesFix,
 } from './cleanup'
 
 const logger = createLogger('DB_CLEANER')
-
-// Transaction timeout: 5 minutes (enough for large datasets)
-const TRANSACTION_TIMEOUT_MS = 5 * 60 * 1000
 
 // ============================================================================
 // MAIN AGENT
@@ -751,5 +743,14 @@ async function fixAberrantValuesWithTx(tx: TransactionClient) {
 
   return { removed: 0, fixed }
 }
+
+void [
+  removeInvalidEntriesWithTx,
+  normalizeCountriesWithTx,
+  normalizeStagesWithTx,
+  normalizeIndustriesWithTx,
+  removeOrphansWithTx,
+  fixAberrantValuesWithTx,
+]
 
 export default runCleaner

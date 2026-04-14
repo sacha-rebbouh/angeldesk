@@ -1,6 +1,7 @@
 import { put, del } from "@vercel/blob";
 import { writeFile, mkdir, unlink } from "fs/promises";
 import { join, resolve, normalize } from "path";
+import { encryptBuffer, safeDecryptBuffer } from "@/lib/encryption";
 
 export interface UploadResult {
   url: string;
@@ -40,10 +41,13 @@ export async function uploadFile(
   file: File | Buffer,
   options?: { access?: "public" | "private" }
 ): Promise<UploadResult> {
+  const buffer = await toBuffer(file);
+  const content = options?.access === "private" ? encryptBuffer(buffer) : buffer;
+
   if (isVercelBlobConfigured) {
-    return uploadToVercelBlob(path, file, options);
+    return uploadToVercelBlob(path, content);
   }
-  return uploadToLocal(path, file);
+  return uploadToLocal(path, content);
 }
 
 /**
@@ -70,11 +74,15 @@ export async function deleteFile(urlOrPath: string): Promise<void> {
  * Download a file from storage as Buffer
  */
 export async function downloadFile(urlOrPath: string): Promise<Buffer> {
+  let buffer: Buffer;
+
   if (isVercelBlobConfigured) {
     const res = await fetch(urlOrPath);
     if (!res.ok) throw new Error(`Failed to download from blob: ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    buffer = Buffer.from(await res.arrayBuffer());
+    return safeDecryptBuffer(buffer);
   }
+
   const { readFile } = await import("fs/promises");
   const baseDir = join(process.cwd(), "public", "uploads");
 
@@ -85,7 +93,8 @@ export async function downloadFile(urlOrPath: string): Promise<Buffer> {
 
   // Sanitize to prevent path traversal
   const localPath = sanitizePath(baseDir, pathPart);
-  return readFile(localPath);
+  buffer = await readFile(localPath);
+  return safeDecryptBuffer(buffer);
 }
 
 /**
@@ -102,10 +111,11 @@ export function getPublicUrl(pathname: string): string {
 // --- Vercel Blob ---
 async function uploadToVercelBlob(
   path: string,
-  file: File | Buffer,
-  _options?: { access?: "public" | "private" }
+  file: Buffer
 ): Promise<UploadResult> {
-  // Vercel Blob only supports "public" access in the free tier
+  // Vercel Blob only supports public blobs. Private uploads are encrypted by
+  // uploadFile() before reaching this function and must be served through an
+  // authenticated API route that calls downloadFile().
   const blob = await put(path, file, {
     access: "public",
   });
@@ -118,7 +128,7 @@ async function uploadToVercelBlob(
 // --- Local Storage (dev) ---
 async function uploadToLocal(
   path: string,
-  file: File | Buffer
+  file: Buffer
 ): Promise<UploadResult> {
   const uploadsDir = join(process.cwd(), "public", "uploads");
 
@@ -129,17 +139,8 @@ async function uploadToLocal(
   // Ensure directory exists
   await mkdir(dir, { recursive: true });
 
-  // Convert File to Buffer if needed
-  let buffer: Buffer;
-  if (file instanceof File) {
-    const arrayBuffer = await file.arrayBuffer();
-    buffer = Buffer.from(arrayBuffer);
-  } else {
-    buffer = file;
-  }
-
   // Write file
-  await writeFile(fullPath, buffer);
+  await writeFile(fullPath, file);
 
   // Extract relative path for URL
   const relativePath = fullPath.replace(uploadsDir + "/", "");
@@ -149,6 +150,14 @@ async function uploadToLocal(
     url: publicUrl,
     pathname: relativePath,
   };
+}
+
+async function toBuffer(file: File | Buffer): Promise<Buffer> {
+  if (file instanceof File) {
+    const arrayBuffer = await file.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+  return file;
 }
 
 // Export config check for debugging

@@ -14,7 +14,7 @@ export function buildDatasourceUrl(): string | undefined {
   if (!baseUrl) return undefined;
 
   const separator = baseUrl.includes("?") ? "&" : "?";
-  return `${baseUrl}${separator}connection_limit=15&pool_timeout=30`;
+  return `${baseUrl}${separator}connection_limit=25&pool_timeout=30`;
 }
 
 /**
@@ -25,7 +25,7 @@ export function buildDatasourceUrl(): string | undefined {
  * - For direct connections (migrations), use DIRECT_DATABASE_URL without pgbouncer
  *
  * Pool settings:
- * - connection_limit=15: prevents exhausting Neon's pool (default ~29 connections)
+ * - connection_limit=25: increased from 15 for concurrent analyses (Neon pool ~29 connections)
  * - pool_timeout=30: increases timeout from 10s to 30s for breathing room during analysis
  */
 export const prisma =

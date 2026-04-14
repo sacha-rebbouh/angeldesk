@@ -15,7 +15,7 @@ import type {
   ReferenceCheck,
   DiligenceChecklistItem,
   NegotiationPoint,
-  Dealbreaker,
+  CriticalQuestion,
   AgentFindingsSummary,
   AgentResult,
 } from "../types";
@@ -26,7 +26,7 @@ import { calculateAgentScore, QUESTION_MASTER_CRITERIA, type ExtractedMetric } f
  *
  * Mission: Synthetiser TOUS les findings des agents Tier 1 en questions actionnables
  * Persona: Senior Partner VC avec 25+ ans d'experience en due diligence
- * Standard: Questions qui debloquent des deals ou revelent des dealbreakers
+ * Standard: Questions qui debloquent des deals ou revelent des risques critiques
  *
  * Inputs:
  * - Tous les resultats des agents Tier 1 (via previousResults)
@@ -38,21 +38,9 @@ import { calculateAgentScore, QUESTION_MASTER_CRITERIA, type ExtractedMetric } f
  * - 5+ reference checks structures
  * - Checklist DD complete
  * - 5+ points de negociation avec leverage
- * - Dealbreakers identifies
- * - Synthese de readiness (READY/NEEDS_DD/CONCERNS/NO_GO)
+ * - Risques critiques identifies
+ * - Synthese de readiness (READY/NEEDS_DD/CONCERNS/ALERT_DOMINANT)
  */
-
-// ============================================================================
-// SCORING FRAMEWORK
-// ============================================================================
-
-const SCORING_CRITERIA = {
-  questionsRelevance: { weight: 30, description: "Pertinence et profondeur des questions generees" },
-  ddCompleteness: { weight: 25, description: "Completude de la checklist DD" },
-  negotiationLeverage: { weight: 20, description: "Qualite des leviers de negociation identifies" },
-  riskIdentification: { weight: 15, description: "Identification des dealbreakers et risques" },
-  actionability: { weight: 10, description: "Caractere actionnable des recommandations" },
-} as const;
 
 // ============================================================================
 // LLM RESPONSE INTERFACE
@@ -148,9 +136,9 @@ interface LLMQuestionMasterResponse {
         valueRange: string;
       };
     }[];
-    dealbreakers: {
+    criticalQuestions: {
       id: string;
-      severity: "ABSOLUTE" | "CONDITIONAL";
+      severity: "CRITICAL" | "HIGH";
       condition: string;
       description: string;
       sourceAgent: string;
@@ -272,7 +260,7 @@ Le BA doit savoir exactement:
 2. Quels reference checks faire (et quoi chercher)
 3. Quels documents demander (et quoi verifier)
 4. Quels points negocier (et avec quel leverage)
-5. Quels sont les dealbreakers (et s'ils sont resolubles)
+5. Quels sont les risques critiques (et s'ils sont resolubles)
 
 # METHODOLOGIE D'ANALYSE
 
@@ -286,7 +274,7 @@ Le BA doit savoir exactement:
 Pour CHAQUE red flag et concern:
 - Generer une question SPECIFIQUE (pas generique)
 - Contextualiser: pourquoi on pose cette question (donnee declencheuse)
-- Definir: bonne reponse vs mauvaise reponse vs dealbreaker
+- Definir: bonne reponse vs mauvaise reponse vs risque critique
 - Planifier: question de suivi si reponse insuffisante
 
 ## Etape 3: Preparation des reference checks
@@ -306,7 +294,7 @@ Pour chaque levier identifie par les agents (valorisation agressive, red flags, 
 - Proposer l'approche et le fallback
 
 ## Etape 6: Synthese finale
-- Dealbreakers absolus vs conditionnels
+- Risques critiques absolus vs conditionnels
 - Top 5 priorities immédiates
 - Timeline suggeree pour la DD
 
@@ -331,7 +319,7 @@ Pour chaque levier identifie par les agents (valorisation agressive, red flags, 
 | first_meeting | Premier call/meeting | Vision, pourquoi maintenant, equipe |
 | second_meeting | Deep dive | Execution, metriques, concurrence |
 | dd_phase | Due diligence formelle | Financials detailles, legal, tech |
-| pre_term_sheet | Avant signature | Dealbreakers, negociation |
+| pre_term_sheet | Avant signature | Risques critiques, negociation |
 
 # REFERENCE CHECKS - CIBLES PRIORITAIRES
 
@@ -365,12 +353,12 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 
 | Priorite | Definition | Exemples |
 |----------|------------|----------|
-| CRITICAL | Questions DEAL-BREAKING - sans reponse satisfaisante = NO GO | Fraude suspectee, chiffres contradictoires majeurs, fondateur avec historique problematique |
-| HIGH | Questions essentielles pour la decision d'investir | Validation des metriques cles, plan d'execution, composition equity |
+| CRITICAL | Questions CRITIQUES - sans reponse satisfaisante, risque majeur pour la these d'investissement | Fraude suspectee, chiffres contradictoires majeurs, fondateur avec historique problematique |
+| HIGH | Questions essentielles pour eclairer la decision | Validation des metriques cles, plan d'execution, composition equity |
 | MEDIUM | Questions importantes mais non bloquantes | Details operationnels, plans secondaires |
 | LOW | Questions nice-to-have pour approfondir | Contexte additionnel, vision long terme |
 
-IMPORTANT: Les questions CRITICAL et HIGH sont OBLIGATOIRES avant la decision d'investissement.
+IMPORTANT: Les questions CRITICAL et HIGH sont OBLIGATOIRES avant toute decision.
 Le Business Angel ne peut pas re-analyser le deal tant qu'il n'a pas repondu a TOUTES les questions CRITICAL et HIGH.
 
 # REGLES ABSOLUES
@@ -417,7 +405,7 @@ Regles:
   "evaluation": {
     "goodAnswer": "Le 800K inclut les contrats signes Q4 non encore factures. Voici les contrats signes.",
     "badAnswer": "C'est une projection / Je ne comprends pas la question / Les deux sont corrects",
-    "redFlagIfBadAnswer": "Fondateur qui gonfle ses chiffres ou qui ne maitrise pas ses metriques - NO GO immediat",
+    "redFlagIfBadAnswer": "Fondateur qui gonfle ses chiffres ou qui ne maitrise pas ses metriques - risque critique",
     "followUpIfBad": "Pouvez-vous me montrer le detail de chaque ligne de revenu recurrent?"
   },
   "timing": "first_meeting"
@@ -533,7 +521,7 @@ ${previousQuestionsSection}
 3. PREPARE 5+ reference checks avec profils cibles et questions
 4. CREE une checklist DD complete avec critical path
 5. IDENTIFIE 5+ points de negociation avec leverage concret
-6. DETERMINE les dealbreakers (absolus vs conditionnels)
+6. DETERMINE les risques critiques (absolus vs conditionnels)
 7. CALCULE le readiness global et la timeline suggeree
 
 ## OUTPUT ATTENDU
@@ -670,11 +658,11 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
         }
       }
     ],
-    "dealbreakers": [
+    "criticalQuestions": [
       {
-        "id": "DB-001",
-        "severity": "ABSOLUTE|CONDITIONAL",
-        "condition": "Condition du dealbreaker",
+        "id": "CQ-001",
+        "severity": "CRITICAL|HIGH",
+        "condition": "Condition du risque critique",
         "description": "Description",
         "sourceAgent": "Agent source",
         "linkedRedFlags": ["RF-001"],
@@ -806,11 +794,11 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
         unit: "score", source: "Negotiation points", dataReliability: "VERIFIED", category: "product",
       });
 
-      // Dealbreakers
-      const dealbreakers = f?.dealbreakers ?? [];
+      // Critical Questions (risques critiques)
+      const criticalQs = f?.criticalQuestions ?? [];
       extractedMetrics.push({
-        name: "dealbreakers_identified", value: dealbreakers.length > 0 ? Math.min(100, dealbreakers.length * 25) : 50,
-        unit: "score", source: "Dealbreaker analysis", dataReliability: "VERIFIED", category: "product",
+        name: "critical_questions_identified", value: criticalQs.length > 0 ? Math.min(100, criticalQs.length * 25) : 50,
+        unit: "score", source: "Critical questions analysis", dataReliability: "VERIFIED", category: "product",
       });
 
       if (extractedMetrics.length > 0) {
@@ -1275,23 +1263,29 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
         }))
       : [];
 
-    // Normalize dealbreakers
-    const validDBSeverities = ["ABSOLUTE", "CONDITIONAL"] as const;
+    // Normalize critical questions (risques critiques)
+    const severityMap: Record<string, "ABSOLUTE" | "CONDITIONAL"> = {
+      "ABSOLUTE": "ABSOLUTE",
+      "CONDITIONAL": "CONDITIONAL",
+      // Legacy compat — map old LLM values to new type values
+      "CRITICAL": "ABSOLUTE",
+      "HIGH": "CONDITIONAL",
+    };
 
-    const dealbreakers: Dealbreaker[] = Array.isArray(findings?.dealbreakers)
-      ? findings.dealbreakers.map((db, idx) => ({
-          id: db.id ?? `DB-${String(idx + 1).padStart(3, "0")}`,
-          severity: validDBSeverities.includes(db.severity as typeof validDBSeverities[number])
-            ? db.severity
-            : "CONDITIONAL",
-          condition: db.condition ?? "",
-          description: db.description ?? "",
-          sourceAgent: db.sourceAgent ?? "",
-          linkedRedFlags: Array.isArray(db.linkedRedFlags) ? db.linkedRedFlags : [],
-          resolvable: db.resolvable ?? true,
-          resolutionPath: db.resolutionPath,
-          timeToResolve: db.timeToResolve,
-          riskIfIgnored: db.riskIfIgnored ?? "",
+    // Support both new (criticalQuestions) and legacy (dealbreakers) field names from LLM
+    const rawCriticalQuestions = findings?.criticalQuestions ?? (findings as Record<string, unknown>)?.dealbreakers;
+    const criticalQuestions: CriticalQuestion[] = Array.isArray(rawCriticalQuestions)
+      ? (rawCriticalQuestions as Array<Record<string, unknown>>).map((db, idx) => ({
+          id: (db.id as string) ?? `CQ-${String(idx + 1).padStart(3, "0")}`,
+          severity: severityMap[db.severity as string] ?? "CONDITIONAL",
+          condition: (db.condition as string) ?? "",
+          description: (db.description as string) ?? "",
+          sourceAgent: (db.sourceAgent as string) ?? "",
+          linkedRedFlags: Array.isArray(db.linkedRedFlags) ? (db.linkedRedFlags as string[]) : [],
+          resolvable: (db.resolvable as boolean) ?? true,
+          resolutionPath: db.resolutionPath as string | undefined,
+          timeToResolve: db.timeToResolve as string | undefined,
+          riskIfIgnored: (db.riskIfIgnored as string) ?? "",
         }))
       : [];
 
@@ -1349,7 +1343,8 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       referenceChecks,
       diligenceChecklist,
       negotiationPoints,
-      dealbreakers,
+      criticalQuestions,
+      dealbreakers: criticalQuestions, // backward compat
       tier1Summary,
       topPriorities,
       suggestedTimeline,

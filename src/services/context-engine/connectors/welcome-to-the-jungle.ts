@@ -17,7 +17,6 @@ import type {
   Connector,
   ConnectorQuery,
   NewsArticle,
-  DataSource,
 } from "../types";
 
 // ============================================================================
@@ -162,14 +161,6 @@ function categorizeDepartment(title: string, department: string): string {
 
   return "Other";
 }
-
-const wttjSource: DataSource = {
-  type: "web_search",
-  name: "Welcome to the Jungle",
-  url: "https://www.welcometothejungle.com",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.85,
-};
 
 // ============================================================================
 // SCRAPING FUNCTIONS

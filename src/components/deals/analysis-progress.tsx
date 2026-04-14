@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useState, useRef, useMemo } from "react";
+import { memo, useMemo, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 import { Check, Loader2, XCircle } from "lucide-react";
 import { formatAgentName } from "@/lib/format-utils";
@@ -48,6 +48,17 @@ interface StepConfig {
   threshold: number;
 }
 
+function useNow(intervalMs: number): number {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const interval = setInterval(onStoreChange, intervalMs);
+      return () => clearInterval(interval);
+    },
+    () => Date.now(),
+    () => Date.now(),
+  );
+}
+
 export const AnalysisProgress = memo(function AnalysisProgress({
   isRunning,
   analysisType = "full_analysis",
@@ -56,6 +67,8 @@ export const AnalysisProgress = memo(function AnalysisProgress({
   totalAgents = 0,
   startedAt,
 }: AnalysisProgressProps) {
+  const nowMs = useNow(1000);
+
   // Build steps based on analysis type (FREE vs PRO)
   const steps = useMemo<StepConfig[]>(() => {
     if (analysisType === "tier1_complete") {
@@ -74,43 +87,12 @@ export const AnalysisProgress = memo(function AnalysisProgress({
     ];
   }, [analysisType]);
 
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [isComplete, setIsComplete] = useState(false);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Compute elapsed time from backend startedAt (survives page reloads)
-  useEffect(() => {
-    const computeElapsed = () => {
-      if (startedAt) {
-        const start = new Date(startedAt).getTime();
-        setElapsedTime((Date.now() - start) / 1000);
-      }
-    };
-
-    computeElapsed();
-
-    if (isRunning) {
-      intervalRef.current = setInterval(computeElapsed, 1000);
-    }
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [isRunning, startedAt]);
-
-  // When isRunning becomes false, mark as complete
-  useEffect(() => {
-    if (!isRunning && completedAgents > 0) {
-      setIsComplete(true);
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    }
-  }, [isRunning, completedAgents]);
+  const isComplete = !isRunning && completedAgents > 0;
+  const elapsedTime = useMemo(() => {
+    if (!startedAt) return 0;
+    const start = new Date(startedAt).getTime();
+    return Math.max(0, (nowMs - start) / 1000);
+  }, [nowMs, startedAt]);
 
   // Calculate step statuses based on REAL completedAgents from backend
   const stepStatuses = useMemo(() => {
@@ -170,7 +152,7 @@ export const AnalysisProgress = memo(function AnalysisProgress({
                 Analyse en cours
                 {totalAgents > 0 && (
                   <span className="text-muted-foreground font-normal ml-1">
-                    ({completedAgents}/{totalAgents} agents — {progressPercent}%)
+                    ({completedAgents}/{totalAgents} étapes — {progressPercent}%)
                   </span>
                 )}
               </span>

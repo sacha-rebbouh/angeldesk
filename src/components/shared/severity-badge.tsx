@@ -26,7 +26,7 @@ const SEVERITY_CONFIG: Record<string, {
     label: "ELEVE",
     color: "bg-orange-100 text-orange-800 border-orange-300",
     impact: "Risque sérieux qui peut réduire significativement le retour attendu ou bloquer la croissance.",
-    action: "Poser la question au fondateur AVANT d'investir. Négocier une protection (clause, milestone).",
+    action: "Poser la question au fondateur avant toute décision. Négocier une protection (clause, milestone).",
   },
   MEDIUM: {
     label: "MOYEN",

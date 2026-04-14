@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { downloadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 import { encryptText } from "@/lib/encryption";
+import {
+  recordDocumentExtractionRun,
+  summarizeManifestForLegacyMetrics,
+} from "@/services/documents/extraction-runs";
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 interface RouteParams {
   params: Promise<{ documentId: string }>;
@@ -51,8 +54,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Force OCR with low threshold to process all pages
     const result = await smartExtract(buffer, {
       qualityThreshold: 100, // Force OCR on all pages
-      maxOCRPages: 50,
+      maxOCRPages: Number.POSITIVE_INFINITY,
       autoOCR: true,
+      strict: true,
     });
 
     const extractionWarnings: ExtractionWarning[] = [];
@@ -79,17 +83,29 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       suggestion: "Text extracted via OCR.",
     });
 
+    const extractionRun = await recordDocumentExtractionRun({
+      documentId,
+      documentVersion: document.version,
+      contentHash: document.contentHash,
+      text: result.text,
+      qualityScore: result.quality,
+      manifest: result.manifest,
+      warnings: extractionWarnings,
+    });
+
     const updated = await prisma.document.update({
       where: { id: documentId },
       data: {
         extractedText: result.text ? encryptText(result.text) : null,
-        processingStatus: "COMPLETED",
+        processingStatus: result.text ? "COMPLETED" : "FAILED",
         extractionQuality: result.quality,
         extractionMetrics: {
           quality: result.quality,
           method: "ocr",
           pagesOCRd: result.pagesOCRd,
           ocrCost: result.estimatedCost,
+          latestExtractionRunId: extractionRun.id,
+          ...summarizeManifestForLegacyMetrics(result.manifest),
         },
         extractionWarnings: JSON.parse(JSON.stringify(extractionWarnings)),
         requiresOCR: false,
@@ -103,7 +119,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         quality: result.quality,
         pagesOCRd: result.pagesOCRd,
         ocrCost: result.estimatedCost,
-        isUsable: result.quality >= 40,
+        isUsable: extractionRun.readyForAnalysis,
+        manifest: result.manifest,
       },
     });
   } catch (error) {

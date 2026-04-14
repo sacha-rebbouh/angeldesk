@@ -15,9 +15,7 @@
 
 import type {
   Connector,
-  ConnectorQuery,
   FounderBackground,
-  DataSource,
 } from "../types";
 
 // ============================================================================
@@ -201,14 +199,6 @@ function extractFounderRoles(officers: CompaniesHouseOfficer[]): CompaniesHouseO
   );
 }
 
-const chSource: DataSource = {
-  type: "crunchbase", // Using as company data source
-  name: "Companies House UK",
-  url: "https://find-and-update.company-information.service.gov.uk/",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.95, // Very high - official government data
-};
-
 // ============================================================================
 // CONNECTOR IMPLEMENTATION
 // ============================================================================
@@ -221,9 +211,7 @@ export const companiesHouseConnector: Connector = {
     return !!getApiKey();
   },
 
-  getFounderBackground: async (
-    founderName: string
-  ): Promise<FounderBackground | null> => {
+  getFounderBackground: async (): Promise<FounderBackground | null> => {
     // Companies House doesn't have a direct person search
     // but we can search for companies and then look at officers
     // This is limited but can provide some verification

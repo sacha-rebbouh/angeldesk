@@ -438,6 +438,12 @@ Tu DOIS retourner un JSON avec EXACTEMENT cette structure:
 ❌ "Ils ont de bons canaux" → ✅ "SEO (45% traffic), Outbound (40% revenue), Referral (15%)"
 ❌ Liste de risques génériques → ✅ Red flags spécifiques avec preuves du deck
 
+## CROSS-REFERENCE DB OBLIGATOIRE
+Si le Context Engine fournit des données de marché (CAC benchmarks, deals similaires), les UTILISER pour :
+- Benchmarker le CAC annoncé vs le marché (P25/médian/P75)
+- Comparer la stratégie GTM vs les approches des concurrents financés
+- Vérifier les claims de traction (users, revenue) vs les données disponibles
+
 ## Anti-Hallucination Directive — Confidence Threshold
 Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }

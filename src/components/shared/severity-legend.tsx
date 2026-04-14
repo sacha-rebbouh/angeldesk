@@ -7,7 +7,7 @@ import { ChevronDown, ChevronUp, Info } from "lucide-react";
 
 const SEVERITIES = [
   { key: "CRITICAL", label: "CRITIQUE", color: "bg-red-100 text-red-800 border-red-300", desc: "Risque potentiellement bloquant" },
-  { key: "HIGH", label: "ELEVE", color: "bg-orange-100 text-orange-800 border-orange-300", desc: "Risque sérieux, investiguer avant d'investir" },
+  { key: "HIGH", label: "ELEVE", color: "bg-orange-100 text-orange-800 border-orange-300", desc: "Risque sérieux, investiguer avant toute décision" },
   { key: "MEDIUM", label: "MOYEN", color: "bg-yellow-100 text-yellow-800 border-yellow-300", desc: "Point de vigilance, peut devenir critique" },
   { key: "LOW", label: "FAIBLE", color: "bg-blue-100 text-blue-800 border-blue-300", desc: "Risque mineur, commun en early stage" },
 ];

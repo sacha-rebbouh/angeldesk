@@ -26,8 +26,14 @@ export {
   selectiveOCR,
   smartExtract,
   estimateOCRCost,
+  processImageOCR,
   type OCRResult,
-  type PageOCRResult
+  type PageOCRResult,
+  type ExtractionManifest,
+  type ExtractionPageManifest,
+  type ExtractionCreditEstimate,
+  type ExtractionTier,
+  type OCRMode
 } from "./ocr-service";
 
 export {

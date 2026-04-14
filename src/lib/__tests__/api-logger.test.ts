@@ -29,7 +29,7 @@ describe("logApi", () => {
 
 describe("createApiTimer", () => {
   it("measures duration and logs on success", () => {
-    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const timer = createApiTimer("GET", "/api/v1/deals");

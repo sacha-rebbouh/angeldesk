@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   HelpCircle,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface KeyPointsSectionProps {
   consensusPoints: string[];
@@ -106,7 +105,7 @@ export const KeyPointsSection = memo(function KeyPointsSection({
           </ul>
         ) : (
           <p className="text-sm text-slate-500">
-            Pas de questions supplementaires
+            Pas de questions supplémentaires
           </p>
         )}
       </div>

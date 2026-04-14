@@ -20,7 +20,6 @@ import type {
   SourcerResult,
   SourcerDetails,
   SourceStats,
-  AgentError,
   ParsedFunding,
   PaginatedSourceConnector,
   PaginatedSourceResult,

@@ -26,6 +26,14 @@ model User {
   apiKeys       ApiKey[]
   webhooks      Webhook[]
   liveSessions  LiveSession[]
+  documentExtractionOverrides DocumentExtractionOverride[]
+
+  // Credit system
+  creditBalance    UserCreditBalance?
+  creditTransactions CreditTransaction[]
+
+  // CGU/IA consent — null means not yet accepted
+  cguAcceptedAt DateTime?
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -35,6 +43,91 @@ enum SubscriptionStatus {
   FREE
   PRO
   ENTERPRISE
+}
+
+// ============================================================================
+// CREDIT SYSTEM — Pack-based credits (replaces quota system)
+// ============================================================================
+
+// Available credit packs for purchase
+model CreditPack {
+  id            String   @id @default(cuid())
+  name          String   @unique  // "starter", "standard", "pro", "expert", "fund"
+  displayName   String             // "Starter", "Standard", etc.
+  credits       Int                // 10, 30, 60, 125, 300
+  priceEur      Int                // 49, 99, 179, 329, 749 (in cents: 4900, 9900... or EUR int)
+  perCredit     Float              // 4.90, 3.30, etc.
+  stripePriceId String?            // Stripe Price ID for checkout
+  stripeRefillPriceId String?      // Stripe Price ID for auto-refill (-15%)
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// User's credit balance
+model UserCreditBalance {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  balance       Int      @default(0)     // Current credit balance
+  totalPurchased Int     @default(0)     // Lifetime credits purchased (for tier access)
+  lastPackName  String?                  // Last pack purchased (for rate limits)
+
+  // Free tier: 5 credits granted at signup (1 Deep Dive)
+  freeCreditsGranted Boolean @default(false)
+
+  // Auto-refill
+  autoRefill    Boolean  @default(false)
+  autoRefillPackName String?           // Which pack to auto-refill
+
+  // Expiry tracking
+  expiresAt     DateTime?              // Credits expire 6 months after last purchase
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// Credit transaction log
+model CreditTransaction {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  amount        Int                    // Positive = added, negative = consumed
+  balanceAfter  Int                    // Balance after this transaction
+  action        CreditAction           // What triggered this transaction
+  description   String?                // Human-readable description
+  dealId        String?                // Associated deal (if applicable)
+
+  // For purchases
+  packName      String?                // Pack purchased
+  stripePaymentId String?              // Stripe payment intent ID
+
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([userId, action])
+  @@index([dealId])
+}
+
+enum CreditAction {
+  PURCHASE          // Bought a pack
+  AUTO_REFILL       // Auto-refill purchase
+  FREE_GRANT        // Free credits at signup
+  QUICK_SCAN        // -1 credit (Tier 1 only)
+  DEEP_DIVE         // -5 credits (Tier 1+2+3)
+  AI_BOARD          // -10 credits
+  LIVE_COACHING     // -8 credits
+  RE_ANALYSIS       // -3 credits
+  REFUND            // Credit refund (failed action)
+  ADMIN_ADJUSTMENT  // Manual admin adjustment
+  EXPIRED           // Credits expired
 }
 
 // DEAL
@@ -163,6 +256,7 @@ model Document {
   processingStatus ProcessingStatus @default(PENDING)
   extractedText    String?  @db.Text
   factEvents       FactEvent[]
+  extractionRuns   DocumentExtractionRun[]
 
   // Extraction quality tracking
   extractionQuality   Int?      // 0-100 quality score
@@ -213,6 +307,135 @@ enum ProcessingStatus {
   PROCESSING
   COMPLETED
   FAILED
+}
+
+enum ExtractionRunStatus {
+  PENDING
+  PROCESSING
+  READY
+  READY_WITH_WARNINGS
+  BLOCKED
+  FAILED
+}
+
+enum ExtractionPageStatus {
+  READY
+  READY_WITH_WARNINGS
+  NEEDS_REVIEW
+  FAILED
+  SKIPPED
+}
+
+enum ExtractionMethod {
+  NATIVE_TEXT
+  OCR
+  HYBRID
+  SKIPPED
+}
+
+enum ExtractionOverrideType {
+  BYPASS_PAGE
+  MANUAL_VALUE
+  EXCLUDE_PAGE
+}
+
+model DocumentExtractionRun {
+  id                String              @id @default(cuid())
+  documentId        String
+  document          Document            @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentVersion   Int
+
+  status            ExtractionRunStatus @default(PENDING)
+  pageCount         Int                 @default(0)
+  pagesProcessed    Int                 @default(0)
+  pagesSucceeded    Int                 @default(0)
+  pagesFailed       Int                 @default(0)
+  pagesSkipped      Int                 @default(0)
+  coverageRatio     Decimal             @default(0) @db.Decimal(5, 4)
+  qualityScore      Int?
+  readyForAnalysis  Boolean             @default(false)
+  blockedReason     String?             @db.Text
+
+  extractionVersion String
+  pipelineVersion   String
+  contentHash       String?
+  corpusTextHash    String?
+  summaryMetrics    Json?
+  warnings          Json?
+
+  startedAt         DateTime            @default(now())
+  completedAt       DateTime?
+
+  pages             DocumentExtractionPage[]
+  overrides         DocumentExtractionOverride[]
+  analysisLinks     AnalysisExtractionRun[]
+
+  @@index([documentId])
+  @@index([status])
+  @@index([readyForAnalysis])
+  @@index([contentHash])
+}
+
+model DocumentExtractionPage {
+  id                    String              @id @default(cuid())
+  runId                 String
+  run                   DocumentExtractionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  pageNumber            Int
+  status                ExtractionPageStatus
+  method                ExtractionMethod
+  charCount             Int                 @default(0)
+  wordCount             Int                 @default(0)
+  qualityScore          Int?
+  confidence            String?
+  hasTables             Boolean             @default(false)
+  hasCharts             Boolean             @default(false)
+  hasFinancialKeywords  Boolean             @default(false)
+  hasTeamKeywords       Boolean             @default(false)
+  hasMarketKeywords     Boolean             @default(false)
+  requiresOCR           Boolean             @default(false)
+  ocrProcessed          Boolean             @default(false)
+  contentHash           String?
+  errorMessage          String?             @db.Text
+  textPreview           String?             @db.Text
+
+  createdAt             DateTime            @default(now())
+
+  @@unique([runId, pageNumber])
+  @@index([runId])
+  @@index([status])
+  @@index([pageNumber])
+}
+
+model DocumentExtractionOverride {
+  id              String                 @id @default(cuid())
+  runId           String
+  run             DocumentExtractionRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  pageNumber      Int?
+  overrideType    ExtractionOverrideType
+  payload         Json
+  reason          String                 @db.Text
+  createdByUserId String
+  createdByUser   User                   @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  approvedAt      DateTime?
+  createdAt       DateTime               @default(now())
+
+  @@index([runId])
+  @@index([createdByUserId])
+  @@index([overrideType])
+}
+
+model AnalysisExtractionRun {
+  id          String                @id @default(cuid())
+  analysisId  String
+  analysis    Analysis              @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  runId       String
+  run         DocumentExtractionRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  createdAt   DateTime              @default(now())
+
+  @@unique([analysisId, runId])
+  @@index([analysisId])
+  @@index([runId])
 }
 
 // RED FLAG
@@ -301,6 +524,7 @@ model Analysis {
   agentMessages     AgentMessage[]
   stateTransitions  StateTransition[]
   checkpoints       AnalysisCheckpoint[]
+  extractionRunLinks AnalysisExtractionRun[]
 
   createdAt       DateTime @default(now())
 
@@ -584,9 +808,14 @@ enum BoardStatus {
 }
 
 enum BoardVerdict {
-  GO
-  NO_GO
+  VERY_FAVORABLE
+  FAVORABLE
+  CONTRASTED
+  VIGILANCE
+  ALERT_DOMINANT
   NEED_MORE_INFO
+  GO        // @deprecated - kept for migration of existing data
+  NO_GO     // @deprecated - kept for migration of existing data
 }
 
 enum ConsensusLevel {
@@ -1513,45 +1742,8 @@ model FactEvent {
   @@index([eventType])
 }
 
-// ============================================================================
-// CREDIT SYSTEM - User Credits for Analysis
-// ============================================================================
-
-// USER CREDITS - Credit balance and allocation for a user
-model UserCredits {
-  id                  String              @id @default(cuid())
-  clerkUserId         String              @unique
-
-  balance             Int                 @default(10)
-  monthlyAllocation   Int                 @default(10)
-
-  lastResetAt         DateTime            @default(now())
-  nextResetAt         DateTime
-
-  transactions        CreditTransaction[]
-
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
-}
-
-// CREDIT TRANSACTION - Individual credit movement
-model CreditTransaction {
-  id                  String        @id @default(cuid())
-  clerkUserId         String
-  userCredits         UserCredits   @relation(fields: [clerkUserId], references: [clerkUserId])
-
-  type                String        // INITIAL_ANALYSIS, UPDATE_ANALYSIS, AI_BOARD, MONTHLY_RESET, BONUS, REFUND
-  amount              Int           // négatif = dépense
-
-  dealId              String?
-  analysisId          String?
-
-  description         String
-  createdAt           DateTime      @default(now())
-
-  @@index([clerkUserId])
-  @@index([clerkUserId, createdAt])
-}
+// Old UserCredits and CreditTransaction models removed — replaced by
+// CreditPack, UserCreditBalance, CreditTransaction at top of file
 
 // ============================================================================
 // DEAL CHAT - Premium Conversational AI for Deal Analysis

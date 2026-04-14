@@ -60,7 +60,8 @@ interface ConditionsTabProps {
   termSheetDoc?: { id: string; name: string } | null;
 }
 
-export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage, initialData, termSheetDoc }: ConditionsTabProps) {
+export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage: _stage, initialData, termSheetDoc }: ConditionsTabProps) {
+  void _stage;
   const queryClient = useQueryClient();
   const {
     resolutionMap,

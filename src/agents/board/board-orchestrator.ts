@@ -550,7 +550,7 @@ export class BoardOrchestrator {
         try {
           const result = await member.debate(input, ownAnalysis, othersAnalyses, roundNumber);
           response = result.response;
-        } catch (firstError) {
+        } catch {
           console.warn(`[BoardOrchestrator] ${member.name} debate attempt 1 failed, retrying...`);
           const result = await member.debate(input, ownAnalysis, othersAnalyses, roundNumber);
           response = result.response;
@@ -618,7 +618,7 @@ export class BoardOrchestrator {
           const result = await member.vote(input, this.debateHistory);
           vote = result.vote;
           cost = result.cost;
-        } catch (firstError) {
+        } catch {
           console.warn(`[BoardOrchestrator] ${member.name} vote attempt 1 failed, retrying...`);
           const result = await member.vote(input, this.debateHistory);
           vote = result.vote;
@@ -671,8 +671,11 @@ export class BoardOrchestrator {
   private checkStoppingCondition(roundNumber: number): StoppingConditionResult {
     const verdicts = this.currentVerdicts;
     const verdictCounts: Record<BoardVerdictType, number> = {
-      GO: 0,
-      NO_GO: 0,
+      VERY_FAVORABLE: 0,
+      FAVORABLE: 0,
+      CONTRASTED: 0,
+      VIGILANCE: 0,
+      ALERT_DOMINANT: 0,
       NEED_MORE_INFO: 0,
     };
 
@@ -684,7 +687,7 @@ export class BoardOrchestrator {
     const currentVerdictsObj = Object.fromEntries(verdicts);
 
     // Consensus: 4/4 same verdict
-    for (const [verdict, count] of Object.entries(verdictCounts)) {
+    for (const count of Object.values(verdictCounts)) {
       if (count === totalMembers && totalMembers >= MIN_MEMBERS_REQUIRED) {
         return {
           shouldStop: true,
@@ -696,7 +699,7 @@ export class BoardOrchestrator {
     }
 
     // Majority stable: 3/4 same verdict + no change since last round
-    for (const [verdict, count] of Object.entries(verdictCounts)) {
+    for (const count of Object.values(verdictCounts)) {
       if (count >= 3 && totalMembers >= 3) {
         // Check if stable (no position changes)
         let stable = true;
@@ -760,8 +763,11 @@ export class BoardOrchestrator {
 
   private calculateConsensusLevel(): ConsensusLevelType {
     const verdictCounts: Record<BoardVerdictType, number> = {
-      GO: 0,
-      NO_GO: 0,
+      VERY_FAVORABLE: 0,
+      FAVORABLE: 0,
+      CONTRASTED: 0,
+      VIGILANCE: 0,
+      ALERT_DOMINANT: 0,
       NEED_MORE_INFO: 0,
     };
 
@@ -780,8 +786,11 @@ export class BoardOrchestrator {
 
   private getMajorityVerdict(): BoardVerdictType {
     const verdictCounts: Record<BoardVerdictType, number> = {
-      GO: 0,
-      NO_GO: 0,
+      VERY_FAVORABLE: 0,
+      FAVORABLE: 0,
+      CONTRASTED: 0,
+      VIGILANCE: 0,
+      ALERT_DOMINANT: 0,
       NEED_MORE_INFO: 0,
     };
 
@@ -789,7 +798,7 @@ export class BoardOrchestrator {
       verdictCounts[verdict]++;
     }
 
-    let maxVerdict: BoardVerdictType = "NEED_MORE_INFO";
+    let maxVerdict: BoardVerdictType = "CONTRASTED";
     let maxCount = 0;
 
     for (const [verdict, count] of Object.entries(verdictCounts)) {
@@ -910,6 +919,8 @@ REGLES:
 - Chaque point doit etre unique — ZERO redondance
 - Garde la formulation la plus precise et detaillee quand tu fusionnes
 - AUCUNE limite de nombre — garde TOUS les points uniques, n'en supprime aucun
+- N'INVENTE aucun point — tu ne fais que fusionner et reformuler les points existants
+- Si tu n'es pas sur que deux points sont des doublons, garde les deux
 - En francais
 - JSON seulement, rien d'autre`;
 
@@ -1011,8 +1022,11 @@ REGLES:
     if (!this.sessionId) return;
 
     const verdictCounts: Record<BoardVerdictType, number> = {
-      GO: 0,
-      NO_GO: 0,
+      VERY_FAVORABLE: 0,
+      FAVORABLE: 0,
+      CONTRASTED: 0,
+      VIGILANCE: 0,
+      ALERT_DOMINANT: 0,
       NEED_MORE_INFO: 0,
     };
 

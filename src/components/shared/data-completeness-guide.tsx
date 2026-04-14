@@ -27,9 +27,9 @@ interface DataCompletenessGuideProps {
 
 const IMPROVEMENT_SUGGESTIONS: { pattern: RegExp; suggestion: string; icon: "upload" | "form" | "web" }[] = [
   { pattern: /pitch\s?deck|deck|presentation|document/i, suggestion: "Uploadez votre pitch deck (PDF)", icon: "upload" },
-  { pattern: /financ|revenue|arr|mrr|chiffre|tresorerie|bilan|resultat/i, suggestion: "Renseignez l'ARR et le taux de croissance", icon: "form" },
+  { pattern: /financ|revenue|arr|mrr|chiffre|trésorerie|bilan|resultat/i, suggestion: "Renseignez l'ARR et le taux de croissance", icon: "form" },
   { pattern: /valoris|valuation|valo|pre-money/i, suggestion: "Renseignez la valorisation pré-money", icon: "form" },
-  { pattern: /equipe|team|fondateur|cto|ceo|linkedin/i, suggestion: "Ajoutez les profils LinkedIn des fondateurs", icon: "web" },
+  { pattern: /équipe|equipe|team|fondateur|cto|ceo|linkedin/i, suggestion: "Ajoutez les profils LinkedIn des fondateurs", icon: "web" },
   { pattern: /site\s?web|website|url|domaine/i, suggestion: "Renseignez le site web de la startup", icon: "form" },
   { pattern: /cap\s?table|dilution|term\s?sheet|vesting/i, suggestion: "Uploadez la cap table ou le term sheet", icon: "upload" },
   { pattern: /concurr|compet|marche|market|tam|sam/i, suggestion: "Ajoutez une description du marché et des concurrents", icon: "form" },

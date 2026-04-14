@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useCallback, useRef } from "react";
+import { useMemo, useCallback, useEffect, useRef } from "react";
 import { queryKeys } from "@/lib/query-keys";
 
 export interface AlertResolution {
@@ -129,14 +129,18 @@ export function useResolutions(dealId: string) {
   }, [resolutions]);
 
   const createMutationRef = useRef(createMutation);
-  createMutationRef.current = createMutation;
+  useEffect(() => {
+    createMutationRef.current = createMutation;
+  }, [createMutation]);
   const resolve = useCallback(
     (input: CreateResolutionInput) => createMutationRef.current.mutateAsync(input),
     [],
   );
 
   const deleteMutationRef = useRef(deleteMutation);
-  deleteMutationRef.current = deleteMutation;
+  useEffect(() => {
+    deleteMutationRef.current = deleteMutation;
+  }, [deleteMutation]);
   const unresolve = useCallback(
     (alertKey: string) => deleteMutationRef.current.mutateAsync(alertKey),
     [],

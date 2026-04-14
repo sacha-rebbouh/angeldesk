@@ -208,7 +208,6 @@ function repairTruncatedJSON(content: string): string | null {
     const lastQuote = repaired.lastIndexOf('"');
     if (lastQuote > 0) {
       // Check what comes before - if it's a key, we need a value
-      const beforeQuote = repaired.substring(0, lastQuote);
       const afterQuote = repaired.substring(lastQuote);
 
       // If string was being written and got cut off, just close it

@@ -7,8 +7,6 @@ import {
   setAgentContext,
   type TaskComplexity,
   type StreamCallbacks,
-  type StreamingJSONOptions,
-  type StreamingJSONResult,
 } from "@/services/openrouter/router";
 import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed, AgentTraceMetrics } from "./types";
 import { createHash } from "crypto";
@@ -1335,7 +1333,7 @@ son deal sous le meilleur jour possible. Tu DOIS appliquer les regles suivantes:
       : "";
     const now = new Date();
     const dateContext = `\n\n## CONTEXTE TEMPOREL (CRITIQUE)\nDate actuelle : ${now.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.\nUtilise TOUJOURS cette date comme reference pour evaluer la fraicheur des donnees, les projections vs le realise, et les timelines. Ne JAMAIS deduire la date actuelle du contenu des documents analyses.\n`;
-    return base + dateContext + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance() + this.getAbstentionPermission() + this.getCitationDemand() + this.getSelfAuditDirective() + this.getStructuredUncertaintyDirective();
+    return base + dateContext + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance() + this.getDataReliabilityDirective() + this.getAnalyticalToneDirective() + this.getAbstentionPermission() + this.getCitationDemand() + this.getSelfAuditDirective() + this.getStructuredUncertaintyDirective();
   }
 
   // Anti-Hallucination Directive — Abstention Permission (Prompt 2/5)
@@ -1386,6 +1384,50 @@ Structure your response in three clearly labelled sections:
 **SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%)
 Every claim must be placed in one of these three categories.
 Do not present speculative claims as confident ones.
+`;
+  }
+
+  // Data Reliability Classification Directive
+  protected getDataReliabilityDirective(): string {
+    return `
+
+## CLASSIFICATION DE FIABILITÉ DES DONNÉES (OBLIGATOIRE)
+Chaque donnée que tu analyses a un niveau de fiabilité. Tu DOIS en tenir compte dans ton analyse.
+
+**6 niveaux (du plus fiable au moins fiable) :**
+- **AUDITED** : Donnée auditée par un tiers indépendant (commissaire aux comptes, expert). Confiance maximale.
+- **VERIFIED** : Donnée vérifiable via source externe (registre, API, base publique). Haute confiance.
+- **DECLARED** : Donnée déclarée par le fondateur dans le deck, non vérifiée. Confiance modérée.
+- **PROJECTED** : Projection future (CA prévisionnel, croissance attendue). Confiance faible — traiter comme hypothèse.
+- **ESTIMATED** : Estimation dérivée ou calculée à partir d'autres données. Confiance faible.
+- **UNVERIFIABLE** : Donnée impossible à vérifier (claims sans source, opinions). Confiance minimale.
+
+**Règles impératives :**
+1. Ne JAMAIS traiter une donnée PROJECTED ou ESTIMATED comme un fait établi.
+2. Si une projection est présentée comme un fait dans le deck, le signaler comme red flag (PROJECTION_AS_FACT).
+3. Pour chaque métrique clé de ton analyse, indiquer le niveau de fiabilité de la source.
+4. Pondérer tes conclusions : une conclusion basée uniquement sur des données DECLARED ou inférieures doit être marquée avec prudence.
+5. Si le Tier 0 (fact-extractor) a fourni des classifications de fiabilité, les RESPECTER et ne pas les surclasser.
+`;
+  }
+
+  // Analytical Tone Directive (Rule #1: Angel Desk ANALYSE et GUIDE, ne DÉCIDE JAMAIS)
+  protected getAnalyticalToneDirective(): string {
+    return `
+
+## TON ANALYTIQUE OBLIGATOIRE (RÈGLE N°1)
+Angel Desk ANALYSE et GUIDE. Angel Desk ne DÉCIDE JAMAIS. Le Business Angel est le seul décideur.
+
+**INTERDIT dans TOUT texte généré (narrative, nextSteps, forNegotiation, rationale, summary) :**
+- "Investir" / "Ne pas investir" / "Rejeter l'opportunité" / "Passer ce deal"
+- "GO" / "NO-GO" / "Dealbreaker"
+- Tout impératif adressé à l'investisseur ("Fuyez", "N'investissez pas", "Rejetez")
+- Tout langage qui prescrit une décision
+
+**OBLIGATOIRE :**
+- Ton analytique : "Les données montrent...", "Les signaux indiquent...", "X dimensions présentent..."
+- Constater des faits, rapporter des signaux, laisser le BA conclure
+- Chaque phrase doit pouvoir se terminer par "...à vous de décider" sans être absurde
 `;
   }
 }

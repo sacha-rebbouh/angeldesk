@@ -85,6 +85,7 @@ export function extractAgentData(result: AgentResult): ExtractedAgentData | null
 // ============================================================================
 
 function extractConfidence(data: AgentData, agentName: string): ConfidenceScore {
+  void agentName;
   const confidenceLevel = data.meta?.confidenceLevel ?? 0;
   const dataCompleteness = data.meta?.dataCompleteness ?? "minimal";
   const limitations = data.meta?.limitations ?? [];

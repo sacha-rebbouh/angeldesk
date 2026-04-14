@@ -17,10 +17,21 @@ import type {
 } from "../types";
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+const OPENROUTER_REQUEST_TIMEOUT_MS = 20_000;
+const OPENROUTER_MAX_RETRIES = 2;
+const OPENROUTER_RETRY_BASE_DELAY_MS = 750;
 
 // Perplexity models via OpenRouter for web search
 // Updated to new model naming (2025): sonar replaces llama-3.1-sonar-*
 const SEARCH_MODEL = "perplexity/sonar";
+
+interface OpenRouterResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
+  }>;
+}
 
 function getApiKey(): string | undefined {
   return process.env.OPENROUTER_API_KEY;
@@ -36,6 +47,85 @@ function createSource(url?: string): DataSource {
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableOpenRouterError(error: unknown): boolean {
+  if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      return true;
+    }
+
+    if (/timeout|timed out|fetch failed/i.test(error.message)) {
+      return true;
+    }
+  }
+
+  const typedError = error as { status?: number; code?: string } | null;
+  if (!typedError) {
+    return false;
+  }
+
+  if (typeof typedError.status === "number") {
+    return typedError.status === 429 || typedError.status >= 500;
+  }
+
+  if (typeof typedError.code === "string") {
+    return ["ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "ENOTFOUND"].includes(typedError.code);
+  }
+
+  return false;
+}
+
+async function postOpenRouterCompletion(
+  apiKey: string,
+  requestTitle: string,
+  payload: Record<string, unknown>
+): Promise<OpenRouterResponse> {
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= OPENROUTER_MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OPENROUTER_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://angeldesk.app",
+          "X-Title": requestTitle,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw Object.assign(new Error(`OpenRouter error: ${response.status} - ${error}`), {
+          status: response.status,
+        });
+      }
+
+      return (await response.json()) as OpenRouterResponse;
+    } catch (error) {
+      lastError = error;
+
+      if (attempt === OPENROUTER_MAX_RETRIES || !isRetryableOpenRouterError(error)) {
+        throw error;
+      }
+
+      await sleep(OPENROUTER_RETRY_BASE_DELAY_MS * (attempt + 1));
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Unknown OpenRouter error");
+}
+
 /**
  * Execute a web search query using Perplexity via OpenRouter
  */
@@ -43,33 +133,17 @@ async function webSearch(query: string): Promise<string> {
   const apiKey = getApiKey();
   if (!apiKey) throw new Error("OpenRouter API key not configured");
 
-  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://angeldesk.app",
-      "X-Title": "Angel Desk Context Engine",
-    },
-    body: JSON.stringify({
-      model: SEARCH_MODEL,
-      messages: [
-        {
-          role: "user",
-          content: query,
-        },
-      ],
-      temperature: 0.1,
-      max_tokens: 2000,
-    }),
+  const data = await postOpenRouterCompletion(apiKey, "Angel Desk Context Engine", {
+    model: SEARCH_MODEL,
+    messages: [
+      {
+        role: "user",
+        content: query,
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 2000,
   });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`OpenRouter error: ${response.status} - ${error}`);
-  }
-
-  const data = await response.json();
   return data.choices?.[0]?.message?.content || "";
 }
 
@@ -82,20 +156,12 @@ async function groupSimilarUseCases(useCases: string[]): Promise<string[]> {
   if (!apiKey) return useCases.slice(0, 5);
 
   try {
-    const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://angeldesk.app",
-        "X-Title": "Angel Desk Use Case Grouping",
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-4o-mini", // Fast and cheap for this simple task
-        messages: [
-          {
-            role: "user",
-            content: `Group these ${useCases.length} use cases into exactly 5 categories by similarity.
+    const data = await postOpenRouterCompletion(apiKey, "Angel Desk Use Case Grouping", {
+      model: "openai/gpt-4o-mini", // Fast and cheap for this simple task
+      messages: [
+        {
+          role: "user",
+          content: `Group these ${useCases.length} use cases into exactly 5 categories by similarity.
 Each category should combine related use cases into a single search-friendly phrase.
 
 Use cases:
@@ -107,19 +173,11 @@ Whistleblowing and compliance reporting
 Virtual data rooms and secure document sharing
 KYC/AML identity verification
 ...`,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 300,
-      }),
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 300,
     });
-
-    if (!response.ok) {
-      console.error("[WebSearch] Failed to group use cases, using first 5");
-      return useCases.slice(0, 5);
-    }
-
-    const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
 
     // Parse the 5 lines
@@ -204,8 +262,6 @@ function parseFounderBackground(
   text: string,
   founderName: string
 ): FounderBackground | null {
-  const source = createSource();
-
   // Extract structured information from the text
   // This is a simplified version - production would use structured LLM output
 
@@ -283,7 +339,6 @@ export const webSearchConnector: Connector = {
 
       const companyName = query.companyName || "cette startup";
       const useCases = query.useCases && query.useCases.length > 0 ? query.useCases : null;
-      const productName = query.productName || null;
       const coreValueProp = query.coreValueProposition || null;
       const productDesc = query.productDescription || null;
       const geoContext = query.geography ? `in ${query.geography}` : "in Europe";
@@ -313,8 +368,7 @@ export const webSearchConnector: Connector = {
           console.log(`[WebSearch] Grouped into: ${searchGroups.join(" | ")}`);
         }
 
-        // Run searches in parallel - one per group
-        const searchPromises = searchGroups.map(async (useCaseGroup) => {
+        const runSearchGroup = async (useCaseGroup: string) => {
           const searchQuery = `Find the top 5 startups and companies that offer solutions for: ${useCaseGroup}.
 
 ${geoContext}
@@ -339,9 +393,12 @@ List exactly 5 competitors with format: "Company Name - What they do for ${useCa
             console.error(`[WebSearch] Error searching for "${useCaseGroup}":`, err);
             return [];
           }
-        });
+        };
 
-        const results = await Promise.all(searchPromises);
+        const results: Competitor[][] = [];
+        for (const useCaseGroup of searchGroups) {
+          results.push(await runSearchGroup(useCaseGroup));
+        }
         const allCompetitors = results.flat();
 
         // Deduplicate by company name (keep first occurrence)

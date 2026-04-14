@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import {
@@ -83,9 +83,10 @@ export function InvestmentPreferencesForm() {
   const [localPrefs, setLocalPrefs] = useState<Partial<BAPreferences>>({});
 
   // Merge local changes with server data
-  const currentPrefs: BAPreferences | null = preferences
-    ? { ...preferences, ...localPrefs }
-    : null;
+  const currentPrefs: BAPreferences | null = useMemo(
+    () => (preferences ? { ...preferences, ...localPrefs } : null),
+    [preferences, localPrefs]
+  );
 
   const handleChange = useCallback((key: keyof BAPreferences, value: BAPreferences[keyof BAPreferences]) => {
     setLocalPrefs((prev) => ({ ...prev, [key]: value }));

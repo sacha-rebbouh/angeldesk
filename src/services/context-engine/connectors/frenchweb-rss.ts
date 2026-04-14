@@ -15,7 +15,6 @@ import type {
   Connector,
   ConnectorQuery,
   NewsArticle,
-  DataSource,
 } from "../types";
 
 // ============================================================================
@@ -195,14 +194,6 @@ function matchesQuery(article: NewsArticle, query: ConnectorQuery): boolean {
 
   return false;
 }
-
-const frenchWebSource: DataSource = {
-  type: "news_api",
-  name: "FrenchWeb RSS",
-  url: "https://www.frenchweb.fr",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.75,
-};
 
 // ============================================================================
 // CONNECTOR IMPLEMENTATION

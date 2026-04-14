@@ -175,6 +175,7 @@ export async function checkRetryResult(
     // Check if we should retry again
     if (retryRun.retryAttempt < 2) {
       const newRetry = await triggerRetry(agent, retryRunId)
+      void newRetry
       await notifyAgentFailed(
         agent,
         `Retry échoué (status: ${retryRun.status})`,

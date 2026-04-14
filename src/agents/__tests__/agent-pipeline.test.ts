@@ -963,7 +963,7 @@ vi.mock("@/services/openrouter/router", () => {
               category: "competitive",
               evidence: "Technology can be replicated",
               sourceAgent: "competitive-intel",
-              dealBreakerLevel: "CONDITIONAL",
+              dealBreakerLevel: "HIGH",
               condition: "Unless proprietary data moat is built within 12 months",
               resolutionPossible: true,
               resolutionPath: "Build data flywheel with early customers",

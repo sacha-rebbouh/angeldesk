@@ -822,7 +822,7 @@ async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProf
     console.warn("[RapidAPI LinkedIn] DB cache lookup failed, fetching fresh:", err);
   }
 
-  // --- RAPIDAPI FETCH ---
+  // --- RAPIDAPI FETCH WITH RETRY ---
   try {
     console.log(`[RapidAPI LinkedIn] Fetching profile: ${normalizedUrl}`);
 
@@ -841,53 +841,76 @@ async function fetchLinkedInProfile(linkedinUrl: string): Promise<NormalizedProf
       include_company_public_url: "false",
     });
 
-    const response = await fetch(
-      `https://${RAPIDAPI_HOST}/enrich-lead?${params.toString()}`,
-      {
-        method: "GET",
-        headers: {
-          "x-rapidapi-host": RAPIDAPI_HOST,
-          "x-rapidapi-key": apiKey,
-        },
-        signal: AbortSignal.timeout(60000),
+    const url = `https://${RAPIDAPI_HOST}/enrich-lead?${params.toString()}`;
+    const headers = {
+      "x-rapidapi-host": RAPIDAPI_HOST,
+      "x-rapidapi-key": apiKey,
+    };
+
+    // Fetch with up to 3 retries on 429
+    const MAX_ATTEMPTS = 4; // 1 initial + 3 retries
+    let lastStatus = 0;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        const delayMs = attempt * 2000; // 2s, 4s, 6s
+        console.warn(`[RapidAPI LinkedIn] 429 rate limited — retry ${attempt}/${MAX_ATTEMPTS - 1} in ${delayMs}ms`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
       }
-    );
 
-    if (!response.ok) {
-      console.error(`[RapidAPI LinkedIn] API error: ${response.status}`);
-      return null;
-    }
-
-    const json = await response.json() as { data?: RapidAPIProfile; message?: string };
-
-    if (!json.data || json.message !== "ok") {
-      console.warn(`[RapidAPI LinkedIn] No profile found for: ${normalizedUrl}`);
-      return null;
-    }
-
-    const normalized = normalizeRapidAPIProfile(json.data, normalizedUrl);
-    console.log(`[RapidAPI LinkedIn] Successfully fetched: ${normalized.full_name} (${normalized.experiences.length} exp, ${normalized.education.length} edu)`);
-
-    // --- STORE IN DB CACHE ---
-    try {
-      await prisma.linkedInProfileCache.upsert({
-        where: { linkedinUrl: normalizedUrl },
-        update: {
-          profileData: JSON.parse(JSON.stringify(normalized)),
-          fetchedAt: new Date(),
-        },
-        create: {
-          linkedinUrl: normalizedUrl,
-          profileData: JSON.parse(JSON.stringify(normalized)),
-        },
+      const response = await fetch(url, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(60000),
       });
-      console.log(`[RapidAPI LinkedIn] Cached profile in DB: ${normalized.full_name}`);
-    } catch (err) {
-      // Non-blocking — if cache write fails, the profile is still returned
-      console.warn("[RapidAPI LinkedIn] Failed to cache profile in DB:", err);
+
+      lastStatus = response.status;
+
+      if (response.status === 429) {
+        // Drain response body to prevent socket leak
+        await response.text().catch(() => {});
+        continue; // retry
+      }
+
+      if (!response.ok) {
+        console.error(`[RapidAPI LinkedIn] API error: ${response.status}`);
+        return null;
+      }
+
+      const json = await response.json() as { data?: RapidAPIProfile; message?: string };
+
+      if (!json.data || json.message !== "ok") {
+        console.warn(`[RapidAPI LinkedIn] No profile found for: ${normalizedUrl}`);
+        return null;
+      }
+
+      const normalized = normalizeRapidAPIProfile(json.data, normalizedUrl);
+      const logPrefix = attempt > 0 ? `Successfully fetched on retry ${attempt}` : "Successfully fetched";
+      console.log(`[RapidAPI LinkedIn] ${logPrefix}: ${normalized.full_name} (${normalized.experiences.length} exp, ${normalized.education.length} edu)`);
+
+      // Store in DB cache (non-blocking)
+      try {
+        await prisma.linkedInProfileCache.upsert({
+          where: { linkedinUrl: normalizedUrl },
+          update: {
+            profileData: JSON.parse(JSON.stringify(normalized)),
+            fetchedAt: new Date(),
+          },
+          create: {
+            linkedinUrl: normalizedUrl,
+            profileData: JSON.parse(JSON.stringify(normalized)),
+          },
+        });
+        console.log(`[RapidAPI LinkedIn] Cached profile in DB: ${normalized.full_name}`);
+      } catch (err) {
+        console.warn("[RapidAPI LinkedIn] Failed to cache profile in DB:", err);
+      }
+
+      return normalized;
     }
 
-    return normalized;
+    console.error(`[RapidAPI LinkedIn] Exhausted retries (last status: ${lastStatus}) for: ${normalizedUrl}`);
+    return null;
   } catch (error) {
     console.error("[RapidAPI LinkedIn] Request failed:", error);
     return null;

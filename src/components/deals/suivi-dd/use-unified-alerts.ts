@@ -28,7 +28,7 @@ interface KillReason {
   reason: string;
   category?: string;
   evidence: string;
-  dealBreakerLevel: "ABSOLUTE" | "CONDITIONAL" | "CONCERN";
+  dealBreakerLevel: "CRITICAL" | "HIGH" | "CONCERN";
   questionToFounder?: string;
   impactIfIgnored?: string;
   resolutionPath?: string;
@@ -151,7 +151,7 @@ export function useUnifiedAlerts({
         // Kill reasons
         for (const kr of daData.findings?.killReasons ?? []) {
           const alertKey = devilsAdvocateAlertKey("killReason", kr.reason);
-          const severity = kr.dealBreakerLevel === "ABSOLUTE" ? "CRITICAL" : kr.dealBreakerLevel === "CONDITIONAL" ? "HIGH" : "MEDIUM";
+          const severity = kr.dealBreakerLevel === "CRITICAL" ? "CRITICAL" : kr.dealBreakerLevel === "HIGH" ? "HIGH" : "MEDIUM";
 
           let linkedQ: UnifiedAlert["linkedQuestion"] = null;
           let linkedR: UnifiedAlert["linkedResponse"] = null;

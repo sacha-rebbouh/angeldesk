@@ -37,6 +37,7 @@ interface ExtractionQualityBadgeProps {
   warnings: ExtractionWarning[] | null;
   requiresOCR: boolean;
   processingStatus: string;
+  extractionStatus?: string | null;
 }
 
 export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
@@ -44,6 +45,7 @@ export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
   warnings,
   requiresOCR,
   processingStatus,
+  extractionStatus,
 }: ExtractionQualityBadgeProps) {
   // Processing states
   if (processingStatus === "PENDING") {
@@ -68,11 +70,11 @@ export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
         <TooltipTrigger>
           <Badge variant="destructive" className="flex items-center gap-1">
             <XCircle className="h-3 w-3" />
-            Echec
+            Échec
           </Badge>
         </TooltipTrigger>
         <TooltipContent className="max-w-xs">
-          <p>L&apos;extraction du PDF a echoue</p>
+          <p>L&apos;extraction du PDF a échoué</p>
           {warnings?.[0]?.suggestion && (
             <p className="mt-1 text-xs opacity-80">
               {warnings[0].suggestion}
@@ -97,6 +99,24 @@ export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
         <HelpCircle className="mr-1 h-3 w-3" />
         Non evalue
       </Badge>
+    );
+  }
+
+  if (extractionStatus === "needs_review" || extractionStatus === "failed") {
+    return (
+      <ExtractionWarningDialog
+        quality={quality}
+        warnings={warningList}
+        requiresOCR={requiresOCR}
+      >
+        <Badge
+          variant="secondary"
+          className="flex cursor-pointer items-center gap-1 border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+        >
+          <AlertCircle className="h-3 w-3" />
+          Review requis
+        </Badge>
+      </ExtractionWarningDialog>
     );
   }
 

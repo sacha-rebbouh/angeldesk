@@ -24,8 +24,8 @@ import type {
   PeopleGraph,
   WebsiteContent,
 } from "./types";
-import { crawlWebsite, type CrawlOptions } from "./connectors/website-crawler";
-import { resolveWebsiteUrl, type WebsiteResolutionInput } from "./website-resolver";
+import { crawlWebsite } from "./connectors/website-crawler";
+import { resolveWebsiteUrl } from "./website-resolver";
 import { newsApiConnector } from "./connectors/news-api";
 import { webSearchConnector } from "./connectors/web-search";
 import { rssFundingConnector } from "./connectors/rss-funding";
@@ -38,8 +38,6 @@ import {
   rapidapiLinkedInConnector,
   analyzeFounderLinkedIn,
   analyzeFounderByName,
-  analyzeTeamLinkedIn,
-  isRapidAPILinkedInConfigured,
 } from "./connectors/rapidapi-linkedin";
 // French ecosystem connectors
 import { societeComConnector } from "./connectors/societe-com";
@@ -73,14 +71,12 @@ import {
   fetchNewsParallel,
   aggregateMetrics,
   type FetchMetrics,
-  type ConnectorResult,
 } from "./parallel-fetcher";
 import { getCircuitStates } from "./circuit-breaker";
 // Persistent storage for Context Engine snapshots
 import {
   saveContextSnapshot,
   loadContextSnapshot,
-  getSnapshotStats,
 } from "./persistence";
 
 // Cache TTLs
@@ -470,19 +466,16 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
   console.log(`[ContextEngine] Computing context for: ${query.companyName || query.sector} (${configuredConnectors.length} connectors)`);
 
   // =========================================================================
-  // PARALLEL FETCH WITH CIRCUIT BREAKER + RETRY + TIMEOUT
+  // BOUNDED FETCH WITH CIRCUIT BREAKER + RETRY + TIMEOUT
   // =========================================================================
-  const [
-    { deals: similarDeals, results: dealsResults },
-    { marketData, results: marketResults },
-    { competitors, results: competitorResults },
-    { news, results: newsResults },
-  ] = await Promise.all([
-    fetchSimilarDealsParallel(query, configuredConnectors),
-    fetchMarketDataParallel(query, configuredConnectors),
-    fetchCompetitorsParallel(query, configuredConnectors),
-    fetchNewsParallel(query, configuredConnectors),
-  ]);
+  const { deals: similarDeals, results: dealsResults } =
+    await fetchSimilarDealsParallel(query, configuredConnectors);
+  const { marketData, results: marketResults } =
+    await fetchMarketDataParallel(query, configuredConnectors);
+  const { competitors, results: competitorResults } =
+    await fetchCompetitorsParallel(query, configuredConnectors);
+  const { news, results: newsResults } =
+    await fetchNewsParallel(query, configuredConnectors);
 
   // =========================================================================
   // AGGREGATE METRICS
@@ -739,10 +732,11 @@ export async function buildPeopleGraph(
   const enrichedFounders: EnrichedFounderData[] = [];
   const allQuestions: EnrichedPeopleGraph["allQuestionsToAsk"] = [];
 
-  console.log(`[ContextEngine] Building people graph for ${founders.length} founders`);
+  console.log(`[ContextEngine] Building people graph for ${founders.length} founders (sequential to avoid rate limits)`);
 
-  // Process each founder in parallel
-  const founderPromises = founders.map(async (founder) => {
+  // Process founders sequentially to avoid LinkedIn API rate limits (429)
+  // Each profile is fetched only after the previous one completes
+  for (const founder of founders) {
     const cacheKey = `founder-enriched:${(founder.linkedinUrl || founder.name).toLowerCase().trim()}:${options.startupSector || ""}`;
 
     const { data, fromCache } = await cache.getOrCompute<EnrichedFounderData | null>(
@@ -759,26 +753,19 @@ export async function buildPeopleGraph(
 
     if (fromCache) {
       console.log(`[ContextEngine] Founder cache HIT: ${founder.name}`);
+    } else {
+      // Cooldown between API calls to stay under RapidAPI rate limits
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
 
-    return data;
-  });
-
-  const results = await Promise.all(founderPromises);
-
-  // Aggregate results
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    const founder = founders[i];
-
-    if (result) {
-      enrichedFounders.push(result);
+    if (data) {
+      enrichedFounders.push(data);
 
       // Collect questions
-      if (result.questionsToAsk) {
-        for (const q of result.questionsToAsk) {
+      if (data.questionsToAsk) {
+        for (const q of data.questionsToAsk) {
           allQuestions.push({
-            founderName: result.name || founder.name,
+            founderName: data.name || founder.name,
             ...q,
           });
         }
@@ -888,7 +875,16 @@ async function fetchAndAnalyzeFounder(
     verificationStatus: profile.verificationStatus,
     // Extended data from analysis
     expertiseProfile: analysis?.expertise ? {
-      rawExperiences: analysis.expertise.rawExperiences.map((exp: any) => ({
+      rawExperiences: analysis.expertise.rawExperiences.map((exp: {
+        company: string;
+        title: string;
+        months: number;
+        startYear?: number;
+        endYear?: number;
+        matchedIndustries: string[];
+        matchedRoles: string[];
+        matchedEcosystems: string[];
+      }) => ({
         company: exp.company,
         title: exp.title,
         description: null,
@@ -1057,6 +1053,8 @@ export { resetCircuit, resetAllCircuits } from "./circuit-breaker";
 export {
   analyzeFounderLinkedIn,
   analyzeFounderByName,
+} from "./connectors/rapidapi-linkedin";
+export {
   analyzeTeamLinkedIn,
   isRapidAPILinkedInConfigured,
 } from "./connectors/rapidapi-linkedin";
@@ -1072,6 +1070,7 @@ function buildDealIntelligence(
   deals: SimilarDeal[],
   _query: ConnectorQuery
 ): import("./types").DealIntelligence {
+  void _query;
   // Calculate statistics from similar deals
   const multiples = deals
     .map((d) => d.valuationMultiple)

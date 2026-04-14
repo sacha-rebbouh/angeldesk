@@ -1,5 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { encryptText, decryptText, isEncrypted, safeDecrypt } from "../encryption";
+import {
+  decryptBuffer,
+  decryptText,
+  encryptBuffer,
+  encryptText,
+  isEncrypted,
+  isEncryptedBuffer,
+  safeDecrypt,
+  safeDecryptBuffer,
+} from "../encryption";
 
 // Set a test encryption key (32 bytes = 64 hex chars)
 const TEST_KEY = "a".repeat(64);
@@ -77,5 +86,37 @@ describe("safeDecrypt", () => {
   it("returns plaintext as-is if not encrypted", () => {
     const plain = "Hello world, this is not encrypted";
     expect(safeDecrypt(plain)).toBe(plain);
+  });
+});
+
+describe("encryptBuffer / decryptBuffer", () => {
+  it("encrypts and decrypts binary content back to the original buffer", () => {
+    const original = Buffer.from([0, 1, 2, 3, 255, 254, 128, 64]);
+
+    const encrypted = encryptBuffer(original);
+
+    expect(encrypted.equals(original)).toBe(false);
+    expect(isEncryptedBuffer(encrypted)).toBe(true);
+    expect(decryptBuffer(encrypted).equals(original)).toBe(true);
+  });
+
+  it("produces different ciphertext for the same buffer", () => {
+    const original = Buffer.from("same file content");
+
+    expect(encryptBuffer(original).equals(encryptBuffer(original))).toBe(false);
+  });
+
+  it("safeDecryptBuffer returns plaintext buffers unchanged", () => {
+    const original = Buffer.from("legacy plaintext file");
+
+    expect(safeDecryptBuffer(original)).toBe(original);
+    expect(isEncryptedBuffer(original)).toBe(false);
+  });
+
+  it("detects tampered encrypted buffers", () => {
+    const encrypted = encryptBuffer(Buffer.from("confidential deck"));
+    encrypted[encrypted.length - 1] = encrypted[encrypted.length - 1] ^ 1;
+
+    expect(() => decryptBuffer(encrypted)).toThrow();
   });
 });

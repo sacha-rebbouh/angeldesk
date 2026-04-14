@@ -142,7 +142,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
         <View style={{ marginTop: 20 }}>
           <Text style={gs.small}>
             Analyse complète : {analysis.completedAgents}/{analysis.totalAgents}{" "}
-            agents • {analysis.type.replace(/_/g, " ")}
+            étapes • {analysis.type.replace(/_/g, " ")}
           </Text>
           <Text style={[gs.small, { marginTop: 2 }]}>
             Généré le {formatDate()}

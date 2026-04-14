@@ -88,7 +88,7 @@ export const StructuredModeForm = React.memo(function StructuredModeForm({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Layers className="h-4 w-4" />
-              Resume de la structure
+              Résumé de la structure
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-4 text-sm">
@@ -155,9 +155,9 @@ export const StructuredModeForm = React.memo(function StructuredModeForm({
       {tranches.length === 0 && (
         <div className="text-center py-8 text-muted-foreground">
           <Layers className="mx-auto h-10 w-10 mb-3 opacity-30" />
-          <p className="text-sm">Aucune tranche definie</p>
+          <p className="text-sm">Aucune tranche définie</p>
           <p className="text-xs mt-1">
-            Ajoutez des tranches pour decrire la structure de votre investissement
+            Ajoutez des tranches pour décrire la structure de votre investissement
             (CCA, equity, options...)
           </p>
         </div>

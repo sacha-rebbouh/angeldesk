@@ -11,7 +11,6 @@ import type {
   AgentAlertSignal,
   AgentNarrative,
   DbCrossReference,
-  LinkedInEnrichedProfile,
 } from "../types";
 import { calculateAgentScore, TEAM_INVESTIGATOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
@@ -39,18 +38,6 @@ import { calculateAgentScore, TEAM_INVESTIGATOR_CRITERIA, type ExtractedMetric }
  * - Champs: experiences, education, skills, headline, about, languages
  * - Données temps réel, profils frais
  */
-
-// ============================================================================
-// SCORING FRAMEWORK
-// ============================================================================
-
-const SCORING_CRITERIA = {
-  founderQuality: { weight: 30, description: "Qualité individuelle des fondateurs (track record, expertise)" },
-  teamComplementarity: { weight: 25, description: "Complémentarité et couverture des compétences clés" },
-  entrepreneurialExperience: { weight: 20, description: "Expérience entrepreneuriale et exits" },
-  cofounderDynamics: { weight: 15, description: "Dynamique cofondateurs (equity, vesting, historique)" },
-  networkStrength: { weight: 10, description: "Qualité du réseau (advisors, investisseurs, industry)" },
-} as const;
 
 // ============================================================================
 // LLM RESPONSE INTERFACE
@@ -624,6 +611,13 @@ LinkedIn: "Dan Arki - Co-fondateur & CTO @ IInovation"
 → CRITICAL à identifier : le deck dit Formuleo, LinkedIn dit IInovation. Pourquoi cette divergence ?
 → Questions à investiguer : Le deck est-il à jour ? Dan a-t-il quitté Formuleo pour fonder IInovation ? Ou est-ce une erreur dans le deck ? Ou un mensonge ?
 → Si c'est un changement de carrière légitime, analyser la pertinence : la transition Account Manager → CTO est-elle crédible ? A-t-il les compétences techniques ? Son expérience chez Formuleo est-elle pertinente pour le projet actuel ?
+
+## CROSS-REFERENCE DB OBLIGATOIRE
+Si le Context Engine fournit des données sur les fondateurs (ventures précédentes, rounds précédents), les UTILISER pour :
+- Vérifier le track record annoncé vs les données de la Funding DB
+- Identifier les ventures précédentes et leur issue (exit, shutdown, pivot)
+- Comparer l'expérience déclarée vs les données vérifiables
+Chaque claim du fondateur sur son passé doit être confronté aux données disponibles.
 
 ## Anti-Hallucination Directive — Confidence Threshold
 Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;

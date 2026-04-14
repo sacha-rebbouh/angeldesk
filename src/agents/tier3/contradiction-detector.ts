@@ -8,7 +8,7 @@
  * Standard: Qualite facturable 50K€ - Chaque contradiction sourcee et quantifiee
  *
  * Inputs:
- * - Tous les outputs Tier 1 (12 agents)
+ * - Tous les outputs Tier 1 (13 agents)
  * - Output Tier 2 expert sectoriel
  * - Deck original (via extractedData)
  * - Context Engine data
@@ -46,7 +46,6 @@ import type {
   AgentAlertSignal,
   AgentNarrative,
   DbCrossReference,
-  AgentResult,
 } from "../types";
 
 // ============================================================================
@@ -152,7 +151,7 @@ Tu es un CONTRADICTION DETECTOR expert, combinant:
 - **Audit Big4 senior** (20+ ans): Verification croisee systematique, standards IFRS/GAAP
 - **Partner VC skeptique** (500+ deals analyses): Pattern matching des red flags classiques
 
-Tu travailles pour un Business Angel qui investit SON PROPRE ARGENT et ne peut pas se permettre d'investir dans un deal avec des informations contradictoires.
+Tu travailles pour un Business Angel qui a besoin d'informations fiables et cohérentes pour prendre ses propres décisions d'investissement.
 
 # MISSION
 
@@ -337,7 +336,22 @@ POURQUOI C'EST NUL:
 3. **Structure > Contenu**: Mieux vaut 5 contradictions completes que 10 tronquees
 
 ## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+
+## TONALITE — REGLE ABSOLUE
+Tu CONSTATES des contradictions. Tu ne DECIDES jamais.
+
+**INTERDIT dans TOUS les champs texte :**
+- "Ne pas investir" / "Fuir" / "Passer ce deal" / "Rejeter"
+- "Il est recommandé de..." suivi d'une action d'investissement
+- Tout impératif adressé à l'investisseur
+
+**CORRECT :**
+- "Ces incohérences affectent la fiabilité des données sur X dimensions"
+- "Clarification nécessaire avant toute décision"
+- "Les données contradictoires limitent la visibilité sur..."
+
+`;
   }
 
   // ============================================================================
@@ -1129,8 +1143,8 @@ Produis un JSON avec cette structure:
     const results = context.previousResults ?? {};
     const successfulAgents = Object.keys(results).filter(k => results[k]?.success);
 
-    if (successfulAgents.length < 12) {
-      limitations.push(`Seulement ${successfulAgents.length}/12 agents Tier 1 ont produit un output`);
+    if (successfulAgents.length < 13) {
+      limitations.push(`Seulement ${successfulAgents.length}/13 agents Tier 1 ont produit un output`);
     }
 
     if (!context.fundingDbContext && !context.fundingContext) {
@@ -1201,7 +1215,7 @@ Produis un JSON avec cette structure:
         evidence: `Score: ${consistencyScore}. Contradictions: ${contradictions.length}`,
         impact: "Les donnees du deal sont trop incoherentes pour baser une decision d'investissement.",
         question: "De nombreuses incoherences ont ete detectees. Pouvez-vous fournir des donnees plus coherentes?",
-        redFlagIfBadAnswer: "Si les incoherences persistent, il est recommande de ne pas investir.",
+        redFlagIfBadAnswer: "Ces incohérences limitent la capacité à prendre une décision éclairée sur ce deal.",
       });
     }
   }

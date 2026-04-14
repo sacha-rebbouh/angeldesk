@@ -26,7 +26,6 @@ const PITCH_DECK_KEYWORDS = [
 
 // Minimum thresholds
 const MIN_CHARS_PER_PAGE = 200;         // A page with less is likely image-heavy
-const MIN_WORDS_PER_PAGE = 30;          // Sanity check for words
 const MIN_QUALITY_SCORE = 40;           // Below this, warn the user
 const GOOD_QUALITY_SCORE = 70;          // Above this, extraction is reliable
 const MIN_KEYWORD_MATCHES = 3;          // Minimum pitch deck keywords expected

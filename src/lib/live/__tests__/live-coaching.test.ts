@@ -6,7 +6,7 @@
 //         rate limiter, session limits.
 // ============================================================================
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Mocks — must be declared before imports that reference them
@@ -116,9 +116,7 @@ import { serializeContext } from "@/lib/live/context-compiler";
 
 import type {
   UtteranceClassification,
-  SpeakerRole,
   AblyCoachingCardEvent,
-  CoachingInput,
   DealContext,
   CondensedTranscriptIntel,
   PostCallReport,
@@ -692,7 +690,7 @@ describe("Card reducer (coaching-feed)", () => {
 
     it("prevents duplicates — same ID in active list", () => {
       const card = makeCard({ id: "card-dup" });
-      let state = cardReducer(emptyState, { type: "ADD_CARD", card });
+      const state = cardReducer(emptyState, { type: "ADD_CARD", card });
       const stateAfterDup = cardReducer(state, { type: "ADD_CARD", card });
       // Should return exact same reference (no mutation)
       expect(stateAfterDup).toBe(state);

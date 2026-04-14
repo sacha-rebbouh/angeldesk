@@ -7,7 +7,6 @@
 import type {
   AggregationConfig,
   AggregationResult,
-  ConfidenceScore,
   DimensionContributor,
   DimensionScore,
   IScoreAggregator,
@@ -25,8 +24,8 @@ const DEFAULT_CONFIG: AggregationConfig = {
     team: 0.25,
     market: 0.20,
     product: 0.20,
-    financials: 0.25,
-    timing: 0.10,
+    financials: 0.20,
+    timing: 0.15,
   },
   missingDataPenalty: 5, // 5 points per missing required metric
   minMetricsForDimension: 2, // Need at least 2 metrics to score dimension
@@ -57,13 +56,6 @@ class ScoreAggregator implements IScoreAggregator {
     const includedFindings = findings.filter(
       (f) => f.confidence.score >= fullConfig.minConfidenceForInclusion
     );
-
-    const excludedFindings = findings
-      .filter((f) => f.confidence.score < fullConfig.minConfidenceForInclusion)
-      .map((f) => ({
-        id: f.id,
-        reason: `Confidence ${f.confidence.score}% below threshold ${fullConfig.minConfidenceForInclusion}%`,
-      }));
 
     // Group findings by dimension
     const findingsByDimension = this.groupByDimension(includedFindings);
@@ -104,10 +96,7 @@ class ScoreAggregator implements IScoreAggregator {
     );
 
     // Calculate expected variance
-    const expectedVariance = this.calculateExpectedVariance(
-      includedFindings,
-      globalResult.score
-    );
+    const expectedVariance = this.calculateExpectedVariance(includedFindings);
 
     // Count high confidence findings
     const highConfidenceFindings = includedFindings.filter(
@@ -381,10 +370,7 @@ class ScoreAggregator implements IScoreAggregator {
    * Calculate expected variance based on confidence distribution
    * Lower confidence = higher expected variance
    */
-  private calculateExpectedVariance(
-    findings: ScoredFinding[],
-    globalScore: number
-  ): number {
+  private calculateExpectedVariance(findings: ScoredFinding[]): number {
     if (findings.length === 0) return 25; // Max variance if no findings
 
     // Calculate variance based on confidence distribution

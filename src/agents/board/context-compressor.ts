@@ -90,7 +90,7 @@ export function buildDealSummary(input: BoardInput): string {
   const devil = input.agentOutputs.tier3?.devilsAdvocate;
   if (devil && typeof devil === "object") {
     const d = devil as Record<string, unknown>;
-    const flags = (d.criticalRedFlags ?? d.redFlags ?? d.dealbreakers) as string[] | undefined;
+    const flags = (d.criticalRedFlags ?? d.redFlags ?? d.criticalRisks) as string[] | undefined;
     if (Array.isArray(flags) && flags.length > 0) {
       parts.push(`Top red flags: ${flags.slice(0, 3).join(" | ")}`);
     }

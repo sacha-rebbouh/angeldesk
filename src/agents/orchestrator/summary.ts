@@ -7,14 +7,11 @@ import type { AnalysisType } from "./types";
 import { TIER1_AGENT_NAMES, TIER3_AGENT_NAMES, TIER2_EXPERT_NAMES } from "./types";
 
 const ACTION_LABELS: Record<string, string> = {
-  invest: "Signaux favorables",
-  strong_invest: "Signaux favorables",
-  pass: "Signaux d'alerte dominants",
-  strong_pass: "Signaux d'alerte dominants",
-  no_go: "Signaux d'alerte dominants",
-  negotiate: "Signaux contrastés",
-  conditional_invest: "Signaux contrastés",
-  wait: "Investigation complémentaire",
+  very_favorable: "Signaux très favorables",
+  favorable: "Signaux favorables",
+  contrasted: "Signaux contrastés",
+  vigilance: "Vigilance requise",
+  alert_dominant: "Signaux d'alerte dominants",
 };
 
 /**
@@ -69,9 +66,10 @@ export function generateTier1Summary(results: Record<string, AgentResult>): stri
   // Count critical issues from question-master
   const questionMaster = results["question-master"];
   if (questionMaster?.success && "data" in questionMaster) {
-    const data = questionMaster.data as { dealbreakers?: string[]; topPriorities?: string[] };
-    if (data.dealbreakers && data.dealbreakers.length > 0) {
-      parts.push(`\n**Risques critiques potentiels:** ${data.dealbreakers.length}`);
+    const data = questionMaster.data as { criticalQuestions?: string[]; dealbreakers?: string[]; topPriorities?: string[] };
+    const criticalQs = data.criticalQuestions ?? data.dealbreakers;
+    if (criticalQs && criticalQs.length > 0) {
+      parts.push(`\n**Risques critiques potentiels:** ${criticalQs.length}`);
     }
     if (data.topPriorities && data.topPriorities.length > 0) {
       parts.push(`**Top priorites:** ${data.topPriorities.slice(0, 3).join(", ")}`);
@@ -131,12 +129,12 @@ export function generateFullAnalysisSummary(results: Record<string, AgentResult>
   const tier2ExpertSuccess = tier2Result && results[tier2Result]?.success;
 
   parts.push(`**Full Analysis Complete**`);
-  parts.push(`- Tier 1 (Investigation): ${tier1Success}/12 agents`);
+  parts.push(`- Tier 1 (Investigation): ${tier1Success}/${TIER1_AGENT_NAMES.length} agents`);
   if (tier2Result) {
     const expertName = tier2Result.replace("-expert", "").replace(/-/g, " ").toUpperCase();
     parts.push(`- Tier 2 (Sector): ${tier2ExpertSuccess ? "✅" : "❌"} ${expertName} Expert`);
   }
-  parts.push(`- Tier 3 (Synthesis): ${tier3Success}/5 agents`);
+  parts.push(`- Tier 3 (Synthesis): ${tier3Success}/${TIER3_AGENT_NAMES.length} agents`);
 
   // Get final verdict
   const scorer = results["synthesis-deal-scorer"] as SynthesisDealScorerResult | undefined;
@@ -183,6 +181,7 @@ export function generateSummary(
   results: Record<string, AgentResult>,
   _type: AnalysisType
 ): string {
+  void _type;
   const parts: string[] = [];
 
   // Scoring summary from synthesis-deal-scorer

@@ -11,7 +11,12 @@ export const maxDuration = 300; // 5 minutes
  * The client connects and receives events as agents complete.
  */
 export async function GET(request: NextRequest) {
-  const user = await requireAuth();
+  let user;
+  try {
+    user = await requireAuth();
+  } catch {
+    return new Response("Unauthorized", { status: 401 });
+  }
   const dealId = request.nextUrl.searchParams.get("dealId");
 
   if (!dealId || !isValidCuid(dealId)) {
@@ -29,14 +34,34 @@ export async function GET(request: NextRequest) {
   }
 
   const encoder = new TextEncoder();
+  const signal = request.signal;
 
   const stream = new ReadableStream({
     async start(controller) {
+      let closed = false;
+      const close = () => {
+        if (!closed) {
+          closed = true;
+          controller.close();
+        }
+      };
       const sendEvent = (event: string, data: unknown) => {
+        if (closed || signal.aborted) return;
         controller.enqueue(
           encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
         );
       };
+      const sleep = (ms: number) => new Promise<void>((resolve) => {
+        if (signal.aborted) {
+          resolve();
+          return;
+        }
+        const timeoutId = setTimeout(resolve, ms);
+        signal.addEventListener("abort", () => {
+          clearTimeout(timeoutId);
+          resolve();
+        }, { once: true });
+      });
 
       let lastCompletedAgents = -1;
       let lastResults: string[] = [];
@@ -45,6 +70,10 @@ export async function GET(request: NextRequest) {
 
       const poll = async () => {
         try {
+          if (signal.aborted) {
+            return false;
+          }
+
           const analysis = await prisma.analysis.findFirst({
             where: { dealId, status: { in: ["RUNNING", "COMPLETED", "FAILED"] } },
             orderBy: { createdAt: "desc" },
@@ -53,7 +82,6 @@ export async function GET(request: NextRequest) {
               status: true,
               completedAgents: true,
               totalAgents: true,
-              results: true,
               summary: true,
               totalCost: true,
               totalTimeMs: true,
@@ -69,9 +97,13 @@ export async function GET(request: NextRequest) {
           if (analysis.completedAgents !== lastCompletedAgents) {
             lastCompletedAgents = analysis.completedAgents;
 
-            // Extract newly completed agent names from results
-            const currentResults = analysis.results
-              ? Object.keys(analysis.results as Record<string, unknown>)
+            // Fetch the large results JSON only when progress changed.
+            const analysisResults = await prisma.analysis.findUnique({
+              where: { id: analysis.id },
+              select: { results: true },
+            });
+            const currentResults = analysisResults?.results
+              ? Object.keys(analysisResults.results as Record<string, unknown>)
               : [];
             const newAgents = currentResults.filter(a => !lastResults.includes(a));
             lastResults = currentResults;
@@ -115,18 +147,22 @@ export async function GET(request: NextRequest) {
       };
 
       // Poll every 1.5 seconds
-      while (attempts < MAX_ATTEMPTS) {
+      while (attempts < MAX_ATTEMPTS && !signal.aborted) {
         const shouldContinue = await poll();
         if (!shouldContinue) break;
         attempts++;
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        await sleep(1500);
       }
 
-      if (attempts >= MAX_ATTEMPTS) {
+      if (attempts >= MAX_ATTEMPTS && !signal.aborted) {
         sendEvent("timeout", { message: "Stream timeout after 5 minutes" });
       }
 
-      controller.close();
+      close();
+    },
+    cancel() {
+      // The request signal drives the polling loop; this hook exists so abandoned
+      // clients do not leave future work scheduled by the stream itself.
     },
   });
 

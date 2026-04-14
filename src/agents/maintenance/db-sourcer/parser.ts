@@ -5,7 +5,7 @@
  */
 
 import type { ParsedFunding } from '../types'
-import { parseFundingAmount, stripHtml, normalizeStage, normalizeCountry } from '../utils'
+import { parseFundingAmount, stripHtml, normalizeStage } from '../utils'
 
 // ============================================================================
 // MAIN PARSER

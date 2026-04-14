@@ -12,22 +12,12 @@ import type {
   Connector,
   ConnectorQuery,
   NewsArticle,
-  DataSource,
 } from "../types";
 
 const NEWS_API_BASE = "https://newsapi.org/v2";
 
 function getApiKey(): string | undefined {
   return process.env.NEWS_API_KEY;
-}
-
-function createSource(): DataSource {
-  return {
-    type: "news_api",
-    name: "NewsAPI.org",
-    retrievedAt: new Date().toISOString(),
-    confidence: 0.9,
-  };
 }
 
 /**
@@ -164,8 +154,6 @@ export const newsApiConnector: Connector = {
       if (data.status !== "ok" || !data.articles) {
         return [];
       }
-
-      const source = createSource();
 
       return data.articles.map((article: {
         title: string;

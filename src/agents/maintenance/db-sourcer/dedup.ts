@@ -6,7 +6,7 @@
 
 import { prisma } from '@/lib/prisma'
 import type { ParsedFunding } from '../types'
-import { normalizeCompanyName, normalizeStage, normalizeCountry, convertToUSD } from '../utils'
+import { normalizeCompanyName, normalizeStage, convertToUSD } from '../utils'
 
 // ============================================================================
 // DUPLICATE CHECK

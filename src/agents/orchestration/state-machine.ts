@@ -3,7 +3,7 @@
  * Manages the lifecycle of an analysis session with DB persistence for crash recovery
  */
 
-import type { AgentResult, AnalysisAgentResult } from "../types";
+import type { AnalysisAgentResult } from "../types";
 import type { ScoredFinding } from "@/scoring/types";
 import { messageBus } from "./message-bus";
 import { createMessage } from "./message-types";

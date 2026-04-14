@@ -6,7 +6,7 @@
 
 import { prisma } from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
-import type { DataQualityMetrics, ActivityStatusBreakdown } from '../types'
+import type { DataQualityMetrics } from '../types'
 import { createLogger } from '../utils'
 
 const logger = createLogger('SUPERVISOR:quality-snapshot')

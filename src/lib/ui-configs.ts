@@ -109,34 +109,32 @@ export function getScoreBarColor(score: number): string {
 // =============================================================================
 
 export const RECOMMENDATION_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  invest: { label: "Signaux favorables", color: "text-green-800", bg: "bg-green-50 border-green-300" },
-  strong_invest: { label: "Signaux favorables", color: "text-green-800", bg: "bg-green-50 border-green-300" },
-  negotiate: { label: "Signaux contrastés", color: "text-amber-800", bg: "bg-amber-50 border-amber-300" },
-  conditional_invest: { label: "Signaux contrastés", color: "text-amber-800", bg: "bg-amber-50 border-amber-300" },
-  wait: { label: "Investigation complémentaire", color: "text-blue-800", bg: "bg-blue-50 border-blue-300" },
-  pass: { label: "Signaux d'alerte dominants", color: "text-red-800", bg: "bg-red-50 border-red-300" },
-  strong_pass: { label: "Signaux d'alerte dominants", color: "text-red-800", bg: "bg-red-50 border-red-300" },
-  no_go: { label: "Signaux d'alerte dominants", color: "text-red-800", bg: "bg-red-50 border-red-300" },
+  very_favorable: { label: "Signaux très favorables", color: "text-green-800", bg: "bg-green-50 border-green-300" },
+  favorable: { label: "Signaux favorables", color: "text-green-800", bg: "bg-green-50 border-green-300" },
+  contrasted: { label: "Signaux contrastés", color: "text-amber-800", bg: "bg-amber-50 border-amber-300" },
+  vigilance: { label: "Vigilance requise", color: "text-blue-800", bg: "bg-blue-50 border-blue-300" },
+  alert_dominant: { label: "Signaux d'alerte dominants", color: "text-red-800", bg: "bg-red-50 border-red-300" },
 };
 
 // Verdict Config — maps synthesis scorer verdict values to badge display
 // Used by tier3-results VerdictBadge
 export const VERDICT_CONFIG: Record<string, { label: string; color: string }> = {
-  strong_pass: { label: "Signaux très favorables", color: "bg-green-100 text-green-800 border-green-300" },
-  pass: { label: "Signaux favorables", color: "bg-blue-100 text-blue-800 border-blue-300" },
-  conditional_pass: { label: "Signaux contrastés", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  weak_pass: { label: "Vigilance requise", color: "bg-orange-100 text-orange-800 border-orange-300" },
-  no_go: { label: "Signaux d'alerte dominants", color: "bg-red-100 text-red-800 border-red-300" },
-  // Aliases for recommendation keys that might appear as verdict
-  invest: { label: "Signaux très favorables", color: "bg-green-100 text-green-800 border-green-300" },
-  strong_invest: { label: "Signaux très favorables", color: "bg-green-100 text-green-800 border-green-300" },
-  negotiate: { label: "Signaux contrastés", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  conditional_invest: { label: "Signaux contrastés", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
-  wait: { label: "Vigilance requise", color: "bg-orange-100 text-orange-800 border-orange-300" },
+  very_favorable: { label: "Signaux très favorables", color: "bg-green-100 text-green-800 border-green-300" },
+  favorable: { label: "Signaux favorables", color: "bg-blue-100 text-blue-800 border-blue-300" },
+  contrasted: { label: "Signaux contrastés", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
+  vigilance: { label: "Vigilance requise", color: "bg-orange-100 text-orange-800 border-orange-300" },
+  alert_dominant: { label: "Signaux d'alerte dominants", color: "bg-red-100 text-red-800 border-red-300" },
 };
 
 // Alert Signal Labels — analytical framing (no prescriptive language)
 export const ALERT_SIGNAL_LABELS: Record<string, string> = {
+  // New signal profile keys
+  alert_dominant: "ANOMALIE MAJEURE",
+  vigilance: "INVESTIGATION REQUISE",
+  contrasted: "POINTS D'ATTENTION",
+  favorable: "CONFORME",
+  very_favorable: "CONFORME",
+  // Legacy keys for backward compatibility
   STOP: "ANOMALIE MAJEURE",
   INVESTIGATE_FURTHER: "INVESTIGATION REQUISE",
   PROCEED_WITH_CAUTION: "POINTS D'ATTENTION",
@@ -150,3 +148,71 @@ export const READINESS_LABELS: Record<string, string> = {
   SIGNIFICANT_CONCERNS: "Points d'attention majeurs",
   DO_NOT_PROCEED: "Alertes critiques",
 };
+
+// =============================================================================
+// Enum FR Labels — centralized translations for agent output enums
+// English business terms (Burn Rate, ARR, Churn) stay in EN with tooltips
+// =============================================================================
+
+/** Burn efficiency labels */
+export const BURN_EFFICIENCY_LABELS: Record<string, string> = {
+  EFFICIENT: "Efficace",
+  MODERATE: "Modéré",
+  INEFFICIENT: "Inefficace",
+};
+
+/** Competitive moat labels */
+export const MOAT_LABELS: Record<string, string> = {
+  STRONG_MOAT: "Fort avantage concurrentiel",
+  MODERATE_MOAT: "Avantage modéré",
+  WEAK_MOAT: "Avantage faible",
+  NO_MOAT: "Pas d'avantage identifié",
+  NARROW_MOAT: "Avantage étroit",
+};
+
+/** Product-market fit labels */
+export const PMF_LABELS: Record<string, string> = {
+  STRONG: "Fort",
+  MODERATE: "Modéré",
+  WEAK: "Faible",
+  EARLY: "Précoce",
+  NONE: "Non identifié",
+};
+
+/** Channel diversification labels */
+export const DIVERSIFICATION_LABELS: Record<string, string> = {
+  HIGH: "Élevée",
+  MODERATE: "Modérée",
+  LOW: "Faible",
+  DIVERSIFIED: "Diversifié",
+  CONCENTRATED: "Concentré",
+};
+
+/** Concentration level labels */
+export const CONCENTRATION_LABELS: Record<string, string> = {
+  LOW: "Faible",
+  MODERATE: "Modérée",
+  HIGH: "Élevée",
+  CRITICAL: "Critique",
+};
+
+/** Generic level/strength labels */
+export const LEVEL_LABELS: Record<string, string> = {
+  HIGH: "Élevé",
+  MODERATE: "Modéré",
+  LOW: "Faible",
+  STRONG: "Fort",
+  WEAK: "Faible",
+  CRITICAL: "Critique",
+  NONE: "Aucun",
+};
+
+/**
+ * Get FR label for any enum value.
+ * Falls back to the original value with underscores replaced by spaces.
+ */
+export function getEnumLabel(value: string, labels?: Record<string, string>): string {
+  if (labels && value in labels) return labels[value];
+  if (value in LEVEL_LABELS) return LEVEL_LABELS[value];
+  return value.replace(/_/g, " ");
+}

@@ -19,7 +19,6 @@
 import type {
   Connector,
   ConnectorQuery,
-  DataSource,
 } from "../types";
 
 // ============================================================================
@@ -166,14 +165,6 @@ function calculateValidationScore(validations: BPIValidation["validations"]): nu
 
   return Math.min(100, score);
 }
-
-const bpiSource: DataSource = {
-  type: "web_search",
-  name: "BPI France / French Tech",
-  url: "https://lafrenchtech.com",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.95, // Official government data
-};
 
 // ============================================================================
 // MAIN LOOKUP FUNCTIONS

@@ -30,12 +30,12 @@ export const DisclaimerBanner = memo(function DisclaimerBanner() {
   }
 
   return (
-    <div className="border-t bg-amber-50 dark:bg-amber-950/20 px-4 py-3 pr-40">
+    <div className="border-t bg-amber-50 dark:bg-amber-950/20 px-4 py-3">
       <div className="max-w-7xl mx-auto flex items-start gap-3">
         <button
           onClick={handleDismiss}
           className="shrink-0 p-1 hover:bg-amber-100 rounded transition-colors"
-          aria-label="Reduire l'avertissement"
+          aria-label="Réduire l'avertissement"
         >
           <X className="h-3.5 w-3.5 text-amber-600" />
         </button>

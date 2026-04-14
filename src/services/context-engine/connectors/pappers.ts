@@ -237,9 +237,7 @@ export const pappersConnector: Connector = {
     return !!getApiKey();
   },
 
-  getFounderBackground: async (
-    founderName: string
-  ): Promise<FounderBackground | null> => {
+  getFounderBackground: async (): Promise<FounderBackground | null> => {
     // Pappers can search for dirigeants across all companies
     // This would require the "recherche-dirigeants" endpoint
     // For now, return null - implement when needed

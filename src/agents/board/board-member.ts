@@ -1,5 +1,5 @@
-import { MODELS, type ModelKey } from "@/services/openrouter/client";
-import { complete, setAgentContext, completeJSON } from "@/services/openrouter/router";
+import type { ModelKey } from "@/services/openrouter/client";
+import { setAgentContext, completeJSON } from "@/services/openrouter/router";
 import { compressBoardContext, buildDealSummary } from "./context-compressor";
 import type {
   BoardMemberConfig,
@@ -7,7 +7,6 @@ import type {
   InitialAnalysis,
   DebateResponse,
   FinalVote,
-  BoardVerdictType,
 } from "./types";
 
 const ANALYSIS_TIMEOUT_MS = 120000; // 2 minutes
@@ -153,7 +152,7 @@ La valeur de ce board reside dans la DIVERSITE des perspectives:
 ## TON ROLE
 Tu es un analyste senior avec 15+ ans d'experience en venture capital. Tu dois:
 1. Analyser objectivement le deal avec tes propres capacites de raisonnement
-2. Former un verdict independant (GO / NO_GO / NEED_MORE_INFO)
+2. Former un profil de signal independant (VERY_FAVORABLE / FAVORABLE / CONTRASTED / VIGILANCE / ALERT_DOMINANT / NEED_MORE_INFO)
 3. Justifier chaque position avec des preuves concretes du deck ou des donnees
 4. Debattre honnetement avec les autres modeles - changer d'avis si convaincu
 5. Signaler ce que TU vois que les autres pourraient manquer
@@ -163,7 +162,7 @@ Tu es un analyste senior avec 15+ ans d'experience en venture capital. Tu dois:
 2. **Marche** (25%) - TAM/SAM/SOM, croissance, timing, concurrence
 3. **Produit** (20%) - PMF, differenciation, moat, traction
 4. **Financiers** (10%) - Unit economics, valorisation, terms, runway
-5. **Risques** (5%) - Red flags critiques, dealbreakers potentiels
+5. **Risques** (5%) - Red flags critiques, risques critiques potentiels
 
 ## REGLES ABSOLUES
 - Sois HONNETE sur ce que tu vois, meme si ca contredit les autres
@@ -172,6 +171,38 @@ Tu es un analyste senior avec 15+ ans d'experience en venture capital. Tu dois:
 - Confiance = fonction de la qualite des donnees disponibles
 
 FORMAT: Toujours repondre en JSON valide.
+
+## CLASSIFICATION DE FIABILITÉ DES DONNÉES (OBLIGATOIRE)
+Chaque donnée que tu analyses a un niveau de fiabilité. Tu DOIS en tenir compte dans ton analyse.
+
+**6 niveaux (du plus fiable au moins fiable) :**
+- **AUDITED** : Donnée auditée par un tiers indépendant (commissaire aux comptes, expert). Confiance maximale.
+- **VERIFIED** : Donnée vérifiable via source externe (registre, API, base publique). Haute confiance.
+- **DECLARED** : Donnée déclarée par le fondateur dans le deck, non vérifiée. Confiance modérée.
+- **PROJECTED** : Projection future (CA prévisionnel, croissance attendue). Confiance faible — traiter comme hypothèse.
+- **ESTIMATED** : Estimation dérivée ou calculée à partir d'autres données. Confiance faible.
+- **UNVERIFIABLE** : Donnée impossible à vérifier (claims sans source, opinions). Confiance minimale.
+
+**Règles impératives :**
+1. Ne JAMAIS traiter une donnée PROJECTED ou ESTIMATED comme un fait établi.
+2. Si une projection est présentée comme un fait dans le deck, le signaler comme red flag (PROJECTION_AS_FACT).
+3. Pour chaque métrique clé de ton analyse, indiquer le niveau de fiabilité de la source.
+4. Pondérer tes conclusions : une conclusion basée uniquement sur des données DECLARED ou inférieures doit être marquée avec prudence.
+5. Si le Tier 0 (fact-extractor) a fourni des classifications de fiabilité, les RESPECTER et ne pas les surclasser.
+
+## TON ANALYTIQUE OBLIGATOIRE (RÈGLE N°1)
+Angel Desk ANALYSE et GUIDE. Angel Desk ne DÉCIDE JAMAIS. Le Business Angel est le seul décideur.
+
+**INTERDIT dans TOUT texte généré (narrative, nextSteps, forNegotiation, rationale, summary) :**
+- "Investir" / "Ne pas investir" / "Rejeter l'opportunité" / "Passer ce deal"
+- "GO" / "NO-GO" / "Dealbreaker"
+- Tout impératif adressé à l'investisseur ("Fuyez", "N'investissez pas", "Rejetez")
+- Tout langage qui prescrit une décision
+
+**OBLIGATOIRE :**
+- Ton analytique : "Les données montrent...", "Les signaux indiquent...", "X dimensions présentent..."
+- Constater des faits, rapporter des signaux, laisser le BA conclure
+- Chaque phrase doit pouvoir se terminer par "...à vous de décider" sans être absurde
 
 ## Anti-Hallucination Directive — Confidence Threshold
 Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
@@ -219,7 +250,7 @@ Analyse ce deal et forme ton verdict independant.
 Reponds en JSON avec ce format exact:
 \`\`\`json
 {
-  "verdict": "GO" | "NO_GO" | "NEED_MORE_INFO",
+  "verdict": "VERY_FAVORABLE" | "FAVORABLE" | "CONTRASTED" | "VIGILANCE" | "ALERT_DOMINANT" | "NEED_MORE_INFO",
   "confidence": <0-100>,
   "arguments": [
     {
@@ -293,7 +324,7 @@ Reponds en JSON:
 \`\`\`json
 {
   "positionChanged": <boolean>,
-  "newVerdict": "<si change: GO | NO_GO | NEED_MORE_INFO>",
+  "newVerdict": "<si change: VERY_FAVORABLE | FAVORABLE | CONTRASTED | VIGILANCE | ALERT_DOMINANT | NEED_MORE_INFO>",
   "newConfidence": <si change: 0-100>,
   "justification": "<explication de ta position actuelle>",
   "responsesToOthers": [
@@ -357,7 +388,7 @@ C'est le moment du vote final. Apres avoir ecoute tous les debats, donne ton ver
 Reponds en JSON:
 \`\`\`json
 {
-  "verdict": "GO" | "NO_GO" | "NEED_MORE_INFO",
+  "verdict": "VERY_FAVORABLE" | "FAVORABLE" | "CONTRASTED" | "VIGILANCE" | "ALERT_DOMINANT" | "NEED_MORE_INFO",
   "confidence": <0-100>,
   "justification": "<justification finale>",
   "keyFactors": [
@@ -371,7 +402,7 @@ Reponds en JSON:
     "<point sur lequel tu es d'accord avec les autres>"
   ],
   "remainingConcerns": [
-    "<concern qui persiste meme si tu votes GO>"
+    "<concern qui persiste>"
   ]
 }
 \`\`\``;

@@ -14,8 +14,8 @@ export default function DashboardLoading() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-3">
-        {[...Array(3)].map((_, i) => (
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
+        {[...Array(4)].map((_, i) => (
           <Card key={i}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <Skeleton className="h-4 w-24" />

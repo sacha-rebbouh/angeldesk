@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Eye, FileText, MoreHorizontal, Pencil, Trash2, Upload, AlertTriangle } from "lucide-react";
+import { Eye, FileSearch, FileText, MoreHorizontal, Pencil, Trash2, Upload, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Card,
@@ -44,6 +44,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DocumentUploadDialog } from "./document-upload-dialog";
+import { DocumentExtractionAuditDialog } from "./document-extraction-audit-dialog";
 import { DocumentPreviewDialog } from "./document-preview-dialog";
 import {
   ExtractionQualityBadge,
@@ -58,6 +59,7 @@ interface Document {
   mimeType: string | null;
   processingStatus: string;
   extractionQuality: number | null;
+  extractionMetrics?: unknown;
   extractionWarnings: { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null;
   requiresOCR: boolean;
   uploadedAt: Date;
@@ -92,11 +94,18 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
   return response.json();
 }
 
+function getExtractionMetricStatus(metrics: unknown): string | null {
+  if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) return null;
+  const status = (metrics as { status?: unknown }).status;
+  return typeof status === "string" ? status : null;
+}
+
 export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
+  const [auditDoc, setAuditDoc] = useState<Document | null>(null);
   const [renameDoc, setRenameDoc] = useState<Document | null>(null);
   const [newName, setNewName] = useState("");
   const [deleteDoc, setDeleteDoc] = useState<Document | null>(null);
@@ -130,6 +139,10 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
 
   const openPreview = useCallback((doc: Document) => {
     setPreviewDoc(doc);
+  }, []);
+
+  const openAudit = useCallback((doc: Document) => {
+    setAuditDoc(doc);
   }, []);
 
   const openRename = useCallback((doc: Document) => {
@@ -272,6 +285,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                           warnings={doc.extractionWarnings}
                           requiresOCR={doc.requiresOCR}
                           processingStatus={doc.processingStatus}
+                          extractionStatus={getExtractionMetricStatus(doc.extractionMetrics)}
                         />
                       ) : (
                         <Badge
@@ -299,7 +313,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                             : doc.processingStatus === "PENDING"
                             ? "En attente"
                             : doc.processingStatus === "FAILED"
-                            ? "Echec"
+                            ? "Échec"
                             : doc.processingStatus}
                         </Badge>
                       )}
@@ -311,6 +325,15 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                       >
                         <Eye className="h-4 w-4 mr-1" />
                         Voir
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openAudit(doc)}
+                        disabled={doc.processingStatus !== "COMPLETED"}
+                      >
+                        <FileSearch className="h-4 w-4 mr-1" />
+                        Audit
                       </Button>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -355,6 +378,12 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
         open={!!previewDoc}
         onOpenChange={(open) => !open && setPreviewDoc(null)}
         document={previewDoc}
+      />
+
+      <DocumentExtractionAuditDialog
+        open={!!auditDoc}
+        onOpenChange={(open) => !open && setAuditDoc(null)}
+        document={auditDoc}
       />
 
       {/* Rename Dialog */}

@@ -30,6 +30,7 @@
 //   PORT           — listening port (default 8080)
 // ============================================================================
 
+/* eslint-disable @typescript-eslint/no-require-imports -- Fly relay runs as a standalone CommonJS service. */
 const { WebSocketServer } = require("ws");
 const { createServer } = require("http");
 const sharp = require("sharp");
@@ -165,7 +166,7 @@ wss.on("connection", (ws, req) => {
     let event;
     try {
       event = JSON.parse(message.toString());
-    } catch (err) {
+    } catch {
       if (messageCount <= 3) {
         console.warn(`[relay][${sessionId}] Non-JSON message #${messageCount}, ignoring (${message.toString().substring(0, 100)})`);
       }

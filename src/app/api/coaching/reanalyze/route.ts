@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid, checkRateLimit } from "@/lib/sanitize";
+import { deductCredits, refundCredits } from "@/services/credits";
 import { handleApiError } from "@/lib/api-error";
 import {
   triggerTargetedReanalysis,
@@ -91,13 +92,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // --- Delta mode: lightweight comparison, no agent re-run ---
+    // --- Delta mode: lightweight comparison, no agent re-run (free) ---
     if (mode === "delta") {
       const deltaReport = await generateDeltaReport(sessionId, session.dealId);
       return NextResponse.json({ data: deltaReport });
     }
 
-    // --- Targeted mode: identify impacted agents from session summary ---
+    // --- Targeted mode: verify summary exists BEFORE deducting credits ---
+    let agentNames: string[];
     if (mode === "targeted") {
       const summary = await prisma.sessionSummary.findUnique({
         where: { sessionId },
@@ -123,30 +125,29 @@ export async function POST(request: NextRequest) {
         sessionStats: summary.sessionStats as PostCallReport["sessionStats"],
       };
 
-      const agentNames = identifyImpactedAgents(postCallReport);
-
-      await triggerTargetedReanalysis(session.dealId, agentNames, sessionId);
-
-      // Fetch the created analysis to return its ID
-      const analysis = await prisma.analysis.findFirst({
-        where: {
-          dealId: session.dealId,
-          mode: "post_call_reanalysis",
-        },
-        orderBy: { createdAt: "desc" },
-        select: { id: true },
-      });
-
-      return NextResponse.json({
-        data: {
-          agents: agentNames,
-          analysisId: analysis?.id ?? null,
-        },
-      });
+      agentNames = identifyImpactedAgents(postCallReport);
+    } else {
+      // Full mode
+      agentNames = ALL_AGENT_NAMES;
     }
 
-    // --- Full mode: re-run all agents ---
-    await triggerTargetedReanalysis(session.dealId, ALL_AGENT_NAMES, sessionId);
+    // --- Deduct credits (RE_ANALYSIS = 3 credits) — after all preconditions pass ---
+    const deduction = await deductCredits(user.id, 'RE_ANALYSIS', session.dealId);
+    if (!deduction.success) {
+      return NextResponse.json(
+        { error: deduction.error ?? "Crédits insuffisants pour la re-analyse" },
+        { status: 402 }
+      );
+    }
+
+    // --- Trigger re-analysis (refund on failure) ---
+    try {
+      await triggerTargetedReanalysis(session.dealId, agentNames, sessionId);
+    } catch (reanalysisError) {
+      // Refund credits — re-analysis failed to start
+      await refundCredits(user.id, 'RE_ANALYSIS', session.dealId);
+      throw reanalysisError;
+    }
 
     // Fetch the created analysis to return its ID
     const analysis = await prisma.analysis.findFirst({
@@ -160,7 +161,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       data: {
-        agents: ALL_AGENT_NAMES,
+        agents: agentNames,
         analysisId: analysis?.id ?? null,
       },
     });

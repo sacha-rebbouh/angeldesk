@@ -8,7 +8,6 @@
 import type { ParsedFunding } from '../types'
 import { MAINTENANCE_CONSTANTS } from '../types'
 import {
-  withTimeout,
   withRetry,
   createLogger,
   isCircuitOpen,
@@ -56,6 +55,13 @@ interface OpenRouterResponse {
     completion_tokens: number
     total_tokens: number
   }
+}
+
+type OpenRouterRequestPayload = {
+  model: string
+  messages: Array<{ role: 'system' | 'user'; content: string }>
+  temperature: number
+  max_tokens: number
 }
 
 // ============================================================================
@@ -126,12 +132,7 @@ Return ONLY valid JSON, no explanation.`
 
   try {
     const result = await withRetry(
-      () =>
-        withTimeout(
-          callLLM(apiKey, userPrompt),
-          MAINTENANCE_CONSTANTS.LLM_TIMEOUT_MS,
-          'LLM parsing timeout'
-        ),
+      () => callLLM(apiKey, userPrompt),
       {
         maxAttempts: 2,
         baseDelayMs: 1000,
@@ -164,31 +165,15 @@ Return ONLY valid JSON, no explanation.`
 // ============================================================================
 
 async function callLLM(apiKey: string, userPrompt: string): Promise<LLMFundingExtraction | null> {
-  const response = await fetch(OPENROUTER_API, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://angeldesk.app',
-      'X-Title': 'Angel Desk DB Sourcer',
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.1,
-      max_tokens: 500,
-    }),
+  const data = await postOpenRouterCompletion(apiKey, {
+    model: MODEL,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
+    temperature: 0.1,
+    max_tokens: 500,
   })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`)
-  }
-
-  const data = (await response.json()) as OpenRouterResponse
 
   if (!data.choices?.[0]?.message?.content) {
     return null
@@ -215,6 +200,37 @@ function cleanJsonResponse(content: string): string {
     .replace(/^```\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim()
+}
+
+async function postOpenRouterCompletion(
+  apiKey: string,
+  payload: OpenRouterRequestPayload
+): Promise<OpenRouterResponse> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), MAINTENANCE_CONSTANTS.LLM_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(OPENROUTER_API, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://angeldesk.app',
+        'X-Title': 'Angel Desk DB Sourcer',
+      },
+      signal: controller.signal,
+      body: JSON.stringify(payload),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`)
+    }
+
+    return (await response.json()) as OpenRouterResponse
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 // ============================================================================

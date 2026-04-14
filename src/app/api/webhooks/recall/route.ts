@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
 
     // ── Map Recall status codes to session status ──
     let newStatus: SessionStatus | null = null;
-    let updateData: Record<string, unknown> = {};
+    const updateData: Record<string, unknown> = {};
     let ablyMessage = "";
 
     switch (statusCode) {

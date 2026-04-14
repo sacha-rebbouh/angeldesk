@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { z } from "zod";
 import { handleApiError } from "@/lib/api-error";
+import { validateLinkedInProfileUrl } from "@/lib/url-validator";
 
 const updateFounderSchema = z.object({
   name: z.string().min(1, "Le nom est requis").optional(),
@@ -86,6 +87,15 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     const body = await request.json();
     const validatedData = updateFounderSchema.parse(body);
+    if (validatedData.linkedinUrl) {
+      const linkedInValidation = validateLinkedInProfileUrl(validatedData.linkedinUrl);
+      if (!linkedInValidation.valid) {
+        return NextResponse.json(
+          { error: linkedInValidation.reason ?? "URL LinkedIn invalide" },
+          { status: 400 }
+        );
+      }
+    }
 
     const founder = await prisma.founder.update({
       where: { id: founderId },

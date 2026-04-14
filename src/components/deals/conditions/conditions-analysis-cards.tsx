@@ -31,13 +31,13 @@ import type {
 function getVerdictConfig(score: number) {
   if (score >= 80) return { label: "Conditions favorables", color: "text-green-700", accentColor: "bg-emerald-500" };
   if (score >= 60) return { label: "Conditions acceptables", color: "text-blue-700", accentColor: "bg-blue-500" };
-  if (score >= 40) return { label: "Conditions a negocier", color: "text-amber-700", accentColor: "bg-amber-500" };
-  return { label: "Conditions defavorables", color: "text-red-700", accentColor: "bg-red-500" };
+  if (score >= 40) return { label: "Conditions à négocier", color: "text-amber-700", accentColor: "bg-amber-500" };
+  return { label: "Conditions défavorables", color: "text-red-700", accentColor: "bg-red-500" };
 }
 
 function getValuationLabel(verdict: string): { label: string; color: string } {
   switch (verdict) {
-    case "UNDERVALUED": return { label: "Sous-evalue", color: "text-green-600" };
+    case "UNDERVALUED": return { label: "Sous-évalué", color: "text-green-600" };
     case "FAIR": return { label: "Fair market", color: "text-blue-600" };
     case "AGGRESSIVE": return { label: "Agressif", color: "text-orange-600" };
     case "VERY_AGGRESSIVE": return { label: "Tres agressif", color: "text-red-600" };
@@ -247,7 +247,7 @@ export const NegotiationAdviceCard = React.memo(function NegotiationAdviceCard({
         {/* Talking points from narrative.forNegotiation */}
         {talkingPoints && talkingPoints.length > 0 && (
           <div className="space-y-1.5 pb-3 border-b mb-3">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Arguments cles</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Arguments clés</p>
             {talkingPoints.map((point, idx) => (
               <p key={idx} className="text-sm text-foreground flex items-start gap-1.5">
                 <span className="text-primary mt-0.5 shrink-0">•</span>

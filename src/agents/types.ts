@@ -1,6 +1,5 @@
 import type { Deal, RedFlagCategory, RedFlagSeverity } from "@prisma/client";
 import type {
-  DealContext,
   DealIntelligence,
   MarketData,
   CompetitiveLandscape,
@@ -2770,6 +2769,9 @@ export interface Dealbreaker {
   riskIfIgnored: string;
 }
 
+/** CriticalQuestion — alias for Dealbreaker (renamed for clarity) */
+export type CriticalQuestion = Dealbreaker;
+
 /** Synthese des findings par agent */
 export interface AgentFindingsSummary {
   agentName: string;
@@ -2802,7 +2804,9 @@ export interface QuestionMasterFindings {
   // Points de negociation (minimum 5)
   negotiationPoints: NegotiationPoint[];
 
-  // Dealbreakers identifies
+  // Risques critiques identifies
+  criticalQuestions: CriticalQuestion[];
+  /** @deprecated Use criticalQuestions */
   dealbreakers: Dealbreaker[];
 
   // Synthese des findings Tier 1
@@ -3326,7 +3330,7 @@ export interface ScenarioModelerResult extends AgentResult {
 // Synthesis Deal Scorer Agent
 export interface SynthesisDealScorerData {
   overallScore: number; // 0-100
-  verdict: "strong_pass" | "pass" | "conditional_pass" | "weak_pass" | "no_go";
+  verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
   confidence: number; // 0-100
   dimensionScores: {
     dimension: string;
@@ -3349,7 +3353,7 @@ export interface SynthesisDealScorerData {
     similarDealsAnalyzed: number;
   };
   investmentRecommendation: {
-    action: "invest" | "pass" | "wait" | "negotiate";
+    action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     rationale: string;
     conditions?: string[];
     suggestedTerms?: string;
@@ -3594,7 +3598,7 @@ export interface DevilsAdvocateResult extends AgentResult {
 export interface MemoGeneratorData {
   executiveSummary: {
     oneLiner: string;
-    recommendation: "invest" | "pass" | "more_dd_needed";
+    recommendation: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     keyPoints: string[];
   };
   companyOverview: {
@@ -3690,13 +3694,16 @@ export type Tier1AgentName =
   | "exit-strategist"
   | "question-master";
 
-// Tier 2 agent names
-export type Tier2AgentName =
+// Tier 3 agent names
+export type Tier3AgentName =
   | "contradiction-detector"
   | "scenario-modeler"
   | "synthesis-deal-scorer"
   | "devils-advocate"
   | "memo-generator";
+
+/** @deprecated Use Tier3AgentName */
+export type Tier2AgentName = Tier3AgentName;
 
 export interface AnalysisSession {
   id: string;

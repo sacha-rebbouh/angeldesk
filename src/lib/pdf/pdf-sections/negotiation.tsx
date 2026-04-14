@@ -3,8 +3,7 @@
  */
 
 import React from "react";
-import { View, Text } from "@react-pdf/renderer";
-import { styles as gs } from "../pdf-theme";
+import { View } from "@react-pdf/renderer";
 import {
   PdfPage,
   SectionTitle,

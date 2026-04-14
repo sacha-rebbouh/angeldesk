@@ -11,7 +11,6 @@ import { z } from "zod";
 import { BaseAgent, AgentResultWithData } from "../base-agent";
 import type { AgentContext, EnrichedAgentContext } from "../types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { MARKETPLACE_STANDARDS } from "./sector-standards";
 
 // Extended data type for UI wow effect
 interface ExtendedMarketplaceData {
@@ -604,6 +603,7 @@ Compare ce deal aux marketplaces de la Funding Database avec :
       const cappedScore = Math.min(rawScore, scoreMax);
       const rawFitScore = output.executive_summary?.sector_fit_score ?? 0;
       const cappedFitScore = Math.min(rawFitScore, scoreMax);
+      void cappedFitScore;
       const limitations: string[] = [
         ...(completenessData.limitations ?? []),
         ...(completenessData.missingCritical ?? []).map((m: string) => `Missing critical data: ${m}`),

@@ -210,13 +210,14 @@ function TimelineMemberCard({
             variant="secondary"
             className={cn(
               "text-[10px] border-0",
-              member.verdict === "GO" && "bg-emerald-500/15 text-emerald-400",
-              member.verdict === "NO_GO" && "bg-red-500/15 text-red-400",
-              member.verdict === "NEED_MORE_INFO" && "bg-amber-500/15 text-amber-400"
+              (member.verdict === "VERY_FAVORABLE" || member.verdict === "FAVORABLE") && "bg-emerald-500/15 text-emerald-400",
+              (member.verdict === "ALERT_DOMINANT") && "bg-red-500/15 text-red-400",
+              member.verdict === "VIGILANCE" && "bg-orange-500/15 text-orange-400",
+              (member.verdict === "CONTRASTED" || member.verdict === "NEED_MORE_INFO") && "bg-amber-500/15 text-amber-400"
             )}
           >
             {member.positionChanged && "\u2192 "}
-            {member.verdict === "NO_GO" ? "NO GO" : member.verdict}
+            {member.verdict.replace(/_/g, " ")}
           </Badge>
         )}
       </div>
@@ -287,9 +288,10 @@ function TimelineMemberCard({
             <div
               className={cn(
                 "h-full rounded-full transition-all",
-                member.verdict === "GO" && "bg-emerald-400",
-                member.verdict === "NO_GO" && "bg-red-400",
-                (!member.verdict || member.verdict === "NEED_MORE_INFO") && "bg-amber-400"
+                (member.verdict === "VERY_FAVORABLE" || member.verdict === "FAVORABLE") && "bg-emerald-400",
+                member.verdict === "ALERT_DOMINANT" && "bg-red-400",
+                member.verdict === "VIGILANCE" && "bg-orange-400",
+                (!member.verdict || member.verdict === "CONTRASTED" || member.verdict === "NEED_MORE_INFO") && "bg-amber-400"
               )}
               style={{ width: `${member.confidence}%` }}
             />
@@ -307,7 +309,7 @@ function TimelineMemberCard({
           className="flex items-center gap-1 text-[10px] font-medium text-slate-500 hover:text-slate-300 transition-colors mt-1.5"
         >
           <ChevronDown className={cn("h-3 w-3 transition-transform", expanded && "rotate-180")} />
-          {expanded ? "Reduire" : "Lire la suite"}
+          {expanded ? "Réduire" : "Lire la suite"}
         </button>
       )}
     </div>

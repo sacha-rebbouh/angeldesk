@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Users, Play, Square, Loader2, Crown, Sparkles, Zap, Shield, Vote, MessageSquareMore, Lightbulb } from "lucide-react";
+import { Users, Square, Loader2, Crown, Sparkles, Zap, Shield, Vote, MessageSquareMore, Lightbulb } from "lucide-react";
 import { VoteBoard } from "./vote-board";
 import { KeyPointsSection } from "./key-points-section";
 import { DebateViewer } from "./debate-viewer";
@@ -374,7 +374,7 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
                   </Badge>
                 </div>
                 <p className="mt-0.5 text-sm text-slate-400">
-                  4 LLMs TOP deliberent sur ce deal
+                  4 LLMs TOP délibèrent sur ce deal
                 </p>
               </div>
             </div>
@@ -436,7 +436,7 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
             isRunning={isRunning}
           />
 
-          {/* Phase 2: Points cles */}
+          {/* Phase 2: Points clés */}
           {result && (
             <>
               <SectionDivider
@@ -456,7 +456,7 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
             <>
               <SectionDivider
                 icon={<MessageSquareMore className="h-4 w-4" />}
-                label={`Debat — ${Math.max(0, ...debateResponses.map(r => r.roundNumber))} round${Math.max(0, ...debateResponses.map(r => r.roundNumber)) > 1 ? "s" : ""}`}
+                label={`Débat — ${Math.max(0, ...debateResponses.map(r => r.roundNumber))} round${Math.max(0, ...debateResponses.map(r => r.roundNumber)) > 1 ? "s" : ""}`}
               />
               <DebateViewer
                 memberAnalyses={memberAnalyses}

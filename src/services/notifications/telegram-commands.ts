@@ -8,7 +8,6 @@ import { prisma } from '@/lib/prisma'
 import { inngest } from '@/lib/inngest'
 import type { TelegramCommandContext, TelegramCommand } from '@/agents/maintenance/types'
 import {
-  sendToAdmin,
   formatStatusMessage,
   formatHealthMessage,
   formatLastRunMessage,
@@ -63,7 +62,7 @@ export async function handleTelegramCommand(
 /**
  * /status - État actuel de tous les agents
  */
-async function handleStatus(_ctx: TelegramCommandContext): Promise<string> {
+async function handleStatus(): Promise<string> {
   // Get latest runs for each agent
   const agents = ['DB_CLEANER', 'DB_SOURCER', 'DB_COMPLETER'] as const
   const agentEmojis: Record<string, string> = {
@@ -190,7 +189,7 @@ Je te notifierai quand ce sera terminé.`
 /**
  * /report - Génère le rapport hebdo maintenant
  */
-async function handleReport(_ctx: TelegramCommandContext): Promise<string> {
+async function handleReport(): Promise<string> {
   // Trigger weekly report generation
   const baseUrl = process.env.APP_URL
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
@@ -218,7 +217,7 @@ async function handleReport(_ctx: TelegramCommandContext): Promise<string> {
 /**
  * /health - Métriques de qualité DB
  */
-async function handleHealth(_ctx: TelegramCommandContext): Promise<string> {
+async function handleHealth(): Promise<string> {
   // Get latest snapshot or compute metrics
   const snapshot = await prisma.dataQualitySnapshot.findFirst({
     orderBy: { capturedAt: 'desc' },
@@ -408,7 +407,7 @@ async function handleCancel(ctx: TelegramCommandContext): Promise<string> {
 /**
  * /help - Liste des commandes
  */
-async function handleHelp(_ctx: TelegramCommandContext): Promise<string> {
+async function handleHelp(): Promise<string> {
   return `🤖 *Angel Desk Maintenance Bot*
 
 Commandes disponibles:

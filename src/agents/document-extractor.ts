@@ -207,6 +207,7 @@ OUTPUT: JSON structure uniquement, en francais.`;
     factData: FactExtractorOutput,
     _context: AgentContext
   ): ExtractionData {
+    void _context;
     const extractedInfo: Record<string, unknown> = {};
     const confidence: Record<string, number> = {};
     const sourceReferences: ExtractionData["sourceReferences"] = [];

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
-import { DealsTable } from "@/components/deals/deals-table";
+import { DealsViewToggle } from "@/components/deals/deals-view-toggle";
 
 async function getDeals(userId: string) {
   noStore();
@@ -57,15 +57,9 @@ export default async function DealsPage() {
         </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Tous les deals</CardTitle>
-          <CardDescription>
-            {deals.length} deal{deals.length !== 1 ? "s" : ""} au total
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {deals.length === 0 ? (
+      {deals.length === 0 ? (
+        <Card>
+          <CardContent>
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <h3 className="mt-4 text-lg font-semibold">Aucun deal</h3>
               <p className="mt-2 text-sm text-muted-foreground">
@@ -78,11 +72,25 @@ export default async function DealsPage() {
                 </Link>
               </Button>
             </div>
-          ) : (
-            <DealsTable deals={deals} />
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Tous les deals</CardTitle>
+                <CardDescription>
+                  {deals.length} deal{deals.length !== 1 ? "s" : ""} au total
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <DealsViewToggle deals={deals} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

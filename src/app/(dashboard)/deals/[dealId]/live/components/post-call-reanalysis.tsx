@@ -11,7 +11,6 @@ import {
   Zap,
   AlertTriangle,
   CheckCircle,
-  HelpCircle,
   TrendingUp,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +26,6 @@ import type { DeltaReport, PostCallReport } from "@/lib/live/types";
 
 interface PostCallReanalysisProps {
   sessionId: string;
-  dealId: string;
   summary?: PostCallReport;
 }
 
@@ -263,7 +261,6 @@ const AgentStatusDisplay = memo(function AgentStatusDisplay({
 
 export default memo(function PostCallReanalysis({
   sessionId,
-  dealId,
   summary,
 }: PostCallReanalysisProps) {
   const [deltaReport, setDeltaReport] = useState<DeltaReport | null>(null);
@@ -271,18 +268,19 @@ export default memo(function PostCallReanalysis({
     agents: string[];
     status: string;
   } | null>(null);
+  const newInformation = summary?.newInformation;
 
   const impactedAgentCount = useMemo(() => {
-    if (!Array.isArray(summary?.newInformation)) return 0;
+    if (!Array.isArray(newInformation)) return 0;
     const agentSet = new Set<string>();
-    for (const info of summary.newInformation) {
+    for (const info of newInformation) {
       const agents = Array.isArray(info.agentsAffected) ? info.agentsAffected : [];
       for (const agent of agents) {
         agentSet.add(agent);
       }
     }
     return agentSet.size;
-  }, [summary?.newInformation]);
+  }, [newInformation]);
 
   const deltaMutation = useMutation({
     mutationFn: () => triggerReanalyze(sessionId, "delta"),

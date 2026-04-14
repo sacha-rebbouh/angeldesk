@@ -111,10 +111,7 @@ function flushBuffer(sessionId: string): FlushedUtterance | null {
 
 async function processUtterance(
   id: string,
-  utterance: FlushedUtterance,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _sessionSnapshot: any,
-  _participantsSnapshot: Participant[]
+  utterance: FlushedUtterance
 ): Promise<void> {
   // Re-fetch session to get latest state
   const session = await prisma.liveSession.findFirst({
@@ -638,7 +635,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     // ── Determine speaker role from participants ──
-    const speakerRole: SpeakerRole = mapSpeakerToRole(speaker, participants);
+    mapSpeakerToRole(speaker, participants);
 
     // ── Buffer micro-chunks into meaningful utterances ──
     // Collect all utterances to flush (may be multiple if speaker changes AND word threshold met)
@@ -699,7 +696,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
       await Promise.allSettled(
         toProcess.map((utterance) =>
-          processUtterance(id, utterance, session, participants).catch((error) => {
+          processUtterance(id, utterance).catch((error) => {
             logCoachingError(id, "process_utterance", error);
           })
         )

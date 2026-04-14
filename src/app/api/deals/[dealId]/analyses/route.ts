@@ -3,67 +3,11 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
+import { loadResults } from "@/services/analysis-results/load-results";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
 };
-
-/**
- * Try to load results from local cache or Vercel Blob (fast, <1s).
- * Falls back to DB if cache miss (old analyses before caching was added).
- */
-async function loadResults(analysisId: string): Promise<unknown> {
-  const blobPath = `analysis-results/${analysisId}.json`;
-
-  // Try cache first
-  try {
-    const { storageConfig } = await import("@/services/storage");
-
-    if (!storageConfig.isConfigured) {
-      // Local dev: read from filesystem
-      const { readFile } = await import("fs/promises");
-      const { join } = await import("path");
-      const localPath = join(process.cwd(), "public", "uploads", blobPath);
-      const buffer = await readFile(localPath);
-      return JSON.parse(buffer.toString("utf-8"));
-    } else {
-      // Production: list blobs matching our path prefix to get the full URL
-      const { list } = await import("@vercel/blob");
-      const { blobs } = await list({ prefix: blobPath, limit: 1 });
-      if (blobs.length > 0) {
-        const res = await fetch(blobs[0].url);
-        if (res.ok) {
-          return await res.json();
-        }
-      }
-    }
-  } catch {
-    // Cache miss — fall through to DB
-  }
-
-  // DB fallback (slow for large results, but always works)
-  console.warn(`[analyses] Cache miss for ${analysisId}, falling back to DB`);
-  const start = Date.now();
-  const row = await prisma.analysis.findUnique({
-    where: { id: analysisId },
-    select: { results: true },
-  });
-  console.warn(`[analyses] DB fallback took ${Date.now() - start}ms`);
-
-  // Backfill cache for next time
-  if (row?.results) {
-    try {
-      const { uploadFile } = await import("@/services/storage");
-      const jsonBuffer = Buffer.from(JSON.stringify(row.results));
-      await uploadFile(blobPath, jsonBuffer);
-      console.log(`[analyses] Backfilled cache for ${analysisId}`);
-    } catch {
-      // Non-critical
-    }
-  }
-
-  return row?.results ?? null;
-}
 
 /**
  * GET /api/deals/[dealId]/analyses

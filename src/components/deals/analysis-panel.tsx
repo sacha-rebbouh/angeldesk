@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, useEffect, useRef, memo } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, Crown, AlertCircle, AlertTriangle, FileWarning, ShieldAlert, Download, FileText, ClipboardCheck, MessageSquareText } from "lucide-react";
+import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, AlertCircle, AlertTriangle, FileWarning, ShieldAlert, Download, FileText, ClipboardCheck, MessageSquareText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,8 +26,8 @@ import {
   formatDate,
   categorizeResults,
   PLAN_ANALYSIS_CONFIG,
-  getAnalysisTypeForPlan,
   type SubscriptionPlan,
+  type AnalysisTypeValue,
 } from "@/lib/analysis-constants";
 import {
   Tier1ResultsSkeleton,
@@ -48,7 +48,7 @@ import { NextStepsGuide } from "./next-steps-guide";
 import { PartialAnalysisBanner } from "./partial-analysis-banner";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 import { formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
-import { consolidateAndPrioritizeQuestions, consolidateAcrossAnalyses } from "@/lib/question-consolidator";
+import { consolidateAcrossAnalyses } from "@/lib/question-consolidator";
 import { consolidateRedFlagsFromResults } from "@/services/red-flag-dedup/consolidate";
 import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
 import {
@@ -164,11 +164,13 @@ interface StalenessInfo {
 }
 
 interface QuotaData {
-  plan: "FREE" | "PRO";
-  analyses: { used: number; limit: number };
-  boards: { used: number; limit: number };
-  availableTiers: string[];
-  resetsAt: string;
+  balance: number;
+  totalPurchased: number;
+  lastPackName: string | null;
+  autoRefill: boolean;
+  expiresAt: string | null;
+  freeCreditsGranted: boolean;
+  costs: Record<string, number>;
 }
 
 interface FounderResponsesData {
@@ -182,6 +184,25 @@ interface FounderResponsesData {
     createdAt: string;
   }>;
   freeNotes: { content: string; createdAt: string } | null;
+}
+
+interface DocumentReadinessIssue {
+  documentId: string;
+  documentName: string;
+  runId?: string;
+  pageNumber?: number;
+  code: string;
+  message: string;
+  canBypass: boolean;
+}
+
+interface DocumentReadiness {
+  ready: boolean;
+  dealId: string;
+  documentCount: number;
+  readyDocumentCount: number;
+  blockers: DocumentReadinessIssue[];
+  warnings: DocumentReadinessIssue[];
 }
 
 // Helper: Generic fetch wrapper to reduce duplication
@@ -288,6 +309,10 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
   return fetchApi(`/api/deals/${dealId}/staleness`, "Failed to fetch staleness");
 }
 
+async function fetchDocumentReadiness(dealId: string): Promise<{ data: DocumentReadiness }> {
+  return fetchApi(`/api/deals/${dealId}/documents/readiness`, "Failed to fetch document readiness");
+}
+
 // Helper to map question category from LLM output to UI format
 export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, currentStatus, analyses = [] }: AnalysisPanelProps) {
   const queryClient = useQueryClient();
@@ -340,6 +365,41 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   });
 
   const quota = quotaData?.data;
+
+  const { data: documentReadinessData, isLoading: isDocumentReadinessLoading } = useQuery({
+    queryKey: ["deal-document-readiness", dealId],
+    queryFn: () => fetchDocumentReadiness(dealId),
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
+  });
+
+  const documentReadiness = documentReadinessData?.data;
+
+  const extractionDecisionMutation = useMutation({
+    mutationFn: async (params: {
+      documentId: string;
+      runId: string;
+      pageNumber?: number;
+      action: "BYPASS_PAGE" | "EXCLUDE_PAGE";
+      reason: string;
+    }) => {
+      const response = await fetch(`/api/documents/${params.documentId}/extraction-decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: "Failed to record extraction decision" }));
+        throw new Error(error.error ?? "Failed to record extraction decision");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast.success("Decision d'extraction enregistree");
+      queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   // Track the latest analysis ID we've already processed to avoid re-processing
   const lastProcessedAnalysisIdRef = useRef<string | null>(null);
@@ -456,7 +516,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
           .catch(() => {});
       }
     }
-  }, [polledAnalysis, isPolling, dealId, queryClient, analyses, loadCompletedAnalysis, onDemandResults, router]);
+  }, [polledAnalysis, isPolling, dealId, queryClient, analyses, loadCompletedAnalysis, onDemandResults, router, POLLING_TIMEOUT_MS]);
 
   // Fetch founder responses
   const { data: founderResponsesData } = useQuery({
@@ -485,10 +545,11 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   const staleness = stalenessData?.staleness;
   const isAnalysisStale = staleness?.isStale ?? false;
 
-  // Determine analysis type based on subscription plan
+  // Determine analysis type based on credit balance (not subscription plan)
   const subscriptionPlan: SubscriptionPlan = (usage?.subscriptionStatus as SubscriptionPlan) ?? "FREE";
-  const planConfig = PLAN_ANALYSIS_CONFIG[subscriptionPlan] ?? PLAN_ANALYSIS_CONFIG.FREE;
-  const analysisType = getAnalysisTypeForPlan(subscriptionPlan);
+  const canAffordDeepDive = (quota?.balance ?? 0) >= (quota?.costs?.DEEP_DIVE ?? 5);
+  const analysisType: AnalysisTypeValue = canAffordDeepDive ? "full_analysis" : "tier1_complete";
+  const planConfig = canAffordDeepDive ? PLAN_ANALYSIS_CONFIG.PRO : PLAN_ANALYSIS_CONFIG.FREE;
 
   // Check if this is an update (has previous analysis)
   const hasExistingAnalysis = analyses.some((a) => a.status === "COMPLETED");
@@ -564,7 +625,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
       if (response.data.status === "RESUMING") {
         isResumingRef.current = true;
-        toast.success(`Reprise de l'analyse (${response.data.completedAgents ?? 0}/${response.data.totalAgents ?? 0} agents deja termines)`);
+        toast.success(`Reprise de l'analyse (${response.data.completedAgents ?? 0}/${response.data.totalAgents ?? 0} étapes deja terminees)`);
       } else {
         isResumingRef.current = false;
         toast.success("Analyse lancee en arriere-plan");
@@ -574,7 +635,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       if (error.upgradeRequired) {
         toast.error(error.message, {
           action: {
-            label: "Passer PRO",
+            label: "Acheter des crédits",
             onClick: () => router.push("/pricing"),
           },
         });
@@ -584,21 +645,24 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     },
   });
 
-  // Handle analysis button click - check quota for FREE users
+  // Handle analysis button click - check credit balance
   const handleAnalyzeClick = useCallback(() => {
-    // For FREE users, check if quota is exhausted
-    if (subscriptionPlan === "FREE" && quota) {
-      const remaining = quota.analyses.limit - quota.analyses.used;
-      if (remaining <= 0) {
+    if (documentReadiness && !documentReadiness.ready) {
+      toast.error("Extraction documentaire incomplete. Traitez les pages bloquees avant de lancer l'analyse.");
+      return;
+    }
+    if (quota) {
+      const cost = quota.costs?.DEEP_DIVE ?? 5;
+      if (quota.balance < cost) {
         setShowCreditModal(true);
         return;
       }
     }
-    // Quota available or PRO user - run directly
+    // Credits available - run directly
     setLiveResult(null);
     setSelectedAnalysisId(null);
     mutation.mutate();
-  }, [subscriptionPlan, quota, mutation]);
+  }, [documentReadiness, quota, mutation]);
 
   // Resume interrupted analysis — bypasses quota check (already paid)
   const handleResumeClick = useCallback(() => {
@@ -608,6 +672,26 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   }, [mutation]);
 
   const handleCloseCreditModal = useCallback(() => setShowCreditModal(false), []);
+
+  const handleExtractionDecision = useCallback((
+    issue: DocumentReadinessIssue,
+    action: "BYPASS_PAGE" | "EXCLUDE_PAGE"
+  ) => {
+    if (!issue.runId) {
+      toast.error("Relancez d'abord l'extraction stricte du document.");
+      return;
+    }
+
+    extractionDecisionMutation.mutate({
+      documentId: issue.documentId,
+      runId: issue.runId,
+      pageNumber: issue.pageNumber,
+      action,
+      reason: action === "EXCLUDE_PAGE"
+        ? `System decision: page ${issue.pageNumber ?? "unknown"} excluded after user review.`
+        : `System decision: page ${issue.pageNumber ?? "unknown"} approved after user review.`,
+    });
+  }, [extractionDecisionMutation]);
 
   const handleSelectAnalysis = useCallback(async (analysisId: string) => {
     setSelectedAnalysisId(analysisId);
@@ -724,13 +808,19 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     };
   }, [displayedResult]);
 
+  // Effective plan for results display:
+  // If displayed results contain Tier 2/3 data, user paid for a Deep Dive → show all
+  const effectivePlan: SubscriptionPlan = (isTier2Analysis || isTier3Analysis) ? "PRO" : subscriptionPlan;
+
   // Filter completed analyses for history (results loaded on-demand, not required here)
   const completedAnalyses = useMemo(() => {
     return analyses.filter(a => a.status === "COMPLETED");
   }, [analyses]);
 
   // Can run analysis if user has remaining deals AND usage is loaded
-  const canRunAnalysis = isUsageLoading ? false : (usage ? usage.canAnalyze : true);
+  const canRunAnalysis = isUsageLoading || isDocumentReadinessLoading
+    ? false
+    : (usage ? usage.canAnalyze : true) && (documentReadiness?.ready ?? true);
 
   // Detect interrupted analysis (FAILED with partial results, < 6h old)
   // Pick the one with the MOST completed agents (best progress to resume from)
@@ -871,7 +961,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
         const key = devilsAdvocateAlertKey("killReason", kr.reason);
         if (!resolutionMap[key]) {
           openCount++;
-          if (kr.dealBreakerLevel === "ABSOLUTE") criticalOpen++;
+          if (kr.dealBreakerLevel === "CRITICAL") criticalOpen++;
         }
       }
     }
@@ -898,8 +988,8 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         if (response.status === 403) {
-          toast.error("L'export PDF est reserve aux utilisateurs PRO", {
-            action: { label: "Passer PRO", onClick: () => router.push("/pricing") },
+          toast.error("Crédits insuffisants pour l'export PDF", {
+            action: { label: "Acheter des crédits", onClick: () => router.push("/pricing") },
           });
           return;
         }
@@ -917,7 +1007,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      toast.success(format === "summary" ? "Resume PDF exporte" : "Rapport complet PDF exporte");
+      toast.success(format === "summary" ? "Résumé PDF exporté" : "Rapport complet PDF exporté");
     } catch (error) {
       console.error("[AnalysisPanel] PDF export error:", error);
       toast.error(error instanceof Error ? error.message : "Erreur lors de l'export PDF");
@@ -928,18 +1018,68 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
 
   return (
     <div className="space-y-4">
-      {/* Quota Modal for FREE users */}
+      {/* Credit purchase modal when insufficient credits */}
       {quota && (
         <CreditModal
           isOpen={showCreditModal}
           onClose={handleCloseCreditModal}
-          type="LIMIT_REACHED"
-          action={isUpdate ? "UPDATE" : "ANALYSIS"}
-          current={quota.analyses.used}
-          limit={quota.analyses.limit}
-          resetDate={quota.resetsAt}
-          planName={quota.plan}
+          action={isUpdate ? "RE_ANALYSIS" : "DEEP_DIVE"}
+          balance={quota.balance}
+          totalPurchased={quota.totalPurchased}
         />
+      )}
+
+      {documentReadiness && (!documentReadiness.ready || documentReadiness.warnings.length > 0) && (
+        <Card className={!documentReadiness.ready ? "border-red-300 bg-red-50" : "border-amber-300 bg-amber-50"}>
+          <CardHeader className="pb-3">
+            <CardTitle className={`flex items-center gap-2 text-base ${!documentReadiness.ready ? "text-red-900" : "text-amber-900"}`}>
+              <ShieldAlert className="h-5 w-5" />
+              Controle extraction documentaire
+            </CardTitle>
+            <CardDescription className={!documentReadiness.ready ? "text-red-800" : "text-amber-800"}>
+              {documentReadiness.ready
+                ? "Analyse autorisee avec des decisions utilisateur tracees."
+                : `${documentReadiness.readyDocumentCount}/${documentReadiness.documentCount} document(s) pret(s). L'analyse est bloquee tant que les pages critiques ne sont pas traitees.`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {documentReadiness.blockers.map((issue) => (
+              <div key={`${issue.documentId}-${issue.pageNumber ?? issue.code}`} className="rounded-lg border border-red-200 bg-white p-3">
+                <p className="font-medium text-red-900">{issue.message}</p>
+                <p className="mt-1 text-sm text-red-700">
+                  Relancez OCR, uploadez une version corrigee, ou prenez une decision explicite si le risque est acceptable.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {issue.canBypass && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleExtractionDecision(issue, "BYPASS_PAGE")}
+                      disabled={extractionDecisionMutation.isPending}
+                    >
+                      Approuver apres inspection
+                    </Button>
+                  )}
+                  {issue.canBypass && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleExtractionDecision(issue, "EXCLUDE_PAGE")}
+                      disabled={extractionDecisionMutation.isPending}
+                    >
+                      Exclure la page
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {documentReadiness.warnings.map((issue) => (
+              <div key={`warning-${issue.documentId}-${issue.pageNumber ?? issue.code}`} className="rounded-lg border border-amber-200 bg-white p-3 text-sm text-amber-800">
+                {issue.message}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
 
       {/* Launch Analysis Card - sticky at top */}
@@ -953,9 +1093,9 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 </CardTitle>
                 <CardDescription className="text-sm">
                   {planConfig.description}
-                  {subscriptionPlan === "FREE" && quota && (
+                  {quota && (
                     <span className="ml-2 text-muted-foreground">
-                      ({quota.analyses.limit - quota.analyses.used} credit{quota.analyses.limit - quota.analyses.used !== 1 ? "s" : ""} restant{quota.analyses.limit - quota.analyses.used !== 1 ? "s" : ""})
+                      ({quota.balance} crédit{quota.balance !== 1 ? "s" : ""} disponible{quota.balance !== 1 ? "s" : ""})
                     </span>
                   )}
                 </CardDescription>
@@ -980,7 +1120,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   {!canRunAnalysis ? (
                     <>
                       <AlertCircle className="mr-2 h-4 w-4" />
-                      Limite atteinte
+                      {documentReadiness && !documentReadiness.ready ? "Extraction incomplete" : "Limite atteinte"}
                     </>
                   ) : (
                     <>
@@ -1050,7 +1190,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 <AlertTriangle className="h-5 w-5 text-blue-600" />
                 <div>
                   <p className="font-medium text-blue-800">
-                    Analyse interrompue ({interruptedAnalysis.completedAgents}/{interruptedAnalysis.totalAgents} agents terminés)
+                    Analyse interrompue ({interruptedAnalysis.completedAgents}/{interruptedAnalysis.totalAgents} étapes terminées)
                   </p>
                   <p className="text-sm text-blue-700">
                     L&apos;analyse récente la plus aboutie a été interrompue. Cliquez pour reprendre là où elle s&apos;est arrêtée sans repayer les agents déjà terminés.
@@ -1115,7 +1255,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
               </CardTitle>
               {isPolling && polledProgress && (
                 <CardDescription>
-                  {polledProgress.completedAgents}/{polledProgress.totalAgents} agents terminés
+                  {polledProgress.completedAgents}/{polledProgress.totalAgents} étapes terminées
                 </CardDescription>
               )}
             </CardHeader>
@@ -1178,12 +1318,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                             <Download className="h-3.5 w-3.5" />
                           )}
                           Export PDF
-                          {subscriptionPlan === "FREE" && (
-                            <Badge variant="secondary" className="ml-1 bg-gradient-to-r from-amber-100 to-orange-100 text-amber-800 text-[10px] px-1 py-0">
-                              <Crown className="mr-0.5 h-2.5 w-2.5" />
-                              PRO
-                            </Badge>
-                          )}
+                          {/* PDF export is free — no badge needed */}
                           <ChevronDown className="h-3 w-3 ml-0.5 opacity-60" />
                         </Button>
                       </DropdownMenuTrigger>
@@ -1191,9 +1326,9 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                         <DropdownMenuItem onClick={() => handleExportPdf("summary")} className="flex flex-col items-start gap-0.5 py-2.5">
                           <div className="flex items-center gap-2 font-medium">
                             <FileText className="h-4 w-4 text-blue-600" />
-                            Resume executif
+                            Résumé exécutif
                           </div>
-                          <span className="text-xs text-muted-foreground ml-6">5-7 pages — Score, red flags, questions cles</span>
+                          <span className="text-xs text-muted-foreground ml-6">5-7 pages — Score, red flags, questions clés</span>
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleExportPdf("full")} className="flex flex-col items-start gap-0.5 py-2.5">
                           <div className="flex items-center gap-2 font-medium">
@@ -1297,7 +1432,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
                   <Tier3Results
                     results={tier3Results}
-                    subscriptionPlan={subscriptionPlan}
+                    subscriptionPlan={effectivePlan}
                     totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter(r => r.success).length : 0}
                     resolutionMap={resolutionMap}
                     resolutions={resolutions}
@@ -1314,7 +1449,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     isChanged={previousAnalysis !== null}
                     changeType="neutral"
                   >
-                    <Tier2Results results={tier2Results} subscriptionPlan={subscriptionPlan} />
+                    <Tier2Results results={tier2Results} subscriptionPlan={effectivePlan} />
                   </ChangedSection>
                 )}
 
@@ -1322,7 +1457,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 {isTier1Analysis && displayedResult.success && Object.keys(tier1Results).length > 0 && (
                   <Tier1Results
                     results={tier1Results}
-                    subscriptionPlan={subscriptionPlan}
+                    subscriptionPlan={effectivePlan}
                     resolutionMap={resolutionMap}
                     onResolve={resolveAlert}
                     onUnresolve={unresolveAlert}
@@ -1475,14 +1610,14 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 {/* Summary */}
                 {displayedResult.summary && !isTier1Analysis && !isTier2Analysis && (
                   <div className="rounded-lg bg-muted p-4">
-                    <h4 className="font-medium mb-2">Resume</h4>
+                    <h4 className="font-medium mb-2">Résumé</h4>
                     <div className="text-sm whitespace-pre-wrap">{displayedResult.summary}</div>
                   </div>
                 )}
 
                 {/* Partial Analysis Banner for FREE users (F32) */}
                 <PartialAnalysisBanner
-                  subscriptionPlan={subscriptionPlan}
+                  subscriptionPlan={effectivePlan}
                   isMissingTier3={!isTier3Analysis}
                 />
 
@@ -1501,12 +1636,12 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     questionsCount={founderQuestions.length}
                     avgScore={currentScore ?? 0}
                     hasTier3={isTier3Analysis}
-                    subscriptionPlan={subscriptionPlan}
+                    subscriptionPlan={effectivePlan}
                   />
                 )}
 
-                {/* PRO Upsell Banner for FREE users */}
-                {subscriptionPlan === "FREE" && displayedResult.success && (
+                {/* Credit upsell banner for users who haven't purchased yet */}
+                {quota && (quota.totalPurchased ?? 0) === 0 && displayedResult.success && (
                   <ProTeaserBanner />
                 )}
               </TabsContent>

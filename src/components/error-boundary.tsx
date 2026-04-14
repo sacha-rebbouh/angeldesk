@@ -179,7 +179,7 @@ export function AnalysisErrorBoundary({
             <AlertTriangle className="h-8 w-8 text-orange-500 mx-auto mb-2" />
             <p className="font-medium">Erreur lors du chargement de l&apos;analyse</p>
             <p className="text-sm text-muted-foreground mt-1">
-              {error.message || "Impossible de charger les resultats d'analyse."}
+              {error.message || "Impossible de charger les résultats d'analyse."}
             </p>
             <Button
               variant="outline"

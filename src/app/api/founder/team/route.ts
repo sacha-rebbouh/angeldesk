@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/sanitize";
 import { buildPeopleGraph, type FounderInput } from "@/services/context-engine";
 import { handleApiError } from "@/lib/api-error";
+import { validateLinkedInProfileUrl } from "@/lib/url-validator";
 
 const teamSchema = z.object({
   founders: z.array(z.object({
@@ -56,6 +57,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
     }
     const { founders, startupSector } = parsed.data;
+
+    for (const founder of founders) {
+      if (!founder.linkedinUrl) continue;
+      const validation = validateLinkedInProfileUrl(founder.linkedinUrl);
+      if (!validation.valid) {
+        return NextResponse.json(
+          {
+            error: validation.reason ?? "Only LinkedIn profile URLs are accepted",
+            founder: founder.name,
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     // Convert to FounderInput format
     const founderInputs: FounderInput[] = founders.map((f) => ({

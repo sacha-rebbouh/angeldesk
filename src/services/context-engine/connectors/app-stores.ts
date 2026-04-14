@@ -15,7 +15,6 @@
 import type {
   Connector,
   ConnectorQuery,
-  DataSource,
 } from "../types";
 
 // ============================================================================
@@ -120,14 +119,6 @@ function parseDownloadsToNumber(downloads: string): number {
 
   return parseInt(cleaned, 10) || 0;
 }
-
-const appStoreSource: DataSource = {
-  type: "web_search",
-  name: "App Stores",
-  url: "https://apps.apple.com",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.9, // Direct from stores
-};
 
 // ============================================================================
 // APP STORE (iOS) FUNCTIONS

@@ -28,17 +28,16 @@ import {
   validateAndCalculate,
   type CalculationResult,
   calculateARR,
-  calculateGrossMargin,
   calculateLTVCACRatio,
   calculateRuleOf40,
 } from "../orchestration";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { applyTier3Coherence, injectCoherenceIntoContext } from "../orchestration/tier3-coherence";
 import { runTier1CrossValidation } from "../orchestration/tier1-cross-validation";
-import { sanitizeResultForDownstream } from "../orchestration/result-sanitizer";
+import { sanitizeResultForDownstream, sanitizeAgentNarratives } from "../orchestration/result-sanitizer";
 import { costMonitor } from "@/services/cost-monitor";
 import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
-import { setAgentContext, setAnalysisContext, runWithLLMContext } from "@/services/openrouter/router";
+import { setAnalysisContext, runWithLLMContext } from "@/services/openrouter/router";
 import { runJob } from "@/services/jobs";
 
 // Fact Store imports for Tier 0 fact extraction
@@ -68,13 +67,10 @@ import {
   TIER1_PHASE_B,
   TIER1_PHASE_C,
   TIER1_PHASE_D,
-  TIER1_ALWAYS_REFLECT_PHASES,
   TIER3_AGENT_NAMES,
-  TIER3_DEPENDENCIES,
   TIER3_EXECUTION_BATCHES,
   TIER3_BATCHES_BEFORE_TIER2,
   TIER3_BATCHES_AFTER_TIER2,
-  resolveAgentDependencies,
 } from "./types";
 import {
   BASE_AGENTS,
@@ -480,7 +476,7 @@ export class AgentOrchestrator {
     onProgress: AnalysisOptions["onProgress"],
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, enableTrace = true, isUpdate = false } = advancedOptions;
+    const { onEarlyWarning, isUpdate = false } = advancedOptions;
     const startTime = Date.now();
     const TIER1_AGENT_COUNT = TIER1_AGENT_NAMES.length; // 13
     const collectedWarnings: EarlyWarning[] = [];
@@ -1156,7 +1152,7 @@ export class AgentOrchestrator {
     onProgress: AnalysisOptions["onProgress"],
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { mode, failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false, userPlan = "FREE" } = advancedOptions;
+    const { failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false, userPlan = "FREE" } = advancedOptions;
     const startTime = Date.now();
     const collectedWarnings: EarlyWarning[] = [];
 
@@ -1407,7 +1403,7 @@ export class AgentOrchestrator {
         stateMachine,
       });
 
-      const { allFindings, agentConfidences, lowConfidenceAgents } = phasesResult;
+      const { allFindings, lowConfidenceAgents } = phasesResult;
       totalCost += phasesResult.costIncurred;
       completedCount += phasesResult.completedInPhases;
       factStore = phasesResult.updatedFactStore;
@@ -1674,6 +1670,14 @@ export class AgentOrchestrator {
 
         // Collect batch results
         for (const { agentName, result } of batchResults) {
+          // Sanitize narrative fields for prescriptive language (Rule #1)
+          if (result.success && "data" in result) {
+            const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+            if (totalViolations > 0) {
+              console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+              (result as { data: unknown }).data = sanitized;
+            }
+          }
           allResults[agentName] = result;
           totalCost += result.cost;
           completedCount++;
@@ -2122,6 +2126,14 @@ export class AgentOrchestrator {
 
       // Collect phase results
       for (const { agentName, result } of phaseResults) {
+        // Sanitize narrative fields for prescriptive language (Rule #1)
+        if (result.success && "data" in result) {
+          const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+          if (totalViolations > 0) {
+            console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+            (result as { data: unknown }).data = sanitized;
+          }
+        }
         allResults[agentName] = result;
         totalCost += result.cost;
         completedCount++;
@@ -2218,13 +2230,12 @@ export class AgentOrchestrator {
         `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
       );
 
-      // EARLY ABORT: If Phase A (deck-forensics) or Phase B (financial-auditor) fail,
-      // subsequent phases depend on their output and will produce low-quality results.
-      // Stop early to avoid wasting LLM cost on phases that can't produce value.
-      if (
-        (phase.name.includes("Phase A") || phase.name.includes("Phase B")) &&
-        phaseFailCount > 0
-      ) {
+      // EARLY ABORT: Only Phase A (deck-forensics) is truly critical — it validates the deck
+      // and provides foundational analysis that all other agents depend on.
+      // Phase B (financial-auditor) failure is logged but does NOT abort: the remaining
+      // 11 agents (team, market, competitive, tech, legal, etc.) don't depend on it directly.
+      // question-master will run in degraded mode without financial red flags.
+      if (phase.name.includes("Phase A") && phaseFailCount > 0) {
         const failedNames = phaseResults
           .filter(r => !r.result.success)
           .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
@@ -2233,6 +2244,16 @@ export class AgentOrchestrator {
           `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
         );
         break;
+      }
+
+      if (phase.name.includes("Phase B") && phaseFailCount > 0) {
+        const failedNames = phaseResults
+          .filter(r => !r.result.success)
+          .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
+          .join(", ");
+        console.warn(
+          `[Orchestrator] Phase B agent(s) failed (non-fatal, continuing): ${failedNames}`
+        );
       }
     }
 
@@ -2611,7 +2632,6 @@ export class AgentOrchestrator {
       });
 
       // investmentPreferences is a Json field - may need npx prisma generate if types outdated
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const prefs = (user as unknown as { investmentPreferences?: unknown })?.investmentPreferences;
       return getBAPreferences(prefs as Parameters<typeof getBAPreferences>[0]);
     } catch (error) {
@@ -3368,6 +3388,14 @@ export class AgentOrchestrator {
           );
 
           for (const { agentName, result } of tier1Results) {
+            // Sanitize narrative fields for prescriptive language (Rule #1)
+            if (result.success && "data" in result) {
+              const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+              if (totalViolations > 0) {
+                console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+                (result as { data: unknown }).data = sanitized;
+              }
+            }
             allResults[agentName] = result;
             totalCost += result.cost;
             completedCount++;
@@ -3513,6 +3541,14 @@ export class AgentOrchestrator {
 
               try {
                 const result = await agent.run(enrichedContext);
+                // Sanitize narrative fields for prescriptive language (Rule #1)
+                if (result.success && "data" in result) {
+                  const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+                  if (totalViolations > 0) {
+                    console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+                    (result as { data: unknown }).data = sanitized;
+                  }
+                }
                 allResults[agentName] = result;
                 totalCost += result.cost;
                 completedCount++;
@@ -3551,6 +3587,14 @@ export class AgentOrchestrator {
               );
 
               for (const { agentName, result } of batchResults) {
+                // Sanitize narrative fields for prescriptive language (Rule #1)
+                if (result.success && "data" in result) {
+                  const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+                  if (totalViolations > 0) {
+                    console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+                    (result as { data: unknown }).data = sanitized;
+                  }
+                }
                 allResults[agentName] = result;
                 totalCost += result.cost;
                 completedCount++;

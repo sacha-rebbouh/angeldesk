@@ -2,15 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/sanitize";
-import { getUserQuotaInfo, checkQuota } from "@/services/credits/usage-gate";
+import { getCreditBalance, checkCredits, CREDIT_COSTS, CREDIT_PACKS } from "@/services/credits";
 import { handleApiError } from "@/lib/api-error";
 
-// GET /api/credits → user quota info
-export async function GET(request: NextRequest) {
+// GET /api/credits → user credit balance & info
+export async function GET() {
   try {
     const user = await requireAuth();
 
-    // Rate limiting: max 60 requests per minute
     const rateLimit = checkRateLimit(`credits-get:${user.id}`, { maxRequests: 60, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json(
@@ -19,17 +18,28 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const quotaInfo = await getUserQuotaInfo(user.id, user.subscriptionStatus);
+    const balance = await getCreditBalance(user.id);
 
-    return NextResponse.json({ data: quotaInfo });
+    return NextResponse.json({
+      data: {
+        ...balance,
+        costs: CREDIT_COSTS,
+        packs: CREDIT_PACKS,
+      },
+    });
   } catch (error) {
-    return handleApiError(error, "fetch quota info");
+    return handleApiError(error, "fetch credit info");
   }
 }
 
 // POST /api/credits → check if action is allowed
 const checkSchema = z.object({
-  action: z.enum(['ANALYSIS', 'UPDATE', 'BOARD']),
+  action: z.enum([
+    'QUICK_SCAN', 'DEEP_DIVE', 'AI_BOARD', 'LIVE_COACHING',
+    'RE_ANALYSIS', 'CHAT', 'PDF_EXPORT',
+    // Legacy actions
+    'ANALYSIS', 'UPDATE', 'BOARD',
+  ]),
   dealId: z.string().optional(),
 });
 
@@ -37,7 +47,6 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    // Rate limiting: max 60 requests per minute
     const rateLimit = checkRateLimit(`credits-post:${user.id}`, { maxRequests: 60, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json(
@@ -47,17 +56,21 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-
     const parseResult = checkSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json({ error: "Validation error", details: parseResult.error.issues }, { status: 400 });
     }
 
-    const { action, dealId } = parseResult.data;
-    const result = await checkQuota(user.id, user.subscriptionStatus, action, dealId);
+    // Map legacy actions
+    let action = parseResult.data.action;
+    if (action === 'ANALYSIS') action = 'DEEP_DIVE';
+    if (action === 'UPDATE') action = 'RE_ANALYSIS';
+    if (action === 'BOARD') action = 'AI_BOARD';
+
+    const result = await checkCredits(user.id, action as Parameters<typeof checkCredits>[1]);
 
     return NextResponse.json({ data: result });
   } catch (error) {
-    return handleApiError(error, "check quota");
+    return handleApiError(error, "check credits");
   }
 }

@@ -7,7 +7,7 @@
  * Structure: SECTOR -> STAGE -> METRICS
  */
 
-import type { BenchmarkConfig, PercentileBenchmark, SectorStageBenchmarks } from "./types";
+import type { BenchmarkConfig, SectorStageBenchmarks } from "./types";
 
 // ============================================================================
 // BENCHMARKS FINANCIERS PAR DÉFAUT (utilisés si pas de data DB)

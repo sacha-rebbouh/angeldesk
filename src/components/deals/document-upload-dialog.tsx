@@ -33,13 +33,10 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
   const [uploadedCount, setUploadedCount] = useState(0);
   const [hasUploaded, setHasUploaded] = useState(false);
 
-  const handleUploadComplete = useCallback(
-    (document: { id: string; name: string }) => {
-      setUploadedCount((prev) => prev + 1);
-      setHasUploaded(true);
-    },
-    []
-  );
+  const handleUploadComplete = useCallback(() => {
+    setUploadedCount((prev) => prev + 1);
+    setHasUploaded(true);
+  }, []);
 
   const handleAllComplete = useCallback(() => {
     toast.success("Documents uploadés avec succès");
@@ -67,7 +64,7 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
     setUploadedCount(0);
     setHasUploaded(false);
     onOpenChange(false);
-  }, [hasUploaded, queryClient, dealId, onUploadSuccess, onOpenChange]);
+  }, [hasUploaded, queryClient, dealId, onUploadSuccess, onOpenChange, router]);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>

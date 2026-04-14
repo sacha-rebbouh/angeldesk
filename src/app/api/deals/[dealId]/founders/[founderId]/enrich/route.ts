@@ -7,6 +7,7 @@ import {
   isRapidAPILinkedInConfigured,
 } from "@/services/context-engine/connectors/rapidapi-linkedin";
 import { handleApiError } from "@/lib/api-error";
+import { validateLinkedInProfileUrl } from "@/lib/url-validator";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -129,6 +130,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!founder.linkedinUrl) {
       return NextResponse.json(
         { error: "Founder has no LinkedIn URL. Add a LinkedIn URL first." },
+        { status: 400 }
+      );
+    }
+    const linkedInValidation = validateLinkedInProfileUrl(founder.linkedinUrl);
+    if (!linkedInValidation.valid) {
+      return NextResponse.json(
+        { error: linkedInValidation.reason ?? "URL LinkedIn invalide" },
         { status: 400 }
       );
     }

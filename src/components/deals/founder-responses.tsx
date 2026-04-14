@@ -69,7 +69,7 @@ const PRIORITY_CONFIG: Record<QuestionPriority, {
     className: "bg-red-600 text-white border-transparent",
     bgClass: "bg-red-50 border-red-200",
     isRequired: true,
-    description: "Question essentielle - reponse obligatoire avant re-analyse"
+    description: "Question essentielle - réponse obligatoire avant ré-analyse"
   },
   HIGH: {
     label: "High",
@@ -77,7 +77,7 @@ const PRIORITY_CONFIG: Record<QuestionPriority, {
     className: "bg-orange-500 text-white border-transparent",
     bgClass: "bg-orange-50 border-orange-200",
     isRequired: true,
-    description: "Question importante - reponse obligatoire"
+    description: "Question importante - réponse obligatoire"
   },
   MEDIUM: {
     label: "Medium",
@@ -267,7 +267,7 @@ function QuestionItem({ question, response, onChange }: QuestionItemProps) {
           id={textareaId}
           value={response.answer}
           onChange={(e) => handleAnswerChange(e.target.value)}
-          placeholder="Saisissez la reponse du fondateur..."
+          placeholder="Saisissez la réponse du fondateur..."
           className="min-h-[80px] resize-y"
           disabled={response.status !== "answered" && response.status !== "pending"}
         />
@@ -276,7 +276,7 @@ function QuestionItem({ question, response, onChange }: QuestionItemProps) {
       {response.status === "refused" && (
         <div className="text-sm text-amber-600 bg-amber-50 p-2 rounded flex items-center gap-2">
           <AlertTriangle className="h-4 w-4" />
-          Le fondateur a refuse de repondre - ceci sera pris en compte dans l&apos;analyse.
+          Le fondateur a refusé de répondre - ceci sera pris en compte dans l&apos;analyse.
         </div>
       )}
 
@@ -439,9 +439,9 @@ export const FounderResponses = memo(function FounderResponses({
         <CardContent className="py-8">
           <div className="text-center text-muted-foreground">
             <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-50" />
-            <p className="font-medium">Aucune question generee</p>
+            <p className="font-medium">Aucune question générée</p>
             <p className="text-sm mt-1">
-              Lancez une analyse pour generer des questions a poser au fondateur.
+              Lancez une analyse pour générer des questions à poser au fondateur.
             </p>
           </div>
         </CardContent>
@@ -478,7 +478,7 @@ export const FounderResponses = memo(function FounderResponses({
                 <AlertTriangle className="h-4 w-4" />
               )}
               <span>
-                {stats.requiredAnswered}/{stats.requiredCount} questions obligatoires traitees
+                {stats.requiredAnswered}/{stats.requiredCount} questions obligatoires traitées
               </span>
             </div>
             <span className="text-muted-foreground">
@@ -569,7 +569,7 @@ export const FounderResponses = memo(function FounderResponses({
               ) : (
                 <>
                   <RefreshCw className="h-4 w-4 mr-2" />
-                  Re-analyser avec les reponses
+                  Ré-analyser avec les réponses
                 </>
               )}
             </Button>

@@ -16,6 +16,8 @@ const DEV_USER = {
   name: "Dev User",
   image: null,
   subscriptionStatus: "PRO" as const,
+  investmentPreferences: null,
+  cguAcceptedAt: new Date(), // Dev user always has CGU accepted
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -46,7 +48,7 @@ export async function getOrCreateUser() {
     });
 
     if (!existingUser) {
-      return prisma.user.create({
+      const user = await prisma.user.create({
         data: {
           id: DEV_USER.id,
           clerkId: DEV_USER.clerkId,
@@ -55,8 +57,13 @@ export async function getOrCreateUser() {
           subscriptionStatus: DEV_USER.subscriptionStatus,
         },
       });
+      // Grant admin credits
+      await ensureAdminCredits(DEV_USER.id);
+      return user;
     }
 
+    // Ensure admin credits exist on every request (idempotent)
+    await ensureAdminCredits(DEV_USER.id);
     return existingUser;
   }
 
@@ -153,4 +160,42 @@ export async function requireOwner() {
   }
 
   return user;
+}
+
+// ============================================================================
+// ADMIN CREDITS — Ensure dev/admin user always has 250K credits for testing
+// ============================================================================
+
+const ADMIN_CREDITS = 500;
+
+async function ensureAdminCredits(userId: string): Promise<void> {
+  try {
+    const balance = await prisma.userCreditBalance.findUnique({
+      where: { userId },
+    });
+
+    if (!balance) {
+      await prisma.userCreditBalance.create({
+        data: {
+          userId,
+          balance: ADMIN_CREDITS,
+          totalPurchased: ADMIN_CREDITS,
+          lastPackName: 'admin',
+          freeCreditsGranted: true,
+        },
+      });
+      return;
+    }
+
+    // Top up if below threshold
+    if (balance.balance < ADMIN_CREDITS) {
+      await prisma.userCreditBalance.update({
+        where: { userId },
+        data: { balance: ADMIN_CREDITS },
+      });
+    }
+  } catch {
+    // Table may not exist yet — skip silently in dev
+    console.warn('[auth] Credit tables not available — skipping ensureAdminCredits');
+  }
 }

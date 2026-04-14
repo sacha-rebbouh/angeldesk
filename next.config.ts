@@ -23,7 +23,7 @@ const nextConfig: NextConfig = {
     if (!isDev) {
       securityHeaders.push({
         key: "Content-Security-Policy",
-        value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.clerk.dev https://*.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self' https://*.clerk.dev https://*.clerk.com https://*.sentry.io https://openrouter.ai wss://*.clerk.dev; frame-src 'self' https://*.clerk.dev https://*.clerk.com; frame-ancestors 'none';",
+        value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.clerk.dev https://*.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self' https://*.clerk.dev https://*.clerk.com https://*.sentry.io https://openrouter.ai wss://*.clerk.dev wss://*.ably.io https://*.ably.io; frame-src 'self' https://*.clerk.dev https://*.clerk.com; frame-ancestors 'none';",
       });
     }
 
@@ -31,6 +31,20 @@ const nextConfig: NextConfig = {
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      // Cache immutable assets (Next.js hashed files)
+      {
+        source: "/_next/static/(.*)",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
+      // Cache fonts
+      {
+        source: "/fonts/(.*)",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
       },
     ];
   },

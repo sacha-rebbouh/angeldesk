@@ -12,7 +12,6 @@ import { confidenceCalculator } from "./confidence-calculator";
 import type {
   ScoredFinding,
   FindingCategory,
-  ConfidenceScore,
   Evidence,
 } from "../types";
 

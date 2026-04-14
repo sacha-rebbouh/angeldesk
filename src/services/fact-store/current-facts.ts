@@ -10,11 +10,10 @@ import type {
   CurrentFact,
   FactCategory,
   FactSource,
-  FactEventType,
   FactEventRecord,
 } from './types';
 import { toFactEventRecord } from './persistence';
-import { getFactKeyDefinition, FACT_KEYS } from './fact-keys';
+import { getFactKeyDefinition } from './fact-keys';
 
 // ═══════════════════════════════════════════════════════════════════════
 // MAIN FUNCTIONS
@@ -72,7 +71,7 @@ export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFa
       firstSeenAt: row.createdAt,
       lastUpdatedAt: row.createdAt,
     }));
-  } catch (error) {
+  } catch {
     // Fallback to computed version if view doesn't exist
     console.warn(
       '[getCurrentFactsFromView] Materialized view not available, using computed version'

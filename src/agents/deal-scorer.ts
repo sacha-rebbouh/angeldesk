@@ -72,7 +72,7 @@ SCORING GUIDE:
 - 60-79: Solide, above average
 - 40-59: Moyen, des concerns mais potentiel
 - 20-39: Faible, red flags majeurs
-- 0-19: Dealbreaker, ne pas investir
+- 0-19: Signaux d'alerte dominants
 
 REGLES:
 - Chaque score doit etre justifie par des facteurs concrets

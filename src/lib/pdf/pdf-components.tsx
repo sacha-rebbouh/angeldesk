@@ -340,10 +340,7 @@ export function ScoreCircle({
   const r = (size - 6) / 2;
   const cx = size / 2;
   const cy = size / 2;
-  const circumference = 2 * Math.PI * r;
   const progress = Math.min(Math.max(score, 0), 100) / 100;
-  const dashArray = circumference * progress;
-  const dashOffset = 0;
   const color = scoreColor(score);
 
   // Build SVG arc path for the progress
@@ -592,30 +589,40 @@ export function TwoColumn({
 }
 
 // ---------------------------------------------------------------------------
-// RecommendationBadge — Large colored badge for invest/pass/etc.
+// RecommendationBadge — Large colored badge for canonical signal profiles.
 // ---------------------------------------------------------------------------
 
 export function RecommendationBadge({ recommendation }: { recommendation: string }) {
   const rec = recommendation?.toLowerCase();
-  const isFavorable = rec === "invest" || rec === "investir" || rec === "strong_invest";
-  const isAlert = rec === "pass" || rec === "passer" || rec === "strong_pass" || rec === "no_go";
-  const isContrasted = rec === "negotiate" || rec === "negocier" || rec === "conditional_invest";
+  const isVeryFavorable = rec === "very_favorable";
+  const isFavorable = isVeryFavorable || rec === "favorable";
+  const isAlert = rec === "alert_dominant";
+  const isVigilance = rec === "vigilance";
+  const isContrasted = rec === "contrasted";
   const bg = isFavorable
     ? colors.successLight
     : isAlert
       ? colors.dangerLight
-      : colors.warningLight;
+      : isVigilance
+        ? colors.primaryLight
+        : colors.warningLight;
   const fg = isFavorable
     ? colors.success
     : isAlert
       ? colors.danger
-      : colors.warning;
-  const label = isFavorable
-    ? "SIGNAUX FAVORABLES"
+      : isVigilance
+        ? colors.primary
+        : colors.warning;
+  const label = isVeryFavorable
+    ? "SIGNAUX TRÈS FAVORABLES"
+    : rec === "favorable"
+      ? "SIGNAUX FAVORABLES"
     : isAlert
       ? "SIGNAUX D'ALERTE DOMINANTS"
-      : isContrasted
-        ? "SIGNAUX CONTRASTÉS"
+    : isContrasted
+      ? "SIGNAUX CONTRASTÉS"
+      : isVigilance
+        ? "VIGILANCE REQUISE"
         : "INVESTIGATION COMPLÉMENTAIRE";
 
   return (

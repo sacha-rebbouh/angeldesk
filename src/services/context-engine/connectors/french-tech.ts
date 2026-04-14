@@ -372,11 +372,6 @@ const FRENCH_TECH_COMPANIES: FrenchTechCompany[] = [
 ];
 
 // French Tech Capital Cities
-const FRENCH_TECH_CAPITALS = [
-  "Paris", "Lyon", "Bordeaux", "Toulouse", "Nantes", "Lille", "Marseille",
-  "Montpellier", "Rennes", "Grenoble", "Nice", "Strasbourg"
-];
-
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================

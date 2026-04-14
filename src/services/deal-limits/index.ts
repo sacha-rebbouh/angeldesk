@@ -1,49 +1,32 @@
-import { prisma } from "@/lib/prisma";
+import { checkCredits, deductCredits, getCreditBalance, type CreditActionType } from "@/services/credits";
+import { CREDIT_COSTS, getActionForAnalysisType } from "@/services/credits/types";
 
-// Limits configuration
-// Use -1 to represent unlimited (Infinity is not a valid DB integer)
-const UNLIMITED = -1;
+// ============================================================================
+// DEAL LIMITS — Credit-based (replaces old monthly quota system)
+// ============================================================================
 
-// IMPORTANT: Keep in sync with src/services/credits/types.ts PLAN_LIMITS
-const LIMITS_CONFIG = {
-  FREE: {
-    monthlyDeals: 3, // Aligned with PLAN_LIMITS.FREE.analysesPerMonth
-    maxTier: 1, // Only Tier 1
-  },
-  PRO: {
-    monthlyDeals: UNLIMITED,
-    maxTier: 3, // All tiers
-  },
-  ENTERPRISE: {
-    monthlyDeals: UNLIMITED,
-    maxTier: 3,
-  },
-} as const;
-
-export type SubscriptionTier = keyof typeof LIMITS_CONFIG;
+export type SubscriptionTier = 'FREE' | 'PRO' | 'ENTERPRISE';
 export type AnalysisTier = 1 | 2 | 3;
 
 export interface DealUsageStatus {
   canAnalyze: boolean;
   reason?: string;
 
-  // Limits
-  monthlyLimit: number;
-  usedThisMonth: number;
-  remainingDeals: number;
+  // Credit info
+  creditBalance: number;
+  totalPurchased: number;
 
-  // Tier access
+  // Tier access — with credits, all tiers are available
   maxTier: AnalysisTier;
   canUseTier: (tier: AnalysisTier) => boolean;
 
-  // Subscription info
+  // Legacy fields for backward compat
+  monthlyLimit: number;
+  usedThisMonth: number;
+  remainingDeals: number;
   subscriptionStatus: SubscriptionTier;
   isUnlimited: boolean;
-
-  // Reset info
   nextResetDate: Date;
-
-  // Analytics
   tier1Count: number;
   tier2Count: number;
   tier3Count: number;
@@ -54,6 +37,7 @@ export interface AnalyzePermission {
   reason?: string;
   upgradeRequired?: boolean;
   maxAllowedTier: AnalysisTier;
+  creditCost?: number;
 }
 
 /**
@@ -63,31 +47,24 @@ export async function canAnalyzeDeal(
   userId: string,
   requestedTier: AnalysisTier = 1
 ): Promise<AnalyzePermission> {
-  const status = await getUsageStatus(userId);
+  // Map tier to credit action
+  const action: CreditActionType = requestedTier <= 1 ? 'QUICK_SCAN' : 'DEEP_DIVE';
+  const result = await checkCredits(userId, action);
 
-  // Check deal limit first
-  if (!status.canAnalyze) {
+  if (!result.allowed) {
     return {
       allowed: false,
-      reason: status.reason,
+      reason: `Crédits insuffisants (${result.balance} disponibles, ${result.cost} requis)`,
       upgradeRequired: true,
-      maxAllowedTier: status.maxTier,
-    };
-  }
-
-  // Check tier access
-  if (requestedTier > status.maxTier) {
-    return {
-      allowed: false,
-      reason: `Tier ${requestedTier} requiert un abonnement PRO`,
-      upgradeRequired: true,
-      maxAllowedTier: status.maxTier,
+      maxAllowedTier: 3, // All tiers available with credits
+      creditCost: result.cost,
     };
   }
 
   return {
     allowed: true,
-    maxAllowedTier: status.maxTier,
+    maxAllowedTier: 3,
+    creditCost: result.cost,
   };
 }
 
@@ -95,184 +72,62 @@ export async function canAnalyzeDeal(
  * Get the full usage status for a user
  */
 export async function getUsageStatus(userId: string): Promise<DealUsageStatus> {
-  // Get user subscription status
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { subscriptionStatus: true },
-  });
-
-  if (!user) {
-    return {
-      canAnalyze: false,
-      reason: "Utilisateur non trouve",
-      monthlyLimit: 0,
-      usedThisMonth: 0,
-      remainingDeals: 0,
-      maxTier: 1,
-      canUseTier: () => false,
-      subscriptionStatus: "FREE",
-      isUnlimited: false,
-      nextResetDate: getNextResetDate(),
-      tier1Count: 0,
-      tier2Count: 0,
-      tier3Count: 0,
-    };
-  }
-
-  const subscriptionStatus = user.subscriptionStatus as SubscriptionTier;
-  console.log("[DEBUG deal-limits] userId:", userId, "subscriptionStatus:", subscriptionStatus);
-  const config = LIMITS_CONFIG[subscriptionStatus];
-
-  // PRO/ENTERPRISE = unlimited
-  const isUnlimited = config.monthlyDeals === UNLIMITED;
-  if (isUnlimited) {
-    // Still get/create usage for analytics
-    const usage = await getOrCreateUsage(userId, config.monthlyDeals);
-
-    return {
-      canAnalyze: true,
-      monthlyLimit: Infinity,
-      usedThisMonth: usage.usedThisMonth,
-      remainingDeals: Infinity,
-      maxTier: config.maxTier as AnalysisTier,
-      canUseTier: (tier) => tier <= config.maxTier,
-      subscriptionStatus,
-      isUnlimited: true,
-      nextResetDate: getNextResetDate(),
-      tier1Count: usage.tier1Count,
-      tier2Count: usage.tier2Count,
-      tier3Count: usage.tier3Count,
-    };
-  }
-
-  // FREE tier - check limits
-  let usage = await getOrCreateUsage(userId, config.monthlyDeals);
-
-  // Check if we need to reset monthly usage
-  if (shouldResetMonthlyUsage(usage.lastResetAt)) {
-    usage = await prisma.userDealUsage.update({
-      where: { userId },
-      data: {
-        usedThisMonth: 0,
-        tier1Count: 0,
-        tier2Count: 0,
-        tier3Count: 0,
-        lastResetAt: new Date(),
-      },
-    });
-  }
-
-  const remainingDeals = Math.max(0, config.monthlyDeals - usage.usedThisMonth);
-  const canAnalyze = remainingDeals > 0;
+  const balance = await getCreditBalance(userId);
 
   return {
-    canAnalyze,
-    reason: canAnalyze ? undefined : "Limite mensuelle atteinte (3 deals/mois)",
-    monthlyLimit: config.monthlyDeals,
-    usedThisMonth: usage.usedThisMonth,
-    remainingDeals,
-    maxTier: config.maxTier as AnalysisTier,
-    canUseTier: (tier) => tier <= config.maxTier,
-    subscriptionStatus,
+    canAnalyze: balance.balance >= CREDIT_COSTS.QUICK_SCAN,
+    reason: balance.balance < CREDIT_COSTS.QUICK_SCAN ? "Crédits insuffisants" : undefined,
+    creditBalance: balance.balance,
+    totalPurchased: balance.totalPurchased,
+    maxTier: 3,
+    canUseTier: (tier: AnalysisTier) => balance.balance >= (tier <= 1 ? CREDIT_COSTS.QUICK_SCAN : CREDIT_COSTS.DEEP_DIVE),
+    // Legacy fields
+    monthlyLimit: balance.balance,
+    usedThisMonth: 0,
+    remainingDeals: balance.balance,
+    subscriptionStatus: balance.totalPurchased > 0 ? 'PRO' : 'FREE',
     isUnlimited: false,
-    nextResetDate: getNextResetDate(),
-    tier1Count: usage.tier1Count,
-    tier2Count: usage.tier2Count,
-    tier3Count: usage.tier3Count,
+    nextResetDate: balance.expiresAt ?? new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
+    tier1Count: 0,
+    tier2Count: 0,
+    tier3Count: 0,
   };
 }
 
 /**
- * Record a deal analysis (consumes from limit for FREE users)
+ * Record a deal analysis — deducts credits
  */
 export async function recordDealAnalysis(
   userId: string,
-  tier: AnalysisTier
+  tier: AnalysisTier,
+  dealId?: string,
+  analysisType?: string
 ): Promise<{ success: boolean; remainingDeals: number }> {
-  const status = await getUsageStatus(userId);
-
-  // PRO/ENTERPRISE - just record for analytics
-  if (status.isUnlimited) {
-    await prisma.userDealUsage.upsert({
-      where: { userId },
-      create: {
-        userId,
-        monthlyLimit: UNLIMITED,
-        usedThisMonth: 1,
-        tier1Count: tier >= 1 ? 1 : 0,
-        tier2Count: tier >= 2 ? 1 : 0,
-        tier3Count: tier >= 3 ? 1 : 0,
-      },
-      update: {
-        usedThisMonth: { increment: 1 },
-        tier1Count: tier >= 1 ? { increment: 1 } : undefined,
-        tier2Count: tier >= 2 ? { increment: 1 } : undefined,
-        tier3Count: tier >= 3 ? { increment: 1 } : undefined,
-      },
-    });
-
-    return { success: true, remainingDeals: Infinity };
+  // Determine credit action from analysis type or tier
+  let action: CreditActionType;
+  if (analysisType) {
+    action = getActionForAnalysisType(analysisType);
+  } else {
+    action = tier <= 1 ? 'QUICK_SCAN' : 'DEEP_DIVE';
   }
 
-  // FREE - check and consume
-  if (!status.canAnalyze) {
-    return { success: false, remainingDeals: 0 };
-  }
-
-  await prisma.userDealUsage.update({
-    where: { userId },
-    data: {
-      usedThisMonth: { increment: 1 },
-      tier1Count: tier >= 1 ? { increment: 1 } : undefined,
-    },
-  });
+  const result = await deductCredits(userId, action, dealId);
 
   return {
-    success: true,
-    remainingDeals: status.remainingDeals - 1,
+    success: result.success,
+    remainingDeals: result.balanceAfter,
   };
 }
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-async function getOrCreateUsage(userId: string, monthlyLimit: number) {
-  return prisma.userDealUsage.upsert({
-    where: { userId },
-    create: {
-      userId,
-      monthlyLimit,
-      usedThisMonth: 0,
-    },
-    update: {},
-  });
-}
-
-function shouldResetMonthlyUsage(lastResetAt: Date): boolean {
-  const now = new Date();
-  const lastReset = new Date(lastResetAt);
-
-  return (
-    now.getMonth() !== lastReset.getMonth() ||
-    now.getFullYear() !== lastReset.getFullYear()
-  );
-}
-
-function getNextResetDate(): Date {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth() + 1, 1);
-}
-
-// Export pricing/limits for UI (keep in sync with PLAN_LIMITS in credits/types.ts)
+// Legacy exports for backward compatibility
 export const FREE_TIER_LIMITS = {
-  MONTHLY_DEALS: 3, // Aligned with PLAN_LIMITS.FREE.analysesPerMonth
-  MAX_TIER: 1,
+  MONTHLY_DEALS: 999,
+  MAX_TIER: 3,
 } as const;
 
 export const PRO_TIER_BENEFITS = {
   UNLIMITED_DEALS: true,
   MAX_TIER: 3,
-  AI_BOARD_INCLUDED: 5,
-  PRICE_MONTHLY: 249, // EUR
+  AI_BOARD_INCLUDED: 999,
+  PRICE_MONTHLY: 0, // Credit-based now
 } as const;

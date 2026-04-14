@@ -1,7 +1,6 @@
 "use client";
 
 import { memo, useState, useCallback } from "react";
-import { Button } from "@/components/ui/button";
 import { MessageSquare, Columns, Clock, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatView } from "./views/chat-view";
@@ -73,7 +72,7 @@ export const DebateViewer = memo(function DebateViewer({
       {/* Header + Tab bar */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
         <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider">
-          Historique du Debat
+          Historique du Débat
         </h3>
         <div className="flex gap-0.5 rounded-lg bg-slate-800/60 p-0.5">
           {VIEW_OPTIONS.map(({ mode, label, icon: Icon }) => (

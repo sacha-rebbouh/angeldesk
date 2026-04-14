@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { createBot } from "@/lib/live/recall-client";
 import { publishSessionStatus } from "@/lib/live/ably-server";
+import { deductCredits, refundCredits } from "@/services/credits";
 import { handleApiError } from "@/lib/api-error";
 
 export const maxDuration = 30;
@@ -44,6 +45,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json(
         { error: `Session cannot be started from status "${session.status}". Must be "created".` },
         { status: 400 }
+      );
+    }
+
+    // Deduct credits for live coaching (8 credits)
+    const deduction = await deductCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined);
+    if (!deduction.success) {
+      return NextResponse.json(
+        { error: deduction.error ?? "Crédits insuffisants" },
+        { status: 402 }
       );
     }
 
@@ -135,8 +145,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (ep: any) => ep.type !== "websocket"
         );
-        bot = await createBot(botConfig);
+        try {
+          bot = await createBot(botConfig);
+        } catch (retryErr) {
+          // Refund credits — bot deploy failed completely
+          await refundCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined);
+          throw retryErr;
+        }
       } else {
+        // Refund credits — bot deploy failed
+        await refundCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined);
         throw err;
       }
     }

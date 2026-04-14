@@ -57,7 +57,7 @@ CATEGORIES DE RED FLAGS:
 5. DEAL_STRUCTURE: Terms abusifs, cap table problematique, gouvernance faible
 
 NIVEAUX DE SEVERITE:
-- CRITICAL: Dealbreaker potentiel, necessite resolution avant invest
+- CRITICAL: Risque critique identifié, nécessite investigation avant toute décision
 - HIGH: Risque majeur, doit etre adresse
 - MEDIUM: A surveiller, negociable
 - LOW: Minor, bon a savoir

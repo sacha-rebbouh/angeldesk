@@ -2,7 +2,7 @@
  * Message Types for Agent Communication
  */
 
-import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
+import type { ScoredFinding } from "@/scoring/types";
 
 // ============================================================================
 // MESSAGE CORE TYPES

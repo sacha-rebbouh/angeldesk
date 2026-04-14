@@ -23,7 +23,6 @@
  * Cross-reference obligatoire avec Funding DB
  */
 
-import { z } from "zod";
 import type { AgentResult, EnrichedAgentContext } from "../types";
 import {
   SectorExpertOutputSchema,
@@ -219,6 +218,7 @@ function buildClimatePrompt(context: EnrichedAgentContext): {
   const deal = context.deal;
   const stage = deal.stage ?? "SEED";
   const benchmarks = EXTENDED_CLIMATE_BENCHMARKS;
+  void benchmarks;
 
   // Extract funding DB data
   const dbCompetitors = context.fundingContext?.competitors ?? [];
@@ -230,6 +230,7 @@ function buildClimatePrompt(context: EnrichedAgentContext): {
     | "SEED"
     | "SERIES_A"
     | "SERIES_B";
+  void stageKey;
 
   // =============================================================================
   // SYSTEM PROMPT
@@ -1165,13 +1166,16 @@ export const climateExpert = {
 
     try {
       const { system, user } = buildClimatePrompt(context);
+      // Data Reliability + Analytical Tone directives
+      const dataReliability = "\n\n## CLASSIFICATION DE FIABILITÉ DES DONNÉES (OBLIGATOIRE)\nChaque donnée que tu analyses a un niveau de fiabilité. Tu DOIS en tenir compte.\n\n**6 niveaux :** AUDITED (auditée) > VERIFIED (vérifiable) > DECLARED (déclarée, non vérifiée) > PROJECTED (projection future) > ESTIMATED (estimation dérivée) > UNVERIFIABLE (invérifiable).\n\n**Règles :** Ne JAMAIS traiter PROJECTED/ESTIMATED comme un fait. Signaler toute projection présentée comme fait (PROJECTION_AS_FACT). Indiquer le niveau de fiabilité pour chaque métrique clé. Respecter les classifications du Tier 0.\n";
+      const analyticalTone = "\n\n## TON ANALYTIQUE OBLIGATOIRE (RÈGLE N°1)\nAngel Desk ANALYSE et GUIDE, ne DÉCIDE JAMAIS. Le BA est le seul décideur.\n\n**INTERDIT :** \"Investir\", \"Ne pas investir\", \"Rejeter\", \"Passer\", \"GO/NO-GO\", \"Dealbreaker\", tout impératif.\n**OBLIGATOIRE :** Ton analytique (\"Les données montrent...\", \"Les signaux indiquent...\"). Constater des faits, laisser le BA conclure.\n";
       // Anti-Hallucination Directive — Citation Demand (Prompt 3/5)
       const citationDemand = "\n\n## Anti-Hallucination Directive — Citation Demand\nFor every factual claim in your response:\n1. Cite a specific, verifiable source (name, publication, date)\n2. If you cannot cite a specific source, mark the claim as [UNVERIFIED] and explain why you believe it to be true\n3. If you are relying on general training data rather than a specific source, say so explicitly\nDo not present unverified information as established fact.\n";
       const structuredUncertainty = "\n\n## Anti-Hallucination Directive — Structured Uncertainty\nStructure your response in three clearly labelled sections:\n**CONFIDENT:** Claims where you have strong evidence and high certainty (>90%)\n**PROBABLE:** Claims where you believe this is likely correct but acknowledge uncertainty (50-90%)\n**SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%)\nEvery claim must be placed in one of these three categories.\nDo not present speculative claims as confident ones.\n";
       setAgentContext("climate-expert");
 
       const response = await complete(user, {
-        systemPrompt: system + citationDemand + structuredUncertainty,
+        systemPrompt: system + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
         complexity: "complex",
         temperature: 0.3,
       });

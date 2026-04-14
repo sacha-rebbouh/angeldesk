@@ -341,17 +341,23 @@ function isPersistentType(keyType: CacheKeyType): boolean {
 }
 
 async function getFromDbCache<T>(_key: string, _ttlMs: number): Promise<T | null> {
+  void _key;
+  void _ttlMs;
   // DB cache disabled - CacheEntry model not in schema
   // Using memory cache only for now
   return null
 }
 
 async function setToDbCache<T>(_key: string, _data: T, _ttlMs: number): Promise<void> {
+  void _key;
+  void _data;
+  void _ttlMs;
   // DB cache disabled - CacheEntry model not in schema
   // Using memory cache only for now
 }
 
 async function deleteFromDbCache(_key: string): Promise<void> {
+  void _key;
   // DB cache disabled - CacheEntry model not in schema
   // Using memory cache only for now
 }

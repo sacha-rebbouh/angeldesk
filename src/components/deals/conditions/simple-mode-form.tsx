@@ -354,14 +354,14 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
       {/* Notes / champ libre */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Notes et conditions specifiques</CardTitle>
+          <CardTitle className="text-base">Notes et conditions spécifiques</CardTitle>
           <CardDescription>
             Renseignez ici toute condition non couverte par les champs ci-dessus
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>Conditions supplementaires</Label>
+            <Label>Conditions supplémentaires</Label>
             <Textarea
               placeholder="Ex: Clause de sortie conjointe, earn-out, conditions suspensives..."
               rows={3}

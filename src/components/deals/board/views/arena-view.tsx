@@ -88,7 +88,7 @@ export const ArenaView = memo(function ArenaView({ memberAnalyses, debateRespons
   return (
     <div className="flex gap-6">
       {/* Arena */}
-      <div className="relative h-[300px] w-[300px] shrink-0">
+      <div className="relative h-[240px] w-[240px] sm:h-[300px] sm:w-[300px] lg:h-[400px] lg:w-[400px] shrink-0">
         {/* Connection lines */}
         <svg className="absolute inset-0" viewBox="0 0 300 300">
           {connections.map((conn, idx) => {
@@ -122,7 +122,7 @@ export const ArenaView = memo(function ArenaView({ memberAnalyses, debateRespons
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           <div className="flex h-16 w-16 items-center justify-center rounded-full border border-dashed border-slate-700/50">
             <span className="text-[10px] text-slate-600 text-center font-medium uppercase tracking-wider">
-              Debat
+              Débat
             </span>
           </div>
         </div>
@@ -135,6 +135,7 @@ export const ArenaView = memo(function ArenaView({ memberAnalyses, debateRespons
           return (
             <button
               key={member.id}
+              aria-label={`Voir les détails de ${member.name}`}
               className={cn(
                 "absolute flex flex-col items-center transition-transform hover:scale-110",
                 selectedMember === member.id && "scale-110"
@@ -165,12 +166,14 @@ export const ArenaView = memo(function ArenaView({ memberAnalyses, debateRespons
                   variant="secondary"
                   className={cn(
                     "mt-0.5 text-[9px] border-0",
-                    member.currentVerdict === "GO" && "bg-emerald-500/15 text-emerald-400",
-                    member.currentVerdict === "NO_GO" && "bg-red-500/15 text-red-400",
+                    (member.currentVerdict === "VERY_FAVORABLE" || member.currentVerdict === "FAVORABLE") && "bg-emerald-500/15 text-emerald-400",
+                    member.currentVerdict === "CONTRASTED" && "bg-amber-500/15 text-amber-400",
+                    member.currentVerdict === "VIGILANCE" && "bg-orange-500/15 text-orange-400",
+                    member.currentVerdict === "ALERT_DOMINANT" && "bg-red-500/15 text-red-400",
                     member.currentVerdict === "NEED_MORE_INFO" && "bg-amber-500/15 text-amber-400"
                   )}
                 >
-                  {member.currentVerdict === "NO_GO" ? "NO GO" : member.currentVerdict === "NEED_MORE_INFO" ? "MORE" : member.currentVerdict}
+                  {member.currentVerdict === "VERY_FAVORABLE" ? "Très favorable" : member.currentVerdict === "FAVORABLE" ? "Favorable" : member.currentVerdict === "CONTRASTED" ? "Contrasté" : member.currentVerdict === "VIGILANCE" ? "Vigilance" : member.currentVerdict === "ALERT_DOMINANT" ? "Alerte" : member.currentVerdict === "NEED_MORE_INFO" ? "Info manquante" : member.currentVerdict}
                 </Badge>
               )}
             </button>
@@ -222,13 +225,13 @@ export const ArenaView = memo(function ArenaView({ memberAnalyses, debateRespons
 
             {selectedMemberData.responses.length > 0 && (
               <div className="space-y-2">
-                <p className="text-xs font-medium text-slate-300 uppercase tracking-wider">Derniere reponse</p>
+                <p className="text-xs font-medium text-slate-300 uppercase tracking-wider">Dernière réponse</p>
                 <p className="text-xs text-slate-400 leading-relaxed">
                   {selectedMemberData.responses[0]?.response.justification}
                 </p>
                 {selectedMemberData.responses[0]?.response.positionChanged && (
                   <Badge variant="secondary" className="text-[10px] border-0 bg-purple-500/15 text-purple-400">
-                    A change de position
+                    A changé de position
                   </Badge>
                 )}
               </div>
@@ -236,7 +239,7 @@ export const ArenaView = memo(function ArenaView({ memberAnalyses, debateRespons
           </div>
         ) : (
           <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-slate-500">Cliquez sur un membre pour voir les details</p>
+            <p className="text-sm text-slate-500">Cliquez sur un membre pour voir les détails</p>
           </div>
         )}
       </div>

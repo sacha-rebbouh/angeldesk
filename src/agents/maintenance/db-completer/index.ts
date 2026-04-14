@@ -21,7 +21,7 @@ import { createLogger, createAgentError, processBatch } from '../utils'
 import { selectCompaniesToEnrich, releaseEnrichmentLock, releaseAllLocksForRun } from './selector'
 import { searchWithFallback, getBraveCircuitStatus, getSearchMetrics, resetSearchMetrics } from './web-search'
 import { scrapeUrls } from './scraper'
-import { extractWithLLM, type LLMExtractionResponse, getLLMCircuitStatus } from './llm-extract'
+import { extractWithLLM, getLLMCircuitStatus } from './llm-extract'
 import { validateAndUpdate } from './validator'
 
 const logger = createLogger('DB_COMPLETER')

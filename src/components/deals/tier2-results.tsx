@@ -40,7 +40,7 @@ import {
   AlertCircle,
   Minus,
 } from "lucide-react";
-import type { SectorExpertData, SectorExpertResult, ExtendedSectorData } from "@/agents/tier2/types";
+import type { SectorExpertData, ExtendedSectorData } from "@/agents/tier2/types";
 import {
   SECTOR_CONFIG,
   MATURITY_CONFIG,
@@ -200,7 +200,7 @@ const VerdictHero = memo(function VerdictHero({
             <div className="flex items-start gap-2">
               <AlertCircle className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wide">Point d'attention principal</p>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Point d&apos;attention principal</p>
                 <p className="text-sm text-slate-700">{verdict.topConcern}</p>
               </div>
             </div>
@@ -223,10 +223,8 @@ const VerdictHero = memo(function VerdictHero({
 
 const ScoreBreakdownSection = memo(function ScoreBreakdownSection({
   breakdown,
-  totalScore,
 }: {
   breakdown: ExtendedSectorData["scoreBreakdown"];
-  totalScore: number;
 }) {
   if (!breakdown) return null;
 
@@ -1105,7 +1103,7 @@ export const Tier2Results = memo(function Tier2Results({ results, subscriptionPl
             icon={<BarChart3 className="h-4 w-4" />}
             defaultOpen={true}
           >
-            <ScoreBreakdownSection breakdown={extended.scoreBreakdown} totalScore={data.sectorScore} />
+            <ScoreBreakdownSection breakdown={extended.scoreBreakdown} />
           </ExpandableSection>
         )}
 

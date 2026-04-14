@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import {
   Upload,
@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
 
 const DOCUMENT_TYPES = [
   { value: "PITCH_DECK", label: "Pitch Deck" },
@@ -89,6 +90,9 @@ export const FileUpload = memo(function FileUpload({
 }: FileUploadProps) {
   const [files, setFiles] = useState<FileToUpload[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadStartedAt, setUploadStartedAt] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [activeFileName, setActiveFileName] = useState<string | null>(null);
 
   const onDrop = useCallback(
     (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
@@ -127,6 +131,7 @@ export const FileUpload = memo(function FileUpload({
   const uploadFile = useCallback(
     async (fileData: FileToUpload) => {
       updateFile(fileData.id, { status: "uploading" });
+      setActiveFileName(fileData.file.name);
 
       try {
         const formData = new FormData();
@@ -172,17 +177,43 @@ export const FileUpload = memo(function FileUpload({
     }
 
     setIsUploading(true);
+    setUploadStartedAt(Date.now());
+    setElapsedSeconds(0);
     for (const fileData of pendingFiles) {
       await uploadFile(fileData);
     }
     setIsUploading(false);
+    setUploadStartedAt(null);
+    setActiveFileName(null);
+    setElapsedSeconds(0);
     onAllComplete?.();
   }, [files, uploadFile, onError, onAllComplete]);
 
   const pendingCount = files.filter((f) => f.status === "pending").length;
+  const uploadingFile = files.find((file) => file.status === "uploading") ?? null;
+  const totalFilesToProcess = files.filter((file) => file.status !== "error").length || 1;
+  const completedFiles = files.filter((file) => file.status === "success").length;
+  const estimatedUploadProgress = useMemo(() => {
+    if (!isUploading) return 0;
+    const fileBaseline = (completedFiles / totalFilesToProcess) * 100;
+    const perFileCap = 100 / totalFilesToProcess;
+    const currentFileExpectedSeconds = Math.max(45, Math.ceil(((uploadingFile?.file.size ?? 5_000_000) / (1024 * 1024)) * 10));
+    const currentFileProgress = Math.min(0.95, elapsedSeconds / currentFileExpectedSeconds) * perFileCap;
+    return Math.min(95, Math.max(5, Math.round(fileBaseline + currentFileProgress)));
+  }, [completedFiles, elapsedSeconds, isUploading, totalFilesToProcess, uploadingFile?.file.size]);
+
+  useEffect(() => {
+    if (!isUploading || !uploadStartedAt) return;
+    const tick = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - uploadStartedAt) / 1000)));
+    };
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [isUploading, uploadStartedAt]);
 
   return (
-    <div className="space-y-3">
+    <div className="relative space-y-3">
       {/* Dropzone - compact */}
       <div
         {...getRootProps()}
@@ -317,6 +348,41 @@ export const FileUpload = memo(function FileUpload({
           )}
         </Button>
       )}
+
+      {isUploading && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-background/85 p-4 backdrop-blur-sm">
+          <div className="w-full rounded-lg border bg-background p-4 shadow-lg">
+            <div className="flex items-start gap-3">
+              <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">Extraction documentaire en cours</p>
+                <p className="mt-1 truncate text-sm text-muted-foreground">
+                  {activeFileName ?? uploadingFile?.file.name ?? "Document"} - OCR et analyse visuelle des pages.
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Temps ecoule: {formatElapsed(elapsedSeconds)}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Progression estimee</span>
+                <span>{estimatedUploadProgress}%</span>
+              </div>
+              <Progress value={estimatedUploadProgress} className="h-2" />
+              <p className="text-xs text-muted-foreground">
+                Les pages complexes peuvent prendre plus longtemps: graphiques, tableaux, OCR haute fidelite.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
+
+function formatElapsed(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}

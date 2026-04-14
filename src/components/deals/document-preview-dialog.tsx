@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { Download, ExternalLink, FileSpreadsheet, X } from "lucide-react";
+import { Download, ExternalLink, FileSpreadsheet } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -29,16 +29,15 @@ export const DocumentPreviewDialog = memo(function DocumentPreviewDialog({
 }: DocumentPreviewDialogProps) {
   if (!document) return null;
 
+  const downloadUrl = `/api/documents/${document.id}/download`;
+  const inlineUrl = `${downloadUrl}?disposition=inline`;
+
   const handleDownload = () => {
-    if (document.storageUrl) {
-      window.open(document.storageUrl, "_blank");
-    }
+    window.open(downloadUrl, "_blank");
   };
 
   const handleOpenNewTab = () => {
-    if (document.storageUrl) {
-      window.open(document.storageUrl, "_blank");
-    }
+    window.open(inlineUrl, "_blank");
   };
 
   const isPdf = document.mimeType === "application/pdf";
@@ -71,7 +70,7 @@ export const DocumentPreviewDialog = memo(function DocumentPreviewDialog({
         <div className="flex-1 min-h-0 bg-muted/30">
           {isPdf && document.storageUrl && (
             <iframe
-              src={`${document.storageUrl}#toolbar=1&navpanes=0`}
+              src={`${inlineUrl}#toolbar=1&navpanes=0`}
               className="w-full h-full border-0"
               title={document.name}
             />
@@ -79,8 +78,9 @@ export const DocumentPreviewDialog = memo(function DocumentPreviewDialog({
 
           {isImage && document.storageUrl && (
             <div className="w-full h-full flex items-center justify-center p-4 overflow-auto">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={document.storageUrl}
+                src={inlineUrl}
                 alt={document.name}
                 className="max-w-full max-h-full object-contain"
               />

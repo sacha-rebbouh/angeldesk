@@ -90,10 +90,7 @@ export const SuiviDDTab = memo(function SuiviDDTab({
 
   // Filters
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
-  const filterCounts = useMemo(
-    () => ({ byType: counts.byType }),
-    [counts.byType.RED_FLAG, counts.byType.DEVILS_ADVOCATE, counts.byType.CONDITIONS],
-  );
+  const filterCounts = { byType: counts.byType };
 
   // Response editing state: questionId → { answer, status }
   const [responseEdits, setResponseEdits] = useState<Record<string, { answer: string; status: ResponseStatus }>>({});
@@ -314,7 +311,7 @@ export const SuiviDDTab = memo(function SuiviDDTab({
           ) : (
             <Play className="mr-2 h-4 w-4" />
           )}
-          Re-analyser avec les reponses
+          Ré-analyser avec les réponses
         </Button>
       </div>
     </div>

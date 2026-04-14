@@ -295,8 +295,8 @@ export const PercentileComparator = React.memo(function PercentileComparator({
               )}>
                 {data.dilution.dealValue}%
                 {data.dilution.dealValue <= data.dilution.median
-                  ? " (en-dessous de la mediane)"
-                  : " (au-dessus de la mediane)"
+                  ? " (en-dessous de la médiane)"
+                  : " (au-dessus de la médiane)"
                 }
               </span>
             </div>

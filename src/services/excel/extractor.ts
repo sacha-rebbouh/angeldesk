@@ -49,7 +49,7 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
     let totalRows = 0;
     let totalCells = 0;
     let hasFormulas = false;
-    let textParts: string[] = [];
+    const textParts: string[] = [];
 
     // Process each sheet
     for (const sheetName of workbook.SheetNames) {
@@ -379,7 +379,7 @@ function formatRegularTable(data: string[][]): string {
 
     // Find label and value
     let label = "";
-    let values: string[] = [];
+    const values: string[] = [];
 
     for (let i = 0; i < row.length; i++) {
       const cell = String(row[i] || "").trim();

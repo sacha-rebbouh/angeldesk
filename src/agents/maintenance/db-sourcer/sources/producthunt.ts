@@ -221,6 +221,7 @@ export const producthuntConnector: PaginatedSourceConnector = {
           // ProductHunt launches aren't funding rounds, but we track them as "signals"
           // We'll mark them as PRE_SEED with amount = null
           const topics = post.topics?.edges?.map((e) => e.node.name) || []
+          void topics
 
           const parsed: ParsedFunding = {
             companyName: post.name,

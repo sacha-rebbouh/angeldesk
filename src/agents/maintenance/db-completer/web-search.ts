@@ -12,7 +12,6 @@
 import type { WebSearchResult } from '../types'
 import {
   withTimeout,
-  withRetry,
   createLogger,
   isCircuitOpen,
   recordCircuitFailure,

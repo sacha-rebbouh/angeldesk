@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   applyTier3Coherence,
   injectCoherenceIntoContext,
-  type CoherenceResult,
 } from "../tier3-coherence";
 import type { AgentResult, ScenarioV2 } from "../../types";
 

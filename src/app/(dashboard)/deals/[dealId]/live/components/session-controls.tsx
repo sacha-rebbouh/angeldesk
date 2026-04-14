@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useRef } from "react";
+import { memo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Square, Loader2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -65,8 +65,6 @@ export default memo(function SessionControls({
   status,
 }: SessionControlsProps) {
   const queryClient = useQueryClient();
-  const isStoppingRef = useRef(false);
-
   const invalidateAll = () => {
     queryClient.invalidateQueries({
       queryKey: queryKeys.live.session(sessionId),
@@ -79,12 +77,9 @@ export default memo(function SessionControls({
   const stopMutation = useMutation({
     mutationFn: () => stopSession(sessionId),
     onSuccess: () => {
-      isStoppingRef.current = false;
       invalidateAll();
     },
-    onError: () => {
-      isStoppingRef.current = false;
-    },
+    onError: () => {},
   });
 
   const reinviteMutation = useMutation({
@@ -164,10 +159,9 @@ export default memo(function SessionControls({
               <AlertDialogCancel>Annuler</AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
-                disabled={stopMutation.isPending || isStoppingRef.current}
+                disabled={stopMutation.isPending}
                 onClick={() => {
-                  if (isStoppingRef.current || stopMutation.isPending) return;
-                  isStoppingRef.current = true;
+                  if (stopMutation.isPending) return;
                   stopMutation.mutate();
                 }}
               >

@@ -3,6 +3,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // GCM standard
 const AUTH_TAG_LENGTH = 16;
+const BUFFER_ENCRYPTION_PREFIX = Buffer.from("ADENC1\0", "utf8");
 
 /**
  * Get the encryption key from environment.
@@ -70,6 +71,63 @@ export function decryptText(encryptedBase64: string): string {
   ]);
 
   return decrypted.toString("utf8");
+}
+
+/**
+ * Encrypt arbitrary binary content using AES-256-GCM.
+ * Returns: magic prefix + iv + authTag + ciphertext.
+ */
+export function encryptBuffer(plaintext: Buffer): Buffer {
+  const key = getEncryptionKey();
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv(ALGORITHM, key, iv);
+
+  const encrypted = Buffer.concat([
+    cipher.update(plaintext),
+    cipher.final(),
+  ]);
+
+  return Buffer.concat([BUFFER_ENCRYPTION_PREFIX, iv, cipher.getAuthTag(), encrypted]);
+}
+
+/**
+ * Decrypt binary content encrypted with encryptBuffer().
+ */
+export function decryptBuffer(encrypted: Buffer): Buffer {
+  if (!isEncryptedBuffer(encrypted)) {
+    throw new Error("Buffer is not encrypted with Angel Desk binary envelope");
+  }
+
+  const key = getEncryptionKey();
+  const payload = encrypted.subarray(BUFFER_ENCRYPTION_PREFIX.length);
+  const iv = payload.subarray(0, IV_LENGTH);
+  const authTag = payload.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+  const ciphertext = payload.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+
+  const decipher = createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(authTag);
+
+  return Buffer.concat([
+    decipher.update(ciphertext),
+    decipher.final(),
+  ]);
+}
+
+/**
+ * Check whether a binary payload uses Angel Desk's encrypted file envelope.
+ */
+export function isEncryptedBuffer(buffer: Buffer): boolean {
+  return buffer.length > BUFFER_ENCRYPTION_PREFIX.length + IV_LENGTH + AUTH_TAG_LENGTH &&
+    buffer.subarray(0, BUFFER_ENCRYPTION_PREFIX.length).equals(BUFFER_ENCRYPTION_PREFIX);
+}
+
+/**
+ * Decrypt binary payloads when encrypted, return unchanged otherwise.
+ * Used during migration so existing plaintext blobs/local files remain readable.
+ */
+export function safeDecryptBuffer(buffer: Buffer): Buffer {
+  if (!isEncryptedBuffer(buffer)) return buffer;
+  return decryptBuffer(buffer);
 }
 
 /**

@@ -27,10 +27,10 @@ const SIZE_CLASSES = {
 
 const SCORE_SCALE = [
   { min: 80, label: "Excellent", color: "bg-green-500" },
-  { min: 60, label: "Bon", color: "bg-blue-500" },
-  { min: 40, label: "Moyen", color: "bg-yellow-500" },
-  { min: 20, label: "Faible", color: "bg-orange-500" },
-  { min: 0,  label: "Critique", color: "bg-red-500" },
+  { min: 60, label: "Solide", color: "bg-blue-500" },
+  { min: 40, label: "À approfondir", color: "bg-yellow-500" },
+  { min: 20, label: "Points d'attention", color: "bg-orange-500" },
+  { min: 0,  label: "Zone d'alerte", color: "bg-red-500" },
 ] as const;
 
 function getScoreLabel(score: number): string {
@@ -63,7 +63,7 @@ export const ScoreBadge = memo(function ScoreBadge({
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="w-48 p-2">
-            <p className="text-xs">Score non disponible — le modele n&apos;a pas retourne de valeur pour cette analyse.</p>
+            <p className="text-xs">Score non disponible — le mod&egrave;le n&apos;a pas retourn&eacute; de valeur pour cette analyse.</p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -86,7 +86,7 @@ export const ScoreBadge = memo(function ScoreBadge({
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="inline-flex items-center gap-1.5 cursor-help">
+          <span className="inline-flex items-center gap-1.5 cursor-help" tabIndex={0}>
             {badge}
             {size === "lg" && (
               <span className="text-xs font-normal text-muted-foreground">
@@ -109,7 +109,7 @@ export const ScoreBadge = memo(function ScoreBadge({
             />
           </div>
 
-          {/* Echelle qualitative */}
+          {/* Échelle qualitative */}
           <div className="grid grid-cols-5 gap-0.5 text-center mb-2">
             {SCORE_SCALE.slice().reverse().map((s) => (
               <div
@@ -160,9 +160,9 @@ export const ScoreBadge = memo(function ScoreBadge({
             </div>
           )}
 
-          {/* Legende echelle */}
+          {/* Légende échelle */}
           <p className="text-[10px] text-muted-foreground mt-1">
-            80+ = Excellent | 60-79 = Bon | 40-59 = Moyen | 20-39 = Faible | 0-19 = Critique
+            80+ = Excellent | 60-79 = Solide | 40-59 = À approfondir | 20-39 = Points d&apos;attention | 0-19 = Zone d&apos;alerte
           </p>
         </TooltipContent>
       </Tooltip>

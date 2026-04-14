@@ -11,7 +11,7 @@
  *
  * Outputs:
  * - Points de negociation priorises
- * - Dealbreakers
+ * - Conditions bloquantes (risques critiques)
  * - Trade-offs suggeres
  */
 
@@ -40,7 +40,7 @@ export interface NegotiationPoint {
   compromiseValue?: string;
 }
 
-export interface Dealbreaker {
+export interface CriticalCondition {
   id: string;
   condition: string;
   description: string;
@@ -49,6 +49,9 @@ export interface Dealbreaker {
   linkedPoints: string[]; // IDs of linked negotiation points
   resolved?: boolean; // Auto-set to true when all linkedPoints are obtained/compromised
 }
+
+/** @deprecated Use CriticalCondition instead */
+export type Dealbreaker = CriticalCondition;
 
 export interface TradeOff {
   id: string;
@@ -64,7 +67,8 @@ export interface NegotiationStrategy {
   overallLeverage: "strong" | "moderate" | "weak";
   leverageRationale: string;
   negotiationPoints: NegotiationPoint[];
-  dealbreakers: Dealbreaker[];
+  /** Critical conditions (risques critiques) — field named "dealbreakers" for stored data compat */
+  dealbreakers: CriticalCondition[];
   tradeoffs: TradeOff[];
   suggestedApproach: string;
   keyArguments: string[];
@@ -196,8 +200,8 @@ Pour chaque faiblesse ou red flag detecte, tu identifies une opportunite de nego
 
 | Priorite | Definition |
 |----------|------------|
-| must_have | Non negociable - si refuse, ne pas investir |
-| nice_to_have | Important mais pas dealbreaker |
+| must_have | Essentiel — si refuse, evaluer l'impact sur la these d'investissement |
+| nice_to_have | Important mais pas bloquant |
 | optional | Bonus si obtenu |
 
 Chaque point doit avoir:
@@ -208,9 +212,9 @@ Chaque point doit avoir:
 - Ask: ce qu'on demande
 - Fallback: position de repli acceptable
 
-## 2. Dealbreakers
+## 2. Conditions bloquantes (risques critiques)
 
-Points absolument non negociables. Si refuses = no deal.
+Points absolument non negociables. Si refuses = risque critique pour la these d'investissement.
 
 ## 3. Trade-offs
 
@@ -266,7 +270,7 @@ Produis un JSON structure avec tous les elements du plan de negociation.
 1. Chaque argument DOIT etre base sur une donnee de l'analyse (red flag, benchmark, etc.)
 2. Les asks doivent etre REALISTES et CHIFFRES quand possible
 3. Toujours proposer un fallback (position de repli)
-4. Les dealbreakers doivent etre justifies par des risques concrets
+4. Les conditions bloquantes doivent etre justifiees par des risques critiques concrets
 5. Les trade-offs doivent avoir un net benefit positif ou neutre`;
 
 export async function generateNegotiationStrategy(
@@ -287,7 +291,7 @@ ${context}
 
 1. Analyse les faiblesses et red flags identifies
 2. Genere 5-10 points de negociation priorises
-3. Identifie les dealbreakers (si applicable)
+3. Identifie les conditions bloquantes (si applicable)
 4. Propose des trade-offs strategiques
 5. Suggere une approche globale de negociation
 
@@ -315,7 +319,7 @@ ${context}
   ],
   "dealbreakers": [
     {
-      "condition": "Condition qui fait dealbreaker",
+      "condition": "Condition bloquante (risque critique)",
       "description": "Explication",
       "resolvable": true/false,
       "resolutionPath": "Comment resoudre si resolvable"
@@ -493,8 +497,8 @@ function normalizeResponse(
       }))
     : [];
 
-  // Normalize dealbreakers
-  const dealbreakers: Dealbreaker[] = Array.isArray(response.dealbreakers)
+  // Normalize critical conditions (risques critiques)
+  const dealbreakers: CriticalCondition[] = Array.isArray(response.dealbreakers)
     ? response.dealbreakers.map((db, idx) => ({
         id: `DB-${String(idx + 1).padStart(3, "0")}`,
         condition: db.condition ?? "",

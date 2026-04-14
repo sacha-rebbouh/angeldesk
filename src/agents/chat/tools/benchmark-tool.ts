@@ -343,7 +343,7 @@ function generateRecommendations(
   if (ltvCacMetric && ltvCacMetric.dealValue && ltvCacMetric.dealValue < 3) {
     recommendations.push(
       `LTV/CAC ratio de ${ltvCacMetric.dealValue}x sous le seuil de 3x recommandé. ` +
-      `Unit economics à approfondir avant d'investir.`
+      `Unit economics à approfondir avant toute décision.`
     );
   }
 

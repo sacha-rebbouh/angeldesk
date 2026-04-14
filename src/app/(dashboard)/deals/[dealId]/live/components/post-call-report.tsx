@@ -36,9 +36,10 @@ import type { PostCallReport as PostCallReportData } from "@/lib/live/types";
 // =============================================================================
 
 interface PostCallReportProps {
-  sessionId: string;
   summary?: PostCallReportData;
 }
+
+const EMPTY_TOPICS_CHECKLIST = { total: 0, covered: 0 };
 
 // =============================================================================
 // Constants
@@ -386,7 +387,7 @@ const SessionStats = memo(function SessionStats({
     () => Math.round(stats.duration),
     [stats.duration]
   );
-  const topicsChecklist = stats.topicsChecklist ?? { total: 0, covered: 0 };
+  const topicsChecklist = stats.topicsChecklist ?? EMPTY_TOPICS_CHECKLIST;
   const coveragePct = useMemo(
     () =>
       topicsChecklist.total > 0
@@ -394,7 +395,7 @@ const SessionStats = memo(function SessionStats({
             (topicsChecklist.covered / topicsChecklist.total) * 100
           )
         : 0,
-    [topicsChecklist]
+    [topicsChecklist.total, topicsChecklist.covered]
   );
 
   return (
@@ -492,7 +493,6 @@ const ConfidenceDelta = memo(function ConfidenceDelta({
 // =============================================================================
 
 export default memo(function PostCallReport({
-  sessionId,
   summary,
 }: PostCallReportProps) {
   // Processing state — no summary yet

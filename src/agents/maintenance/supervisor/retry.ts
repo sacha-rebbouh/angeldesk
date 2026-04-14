@@ -166,6 +166,7 @@ function buildRetryStrategy(
   config: BackoffConfig
 ): RetryStrategy {
   const adjustments: RetryAdjustments = {}
+  void adjustments
 
   switch (category) {
     case 'RATE_LIMIT':

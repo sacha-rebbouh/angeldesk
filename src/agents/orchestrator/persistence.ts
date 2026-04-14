@@ -110,7 +110,7 @@ export async function completeAnalysis(params: {
   try {
     const { uploadFile } = await import("@/services/storage");
     const jsonBuffer = Buffer.from(JSON.stringify(serializedResults));
-    await uploadFile(`analysis-results/${params.analysisId}.json`, jsonBuffer);
+    await uploadFile(`analysis-results/${params.analysisId}.json`, jsonBuffer, { access: "private" });
     console.log(`[Persistence] Results cached to blob: analysis-results/${params.analysisId}.json (${(jsonBuffer.length / 1024).toFixed(0)}KB)`);
   } catch (err) {
     // Non-blocking: DB has the data, blob is just a fast cache
@@ -611,6 +611,21 @@ export async function getDealWithRelations(dealId: string) {
           extractedText: true,
           processingStatus: true, // Required for document versioning/staleness detection
           uploadedAt: true, // Required for document chronology awareness by agents
+          extractionRuns: {
+            orderBy: { completedAt: "desc" },
+            take: 1,
+            select: {
+              overrides: {
+                where: { approvedAt: { not: null } },
+                select: {
+                  pageNumber: true,
+                  overrideType: true,
+                  reason: true,
+                  payload: true,
+                },
+              },
+            },
+          },
         },
       },
       founders: true,
@@ -620,10 +635,13 @@ export async function getDealWithRelations(dealId: string) {
   if (!deal) return null;
 
   // Decrypt extracted text for each document (handles mixed encrypted/plaintext)
-  deal.documents = deal.documents.map(doc => ({
-    ...doc,
-    extractedText: doc.extractedText ? safeDecrypt(doc.extractedText) : null,
-  }));
+  deal.documents = deal.documents.map(doc => {
+    const decryptedText = doc.extractedText ? safeDecrypt(doc.extractedText) : null;
+    return {
+      ...doc,
+      extractedText: decryptedText,
+    };
+  });
 
   return deal;
 }

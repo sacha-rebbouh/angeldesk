@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateAnalysisPdf, type PdfExportData, type PdfFormat } from "@/lib/pdf/generate-analysis-pdf";
+import { loadResults } from "@/services/analysis-results/load-results";
 
 export async function GET(
   request: NextRequest,
@@ -23,50 +24,63 @@ export async function GET(
     const analysisId = request.nextUrl.searchParams.get("analysisId");
     const format = (request.nextUrl.searchParams.get("format") === "summary" ? "summary" : "full") as PdfFormat;
 
-    // 1. Check subscription — PRO only
-    // requireAuth() returns the Prisma User directly (with subscriptionStatus)
-    if (user.subscriptionStatus === "FREE") {
-      return NextResponse.json(
-        { error: "L'export PDF est reserve aux utilisateurs PRO." },
-        { status: 403 }
-      );
-    }
+    // PDF export is free (0 credits) — no subscription check needed
 
-    // 2. Load deal with relations
-    const deal = await prisma.deal.findFirst({
-      where: { id: dealId, userId: user.id },
-      include: {
-        founders: { select: { name: true, role: true, linkedinUrl: true } },
-        redFlags: {
-          where: { status: "OPEN" },
-          orderBy: [{ severity: "asc" }, { detectedAt: "desc" }],
-          select: {
-            title: true,
-            description: true,
-            severity: true,
-            confidenceScore: true,
-            questionsToAsk: true,
-            status: true,
+    // Load deal and analysis metadata in parallel (excludes heavy results blob)
+    const analysisSelect = {
+      id: true,
+      type: true,
+      completedAt: true,
+      totalAgents: true,
+      completedAgents: true,
+      negotiationStrategy: true,
+    } as const;
+
+    const [deal, analysisMeta] = await Promise.all([
+      prisma.deal.findFirst({
+        where: { id: dealId, userId: user.id },
+        include: {
+          founders: { select: { name: true, role: true, linkedinUrl: true } },
+          redFlags: {
+            where: { status: "OPEN" },
+            orderBy: [{ severity: "asc" }, { detectedAt: "desc" }],
+            select: {
+              title: true,
+              description: true,
+              severity: true,
+              confidenceScore: true,
+              questionsToAsk: true,
+              status: true,
+            },
           },
         },
-      },
-    });
+      }),
+      analysisId
+        ? prisma.analysis.findFirst({
+            where: { id: analysisId, dealId, deal: { userId: user.id } },
+            select: analysisSelect,
+          })
+        : prisma.analysis.findFirst({
+            where: { dealId, status: "COMPLETED", deal: { userId: user.id } },
+            orderBy: { createdAt: "desc" },
+            select: analysisSelect,
+          }),
+    ]);
 
     if (!deal) {
       return NextResponse.json({ error: "Deal non trouve" }, { status: 404 });
     }
 
-    // 3. Load analysis (specific or latest completed)
-    const analysis = analysisId
-      ? await prisma.analysis.findFirst({
-          where: { id: analysisId, dealId, deal: { userId: user.id } },
-        })
-      : await prisma.analysis.findFirst({
-          where: { dealId, status: "COMPLETED", deal: { userId: user.id } },
-          orderBy: { createdAt: "desc" },
-        });
+    if (!analysisMeta) {
+      return NextResponse.json(
+        { error: "Aucune analyse completee trouvee" },
+        { status: 404 }
+      );
+    }
 
-    if (!analysis || !analysis.results) {
+    // PERF: Load results from Blob cache (fast) instead of DB (slow, 30s+ for multi-MB JSON)
+    const results = await loadResults(analysisMeta.id);
+    if (!results) {
       return NextResponse.json(
         { error: "Aucune analyse completee trouvee" },
         { status: 404 }
@@ -94,11 +108,11 @@ export async function GET(
       category: fact.category,
     }));
 
-    // 5. Load negotiation strategy from analysis JSON field (if exists)
-    const negotiationRaw = analysis.negotiationStrategy;
+    // 5. Load negotiation strategy from analysis metadata (if exists)
+    const negotiationRaw = analysisMeta.negotiationStrategy;
 
     // 5b. Extract early warnings from analysis results (stored at top level of results JSON)
-    const rawResults = analysis.results as Record<string, unknown>;
+    const rawResults = results as Record<string, unknown>;
     const earlyWarnings = (rawResults?.earlyWarnings ?? []) as PdfExportData["earlyWarnings"];
 
     // 6. Build export data
@@ -122,12 +136,12 @@ export async function GET(
         })),
       },
       analysis: {
-        id: analysis.id,
-        type: analysis.type,
-        completedAt: analysis.completedAt?.toISOString() ?? null,
-        totalAgents: analysis.totalAgents,
-        completedAgents: analysis.completedAgents,
-        results: analysis.results as unknown as Record<string, PdfExportData["analysis"]["results"][string]>,
+        id: analysisMeta.id,
+        type: analysisMeta.type,
+        completedAt: analysisMeta.completedAt?.toISOString() ?? null,
+        totalAgents: analysisMeta.totalAgents,
+        completedAgents: analysisMeta.completedAgents,
+        results: results as unknown as Record<string, PdfExportData["analysis"]["results"][string]>,
       },
       founderResponses,
       negotiation: negotiationRaw

@@ -4,7 +4,7 @@
 
 import React from "react";
 import { View, Text } from "@react-pdf/renderer";
-import { colors, styles as gs } from "../pdf-theme";
+import { styles as gs } from "../pdf-theme";
 import {
   PdfPage,
   SectionTitle,
@@ -16,7 +16,7 @@ import {
   Spacer,
   BodyText,
 } from "../pdf-components";
-import { s, fmtPct } from "../pdf-helpers";
+import { s } from "../pdf-helpers";
 import type { AgentResult } from "../generate-analysis-pdf";
 
 export function Tier3SynthesisSection({

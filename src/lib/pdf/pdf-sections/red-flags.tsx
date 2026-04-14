@@ -12,8 +12,6 @@ import {
   H3,
   BulletList,
   PdfTable,
-  Spacer,
-  BodyText,
 } from "../pdf-components";
 import { severityOrder, sup } from "../pdf-helpers";
 import { AGENT_DISPLAY_NAMES } from "@/lib/format-utils";

@@ -6,7 +6,7 @@
  */
 
 import type { LLMExtractionResult, WebSearchResult } from '../types'
-import { createLogger, combinedSimilarity } from '../utils'
+import { createLogger } from '../utils'
 import { searchCompany, searchDuckDuckGo } from './web-search'
 import { scrapeUrls } from './scraper'
 import { extractWithLLM } from './llm-extract'

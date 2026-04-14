@@ -50,6 +50,13 @@ export interface SocieteComCompany {
 
 const BASE_URL = "https://www.societe.com";
 const USER_AGENT = "Mozilla/5.0 (compatible; AngelDeskBot/1.0; +https://angeldesk.app)";
+const societeComSource: DataSource = {
+  type: "database",
+  name: "Societe.com",
+  url: BASE_URL,
+  retrievedAt: new Date().toISOString(),
+  confidence: 0.75,
+};
 
 // Rate limiting: max 1 request per second
 let lastRequestTime = 0;
@@ -90,11 +97,6 @@ async function rateLimitedFetch(url: string): Promise<string | null> {
   }
 }
 
-function extractText(html: string, pattern: RegExp): string | null {
-  const match = html.match(pattern);
-  return match ? match[1].trim() : null;
-}
-
 function parseEmployees(text: string | null): number | undefined {
   if (!text) return undefined;
   const match = text.match(/(\d+)/);
@@ -113,14 +115,6 @@ function parseRevenue(text: string | null): number | undefined {
   }
   return parseInt(cleaned, 10) || undefined;
 }
-
-const societeComSource: DataSource = {
-  type: "crunchbase",
-  name: "Societe.com",
-  url: "https://www.societe.com",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.85, // Public data, generally accurate
-};
 
 // ============================================================================
 // SCRAPING FUNCTIONS

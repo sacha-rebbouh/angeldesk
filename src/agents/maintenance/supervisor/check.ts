@@ -6,7 +6,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
-import type { MaintenanceAgent, MaintenanceStatus } from '@prisma/client'
+import type { MaintenanceAgent } from '@prisma/client'
 import type {
   SupervisorCheckResult,
   SupervisorCheckDetails,

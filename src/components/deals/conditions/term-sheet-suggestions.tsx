@@ -46,7 +46,7 @@ const FIELD_LABELS: Record<string, string> = {
   payToPlay: "Pay-to-play",
   milestoneTranches: "Milestone tranches",
   nonCompete: "Non-compete",
-  customConditions: "Conditions supplementaires",
+  customConditions: "Conditions supplémentaires",
 };
 
 function formatValue(key: string, value: unknown): string {

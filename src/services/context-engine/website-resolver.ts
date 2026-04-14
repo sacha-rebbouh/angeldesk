@@ -9,6 +9,10 @@
  * 5. Web search : Rechercher "nom + secteur" pour trouver le site
  */
 
+import {
+  fetchWithValidatedRedirects,
+} from "@/lib/url-validator";
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -178,43 +182,52 @@ function normalizeUrl(url: string): string | null {
  * Valide qu'une URL est accessible
  */
 async function validateUrl(url: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CONFIG.VALIDATE_TIMEOUT_MS);
+
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), CONFIG.VALIDATE_TIMEOUT_MS);
-
-    const response = await fetch(url, {
-      method: "HEAD", // HEAD est plus rapide
-      headers: {
-        "User-Agent": CONFIG.USER_AGENT,
-      },
-      redirect: "follow",
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    // Accepter 2xx et 3xx
-    return response.ok || (response.status >= 300 && response.status < 400);
-  } catch {
-    // Essayer avec GET si HEAD échoue (certains serveurs ne supportent pas HEAD)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), CONFIG.VALIDATE_TIMEOUT_MS);
-
-      const response = await fetch(url, {
-        method: "GET",
+    const headResult = await fetchWithValidatedRedirects(
+      url,
+      {
+        method: "HEAD",
         headers: {
           "User-Agent": CONFIG.USER_AGENT,
         },
-        redirect: "follow",
         signal: controller.signal,
-      });
+      },
+      { maxRedirects: 5 }
+    );
 
-      clearTimeout(timeoutId);
-      return response.ok;
-    } catch {
+    return headResult.response.ok;
+  } catch (headError) {
+    if (headError instanceof Error && /Blocked private\/internal URL/i.test(headError.message)) {
+      console.warn(`[WebsiteResolver] SSRF blocked: ${url} — ${headError.message}`);
       return false;
     }
+
+    // Essayer avec GET si HEAD échoue (certains serveurs ne supportent pas HEAD)
+    try {
+      const getResult = await fetchWithValidatedRedirects(
+        url,
+        {
+          method: "GET",
+          headers: {
+            "User-Agent": CONFIG.USER_AGENT,
+          },
+          signal: controller.signal,
+        },
+        { maxRedirects: 5 }
+      );
+
+      return getResult.response.ok;
+    } catch {
+      if (headError instanceof Error && headError.message) {
+        console.warn(`[WebsiteResolver] URL validation failed for ${url}: ${headError.message}`);
+      }
+      return false;
+    }
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -503,4 +516,3 @@ async function searchWithBrave(query: string, companyName: string, apiKey: strin
     return null;
   }
 }
-

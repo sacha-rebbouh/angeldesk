@@ -476,6 +476,12 @@ Produis un JSON avec la structure v2.0 complete incluant:
 
 → INTERDIT: Vague, pas de source, pas d'impact, pas actionnable
 
+## CROSS-REFERENCE DB OBLIGATOIRE
+Si le Context Engine fournit des benchmarks de dilution et de valorisation, les UTILISER pour :
+- Comparer la dilution demandée vs les deals similaires (P25/médian/P75)
+- Benchmarker la valorisation vs les multiples du secteur/stage
+- Évaluer les terms vs les standards de marché
+
 ## Anti-Hallucination Directive — Confidence Threshold
 Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }

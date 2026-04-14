@@ -65,12 +65,6 @@ interface SendMessageResponse {
   };
 }
 
-interface ConversationWithMessages {
-  id: string;
-  title: string | null;
-  messages: ChatMessageData[];
-}
-
 // ============================================================================
 // QUICK ACTIONS CONFIG
 // ============================================================================
@@ -82,20 +76,20 @@ const QUICK_ACTIONS_BY_LEVEL: Record<InvestorLevel, Array<{ label: string; promp
   beginner: [
     { label: "C'est quoi ce score ?", prompt: "Explique-moi simplement ce que signifie le score de ce deal et si c'est bien ou pas." },
     { label: "Quels sont les risques ?", prompt: "Quels sont les principaux risques de cet investissement, expliques simplement ?" },
-    { label: "Que demander au fondateur ?", prompt: "Quelles questions simples mais importantes devrais-je poser au fondateur avant d'investir ?" },
-    { label: "Resume pour moi", prompt: "Resume cette analyse comme si tu l'expliquais a quelqu'un qui n'a jamais investi dans une startup." },
+    { label: "Que demander au fondateur ?", prompt: "Quelles questions simples mais importantes devrais-je poser au fondateur avant de me décider ?" },
+    { label: "Résumé pour moi", prompt: "Résume cette analyse comme si tu l'expliquais à quelqu'un qui n'a jamais investi dans une startup." },
   ],
   intermediate: [
-    { label: "Explique les red flags", prompt: "Explique-moi les red flags identifies dans cette analyse et leur impact potentiel." },
-    { label: "Compare aux benchmarks", prompt: "Compare ce deal aux benchmarks du secteur. Les metriques sont-elles au-dessus ou en-dessous de la mediane ?" },
-    { label: "Questions au fondateur", prompt: "Quelles questions devrais-je poser au fondateur, classees par priorite ?" },
-    { label: "Points de negociation", prompt: "Quels sont mes leviers de negociation sur la valorisation et les termes ?" },
+    { label: "Explique les red flags", prompt: "Explique-moi les red flags identifiés dans cette analyse et leur impact potentiel." },
+    { label: "Compare aux benchmarks", prompt: "Compare ce deal aux benchmarks du secteur. Les métriques sont-elles au-dessus ou en-dessous de la médiane ?" },
+    { label: "Questions au fondateur", prompt: "Quelles questions devrais-je poser au fondateur, classées par priorité ?" },
+    { label: "Points de négociation", prompt: "Quels sont mes leviers de négociation sur la valorisation et les termes ?" },
   ],
   expert: [
     { label: "Red flags & risques critiques", prompt: "Analyse les red flags détectés. Lesquels sont des risques critiques absolus vs conditionnels ?" },
-    { label: "Benchmark & valo", prompt: "Compare les multiples de valorisation aux comparables. La valo est-elle justifiee ?" },
-    { label: "Due diligence gaps", prompt: "Quels points de la DD restent insuffisamment couverts ? Quelles donnees manquent ?" },
-    { label: "Structuration du deal", prompt: "Quels termes devrais-je negocier (liquidation pref, pro-rata, anti-dilution) ?" },
+    { label: "Benchmark & valo", prompt: "Compare les multiples de valorisation aux comparables. La valo est-elle justifiée ?" },
+    { label: "Due diligence gaps", prompt: "Quels points de la DD restent insuffisamment couverts ? Quelles données manquent ?" },
+    { label: "Structuration du deal", prompt: "Quels termes devrais-je négocier (liquidation pref, pro-rata, anti-dilution) ?" },
   ],
 };
 
@@ -306,7 +300,7 @@ const EmptyState = memo(function EmptyState({ dealName }: EmptyStateProps) {
       </div>
       <h3 className="font-semibold text-lg mb-2">Chat IA</h3>
       <p className="text-sm text-muted-foreground max-w-[280px]">
-        Posez des questions sur l'analyse de{" "}
+        Posez des questions sur l&apos;analyse de{" "}
         <span className="font-medium text-foreground">{dealName}</span>.
         Utilisez les suggestions ci-dessous pour commencer.
       </p>
@@ -377,27 +371,22 @@ export const DealChatPanel = memo(function DealChatPanel({
     return conversationsData.data.conversations[0];
   }, [conversationsData]);
 
-  // Set active conversation when data loads
-  useEffect(() => {
-    if (latestConversation && !activeConversationId) {
-      setActiveConversationId(latestConversation.id);
-    }
-  }, [latestConversation, activeConversationId]);
+  const resolvedConversationId = activeConversationId ?? latestConversation?.id ?? null;
 
   // Fetch persisted messages for the active conversation
   const { data: conversationData, isLoading: isLoadingMessages } =
     useQuery<ConversationMessagesResponse>({
-      queryKey: queryKeys.chat.messages(dealId, activeConversationId ?? ""),
+      queryKey: queryKeys.chat.messages(dealId, resolvedConversationId ?? ""),
       queryFn: async () => {
         const response = await fetch(
-          `/api/chat/${dealId}?conversationId=${activeConversationId}`
+          `/api/chat/${dealId}?conversationId=${resolvedConversationId}`
         );
         if (!response.ok) {
           throw new Error("Failed to fetch messages");
         }
         return response.json();
       },
-      enabled: isOpen && !!activeConversationId,
+      enabled: isOpen && !!resolvedConversationId,
       staleTime: 30_000,
     });
 
@@ -425,7 +414,7 @@ export const DealChatPanel = memo(function DealChatPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          conversationId: activeConversationId,
+          conversationId: resolvedConversationId,
           message,
           investorLevel,
         }),
@@ -452,7 +441,7 @@ export const DealChatPanel = memo(function DealChatPanel({
       const { conversationId, isNewConversation } = response.data;
 
       // Set active conversation if this was a new one
-      if (!activeConversationId || isNewConversation) {
+      if (!resolvedConversationId || isNewConversation) {
         setActiveConversationId(conversationId);
       }
 

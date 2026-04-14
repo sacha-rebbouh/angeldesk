@@ -17,7 +17,6 @@ import type {
   Connector,
   ConnectorQuery,
   NewsArticle,
-  DataSource,
 } from "../types";
 
 // ============================================================================
@@ -164,14 +163,6 @@ function detectContractType(text: string): string | undefined {
 
   return undefined;
 }
-
-const indeedSource: DataSource = {
-  type: "web_search",
-  name: "Indeed",
-  url: "https://fr.indeed.com",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.8,
-};
 
 // ============================================================================
 // SCRAPING FUNCTIONS

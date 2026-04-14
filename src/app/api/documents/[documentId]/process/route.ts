@@ -3,12 +3,19 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
-import { extractTextFromPDFUrl, type ExtractionWarning } from "@/services/pdf/extractor";
+import { smartExtract, type ExtractionWarning } from "@/services/pdf";
+import { downloadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 import { encryptText } from "@/lib/encryption";
+import {
+  recordDocumentExtractionRun,
+  summarizeManifestForLegacyMetrics,
+} from "@/services/documents/extraction-runs";
 
 // CUID validation schema
 const cuidSchema = z.string().cuid();
+
+export const maxDuration = 300;
 
 interface RouteParams {
   params: Promise<{ documentId: string }>;
@@ -68,15 +75,36 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       data: { processingStatus: "PROCESSING" },
     });
 
-    // Extract text from the stored PDF
-    const extraction = await extractTextFromPDFUrl(document.storageUrl);
+    // Extract text from the stored PDF. downloadFile() transparently decrypts
+    // private document blobs before pdfjs reads the buffer.
+    const buffer = await downloadFile(document.storageUrl);
+    const extraction = await smartExtract(buffer, {
+      qualityThreshold: 40,
+      maxOCRPages: Number.POSITIVE_INFINITY,
+      autoOCR: true,
+      strict: true,
+    });
+    const extractionWarnings: ExtractionWarning[] = extraction.manifest.hardBlockers.map((blocker) => ({
+      code: blocker.code,
+      severity: "critical",
+      message: blocker.message,
+      suggestion: blocker.pageNumber
+        ? `Review page ${blocker.pageNumber}, rerun OCR, upload a corrected file, or approve an explicit override.`
+        : "Rerun extraction, upload a corrected file, or approve an explicit override.",
+    }));
+    const extractionRun = await recordDocumentExtractionRun({
+      documentId,
+      documentVersion: document.version,
+      contentHash: document.contentHash,
+      text: extraction.text,
+      qualityScore: extraction.quality,
+      manifest: extraction.manifest,
+      warnings: extractionWarnings.length > 0 ? JSON.parse(JSON.stringify(extractionWarnings)) : [],
+    });
 
-    if (extraction.success) {
-      // Extract quality metrics
-      const quality = extraction.quality;
-      const extractionQuality = quality?.metrics.qualityScore ?? null;
-      const extractionWarnings: ExtractionWarning[] = quality?.warnings ?? [];
-      const requiresOCR = quality?.requiresOCR ?? false;
+    if (extraction.text) {
+      const extractionQuality = extraction.quality;
+      const requiresOCR = extraction.manifest.status === "needs_review" || extraction.manifest.status === "failed";
 
       const updated = await prisma.document.update({
         where: { id: documentId },
@@ -84,29 +112,38 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           extractedText: extraction.text ? encryptText(extraction.text) : null,
           processingStatus: "COMPLETED",
           extractionQuality,
-          extractionMetrics: quality?.metrics ? JSON.parse(JSON.stringify(quality.metrics)) : Prisma.DbNull,
+          extractionMetrics: {
+            quality: extractionQuality,
+            method: extraction.method,
+            pagesOCRd: extraction.pagesOCRd,
+            ocrCost: extraction.estimatedCost,
+            latestExtractionRunId: extractionRun.id,
+            ...summarizeManifestForLegacyMetrics(extraction.manifest),
+          },
           extractionWarnings: extractionWarnings.length > 0 ? JSON.parse(JSON.stringify(extractionWarnings)) : Prisma.DbNull,
           requiresOCR,
+          ocrProcessed: extraction.method === "ocr" || extraction.method === "hybrid",
         },
       });
 
       return NextResponse.json({
         data: updated,
         extraction: {
-          pageCount: extraction.pageCount,
+          pageCount: extraction.manifest.pageCount,
           textLength: extraction.text.length,
-          info: extraction.info,
           quality: extractionQuality,
           warnings: extractionWarnings,
           requiresOCR,
-          isUsable: (extractionQuality ?? 0) >= 40,
+          isUsable: extractionRun.readyForAnalysis,
+          creditEstimate: extraction.manifest.creditEstimate,
+          manifest: extraction.manifest,
         },
       });
     } else {
       const errorWarning: ExtractionWarning = {
         code: "EXTRACTION_FAILED",
         severity: "critical",
-        message: extraction.error ?? "Failed to extract text from PDF",
+        message: extraction.manifest.hardBlockers[0]?.message ?? "Failed to extract text from PDF",
         suggestion: "Try re-exporting the PDF from the original source."
       };
 
@@ -114,13 +151,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         where: { id: documentId },
         data: {
           processingStatus: "FAILED",
+          extractionQuality: extraction.quality,
+          extractionMetrics: {
+            quality: extraction.quality,
+            method: extraction.method,
+            pagesOCRd: extraction.pagesOCRd,
+            ocrCost: extraction.estimatedCost,
+            latestExtractionRunId: extractionRun.id,
+            ...summarizeManifestForLegacyMetrics(extraction.manifest),
+          },
           extractionWarnings: JSON.parse(JSON.stringify([errorWarning])),
         },
       });
 
       return NextResponse.json(
         {
-          error: extraction.error ?? "Failed to extract text from PDF",
+          error: extraction.manifest.hardBlockers[0]?.message ?? "Failed to extract text from PDF",
           warnings: [errorWarning]
         },
         { status: 500 }

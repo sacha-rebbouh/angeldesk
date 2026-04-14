@@ -54,22 +54,22 @@ const RECOMMENDATION_CONFIG = {
   PROCEED: {
     color: "bg-green-50 border-green-200 text-green-800",
     icon: CheckCircle,
-    text: "Donnees coherentes - Analyse fiable",
+    text: "Données cohérentes - Analyse fiable",
   },
   PROCEED_WITH_CAUTION: {
     color: "bg-yellow-50 border-yellow-200 text-yellow-800",
     icon: AlertCircle,
-    text: "Quelques incoherences mineures - Prudence recommandee",
+    text: "Quelques incohérences mineures - Prudence recommandée",
   },
   REQUEST_CLARIFICATION: {
     color: "bg-orange-50 border-orange-200 text-orange-800",
     icon: AlertTriangle,
-    text: "Incoherences detectees - Clarification necessaire avant analyse",
+    text: "Incohérences détectées - Clarification nécessaire avant analyse",
   },
   DATA_UNRELIABLE: {
     color: "bg-red-50 border-red-200 text-red-800",
     icon: XCircle,
-    text: "Donnees peu fiables - Demander des documents supplementaires",
+    text: "Données peu fiables - Demander des documents supplémentaires",
   },
 } as const;
 
@@ -313,7 +313,7 @@ export const DeckCoherenceReport = memo(function DeckCoherenceReport({
           </div>
         </button>
         <CardDescription className="text-left">
-          Verification automatique de la coherence des donnees
+          Vérification automatique de la cohérence des données
         </CardDescription>
       </CardHeader>
 
@@ -379,7 +379,7 @@ export const DeckCoherenceReport = memo(function DeckCoherenceReport({
                   <div className="space-y-2">
                     <h4 className="text-sm font-medium text-orange-800 flex items-center gap-1">
                       <AlertTriangle className="h-4 w-4" />
-                      Points d'attention ({groupedIssues.warning.length})
+                      Points d&apos;attention ({groupedIssues.warning.length})
                     </h4>
                     <div className="space-y-2">
                       {groupedIssues.warning.map((issue, i) => (
@@ -408,10 +408,10 @@ export const DeckCoherenceReport = memo(function DeckCoherenceReport({
               <div className="p-4 rounded-lg bg-green-50 border border-green-200 text-center">
                 <CheckCircle className="h-8 w-8 text-green-600 mx-auto mb-2" />
                 <p className="text-sm text-green-800 font-medium">
-                  Aucune incoherence detectee
+                  Aucune incohérence détectée
                 </p>
                 <p className="text-xs text-green-700 mt-1">
-                  Les donnees du deck semblent coherentes
+                  Les données du deck semblent cohérentes
                 </p>
               </div>
             )}

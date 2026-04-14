@@ -380,7 +380,7 @@ ${searchContent}
           }
         }
       }
-    } catch (error) {
+    } catch {
       webSearchSection = "\n## RECHERCHE WEB\nRecherche web echouee. Analyse basee uniquement sur le Context Engine et les connaissances generales.";
     }
 

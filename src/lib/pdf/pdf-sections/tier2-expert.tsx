@@ -13,10 +13,9 @@ import {
   BulletList,
   LabelValue,
   PdfTable,
-  Spacer,
   BodyText,
 } from "../pdf-components";
-import { s, sup, formatValue, fmtPct } from "../pdf-helpers";
+import { s, sup } from "../pdf-helpers";
 import { AGENT_DISPLAY_NAMES } from "@/lib/format-utils";
 import type { AgentResult } from "../generate-analysis-pdf";
 

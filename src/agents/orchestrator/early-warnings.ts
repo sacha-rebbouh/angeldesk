@@ -408,8 +408,8 @@ const DETECTION_RULES: DetectionRule[] = [
     condition: "exists",
     severity: "critical",
     category: "founder_integrity", // Will be refined based on content
-    title: "Potential Dealbreakers Identified",
-    descriptionTemplate: "Analysis identified conditions that could kill the deal.",
+    title: "Risques critiques identifiés",
+    descriptionTemplate: "L'analyse a identifié des conditions critiques nécessitant une investigation approfondie.",
     recommendation: "likely_dealbreaker",
   },
 
@@ -422,8 +422,8 @@ const DETECTION_RULES: DetectionRule[] = [
     condition: "exists",
     severity: "critical",
     category: "founder_integrity",
-    title: "Devil's Advocate: Absolute Dealbreakers Found",
-    descriptionTemplate: "Critical review identified absolute dealbreaking scenarios.",
+    title: "Devil's Advocate : risques critiques détectés",
+    descriptionTemplate: "L'analyse critique a identifié des scénarios de risque critique.",
     recommendation: "likely_dealbreaker",
   },
   {
@@ -448,8 +448,8 @@ const DETECTION_RULES: DetectionRule[] = [
     threshold: "no_go",
     severity: "critical",
     category: "financial_critical",
-    title: "No-Go Recommendation",
-    descriptionTemplate: "Synthesis analysis recommends passing on this deal.",
+    title: "Signaux d'alerte dominants détectés",
+    descriptionTemplate: "L'analyse de synthèse identifie des signaux d'alerte dominants sur ce deal.",
     recommendation: "likely_dealbreaker",
   },
   {
@@ -659,7 +659,7 @@ export function aggregateWarnings(warnings: EarlyWarning[]): {
 
   let summary: string;
   if (critical.length > 0) {
-    summary = `${critical.length} CRITICAL warning(s) detected - potential dealbreakers identified`;
+    summary = `${critical.length} CRITICAL warning(s) detected - potential critical risks identified`;
   } else if (high.length > 0) {
     summary = `${high.length} HIGH priority warning(s) - require investigation before proceeding`;
   } else if (warnings.length > 0) {

@@ -12,7 +12,7 @@
  * Goal: Identify which agents break and why, without calling OpenRouter.
  */
 
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { AgentResult, EnrichedAgentContext } from "../types";
 
 // ============================================================================
@@ -954,7 +954,7 @@ function buildAgentMockResponse(prompt: string, systemPrompt?: string): unknown 
         {
           id: "kr-1", reason: "No verified financial data", category: "Financial transparency",
           evidence: "All financials are declared only", sourceAgent: "financial-auditor",
-          dealBreakerLevel: "CONDITIONAL", condition: "Unless bank statements provided",
+          dealBreakerLevel: "HIGH", condition: "Unless bank statements provided",
           resolutionPossible: true, resolutionPath: "Request Qonto/bank statements",
           impactIfIgnored: "Could be investing based on fabricated numbers",
           questionToFounder: "Share your banking dashboard access",

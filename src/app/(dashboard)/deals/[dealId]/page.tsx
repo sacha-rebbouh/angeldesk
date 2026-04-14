@@ -37,6 +37,31 @@ async function getDeal(dealId: string, userId: string) {
       founders: true,
       documents: {
         orderBy: { uploadedAt: "desc" },
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          customType: true,
+          comments: true,
+          storagePath: true,
+          storageUrl: true,
+          mimeType: true,
+          sizeBytes: true,
+          processingStatus: true,
+          extractionQuality: true,
+          extractionMetrics: true,
+          extractionWarnings: true,
+          requiresOCR: true,
+          ocrProcessed: true,
+          // ocrText excluded — large text field, not needed for display
+          contentHash: true,
+          version: true,
+          parentDocumentId: true,
+          isLatest: true,
+          supersededAt: true,
+          uploadedAt: true,
+          // extractedText excluded — can be 200KB+ per document, not needed for display
+        },
       },
       redFlags: {
         orderBy: [{ severity: "asc" }, { detectedAt: "desc" }],
@@ -106,6 +131,13 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
 
   const content = (
     <div className="space-y-6">
+      {/* Breadcrumb */}
+      <nav aria-label="Fil d'Ariane" className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <Link href="/deals" className="hover:text-foreground transition-colors">Deals</Link>
+        <span className="text-muted-foreground/40">/</span>
+        <span className="text-foreground font-medium truncate max-w-[200px]">{deal.name}</span>
+      </nav>
+
       {/* Header — enriched with stage, sector, amount */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-4">

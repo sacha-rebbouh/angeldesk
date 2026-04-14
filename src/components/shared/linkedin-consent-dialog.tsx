@@ -40,12 +40,12 @@ export const LinkedInConsentDialog = memo(function LinkedInConsentDialog({
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <p>
-            Cette action va consulter les donnees <strong>publiquement accessibles</strong> sur
-            LinkedIn (experiences, formation, competences) via une API tierce.
+            Cette action va consulter les données <strong>publiquement accessibles</strong> sur
+            LinkedIn (expériences, formation, compétences) via une API tierce.
           </p>
           <p className="text-muted-foreground">
-            Base legale : Interet legitime pour l&apos;analyse de due diligence (Art. 6.1.f RGPD).
-            Les donnees sont supprimables a tout moment depuis le dashboard.
+            Base légale : Intérêt légitime pour l&apos;analyse de due diligence (Art. 6.1.f RGPD).
+            Les données sont supprimables à tout moment depuis le dashboard.
           </p>
         </div>
         <DialogFooter>

@@ -17,7 +17,7 @@ export const ANALYSIS_CONFIGS = {
   },
   tier1_complete: {
     agents: [] as BaseAgentName[], // Special handling - uses Tier 1 agents
-    description: "Investigation complete par 12 agents en parallele",
+    description: "Investigation complete par 13 agents en parallele",
     parallel: true,
   },
   tier2_sector: {
@@ -27,12 +27,12 @@ export const ANALYSIS_CONFIGS = {
   },
   tier3_synthesis: {
     agents: [] as BaseAgentName[], // Special handling - uses Tier 3 agents after Tier 1
-    description: "Synthese complete avec 5 agents (requires Tier 1 results)",
+    description: "Synthese complete avec 6 agents (requires Tier 1 results)",
     parallel: false, // Tier 3 runs sequentially
   },
   full_analysis: {
     agents: [] as BaseAgentName[], // Special handling - Tier 1 + Tier 2 + Tier 3
-    description: "Analyse complete: Tier 1 (12) + Tier 2 Sector Expert (1) + Tier 3 (5)",
+    description: "Analyse complete: Tier 1 (13) + Tier 2 Sector Expert (1) + Tier 3 (6)",
     parallel: false,
   },
 } as const;
@@ -162,16 +162,6 @@ export interface AdvancedAnalysisOptions {
   /** User subscription plan for tier gating */
   userPlan?: UserPlan;
 }
-
-// Agent counts by analysis type
-export const AGENT_COUNTS: Record<AnalysisType, number> = {
-  extraction: 1,
-  full_dd: 4,
-  tier1_complete: 13, // 13 Tier 1 agents (used for display; actual total includes extractor + fact-extractor)
-  tier2_sector: 1, // Dynamic sector expert
-  tier3_synthesis: 6,
-  full_analysis: 20, // 13 Tier 1 + 1 sector expert + 6 Tier 3
-};
 
 // Tier 1 agent names (13 agents)
 export const TIER1_AGENT_NAMES = [
@@ -328,12 +318,37 @@ export function resolveAgentDependencies(
 // Tier 2 sector expert names
 export const TIER2_EXPERT_NAMES = [
   "saas-expert",
+  "legaltech-expert",
+  "hrtech-expert",
   "marketplace-expert",
   "fintech-expert",
   "healthtech-expert",
+  "biotech-expert",
+  "ai-expert",
   "deeptech-expert",
   "climate-expert",
   "hardware-expert",
+  "spacetech-expert",
   "gaming-expert",
   "consumer-expert",
+  "proptech-expert",
+  "edtech-expert",
+  "foodtech-expert",
+  "mobility-expert",
+  "cybersecurity-expert",
+  "creator-expert",
+  "blockchain-expert",
+  "general-expert",
 ] as const;
+
+export const TIER2_SECTOR_EXPERT_COUNT = 1 as const;
+
+// Agent counts by analysis type
+export const AGENT_COUNTS: Record<AnalysisType, number> = {
+  extraction: ANALYSIS_CONFIGS.extraction.agents.length,
+  full_dd: ANALYSIS_CONFIGS.full_dd.agents.length,
+  tier1_complete: TIER1_AGENT_NAMES.length,
+  tier2_sector: TIER2_SECTOR_EXPERT_COUNT,
+  tier3_synthesis: TIER3_AGENT_NAMES.length,
+  full_analysis: TIER1_AGENT_NAMES.length + TIER2_SECTOR_EXPERT_COUNT + TIER3_AGENT_NAMES.length,
+};

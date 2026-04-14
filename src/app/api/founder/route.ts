@@ -3,8 +3,8 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/sanitize";
 import { analyzeFounderLinkedIn, findLinkedInProfile } from "@/services/context-engine/connectors/proxycurl";
-import { buildPeopleGraph, type FounderInput } from "@/services/context-engine";
 import { handleApiError } from "@/lib/api-error";
+import { validateLinkedInProfileUrl } from "@/lib/url-validator";
 
 const founderSchema = z.object({
   linkedinUrl: z.string().url().optional(),
@@ -60,17 +60,10 @@ export async function POST(request: NextRequest) {
 
     // Validate LinkedIn URL to prevent SSRF
     if (linkedinUrl) {
-      try {
-        const parsed = new URL(linkedinUrl);
-        if (!parsed.hostname.endsWith("linkedin.com")) {
-          return NextResponse.json(
-            { error: "Only LinkedIn URLs are accepted" },
-            { status: 400 }
-          );
-        }
-      } catch {
+      const validation = validateLinkedInProfileUrl(linkedinUrl);
+      if (!validation.valid) {
         return NextResponse.json(
-          { error: "Invalid URL format" },
+          { error: validation.reason ?? "Only LinkedIn profile URLs are accepted" },
           { status: 400 }
         );
       }

@@ -1,12 +1,11 @@
 "use client";
 
-import { useMemo, useCallback, useState, useEffect, useRef, memo } from "react";
+import { useMemo, useCallback, useState, useEffect, memo, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useChannel } from "ably/react";
 import type { Message } from "ably";
 import * as Ably from "ably";
 import {
-  Radio,
   Loader2,
   AlertCircle,
   Clock,
@@ -75,15 +74,24 @@ interface SessionsResponse {
   data: SessionData[];
 }
 
-interface AnalysisCheckResponse {
-  data: { hasAnalysis: boolean };
-}
-
 // =============================================================================
 // Constants
 // =============================================================================
 
 const ACTIVE_STATUSES: SessionStatus[] = ["created", "bot_joining", "live", "processing"];
+const EMPTY_SESSIONS: SessionData[] = [];
+const EMPTY_PARTICIPANTS: Array<{ name: string; role: string; speakerId: string }> = [];
+
+function useNow(intervalMs: number): number {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const interval = setInterval(onStoreChange, intervalMs);
+      return () => clearInterval(interval);
+    },
+    () => Date.now(),
+    () => Date.now(),
+  );
+}
 
 // =============================================================================
 // API
@@ -128,8 +136,6 @@ function formatSessionDate(dateStr: string): string {
 // =============================================================================
 
 export default memo(function LiveTabContent({ dealId, dealName, userName, founderNames }: LiveTabContentProps) {
-  const queryClient = useQueryClient();
-
   // Fetch all sessions for this deal
   const {
     data: sessionsData,
@@ -141,7 +147,7 @@ export default memo(function LiveTabContent({ dealId, dealName, userName, founde
     queryFn: () => fetchSessions(dealId),
     // Conditional polling: very aggressive when bot_joining/processing, moderate when live, off otherwise
     refetchInterval: (query) => {
-      const sessions = query.state.data?.data ?? [];
+      const sessions = query.state.data?.data ?? EMPTY_SESSIONS;
       const active = sessions.find((s) => ACTIVE_STATUSES.includes(s.status));
       if (!active) return false;
       // Bot joining or processing: poll every 2s for fast UI transition
@@ -162,7 +168,8 @@ export default memo(function LiveTabContent({ dealId, dealName, userName, founde
     staleTime: 60_000,
   });
 
-  const sessions = sessionsData?.data ?? [];
+  const sessions = sessionsData?.data ?? EMPTY_SESSIONS;
+  const nowMs = useNow(60_000);
 
   // Derive active session and history
   // Keep recently completed sessions (within 10min) visible as "active" for display
@@ -176,7 +183,7 @@ export default memo(function LiveTabContent({ dealId, dealName, userName, founde
           (s) =>
             (s.status === "completed" || s.status === "failed") &&
             new Date(s.updatedAt || s.createdAt).getTime() >
-              Date.now() - 2 * 60 * 60 * 1000
+              nowMs - 2 * 60 * 60 * 1000
         ) ?? null
       : null;
 
@@ -189,7 +196,7 @@ export default memo(function LiveTabContent({ dealId, dealName, userName, founde
     );
 
     return { activeSession: displayActive, completedSessions: completed };
-  }, [sessions]);
+  }, [sessions, nowMs]);
 
   // Fix: use only refetchSessions (no double invalidation)
   const handleRefresh = useCallback(() => {
@@ -276,18 +283,11 @@ export default memo(function LiveTabContent({ dealId, dealName, userName, founde
 
 function useSessionRealtimeEvents(sessionId: string, enabled: boolean) {
   const [realtimeStatus, setRealtimeStatus] = useState<SessionStatus | null>(null);
-  const [realtimeParticipants, setRealtimeParticipants] = useState<
-    Array<{ name: string; role: string }>
-  >([]);
+  const [realtimeParticipants, setRealtimeParticipants] = useState<Array<{ name: string; role: string }>>(EMPTY_PARTICIPANTS);
   const [liveDetectedAt, setLiveDetectedAt] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!enabled) {
-      // Reset when disabled (session went live, LiveAblyProvider takes over)
-      setRealtimeStatus(null);
-      setRealtimeParticipants([]);
-      return;
-    }
+    if (!enabled) return;
 
     let client: Ably.Realtime | null = null;
     let channel: Ably.RealtimeChannel | null = null;
@@ -363,7 +363,7 @@ const ActiveSessionView = memo(function ActiveSessionView({
 }) {
   const polledParticipants = Array.isArray(session.participants)
     ? session.participants
-    : [];
+    : EMPTY_PARTICIPANTS;
 
   // Standalone Ably listener — active only during bot_joining/created
   const isWaiting =
@@ -373,6 +373,7 @@ const ActiveSessionView = memo(function ActiveSessionView({
 
   // Effective status: realtime event takes priority over polled status
   const effectiveStatus = realtimeStatus ?? session.status;
+  const nowMs = useNow(60_000);
 
   // Merge polled + realtime participants (deduplicated by name)
   const allParticipants = useMemo(() => {
@@ -489,7 +490,7 @@ const ActiveSessionView = memo(function ActiveSessionView({
         </div>
 
         {/* Show report placeholder during processing */}
-        <PostCallReport sessionId={session.id} />
+        <PostCallReport />
       </div>
     );
   }
@@ -498,7 +499,7 @@ const ActiveSessionView = memo(function ActiveSessionView({
   if (effectiveStatus === "completed" || effectiveStatus === "failed") {
     const summaryData = session.summary ?? undefined;
     // Show reinvite if session is recent (< 2h)
-    const isRecent = new Date(session.updatedAt || session.createdAt).getTime() > Date.now() - 2 * 60 * 60 * 1000;
+    const isRecent = new Date(session.updatedAt || session.createdAt).getTime() > nowMs - 2 * 60 * 60 * 1000;
     return (
       <div className="space-y-4">
         {isRecent && (
@@ -514,15 +515,11 @@ const ActiveSessionView = memo(function ActiveSessionView({
           </div>
         )}
         {summaryData && (
-          <PostCallReport
-            sessionId={session.id}
-            summary={summaryData}
-          />
+          <PostCallReport summary={summaryData} />
         )}
         {summaryData && (
           <PostCallReanalysis
             sessionId={session.id}
-            dealId={dealId}
             summary={summaryData}
           />
         )}
@@ -572,32 +569,31 @@ const LiveSessionView = memo(function LiveSessionView({
   startedAtOverride?: string;
 }) {
   const [showParticipants, setShowParticipants] = useState(false);
-  const [liveParticipants, setLiveParticipants] = useState(initialParticipants);
+  const [realtimeParticipants, setRealtimeParticipants] = useState<
+    Array<{ name: string; role: string }>
+  >([]);
 
-  // Sync from polling (new participants from server)
-  useEffect(() => {
-    setLiveParticipants((prev) => {
-      const existingIds = new Set(prev.map((p) => p.speakerId));
-      const toAdd = initialParticipants.filter((p) => !existingIds.has(p.speakerId));
-      return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-    });
-  }, [initialParticipants]);
+  const liveParticipants = useMemo(() => {
+    const base = [...initialParticipants];
+    for (const rp of realtimeParticipants) {
+      if (!base.some((bp) => bp.name === rp.name)) {
+        base.push({
+          name: rp.name,
+          role: rp.role,
+          speakerId: `spk_${rp.name.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
+        });
+      }
+    }
+    return base;
+  }, [initialParticipants, realtimeParticipants]);
 
   // Listen for real-time participant-joined Ably events
   const handleParticipantJoined = useCallback((message: Message) => {
     if (!message.data) return;
     const { name, role } = message.data as { name: string; role: string };
-    setLiveParticipants((prev) => {
-      // Prevent duplicates
+    setRealtimeParticipants((prev) => {
       if (prev.some((p) => p.name === name)) return prev;
-      return [
-        ...prev,
-        {
-          name,
-          role,
-          speakerId: `spk_${name.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
-        },
-      ];
+      return [...prev, { name, role }];
     });
   }, []);
 
@@ -765,10 +761,7 @@ const SessionHistory = memo(function SessionHistory({ sessions, dealId }: { sess
               </div>
               {isExpanded && hasSummary && (
                 <div className="border-t px-4 py-4">
-                  <PostCallReport
-                    sessionId={session.id}
-                    summary={session.summary!}
-                  />
+                  <PostCallReport summary={session.summary!} />
                 </div>
               )}
             </div>

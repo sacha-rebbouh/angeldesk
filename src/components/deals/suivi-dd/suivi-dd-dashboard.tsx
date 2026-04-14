@@ -42,7 +42,7 @@ export const SuiviDDDashboard = memo(function SuiviDDDashboard({
         <div className="space-y-1">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
-              {counts.resolved + counts.accepted}/{counts.total} alertes traitees
+              {counts.resolved + counts.accepted}/{counts.total} alertes traitées
             </span>
             <span className="font-medium">{progressPct}%</span>
           </div>
@@ -68,7 +68,7 @@ export const SuiviDDDashboard = memo(function SuiviDDDashboard({
           {counts.questionsTotal > 0 && (
             <Badge variant="outline" className="text-xs gap-1 ml-auto">
               <MessageSquare className="h-3 w-3" />
-              {counts.questionsAnswered}/{counts.questionsTotal} reponses
+              {counts.questionsAnswered}/{counts.questionsTotal} réponses
             </Badge>
           )}
         </div>

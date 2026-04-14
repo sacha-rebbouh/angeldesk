@@ -1,144 +1,377 @@
 import { prisma } from '@/lib/prisma';
-import { PLAN_LIMITS, type PlanType, type QuotaAction, type QuotaCheckResult, type UserQuotaInfo } from './types';
+import type { CreditAction } from '@prisma/client';
+import {
+  CREDIT_COSTS,
+  CREDIT_RULES,
+  FREE_TIER,
+  type CreditActionType,
+  type CreditCheckResult,
+  type CreditBalanceInfo,
+} from './types';
 
 // ============================================================================
-// QUOTA GATE - Enforces usage limits based on plan
+// CREDIT GATE — Enforces credit-based usage limits
 // ============================================================================
 
 /**
- * Get user's current plan based on subscription status
+ * Check if user has enough credits for an action
  */
-function getPlanType(subscriptionStatus: string): PlanType {
-  return subscriptionStatus === 'PRO' || subscriptionStatus === 'ENTERPRISE'
-    ? 'PRO'
-    : 'FREE';
+export async function checkCredits(
+  userId: string,
+  action: CreditActionType
+): Promise<CreditCheckResult> {
+  const cost = CREDIT_COSTS[action];
+
+  // Free actions always allowed
+  if (cost === 0) {
+    return { allowed: true, reason: 'OK', balance: 0, cost: 0, balanceAfter: 0 };
+  }
+
+  const balanceRecord = await getOrCreateBalance(userId);
+
+  // Check expiry
+  if (balanceRecord.expiresAt && new Date() > balanceRecord.expiresAt) {
+    // Credits expired — set balance to 0
+    await expireCredits(userId, balanceRecord.balance);
+    return {
+      allowed: false,
+      reason: 'INSUFFICIENT_CREDITS',
+      balance: 0,
+      cost,
+      balanceAfter: 0,
+    };
+  }
+
+  const allowed = balanceRecord.balance >= cost;
+
+  return {
+    allowed,
+    reason: allowed ? 'OK' : 'INSUFFICIENT_CREDITS',
+    balance: balanceRecord.balance,
+    cost,
+    balanceAfter: allowed ? balanceRecord.balance - cost : balanceRecord.balance,
+  };
 }
 
 /**
- * Check if user can perform an action
+ * Deduct credits for an action (atomic transaction)
+ */
+export async function deductCredits(
+  userId: string,
+  action: CreditActionType,
+  dealId?: string
+): Promise<{ success: boolean; balanceAfter: number; error?: string }> {
+  const cost = CREDIT_COSTS[action];
+
+  // Free actions — no deduction needed
+  if (cost === 0) {
+    return { success: true, balanceAfter: 0 };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const balance = await tx.userCreditBalance.findUnique({
+        where: { userId },
+      });
+
+      if (!balance) {
+        return { success: false, balanceAfter: 0, error: 'Compte crédits non trouvé' };
+      }
+
+      // Check expiry
+      if (balance.expiresAt && new Date() > balance.expiresAt) {
+        return { success: false, balanceAfter: 0, error: 'Crédits expirés' };
+      }
+
+      if (balance.balance < cost) {
+        return {
+          success: false,
+          balanceAfter: balance.balance,
+          error: `Crédits insuffisants (${balance.balance} disponibles, ${cost} requis)`,
+        };
+      }
+
+      // Atomic deduction with optimistic locking
+      const updated = await tx.userCreditBalance.updateMany({
+        where: {
+          userId,
+          balance: { gte: cost },
+        },
+        data: {
+          balance: { decrement: cost },
+        },
+      });
+
+      if (updated.count === 0) {
+        return { success: false, balanceAfter: balance.balance, error: 'Concurrence détectée' };
+      }
+
+      const newBalance = balance.balance - cost;
+
+      // Log the transaction
+      await tx.creditTransaction.create({
+        data: {
+          userId,
+          amount: -cost,
+          balanceAfter: newBalance,
+          action: action as CreditAction,
+          description: getActionDescription(action),
+          dealId: dealId ?? null,
+        },
+      });
+
+      return { success: true, balanceAfter: newBalance };
+    });
+
+    return result;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : '';
+    if (msg.includes('does not exist')) {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[Credits] Credit tables not available in PRODUCTION — blocking action');
+        return { success: false, balanceAfter: 0, error: 'Système de crédits indisponible' };
+      }
+      console.warn('[Credits] Credit tables not available — allowing action (dev only)');
+      return { success: true, balanceAfter: 9999 };
+    }
+    console.error('[Credits] deductCredits transaction failed:', error);
+    return { success: false, balanceAfter: 0, error: 'Erreur lors de la déduction' };
+  }
+}
+
+/**
+ * Add credits from a pack purchase.
+ * On auto-refill, enforces rollover cap: balance cannot exceed 2x the pack size.
+ * Manual purchases have no cap.
+ */
+export async function addCredits(
+  userId: string,
+  packName: string,
+  credits: number,
+  stripePaymentId?: string,
+  isAutoRefill = false
+): Promise<{ success: boolean; newBalance: number }> {
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      let effectiveCredits = credits;
+
+      // Enforce rollover cap only on auto-refill
+      if (isAutoRefill) {
+        const existing = await tx.userCreditBalance.findUnique({ where: { userId } });
+        const currentBalance = existing?.balance ?? 0;
+        const maxBalance = credits * CREDIT_RULES.rolloverMax;
+        effectiveCredits = Math.min(credits, Math.max(0, maxBalance - currentBalance));
+      }
+
+      const balance = await tx.userCreditBalance.upsert({
+        where: { userId },
+        create: {
+          userId,
+          balance: effectiveCredits,
+          totalPurchased: credits,
+          lastPackName: packName,
+          freeCreditsGranted: false,
+          expiresAt: getExpiryDate(),
+        },
+        update: {
+          balance: { increment: effectiveCredits },
+          totalPurchased: { increment: credits },
+          lastPackName: packName,
+          expiresAt: getExpiryDate(), // Reset expiry on new purchase
+        },
+      });
+
+      // Log the transaction
+      await tx.creditTransaction.create({
+        data: {
+          userId,
+          amount: credits,
+          balanceAfter: balance.balance,
+          action: 'PURCHASE',
+          description: `Achat pack ${packName}`,
+          packName,
+          stripePaymentId: stripePaymentId ?? null,
+        },
+      });
+
+      return { success: true, newBalance: balance.balance };
+    });
+
+    return result;
+  } catch (error) {
+    console.error('[Credits] addCredits failed:', error);
+    return { success: false, newBalance: 0 };
+  }
+}
+
+/**
+ * Grant free credits at signup (1 Deep Dive = 5 credits)
+ */
+export async function grantFreeCredits(userId: string): Promise<boolean> {
+  try {
+    const existing = await prisma.userCreditBalance.findUnique({
+      where: { userId },
+    });
+
+    if (existing?.freeCreditsGranted) {
+      return false; // Already granted
+    }
+
+    const credits = FREE_TIER.initialCredits;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.userCreditBalance.upsert({
+        where: { userId },
+        create: {
+          userId,
+          balance: credits,
+          totalPurchased: 0,
+          freeCreditsGranted: true,
+          expiresAt: getExpiryDate(),
+        },
+        update: {
+          balance: { increment: credits },
+          freeCreditsGranted: true,
+          expiresAt: getExpiryDate(),
+        },
+      });
+
+      await tx.creditTransaction.create({
+        data: {
+          userId,
+          amount: credits,
+          balanceAfter: credits,
+          action: 'FREE_GRANT',
+          description: '1 Deep Dive offert (inscription)',
+        },
+      });
+    });
+
+    return true;
+  } catch (error) {
+    console.error('[Credits] grantFreeCredits failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Refund credits for a failed action
+ */
+export async function refundCredits(
+  userId: string,
+  action: CreditActionType,
+  dealId?: string
+): Promise<void> {
+  const cost = CREDIT_COSTS[action];
+  if (cost === 0) return;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Idempotence: prevent double refund for same deal
+      if (dealId) {
+        const existingRefund = await tx.creditTransaction.findFirst({
+          where: {
+            userId,
+            dealId,
+            action: 'REFUND',
+          },
+        });
+        if (existingRefund) {
+          console.warn(`[Credits] Refund already exists for deal ${dealId} — skipping`);
+          return;
+        }
+      }
+
+      const updated = await tx.userCreditBalance.update({
+        where: { userId },
+        data: {
+          balance: { increment: cost },
+        },
+      });
+
+      await tx.creditTransaction.create({
+        data: {
+          userId,
+          amount: cost,
+          balanceAfter: updated.balance,
+          action: 'REFUND',
+          description: `Remboursement ${getActionDescription(action)}`,
+          dealId: dealId ?? null,
+        },
+      });
+    });
+  } catch (error) {
+    console.error('[Credits] refundCredits failed:', error);
+  }
+}
+
+/**
+ * Get user's credit balance info
+ */
+export async function getCreditBalance(userId: string): Promise<CreditBalanceInfo> {
+  const balance = await getOrCreateBalance(userId);
+
+  return {
+    balance: balance.balance,
+    totalPurchased: balance.totalPurchased,
+    lastPackName: balance.lastPackName,
+    autoRefill: balance.autoRefill,
+    expiresAt: balance.expiresAt,
+    freeCreditsGranted: balance.freeCreditsGranted,
+  };
+}
+
+// ============================================================================
+// BACKWARD COMPATIBILITY — Maps old quota API to new credit system
+// These functions maintain the same interface for callers that haven't migrated
+// ============================================================================
+
+/**
+ * Legacy: Check if user can perform an action (maps to checkCredits)
  */
 export async function checkQuota(
   userId: string,
-  subscriptionStatus: string,
-  action: QuotaAction,
-  dealId?: string
-): Promise<QuotaCheckResult> {
-  const plan = getPlanType(subscriptionStatus);
-  const limits = PLAN_LIMITS[plan];
+  action: 'ANALYSIS' | 'UPDATE' | 'BOARD'
+): Promise<{ allowed: boolean; reason: string; current: number; limit: number; plan: string }> {
+  const creditAction = mapLegacyAction(action);
+  const result = await checkCredits(userId, creditAction);
 
-  // Get or create usage record
-  const usage = await getOrCreateUsage(userId);
-
-  // Check monthly reset
-  const now = new Date();
-  if (now >= usage.lastResetAt && shouldReset(usage.lastResetAt)) {
-    await resetMonthlyUsage(userId);
-    // Re-fetch after reset
-    const refreshed = await getOrCreateUsage(userId);
-    return checkAction(refreshed, action, limits, plan, dealId);
-  }
-
-  return checkAction(usage, action, limits, plan, dealId);
-}
-
-async function checkAction(
-  usage: { usedThisMonth: number; tier1Count: number; tier2Count: number; tier3Count: number; id: string },
-  action: QuotaAction,
-  limits: typeof PLAN_LIMITS['FREE'],
-  plan: PlanType,
-  dealId?: string
-): Promise<QuotaCheckResult> {
-  switch (action) {
-    case 'ANALYSIS': {
-      return {
-        allowed: usage.tier1Count < limits.analysesPerMonth,
-        reason: usage.tier1Count >= limits.analysesPerMonth ? 'LIMIT_REACHED' : 'OK',
-        current: usage.tier1Count,
-        limit: limits.analysesPerMonth,
-        plan,
-      };
-    }
-    case 'UPDATE': {
-      if (limits.updatesPerDeal === -1) {
-        return { allowed: true, reason: 'OK', current: 0, limit: -1, plan };
-      }
-      if (!dealId) {
-        return { allowed: false, reason: 'LIMIT_REACHED', current: 0, limit: limits.updatesPerDeal, plan };
-      }
-      // Count updates for this specific deal this month
-      const updateCount = await prisma.analysis.count({
-        where: {
-          dealId,
-          type: 'FULL_DD',
-          status: 'COMPLETED',
-          createdAt: { gte: getMonthStart() },
-        },
-      });
-      // First analysis doesn't count as update
-      const updates = Math.max(0, updateCount - 1);
-      return {
-        allowed: updates < limits.updatesPerDeal,
-        reason: updates >= limits.updatesPerDeal ? 'LIMIT_REACHED' : 'OK',
-        current: updates,
-        limit: limits.updatesPerDeal,
-        plan,
-      };
-    }
-    case 'BOARD': {
-      if (limits.boardsPerMonth === 0) {
-        return { allowed: false, reason: 'UPGRADE_REQUIRED', current: 0, limit: 0, plan };
-      }
-      const boardCount = await prisma.aIBoardSession.count({
-        where: {
-          userId: usage.id,
-          status: 'COMPLETED',
-          createdAt: { gte: getMonthStart() },
-        },
-      });
-      return {
-        allowed: boardCount < limits.boardsPerMonth,
-        reason: boardCount >= limits.boardsPerMonth ? 'LIMIT_REACHED' : 'OK',
-        current: boardCount,
-        limit: limits.boardsPerMonth,
-        plan,
-      };
-    }
-  }
+  return {
+    allowed: result.allowed,
+    reason: result.reason === 'OK' ? 'OK' : 'LIMIT_REACHED',
+    current: result.balance,
+    limit: result.balance, // No fixed limit in credit system
+    plan: 'CREDITS',
+  };
 }
 
 /**
- * Get user quota info for display
+ * Legacy: Record a usage event (maps to deductCredits)
+ */
+export async function recordUsage(
+  userId: string,
+  action: 'ANALYSIS' | 'UPDATE' | 'BOARD'
+): Promise<void> {
+  const creditAction = mapLegacyAction(action);
+  await deductCredits(userId, creditAction);
+}
+
+/**
+ * Legacy: Get user quota info
  */
 export async function getUserQuotaInfo(
-  userId: string,
-  subscriptionStatus: string
-): Promise<UserQuotaInfo> {
-  const plan = getPlanType(subscriptionStatus);
-  const limits = PLAN_LIMITS[plan];
-  const usage = await getOrCreateUsage(userId);
-
-  // Check monthly reset
-  const now = new Date();
-  if (now >= usage.lastResetAt && shouldReset(usage.lastResetAt)) {
-    await resetMonthlyUsage(userId);
-  }
-
-  const boardCount = await prisma.aIBoardSession.count({
-    where: {
-      userId,
-      status: 'COMPLETED',
-      createdAt: { gte: getMonthStart() },
-    },
-  });
-
-  const nextReset = getNextMonthStart();
-
+  userId: string
+) {
+  const balance = await getCreditBalance(userId);
   return {
-    plan,
-    analyses: { used: usage.tier1Count, limit: limits.analysesPerMonth },
-    boards: { used: boardCount, limit: limits.boardsPerMonth },
-    availableTiers: limits.tiers,
-    resetsAt: nextReset,
+    plan: 'CREDITS' as const,
+    analyses: { used: 0, limit: balance.balance },
+    boards: { used: 0, limit: balance.balance >= CREDIT_COSTS.AI_BOARD ? 999 : 0 },
+    availableTiers: ['TIER_1', 'TIER_2', 'TIER_3', 'SYNTHESIS'],
+    resetsAt: balance.expiresAt ?? new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
+    // New fields
+    creditBalance: balance.balance,
+    totalPurchased: balance.totalPurchased,
   };
 }
 
@@ -146,70 +379,87 @@ export async function getUserQuotaInfo(
 // HELPERS
 // ============================================================================
 
-async function getOrCreateUsage(userId: string) {
-  return prisma.userDealUsage.upsert({
-    where: { userId },
-    create: {
+async function getOrCreateBalance(userId: string) {
+  try {
+    let balance = await prisma.userCreditBalance.findUnique({
+      where: { userId },
+    });
+
+    if (!balance) {
+      balance = await prisma.userCreditBalance.create({
+        data: {
+          userId,
+          balance: 0,
+          totalPurchased: 0,
+          freeCreditsGranted: false,
+        },
+      });
+    }
+
+    return balance;
+  } catch {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[Credits] Credit tables not available in PRODUCTION');
+      throw new Error('Credit tables not available');
+    }
+    console.warn('[Credits] Credit tables not available — returning unlimited balance (dev only)');
+    return {
       userId,
-      monthlyLimit: 3,
-      usedThisMonth: 0,
-      tier1Count: 0,
-      tier2Count: 0,
-      tier3Count: 0,
-      lastResetAt: new Date(),
-    },
-    update: {},
-  });
-}
-
-async function resetMonthlyUsage(userId: string) {
-  await prisma.userDealUsage.update({
-    where: { userId },
-    data: {
-      usedThisMonth: 0,
-      tier1Count: 0,
-      tier2Count: 0,
-      tier3Count: 0,
-      lastResetAt: new Date(),
-    },
-  });
-}
-
-function shouldReset(lastResetAt: Date): boolean {
-  const now = new Date();
-  const monthStart = getMonthStart();
-  return lastResetAt < monthStart && now >= monthStart;
-}
-
-function getMonthStart(): Date {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1);
-}
-
-function getNextMonthStart(): Date {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth() + 1, 1);
-}
-
-/**
- * Record a usage event (increment counters)
- */
-export async function recordUsage(
-  userId: string,
-  action: QuotaAction
-): Promise<void> {
-  const usage = await getOrCreateUsage(userId);
-
-  const updateData: Record<string, number> = {
-    usedThisMonth: usage.usedThisMonth + 1,
-  };
-
-  if (action === 'ANALYSIS') {
-    updateData.tier1Count = usage.tier1Count + 1;
+      balance: 9999,
+      totalPurchased: 9999,
+      lastPackName: null,
+      freeCreditsGranted: true,
+      autoRefill: false,
+      autoRefillPackName: null,
+      expiresAt: null,
+    };
   }
+}
 
-  await prisma.userDealUsage.update({
-    where: { userId },
-    data: updateData,
+async function expireCredits(userId: string, currentBalance: number) {
+  if (currentBalance <= 0) return;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.userCreditBalance.update({
+      where: { userId },
+      data: { balance: 0 },
+    });
+
+    await tx.creditTransaction.create({
+      data: {
+        userId,
+        amount: -currentBalance,
+        balanceAfter: 0,
+        action: 'EXPIRED',
+        description: `${currentBalance} crédits expirés`,
+      },
+    });
   });
+}
+
+function getExpiryDate(): Date {
+  const date = new Date();
+  date.setMonth(date.getMonth() + CREDIT_RULES.expiryMonths);
+  return date;
+}
+
+function getActionDescription(action: CreditActionType): string {
+  const descriptions: Record<CreditActionType, string> = {
+    QUICK_SCAN: 'Quick Scan (Tier 1)',
+    DEEP_DIVE: 'Deep Dive (Tier 1+2+3)',
+    AI_BOARD: 'AI Board (4 LLMs)',
+    LIVE_COACHING: 'Live Coaching',
+    RE_ANALYSIS: 'Re-analyse',
+    CHAT: 'Chat IA',
+    PDF_EXPORT: 'Export PDF',
+  };
+  return descriptions[action];
+}
+
+function mapLegacyAction(action: 'ANALYSIS' | 'UPDATE' | 'BOARD'): CreditActionType {
+  switch (action) {
+    case 'ANALYSIS': return 'DEEP_DIVE';
+    case 'UPDATE': return 'RE_ANALYSIS';
+    case 'BOARD': return 'AI_BOARD';
+  }
 }

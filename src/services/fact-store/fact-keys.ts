@@ -542,7 +542,7 @@ export function getFactKeyDefinition(factKey: string): FactKeyDefinition | undef
  */
 export function getFactKeysByCategory(category: FactCategory): string[] {
   return Object.entries(FACT_KEYS)
-    .filter(([_, def]) => def.category === category)
+    .filter(([, def]) => def.category === category)
     .map(([key]) => key);
 }
 
@@ -568,7 +568,7 @@ export function getFactKeysByType(
   type: FactKeyDefinition['type']
 ): string[] {
   return Object.entries(FACT_KEYS)
-    .filter(([_, def]) => def.type === type)
+    .filter(([, def]) => def.type === type)
     .map(([key]) => key);
 }
 
@@ -591,7 +591,7 @@ export function getPercentageFactKeys(): string[] {
  */
 export function getEnumFactKeys(): Array<{ key: string; values: string[] }> {
   return Object.entries(FACT_KEYS)
-    .filter(([_, def]) => def.type === 'enum' && def.enumValues)
+    .filter(([, def]) => def.type === 'enum' && def.enumValues)
     .map(([key, def]) => ({
       key,
       values: def.enumValues!,

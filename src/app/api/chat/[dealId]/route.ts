@@ -21,10 +21,6 @@ import { handleApiError } from "@/lib/api-error";
 // SCHEMAS
 // ============================================================================
 
-const createConversationSchema = z.object({
-  title: z.string().optional(),
-});
-
 const sendMessageSchema = z.object({
   conversationId: z
     .string()

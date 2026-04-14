@@ -3,15 +3,14 @@
  */
 
 import React from "react";
-import { View, Text } from "@react-pdf/renderer";
-import { colors, styles as gs } from "../pdf-theme";
+import { Text } from "@react-pdf/renderer";
+import { styles as gs } from "../pdf-theme";
 import {
   PdfPage,
   SectionTitle,
   H3,
   BulletList,
   LabelValue,
-  Spacer,
   RedFlagCard,
 } from "../pdf-components";
 import { priorityOrder } from "../pdf-helpers";
@@ -40,12 +39,6 @@ export function EarlyWarningsSection({
       </Text>
 
       {sorted.map((w, i) => {
-        const sevLabel =
-          w.severity === "critical"
-            ? "CRITIQUE"
-            : w.severity === "high"
-              ? "HAUT"
-              : "MOYEN";
         const recLabel =
           w.recommendation === "absolute_dealbreaker"
             ? "RISQUE CRITIQUE DÉTECTÉ"

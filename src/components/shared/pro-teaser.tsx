@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { useRouter } from "next/navigation";
-import { Lock, Crown } from "lucide-react";
+import { Lock, Coins } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -24,8 +24,8 @@ interface ProTeaserProps {
 }
 
 /**
- * ProTeaser - Displays a teaser for PRO features with blur effect
- * Used to show FREE users what they're missing
+ * ProTeaser - Displays a teaser for credit-gated features with blur effect
+ * Used to show users what they can unlock with more credits
  */
 export const ProTeaser = memo(function ProTeaser({
   hiddenCount,
@@ -45,8 +45,8 @@ export const ProTeaser = memo(function ProTeaser({
 
   const displayMessage = message ?? (
     hiddenCount && hiddenCount > 0
-      ? `Decouvrez ${hiddenCount} autre${hiddenCount > 1 ? "s" : ""} ${itemLabel} avec PRO`
-      : `Disponible avec PRO`
+      ? `${hiddenCount} autre${hiddenCount > 1 ? "s" : ""} ${itemLabel} disponible${hiddenCount > 1 ? "s" : ""} avec plus de crédits`
+      : `Disponible avec des crédits`
   );
 
   return (
@@ -96,8 +96,8 @@ export const ProTeaser = memo(function ProTeaser({
           className="mt-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
           onClick={() => router.push("/pricing")}
         >
-          <Crown className="mr-2 h-4 w-4" />
-          Passer a PRO - 249EUR/mois
+          <Coins className="mr-2 h-4 w-4" />
+          Acheter des crédits
         </Button>
       )}
     </div>
@@ -124,7 +124,7 @@ export const ProTeaserInline = memo(function ProTeaserInline({
     >
       <Lock className="h-4 w-4 shrink-0" />
       <span>
-        Decouvrez {hiddenCount} autre{hiddenCount > 1 ? "s" : ""} {itemLabel} avec PRO &rarr;
+        {hiddenCount} autre{hiddenCount > 1 ? "s" : ""} {itemLabel} avec plus de crédits &rarr;
       </span>
     </button>
   );
@@ -174,15 +174,15 @@ export const ProTeaserSection = memo(function ProTeaserSection({
         className="mt-4 w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
         onClick={() => router.push("/pricing")}
       >
-        <Crown className="mr-2 h-4 w-4" />
-        Debloquer avec PRO
+        <Coins className="mr-2 h-4 w-4" />
+        Débloquer avec des crédits
       </Button>
     </div>
   );
 });
 
 /**
- * ProTeaserBanner - Banner for PRO upsell at the end of results
+ * ProTeaserBanner - Banner for upsell at the end of results
  */
 export const ProTeaserBanner = memo(function ProTeaserBanner() {
   const router = useRouter();
@@ -193,9 +193,9 @@ export const ProTeaserBanner = memo(function ProTeaserBanner() {
 
       <div className="relative">
         <div className="flex items-center gap-2 mb-3">
-          <Crown className="h-6 w-6 text-amber-500" />
+          <Coins className="h-6 w-6 text-amber-500" />
           <h3 className="text-lg font-bold text-amber-800 dark:text-amber-200">
-            Passez à PRO pour une analyse complète
+            Allez plus loin dans votre analyse
           </h3>
         </div>
 
@@ -220,11 +220,11 @@ export const ProTeaserBanner = memo(function ProTeaserBanner() {
             className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
             onClick={() => router.push("/pricing")}
           >
-            <Crown className="mr-2 h-4 w-4" />
-            Passer a PRO - 249EUR/mois
+            <Coins className="mr-2 h-4 w-4" />
+            Voir les packs de crédits
           </Button>
           <p className="text-sm text-amber-600 dark:text-amber-400">
-            1 mauvaise decision evitee = 25K EUR sauves
+            1 mauvaise décision évitée = 25K € sauvés
           </p>
         </div>
       </div>

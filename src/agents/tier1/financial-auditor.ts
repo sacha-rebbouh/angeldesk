@@ -40,18 +40,6 @@ import { FinancialAuditResponseSchema } from "./schemas/financial-auditor-schema
  */
 
 // ============================================================================
-// SCORING FRAMEWORK
-// ============================================================================
-
-const SCORING_CRITERIA = {
-  dataTransparency: { weight: 25, description: "Qualité et complétude des données financières" },
-  metricsHealth: { weight: 25, description: "Santé des métriques clés vs benchmarks" },
-  valuationRationality: { weight: 20, description: "Rationalité de la valorisation demandée" },
-  unitEconomicsViability: { weight: 15, description: "Viabilité des unit economics" },
-  burnEfficiency: { weight: 15, description: "Efficacité du burn et runway" },
-} as const;
-
-// ============================================================================
 // NOTE: Benchmarks are now centralized in @/services/benchmarks
 // See: src/services/benchmarks/config.ts for all default values
 // ============================================================================
@@ -173,7 +161,7 @@ export class FinancialAuditorAgent extends BaseAgent<FinancialAuditData, Financi
       description: "Audit financier exhaustif standard Big4 + Partner VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      timeoutMs: 180000,
       dependencies: ["document-extractor"],
     });
   }
@@ -490,7 +478,7 @@ ${discrepancies.map((d: string) => `- ${d}`).join("\n")}
           // Societe.com fallback also failed, continue without
         }
       }
-    } catch (error) {
+    } catch {
       registryVerification = "\n## VERIFICATION REGISTRE\nVerification impossible (erreur technique). Fiabilite des donnees financieres NON confirmee.";
     }
 

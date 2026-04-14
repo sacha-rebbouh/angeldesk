@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   FolderKanban,
   AlertTriangle,
-  TrendingUp,
+  Coins,
   Plus,
   Brain,
 } from "lucide-react";
@@ -24,6 +24,7 @@ import { FirstDealGuide } from "@/components/onboarding/first-deal-guide";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
 import { formatAnalysisMode } from "@/lib/analysis-constants";
+import { getCreditBalance } from "@/services/credits/usage-gate";
 
 const PIPELINE_STATUSES = [
   { value: "SCREENING", label: "Screening", color: "bg-blue-500" },
@@ -36,7 +37,7 @@ const PIPELINE_STATUSES = [
 
 async function getDashboardStats(userId: string) {
   noStore();
-  const [totalDeals, activeDeals, recentDeals, redFlagsCount, topRedFlags, dealsByStatus, recentAnalyses, dealsWithScores] =
+  const [totalDeals, activeDeals, recentDeals, redFlagsCount, topRedFlags, dealsByStatus, recentAnalyses, dealsWithScores, creditBalance] =
     await Promise.all([
       prisma.deal.count({ where: { userId } }),
       prisma.deal.count({
@@ -95,6 +96,8 @@ async function getDashboardStats(userId: string) {
         where: { userId, globalScore: { not: null } },
         select: { globalScore: true, sector: true },
       }),
+      // Credit balance
+      getCreditBalance(userId),
     ]);
 
   // Compute pipeline counts
@@ -119,6 +122,7 @@ async function getDashboardStats(userId: string) {
     avgScore,
     sectorDistribution,
     dealsWithScoresCount: dealsWithScores.length,
+    creditBalance,
   };
 }
 
@@ -135,6 +139,7 @@ export default async function DashboardPage() {
     avgScore,
     sectorDistribution,
     dealsWithScoresCount,
+    creditBalance,
   } = await getDashboardStats(user.id);
 
   return (
@@ -180,18 +185,14 @@ export default async function DashboardPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Plan</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Crédits</CardTitle>
+            <Coins className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {user.subscriptionStatus === "FREE" ? "Gratuit" : "Pro"}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {user.subscriptionStatus === "FREE"
-                ? "3 deals/mois"
-                : "Illimité"}
-            </p>
+            <div className="text-2xl font-bold">{creditBalance.balance}</div>
+            <Link href="/pricing" className="text-xs text-muted-foreground hover:underline">
+              Recharger
+            </Link>
           </CardContent>
         </Card>
         <Card>

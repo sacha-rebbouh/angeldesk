@@ -24,6 +24,8 @@ interface QuestionItem {
   context: string;
 }
 
+const EMPTY_QUESTIONS: QuestionItem[] = [];
+
 interface ContextResponse {
   data: DealContext;
 }
@@ -203,7 +205,7 @@ export default function AnalysisQuestionsTab({
     staleTime: 5 * 60_000,
   });
 
-  const questions = data?.data?.questionsToAsk ?? [];
+  const questions = data?.data?.questionsToAsk ?? EMPTY_QUESTIONS;
 
   const groupedByCategory = useMemo(() => {
     const groups: Record<string, QuestionItem[]> = {};

@@ -1,280 +1,101 @@
 // ============================================================================
-// QUOTA GATE - USAGE LIMIT TESTS
-// Tests for quota checking and usage recording
+// CREDIT SYSTEM TESTS
+// Tests for credit checking, deduction, and granting
 // ============================================================================
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { checkQuota, getUserQuotaInfo, recordUsage } from '../usage-gate';
-import { PLAN_LIMITS } from '../types';
+import { describe, it, expect } from 'vitest';
+import { CREDIT_COSTS, CREDIT_PACKS, FREE_TIER, FULL_DEAL_PACKAGE_CREDITS } from '../types';
 
 // ============================================================================
-// MOCK SETUP
+// CREDIT_COSTS TESTS
 // ============================================================================
 
-const mockUserDealUsage = {
-  upsert: vi.fn(),
-  update: vi.fn(),
-};
-
-const mockAnalysis = {
-  count: vi.fn(),
-};
-
-const mockAIBoardSession = {
-  count: vi.fn(),
-};
-
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
-    userDealUsage: {
-      upsert: (...args: unknown[]) => mockUserDealUsage.upsert(...args),
-      update: (...args: unknown[]) => mockUserDealUsage.update(...args),
-    },
-    analysis: {
-      count: (...args: unknown[]) => mockAnalysis.count(...args),
-    },
-    aIBoardSession: {
-      count: (...args: unknown[]) => mockAIBoardSession.count(...args),
-    },
-  },
-}));
-
-// ============================================================================
-// TEST HELPERS
-// ============================================================================
-
-function createMockUsage(overrides: Partial<{
-  id: string;
-  userId: string;
-  monthlyLimit: number;
-  usedThisMonth: number;
-  tier1Count: number;
-  tier2Count: number;
-  tier3Count: number;
-  lastResetAt: Date;
-}> = {}) {
-  return {
-    id: 'usage-1',
-    userId: 'user-123',
-    monthlyLimit: 3,
-    usedThisMonth: 0,
-    tier1Count: 0,
-    tier2Count: 0,
-    tier3Count: 0,
-    lastResetAt: new Date(),
-    ...overrides,
-  };
-}
-
-// ============================================================================
-// PLAN_LIMITS TESTS
-// ============================================================================
-
-describe('PLAN_LIMITS', () => {
-  it('FREE plan should have 3 analyses per month', () => {
-    expect(PLAN_LIMITS.FREE.analysesPerMonth).toBe(3);
+describe('CREDIT_COSTS', () => {
+  it('Quick Scan should cost 1 credit', () => {
+    expect(CREDIT_COSTS.QUICK_SCAN).toBe(1);
   });
 
-  it('FREE plan should have 2 updates per deal', () => {
-    expect(PLAN_LIMITS.FREE.updatesPerDeal).toBe(2);
+  it('Deep Dive should cost 5 credits', () => {
+    expect(CREDIT_COSTS.DEEP_DIVE).toBe(5);
   });
 
-  it('FREE plan should have 0 boards per month', () => {
-    expect(PLAN_LIMITS.FREE.boardsPerMonth).toBe(0);
+  it('AI Board should cost 10 credits', () => {
+    expect(CREDIT_COSTS.AI_BOARD).toBe(10);
   });
 
-  it('PRO plan should have 20 analyses per month', () => {
-    expect(PLAN_LIMITS.PRO.analysesPerMonth).toBe(20);
+  it('Live Coaching should cost 8 credits', () => {
+    expect(CREDIT_COSTS.LIVE_COACHING).toBe(8);
   });
 
-  it('PRO plan should have unlimited updates', () => {
-    expect(PLAN_LIMITS.PRO.updatesPerDeal).toBe(-1);
+  it('Re-analysis should cost 3 credits', () => {
+    expect(CREDIT_COSTS.RE_ANALYSIS).toBe(3);
   });
 
-  it('PRO plan should have 5 boards per month', () => {
-    expect(PLAN_LIMITS.PRO.boardsPerMonth).toBe(5);
+  it('Chat should be free', () => {
+    expect(CREDIT_COSTS.CHAT).toBe(0);
+  });
+
+  it('PDF export should be free', () => {
+    expect(CREDIT_COSTS.PDF_EXPORT).toBe(0);
   });
 });
 
 // ============================================================================
-// checkQuota TESTS
+// CREDIT_PACKS TESTS
 // ============================================================================
 
-describe('checkQuota', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('CREDIT_PACKS', () => {
+  it('should have 5 packs', () => {
+    expect(CREDIT_PACKS).toHaveLength(5);
   });
 
-  it('should allow ANALYSIS when under limit', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(
-      createMockUsage({ tier1Count: 1 })
-    );
-
-    const result = await checkQuota('user-123', 'FREE', 'ANALYSIS');
-
-    expect(result.allowed).toBe(true);
-    expect(result.reason).toBe('OK');
-    expect(result.current).toBe(1);
-    expect(result.limit).toBe(3);
-    expect(result.plan).toBe('FREE');
+  it('Starter should have 10 credits for 49€', () => {
+    const starter = CREDIT_PACKS.find(p => p.name === 'starter');
+    expect(starter).toBeDefined();
+    expect(starter!.credits).toBe(10);
+    expect(starter!.priceEur).toBe(49);
   });
 
-  it('should deny ANALYSIS when limit reached', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(
-      createMockUsage({ tier1Count: 3 })
-    );
-
-    const result = await checkQuota('user-123', 'FREE', 'ANALYSIS');
-
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toBe('LIMIT_REACHED');
-    expect(result.current).toBe(3);
-    expect(result.limit).toBe(3);
+  it('Pro should be highlighted', () => {
+    const pro = CREDIT_PACKS.find(p => p.name === 'pro');
+    expect(pro).toBeDefined();
+    expect(pro!.highlight).toBe(true);
   });
 
-  it('should allow PRO users more analyses', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(
-      createMockUsage({ tier1Count: 10 })
-    );
-
-    const result = await checkQuota('user-123', 'PRO', 'ANALYSIS');
-
-    expect(result.allowed).toBe(true);
-    expect(result.limit).toBe(20);
+  it('Fund should have 300 credits for 749€', () => {
+    const fund = CREDIT_PACKS.find(p => p.name === 'fund');
+    expect(fund).toBeDefined();
+    expect(fund!.credits).toBe(300);
+    expect(fund!.priceEur).toBe(749);
   });
 
-  it('should allow unlimited updates for PRO', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
-
-    const result = await checkQuota('user-123', 'PRO', 'UPDATE', 'deal-123');
-
-    expect(result.allowed).toBe(true);
-    expect(result.limit).toBe(-1);
-  });
-
-  it('should deny BOARD for FREE users', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
-
-    const result = await checkQuota('user-123', 'FREE', 'BOARD');
-
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toBe('UPGRADE_REQUIRED');
-  });
-
-  it('should allow BOARD for PRO users under limit', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
-    mockAIBoardSession.count.mockResolvedValue(2);
-
-    const result = await checkQuota('user-123', 'PRO', 'BOARD');
-
-    expect(result.allowed).toBe(true);
-    expect(result.current).toBe(2);
-    expect(result.limit).toBe(5);
-  });
-
-  it('should use upsert to get or create usage record', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
-
-    await checkQuota('user-123', 'FREE', 'ANALYSIS');
-
-    expect(mockUserDealUsage.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: 'user-123' },
-        create: expect.objectContaining({ userId: 'user-123' }),
-        update: {},
-      })
-    );
-  });
-
-  it('should treat ENTERPRISE as PRO', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(createMockUsage());
-
-    const result = await checkQuota('user-123', 'ENTERPRISE', 'ANALYSIS');
-
-    expect(result.plan).toBe('PRO');
-    expect(result.limit).toBe(20);
+  it('per-credit price should decrease with pack size', () => {
+    for (let i = 1; i < CREDIT_PACKS.length; i++) {
+      expect(CREDIT_PACKS[i].perCredit).toBeLessThan(CREDIT_PACKS[i - 1].perCredit);
+    }
   });
 });
 
 // ============================================================================
-// getUserQuotaInfo TESTS
+// FULL_DEAL_PACKAGE_CREDITS TESTS
 // ============================================================================
 
-describe('getUserQuotaInfo', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('should return quota info for FREE user', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(
-      createMockUsage({ tier1Count: 2 })
-    );
-    mockAIBoardSession.count.mockResolvedValue(0);
-
-    const info = await getUserQuotaInfo('user-123', 'FREE');
-
-    expect(info.plan).toBe('FREE');
-    expect(info.analyses.used).toBe(2);
-    expect(info.analyses.limit).toBe(3);
-    expect(info.boards.used).toBe(0);
-    expect(info.boards.limit).toBe(0);
-    expect(info.availableTiers).toEqual(['TIER_1', 'SYNTHESIS']);
-  });
-
-  it('should return quota info for PRO user', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(
-      createMockUsage({ tier1Count: 5 })
-    );
-    mockAIBoardSession.count.mockResolvedValue(2);
-
-    const info = await getUserQuotaInfo('user-123', 'PRO');
-
-    expect(info.plan).toBe('PRO');
-    expect(info.analyses.used).toBe(5);
-    expect(info.analyses.limit).toBe(20);
-    expect(info.boards.used).toBe(2);
-    expect(info.boards.limit).toBe(5);
-    expect(info.availableTiers).toEqual(['TIER_1', 'TIER_2', 'TIER_3', 'SYNTHESIS']);
+describe('FULL_DEAL_PACKAGE_CREDITS', () => {
+  it('should be 26 credits (5 + 10 + 8 + 3)', () => {
+    expect(FULL_DEAL_PACKAGE_CREDITS).toBe(26);
   });
 });
 
 // ============================================================================
-// recordUsage TESTS
+// FREE_TIER TESTS
 // ============================================================================
 
-describe('recordUsage', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('FREE_TIER', () => {
+  it('should grant 5 initial credits (1 Deep Dive)', () => {
+    expect(FREE_TIER.initialCredits).toBe(5);
   });
 
-  it('should increment counters for ANALYSIS', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(
-      createMockUsage({ usedThisMonth: 1, tier1Count: 1 })
-    );
-
-    await recordUsage('user-123', 'ANALYSIS');
-
-    expect(mockUserDealUsage.update).toHaveBeenCalledWith({
-      where: { userId: 'user-123' },
-      data: {
-        usedThisMonth: 2,
-        tier1Count: 2,
-      },
-    });
-  });
-
-  it('should increment only usedThisMonth for non-ANALYSIS actions', async () => {
-    mockUserDealUsage.upsert.mockResolvedValue(
-      createMockUsage({ usedThisMonth: 3 })
-    );
-
-    await recordUsage('user-123', 'BOARD');
-
-    expect(mockUserDealUsage.update).toHaveBeenCalledWith({
-      where: { userId: 'user-123' },
-      data: {
-        usedThisMonth: 4,
-      },
-    });
+  it('should not require a card', () => {
+    expect(FREE_TIER.requiresCard).toBe(false);
   });
 });

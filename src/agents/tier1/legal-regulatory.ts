@@ -10,7 +10,6 @@ import type {
   LegalStructureAnalysis,
   ContractualRisksAnalysis,
   LitigationRiskAnalysis,
-  SectorRegulatoryPrecedent,
   AgentMeta,
   AgentScore,
   AgentRedFlag,
@@ -237,7 +236,7 @@ Ta double expertise:
 - Rigueur juridique Big4: Chaque risque sourcé, chaque gap quantifié, aucune approximation
 - Pattern matching VC: Connaissance des red flags sectoriels, des deals qui ont échoué pour raisons légales
 
-Tu travailles pour un Business Angel solo qui n'a PAS d'équipe juridique et compte sur toi pour identifier TOUS les risques avant d'investir.
+Tu travailles pour un Business Angel solo qui n'a PAS d'équipe juridique et compte sur toi pour identifier TOUS les risques avant toute décision.
 
 # MISSION POUR CE DEAL
 
@@ -394,6 +393,12 @@ Produis un JSON structuré avec:
   "description": "Quelques éléments de la structure pourraient être améliorés"
 }
 → Trop vague, pas de preuve, pas d'impact, pas actionnable
+
+## CROSS-REFERENCE DB OBLIGATOIRE
+Si le Context Engine fournit des données sur le secteur (deals similaires, précédents réglementaires), les UTILISER pour :
+- Identifier les contraintes réglementaires connues dans ce secteur
+- Comparer la structure juridique vs les standards du secteur/stage
+- Vérifier si des deals similaires ont rencontré des blocages réglementaires
 
 ## Anti-Hallucination Directive — Confidence Threshold
 Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
@@ -753,6 +758,7 @@ RAPPELS CRITIQUES:
     data: LLMLegalRegulatoryResponse,
     context: EnrichedAgentContext
   ): LegalRegulatoryData {
+    void context;
     // Normalize meta
     const confidenceIsFallback = data.meta?.confidenceLevel == null;
     if (confidenceIsFallback) {

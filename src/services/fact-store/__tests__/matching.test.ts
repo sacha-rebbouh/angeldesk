@@ -3,7 +3,7 @@
 // Tests for supersession logic and contradiction detection
 // ═══════════════════════════════════════════════════════════════════════
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   matchFact,
   detectContradiction,
@@ -93,7 +93,7 @@ describe('getSourcePriority', () => {
   });
 
   it('should return 0 for unknown source', () => {
-    expect(getSourcePriority('UNKNOWN' as any)).toBe(0);
+    expect(getSourcePriority('UNKNOWN' as never)).toBe(0);
   });
 });
 

@@ -17,7 +17,6 @@ import type {
   Connector,
   ConnectorQuery,
   NewsArticle,
-  DataSource,
 } from "../types";
 
 // ============================================================================
@@ -147,51 +146,9 @@ function getSentimentFromTraction(score: number): "positive" | "neutral" | "nega
   return "negative";
 }
 
-const phSource: DataSource = {
-  type: "web_search", // Similar type
-  name: "Product Hunt",
-  url: "https://www.producthunt.com",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.75, // Medium-high confidence for traction signals
-};
-
 // ============================================================================
 // GRAPHQL QUERIES
 // ============================================================================
-
-const SEARCH_POSTS_QUERY = `
-  query SearchPosts($query: String!, $first: Int!) {
-    posts(first: $first, order: VOTES, topic: $query) {
-      edges {
-        node {
-          id
-          name
-          tagline
-          description
-          url
-          website
-          votesCount
-          commentsCount
-          createdAt
-          featuredAt
-          topics {
-            nodes {
-              name
-            }
-          }
-          makers {
-            id
-            name
-            headline
-          }
-          thumbnail {
-            url
-          }
-        }
-      }
-    }
-  }
-`;
 
 const SEARCH_BY_NAME_QUERY = `
   query SearchByName($query: String!, $first: Int!) {

@@ -125,39 +125,27 @@ function getCurrentUserName(): string {
   return "";
 }
 
-function initParticipants(
-  participants: ParticipantData[],
+function detectRole(
+  participant: ParticipantData,
   currentUserName: string,
   founderNames?: string[]
-): ParticipantState[] {
-  return participants.map((p) => {
-    let role: SpeakerRole = (p.role as SpeakerRole) || "other";
+): SpeakerRole {
+  const role: SpeakerRole = (participant.role as SpeakerRole) || "other";
+  if (role !== "other") return role;
 
-    // Already assigned a meaningful role — keep it
-    if (role !== "other") {
-      return { speakerId: p.speakerId, name: p.name, role };
-    }
+  if (currentUserName && fuzzyMatch(participant.name, currentUserName)) {
+    return "ba";
+  }
 
-    // Auto-detect BA if participant name fuzzy-matches current user
-    if (currentUserName && fuzzyMatch(p.name, currentUserName)) {
-      role = "ba";
-    }
-    // Auto-detect founder if participant name fuzzy-matches a founder
-    else if (founderNames && founderNames.length > 0) {
-      for (const fn of founderNames) {
-        if (fuzzyMatch(p.name, fn)) {
-          role = "founder";
-          break;
-        }
+  if (founderNames && founderNames.length > 0) {
+    for (const fn of founderNames) {
+      if (fuzzyMatch(participant.name, fn)) {
+        return "founder";
       }
     }
+  }
 
-    return {
-      speakerId: p.speakerId,
-      name: p.name,
-      role,
-    };
-  });
+  return role;
 }
 
 // =============================================================================
@@ -203,25 +191,19 @@ export default memo(function ParticipantMapper({
     [userName]
   );
 
-  const [participantStates, setParticipantStates] = useState<
-    ParticipantState[]
-  >(() => initParticipants(participants, currentUserName, founderNames));
+  const [roleOverrides, setRoleOverrides] = useState<Record<string, SpeakerRole>>({});
 
-  // Sync new participants from prop (e.g., someone joins mid-session)
-  useEffect(() => {
-    setParticipantStates((prev) => {
-      const existingIds = new Set(prev.map((p) => p.speakerId));
-      const newParticipants = participants
-        .filter((p) => !existingIds.has(p.speakerId))
-        .map((p) => ({
-          speakerId: p.speakerId,
-          name: p.name,
-          role: ((p.role as SpeakerRole) || "other") as SpeakerRole,
-        }));
-      if (newParticipants.length === 0) return prev;
-      return [...prev, ...newParticipants];
-    });
-  }, [participants]);
+  const participantStates = useMemo(
+    () =>
+      participants.map((participant) => ({
+        speakerId: participant.speakerId,
+        name: participant.name,
+        role:
+          roleOverrides[participant.speakerId] ??
+          detectRole(participant, currentUserName, founderNames),
+      })),
+    [participants, roleOverrides, currentUserName, founderNames]
+  );
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -258,15 +240,15 @@ export default memo(function ParticipantMapper({
 
   const handleRoleChange = useCallback(
     (speakerId: string, newRole: SpeakerRole) => {
-      setParticipantStates((prev) => {
-        const updated = prev.map((p) =>
-          p.speakerId === speakerId ? { ...p, role: newRole } : p
-        );
-        debouncedSave(updated);
-        return updated;
-      });
+      setRoleOverrides((prev) => ({ ...prev, [speakerId]: newRole }));
+      const updated = participantStates.map((participant) =>
+        participant.speakerId === speakerId
+          ? { ...participant, role: newRole }
+          : participant
+      );
+      debouncedSave(updated);
     },
-    [debouncedSave]
+    [debouncedSave, participantStates]
   );
 
   if (participantStates.length === 0) {

@@ -184,6 +184,12 @@ Dette technique: HIGH
 - "Quelques risques" = lesquels exactement?
 - Zéro actionnable pour le BA
 
+## CROSS-REFERENCE DB OBLIGATOIRE
+Si le Context Engine fournit des données sur les stacks techniques du secteur, les UTILISER pour :
+- Comparer le choix de stack vs les standards du secteur
+- Évaluer la maturité technique vs les deals comparables au même stage
+- Identifier les risques techniques spécifiques à ce type de produit
+
 ## Anti-Hallucination Directive — Confidence Threshold
 Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
@@ -458,6 +464,7 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
   }
 
   private normalizeResponse(data: LLMTechStackDDResponse, _context: EnrichedAgentContext): TechStackDDData {
+    void _context;
     // Normalize meta
     const confidenceIsFallback = data.meta?.confidenceLevel == null;
     if (confidenceIsFallback) {

@@ -2,7 +2,7 @@
  * SYNTHESIS DEAL SCORER - TIER 3 - REFONTE v2.0
  *
  * Mission: Produire le SCORE FINAL et la RECOMMANDATION d'investissement
- *          en synthétisant TOUS les outputs Tier 1 (12 agents) et Tier 2 (expert sectoriel)
+ *          en synthétisant TOUS les outputs Tier 1 (13 agents) et Tier 2 (expert sectoriel)
  *
  * Persona: Senior Investment Committee Partner (20+ ans d'expérience)
  *          - A siégé à 200+ IC meetings
@@ -18,7 +18,7 @@
  * - Output informatif: profil de signal clair, le BA décide
  *
  * Inputs:
- * - Tous les résultats Tier 1 (12 agents)
+ * - Tous les résultats Tier 1 (13 agents)
  * - Résultat Tier 2 (expert sectoriel si disponible)
  * - Context Engine data
  * - Funding DB comparables
@@ -26,7 +26,7 @@
  *
  * Outputs:
  * - Score final pondéré (0-100) avec breakdown
- * - Verdict: STRONG_PASS / PASS / CONDITIONAL_PASS / WEAK_PASS / NO_GO
+ * - Verdict: very_favorable / favorable / contrasted / vigilance / alert_dominant
  * - Investment thesis (bull/bear)
  * - Consolidated red flags
  * - Top questions for founder
@@ -124,12 +124,12 @@ interface InvestmentThesis {
 
 /** Recommandation d'investissement */
 interface InvestmentRecommendation {
-  action: "STRONG_INVEST" | "INVEST" | "CONSIDER" | "PASS" | "STRONG_PASS";
-  verdict: "strong_pass" | "pass" | "conditional_pass" | "weak_pass" | "no_go";
+  action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
+  verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
   rationale: string;
-  conditions?: string[]; // Si conditional_pass
-  dealbreakers?: string[]; // Si no_go
-  suggestedTerms?: string; // Si negotiate
+  conditions?: string[]; // Si contrasted
+  criticalRisks?: string[]; // Si alert_dominant
+  suggestedTerms?: string;
   nextSteps: {
     step: string;
     priority: "IMMEDIATE" | "BEFORE_TERM_SHEET" | "DURING_DD";
@@ -213,7 +213,7 @@ export interface SynthesisDealScorerDataV2 {
 // Pour compatibilité avec l'ancien type exporté
 export interface SynthesisDealScorerData {
   overallScore: number;
-  verdict: "strong_pass" | "pass" | "conditional_pass" | "weak_pass" | "no_go";
+  verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
   confidence: number;
   dimensionScores: {
     dimension: string;
@@ -236,7 +236,7 @@ export interface SynthesisDealScorerData {
     similarDealsAnalyzed: number;
   };
   investmentRecommendation: {
-    action: "invest" | "pass" | "wait" | "negotiate";
+    action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     rationale: string;
     conditions?: string[];
     suggestedTerms?: string;
@@ -304,7 +304,7 @@ Tu es un **SENIOR INVESTMENT COMMITTEE PARTNER** avec 20+ ans d'expérience en v
 ## TA MISSION POUR CE DEAL
 
 **PRODUIRE L'ANALYSE FINALE DU DEAL** en:
-1. Synthétisant les outputs de 12 agents Tier 1 + expert sectoriel Tier 2 + agents Tier 3 (contradictions, scénarios, devil's advocate)
+1. Synthétisant les outputs de 13 agents Tier 1 + expert sectoriel Tier 2 + agents Tier 3 (contradictions, scénarios, devil's advocate)
 2. Calculant un score final pondéré AJUSTÉ (pas les scores bruts Tier 1 — les scores finaux après analyse cross-tiers)
 3. Identifiant les signaux d'alerte majeurs vs points d'attention secondaires
 4. Fournissant un profil de signal clair pour aider le BA à décider
@@ -357,23 +357,23 @@ Obligatoire:
 - Vérifier si les claims de "pas de concurrent" sont valides
 
 ## Étape 5: CONSTRUCTION INVESTMENT THESIS
-- BULL CASE: 3-5 raisons d'investir (avec sources)
-- BEAR CASE: 3-5 raisons de passer (avec sources)
+- BULL CASE: 3-5 signaux favorables (avec sources)
+- BEAR CASE: 3-5 signaux d'alerte (avec sources)
 - KEY ASSUMPTIONS: Ce qui doit être vrai pour que l'investissement réussisse
 
 ## Étape 6: VERDICT FINAL
 Appliquer la grille:
 
-| Score | Verdict | Description analytique |
+| Score | Profil de signal | Description analytique |
 |-------|---------|------------------------|
-| 85-100 | STRONG_PASS | Signaux tres favorables sur toutes les dimensions |
-| 70-84 | PASS | Signaux favorables, points d'attention mineurs |
-| 55-69 | CONDITIONAL_PASS | Signaux contrastes, investigation complementaire recommandee |
-| 40-54 | WEAK_PASS | Vigilance requise, risques significatifs identifies |
-| 0-39 | NO_GO | Signaux d'alerte dominants sur plusieurs dimensions |
+| 85-100 | very_favorable | Signaux tres favorables sur toutes les dimensions |
+| 70-84 | favorable | Signaux favorables, points d'attention mineurs |
+| 55-69 | contrasted | Signaux contrastes, investigation complementaire recommandee |
+| 40-54 | vigilance | Vigilance requise, risques significatifs identifies |
+| 0-39 | alert_dominant | Signaux d'alerte dominants sur plusieurs dimensions |
 
 ## Étape 7: FORMULATION DES NEXT STEPS
-Pour chaque verdict sauf NO_GO:
+Pour chaque profil sauf alert_dominant:
 - Actions immédiates (avant prochaine discussion)
 - Actions pre-term sheet
 - Actions DD approfondie
@@ -451,7 +451,7 @@ Pour chaque verdict sauf NO_GO:
 
 # RED FLAGS À DÉTECTER (Consolidation)
 
-## DEAL-BREAKERS (Score = NO_GO automatique)
+## RISQUES CRITIQUES (Score = Signaux d'alerte dominants automatique)
 - Fraude détectée (CV falsifié, metrics inventées)
 - Cap table cassée (fondateurs <30% pré-round)
 - Litige en cours majeur
@@ -643,13 +643,13 @@ L'outil ANALYSE et GUIDE. Il ne DECIDE JAMAIS a la place du Business Angel.
       "calculationShown": "68 - 8 - 3 = 57"
     },
     "recommendation": {
-      "action": "CONSIDER",
-      "verdict": "conditional_pass",
-      "rationale": "Deal intéressant (équipe + marché) mais valorisation trop agressive dans un marché froid. Investir SI valorisation réduite de 30%.",
+      "action": "contrasted",
+      "verdict": "contrasted",
+      "rationale": "Signaux contrastés : équipe et marché favorables, mais valorisation au P92 du secteur dans un marché froid. Points d'attention sur le burn rate et le runway.",
       "conditions": [
-        "Réduction valorisation à 5.5M€ max (vs 8M€ demandés)",
-        "Vérification background équipe fondatrice avant closing",
-        "Extension runway minimum 12 mois post-round"
+        "Valorisation à réévaluer (8M€ demandés vs 5.5M€ médiane secteur)",
+        "Background équipe fondatrice à vérifier avant toute décision",
+        "Runway de 9 mois insuffisant — extension nécessaire"
       ]
     }
   }
@@ -712,7 +712,8 @@ L'outil ANALYSE et GUIDE. Il ne DECIDE JAMAIS a la place du Business Angel.
 3. **Structure > Contenu**: Mieux vaut un JSON complet et concis qu'un JSON tronque
 
 ## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+`;
   }
 
   // ===========================================================================
@@ -750,7 +751,7 @@ ${dealContext}
 
 ---
 
-## SCORES BRUTS TIER 1 (12 agents) — À AJUSTER avec Tier 2/3
+## SCORES BRUTS TIER 1 (13 agents) — À AJUSTER avec Tier 2/3
 ${tier1Scores}
 
 ---
@@ -827,12 +828,12 @@ ${weightsTable}
    - 3-5 bear points avec sources
    - Key assumptions à valider
 
-5. **DONNE LE VERDICT**:
-   - 85-100: STRONG_PASS
-   - 70-84: PASS
-   - 55-69: CONDITIONAL_PASS
-   - 40-54: WEAK_PASS
-   - 0-39: NO_GO
+5. **DONNE LE PROFIL DE SIGNAL**:
+   - 85-100: very_favorable
+   - 70-84: favorable
+   - 55-69: contrasted
+   - 40-54: vigilance
+   - 0-39: alert_dominant
 
 6. **LISTE LES NEXT STEPS** concrets
 
@@ -845,7 +846,7 @@ ${weightsTable}
 ⚠️ **SOIS INFORMATIF** — Profil de signal clair, le BA décide
 ⚠️ **CONSOLIDE LES RED FLAGS** - Ne répète pas, synthétise avec priorité
 ⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences
-⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les scénarios ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal NO_GO avec scepticisme >80 ne peut pas avoir un score > 40.
+⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les scénarios ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal alert_dominant avec scepticisme >80 ne peut pas avoir un score > 40.
 ⚠️ **score.value = Σ(breakdown weights × breakdown scores)** — Le score.value DOIT être la moyenne pondérée de ton breakdown. Si ton breakdown donne 50, score.value DOIT être ~50, PAS 2 ou 5. C'est un entier 0-100.
 
 **CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
@@ -1508,21 +1509,27 @@ Aucune incohérence majeure détectée entre les agents.`;
 
   private transformResponse(data: LLMSynthesisResponse, context: EnrichedAgentContext): SynthesisDealScorerData {
     // Validate and normalize the response
-    const validVerdicts = ["strong_pass", "pass", "conditional_pass", "weak_pass", "no_go"] as const;
-    const validActions = ["invest", "pass", "wait", "negotiate"] as const;
+    const validActions = ["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"] as const;
+    type SignalVerdict = typeof validActions[number];
 
-    // Map new action format to old
+    // Map legacy action/verdict formats to new signal profiles
     const actionMapping: Record<string, typeof validActions[number]> = {
-      "STRONG_INVEST": "invest",
-      "INVEST": "invest",
-      "CONSIDER": "negotiate",
-      "PASS": "pass",
-      "STRONG_PASS": "pass",
+      "STRONG_INVEST": "very_favorable",
+      "INVEST": "favorable",
+      "CONSIDER": "contrasted",
+      "PASS": "vigilance",
+      "STRONG_PASS": "alert_dominant",
+      // Identity mappings for new format
+      "very_favorable": "very_favorable",
+      "favorable": "favorable",
+      "contrasted": "contrasted",
+      "vigilance": "vigilance",
+      "alert_dominant": "alert_dominant",
     };
 
-    const rawAction = data.findings?.recommendation?.action ?? data.investmentRecommendation?.action;
+    const rawAction = data.findings?.recommendation?.action ?? data.investmentRecommendation?.action ?? data.recommendation?.action;
     let mappedAction = actionMapping[rawAction as string] ??
-                        (validActions.includes(rawAction as typeof validActions[number]) ? rawAction : "wait");
+                        (validActions.includes(rawAction as typeof validActions[number]) ? rawAction : "vigilance");
 
     // Extract dimension scores with backward compatibility
     const rawDimensionData = data.score?.breakdown ?? data.dimensionScores ?? [];
@@ -1603,15 +1610,48 @@ Aucune incohérence majeure détectée entre les agents.`;
       .filter((text): text is string => !!text && text !== "");
 
     // Verdict is ALWAYS derived from the score — never trust the LLM verdict alone
-    // The LLM often returns "conditional_pass" as a safe default which contradicts low scores
-    const scoreBasedVerdict = (score: number): typeof validVerdicts[number] => {
-      if (score >= 85) return "strong_pass";
-      if (score >= 70) return "pass";
-      if (score >= 55) return "conditional_pass";
-      if (score >= 40) return "weak_pass";
-      return "no_go";
+    // The LLM verdict can contradict low scores; derive the signal profile from score.
+    const scoreBasedVerdict = (score: number): SignalVerdict => {
+      if (score >= 85) return "very_favorable";
+      if (score >= 70) return "favorable";
+      if (score >= 55) return "contrasted";
+      if (score >= 40) return "vigilance";
+      return "alert_dominant";
     };
-    const finalOverallScore = Math.round(Math.min(100, Math.max(0, overallScore)));
+    let finalOverallScore = Math.round(Math.min(100, Math.max(0, overallScore)));
+
+    // =========================================================================
+    // POST-LLM COHERENCE VALIDATION (in code, not prompt)
+    // =========================================================================
+
+    // Rule 1: If alertSignal shows dominant alerts AND skepticism > 80 → cap score at 40
+    const alertRec = data.alertSignal?.recommendation?.toLowerCase() ?? "";
+    const isAlertDominant = alertRec.includes("alert_dominant") || alertRec === "stop";
+    const daResult = context.previousResults?.["devils-advocate"];
+    const daData = daResult?.success && daResult && "data" in daResult && daResult.data
+      ? daResult.data as Record<string, unknown>
+      : null;
+    const daFindings = daData?.findings as Record<string, unknown> | undefined;
+    const skepticismAssessment = daFindings?.skepticismAssessment as { score?: number } | undefined;
+    const skepticismScore = skepticismAssessment?.score ?? 0;
+
+    if (isAlertDominant && skepticismScore > 80 && finalOverallScore > 40) {
+      console.warn(
+        `[SynthesisDealScorer] Coherence cap: alertSignal="${alertRec}" + skepticism=${skepticismScore} → capping score from ${finalOverallScore} to 40`
+      );
+      finalOverallScore = 40;
+    }
+
+    // Rule 2: If score > 85 but has CRITICAL red flags → cap at 70
+    if (finalOverallScore > 85 && criticalRisks.length > 0) {
+      console.warn(
+        `[SynthesisDealScorer] Coherence cap: score=${finalOverallScore} with ${criticalRisks.length} CRITICAL red flags → capping at 70`
+      );
+      finalOverallScore = 70;
+    }
+
+    // =========================================================================
+
     const finalVerdict = scoreBasedVerdict(finalOverallScore);
 
     // If the score was overridden by the guard-fou, patch any mention of the old
@@ -1629,19 +1669,21 @@ Aucune incohérence majeure détectée entre les agents.`;
         );
     };
 
-    // Enforce action/verdict coherence — "wait" makes no sense for NO_GO
-    if (finalVerdict === "no_go" && mappedAction !== "pass") {
-      console.warn(`[SynthesisDealScorer] Action "${mappedAction}" incoherent with verdict "${finalVerdict}" — forcing "pass"`);
-      mappedAction = "pass";
+    // Enforce action/verdict coherence — action should align with verdict signal profile
+    if (finalVerdict === "alert_dominant" && mappedAction !== "alert_dominant") {
+      console.warn(`[SynthesisDealScorer] Action "${mappedAction}" incoherent with verdict "${finalVerdict}" — forcing "alert_dominant"`);
+      mappedAction = "alert_dominant";
     }
-    if (finalVerdict === "strong_pass" && mappedAction === "pass") {
-      mappedAction = "invest";
+    if (finalVerdict === "very_favorable" && mappedAction === "alert_dominant") {
+      mappedAction = "very_favorable";
     }
 
     // Extract rationale and patch score references if needed
     const rawRationale = data.findings?.recommendation?.rationale ??
                         data.investmentRecommendation?.rationale ??
-                        "Analyse en cours";
+                        data.investmentThesis?.summary ??
+                        data.recommendation?.rationale ??
+                        "Analyse complétée — consultez les scores par dimension pour le détail.";
 
     return {
       overallScore: finalOverallScore,
@@ -1673,12 +1715,14 @@ Aucune incohérence majeure détectée entre les agents.`;
                              data.comparativeRanking?.similarDealsAnalyzed ?? 0,
       },
       investmentRecommendation: {
-        action: mappedAction as "invest" | "pass" | "wait" | "negotiate",
+        action: mappedAction as "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant",
         rationale: patchScoreInText(rawRationale),
         conditions: data.findings?.recommendation?.conditions ??
-                   data.investmentRecommendation?.conditions,
+                   data.investmentRecommendation?.conditions ??
+                   data.recommendation?.conditions,
         suggestedTerms: data.findings?.recommendation?.suggestedTerms ??
-                       data.investmentRecommendation?.suggestedTerms,
+                       data.investmentRecommendation?.suggestedTerms ??
+                       data.recommendation?.suggestedTerms,
       },
       keyStrengths: Array.isArray(keyStrengths) ? keyStrengths.slice(0, 5) : [],
       keyWeaknesses: Array.isArray(keyWeaknesses) ? keyWeaknesses.slice(0, 5) : [],
@@ -1770,6 +1814,21 @@ interface LLMSynthesisResponse {
     summary: string;
     keyInsights: string[];
     forNegotiation: string[];
+  };
+  // Zod schema output fields (from SynthesisDealScorerResponseSchema)
+  recommendation?: {
+    action: string;
+    rationale?: string;
+    conditions?: string[];
+    nextSteps?: string[];
+    suggestedTerms?: string;
+  };
+  investmentThesis?: {
+    summary: string;
+    strengths: string[];
+    weaknesses: string[];
+    keyRisks: string[];
+    keyOpportunities: string[];
   };
   // Legacy fields for backward compatibility
   overallScore?: number;

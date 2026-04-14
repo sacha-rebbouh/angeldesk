@@ -49,6 +49,14 @@ export interface EldoradoInvestor {
 // STATIC DATA - RECENT FRENCH DEALS (Sample - would be refreshed via scraping)
 // ============================================================================
 
+const eldoradoSource: DataSource = {
+  type: "database",
+  name: "Eldorado",
+  url: "https://eldorado.co",
+  retrievedAt: new Date().toISOString(),
+  confidence: 0.85,
+};
+
 const RECENT_DEALS: EldoradoDeal[] = [
   // 2024 Deals
   {
@@ -399,20 +407,10 @@ function calculateValuationMultiple(
   if (!dilution) return undefined;
 
   // Post-money valuation = amount / dilution
-  const postMoney = amount / dilution;
-
   // Assume ARR = post-money / 20 (rough SaaS multiple)
   // Return the implied ARR multiple
   return 20; // Simplified - would need actual ARR data
 }
-
-const eldoradoSource: DataSource = {
-  type: "crunchbase",
-  name: "Eldorado.co",
-  url: "https://eldorado.co",
-  retrievedAt: new Date().toISOString(),
-  confidence: 0.85,
-};
 
 // ============================================================================
 // CONNECTOR IMPLEMENTATION

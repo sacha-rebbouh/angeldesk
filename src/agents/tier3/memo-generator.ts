@@ -10,7 +10,7 @@
  * Standard: Memo qualité institutionnelle facturable 50K€
  *
  * Inputs:
- * - Tous les outputs Tier 1 (12 agents d'analyse)
+ * - Tous les outputs Tier 1 (13 agents d'analyse)
  * - Tous les outputs Tier 2 (expert sectoriel activé)
  * - Outputs Tier 3 (contradiction-detector, synthesis-deal-scorer, devils-advocate, scenario-modeler)
  * - Context Engine (benchmarks, comparables, tendances)
@@ -30,7 +30,6 @@ import type {
   EnrichedAgentContext,
   MemoGeneratorResult,
   MemoGeneratorData,
-  AgentResult,
 } from "../types";
 import { calculateBATicketSize, type BAPreferences } from "@/services/benchmarks";
 
@@ -75,13 +74,6 @@ interface NextStepItem {
   context?: string;
 }
 
-interface InvestmentHighlight {
-  highlight: string;
-  evidence: string;
-  dbComparable?: string;
-  source: string;
-}
-
 interface LLMMemoResponse {
   meta: {
     dataCompleteness: "complete" | "partial" | "minimal";
@@ -100,7 +92,7 @@ interface LLMMemoResponse {
   };
   executiveSummary: {
     oneLiner: string;
-    recommendation: "STRONG_INVEST" | "INVEST" | "CONSIDER" | "PASS" | "STRONG_PASS";
+    recommendation: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     verdict: string;
     keyStrengths: string[];
     keyRisks: string[];
@@ -207,7 +199,7 @@ interface LLMMemoResponse {
   alertSignal: {
     hasBlocker: boolean;
     blockerReason?: string;
-    recommendation: "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP";
+    recommendation: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     justification: string;
   };
 }
@@ -266,7 +258,7 @@ Produire un INVESTMENT MEMO de qualité institutionnelle qui:
 - Formater de manière non-confrontationnelle
 
 ## Étape 3: Synthèse des Scores
-- Agréger les scores des 12 agents Tier 1
+- Agréger les scores des 13 agents Tier 1
 - Intégrer le score du synthesis-deal-scorer
 - Pondérer selon l'importance (Team 25%, Financials 25%, Market 20%, Product 15%, Traction 15%)
 - Ajuster selon les contradictions détectées
@@ -398,7 +390,7 @@ L'outil ANALYSE et GUIDE. Il ne DÉCIDE JAMAIS à la place du Business Angel.
 {
   "executiveSummary": {
     "oneLiner": "SaaS B2B vertical RH avec NRR 130% et équipe ex-Workday, valorisé 20% au-dessus du marché",
-    "recommendation": "INVEST",
+    "recommendation": "favorable",
     "verdict": "Deal solide avec upside significatif. Négocier la valorisation de 15-20% pour aligner avec les comparables.",
     "keyStrengths": [
       "NRR 130% (P85 du secteur SaaS - Source: financial-auditor)",
@@ -420,7 +412,7 @@ L'outil ANALYSE et GUIDE. Il ne DÉCIDE JAMAIS à la place du Business Angel.
 {
   "executiveSummary": {
     "oneLiner": "Startup prometteuse dans un secteur en croissance",
-    "recommendation": "CONSIDER",
+    "recommendation": "contrasted",
     "verdict": "Le deal présente des opportunités intéressantes mais aussi des risques à évaluer.",
     "keyStrengths": ["Bonne équipe", "Marché porteur", "Produit intéressant"],
     "keyRisks": ["Quelques risques", "Concurrence présente", "Points à clarifier"]
@@ -442,7 +434,8 @@ L'outil ANALYSE et GUIDE. Il ne DÉCIDE JAMAIS à la place du Business Angel.
 → INTERDIT: Prescriptif, dit au BA quoi faire. L'outil rapporte les signaux, le BA décide.
 
 ## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<MemoGeneratorData> {
@@ -476,7 +469,7 @@ ${dealContext}
 - Croissance: ${deal.growthRate != null ? `${Number(deal.growthRate)}%` : "Non spécifié"}
 - Multiple implicite: ${arr > 0 && valuation > 0 ? `${(valuation / arr).toFixed(1)}x ARR` : "Non calculable"}
 
-## ANALYSES TIER 1 (12 AGENTS)
+## ANALYSES TIER 1 (13 AGENTS)
 ${tier1Insights}
 
 ## ANALYSE SECTORIELLE TIER 2
@@ -535,7 +528,7 @@ Réponds en JSON avec cette structure exacte:
   },
   "executiveSummary": {
     "oneLiner": "Une phrase mémorable avec chiffres clés",
-    "recommendation": "STRONG_INVEST|INVEST|CONSIDER|PASS|STRONG_PASS",
+    "recommendation": "very_favorable|favorable|contrasted|vigilance|alert_dominant",
     "verdict": "Verdict en 2-3 phrases avec argumentation",
     "keyStrengths": ["Force 1 avec source", "Force 2 avec source", "Force 3 avec source"],
     "keyRisks": ["Risque 1 avec source", "Risque 2 avec source", "Risque 3 avec source"]
@@ -624,7 +617,7 @@ Réponds en JSON avec cette structure exacte:
   "alertSignal": {
     "hasBlocker": true|false,
     "blockerReason": "Raison si blocker",
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
+    "recommendation": "very_favorable|favorable|contrasted|vigilance|alert_dominant",
     "justification": "Justification de la recommandation"
   }
 }
@@ -1147,29 +1140,20 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
     consolidatedRedFlags: ConsolidatedRedFlag[],
     consolidatedQuestions: ConsolidatedQuestion[]
   ): MemoGeneratorData {
-    const validRecommendations = ["STRONG_INVEST", "INVEST", "CONSIDER", "PASS", "STRONG_PASS"];
-    const validGrades = ["A", "B", "C", "D", "F"];
-    const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"];
+    const validRecommendations = ["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"];
     const validPriorities = ["IMMEDIATE", "BEFORE_TERM_SHEET", "DURING_DD"];
     const validOwners = ["INVESTOR", "FOUNDER"];
-
-    // Mapping vers l'ancien format pour compatibilité
-    const recommendationMap: Record<string, "invest" | "pass" | "more_dd_needed"> = {
-      STRONG_INVEST: "invest",
-      INVEST: "invest",
-      CONSIDER: "more_dd_needed",
-      PASS: "pass",
-      STRONG_PASS: "pass",
-    };
 
     const valuation = deal.valuationPre != null ? Number(deal.valuationPre) : 0;
     const amount = deal.amountRequested != null ? Number(deal.amountRequested) : 0;
 
     return {
-      // Executive Summary (ancien format pour compatibilité)
+      // Executive Summary
       executiveSummary: {
         oneLiner: data.executiveSummary?.oneLiner ?? `${deal.name} - Investment Memo`,
-        recommendation: recommendationMap[data.executiveSummary?.recommendation ?? "CONSIDER"] ?? "more_dd_needed",
+        recommendation: validRecommendations.includes(data.executiveSummary?.recommendation ?? "")
+          ? data.executiveSummary.recommendation
+          : "contrasted",
         keyPoints: [
           ...(data.executiveSummary?.keyStrengths ?? []).slice(0, 3),
           ...(data.executiveSummary?.keyRisks ?? []).slice(0, 2),

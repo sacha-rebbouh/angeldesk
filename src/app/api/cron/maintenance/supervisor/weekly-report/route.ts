@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'node:crypto'
 import { generateWeeklyReport } from '@/agents/maintenance/supervisor'
 import { handleApiError } from "@/lib/api-error";
 
@@ -13,7 +14,7 @@ export const runtime = 'nodejs'
 export const maxDuration = 120 // 2 minutes max
 
 /**
- * Vérifie le secret cron pour sécuriser l'endpoint
+ * Vérifie le secret cron pour sécuriser l'endpoint (timing-safe)
  */
 function verifyCronSecret(request: NextRequest): boolean {
   const authHeader = request.headers.get('authorization')
@@ -24,7 +25,9 @@ function verifyCronSecret(request: NextRequest): boolean {
     return false
   }
 
-  return authHeader === `Bearer ${cronSecret}`
+  const expected = `Bearer ${cronSecret}`
+  if (!authHeader || authHeader.length !== expected.length) return false
+  return timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))
 }
 
 export async function GET(request: NextRequest) {

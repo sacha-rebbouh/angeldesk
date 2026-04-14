@@ -31,6 +31,8 @@ interface DealComparisonData {
   criticalRedFlagCount: number;
 }
 
+const EMPTY_DEALS: DealComparisonData[] = [];
+
 async function fetchComparisonData(
   dealIds: string[]
 ): Promise<{ data: DealComparisonData[] }> {
@@ -60,7 +62,7 @@ export const DealComparison = memo(function DealComparison({
     staleTime: 60_000,
   });
 
-  const deals = data?.data ?? [];
+  const deals = data?.data ?? EMPTY_DEALS;
 
   // Find best scores for highlighting
   const bestScores = useMemo(() => {

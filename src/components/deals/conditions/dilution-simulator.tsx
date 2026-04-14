@@ -9,7 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { TrendingDown, Calculator, PieChart } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { simulateDilution, type DilutionInput, type DilutionResult } from "@/services/waterfall-simulator/index";
+import { simulateDilution, type DilutionResult } from "@/services/waterfall-simulator/index";
 
 interface DilutionSimulatorProps {
   dealId: string;
@@ -50,13 +50,11 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
   const handleInvestmentChange = useCallback((value: number) => setInvestment(value), []);
   const handleEsopChange = useCallback((value: number) => setEsop(value), []);
 
-  const result: DilutionResult = useMemo(() => {
-    return simulateDilution({
-      preMoneyValuation: Math.max(preMoney, 1),
-      investmentAmount: Math.max(investment, 1),
-      esopPercent: esop,
-    });
-  }, [preMoney, investment, esop]);
+  const result: DilutionResult = simulateDilution({
+    preMoneyValuation: Math.max(preMoney, 1),
+    investmentAmount: Math.max(investment, 1),
+    esopPercent: esop,
+  });
 
   // Scenario comparison: 3 scenarios with different pre-money
   type CapTableEntry = DilutionResult["capTable"][number];
@@ -96,7 +94,7 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
         postMoney: pessimistic.postMoneyValuation,
       },
     ];
-  }, [preMoney, investment, esop]);
+  }, [preMoney, investment, esop, result]);
 
   // Chart data for cap table stacked bar
   const chartData: ChartItem[] = useMemo(() => {
@@ -216,7 +214,7 @@ export const DilutionSimulator = React.memo(function DilutionSimulator({
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <TrendingDown className="h-4 w-4" />
-              Resultats
+              Résultats
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">

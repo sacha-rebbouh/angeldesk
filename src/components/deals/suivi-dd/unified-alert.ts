@@ -17,7 +17,7 @@ export interface UnifiedAlert {
   duplicateCount?: number;
 
   // DA specific
-  dealBreakerLevel?: "ABSOLUTE" | "CONDITIONAL" | "CONCERN";
+  dealBreakerLevel?: "CRITICAL" | "HIGH" | "CONCERN";
   resolutionPath?: string;
   // Conditions specific
   suggestedArgument?: string;

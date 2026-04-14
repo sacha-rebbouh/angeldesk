@@ -5,6 +5,7 @@ import { requireAuth } from "@/lib/auth";
 import { checkRateLimit, isValidCuid } from "@/lib/sanitize";
 import { detectPlatform } from "@/lib/live/recall-client";
 import { canStartLiveSession } from "@/services/live-session-limits";
+import { checkCredits } from "@/services/credits";
 import { handleApiError } from "@/lib/api-error";
 
 const createSessionSchema = z.object({
@@ -48,6 +49,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: limitCheck.reason },
         { status: 429 }
+      );
+    }
+
+    // Check credits (LIVE_COACHING = 8 credits, deducted on /start)
+    const creditCheck = await checkCredits(user.id, 'LIVE_COACHING');
+    if (!creditCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: `Crédits insuffisants (${creditCheck.balance} disponibles, ${creditCheck.cost} requis)`,
+          creditCheck,
+        },
+        { status: 402 }
       );
     }
 

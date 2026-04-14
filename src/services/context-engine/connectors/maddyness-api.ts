@@ -48,10 +48,6 @@ interface ParsedFundingRound {
 const API_BASE = "https://www.maddyness.com/wp-json/wp/v2";
 
 // Tags and categories
-const TAGS = {
-  MADDYMONEY: 42, // Funding roundups tag
-};
-
 // Cache - stores ALL historical funding data
 let cachedDeals: ParsedFundingRound[] = [];
 let lastFetchTime = 0;

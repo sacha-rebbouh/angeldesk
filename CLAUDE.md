@@ -137,21 +137,19 @@ npx tsc --noEmit                # Type check
 ```
 
 ## Documents de référence
-- `investor.md` — Vision produit complète (~3500 lignes). Lire si la tâche concerne l'architecture, les agents ou la vision produit.
-- `AGENT-REFONTE-PROMPT.md` — Guide de refonte des agents. Lire avant de modifier un agent.
-- `DB-EXPLOITATION-SPEC.md` — Spécification d'exploitation de la DB par les agents.
+- `docs-private/reference.yaml` — **Toujours lire en début de session.** Référence technique et produit centrale.
 - `dbagents.md` — Système de maintenance DB (CLEANER, SOURCER, COMPLETER, SUPERVISOR).
 - `changes-log.md` — Historique des modifications.
 
 ---
 
-## REFONTE DES 40 AGENTS (3 TIERS)
+## REFONTE DES 41 AGENTS (3 TIERS)
 
 | Tier | Nb | Rôle | Exécution |
 |------|----|------|-----------|
 | Tier 1 | 13 | Analyse | Parallèle |
 | Tier 2 | 22 | Experts sectoriels (21 secteurs + 1 général) | Dynamique (selon secteur) |
-| Tier 3 | 5 | Synthèse | Séquentiel (après Tier 1 & 2) |
+| Tier 3 | 6 | Synthèse | Séquentiel (après Tier 1 & 2) |
 
 > technical-dd a été split en tech-stack-dd + tech-ops-dd (optimisation coûts/timeouts Haiku).
 
@@ -192,7 +190,7 @@ Fallback : `general-expert.ts` (100% recherche web).
 
 Support : `base-sector-expert.ts`, `sector-standards.ts`, `benchmark-injector.ts`.
 
-### Tier 3 — Synthèse (5 agents)
+### Tier 3 — Synthèse (6 agents)
 ```
 src/agents/tier3/
 ├── contradiction-detector.ts   [CRITIQUE]
@@ -213,7 +211,7 @@ src/agents/tier3/
 
 ## EXPLOITATION DE LA FUNDING DATABASE
 
-La DB de deals (5,000+ cible) est exploitée par les agents d'analyse. Détails complets dans `DB-EXPLOITATION-SPEC.md`.
+La DB de deals (5,000+ cible) est exploitée par les agents d'analyse.
 
 ### Usages prioritaires
 1. **Détection concurrents** — Boîtes similaires (use cases, secteur)
@@ -236,6 +234,4 @@ Chaque claim du deck (concurrence, valorisation, marché) doit être confronté 
 ### Relations entre documents
 ```
 dbagents.md           → Maintenance DB
-DB-EXPLOITATION-SPEC.md → Exploitation DB (agents Tier 1)
-AGENT-REFONTE-PROMPT.md → Standards agents
 ```

@@ -4,13 +4,13 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { orchestrator, type AnalysisType } from "@/agents";
 import {
-  canAnalyzeDeal,
   recordDealAnalysis,
   getUsageStatus,
   type AnalysisTier,
-  type SubscriptionTier,
 } from "@/services/deal-limits";
+import { refundCredits, getActionForAnalysisType } from "@/services/credits";
 import { CUID_PATTERN } from "@/lib/sanitize";
+import { evaluateDealDocumentReadiness } from "@/services/documents/extraction-runs";
 
 // Vercel: Allow long-running analysis. Requires Pro plan (300s max).
 // Without this, the fire-and-forget promise may be killed after 10s.
@@ -86,18 +86,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
-    // Check tier and limits
     const requestedTier = getAnalysisTier(type);
-    const permission = await canAnalyzeDeal(user.id, requestedTier);
-
-    if (!permission.allowed) {
+    const documentReadiness = await evaluateDealDocumentReadiness(dealId);
+    if (!documentReadiness.ready) {
       return NextResponse.json(
         {
-          error: permission.reason,
-          upgradeRequired: permission.upgradeRequired,
-          maxAllowedTier: permission.maxAllowedTier,
+          error: "Document extraction is not ready for analysis",
+          documentReadiness,
         },
-        { status: 403 }
+        { status: 409 }
       );
     }
 
@@ -133,7 +130,7 @@ export async function POST(request: NextRequest) {
     if (canResume) {
       console.log(
         `[analyze] Found resumable analysis ${resumableAnalysis.id} ` +
-        `(${resumableAnalysis.completedAgents}/${resumableAnalysis.totalAgents} agents). Resuming from checkpoint.`
+        `(${resumableAnalysis.completedAgents}/${resumableAnalysis.totalAgents} étapes). Resuming from checkpoint.`
       );
 
       // Set analysis back to RUNNING for resumeAnalysis to work
@@ -186,50 +183,31 @@ export async function POST(request: NextRequest) {
     // NEW ANALYSIS (no resumable analysis found)
     // ================================================================
 
-    // Atomic check: no running analysis + record usage in a single transaction
-    // Prevents race conditions (double analysis, double credit consumption)
-    const txResult = await prisma.$transaction(async (tx) => {
-      // Check if there's already a running analysis
-      const runningAnalysis = await tx.analysis.findFirst({
-        where: { dealId, status: "RUNNING" },
-      });
-
-      if (runningAnalysis) {
-        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
-        if (runningAnalysis.createdAt < thirtyMinAgo) {
-          await tx.analysis.update({
-            where: { id: runningAnalysis.id },
-            data: { status: "FAILED" },
-          });
-        } else {
-          return { error: "ALREADY_RUNNING" as const };
-        }
-      }
-
-      // Record usage atomically (increment within transaction)
-      const usage = await tx.userDealUsage.findUnique({ where: { userId: user.id } });
-      if (usage && usage.monthlyLimit !== -1 && usage.usedThisMonth >= usage.monthlyLimit) {
-        return { error: "LIMIT_REACHED" as const };
-      }
-
-      await tx.userDealUsage.upsert({
-        where: { userId: user.id },
-        create: { userId: user.id, monthlyLimit: 3, usedThisMonth: 1, tier1Count: requestedTier >= 1 ? 1 : 0, tier2Count: requestedTier >= 2 ? 1 : 0, tier3Count: requestedTier >= 3 ? 1 : 0 },
-        update: { usedThisMonth: { increment: 1 }, tier1Count: requestedTier >= 1 ? { increment: 1 } : undefined, tier2Count: requestedTier >= 2 ? { increment: 1 } : undefined, tier3Count: requestedTier >= 3 ? { increment: 1 } : undefined },
-      });
-
-      const remaining = usage ? Math.max(0, (usage.monthlyLimit === -1 ? Infinity : usage.monthlyLimit) - usage.usedThisMonth - 1) : 2;
-      return { success: true as const, remainingDeals: remaining };
+    // Check for already running analysis
+    const runningAnalysis = await prisma.analysis.findFirst({
+      where: { dealId, status: "RUNNING" },
     });
 
-    if ("error" in txResult) {
-      if (txResult.error === "ALREADY_RUNNING") {
+    if (runningAnalysis) {
+      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+      if (runningAnalysis.createdAt < thirtyMinAgo) {
+        await prisma.analysis.update({
+          where: { id: runningAnalysis.id },
+          data: { status: "FAILED" },
+        });
+      } else {
         return NextResponse.json({ error: "An analysis is already running for this deal" }, { status: 409 });
       }
-      return NextResponse.json({ error: "Limite mensuelle atteinte", upgradeRequired: true, remainingDeals: 0 }, { status: 403 });
     }
 
-    const usageResult = txResult;
+    // Deduct credits for this analysis
+    const deduction = await recordDealAnalysis(user.id, requestedTier, dealId, type);
+    if (!deduction.success) {
+      return NextResponse.json(
+        { error: "Crédits insuffisants", upgradeRequired: true, remainingDeals: 0 },
+        { status: 403 }
+      );
+    }
 
     // Update deal status
     await prisma.deal.update({
@@ -237,17 +215,9 @@ export async function POST(request: NextRequest) {
       data: { status: "ANALYZING" },
     });
 
-    // Get user subscription status for tier gating
-    const userData = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { subscriptionStatus: true },
-    });
-    const userPlan = (userData?.subscriptionStatus as SubscriptionTier) || "FREE";
-    const effectivePlan = userPlan === "PRO" || userPlan === "ENTERPRISE" ? "PRO" : "FREE";
-
-    // Override analysis type based on server-side subscription status
-    // Never trust the frontend type — it can be stale if usage query hasn't resolved yet
-    const effectiveType: AnalysisType = effectivePlan === "PRO" ? "full_analysis" : "tier1_complete";
+    // Use the requested analysis type directly — credit check already validated the tier
+    const effectiveType: AnalysisType = type as AnalysisType;
+    const effectivePlan = requestedTier >= 2 ? "PRO" : "FREE";
 
     // Fire-and-forget: start analysis in background, return immediately
     // The orchestrator handles its own persistence (createAnalysis → completeAnalysis)
@@ -270,7 +240,15 @@ export async function POST(request: NextRequest) {
           `[analyze] Background analysis failed for deal ${dealId}:`,
           error
         );
-        // Reset deal status if analysis failed at a very early stage
+        // Refund credits — analysis failed before producing results
+        try {
+          const creditAction = getActionForAnalysisType(type);
+          await refundCredits(user.id, creditAction, dealId);
+          console.log(`[analyze] Refunded ${creditAction} credits for deal ${dealId}`);
+        } catch (refundErr) {
+          console.error(`[analyze] Failed to refund credits:`, refundErr);
+        }
+        // Reset deal status
         try {
           await prisma.deal.update({
             where: { id: dealId },
@@ -285,7 +263,7 @@ export async function POST(request: NextRequest) {
       data: {
         status: "RUNNING",
         dealId,
-        remainingDeals: usageResult.remainingDeals,
+        remainingDeals: deduction.remainingDeals,
       },
     });
   } catch (error) {

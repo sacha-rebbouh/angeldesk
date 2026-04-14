@@ -29,6 +29,8 @@ interface SessionsResponse {
   data: SessionData[];
 }
 
+const EMPTY_SESSIONS: SessionData[] = [];
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -83,7 +85,7 @@ export default function LiveSessionCard({ dealId }: LiveSessionCardProps) {
     refetchInterval: 60_000,
   });
 
-  const sessions = data?.data ?? [];
+  const sessions = data?.data ?? EMPTY_SESSIONS;
 
   const { activeSession, latestCompleted } = useMemo(() => {
     const active = sessions.find(isActiveSession) ?? null;

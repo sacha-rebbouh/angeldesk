@@ -99,12 +99,14 @@ function AnalysisCard({ analysis }: { analysis: InitialAnalysis }) {
           variant="secondary"
           className={cn(
             "text-[10px] border-0",
-            analysis.verdict === "GO" && "bg-emerald-500/15 text-emerald-400",
-            analysis.verdict === "NO_GO" && "bg-red-500/15 text-red-400",
+            (analysis.verdict === "VERY_FAVORABLE" || analysis.verdict === "FAVORABLE") && "bg-emerald-500/15 text-emerald-400",
+            analysis.verdict === "CONTRASTED" && "bg-amber-500/15 text-amber-400",
+            analysis.verdict === "VIGILANCE" && "bg-orange-500/15 text-orange-400",
+            analysis.verdict === "ALERT_DOMINANT" && "bg-red-500/15 text-red-400",
             analysis.verdict === "NEED_MORE_INFO" && "bg-amber-500/15 text-amber-400"
           )}
         >
-          {analysis.verdict === "NO_GO" ? "NO GO" : analysis.verdict}
+          {analysis.verdict === "VERY_FAVORABLE" ? "Très favorable" : analysis.verdict === "FAVORABLE" ? "Favorable" : analysis.verdict === "CONTRASTED" ? "Contrasté" : analysis.verdict === "VIGILANCE" ? "Vigilance" : analysis.verdict === "ALERT_DOMINANT" ? "Alerte" : analysis.verdict === "NEED_MORE_INFO" ? "Info manquante" : analysis.verdict}
         </Badge>
       </div>
 
@@ -138,7 +140,7 @@ function AnalysisCard({ analysis }: { analysis: InitialAnalysis }) {
           className="flex items-center gap-1 text-[10px] font-medium text-slate-500 hover:text-slate-300 transition-colors pt-1"
         >
           <ChevronDown className={cn("h-3 w-3 transition-transform", expanded && "rotate-180")} />
-          {expanded ? "Reduire" : `Voir tout (${analysis.arguments.length} args, ${analysis.concerns.length} concerns)`}
+          {expanded ? "Réduire" : `Voir tout (${analysis.arguments.length} args, ${analysis.concerns.length} concerns)`}
         </button>
       )}
     </div>
@@ -172,12 +174,14 @@ function ResponseCard({ roundNumber, response }: { roundNumber: number; response
             variant="secondary"
             className={cn(
               "text-[10px] border-0",
-              response.newVerdict === "GO" && "bg-emerald-500/15 text-emerald-400",
-              response.newVerdict === "NO_GO" && "bg-red-500/15 text-red-400",
+              (response.newVerdict === "VERY_FAVORABLE" || response.newVerdict === "FAVORABLE") && "bg-emerald-500/15 text-emerald-400",
+              response.newVerdict === "CONTRASTED" && "bg-amber-500/15 text-amber-400",
+              response.newVerdict === "VIGILANCE" && "bg-orange-500/15 text-orange-400",
+              response.newVerdict === "ALERT_DOMINANT" && "bg-red-500/15 text-red-400",
               response.newVerdict === "NEED_MORE_INFO" && "bg-amber-500/15 text-amber-400"
             )}
           >
-            &rarr; {response.newVerdict === "NO_GO" ? "NO GO" : response.newVerdict}
+            &rarr; {response.newVerdict === "VERY_FAVORABLE" ? "Très favorable" : response.newVerdict === "FAVORABLE" ? "Favorable" : response.newVerdict === "CONTRASTED" ? "Contrasté" : response.newVerdict === "VIGILANCE" ? "Vigilance" : response.newVerdict === "ALERT_DOMINANT" ? "Alerte" : response.newVerdict === "NEED_MORE_INFO" ? "Info manquante" : response.newVerdict}
           </Badge>
         )}
       </div>
@@ -190,7 +194,7 @@ function ResponseCard({ roundNumber, response }: { roundNumber: number; response
           className="flex items-center gap-1 text-[10px] font-medium text-slate-500 hover:text-slate-300 transition-colors"
         >
           <ChevronDown className={cn("h-3 w-3 transition-transform", expanded && "rotate-180")} />
-          {expanded ? "Reduire" : "Lire la suite"}
+          {expanded ? "Réduire" : "Lire la suite"}
         </button>
       )}
     </div>

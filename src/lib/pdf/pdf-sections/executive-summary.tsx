@@ -4,7 +4,7 @@
 
 import React from "react";
 import { View, Text } from "@react-pdf/renderer";
-import { colors, styles as gs } from "../pdf-theme";
+import { styles as gs } from "../pdf-theme";
 import {
   PdfPage,
   SectionTitle,

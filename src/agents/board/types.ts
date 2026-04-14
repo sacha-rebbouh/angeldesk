@@ -186,7 +186,7 @@ export interface BoardInput {
 // ANALYSIS TYPES
 // ============================================================================
 
-export type BoardVerdictType = "GO" | "NO_GO" | "NEED_MORE_INFO";
+export type BoardVerdictType = "VERY_FAVORABLE" | "FAVORABLE" | "CONTRASTED" | "VIGILANCE" | "ALERT_DOMINANT" | "NEED_MORE_INFO";
 
 export interface InitialAnalysis {
   verdict: BoardVerdictType;
@@ -258,7 +258,7 @@ export interface FinalVote {
   // Points of agreement with others
   agreementPoints: string[];
 
-  // Remaining concerns even if voting GO
+  // Remaining concerns
   remainingConcerns: string[];
 }
 

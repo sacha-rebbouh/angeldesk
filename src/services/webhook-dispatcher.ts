@@ -6,6 +6,7 @@
 
 import { createHmac } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { fetchWithValidatedRedirects } from "@/lib/url-validator";
 
 export type WebhookEvent =
   | "analysis.completed"
@@ -53,7 +54,7 @@ export async function dispatchWebhookEvent(
         .digest("hex");
 
       try {
-        const response = await fetch(webhook.url, {
+        const { response } = await fetchWithValidatedRedirects(webhook.url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -62,7 +63,7 @@ export async function dispatchWebhookEvent(
           },
           body,
           signal: AbortSignal.timeout(10_000), // 10s timeout
-        });
+        }, { maxRedirects: 0 });
 
         if (response.ok) {
           await prisma.webhook.update({

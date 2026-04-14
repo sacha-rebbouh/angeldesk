@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, memo } from "react";
+import { useState, useCallback, useMemo, memo, useSyncExternalStore } from "react";
 import { useChannel } from "ably/react";
 import type { Message } from "ably";
 import { Badge } from "@/components/ui/badge";
@@ -54,32 +54,29 @@ function formatElapsed(seconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function useNow(intervalMs: number): number {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const interval = setInterval(onStoreChange, intervalMs);
+      return () => clearInterval(interval);
+    },
+    () => Date.now(),
+    () => Date.now(),
+  );
+}
+
 // =============================================================================
 // Timer Hook
 // =============================================================================
 
 function useElapsedTimer(startedAt: string | undefined, isLive: boolean) {
-  const [elapsed, setElapsed] = useState(0);
+  const nowMs = useNow(1000);
 
-  useEffect(() => {
-    if (!startedAt || !isLive) {
-      setElapsed(0);
-      return;
-    }
-
+  return useMemo(() => {
+    if (!startedAt || !isLive) return 0;
     const startMs = new Date(startedAt).getTime();
-
-    function tick() {
-      const now = Date.now();
-      setElapsed(Math.max(0, Math.floor((now - startMs) / 1000)));
-    }
-
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [startedAt, isLive]);
-
-  return elapsed;
+    return Math.max(0, Math.floor((nowMs - startMs) / 1000));
+  }, [isLive, nowMs, startedAt]);
 }
 
 // =============================================================================
@@ -92,25 +89,25 @@ export default memo(function SessionStatusBar({
   status: initialStatus,
   startedAt,
 }: SessionStatusBarProps) {
-  const [currentStatus, setCurrentStatus] = useState<string>(initialStatus);
-
-  // Sync with prop changes (e.g., parent polling detects status change)
-  useEffect(() => {
-    setCurrentStatus(initialStatus);
-  }, [initialStatus]);
+  const [realtimeStatus, setRealtimeStatus] = useState<string | null>(null);
 
   // Listen for real-time status updates via Ably
-  useChannel(`live-session:${sessionId}`, "session-status", useCallback(
-    (message: Message) => {
+  useChannel(
+    `live-session:${sessionId}`,
+    "session-status",
+    useCallback((message: Message) => {
       if (!message.data) return;
       const event = message.data as AblySessionStatusEvent;
       if (event.status) {
-        setCurrentStatus(event.status);
+        setRealtimeStatus(event.status);
       }
-    },
-    []
-  ));
+    }, [])
+  );
 
+  const currentStatus =
+    initialStatus === "completed" || initialStatus === "failed"
+      ? initialStatus
+      : realtimeStatus ?? initialStatus;
   const isLive = currentStatus === "live";
   const elapsed = useElapsedTimer(startedAt, isLive);
 

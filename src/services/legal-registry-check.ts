@@ -30,17 +30,17 @@ const REGISTRY_MAP: Record<string, {
     registries: [
       {
         name: "Pappers (Registre du Commerce FR)",
-        url: (c) => `https://www.pappers.fr/recherche?q=${encodeURIComponent(c)}`,
+        url: (company) => `https://www.pappers.fr/recherche?q=${encodeURIComponent(company)}`,
         capabilities: ["legal_status", "dirigeants", "beneficiaires_effectifs", "finances", "publications_bodacc"],
       },
       {
         name: "Societe.com (Donnees entreprise FR)",
-        url: (c) => `https://www.societe.com/cgi-bin/search?champs=${encodeURIComponent(c)}`,
+        url: (company) => `https://www.societe.com/cgi-bin/search?champs=${encodeURIComponent(company)}`,
         capabilities: ["chiffre_affaires", "effectif", "bilans", "dirigeants"],
       },
       {
         name: "INPI (Brevets & Marques FR)",
-        url: (_c) => `https://data.inpi.fr/`,
+        url: () => `https://data.inpi.fr/`,
         capabilities: ["brevets", "marques", "dessins_modeles"],
       },
     ],
@@ -49,12 +49,12 @@ const REGISTRY_MAP: Record<string, {
     registries: [
       {
         name: "Companies House (UK)",
-        url: (c) => `https://find-and-update.company-information.service.gov.uk/search?q=${encodeURIComponent(c)}`,
+        url: (company) => `https://find-and-update.company-information.service.gov.uk/search?q=${encodeURIComponent(company)}`,
         capabilities: ["company_status", "officers", "filing_history", "charges", "insolvency"],
       },
       {
         name: "IPO (Intellectual Property Office UK)",
-        url: (_c) => `https://www.ipo.gov.uk/`,
+        url: () => `https://www.ipo.gov.uk/`,
         capabilities: ["patents", "trademarks"],
       },
     ],
@@ -63,12 +63,12 @@ const REGISTRY_MAP: Record<string, {
     registries: [
       {
         name: "SEC EDGAR (Filings US)",
-        url: (c) => `https://efts.sec.gov/LATEST/search-index?q=${encodeURIComponent(c)}`,
+        url: (company) => `https://efts.sec.gov/LATEST/search-index?q=${encodeURIComponent(company)}`,
         capabilities: ["10K", "10Q", "8K", "registration"],
       },
       {
         name: "USPTO (Patents US)",
-        url: (_c) => `https://www.uspto.gov/patents`,
+        url: () => `https://www.uspto.gov/patents`,
         capabilities: ["patents", "trademarks"],
       },
     ],
@@ -77,7 +77,7 @@ const REGISTRY_MAP: Record<string, {
     registries: [
       {
         name: "Handelsregister (Registre commerce DE)",
-        url: (_c) => `https://www.handelsregister.de/`,
+        url: () => `https://www.handelsregister.de/`,
         capabilities: ["company_data", "register_entries"],
       },
     ],
@@ -86,8 +86,7 @@ const REGISTRY_MAP: Record<string, {
 
 export function checkLegalRegistries(
   companyName: string,
-  geography: string,
-  _siren?: string
+  geography: string
 ): RegistryCheckResult {
   const geo = geography.toUpperCase().replace("FRANCE", "FR").replace("UNITED KINGDOM", "UK").replace("ENGLAND", "UK").replace("USA", "US").replace("UNITED STATES", "US").replace("GERMANY", "DE").replace("ALLEMAGNE", "DE").replace("GB", "UK");
 

@@ -19,7 +19,6 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  Minus,
   Scale,
   Brain,
   FileText,
@@ -67,23 +66,25 @@ const VerdictBadge = memo(function VerdictBadge({ verdict }: { verdict: string }
   return <Badge variant="outline" className={cn("text-sm px-3 py-1", c.color)}>{c.label}</Badge>;
 });
 
-// Hoisted config (without icons - they'll be resolved at render)
-const RECOMMENDATION_CONFIG: Record<string, { label: string; color: string }> = {
-  invest: { label: "Signaux favorables", color: "bg-green-500 text-white" },
-  pass: { label: "Signaux d'alerte dominants", color: "bg-red-500 text-white" },
-  wait: { label: "Investigation complémentaire", color: "bg-yellow-500 text-white" },
-  negotiate: { label: "Signaux contrastés", color: "bg-blue-500 text-white" },
+// Hoisted config — badge-specific colors (solid bg for badges, not the subtle bg from global config)
+const RECOMMENDATION_BADGE_CONFIG: Record<string, { label: string; color: string }> = {
+  very_favorable: { label: "Signaux très favorables", color: "bg-green-500 text-white" },
+  favorable: { label: "Signaux favorables", color: "bg-green-500 text-white" },
+  contrasted: { label: "Signaux contrastés", color: "bg-amber-500 text-white" },
+  vigilance: { label: "Vigilance requise", color: "bg-blue-500 text-white" },
+  alert_dominant: { label: "Signaux d'alerte dominants", color: "bg-red-500 text-white" },
 };
 
 const RECOMMENDATION_ICONS: Record<string, React.ReactNode> = {
-  invest: <CheckCircle className="h-4 w-4" />,
-  pass: <XCircle className="h-4 w-4" />,
-  wait: <Minus className="h-4 w-4" />,
-  negotiate: <Scale className="h-4 w-4" />,
+  very_favorable: <CheckCircle className="h-4 w-4" />,
+  favorable: <CheckCircle className="h-4 w-4" />,
+  contrasted: <Scale className="h-4 w-4" />,
+  vigilance: <AlertTriangle className="h-4 w-4" />,
+  alert_dominant: <XCircle className="h-4 w-4" />,
 };
 
 const RecommendationBadge = memo(function RecommendationBadge({ action }: { action: string }) {
-  const c = RECOMMENDATION_CONFIG[action] ?? { label: action, color: "bg-gray-500 text-white" };
+  const c = RECOMMENDATION_BADGE_CONFIG[action] ?? { label: action, color: "bg-gray-500 text-white" };
   const icon = RECOMMENDATION_ICONS[action] ?? null;
   return (
     <Badge className={cn("text-sm px-3 py-1.5 flex items-center gap-1.5 shrink-0", c.color)}>
@@ -623,14 +624,9 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
   const dataGaps = data.findings?.dataGaps ?? [];
   const consistencyScore = data.findings?.consistencyAnalysis?.overallScore ?? data.score?.value ?? 0;
   const summaryAssessment = data.narrative?.summary ?? data.narrative?.keyInsights?.[0] ?? "";
-  const consistencyBreakdown = data.findings?.consistencyAnalysis?.breakdown ?? [];
-  const redFlagConvergence = data.findings?.redFlagConvergence ?? [];
-  const agentSummary = data.findings?.agentOutputsSummary ?? [];
-
   // Count by severity
   const criticalCount = contradictions.filter(c => c.severity === "CRITICAL").length;
   const highCount = contradictions.filter(c => c.severity === "HIGH").length;
-  const mediumCount = contradictions.filter(c => c.severity === "MEDIUM").length;
 
   return (
     <Card className="border-2 border-amber-100">
@@ -748,7 +744,7 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
             <CheckCircle className="h-8 w-8 text-green-600" />
             <div>
               <p className="font-medium text-green-800">Aucune contradiction majeure</p>
-              <p className="text-sm text-green-700">Les analyses des 12 agents sont cohérentes entre elles.</p>
+              <p className="text-sm text-green-700">Les analyses des 13 agents sont cohérentes entre elles.</p>
             </div>
           </div>
         )}
@@ -795,9 +791,11 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
 
 // Hoisted config for MemoGeneratorCard — distinct from RECOMMENDATION_CONFIG (which covers scorer actions)
 const MEMO_RECOMMENDATION_CONFIG: Record<string, { label: string; color: string }> = {
-  invest: { label: "Signaux favorables", color: "bg-green-500 text-white" },
-  pass: { label: "Signaux d'alerte dominants", color: "bg-red-500 text-white" },
-  more_dd_needed: { label: "Investigation complémentaire", color: "bg-yellow-500 text-white" },
+  very_favorable: { label: "Signaux très favorables", color: "bg-green-500 text-white" },
+  favorable: { label: "Signaux favorables", color: "bg-green-500 text-white" },
+  contrasted: { label: "Signaux contrastés", color: "bg-amber-500 text-white" },
+  vigilance: { label: "Vigilance requise", color: "bg-blue-500 text-white" },
+  alert_dominant: { label: "Signaux d'alerte dominants", color: "bg-red-500 text-white" },
 };
 
 // Parse red flag string: "[CRITICAL] Some text (agent-name)" → { severity, text, source }
@@ -1076,10 +1074,10 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
               <div className="text-right">
                 <div className="text-4xl font-bold text-white">{scorerData.overallScore}<span className="text-xl text-slate-400">/100</span></div>
                 <VerdictBadge verdict={
-                  scorerData.overallScore >= 85 ? "strong_pass" :
-                  scorerData.overallScore >= 70 ? "pass" :
-                  scorerData.overallScore >= 55 ? "conditional_pass" :
-                  scorerData.overallScore >= 40 ? "weak_pass" : "no_go"
+                  scorerData.overallScore >= 85 ? "very_favorable" :
+                  scorerData.overallScore >= 70 ? "favorable" :
+                  scorerData.overallScore >= 55 ? "contrasted" :
+                  scorerData.overallScore >= 40 ? "vigilance" : "alert_dominant"
                 } />
               </div>
             )}
@@ -1213,7 +1211,7 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
                 ? `${contradictionData.findings?.contradictions?.length ?? 0} contradiction(s) identifiée(s) entre les analyses`
                 : "Détection automatique des incohérences"}
               icon={Zap}
-              previewText={contradictionData ? `Score coherence: ${contradictionData.findings?.consistencyAnalysis?.overallScore ?? contradictionData.score?.value ?? 0}/100` : undefined}
+              previewText={contradictionData ? `Score cohérence: ${contradictionData.findings?.consistencyAnalysis?.overallScore ?? contradictionData.score?.value ?? 0}/100` : undefined}
             />
           ) : (
             contradictionData && <ContradictionDetectorCard data={contradictionData} />

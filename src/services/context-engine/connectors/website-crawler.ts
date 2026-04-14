@@ -9,6 +9,10 @@
  */
 
 import type { WebsiteContent, WebsitePage, WebsitePageType } from "../types";
+import {
+  fetchWithValidatedRedirects,
+  validatePublicUrl,
+} from "@/lib/url-validator";
 
 // ============================================================================
 // CONFIGURATION
@@ -160,21 +164,31 @@ interface CrawlResult {
 }
 
 async function crawlPage(url: string, baseUrl: string): Promise<CrawlResult | null> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
   try {
+    // SSRF protection: block private/internal URLs
+    const urlCheck = await validatePublicUrl(url);
+    if (!urlCheck.valid) {
+      console.warn(`[WebsiteCrawler] SSRF blocked: ${url} — ${urlCheck.reason}`);
+      return null;
+    }
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), CONFIG.PAGE_TIMEOUT_MS);
+    timeoutId = setTimeout(() => controller.abort(), CONFIG.PAGE_TIMEOUT_MS);
 
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": CONFIG.USER_AGENT,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+    const { response, finalUrl } = await fetchWithValidatedRedirects(
+      url,
+      {
+        headers: {
+          "User-Agent": CONFIG.USER_AGENT,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+        },
+        signal: controller.signal,
       },
-      redirect: "follow",
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
+      { maxRedirects: 5 }
+    );
 
     if (!response.ok) {
       return null;
@@ -192,17 +206,17 @@ async function crawlPage(url: string, baseUrl: string): Promise<CrawlResult | nu
     const title = extractTitle(html);
     const description = extractMetaDescription(html);
     const content = extractTextContent(html);
-    const links = extractInternalLinks(html, url, baseUrl);
+    const links = extractInternalLinks(html, finalUrl, baseUrl);
 
     // Déterminer le type de page (pour catégorisation, pas pour filtrage)
-    const path = new URL(url).pathname;
+    const path = new URL(finalUrl).pathname;
     const pageType = inferPageType(path, title);
 
     // Extraire les données structurées si possible
     const extractedData = extractStructuredData(html, pageType);
 
     const page: WebsitePage = {
-      url,
+      url: finalUrl,
       path,
       title,
       description,
@@ -216,6 +230,10 @@ async function crawlPage(url: string, baseUrl: string): Promise<CrawlResult | nu
     return { page, links };
   } catch {
     return null;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 

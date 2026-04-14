@@ -14,7 +14,6 @@ import type { LLMExtractionResult } from '../types'
 import { MAINTENANCE_CONSTANTS, INDUSTRY_TAXONOMY } from '../types'
 import {
   normalizeCountry,
-  normalizeStage,
   mapActivityToCompanyStatus,
   createLogger,
 } from '../utils'
@@ -133,8 +132,6 @@ export function validateActivityStatus(
       patternFound: false,
     }
   }
-
-  const content = scrapedContent.toLowerCase()
 
   // Chercher les patterns selon le statut
   if (llmStatus === 'acquired') {
@@ -301,7 +298,6 @@ export async function validateAndUpdate(
   extraction: LLMExtractionResult,
   scrapedContent?: string
 ): Promise<ValidationResult> {
-  const errors: string[] = []
   const fieldsUpdated: string[] = []
 
   // Skip if confidence is too low

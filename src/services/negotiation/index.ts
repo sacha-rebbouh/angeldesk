@@ -14,6 +14,7 @@ export {
 export type {
   NegotiationStrategy,
   NegotiationPoint,
+  CriticalCondition,
   Dealbreaker,
   TradeOff,
   AnalysisResults,

@@ -160,7 +160,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
     return result;
   }, [deals, searchQuery, sectorFilter, stageFilter, scoreMin, sortField, sortDir]);
 
-  const SortIcon = useCallback(({ field }: { field: SortField }) => {
+  const renderSortIcon = useCallback((field: SortField) => {
     if (sortField !== field) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-30" />;
     return sortDir === "asc"
       ? <ArrowUp className="h-3 w-3 ml-1" />
@@ -310,24 +310,24 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
             <TableRow>
               <TableHead className="w-[40px]" />
               <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
-                <span className="flex items-center">Nom <SortIcon field="name" /></span>
+                <span className="flex items-center">Nom {renderSortIcon("name")}</span>
               </TableHead>
               <TableHead className="hidden sm:table-cell cursor-pointer" onClick={() => handleSort("sector")}>
-                <span className="flex items-center">Secteur <SortIcon field="sector" /></span>
+                <span className="flex items-center">Secteur {renderSortIcon("sector")}</span>
               </TableHead>
               <TableHead className="hidden lg:table-cell cursor-pointer" onClick={() => handleSort("stage")}>
-                <span className="flex items-center">Stade <SortIcon field="stage" /></span>
+                <span className="flex items-center">Stade {renderSortIcon("stage")}</span>
               </TableHead>
               <TableHead className="hidden md:table-cell cursor-pointer" onClick={() => handleSort("valuationPre")}>
-                <span className="flex items-center">Valorisation <SortIcon field="valuationPre" /></span>
+                <span className="flex items-center">Valorisation {renderSortIcon("valuationPre")}</span>
               </TableHead>
               <TableHead className="hidden sm:table-cell cursor-pointer" onClick={() => handleSort("globalScore")}>
-                <span className="flex items-center">Score <SortIcon field="globalScore" /></span>
+                <span className="flex items-center">Score {renderSortIcon("globalScore")}</span>
               </TableHead>
               <TableHead>Statut</TableHead>
               <TableHead>Alertes</TableHead>
               <TableHead className="hidden md:table-cell cursor-pointer" onClick={() => handleSort("updatedAt")}>
-                <span className="flex items-center">Mis à jour <SortIcon field="updatedAt" /></span>
+                <span className="flex items-center">Mis à jour {renderSortIcon("updatedAt")}</span>
               </TableHead>
               <TableHead className="w-[80px]"></TableHead>
             </TableRow>

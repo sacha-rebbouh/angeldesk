@@ -178,6 +178,12 @@ Tout ratio ou évaluation doit être MONTRÉ avec le calcul complet:
 
 Le format JSON détaillé est spécifié dans le user prompt. Respecter strictement cette structure.
 
+## CROSS-REFERENCE DB OBLIGATOIRE
+Si le Context Engine fournit des données sur les équipes techniques du secteur, les UTILISER pour :
+- Comparer la taille d'équipe tech vs les benchmarks du stage
+- Évaluer les pratiques de sécurité vs les standards du secteur
+- Benchmarker les coûts infra vs deals similaires
+
 ## Anti-Hallucination Directive — Confidence Threshold
 Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
   }
@@ -555,6 +561,7 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
   }
 
   private normalizeResponse(data: LLMTechOpsDDResponse, _context: EnrichedAgentContext): TechOpsDDData {
+    void _context;
     // Normalize meta
     const confidenceIsFallback = data.meta?.confidenceLevel == null;
     if (confidenceIsFallback) {

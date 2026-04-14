@@ -256,9 +256,9 @@ export const TrancheEditor = React.memo(function TrancheEditor({
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Details supplementaires</Label>
+                <Label>Détails supplémentaires</Label>
                 <Input
-                  placeholder="Precisions sur cette tranche..."
+                  placeholder="Précisions sur cette tranche..."
                   value={tranche.typeDetails ?? ""}
                   onChange={e => update("typeDetails", e.target.value || null)}
                 />

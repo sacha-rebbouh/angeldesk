@@ -1187,9 +1187,9 @@ function BoardsTab({
                     {session.verdict ? (
                       <Badge
                         variant={
-                          session.verdict === "GO"
+                          (session.verdict === "VERY_FAVORABLE" || session.verdict === "FAVORABLE")
                             ? "default"
-                            : session.verdict === "NO_GO"
+                            : session.verdict === "ALERT_DOMINANT"
                             ? "destructive"
                             : "secondary"
                         }

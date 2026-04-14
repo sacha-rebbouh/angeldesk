@@ -324,7 +324,6 @@ export async function upsertFundingRound(input: FundingRoundInput): Promise<Fund
  */
 export async function bulkInsertFundingRounds(
   rounds: FundingRoundInput[],
-  options: { skipDuplicates?: boolean } = {}
 ): Promise<{ inserted: number; skipped: number; errors: number }> {
   let inserted = 0;
   const skipped = 0;

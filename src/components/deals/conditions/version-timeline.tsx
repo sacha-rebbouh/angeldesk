@@ -34,6 +34,8 @@ interface VersionWithDelta extends TermsVersionData {
   deltaScore: number | null;
 }
 
+const EMPTY_VERSIONS: VersionWithDelta[] = [];
+
 export const VersionTimeline = React.memo(function VersionTimeline({ dealId }: VersionTimelineProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -48,7 +50,7 @@ export const VersionTimeline = React.memo(function VersionTimeline({ dealId }: V
     staleTime: 30_000,
   });
 
-  const versions = data?.versions ?? [];
+  const versions = data?.versions ?? EMPTY_VERSIONS;
 
   // Collapse logic: show first 2 + last 3 when > 6 versions
   const displayedVersions = useMemo(() => {

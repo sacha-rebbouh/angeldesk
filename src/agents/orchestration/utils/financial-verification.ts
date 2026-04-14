@@ -9,9 +9,7 @@ import {
   calculateGrossMargin,
   calculateLTVCACRatio,
   calculatePercentageDeviation,
-  type CalculationResult,
 } from "./financial-calculations";
-import { getBenchmarkFull } from "@/services/benchmarks";
 
 export interface VerificationResult {
   metric: string;
@@ -63,6 +61,8 @@ export function verifyFinancialMetrics(
   sector: string,
   stage: string,
 ): FinancialVerificationReport {
+  void sector;
+  void stage;
   const results: VerificationResult[] = [];
 
   // 1. Verifier ARR si MRR disponible

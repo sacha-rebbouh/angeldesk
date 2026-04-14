@@ -15,6 +15,7 @@ import {
 
 export interface PDFExtractionResult {
   text: string;
+  pageTexts: string[];
   pageCount: number;
   info: {
     title?: string;
@@ -61,10 +62,12 @@ export async function extractTextFromPDF(
     const metadata = await pdf.getMetadata().catch(() => null);
     const info = metadata?.info as PDFMetadataInfo | undefined;
 
-    const textContent = pageTexts.join("\n");
-
-    // Clean up extracted text
-    const cleanedText = cleanExtractedText(textContent);
+    // Clean each page independently and preserve page boundaries. Downstream
+    // strict extraction depends on this to prove page-level coverage.
+    const cleanedPageTexts = pageTexts.map((pageText, index) =>
+      `[Page ${index + 1} - Native PDF text]\n${cleanExtractedText(pageText)}`
+    );
+    const cleanedText = cleanedPageTexts.join("\n\f\n");
 
     // Analyze extraction quality
     const quality = analyzeExtractionQuality(cleanedText, totalPages);
@@ -78,6 +81,7 @@ export async function extractTextFromPDF(
 
     return {
       text: cleanedText,
+      pageTexts: cleanedPageTexts,
       pageCount: totalPages,
       info: {
         title: info?.Title,
@@ -91,6 +95,7 @@ export async function extractTextFromPDF(
     console.error("PDF extraction error:", error);
     return {
       text: "",
+      pageTexts: [],
       pageCount: 0,
       info: {},
       success: false,
@@ -111,6 +116,7 @@ export async function extractTextFromPDFUrl(
     if (!response.ok) {
       return {
         text: "",
+        pageTexts: [],
         pageCount: 0,
         info: {},
         success: false,
@@ -126,6 +132,7 @@ export async function extractTextFromPDFUrl(
     console.error("PDF URL fetch error:", error);
     return {
       text: "",
+      pageTexts: [],
       pageCount: 0,
       info: {},
       success: false,
