@@ -20,7 +20,17 @@ const ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Types
 type DealWithRelations = Deal & {
-  documents: Pick<Document, "id" | "extractedText" | "processingStatus">[];
+  documents: (Pick<Document, "id" | "extractedText" | "processingStatus" | "uploadedAt"> & {
+    extractionRuns?: Array<{
+      id: string;
+      documentVersion: number;
+      contentHash: string | null;
+      corpusTextHash: string | null;
+      status: string;
+      readyForAnalysis: boolean;
+      completedAt: Date | null;
+    }>;
+  })[];
   founders: Pick<Founder, "id" | "name" | "role">[];
 };
 
@@ -69,9 +79,21 @@ export function generateDealFingerprint(deal: DealWithRelations): string {
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((d) => ({
         id: d.id,
-        // Use first 1000 chars of extracted text for fingerprint
-        // Full text would make fingerprint too large
-        textPreview: d.extractedText?.slice(0, 1000) ?? null,
+        uploadedAt: d.uploadedAt.toISOString(),
+        latestExtractionRun: d.extractionRuns?.[0]
+          ? {
+              id: d.extractionRuns[0].id,
+              documentVersion: d.extractionRuns[0].documentVersion,
+              contentHash: d.extractionRuns[0].contentHash,
+              corpusTextHash: d.extractionRuns[0].corpusTextHash,
+              status: d.extractionRuns[0].status,
+              readyForAnalysis: d.extractionRuns[0].readyForAnalysis,
+              completedAt: d.extractionRuns[0].completedAt?.toISOString() ?? null,
+            }
+          : null,
+        extractedTextHash: d.extractedText
+          ? createHash("sha256").update(d.extractedText, "utf8").digest("hex")
+          : null,
       })),
 
     // Founders (sorted by name for consistency)
@@ -165,6 +187,20 @@ export async function getDealForFingerprint(
           id: true,
           extractedText: true,
           processingStatus: true,
+          uploadedAt: true,
+          extractionRuns: {
+            orderBy: { completedAt: "desc" },
+            take: 1,
+            select: {
+              id: true,
+              documentVersion: true,
+              contentHash: true,
+              corpusTextHash: true,
+              status: true,
+              readyForAnalysis: true,
+              completedAt: true,
+            },
+          },
         },
       },
       founders: {

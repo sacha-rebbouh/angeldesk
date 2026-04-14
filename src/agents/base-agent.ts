@@ -15,6 +15,7 @@ import { z } from "zod";
 import { formatGeographyCoverageForPrompt } from "@/services/context-engine/geography-coverage";
 import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
 import { getStageCalibrationBlock } from "@/agents/stage-calibration";
+import { formatRetrievedDocumentWindows } from "./document-context-retriever";
 
 // Generic type for agent results with data
 export interface AgentResultWithData<T> extends AgentResult {
@@ -812,6 +813,11 @@ ${sanitizedDeal.description}
       text += `récent et le deck initial, le document récent fait foi (sauf preuve contraire).\n\n`;
 
       for (const doc of sortedDocs) {
+        if (!this.shouldIncludeDocumentInGeneralContext(doc.type)) {
+          text += `\n### ${sanitizeName(doc.name)} (${sanitizeName(doc.type)})\n`;
+          text += `[Document route hors contexte general pour ${this.config.name}; il sera traite par les agents specialises.]\n`;
+          continue;
+        }
         // Sanitize document name and type
         const sanitizedDocName = sanitizeName(doc.name);
         const sanitizedDocType = sanitizeName(doc.type);
@@ -820,33 +826,15 @@ ${sanitizedDeal.description}
           : "date inconnue";
         text += `\n### ${sanitizedDocName} (${sanitizedDocType}) — importé le ${dateLabel}\n`;
         if (doc.extractedText) {
-          // Financial models need more content (multiple sheets)
-          const limit = doc.type === "FINANCIAL_MODEL" ? 50000 : 10000;
-          // F27: head+tail truncation to capture financial annexes
-          const tailReserve = Math.min(2000, Math.floor(limit * 0.15)); // 15% reserve, max 2K
-
-          if (doc.extractedText.length <= limit) {
-            const sanitizedContent = sanitizeForLLM(doc.extractedText, {
-              maxLength: limit,
-              preserveNewlines: true,
-            });
-            text += sanitizedContent;
-          } else {
-            const headLimit = limit - tailReserve;
-            const headContent = sanitizeForLLM(doc.extractedText.substring(0, headLimit), {
-              maxLength: headLimit,
-              preserveNewlines: true,
-            });
-            const tailContent = sanitizeForLLM(
-              doc.extractedText.substring(doc.extractedText.length - tailReserve),
-              { maxLength: tailReserve, preserveNewlines: true }
-            );
-            const omittedChars = doc.extractedText.length - limit;
-
-            text += headContent;
-            text += `\n\n[⚠️ TRONCATION: ${omittedChars} caracteres omis. Document total: ${doc.extractedText.length} chars. Fin du document ci-dessous.]\n\n`;
-            text += tailContent;
-          }
+          const limit = this.getDocumentContextLimit(doc.type);
+          const retrieved = formatRetrievedDocumentWindows(doc, this.config.name, {
+            maxChars: limit,
+            maxWindows: doc.type === "FINANCIAL_MODEL" ? 18 : 10,
+          });
+          text += sanitizeForLLM(retrieved.text, {
+            maxLength: limit + 1000,
+            preserveNewlines: true,
+          });
         } else {
           text += "(Content not yet extracted)";
         }
@@ -865,11 +853,29 @@ ${sanitizedDeal.description}
     const financialModel = documents.find(d => d.type === "FINANCIAL_MODEL");
     if (!financialModel?.extractedText) return null;
 
+    const retrieved = formatRetrievedDocumentWindows(financialModel, this.config.name, {
+      maxChars: 100000,
+      maxWindows: 30,
+    });
+
     // Sanitize financial model content (preserve structure for analysis)
-    return sanitizeForLLM(financialModel.extractedText, {
+    return sanitizeForLLM(retrieved.text, {
       maxLength: 100000,
       preserveNewlines: true,
     });
+  }
+
+  private shouldIncludeDocumentInGeneralContext(documentType: string): boolean {
+    if (documentType === "FINANCIAL_MODEL") {
+      return this.config.name === "financial-auditor";
+    }
+    return true;
+  }
+
+  private getDocumentContextLimit(documentType: string): number {
+    if (documentType === "FINANCIAL_MODEL") return 80_000;
+    if (documentType === "PITCH_DECK") return 30_000;
+    return 24_000;
   }
 
   // Format Context Engine data for prompts (Tier 1 agents)

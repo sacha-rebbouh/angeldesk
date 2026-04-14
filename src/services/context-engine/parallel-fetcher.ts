@@ -48,9 +48,9 @@ export const CONNECTOR_TIERS: Record<string, FetchConfig> = {
   },
   // Tier 2: Fast APIs
   fast: {
-    timeoutMs: 5000,
+    timeoutMs: 15000,
     maxRetries: 1,
-    retryDelayMs: 500,
+    retryDelayMs: 750,
     useCircuitBreaker: true,
   },
   // Tier 3: Slow APIs (LinkedIn, web search)

@@ -9,6 +9,9 @@
 
 import * as XLSX from "xlsx";
 
+const MAX_PROMPT_TEXT_PER_WORKBOOK = 120_000;
+const MAX_CHARS_PER_SHEET = 6_000;
+
 export interface ExcelExtractionResult {
   success: boolean;
   text: string;
@@ -18,6 +21,7 @@ export interface ExcelExtractionResult {
     totalRows: number;
     totalCells: number;
     hasFormulas: boolean;
+    formulaCount: number;
     hasCharts: boolean;
   };
   error?: string;
@@ -25,12 +29,26 @@ export interface ExcelExtractionResult {
 
 export interface SheetData {
   name: string;
+  classification: SheetClassification;
+  hidden: boolean;
+  includedInPrompt: boolean;
+  truncated: boolean;
   rowCount: number;
   columnCount: number;
   data: string[][]; // Raw cell values as strings
   headers?: string[]; // First row if detected as headers
   textContent: string; // Formatted text representation
+  formulaCount: number;
 }
+
+export type SheetClassification =
+  | "ASSUMPTIONS"
+  | "PNL"
+  | "CASHFLOW"
+  | "CAPTABLE"
+  | "CALCULATIONS"
+  | "TIMESERIES"
+  | "OTHER";
 
 /**
  * Extract text content from an Excel buffer
@@ -40,20 +58,30 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
     // Parse the workbook
     const workbook = XLSX.read(buffer, {
       type: "buffer",
-      cellFormula: true,
-      cellNF: true,
+      cellFormula: false,
+      cellNF: false,
       cellStyles: false, // Skip styles for performance
     });
 
     const sheets: SheetData[] = [];
     let totalRows = 0;
     let totalCells = 0;
-    let hasFormulas = false;
+    const hasFormulas = false;
+    const formulaCount = 0;
     const textParts: string[] = [];
 
+    textParts.push(`=== FINANCIAL MODEL EXCEL ===`);
+    textParts.push(`Total: ${workbook.SheetNames.length} feuilles`);
+    textParts.push(`Budget prompt: ${MAX_PROMPT_TEXT_PER_WORKBOOK} caracteres max | ${MAX_CHARS_PER_SHEET} caracteres max par feuille`);
+    textParts.push("");
+    textParts.push("== TABLE DES MATIERES ==");
+
+    const parsedSheets: SheetData[] = [];
+
     // Process each sheet
-    for (const sheetName of workbook.SheetNames) {
+    for (const [sheetIndex, sheetName] of workbook.SheetNames.entries()) {
       const worksheet = workbook.Sheets[sheetName];
+      const hidden = Boolean(workbook.Workbook?.Sheets?.[sheetIndex]?.Hidden);
 
       // Get range
       const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1");
@@ -70,47 +98,68 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
       // Detect headers (first row with content)
       const headers = data.length > 0 ? data[0].map(String) : undefined;
 
-      // Check for formulas
+      // Formulas are intentionally not extracted into prompt text. The xlsx file
+      // remains the audit source of truth; values are enough for LLM analysis.
       for (const cellAddress in worksheet) {
         if (cellAddress[0] === "!") continue;
         const cell = worksheet[cellAddress];
-        if (cell.f) hasFormulas = true;
         if (cell.v !== undefined) totalCells++;
       }
 
-      // Build text representation of the sheet
-      let sheetText = `\n=== FEUILLE: ${sheetName} ===\n`;
+      const classification = classifySheet(sheetName, data);
+      const includedInPrompt = !hidden && classification !== "CALCULATIONS";
+      const sheetText = includedInPrompt
+        ? formatSheetForLLM({
+          name: sheetName,
+          classification,
+          hidden,
+          includedInPrompt,
+          truncated: false,
+          rowCount,
+          columnCount,
+          data,
+          headers,
+          textContent: "",
+          formulaCount: 0,
+        }, MAX_CHARS_PER_SHEET)
+        : `\n=== FEUILLE: ${sheetName} ===\nClassification: ${classification} | Dimensions: ${rowCount} lignes x ${columnCount} colonnes\n[Feuille exclue du prompt: ${hidden ? "hidden sheet" : "calculation/helper sheet"}]\n`;
 
-      // Format as table-like text
-      for (let i = 0; i < data.length; i++) {
-        const row = data[i];
-        if (row.some((cell) => cell !== "")) {
-          // Skip empty rows
-          const rowText = row
-            .map((cell) => String(cell).trim())
-            .filter((cell) => cell !== "")
-            .join(" | ");
-          if (rowText) {
-            sheetText += rowText + "\n";
-          }
-        }
-      }
-
-      sheets.push({
+      parsedSheets.push({
         name: sheetName,
+        classification,
+        hidden,
+        includedInPrompt,
+        truncated: sheetText.length >= MAX_CHARS_PER_SHEET,
         rowCount,
         columnCount,
         data,
         headers,
         textContent: sheetText,
+        formulaCount: 0,
       });
 
       totalRows += rowCount;
-      textParts.push(sheetText);
     }
 
+    for (const [index, sheet] of parsedSheets.entries()) {
+      textParts.push(`${index + 1}. [${sheet.name}] - ${sheet.classification} - ${sheet.rowCount} lignes x ${sheet.columnCount} colonnes${sheet.hidden ? " - HIDDEN" : ""}${sheet.includedInPrompt ? "" : " - STUB_ONLY"}`);
+    }
+    textParts.push("");
+    textParts.push("IMPORTANT: Les formules ne sont pas dumpées dans le prompt. Les valeurs calculées sont extraites; le fichier Excel original reste la source d'audit.");
+    textParts.push("");
+
+    for (const sheet of parsedSheets) {
+      if (textParts.join("\n").length >= MAX_PROMPT_TEXT_PER_WORKBOOK) break;
+      textParts.push(sheet.textContent);
+    }
+
+    sheets.push(...parsedSheets);
+
     // Combine all text
-    const fullText = textParts.join("\n");
+    const combinedText = textParts.join("\n");
+    const fullText = combinedText.length > MAX_PROMPT_TEXT_PER_WORKBOOK
+      ? `${combinedText.slice(0, MAX_PROMPT_TEXT_PER_WORKBOOK - 180)}\n\n[TRONQUE: workbook promptText borne a ${MAX_PROMPT_TEXT_PER_WORKBOOK} caracteres. Le fichier Excel original reste disponible pour audit.]`
+      : combinedText;
 
     // Check for charts (SheetJS doesn't extract chart data, but we can detect presence)
     // Charts are stored in the workbook but not easily accessible
@@ -125,6 +174,7 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
         totalRows,
         totalCells,
         hasFormulas,
+        formulaCount,
         hasCharts,
       },
     };
@@ -139,6 +189,7 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
         totalRows: 0,
         totalCells: 0,
         hasFormulas: false,
+        formulaCount: 0,
         hasCharts: false,
       },
       error: error instanceof Error ? error.message : "Unknown error parsing Excel file",
@@ -162,74 +213,31 @@ export interface FinancialMetrics {
   years?: string[];
 }
 
-/**
- * Summarize Excel content for LLM analysis
- * Returns a condensed, LLM-readable version with smart formatting
- *
- * IMPORTANT: Processes ALL sheets - never truncates sheets silently
- */
-export function summarizeForLLM(result: ExcelExtractionResult, maxChars: number = 50000): string {
-  if (!result.success) return "";
+function classifySheet(sheetName: string, data: string[][]): SheetClassification {
+  const normalizedName = normalizeForClassification(sheetName);
+  if (/assumpt|hypoth|input/.test(normalizedName)) return "ASSUMPTIONS";
+  if (/p.?n?.?l|profit|loss|income/.test(normalizedName)) return "PNL";
+  if (/cash.?flow|tresor/.test(normalizedName)) return "CASHFLOW";
+  if (/cap.?table|sharehold/.test(normalizedName)) return "CAPTABLE";
+  if (/calc|aux|helper|work/.test(normalizedName)) return "CALCULATIONS";
 
-  // First, build a TABLE OF CONTENTS so LLM knows what sheets exist
-  let summary = `=== FINANCIAL MODEL EXCEL ===\n`;
-  summary += `Total: ${result.metadata.sheetCount} feuilles | ${result.metadata.totalCells} cellules | Formules: ${result.metadata.hasFormulas ? "Oui" : "Non"}\n\n`;
+  const firstRows = data.slice(0, 8);
+  const dateColumnCount = Math.max(0, ...firstRows.map((row) => detectDateColumns(row).length));
+  if (dateColumnCount > 6) return "TIMESERIES";
 
-  // TABLE OF CONTENTS - always include ALL sheet names
-  summary += `== TABLE DES MATIERES ==\n`;
-  for (let i = 0; i < result.sheets.length; i++) {
-    const sheet = result.sheets[i];
-    const preview = getSheetPreview(sheet);
-    summary += `${i + 1}. [${sheet.name}] - ${sheet.rowCount} lignes - ${preview}\n`;
-  }
-  summary += `\n⚠️ IMPORTANT: Tu DOIS analyser CHAQUE onglet ci-dessus. Ne saute aucun onglet.\n\n`;
-
-  // Calculate chars per sheet to ensure all sheets get space
-  const headerLength = summary.length;
-  const availableChars = maxChars - headerLength;
-  const charsPerSheet = Math.floor(availableChars / result.sheets.length);
-
-  // Process EACH sheet - never skip any
-  for (const sheet of result.sheets) {
-    const sheetSummary = formatSheetForLLM(sheet, Math.max(charsPerSheet, 2000));
-    if (sheetSummary) {
-      summary += sheetSummary + "\n";
-    }
-  }
-
-  // If we exceed maxChars, truncate but add a warning
-  if (summary.length > maxChars) {
-    const truncatedSummary = summary.substring(0, maxChars - 100);
-    return truncatedSummary + `\n\n[... TRONQUÉ - ${result.metadata.sheetCount} onglets présents, analyser chacun ...]`;
-  }
-
-  return summary;
+  const sample = normalizeForClassification(firstRows.flat().join(" "));
+  if (/assumpt|hypoth|input/.test(sample)) return "ASSUMPTIONS";
+  if (/revenue|ebitda|gross margin|profit|loss|income|pnl/.test(sample)) return "PNL";
+  if (/cash flow|cashflow|runway|burn|tresor/.test(sample)) return "CASHFLOW";
+  if (/cap table|sharehold|dilution|option pool|esop/.test(sample)) return "CAPTABLE";
+  return "OTHER";
 }
 
-/**
- * Get a brief preview of what a sheet contains
- */
-function getSheetPreview(sheet: SheetData): string {
-  const { data } = sheet;
-  if (data.length === 0) return "Vide";
-
-  // Look for keywords in first few rows to describe content
-  const keywords: string[] = [];
-  const financialKeywords = ["revenue", "arr", "mrr", "cost", "burn", "ebitda", "profit", "loss", "cash", "capex"];
-  const projectionKeywords = ["projection", "forecast", "budget", "plan", "target", "objectif"];
-  const assumptionKeywords = ["assumption", "hypothèse", "hypothesis", "paramètre"];
-
-  const textContent = data.slice(0, 10).flat().join(" ").toLowerCase();
-
-  if (financialKeywords.some(k => textContent.includes(k))) keywords.push("Données financières");
-  if (projectionKeywords.some(k => textContent.includes(k))) keywords.push("Projections");
-  if (assumptionKeywords.some(k => textContent.includes(k))) keywords.push("Hypothèses");
-
-  // Check for dates/years
-  const hasYears = /20\d{2}/.test(textContent);
-  if (hasYears) keywords.push("Timeline");
-
-  return keywords.length > 0 ? keywords.join(", ") : "Données";
+function normalizeForClassification(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
 /**
@@ -243,7 +251,8 @@ function formatSheetForLLM(sheet: SheetData, maxChars: number = 5000): string {
 
   if (data.length === 0) return `\n--- ${name.toUpperCase()} --- (Vide)\n`;
 
-  let output = `\n--- ${name.toUpperCase()} ---\n`;
+  let output = `\n=== FEUILLE: ${name} ===\n`;
+  output += `Classification: ${sheet.classification} | Dimensions: ${sheet.rowCount} lignes x ${sheet.columnCount} colonnes\n`;
 
   // Detect if this looks like a financial table (many date columns)
   const firstRow = data[0] || [];

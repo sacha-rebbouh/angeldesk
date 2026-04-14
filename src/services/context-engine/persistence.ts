@@ -28,6 +28,10 @@ export async function saveContextSnapshot(
     stage?: string;
     tagline?: string;
     competitors?: string[];
+    productName?: string;
+    coreValueProposition?: string;
+    useCases?: string[];
+    keyDifferentiators?: string[];
   }
 ): Promise<void> {
   try {
@@ -97,6 +101,11 @@ export async function loadContextSnapshot(
     sector?: string;
     stage?: string;
     tagline?: string;
+    competitors?: string[];
+    productName?: string;
+    coreValueProposition?: string;
+    useCases?: string[];
+    keyDifferentiators?: string[];
   }
 ): Promise<DealContext | null> {
   try {
@@ -124,15 +133,25 @@ export async function loadContextSnapshot(
         sector?: string;
         stage?: string;
         tagline?: string;
+        competitors?: string[];
+        productName?: string;
+        coreValueProposition?: string;
+        useCases?: string[];
+        keyDifferentiators?: string[];
       };
 
+      const normalizeString = (value?: string) => (value ?? "").toLowerCase().trim();
+      const normalizeList = (values?: string[]) => [...(values ?? [])].map((value) => value.toLowerCase().trim()).sort().join("|");
       const hasChanged =
-        (currentInputData.companyName &&
-          savedInput.companyName &&
-          currentInputData.companyName.toLowerCase() !== savedInput.companyName.toLowerCase()) ||
-        (currentInputData.sector &&
-          savedInput.sector &&
-          currentInputData.sector.toLowerCase() !== savedInput.sector.toLowerCase());
+        normalizeString(currentInputData.companyName) !== normalizeString(savedInput.companyName) ||
+        normalizeString(currentInputData.sector) !== normalizeString(savedInput.sector) ||
+        normalizeString(currentInputData.stage) !== normalizeString(savedInput.stage) ||
+        normalizeString(currentInputData.tagline) !== normalizeString(savedInput.tagline) ||
+        normalizeString(currentInputData.productName) !== normalizeString(savedInput.productName) ||
+        normalizeString(currentInputData.coreValueProposition) !== normalizeString(savedInput.coreValueProposition) ||
+        normalizeList(currentInputData.competitors) !== normalizeList(savedInput.competitors) ||
+        normalizeList(currentInputData.useCases) !== normalizeList(savedInput.useCases) ||
+        normalizeList(currentInputData.keyDifferentiators) !== normalizeList(savedInput.keyDifferentiators);
 
       if (hasChanged) {
         console.log(

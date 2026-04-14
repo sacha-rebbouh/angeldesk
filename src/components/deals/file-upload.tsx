@@ -48,6 +48,14 @@ interface FileToUpload {
   error?: string;
 }
 
+interface UploadProgressSnapshot {
+  phase: string;
+  pageCount: number;
+  pagesProcessed: number;
+  percent: number;
+  message?: string;
+}
+
 interface FileUploadProps {
   dealId: string;
   onUploadComplete?: (document: { id: string; name: string; type: string }) => void;
@@ -93,6 +101,8 @@ export const FileUpload = memo(function FileUpload({
   const [uploadStartedAt, setUploadStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
+  const [activeProgressId, setActiveProgressId] = useState<string | null>(null);
+  const [serverProgress, setServerProgress] = useState<UploadProgressSnapshot | null>(null);
 
   const onDrop = useCallback(
     (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
@@ -132,12 +142,16 @@ export const FileUpload = memo(function FileUpload({
     async (fileData: FileToUpload) => {
       updateFile(fileData.id, { status: "uploading" });
       setActiveFileName(fileData.file.name);
+      const progressId = crypto.randomUUID();
+      setActiveProgressId(progressId);
+      setServerProgress(null);
 
       try {
         const formData = new FormData();
         formData.append("file", fileData.file);
         formData.append("dealId", dealId);
         formData.append("type", fileData.documentType);
+        formData.append("progressId", progressId);
         if (fileData.documentType === "OTHER" && fileData.customType) {
           formData.append("customType", fileData.customType);
         }
@@ -185,6 +199,8 @@ export const FileUpload = memo(function FileUpload({
     setIsUploading(false);
     setUploadStartedAt(null);
     setActiveFileName(null);
+    setActiveProgressId(null);
+    setServerProgress(null);
     setElapsedSeconds(0);
     onAllComplete?.();
   }, [files, uploadFile, onError, onAllComplete]);
@@ -194,13 +210,14 @@ export const FileUpload = memo(function FileUpload({
   const totalFilesToProcess = files.filter((file) => file.status !== "error").length || 1;
   const completedFiles = files.filter((file) => file.status === "success").length;
   const estimatedUploadProgress = useMemo(() => {
+    if (serverProgress) return serverProgress.percent;
     if (!isUploading) return 0;
     const fileBaseline = (completedFiles / totalFilesToProcess) * 100;
     const perFileCap = 100 / totalFilesToProcess;
     const currentFileExpectedSeconds = Math.max(45, Math.ceil(((uploadingFile?.file.size ?? 5_000_000) / (1024 * 1024)) * 10));
     const currentFileProgress = Math.min(0.95, elapsedSeconds / currentFileExpectedSeconds) * perFileCap;
     return Math.min(95, Math.max(5, Math.round(fileBaseline + currentFileProgress)));
-  }, [completedFiles, elapsedSeconds, isUploading, totalFilesToProcess, uploadingFile?.file.size]);
+  }, [completedFiles, elapsedSeconds, isUploading, serverProgress, totalFilesToProcess, uploadingFile?.file.size]);
 
   useEffect(() => {
     if (!isUploading || !uploadStartedAt) return;
@@ -211,6 +228,29 @@ export const FileUpload = memo(function FileUpload({
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
   }, [isUploading, uploadStartedAt]);
+
+  useEffect(() => {
+    if (!isUploading || !activeProgressId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/documents/upload/progress/${activeProgressId}`);
+        if (!response.ok) return;
+        const payload = await response.json() as { data: UploadProgressSnapshot | null };
+        if (!cancelled && payload.data) {
+          setServerProgress(payload.data);
+        }
+      } catch {
+        // Keep the local elapsed-time fallback if progress polling is temporarily unavailable.
+      }
+    };
+    poll();
+    const intervalId = window.setInterval(poll, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeProgressId, isUploading]);
 
   return (
     <div className="relative space-y-3">
@@ -360,18 +400,21 @@ export const FileUpload = memo(function FileUpload({
                   {activeFileName ?? uploadingFile?.file.name ?? "Document"} - OCR et analyse visuelle des pages.
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Temps ecoule: {formatElapsed(elapsedSeconds)}
+                  {serverProgress?.pageCount
+                    ? `${serverProgress.pagesProcessed}/${serverProgress.pageCount} pages traitees`
+                    : "Preparation de l'extraction"}{" "}
+                  - Temps ecoule: {formatElapsed(elapsedSeconds)}
                 </p>
               </div>
             </div>
             <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>Progression estimee</span>
+                <span>{serverProgress ? "Progression backend" : "Progression estimee"}</span>
                 <span>{estimatedUploadProgress}%</span>
               </div>
               <Progress value={estimatedUploadProgress} className="h-2" />
               <p className="text-xs text-muted-foreground">
-                Les pages complexes peuvent prendre plus longtemps: graphiques, tableaux, OCR haute fidelite.
+                {serverProgress?.message ?? "Les pages complexes peuvent prendre plus longtemps: graphiques, tableaux, OCR haute fidelite."}
               </p>
             </div>
           </div>

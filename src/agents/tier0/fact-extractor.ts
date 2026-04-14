@@ -434,7 +434,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
       .map(doc => ({
         id: doc.id,
         type: this.mapDocumentType(doc.type),
-        content: doc.extractedText ?? "",
+        content: this.prepareDocumentContent(doc.type, doc.name, doc.extractedText ?? ""),
         name: doc.name,
       }));
 
@@ -518,6 +518,18 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
       default:
         return "OTHER";
     }
+  }
+
+  private prepareDocumentContent(type: string, name: string, content: string): string {
+    if (type === "FINANCIAL_MODEL" && (content.length > 500_000 || /\[[A-Z]{1,3}\d+=/.test(content))) {
+      return [
+        "[EXCEL LEGACY EXTRACTION DETECTED]",
+        `Document: ${name}`,
+        `Taille extraite: ${content.length} caracteres`,
+        "Ancien dump Excel brut ignore. Re-extraire le workbook avec extractorVersion=2 avant de creer des facts financiers.",
+      ].join("\n");
+    }
+    return content;
   }
 
   /**

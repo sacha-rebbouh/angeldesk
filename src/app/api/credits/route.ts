@@ -36,7 +36,8 @@ export async function GET() {
 const checkSchema = z.object({
   action: z.enum([
     'QUICK_SCAN', 'DEEP_DIVE', 'AI_BOARD', 'LIVE_COACHING',
-    'RE_ANALYSIS', 'CHAT', 'PDF_EXPORT',
+    'RE_ANALYSIS', 'EXTRACTION_STANDARD_PAGE', 'EXTRACTION_HIGH_PAGE',
+    'EXTRACTION_SUPREME_PAGE', 'CHAT', 'PDF_EXPORT',
     // Legacy actions
     'ANALYSIS', 'UPDATE', 'BOARD',
   ]),

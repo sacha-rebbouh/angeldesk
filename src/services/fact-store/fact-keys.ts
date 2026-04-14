@@ -16,6 +16,15 @@ export interface FactKeyDefinition {
 
 export const FACT_KEYS: Record<string, FactKeyDefinition> = {
   // ═══════════════════════════════════════════════════════════════════
+  // COMPANY
+  // ═══════════════════════════════════════════════════════════════════
+  'company.name': {
+    type: 'string',
+    category: 'OTHER',
+    description: 'Canonical company name',
+  },
+
+  // ═══════════════════════════════════════════════════════════════════
   // FINANCIAL (~20 cles)
   // ═══════════════════════════════════════════════════════════════════
   'financial.arr': {

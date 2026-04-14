@@ -7,9 +7,11 @@ import { requireAuth } from "@/lib/auth";
 import { encryptText, safeDecrypt } from "@/lib/encryption";
 import { prisma } from "@/lib/prisma";
 import {
+  buildDocumentPageArtifact,
   hashExtractedCorpus,
   refreshRunExtractionStats,
 } from "@/services/documents/extraction-runs";
+import { deductCreditAmount } from "@/services/credits";
 import { selectiveOCR } from "@/services/pdf";
 import { downloadFile } from "@/services/storage";
 
@@ -79,6 +81,21 @@ export async function POST(_request: Request, context: RouteParams) {
       );
     }
 
+    const creditDeduction = await deductCreditAmount(user.id, "EXTRACTION_SUPREME_PAGE", 2, {
+      dealId: document.dealId,
+      documentId,
+      documentExtractionRunId: latestRun.id,
+      pageNumber,
+      idempotencyKey: `extraction:supreme-page:${latestRun.id}:${pageNumber}`,
+      description: `Supreme OCR retry for ${document.name}, page ${pageNumber}`,
+    });
+    if (!creditDeduction.success) {
+      return NextResponse.json(
+        { error: creditDeduction.error ?? "Credits insuffisants pour relancer cette page", requiredCredits: 2 },
+        { status: 402 }
+      );
+    }
+
     await prisma.document.update({
       where: { id: documentId },
       data: { processingStatus: "PROCESSING" },
@@ -128,6 +145,15 @@ export async function POST(_request: Request, context: RouteParams) {
     const wordCount = retryPage.text.split(/\s+/).filter(Boolean).length;
     const qualityScore = scoreRetriedPage(charCount, signals);
     const status = determineRetriedPageStatus(charCount, qualityScore, retryPage.confidence);
+    const pageArtifact = buildDocumentPageArtifact({
+      pageNumber,
+      label: `Page ${pageNumber}`,
+      text: retryPage.text,
+      hasTables: signals.hasTables,
+      hasCharts: signals.hasCharts,
+      confidence: retryPage.confidence,
+      needsHumanReview: status === "NEEDS_REVIEW",
+    });
     const summaryMetrics = updateSummaryMetrics(latestRun.summaryMetrics, {
       pageNumber,
       extractionTier: "supreme",
@@ -153,6 +179,9 @@ export async function POST(_request: Request, context: RouteParams) {
           requiresOCR: true,
           ocrProcessed: true,
           contentHash: hashExtractedCorpus(retryPage.text),
+          artifactVersion: pageArtifact.version,
+          artifact: JSON.parse(JSON.stringify(pageArtifact)) as Prisma.InputJsonValue,
+          pageImageHash: pageArtifact.sourceHash ?? null,
           errorMessage: status === "NEEDS_REVIEW" ? "Targeted supreme OCR completed but still needs review" : null,
           textPreview: buildPreview(retryPage.text),
         },
@@ -181,6 +210,8 @@ export async function POST(_request: Request, context: RouteParams) {
               charCount,
               wordCount,
               cost: retryResult.totalCost,
+              creditsCharged: 2,
+              creditAction: "EXTRACTION_SUPREME_PAGE",
               retriedAt: new Date().toISOString(),
             },
           }),
@@ -207,6 +238,7 @@ export async function POST(_request: Request, context: RouteParams) {
         qualityScore,
         runStatus: refreshedRun?.status ?? latestRun.status,
         readyForAnalysis: refreshedRun?.readyForAnalysis ?? latestRun.readyForAnalysis,
+        creditsCharged: 2,
       },
     });
   } catch (error) {

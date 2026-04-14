@@ -37,7 +37,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
         ocrProcessed: true,
         extractedText: true,
         extractionRuns: {
-          orderBy: { completedAt: "desc" },
+          orderBy: [{ startedAt: "desc" }, { completedAt: "desc" }],
           take: 1,
           include: {
             pages: { orderBy: { pageNumber: "asc" } },
@@ -95,6 +95,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
               contentHash: latestRun.contentHash,
               corpusTextHash: latestRun.corpusTextHash,
               creditEstimate,
+              startedAt: latestRun.startedAt.toISOString(),
               completedAt: latestRun.completedAt?.toISOString() ?? null,
               pages: latestRun.pages.map((page) => {
                 const pageOverride = latestRun.overrides.find(
@@ -119,6 +120,9 @@ export async function GET(_request: NextRequest, context: RouteParams) {
                   ocrProcessed: page.ocrProcessed,
                   errorMessage: page.errorMessage,
                   textPreview: page.textPreview,
+                  artifactVersion: page.artifactVersion,
+                  artifact: page.artifact,
+                  pageImageHash: page.pageImageHash,
                   extractionTier: qualityPlan?.extractionTier ?? null,
                   visualRiskScore: qualityPlan?.visualRiskScore ?? null,
                   visualRiskReasons: qualityPlan?.visualRiskReasons ?? [],

@@ -62,7 +62,28 @@ export async function deductCredits(
   dealId?: string
 ): Promise<{ success: boolean; balanceAfter: number; error?: string }> {
   const cost = CREDIT_COSTS[action];
+  return deductCreditAmount(userId, action, cost, { dealId });
+}
 
+export interface CreditDeductionContext {
+  dealId?: string;
+  documentId?: string;
+  documentExtractionRunId?: string;
+  pageNumber?: number;
+  idempotencyKey?: string;
+  description?: string;
+}
+
+/**
+ * Deduct an explicit credit amount for variable-cost operations.
+ * This is used for extraction because the billable primitive is page-level.
+ */
+export async function deductCreditAmount(
+  userId: string,
+  action: CreditActionType,
+  cost: number,
+  context: CreditDeductionContext = {}
+): Promise<{ success: boolean; balanceAfter: number; error?: string; alreadyDeducted?: boolean }> {
   // Free actions — no deduction needed
   if (cost === 0) {
     return { success: true, balanceAfter: 0 };
@@ -70,6 +91,16 @@ export async function deductCredits(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      if (context.idempotencyKey) {
+        const existing = await tx.creditTransaction.findUnique({
+          where: { idempotencyKey: context.idempotencyKey },
+          select: { balanceAfter: true },
+        });
+        if (existing) {
+          return { success: true, balanceAfter: existing.balanceAfter, alreadyDeducted: true };
+        }
+      }
+
       const balance = await tx.userCreditBalance.findUnique({
         where: { userId },
       });
@@ -115,8 +146,12 @@ export async function deductCredits(
           amount: -cost,
           balanceAfter: newBalance,
           action: action as CreditAction,
-          description: getActionDescription(action),
-          dealId: dealId ?? null,
+          description: context.description ?? getActionDescription(action),
+          dealId: context.dealId ?? null,
+          documentId: context.documentId ?? null,
+          documentExtractionRunId: context.documentExtractionRunId ?? null,
+          pageNumber: context.pageNumber ?? null,
+          idempotencyKey: context.idempotencyKey ?? null,
         },
       });
 
@@ -450,6 +485,9 @@ function getActionDescription(action: CreditActionType): string {
     AI_BOARD: 'AI Board (4 LLMs)',
     LIVE_COACHING: 'Live Coaching',
     RE_ANALYSIS: 'Re-analyse',
+    EXTRACTION_STANDARD_PAGE: 'Extraction standard page',
+    EXTRACTION_HIGH_PAGE: 'Extraction high fidelity page',
+    EXTRACTION_SUPREME_PAGE: 'Extraction supreme page',
     CHAT: 'Chat IA',
     PDF_EXPORT: 'Export PDF',
   };

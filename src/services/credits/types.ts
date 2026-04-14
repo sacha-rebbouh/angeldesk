@@ -9,6 +9,9 @@ export type CreditActionType =
   | 'AI_BOARD'        // 4 LLMs en débat
   | 'LIVE_COACHING'   // Session 30 min
   | 'RE_ANALYSIS'     // Re-analyse avec nouvelles données
+  | 'EXTRACTION_STANDARD_PAGE' // Standard OCR page
+  | 'EXTRACTION_HIGH_PAGE'     // High fidelity extraction page
+  | 'EXTRACTION_SUPREME_PAGE'  // Supreme extraction page
   | 'CHAT'            // Chat IA (gratuit)
   | 'PDF_EXPORT';     // Export PDF (gratuit)
 
@@ -18,6 +21,9 @@ export const CREDIT_COSTS: Record<CreditActionType, number> = {
   AI_BOARD: 10,
   LIVE_COACHING: 8,
   RE_ANALYSIS: 3,
+  EXTRACTION_STANDARD_PAGE: 0,
+  EXTRACTION_HIGH_PAGE: 1,
+  EXTRACTION_SUPREME_PAGE: 2,
   CHAT: 0,
   PDF_EXPORT: 0,
 } as const;

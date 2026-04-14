@@ -264,13 +264,18 @@ OUTPUT: JSON structure uniquement, en francais.`;
   protected async execute(context: AgentContext): Promise<ExtractionData> {
     const { documents } = context;
 
-    // F94: Reutiliser les resultats du fact-extractor s'il a deja tourne
+    // F94: Reuse fact-extractor only when no document corpus is available.
+    // The fact extractor is intentionally narrow and does not cover rich context
+    // fields required by the Context Engine: product name, value proposition,
+    // use cases, differentiators, website, competitors and founder context.
+    // Skipping this extractor when documents exist silently underfeeds all
+    // downstream agents.
     const factExtractorResult = context.previousResults?.["fact-extractor"];
-    if (factExtractorResult?.success && "data" in factExtractorResult) {
+    if ((!documents || documents.length === 0) && factExtractorResult?.success && "data" in factExtractorResult) {
       const factData = factExtractorResult.data as FactExtractorOutput;
       if (factData?.facts && factData.facts.length > 0) {
         console.log(
-          `[DocumentExtractor] Reusing ${factData.facts.length} facts from fact-extractor (skipping LLM call)`
+          `[DocumentExtractor] Reusing ${factData.facts.length} facts from fact-extractor because no document corpus is available`
         );
         return this.convertFactsToExtractionData(factData, context);
       }
@@ -286,10 +291,12 @@ OUTPUT: JSON structure uniquement, en francais.`;
     }
 
     // Build document content for the prompt
-    // Limit: 30K chars per document to ensure quality extraction
+    // Limit: 120K chars per document. Extraction already gates document quality at
+    // upload time; this agent should preserve enough corpus for full decks,
+    // workbooks and long memos instead of amputating middle pages.
     // F27: head+tail strategy to capture financial annexes at end of documents
-    const CHARS_PER_DOC = 30000;
-    const TAIL_RESERVE = 5000; // Reserve pour les dernieres pages (annexes financieres)
+    const CHARS_PER_DOC = 120000;
+    const TAIL_RESERVE = 20000; // Reserve pour les dernieres pages (annexes financieres)
     let documentContent = "";
     const truncationWarnings: string[] = [];
 
@@ -298,6 +305,11 @@ OUTPUT: JSON structure uniquement, en francais.`;
       const sanitizedDocType = sanitizeName(doc.type);
       documentContent += `\n--- DOCUMENT: ${sanitizedDocName} (${sanitizedDocType}) ---\n`;
       if (doc.extractedText) {
+        if (doc.type === "FINANCIAL_MODEL" && (doc.extractedText.length > 500_000 || /\[[A-Z]{1,3}\d+=/.test(doc.extractedText))) {
+          documentContent += "[EXCEL LEGACY EXTRACTION DETECTED] Re-extraire ce fichier Excel avant usage analytique; ancien dump brut ignore pour proteger le prompt.";
+          documentContent += "\n";
+          continue;
+        }
         if (doc.extractedText.length <= CHARS_PER_DOC) {
           documentContent += this.sanitizeDocumentContent(doc.extractedText, CHARS_PER_DOC);
         } else {

@@ -31,6 +31,7 @@ export {
   type PageOCRResult,
   type ExtractionManifest,
   type ExtractionPageManifest,
+  type DocumentPageArtifact,
   type ExtractionCreditEstimate,
   type ExtractionTier,
   type OCRMode

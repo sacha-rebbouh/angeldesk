@@ -45,9 +45,7 @@ export async function extractFromPptx(
         const text = match[1].trim();
         if (text) texts.push(text);
       }
-      if (texts.length > 0) {
-        slideTexts.push(`--- Slide ${slideTexts.length + 1} ---\n${texts.join("\n")}`);
-      }
+      slideTexts.push(`--- Slide ${slideTexts.length + 1} ---\n${texts.length > 0 ? texts.join("\n") : "[Aucun texte natif extrait]"}`);
     }
 
     const fullText = slideTexts.join("\n\n");

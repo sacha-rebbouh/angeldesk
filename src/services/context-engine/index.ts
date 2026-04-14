@@ -153,6 +153,10 @@ function getQueryCacheKey(query: ConnectorQuery): string {
     // Include extracted data in cache key
     tagline: (query.tagline || "").toLowerCase().trim().slice(0, 50),
     competitors: (query.mentionedCompetitors || []).sort().join(",").toLowerCase(),
+    productName: (query.productName || "").toLowerCase().trim(),
+    coreValueProposition: (query.coreValueProposition || "").toLowerCase().trim().slice(0, 160),
+    useCases: (query.useCases || []).map((value) => value.toLowerCase().trim()).sort(),
+    keyDifferentiators: (query.keyDifferentiators || []).map((value) => value.toLowerCase().trim()).sort(),
   };
   return JSON.stringify(normalized);
 }
@@ -264,6 +268,10 @@ export async function enrichDeal(
     stage: enrichedQuery.stage,
     tagline: enrichedQuery.tagline,
     competitors: enrichedQuery.mentionedCompetitors,
+    productName: enrichedQuery.productName,
+    coreValueProposition: enrichedQuery.coreValueProposition,
+    useCases: enrichedQuery.useCases,
+    keyDifferentiators: enrichedQuery.keyDifferentiators,
   };
 
   // =========================================================================

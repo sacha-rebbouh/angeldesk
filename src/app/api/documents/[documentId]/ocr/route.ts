@@ -6,9 +6,13 @@ import { downloadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 import { encryptText } from "@/lib/encryption";
 import {
-  recordDocumentExtractionRun,
+  completeDocumentExtractionRun,
+  markExtractionRunProgress,
+  recordExtractionPageProgress,
   summarizeManifestForLegacyMetrics,
+  startDocumentExtractionRun,
 } from "@/services/documents/extraction-runs";
+import { deductCreditAmount } from "@/services/credits";
 
 export const maxDuration = 300;
 
@@ -47,6 +51,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       where: { id: documentId },
       data: { processingStatus: "PROCESSING" },
     });
+    const progressRun = await startDocumentExtractionRun({
+      documentId,
+      documentVersion: document.version,
+      contentHash: document.contentHash,
+      extractionVersion: "strict-pdf-v1",
+    });
+    let creditsCharged = 0;
 
     // Download the PDF buffer from storage
     const buffer = await downloadFile(document.storageUrl);
@@ -57,6 +68,58 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       maxOCRPages: Number.POSITIVE_INFINITY,
       autoOCR: true,
       strict: true,
+      onProgress: async (event) => {
+        if (event.phase === "native_extracted") {
+          const estimatedCredits = Math.max(0, event.pageCount);
+          if (estimatedCredits > 0 && creditsCharged === 0) {
+            const deduction = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", estimatedCredits, {
+              dealId: document.dealId,
+              documentId,
+              documentExtractionRunId: progressRun.id,
+              idempotencyKey: `extraction:full-ocr:${progressRun.id}`,
+              description: `Full OCR extraction for ${document.name}`,
+            });
+            if (!deduction.success) {
+              const message = deduction.error ?? "Credits insuffisants pour lancer l'OCR";
+              await markExtractionRunProgress({
+                runId: progressRun.id,
+                pageCount: event.pageCount,
+                pagesProcessed: 0,
+                phase: "failed",
+                message,
+              });
+              await prisma.document.update({
+                where: { id: documentId },
+                data: { processingStatus: "FAILED" },
+              });
+              throw new Error(message);
+            }
+            creditsCharged = estimatedCredits;
+          }
+          await markExtractionRunProgress({
+            runId: progressRun.id,
+            pageCount: event.pageCount,
+            pagesProcessed: 0,
+            phase: event.phase,
+            message: event.message,
+          });
+          return;
+        }
+        if (event.phase === "page_processed") {
+          await recordExtractionPageProgress({
+            runId: progressRun.id,
+            page: event.page,
+          });
+          return;
+        }
+        await markExtractionRunProgress({
+          runId: progressRun.id,
+          phase: event.phase,
+          message: event.message,
+          pageCount: "pageCount" in event ? event.pageCount : undefined,
+          pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
+        });
+      },
     });
 
     const extractionWarnings: ExtractionWarning[] = [];
@@ -83,10 +146,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       suggestion: "Text extracted via OCR.",
     });
 
-    const extractionRun = await recordDocumentExtractionRun({
-      documentId,
-      documentVersion: document.version,
-      contentHash: document.contentHash,
+    const extractionRun = await completeDocumentExtractionRun({
+      runId: progressRun.id,
       text: result.text,
       qualityScore: result.quality,
       manifest: result.manifest,
@@ -104,6 +165,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           method: "ocr",
           pagesOCRd: result.pagesOCRd,
           ocrCost: result.estimatedCost,
+          extractionCreditsCharged: creditsCharged,
           latestExtractionRunId: extractionRun.id,
           ...summarizeManifestForLegacyMetrics(result.manifest),
         },

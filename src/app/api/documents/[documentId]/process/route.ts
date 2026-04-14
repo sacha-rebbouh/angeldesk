@@ -8,9 +8,13 @@ import { downloadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 import { encryptText } from "@/lib/encryption";
 import {
-  recordDocumentExtractionRun,
+  completeDocumentExtractionRun,
+  markExtractionRunProgress,
+  recordExtractionPageProgress,
   summarizeManifestForLegacyMetrics,
+  startDocumentExtractionRun,
 } from "@/services/documents/extraction-runs";
+import { deductCreditAmount } from "@/services/credits";
 
 // CUID validation schema
 const cuidSchema = z.string().cuid();
@@ -39,6 +43,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       include: {
         deal: {
           select: { userId: true },
+        },
+        extractionRuns: {
+          orderBy: { completedAt: "desc" },
+          take: 1,
+          select: { summaryMetrics: true },
         },
       },
     });
@@ -69,10 +78,32 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const estimatedCredits = extractEstimatedCredits(document.extractionRuns[0]?.summaryMetrics);
+    if (estimatedCredits > 0) {
+      const deduction = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", estimatedCredits, {
+        dealId: document.dealId,
+        documentId,
+        idempotencyKey: `extraction:reprocess:${documentId}:${document.version}:${document.contentHash ?? "nohash"}:${Math.floor(Date.now() / 60000)}`,
+        description: `Enhanced document re-extraction for ${document.name}`,
+      });
+      if (!deduction.success) {
+        return NextResponse.json(
+          { error: deduction.error ?? "Credits insuffisants pour relancer l'extraction", requiredCredits: estimatedCredits },
+          { status: 402 }
+        );
+      }
+    }
+
     // Update status to PROCESSING
     await prisma.document.update({
       where: { id: documentId },
       data: { processingStatus: "PROCESSING" },
+    });
+    const progressRun = await startDocumentExtractionRun({
+      documentId,
+      documentVersion: document.version,
+      contentHash: document.contentHash,
+      extractionVersion: "strict-pdf-v1",
     });
 
     // Extract text from the stored PDF. downloadFile() transparently decrypts
@@ -83,6 +114,32 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       maxOCRPages: Number.POSITIVE_INFINITY,
       autoOCR: true,
       strict: true,
+      onProgress: async (event) => {
+        if (event.phase === "native_extracted") {
+          await markExtractionRunProgress({
+            runId: progressRun.id,
+            pageCount: event.pageCount,
+            pagesProcessed: 0,
+            phase: event.phase,
+            message: event.message,
+          });
+          return;
+        }
+        if (event.phase === "page_processed") {
+          await recordExtractionPageProgress({
+            runId: progressRun.id,
+            page: event.page,
+          });
+          return;
+        }
+        await markExtractionRunProgress({
+          runId: progressRun.id,
+          phase: event.phase,
+          message: event.message,
+          pageCount: "pageCount" in event ? event.pageCount : undefined,
+          pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
+        });
+      },
     });
     const extractionWarnings: ExtractionWarning[] = extraction.manifest.hardBlockers.map((blocker) => ({
       code: blocker.code,
@@ -92,10 +149,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ? `Review page ${blocker.pageNumber}, rerun OCR, upload a corrected file, or approve an explicit override.`
         : "Rerun extraction, upload a corrected file, or approve an explicit override.",
     }));
-    const extractionRun = await recordDocumentExtractionRun({
-      documentId,
-      documentVersion: document.version,
-      contentHash: document.contentHash,
+    const extractionRun = await completeDocumentExtractionRun({
+      runId: progressRun.id,
       text: extraction.text,
       qualityScore: extraction.quality,
       manifest: extraction.manifest,
@@ -136,6 +191,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           requiresOCR,
           isUsable: extractionRun.readyForAnalysis,
           creditEstimate: extraction.manifest.creditEstimate,
+          creditsCharged: estimatedCredits,
           manifest: extraction.manifest,
         },
       });
@@ -175,4 +231,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   } catch (error) {
     return handleApiError(error, "process document");
   }
+}
+
+function extractEstimatedCredits(summaryMetrics: unknown): number {
+  if (!summaryMetrics || typeof summaryMetrics !== "object" || Array.isArray(summaryMetrics)) return 0;
+  const creditEstimate = (summaryMetrics as { creditEstimate?: { estimatedCredits?: unknown } }).creditEstimate;
+  const value = creditEstimate?.estimatedCredits;
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.ceil(value)) : 0;
 }

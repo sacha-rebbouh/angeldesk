@@ -57,6 +57,17 @@ interface AuditPage {
   visualRiskScore: number | null;
   visualRiskReasons: string[];
   errorMessage: string | null;
+  artifactVersion: string | null;
+  artifact: {
+    visualBlocks?: Array<{ type: string; title?: string; description: string; confidence: string }>;
+    tables?: Array<{ title?: string; markdown?: string; confidence: string }>;
+    charts?: Array<{ title?: string; chartType?: string; description: string; confidence: string }>;
+    unreadableRegions?: Array<{ reason: string; severity: string }>;
+    numericClaims?: Array<{ label: string; value: string; unit?: string; confidence: string }>;
+    confidence?: string;
+    needsHumanReview?: boolean;
+  } | null;
+  pageImageHash: string | null;
   extractedText: string;
   override: {
     id: string;
@@ -98,6 +109,9 @@ interface ExtractionAuditResponse {
         estimatedUsd: number;
         pagesByTier: Record<string, number>;
       } | null;
+      extractionVersion?: string;
+      pipelineVersion?: string;
+      startedAt?: string | null;
       completedAt: string | null;
       pages: AuditPage[];
       overrides: Array<{
@@ -319,14 +333,34 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     return () => window.clearInterval(intervalId);
   }, [extractionActionPending, reprocessStartedAt]);
 
+  useEffect(() => {
+    if (!extractionActionPending) return;
+    const intervalId = window.setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: auditQueryKey });
+    }, 1500);
+    return () => window.clearInterval(intervalId);
+  }, [auditQueryKey, extractionActionPending, queryClient]);
+
+  const backendProgress = useMemo(() => {
+    const run = audit?.latestRun;
+    if (!run || run.pageCount <= 0) return null;
+    const percent = Math.min(99, Math.max(1, Math.round((run.pagesProcessed / run.pageCount) * 100)));
+    return {
+      percent,
+      label: `${run.pagesProcessed}/${run.pageCount} pages`,
+      status: run.status,
+    };
+  }, [audit?.latestRun]);
+
   const estimatedReprocessProgress = useMemo(() => {
+    if (backendProgress) return backendProgress.percent;
     if (pageRetryMutation.isPending) {
       return Math.min(95, Math.max(12, Math.round((elapsedSeconds / 25) * 100)));
     }
     const pageCount = audit?.latestRun?.pageCount ?? audit?.corpus.parsedPages ?? 1;
     const expectedSeconds = Math.max(45, pageCount * 4);
     return Math.min(95, Math.max(8, Math.round((elapsedSeconds / expectedSeconds) * 100)));
-  }, [audit?.corpus.parsedPages, audit?.latestRun?.pageCount, elapsedSeconds, pageRetryMutation.isPending]);
+  }, [audit?.corpus.parsedPages, audit?.latestRun?.pageCount, backendProgress, elapsedSeconds, pageRetryMutation.isPending]);
 
   const startReprocess = () => {
     setReprocessStartedAt(Date.now());
@@ -566,6 +600,9 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                               )}
                             </div>
                           )}
+                          {pageToInspect.artifact && (
+                            <ArtifactSummary page={pageToInspect} />
+                          )}
                           {pageRequiresDecision(pageToInspect) && (
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -792,6 +829,10 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                           </div>
                         )}
 
+                        {reviewPageToInspect.artifact && (
+                          <ArtifactSummary page={reviewPageToInspect} />
+                        )}
+
                         <div className="min-h-[300px] flex-1 overflow-hidden rounded-lg border">
                           <Textarea
                             readOnly
@@ -833,14 +874,16 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
               </div>
               <div className="mt-4 space-y-2">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Progression estimee</span>
+                  <span>{backendProgress ? "Progression backend" : "Progression estimee"}</span>
                   <span>{estimatedReprocessProgress}%</span>
                 </div>
                 <Progress value={estimatedReprocessProgress} className="h-2" />
                 <p className="text-xs text-muted-foreground">
-                  {pageRetryMutation.isPending
+                  {backendProgress
+                    ? `${backendProgress.label} traitees. Statut: ${backendProgress.status}.`
+                    : pageRetryMutation.isPending
                     ? "Cette operation ne relance pas les autres pages du document."
-                    : "La progression exacte par page necessite un job backend avec evenements de progression. Cette extraction continue tant que cette fenetre est ouverte."}
+                    : "En attente du premier evenement backend. Les pages OCR apparaitront ici au fil du traitement."}
                 </p>
               </div>
             </div>
@@ -893,6 +936,43 @@ function MiniBadge({ label }: { label: string }) {
     <span className="rounded border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
       {label}
     </span>
+  );
+}
+
+function ArtifactSummary({ page }: { page: AuditPage }) {
+  const artifact = page.artifact;
+  if (!artifact) return null;
+  const visualCount = artifact.visualBlocks?.length ?? 0;
+  const tableCount = artifact.tables?.length ?? 0;
+  const chartCount = artifact.charts?.length ?? 0;
+  const unreadableCount = artifact.unreadableRegions?.length ?? 0;
+  const numericClaimCount = artifact.numericClaims?.length ?? 0;
+
+  if (visualCount + tableCount + chartCount + unreadableCount + numericClaimCount === 0 && !artifact.confidence) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">Artefact structure</span>
+        {artifact.confidence && <Badge variant="outline">Confiance {artifact.confidence}</Badge>}
+        {artifact.needsHumanReview && <Badge className="bg-amber-100 text-amber-700">Review</Badge>}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {visualCount > 0 && <MiniBadge label={`${visualCount} bloc${visualCount > 1 ? "s" : ""}`} />}
+        {tableCount > 0 && <MiniBadge label={`${tableCount} table${tableCount > 1 ? "s" : ""}`} />}
+        {chartCount > 0 && <MiniBadge label={`${chartCount} chart${chartCount > 1 ? "s" : ""}`} />}
+        {numericClaimCount > 0 && <MiniBadge label={`${numericClaimCount} chiffre${numericClaimCount > 1 ? "s" : ""}`} />}
+        {unreadableCount > 0 && <MiniBadge label={`${unreadableCount} zone${unreadableCount > 1 ? "s" : ""} a revoir`} />}
+      </div>
+      {artifact.charts?.[0]?.description && (
+        <p className="mt-2 text-muted-foreground">{artifact.charts[0].description}</p>
+      )}
+      {artifact.unreadableRegions?.[0]?.reason && (
+        <p className="mt-2 text-amber-800">{artifact.unreadableRegions[0].reason}</p>
+      )}
+    </div>
   );
 }
 

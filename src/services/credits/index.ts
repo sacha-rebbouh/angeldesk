@@ -2,6 +2,7 @@
 export {
   checkCredits,
   deductCredits,
+  deductCreditAmount,
   addCredits,
   grantFreeCredits,
   refundCredits,

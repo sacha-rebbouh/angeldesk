@@ -134,6 +134,23 @@ type DealWithDocs = Deal & {
   founders?: { id: string; name: string; role: string; linkedinUrl: string | null }[];
 };
 
+type ContextSeed = {
+  tagline?: string;
+  competitors?: string[];
+  founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+  productDescription?: string;
+  businessModel?: string;
+  productName?: string;
+  coreValueProposition?: string;
+  useCases?: string[];
+  keyDifferentiators?: string[];
+  websiteUrl?: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export class AgentOrchestrator {
   /**
    * Run a complete analysis session
@@ -535,13 +552,7 @@ export class AgentOrchestrator {
 
     // STEP 1: Run document-extractor first (if documents exist)
     // Extract data needed for Context Engine (tagline, competitors, founders)
-    let extractedData: {
-      tagline?: string;
-      competitors?: string[];
-      founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
-      productDescription?: string;
-      businessModel?: string;
-    } = {};
+    let extractedData: ContextSeed = {};
 
     if (deal.documents.length > 0) {
       onProgress?.({
@@ -559,16 +570,9 @@ export class AgentOrchestrator {
         await updateAnalysisProgress(analysis.id, 1, totalCost);
 
         // Extract data for Context Engine
-        if (extractorResult.success && "data" in extractorResult) {
-          const data = (extractorResult as { data: Record<string, unknown> }).data;
-          extractedData = {
-            tagline: data.tagline as string | undefined,
-            competitors: data.competitors as string[] | undefined,
-            founders: data.founders as Array<{ name: string; role?: string; linkedinUrl?: string }> | undefined,
-            productDescription: data.productDescription as string | undefined,
-            businessModel: data.businessModel as string | undefined,
-          };
-          console.log(`[Orchestrator] tier1_complete: Extracted data for Context Engine: tagline=${!!extractedData.tagline}, competitors=${extractedData.competitors?.length ?? 0}`);
+        if (extractorResult.success) {
+          extractedData = this.extractContextSeed(extractorResult);
+          console.log(`[Orchestrator] tier1_complete: Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}`);
         }
 
         // Check for early warnings from extractor
@@ -1041,24 +1045,11 @@ export class AgentOrchestrator {
     let totalCost = 0;
 
     // Extract data from previous document-extractor result (from Tier 1)
-    let extractedData: {
-      tagline?: string;
-      competitors?: string[];
-      founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
-      productDescription?: string;
-      businessModel?: string;
-    } = {};
+    let extractedData: ContextSeed = {};
 
     const extractorResult = previousResults?.["document-extractor"];
-    if (extractorResult?.success && extractorResult && "data" in extractorResult) {
-      const data = (extractorResult as { data: Record<string, unknown> }).data;
-      extractedData = {
-        tagline: data.tagline as string | undefined,
-        competitors: data.competitors as string[] | undefined,
-        founders: data.founders as Array<{ name: string; role?: string; linkedinUrl?: string }> | undefined,
-        productDescription: data.productDescription as string | undefined,
-        businessModel: data.businessModel as string | undefined,
-      };
+    if (extractorResult?.success) {
+      extractedData = this.extractContextSeed(extractorResult);
     }
 
     const contextEngineData = await this.enrichContext(deal, extractedData);
@@ -1267,13 +1258,7 @@ export class AgentOrchestrator {
       });
 
       // Extract data from documents first
-      let extractedData: {
-        tagline?: string;
-        competitors?: string[];
-        founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
-        productDescription?: string;
-        businessModel?: string;
-      } = {};
+      let extractedData: ContextSeed = {};
 
       if (deal.documents.length > 0) {
         try {
@@ -1290,16 +1275,9 @@ export class AgentOrchestrator {
           await updateAnalysisProgress(analysis.id, completedCount, totalCost);
 
           // Extract data for Context Engine
-          if (extractorResult.success && "data" in extractorResult) {
-            const data = (extractorResult as { data: Record<string, unknown> }).data;
-            extractedData = {
-              tagline: data.tagline as string | undefined,
-              competitors: data.competitors as string[] | undefined,
-              founders: data.founders as Array<{ name: string; role?: string; linkedinUrl?: string }> | undefined,
-              productDescription: data.productDescription as string | undefined,
-              businessModel: data.businessModel as string | undefined,
-            };
-            console.log(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
+          if (extractorResult.success) {
+            extractedData = this.extractContextSeed(extractorResult);
+            console.log(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
           }
         } catch (error) {
           const errorResult: AgentResult = {
@@ -2243,7 +2221,7 @@ export class AgentOrchestrator {
         console.error(
           `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
         );
-        break;
+        throw new Error(`Critical Tier 1 phase failed: ${failedNames}`);
       }
 
       if (phase.name.includes("Phase B") && phaseFailCount > 0) {
@@ -2640,6 +2618,35 @@ export class AgentOrchestrator {
     }
   }
 
+  private extractContextSeed(extractorResult: AgentResult): ContextSeed {
+    const rawData = "data" in extractorResult
+      ? (extractorResult as AgentResult & { data?: unknown }).data
+      : undefined;
+    const data = isRecord(rawData) ? rawData : {};
+    const extractedInfo = isRecord(data.extractedInfo) ? data.extractedInfo : data;
+
+    return {
+      tagline: typeof extractedInfo.tagline === "string" ? extractedInfo.tagline : undefined,
+      competitors: Array.isArray(extractedInfo.competitors) ? extractedInfo.competitors.filter((value): value is string => typeof value === "string") : undefined,
+      founders: Array.isArray(extractedInfo.founders)
+        ? extractedInfo.founders.filter((founder): founder is NonNullable<ContextSeed["founders"]>[number] => (
+          isRecord(founder) && typeof founder.name === "string"
+        )).map((founder) => ({
+          name: founder.name,
+          role: typeof founder.role === "string" ? founder.role : undefined,
+          linkedinUrl: typeof founder.linkedinUrl === "string" ? founder.linkedinUrl : undefined,
+        }))
+        : undefined,
+      productDescription: typeof extractedInfo.productDescription === "string" ? extractedInfo.productDescription : undefined,
+      businessModel: typeof extractedInfo.businessModel === "string" ? extractedInfo.businessModel : undefined,
+      productName: typeof extractedInfo.productName === "string" ? extractedInfo.productName : undefined,
+      coreValueProposition: typeof extractedInfo.coreValueProposition === "string" ? extractedInfo.coreValueProposition : undefined,
+      useCases: Array.isArray(extractedInfo.useCases) ? extractedInfo.useCases.filter((value): value is string => typeof value === "string") : undefined,
+      keyDifferentiators: Array.isArray(extractedInfo.keyDifferentiators) ? extractedInfo.keyDifferentiators.filter((value): value is string => typeof value === "string") : undefined,
+      websiteUrl: typeof extractedInfo.websiteUrl === "string" ? extractedInfo.websiteUrl : undefined,
+    };
+  }
+
   /**
    * Enrich deal context with Context Engine
    *
@@ -2654,13 +2661,7 @@ export class AgentOrchestrator {
    */
   private async enrichContext(
     deal: DealWithDocs,
-    extractedData?: {
-      tagline?: string;
-      competitors?: string[];
-      founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
-      productDescription?: string;
-      businessModel?: string;
-    }
+    extractedData?: ContextSeed
   ): Promise<EnrichedAgentContext["contextEngine"]> {
     try {
       // Merge founders: extracted founders (from deck) take priority over DB founders
@@ -2707,6 +2708,12 @@ export class AgentOrchestrator {
           extractedCompetitors: extractedData?.competitors,
           extractedProductDescription: extractedData?.productDescription,
           extractedBusinessModel: extractedData?.businessModel,
+          extractedProductName: extractedData?.productName,
+          extractedCoreValueProposition: extractedData?.coreValueProposition,
+          extractedUseCases: extractedData?.useCases,
+          extractedKeyDifferentiators: extractedData?.keyDifferentiators,
+          extractedWebsiteUrl: extractedData?.websiteUrl,
+          formWebsiteUrl: deal.website ?? undefined,
         }
       );
 

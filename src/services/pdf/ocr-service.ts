@@ -35,7 +35,17 @@ export interface PageOCRResult {
   processingTimeMs: number;
   cost: number;
   mode?: OCRMode;
+  artifact?: DocumentPageArtifact;
 }
+
+export type ExtractionProgressEvent =
+  | { phase: "started"; message?: string }
+  | { phase: "native_extracted"; pageCount: number; pagesProcessed: number; message?: string }
+  | { phase: "page_processed"; pageNumber: number; page: PageOCRResult; message?: string }
+  | { phase: "completed"; pageCount: number; pagesProcessed: number; message?: string }
+  | { phase: "failed"; message: string };
+
+export type ExtractionProgressCallback = (event: ExtractionProgressEvent) => void | Promise<void>;
 
 export type ExtractionTier = 'native_only' | 'standard_ocr' | 'high_fidelity' | 'supreme';
 
@@ -56,11 +66,54 @@ export interface ExtractionPageManifest {
   extractionTier: ExtractionTier;
   visualRiskScore: number;
   visualRiskReasons: string[];
+  artifact?: DocumentPageArtifact;
+  pageImageHash?: string;
   error?: string;
 }
 
+export interface DocumentPageArtifact {
+  version: "document-page-artifact-v1";
+  pageNumber: number;
+  label?: string;
+  text: string;
+  visualBlocks: Array<{
+    type: "table" | "chart" | "diagram" | "image" | "text" | "unknown";
+    title?: string;
+    description: string;
+    confidence: "high" | "medium" | "low";
+  }>;
+  tables: Array<{
+    title?: string;
+    markdown?: string;
+    rows?: string[][];
+    confidence: "high" | "medium" | "low";
+  }>;
+  charts: Array<{
+    title?: string;
+    chartType?: string;
+    description: string;
+    series?: string[];
+    values?: Array<{ label: string; value: string }>;
+    confidence: "high" | "medium" | "low";
+  }>;
+  unreadableRegions: Array<{
+    reason: string;
+    severity: "low" | "medium" | "high";
+  }>;
+  numericClaims: Array<{
+    label: string;
+    value: string;
+    unit?: string;
+    sourceText: string;
+    confidence: "high" | "medium" | "low";
+  }>;
+  confidence: "high" | "medium" | "low";
+  needsHumanReview: boolean;
+  sourceHash?: string;
+}
+
 export interface ExtractionManifest {
-  version: "strict-pdf-v1";
+  version: "strict-pdf-v1" | "strict-document-v1";
   status: 'ready' | 'ready_with_warnings' | 'needs_review' | 'failed';
   pageCount: number;
   pagesProcessed: number;
@@ -189,6 +242,15 @@ Rules:
 - Preserve page reading order and keep independent visual blocks separate.
 - Do not invent numbers, labels, currencies, percentages, names, periods or sources.
 - If exact chart values are not printed and cannot be read from the axis, describe the trend and mark values as [UNREADABLE].
+- End with a machine-readable JSON block named ARTIFACT_JSON following this schema exactly:
+{
+  "visualBlocks": [{"type":"table|chart|diagram|image|text|unknown","title":"string|null","description":"string","confidence":"high|medium|low"}],
+  "tables": [{"title":"string|null","markdown":"string|null","confidence":"high|medium|low"}],
+  "charts": [{"title":"string|null","chartType":"string|null","description":"string","series":["string"],"values":[{"label":"string","value":"string"}],"confidence":"high|medium|low"}],
+  "unreadableRegions": [{"reason":"string","severity":"low|medium|high"}],
+  "numericClaims": [{"label":"string","value":"string","unit":"string|null","sourceText":"string","confidence":"high|medium|low"}],
+  "needsHumanReview": true
+}
 
 Output format:
 ## Page text
@@ -207,7 +269,12 @@ Output format:
 - Notes / source:
 - Extraction confidence: high | medium | low
 
-Repeat for every visual block.`;
+Repeat for every visual block.
+
+## ARTIFACT_JSON
+\`\`\`json
+{...}
+\`\`\``;
   }
 
   if (mode === "high_fidelity") {
@@ -227,6 +294,7 @@ Rules:
 - Do not summarize away numbers.
 - Do not invent missing numbers, names, dates, percentages, currencies, or labels.
 - If the page is mostly decorative and contains no decision-useful content, output the visible text and then [NO_DECISION_USEFUL_CONTENT].
+- End with ARTIFACT_JSON using the same schema as supreme mode. If no table/chart exists, use empty arrays.
 
 Output format:
 ## Page text
@@ -239,7 +307,12 @@ Output format:
 - Values:
 - Notes:
 
-Repeat for every chart, table, diagram or KPI block.`;
+Repeat for every chart, table, diagram or KPI block.
+
+## ARTIFACT_JSON
+\`\`\`json
+{...}
+\`\`\``;
   }
 
   return `Extract ALL text from this slide. Include:
@@ -311,7 +384,7 @@ async function generateOCRText(dataUrl: string, mode: OCRMode): Promise<string> 
 async function processSelectedPdfPages(
   buffer: Buffer,
   pagesToProcess: number[],
-  options: { mode?: OCRMode; scale?: number } = {}
+  options: { mode?: OCRMode; scale?: number; onProgress?: ExtractionProgressCallback } = {}
 ): Promise<PageOCRResult[]> {
   const { pdf } = await import("pdf-to-img");
   const targetPages = new Set(pagesToProcess.map(pageIdx => pageIdx + 1));
@@ -326,9 +399,11 @@ async function processSelectedPdfPages(
       batch.push({ pageNum, imageBuffer: Buffer.from(image) });
 
       if (batch.length >= BATCH_SIZE) {
-        pageResults.push(...await Promise.all(
+        const processedBatch = await Promise.all(
           batch.map(({ pageNum, imageBuffer }) => processPageImage(imageBuffer, pageNum, mode))
-        ));
+        );
+        pageResults.push(...processedBatch);
+        await notifyProcessedPages(processedBatch, options.onProgress);
         batch = [];
       }
 
@@ -341,15 +416,17 @@ async function processSelectedPdfPages(
   }
 
   if (batch.length > 0) {
-    pageResults.push(...await Promise.all(
+    const processedBatch = await Promise.all(
       batch.map(({ pageNum, imageBuffer }) => processPageImage(imageBuffer, pageNum, mode))
-    ));
+    );
+    pageResults.push(...processedBatch);
+    await notifyProcessedPages(processedBatch, options.onProgress);
   }
 
   return pageResults;
 }
 
-async function processAllPdfPages(buffer: Buffer, options: { mode?: OCRMode; scale?: number } = {}): Promise<PageOCRResult[]> {
+async function processAllPdfPages(buffer: Buffer, options: { mode?: OCRMode; scale?: number; onProgress?: ExtractionProgressCallback } = {}): Promise<PageOCRResult[]> {
   const { pdf } = await import("pdf-to-img");
   const mode = options.mode ?? "standard";
   const scale = options.scale ?? 1.5;
@@ -361,9 +438,11 @@ async function processAllPdfPages(buffer: Buffer, options: { mode?: OCRMode; sca
     batch.push({ pageNum, imageBuffer: Buffer.from(image) });
 
     if (batch.length >= BATCH_SIZE) {
-      pageResults.push(...await Promise.all(
+      const processedBatch = await Promise.all(
         batch.map(({ pageNum, imageBuffer }) => processPageImage(imageBuffer, pageNum, mode))
-      ));
+      );
+      pageResults.push(...processedBatch);
+      await notifyProcessedPages(processedBatch, options.onProgress);
       batch = [];
     }
 
@@ -371,9 +450,11 @@ async function processAllPdfPages(buffer: Buffer, options: { mode?: OCRMode; sca
   }
 
   if (batch.length > 0) {
-    pageResults.push(...await Promise.all(
+    const processedBatch = await Promise.all(
       batch.map(({ pageNum, imageBuffer }) => processPageImage(imageBuffer, pageNum, mode))
-    ));
+    );
+    pageResults.push(...processedBatch);
+    await notifyProcessedPages(processedBatch, options.onProgress);
   }
 
   return pageResults;
@@ -386,7 +467,7 @@ export async function selectiveOCR(
   buffer: Buffer,
   pageIndices: number[],  // 0-indexed page numbers to process
   existingText?: string,
-  options: { maxPages?: number; mode?: OCRMode; scale?: number } = {}
+  options: { maxPages?: number; mode?: OCRMode; scale?: number; onProgress?: ExtractionProgressCallback } = {}
 ): Promise<OCRResult> {
   const startTime = Date.now();
   let totalCost = 0;
@@ -413,6 +494,7 @@ export async function selectiveOCR(
     const pageResults = await processSelectedPdfPages(buffer, pagesToProcess, {
       mode: options.mode,
       scale: options.scale,
+      onProgress: options.onProgress,
     });
     totalCost += pageResults.reduce((sum, r) => sum + r.cost, 0);
 
@@ -466,11 +548,14 @@ export async function retryPdfPageOCR(
 /**
  * Full OCR - process all pages (expensive, use sparingly)
  */
-export async function extractTextWithOCR(buffer: Buffer, options: { maxPages?: number } = {}): Promise<OCRResult> {
+export async function extractTextWithOCR(
+  buffer: Buffer,
+  options: { maxPages?: number; onProgress?: ExtractionProgressCallback } = {}
+): Promise<OCRResult> {
   try {
     if (options.maxPages !== undefined && !Number.isFinite(options.maxPages)) {
       const startTime = Date.now();
-      const pageResults = await processAllPdfPages(buffer);
+      const pageResults = await processAllPdfPages(buffer, { onProgress: options.onProgress });
       const sortedResults = [...pageResults].sort((a, b) => a.pageNumber - b.pageNumber);
       const text = composeOCRText(undefined, sortedResults);
 
@@ -487,7 +572,7 @@ export async function extractTextWithOCR(buffer: Buffer, options: { maxPages?: n
 
     const pageLimit = options.maxPages ?? MAX_PAGES_TO_OCR;
     const allPages = Array.from({ length: pageLimit }, (_, i) => i);
-    return selectiveOCR(buffer, allPages, undefined, { maxPages: pageLimit });
+    return selectiveOCR(buffer, allPages, undefined, { maxPages: pageLimit, onProgress: options.onProgress });
   } catch (error) {
     return {
       success: false,
@@ -540,6 +625,7 @@ async function processPageImage(
           ? HIGH_FIDELITY_COST_PER_PAGE
           : COST_PER_PAGE,
       mode,
+      artifact: buildArtifactFromOCRText(pageNumber, extractedText, confidence),
     };
   } catch (error) {
     console.error(`OCR error on page ${pageNumber}:`, error);
@@ -560,6 +646,21 @@ async function processPageImage(
   }
 }
 
+async function notifyProcessedPages(
+  pages: PageOCRResult[],
+  onProgress: ExtractionProgressCallback | undefined
+) {
+  if (!onProgress) return;
+  for (const page of pages) {
+    await onProgress({
+      phase: "page_processed",
+      pageNumber: page.pageNumber,
+      page,
+      message: `Page ${page.pageNumber} OCR processed`,
+    });
+  }
+}
+
 function composeOCRText(existingText: string | undefined, pageResults: PageOCRResult[]): string {
   const sortedResults = [...pageResults].sort((a, b) => a.pageNumber - b.pageNumber);
   const ocrText = sortedResults
@@ -575,6 +676,246 @@ function formatOCRModeLabel(mode: OCRMode | undefined): string {
   if (mode === "supreme") return "Supreme OCR";
   if (mode === "high_fidelity") return "High-fidelity OCR";
   return "OCR";
+}
+
+function buildArtifactFromOCRText(
+  pageNumber: number,
+  text: string,
+  fallbackConfidence: "high" | "medium" | "low"
+): DocumentPageArtifact {
+  const parsed = parseArtifactJson(text);
+  const visualBlocks = parsed?.visualBlocks ?? inferVisualBlocks(text, fallbackConfidence);
+  const tables = parsed?.tables ?? inferTables(text, fallbackConfidence);
+  const charts = parsed?.charts ?? inferCharts(text, fallbackConfidence);
+  const unreadableRegions = parsed?.unreadableRegions ?? inferUnreadableRegions(text);
+  const numericClaims = parsed?.numericClaims ?? inferNumericClaims(text, fallbackConfidence);
+  const needsHumanReview = parsed?.needsHumanReview ?? (
+    unreadableRegions.length > 0 ||
+    (charts.length > 0 && numericClaims.length === 0 && /\b(chart|graph|axis|legend|bar|line)\b/i.test(text))
+  );
+
+  return {
+    version: "document-page-artifact-v1",
+    pageNumber,
+    text,
+    visualBlocks,
+    tables,
+    charts,
+    unreadableRegions,
+    numericClaims,
+    confidence: fallbackConfidence,
+    needsHumanReview,
+    sourceHash: hashText(text),
+  };
+}
+
+type ParsedArtifact = Pick<
+  DocumentPageArtifact,
+  "visualBlocks" | "tables" | "charts" | "unreadableRegions" | "numericClaims" | "needsHumanReview"
+>;
+
+function parseArtifactJson(text: string): ParsedArtifact | null {
+  const match = text.match(/ARTIFACT_JSON[\s\S]*?```json\s*([\s\S]*?)```/i)
+    ?? text.match(/```\s*json\s*([\s\S]*?"visualBlocks"[\s\S]*?)```/i);
+  if (!match?.[1]) return null;
+
+  try {
+    const parsed = JSON.parse(match[1]) as Partial<ParsedArtifact>;
+    return {
+      visualBlocks: normalizeVisualBlocks(parsed.visualBlocks),
+      tables: normalizeTables(parsed.tables),
+      charts: normalizeCharts(parsed.charts),
+      unreadableRegions: normalizeUnreadableRegions(parsed.unreadableRegions),
+      numericClaims: normalizeNumericClaims(parsed.numericClaims),
+      needsHumanReview: Boolean(parsed.needsHumanReview),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function inferVisualBlocks(text: string, confidence: "high" | "medium" | "low"): DocumentPageArtifact["visualBlocks"] {
+  const blocks: DocumentPageArtifact["visualBlocks"] = [];
+  if (/\|.+\||\btable\b|\bcohort\b/i.test(text)) {
+    blocks.push({ type: "table", description: "Table-like content detected in OCR output.", confidence });
+  }
+  if (/\b(chart|graph|axis|legend|bar|line|waterfall|heatmap|scatter|donut|pie)\b/i.test(text)) {
+    blocks.push({ type: "chart", description: "Chart-like content detected in OCR output.", confidence });
+  }
+  if (/\b(diagram|flow|arrow|node|roadmap|timeline)\b/i.test(text)) {
+    blocks.push({ type: "diagram", description: "Diagram-like content detected in OCR output.", confidence });
+  }
+  return blocks;
+}
+
+function inferTables(text: string, confidence: "high" | "medium" | "low"): DocumentPageArtifact["tables"] {
+  if (!/\|/.test(text)) return [];
+  const lines = text.split("\n").filter((line) => line.includes("|"));
+  if (lines.length === 0) return [];
+  return [{ markdown: lines.join("\n"), confidence }];
+}
+
+function inferCharts(text: string, confidence: "high" | "medium" | "low"): DocumentPageArtifact["charts"] {
+  if (!/\b(chart|graph|axis|legend|bar|line|waterfall|heatmap|scatter|donut|pie)\b/i.test(text)) return [];
+  const series = [...new Set((text.match(/\b[A-Z][A-Za-z0-9 &/%.-]{2,30}\b/g) ?? []).slice(0, 8))];
+  return [{
+    chartType: inferChartType(text),
+    description: "Chart content detected. Review numeric claims and unreadable regions for analytical reliability.",
+    series,
+    values: inferNumericClaims(text, confidence).slice(0, 20).map((claim) => ({ label: claim.label, value: claim.value })),
+    confidence,
+  }];
+}
+
+function inferChartType(text: string): string | undefined {
+  if (/stacked/i.test(text)) return "stacked";
+  if (/waterfall/i.test(text)) return "waterfall";
+  if (/heatmap/i.test(text)) return "heatmap";
+  if (/scatter|bubble/i.test(text)) return "scatter";
+  if (/line/i.test(text)) return "line";
+  if (/bar|histogram/i.test(text)) return "bar";
+  if (/pie|donut/i.test(text)) return "pie";
+  return undefined;
+}
+
+function inferUnreadableRegions(text: string): DocumentPageArtifact["unreadableRegions"] {
+  const regions: DocumentPageArtifact["unreadableRegions"] = [];
+  const unreadableCount = (text.match(/\[UNREADABLE\]/gi) ?? []).length;
+  if (unreadableCount > 0) {
+    regions.push({ reason: `${unreadableCount} unreadable value(s) explicitly marked by OCR.`, severity: unreadableCount > 5 ? "high" : "medium" });
+  }
+  if (/cannot be read|not readable|illegible/i.test(text)) {
+    regions.push({ reason: "OCR reported unreadable visual content.", severity: "high" });
+  }
+  return regions;
+}
+
+function inferNumericClaims(text: string, confidence: "high" | "medium" | "low"): DocumentPageArtifact["numericClaims"] {
+  const claims: DocumentPageArtifact["numericClaims"] = [];
+  const pattern = /([A-Za-z][A-Za-z0-9 /&().-]{0,48}?)\s*[:=]?\s*(-?\d+(?:[.,]\d+)?\s?(?:%|€|EUR|k€|m€|M€|\$|k|m|x|bps)?)/g;
+  for (const match of text.matchAll(pattern)) {
+    const label = match[1]?.trim().replace(/^[^\w]+/, "");
+    const value = match[2]?.trim();
+    if (!label || !value || label.length < 2) continue;
+    claims.push({
+      label,
+      value,
+      unit: value.match(/(%|€|EUR|k€|m€|M€|\$|k|m|x|bps)$/i)?.[1],
+      sourceText: match[0].slice(0, 180),
+      confidence,
+    });
+    if (claims.length >= 60) break;
+  }
+  if (claims.length === 0 && /\d/.test(text)) {
+    for (const match of text.matchAll(/-?\d+(?:[.,]\d+)?\s?(?:%|€|EUR|k€|m€|M€|\$|k|m|x|bps)?/g)) {
+      const value = match[0].trim();
+      claims.push({
+        label: "numeric_value",
+        value,
+        unit: value.match(/(%|€|EUR|k€|m€|M€|\$|k|m|x|bps)$/i)?.[1],
+        sourceText: value,
+        confidence,
+      });
+      if (claims.length >= 60) break;
+    }
+  }
+  return claims;
+}
+
+function normalizeVisualBlocks(value: unknown): DocumentPageArtifact["visualBlocks"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const type = typeof record.type === "string" && ["table", "chart", "diagram", "image", "text", "unknown"].includes(record.type)
+      ? record.type as DocumentPageArtifact["visualBlocks"][number]["type"]
+      : "unknown";
+    return [{
+      type,
+      title: typeof record.title === "string" ? record.title : undefined,
+      description: typeof record.description === "string" ? record.description : "",
+      confidence: normalizeConfidence(record.confidence),
+    }];
+  });
+}
+
+function normalizeTables(value: unknown): DocumentPageArtifact["tables"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    return [{
+      title: typeof record.title === "string" ? record.title : undefined,
+      markdown: typeof record.markdown === "string" ? record.markdown : undefined,
+      rows: Array.isArray(record.rows) ? record.rows.filter(Array.isArray).map((row) => row.map(String)) : undefined,
+      confidence: normalizeConfidence(record.confidence),
+    }];
+  });
+}
+
+function normalizeCharts(value: unknown): DocumentPageArtifact["charts"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    return [{
+      title: typeof record.title === "string" ? record.title : undefined,
+      chartType: typeof record.chartType === "string" ? record.chartType : undefined,
+      description: typeof record.description === "string" ? record.description : "",
+      series: Array.isArray(record.series) ? record.series.map(String) : undefined,
+      values: Array.isArray(record.values)
+        ? record.values.flatMap((entry) => {
+            if (!entry || typeof entry !== "object") return [];
+            const valueRecord = entry as Record<string, unknown>;
+            return [{ label: String(valueRecord.label ?? ""), value: String(valueRecord.value ?? "") }];
+          })
+        : undefined,
+      confidence: normalizeConfidence(record.confidence),
+    }];
+  });
+}
+
+function normalizeUnreadableRegions(value: unknown): DocumentPageArtifact["unreadableRegions"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    return [{
+      reason: typeof record.reason === "string" ? record.reason : "Unreadable region",
+      severity: normalizeSeverity(record.severity),
+    }];
+  });
+}
+
+function normalizeNumericClaims(value: unknown): DocumentPageArtifact["numericClaims"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    return [{
+      label: String(record.label ?? ""),
+      value: String(record.value ?? ""),
+      unit: typeof record.unit === "string" ? record.unit : undefined,
+      sourceText: String(record.sourceText ?? record.value ?? ""),
+      confidence: normalizeConfidence(record.confidence),
+    }];
+  }).filter((claim) => claim.label && claim.value);
+}
+
+function normalizeConfidence(value: unknown): "high" | "medium" | "low" {
+  return value === "high" || value === "medium" || value === "low" ? value : "medium";
+}
+
+function normalizeSeverity(value: unknown): "low" | "medium" | "high" {
+  return value === "low" || value === "medium" || value === "high" ? value : "medium";
+}
+
+function hashText(text: string): string {
+  let hash = 0;
+  for (let index = 0; index < text.length; index++) {
+    hash = (hash * 31 + text.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(16);
 }
 
 function mergeOCRResults(params: {
@@ -611,7 +952,8 @@ async function runVisualOCRPlan(
   buffer: Buffer,
   pageIndices: number[],
   existingText: string | undefined,
-  visualPlan: VisualExtractionPlanPage[]
+  visualPlan: VisualExtractionPlanPage[],
+  onProgress?: ExtractionProgressCallback
 ): Promise<OCRResult> {
   const uniquePages = [...new Set(pageIndices)];
   const supremePages = uniquePages.filter((pageIndex) => (
@@ -635,6 +977,7 @@ async function runVisualOCRPlan(
       maxPages: Number.POSITIVE_INFINITY,
       mode: "high_fidelity",
       scale: 2.5,
+      onProgress,
     }));
   }
   if (supremePages.length > 0) {
@@ -642,6 +985,7 @@ async function runVisualOCRPlan(
       maxPages: Number.POSITIVE_INFINITY,
       mode: "supreme",
       scale: 3,
+      onProgress,
     }));
   }
 
@@ -681,6 +1025,7 @@ export async function smartExtract(
     maxOCRPages?: number;
     autoOCR?: boolean;
     strict?: boolean;
+    onProgress?: ExtractionProgressCallback;
   } = {}
 ): Promise<{
   text: string;
@@ -695,8 +1040,11 @@ export async function smartExtract(
     qualityThreshold = 40,
     maxOCRPages = MAX_PAGES_TO_OCR,
     autoOCR = true,
-    strict = false
+    strict = false,
+    onProgress
   } = options;
+
+  await onProgress?.({ phase: "started", message: "Document extraction started" });
 
   // First try regular text extraction
   let regularResult;
@@ -708,10 +1056,20 @@ export async function smartExtract(
     regularResult = { success: false as const, text: "", pageTexts: [], pageCount: 0, info: {} };
   }
 
+  await onProgress?.({
+    phase: "native_extracted",
+    pageCount: regularResult.pageCount,
+    pagesProcessed: regularResult.pageTexts?.length ?? 0,
+    message: regularResult.success ? "Native PDF text extracted" : "Native PDF extraction failed",
+  });
+
   if (!regularResult.success) {
     if (autoOCR) {
       try {
-        const ocrResult = await extractTextWithOCR(buffer, { maxPages: strict ? Number.POSITIVE_INFINITY : maxOCRPages });
+        const ocrResult = await extractTextWithOCR(buffer, {
+          maxPages: strict ? Number.POSITIVE_INFINITY : maxOCRPages,
+          onProgress,
+        });
         const ocrQuality = ocrResult.success
           ? analyzeExtractionQuality(ocrResult.text, ocrResult.pagesProcessed || 1).metrics.qualityScore
           : 0;
@@ -723,6 +1081,12 @@ export async function smartExtract(
           qualityScore: ocrQuality,
           pagesRequestedForOCR: ocrResult.pageResults.map((page) => page.pageNumber - 1),
         });
+        await onProgress?.({
+          phase: "completed",
+          pageCount: manifest.pageCount,
+          pagesProcessed: manifest.pagesProcessed,
+          message: "OCR extraction completed",
+        });
         return {
           text: ocrResult.text,
           method: 'ocr',
@@ -733,7 +1097,9 @@ export async function smartExtract(
           manifest
         };
       } catch (ocrError) {
-        console.error("[smartExtract] OCR also failed:", ocrError instanceof Error ? ocrError.message : ocrError);
+        const message = ocrError instanceof Error ? ocrError.message : String(ocrError);
+        console.error("[smartExtract] OCR also failed:", message);
+        await onProgress?.({ phase: "failed", message });
       }
     }
     const manifest = buildExtractionManifest({
@@ -743,6 +1109,10 @@ export async function smartExtract(
       qualityScore: 0,
       pagesRequestedForOCR: [],
       hardBlockers: [{ code: "PDF_EXTRACTION_FAILED", message: "Native PDF text extraction and OCR failed" }],
+    });
+    await onProgress?.({
+      phase: "failed",
+      message: "Native PDF text extraction and OCR failed",
     });
     return {
       text: "",
@@ -767,6 +1137,12 @@ export async function smartExtract(
       qualityScore,
       pagesRequestedForOCR: [],
     });
+    await onProgress?.({
+      phase: "completed",
+      pageCount: manifest.pageCount,
+      pagesProcessed: manifest.pagesProcessed,
+      message: "Native extraction completed",
+    });
     return {
       text: regularResult.text,
       method: 'text',
@@ -784,6 +1160,12 @@ export async function smartExtract(
       method: 'text',
       qualityScore,
       pagesRequestedForOCR: [],
+    });
+    await onProgress?.({
+      phase: "completed",
+      pageCount: manifest.pageCount,
+      pagesProcessed: manifest.pagesProcessed,
+      message: "Native extraction completed",
     });
     return {
       text: regularResult.text,
@@ -817,7 +1199,7 @@ export async function smartExtract(
         .map((page) => page.pageIndex);
 
       if (highFidelityPages.length > 0) {
-        const ocrResult = await runVisualOCRPlan(buffer, highFidelityPages, regularResult.text, visualPlan);
+        const ocrResult = await runVisualOCRPlan(buffer, highFidelityPages, regularResult.text, visualPlan, onProgress);
         const hybridManifest = buildExtractionManifest({
           pageCount: regularResult.pageCount,
           pageTexts: regularResult.pageTexts ?? [],
@@ -825,6 +1207,12 @@ export async function smartExtract(
           qualityScore,
           ocrResult,
           pagesRequestedForOCR: highFidelityPages,
+        });
+        await onProgress?.({
+          phase: "completed",
+          pageCount: hybridManifest.pageCount,
+          pagesProcessed: hybridManifest.pagesProcessed,
+          message: "Hybrid visual extraction completed",
         });
         return {
           text: ocrResult.text,
@@ -838,6 +1226,12 @@ export async function smartExtract(
       }
     }
 
+    await onProgress?.({
+      phase: "completed",
+      pageCount: manifest.pageCount,
+      pagesProcessed: manifest.pagesProcessed,
+      message: "Native extraction completed",
+    });
     return {
       text: regularResult.text,
       method: 'text',
@@ -848,7 +1242,10 @@ export async function smartExtract(
     };
   }
 
-  let ocrResult = await selectiveOCR(buffer, pagesToOCR, regularResult.text, { maxPages: maxOCRPages });
+  let ocrResult = await selectiveOCR(buffer, pagesToOCR, regularResult.text, {
+    maxPages: maxOCRPages,
+    onProgress,
+  });
 
   if (!ocrResult.success || ocrResult.pagesProcessed === 0) {
     const manifest = buildExtractionManifest({
@@ -858,6 +1255,12 @@ export async function smartExtract(
       qualityScore,
       ocrResult,
       pagesRequestedForOCR: pagesToOCR,
+    });
+    await onProgress?.({
+      phase: "completed",
+      pageCount: manifest.pageCount,
+      pagesProcessed: manifest.pagesProcessed,
+      message: "Extraction completed with OCR warnings",
     });
     return {
       text: regularResult.text,
@@ -900,7 +1303,7 @@ export async function smartExtract(
     ])];
 
     if (secondPassPages.length > 0) {
-      const secondPass = await runVisualOCRPlan(buffer, secondPassPages, undefined, visualPlan);
+      const secondPass = await runVisualOCRPlan(buffer, secondPassPages, undefined, visualPlan, onProgress);
       ocrResult = mergeOCRResults({
         original: ocrResult,
         retry: secondPass,
@@ -917,6 +1320,12 @@ export async function smartExtract(
     }
   }
 
+  await onProgress?.({
+    phase: "completed",
+    pageCount: manifest.pageCount,
+    pagesProcessed: manifest.pagesProcessed,
+    message: "Hybrid extraction completed",
+  });
   return {
     text: ocrResult.text,
     method: 'hybrid',
@@ -1015,6 +1424,8 @@ function buildExtractionManifest(params: {
       extractionTier,
       visualRiskScore: visualRisk.score,
       visualRiskReasons: visualRisk.reasons,
+      artifact: ocr?.artifact ?? buildArtifactFromOCRText(pageNumber, combinedText, qualityScore >= 75 ? "high" : qualityScore >= 45 ? "medium" : "low"),
+      pageImageHash: ocr?.artifact?.sourceHash,
       error,
     });
   }

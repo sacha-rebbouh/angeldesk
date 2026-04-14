@@ -103,6 +103,10 @@ model CreditTransaction {
   action        CreditAction           // What triggered this transaction
   description   String?                // Human-readable description
   dealId        String?                // Associated deal (if applicable)
+  documentId    String?                // Associated document for extraction credits
+  documentExtractionRunId String?       // Associated extraction run for extraction credits
+  pageNumber    Int?                   // Associated page/artifact number for page-level extraction
+  idempotencyKey String?               // Prevents duplicate credit debits for the same operation
 
   // For purchases
   packName      String?                // Pack purchased
@@ -114,6 +118,9 @@ model CreditTransaction {
   @@index([userId, createdAt])
   @@index([userId, action])
   @@index([dealId])
+  @@index([documentId, pageNumber])
+  @@index([documentExtractionRunId])
+  @@unique([idempotencyKey])
 }
 
 enum CreditAction {
@@ -125,6 +132,9 @@ enum CreditAction {
   AI_BOARD          // -10 credits
   LIVE_COACHING     // -8 credits
   RE_ANALYSIS       // -3 credits
+  EXTRACTION_STANDARD_PAGE // Standard OCR page extraction
+  EXTRACTION_HIGH_PAGE // High fidelity page extraction
+  EXTRACTION_SUPREME_PAGE // Supreme extraction for one page/artifact
   REFUND            // Credit refund (failed action)
   ADMIN_ADJUSTMENT  // Manual admin adjustment
   EXPIRED           // Credits expired
@@ -396,6 +406,9 @@ model DocumentExtractionPage {
   requiresOCR           Boolean             @default(false)
   ocrProcessed          Boolean             @default(false)
   contentHash           String?
+  artifactVersion       String?
+  artifact              Json?
+  pageImageHash         String?
   errorMessage          String?             @db.Text
   textPreview           String?             @db.Text
 

@@ -358,6 +358,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
     let fomoSection = "";
     if (context.documents) {
       for (const doc of context.documents) {
+        if (doc.type === "FINANCIAL_MODEL") continue;
         if (doc.extractedText) {
           const fomoResult = detectFOMO(doc.extractedText, doc.name);
           if (fomoResult.detected) {

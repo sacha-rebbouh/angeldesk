@@ -6,7 +6,6 @@
 
 export {
   extractFromExcel,
-  summarizeForLLM,
   type ExcelExtractionResult,
   type SheetData,
   type FinancialMetrics,
