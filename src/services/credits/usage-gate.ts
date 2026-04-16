@@ -551,11 +551,13 @@ function getExpiryDate(): Date {
 
 function getActionDescription(action: CreditActionType): string {
   const descriptions: Record<CreditActionType, string> = {
-    QUICK_SCAN: 'Quick Scan (Tier 1)',
-    DEEP_DIVE: 'Deep Dive (Tier 1+2+3)',
-    AI_BOARD: 'AI Board (4 LLMs)',
+    QUICK_SCAN: 'Quick Scan (DEPRECATED — tier retire)',
+    DEEP_DIVE: 'Deep Dive (Tier 0.5 thesis + Tier 1+2+3 + reconciler)',
+    AI_BOARD: 'AI Board (4 LLMs + round thesis)',
     LIVE_COACHING: 'Live Coaching',
     RE_ANALYSIS: 'Re-analyse',
+    THESIS_REBUTTAL: 'Thesis rebuttal (action BA one-shot)',
+    THESIS_REEXTRACT: 'Thesis re-extraction (auto sur nouveau doc)',
     EXTRACTION_STANDARD_PAGE: 'Extraction standard page',
     EXTRACTION_HIGH_PAGE: 'Extraction high fidelity page',
     EXTRACTION_SUPREME_PAGE: 'Extraction supreme page',

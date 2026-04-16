@@ -127,11 +127,13 @@ enum CreditAction {
   PURCHASE // Bought a pack
   AUTO_REFILL // Auto-refill purchase
   FREE_GRANT // Free credits at signup
-  QUICK_SCAN // -1 credit (Tier 1 only)
-  DEEP_DIVE // -5 credits (Tier 1+2+3)
-  AI_BOARD // -10 credits
+  QUICK_SCAN // DEPRECATED (2026-04-17) — tier retire, conserve pour historique transactions
+  DEEP_DIVE // -5 credits (Tier 0.5 thesis + Tier 1+2+3 reconciler)
+  AI_BOARD // -10 credits (inclut round THESIS_DEBATE)
   LIVE_COACHING // -8 credits
   RE_ANALYSIS // -3 credits
+  THESIS_REBUTTAL // -1 credit (action one-shot BA)
+  THESIS_REEXTRACT // -1 credit (auto sur nouveau doc upload)
   EXTRACTION_STANDARD_PAGE // Standard OCR page extraction
   EXTRACTION_HIGH_PAGE // High fidelity page extraction
   EXTRACTION_SUPREME_PAGE // Supreme extraction for one page/artifact
@@ -185,6 +187,7 @@ model Deal {
   dealTermsVersions DealTermsVersion[]
   alertResolutions  AlertResolution[]
   liveSessions      LiveSession[]
+  theses            Thesis[] // Thesis-first — toutes les versions de these extraites pour ce deal
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -501,6 +504,8 @@ enum RedFlagCategory {
   MARKET
   PRODUCT
   DEAL_STRUCTURE
+  THESIS // Faille structurelle de la these (why-now speculatif, moat non demontre, assumption load-bearing fragile)
+  THESIS_VS_REALITY // Contradiction entre un claim de la these et un finding d'agent Tier 1/2/3
 }
 
 enum RedFlagSeverity {
@@ -557,8 +562,16 @@ model Analysis {
   // P1 — Refund tracking: set when credits have been refunded pour cette analyse.
   // Utilise par le resume logic pour savoir si l'ancienne analyse a deja rembourse
   // avant de re-tenter. UI peut aussi afficher "credits rembourses" au user.
-  refundedAt      DateTime?
-  refundAmount    Int?
+  refundedAt   DateTime?
+  refundAmount Int?
+
+  // Thesis-first (2026-04-17) — reference la these extraite en Tier 0.5
+  // et trace la decision du BA apres verdict thesis.
+  thesisId         String?
+  thesis           Thesis?   @relation(fields: [thesisId], references: [id], onDelete: SetNull)
+  thesisDecision   String? // "stop" | "continue" | "contest" | null (pending)
+  thesisDecisionAt DateTime?
+  thesisBypass     Boolean   @default(false) // true si BA a force Continue malgre verdict fragile
 
   // Relations to sub-models (cascade delete)
   scoredFindings     ScoredFinding[]
@@ -575,11 +588,79 @@ model Analysis {
   @@index([status])
   @@index([dealId, mode, dealFingerprint]) // For cache lookup
   @@index([dealId, status, createdAt])
+  @@index([thesisId])
 }
 
 enum AnalysisType {
   SCREENING
   FULL_DD
+}
+
+// THESIS — Representation structuree de la these d'investissement de la societe,
+// extraite par l'AI (thesis-extractor en Tier 0.5) et confrontee aux findings
+// Tier 1/2/3 par thesis-reconciler. Un deal peut avoir plusieurs versions au fil
+// des uploads de documents (isLatest=true pour la courante).
+model Thesis {
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  version  Int     @default(1)
+  isLatest Boolean @default(true)
+
+  // These reformulee — plusieurs champs pour eviter un bloc monolithique
+  reformulated String  @db.Text // "Angel Desk parie que X en visant Y via Z"
+  problem      String  @db.Text
+  solution     String  @db.Text
+  whyNow       String  @db.Text
+  moat         String? @db.Text
+  pathToExit   String? @db.Text
+
+  // Verdict unifie (aligne sur RECOMMENDATION_CONFIG existant)
+  // very_favorable | favorable | contrasted | vigilance | alert_dominant
+  verdict    String
+  confidence Int // 0-100
+
+  // Load-bearing assumptions: les 3-5 hypotheses SANS LESQUELLES la these s'effondre
+  // [{id, statement, status, impact, validationPath}]
+  loadBearing Json
+
+  // Breakdowns par framework (invisibles UI par defaut, expand pour voir)
+  // Structure: {verdict, claims[], failures[]}
+  ycLens        Json
+  thielLens     Json
+  angelDeskLens Json
+
+  // Alertes consolidees (pas limite a N, user a demande "plus que 3")
+  // [{severity, category, title, detail}]
+  alerts Json
+
+  // Reconciliation Tier 3 — mis a jour apres thesis-reconciler
+  // null tant que reconciler n'a pas tourne
+  reconciledAt       DateTime?
+  reconciliationJson Json? // {updatedVerdict, updatedConfidence, notes[]}
+
+  // Decision BA apres verdict initial
+  decision        String? // "stop" | "continue" | "contest"
+  decisionAt      DateTime?
+  rebuttalText    String?   @db.Text // present si decision = "contest"
+  rebuttalVerdict String? // "valid" | "rejected" — output de rebuttal-judge
+  rebuttalCount   Int       @default(0) // anti-abus, cap 3/deal
+
+  // Source tracking
+  sourceDocumentIds String[] // IDs des Document utilises pour l'extraction
+  sourceHash        String // hash du corpus utilise — pour detecter staleness sur nouveau doc
+
+  // Back-relation pour Analysis.thesis (Analysis.thesisId → Thesis.id)
+  analyses Analysis[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dealId, isLatest])
+  @@index([dealId, version])
+  @@index([verdict])
+  @@index([dealId, createdAt])
 }
 
 enum AnalysisStatus {
@@ -933,6 +1014,7 @@ enum RoundType {
   INITIAL_ANALYSIS
   DEBATE
   FINAL_VOTE
+  THESIS_DEBATE // Round dedie au debat sur la these d'investissement, execute AVANT les DEBATE rounds classiques
 }
 
 // USER BOARD CREDITS - Credits for AI Board usage

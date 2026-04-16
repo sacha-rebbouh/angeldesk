@@ -18,29 +18,33 @@ import { logger } from "@/lib/logger";
 // Without this, the fire-and-forget promise may be killed after 10s.
 export const maxDuration = 300; // 5 minutes
 
+// Thesis-first (2026-04-17) — Quick Scan supprime. Le tier d'entree est
+// desormais Deep Dive qui inclut thesis-extractor (Tier 0.5) + bifurcation.
+// Les types "screening" / "quick_scan" / "tier1_complete" ne sont plus acceptes
+// en creation de nouvelle analyse. Les analyses historiques de ces types
+// restent consultables en base (compatibilite lecture).
 const analyzeSchema = z.object({
   dealId: z.string().min(1, "Deal ID is required").regex(CUID_PATTERN, "Invalid deal ID format"),
   type: z.enum([
-    "screening",
-    "extraction",
-    "full_dd",
-    "tier1_complete",
-    "tier2_sector",
-    "tier3_synthesis",
-    "full_analysis"
-  ]).default("screening"),
+    "extraction", // technique, conserve
+    "full_dd", // Deep Dive
+    "tier2_sector", // re-run ciblee
+    "tier3_synthesis", // re-run ciblee
+    "full_analysis", // Full DD
+  ]).default("full_dd"),
   enableTrace: z.boolean().default(true),
-  // New: stream mode returns immediately with analysisId
   stream: z.boolean().default(true),
 });
 
-// Map analysis types to tiers
+// Types legacy supprimes mais tolerees en query pour retourner un message clair
+const LEGACY_REMOVED_TYPES = new Set(["screening", "quick_scan", "tier1_complete"]);
+
+// Map analysis types to tiers.
+// Thesis-first : Quick Scan (tier 1) retire, Deep Dive est le tier d'entree.
 function getAnalysisTier(type: string): AnalysisTier {
   switch (type) {
-    case "screening":
     case "extraction":
-    case "tier1_complete":
-      return 1;
+      return 1; // technique, pas d'analyse metier
     case "tier2_sector":
     case "full_dd":
       return 2;
@@ -48,7 +52,7 @@ function getAnalysisTier(type: string): AnalysisTier {
     case "full_analysis":
       return 3;
     default:
-      return 1;
+      return 2; // defaut Deep Dive
   }
 }
 
@@ -74,6 +78,18 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+
+    // Thesis-first: messages clairs pour les types legacy retires
+    if (body && typeof body === "object" && LEGACY_REMOVED_TYPES.has(String((body as { type?: unknown }).type))) {
+      return NextResponse.json(
+        {
+          error: "Quick Scan a ete remplace par Deep Dive (qui inclut l'analyse de these). Utilisez type='full_dd' ou 'full_analysis'.",
+          retiredType: (body as { type?: unknown }).type,
+          replacement: "full_dd",
+        },
+        { status: 400 }
+      );
+    }
 
     const { dealId, type, enableTrace } = analyzeSchema.parse(body);
 

@@ -262,10 +262,15 @@ export const TIER3_BATCHES_BEFORE_TIER2 = [
 
 /**
  * NEW: Tier 3 batches AFTER Tier 2 sector expert
- * These agents benefit from sector expert insights for final scoring
+ * These agents benefit from sector expert insights for final scoring.
+ *
+ * Thesis-first : thesis-reconciler tourne AVANT synthesis-deal-scorer pour que
+ * ce dernier voie le verdict mis a jour apres confrontation Tier 1/2.
  */
 export const TIER3_BATCHES_AFTER_TIER2 = [
-  // synthesis-deal-scorer: Final scoring with ALL insights including Tier 2
+  // thesis-reconciler: confronte la these initiale aux findings Tier 1/2
+  ["thesis-reconciler"],
+  // synthesis-deal-scorer: Final scoring with ALL insights including Tier 2 + thesis reconcilie
   ["synthesis-deal-scorer"],
   // memo-generator: Investment memo with complete analysis
   ["memo-generator"],

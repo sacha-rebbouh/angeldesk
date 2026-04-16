@@ -47,6 +47,10 @@ import {
 // Fact Store imports for Tier 0 fact extraction
 import { factExtractorAgent, type FactExtractorOutput } from "@/agents/tier0/fact-extractor";
 import { deckCoherenceChecker, type DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
+// Thesis-first (Tier 0.5) — extraction de la these d'investissement
+import { thesisExtractorAgent } from "@/agents/tier0/thesis-extractor";
+import type { ThesisExtractorOutput, ThesisReconcilerOutput } from "@/agents/thesis/types";
+import { thesisService } from "@/services/thesis";
 import {
   getCurrentFacts,
   formatFactStoreForAgents,
@@ -1156,7 +1160,7 @@ export class AgentOrchestrator {
     onProgress: AnalysisOptions["onProgress"],
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false, userPlan = "FREE" } = advancedOptions;
+    const { failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false, userPlan = "FREE", enableTrace = true } = advancedOptions;
     const startTime = Date.now();
     const collectedWarnings: EarlyWarning[] = [];
 
@@ -1365,6 +1369,21 @@ export class AgentOrchestrator {
         founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
         previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
       });
+
+      // STEP 2.5: THESIS EXTRACTION (Tier 0.5) — thesis-first architecture
+      // Extrait la these d'investissement, la teste contre 3 frameworks (YC/Thiel/AD),
+      // persiste en DB, injecte dans enrichedContext pour que Tier 1/2/3 l'utilisent.
+      await this.runThesisExtraction(
+        enrichedContext,
+        analysis.id,
+        dealId,
+        allResults,
+        enableTrace,
+      );
+      if (allResults["thesis-extractor"]?.cost) {
+        totalCost += allResults["thesis-extractor"].cost;
+        completedCount++;
+      }
 
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases
       // Phase A: deck-forensics → validates deck claims
@@ -1885,6 +1904,33 @@ export class AgentOrchestrator {
           }
           await processAgentResult(dealId, agentName, agentResult);
           await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+          // Thesis-first — apres thesis-reconciler, persister la reconciliation sur
+          // la these initiale (maj verdict + confidence + reconciliationJson + notes)
+          if (agentName === "thesis-reconciler" && agentResult.success && "data" in agentResult) {
+            const thesisId = enrichedContext.thesis?.id;
+            if (thesisId) {
+              try {
+                const reconcilerOutput = (agentResult as AgentResult & { data: ThesisReconcilerOutput }).data;
+                await thesisService.applyReconciliation({
+                  thesisId,
+                  reconcilerOutput,
+                });
+                // Met a jour enrichedContext.thesis pour que synthesis-deal-scorer (batch suivant)
+                // voie le verdict raffine lors du meta-gate.
+                if (enrichedContext.thesis) {
+                  enrichedContext.thesis = {
+                    ...enrichedContext.thesis,
+                    verdict: reconcilerOutput.updatedVerdict,
+                    confidence: reconcilerOutput.updatedConfidence,
+                  };
+                }
+                console.log(`[Orchestrator:FullAnalysis] Thesis reconciled: verdict=${reconcilerOutput.updatedVerdict} (changed=${reconcilerOutput.verdictChanged})`);
+              } catch (reconErr) {
+                console.error(`[Orchestrator:FullAnalysis] Failed to persist thesis reconciliation:`, reconErr);
+              }
+            }
+          }
 
           onProgress?.({
             currentAgent: agentName,
@@ -2627,6 +2673,77 @@ export class AgentOrchestrator {
         cost: 0,
         executionTimeMs: Date.now() - startTime,
       };
+    }
+  }
+
+  /**
+   * THESIS EXTRACTION (Tier 0.5) — thesis-first architecture
+   *
+   * Execute apres fact-extractor + deck-coherence + context-engine (tous deja dans
+   * enrichedContext). Extrait la these d'investissement, la teste contre 3 frameworks
+   * (YC/Thiel/Angel Desk), persiste en DB (table Thesis), linke Analysis.thesisId,
+   * et injecte le resultat dans enrichedContext.thesis pour que Tier 1/2/3 l'utilisent
+   * comme contexte obligatoire.
+   *
+   * Non-fatal : si thesis-extractor crash, on continue l'analyse (la these manquera
+   * dans l'UI, les Tier 1/2/3 n'auront pas de thesis context). Mieux que tout casser.
+   */
+  private async runThesisExtraction(
+    enrichedContext: EnrichedAgentContext,
+    analysisId: string,
+    dealId: string,
+    allResults: Record<string, AgentResult>,
+    enableTrace: boolean,
+  ): Promise<ThesisExtractorOutput | null> {
+    try {
+      const thesisResult = await thesisExtractorAgent.run(enrichedContext, { enableTrace });
+      allResults["thesis-extractor"] = thesisResult;
+
+      if (!thesisResult.success || !("data" in thesisResult)) {
+        console.warn(`[Orchestrator:ThesisExtraction] Non-fatal failure: ${thesisResult.error ?? "unknown"}`);
+        return null;
+      }
+
+      const thesisOutput = (thesisResult as AgentResult & { data: ThesisExtractorOutput }).data;
+
+      // Persist Thesis (cree une nouvelle version, marque l'ancienne isLatest=false)
+      const persisted = await thesisService.create({ dealId, extractorOutput: thesisOutput });
+
+      // Link to Analysis
+      await prisma.analysis.update({
+        where: { id: analysisId },
+        data: { thesisId: persisted.id },
+      });
+
+      // Injection dans enrichedContext pour Tier 1/2/3
+      enrichedContext.thesis = {
+        id: persisted.id,
+        reformulated: thesisOutput.reformulated,
+        problem: thesisOutput.problem,
+        solution: thesisOutput.solution,
+        whyNow: thesisOutput.whyNow,
+        moat: thesisOutput.moat,
+        pathToExit: thesisOutput.pathToExit,
+        verdict: thesisOutput.verdict,
+        confidence: thesisOutput.confidence,
+        loadBearing: thesisOutput.loadBearing,
+        alertsCount: thesisOutput.alerts.length,
+        ycVerdict: thesisOutput.ycLens.verdict,
+        thielVerdict: thesisOutput.thielLens.verdict,
+        angelDeskVerdict: thesisOutput.angelDeskLens.verdict,
+      };
+      enrichedContext.previousResults = {
+        ...(enrichedContext.previousResults ?? {}),
+        "thesis-extractor": thesisResult,
+      };
+
+      console.log(
+        `[Orchestrator:ThesisExtraction] verdict=${thesisOutput.verdict} confidence=${thesisOutput.confidence} alerts=${thesisOutput.alerts.length} (thesisId=${persisted.id})`
+      );
+      return thesisOutput;
+    } catch (err) {
+      console.error(`[Orchestrator:ThesisExtraction] Crashed (non-fatal):`, err);
+      return null;
     }
   }
 

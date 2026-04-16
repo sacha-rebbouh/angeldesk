@@ -1,6 +1,105 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-04-17 — feat: Thesis-first architecture (extractor + reconciler + frameworks + bifurcation)
+
+Refonte fondamentale de l'analyse : avant de parler equipe/marche/finances, on teste
+la THESE d'investissement de la societe. Extraite par AI en Tier 0.5, confrontee a
+3 frameworks (YC, Thiel, Angel Desk), reconciliee avec les findings Tier 1/2/3,
+bifurcation BA (Stop / Continue / Contest + rebuttal 1cr).
+
+### Phase 1 — Schema + Agents backend
+**Fichiers :**
+- `prisma/schema.prisma` — nouveau modele `Thesis`, enum `RedFlagCategory` += `THESIS` + `THESIS_VS_REALITY`, enum `RoundType` += `THESIS_DEBATE`, enum `CreditAction` += `THESIS_REBUTTAL` + `THESIS_REEXTRACT`. `Analysis` : nouveaux champs `thesisId` (FK), `thesisDecision`, `thesisDecisionAt`, `thesisBypass`.
+- `prisma/migrations/20260417120000_thesis_first_architecture/migration.sql` — migration idempotente (appliquee sur Neon). Cree table `Thesis` + indexes + FK CASCADE, etend les enums, ajoute les colonnes sur `Analysis`.
+- `src/agents/thesis/types.ts` — types partages : `ThesisVerdict`, `LoadBearingAssumption`, `FrameworkClaim`, `FrameworkLens`, `ThesisAlert`, `ThesisExtractorOutput`, `ThesisReconcilerOutput`, `RebuttalJudgeOutput`. Helper `worstVerdict()` pour la doctrine "worst-of-3".
+- `src/agents/thesis/frameworks/yc.ts` — lunette YC (problem reality, PMF path, distribution, retention, why-now, moat PMF-driven).
+- `src/agents/thesis/frameworks/thiel.ts` — lunette Thiel (contrarian truth, 10x, proprietary tech, network effects, monopoly path, timing).
+- `src/agents/thesis/frameworks/angel-desk.ts` — lunette Angel Desk **elargi au spectre investisseur prive** (BA solo + groupe d'angels + family office + syndicate, pas juste BA solo). Exit realisable, ticket compatibility, dilution control, key-person risk, liquidity path, instrument protection.
+- `src/agents/tier0/thesis-extractor.ts` — agent Tier 0.5 : extrait reformulated/problem/solution/whyNow/moat/pathToExit, identifie 3-5 load-bearing assumptions, lance les 3 lunettes en parallele, verdict worst-of-3.
+- `src/agents/tier3/thesis-reconciler.ts` — agent Tier 3 : confronte la these initiale aux findings Tier 1/2 (financial-auditor, market-intel, competitive-intel, team-investigator, customer-intel), emet red flags `THESIS_VS_REALITY`, met a jour verdict (cap amelioration +1 cran max, degradation non cappee).
+- `src/agents/thesis/rebuttal-judge.ts` — agent one-shot declenche par action BA. Juge un rebuttal ecrit (valid / rejected) avec critere de rigueur strict (~80% rejected attendus).
+- `src/services/thesis/index.ts` — service persistance : create (versioning auto-incremente), getLatest, getHistory, applyReconciliation, recordDecision, recordRebuttalVerdict, hasReachedRebuttalCap (3 max/deal), isStale, listDashboard cross-deals.
+- `src/agents/thesis/__tests__/types.test.ts` + `src/services/thesis/__tests__/thesis-service.test.ts` — 21 tests couvrant worstVerdict doctrine + CRUD + versioning + rebuttal cap + isStale.
+
+### Phase 2 — Orchestrateur + Tier 3 integration
+**Fichiers :**
+- `src/agents/orchestrator/index.ts` — nouvelle methode `runThesisExtraction()` appelee en Tier 0.5 dans `runFullAnalysis` (apres fact-extractor + deck-coherence + context-engine, avant Tier 1 phases). Persiste la these via `thesisService.create()`, linke `Analysis.thesisId`, injecte dans `enrichedContext.thesis` pour propagation downstream. Apres thesis-reconciler (Tier 3), appelle `thesisService.applyReconciliation()` pour persister le verdict raffine.
+- `src/agents/orchestrator/agent-registry.ts` — `getTier3Agents()` retourne maintenant 7 agents (+ `thesis-reconciler`).
+- `src/agents/orchestrator/types.ts` — `TIER3_BATCHES_AFTER_TIER2` : nouveau batch `["thesis-reconciler"]` AVANT `synthesis-deal-scorer` (pour que le scorer voie le verdict raffine).
+- `src/agents/tier3/index.ts` — exports ajoutes.
+- `src/agents/types.ts` — `EnrichedAgentContext.thesis` ajoute (champs reformulated/problem/solution/whyNow/moat/pathToExit/verdict/confidence/loadBearing/alertsCount/ycVerdict/thielVerdict/angelDeskVerdict).
+- `src/services/credits/types.ts` — `CreditActionType` += `THESIS_REBUTTAL` (1cr), `THESIS_REEXTRACT` (1cr). `QUICK_SCAN` marque DEPRECATED (valeur conservee pour historique transactions).
+- `src/services/credits/usage-gate.ts` — `getActionDescription()` complete pour les nouveaux types.
+- `src/app/api/analyze/route.ts` — **Quick Scan retire de l'offre**. `analyzeSchema` rejette les nouveaux types `screening`/`quick_scan`/`tier1_complete`. Message de transition : "Quick Scan a ete remplace par Deep Dive". Defaut = `full_dd`. `getAnalysisTier` mis a jour.
+- `src/agents/__tests__/agent-pipeline.test.ts` — test mis a jour : tier3Agents = 7 (avec thesis-reconciler).
+
+**Simplification documentee :** L'Inngest `waitForEvent` pour PAUSE mi-pipeline (stop/continue/contest avant Tier 1/2/3) n'est PAS implemente dans cette version. Le pipeline tourne complet, la bifurcation se fait cote UI post-completion via modal non-dismissible. Le compute Tier 1/2/3 est toujours depense meme sur Stop, mais le rendu UI est gate par `thesisDecision`. Evolution Phase 2b : split `runAnalysis` en 2 steps Inngest avec `step.waitForEvent('thesis.decision', { timeout: '24h' })` + handler dedie pour reprendre le pipeline. Reporte pour eviter un refactor massif risque du orchestrateur (3794 lignes).
+
+### Phase 3 — Endpoints API
+**Fichiers nouveaux :**
+- `src/app/api/deals/[dealId]/thesis/route.ts` — `GET` : these courante + historique versions + hasPendingDecision flag. Auth + ownership.
+- `src/app/api/deals/[dealId]/thesis/decision/route.ts` — `POST` : enregistre la decision BA (stop | continue | contest). Refund partiel 2cr si stop. `thesisBypass=true` si continue sur verdict fragile. Idempotence double-submit (409 si decision deja posee). Cap rebuttals (3 max/deal).
+- `src/app/api/deals/[dealId]/thesis/rebuttal/route.ts` — `POST` : invoque `thesis-rebuttal-judge`. Debite 1cr idempotent (clef `thesis:rebuttal:${thesisId}:${count}`). Refund automatique en cas de crash/echec du juge.
+- `src/app/api/thesis/dashboard/route.ts` — `GET` : liste cross-deals avec filtres `verdict` / `sector` / `stage` / `search` / `sortBy` / `sortDir` + pagination (take/skip, cap 100).
+
+### Phase 4 — UI thesis-first (composants V1)
+**Fichiers nouveaux :**
+- `src/components/deals/thesis/thesis-hero-card.tsx` — HERO card : reformulation longue (3-5 phrases), verdict badge (RECOMMENDATION_CONFIG), structure probleme/solution/whyNow/moat/pathToExit, load-bearing assumptions avec statut (verified/declared/projected/speculative), alertes (toutes affichees, pas limitees a 3 — expand au-dela de 5). Bouton "Decider" et "Voir par framework".
+- `src/components/deals/thesis/thesis-review-modal.tsx` — modal non-dismissible (pattern cgu-consent-modal). 3 options : Arreter (refund partiel 2cr) / Continuer / Contester (1cr, textarea 4000 chars max). Appels API /thesis/decision et /thesis/rebuttal. Footer explicite sur le timeout 24h.
+
+**Reportes en Phase 4b :**
+- Integration effective de `ThesisHeroCard` dans `AnalysisPanel` (placement HERO, polling pending decision, auto-ouverture du modal) — composants livres, cablage UI a faire.
+- `ThesisFrameworksExpand` — toggle 3 lunettes YC/Thiel/AD.
+- `ThesisRebuttalDialog` (en partie : integre au ReviewModal).
+- `ThesisRevisionBanner` (auto re-extraction sur nouveau doc).
+- `ThesisStaleBadge` sur deals pre-migration.
+- Meta-gate UI (masquer score global dans `VerdictPanel` si verdict=alert_dominant et !thesisBypass).
+
+### Phase 5 — Dashboard cross-deals
+**Fichier nouveau :**
+- `src/app/(dashboard)/theses/page.tsx` — page `/theses` : 5 cards count par verdict (very_favorable → alert_dominant), liste des thèses avec click → page deal, deal/secteur/stage/reformulation tronquee + verdict + decision. Server component.
+
+### Phase 6 — Chat intent THESIS
+**Fichiers :**
+- `src/agents/chat/deal-chat-agent.ts` — ajout de l'intent `"THESIS"` dans le type `ChatIntent` + guidance dedie dans `getIntentGuidance()`. Le chat repond structurement sur verdict / assumptions / raison de la fracture / points d'approfondissement.
+
+**Reporte en Phase 6b :**
+- Round `THESIS_DEBATE` dans le Board IA (refactor `board-orchestrator` + `board-member`). Les types enum Prisma sont en place. L'implementation des prompts + ordre des rounds reste a faire.
+- Auto re-extraction sur nouveau doc upload (event Inngest `thesis.reextract` + handler).
+- Backfill badge UI sur deals pre-migration.
+
+### Decisions utilisateur respectees (dialogue en 6 batches)
+- **Nature these** : celle de la societe (pas du BA) — pas de champ user pour rediger these
+- **Placement** : Tier 0.5 (extractor) + Tier 3 (reconciler) — 2 passes
+- **Frameworks** : YC + Thiel + Angel Desk systematiquement en parallele
+- **Framework Angel Desk elargi** : BA solo + groupe d'angels + family office + syndicate (clarifie mid-dialogue)
+- **Bifurcation** : Stop / Continuer / Contester (3 boutons modal non-dismissible)
+- **Labels verdict** : alignes sur `RECOMMENDATION_CONFIG` existant (signaux très favorables → alerte dominante)
+- **Scoring gate** : meta-gate — si thèse fail, score global masque (implementation UI en Phase 4b)
+- **Frameworks visibles** : partiellement (expand apres verdict unifie)
+- **Conflit thèse vs realite** : nouvelle categorie `THESIS_VS_REALITY` (emise par reconciler)
+- **Persistance** : table Thesis + versioning + comparable cross-deals dashboard
+- **Edition these** : non editable, rebuttal ecrit (1cr) analyse par rebuttal-judge
+- **Quick Scan supprime** — Deep Dive est le tier d'entree (validation explicite user)
+- **Bifurcation timeout** : 24h (dans la doc du modal UI ; implementation serveur en Phase 2b)
+- **Rebuttal cap** : 3 max/deal (anti-abus)
+- **First view BA** : these reformulee longue + verdict + alertes (pas limitees a 3)
+
+### Validation
+- `npx prisma migrate deploy` OK (9 migrations appliquees sur Neon prod)
+- `npx prisma validate` OK
+- `npx prisma generate` OK
+- `npx tsc --noEmit` : **0 erreur**
+- `npx vitest run` : **559/559 tests verts** (21 nouveaux thesis-*)
+
+### Avant gros tests
+1. Tester manuellement le flow Deep Dive sur un deal existant : verifier que thesis-extractor tourne en Tier 0.5 et persiste
+2. Tester les 4 endpoints API (GET thesis, POST decision, POST rebuttal, GET dashboard)
+3. Exercer la page `/theses`
+4. Monitorer les costs LLM : thesis-extractor = 4 LLM calls (1 core + 3 frameworks parallel). Modele complex. Estimer le cout moyen.
+
+---
 ## 2026-04-16 — feat: Sprint P1 — durcissement complet (securite, data, scoring, UI, perf)
 
 6 vagues livrees, 2 migrations Neon appliquees, 538/538 tests, tsc 0 erreur.

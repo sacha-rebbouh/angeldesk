@@ -46,7 +46,8 @@ export async function getTier1Agents(): Promise<Record<string, DynamicAgent>> {
 }
 
 /**
- * Get Tier 3 agents (6 synthesis agents)
+ * Get Tier 3 agents (7 synthesis agents, incluant thesis-reconciler qui tourne
+ * apres les autres Tier 1/2 pour confronter la these initiale aux findings).
  */
 export async function getTier3Agents(): Promise<Record<string, DynamicAgent>> {
   if (!tier3Agents) {
@@ -58,6 +59,7 @@ export async function getTier3Agents(): Promise<Record<string, DynamicAgent>> {
       "synthesis-deal-scorer": tier3Module.synthesisDealScorer,
       "devils-advocate": tier3Module.devilsAdvocate,
       "memo-generator": tier3Module.memoGenerator,
+      "thesis-reconciler": tier3Module.thesisReconcilerAgent,
     };
   }
   return tier3Agents;

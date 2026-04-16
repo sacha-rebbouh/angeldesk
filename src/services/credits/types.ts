@@ -3,12 +3,17 @@
 // ============================================================================
 
 // --- Credit costs per action ---
+// Thesis-first (2026-04-17) : QUICK_SCAN est deprecated (tier retire). Le type
+// reste pour les historiques de transactions mais n'est plus consomme a la
+// creation d'une nouvelle analyse. THESIS_REBUTTAL + THESIS_REEXTRACT ajoutes.
 export type CreditActionType =
-  | 'QUICK_SCAN'      // Tier 1 only
-  | 'DEEP_DIVE'       // Tier 1+2+3
-  | 'AI_BOARD'        // 4 LLMs en débat
+  | 'QUICK_SCAN'      // DEPRECATED — tier retire, conserve pour historique
+  | 'DEEP_DIVE'       // Tier 0.5 (thesis) + Tier 1+2+3 + reconciler
+  | 'AI_BOARD'        // 4 LLMs en debat, inclut round THESIS_DEBATE
   | 'LIVE_COACHING'   // Session 30 min
-  | 'RE_ANALYSIS'     // Re-analyse avec nouvelles données
+  | 'RE_ANALYSIS'     // Re-analyse avec nouvelles donnees
+  | 'THESIS_REBUTTAL' // Contestation BA sur reformulation these
+  | 'THESIS_REEXTRACT' // Auto re-extraction sur nouveau doc upload
   | 'EXTRACTION_STANDARD_PAGE' // Standard OCR page
   | 'EXTRACTION_HIGH_PAGE'     // High fidelity extraction page
   | 'EXTRACTION_SUPREME_PAGE'  // Supreme extraction page
@@ -16,11 +21,13 @@ export type CreditActionType =
   | 'PDF_EXPORT';     // Export PDF (gratuit)
 
 export const CREDIT_COSTS: Record<CreditActionType, number> = {
-  QUICK_SCAN: 1,
+  QUICK_SCAN: 1, // deprecated mais valeur conservee pour historique
   DEEP_DIVE: 5,
   AI_BOARD: 10,
   LIVE_COACHING: 8,
   RE_ANALYSIS: 3,
+  THESIS_REBUTTAL: 1,
+  THESIS_REEXTRACT: 1,
   EXTRACTION_STANDARD_PAGE: 0,
   EXTRACTION_HIGH_PAGE: 1,
   EXTRACTION_SUPREME_PAGE: 2,

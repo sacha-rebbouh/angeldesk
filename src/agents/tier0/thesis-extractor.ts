@@ -1,0 +1,449 @@
+/**
+ * Thesis Extractor Agent — Tier 0.5
+ *
+ * Mission: extraire la these d'investissement de la societe a partir du deck,
+ * du fact-store, du context-engine et du deck-coherence-report. Tester la these
+ * contre 3 frameworks canoniques (YC / Thiel / Angel Desk) en parallele.
+ * Produire un verdict unifie worst-of-3, les load-bearing assumptions, et les
+ * alertes structurelles.
+ *
+ * Executed APRES fact-extractor + deck-coherence-checker (Tier 0),
+ * AVANT tous les agents Tier 1/2/3. Le verdict produit ici conditionne
+ * la bifurcation UI (Stop/Continuer/Contester) qui pilote la suite.
+ */
+
+import { createHash } from "crypto";
+import { z } from "zod";
+import { BaseAgent } from "../base-agent";
+import type { AgentContext, EnrichedAgentContext } from "../types";
+import type {
+  ThesisExtractorOutput,
+  ThesisVerdict,
+  LoadBearingAssumption,
+  ThesisAlert,
+  FrameworkLens,
+} from "../thesis/types";
+import { worstVerdict } from "../thesis/types";
+import {
+  YcLensSchema,
+  buildYcLensSystemPrompt,
+  buildYcLensUserPrompt,
+  type YcLensOutput,
+} from "../thesis/frameworks/yc";
+import {
+  ThielLensSchema,
+  buildThielLensSystemPrompt,
+  buildThielLensUserPrompt,
+  type ThielLensOutput,
+} from "../thesis/frameworks/thiel";
+import {
+  AngelDeskLensSchema,
+  buildAngelDeskLensSystemPrompt,
+  buildAngelDeskLensUserPrompt,
+  type AngelDeskLensOutput,
+} from "../thesis/frameworks/angel-desk";
+import { sanitizeForLLM } from "@/lib/sanitize";
+
+// ---------------------------------------------------------------------------
+// LLM response schemas (core thesis extraction)
+// ---------------------------------------------------------------------------
+const ThesisCoreSchema = z.object({
+  reformulated: z.string(),
+  problem: z.string(),
+  solution: z.string(),
+  whyNow: z.string(),
+  moat: z.string().nullable(),
+  pathToExit: z.string().nullable(),
+  loadBearing: z.array(
+    z.object({
+      id: z.string(),
+      statement: z.string(),
+      status: z.enum(["verified", "declared", "projected", "speculative"]),
+      impact: z.string(),
+      validationPath: z.string(),
+    })
+  ),
+  alerts: z.array(
+    z.object({
+      severity: z.enum(["critical", "high", "medium", "low"]),
+      category: z.enum([
+        "why_now",
+        "problem_reality",
+        "solution_fit",
+        "moat",
+        "unit_economics",
+        "path_to_exit",
+        "team_dependency",
+        "market_size",
+        "assumption_fragile",
+      ]),
+      title: z.string(),
+      detail: z.string(),
+      linkedAssumptionId: z.string().optional(),
+    })
+  ),
+});
+
+type ThesisCore = z.infer<typeof ThesisCoreSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent
+// ---------------------------------------------------------------------------
+export class ThesisExtractorAgent extends BaseAgent<ThesisExtractorOutput> {
+  constructor() {
+    super({
+      name: "thesis-extractor",
+      description: "Extraction et validation structurelle de la these d'investissement (Tier 0.5)",
+      modelComplexity: "complex",
+      maxRetries: 2,
+      timeoutMs: 180000, // 3 min — 1 extraction core + 3 frameworks parallel + 1 consolidation
+      dependencies: ["fact-extractor", "deck-coherence-checker"],
+    });
+  }
+
+  protected buildSystemPrompt(): string {
+    return `# ROLE
+
+Tu es un analyste these d'investissement senior, specialise dans la lecture structurelle d'une these de societe (pas du business, de la these elle-meme). Tu lis un deck, tu identifies ce que la societe promet de devenir, pourquoi ca doit marcher, et quelles hypotheses porteuses sont necessaires.
+
+# MISSION
+
+Extraire la these d'investissement de la societe en 6 champs structurels + decomposer ses hypotheses porteuses + identifier les alertes structurelles a watcher.
+
+# 6 CHAMPS A EXTRAIRE
+
+1. **reformulated** — 3-5 phrases claires qui resument la these : "Angel Desk parie que X en visant Y via Z". Format synthetique, pas un copy-paste de pitch.
+2. **problem** — description structuree du probleme vise. A quel point est-ce un vrai probleme, pour qui, combien.
+3. **solution** — description de la solution apportee. Pas juste "une plateforme SaaS" mais l'angle specifique.
+4. **whyNow** — pourquoi cette these est pertinente MAINTENANT, pas il y a 5 ans, pas dans 5 ans. Cette section est critique : sans why-now solide, la these est speculative.
+5. **moat** — defensibilite durable. Si aucune claim credible, mettre \`null\`. Ne pas inventer.
+6. **pathToExit** — chemin d'exit envisage (acquereur strategique nomme, IPO path, secondary). Si indetermine, \`null\`.
+
+# LOAD-BEARING ASSUMPTIONS
+
+Identifier 3 a 5 hypotheses SANS LESQUELLES la these s'effondre (murs porteurs, pas decoration).
+
+Pour chacune:
+- **statement** : l'hypothese formulee ("La conversion landing->meeting tiendra a 8%+ a scale")
+- **status** : "verified" (source auditable) | "declared" (dans le deck seulement) | "projected" (projection future) | "speculative" (aucune source)
+- **impact** : ce qui casse si l'hypothese est fausse ("CAC > LTV, modele non viable")
+- **validationPath** : comment valider/invalider ("demander cohortes conversion 3 derniers mois")
+
+# ALERTES
+
+Toutes les alertes structurelles (pas limite arbitraire). Chaque alerte:
+- **severity** : critical / high / medium / low
+- **category** : why_now | problem_reality | solution_fit | moat | unit_economics | path_to_exit | team_dependency | market_size | assumption_fragile
+- **title** : titre court (10 mots max)
+- **detail** : explication (3-5 phrases max)
+- **linkedAssumptionId** : ref a une load-bearing si applicable
+
+# REGLES DE RIGUEUR
+
+- Tu lis CE QUE DIT la societe, tu n'inventes pas de claims favorables
+- Tu separes les FAITS verifiables des PROJECTIONS (status: projected)
+- Un "pitch visionnaire" sans preuves = alert assumption_fragile de severite elevee
+- Si les sources (deck / fact-store / context-engine) ne permettent pas d'etablir un champ, tu le laisses vague ou null. Tu ne comble pas le vide.
+- Tu respectes la Regle N°1 Angel Desk : ANALYSE, ne DECIDE JAMAIS. Ton sortie est analytique, pas prescriptive.
+
+LANGUE: Francais.`;
+  }
+
+  protected async execute(context: AgentContext): Promise<ThesisExtractorOutput> {
+    // 1. Preparer le contexte synthetique (deck + fact-store + context-engine + deck-coherence)
+    const contextSummary = this.buildContextSummary(context);
+    const sourceDocumentIds = (context.documents ?? []).map((d) => d.id);
+    const sourceHash = this.hashSources(context);
+
+    // 2. Extraction core de la these (1 call LLM complex)
+    const coreUserPrompt = this.buildCoreUserPrompt(context, contextSummary);
+    const coreResult = await this.llmCompleteJSONValidated<ThesisCore>(
+      coreUserPrompt,
+      ThesisCoreSchema,
+      { temperature: 0.2 }
+    );
+    const core = coreResult.data;
+
+    // 3. 3 frameworks en parallele (Promise.all pour reduire la latence)
+    const frameworkInput = {
+      reformulated: core.reformulated,
+      problem: core.problem,
+      solution: core.solution,
+      whyNow: core.whyNow,
+      moat: core.moat,
+      pathToExit: core.pathToExit,
+      contextSummary,
+    };
+
+    const deal = context.deal;
+
+    const [yc, thiel, ad] = await Promise.all([
+      this.runYcLens(frameworkInput),
+      this.runThielLens(frameworkInput),
+      this.runAngelDeskLens({
+        ...frameworkInput,
+        dealStage: deal?.stage ?? undefined,
+        dealSector: deal?.sector ?? undefined,
+        dealInstrument: deal?.instrument ?? undefined,
+        dealAmountRequested: deal?.amountRequested ? Number(deal.amountRequested) : undefined,
+        dealValuationPre: deal?.valuationPre ? Number(deal.valuationPre) : undefined,
+      }),
+    ]);
+
+    // 4. Verdict consolide worst-of-3 + confidence moyenne
+    const verdict: ThesisVerdict = worstVerdict([yc.verdict, thiel.verdict, ad.verdict]);
+    const confidence = Math.round((yc.confidence + thiel.confidence + ad.confidence) / 3);
+
+    // 5. Alerts consolidees — on prend celles extraites par le core PLUS celles derivees des
+    // failures des frameworks (severity "high" par defaut)
+    const alerts: ThesisAlert[] = [
+      ...core.alerts.map((a) => ({
+        severity: a.severity,
+        category: a.category,
+        title: a.title,
+        detail: a.detail,
+        linkedAssumptionId: a.linkedAssumptionId,
+      })),
+    ];
+
+    // Ajouter les failures de chaque framework comme alerts si pas deja presents
+    this.appendFrameworkFailuresAsAlerts(alerts, yc, "yc");
+    this.appendFrameworkFailuresAsAlerts(alerts, thiel, "thiel");
+    this.appendFrameworkFailuresAsAlerts(alerts, ad, "angel-desk");
+
+    const loadBearing: LoadBearingAssumption[] = core.loadBearing;
+
+    const ycLens: FrameworkLens = this.toFrameworkLens("yc", yc);
+    const thielLens: FrameworkLens = this.toFrameworkLens("thiel", thiel);
+    const angelDeskLens: FrameworkLens = this.toFrameworkLens("angel-desk", ad);
+
+    return {
+      reformulated: core.reformulated,
+      problem: core.problem,
+      solution: core.solution,
+      whyNow: core.whyNow,
+      moat: core.moat,
+      pathToExit: core.pathToExit,
+      verdict,
+      confidence,
+      loadBearing,
+      alerts,
+      ycLens,
+      thielLens,
+      angelDeskLens,
+      sourceDocumentIds,
+      sourceHash,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // LLM helpers per framework
+  // -------------------------------------------------------------------------
+  private async runYcLens(input: {
+    reformulated: string;
+    problem: string;
+    solution: string;
+    whyNow: string;
+    moat: string | null;
+    pathToExit: string | null;
+    contextSummary: string;
+  }): Promise<YcLensOutput> {
+    const { data } = await this.llmCompleteJSONValidated<YcLensOutput>(
+      buildYcLensUserPrompt(input),
+      YcLensSchema,
+      {
+        systemPrompt: buildYcLensSystemPrompt(),
+        temperature: 0.2,
+      }
+    );
+    return data;
+  }
+
+  private async runThielLens(input: {
+    reformulated: string;
+    problem: string;
+    solution: string;
+    whyNow: string;
+    moat: string | null;
+    pathToExit: string | null;
+    contextSummary: string;
+  }): Promise<ThielLensOutput> {
+    const { data } = await this.llmCompleteJSONValidated<ThielLensOutput>(
+      buildThielLensUserPrompt(input),
+      ThielLensSchema,
+      {
+        systemPrompt: buildThielLensSystemPrompt(),
+        temperature: 0.2,
+      }
+    );
+    return data;
+  }
+
+  private async runAngelDeskLens(input: {
+    reformulated: string;
+    problem: string;
+    solution: string;
+    whyNow: string;
+    moat: string | null;
+    pathToExit: string | null;
+    contextSummary: string;
+    dealStage?: string;
+    dealSector?: string;
+    dealInstrument?: string;
+    dealAmountRequested?: number;
+    dealValuationPre?: number;
+  }): Promise<AngelDeskLensOutput> {
+    const { data } = await this.llmCompleteJSONValidated<AngelDeskLensOutput>(
+      buildAngelDeskLensUserPrompt(input),
+      AngelDeskLensSchema,
+      {
+        systemPrompt: buildAngelDeskLensSystemPrompt(),
+        temperature: 0.2,
+      }
+    );
+    return data;
+  }
+
+  // -------------------------------------------------------------------------
+  // Utilities
+  // -------------------------------------------------------------------------
+  private buildContextSummary(context: AgentContext): string {
+    const enriched = context as EnrichedAgentContext;
+    const parts: string[] = [];
+
+    // Deck text retrieved (on limite a 20K chars pour tenir dans le prompt)
+    const documents = context.documents ?? [];
+    for (const doc of documents) {
+      if (!doc.extractedText) continue;
+      if (doc.type !== "PITCH_DECK" && doc.type !== "INVESTOR_MEMO" && doc.type !== "MARKET_STUDY") continue;
+      parts.push(`### DOCUMENT ${doc.name} (${doc.type})\n${doc.extractedText.slice(0, 8000)}`);
+    }
+
+    // Fact store
+    if (enriched.factStoreFormatted) {
+      parts.push(`### FACT STORE\n${enriched.factStoreFormatted.slice(0, 6000)}`);
+    } else if (enriched.factStore && enriched.factStore.length > 0) {
+      const top = enriched.factStore.slice(0, 40).map((f) => `- ${f.factKey}: ${f.currentDisplayValue} [${f.reliability?.reliability ?? "?"}]`).join("\n");
+      parts.push(`### FACTS (top 40)\n${top}`);
+    }
+
+    // Context engine — highlights
+    if (enriched.contextEngine) {
+      const ce = enriched.contextEngine;
+      const ceLines: string[] = [];
+      if (ce.dealIntelligence?.similarDeals?.length) {
+        ceLines.push(`Similar deals: ${ce.dealIntelligence.similarDeals.slice(0, 3).map(d => `${d.companyName} (${d.sector})`).join(", ")}`);
+      }
+      if (ce.competitiveLandscape?.competitors?.length) {
+        ceLines.push(`Competitors: ${ce.competitiveLandscape.competitors.slice(0, 5).map(c => c.name).join(", ")}`);
+      }
+      if (ce.marketData?.marketSize) {
+        const m = ce.marketData.marketSize;
+        ceLines.push(`Market size: TAM=${m.tam} SAM=${m.sam} SOM=${m.som} CAGR=${m.cagr}%`);
+      }
+      if (ce.newsSentiment?.overallSentiment) {
+        ceLines.push(`News sentiment: ${ce.newsSentiment.overallSentiment}`);
+      }
+      if (ceLines.length > 0) {
+        parts.push(`### CONTEXT ENGINE HIGHLIGHTS\n${ceLines.join("\n")}`);
+      }
+    }
+
+    // Deck coherence report (si present)
+    const deckCoherence = enriched.deckCoherenceReport;
+    if (deckCoherence) {
+      const dc = deckCoherence as { reliabilityGrade?: string; issues?: Array<{ title: string; severity: string }>; missingData?: string[] };
+      const issues = (dc.issues ?? []).slice(0, 10).map((i) => `- [${i.severity}] ${i.title}`).join("\n");
+      const missing = (dc.missingData ?? []).slice(0, 10).join(", ");
+      parts.push(`### DECK COHERENCE REPORT (grade: ${dc.reliabilityGrade ?? "?"})\nIssues:\n${issues}\nMissing: ${missing}`);
+    }
+
+    const full = parts.join("\n\n");
+    return sanitizeForLLM(full, { maxLength: 40000, preserveNewlines: true });
+  }
+
+  private buildCoreUserPrompt(context: AgentContext, contextSummary: string): string {
+    const deal = context.deal;
+    const dealBlock = `
+## DEAL META
+- Nom: ${deal?.name ?? "N/A"}
+- Companie: ${deal?.companyName ?? "N/A"}
+- Secteur: ${deal?.sector ?? "N/A"}
+- Stage: ${deal?.stage ?? "N/A"}
+- Instrument: ${deal?.instrument ?? "N/A"}
+- Geographie: ${deal?.geography ?? "N/A"}
+- ARR: ${deal?.arr != null ? `€${Number(deal.arr).toLocaleString()}` : "N/A"}
+- Growth rate: ${deal?.growthRate != null ? `${deal.growthRate}%` : "N/A"}
+- Montant demande: ${deal?.amountRequested != null ? `€${Number(deal.amountRequested).toLocaleString()}` : "N/A"}
+- Valorisation pre-money: ${deal?.valuationPre != null ? `€${Number(deal.valuationPre).toLocaleString()}` : "N/A"}
+
+${deal?.description ? `## DESCRIPTION COURTE\n${sanitizeForLLM(deal.description, { maxLength: 3000 })}\n` : ""}
+`;
+
+    return `${dealBlock}
+
+## SOURCES DISPONIBLES (deck + fact-store + context engine + deck-coherence)
+
+${contextSummary}
+
+---
+
+Applique ta mission: extrait la these en 6 champs (reformulated, problem, solution, whyNow, moat, pathToExit), identifie 3-5 load-bearing assumptions structurelles, et remonte les alertes (pas de limite arbitraire).
+
+OUTPUT ATTENDU: JSON strict conforme au schema ThesisCore, en francais, sans aucun texte hors JSON.`;
+  }
+
+  private appendFrameworkFailuresAsAlerts(
+    alerts: ThesisAlert[],
+    lens: { failures: string[]; verdict: ThesisVerdict },
+    source: "yc" | "thiel" | "angel-desk"
+  ): void {
+    const severity = lens.verdict === "alert_dominant" ? "critical" : lens.verdict === "vigilance" ? "high" : "medium";
+    for (const f of lens.failures) {
+      // Evite les doublons triviaux
+      if (alerts.some((a) => a.title.toLowerCase() === f.toLowerCase().slice(0, 80))) continue;
+      alerts.push({
+        severity,
+        category: "assumption_fragile",
+        title: `[${source}] ${f.slice(0, 80)}`,
+        detail: f,
+      });
+    }
+  }
+
+  private toFrameworkLens(
+    framework: "yc" | "thiel" | "angel-desk",
+    lens: YcLensOutput | ThielLensOutput | AngelDeskLensOutput
+  ): FrameworkLens {
+    return {
+      framework,
+      verdict: lens.verdict,
+      confidence: lens.confidence,
+      question: lens.question,
+      claims: lens.claims.map((c) => ({
+        claim: c.claim,
+        derivedFrom: c.derivedFrom,
+        status: c.status,
+        evidence: c.evidence,
+        concern: c.concern,
+      })),
+      failures: lens.failures,
+      strengths: lens.strengths,
+      summary: lens.summary,
+    };
+  }
+
+  private hashSources(context: AgentContext): string {
+    const sourceIds = (context.documents ?? []).map((d) => d.id).sort();
+    const contentHashes = (context.documents ?? [])
+      .map((d) => d.extractedText ? createHash("sha256").update(d.extractedText).digest("hex").slice(0, 12) : "empty")
+      .sort();
+    const signature = `${sourceIds.join(",")}|${contentHashes.join(",")}`;
+    return createHash("sha256").update(signature).digest("hex");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Singleton export
+// ---------------------------------------------------------------------------
+export const thesisExtractorAgent = new ThesisExtractorAgent();

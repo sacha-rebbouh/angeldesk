@@ -1948,19 +1948,20 @@ describe("Agent Pipeline Tests", () => {
       expect(agentNames).toContain("question-master");
     });
 
-    it("getTier3Agents() should return all 5 agents", async () => {
+    it("getTier3Agents() should return all 7 agents (incluant thesis-reconciler)", async () => {
       const { getTier3Agents } = await import("@/agents/orchestrator/agent-registry");
 
       const agents = await getTier3Agents();
       const agentNames = Object.keys(agents);
 
-      expect(agentNames).toHaveLength(6);
+      expect(agentNames).toHaveLength(7);
       expect(agentNames).toContain("contradiction-detector");
       expect(agentNames).toContain("scenario-modeler");
       expect(agentNames).toContain("synthesis-deal-scorer");
       expect(agentNames).toContain("devils-advocate");
       expect(agentNames).toContain("memo-generator");
       expect(agentNames).toContain("conditions-analyst");
+      expect(agentNames).toContain("thesis-reconciler");
     });
 
     it("each Tier 1 agent should have a run method", async () => {
@@ -2013,7 +2014,7 @@ describe("Agent Pipeline Tests", () => {
       const tier3 = await getTier3Agents();
 
       expect(Object.keys(tier1)).toHaveLength(13);
-      expect(Object.keys(tier3)).toHaveLength(6);
+      expect(Object.keys(tier3)).toHaveLength(7); // thesis-first : +thesis-reconciler
     });
   });
 

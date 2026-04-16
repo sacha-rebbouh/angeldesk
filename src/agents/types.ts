@@ -136,6 +136,32 @@ export interface EnrichedAgentContext extends AgentContext {
   // Contains detected issues, missing data, and reliability grade
   deckCoherenceReport?: DeckCoherenceReport;
 
+  // Thesis-first — these extraite par thesis-extractor (Tier 0.5), injectee dans
+  // tous les agents downstream (Tier 1/2/3). Inclut le verdict unifie + les claims
+  // de chaque framework + load-bearing assumptions + alerts.
+  thesis?: {
+    id: string; // Thesis.id persiste
+    reformulated: string;
+    problem: string;
+    solution: string;
+    whyNow: string;
+    moat: string | null;
+    pathToExit: string | null;
+    verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
+    confidence: number;
+    loadBearing: Array<{
+      id: string;
+      statement: string;
+      status: "verified" | "declared" | "projected" | "speculative";
+      impact: string;
+      validationPath: string;
+    }>;
+    alertsCount: number;
+    ycVerdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
+    thielVerdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
+    angelDeskVerdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
+  };
+
   // Funding DB context for Tier 2 sector experts
   fundingContext?: {
     competitors?: Array<{

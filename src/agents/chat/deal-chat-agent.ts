@@ -40,6 +40,7 @@ export type ChatIntent =
   | "DEEP_DIVE" // User wants deep analysis on a specific topic
   | "FOLLOW_UP" // User follows up on a previous answer
   | "NEGOTIATION" // User wants negotiation advice/arguments
+  | "THESIS" // thesis-first : questions sur la these (verdict, load-bearing, frameworks, alerts)
   | "GENERAL"; // General question about the deal
 
 /**
@@ -1157,6 +1158,16 @@ Pouvez-vous reformuler votre question ou essayer a nouveau?`,
 - Identifie les points de levier (red flags, benchmarks)
 - Formule des arguments precis et chiffres
 - Suggere des points de negociation (valorisation, conditions, etc.)`,
+
+      THESIS: `# GUIDE POUR THESIS (thesis-first)
+- L'utilisateur pose une question sur la THESE d'investissement (ce que la societe promet de devenir, pourquoi ca doit marcher, ce qui peut casser).
+- Tu as acces au verdict thesis extrait par thesis-extractor + les 3 lunettes YC/Thiel/AngelDesk + les load-bearing assumptions + les alertes.
+- Structure ta reponse :
+  1. Le verdict courant (solide/fragile/invalide) avec les labels existants (signaux tres favorables → alerte dominante)
+  2. La raison structurelle (quelle assumption casse, quel framework tire dans quel sens)
+  3. Ce que le BA peut concretement approfondir (questions au fondateur, signaux a confirmer)
+- Respecte la Regle N°1 : ANALYSE, ne DECIDE jamais. Pas d'imperatif "Investir" ou "Ne pas investir".
+- Si la these a un red flag THESIS_VS_REALITY, cite explicitement l'agent source et le claim contredit.`,
 
       GENERAL: `# GUIDE POUR QUESTION GENERALE
 - Reponds de maniere complete mais concise
