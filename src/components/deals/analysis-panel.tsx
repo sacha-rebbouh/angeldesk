@@ -36,6 +36,8 @@ import {
 } from "./loading-skeletons";
 import { EarlyWarningsPanel } from "./early-warnings-panel";
 import type { EarlyWarning } from "@/types";
+import { ThesisHeroCard } from "./thesis/thesis-hero-card";
+import { ThesisReviewModal } from "./thesis/thesis-review-modal";
 import { ProTeaserBanner } from "@/components/shared/pro-teaser";
 import { AnalysisProgress, type AgentStatus } from "./analysis-progress";
 import { TimelineVersions } from "./timeline-versions";
@@ -413,6 +415,84 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     refetchOnWindowFocus: true,
     staleTime: isPolling ? 0 : 30_000,
   });
+
+  // --- Thesis-first: fetch thesis + pending decision state ---
+  // Polling actif pendant l'analyse (toutes les 5s) pour capter le moment ou
+  // thesis-extractor (Tier 0.5) produit sa these et attend la decision BA.
+  const { data: thesisData } = useQuery({
+    queryKey: queryKeys.thesis.byDeal(dealId),
+    queryFn: async () => {
+      const response = await fetch(`/api/deals/${dealId}/thesis`);
+      if (!response.ok) throw new Error("Failed to fetch thesis");
+      const json = await response.json();
+      return json.data as {
+        thesis: {
+          id: string;
+          reformulated: string;
+          problem: string;
+          solution: string;
+          whyNow: string;
+          moat: string | null;
+          pathToExit: string | null;
+          verdict: string;
+          confidence: number;
+          loadBearing: Array<{
+            id: string;
+            statement: string;
+            status: "verified" | "declared" | "projected" | "speculative";
+            impact: string;
+            validationPath: string;
+          }>;
+          alerts: Array<{
+            severity: "critical" | "high" | "medium" | "low";
+            category: string;
+            title: string;
+            detail: string;
+          }>;
+          decision: string | null;
+          ycLens: { verdict: string };
+          thielLens: { verdict: string };
+          angelDeskLens: { verdict: string };
+        } | null;
+        history: Array<{ id: string; version: number; isLatest: boolean; verdict: string; confidence: number; createdAt: string; decision: string | null }>;
+        hasPendingDecision: boolean;
+      };
+    },
+    refetchInterval: isPolling ? 5000 : false,
+    refetchOnWindowFocus: true,
+    staleTime: isPolling ? 0 : 15_000,
+  });
+
+  const thesis = thesisData?.thesis ?? null;
+  const hasPendingDecision = thesisData?.hasPendingDecision ?? false;
+  const [isThesisModalOpen, setIsThesisModalOpen] = useState(false);
+
+  // Auto-open modal dès que hasPendingDecision devient vrai (Tier 0.5 termine, attend BA)
+  useEffect(() => {
+    if (hasPendingDecision && !isThesisModalOpen) {
+      setIsThesisModalOpen(true);
+    }
+    if (!hasPendingDecision && isThesisModalOpen) {
+      setIsThesisModalOpen(false);
+    }
+  }, [hasPendingDecision, isThesisModalOpen]);
+
+  const handleThesisDecided = useCallback(
+    (decision: "stop" | "continue" | "contest") => {
+      setIsThesisModalOpen(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.thesis.byDeal(dealId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      if (decision === "stop") {
+        toast.info("Analyse arretee. Rapport these-only disponible.");
+      } else if (decision === "continue") {
+        toast.success("Analyse reprise.");
+      } else {
+        toast.info("Rebuttal soumis. Verification en cours.");
+      }
+    },
+    [dealId, queryClient]
+  );
 
   // Helper: populate live results into UI state (callers handle SSR refresh separately)
   const loadCompletedAnalysis = useCallback((polledData: NonNullable<LatestAnalysisResponse["data"]>) => {
@@ -1029,6 +1109,19 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
         />
       )}
 
+      {/* Thesis Review Modal — non-dismissible, force decision BA apres Tier 0.5 */}
+      {thesis && isThesisModalOpen && (
+        <ThesisReviewModal
+          open={isThesisModalOpen}
+          dealId={dealId}
+          reformulated={thesis.reformulated}
+          verdict={thesis.verdict}
+          confidence={thesis.confidence}
+          alertsCount={thesis.alerts.length}
+          onDecided={(decision) => handleThesisDecided(decision)}
+        />
+      )}
+
       {documentReadiness && (!documentReadiness.ready || documentReadiness.warnings.length > 0) && (
         <Card className={!documentReadiness.ready ? "border-red-300 bg-red-50" : "border-amber-300 bg-amber-50"}>
           <CardHeader className="pb-3">
@@ -1383,6 +1476,25 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
             <CardContent className="space-y-4">
               {/* Results Tab Content */}
               <TabsContent value="results" className="mt-0 space-y-4">
+                {/* Thesis Hero Card — thesis-first : affichee en HAUT avant tout */}
+                {thesis && (
+                  <ThesisHeroCard
+                    reformulated={thesis.reformulated}
+                    problem={thesis.problem}
+                    solution={thesis.solution}
+                    whyNow={thesis.whyNow}
+                    moat={thesis.moat}
+                    pathToExit={thesis.pathToExit}
+                    verdict={thesis.verdict}
+                    confidence={thesis.confidence}
+                    loadBearing={thesis.loadBearing}
+                    alerts={thesis.alerts}
+                    hasPendingDecision={hasPendingDecision}
+                    decision={thesis.decision}
+                    onReviewDecisionClick={() => setIsThesisModalOpen(true)}
+                  />
+                )}
+
                 {/* Early Warnings Panel - Show prominently at top */}
                 {displayedResult.earlyWarnings && displayedResult.earlyWarnings.length > 0 && (
                   <EarlyWarningsPanel

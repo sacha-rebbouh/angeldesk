@@ -7,11 +7,13 @@ import type {
   InitialAnalysis,
   DebateResponse,
   FinalVote,
+  ThesisDebateResponse,
 } from "./types";
 
 const ANALYSIS_TIMEOUT_MS = 120000; // 2 minutes
 const DEBATE_TIMEOUT_MS = 90000; // 1.5 minutes
 const VOTE_TIMEOUT_MS = 60000; // 1 minute
+const THESIS_DEBATE_TIMEOUT_MS = 90000; // 1.5 minutes
 
 export class BoardMember {
   readonly id: string;
@@ -32,6 +34,41 @@ export class BoardMember {
 
   getTotalCost(): number {
     return this.totalCost;
+  }
+
+  /**
+   * Phase 0 (thesis-first) : Débat sur la these d'investissement AVANT l'analyse du deal.
+   * Chaque membre evalue la solidite de la these (reformulation AI + 3 frameworks) et
+   * exprime son niveau d'adhesion. Executé comme ROUND 0 par le BoardOrchestrator.
+   */
+  async debateThesis(
+    input: BoardInput
+  ): Promise<{ response: ThesisDebateResponse; cost: number }> {
+    setAgentContext(`board-member-${this.id}`);
+
+    if (!input.thesis) {
+      throw new Error("debateThesis requires input.thesis to be set");
+    }
+
+    const systemPrompt = this.buildSystemPrompt();
+    const userPrompt = this.buildThesisDebatePrompt(input);
+
+    const result = await Promise.race([
+      completeJSON<ThesisDebateResponse>(userPrompt, {
+        model: this.modelKey,
+        systemPrompt,
+        maxTokens: 3000,
+        temperature: 0.5,
+      }),
+      this.timeout<never>(THESIS_DEBATE_TIMEOUT_MS, "Thesis debate timeout"),
+    ]);
+
+    this.totalCost += result.cost;
+
+    return {
+      response: result.data,
+      cost: result.cost,
+    };
   }
 
   /**
@@ -343,6 +380,73 @@ Reponds en JSON:
   ]
 }
 \`\`\``;
+  }
+
+  private buildThesisDebatePrompt(input: BoardInput): string {
+    const t = input.thesis!;
+    const loadBearingStr = t.loadBearing
+      .map((lb) => `- [${lb.status.toUpperCase()}] ${lb.statement} (impact si fausse : ${lb.impact})`)
+      .join("\n");
+    const alertsStr = t.alerts.length > 0
+      ? t.alerts.map((a) => `- [${a.severity.toUpperCase()}] ${a.title} — ${a.detail}`).join("\n")
+      : "(aucune alerte)";
+
+    return `ROUND 0 — DEBAT SUR LA THESE D'INVESTISSEMENT (thesis-first)
+
+## Company : ${input.companyName}
+
+## These reformulee par AI (Tier 0.5)
+${t.reformulated}
+
+### Decomposition
+- **Problème** : ${t.problem}
+- **Solution** : ${t.solution}
+- **Why-now** : ${t.whyNow}
+- **Moat** : ${t.moat ?? "Non declare"}
+- **Path to exit** : ${t.pathToExit ?? "Non declare"}
+
+### Verdict unifie (worst-of-3)
+- Verdict : **${t.verdict}**
+- Confiance : ${t.confidence}/100
+
+### Par framework
+- **YC** : ${t.ycLens.verdict}
+- **Thiel** : ${t.thielLens.verdict}
+- **Angel Desk (BA + groupe + family office + syndicat)** : ${t.angelDeskLens.verdict}
+
+### Load-bearing assumptions (hypotheses porteuses)
+${loadBearingStr}
+
+### Alertes identifiees
+${alertsStr}
+
+---
+
+## TA MISSION
+Tu es le 1er membre a evaluer la these AVANT l'analyse des rapports Tier 1/2/3.
+La question centrale : **cette these tient-elle debout comme objet structurel ?**
+
+Ne decide pas d'investir ou pas. Evalue la SOLIDITE de la these :
+1. Les hypotheses porteuses sont-elles verifiees ou purement speculatives ?
+2. Le verdict unifie est-il aligne avec la qualite objective de la these ?
+3. Quelle est l'hypothese la plus fragile qui pourrait faire ecrouler la these ?
+4. Quel est le defaut structurel majeur que les autres frameworks pourraient avoir rate ?
+
+Reponds en JSON strict :
+\`\`\`json
+{
+  "agreement": "strong_agree" | "agree" | "neutral" | "disagree" | "strong_disagree",
+  "thesisSolidityScore": <0-100>,
+  "weakestAssumption": "<l'hypothese porteuse la plus fragile selon toi>",
+  "majorCritique": "<ce qui pourrait invalider structurellement la these>",
+  "recommendations": [
+    "<recommandation specifique au BA, analytique, jamais prescriptive>"
+  ],
+  "justification": "<justification longue (min 150 mots) expliquant pourquoi la these est solide/fragile>"
+}
+\`\`\`
+
+IMPORTANT : le texte que tu produis est analytique, pas prescriptif. Formule tes observations comme des signaux et points d'attention, pas comme des ordres. Termine chaque recommandation par "...a vous de decider" ou equivalent.`;
   }
 
   private buildVotePrompt(

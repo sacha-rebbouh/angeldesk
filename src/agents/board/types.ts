@@ -109,6 +109,36 @@ export interface BoardInput {
   dealName: string;
   companyName: string;
 
+  // Thesis-first : these d'investissement (Tier 0.5) — injectee en haut du prompt
+  // pour que le Board puisse debat dessus en ROUND 0 avant tout.
+  thesis: {
+    id: string;
+    reformulated: string;
+    problem: string;
+    solution: string;
+    whyNow: string;
+    moat: string | null;
+    pathToExit: string | null;
+    verdict: string;
+    confidence: number;
+    loadBearing: Array<{
+      id: string;
+      statement: string;
+      status: "verified" | "declared" | "projected" | "speculative";
+      impact: string;
+      validationPath: string;
+    }>;
+    alerts: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      detail: string;
+    }>;
+    ycLens: { verdict: string };
+    thielLens: { verdict: string };
+    angelDeskLens: { verdict: string };
+  } | null;
+
   // Extracted documents
   documents: {
     name: string;
@@ -208,6 +238,25 @@ export interface InitialAnalysis {
 
   // What would change their mind
   wouldChangeVerdict: string[];
+}
+
+// ============================================================================
+// THESIS DEBATE TYPES (round 0, thesis-first)
+// ============================================================================
+
+export interface ThesisDebateResponse {
+  /** Verdict du membre sur la these (adherence / scepticisme) */
+  agreement: "strong_agree" | "agree" | "neutral" | "disagree" | "strong_disagree";
+  /** Score de solidite de la these tel que perçue par ce membre (0-100) */
+  thesisSolidityScore: number;
+  /** Load-bearing assumption la plus faible selon ce membre */
+  weakestAssumption: string;
+  /** Critique majeure : ce qui pourrait invalider la these */
+  majorCritique: string;
+  /** Recommandations specifiques au BA concernant la these */
+  recommendations: string[];
+  /** Justification globale (longue, analytique) */
+  justification: string;
 }
 
 // ============================================================================

@@ -122,6 +122,19 @@ export interface AnalysisOptions {
   onEarlyWarning?: OnEarlyWarning; // Callback when potential dealbreaker detected
   /** User subscription plan - determines tier gating (default: "FREE") */
   userPlan?: UserPlan;
+  /**
+   * Thesis-first gate : pause AFTER thesis-extractor (Tier 0.5) completes.
+   * When true, runFullAnalysis returns early with {pausedAfterThesis: true, thesisId, verdict}.
+   * The analysis stays in RUNNING state in DB. Tier 1/2/3 are NOT executed.
+   *
+   * Inngest wraps this in a split:
+   *  - Step A: runAnalysis({pauseAfterThesis: true}) → returns thesisId, verdict
+   *  - Step B: step.waitForEvent('analysis/thesis.decision', 24h)
+   *  - Step C: orchestrator.continueAnalysisAfterThesis(analysisId, decision)
+   *
+   * Absent flag = no gate (default behaviour : runs full analysis end-to-end).
+   */
+  pauseAfterThesis?: boolean;
 }
 
 export interface AnalysisResult {
@@ -161,6 +174,17 @@ export interface AdvancedAnalysisOptions {
   isUpdate?: boolean;
   /** User subscription plan for tier gating */
   userPlan?: UserPlan;
+  /** Thesis-first gate — passed-through from AnalysisOptions */
+  pauseAfterThesis?: boolean;
+}
+
+/** Extended AnalysisResult when the pipeline paused after thesis-extraction for BA review */
+export interface PausedAnalysisResult extends AnalysisResult {
+  pausedAfterThesis: true;
+  thesisId: string;
+  thesisVerdict: string;
+  thesisConfidence: number;
+  alertsCount: number;
 }
 
 // Tier 1 agent names (13 agents)

@@ -136,6 +136,12 @@ export const queryKeys = {
       [...queryKeys.chat.all, "messages", dealId, conversationId] as const,
   },
 
+  // Thesis queries (thesis-first architecture)
+  thesis: {
+    all: ["thesis"] as const,
+    byDeal: (dealId: string) => [...queryKeys.thesis.all, dealId] as const,
+  },
+
   // Live coaching queries
   live: {
     all: ["live"] as const,

@@ -20,6 +20,7 @@ import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { thesisService } from "@/services/thesis";
 import { refundCreditAmount } from "@/services/credits";
+import { inngest } from "@/lib/inngest";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -105,8 +106,34 @@ export async function POST(request: Request, context: RouteContext) {
       },
     });
 
+    // Trouver l'analyse paused correspondante (RUNNING avec thesisId) — la decision
+    // va debloquer le step.waitForEvent dans Inngest pour lancer Tier 1/2/3 ou stopper.
+    const pausedAnalysis = await prisma.analysis.findFirst({
+      where: { dealId, thesisId: latest.id, status: "RUNNING" },
+      select: { id: true },
+    });
+
+    // Emit l'evenement Inngest pour debloquer le pipeline paused (si applicable).
+    // Si aucune analyse RUNNING matching, l'event est absorbe sans effet (predicate if: false).
+    try {
+      await inngest.send({
+        name: "analysis/thesis.decision",
+        data: {
+          analysisId: pausedAnalysis?.id ?? null,
+          dealId,
+          thesisId: latest.id,
+          decision,
+          thesisBypass,
+        },
+      });
+    } catch (err) {
+      console.warn("[API:thesis/decision] Failed to emit Inngest event:", err);
+    }
+
+    // Refund partiel sur "stop" : uniquement pour les analyses deja COMPLETED (legacy/non-paused).
+    // Pour les analyses RUNNING (paused), Inngest phase3 gere le refund partiel (3cr sur 5).
     let refundApplied = 0;
-    if (decision === "stop") {
+    if (decision === "stop" && !pausedAnalysis) {
       const refund = await refundCreditAmount(
         user.id,
         "DEEP_DIVE",

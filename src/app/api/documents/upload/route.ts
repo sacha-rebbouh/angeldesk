@@ -1099,6 +1099,31 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Thesis-first : si le deal a deja une these persistee ET le document a ete extrait avec succes,
+    // declencher une re-extraction auto (1 credit). La these peut avoir evolue avec le nouveau doc.
+    if (updatedDocument?.processingStatus === "COMPLETED") {
+      try {
+        const { thesisService } = await import("@/services/thesis");
+        const existingThesis = await thesisService.getLatest(dealId);
+        if (existingThesis) {
+          const { inngest } = await import("@/lib/inngest");
+          await inngest.send({
+            name: "analysis/thesis.reextract",
+            data: {
+              dealId,
+              userId: user.id,
+              triggeredByDocumentId: document.id,
+              previousThesisId: existingThesis.id,
+            },
+          });
+          console.log(`[upload] Thesis re-extract triggered for deal ${dealId} (prev thesisId=${existingThesis.id})`);
+        }
+      } catch (err) {
+        // Non-bloquant : l'upload reussit meme si l'event Inngest echoue
+        console.warn("[upload] Failed to trigger thesis re-extract:", err);
+      }
+    }
+
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
     return handleApiError(error, "upload document");

@@ -1704,6 +1704,25 @@ Aucune incohérence majeure détectée entre les agents.`;
       );
     }
 
+    // Rule 4: Thesis meta-gate — si la these (Tier 0.5) a ete jugee fragile
+    // (alert_dominant ou vigilance) ET le BA n'a pas explicitement bypass,
+    // on applique un cap de 50/100 pour interdire le faux confort d'un 72/100
+    // alors que la these ne tient pas. Le verdict UI affichera en plus une
+    // notice "Score non applicable — these non validee".
+    // Source: context.thesis est injecte par orchestrator via EnrichedAgentContext
+    // Source: context.analysis.thesisBypass: BA a choisi "continue" malgre these fragile
+    const thesisCtx = (context as unknown as { thesis?: { verdict?: string } }).thesis;
+    const analysisCtx = (context as unknown as { analysis?: { thesisBypass?: boolean } }).analysis;
+    const thesisVerdict = thesisCtx?.verdict ?? null;
+    const thesisBypass = analysisCtx?.thesisBypass ?? false;
+    const fragileThesis = thesisVerdict === "alert_dominant" || thesisVerdict === "vigilance";
+    if (fragileThesis && !thesisBypass && finalOverallScore > 50) {
+      console.warn(
+        `[SynthesisDealScorer] Thesis meta-gate: thesisVerdict="${thesisVerdict}" + !bypass → capping score from ${finalOverallScore} to 50`
+      );
+      finalOverallScore = 50;
+    }
+
     // =========================================================================
 
     const finalVerdict = scoreBasedVerdict(finalOverallScore);

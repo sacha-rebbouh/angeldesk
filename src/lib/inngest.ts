@@ -308,7 +308,6 @@ export const dealAnalysisFunction = inngest.createFunction(
   },
   { event: 'analysis/deal.analyze' },
   async ({ event, step }) => {
-    const { orchestrator } = await import("@/agents");
     const { dealId, type, enableTrace, userPlan, userId } = event.data as {
       dealId: string;
       type: string;
@@ -317,53 +316,129 @@ export const dealAnalysisFunction = inngest.createFunction(
       userId: string;
     };
 
-    // Run the analysis (orchestrator handles its own persistence)
-    const result = await step.run('run-analysis', async () => {
+    // Thesis-first gate actif uniquement pour full_analysis (Deep Dive).
+    // Les autres types (extraction, tier2_sector, tier3_synthesis) bypass.
+    const withThesisGate = type === "full_analysis";
+
+    // ========================================================================
+    // PHASE 1 : Analyse jusqu'a l'extraction de la these (Tier 0.5)
+    // ========================================================================
+    const phase1 = await step.run('phase1-extract-thesis', async () => {
+      const { orchestrator } = await import("@/agents");
       return await orchestrator.runAnalysis({
         dealId,
         type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
         enableTrace,
         userPlan: userPlan as "FREE" | "PRO",
+        pauseAfterThesis: withThesisGate,
       });
     });
 
-    // Compensation: si l'analyse a echoue (result.success=false), refund + reset deal.
-    // runAnalysis fait deja un completeAnalysis(FAILED) en interne; ici on s'assure
-    // que la compensation metier se deroule aussi (le route handler ne peut plus le faire
-    // car la reponse HTTP est deja envoyee quand on arrive ici).
-    if (!result.success) {
-      await step.run('refund-on-failure', async () => {
-        const { refundCredits, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
+    // Pas de pause (non-Deep-Dive ou pause non appliquee) → on se comporte comme avant
+    const paused = withThesisGate && (phase1 as { pausedAfterThesis?: boolean }).pausedAfterThesis === true;
+
+    if (!paused) {
+      if (!phase1.success) {
+        await step.run('refund-on-failure', async () => {
+          await compensateFailedAnalysis({ analysisId: phase1.sessionId, userId, dealId, type });
+        });
+      }
+      return phase1;
+    }
+
+    // ========================================================================
+    // PHASE 2 : Attente de la decision BA via step.waitForEvent (timeout 24h)
+    // ========================================================================
+    const analysisId = phase1.sessionId;
+
+    const decisionEvent = await step.waitForEvent('wait-thesis-decision', {
+      event: 'analysis/thesis.decision',
+      timeout: '24h',
+      if: `async.data.analysisId == "${analysisId}"`,
+    });
+
+    const decisionData = decisionEvent?.data as
+      | { analysisId: string; decision: "stop" | "continue" | "contest"; thesisBypass?: boolean }
+      | undefined;
+
+    const decision: "stop" | "continue" | "contest" | "timeout" = decisionData?.decision ?? "timeout";
+    const thesisBypass = decisionData?.thesisBypass ?? false;
+
+    // ========================================================================
+    // PHASE 3 : Reprise selon la decision
+    //  - stop/timeout : completer these-only + refund partiel/complet
+    //  - continue/contest : lancer Tier 1/2/3 via continueAnalysisAfterThesis
+    // ========================================================================
+    const phase3 = await step.run('phase3-post-thesis', async () => {
+      const { orchestrator } = await import("@/agents");
+      return await orchestrator.continueAnalysisAfterThesis(analysisId, decision, { thesisBypass });
+    });
+
+    // Refund partiel sur stop (3 credits sur 5), complet sur timeout
+    if (decision === "stop" || decision === "timeout") {
+      await step.run('partial-refund-on-thesis-stop', async () => {
+        const { refundCreditAmount, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
         const action = getActionForAnalysisType(type);
-        const analysisId = (result as { sessionId?: string } | undefined)?.sessionId;
-        try {
-          await refundCredits(userId, action, dealId, { analysisId });
-          // P1 — Tracer le refund cote Analysis pour que le resume flow puisse
-          // savoir que les credits ont deja ete rembourses (evite double-refund
-          // en cas de resume qui re-fail).
-          if (analysisId) {
-            await prisma.analysis.update({
-              where: { id: analysisId },
-              data: {
-                refundedAt: new Date(),
-                refundAmount: CREDIT_COSTS[action] ?? null,
-              },
-            }).catch((err: unknown) => logger.warn({ err, analysisId }, 'Could not mark refundedAt'));
+        const fullCost = CREDIT_COSTS[action] ?? 5;
+        // Timeout: full refund. Stop: partial (rembourse ce qui n'a pas ete consomme = Tier1/2/3).
+        // Estimation : thesis + tier 0 coute ~2 credits, reste = fullCost - 2.
+        const refundAmount = decision === "timeout" ? fullCost : Math.max(0, fullCost - 2);
+        if (refundAmount > 0) {
+          try {
+            const refundResult = await refundCreditAmount(userId, action, refundAmount, {
+              dealId,
+              idempotencyKey: `thesis:${decision}-refund:${analysisId}`,
+              description: decision === "timeout"
+                ? `Thesis timeout — refund integral ${refundAmount}cr (deal ${dealId})`
+                : `Thesis stop — refund partiel ${refundAmount}cr (deal ${dealId})`,
+            });
+            if (refundResult.success) {
+              await prisma.analysis.update({
+                where: { id: analysisId },
+                data: { refundedAt: new Date(), refundAmount },
+              }).catch((err: unknown) => logger.warn({ err, analysisId }, 'Could not mark refundedAt'));
+            }
+          } catch (err) {
+            logger.error({ err, dealId, userId, analysisId, decision }, 'Partial refund on thesis-stop failed');
           }
-        } catch (err) {
-          logger.error({ err, dealId, userId }, 'Inngest refund failed for failed analysis');
-        }
-        try {
-          await prisma.deal.update({ where: { id: dealId }, data: { status: 'IN_DD' } });
-        } catch (err) {
-          logger.error({ err, dealId }, 'Inngest deal status reset failed');
         }
       });
     }
 
-    return result;
+    // Compensation si phase3 echoue
+    if (!phase3.success) {
+      await step.run('refund-on-phase3-failure', async () => {
+        await compensateFailedAnalysis({ analysisId: phase3.sessionId, userId, dealId, type });
+      });
+    }
+
+    return phase3;
   }
 );
+
+/**
+ * Helper — compensation d'une analyse qui a echoue (refund + reset deal status).
+ */
+async function compensateFailedAnalysis(params: { analysisId?: string; userId: string; dealId: string; type: string }) {
+  const { refundCredits, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
+  const action = getActionForAnalysisType(params.type);
+  try {
+    await refundCredits(params.userId, action, params.dealId, { analysisId: params.analysisId });
+    if (params.analysisId) {
+      await prisma.analysis.update({
+        where: { id: params.analysisId },
+        data: { refundedAt: new Date(), refundAmount: CREDIT_COSTS[action] ?? null },
+      }).catch((err: unknown) => logger.warn({ err, analysisId: params.analysisId }, 'Could not mark refundedAt'));
+    }
+  } catch (err) {
+    logger.error({ err, dealId: params.dealId, userId: params.userId }, 'Inngest refund failed for failed analysis');
+  }
+  try {
+    await prisma.deal.update({ where: { id: params.dealId }, data: { status: 'IN_DD' } });
+  } catch (err) {
+    logger.error({ err, dealId: params.dealId }, 'Inngest deal status reset failed');
+  }
+}
 
 /**
  * DEAL ANALYSIS RESUME via Inngest
@@ -406,5 +481,80 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
   }
 );
 
+/**
+ * THESIS REEXTRACT via Inngest
+ * Re-extrait la these d'un deal quand un nouveau document est uploade.
+ * Facture 1 credit (THESIS_REEXTRACT). L'ancienne version reste accessible via versioning.
+ */
+export const thesisReextractFunction = inngest.createFunction(
+  {
+    id: 'thesis-reextract',
+    name: 'Thesis Re-extraction',
+    retries: 1,
+    concurrency: [{
+      key: "event.data.userId",
+      limit: 2,
+    }],
+  },
+  { event: 'analysis/thesis.reextract' },
+  async ({ event, step }) => {
+    const { dealId, userId, previousThesisId } = event.data as {
+      dealId: string;
+      userId: string;
+      triggeredByDocumentId?: string;
+      previousThesisId?: string;
+    };
+
+    // Step 1 : facturation 1 credit (idempotent par deal + previousThesisId)
+    const creditResult = await step.run('deduct-reextract-credit', async () => {
+      const { deductCreditAmount } = await import("@/services/credits");
+      return await deductCreditAmount(userId, "THESIS_REEXTRACT", 1, {
+        dealId,
+        idempotencyKey: `thesis-reextract:${dealId}:${previousThesisId ?? 'first'}`,
+        description: `Re-extraction these apres upload document (deal ${dealId})`,
+      });
+    });
+
+    if (!creditResult.success) {
+      logger.warn({ dealId, userId, reason: creditResult.error }, 'Thesis re-extract : credit deduction failed');
+      return { success: false, error: creditResult.error };
+    }
+
+    // Step 2 : re-extraction via orchestrator (charge tous les docs COMPLETED du deal)
+    const result = await step.run('run-thesis-reextract', async () => {
+      const { orchestrator } = await import("@/agents");
+      try {
+        // runAnalysis en mode "extraction" + pauseAfterThesis = uniquement Tier 0 + thesis.
+        // Apres pause, BA decide via modal. Le pipeline ne poursuit PAS automatiquement.
+        const res = await orchestrator.runAnalysis({
+          dealId,
+          type: "full_analysis",
+          userPlan: "PRO",
+          pauseAfterThesis: true,
+          forceRefresh: true,
+        });
+        return res;
+      } catch (err) {
+        logger.error({ err, dealId }, 'Thesis re-extract run failed');
+        throw err;
+      }
+    });
+
+    // Step 3 : si echec → refund du credit
+    if (!result.success) {
+      await step.run('refund-reextract-credit', async () => {
+        const { refundCreditAmount } = await import("@/services/credits");
+        await refundCreditAmount(userId, "THESIS_REEXTRACT", 1, {
+          dealId,
+          idempotencyKey: `thesis-reextract-refund:${dealId}:${previousThesisId ?? 'first'}`,
+          description: `Refund re-extraction these (echec extraction)`,
+        });
+      });
+    }
+
+    return result;
+  }
+);
+
 // Export all functions for the serve handler
-export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction]
+export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction, thesisReextractFunction]

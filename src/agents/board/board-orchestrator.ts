@@ -81,6 +81,23 @@ export class BoardOrchestrator {
         data: { status: "ANALYZING" },
       });
 
+      // 3.5 ROUND 0 — Thesis debate (thesis-first) : debat sur la these AVANT analyse deal
+      if (input.thesis) {
+        this.emitProgress({
+          type: "debate_round_started",
+          sessionId: session.id,
+          roundNumber: 0,
+          message: "Round 0 : Debat sur la these d'investissement",
+        });
+        await this.runThesisDebate(input);
+        this.emitProgress({
+          type: "debate_round_completed",
+          sessionId: session.id,
+          roundNumber: 0,
+          message: "Round 0 termine",
+        });
+      }
+
       // 5. Run initial analyses (PARALLEL)
       await this.runInitialAnalyses(input);
 
@@ -385,10 +402,43 @@ export class BoardOrchestrator {
       `Tier1=${tier1Count}/13, Tier2=${agentOutputs.tier2 ? 1 : 0}, Tier3=${tier3Count}/5`
     );
 
+    // Thesis-first : charger la these latest persistee
+    let thesisInput: BoardInput["thesis"] = null;
+    try {
+      const { thesisService } = await import("@/services/thesis");
+      const latest = await thesisService.getLatest(dealId);
+      if (latest) {
+        const loadBearingArr = Array.isArray(latest.loadBearing) ? latest.loadBearing : [];
+        const alertsArr = Array.isArray(latest.alerts) ? latest.alerts : [];
+        thesisInput = {
+          id: latest.id,
+          reformulated: latest.reformulated,
+          problem: latest.problem,
+          solution: latest.solution,
+          whyNow: latest.whyNow,
+          moat: latest.moat,
+          pathToExit: latest.pathToExit,
+          verdict: latest.verdict,
+          confidence: latest.confidence,
+          loadBearing: loadBearingArr as BoardInput["thesis"] extends null ? never : NonNullable<BoardInput["thesis"]>["loadBearing"],
+          alerts: alertsArr as BoardInput["thesis"] extends null ? never : NonNullable<BoardInput["thesis"]>["alerts"],
+          ycLens: (latest.ycLens as { verdict: string }) ?? { verdict: "unknown" },
+          thielLens: (latest.thielLens as { verdict: string }) ?? { verdict: "unknown" },
+          angelDeskLens: (latest.angelDeskLens as { verdict: string }) ?? { verdict: "unknown" },
+        };
+        console.log(`[BoardOrchestrator] Thesis loaded for round THESIS_DEBATE: verdict=${latest.verdict}`);
+      } else {
+        console.log(`[BoardOrchestrator] No thesis found for deal ${dealId} — THESIS_DEBATE round will be skipped`);
+      }
+    } catch (err) {
+      console.warn(`[BoardOrchestrator] Failed to load thesis:`, err);
+    }
+
     return {
       dealId: deal.id,
       dealName: deal.name,
       companyName: deal.companyName ?? deal.name,
+      thesis: thesisInput,
       documents: deal.documents.map((doc) => ({
         name: doc.name,
         type: doc.type,
@@ -469,6 +519,68 @@ export class BoardOrchestrator {
         });
       }
     }
+  }
+
+  /**
+   * ROUND 0 (thesis-first) : Débat sur la these d'investissement.
+   * Chaque membre evalue la solidite de la these AVANT l'analyse du deal.
+   * Execute en parallele sur tous les membres. Persist en AIBoardRound avec roundType=THESIS_DEBATE.
+   */
+  private async runThesisDebate(input: BoardInput): Promise<void> {
+    if (!input.thesis || !this.sessionId) return;
+
+    const results = await Promise.allSettled(
+      this.members.map(async (member) => {
+        this.emitProgress({
+          type: "member_analysis_started",
+          sessionId: this.sessionId!,
+          memberId: member.id,
+          memberName: member.name,
+          message: `${member.name} debat la these`,
+        });
+
+        const { response, cost } = await member.debateThesis(input);
+
+        this.emitProgress({
+          type: "debate_response",
+          sessionId: this.sessionId!,
+          memberId: member.id,
+          memberName: member.name,
+          roundNumber: 0,
+          message: `${member.name} : ${response.agreement} (solidite ${response.thesisSolidityScore}/100)`,
+        });
+
+        return { memberId: member.id, memberName: member.name, response, cost };
+      })
+    );
+
+    const responses: Array<{ memberId: string; memberName: string; response: unknown; cost: number }> = [];
+    results.forEach((r, idx) => {
+      if (r.status === "fulfilled") {
+        responses.push(r.value);
+      } else {
+        const failedMember = this.members[idx];
+        const errorMessage = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        console.error(`[BoardOrchestrator] ${failedMember.name} thesis debate failed:`, errorMessage);
+      }
+    });
+
+    // Persist round THESIS_DEBATE
+    await prisma.aIBoardRound.create({
+      data: {
+        sessionId: this.sessionId,
+        roundNumber: 0,
+        roundType: "THESIS_DEBATE",
+        responses: responses as unknown as Parameters<typeof prisma.aIBoardRound.create>[0]["data"]["responses"],
+        currentVerdicts: {},
+        consensusReached: false,
+        majorityStable: false,
+      },
+    });
+
+    console.log(
+      `[BoardOrchestrator] THESIS_DEBATE round complete : ${responses.length}/${this.members.length} members participated`
+    );
   }
 
   private async runDebateRounds(input: BoardInput): Promise<void> {

@@ -1,6 +1,36 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-04-17 — feat: Thesis-first pipeline pause + Board round THESIS_DEBATE + meta-gate + auto re-extraction
+
+Suite au delivery thesis-first de base, implementation des 5 items deferes :
+1. **Inngest waitForEvent** : pipeline d'analyse splittee en 3 phases — `phase1-extract-thesis` → `step.waitForEvent('analysis/thesis.decision', 24h)` → `phase3-post-thesis`. Le BA dispose de 24h pour decider (stop / continue / contest). Sur timeout : full refund + analyse expired. Sur stop : partial refund (3cr sur 5).
+2. **AnalysisPanel integration** : `ThesisHeroCard` injecte en haut des resultats d'analyse, polling toutes les 5s de `/api/deals/[id]/thesis`, ouverture automatique de `ThesisReviewModal` des que `hasPendingDecision=true`. Decision BA → invalidation cache → pipeline reprend.
+3. **Board round THESIS_DEBATE** : nouveau round 0 execute AVANT les DEBATE rounds classiques. Les 4 membres IA (Claude/GPT/Gemini/Grok) debattent la solidite de la these (score 0-100, weakest assumption, major critique, recommandations). Persist en `AIBoardRound` avec `roundType=THESIS_DEBATE`.
+4. **Meta-gate UI** : `VerdictPanel` masque le score global si `thesisVerdict ∈ {alert_dominant, vigilance}` et `!thesisBypass`. Affiche notice "Score non applicable — these jugee fragile". `SynthesisDealScorerAgent` applique la regle 4 post-LLM : cap 50/100 si these fragile sans bypass.
+5. **Auto re-extraction** : sur upload d'un nouveau document, si le deal a deja une these persistee, emission de l'event Inngest `analysis/thesis.reextract`. Nouvelle Inngest function `thesisReextractFunction` : facture 1cr (idempotent), re-lance extraction via `orchestrator.runAnalysis({pauseAfterThesis:true, forceRefresh:true})`, refund sur echec.
+
+### Fichiers modifies
+- `src/agents/orchestrator/types.ts` — `AnalysisOptions.pauseAfterThesis` + `PausedAnalysisResult` + pass-through dans `AdvancedAnalysisOptions`.
+- `src/agents/orchestrator/index.ts` — pause post-thesis (persist intermediate results + emit `analysis/thesis.review-required` event + early return), nouvelle methode publique `continueAnalysisAfterThesis(analysisId, decision, {thesisBypass})` qui route sur completeAnalysis (stop/timeout) ou resumeAnalysis (continue/contest).
+- `src/agents/tier3/synthesis-deal-scorer.ts` — regle 4 : cap score a 50 si `thesisVerdict ∈ {alert_dominant, vigilance} && !thesisBypass`.
+- `src/lib/inngest.ts` — `dealAnalysisFunction` splittee en 3 `step.run` avec `step.waitForEvent('analysis/thesis.decision', 24h)` au milieu. Nouvelle fonction `thesisReextractFunction` triggeree par `analysis/thesis.reextract`. Helper `compensateFailedAnalysis` factorise le refund.
+- `src/app/api/deals/[dealId]/thesis/decision/route.ts` — emit `analysis/thesis.decision` event apres persistance. Refund partiel uniquement pour analyses deja COMPLETED (legacy) ; les RUNNING/paused sont gerees par Inngest phase3.
+- `src/app/api/documents/upload/route.ts` — apres extraction COMPLETED, si deal a une these, emit `analysis/thesis.reextract`.
+- `src/components/deals/verdict-panel.tsx` — props `thesisVerdict`/`thesisBypass`/`thesisDecision`. Logic `thesisGated`. Top accent line rouge, score ring masquee, notice "Score non applicable".
+- `src/components/deals/analysis-panel.tsx` — imports `ThesisHeroCard` + `ThesisReviewModal`. Query `thesis.byDeal` avec polling 5s. Auto-open modal sur `hasPendingDecision=true`. Callback `handleThesisDecided` invalide les caches et toast.
+- `src/lib/query-keys.ts` — `queryKeys.thesis.byDeal(dealId)`.
+- `src/agents/board/types.ts` — `BoardInput.thesis` (nullable) + nouveau `ThesisDebateResponse`.
+- `src/agents/board/board-orchestrator.ts` — `prepareInputPackage` charge la these via `thesisService.getLatest()`. Round 0 (`runThesisDebate`) execute AVANT les initial analyses. Persist en `AIBoardRound` avec `roundType=THESIS_DEBATE`.
+- `src/agents/board/board-member.ts` — nouvelle methode `debateThesis(input)` + prompt `buildThesisDebatePrompt` : evaluation adherence/solidity/weakest-assumption/major-critique/recommandations.
+
+### Commandes validation
+```bash
+npx tsc --noEmit  # 0 erreur
+npx vitest run    # 559/559 tests verts
+```
+
+---
 ## 2026-04-17 — feat: Thesis-first architecture (extractor + reconciler + frameworks + bifurcation)
 
 Refonte fondamentale de l'analyse : avant de parler equipe/marche/finances, on teste

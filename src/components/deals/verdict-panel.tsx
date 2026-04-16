@@ -32,6 +32,11 @@ interface VerdictPanelProps {
   hasAnalysis: boolean;
   /** Sub-scores so the verdict can highlight weak dimensions */
   dimensionScores?: DimensionScore[];
+  /** Thesis-first meta-gate : si la these est jugee fragile et le BA n'a pas bypass,
+   *  on masque le score global pour interdire le faux confort. */
+  thesisVerdict?: string | null;
+  thesisBypass?: boolean;
+  thesisDecision?: string | null;
 }
 
 // ScoreRing imported from @/components/ui/score-ring
@@ -66,12 +71,24 @@ export const VerdictPanel = memo(function VerdictPanel({
   conditionIssues,
   hasAnalysis,
   dimensionScores,
+  thesisVerdict,
+  thesisBypass,
+  thesisDecision,
 }: VerdictPanelProps) {
 
   const recConfig = useMemo(() => {
     if (!recommendation) return null;
     return RECOMMENDATION_CONFIG[recommendation.toLowerCase()] ?? null;
   }, [recommendation]);
+
+  // Meta-gate : si la these est jugee fragile (alert_dominant | vigilance) et que
+  // le BA n'a pas explicitement bypass (decision=continue), on masque le score global.
+  // Rationale : interdire le faux confort d'un 72/100 quand la these ne tient pas.
+  const fragileThesisVerdicts = new Set(["alert_dominant", "vigilance"]);
+  const thesisGated = !!thesisVerdict
+    && fragileThesisVerdicts.has(thesisVerdict)
+    && !thesisBypass;
+  const displayedScore = thesisGated ? null : score;
 
   const criticalFlags = useMemo(
     () => redFlags.filter(f => f.severity === "CRITICAL" || f.severity === "HIGH"),
@@ -108,10 +125,11 @@ export const VerdictPanel = memo(function VerdictPanel({
       {/* Subtle top accent line */}
       <div className={cn(
         "absolute top-0 left-0 right-0 h-[2px]",
-        score != null && score >= 80 ? "bg-emerald-500" :
-        score != null && score >= 60 ? "bg-blue-500" :
-        score != null && score >= 40 ? "bg-amber-500" :
-        score != null && score >= 20 ? "bg-orange-500" :
+        thesisGated ? "bg-red-500" :
+        displayedScore != null && displayedScore >= 80 ? "bg-emerald-500" :
+        displayedScore != null && displayedScore >= 60 ? "bg-blue-500" :
+        displayedScore != null && displayedScore >= 40 ? "bg-amber-500" :
+        displayedScore != null && displayedScore >= 20 ? "bg-orange-500" :
         "bg-red-500"
       )} />
 
@@ -124,7 +142,7 @@ export const VerdictPanel = memo(function VerdictPanel({
             </div>
             <h3 className="text-[15px] font-semibold tracking-tight">Analyse globale</h3>
           </div>
-          {recConfig && (
+          {recConfig && !thesisGated && (
             <Badge className={cn(
               "text-xs font-semibold px-3 py-1 rounded-md border",
               recConfig.color, recConfig.bg,
@@ -134,15 +152,25 @@ export const VerdictPanel = memo(function VerdictPanel({
           )}
         </div>
 
+        {/* Meta-gate notice quand la these est fragile et non bypass */}
+        {thesisGated && (
+          <div className="mb-6 rounded-md border border-red-300 bg-red-50 p-3">
+            <p className="text-sm font-semibold text-red-800 mb-1">Score global non applicable</p>
+            <p className="text-xs text-red-700 leading-relaxed">
+              La these d&apos;investissement a ete jugee <strong>{thesisVerdict === "alert_dominant" ? "dominee par des signaux d&apos;alerte" : "fragile"}</strong>{thesisDecision === "stop" ? " et vous avez choisi d&apos;arreter l&apos;analyse." : "."} Consultez la carte Thèse ci-dessus et les points d&apos;alerte. {thesisDecision === null ? "Une decision BA est requise avant d&apos;afficher le score." : ""}
+            </p>
+          </div>
+        )}
+
         {/* Score + Summary area */}
         <div className="flex items-start gap-8">
           {/* Score Ring */}
-          {score != null && score > 0 && (
+          {displayedScore != null && displayedScore > 0 && (
             <div className="shrink-0">
-              <ScoreRing score={score} />
+              <ScoreRing score={displayedScore} />
               <p className="text-center mt-2">
                 <Badge variant="outline" className="text-[10px] font-medium tracking-wide uppercase">
-                  {getScoreLabel(score)}
+                  {getScoreLabel(displayedScore)}
                 </Badge>
               </p>
             </div>
