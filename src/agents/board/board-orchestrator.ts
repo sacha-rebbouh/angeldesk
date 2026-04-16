@@ -825,13 +825,16 @@ export class BoardOrchestrator {
     const rawQuestions = this.collectRawQuestions(finalVotes);
 
     // LLM-powered deduplication + synthesis for high confidence
-    const { consensusPoints, frictionPoints, questionsForFounder } =
-      await this.synthesizeKeyPoints(rawAgreementPoints, rawConcerns, rawQuestions);
+    const synth = await this.synthesizeKeyPoints(rawAgreementPoints, rawConcerns, rawQuestions);
 
-    return {
-      verdict: majorityVerdict,
-      consensusLevel,
-      stoppingReason: reason,
+    // P1 — Sanitize toutes les narratives avant persistence + export client.
+    // Les membres du board peuvent produire des votes avec langage prescriptif;
+    // la regle N°1 interdit ces formulations dans toute UI visible par le BA.
+    const { sanitizeAgentNarratives } = await import("@/agents/orchestration/result-sanitizer");
+    const { data: sanitized, totalViolations } = sanitizeAgentNarratives({
+      consensusPoints: synth.consensusPoints,
+      frictionPoints: synth.frictionPoints,
+      questionsForFounder: synth.questionsForFounder,
       votes: finalVotes.map((v) => ({
         memberId: v.memberId,
         memberName: v.member.name,
@@ -840,9 +843,32 @@ export class BoardOrchestrator {
         confidence: v.vote.confidence,
         justification: v.vote.justification,
       })),
-      consensusPoints,
-      frictionPoints,
-      questionsForFounder,
+    });
+    if (totalViolations > 0) {
+      console.warn(`[BoardOrchestrator] Sanitized ${totalViolations} prescriptive violations`);
+    }
+    const safe = sanitized as {
+      consensusPoints: string[];
+      frictionPoints: string[];
+      questionsForFounder: string[];
+      votes: Array<{
+        memberId: string;
+        memberName: string;
+        color: string;
+        verdict: FinalVote["verdict"];
+        confidence: number;
+        justification: string;
+      }>;
+    };
+
+    return {
+      verdict: majorityVerdict,
+      consensusLevel,
+      stoppingReason: reason,
+      votes: safe.votes,
+      consensusPoints: safe.consensusPoints,
+      frictionPoints: safe.frictionPoints,
+      questionsForFounder: safe.questionsForFounder,
       totalRounds: this.debateHistory.length,
       totalCost: this.getTotalCost(),
       totalTimeMs: Date.now() - this.startTime,

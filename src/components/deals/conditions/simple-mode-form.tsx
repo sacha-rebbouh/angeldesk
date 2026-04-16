@@ -68,7 +68,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
             />
           </div>
           <div className="space-y-2">
-            <HelpLabel fieldKey="amountRaised" fallbackLabel="Montant leve (EUR)" />
+            <HelpLabel fieldKey="amountRaised" fallbackLabel="Montant levé (EUR)" />
             <Input
               type="number"
               placeholder="Ex: 1000000"
@@ -88,7 +88,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
             />
             {autoDilution !== null && form.dilutionPct == null && (
               <p className="text-xs text-muted-foreground">
-                Calculee : {autoDilution}%
+                Dilution calculée : {autoDilution}%
                 <Button
                   variant="link"
                   size="sm"
@@ -101,7 +101,7 @@ export const SimpleModeForm = React.memo(function SimpleModeForm({ form, updateF
             )}
             {autoDilution !== null && form.dilutionPct != null && Math.abs(form.dilutionPct - autoDilution) > 0.5 && (
               <p className="text-xs text-yellow-600">
-                Ecart avec le calcul theorique ({autoDilution}%)
+                Écart avec le calcul théorique ({autoDilution}%)
               </p>
             )}
           </div>

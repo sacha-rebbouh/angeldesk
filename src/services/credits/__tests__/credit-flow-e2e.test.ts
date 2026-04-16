@@ -39,6 +39,7 @@ interface InMemoryTransaction {
   dealId: string | null;
   packName: string | null;
   stripePaymentId: string | null;
+  idempotencyKey: string | null;
   createdAt: Date;
 }
 
@@ -166,6 +167,11 @@ const mockTx = {
           tx.action === where.action
       ) ?? null;
     }),
+    // P1 — refundCredits scope par idempotencyKey desormais; le mock doit supporter findUnique.
+    findUnique: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      if (typeof where.idempotencyKey !== 'string') return null;
+      return transactions.find((tx) => tx.idempotencyKey === where.idempotencyKey) ?? null;
+    }),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
       const tx: InMemoryTransaction = {
         id: nextId(),
@@ -177,6 +183,7 @@ const mockTx = {
         dealId: (data.dealId as string) ?? null,
         packName: (data.packName as string) ?? null,
         stripePaymentId: (data.stripePaymentId as string) ?? null,
+        idempotencyKey: (data.idempotencyKey as string) ?? null,
         createdAt: new Date(),
       };
       transactions.push(tx);

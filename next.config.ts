@@ -20,10 +20,26 @@ const nextConfig: NextConfig = {
     ];
 
     // CSP only in production (Turbopack HMR scripts break CSP in dev)
+    // P1 — durci: retrait d'unsafe-eval (plus requis avec Next 16 turbopack prod build).
+    // unsafe-inline conserve pour les inline scripts Clerk/Vercel Analytics et les
+    // style inline Tailwind. La migration vers un CSP nonce-based necessite un
+    // middleware dedie + injection de nonce dans le layout (suivi P2).
     if (!isDev) {
       securityHeaders.push({
         key: "Content-Security-Policy",
-        value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.clerk.dev https://*.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self' https://*.clerk.dev https://*.clerk.com https://*.sentry.io https://openrouter.ai wss://*.clerk.dev wss://*.ably.io https://*.ably.io; frame-src 'self' https://*.clerk.dev https://*.clerk.com; frame-ancestors 'none';",
+        value: [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline' https://*.clerk.dev https://*.clerk.com https://*.clerk.accounts.dev https://challenges.cloudflare.com",
+          "style-src 'self' 'unsafe-inline'",
+          "img-src 'self' data: https: blob:",
+          "font-src 'self' data:",
+          "connect-src 'self' https://*.clerk.dev https://*.clerk.com https://*.clerk.accounts.dev https://*.sentry.io https://openrouter.ai https://api.openrouter.ai wss://*.clerk.dev wss://*.ably.io https://*.ably.io https://api.inngest.com https://inn.gs",
+          "frame-src 'self' https://*.clerk.dev https://*.clerk.com https://challenges.cloudflare.com",
+          "frame-ancestors 'none'",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "form-action 'self'",
+        ].join("; "),
       });
     }
 

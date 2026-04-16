@@ -144,8 +144,12 @@ export async function POST(request: NextRequest) {
     try {
       await triggerTargetedReanalysis(session.dealId, agentNames, sessionId);
     } catch (reanalysisError) {
-      // Refund credits — re-analysis failed to start
-      await refundCredits(user.id, 'RE_ANALYSIS', session.dealId);
+      // Refund credits — re-analysis failed to start.
+      // P1 — idempotency scope fine: par (sessionId, dealId) pour permettre plusieurs
+      // tentatives successives sans bloquer les refunds legitimes.
+      await refundCredits(user.id, 'RE_ANALYSIS', session.dealId, {
+        idempotencyKey: `refund:RE_ANALYSIS:session:${sessionId}`,
+      });
       throw reanalysisError;
     }
 

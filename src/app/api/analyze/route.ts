@@ -57,7 +57,8 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    // Rate limiting via DB: persistent across serverless instances
+    // P1 — Rate limiting serre: max 2 dispatch/min par user (Deep Dive = 41 agents,
+    // un user n'a aucune raison legitime de lancer plus). Persistent cross-instance via DB.
     const recentAnalyses = await prisma.analysis.count({
       where: {
         deal: { userId: user.id },
@@ -65,9 +66,9 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (recentAnalyses >= 5) {
+    if (recentAnalyses >= 2) {
       return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
+        { error: "Rate limit: maximum 2 analyses par minute" },
         { status: 429, headers: { "Retry-After": "60" } }
       );
     }
@@ -136,9 +137,24 @@ export async function POST(request: NextRequest) {
           dealId,
           completed: resumableAnalysis.completedAgents,
           total: resumableAnalysis.totalAgents,
+          alreadyRefunded: !!resumableAnalysis.refundedAt,
         },
         "Found resumable analysis, resuming from checkpoint"
       );
+
+      // P1 — Si l'analyse precedente a deja ete remboursee, elle a couvert
+      // l'ancien paiement. On re-facture la reprise (le user avait reçu son refund
+      // et decide de re-tenter). Sinon (pas de refund), l'analyse precedente est
+      // encore consideree comme "en cours" cote credits, pas de nouvelle facturation.
+      if (resumableAnalysis.refundedAt) {
+        const resumeDeduction = await recordDealAnalysis(user.id, requestedTier, dealId, type);
+        if (!resumeDeduction.success) {
+          return NextResponse.json(
+            { error: "Credits insuffisants pour la reprise", upgradeRequired: true, remainingDeals: 0 },
+            { status: 403 }
+          );
+        }
+      }
 
       // Set analysis back to RUNNING for resumeAnalysis to work
       await prisma.analysis.update({

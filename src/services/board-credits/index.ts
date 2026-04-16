@@ -88,10 +88,16 @@ export async function addExtraCredits(): Promise<{ newTotal: number }> {
 }
 
 /**
- * Refund a credit (if board failed)
+ * Refund a credit (if board failed).
+ * P1 — passe un idempotencyKey scope par sessionId (ou timestamp minute) pour
+ * eviter les double-refunds silencieux mais aussi les blocages d'ancien refund
+ * deja enregistre.
  */
-export async function refundCredit(userId: string): Promise<void> {
-  await refundCredits(userId, 'AI_BOARD');
+export async function refundCredit(userId: string, sessionId?: string): Promise<void> {
+  const idempotencyKey = sessionId
+    ? `refund:AI_BOARD:session:${sessionId}`
+    : `refund:AI_BOARD:user:${userId}:${Math.floor(Date.now() / 60_000)}`;
+  await refundCredits(userId, 'AI_BOARD', undefined, { idempotencyKey });
 }
 
 // Legacy export

@@ -138,7 +138,7 @@ export const RedFlagsSummary = memo(function RedFlagsSummary({
               )}
               {counts.HIGH > 0 && (
                 <Badge className="bg-orange-500 text-white border-0">
-                  {counts.HIGH} Eleve{counts.HIGH > 1 ? "s" : ""}
+                  {counts.HIGH} Élevé{counts.HIGH > 1 ? "s" : ""}
                 </Badge>
               )}
               {counts.MEDIUM > 0 && (

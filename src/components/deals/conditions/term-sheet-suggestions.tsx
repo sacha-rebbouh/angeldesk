@@ -158,9 +158,9 @@ export const TermSheetSuggestions = React.memo(function TermSheetSuggestions({
         <div className="flex items-center gap-3">
           <Sparkles className="h-5 w-5 text-primary shrink-0" />
           <div>
-            <p className="text-sm font-medium">Term sheet detecte : {termSheetDocName}</p>
+            <p className="text-sm font-medium">Term sheet détecté : {termSheetDocName}</p>
             <p className="text-xs text-muted-foreground">
-              L&apos;IA peut extraire les conditions du document et pre-remplir le formulaire
+              L&apos;IA peut extraire les conditions du document et pré-remplir le formulaire
             </p>
           </div>
         </div>

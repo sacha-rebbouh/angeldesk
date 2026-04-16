@@ -238,13 +238,17 @@ export async function POST(request: NextRequest) {
     let extractionCreditEstimate: ExtractionCreditEstimate | null = null;
 
     // Images (JPEG/PNG): OCR via Vision LLM to extract text content
+    let imageOcrCredits = 0;
     if (file.type === "image/jpeg" || file.type === "image/png") {
-      // P0.4: pre-check credits AVANT d'appeler le Vision LLM (coût OpenRouter engage).
-      const imagePreCheck = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", 2, {
+      // P0.4 + P1: pre-check credits AVANT d'appeler le Vision LLM. Tarification
+      // granulaire par taille: 1 credit si < 500KB (image simple, screenshot
+      // standard), 2 credits au-dela (image lourde, qualite high-fidelity).
+      imageOcrCredits = file.size < 500 * 1024 ? 1 : 2;
+      const imagePreCheck = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", imageOcrCredits, {
         dealId,
         documentId: document.id,
         idempotencyKey: `extraction:pre:image:${document.id}`,
-        description: `Pre-check image OCR for ${file.name}`,
+        description: `Pre-check image OCR (${imageOcrCredits}cr, ${Math.round(file.size / 1024)}KB) for ${file.name}`,
       });
       if (!imagePreCheck.success) {
         await prisma.document.update({
@@ -254,7 +258,7 @@ export async function POST(request: NextRequest) {
             extractionWarnings: [{
               code: "INSUFFICIENT_CREDITS",
               severity: "critical",
-              message: `Credits insuffisants pour l'OCR image (2 requis)`,
+              message: `Credits insuffisants pour l'OCR image (${imageOcrCredits} requis)`,
               suggestion: "Acheter un pack de credits puis re-uploader.",
             }] as Prisma.InputJsonValue,
           },
@@ -262,8 +266,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             error: "Credits insuffisants pour l'OCR image",
-            required: 2,
-            breakdown: { image: 2 },
+            required: imageOcrCredits,
+            breakdown: { image: imageOcrCredits, sizeKb: Math.round(file.size / 1024) },
           },
           { status: 402 }
         );
@@ -290,7 +294,7 @@ export async function POST(request: NextRequest) {
             hasTables: /\|/.test(ocrResult.text),
             requiresReview: ocrResult.text.trim().length < 30,
           }],
-          estimatedCredits: 2,
+          estimatedCredits: imageOcrCredits,
           estimatedUsd: ocrResult.cost,
         });
         const extractionRun = await recordDocumentExtractionRun({
@@ -320,7 +324,8 @@ export async function POST(request: NextRequest) {
               confidence: ocrResult.confidence,
               ocrCost: ocrResult.cost,
               latestExtractionRunId: extractionRun.id,
-              extractionCreditsCharged: 2,
+              extractionCreditsCharged: imageOcrCredits,
+              sizeKb: Math.round(file.size / 1024),
               ...summarizeManifestForLegacyMetrics(imageManifest),
             },
             extractionWarnings: [{
@@ -343,9 +348,10 @@ export async function POST(request: NextRequest) {
         if (process.env.NODE_ENV === "development") {
           console.error("Image OCR error:", ocrError);
         }
-        // P0.4: OCR a echoue apres pre-check. Remboursement integral (compute
-        // partiel peut avoir ete consomme mais on favorise l'UX).
-        await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", 2, {
+        // P0.4: OCR a echoue apres pre-check. Remboursement integral du montant
+        // effectivement deduit (compute partiel peut avoir ete consomme mais on
+        // favorise l'UX).
+        await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", imageOcrCredits, {
           dealId,
           documentId: document.id,
           idempotencyKey: `extraction:refund:image-fail:${document.id}`,

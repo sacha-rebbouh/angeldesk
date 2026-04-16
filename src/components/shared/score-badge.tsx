@@ -63,7 +63,7 @@ export const ScoreBadge = memo(function ScoreBadge({
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="w-48 p-2">
-            <p className="text-xs">Score non disponible — le mod&egrave;le n&apos;a pas retourn&eacute; de valeur pour cette analyse.</p>
+            <p className="text-xs">Score non disponible — le modèle n&apos;a pas retourné de valeur pour cette analyse.</p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>

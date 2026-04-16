@@ -191,6 +191,7 @@ model Deal {
 
   @@index([userId])
   @@index([status])
+  @@index([userId, status, createdAt])
 }
 
 enum DealStage {
@@ -491,6 +492,7 @@ model RedFlag {
 
   @@index([dealId])
   @@index([severity])
+  @@index([dealId, severity])
 }
 
 enum RedFlagCategory {
@@ -552,6 +554,12 @@ model Analysis {
   // Cached negotiation strategy (generated after Tier 3 analysis)
   negotiationStrategy Json?
 
+  // P1 — Refund tracking: set when credits have been refunded pour cette analyse.
+  // Utilise par le resume logic pour savoir si l'ancienne analyse a deja rembourse
+  // avant de re-tenter. UI peut aussi afficher "credits rembourses" au user.
+  refundedAt      DateTime?
+  refundAmount    Int?
+
   // Relations to sub-models (cascade delete)
   scoredFindings     ScoredFinding[]
   reasoningTraces    ReasoningTrace[]
@@ -566,6 +574,7 @@ model Analysis {
   @@index([dealId])
   @@index([status])
   @@index([dealId, mode, dealFingerprint]) // For cache lookup
+  @@index([dealId, status, createdAt])
 }
 
 enum AnalysisType {

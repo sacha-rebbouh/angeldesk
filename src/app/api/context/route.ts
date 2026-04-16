@@ -58,7 +58,9 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    const rateLimit = checkRateLimit(`context:${user.id}`, { maxRequests: 10, windowMs: 60000 });
+    // P1 — Context engine declenche un cout externe (Perplexity, LinkedIn, Pappers).
+    // 3/min protege du spam sans bloquer le flux normal d'analyse.
+    const rateLimit = checkRateLimit(`context:${user.id}`, { maxRequests: 3, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
     }

@@ -1677,6 +1677,33 @@ Aucune incohérence majeure détectée entre les agents.`;
       finalOverallScore = 70;
     }
 
+    // P1 Rule 3: Penalite contractStatus — un Tier1 retourne PARTIAL_UNVERIFIED
+    // quand son output LLM manque des champs de contrat (benchmarks vides,
+    // dimensions manquantes, etc.). Ces agents ne doivent PAS peser autant qu'un
+    // output VALID dans le score global. On applique -2 pts par agent partiel
+    // (cap a -10) + on baisse la confidence.
+    const tier1Contributors = [
+      "financial-auditor", "team-investigator", "competitive-intel",
+      "market-intelligence", "tech-stack-dd", "tech-ops-dd",
+      "legal-regulatory", "gtm-analyst", "customer-intel",
+      "exit-strategist", "deck-forensics", "cap-table-auditor", "question-master",
+    ];
+    const partialAgents: string[] = [];
+    for (const name of tier1Contributors) {
+      const r = context.previousResults?.[name];
+      if (!r) continue;
+      const status = (r as { contractStatus?: string }).contractStatus;
+      if (status === "PARTIAL_UNVERIFIED") partialAgents.push(name);
+    }
+    if (partialAgents.length > 0) {
+      const penalty = Math.min(10, partialAgents.length * 2);
+      const prior = finalOverallScore;
+      finalOverallScore = Math.max(0, finalOverallScore - penalty);
+      console.warn(
+        `[SynthesisDealScorer] Contract penalty: ${partialAgents.length} agents PARTIAL_UNVERIFIED (${partialAgents.join(", ")}) → -${penalty} pts (${prior} → ${finalOverallScore})`
+      );
+    }
+
     // =========================================================================
 
     const finalVerdict = scoreBasedVerdict(finalOverallScore);
@@ -1712,12 +1739,23 @@ Aucune incohérence majeure détectée entre les agents.`;
                         data.recommendation?.rationale ??
                         "Analyse complétée — consultez les scores par dimension pour le détail.";
 
+    // P1 — Si des agents Tier1 sont en PARTIAL_UNVERIFIED, baisser la confidence
+    // rapportee et injecter un keyWeakness explicite.
+    const rawConfidence = (data.meta?.confidenceLevel ?? data.confidence) != null
+      ? Math.min(100, Math.max(0, (data.meta?.confidenceLevel ?? data.confidence)!))
+      : 0;
+    const confidencePenalty = partialAgents.length * 5;
+    const finalConfidence = Math.max(0, rawConfidence - confidencePenalty);
+    if (partialAgents.length > 0) {
+      keyWeaknesses.unshift(
+        `${partialAgents.length} agent${partialAgents.length > 1 ? "s" : ""} Tier1 en contrat partiel: ${partialAgents.slice(0, 3).join(", ")}${partialAgents.length > 3 ? "..." : ""}. Analyse complete mais donnees structurantes manquantes.`
+      );
+    }
+
     return {
       overallScore: finalOverallScore,
       verdict: finalVerdict,
-      confidence: (data.meta?.confidenceLevel ?? data.confidence) != null
-        ? Math.min(100, Math.max(0, (data.meta?.confidenceLevel ?? data.confidence)!))
-        : 0,
+      confidence: finalConfidence,
       dimensionScores,
       // scoreBreakdown is DERIVED from dimensionScores — never trust LLM's self-reported
       // adjustments (it fabricates post-hoc justifications for its gut-feeling score).

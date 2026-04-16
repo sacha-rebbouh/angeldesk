@@ -141,20 +141,20 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage: 
 
   const validateTerms = useCallback((formData: DealTermsData): string | null => {
     if (formData.dilutionPct != null && (formData.dilutionPct < 0 || formData.dilutionPct > 100)) {
-      return "La dilution doit etre entre 0% et 100%";
+      return "La dilution doit être entre 0% et 100%";
     }
     if (formData.vestingCliffMonths != null && formData.vestingDurationMonths != null
         && formData.vestingCliffMonths > formData.vestingDurationMonths) {
-      return "Le cliff ne peut pas depasser la duree du vesting";
+      return "Le cliff ne peut pas dépasser la durée du vesting";
     }
     if (formData.esopPct != null && (formData.esopPct < 0 || formData.esopPct > 100)) {
-      return "L'ESOP doit etre entre 0% et 100%";
+      return "L'ESOP doit être entre 0% et 100%";
     }
     if (formData.valuationPre != null && formData.valuationPre <= 0) {
-      return "La valorisation doit etre positive";
+      return "La valorisation doit être positive";
     }
     if (formData.amountRaised != null && formData.amountRaised <= 0) {
-      return "Le montant leve doit etre positif";
+      return "Le montant levé doit être positif";
     }
     return null;
   }, []);

@@ -13,6 +13,18 @@ import {
   fetchWithValidatedRedirects,
   validatePublicUrl,
 } from "@/lib/url-validator";
+import { sanitizeForLLM } from "@/lib/sanitize";
+
+// P1 — Sanitize content scrappe avant propagation LLM. Les sites crawles peuvent
+// contenir des injections ("Ignore previous instructions...") inserees par
+// l'adversaire pour detourner les agents. sanitizeForLLM strip control chars,
+// bornes la longueur, et neutralise les patterns d'injection connus.
+const WEBSITE_TEXT_CAP_PER_FIELD = 16_000;
+const WEBSITE_CONTENT_CAP = 40_000;
+function sanitizeWebsiteText(raw: string, maxLength: number = WEBSITE_TEXT_CAP_PER_FIELD): string {
+  if (!raw) return "";
+  return sanitizeForLLM(raw, { maxLength, preserveNewlines: false });
+}
 
 // ============================================================================
 // CONFIGURATION
@@ -203,10 +215,15 @@ async function crawlPage(url: string, baseUrl: string): Promise<CrawlResult | nu
     const html = await response.text();
 
     // Extraire le contenu
-    const title = extractTitle(html);
-    const description = extractMetaDescription(html);
-    const content = extractTextContent(html);
+    const rawTitle = extractTitle(html);
+    const rawDescription = extractMetaDescription(html);
+    const rawContent = extractTextContent(html);
     const links = extractInternalLinks(html, finalUrl, baseUrl);
+
+    // P1 — Sanitize avant persistence: le HTML source peut etre adversaire
+    const title = sanitizeWebsiteText(rawTitle, 512);
+    const description = rawDescription ? sanitizeWebsiteText(rawDescription, 1024) : undefined;
+    const content = sanitizeWebsiteText(rawContent.slice(0, CONFIG.MAX_CONTENT_LENGTH), WEBSITE_CONTENT_CAP);
 
     // Déterminer le type de page (pour catégorisation, pas pour filtrage)
     const path = new URL(finalUrl).pathname;
@@ -214,15 +231,16 @@ async function crawlPage(url: string, baseUrl: string): Promise<CrawlResult | nu
 
     // Extraire les données structurées si possible
     const extractedData = extractStructuredData(html, pageType);
+    const sanitizedExtracted = sanitizeExtractedData(extractedData);
 
     const page: WebsitePage = {
       url: finalUrl,
       path,
       title,
       description,
-      content: content.slice(0, CONFIG.MAX_CONTENT_LENGTH),
+      content,
       pageType,
-      extractedData: Object.keys(extractedData).length > 0 ? extractedData : undefined,
+      extractedData: Object.keys(sanitizedExtracted).length > 0 ? sanitizedExtracted : undefined,
       scrapedAt: new Date().toISOString(),
       wordCount: content.split(/\s+/).filter(Boolean).length,
     };
@@ -333,6 +351,57 @@ function extractInternalLinks(html: string, currentUrl: string, baseUrl: string)
 // ============================================================================
 
 type ExtractedData = NonNullable<WebsitePage["extractedData"]>;
+
+// P1 — Sanitise recursivement tous les champs texte libres issus du HTML crawle
+// pour eviter la propagation de contenu adversaire dans les prompts LLM.
+function sanitizeExtractedData(raw: Partial<ExtractedData>): Partial<ExtractedData> {
+  const cap = <T extends string | undefined>(s: T, n: number): T => (s ? sanitizeWebsiteText(s, n) as T : s);
+  const out: Partial<ExtractedData> = {};
+
+  if (raw.testimonials) {
+    out.testimonials = raw.testimonials.slice(0, 20).map((t) => ({
+      quote: sanitizeWebsiteText(t.quote ?? "", 1024),
+      author: cap(t.author, 256),
+      role: cap(t.role, 256),
+      company: cap(t.company, 256),
+    }));
+  }
+  if (raw.clients) {
+    out.clients = raw.clients.slice(0, 80).map((c) => sanitizeWebsiteText(String(c), 256)).filter(Boolean);
+  }
+  if (raw.teamMembers) {
+    out.teamMembers = raw.teamMembers.slice(0, 50).map((m) => ({
+      name: cap(m.name, 256),
+      role: cap(m.role, 256),
+      bio: cap(m.bio, 1024),
+      linkedinUrl: cap(m.linkedinUrl, 512),
+    }));
+  }
+  if (raw.pricingPlans) {
+    out.pricingPlans = raw.pricingPlans.slice(0, 20).map((p) => ({
+      name: cap(p.name, 128),
+      price: cap(p.price, 128),
+      features: (p.features ?? []).slice(0, 30).map((f) => sanitizeWebsiteText(f, 512)),
+    }));
+  }
+  if (raw.jobOpenings) {
+    out.jobOpenings = raw.jobOpenings.slice(0, 50).map((j) => ({
+      title: cap(j.title, 256),
+      department: cap(j.department, 128),
+      location: cap(j.location, 128),
+    }));
+  }
+  if (raw.features) {
+    out.features = raw.features.slice(0, 40).map((f) => ({
+      title: cap(f.title, 256),
+      description: cap(f.description, 1024),
+    }));
+  }
+  if (raw.integrations) {
+    out.integrations = raw.integrations.slice(0, 60).map((i) => sanitizeWebsiteText(String(i), 256)).filter(Boolean);
+  }
+  return out;
+}
 
 function extractStructuredData(html: string, pageType: WebsitePageType): Partial<ExtractedData> {
   const data: Partial<ExtractedData> = {};

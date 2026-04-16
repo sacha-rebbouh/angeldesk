@@ -706,8 +706,11 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       instrument: deal.instrument ? sanitizeName(deal.instrument) : "Not specified",
       geography: deal.geography ? sanitizeName(deal.geography) : "Not specified",
       website: deal.website ? sanitizeName(deal.website) : "Not specified",
+      // P1 — cap description a 4000 chars (~1000 tokens): un deal bien decrit
+      // tient largement dans ce budget, evite de saturer le contexte global par
+      // un champ user-editable non contraint.
       description: deal.description
-        ? sanitizeForLLM(deal.description, { maxLength: 10000 })
+        ? sanitizeForLLM(deal.description, { maxLength: 4000 })
         : "No description provided",
     };
 
@@ -787,13 +790,20 @@ ${sanitizedDeal.description}
       }
     }
 
-    // Add founders/team from DB (always available via deal.founders relation)
+    // Add founders/team from DB (always available via deal.founders relation).
+    // P1 — cap par agent a 8 fondateurs affiches (deal avec plus de co-founders
+    // reste rare; si >8 on resume et on logue). team-investigator recoit une
+    // expansion dediee via peopleGraph, pas besoin de tout injecter partout.
     const dealWithFounders = deal as unknown as {
       founders?: Array<{ name: string; role: string; linkedinUrl?: string | null }>;
     };
     if (dealWithFounders.founders && dealWithFounders.founders.length > 0) {
-      text += `\n## Équipe Fondatrice (${dealWithFounders.founders.length} membre${dealWithFounders.founders.length > 1 ? "s" : ""})\n`;
-      for (const f of dealWithFounders.founders) {
+      const FOUNDER_DISPLAY_CAP = 8;
+      const founders = dealWithFounders.founders;
+      const shown = founders.slice(0, FOUNDER_DISPLAY_CAP);
+      const omitted = founders.length - shown.length;
+      text += `\n## Équipe Fondatrice (${founders.length} membre${founders.length > 1 ? "s" : ""}${omitted > 0 ? ` — ${shown.length} listés` : ""})\n`;
+      for (const f of shown) {
         const name = sanitizeName(f.name);
         const role = f.role ? sanitizeName(f.role) : "Rôle non spécifié";
         text += `- **${name}** — ${role}`;
@@ -801,6 +811,9 @@ ${sanitizedDeal.description}
           text += ` | LinkedIn: ${sanitizeName(f.linkedinUrl)}`;
         }
         text += "\n";
+      }
+      if (omitted > 0) {
+        text += `- [${omitted} autre${omitted > 1 ? "s" : ""} membre${omitted > 1 ? "s" : ""} non listé${omitted > 1 ? "s" : ""} dans ce contexte — voir people graph pour détails]\n`;
       }
     }
 

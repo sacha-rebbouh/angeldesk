@@ -291,29 +291,39 @@ export async function grantFreeCredits(userId: string): Promise<boolean> {
 }
 
 /**
- * Refund credits for a failed action
+ * Refund credits for a failed action.
+ *
+ * P1 — Idempotence fine: l'ancienne cle `(userId, dealId, action='REFUND')`
+ * bloquait tout refund ulterieur sur le MEME deal meme si plusieurs analyses
+ * echouaient (cas resumable qui re-fail). On utilise maintenant un
+ * idempotencyKey scope precis (analysisId si dispo, sinon dealId + timestamp
+ * arrondi a la minute pour absorber les doubles clics).
  */
 export async function refundCredits(
   userId: string,
   action: CreditActionType,
-  dealId?: string
+  dealId?: string,
+  options?: { analysisId?: string; idempotencyKey?: string }
 ): Promise<void> {
   const cost = CREDIT_COSTS[action];
   if (cost === 0) return;
 
+  const scopedKey = options?.idempotencyKey
+    ?? (options?.analysisId
+        ? `refund:${action}:analysis:${options.analysisId}`
+        : dealId
+          ? `refund:${action}:deal:${dealId}:${Math.floor(Date.now() / 60_000)}`
+          : undefined);
+
   try {
     await prisma.$transaction(async (tx) => {
-      // Idempotence: prevent double refund for same deal
-      if (dealId) {
-        const existingRefund = await tx.creditTransaction.findFirst({
-          where: {
-            userId,
-            dealId,
-            action: 'REFUND',
-          },
+      if (scopedKey) {
+        const existing = await tx.creditTransaction.findUnique({
+          where: { idempotencyKey: scopedKey },
+          select: { id: true },
         });
-        if (existingRefund) {
-          logger.warn({ userId, dealId, action }, 'Refund already exists — skipping');
+        if (existing) {
+          logger.warn({ userId, dealId, action, scopedKey }, 'Refund idempotency hit — skipping');
           return;
         }
       }
@@ -333,6 +343,7 @@ export async function refundCredits(
           action: 'REFUND',
           description: `Remboursement ${getActionDescription(action)}`,
           dealId: dealId ?? null,
+          idempotencyKey: scopedKey ?? null,
         },
       });
     });

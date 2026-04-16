@@ -333,10 +333,23 @@ export const dealAnalysisFunction = inngest.createFunction(
     // car la reponse HTTP est deja envoyee quand on arrive ici).
     if (!result.success) {
       await step.run('refund-on-failure', async () => {
-        const { refundCredits, getActionForAnalysisType } = await import("@/services/credits");
+        const { refundCredits, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
+        const action = getActionForAnalysisType(type);
+        const analysisId = (result as { sessionId?: string } | undefined)?.sessionId;
         try {
-          const action = getActionForAnalysisType(type);
-          await refundCredits(userId, action, dealId);
+          await refundCredits(userId, action, dealId, { analysisId });
+          // P1 — Tracer le refund cote Analysis pour que le resume flow puisse
+          // savoir que les credits ont deja ete rembourses (evite double-refund
+          // en cas de resume qui re-fail).
+          if (analysisId) {
+            await prisma.analysis.update({
+              where: { id: analysisId },
+              data: {
+                refundedAt: new Date(),
+                refundAmount: CREDIT_COSTS[action] ?? null,
+              },
+            }).catch((err: unknown) => logger.warn({ err, analysisId }, 'Could not mark refundedAt'));
+          }
         } catch (err) {
           logger.error({ err, dealId, userId }, 'Inngest refund failed for failed analysis');
         }

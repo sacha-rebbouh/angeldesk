@@ -1070,12 +1070,25 @@ IMPORTANT:
         maxTokens: 16000,
       });
 
-      const response: ChatResponse = {
+      // P1 — Sanitize narrative anti-prescription sur la reponse chat + suggestions
+      // (regle N°1: Angel Desk ANALYSE, ne DECIDE JAMAIS — un BA ne doit jamais
+      // recevoir "Investissez" ou "Ne pas investir" du chat).
+      const { sanitizeAgentNarratives } = await import("../orchestration/result-sanitizer");
+      const { data: sanitized, totalViolations } = sanitizeAgentNarratives({
         response: data.response,
+        suggestedFollowUps: data.suggestedFollowUps ?? [],
+      });
+      if (totalViolations > 0) {
+        console.warn(`[DealChatAgent] Sanitized ${totalViolations} prescriptive violations`);
+      }
+      const sanitizedPayload = sanitized as { response: string; suggestedFollowUps: string[] };
+
+      const response: ChatResponse = {
+        response: sanitizedPayload.response,
         intent: data.intent,
         intentConfidence: data.intentConfidence,
         sourcesUsed: data.sourcesUsed,
-        suggestedFollowUps: data.suggestedFollowUps,
+        suggestedFollowUps: sanitizedPayload.suggestedFollowUps,
       };
 
       const executionTimeMs = Date.now() - startTime;

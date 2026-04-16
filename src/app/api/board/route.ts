@@ -144,8 +144,8 @@ export async function POST(req: NextRequest) {
             console.error("Board orchestration error:", error);
           }
 
-          // Refund credit on failure
-          await refundCredit(user.id);
+          // Refund credit on failure (scope par sessionId pour dedup fin)
+          await refundCredit(user.id, sessionId ?? undefined);
 
           sendEvent({
             type: "error",

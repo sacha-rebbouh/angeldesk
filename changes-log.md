@@ -1,6 +1,161 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-04-16 — feat: Sprint P1 — durcissement complet (securite, data, scoring, UI, perf)
+
+6 vagues livrees, 2 migrations Neon appliquees, 538/538 tests, tsc 0 erreur.
+
+### Vague A — Securite
+
+**Fichiers :**
+- `src/app/api/analyze/route.ts` — rate limit par user resserre 5/min -> 2/min.
+  Protege du spam + de l'abus couteux (chaque Deep Dive = 41 agents).
+- `src/app/api/context/route.ts` — rate limit resserre 10/min -> 3/min. Chaque
+  appel Context Engine declenche des calls externes payants (Perplexity, LinkedIn,
+  Pappers); 3/min suffit largement au flux normal.
+- `next.config.ts` — CSP prod durcie: `unsafe-eval` retire, ajout de
+  `challenges.cloudflare.com` (Clerk anti-bot), `api.inngest.com`/`inn.gs`
+  (workers), policies `object-src none`, `base-uri self`, `form-action self`.
+  Migration nonce-based reportee en P2 (necessite middleware dedie + injection
+  dans le layout).
+- `src/services/context-engine/connectors/website-crawler.ts` — tous les champs
+  issus du HTML crawle (title, description, content, testimonials, clients,
+  teamMembers, pricingPlans, jobOpenings, features, integrations) passent par
+  `sanitizeForLLM` avec caps explicites (content: 40KB, textes: 256-1024 chars).
+  Protege contre les injections adversaire ("Ignore previous instructions...")
+  dans les prompts LLM downstream.
+
+### Vague B — Data integrity + idempotence
+
+**Fichiers :**
+- `prisma/schema.prisma` — 3 indexes composites: `Deal[userId,status,createdAt]`,
+  `RedFlag[dealId,severity]`, `Analysis[dealId,status,createdAt]`.
+- `prisma/migrations/20260416170000_p1_composite_indexes/migration.sql` —
+  migration safe (IF NOT EXISTS), appliquee sur Neon.
+- `src/services/credits/usage-gate.ts` — `refundCredits()` accepte maintenant
+  `options: { analysisId?, idempotencyKey? }`. L'idempotence n'est plus bloquante
+  (ancienne cle `(userId, dealId, action='REFUND')` empechait les refunds
+  multiples sur le meme deal); nouvelle cle scope par analysisId ou par minute
+  d'horloge.
+- `src/lib/inngest.ts`, `src/app/api/coaching/reanalyze/route.ts` — appels
+  migres avec analysisId / sessionId.
+- `src/services/credits/__tests__/credit-flow-e2e.test.ts` — mock `findUnique`
+  + champ `idempotencyKey` ajoute dans les transactions simulees (27/27 tests).
+
+### Vague C — Scoring + anti-hallucination
+
+**Fichiers :**
+- `src/agents/chat/deal-chat-agent.ts` — `sanitizeAgentNarratives()` applique
+  sur la reponse chat + suggestedFollowUps avant retour au client. Regle N°1:
+  un BA ne doit jamais recevoir "Investissez !" du chat.
+- `src/agents/board/board-orchestrator.ts` — idem sur `consensusPoints`,
+  `frictionPoints`, `questionsForFounder`, `votes[].justification` avant
+  persistence + emission au client. Les votes LLM peuvent contenir du
+  langage prescriptif, le sanitizer les neutralise.
+- `src/agents/tier3/synthesis-deal-scorer.ts` — nouvelle Rule 3 post-LLM:
+  detecte les agents Tier1 en `contractStatus === "PARTIAL_UNVERIFIED"` et
+  applique -2 pts par agent (cap -10), baisse la confidence de -5/agent, injecte
+  un keyWeakness explicite. `contractStatus` etait emis mais non consomme; il
+  influe maintenant sur le score final.
+
+### Vague D — Facturation
+
+**Fichiers :**
+- `prisma/schema.prisma` — `Analysis.refundedAt`, `Analysis.refundAmount` ajoutes.
+- `prisma/migrations/20260416180000_p1_analysis_refund_tracking/migration.sql` —
+  appliquee sur Neon.
+- `src/lib/inngest.ts` — le worker marque `refundedAt`/`refundAmount` quand
+  il refund sur echec. Permet au resume flow de savoir si les credits ont deja
+  ete rembourses (evite le double-refund sur un resume qui re-fail).
+- `src/app/api/analyze/route.ts` — resume logic: si `resumableAnalysis.refundedAt`
+  est set, on re-facture la reprise; sinon on continue sans double-charger.
+- `src/app/api/documents/upload/route.ts` — OCR image granulaire: 1 credit si
+  `file.size < 500KB`, 2 credits sinon. Pricing aligne sur cout reel Vision LLM.
+- `src/services/board-credits/index.ts` — `refundCredit()` accepte sessionId
+  et construit un idempotencyKey scope fin.
+
+### Vague E — UI/UX
+
+**Fichiers (accents FR + HTML entities) :**
+- `src/components/deals/founder-responses.tsx` — "Repondez"->"Répondez",
+  "re-analyser"->"ré-analyser".
+- `src/components/chat/deal-chat-panel.tsx` — "Debutant"->"Débutant",
+  "Intermediaire"->"Intermédiaire".
+- `src/components/deals/conditions/simple-mode-form.tsx` — "Montant leve"->
+  "Montant levé", "Calculee"->"Dilution calculée", "Ecart theorique"->"Écart théorique".
+- `src/components/deals/conditions/conditions-tab.tsx` — 5 messages d'erreur
+  avec accents corriges ("doit etre"->"doit être", "depasser la duree"->
+  "dépasser la durée", "leve"->"levé", etc.).
+- `src/components/deals/conditions/term-sheet-suggestions.tsx` — "Montant leve"->
+  "Montant levé", "detecte"->"détecté", "pre-remplir"->"pré-remplir".
+- `src/components/deals/red-flags-summary.tsx` — "Eleve"->"Élevé".
+- `src/components/shared/score-badge.tsx` — HTML entities `&egrave;`, `&eacute;`,
+  `&apos;` remplaces par Unicode natif.
+
+**Fichiers (aria-labels) :**
+- `src/components/deals/board/views/arena-view.tsx` — SVG Arena recoit
+  `role="img"` + `aria-label` explicite.
+- `src/components/deals/documents-tab.tsx` — DropdownMenuTrigger recoit
+  `aria-label="Options pour {doc.name}"`.
+
+### Vague F — Perf
+
+**Fichiers :**
+- `src/agents/base-agent.ts` — `formatDealContext`:
+  - Description capee 10000 -> 4000 chars (~1000 tokens vs ~2500).
+  - Founders affichage capee a 8 membres (au-dela: compte + ref people graph).
+- Retry LLM exponential backoff: **deja en place** au niveau router
+  (`src/services/openrouter/router.ts:calculateBackoff` — `baseDelayMs * 2^attempt`).
+  L'item audit P1 etait outdated.
+
+### Items P1 audit deja resolus en P0 ou conception existante
+
+- `financial-auditor` timeout 180s -> 240s: **fait 2026-04-16** (commit `83a4e07`)
+- `Analysis.documentIds String[]` FK: **fait P0** (`AnalysisDocument` join table)
+- CVE xmldom/defu/effect/flatted: **fait P0** (`npm audit fix`)
+- Chat directive 5 (Structured Uncertainty): **deja presente** ligne 306 du
+  chat system prompt (audit P1 etait errone)
+- Tier3 directives doublees: **deja resolues 2026-03-12** (dedup fait en P2C)
+- LLM retry exponential backoff: **deja present** dans le router central
+
+### Items reportes en P2 (decision requise)
+
+Ces items etaient dans l'audit P1 mais necessitent une decision produit ou un
+chantier multi-semaines qui depasse le scope P1 courant:
+
+- **Poids Board vs `stage-weights.ts`** — divergence jusqu'a 20 pts. Decision
+  produit requise: Board = "investment appeal" (subjectif), Scoring = "DD rigor"
+  (objectif). A documenter explicitement dans l'UI ou a aligner dynamiquement.
+- **Fichiers monolithiques** — orchestrator/index.ts (3800 lignes),
+  tier1-results.tsx (4000), types.ts (3900), synthesis-deal-scorer.ts (1900),
+  ocr-service.ts (1600), base-agent.ts (1650). Split par domaine = chantier
+  d'une semaine minimum. Bloque les nouvelles features, a prioriser apres
+  stabilisation.
+- **BaseAgent AsyncLocalStorage** — remplacer l'etat mutable singleton
+  (`_totalCost`, `_llmCalls`) par un `RunContext` isolated. Refactor
+  transversal sensible (tous les tests d'agents impactes).
+- **Conversion 125 composants `'use client'` en RSC** — audit fichier par
+  fichier, budget bundle 800KB -> 400KB estime. Travail incremental, 1
+  composant = 15-30 min.
+- **Stripe Checkout + webhook HMAC** — necessite compte Stripe actif + cle
+  webhook + tests e2e avec sandbox. Jusque la, achat manuel via mailto reste
+  la voie officielle.
+- **Live coaching refund partiel** — disconnect avant la fin ne refund pas
+  pro-rata. Demande integration Recall.ai webhook + logique temps ecoule.
+- **xlsx -> exceljs** (CVE residuelle) — chantier de 2-3 jours (API differente),
+  a planifier pour un sprint dedie.
+- **Migration `console.log` hot paths restants** — ~600 appels. Outil: codemod
+  ou script sed + PR volumineuse.
+
+### Validation
+
+- `npx prisma migrate deploy` OK (7 migrations appliquees sur Neon prod)
+- `npx prisma validate` OK
+- `npx prisma generate` OK
+- `npx tsc --noEmit` : **0 erreur**
+- `npx vitest run` : **538/538 passed**
+
+---
 ## 2026-04-16 — fix: timeouts Tier1 critiques (financial-auditor, team-investigator)
 
 **Fichiers (2) :**

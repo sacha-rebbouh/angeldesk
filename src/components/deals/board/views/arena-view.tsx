@@ -90,7 +90,12 @@ export const ArenaView = memo(function ArenaView({ memberAnalyses, debateRespons
       {/* Arena */}
       <div className="relative h-[240px] w-[240px] sm:h-[300px] sm:w-[300px] lg:h-[400px] lg:w-[400px] shrink-0">
         {/* Connection lines */}
-        <svg className="absolute inset-0" viewBox="0 0 300 300">
+        <svg
+          className="absolute inset-0"
+          viewBox="0 0 300 300"
+          role="img"
+          aria-label="Arène de débat avec positions des membres du board IA"
+        >
           {connections.map((conn, idx) => {
             const from = memberPositions[conn.from];
             const to = memberPositions[conn.to];
