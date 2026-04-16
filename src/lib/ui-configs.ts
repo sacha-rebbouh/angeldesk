@@ -126,6 +126,47 @@ export const VERDICT_CONFIG: Record<string, { label: string; color: string }> = 
   alert_dominant: { label: "Signaux d'alerte dominants", color: "bg-red-100 text-red-800 border-red-300" },
 };
 
+// Thesis Verdict Config — thesis-first (Tier 0.5). Meme mapping que RECOMMENDATION_CONFIG
+// mais avec libelles orientes "these" pour clarifier la distinction entre verdict these
+// (jugement structurel de la promesse de la societe) et verdict global (score final).
+export const THESIS_VERDICT_CONFIG: Record<string, { label: string; shortLabel: string; color: string; bg: string; description: string }> = {
+  very_favorable: {
+    label: "Thèse très solide",
+    shortLabel: "Très solide",
+    color: "text-green-800",
+    bg: "bg-green-50 border-green-300",
+    description: "Les 3 frameworks convergent. Hypotheses porteuses majoritairement verifiees.",
+  },
+  favorable: {
+    label: "Thèse solide",
+    shortLabel: "Solide",
+    color: "text-green-800",
+    bg: "bg-green-50 border-green-300",
+    description: "Les 3 frameworks s'alignent avec quelques reserves mineures.",
+  },
+  contrasted: {
+    label: "Thèse contrastée",
+    shortLabel: "Contrastée",
+    color: "text-amber-800",
+    bg: "bg-amber-50 border-amber-300",
+    description: "Les frameworks divergent. Points d'attention a clarifier avant decision.",
+  },
+  vigilance: {
+    label: "Thèse fragile",
+    shortLabel: "Fragile",
+    color: "text-blue-800",
+    bg: "bg-blue-50 border-blue-300",
+    description: "Plusieurs hypotheses porteuses speculatives. Vigilance requise.",
+  },
+  alert_dominant: {
+    label: "Thèse non validée",
+    shortLabel: "Non validée",
+    color: "text-red-800",
+    bg: "bg-red-50 border-red-300",
+    description: "Signaux d'alerte dominants sur la these structurelle. Score global masque.",
+  },
+};
+
 // Alert Signal Labels — analytical framing (no prescriptive language)
 export const ALERT_SIGNAL_LABELS: Record<string, string> = {
   // New signal profile keys

@@ -126,6 +126,40 @@ export interface FullChatContext {
   // Completed live coaching sessions with summaries
   liveSessions?: LiveSessionContextData[];
 
+  // Thesis-first context — charge quand intent=THESIS pour permettre au chat
+  // de repondre de maniere informee sur la these, les frameworks, les alertes.
+  thesis?: {
+    id: string;
+    version: number;
+    reformulated: string;
+    problem: string;
+    solution: string;
+    whyNow: string;
+    moat: string | null;
+    pathToExit: string | null;
+    verdict: string;
+    confidence: number;
+    loadBearing: Array<{
+      id: string;
+      statement: string;
+      status: string;
+      impact: string;
+      validationPath: string;
+    }>;
+    alerts: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      detail: string;
+    }>;
+    ycLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
+    thielLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
+    angelDeskLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
+    decision: string | null;
+    thesisBypass: boolean;
+    rebuttalCount: number;
+  } | null;
+
   // Investor level for adapting responses (F31)
   investorLevel?: "beginner" | "intermediate" | "expert";
 }
@@ -572,6 +606,58 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
           contextPrompt += `**Évolution confiance**: ${delta.before}% → ${delta.after}%${delta.reason ? ` (${delta.reason})` : ""}\n`;
         }
       }
+    }
+
+    // Thesis-first : injection complete de la these quand chargee.
+    // Se declenche quand detectedIntent === THESIS (la route API charge la these en consequence).
+    const thesisCtx = this.chatContext.thesis;
+    if (thesisCtx) {
+      contextPrompt += `\n## Thèse d'investissement (thesis-first, version ${thesisCtx.version})\n`;
+      contextPrompt += `- **Verdict unifie** : ${thesisCtx.verdict} (confiance ${thesisCtx.confidence}/100) — worst-of-3 des 3 frameworks\n`;
+      contextPrompt += `- **Reformulation** : ${thesisCtx.reformulated}\n`;
+      contextPrompt += `- **Probleme** : ${thesisCtx.problem}\n`;
+      contextPrompt += `- **Solution** : ${thesisCtx.solution}\n`;
+      contextPrompt += `- **Why-now** : ${thesisCtx.whyNow}\n`;
+      contextPrompt += `- **Moat** : ${thesisCtx.moat ?? "Non declare"}\n`;
+      contextPrompt += `- **Path to exit** : ${thesisCtx.pathToExit ?? "Non declare"}\n`;
+
+      if (thesisCtx.decision) {
+        contextPrompt += `- **Decision BA** : ${thesisCtx.decision}${thesisCtx.thesisBypass ? " (bypass these fragile actif)" : ""}\n`;
+      }
+      if (thesisCtx.rebuttalCount > 0) {
+        contextPrompt += `- **Rebuttals soumis** : ${thesisCtx.rebuttalCount}/3\n`;
+      }
+
+      if (thesisCtx.loadBearing.length > 0) {
+        contextPrompt += `\n### Hypotheses porteuses (load-bearing assumptions)\n`;
+        for (const lb of thesisCtx.loadBearing) {
+          contextPrompt += `- [${lb.status.toUpperCase()}] ${lb.statement}\n  - Impact si fausse : ${lb.impact}\n  - Validation : ${lb.validationPath}\n`;
+        }
+      }
+
+      if (thesisCtx.alerts.length > 0) {
+        contextPrompt += `\n### Points d'alerte (${thesisCtx.alerts.length})\n`;
+        for (const a of thesisCtx.alerts) {
+          contextPrompt += `- [${a.severity.toUpperCase()}] [${a.category}] ${a.title} — ${a.detail}\n`;
+        }
+      }
+
+      contextPrompt += `\n### Analyse par framework\n`;
+      const formatLens = (name: string, lens: typeof thesisCtx.ycLens) => {
+        let section = `#### ${name}\n`;
+        section += `- Verdict : ${lens.verdict} (confiance ${lens.confidence}/100)\n`;
+        section += `- Synthese : ${lens.summary}\n`;
+        if (lens.strengths.length > 0) {
+          section += `- Points d'adherence :\n${lens.strengths.map((s) => `  - ${s}`).join("\n")}\n`;
+        }
+        if (lens.failures.length > 0) {
+          section += `- Points de fragilite :\n${lens.failures.map((f) => `  - ${f}`).join("\n")}\n`;
+        }
+        return section;
+      };
+      contextPrompt += formatLens("YC (problem reality / PMF / distribution)", thesisCtx.ycLens);
+      contextPrompt += formatLens("Thiel (contrarian / 10x / monopoly)", thesisCtx.thielLens);
+      contextPrompt += formatLens("Angel Desk (investable BA / groupe / family office / syndicat)", thesisCtx.angelDeskLens);
     }
 
     return contextPrompt;

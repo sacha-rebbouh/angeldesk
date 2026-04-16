@@ -20,6 +20,7 @@ interface Deal {
   updatedAt: Date;
   redFlags: { severity: string; title?: string }[];
   globalScore?: number | null;
+  thesisVerdict?: string | null;
 }
 
 interface DealsViewToggleProps {

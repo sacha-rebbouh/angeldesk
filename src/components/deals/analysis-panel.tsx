@@ -38,6 +38,8 @@ import { EarlyWarningsPanel } from "./early-warnings-panel";
 import type { EarlyWarning } from "@/types";
 import { ThesisHeroCard } from "./thesis/thesis-hero-card";
 import { ThesisReviewModal } from "./thesis/thesis-review-modal";
+import { ThesisFrameworksExpand } from "./thesis/thesis-frameworks-expand";
+import { ThesisRevisionBanner } from "./thesis/thesis-revision-banner";
 import { ProTeaserBanner } from "@/components/shared/pro-teaser";
 import { AnalysisProgress, type AgentStatus } from "./analysis-progress";
 import { TimelineVersions } from "./timeline-versions";
@@ -419,6 +421,69 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   // --- Thesis-first: fetch thesis + pending decision state ---
   // Polling actif pendant l'analyse (toutes les 5s) pour capter le moment ou
   // thesis-extractor (Tier 0.5) produit sa these et attend la decision BA.
+  type ThesisFrameworkLens = {
+    framework: "yc" | "thiel" | "angel-desk";
+    verdict: string;
+    confidence: number;
+    question: string;
+    claims: Array<{
+      claim: string;
+      derivedFrom: string;
+      status: "supported" | "contradicted" | "unverifiable" | "partial";
+      evidence?: string;
+      concern?: string;
+    }>;
+    failures: string[];
+    strengths: string[];
+    summary: string;
+  };
+  type ThesisPayload = {
+    id: string;
+    version: number;
+    reformulated: string;
+    problem: string;
+    solution: string;
+    whyNow: string;
+    moat: string | null;
+    pathToExit: string | null;
+    verdict: string;
+    confidence: number;
+    loadBearing: Array<{
+      id: string;
+      statement: string;
+      status: "verified" | "declared" | "projected" | "speculative";
+      impact: string;
+      validationPath: string;
+    }>;
+    alerts: Array<{
+      severity: "critical" | "high" | "medium" | "low";
+      category: string;
+      title: string;
+      detail: string;
+    }>;
+    decision: string | null;
+    thesisBypass: boolean;
+    ycLens: ThesisFrameworkLens;
+    thielLens: ThesisFrameworkLens;
+    angelDeskLens: ThesisFrameworkLens;
+  };
+  type ThesisHistoryEntry = {
+    id: string;
+    version: number;
+    isLatest: boolean;
+    verdict: string;
+    confidence: number;
+    createdAt: string;
+    decision: string | null;
+    reformulated?: string;
+    problem?: string;
+    solution?: string;
+    whyNow?: string;
+    moat?: string | null;
+    pathToExit?: string | null;
+    loadBearing?: ThesisPayload["loadBearing"];
+  };
+
   const { data: thesisData } = useQuery({
     queryKey: queryKeys.thesis.byDeal(dealId),
     queryFn: async () => {
@@ -426,35 +491,8 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       if (!response.ok) throw new Error("Failed to fetch thesis");
       const json = await response.json();
       return json.data as {
-        thesis: {
-          id: string;
-          reformulated: string;
-          problem: string;
-          solution: string;
-          whyNow: string;
-          moat: string | null;
-          pathToExit: string | null;
-          verdict: string;
-          confidence: number;
-          loadBearing: Array<{
-            id: string;
-            statement: string;
-            status: "verified" | "declared" | "projected" | "speculative";
-            impact: string;
-            validationPath: string;
-          }>;
-          alerts: Array<{
-            severity: "critical" | "high" | "medium" | "low";
-            category: string;
-            title: string;
-            detail: string;
-          }>;
-          decision: string | null;
-          ycLens: { verdict: string };
-          thielLens: { verdict: string };
-          angelDeskLens: { verdict: string };
-        } | null;
-        history: Array<{ id: string; version: number; isLatest: boolean; verdict: string; confidence: number; createdAt: string; decision: string | null }>;
+        thesis: ThesisPayload | null;
+        history: ThesisHistoryEntry[];
         hasPendingDecision: boolean;
       };
     },
@@ -464,8 +502,17 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   });
 
   const thesis = thesisData?.thesis ?? null;
+  const thesisHistory = thesisData?.history ?? [];
   const hasPendingDecision = thesisData?.hasPendingDecision ?? false;
   const [isThesisModalOpen, setIsThesisModalOpen] = useState(false);
+  const [revisionBannerDismissed, setRevisionBannerDismissed] = useState(false);
+
+  // Detection d'une nouvelle version de these : on compare latest avec la version
+  // immediatement precedente dans history. Si latest.version > 1, on affiche le banner.
+  const previousThesisVersion = useMemo(() => {
+    if (!thesis || thesis.version <= 1) return null;
+    return thesisHistory.find((h) => h.version === thesis.version - 1) ?? null;
+  }, [thesis, thesisHistory]);
 
   // Auto-open modal dès que hasPendingDecision devient vrai (Tier 0.5 termine, attend BA)
   useEffect(() => {
@@ -626,9 +673,11 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   const isAnalysisStale = staleness?.isStale ?? false;
 
   // Determine analysis type based on credit balance (not subscription plan)
+  // Thesis-first : tier1_complete retire. Seul Deep Dive (full_analysis) existe.
+  // Si insuffisant → pas d'analyse possible (modal credits affiche).
   const subscriptionPlan: SubscriptionPlan = (usage?.subscriptionStatus as SubscriptionPlan) ?? "FREE";
   const canAffordDeepDive = (quota?.balance ?? 0) >= (quota?.costs?.DEEP_DIVE ?? 5);
-  const analysisType: AnalysisTypeValue = canAffordDeepDive ? "full_analysis" : "tier1_complete";
+  const analysisType: AnalysisTypeValue = "full_analysis";
   const planConfig = canAffordDeepDive ? PLAN_ANALYSIS_CONFIG.PRO : PLAN_ANALYSIS_CONFIG.FREE;
 
   // Check if this is an update (has previous analysis)
@@ -1122,6 +1171,42 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
         />
       )}
 
+      {/* Thesis Revision Banner — affiche quand une nouvelle version de these apparait
+          (ex: re-extraction auto apres upload nouveau document). Le BA peut voir le diff. */}
+      {thesis && previousThesisVersion && !revisionBannerDismissed && (
+        <ThesisRevisionBanner
+          previous={{
+            id: previousThesisVersion.id,
+            version: previousThesisVersion.version,
+            verdict: previousThesisVersion.verdict,
+            confidence: previousThesisVersion.confidence,
+            reformulated: previousThesisVersion.reformulated ?? "",
+            problem: previousThesisVersion.problem ?? "",
+            solution: previousThesisVersion.solution ?? "",
+            whyNow: previousThesisVersion.whyNow ?? "",
+            moat: previousThesisVersion.moat ?? null,
+            pathToExit: previousThesisVersion.pathToExit ?? null,
+            loadBearing: previousThesisVersion.loadBearing ?? [],
+            createdAt: previousThesisVersion.createdAt,
+          }}
+          latest={{
+            id: thesis.id,
+            version: thesis.version,
+            verdict: thesis.verdict,
+            confidence: thesis.confidence,
+            reformulated: thesis.reformulated,
+            problem: thesis.problem,
+            solution: thesis.solution,
+            whyNow: thesis.whyNow,
+            moat: thesis.moat,
+            pathToExit: thesis.pathToExit,
+            loadBearing: thesis.loadBearing,
+            createdAt: new Date().toISOString(),
+          }}
+          onDismiss={() => setRevisionBannerDismissed(true)}
+        />
+      )}
+
       {documentReadiness && (!documentReadiness.ready || documentReadiness.warnings.length > 0) && (
         <Card className={!documentReadiness.ready ? "border-red-300 bg-red-50" : "border-amber-300 bg-amber-50"}>
           <CardHeader className="pb-3">
@@ -1355,7 +1440,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
             <CardContent>
               <AnalysisProgress
                 isRunning={isAnalyzing}
-                analysisType={analysisType === "tier1_complete" ? "tier1_complete" : "full_analysis"}
+                analysisType="full_analysis"
                 agentStatuses={agentStatuses}
                 completedAgents={polledProgress?.completedAgents ?? 0}
                 totalAgents={polledProgress?.totalAgents ?? 0}
@@ -1495,6 +1580,15 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   />
                 )}
 
+                {/* Thesis Frameworks Expand : 3 lunettes YC/Thiel/Angel Desk en detail */}
+                {thesis && thesis.ycLens && thesis.thielLens && thesis.angelDeskLens && (
+                  <ThesisFrameworksExpand
+                    ycLens={thesis.ycLens}
+                    thielLens={thesis.thielLens}
+                    angelDeskLens={thesis.angelDeskLens}
+                  />
+                )}
+
                 {/* Early Warnings Panel - Show prominently at top */}
                 {displayedResult.earlyWarnings && displayedResult.earlyWarnings.length > 0 && (
                   <EarlyWarningsPanel
@@ -1551,6 +1645,8 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     onResolve={resolveAlert}
                     onUnresolve={unresolveAlert}
                     isResolving={isResolving}
+                    thesisVerdict={thesis?.verdict ?? null}
+                    thesisBypass={thesis?.thesisBypass ?? false}
                   />
                 )}
 

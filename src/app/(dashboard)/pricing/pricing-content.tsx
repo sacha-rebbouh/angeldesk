@@ -26,11 +26,12 @@ interface PricingContentProps {
 }
 
 const ACTION_CARDS = [
-  { action: "QUICK_SCAN" as const, label: "Quick Scan", desc: "Tier 1 : 13 agents", icon: Zap, color: "text-blue-500" },
-  { action: "DEEP_DIVE" as const, label: "Deep Dive", desc: "Tier 1+2+3 complet", icon: Search, color: "text-emerald-500" },
-  { action: "AI_BOARD" as const, label: "AI Board", desc: "4 LLMs en débat", icon: Users, color: "text-amber-500" },
+  { action: "DEEP_DIVE" as const, label: "Deep Dive", desc: "Thèse + Tier 1+2+3 complet", icon: Search, color: "text-emerald-500" },
+  { action: "AI_BOARD" as const, label: "AI Board", desc: "4 LLMs en débat (inclut round thèse)", icon: Users, color: "text-amber-500" },
   { action: "LIVE_COACHING" as const, label: "Live Coaching", desc: "Coaching temps réel", icon: Headphones, color: "text-purple-500" },
   { action: "RE_ANALYSIS" as const, label: "Re-analyse", desc: "Nouvelles données", icon: RefreshCw, color: "text-orange-500" },
+  { action: "THESIS_REBUTTAL" as const, label: "Rebuttal thèse", desc: "Contester l'extraction", icon: Zap, color: "text-pink-500" },
+  { action: "THESIS_REEXTRACT" as const, label: "Re-extract thèse", desc: "Sur nouveau document", icon: RefreshCw, color: "text-indigo-500" },
   { action: "CHAT" as const, label: "Chat IA", desc: "Illimité", icon: MessageSquare, color: "text-sky-500" },
   { action: "PDF_EXPORT" as const, label: "Export PDF", desc: "Rapport complet", icon: FileText, color: "text-slate-500" },
 ] as const;
@@ -79,6 +80,24 @@ export function PricingContent({ balance }: PricingContentProps) {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.1),transparent_70%)]" />
         </div>
       )}
+
+      {/* Transition banner : Quick Scan retire au profit de Deep Dive these-first */}
+      <div className="rounded-md border border-blue-300 bg-blue-50 p-4 flex items-start gap-3">
+        <div className="rounded-full bg-blue-100 p-2 shrink-0">
+          <Sparkles className="h-4 w-4 text-blue-700" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-blue-900">
+            Quick Scan remplacé par Deep Dive thesis-first
+          </p>
+          <p className="text-xs text-blue-800 mt-1 leading-relaxed">
+            Depuis le 17 avril 2026, le Quick Scan a ete retire. Le Deep Dive (5 credits)
+            inclut desormais l&apos;analyse de these (Tier 0.5, 3 frameworks YC/Thiel/Angel Desk)
+            <strong> sans surcout</strong>. Vous pouvez arreter l&apos;analyse apres le verdict
+            these (remboursement partiel de 3 credits) si les signaux sont insuffisants.
+          </p>
+        </div>
+      </div>
 
       {/* Credit costs per action */}
       <div>

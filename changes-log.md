@@ -1,6 +1,50 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-04-17 — feat: Thesis-first completeness — 3 UI components + chat loader + deals-table + admin backfill + transition Quick Scan
+
+Complete du rollout thesis-first avec les 6 items manquants par rapport au plan initial :
+
+1. **ThesisFrameworksExpand** — composant collapsible affichant les 3 lunettes (YC/Thiel/Angel Desk) en detail : verdict + confiance + question centrale + claims testes (supported/contradicted/unverifiable/partial) + strengths + failures + summary. Toggle global + toggle par framework. Injecte dans AnalysisPanel apres ThesisHeroCard.
+2. **ThesisRevisionBanner** — banner affiche quand une nouvelle version de these apparait (v2+). Calcule automatiquement le diff verdict / confiance / reformulation / load-bearing (ajoutees / supprimees / modifiees). Bouton "Voir diff complet" ouvre dialog avec comparaison avant/apres per-field. Dismiss persist localement.
+3. **ThesisStaleBadge** — badge sur deals pre-migration (variant="inline" dans deals-table, variant="full" pour page deal). CTA "Lancer Deep Dive" route vers la page deal + loading state pendant le declenchement.
+4. **Chat IA context loader** — `/api/chat/[dealId]` charge desormais `thesisService.getLatest(dealId)` et l'injecte dans `FullChatContext.thesis`. `DealChatAgent.buildContextPrompt()` formate la these complete (reformulation, probleme, solution, why-now, moat, path-to-exit, verdict, load-bearing, alertes, 3 lunettes). L'intent `THESIS` dispose maintenant du contexte necessaire pour repondre.
+5. **deals-table thesis column** — nouvelle colonne "Thèse" entre Score et Statut. Affiche le verdict avec `THESIS_VERDICT_CONFIG` (labels courts : Très solide / Solide / Contrastée / Fragile / Non validée). Fallback sur `ThesisStaleBadge` pour deals sans these. Sort canonique sur l'ordre du verdict (meilleur→pire), deals sans these en bas. Query Prisma etendue avec `include: { theses: { where: { isLatest: true } } }`.
+6. **Admin backfill** — `/api/admin/thesis/backfill` (GET liste candidats + POST declenche re-extract, 2cr facturees admin, idempotent par dealId). Page `/admin/thesis` avec liste des deals sans these (200 max), search, bouton backfill individuel + bouton batch avec confirm. Client component `AdminThesisBackfillClient` gere les etats loading/done/error par deal.
+7. **THESIS_VERDICT_CONFIG** — config dedie dans `ui-configs.ts` avec `label` long, `shortLabel` pour table, `color`, `bg`, `description` par verdict. Reutilisable partout où la these s'affiche.
+8. **Quick Scan retire de l'UI** — `pricing-content.tsx` retire la card QUICK_SCAN + ajoute cards `THESIS_REBUTTAL` + `THESIS_REEXTRACT`. Banner explicite "Quick Scan remplacé par Deep Dive thesis-first" en tete avec detail du nouveau flow (5cr inclut these, stop possible avec refund 3cr). `analysis-panel.tsx` : retrait du fallback `tier1_complete` → `analysisType` toujours `full_analysis`.
+9. **base-agent contract** — `getRequiredOutputContractFields()` etendu avec entries pour `thesis-extractor` (11 champs : reformulated / problem / solution / whyNow / verdict / confidence / loadBearing / alerts / ycLens / thielLens / angelDeskLens) et `thesis-reconciler` (5 champs). Active la verification contractStatus pour ces agents (PARTIAL_UNVERIFIED si manquants).
+10. **Meta-gate dans Tier3Results** — `Tier3Results` accepte `thesisVerdict` + `thesisBypass`. Si these fragile sans bypass : notice rouge "Score global non applicable" au lieu du SynthesisScorerCard. AnalysisPanel propage les props depuis `thesis?.verdict` + `thesis?.thesisBypass` (lu depuis l'analyse liee via le route API thesis).
+11. **API thesis route enriche** — `/api/deals/[id]/thesis` retourne desormais history avec `reformulated` / `problem` / `solution` / `whyNow` / `moat` / `pathToExit` / `loadBearing` (pour le diff RevisionBanner) + `thesisBypass` lu depuis l'analyse liee la plus recente.
+
+### Fichiers nouveaux
+- `src/components/deals/thesis/thesis-frameworks-expand.tsx`
+- `src/components/deals/thesis/thesis-revision-banner.tsx`
+- `src/components/deals/thesis/thesis-stale-badge.tsx`
+- `src/components/admin/admin-thesis-backfill-client.tsx`
+- `src/app/(dashboard)/admin/thesis/page.tsx`
+- `src/app/api/admin/thesis/backfill/route.ts`
+
+### Fichiers modifies
+- `src/lib/ui-configs.ts` — THESIS_VERDICT_CONFIG.
+- `src/components/deals/analysis-panel.tsx` — imports FrameworksExpand + RevisionBanner + ThesisStaleBadge, types ThesisPayload enrichis, detection previousThesisVersion via history, propagation thesisVerdict/thesisBypass vers Tier3Results, retrait fallback tier1_complete.
+- `src/components/deals/deals-table.tsx` — colonne Thèse, sort thesisVerdict, ThesisStaleBadge inline.
+- `src/components/deals/deals-view-toggle.tsx` — Deal.thesisVerdict optionnel.
+- `src/components/deals/tier3-results.tsx` — props thesisVerdict/thesisBypass, meta-gate notice, masquage SynthesisScorerCard si thesisGated.
+- `src/app/(dashboard)/deals/page.tsx` — include theses (isLatest) dans getDeals, flatten thesisVerdict.
+- `src/app/(dashboard)/pricing/pricing-content.tsx` — retrait QUICK_SCAN, ajout THESIS_REBUTTAL + THESIS_REEXTRACT, banner transition.
+- `src/app/api/chat/[dealId]/route.ts` — thesisService.getLatest() injecte dans FullChatContext.thesis.
+- `src/app/api/deals/[dealId]/thesis/route.ts` — history enrichie + thesisBypass propage.
+- `src/agents/chat/deal-chat-agent.ts` — FullChatContext.thesis + formatage section these dans buildContextPrompt.
+- `src/agents/base-agent.ts` — contract fields pour thesis-extractor et thesis-reconciler.
+
+### Commandes validation
+```bash
+npx tsc --noEmit  # 0 erreur
+npx vitest run    # 559/559 tests verts
+```
+
+---
 ## 2026-04-17 — feat: Thesis-first pipeline pause + Board round THESIS_DEBATE + meta-gate + auto re-extraction
 
 Suite au delivery thesis-first de base, implementation des 5 items deferes :

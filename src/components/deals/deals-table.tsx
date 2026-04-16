@@ -23,6 +23,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ScoreBadge } from "@/components/shared/score-badge";
+import { ThesisStaleBadge } from "./thesis/thesis-stale-badge";
+import { THESIS_VERDICT_CONFIG } from "@/lib/ui-configs";
 import {
   Table,
   TableBody,
@@ -54,9 +56,11 @@ interface Deal {
   updatedAt: Date;
   redFlags: { severity: string; title?: string }[];
   globalScore?: number | null;
+  /** Thesis-first : verdict courant de la these (null si pas encore analysee) */
+  thesisVerdict?: string | null;
 }
 
-type SortField = "name" | "sector" | "stage" | "valuationPre" | "status" | "globalScore" | "updatedAt";
+type SortField = "name" | "sector" | "stage" | "valuationPre" | "status" | "globalScore" | "thesisVerdict" | "updatedAt";
 type SortDir = "asc" | "desc";
 
 interface DealsTableProps {
@@ -136,6 +140,15 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
       }
     }
 
+    // Ordre canonique des verdicts these (du meilleur au pire pour ASC).
+    const thesisVerdictOrder: Record<string, number> = {
+      very_favorable: 1,
+      favorable: 2,
+      contrasted: 3,
+      vigilance: 4,
+      alert_dominant: 5,
+    };
+
     result.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
@@ -148,6 +161,13 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
         case "valuationPre":
           cmp = (Number(a.valuationPre) || 0) - (Number(b.valuationPre) || 0);
           break;
+        case "thesisVerdict": {
+          // Deals sans these → en bas (ordre 999)
+          const orderA = a.thesisVerdict ? thesisVerdictOrder[a.thesisVerdict] ?? 999 : 999;
+          const orderB = b.thesisVerdict ? thesisVerdictOrder[b.thesisVerdict] ?? 999 : 999;
+          cmp = orderA - orderB;
+          break;
+        }
         case "updatedAt":
           cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
           break;
@@ -324,6 +344,9 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
               <TableHead className="hidden sm:table-cell cursor-pointer" onClick={() => handleSort("globalScore")}>
                 <span className="flex items-center">Score {renderSortIcon("globalScore")}</span>
               </TableHead>
+              <TableHead className="hidden lg:table-cell cursor-pointer" onClick={() => handleSort("thesisVerdict")}>
+                <span className="flex items-center">Thèse {renderSortIcon("thesisVerdict")}</span>
+              </TableHead>
               <TableHead>Statut</TableHead>
               <TableHead>Alertes</TableHead>
               <TableHead className="hidden md:table-cell cursor-pointer" onClick={() => handleSort("updatedAt")}>
@@ -378,6 +401,22 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
                       <ScoreBadge score={deal.globalScore} size="sm" />
                     ) : (
                       <span className="text-muted-foreground text-xs">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
+                    {deal.thesisVerdict ? (
+                      (() => {
+                        const cfg = THESIS_VERDICT_CONFIG[deal.thesisVerdict];
+                        return cfg ? (
+                          <Badge variant="outline" className={cn("text-[10px]", cfg.color, cfg.bg)}>
+                            {cfg.shortLabel}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">-</span>
+                        );
+                      })()
+                    ) : (
+                      <ThesisStaleBadge variant="inline" onAnalyze={() => router.push(`/deals/${deal.id}`)} />
                     )}
                   </TableCell>
                   <TableCell>

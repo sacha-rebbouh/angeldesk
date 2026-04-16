@@ -50,9 +50,22 @@ export async function GET(_request: Request, context: RouteContext) {
 
     const hasPendingDecision = latest.decision === null;
 
+    // Propagation de thesisBypass depuis l'analyse la plus recente liee a cette these
+    const linkedAnalysis = await prisma.analysis.findFirst({
+      where: { dealId, thesisId: latest.id },
+      select: { thesisBypass: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const latestEnriched = {
+      ...latest,
+      thesisBypass: linkedAnalysis?.thesisBypass ?? false,
+    };
+
     return NextResponse.json({
       data: {
-        thesis: latest,
+        thesis: latestEnriched,
+        // History enrichie : renvoie les champs necessaires pour le diff (RevisionBanner)
         history: history.map((h) => ({
           id: h.id,
           version: h.version,
@@ -61,6 +74,13 @@ export async function GET(_request: Request, context: RouteContext) {
           confidence: h.confidence,
           createdAt: h.createdAt,
           decision: h.decision,
+          reformulated: h.reformulated,
+          problem: h.problem,
+          solution: h.solution,
+          whyNow: h.whyNow,
+          moat: h.moat,
+          pathToExit: h.pathToExit,
+          loadBearing: h.loadBearing,
         })),
         hasPendingDecision,
       },

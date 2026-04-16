@@ -1054,6 +1054,31 @@ ${sanitizedDeal.description}
     if (this.config.name === "memo-generator") {
       return ["executiveSummary", "companyOverview", "investmentHighlights", "keyRisks", "dueDiligenceFindings", "nextSteps"];
     }
+    // Thesis-first : contract pour thesis-extractor (Tier 0.5) et thesis-reconciler (Tier 3)
+    if (this.config.name === "thesis-extractor") {
+      return [
+        "reformulated",
+        "problem",
+        "solution",
+        "whyNow",
+        "verdict",
+        "confidence",
+        "loadBearing",
+        "alerts",
+        "ycLens",
+        "thielLens",
+        "angelDeskLens",
+      ];
+    }
+    if (this.config.name === "thesis-reconciler") {
+      return [
+        "updatedVerdict",
+        "updatedConfidence",
+        "verdictChanged",
+        "newRedFlags",
+        "reconciliationNotes",
+      ];
+    }
     return [];
   }
 

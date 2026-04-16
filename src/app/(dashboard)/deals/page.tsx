@@ -26,13 +26,19 @@ async function getDeals(userId: string) {
         where: { status: "OPEN" },
         select: { severity: true, title: true },
       },
+      theses: {
+        where: { isLatest: true },
+        select: { verdict: true },
+        take: 1,
+      },
     },
   });
 
-  // Serialize Decimal fields for client component
+  // Serialize Decimal fields for client component + flatten thesis verdict
   return deals.map((deal) => ({
     ...deal,
     valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+    thesisVerdict: deal.theses[0]?.verdict ?? null,
   }));
 }
 

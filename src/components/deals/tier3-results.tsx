@@ -59,6 +59,9 @@ interface Tier3ResultsProps {
   onResolve?: (input: import("@/hooks/use-resolutions").CreateResolutionInput) => Promise<unknown>;
   onUnresolve?: (alertKey: string) => Promise<unknown>;
   isResolving?: boolean;
+  /** Thesis-first : meta-gate — masquer score si these fragile sans bypass */
+  thesisVerdict?: string | null;
+  thesisBypass?: boolean;
 }
 
 const VerdictBadge = memo(function VerdictBadge({ verdict }: { verdict: string }) {
@@ -1012,7 +1015,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
 });
 
 // Main Tier 3 Results Component - Synthesis Agents (3 cards: Verdict, Coherence, Memo)
-export const Tier3Results = memo(function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRun, resolutionMap, resolutions, onResolve, onUnresolve, isResolving }: Tier3ResultsProps) {
+export const Tier3Results = memo(function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRun, resolutionMap, resolutions, onResolve, onUnresolve, isResolving, thesisVerdict, thesisBypass }: Tier3ResultsProps) {
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
     if (!result?.success || !result.data) return null;
@@ -1023,6 +1026,11 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
   const devilsData = getAgentData<DevilsAdvocateData>("devils-advocate");
   const contradictionData = getAgentData<ContradictionDetectorData>("contradiction-detector");
   const memoData = getAgentData<MemoGeneratorData>("memo-generator");
+
+  // Thesis-first meta-gate : masquer le score global si these fragile sans bypass
+  const fragileThesisVerdicts = new Set(["alert_dominant", "vigilance"]);
+  const thesisGated =
+    !!thesisVerdict && fragileThesisVerdicts.has(thesisVerdict) && !thesisBypass;
 
   // Get display limits based on plan
   const displayLimits = useMemo(() => getDisplayLimits(subscriptionPlan), [subscriptionPlan]);
@@ -1169,12 +1177,30 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
 
         {/* Tab 1: Verdict — Scorer (with DA merged) + NoGo if applicable */}
         <TabsContent value="verdict" className="space-y-4 mt-4">
+          {/* Thesis-first meta-gate : masquer score si these fragile sans bypass */}
+          {thesisGated && (
+            <Card className="border-red-300 bg-red-50">
+              <CardContent className="py-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-red-900 text-sm">Score global non applicable</p>
+                    <p className="text-xs text-red-800 mt-1 leading-relaxed">
+                      La these d&apos;investissement a ete jugee <strong>{thesisVerdict === "alert_dominant" ? "dominee par des signaux d'alerte" : "fragile"}</strong>
+                      {" "}et vous n&apos;avez pas explicitement bypass cette alerte. Le score global est masque
+                      pour interdire le faux confort. Consultez la carte These ci-dessus + les points d&apos;alerte.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           {(() => {
-            const showNoGo = !isFree && scorerData && (scorerData.overallScore ?? 100) < 35;
+            const showNoGo = !isFree && scorerData && (scorerData.overallScore ?? 100) < 35 && !thesisGated;
             return (
               <>
                 <div className="grid gap-4 md:grid-cols-2">
-                  {scorerData && (
+                  {scorerData && !thesisGated && (
                     <SynthesisScorerCard
                       data={scorerData}
                       devilsData={devilsData}

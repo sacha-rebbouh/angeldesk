@@ -183,10 +183,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
       });
     }
 
-    // Fetch full context and conversation history in parallel
-    const [fullContextData, history] = await Promise.all([
+    // Fetch full context, conversation history, and thesis in parallel
+    // La these est injectee dans le contexte chat pour permettre a l'agent d'y repondre
+    // de maniere informee (intent=THESIS). Si aucune these persistee : null → agent skip section.
+    const { thesisService } = await import("@/services/thesis");
+    const [fullContextData, history, latestThesis] = await Promise.all([
       getFullChatContext(dealId),
       conversationId ? getConversationHistoryForLLM(conversationId) : Promise.resolve([]),
+      thesisService.getLatest(dealId),
     ]);
 
     // Build FullChatContext for the agent
@@ -231,6 +235,57 @@ export async function POST(request: NextRequest, context: RouteContext) {
           }
         : null,
       liveSessions: fullContextData.liveSessions,
+      thesis: latestThesis
+        ? {
+            id: latestThesis.id,
+            version: latestThesis.version,
+            reformulated: latestThesis.reformulated,
+            problem: latestThesis.problem,
+            solution: latestThesis.solution,
+            whyNow: latestThesis.whyNow,
+            moat: latestThesis.moat,
+            pathToExit: latestThesis.pathToExit,
+            verdict: latestThesis.verdict,
+            confidence: latestThesis.confidence,
+            loadBearing: (latestThesis.loadBearing as Array<{
+              id: string;
+              statement: string;
+              status: string;
+              impact: string;
+              validationPath: string;
+            }>) ?? [],
+            alerts: (latestThesis.alerts as Array<{
+              severity: string;
+              category: string;
+              title: string;
+              detail: string;
+            }>) ?? [],
+            ycLens: (latestThesis.ycLens as {
+              verdict: string;
+              confidence: number;
+              summary: string;
+              failures: string[];
+              strengths: string[];
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+            thielLens: (latestThesis.thielLens as {
+              verdict: string;
+              confidence: number;
+              summary: string;
+              failures: string[];
+              strengths: string[];
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+            angelDeskLens: (latestThesis.angelDeskLens as {
+              verdict: string;
+              confidence: number;
+              summary: string;
+              failures: string[];
+              strengths: string[];
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+            decision: latestThesis.decision,
+            thesisBypass: false, // Propagation depuis l'analyse est complexe; fallback false.
+            rebuttalCount: latestThesis.rebuttalCount,
+          }
+        : null,
       investorLevel: validated.investorLevel,
     };
 
