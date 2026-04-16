@@ -57,4 +57,66 @@ describe("document-context-retriever", () => {
     expect(product.text).toContain("FEUILLE: Summary");
     expect(product.omittedWindows).toBe(0);
   });
+
+  it("prefers strict extraction artifacts over flat text when available", () => {
+    const retrieved = formatRetrievedDocumentWindows(
+      {
+        ...baseDoc,
+        extractedText: "Flat text without the chart values.",
+        extractionRuns: [{
+          id: "run_1",
+          status: "READY_WITH_WARNINGS",
+          readyForAnalysis: true,
+          corpusTextHash: "hash_1",
+          pages: [{
+            pageNumber: 15,
+            status: "READY_WITH_WARNINGS",
+            method: "HYBRID",
+            charCount: 1200,
+            wordCount: 140,
+            qualityScore: 82,
+            hasTables: true,
+            hasCharts: true,
+            hasFinancialKeywords: true,
+            hasTeamKeywords: false,
+            hasMarketKeywords: true,
+            textPreview: "visual preview",
+            artifact: {
+              version: "document-page-artifact-v1",
+              pageNumber: 15,
+              text: "Operating margins and NRI growth.",
+              visualBlocks: [],
+              tables: [{
+                title: "Operating margins",
+                rows: [
+                  ["Sector", "Margin"],
+                  ["Self-storage", "75%"],
+                ],
+                confidence: "high",
+              }],
+              charts: [{
+                title: "NRI growth",
+                chartType: "bar",
+                description: "Top 30 markets growth by year.",
+                values: [{ label: "2021", value: "9.9%" }],
+                confidence: "high",
+              }],
+              unreadableRegions: [],
+              numericClaims: [{ label: "2021", value: "9.9%", unit: "%", sourceText: "2021 9.9%", confidence: "high" }],
+              confidence: "high",
+              needsHumanReview: false,
+            },
+          }],
+        }],
+      },
+      "financial-auditor",
+      { maxChars: 1000, maxWindows: 2 }
+    );
+
+    expect(retrieved.text).toContain("Artifact page 15");
+    expect(retrieved.text).toContain("Operating margins");
+    expect(retrieved.text).toContain("Self-storage | 75%");
+    expect(retrieved.text).toContain("2021=9.9%");
+    expect(retrieved.text).toContain("artefacts");
+  });
 });

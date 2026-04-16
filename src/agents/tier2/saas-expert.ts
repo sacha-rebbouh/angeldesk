@@ -757,6 +757,14 @@ export const saasExpert = {
 
       // Transform to SectorExpertData format
       const sectorData = transformOutput(parsedOutput, cappedScore, cappedFitScore);
+      const unitEconomics = parsedOutput.unitEconomics ?? {
+        ltv: 0,
+        cac: 0,
+        ltvCacRatio: 0,
+        cacPaybackMonths: 0,
+        burnMultiple: 0,
+        magicNumber: 0,
+      };
 
       return {
         agentName: "saas-expert",
@@ -771,12 +779,12 @@ export const saasExpert = {
             rationale: `Business model: ${parsedOutput.businessModel}`,
           },
           unitEconomics: {
-            ltv: parsedOutput.unitEconomics.ltv,
-            cac: parsedOutput.unitEconomics.cac,
-            ltvCacRatio: parsedOutput.unitEconomics.ltvCacRatio,
-            cacPaybackMonths: parsedOutput.unitEconomics.cacPaybackMonths,
-            burnMultiple: parsedOutput.unitEconomics.burnMultiple,
-            magicNumber: parsedOutput.unitEconomics.magicNumber,
+            ltv: unitEconomics.ltv,
+            cac: unitEconomics.cac,
+            ltvCacRatio: unitEconomics.ltvCacRatio,
+            cacPaybackMonths: unitEconomics.cacPaybackMonths,
+            burnMultiple: unitEconomics.burnMultiple,
+            magicNumber: unitEconomics.magicNumber,
           },
           valuationAnalysis: parsedOutput.valuationAnalysis,
           dbComparison: parsedOutput.dbComparison,

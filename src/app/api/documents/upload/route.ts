@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DocumentType, Prisma } from "@prisma/client";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
-import { extractFromExcel } from "@/services/excel";
+import { extractFromExcel, type SheetData } from "@/services/excel";
 import { extractFromDocx } from "@/services/docx";
 import { extractFromPptx } from "@/services/pptx";
 import { uploadFile } from "@/services/storage";
@@ -27,7 +28,7 @@ import {
   setDocumentExtractionProgress,
 } from "@/services/documents/extraction-progress";
 import { deductCreditAmount } from "@/services/credits";
-import type { ExtractionCreditEstimate } from "@/services/pdf";
+import type { DocumentPageArtifact, ExtractionCreditEstimate } from "@/services/pdf";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -556,6 +557,7 @@ export async function POST(request: NextRequest) {
               hasTables: sheet.rowCount > 1 && sheet.columnCount > 1,
               hasFinancialKeywords: /\b(arr|mrr|revenue|cash|burn|runway|ebitda|margin|forecast|budget|p&l|pl|profit|loss)\b/i.test(sheet.textContent),
               requiresReview: sheet.rowCount > 0 && sheet.textContent.trim().length < 20,
+              artifact: buildExcelSheetArtifact(sheet, index + 1),
             })),
           });
 
@@ -657,36 +659,86 @@ export async function POST(request: NextRequest) {
         const result = await extractFromDocx(buffer);
 
         if (result.success) {
-          extractionQuality = result.text.length > 100 ? 85 : 50;
+          const embeddedMediaExtraction = await extractOfficeEmbeddedMediaArtifacts(result.embeddedMedia, "DOCX");
+          const combinedText = [result.text, embeddedMediaExtraction.text].filter(Boolean).join("\n\n");
+          extractionQuality = combinedText.length > 100 ? 85 : 50;
           const wordManifest = buildStructuredDocumentManifest({
-            artifacts: buildTextArtifacts("Section", result.text, 12000).map((artifact) => ({
-              ...artifact,
-              method: "native_text" as const,
-              requiresReview: artifact.text.trim().length < 80,
-            })),
+            artifacts: [
+              ...result.sections.map((section) => ({
+                index: section.sectionNumber,
+                label: `Section ${section.sectionNumber}`,
+                text: section.text,
+                method: "native_text" as const,
+                hasTables: section.tables.length > 0 || looksLikeDelimitedTable(section.text),
+                hasFinancialKeywords: /\b(arr|mrr|revenue|cash|burn|runway|ebitda|margin|forecast|budget|profit|loss)\b/i.test(section.text),
+                hasTeamKeywords: /\b(founder|ceo|cto|cfo|team|linkedin|board|advisor)\b/i.test(section.text),
+                hasMarketKeywords: /\b(tam|sam|som|market|competitor|cagr|customer|segment)\b/i.test(section.text),
+                requiresReview: section.text.trim().length < 80 || result.warnings.length > 0,
+                artifact: buildOfficeTextArtifact({
+                  pageNumber: section.sectionNumber,
+                  label: `Section ${section.sectionNumber}`,
+                  text: section.text,
+                  sourceType: "DOCX",
+                  nativeTables: section.tables,
+                  extractionWarnings: result.warnings,
+                }),
+              })),
+              ...embeddedMediaExtraction.artifacts.map((artifact, index) => ({
+                index: result.sections.length + index + 1,
+                label: artifact.label,
+                text: artifact.text,
+                method: "ocr" as const,
+                hasCharts: artifact.artifact.charts.length > 0 || artifact.artifact.visualBlocks.some((block) => block.type === "chart"),
+                hasTables: artifact.artifact.tables.length > 0 || artifact.artifact.visualBlocks.some((block) => block.type === "table"),
+                requiresReview: artifact.artifact.needsHumanReview,
+                artifact: artifact.artifact,
+              })),
+            ],
+            estimatedCredits: embeddedMediaExtraction.credits,
+            estimatedUsd: embeddedMediaExtraction.usd,
           });
           const extractionRun = await recordDocumentExtractionRun({
             documentId: document.id,
             documentVersion: document.version,
             contentHash,
-            text: result.text,
+            text: combinedText,
             qualityScore: extractionQuality,
             manifest: wordManifest,
-            warnings: [],
+            warnings: [...result.warnings, ...embeddedMediaExtraction.warnings],
+          });
+          await chargeExtractionCredits({
+            userId: user.id,
+            dealId,
+            documentId: document.id,
+            runId: extractionRun.id,
+            credits: embeddedMediaExtraction.credits,
+            description: `Embedded media OCR for ${file.name}`,
           });
 
           await prisma.document.update({
             where: { id: document.id },
             data: {
-              extractedText: encryptText(result.text),
+              extractedText: encryptText(combinedText),
               processingStatus: "COMPLETED",
               extractionQuality,
               extractionMetrics: {
-                charCount: result.text.length,
+                charCount: combinedText.length,
+                tableCount: result.tables.length,
+                embeddedMediaCount: result.embeddedMedia.length,
+                embeddedMediaOCRCount: embeddedMediaExtraction.ocrCount,
+                embeddedMediaOCRCost: embeddedMediaExtraction.usd,
+                warnings: [...result.warnings, ...embeddedMediaExtraction.warnings],
                 latestExtractionRunId: extractionRun.id,
                 ...summarizeManifestForLegacyMetrics(wordManifest),
               },
-              extractionWarnings: Prisma.DbNull,
+              extractionWarnings: [...result.warnings, ...embeddedMediaExtraction.warnings].length > 0
+                ? [...result.warnings, ...embeddedMediaExtraction.warnings].map((warning) => ({
+                  code: "DOCX_NATIVE_EXTRACTION_WARNING",
+                  severity: "medium",
+                  message: warning,
+                  suggestion: "Review extracted sections if this document relies on screenshots or embedded media."
+                })) as Prisma.InputJsonValue
+                : Prisma.DbNull,
             },
           });
 
@@ -742,39 +794,89 @@ export async function POST(request: NextRequest) {
         const result = await extractFromPptx(buffer);
 
         if (result.success) {
-          extractionQuality = result.text.length > 100 ? 80 : 50;
+          const embeddedMediaExtraction = await extractOfficeEmbeddedMediaArtifacts(result.embeddedMedia, "PPTX");
+          const combinedText = [result.text, embeddedMediaExtraction.text].filter(Boolean).join("\n\n");
+          extractionQuality = combinedText.length > 100 ? 80 : 50;
           const pptManifest = buildStructuredDocumentManifest({
-            artifacts: buildSlideArtifacts(result.text, result.slideCount).map((artifact) => ({
-              ...artifact,
-              method: "native_text" as const,
-              hasCharts: /chart|graph|diagram|graphique|axis|axe|bar|line|pie|waterfall|funnel/i.test(artifact.text),
-              hasTables: /\|/.test(artifact.text) || /\d+([.,]\d+)?\s?(%|€|eur|\$|m|k|x)/i.test(artifact.text),
-              requiresReview: artifact.text.trim().length < 80,
-            })),
+            artifacts: [
+              ...buildSlideArtifacts(result.text, result.slideCount).map((artifact) => {
+              const slide = result.slides.find((entry) => entry.slideNumber === artifact.index);
+              const charts = artifact.index === 1 ? result.charts : [];
+              const chartHint = charts.length > 0 || /chart|graph|diagram|graphique|axis|axe|bar|line|pie|waterfall|funnel/i.test(artifact.text);
+              const hasTables = (slide?.tables.length ?? 0) > 0 || /\|/.test(artifact.text) || /\d+([.,]\d+)?\s?(%|€|eur|\$|m|k|x)/i.test(artifact.text);
+              return {
+                ...artifact,
+                method: "native_text" as const,
+                hasCharts: chartHint,
+                hasTables,
+                requiresReview: artifact.text.trim().length < 80 || (chartHint && charts.length === 0),
+                artifact: buildOfficeTextArtifact({
+                  pageNumber: artifact.index,
+                  label: artifact.label,
+                  text: artifact.text,
+                  sourceType: "PPTX",
+                  chartHint,
+                  nativeTables: slide?.tables,
+                  nativeCharts: charts,
+                }),
+              };
+              }),
+              ...embeddedMediaExtraction.artifacts.map((artifact, index) => ({
+                index: result.slideCount + index + 1,
+                label: artifact.label,
+                text: artifact.text,
+                method: "ocr" as const,
+                hasCharts: artifact.artifact.charts.length > 0 || artifact.artifact.visualBlocks.some((block) => block.type === "chart"),
+                hasTables: artifact.artifact.tables.length > 0 || artifact.artifact.visualBlocks.some((block) => block.type === "table"),
+                requiresReview: artifact.artifact.needsHumanReview,
+                artifact: artifact.artifact,
+              })),
+            ],
+            estimatedCredits: embeddedMediaExtraction.credits,
+            estimatedUsd: embeddedMediaExtraction.usd,
           });
           const extractionRun = await recordDocumentExtractionRun({
             documentId: document.id,
             documentVersion: document.version,
             contentHash,
-            text: result.text,
+            text: combinedText,
             qualityScore: extractionQuality,
             manifest: pptManifest,
-            warnings: [],
+            warnings: [...result.warnings, ...embeddedMediaExtraction.warnings],
+          });
+          await chargeExtractionCredits({
+            userId: user.id,
+            dealId,
+            documentId: document.id,
+            runId: extractionRun.id,
+            credits: embeddedMediaExtraction.credits,
+            description: `Embedded media OCR for ${file.name}`,
           });
 
           await prisma.document.update({
             where: { id: document.id },
             data: {
-              extractedText: encryptText(result.text),
+              extractedText: encryptText(combinedText),
               processingStatus: "COMPLETED",
               extractionQuality,
               extractionMetrics: {
                 slideCount: result.slideCount,
-                charCount: result.text.length,
+                chartCount: result.charts.length,
+                charCount: combinedText.length,
+                embeddedMediaCount: result.embeddedMedia.length,
+                embeddedMediaOCRCount: embeddedMediaExtraction.ocrCount,
+                embeddedMediaOCRCost: embeddedMediaExtraction.usd,
                 latestExtractionRunId: extractionRun.id,
                 ...summarizeManifestForLegacyMetrics(pptManifest),
               },
-              extractionWarnings: Prisma.DbNull,
+              extractionWarnings: [...result.warnings, ...embeddedMediaExtraction.warnings].length > 0
+                ? [...result.warnings, ...embeddedMediaExtraction.warnings].map((warning) => ({
+                  code: "PPTX_NATIVE_EXTRACTION_WARNING",
+                  severity: "medium",
+                  message: warning,
+                  suggestion: "Review extracted slides if this presentation relies on screenshots or embedded media."
+                })) as Prisma.InputJsonValue
+                : Prisma.DbNull,
             },
           });
 
@@ -893,24 +995,6 @@ function formatExtractionTierSummary(pagesByTier: ExtractionCreditEstimate["page
     .join(", ");
 }
 
-function buildTextArtifacts(label: string, text: string, chunkSize: number) {
-  const normalized = text.trim();
-  if (!normalized) {
-    return [{ index: 1, label: `${label} 1`, text: "" }];
-  }
-
-  const artifacts: Array<{ index: number; label: string; text: string }> = [];
-  for (let start = 0; start < normalized.length; start += chunkSize) {
-    const index = artifacts.length + 1;
-    artifacts.push({
-      index,
-      label: `${label} ${index}`,
-      text: normalized.slice(start, start + chunkSize),
-    });
-  }
-  return artifacts;
-}
-
 function buildSlideArtifacts(text: string, slideCount: number) {
   const parts = text
     .split(/--- Slide \d+ ---/g)
@@ -930,6 +1014,361 @@ function buildSlideArtifacts(text: string, slideCount: number) {
     label: `Slide ${index + 1}`,
     text: part,
   }));
+}
+
+type OfficeMediaLike = {
+  name: string;
+  contentType: "image/png" | "image/jpeg" | "image/unknown";
+  sizeBytes: number;
+  buffer: Buffer;
+};
+
+async function extractOfficeEmbeddedMediaArtifacts(
+  media: OfficeMediaLike[],
+  sourceType: "DOCX" | "PPTX"
+): Promise<{
+  text: string;
+  artifacts: Array<{ label: string; text: string; artifact: DocumentPageArtifact }>;
+  warnings: string[];
+  credits: number;
+  usd: number;
+  ocrCount: number;
+}> {
+  if (media.length === 0) {
+    return { text: "", artifacts: [], warnings: [], credits: 0, usd: 0, ocrCount: 0 };
+  }
+
+  const { processImageArtifactOCR } = await import("@/services/pdf/ocr-service");
+  const artifacts: Array<{ label: string; text: string; artifact: DocumentPageArtifact }> = [];
+  const warnings: string[] = [];
+  let usd = 0;
+  let ocrCount = 0;
+  const supportedMedia = media.filter((item) => item.contentType === "image/png" || item.contentType === "image/jpeg");
+  const mediaToOCR = supportedMedia.filter((item) => item.sizeBytes >= 128).slice(0, 8);
+  const skipped = supportedMedia.length - mediaToOCR.length;
+
+  for (const [index, item] of mediaToOCR.entries()) {
+    const label = `${sourceType} embedded image ${index + 1}: ${item.name}`;
+    try {
+      const result = await processImageArtifactOCR(
+        item.buffer,
+        item.contentType === "image/jpeg" ? "jpeg" : "png",
+        index + 1,
+        "high_fidelity"
+      );
+      usd += result.cost;
+      ocrCount += 1;
+      const artifact = result.artifact ?? buildEmbeddedMediaFallbackArtifact({
+        pageNumber: index + 1,
+        label,
+        text: result.text,
+        sourceHash: hashBuffer(item.buffer),
+        warning: result.text.trim().length === 0 ? "Embedded image OCR returned no text." : undefined,
+      });
+      artifacts.push({
+        label,
+        text: result.text,
+        artifact: {
+          ...artifact,
+          label,
+          sourceHash: artifact.sourceHash ?? hashBuffer(item.buffer),
+        },
+      });
+      if (artifact.needsHumanReview || result.confidence === "low") {
+        warnings.push(`${label} requires review after media OCR.`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Embedded media OCR failed";
+      warnings.push(`${label}: ${message}`);
+      artifacts.push({
+        label,
+        text: "",
+        artifact: buildEmbeddedMediaFallbackArtifact({
+          pageNumber: index + 1,
+          label,
+          text: "",
+          sourceHash: hashBuffer(item.buffer),
+          warning: message,
+        }),
+      });
+    }
+  }
+
+  for (const item of supportedMedia.filter((entry) => entry.sizeBytes < 128)) {
+    const label = `${sourceType} embedded image skipped: ${item.name}`;
+    warnings.push(`${label} is too small for reliable OCR (${item.sizeBytes} bytes).`);
+    artifacts.push({
+      label,
+      text: "",
+      artifact: buildEmbeddedMediaFallbackArtifact({
+        pageNumber: artifacts.length + 1,
+        label,
+        text: "",
+        sourceHash: hashBuffer(item.buffer),
+        warning: "Embedded image too small for reliable OCR.",
+      }),
+    });
+  }
+
+  if (skipped > 0) {
+    warnings.push(`${skipped} embedded media object(s) were not OCRed because the per-document media OCR cap is 8.`);
+  }
+
+  const text = artifacts
+    .filter((entry) => entry.text.trim())
+    .map((entry, index) => `[Embedded Media ${index + 1} - ${entry.label}]\n${entry.text.trim()}`)
+    .join("\n\n");
+
+  return {
+    text,
+    artifacts,
+    warnings,
+    credits: ocrCount,
+    usd,
+    ocrCount,
+  };
+}
+
+function buildEmbeddedMediaFallbackArtifact(params: {
+  pageNumber: number;
+  label: string;
+  text: string;
+  sourceHash: string;
+  warning?: string;
+}): DocumentPageArtifact {
+  return {
+    version: "document-page-artifact-v1",
+    pageNumber: params.pageNumber,
+    label: params.label,
+    text: params.text,
+    visualBlocks: [{
+      type: "image",
+      title: params.label,
+      description: "Embedded Office media image. OCR was unavailable or insufficient; original document remains audit source.",
+      confidence: "low",
+    }],
+    tables: [],
+    charts: [],
+    unreadableRegions: [{
+      reason: params.warning ?? "Embedded media requires human review.",
+      severity: "high",
+    }],
+    numericClaims: [],
+    confidence: "low",
+    needsHumanReview: true,
+    sourceHash: params.sourceHash,
+  };
+}
+
+function hashBuffer(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+function buildExcelSheetArtifact(sheet: SheetData, pageNumber: number): DocumentPageArtifact {
+  const rows = sheet.data
+    .filter((row) => row.some((cell) => String(cell ?? "").trim().length > 0))
+    .slice(0, 200)
+    .map((row) => row.map((cell) => String(cell ?? "")));
+  const confidence: DocumentPageArtifact["confidence"] = sheet.includedInPrompt && !sheet.truncated
+    ? "high"
+    : sheet.includedInPrompt
+      ? "medium"
+      : "low";
+  const numericClaims: DocumentPageArtifact["numericClaims"] = [];
+
+  for (const row of rows) {
+    const label = row.find((cell) => cell.trim() && !looksNumericCell(cell)) ?? "row_value";
+    for (const cell of row) {
+      const value = cell.trim();
+      if (!looksNumericCell(value)) continue;
+      numericClaims.push({
+        label,
+        value,
+        unit: value.match(/(%|€|EUR|k€|m€|M€|\$|k|m|x|bps)$/i)?.[1],
+        sourceText: row.join(" | ").slice(0, 180),
+        confidence,
+      });
+      if (numericClaims.length >= 80) break;
+    }
+    if (numericClaims.length >= 80) break;
+  }
+
+  return {
+    version: "document-page-artifact-v1",
+    pageNumber,
+    label: `Feuille ${sheet.name}`,
+    text: sheet.textContent,
+    visualBlocks: rows.length > 1
+      ? [{
+        type: "table",
+        title: sheet.name,
+        description: `Excel sheet classified as ${sheet.classification}; ${sheet.rowCount} rows x ${sheet.columnCount} columns.`,
+        confidence,
+      }]
+      : [],
+    tables: rows.length > 1
+      ? [{
+        title: sheet.name,
+        rows,
+        confidence,
+      }]
+      : [],
+    charts: [],
+    unreadableRegions: [
+      ...(!sheet.includedInPrompt ? [{
+        reason: `Sheet excluded from prompt (${sheet.hidden ? "hidden" : sheet.classification}). Original workbook remains audit source.`,
+        severity: "medium" as const,
+      }] : []),
+      ...(sheet.truncated ? [{
+        reason: "Sheet prompt text was truncated; structured rows are capped for prompt safety.",
+        severity: "medium" as const,
+      }] : []),
+    ],
+    numericClaims,
+    confidence,
+    needsHumanReview: sheet.truncated || (!sheet.includedInPrompt && sheet.classification !== "CALCULATIONS"),
+  };
+}
+
+function buildOfficeTextArtifact(params: {
+  pageNumber: number;
+  label: string;
+  text: string;
+  sourceType: "DOCX" | "PPTX";
+  chartHint?: boolean;
+  nativeTables?: string[][][];
+  nativeCharts?: Array<{ chartNumber: number; title?: string; values: Array<{ label: string; value: string }> }>;
+  extractionWarnings?: string[];
+}): DocumentPageArtifact {
+  const nativeTableRows = params.nativeTables?.flatMap((table) => table) ?? [];
+  const rows = nativeTableRows.length > 0 ? nativeTableRows : extractDelimitedRows(params.text);
+  const nativeChartClaims: DocumentPageArtifact["numericClaims"] = (params.nativeCharts ?? []).flatMap((chart) =>
+    chart.values.map((entry) => ({
+      label: chart.title ? `${chart.title} - ${entry.label}` : entry.label,
+      value: entry.value,
+      sourceText: `PPTX chart ${chart.chartNumber}: ${entry.label}=${entry.value}`,
+      confidence: "medium" as const,
+    }))
+  );
+  const numericClaims = [
+    ...nativeChartClaims,
+    ...extractNumericClaims(params.text, "medium"),
+  ].slice(0, 100);
+  const visualBlocks: DocumentPageArtifact["visualBlocks"] = [];
+
+  if (rows.length > 1) {
+    visualBlocks.push({
+      type: "table",
+      title: params.label,
+      description: nativeTableRows.length > 0
+        ? `${params.sourceType} native table extracted from Office XML.`
+        : `${params.sourceType} text contains delimited/table-like rows extracted from native text.`,
+      confidence: nativeTableRows.length > 0 ? "high" : "medium",
+    });
+  }
+  if (params.chartHint || numericClaims.length >= 8) {
+    visualBlocks.push({
+      type: "chart",
+      title: params.label,
+      description: (params.nativeCharts?.length ?? 0) > 0
+        ? `${params.sourceType} native chart data extracted from Office XML.`
+        : `${params.sourceType} text suggests visual chart content, but native Office extraction is text-first.`,
+      confidence: (params.nativeCharts?.length ?? 0) > 0 ? "medium" : "low",
+    });
+  }
+
+  return {
+    version: "document-page-artifact-v1",
+    pageNumber: params.pageNumber,
+    label: params.label,
+    text: params.text,
+    visualBlocks,
+    tables: rows.length > 1
+      ? [{
+        title: params.label,
+        rows,
+        confidence: nativeTableRows.length > 0 ? "high" : "medium",
+      }]
+      : [],
+    charts: params.chartHint
+      ? (params.nativeCharts?.length ?? 0) > 0
+        ? params.nativeCharts!.map((chart) => ({
+          title: chart.title ?? `Chart ${chart.chartNumber}`,
+          chartType: "unknown",
+          description: "Native PPTX chart values extracted from chart XML. Visual geometry/colors are not represented.",
+          values: chart.values,
+          confidence: "medium" as const,
+        }))
+        : [{
+          title: params.label,
+          chartType: "unknown",
+          description: "Chart-like content detected from native text. Values are captured as numeric claims only; visual geometry is not guaranteed.",
+          values: numericClaims.slice(0, 30).map((claim) => ({ label: claim.label, value: claim.value })),
+          confidence: "low" as const,
+        }]
+      : [],
+    unreadableRegions: [
+      ...(params.chartHint && (params.nativeCharts?.length ?? 0) === 0
+        ? [{
+        reason: "Office native text extraction cannot guarantee chart geometry, labels, colors or embedded image/table fidelity.",
+        severity: "medium",
+      } as const]
+        : []),
+      ...(params.extractionWarnings ?? []).slice(0, 10).map((warning) => ({
+        reason: warning,
+        severity: "medium" as const,
+      })),
+    ],
+    numericClaims,
+    confidence: params.text.trim().length >= 80 || rows.length > 0 || numericClaims.length > 0 ? "medium" : "low",
+    needsHumanReview: params.text.trim().length < 80 ||
+      (Boolean(params.chartHint) && (params.nativeCharts?.length ?? 0) === 0) ||
+      (params.extractionWarnings?.length ?? 0) > 0,
+  };
+}
+
+function extractDelimitedRows(text: string): string[][] {
+  const rows = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => looksLikeDelimitedTable(line))
+    .map((line) => line.split(/\t|\s{2,}|\|/).map((cell) => cell.trim()).filter(Boolean))
+    .filter((row) => row.length > 1);
+  return rows.slice(0, 120);
+}
+
+function extractNumericClaims(
+  text: string,
+  confidence: DocumentPageArtifact["confidence"]
+): DocumentPageArtifact["numericClaims"] {
+  const claims: DocumentPageArtifact["numericClaims"] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const matches = line.matchAll(/(?:^|[\s(:])(-?\d+(?:[.,]\d+)?\s?(?:%|€|EUR|k€|m€|M€|\$|k|m|x|bps)?)(?=$|[\s),;])/gi);
+    for (const match of matches) {
+      const value = match[1]?.trim();
+      if (!value || !looksNumericCell(value)) continue;
+      claims.push({
+        label: line.replace(value, "").trim().slice(0, 80) || "numeric_value",
+        value,
+        unit: value.match(/(%|€|EUR|k€|m€|M€|\$|k|m|x|bps)$/i)?.[1],
+        sourceText: line.trim().slice(0, 180),
+        confidence,
+      });
+      if (claims.length >= 100) return claims;
+    }
+  }
+  return claims;
+}
+
+function looksLikeDelimitedTable(text: string): boolean {
+  const line = text.trim();
+  if (!line) return false;
+  return line.includes("|") || line.includes("\t") || /\S+\s{2,}\S+\s{2,}\S+/.test(line);
+}
+
+function looksNumericCell(value: string): boolean {
+  const cleaned = value.trim().replace(/[€$£,\s%]/g, "").replace(/[()]/g, "-");
+  return cleaned.length > 0 && !Number.isNaN(Number.parseFloat(cleaned));
 }
 
 async function chargeExtractionCredits(params: {

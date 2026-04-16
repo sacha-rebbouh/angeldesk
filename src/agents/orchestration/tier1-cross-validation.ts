@@ -159,12 +159,16 @@ export function runTier1CrossValidation(
   }
 
   // Detect major divergences (> 30 points)
+  const optimisticCaps = new Map<string, ScoreAdjustment>();
   for (let i = 0; i < agentScores.length; i++) {
     for (let j = i + 1; j < agentScores.length; j++) {
       const delta = Math.abs(agentScores[i].score - agentScores[j].score);
       if (delta > 30) {
+        const high = agentScores[i].score > agentScores[j].score ? agentScores[i] : agentScores[j];
+        const low = high === agentScores[i] ? agentScores[j] : agentScores[i];
+        const validationId = `CV-DIV-${i}-${j}`;
         validations.push({
-          id: `CV-DIV-${i}-${j}`,
+          id: validationId,
           type: "METRICS_VS_RETENTION",
           severity: delta > 50 ? "CRITICAL" : "HIGH",
           agent1: agentScores[i].name,
@@ -174,9 +178,27 @@ export function runTier1CrossValidation(
           verdict: delta > 50 ? "CONTRADICTION" : "MAJOR_DIVERGENCE",
           detail: `Divergence de ${delta} points entre ${agentScores[i].name} (${agentScores[i].score}) et ${agentScores[j].name} (${agentScores[j].score}). Necessite investigation.`,
         });
+
+        if (high.score >= 70 && low.score <= 45) {
+          const cap = delta > 50 ? 60 : 68;
+          const after = Math.min(high.score, cap);
+          if (after < high.score) {
+            const current = optimisticCaps.get(high.name);
+            const candidate: ScoreAdjustment = {
+              agentName: high.name,
+              field: "score.value",
+              before: high.score,
+              after: current ? Math.min(current.after, after) : after,
+              reason: `Score optimiste borne: divergence ${delta} pts avec ${low.name} (${low.score}/100)`,
+              crossValidationId: validationId,
+            };
+            optimisticCaps.set(high.name, candidate);
+          }
+        }
       }
     }
   }
+  adjustments.push(...optimisticCaps.values());
 
   // Detect statistical outliers (> 2 standard deviations)
   if (agentScores.length >= 5) {

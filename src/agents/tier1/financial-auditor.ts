@@ -709,6 +709,25 @@ MONTRE tes calculs.
 
     // Validate and normalize response
     const result = this.normalizeResponse(data, sector, stage);
+    if (validationErrors?.length) {
+      result.meta.dataCompleteness = "minimal";
+      result.meta.confidenceLevel = Math.min(result.meta.confidenceLevel, 40);
+      result.meta.limitations.push(
+        `Contrat de sortie LLM partiel: ${validationErrors.slice(0, 3).join("; ")}`
+      );
+      result.redFlags.push({
+        id: "RF-FINANCIAL-CONTRACT-PARTIAL",
+        category: "missing_data",
+        severity: "HIGH",
+        title: "Analyse financiere structurellement incomplete",
+        description: "Le modele n'a pas rendu tous les champs financiers attendus; l'analyse est conservee mais doit etre traitee comme partielle.",
+        location: "financial-auditor output contract",
+        evidence: validationErrors.slice(0, 5).join("; "),
+        impact: "Les benchmarks, questions et conclusions financieres peuvent etre incomplets.",
+        question: "Fournir un modele financier et des benchmarks comparables exploitables.",
+        redFlagIfBadAnswer: "Impossible de verifier rigoureusement les hypotheses financieres.",
+      });
+    }
 
     // F07: Inject registry red flags
     if (registryRedFlags.length > 0) {

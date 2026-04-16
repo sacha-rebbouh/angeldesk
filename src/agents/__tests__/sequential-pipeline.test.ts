@@ -1347,7 +1347,12 @@ vi.mock("@/services/fomo-detector", () => ({
 vi.mock("@/services/fact-checking", () => ({
   factCheckDevilsAdvocate: vi.fn().mockImplementation(async (findings: unknown) => ({
     findings,
-    stats: { totalChecked: 0, verified: 0, unverified: 0, errors: 0 },
+    factCheckResult: {
+      totalSources: 0,
+      verifiedCount: 0,
+      unverifiedCount: 0,
+      sources: [],
+    },
   })),
 }));
 
@@ -1363,6 +1368,15 @@ vi.mock("@/services/waterfall-simulator", () => ({
 vi.mock("@/agents/orchestration/utils/financial-calculations", () => ({
   calculateIRR: vi.fn().mockReturnValue({ value: 20, calculation: "20% IRR", steps: [] }),
   calculateCumulativeDilution: vi.fn().mockReturnValue({ value: 50, calculation: "50% dilution", steps: [] }),
+}));
+
+vi.mock("@/services/funding-db/percentile-calculator", () => ({
+  calculateDealPercentile: vi.fn().mockResolvedValue({
+    percentileOverall: 55,
+    percentileSector: 60,
+    percentileStage: 50,
+    totalDealsCompared: 100,
+  }),
 }));
 
 // Mock context-engine geography coverage

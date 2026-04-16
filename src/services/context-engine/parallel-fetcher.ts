@@ -94,6 +94,33 @@ const CONNECTOR_TIER_MAP: Record<string, keyof typeof CONNECTOR_TIERS> = {
   pappers: "slow",
   companies_house: "slow",
   indeed: "slow",
+
+  // Actual connector display names used by implementations.
+  "Funding DB": "internal",
+  "FrenchWeb API": "fast",
+  "Maddyness API": "fast",
+  "EU-Startups API": "fast",
+  "Tech.eu": "fast",
+  "US Funding": "fast",
+  "Seedtable": "fast",
+  "Product Hunt": "fast",
+  "French Tech": "fast",
+  "BPI France": "fast",
+  "Incubators": "fast",
+  "YC Companies": "fast",
+  "Eldorado": "fast",
+  "RSS Funding": "fast",
+  "FrenchWeb RSS": "fast",
+  "App Stores": "fast",
+  "GitHub": "fast",
+  "Welcome to the Jungle": "fast",
+  "Coresignal LinkedIn": "slow",
+  "Web Search (Perplexity)": "slow",
+  "NewsAPI": "slow",
+  "Societe.com": "slow",
+  "Pappers.fr": "slow",
+  "Companies House UK": "slow",
+  "Indeed": "slow",
 };
 
 const MAX_CONNECTOR_CONCURRENCY = 4;

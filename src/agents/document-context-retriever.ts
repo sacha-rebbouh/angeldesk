@@ -1,6 +1,7 @@
 import type { AgentContext } from "./types";
 
 type AgentDocument = NonNullable<AgentContext["documents"]>[number];
+type ExtractionPage = NonNullable<AgentDocument["extractionRuns"]>[number]["pages"][number];
 
 interface DocumentWindow {
   label: string;
@@ -11,11 +12,18 @@ interface DocumentWindow {
 
 const AGENT_KEYWORDS: Record<string, string[]> = {
   "financial-auditor": ["arr", "mrr", "revenue", "cash", "burn", "runway", "ebitda", "margin", "cac", "ltv", "churn", "nrr", "forecast", "budget", "p&l", "profit", "loss"],
-  "market-analyst": ["tam", "sam", "som", "market", "cagr", "segment", "customer", "competition", "competitor", "pricing", "growth"],
-  "team-analyst": ["founder", "ceo", "cto", "cfo", "coo", "team", "headcount", "advisor", "linkedin", "hire", "employee"],
-  "product-analyst": ["product", "use case", "workflow", "feature", "platform", "integration", "roadmap", "customer pain", "differentiator"],
-  "legal-analyst": ["term", "safe", "equity", "liquidation", "preference", "pro rata", "vesting", "warranty", "shareholder", "cap table"],
+  "market-intelligence": ["tam", "sam", "som", "market", "cagr", "segment", "customer", "competition", "competitor", "pricing", "growth"],
+  "team-investigator": ["founder", "ceo", "cto", "cfo", "coo", "team", "headcount", "advisor", "linkedin", "hire", "employee"],
+  "competitive-intel": ["competitor", "competition", "alternative", "positioning", "differentiation", "market", "pricing", "category"],
+  "customer-intel": ["customer", "retention", "churn", "nrr", "grr", "cohort", "testimonial", "case study", "pipeline", "usage"],
+  "gtm-analyst": ["pricing", "sales", "pipeline", "conversion", "cac", "payback", "channel", "gtm", "marketing", "quota"],
+  "tech-stack-dd": ["product", "architecture", "stack", "integration", "roadmap", "api", "security", "scalability", "infrastructure"],
+  "tech-ops-dd": ["product", "roadmap", "ops", "sla", "incident", "security", "ip", "infrastructure", "scalability", "delivery"],
+  "legal-regulatory": ["term", "safe", "equity", "liquidation", "preference", "pro rata", "vesting", "warranty", "shareholder", "cap table", "gdpr", "regulatory"],
   "conditions-analyst": ["valuation", "pre-money", "post-money", "dilution", "safe", "equity", "term", "liquidation", "pro rata", "vesting", "esop"],
+  "cap-table-auditor": ["cap table", "shareholder", "dilution", "option pool", "esop", "vesting", "safe", "equity", "pre-money", "post-money"],
+  "exit-strategist": ["exit", "acquirer", "m&a", "ipo", "multiple", "strategic", "comparable", "valuation", "market"],
+  "deck-forensics": ["slide", "claim", "deck", "story", "traction", "team", "market", "chart", "table", "source"],
 };
 
 const UNIVERSAL_KEYWORDS = [
@@ -49,14 +57,22 @@ export function formatRetrievedDocumentWindows(
     };
   }
 
-  if (corpus.length <= options.maxChars) {
+  const artifactWindows = buildArtifactWindows(doc);
+  const windows = artifactWindows.length > 0 ? artifactWindows : splitDocumentWindows(corpus);
+  if (windows.length === 0) {
+    return { text: "(No extracted artifact content)", omittedWindows: 0, totalWindows: 0 };
+  }
+  if (corpus.length <= options.maxChars && artifactWindows.length === 0) {
     return { text: corpus, omittedWindows: 0, totalWindows: 1 };
   }
-
-  const windows = splitDocumentWindows(corpus);
   if (windows.length <= 1) {
+    const singleText = windows[0]?.text.length > options.maxChars
+      ? buildHeadTailFallback(windows[0].text, options.maxChars)
+      : windows[0]?.text ?? buildHeadTailFallback(corpus, options.maxChars);
     return {
-      text: buildHeadTailFallback(corpus, options.maxChars),
+      text: artifactWindows.length > 0
+        ? `${singleText}\n\n[RETRIEVAL: 1/1 artefacts retenus pour ${agentName}.]`
+        : singleText,
       omittedWindows: 0,
       totalWindows: 1,
     };
@@ -86,7 +102,7 @@ export function formatRetrievedDocumentWindows(
     .join("\n\n");
 
   return {
-    text: `${text}\n\n[RETRIEVAL: ${ordered.length}/${windows.length} fenetres documentaires retenues pour ${agentName}.]`,
+    text: `${text}\n\n[RETRIEVAL: ${ordered.length}/${windows.length} ${artifactWindows.length > 0 ? "artefacts" : "fenetres documentaires"} retenus pour ${agentName}.]`,
     omittedWindows: Math.max(0, windows.length - ordered.length),
     totalWindows: windows.length,
   };
@@ -95,6 +111,105 @@ export function formatRetrievedDocumentWindows(
 function isLegacyExcelDump(doc: AgentDocument, corpus: string): boolean {
   if (doc.type !== "FINANCIAL_MODEL") return false;
   return corpus.length > 500_000 || /\[[A-Z]{1,3}\d+=/.test(corpus);
+}
+
+function buildArtifactWindows(doc: AgentDocument): Array<Omit<DocumentWindow, "score" | "reason">> {
+  const run = doc.extractionRuns?.[0];
+  if (!run?.pages?.length) return [];
+
+  return run.pages.flatMap((page) => {
+    const text = formatExtractionPageArtifact(page, doc.type);
+    if (!text.trim()) return [];
+    return [{
+      label: `Artifact ${page.pageNumber} (${page.method}/${page.status})`,
+      text,
+    }];
+  });
+}
+
+function formatExtractionPageArtifact(page: ExtractionPage, documentType: string): string {
+  const artifact = isRecord(page.artifact) ? page.artifact : {};
+  const lines: string[] = [
+    `[Artifact page ${page.pageNumber} | ${documentType} | status=${page.status} | method=${page.method} | quality=${page.qualityScore ?? "n/a"}]`,
+  ];
+
+  const text = typeof artifact.text === "string" ? artifact.text : page.textPreview ?? "";
+  if (text.trim()) {
+    lines.push("## Extracted text");
+    lines.push(text.trim().slice(0, 4000));
+  }
+
+  const tables = Array.isArray(artifact.tables) ? artifact.tables : [];
+  if (tables.length > 0) {
+    lines.push("## Tables");
+    for (const [index, table] of tables.entries()) {
+      if (!isRecord(table)) continue;
+      lines.push(`### Table ${index + 1}${typeof table.title === "string" ? ` - ${table.title}` : ""}`);
+      if (typeof table.markdown === "string" && table.markdown.trim()) {
+        lines.push(table.markdown.trim().slice(0, 3000));
+      } else if (Array.isArray(table.rows)) {
+        lines.push(formatRows(table.rows).slice(0, 3000));
+      } else {
+        lines.push("[TABLE DETECTED WITHOUT STRUCTURED ROWS]");
+      }
+    }
+  }
+
+  const charts = Array.isArray(artifact.charts) ? artifact.charts : [];
+  if (charts.length > 0) {
+    lines.push("## Charts");
+    for (const [index, chart] of charts.entries()) {
+      if (!isRecord(chart)) continue;
+      lines.push(`### Chart ${index + 1}${typeof chart.title === "string" ? ` - ${chart.title}` : ""}`);
+      if (typeof chart.chartType === "string") lines.push(`Type: ${chart.chartType}`);
+      if (typeof chart.description === "string") lines.push(`Description: ${chart.description}`);
+      if (Array.isArray(chart.series) && chart.series.length > 0) lines.push(`Series: ${chart.series.map(String).join(", ")}`);
+      if (Array.isArray(chart.values) && chart.values.length > 0) {
+        lines.push(`Values: ${chart.values.map((entry) => {
+          if (!isRecord(entry)) return String(entry);
+          return `${String(entry.label ?? "value")}=${String(entry.value ?? "")}`;
+        }).join(" | ")}`);
+      } else {
+        lines.push("[CHART DETECTED WITHOUT STRUCTURED VALUES]");
+      }
+    }
+  }
+
+  const numericClaims = Array.isArray(artifact.numericClaims) ? artifact.numericClaims : [];
+  if (numericClaims.length > 0) {
+    lines.push("## Numeric claims");
+    for (const claim of numericClaims.slice(0, 40)) {
+      if (!isRecord(claim)) continue;
+      lines.push(`- ${String(claim.label ?? "value")}: ${String(claim.value ?? "")}${claim.unit ? ` ${String(claim.unit)}` : ""}${claim.sourceText ? ` | source: ${String(claim.sourceText).slice(0, 140)}` : ""}`);
+    }
+  }
+
+  const unreadableRegions = Array.isArray(artifact.unreadableRegions) ? artifact.unreadableRegions : [];
+  if (unreadableRegions.length > 0) {
+    lines.push("## Extraction warnings");
+    for (const region of unreadableRegions) {
+      if (!isRecord(region)) continue;
+      lines.push(`- ${String(region.severity ?? "medium")}: ${String(region.reason ?? "Unreadable region")}`);
+    }
+  }
+
+  if ((page.hasTables || page.hasCharts) && tables.length === 0 && charts.length === 0) {
+    lines.push("[VISUAL RISK: page flagged as table/chart but no structured table/chart artifact is available]");
+  }
+
+  return lines.join("\n");
+}
+
+function formatRows(rows: unknown[]): string {
+  return rows
+    .filter(Array.isArray)
+    .slice(0, 120)
+    .map((row) => (row as unknown[]).map((cell) => String(cell ?? "")).join(" | "))
+    .join("\n");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function splitDocumentWindows(corpus: string): Array<Omit<DocumentWindow, "score" | "reason">> {
@@ -147,7 +262,7 @@ function buildReason(window: Omit<DocumentWindow, "score" | "reason">, agentName
 }
 
 function originalIndex(label: string): number {
-  const page = label.match(/Page (\d+)/i)?.[1] ?? label.match(/Slide (\d+)/i)?.[1];
+  const page = label.match(/Page (\d+)/i)?.[1] ?? label.match(/Slide (\d+)/i)?.[1] ?? label.match(/Artifact (\d+)/i)?.[1];
   if (page) return Number(page);
   return Number.MAX_SAFE_INTEGER;
 }

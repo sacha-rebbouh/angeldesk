@@ -625,7 +625,7 @@ async function processPageImage(
           ? HIGH_FIDELITY_COST_PER_PAGE
           : COST_PER_PAGE,
       mode,
-      artifact: buildArtifactFromOCRText(pageNumber, extractedText, confidence),
+      artifact: buildArtifactFromOCRText(pageNumber, extractedText, confidence, mode),
     };
   } catch (error) {
     console.error(`OCR error on page ${pageNumber}:`, error);
@@ -681,13 +681,20 @@ function formatOCRModeLabel(mode: OCRMode | undefined): string {
 function buildArtifactFromOCRText(
   pageNumber: number,
   text: string,
-  fallbackConfidence: "high" | "medium" | "low"
+  fallbackConfidence: "high" | "medium" | "low",
+  mode: OCRMode = "standard"
 ): DocumentPageArtifact {
   const parsed = parseArtifactJson(text);
   const visualBlocks = parsed?.visualBlocks ?? inferVisualBlocks(text, fallbackConfidence);
   const tables = parsed?.tables ?? inferTables(text, fallbackConfidence);
   const charts = parsed?.charts ?? inferCharts(text, fallbackConfidence);
   const unreadableRegions = parsed?.unreadableRegions ?? inferUnreadableRegions(text);
+  if (!parsed && mode !== "standard" && visualBlocks.some((block) => block.type === "table" || block.type === "chart")) {
+    unreadableRegions.push({
+      reason: "High-fidelity OCR did not return the required ARTIFACT_JSON for visual content.",
+      severity: "high",
+    });
+  }
   const numericClaims = parsed?.numericClaims ?? inferNumericClaims(text, fallbackConfidence);
   const needsHumanReview = parsed?.needsHumanReview ?? (
     unreadableRegions.length > 0 ||
@@ -1013,6 +1020,18 @@ export async function processImageOCR(
   else if (text.length < 30) confidence = "low";
 
   return { text, confidence, cost: COST_PER_PAGE };
+}
+
+export async function processImageArtifactOCR(
+  imageBuffer: Buffer,
+  format: "jpeg" | "png",
+  pageNumber = 1,
+  mode: OCRMode = "high_fidelity"
+): Promise<PageOCRResult> {
+  const normalizedBuffer = format === "png"
+    ? imageBuffer
+    : imageBuffer;
+  return processPageImage(normalizedBuffer, pageNumber, mode);
 }
 
 /**
@@ -1403,6 +1422,20 @@ function buildExtractionManifest(params: {
           : "Low page extraction quality";
     }
 
+    const pageArtifact = ocr?.artifact ?? buildArtifactFromOCRText(pageNumber, combinedText, qualityScore >= 75 ? "high" : qualityScore >= 45 ? "medium" : "low");
+    const hasIncompleteStructuredVisual = (
+      (flags.hasTables && pageArtifact.tables.length === 0) ||
+      (flags.hasCharts && (
+        pageArtifact.charts.length === 0 ||
+        pageArtifact.charts.some((chart) => !chart.values || chart.values.length === 0)
+      )) ||
+      pageArtifact.unreadableRegions.some((region) => region.severity === "high")
+    );
+    if ((status === "ready" || status === "ready_with_warnings") && hasIncompleteStructuredVisual) {
+      status = "needs_review";
+      error = "Visual/table-like page has incomplete structured extraction";
+    }
+
     if (status === "failed" && hasDomainCriticalSignals) {
       hardBlockers.push({
         code: "CRITICAL_PAGE_UNREADABLE",
@@ -1424,7 +1457,7 @@ function buildExtractionManifest(params: {
       extractionTier,
       visualRiskScore: visualRisk.score,
       visualRiskReasons: visualRisk.reasons,
-      artifact: ocr?.artifact ?? buildArtifactFromOCRText(pageNumber, combinedText, qualityScore >= 75 ? "high" : qualityScore >= 45 ? "medium" : "low"),
+      artifact: pageArtifact,
       pageImageHash: ocr?.artifact?.sourceHash,
       error,
     });

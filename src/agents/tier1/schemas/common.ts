@@ -18,7 +18,7 @@ export const RedFlagSchema = z.object({
 
 export const QuestionSchema = z.object({
   question: z.string(),
-  priority: z.enum(["critical", "high", "medium"]).optional(),
+  priority: z.enum(["critical", "high", "medium", "CRITICAL", "HIGH", "MEDIUM"]).optional(),
   context: z.string().optional(),
   category: z.string().optional(),
   whatToLookFor: z.string().optional(),

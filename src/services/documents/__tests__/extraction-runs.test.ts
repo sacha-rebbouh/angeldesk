@@ -78,7 +78,7 @@ describe("buildStructuredDocumentManifest", () => {
       method: "ocr",
       hasCharts: true,
       extractionTier: "high_fidelity",
-      visualRiskScore: 75,
+      visualRiskScore: 100,
     });
 
     expect(manifest.pages[3]).toMatchObject({
@@ -142,5 +142,40 @@ describe("buildStructuredDocumentManifest", () => {
         },
       ],
     });
+  });
+
+  it("blocks visually flagged artifacts when structured tables/charts are missing", () => {
+    const manifest = buildStructuredDocumentManifest({
+      artifacts: [
+        {
+          index: 1,
+          label: "visual page",
+          text: "Revenue chart with visible axis and percentages",
+          method: "hybrid",
+          hasCharts: true,
+          hasFinancialKeywords: true,
+          artifact: {
+            version: "document-page-artifact-v1",
+            pageNumber: 1,
+            label: "visual page",
+            text: "Revenue chart with visible axis and percentages",
+            visualBlocks: [{ type: "chart", description: "Chart detected", confidence: "medium" }],
+            tables: [],
+            charts: [],
+            unreadableRegions: [],
+            numericClaims: [],
+            confidence: "medium",
+            needsHumanReview: true,
+          },
+        },
+      ],
+    });
+
+    expect(manifest.status).toBe("needs_review");
+    expect(manifest.pages[0]).toMatchObject({
+      status: "needs_review",
+      visualRiskScore: 100,
+    });
+    expect(manifest.pages[0].visualRiskReasons).toContain("visual page has incomplete structured visual extraction");
   });
 });

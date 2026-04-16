@@ -16,6 +16,7 @@ import { formatGeographyCoverageForPrompt } from "@/services/context-engine/geog
 import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
 import { getStageCalibrationBlock } from "@/agents/stage-calibration";
 import { formatRetrievedDocumentWindows } from "./document-context-retriever";
+import { formatEvidenceLedgerForPrompt } from "@/services/evidence-ledger";
 
 // Generic type for agent results with data
 export interface AgentResultWithData<T> extends AgentResult {
@@ -24,6 +25,7 @@ export interface AgentResultWithData<T> extends AgentResult {
 
 /** F80: Max chars per trace field (prompt/response) to prevent DB bloat */
 const TRACE_FIELD_MAX_CHARS = 50_000;
+const GENERAL_DOCUMENT_CONTEXT_BUDGET = 120_000;
 
 function truncateTraceField(content: string, fieldName: string): string {
   if (content.length <= TRACE_FIELD_MAX_CHARS) return content;
@@ -290,6 +292,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       );
 
       const executionTimeMs = Date.now() - startTime;
+      const contract = this.assessOutputContract(data);
 
       // Build trace if enabled
       const trace = this.buildTrace();
@@ -314,9 +317,12 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
       return {
         agentName: this.config.name,
-        success: true,
+        success: contract.status !== "CONTRACT_BROKEN",
         executionTimeMs,
         cost: this._totalCost,
+        contractStatus: contract.status,
+        contractIssues: contract.issues,
+        ...(contract.status === "CONTRACT_BROKEN" && { error: `Agent output contract broken: ${contract.issues.join("; ")}` }),
         data,
         _traceMetrics: traceMetrics,
         ...(trace && { _traceFull: trace }),
@@ -812,10 +818,12 @@ ${sanitizedDeal.description}
       text += `mises à jour ou réponses à des questions. En cas de divergence entre un document\n`;
       text += `récent et le deck initial, le document récent fait foi (sauf preuve contraire).\n\n`;
 
+      let remainingDocumentBudget = this.getGlobalDocumentContextBudget();
       for (const doc of sortedDocs) {
-        if (!this.shouldIncludeDocumentInGeneralContext(doc.type)) {
+        const routing = this.getDocumentRoutingDecision(doc.type);
+        if (!routing.include) {
           text += `\n### ${sanitizeName(doc.name)} (${sanitizeName(doc.type)})\n`;
-          text += `[Document route hors contexte general pour ${this.config.name}; il sera traite par les agents specialises.]\n`;
+          text += `[Document exclu du contexte de ${this.config.name}: ${routing.reason}.]\n`;
           continue;
         }
         // Sanitize document name and type
@@ -826,7 +834,11 @@ ${sanitizedDeal.description}
           : "date inconnue";
         text += `\n### ${sanitizedDocName} (${sanitizedDocType}) — importé le ${dateLabel}\n`;
         if (doc.extractedText) {
-          const limit = this.getDocumentContextLimit(doc.type);
+          const limit = Math.min(this.getDocumentContextLimit(doc.type), Math.max(0, remainingDocumentBudget));
+          if (limit < 1_000) {
+            text += `[Document omis: budget documentaire global atteint pour ${this.config.name}.]\n`;
+            continue;
+          }
           const retrieved = formatRetrievedDocumentWindows(doc, this.config.name, {
             maxChars: limit,
             maxWindows: doc.type === "FINANCIAL_MODEL" ? 18 : 10,
@@ -835,10 +847,16 @@ ${sanitizedDeal.description}
             maxLength: limit + 1000,
             preserveNewlines: true,
           });
+          remainingDocumentBudget -= Math.min(limit, retrieved.text.length);
         } else {
           text += "(Content not yet extracted)";
         }
       }
+    }
+
+    const evidenceLedger = this.formatEvidenceLedgerData(context as EnrichedAgentContext);
+    if (evidenceLedger) {
+      text += `\n${evidenceLedger}\n`;
     }
 
     return text;
@@ -865,17 +883,165 @@ ${sanitizedDeal.description}
     });
   }
 
-  private shouldIncludeDocumentInGeneralContext(documentType: string): boolean {
-    if (documentType === "FINANCIAL_MODEL") {
-      return this.config.name === "financial-auditor";
+  private getDocumentRoutingDecision(documentType: string): { include: boolean; reason: string } {
+    const relevance = this.getDocumentTypeRelevance(documentType);
+    if (relevance <= 0) {
+      return { include: false, reason: "type documentaire non pertinent pour cet agent" };
     }
-    return true;
+    return { include: true, reason: `pertinence ${relevance}/100` };
+  }
+
+  private getDocumentTypeRelevance(documentType: string): number {
+    const agent = this.config.name;
+    const relevanceByAgent: Record<string, Record<string, number>> = {
+      "deck-forensics": { PITCH_DECK: 100, INVESTOR_MEMO: 45, MARKET_STUDY: 25, PRODUCT_DEMO: 35, CALL_TRANSCRIPT: 25, OTHER: 25 },
+      "financial-auditor": { FINANCIAL_MODEL: 100, FINANCIAL_STATEMENTS: 100, PITCH_DECK: 70, INVESTOR_MEMO: 65, CAP_TABLE: 45, TERM_SHEET: 35, MARKET_STUDY: 20, CALL_TRANSCRIPT: 25, OTHER: 25 },
+      "team-investigator": { PITCH_DECK: 90, INVESTOR_MEMO: 65, CALL_TRANSCRIPT: 60, PRODUCT_DEMO: 20, MARKET_STUDY: 10, OTHER: 35 },
+      "market-intelligence": { MARKET_STUDY: 100, PITCH_DECK: 85, INVESTOR_MEMO: 75, FINANCIAL_MODEL: 25, CALL_TRANSCRIPT: 35, OTHER: 35 },
+      "competitive-intel": { MARKET_STUDY: 90, PITCH_DECK: 85, INVESTOR_MEMO: 75, PRODUCT_DEMO: 55, CALL_TRANSCRIPT: 35, OTHER: 35 },
+      "customer-intel": { PITCH_DECK: 85, INVESTOR_MEMO: 75, MARKET_STUDY: 70, FINANCIAL_MODEL: 35, CALL_TRANSCRIPT: 70, PRODUCT_DEMO: 45, OTHER: 35 },
+      "gtm-analyst": { PITCH_DECK: 85, INVESTOR_MEMO: 80, MARKET_STUDY: 65, FINANCIAL_MODEL: 45, CALL_TRANSCRIPT: 60, PRODUCT_DEMO: 35, OTHER: 35 },
+      "tech-stack-dd": { PRODUCT_DEMO: 100, PITCH_DECK: 80, INVESTOR_MEMO: 55, CALL_TRANSCRIPT: 45, LEGAL_DOCS: 20, OTHER: 35 },
+      "tech-ops-dd": { PRODUCT_DEMO: 90, PITCH_DECK: 75, INVESTOR_MEMO: 55, CALL_TRANSCRIPT: 45, LEGAL_DOCS: 20, OTHER: 35 },
+      "legal-regulatory": { LEGAL_DOCS: 100, TERM_SHEET: 95, CAP_TABLE: 75, PITCH_DECK: 45, INVESTOR_MEMO: 45, CALL_TRANSCRIPT: 35, OTHER: 35 },
+      "cap-table-auditor": { CAP_TABLE: 100, TERM_SHEET: 95, FINANCIAL_MODEL: 65, LEGAL_DOCS: 55, PITCH_DECK: 45, INVESTOR_MEMO: 45, OTHER: 30 },
+      "conditions-analyst": { TERM_SHEET: 100, CAP_TABLE: 90, LEGAL_DOCS: 70, FINANCIAL_MODEL: 45, PITCH_DECK: 55, INVESTOR_MEMO: 50, OTHER: 30 },
+      "exit-strategist": { MARKET_STUDY: 90, PITCH_DECK: 80, INVESTOR_MEMO: 75, FINANCIAL_MODEL: 55, CALL_TRANSCRIPT: 35, OTHER: 30 },
+      "question-master": { PITCH_DECK: 85, FINANCIAL_MODEL: 70, CAP_TABLE: 70, TERM_SHEET: 70, INVESTOR_MEMO: 75, FINANCIAL_STATEMENTS: 70, LEGAL_DOCS: 65, MARKET_STUDY: 75, PRODUCT_DEMO: 65, CALL_TRANSCRIPT: 75, OTHER: 45 },
+    };
+
+    const tier3SynthesisAgents = new Set(["contradiction-detector", "scenario-modeler", "synthesis-deal-scorer", "devils-advocate", "memo-generator"]);
+    if (tier3SynthesisAgents.has(agent)) {
+      return ({ FINANCIAL_MODEL: 45, FINANCIAL_STATEMENTS: 50, PITCH_DECK: 80, INVESTOR_MEMO: 80, MARKET_STUDY: 65, CAP_TABLE: 60, TERM_SHEET: 60, LEGAL_DOCS: 45, PRODUCT_DEMO: 45, CALL_TRANSCRIPT: 50, OTHER: 30 } as Record<string, number>)[documentType] ?? 0;
+    }
+
+    return relevanceByAgent[agent]?.[documentType] ?? 50;
+  }
+
+  private getGlobalDocumentContextBudget(): number {
+    if (this.config.name === "financial-auditor") return 150_000;
+    if (["synthesis-deal-scorer", "memo-generator", "devils-advocate"].includes(this.config.name)) return 140_000;
+    return GENERAL_DOCUMENT_CONTEXT_BUDGET;
   }
 
   private getDocumentContextLimit(documentType: string): number {
     if (documentType === "FINANCIAL_MODEL") return 80_000;
     if (documentType === "PITCH_DECK") return 30_000;
     return 24_000;
+  }
+
+  private assessOutputContract(data: unknown): { status: "VALID" | "PARTIAL_UNVERIFIED" | "CONTRACT_BROKEN"; issues: string[] } {
+    if (!this.requiresStructuredAgentContract()) {
+      return { status: "VALID", issues: [] };
+    }
+
+    if (!isPlainRecord(data)) {
+      return { status: "CONTRACT_BROKEN", issues: ["Output is not an object"] };
+    }
+
+    const issues: string[] = [];
+    const partialIssues: string[] = [];
+    const requiredFields = this.getRequiredOutputContractFields();
+    for (const key of requiredFields) {
+      if (!(key in data)) issues.push(`Missing ${key}`);
+    }
+
+    const meta = isPlainRecord(data.meta) ? data.meta : undefined;
+    if (meta && typeof meta.confidenceLevel !== "number") partialIssues.push("Missing meta.confidenceLevel");
+
+    const score = isPlainRecord(data.score) ? data.score : undefined;
+    if (score) {
+      if (typeof score.value !== "number") issues.push("Missing score.value");
+      if (!Array.isArray(score.breakdown) || score.breakdown.length === 0) partialIssues.push("Missing score.breakdown");
+    }
+
+    if (this.config.name === "financial-auditor") {
+      const findings = isPlainRecord(data.findings) ? data.findings : undefined;
+      const metrics = Array.isArray(findings?.metrics) ? findings.metrics : [];
+      if (metrics.length === 0) {
+        partialIssues.push("No financial metrics extracted");
+      } else {
+        const benchmarkedMetrics = metrics.filter((metric) => {
+          if (!isPlainRecord(metric)) return false;
+          return (
+            typeof metric.benchmarkP25 === "number" ||
+            typeof metric.benchmarkMedian === "number" ||
+            typeof metric.benchmarkP75 === "number" ||
+            typeof metric.percentile === "number"
+          );
+        });
+        if (benchmarkedMetrics.length === 0) {
+          partialIssues.push("No usable financial benchmarks on extracted metrics");
+        }
+      }
+    }
+
+    if (this.config.name === "synthesis-deal-scorer") {
+      const overallScore = typeof data.overallScore === "number" ? data.overallScore : undefined;
+      const dimensionScores = Array.isArray(data.dimensionScores) ? data.dimensionScores : [];
+      const comparativeRanking = isPlainRecord(data.comparativeRanking) ? data.comparativeRanking : undefined;
+      if (overallScore === undefined) issues.push("Missing overallScore");
+      if (dimensionScores.length === 0) issues.push("Missing dimensionScores");
+      if (!comparativeRanking) {
+        partialIssues.push("Missing comparativeRanking");
+      } else if (
+        comparativeRanking.insufficientData === true ||
+        comparativeRanking.method === "INSUFFICIENT_DATA" ||
+        comparativeRanking.method === "UNAVAILABLE"
+      ) {
+        partialIssues.push("Comparative ranking has insufficient benchmark data");
+      }
+      if (overallScore !== undefined && dimensionScores.length > 0) {
+        const weighted = dimensionScores.reduce((sum, dimension) => {
+          if (!isPlainRecord(dimension)) return sum;
+          const weightedScore = typeof dimension.weightedScore === "number" ? dimension.weightedScore : 0;
+          return sum + weightedScore;
+        }, 0);
+        if (Math.abs(weighted - overallScore) > 20) {
+          partialIssues.push(`overallScore diverges from dimension weighted sum by ${Math.round(Math.abs(weighted - overallScore))} pts`);
+        }
+      }
+    }
+
+    if (issues.length > 0) return { status: "CONTRACT_BROKEN", issues: [...issues, ...partialIssues] };
+    if (partialIssues.length > 0) return { status: "PARTIAL_UNVERIFIED", issues: partialIssues };
+    return { status: "VALID", issues: [] };
+  }
+
+  private requiresStructuredAgentContract(): boolean {
+    return this.getRequiredOutputContractFields().length > 0;
+  }
+
+  private getRequiredOutputContractFields(): string[] {
+    const standardStructuredAgents = new Set([
+      "deck-forensics",
+      "financial-auditor",
+      "team-investigator",
+      "competitive-intel",
+      "market-intelligence",
+      "tech-stack-dd",
+      "tech-ops-dd",
+      "legal-regulatory",
+      "cap-table-auditor",
+      "gtm-analyst",
+      "customer-intel",
+      "exit-strategist",
+      "question-master",
+      "conditions-analyst",
+      "contradiction-detector",
+      "scenario-modeler",
+      "devils-advocate",
+    ]);
+    if (standardStructuredAgents.has(this.config.name)) {
+      return ["meta", "score", "findings", "redFlags", "questions", "alertSignal", "narrative"];
+    }
+    if (this.config.name === "synthesis-deal-scorer") {
+      return ["overallScore", "dimensionScores", "investmentRecommendation", "keyStrengths", "keyWeaknesses", "criticalRisks"];
+    }
+    if (this.config.name === "memo-generator") {
+      return ["executiveSummary", "companyOverview", "investmentHighlights", "keyRisks", "dueDiligenceFindings", "nextSteps"];
+    }
+    return [];
   }
 
   // Format Context Engine data for prompts (Tier 1 agents)
@@ -1083,11 +1249,31 @@ ${sanitizedDeal.description}
     // F59: Context quality degradation warning
     if (contextEngine.contextQuality?.degraded) {
       const cq = contextEngine.contextQuality;
-      text += `\n## ⚠️ QUALITE DU CONTEXTE DEGRADEE\n`;
+      text += `\n## QUALITE DU CONTEXTE DEGRADEE\n`;
       text += `Score qualite: ${Math.round(cq.qualityScore * 100)}% (completude: ${Math.round(cq.completeness * 100)}%, fiabilite: ${Math.round(cq.reliability * 100)}%)\n`;
       text += `Raisons: ${cq.degradationReasons.join("; ")}\n`;
       text += `**IMPACT:** Les scores et affirmations bases sur le Context Engine doivent etre penalises. `;
       text += `Mentionner explicitement que le contexte externe est incomplet.\n`;
+    }
+
+    if (contextEngine.sourceHealth) {
+      const health = contextEngine.sourceHealth;
+      const criticalMissing = health.unconfiguredCritical
+        .filter((source) => source.severity === "critical" || source.severity === "high");
+      const importantFailures = health.failed
+        .filter((source) => source.severity === "critical" || source.severity === "high");
+
+      if (criticalMissing.length > 0 || importantFailures.length > 0) {
+        text += `\n## SOURCES EXTERNES NON VERIFIEES\n`;
+        text += `Connecteurs configures: ${health.successful}/${health.totalConfigured} avec reponse exploitable.\n`;
+        for (const source of criticalMissing.slice(0, 6)) {
+          text += `- [${source.severity.toUpperCase()}] ${source.name}: ${source.reason}\n`;
+        }
+        for (const source of importantFailures.slice(0, 6)) {
+          text += `- [${source.severity.toUpperCase()}] ${source.name}: ${source.error}\n`;
+        }
+        text += `**REGLE:** Toute conclusion dependante de ces sources doit etre marquee UNVERIFIED ou traitee comme signal faible.\n`;
+      }
     }
 
     // F70: Geography coverage warning
@@ -1201,6 +1387,10 @@ ${sanitizedFactStore}
     }
 
     return output;
+  }
+
+  protected formatEvidenceLedgerData(context: EnrichedAgentContext): string {
+    return context.evidenceLedgerFormatted || formatEvidenceLedgerForPrompt(context.evidenceLedger);
   }
 
   /**
@@ -1436,4 +1626,8 @@ Angel Desk ANALYSE et GUIDE. Angel Desk ne DÉCIDE JAMAIS. Le Business Angel est
 - Chaque phrase doit pouvoir se terminer par "...à vous de décider" sans être absurde
 `;
   }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

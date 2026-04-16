@@ -6,8 +6,10 @@ import type {
   NewsSentiment,
   PeopleGraph,
   ContextQualityScore,
+  SourceHealth,
 } from "@/services/context-engine/types";
 import type { BAPreferences } from "@/services/benchmarks";
+import type { EvidenceLedger } from "@/services/evidence-ledger";
 
 // Agent execution context
 export interface AgentContext {
@@ -20,6 +22,28 @@ export interface AgentContext {
     extractedText?: string | null;
     /** Date of upload/import — used for document chronology awareness */
     uploadedAt?: Date;
+    /** Latest strict extraction run, when available. Used for artifact-aware retrieval. */
+    extractionRuns?: Array<{
+      id: string;
+      status: string;
+      readyForAnalysis: boolean;
+      corpusTextHash?: string | null;
+      pages: Array<{
+        pageNumber: number;
+        status: string;
+        method: string;
+        charCount: number;
+        wordCount: number;
+        qualityScore?: number | null;
+        hasTables: boolean;
+        hasCharts: boolean;
+        hasFinancialKeywords: boolean;
+        hasTeamKeywords: boolean;
+        hasMarketKeywords: boolean;
+        artifact?: unknown;
+        textPreview?: string | null;
+      }>;
+    }>;
   }[];
   previousResults?: Record<string, AgentResult>;
 }
@@ -41,6 +65,8 @@ export interface EnrichedAgentContext extends AgentContext {
     completeness?: number;
     /** F59: Detailed quality scoring with degradation detection */
     contextQuality?: ContextQualityScore;
+    /** Connector health surfaced to agents */
+    sourceHealth?: SourceHealth;
     // Traction data from App Store, GitHub, Product Hunt connectors (F71)
     tractionData?: {
       appStore?: {
@@ -101,6 +127,10 @@ export interface EnrichedAgentContext extends AgentContext {
   factStore?: CurrentFact[];
   // Pre-formatted version for direct injection into prompts
   factStoreFormatted?: string;
+
+  // Evidence Ledger - compact proof contract built from facts, extraction artifacts and source health
+  evidenceLedger?: EvidenceLedger;
+  evidenceLedgerFormatted?: string;
 
   // Deck Coherence Report - Tier 0 coherence check result
   // Contains detected issues, missing data, and reliability grade
@@ -266,6 +296,9 @@ export interface AgentResult {
   executionTimeMs: number;
   cost: number;
   error?: string;
+  /** Business-level output contract, distinct from process execution. */
+  contractStatus?: "VALID" | "PARTIAL_UNVERIFIED" | "CONTRACT_BROKEN";
+  contractIssues?: string[];
 }
 
 // Document Extractor specific types

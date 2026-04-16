@@ -67,6 +67,21 @@ interface AuditPage {
     confidence?: string;
     needsHumanReview?: boolean;
   } | null;
+  evidenceSummary?: {
+    visualBlocks: number;
+    tables: number;
+    charts: number;
+    numericClaims: number;
+    unreadableRegions: number;
+    confidence: string | null;
+    needsHumanReview: boolean;
+    missingExpectedStructure: boolean;
+    artifactCompleteness: number;
+    expectedVisualBlocks: number;
+    extractedVisualBlocks: number;
+    missingVisualEvidence: string[];
+    recommendedAction: "NONE" | "REVIEW_PAGE" | "RETRY_PAGE" | "RETRY_OR_REVIEW_PAGE";
+  };
   pageImageHash: string | null;
   extractedText: string;
   override: {
@@ -138,7 +153,11 @@ type PageRetryParams = {
 };
 
 function pageRequiresDecision(page: AuditPage) {
-  return !page.override && page.status !== "READY" && page.status !== "SKIPPED";
+  return !page.override && (
+    (page.status !== "READY" && page.status !== "SKIPPED") ||
+    page.evidenceSummary?.missingExpectedStructure === true ||
+    page.evidenceSummary?.needsHumanReview === true
+  );
 }
 
 async function fetchExtractionAudit(documentId: string): Promise<ExtractionAuditResponse> {
@@ -159,6 +178,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   const [selectedPage, setSelectedPage] = useState<number | null>(null);
   const [reprocessStartedAt, setReprocessStartedAt] = useState<number | null>(null);
   const [retryingPageNumber, setRetryingPageNumber] = useState<number | null>(null);
+  const [batchRetryProgress, setBatchRetryProgress] = useState<{ done: number; total: number } | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const queryClient = useQueryClient();
   const auditQueryKey = useMemo(
@@ -320,7 +340,41 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     },
   });
 
-  const extractionActionPending = reprocessMutation.isPending || pageRetryMutation.isPending;
+  const batchRetryMutation = useMutation({
+    mutationFn: async (pagesToRetry: AuditPage[]) => {
+      if (!document) throw new Error("Document indisponible");
+      setBatchRetryProgress({ done: 0, total: pagesToRetry.length });
+      for (const [index, page] of pagesToRetry.entries()) {
+        setRetryingPageNumber(page.pageNumber);
+        const response = await fetch(
+          `/api/documents/${document.id}/extraction-pages/${page.pageNumber}/retry`,
+          { method: "POST" }
+        );
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: `Retry page ${page.pageNumber} impossible` }));
+          throw new Error(error.error ?? `Retry page ${page.pageNumber} impossible`);
+        }
+        setBatchRetryProgress({ done: index + 1, total: pagesToRetry.length });
+        await queryClient.invalidateQueries({ queryKey: auditQueryKey });
+      }
+    },
+    onSuccess: async () => {
+      toast.success("Pages retraitees");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: auditQueryKey }),
+        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
+      ]);
+    },
+    onError: (error: Error) => toast.error(error.message),
+    onSettled: () => {
+      setRetryingPageNumber(null);
+      setBatchRetryProgress(null);
+      setReprocessStartedAt(null);
+      setElapsedSeconds(0);
+    },
+  });
+
+  const extractionActionPending = reprocessMutation.isPending || pageRetryMutation.isPending || batchRetryMutation.isPending;
 
   useEffect(() => {
     if (!extractionActionPending || !reprocessStartedAt) return;
@@ -354,13 +408,16 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
 
   const estimatedReprocessProgress = useMemo(() => {
     if (backendProgress) return backendProgress.percent;
+    if (batchRetryMutation.isPending && batchRetryProgress && batchRetryProgress.total > 0) {
+      return Math.min(95, Math.max(5, Math.round((batchRetryProgress.done / batchRetryProgress.total) * 100)));
+    }
     if (pageRetryMutation.isPending) {
       return Math.min(95, Math.max(12, Math.round((elapsedSeconds / 25) * 100)));
     }
     const pageCount = audit?.latestRun?.pageCount ?? audit?.corpus.parsedPages ?? 1;
     const expectedSeconds = Math.max(45, pageCount * 4);
     return Math.min(95, Math.max(8, Math.round((elapsedSeconds / expectedSeconds) * 100)));
-  }, [audit?.corpus.parsedPages, audit?.latestRun?.pageCount, backendProgress, elapsedSeconds, pageRetryMutation.isPending]);
+  }, [audit?.corpus.parsedPages, audit?.latestRun?.pageCount, backendProgress, elapsedSeconds, pageRetryMutation.isPending, batchRetryMutation.isPending, batchRetryProgress]);
 
   const startReprocess = () => {
     setReprocessStartedAt(Date.now());
@@ -373,6 +430,19 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     setReprocessStartedAt(Date.now());
     setElapsedSeconds(0);
     pageRetryMutation.mutate({ pageNumber: page.pageNumber });
+  };
+
+  const startReviewPagesRetry = () => {
+    const retryable = reviewPages.filter((page) => (
+      page.status === "FAILED" ||
+      page.status === "NEEDS_REVIEW" ||
+      page.evidenceSummary?.missingExpectedStructure ||
+      (page.visualRiskScore ?? 0) >= 55
+    ));
+    if (retryable.length === 0) return;
+    setReprocessStartedAt(Date.now());
+    setElapsedSeconds(0);
+    batchRetryMutation.mutate(retryable);
   };
 
   const handleDecision = (
@@ -640,7 +710,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                                 Sinon, retente l&apos;extraction ou re-uploade un PDF plus lisible.
                               </p>
                               <div className="mt-3 flex flex-wrap gap-2">
-                                {pageToInspect.status === "FAILED" && (
+                                {(pageToInspect.status === "FAILED" || pageToInspect.status === "NEEDS_REVIEW") && (
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -775,13 +845,25 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                         </div>
 
                         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                          <p className="text-sm font-medium text-amber-900">Decision requise</p>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-medium text-amber-900">Decision requise</p>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={startReviewPagesRetry}
+                              disabled={extractionActionPending}
+                              className="bg-background"
+                            >
+                              {batchRetryMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Retenter toutes ({reviewPages.length * 2} credits max)
+                            </Button>
+                          </div>
                           <p className="mt-1 text-sm text-amber-800">
                             Approuve uniquement si l&apos;extraction couvre correctement la page.
                             Sinon, exclue la page ou relance l&apos;extraction renforcee.
                           </p>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {reviewPageToInspect.status === "FAILED" && (
+                            {(reviewPageToInspect.status === "FAILED" || reviewPageToInspect.status === "NEEDS_REVIEW") && (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -862,10 +944,14 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                   <p className="font-medium">
                     {pageRetryMutation.isPending && retryingPageNumber
                       ? `Retry page ${retryingPageNumber} en cours`
+                      : batchRetryMutation.isPending
+                        ? "Retry cible multi-pages en cours"
                       : "Extraction renforcee en cours"}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {pageRetryMutation.isPending
+                    {batchRetryMutation.isPending && batchRetryProgress
+                      ? `Page ${batchRetryProgress.done}/${batchRetryProgress.total}. Chaque page est retraitee en OCR supreme avec debit idempotent.`
+                      : pageRetryMutation.isPending
                       ? "OCR supreme cible sur une seule page. Le reste du document n'est pas retraite."
                       : "Analyse visuelle, OCR haute fidelite et reconstruction des pages complexes."}
                     {" "}Temps ecoule: {formatElapsed(elapsedSeconds)}.
@@ -941,12 +1027,13 @@ function MiniBadge({ label }: { label: string }) {
 
 function ArtifactSummary({ page }: { page: AuditPage }) {
   const artifact = page.artifact;
+  const summary = page.evidenceSummary;
   if (!artifact) return null;
-  const visualCount = artifact.visualBlocks?.length ?? 0;
-  const tableCount = artifact.tables?.length ?? 0;
-  const chartCount = artifact.charts?.length ?? 0;
-  const unreadableCount = artifact.unreadableRegions?.length ?? 0;
-  const numericClaimCount = artifact.numericClaims?.length ?? 0;
+  const visualCount = summary?.visualBlocks ?? artifact.visualBlocks?.length ?? 0;
+  const tableCount = summary?.tables ?? artifact.tables?.length ?? 0;
+  const chartCount = summary?.charts ?? artifact.charts?.length ?? 0;
+  const unreadableCount = summary?.unreadableRegions ?? artifact.unreadableRegions?.length ?? 0;
+  const numericClaimCount = summary?.numericClaims ?? artifact.numericClaims?.length ?? 0;
 
   if (visualCount + tableCount + chartCount + unreadableCount + numericClaimCount === 0 && !artifact.confidence) {
     return null;
@@ -955,10 +1042,37 @@ function ArtifactSummary({ page }: { page: AuditPage }) {
   return (
     <div className="rounded-lg border bg-muted/30 p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">Artefact structure</span>
-        {artifact.confidence && <Badge variant="outline">Confiance {artifact.confidence}</Badge>}
-        {artifact.needsHumanReview && <Badge className="bg-amber-100 text-amber-700">Review</Badge>}
+        <span className="font-medium">Preuves extraites</span>
+        {(summary?.confidence ?? artifact.confidence) && (
+          <Badge variant="outline">Confiance {summary?.confidence ?? artifact.confidence}</Badge>
+        )}
+        {(summary?.needsHumanReview || artifact.needsHumanReview) && <Badge className="bg-amber-100 text-amber-700">Review</Badge>}
+        {summary?.missingExpectedStructure && <Badge variant="destructive">Structure manquante</Badge>}
       </div>
+      {summary?.recommendedAction && summary.recommendedAction !== "NONE" && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Action recommandee: {formatRecommendedAction(summary.recommendedAction)}
+        </p>
+      )}
+      {summary && (
+        <div className="mt-2 space-y-1">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Completude artefact</span>
+            <span>{summary.artifactCompleteness}%</span>
+          </div>
+          <Progress value={summary.artifactCompleteness} className="h-1.5" />
+          {summary.expectedVisualBlocks > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Blocs attendus/extraits: {summary.expectedVisualBlocks}/{summary.extractedVisualBlocks}
+            </p>
+          )}
+          {summary.missingVisualEvidence.length > 0 && (
+            <p className="text-xs text-amber-800">
+              Manquant: {summary.missingVisualEvidence.join(", ")}
+            </p>
+          )}
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap gap-1">
         {visualCount > 0 && <MiniBadge label={`${visualCount} bloc${visualCount > 1 ? "s" : ""}`} />}
         {tableCount > 0 && <MiniBadge label={`${tableCount} table${tableCount > 1 ? "s" : ""}`} />}
@@ -974,6 +1088,19 @@ function ArtifactSummary({ page }: { page: AuditPage }) {
       )}
     </div>
   );
+}
+
+function formatRecommendedAction(action: NonNullable<AuditPage["evidenceSummary"]>["recommendedAction"]) {
+  switch (action) {
+    case "RETRY_PAGE":
+      return "retenter uniquement cette page";
+    case "RETRY_OR_REVIEW_PAGE":
+      return "retenter la page ou inspecter avant approbation";
+    case "REVIEW_PAGE":
+      return "inspection humaine requise";
+    default:
+      return "aucune action";
+  }
 }
 
 function formatTierLabel(tier: string): string {

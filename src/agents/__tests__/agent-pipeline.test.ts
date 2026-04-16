@@ -1368,9 +1368,17 @@ vi.mock("@/services/funding-db/percentile-calculator", () => ({
 
 // ---------- Fact Store ----------
 vi.mock("@/services/fact-store/fact-keys", () => ({
-  FACT_KEYS: [],
-  getFactKeyDefinition: vi.fn().mockReturnValue(null),
-  FACT_KEY_COUNT: 0,
+  FACT_KEYS: {
+    "company.name": { type: "string", category: "OTHER", description: "Canonical company name" },
+    "financial.arr": { type: "currency", category: "FINANCIAL", unit: "EUR", description: "Annual Recurring Revenue" },
+    "financial.mrr": { type: "currency", category: "FINANCIAL", unit: "EUR", description: "Monthly Recurring Revenue" },
+  },
+  getFactKeyDefinition: vi.fn((factKey: string) => ({
+    "company.name": { type: "string", category: "OTHER", description: "Canonical company name" },
+    "financial.arr": { type: "currency", category: "FINANCIAL", unit: "EUR", description: "Annual Recurring Revenue" },
+    "financial.mrr": { type: "currency", category: "FINANCIAL", unit: "EUR", description: "Monthly Recurring Revenue" },
+  })[factKey]),
+  FACT_KEY_COUNT: 3,
 }));
 
 vi.mock("@/services/fact-store/types", () => ({

@@ -114,6 +114,62 @@ export function buildDocumentPageArtifact(params: {
   };
 }
 
+export function calculateArtifactCompleteness(params: {
+  hasTables: boolean;
+  hasCharts: boolean;
+  artifact?: DocumentPageArtifact | null;
+}): {
+  score: number;
+  expectedVisualBlocks: number;
+  extractedVisualBlocks: number;
+  missing: string[];
+} {
+  const expected: string[] = [];
+  if (params.hasTables) expected.push("table");
+  if (params.hasCharts) expected.push("chart");
+  const artifact = params.artifact;
+  if (!artifact) {
+    return {
+      score: expected.length === 0 ? 100 : 0,
+      expectedVisualBlocks: expected.length,
+      extractedVisualBlocks: 0,
+      missing: expected,
+    };
+  }
+
+  const missing: string[] = [];
+  const tableExtracted = artifact.tables.length > 0 || artifact.visualBlocks.some((block) => block.type === "table");
+  const chartExtracted = artifact.charts.some((chart) => (chart.values?.length ?? 0) > 0) ||
+    artifact.visualBlocks.some((block) => block.type === "chart") && artifact.numericClaims.length >= 3;
+  if (params.hasTables && !tableExtracted) missing.push("table");
+  if (params.hasCharts && !chartExtracted) missing.push("chart_values");
+  if (artifact.unreadableRegions.some((region) => region.severity === "high")) missing.push("high_unreadable_region");
+
+  const expectedVisualBlocks = Math.max(expected.length, artifact.visualBlocks.filter((block) => (
+    block.type === "table" || block.type === "chart" || block.type === "diagram" || block.type === "image"
+  )).length);
+  const extractedVisualBlocks = artifact.tables.length + artifact.charts.length +
+    artifact.visualBlocks.filter((block) => block.type === "diagram" || block.type === "image").length;
+
+  if (expected.length === 0 && !artifact.needsHumanReview && missing.length === 0) {
+    return { score: 100, expectedVisualBlocks, extractedVisualBlocks, missing: [] };
+  }
+
+  const base = expected.length === 0
+    ? (artifact.needsHumanReview ? 70 : 100)
+    : Math.round(((expected.length - missing.filter((item) => item === "table" || item === "chart_values").length) / expected.length) * 100);
+  const penalty = artifact.unreadableRegions.reduce((sum, region) => (
+    sum + (region.severity === "high" ? 30 : region.severity === "medium" ? 15 : 5)
+  ), 0);
+
+  return {
+    score: Math.max(0, Math.min(100, base - penalty)),
+    expectedVisualBlocks,
+    extractedVisualBlocks,
+    missing,
+  };
+}
+
 export function summarizeManifestForLegacyMetrics(manifest: ExtractionManifest) {
   const summary = {
     strictExtraction: true,
@@ -153,6 +209,7 @@ export function buildStructuredDocumentManifest(params: {
     hasMarketKeywords?: boolean;
     requiresReview?: boolean;
     error?: string;
+    artifact?: DocumentPageArtifact;
   }>;
   estimatedCredits?: number;
   estimatedUsd?: number;
@@ -168,7 +225,7 @@ export function buildStructuredDocumentManifest(params: {
 
     const hasTables = artifact.hasTables ?? /\|/.test(artifact.text);
     const hasCharts = artifact.hasCharts ?? /chart|graph|diagram|graphique|histogram/i.test(artifact.text);
-    const pageArtifact = buildDocumentPageArtifact({
+    const pageArtifact = artifact.artifact ?? buildDocumentPageArtifact({
       pageNumber: artifact.index,
       label: artifact.label,
       text: artifact.text,
@@ -178,14 +235,27 @@ export function buildStructuredDocumentManifest(params: {
       needsHumanReview: status === "needs_review" || status === "failed",
       error: artifact.error,
     });
+    const visualArtifactIncomplete = (
+      (hasTables && pageArtifact.tables.length === 0) ||
+      (hasCharts && pageArtifact.charts.length === 0) ||
+      pageArtifact.unreadableRegions.some((region) => region.severity === "high")
+    );
+    const artifactCompleteness = calculateArtifactCompleteness({
+      hasTables,
+      hasCharts,
+      artifact: pageArtifact,
+    });
+    const finalStatus: ExtractionPageManifest["status"] = status === "ready" && visualArtifactIncomplete
+      ? "needs_review"
+      : status;
 
     return {
       pageNumber: artifact.index,
-      status,
+      status: finalStatus,
       method: artifact.method ?? "native_text",
       charCount,
       wordCount,
-      qualityScore: artifact.error ? 0 : scoreStructuredArtifactQuality(charCount, artifact),
+      qualityScore: artifact.error ? 0 : Math.max(0, scoreStructuredArtifactQuality(charCount, artifact) - (100 - artifactCompleteness.score)),
       hasTables,
       hasCharts,
       hasFinancialKeywords: artifact.hasFinancialKeywords ?? /\b(arr|mrr|revenue|cash|burn|runway|ebitda|margin|valuation|cap table|forecast|budget)\b/i.test(artifact.text),
@@ -194,8 +264,12 @@ export function buildStructuredDocumentManifest(params: {
       requiresOCR: false,
       ocrProcessed: artifact.method === "ocr" || artifact.method === "hybrid",
       extractionTier: artifact.method === "ocr" || artifact.method === "hybrid" ? "high_fidelity" : "native_only",
-      visualRiskScore: artifact.requiresReview ? 75 : 0,
-      visualRiskReasons: artifact.requiresReview ? [`${artifact.label} needs manual review`] : [],
+      visualRiskScore: artifact.requiresReview || visualArtifactIncomplete ? Math.max(75, 100 - artifactCompleteness.score) : 0,
+      visualRiskReasons: [
+        ...(artifact.requiresReview ? [`${artifact.label} needs manual review`] : []),
+        ...(visualArtifactIncomplete ? [`${artifact.label} has incomplete structured visual extraction`] : []),
+        ...artifactCompleteness.missing.map((missing) => `${artifact.label} missing ${missing}`),
+      ],
       artifact: pageArtifact,
       pageImageHash: pageArtifact.sourceHash,
       error: artifact.error,

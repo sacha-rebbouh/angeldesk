@@ -615,6 +615,28 @@ export async function getDealWithRelations(dealId: string) {
             orderBy: { completedAt: "desc" },
             take: 1,
             select: {
+              id: true,
+              status: true,
+              readyForAnalysis: true,
+              corpusTextHash: true,
+              pages: {
+                orderBy: { pageNumber: "asc" },
+                select: {
+                  pageNumber: true,
+                  status: true,
+                  method: true,
+                  charCount: true,
+                  wordCount: true,
+                  qualityScore: true,
+                  hasTables: true,
+                  hasCharts: true,
+                  hasFinancialKeywords: true,
+                  hasTeamKeywords: true,
+                  hasMarketKeywords: true,
+                  artifact: true,
+                  textPreview: true,
+                },
+              },
               overrides: {
                 where: { approvedAt: { not: null } },
                 select: {

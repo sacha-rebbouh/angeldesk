@@ -234,6 +234,9 @@ export interface SynthesisDealScorerData {
     percentileSector: number;
     percentileStage: number;
     similarDealsAnalyzed: number;
+    method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE";
+    insufficientData?: boolean;
+    calculationDetail?: string;
   };
   investmentRecommendation: {
     action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
@@ -908,12 +911,35 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
         percentileSector: dbPercentile.percentileSector,
         percentileStage: dbPercentile.percentileStage,
         similarDealsAnalyzed: dbPercentile.similarDealsAnalyzed,
+        method: dbPercentile.method,
+        insufficientData: dbPercentile.method === "INSUFFICIENT_DATA",
+        calculationDetail: dbPercentile.calculationDetail,
       };
       if (dbPercentile.method === "INSUFFICIENT_DATA") {
         console.warn(`[synthesis-deal-scorer] F37: Percentile based on ${dbPercentile.similarDealsAnalyzed} deals only (${dbPercentile.method})`);
+        result.confidence = Math.min(result.confidence, 60);
+        result.keyWeaknesses = [
+          ...new Set([
+            ...result.keyWeaknesses,
+            `Benchmark percentile statistically weak: only ${dbPercentile.similarDealsAnalyzed} comparable deals available.`,
+          ]),
+        ].slice(0, 5);
+        result.criticalRisks = [
+          ...new Set([
+            ...result.criticalRisks,
+            "Comparative ranking is insufficiently supported and must not be treated as statistically robust.",
+          ]),
+        ].slice(0, 3);
       }
     } catch (err) {
       console.warn("[synthesis-deal-scorer] F37 percentile calculation failed:", err);
+      result.comparativeRanking = {
+        ...result.comparativeRanking,
+        method: "UNAVAILABLE",
+        insufficientData: true,
+        calculationDetail: "Percentile calculation failed; comparative ranking unavailable.",
+      };
+      result.confidence = Math.min(result.confidence, 55);
     }
 
     return result;
@@ -1538,14 +1564,15 @@ Aucune incohérence majeure détectée entre les agents.`;
       const dAny = d as Record<string, unknown>;
       const dimensionName = (dAny.criterion ?? dAny.dimension ?? "Unknown") as string;
       const scoreVal = (dAny.score as number) != null ? Math.min(100, Math.max(0, dAny.score as number)) : 0;
-      const weightVal = (dAny.weight as number) ?? 0;
+      const rawWeight = (dAny.weight as number) ?? 0;
+      const weightVal = normalizeDimensionWeight(rawWeight);
       const justificationVal = dAny.justification as string | undefined;
 
       return {
         dimension: dimensionName,
         score: scoreVal,
         weight: weightVal,
-        weightedScore: scoreVal * weightVal,
+        weightedScore: Math.round(scoreVal * weightVal),
         sourceAgents: (dAny.sourceAgents as string[]) ?? [],
         keyFactors: (dAny.keyFactors as string[]) ?? (justificationVal ? [justificationVal] : []),
       };
@@ -1713,6 +1740,9 @@ Aucune incohérence majeure détectée entre les agents.`;
                         data.comparativeRanking?.percentileStage ?? 0,
         similarDealsAnalyzed: data.findings?.marketPosition?.similarDealsAnalyzed ??
                              data.comparativeRanking?.similarDealsAnalyzed ?? 0,
+        method: data.comparativeRanking?.method,
+        insufficientData: data.comparativeRanking?.insufficientData,
+        calculationDetail: data.comparativeRanking?.calculationDetail,
       },
       investmentRecommendation: {
         action: mappedAction as "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant",
@@ -1853,6 +1883,9 @@ interface LLMSynthesisResponse {
     percentileSector: number;
     percentileStage: number;
     similarDealsAnalyzed: number;
+    method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE";
+    insufficientData?: boolean;
+    calculationDetail?: string;
   };
   investmentRecommendation?: {
     action: string;
@@ -1863,6 +1896,11 @@ interface LLMSynthesisResponse {
   keyStrengths?: string[];
   keyWeaknesses?: string[];
   criticalRisks?: string[];
+}
+
+function normalizeDimensionWeight(weight: number): number {
+  if (!Number.isFinite(weight) || weight <= 0) return 0;
+  return weight > 1 ? weight / 100 : weight;
 }
 
 // =============================================================================

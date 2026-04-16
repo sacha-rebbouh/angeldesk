@@ -32,6 +32,7 @@ export async function saveContextSnapshot(
     coreValueProposition?: string;
     useCases?: string[];
     keyDifferentiators?: string[];
+    extractionCorpusHashes?: string[];
   }
 ): Promise<void> {
   try {
@@ -106,6 +107,7 @@ export async function loadContextSnapshot(
     coreValueProposition?: string;
     useCases?: string[];
     keyDifferentiators?: string[];
+    extractionCorpusHashes?: string[];
   }
 ): Promise<DealContext | null> {
   try {
@@ -138,6 +140,7 @@ export async function loadContextSnapshot(
         coreValueProposition?: string;
         useCases?: string[];
         keyDifferentiators?: string[];
+        extractionCorpusHashes?: string[];
       };
 
       const normalizeString = (value?: string) => (value ?? "").toLowerCase().trim();
@@ -151,7 +154,8 @@ export async function loadContextSnapshot(
         normalizeString(currentInputData.coreValueProposition) !== normalizeString(savedInput.coreValueProposition) ||
         normalizeList(currentInputData.competitors) !== normalizeList(savedInput.competitors) ||
         normalizeList(currentInputData.useCases) !== normalizeList(savedInput.useCases) ||
-        normalizeList(currentInputData.keyDifferentiators) !== normalizeList(savedInput.keyDifferentiators);
+        normalizeList(currentInputData.keyDifferentiators) !== normalizeList(savedInput.keyDifferentiators) ||
+        normalizeList(currentInputData.extractionCorpusHashes) !== normalizeList(savedInput.extractionCorpusHashes);
 
       if (hasChanged) {
         console.log(

@@ -74,7 +74,7 @@ export async function POST(_request: Request, context: RouteParams) {
     if (!page) {
       return NextResponse.json({ error: `Page ${pageNumber} was not tracked in the latest extraction run` }, { status: 404 });
     }
-    if (page.status !== "FAILED" && page.status !== "NEEDS_REVIEW") {
+    if (!canRetryPage(page, latestRun.summaryMetrics)) {
       return NextResponse.json(
         { error: `Page ${pageNumber} does not require a targeted retry` },
         { status: 409 }
@@ -309,6 +309,37 @@ function scoreRetriedPage(
   if (signals.hasTables || signals.hasCharts) score += 10;
   if (signals.hasFinancialKeywords || signals.hasMarketKeywords || signals.hasTeamKeywords) score += 5;
   return Math.max(0, Math.min(100, score));
+}
+
+function canRetryPage(
+  page: {
+    status: string;
+    pageNumber: number;
+    hasTables: boolean;
+    hasCharts: boolean;
+    artifact: Prisma.JsonValue | null;
+  },
+  summaryMetrics: Prisma.JsonValue | null
+): boolean {
+  if (page.status === "FAILED" || page.status === "NEEDS_REVIEW") return true;
+
+  const artifact = isPlainObject(page.artifact) ? page.artifact : {};
+  const tables = Array.isArray(artifact.tables) ? artifact.tables.length : 0;
+  const charts = Array.isArray(artifact.charts) ? artifact.charts.length : 0;
+  const numericClaims = Array.isArray(artifact.numericClaims) ? artifact.numericClaims.length : 0;
+  const needsHumanReview = artifact.needsHumanReview === true;
+  const missingExpectedStructure = (page.hasTables && tables === 0) || (page.hasCharts && charts === 0 && numericClaims < 3);
+  const visualRiskScore = getVisualRiskScore(summaryMetrics, page.pageNumber);
+
+  return needsHumanReview || missingExpectedStructure || visualRiskScore >= 55;
+}
+
+function getVisualRiskScore(summaryMetrics: Prisma.JsonValue | null, pageNumber: number): number {
+  if (!isPlainObject(summaryMetrics) || !Array.isArray(summaryMetrics.pageQualityPlan)) return 0;
+  const entry = summaryMetrics.pageQualityPlan.find((candidate) => (
+    isPlainObject(candidate) && Number(candidate.pageNumber) === pageNumber
+  ));
+  return isPlainObject(entry) && typeof entry.visualRiskScore === "number" ? entry.visualRiskScore : 0;
 }
 
 function determineRetriedPageStatus(

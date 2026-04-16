@@ -247,6 +247,8 @@ export interface DealContext {
   completeness: number; // 0-1, how much data we found
   /** F59: Detailed quality scoring (replaces simple completeness) */
   contextQuality?: ContextQualityScore;
+  /** Connector health surfaced to agents; missing critical sources must not be silent. */
+  sourceHealth?: SourceHealth;
 }
 
 // ============================================================================
@@ -269,6 +271,21 @@ export interface DataSource {
   url?: string;
   retrievedAt: string;
   confidence: number; // 0-1
+}
+
+export interface SourceHealth {
+  totalConfigured: number;
+  successful: number;
+  failed: Array<{
+    name: string;
+    error: string;
+    severity: "low" | "medium" | "high" | "critical";
+  }>;
+  unconfiguredCritical: Array<{
+    name: string;
+    reason: string;
+    severity: "high" | "critical";
+  }>;
 }
 
 // ============================================================================

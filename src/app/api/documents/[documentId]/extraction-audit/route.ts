@@ -5,6 +5,8 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/api-error";
 import { safeDecrypt } from "@/lib/encryption";
 import { prisma } from "@/lib/prisma";
+import { calculateArtifactCompleteness } from "@/services/documents/extraction-runs";
+import type { DocumentPageArtifact } from "@/services/pdf";
 
 const cuidSchema = z.string().cuid();
 
@@ -122,6 +124,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
                   textPreview: page.textPreview,
                   artifactVersion: page.artifactVersion,
                   artifact: page.artifact,
+                  evidenceSummary: buildPageEvidenceSummary(page.artifact, page.status, page.hasTables, page.hasCharts),
                   pageImageHash: page.pageImageHash,
                   extractionTier: qualityPlan?.extractionTier ?? null,
                   visualRiskScore: qualityPlan?.visualRiskScore ?? null,
@@ -187,6 +190,61 @@ function extractCreditEstimate(summaryMetrics: unknown): unknown {
     return null;
   }
   return (summaryMetrics as { creditEstimate?: unknown }).creditEstimate ?? null;
+}
+
+function buildPageEvidenceSummary(
+  artifact: unknown,
+  status: string,
+  hasTables: boolean,
+  hasCharts: boolean
+) {
+  const record = artifact && typeof artifact === "object" && !Array.isArray(artifact)
+    ? artifact as Record<string, unknown>
+    : {};
+  const visualBlocks = Array.isArray(record.visualBlocks) ? record.visualBlocks.length : 0;
+  const tables = Array.isArray(record.tables) ? record.tables.length : 0;
+  const charts = Array.isArray(record.charts) ? record.charts.length : 0;
+  const numericClaims = Array.isArray(record.numericClaims) ? record.numericClaims.length : 0;
+  const unreadableRegions = Array.isArray(record.unreadableRegions) ? record.unreadableRegions.length : 0;
+  const needsHumanReview = record.needsHumanReview === true || status === "NEEDS_REVIEW" || status === "FAILED";
+  const missingExpectedStructure = (hasTables && tables === 0) || (hasCharts && charts === 0 && numericClaims < 3);
+  const completeness = calculateArtifactCompleteness({
+    hasTables,
+    hasCharts,
+    artifact: isDocumentPageArtifact(record) ? record as unknown as DocumentPageArtifact : null,
+  });
+
+  return {
+    visualBlocks,
+    tables,
+    charts,
+    numericClaims,
+    unreadableRegions,
+    confidence: typeof record.confidence === "string" ? record.confidence : null,
+    needsHumanReview,
+    missingExpectedStructure,
+    artifactCompleteness: completeness.score,
+    expectedVisualBlocks: completeness.expectedVisualBlocks,
+    extractedVisualBlocks: completeness.extractedVisualBlocks,
+    missingVisualEvidence: completeness.missing,
+    recommendedAction: status === "FAILED"
+      ? "RETRY_PAGE"
+      : missingExpectedStructure
+        ? "RETRY_OR_REVIEW_PAGE"
+        : needsHumanReview
+          ? "REVIEW_PAGE"
+          : "NONE",
+  };
+}
+
+function isDocumentPageArtifact(value: Record<string, unknown>): boolean {
+  return value.version === "document-page-artifact-v1" &&
+    typeof value.text === "string" &&
+    Array.isArray(value.visualBlocks) &&
+    Array.isArray(value.tables) &&
+    Array.isArray(value.charts) &&
+    Array.isArray(value.unreadableRegions) &&
+    Array.isArray(value.numericClaims);
 }
 
 function splitExtractedTextByPage(text: string): Array<{ pageNumber: number; text: string }> {

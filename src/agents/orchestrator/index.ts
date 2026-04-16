@@ -39,6 +39,10 @@ import { costMonitor } from "@/services/cost-monitor";
 import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
 import { setAnalysisContext, runWithLLMContext } from "@/services/openrouter/router";
 import { runJob } from "@/services/jobs";
+import {
+  buildEvidenceLedgerFromContext,
+  formatEvidenceLedgerForPrompt,
+} from "@/services/evidence-ledger";
 
 // Fact Store imports for Tier 0 fact extraction
 import { factExtractorAgent, type FactExtractorOutput } from "@/agents/tier0/fact-extractor";
@@ -130,7 +134,7 @@ export { ANALYSIS_CONFIGS, AGENT_COUNTS };
 
 // Type alias for deal with relations
 type DealWithDocs = Deal & {
-  documents: { id: string; name: string; type: string; extractedText: string | null; uploadedAt: Date }[];
+  documents: NonNullable<AgentContext["documents"]>;
   founders?: { id: string; name: string; role: string; linkedinUrl: string | null }[];
 };
 
@@ -149,6 +153,15 @@ type ContextSeed = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function attachEvidenceLedger(context: EnrichedAgentContext): EnrichedAgentContext {
+  const evidenceLedger = buildEvidenceLedgerFromContext(context);
+  return {
+    ...context,
+    evidenceLedger,
+    evidenceLedgerFormatted: formatEvidenceLedgerForPrompt(evidenceLedger),
+  };
 }
 
 export class AgentOrchestrator {
@@ -644,7 +657,7 @@ export class AgentOrchestrator {
       console.log(`[Orchestrator:Tier1] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
     }
 
-    const enrichedContext: EnrichedAgentContext = {
+    const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
       ...baseContext,
       contextEngine: contextEngineData,
       factStore: filteredFactStore,
@@ -652,7 +665,7 @@ export class AgentOrchestrator {
       deckCoherenceReport: deckCoherenceReport ?? undefined,
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
       previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
-    };
+    });
 
     // STEP 3: Run Tier 1 agents in 4 sequential phases (A→B→C→D)
     const tier1AgentMap = await getTier1Agents();
@@ -809,7 +822,7 @@ export class AgentOrchestrator {
       notes: rawDealTerms.notes,
     } : null;
 
-    const context: EnrichedAgentContext = {
+    const context: EnrichedAgentContext = attachEvidenceLedger({
       dealId,
       deal,
       documents: deal.documents,
@@ -818,7 +831,7 @@ export class AgentOrchestrator {
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
       dealTerms,
       conditionsAnalystMode: "pipeline",
-    };
+    });
 
     // Inject structured deal data for conditions-analyst (multi-tranche mode)
     if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
@@ -1070,14 +1083,14 @@ export class AgentOrchestrator {
       category: fact.category,
     }));
 
-    const context: EnrichedAgentContext = {
+    const context: EnrichedAgentContext = attachEvidenceLedger({
       dealId,
       deal,
       documents: deal.documents,
       previousResults: previousResults ?? {},
       contextEngine: contextEngineData,
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
-    };
+    });
 
     onProgress?.({
       currentAgent: sectorExpert.name,
@@ -1343,7 +1356,7 @@ export class AgentOrchestrator {
       }
 
       // Build enriched context with Fact Store for all agents
-      const enrichedContext: EnrichedAgentContext = {
+      const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
         ...baseContext,
         contextEngine: contextEngineData,
         factStore,
@@ -1351,7 +1364,7 @@ export class AgentOrchestrator {
         deckCoherenceReport: deckCoherenceReport ?? undefined,
         founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
         previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
-      };
+      });
 
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases
       // Phase A: deck-forensics → validates deck claims
@@ -1504,6 +1517,14 @@ export class AgentOrchestrator {
             const scoreObj = data?.score as { value?: number } | undefined;
             if (scoreObj && typeof scoreObj.value === "number") {
               scoreObj.value = adj.after;
+              (scoreObj as { grade?: string }).grade = gradeFromScore(adj.after);
+              const meta = data?.meta as { limitations?: string[] } | undefined;
+              if (meta) {
+                meta.limitations = [
+                  ...(Array.isArray(meta.limitations) ? meta.limitations : []),
+                  `Tier 1 cross-validation adjustment ${adj.crossValidationId}: ${adj.reason}`,
+                ];
+              }
             }
           }
         }
@@ -2178,6 +2199,8 @@ export class AgentOrchestrator {
             factStoreFormatted = reformatFactStoreWithValidations(factStore, allValidations);
             enrichedContext.factStore = factStore;
             enrichedContext.factStoreFormatted = factStoreFormatted;
+            enrichedContext.evidenceLedger = buildEvidenceLedgerFromContext(enrichedContext);
+            enrichedContext.evidenceLedgerFormatted = formatEvidenceLedgerForPrompt(enrichedContext.evidenceLedger);
             console.log(`[Orchestrator:${phase.name}] ${agentName}: ${validations.length} fact validations applied`);
           }
         }
@@ -2688,6 +2711,9 @@ export class AgentOrchestrator {
       }
 
       const hasFoundersToEnrich = mergedFounders.length > 0;
+      const extractionCorpusHashes = deal.documents
+        .map((doc) => doc.extractionRuns?.[0]?.corpusTextHash ?? `${doc.id}:no-strict-run`)
+        .sort();
 
       console.log(`[Orchestrator] Context Engine enrichment with: tagline=${!!extractedData?.tagline}, competitors=${extractedData?.competitors?.length ?? 0}, founders=${mergedFounders.length}`);
 
@@ -2714,6 +2740,7 @@ export class AgentOrchestrator {
           extractedKeyDifferentiators: extractedData?.keyDifferentiators,
           extractedWebsiteUrl: extractedData?.websiteUrl,
           formWebsiteUrl: deal.website ?? undefined,
+          extractionCorpusHashes,
         }
       );
 
@@ -3345,12 +3372,12 @@ export class AgentOrchestrator {
         console.error("[Orchestrator:Resume] Failed to restore fact store:", error);
       }
 
-      const enrichedContext: EnrichedAgentContext = {
+      const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
         ...baseContext,
         contextEngine: contextEngineData,
         factStore,
         factStoreFormatted,
-      };
+      });
 
       // Resume based on current state
       if (currentState === "ANALYZING" || currentState === "GATHERING") {
@@ -3753,6 +3780,14 @@ export class AgentOrchestrator {
     );
     console.log(`[Orchestrator] Cancelled interrupted analysis ${analysisId}`);
   }
+}
+
+function gradeFromScore(score: number): string {
+  if (score >= 85) return "A";
+  if (score >= 70) return "B";
+  if (score >= 55) return "C";
+  if (score >= 40) return "D";
+  return "F";
 }
 
 // Export singleton

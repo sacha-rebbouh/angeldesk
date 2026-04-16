@@ -23,6 +23,7 @@ import type {
   DataSource,
   PeopleGraph,
   WebsiteContent,
+  SourceHealth,
 } from "./types";
 import { crawlWebsite } from "./connectors/website-crawler";
 import { resolveWebsiteUrl } from "./website-resolver";
@@ -217,6 +218,8 @@ export interface EnrichDealOptions {
     type: "pitch_deck" | "financials" | "other";
     text: string;
   }[];
+  /** Hashes of strict extraction runs/corpora that fed this context. */
+  extractionCorpusHashes?: string[];
 }
 
 /**
@@ -272,6 +275,7 @@ export async function enrichDeal(
     coreValueProposition: enrichedQuery.coreValueProposition,
     useCases: enrichedQuery.useCases,
     keyDifferentiators: enrichedQuery.keyDifferentiators,
+    extractionCorpusHashes: options.extractionCorpusHashes,
   };
 
   // =========================================================================
@@ -522,6 +526,7 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
     { similarDeals, marketData, competitors, news },
     metrics
   );
+  const sourceHealth = buildSourceHealth(connectors, configuredConnectors, allResults);
   const completeness = contextQuality.completeness;
   const reliability = contextQuality.reliability;
 
@@ -574,6 +579,7 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
     sources,
     completeness,
     contextQuality,
+    sourceHealth,
   };
 }
 
@@ -1225,6 +1231,57 @@ function calculateContextQuality(
       news: { score: newsScore, count: data.news.length, weight: WEIGHTS.news },
     },
   };
+}
+
+function buildSourceHealth(
+  allConnectors: Connector[],
+  configuredConnectors: Connector[],
+  results: Array<{ connectorName: string; success: boolean; error?: string; skipped?: boolean }>
+): SourceHealth {
+  const configuredNames = new Set(configuredConnectors.map((connector) => connector.name));
+  const criticalConnectors = [
+    { name: "Pappers.fr", severity: "critical" as const, reason: "Registre officiel FR indisponible: K-bis, dirigeants et données légales non vérifiés." },
+    { name: "Societe.com", severity: "high" as const, reason: "Source registre FR secondaire indisponible: validation entreprise/dirigeants affaiblie." },
+    { name: "Companies House UK", severity: "high" as const, reason: "Registre UK indisponible: validation société/dirigeants UK affaiblie." },
+    { name: "Web Search (Perplexity)", severity: "high" as const, reason: "Recherche web indisponible: triangulation externe et signaux publics affaiblis." },
+    { name: "GitHub", severity: "medium" as const, reason: "Signal technique public indisponible." },
+    { name: "App Stores", severity: "medium" as const, reason: "Signal traction mobile indisponible." },
+  ];
+
+  const unconfiguredCritical = criticalConnectors
+    .filter((critical) => allConnectors.some((connector) => connector.name === critical.name))
+    .filter((critical) => !configuredNames.has(critical.name))
+    .map((critical) => ({
+      name: critical.name,
+      reason: critical.reason,
+      severity: critical.severity === "medium" ? "high" as const : critical.severity,
+    }));
+
+  const failed = results
+    .filter((result) => !result.success && !result.skipped)
+    .map((result) => ({
+      name: result.connectorName,
+      error: result.error ?? "Unknown connector failure",
+      severity: classifyConnectorFailure(result.connectorName, result.error),
+    }));
+
+  return {
+    totalConfigured: configuredConnectors.length,
+    successful: new Set(results.filter((result) => result.success).map((result) => result.connectorName)).size,
+    failed,
+    unconfiguredCritical,
+  };
+}
+
+function classifyConnectorFailure(
+  connectorName: string,
+  error?: string
+): "low" | "medium" | "high" | "critical" {
+  if (connectorName === "Pappers.fr") return "critical";
+  if (connectorName === "Societe.com" || connectorName === "Companies House UK" || connectorName === "Web Search (Perplexity)") return "high";
+  if (/404|not found/i.test(error ?? "")) return "low";
+  if (/timeout|timed out/i.test(error ?? "")) return "medium";
+  return "medium";
 }
 
 // Re-export types

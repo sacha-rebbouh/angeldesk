@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
 
 import { extractFromExcel } from "../../excel/extractor";
+import { extractFromDocx } from "../../docx";
 import { extractFromPptx } from "../../pptx";
 
 function buildWorkbookBuffer(): Buffer {
@@ -68,6 +69,80 @@ async function buildMinimalPptxBuffer(): Promise<Buffer> {
     ].join("")
   );
 
+  return zip.generateAsync({ type: "nodebuffer" });
+}
+
+async function buildPptxWithTableAndChartBuffer(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file(
+    "ppt/slides/slide1.xml",
+    [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
+      "<p:cSld><p:spTree>",
+      "<p:graphicFrame><a:graphic><a:graphicData><a:tbl>",
+      "<a:tr>",
+      "<a:tc><a:txBody><a:p><a:r><a:t>Metric</a:t></a:r></a:p></a:txBody></a:tc>",
+      "<a:tc><a:txBody><a:p><a:r><a:t>2024</a:t></a:r></a:p></a:txBody></a:tc>",
+      "</a:tr>",
+      "<a:tr>",
+      "<a:tc><a:txBody><a:p><a:r><a:t>Revenue</a:t></a:r></a:p></a:txBody></a:tc>",
+      "<a:tc><a:txBody><a:p><a:r><a:t>120</a:t></a:r></a:p></a:txBody></a:tc>",
+      "</a:tr>",
+      "</a:tbl></a:graphicData></a:graphic></p:graphicFrame>",
+      "</p:spTree></p:cSld>",
+      "</p:sld>",
+    ].join("")
+  );
+  zip.file(
+    "ppt/charts/chart1.xml",
+    [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
+      "<c:chart>",
+      "<c:title><c:tx><c:rich><a:p><a:r><a:t>NRI Growth</a:t></a:r></a:p></c:rich></c:tx></c:title>",
+      "<c:plotArea><c:barChart><c:ser>",
+      "<c:cat><c:strRef><c:strCache><c:pt idx=\"0\"><c:v>2024</c:v></c:pt><c:pt idx=\"1\"><c:v>2025</c:v></c:pt></c:strCache></c:strRef></c:cat>",
+      "<c:val><c:numRef><c:numCache><c:pt idx=\"0\"><c:v>2.3</c:v></c:pt><c:pt idx=\"1\"><c:v>2.5</c:v></c:pt></c:numCache></c:numRef></c:val>",
+      "</c:ser></c:barChart></c:plotArea>",
+      "</c:chart>",
+      "</c:chartSpace>",
+    ].join("")
+  );
+  zip.file("ppt/media/image1.png", Buffer.from("fake-image"));
+  return zip.generateAsync({ type: "nodebuffer" });
+}
+
+async function buildMinimalDocxWithTableAndImageBuffer(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+      '<Default Extension="xml" ContentType="application/xml"/>',
+      '<Default Extension="png" ContentType="image/png"/>',
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+      "</Types>",
+    ].join("")
+  );
+  zip.file("_rels/.rels", "");
+  zip.file(
+    "word/document.xml",
+    [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+      "<w:body>",
+      "<w:p><w:r><w:t>Investment memo</w:t></w:r></w:p>",
+      "<w:tbl>",
+      "<w:tr><w:tc><w:p><w:r><w:t>Metric</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>2025</w:t></w:r></w:p></w:tc></w:tr>",
+      "<w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>120</w:t></w:r></w:p></w:tc></w:tr>",
+      "</w:tbl>",
+      "</w:body>",
+      "</w:document>",
+    ].join("")
+  );
+  zip.file("word/media/image1.png", Buffer.from("fake-image"));
   return zip.generateAsync({ type: "nodebuffer" });
 }
 
@@ -160,5 +235,52 @@ describe("extractFromPptx", () => {
     expect(result.text).toContain("Customer Rate Increases");
     expect(result.text).toContain("--- Slide 2 ---");
     expect(result.text).toContain("[Aucun texte natif extrait]");
+  });
+
+  it("extracts native PPTX table rows and chart values when present", async () => {
+    const result = await extractFromPptx(await buildPptxWithTableAndChartBuffer());
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.slides[0].tables[0]).toEqual([
+      ["Metric", "2024"],
+      ["Revenue", "120"],
+    ]);
+    expect(result.charts[0]).toMatchObject({
+      title: "NRI Growth",
+      values: [
+        { label: "2024", value: "2.3" },
+        { label: "2025", value: "2.5" },
+      ],
+    });
+    expect(result.embeddedMedia[0]).toMatchObject({
+      name: "ppt/media/image1.png",
+      contentType: "image/png",
+    });
+    expect(result.warnings[0]).toContain("embedded media");
+    expect(result.text).toContain("Revenue | 120");
+    expect(result.text).toContain("2025: 2.5");
+  });
+});
+
+describe("extractFromDocx", () => {
+  it("extracts native DOCX table rows and flags embedded media for review", async () => {
+    const result = await extractFromDocx(await buildMinimalDocxWithTableAndImageBuffer());
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.text).toContain("Investment memo");
+    expect(result.tables[0]).toEqual([
+      ["Metric", "2025"],
+      ["Revenue", "120"],
+    ]);
+    expect(result.sections[0].tables[0][1]).toEqual(["Revenue", "120"]);
+    expect(result.embeddedMedia[0]).toMatchObject({
+      name: "word/media/image1.png",
+      contentType: "image/png",
+    });
+    expect(result.warnings[0]).toContain("embedded media");
   });
 });
