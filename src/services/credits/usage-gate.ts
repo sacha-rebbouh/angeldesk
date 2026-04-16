@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { logger } from '@/lib/logger';
 import type { CreditAction } from '@prisma/client';
 import {
   CREDIT_COSTS,
@@ -163,13 +164,13 @@ export async function deductCreditAmount(
     const msg = error instanceof Error ? error.message : '';
     if (msg.includes('does not exist')) {
       if (process.env.NODE_ENV === 'production') {
-        console.error('[Credits] Credit tables not available in PRODUCTION — blocking action');
+        logger.error({ userId, action, cost }, 'Credits tables not available in PRODUCTION — blocking action');
         return { success: false, balanceAfter: 0, error: 'Système de crédits indisponible' };
       }
-      console.warn('[Credits] Credit tables not available — allowing action (dev only)');
+      logger.warn({ userId, action, cost }, 'Credits tables not available — allowing action (dev only)');
       return { success: true, balanceAfter: 9999 };
     }
-    console.error('[Credits] deductCredits transaction failed:', error);
+    logger.error({ err: error, userId, action, cost }, 'deductCreditAmount transaction failed');
     return { success: false, balanceAfter: 0, error: 'Erreur lors de la déduction' };
   }
 }
@@ -234,7 +235,7 @@ export async function addCredits(
 
     return result;
   } catch (error) {
-    console.error('[Credits] addCredits failed:', error);
+    logger.error({ err: error, userId }, 'addCredits failed');
     return { success: false, newBalance: 0 };
   }
 }
@@ -284,7 +285,7 @@ export async function grantFreeCredits(userId: string): Promise<boolean> {
 
     return true;
   } catch (error) {
-    console.error('[Credits] grantFreeCredits failed:', error);
+    logger.error({ err: error, userId }, 'grantFreeCredits failed');
     return false;
   }
 }
@@ -312,7 +313,7 @@ export async function refundCredits(
           },
         });
         if (existingRefund) {
-          console.warn(`[Credits] Refund already exists for deal ${dealId} — skipping`);
+          logger.warn({ userId, dealId, action }, 'Refund already exists — skipping');
           return;
         }
       }
@@ -336,7 +337,66 @@ export async function refundCredits(
       });
     });
   } catch (error) {
-    console.error('[Credits] refundCredits failed:', error);
+    logger.error({ err: error, userId, action, dealId }, 'refundCredits failed');
+  }
+}
+
+/**
+ * Refund d'un montant arbitraire avec idempotence cle-a-cle.
+ * Utilise pour les deltas d'extraction (pre-estime surestime vs reel) ou pour
+ * rembourser seulement une fraction du coût initial.
+ */
+export async function refundCreditAmount(
+  userId: string,
+  action: CreditActionType,
+  credits: number,
+  context: CreditDeductionContext = {}
+): Promise<{ success: boolean; balanceAfter: number; alreadyRefunded?: boolean; error?: string }> {
+  const amount = Math.max(0, Math.floor(credits));
+  if (amount === 0) {
+    return { success: true, balanceAfter: 0 };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      if (context.idempotencyKey) {
+        const existing = await tx.creditTransaction.findUnique({
+          where: { idempotencyKey: context.idempotencyKey },
+          select: { balanceAfter: true },
+        });
+        if (existing) {
+          return { success: true, balanceAfter: existing.balanceAfter, alreadyRefunded: true };
+        }
+      }
+
+      const updated = await tx.userCreditBalance.update({
+        where: { userId },
+        data: { balance: { increment: amount } },
+      });
+
+      await tx.creditTransaction.create({
+        data: {
+          userId,
+          amount,
+          balanceAfter: updated.balance,
+          action: 'REFUND',
+          description: context.description ?? `Remboursement ${getActionDescription(action)}`,
+          dealId: context.dealId ?? null,
+          documentId: context.documentId ?? null,
+          documentExtractionRunId: context.documentExtractionRunId ?? null,
+          pageNumber: context.pageNumber ?? null,
+          idempotencyKey: context.idempotencyKey ?? null,
+        },
+      });
+
+      return { success: true, balanceAfter: updated.balance };
+    });
+
+    return result;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown refund error';
+    logger.error({ err: error, userId, action, credits: amount }, 'refundCreditAmount failed');
+    return { success: false, balanceAfter: 0, error: msg };
   }
 }
 
@@ -434,10 +494,10 @@ async function getOrCreateBalance(userId: string) {
     return balance;
   } catch {
     if (process.env.NODE_ENV === 'production') {
-      console.error('[Credits] Credit tables not available in PRODUCTION');
+      logger.error({ userId }, 'Credit tables not available in PRODUCTION');
       throw new Error('Credit tables not available');
     }
-    console.warn('[Credits] Credit tables not available — returning unlimited balance (dev only)');
+    logger.warn({ userId }, 'Credit tables not available — returning unlimited balance (dev only)');
     return {
       userId,
       balance: 9999,

@@ -6,6 +6,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { logger } from "@/lib/logger";
 
 /**
  * Information about analysis staleness
@@ -41,13 +42,14 @@ export async function getAnalysisStaleness(
   analysisId: string
 ): Promise<AnalysisStalenessInfo | null> {
   try {
-    // Get the analysis with its documentIds
+    // Get the analysis with its documentIds (legacy) + AnalysisDocument (new)
     const analysis = await prisma.analysis.findUnique({
       where: { id: analysisId },
       select: {
         id: true,
         dealId: true,
         documentIds: true,
+        documents: { select: { documentId: true } },
         createdAt: true,
       },
     });
@@ -72,7 +74,9 @@ export async function getAnalysisStaleness(
       return null;
     }
 
-    const analyzedDocumentIds = analysis.documentIds || [];
+    // Prefer the FK-backed jointure if populated; fallback to the legacy String[] field
+    const joinedIds = analysis.documents.map((d) => d.documentId);
+    const analyzedDocumentIds = joinedIds.length > 0 ? joinedIds : (analysis.documentIds || []);
     const currentDocumentIds = deal.documents.map((d) => d.id);
 
     // Find new documents (in current but not in analyzed)
@@ -108,7 +112,7 @@ export async function getAnalysisStaleness(
       message,
     };
   } catch (error) {
-    console.error("[AnalysisVersioning] Failed to check staleness:", error);
+    logger.error({ err: error, scope: "AnalysisVersioning.getAnalysisStaleness" }, "Failed to check staleness");
     return null;
   }
 }
@@ -132,13 +136,14 @@ export async function getAnalysesStaleness(
   }
 
   try {
-    // Batch fetch all analyses
+    // Batch fetch all analyses (legacy documentIds + FK-backed documents)
     const analyses = await prisma.analysis.findMany({
       where: { id: { in: analysisIds } },
       select: {
         id: true,
         dealId: true,
         documentIds: true,
+        documents: { select: { documentId: true } },
       },
     });
 
@@ -167,7 +172,8 @@ export async function getAnalysesStaleness(
 
     // Calculate staleness for each analysis
     for (const analysis of analyses) {
-      const analyzedDocumentIds = analysis.documentIds || [];
+      const joinedIds = analysis.documents.map((d) => d.documentId);
+      const analyzedDocumentIds = joinedIds.length > 0 ? joinedIds : (analysis.documentIds || []);
       const currentDocumentIds = dealDocumentsMap.get(analysis.dealId) || [];
 
       const newDocumentIds = currentDocumentIds.filter(
@@ -202,7 +208,7 @@ export async function getAnalysesStaleness(
 
     return results;
   } catch (error) {
-    console.error("[AnalysisVersioning] Failed to check batch staleness:", error);
+    logger.error({ err: error, scope: "AnalysisVersioning.getAnalysesStaleness" }, "Failed to check batch staleness");
     return results;
   }
 }
@@ -230,6 +236,7 @@ export async function getLatestAnalysisStaleness(
         id: true,
         type: true,
         documentIds: true,
+        documents: { select: { documentId: true } },
       },
     });
 
@@ -249,7 +256,7 @@ export async function getLatestAnalysisStaleness(
       analysisType: latestAnalysis.type,
     };
   } catch (error) {
-    console.error("[AnalysisVersioning] Failed to get latest staleness:", error);
+    logger.error({ err: error, scope: "AnalysisVersioning.getLatestAnalysisStaleness" }, "Failed to get latest staleness");
     return null;
   }
 }
@@ -272,13 +279,19 @@ export async function getUnanalyzedDocuments(
     if (analysisId) {
       analysis = await prisma.analysis.findUnique({
         where: { id: analysisId },
-        select: { documentIds: true },
+        select: {
+          documentIds: true,
+          documents: { select: { documentId: true } },
+        },
       });
     } else {
       analysis = await prisma.analysis.findFirst({
         where: { dealId, status: "COMPLETED" },
         orderBy: { createdAt: "desc" },
-        select: { documentIds: true },
+        select: {
+          documentIds: true,
+          documents: { select: { documentId: true } },
+        },
       });
     }
 
@@ -297,7 +310,9 @@ export async function getUnanalyzedDocuments(
       }));
     }
 
-    const analyzedDocumentIds = new Set(analysis.documentIds || []);
+    const joinedIds = analysis.documents.map((d) => d.documentId);
+    const preferred = joinedIds.length > 0 ? joinedIds : (analysis.documentIds || []);
+    const analyzedDocumentIds = new Set(preferred);
 
     // Get documents not in the analyzed set
     const unanalyzedDocs = await prisma.document.findMany({
@@ -317,7 +332,7 @@ export async function getUnanalyzedDocuments(
       uploadedAt: d.uploadedAt,
     }));
   } catch (error) {
-    console.error("[AnalysisVersioning] Failed to get unanalyzed documents:", error);
+    logger.error({ err: error, scope: "AnalysisVersioning.getUnanalyzedDocuments" }, "Failed to get unanalyzed documents");
     return [];
   }
 }

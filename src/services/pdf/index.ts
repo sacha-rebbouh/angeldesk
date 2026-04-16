@@ -10,6 +10,8 @@
 export {
   extractTextFromPDF,
   extractTextFromPDFUrl,
+  getPdfPageCount,
+  estimatePdfExtractionCost,
   type PDFExtractionResult,
   type ExtractionQualityMetrics,
   type ExtractionWarning

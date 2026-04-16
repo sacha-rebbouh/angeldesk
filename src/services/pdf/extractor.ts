@@ -39,6 +39,53 @@ interface PDFMetadataInfo {
 }
 
 /**
+ * Lit UNIQUEMENT le nombre de pages d'un PDF (sans rendu ni extraction).
+ * Utilise pour l'estimation de cout avant extraction (pre-check credits).
+ *
+ * Rapide (~100-300ms sur PDF de taille normale) car pdfjs ne parcourt pas les streams.
+ * En cas d'erreur (PDF corrompu, protege par mot de passe), retourne 0 —
+ * le caller doit alors tomber en estimation conservatrice ou rejeter l'upload.
+ */
+export async function getPdfPageCount(buffer: Buffer): Promise<number> {
+  try {
+    const loadingTask = getDocument({
+      data: new Uint8Array(buffer),
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+    const pdf: PDFDocumentProxy = await loadingTask.promise;
+    const pageCount = pdf.numPages;
+    await pdf.destroy();
+    return pageCount;
+  } catch (error) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[extractor] getPdfPageCount failed:', error instanceof Error ? error.message : String(error));
+    }
+    return 0;
+  }
+}
+
+/**
+ * Estimation conservatrice du coût en credits d'une extraction PDF.
+ * Hypothese worst-case: chaque page en high_fidelity (1 credit/page).
+ * Le reel peut etre moindre (pages native_only / standard_ocr gratuits),
+ * auquel cas la difference est remboursee apres extraction reelle.
+ */
+export async function estimatePdfExtractionCost(buffer: Buffer): Promise<{
+  pageCount: number;
+  estimatedCredits: number;
+  conservative: true;
+}> {
+  const pageCount = await getPdfPageCount(buffer);
+  return {
+    pageCount,
+    estimatedCredits: pageCount, // 1 credit/page worst-case
+    conservative: true,
+  };
+}
+
+/**
  * Extract text content from a PDF buffer
  */
 export async function extractTextFromPDF(

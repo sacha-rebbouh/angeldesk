@@ -42,35 +42,35 @@ describe("buildDatasourceUrl", () => {
     expect(buildDatasourceUrl()).toBeUndefined();
   });
 
-  it("appends ?connection_limit=25&pool_timeout=30 to URL without params", async () => {
+  it("appends ?connection_limit=50&pool_timeout=30 to URL without params", async () => {
     process.env.DATABASE_URL = "postgresql://user:pass@host:5432/db";
     const { buildDatasourceUrl } = await import("../prisma");
 
     const result = buildDatasourceUrl();
     expect(result).toBe(
-      "postgresql://user:pass@host:5432/db?connection_limit=25&pool_timeout=30"
+      "postgresql://user:pass@host:5432/db?connection_limit=50&pool_timeout=30"
     );
   });
 
-  it("appends &connection_limit=25&pool_timeout=30 to URL with ?pgbouncer=true", async () => {
+  it("appends &connection_limit=50&pool_timeout=30 to URL with ?pgbouncer=true", async () => {
     process.env.DATABASE_URL =
       "postgresql://user:pass@host:5432/db?pgbouncer=true";
     const { buildDatasourceUrl } = await import("../prisma");
 
     const result = buildDatasourceUrl();
     expect(result).toBe(
-      "postgresql://user:pass@host:5432/db?pgbouncer=true&connection_limit=25&pool_timeout=30"
+      "postgresql://user:pass@host:5432/db?pgbouncer=true&connection_limit=50&pool_timeout=30"
     );
   });
 
-  it("appends &connection_limit=25&pool_timeout=30 to URL with existing params", async () => {
+  it("appends &connection_limit=50&pool_timeout=30 to URL with existing params", async () => {
     process.env.DATABASE_URL =
       "postgresql://user:pass@host:5432/db?sslmode=require";
     const { buildDatasourceUrl } = await import("../prisma");
 
     const result = buildDatasourceUrl();
     expect(result).toBe(
-      "postgresql://user:pass@host:5432/db?sslmode=require&connection_limit=25&pool_timeout=30"
+      "postgresql://user:pass@host:5432/db?sslmode=require&connection_limit=50&pool_timeout=30"
     );
   });
 
@@ -85,7 +85,7 @@ describe("buildDatasourceUrl", () => {
     const result = buildDatasourceUrl();
     // Current behavior: appends even if already present
     expect(result).toBe(
-      "postgresql://user:pass@host:5432/db?connection_limit=5&connection_limit=25&pool_timeout=30"
+      "postgresql://user:pass@host:5432/db?connection_limit=5&connection_limit=50&pool_timeout=30"
     );
   });
 });

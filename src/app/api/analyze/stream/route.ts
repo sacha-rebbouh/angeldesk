@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isValidCuid } from "@/lib/sanitize";
+import { nextStreamBackoffMs, DEFAULT_STREAM_HARD_TIMEOUT_MS } from "./backoff";
 
 export const maxDuration = 300; // 5 minutes
 
@@ -9,6 +10,13 @@ export const maxDuration = 300; // 5 minutes
  * GET /api/analyze/stream?dealId=xxx
  * SSE endpoint for real-time analysis progress.
  * The client connects and receives events as agents complete.
+ *
+ * IMPORTANT: Ne charge jamais `Analysis.results` (blob JSON 5-10MB). Seules les
+ * colonnes minimales sont selectionnees pour le polling. Le client doit refetch
+ * les resultats complets via le Blob cache ou l'endpoint dedie apres 'complete'.
+ *
+ * Backoff exponentiel (voir ./backoff.ts) : reset a la progression active
+ * (completedAgents augmente), sinon double jusqu'au cap par type d'analyse.
  */
 export async function GET(request: NextRequest) {
   let user;
@@ -64,98 +72,102 @@ export async function GET(request: NextRequest) {
       });
 
       let lastCompletedAgents = -1;
-      let lastResults: string[] = [];
-      let attempts = 0;
-      const MAX_ATTEMPTS = 200; // 200 * 1.5s = 5 minutes max
+      let currentBackoffMs = 0;
+      const startedAt = Date.now();
 
-      const poll = async () => {
+      const poll = async (): Promise<"continue" | "stop"> => {
         try {
           if (signal.aborted) {
-            return false;
+            return "stop";
           }
 
+          // Colonnes minimales uniquement — pas de `results` ici. Le client
+          // refetch les resultats complets via le cache Blob quand status=COMPLETED.
           const analysis = await prisma.analysis.findFirst({
-            where: { dealId, status: { in: ["RUNNING", "COMPLETED", "FAILED"] } },
+            where: { dealId, status: { in: ["PENDING", "RUNNING", "COMPLETED", "FAILED"] } },
             orderBy: { createdAt: "desc" },
             select: {
               id: true,
+              type: true,
               status: true,
               completedAgents: true,
               totalAgents: true,
               summary: true,
               totalCost: true,
               totalTimeMs: true,
+              startedAt: true,
+              completedAt: true,
             },
           });
 
           if (!analysis) {
             sendEvent("waiting", { message: "No analysis found yet" });
-            return true; // continue polling
+            return "continue";
           }
 
-          // Detect new agent completions
-          if (analysis.completedAgents !== lastCompletedAgents) {
+          // Progression: emit uniquement si completedAgents a change
+          const progressed = analysis.completedAgents !== lastCompletedAgents;
+          if (progressed) {
             lastCompletedAgents = analysis.completedAgents;
-
-            // Fetch the large results JSON only when progress changed.
-            const analysisResults = await prisma.analysis.findUnique({
-              where: { id: analysis.id },
-              select: { results: true },
-            });
-            const currentResults = analysisResults?.results
-              ? Object.keys(analysisResults.results as Record<string, unknown>)
-              : [];
-            const newAgents = currentResults.filter(a => !lastResults.includes(a));
-            lastResults = currentResults;
-
             sendEvent("progress", {
+              analysisId: analysis.id,
+              type: analysis.type,
               completedAgents: analysis.completedAgents,
               totalAgents: analysis.totalAgents,
-              newAgents,
               percent: Math.round(
                 (analysis.completedAgents / Math.max(analysis.totalAgents, 1)) * 100
               ),
+              status: analysis.status,
             });
           }
 
-          // Check if done
           if (analysis.status === "COMPLETED") {
             sendEvent("complete", {
+              analysisId: analysis.id,
               status: "COMPLETED",
               summary: analysis.summary,
               totalCost: analysis.totalCost?.toString(),
               totalTimeMs: analysis.totalTimeMs,
             });
-            return false; // stop polling
+            return "stop";
           }
 
           if (analysis.status === "FAILED") {
             sendEvent("error", {
+              analysisId: analysis.id,
               status: "FAILED",
               summary: analysis.summary,
             });
-            return false; // stop polling
+            return "stop";
           }
 
-          return true; // continue polling
+          // Calcul du prochain backoff (reset sur progression, sinon double jusqu'au cap par type)
+          currentBackoffMs = nextStreamBackoffMs({
+            type: analysis.type,
+            previousMs: currentBackoffMs,
+            progressed,
+          });
+
+          return "continue";
         } catch (error) {
           sendEvent("error", {
             message: error instanceof Error ? error.message : "Unknown error",
           });
-          return false;
+          return "stop";
         }
       };
 
-      // Poll every 1.5 seconds
-      while (attempts < MAX_ATTEMPTS && !signal.aborted) {
+      // Backoff exponentiel borne par un hard timeout global (10 min Deep Dive max)
+      while (!signal.aborted) {
         const shouldContinue = await poll();
-        if (!shouldContinue) break;
-        attempts++;
-        await sleep(1500);
-      }
+        if (shouldContinue === "stop") break;
 
-      if (attempts >= MAX_ATTEMPTS && !signal.aborted) {
-        sendEvent("timeout", { message: "Stream timeout after 5 minutes" });
+        if (Date.now() - startedAt > DEFAULT_STREAM_HARD_TIMEOUT_MS) {
+          sendEvent("timeout", { message: "Stream timeout reached" });
+          break;
+        }
+
+        await sleep(currentBackoffMs);
       }
 
       close();

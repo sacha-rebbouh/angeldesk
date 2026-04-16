@@ -11,6 +11,8 @@ import {
 import { refundCredits, getActionForAnalysisType } from "@/services/credits";
 import { CUID_PATTERN } from "@/lib/sanitize";
 import { evaluateDealDocumentReadiness } from "@/services/documents/extraction-runs";
+import { inngest } from "@/lib/inngest";
+import { logger } from "@/lib/logger";
 
 // Vercel: Allow long-running analysis. Requires Pro plan (300s max).
 // Without this, the fire-and-forget promise may be killed after 10s.
@@ -128,9 +130,14 @@ export async function POST(request: NextRequest) {
     );
 
     if (canResume) {
-      console.log(
-        `[analyze] Found resumable analysis ${resumableAnalysis.id} ` +
-        `(${resumableAnalysis.completedAgents}/${resumableAnalysis.totalAgents} étapes). Resuming from checkpoint.`
+      logger.info(
+        {
+          analysisId: resumableAnalysis.id,
+          dealId,
+          completed: resumableAnalysis.completedAgents,
+          total: resumableAnalysis.totalAgents,
+        },
+        "Found resumable analysis, resuming from checkpoint"
       );
 
       // Set analysis back to RUNNING for resumeAnalysis to work
@@ -145,28 +152,33 @@ export async function POST(request: NextRequest) {
         data: { status: "ANALYZING" },
       });
 
-      // Fire-and-forget: resume analysis in background
-      orchestrator
-        .resumeAnalysis(resumableAnalysis.id)
-        .then((result) => {
-          console.log(
-            `[analyze] Resumed analysis completed for deal ${dealId}: success=${result.success}, time=${result.totalTimeMs}ms`
-          );
-        })
-        .catch(async (error) => {
-          console.error(
-            `[analyze] Resumed analysis failed for deal ${dealId}:`,
-            error
-          );
-          try {
-            await prisma.deal.update({
-              where: { id: dealId },
-              data: { status: "IN_DD" },
-            });
-          } catch (e) {
-            console.error(`[analyze] Failed to reset deal status:`, e);
-          }
+      // Durable background via Inngest — le request handler rend la main immediatement,
+      // le worker Inngest survit au-dela des 5 min de la fonction Vercel.
+      try {
+        await inngest.send({
+          name: "analysis/deal.resume",
+          data: {
+            analysisId: resumableAnalysis.id,
+            dealId,
+            userId: user.id,
+          },
         });
+      } catch (sendErr) {
+        // Rollback: remettre l'analyse en FAILED et le deal en IN_DD
+        await prisma.analysis.update({
+          where: { id: resumableAnalysis.id },
+          data: { status: "FAILED", completedAt: new Date() },
+        }).catch(() => undefined);
+        await prisma.deal.update({
+          where: { id: dealId },
+          data: { status: "IN_DD" },
+        }).catch(() => undefined);
+        logger.error({ err: sendErr, dealId, analysisId: resumableAnalysis.id }, "Inngest resume dispatch failed");
+        return NextResponse.json(
+          { error: "Failed to schedule analysis resume" },
+          { status: 502 }
+        );
+      }
 
       return NextResponse.json({
         data: {
@@ -219,49 +231,45 @@ export async function POST(request: NextRequest) {
     const effectiveType: AnalysisType = type as AnalysisType;
     const effectivePlan = requestedTier >= 2 ? "PRO" : "FREE";
 
-    // Fire-and-forget: start analysis in background, return immediately
-    // The orchestrator handles its own persistence (createAnalysis → completeAnalysis)
-    orchestrator
-      .runAnalysis({
-        dealId,
-        type: effectiveType,
-        enableTrace,
-        userPlan: effectivePlan,
-      })
-      .then((result) => {
-        if (process.env.NODE_ENV === "development") {
-          console.log(
-            `[analyze] Background analysis completed for deal ${dealId}: success=${result.success}, time=${result.totalTimeMs}ms`
-          );
-        }
-      })
-      .catch(async (error) => {
-        console.error(
-          `[analyze] Background analysis failed for deal ${dealId}:`,
-          error
-        );
-        // Refund credits — analysis failed before producing results
-        try {
-          const creditAction = getActionForAnalysisType(type);
-          await refundCredits(user.id, creditAction, dealId);
-          console.log(`[analyze] Refunded ${creditAction} credits for deal ${dealId}`);
-        } catch (refundErr) {
-          console.error(`[analyze] Failed to refund credits:`, refundErr);
-        }
-        // Reset deal status
-        try {
-          await prisma.deal.update({
-            where: { id: dealId },
-            data: { status: "IN_DD" },
-          });
-        } catch (e) {
-          console.error(`[analyze] Failed to reset deal status:`, e);
-        }
+    // Durable background via Inngest: le worker encapsule la creation d'analyse,
+    // l'orchestration Tier 1/2/3 et le completeAnalysis. Le handler HTTP retourne
+    // immediatement sans attendre la fin (utile pour les Deep Dive qui depassent
+    // maxDuration=300s du runtime Vercel serverless).
+    try {
+      await inngest.send({
+        name: "analysis/deal.analyze",
+        data: {
+          dealId,
+          type: effectiveType,
+          enableTrace,
+          userPlan: effectivePlan,
+          userId: user.id,
+        },
       });
+    } catch (sendErr) {
+      // Rollback metier: l'event Inngest n'a pas pu etre enfile, on rembourse
+      // immediatement et on reset le statut du deal.
+      try {
+        const creditAction = getActionForAnalysisType(type);
+        await refundCredits(user.id, creditAction, dealId);
+      } catch (refundErr) {
+        logger.error({ err: refundErr, dealId, userId: user.id }, "Refund failed after Inngest dispatch error");
+      }
+      try {
+        await prisma.deal.update({ where: { id: dealId }, data: { status: "IN_DD" } });
+      } catch (resetErr) {
+        logger.error({ err: resetErr, dealId }, "Deal status reset failed");
+      }
+      logger.error({ err: sendErr, dealId, userId: user.id }, "Inngest analyze dispatch failed");
+      return NextResponse.json(
+        { error: "Failed to schedule analysis" },
+        { status: 502 }
+      );
+    }
 
     return NextResponse.json({
       data: {
-        status: "RUNNING",
+        status: "QUEUED",
         dealId,
         remainingDeals: deduction.remainingDeals,
       },
@@ -274,9 +282,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error running analysis:", error);
-    }
+    logger.error({ err: error }, "Error running analysis");
     return NextResponse.json(
       { error: "Failed to run analysis" },
       { status: 500 }
@@ -308,9 +314,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") {
-      console.error("Error fetching analysis types:", error);
-    }
+    logger.error({ err: error }, "Error fetching analysis types");
     return NextResponse.json(
       { error: "Failed to fetch analysis types" },
       { status: 500 }

@@ -9,6 +9,12 @@ import { requireAuth } from "@/lib/auth";
 import { generateApiKey, apiSuccess, apiError } from "@/lib/api-key-auth";
 import { handleApiError } from "@/lib/api-error";
 import { createApiTimer } from "@/lib/api-logger";
+import {
+  assertFeatureAccess,
+  FeatureAccessError,
+  serializeFeatureAccessError,
+} from "@/services/credits/feature-access";
+import { NextResponse } from "next/server";
 
 export async function GET() {
   const timer = createApiTimer("GET", "/api/v1/keys");
@@ -41,15 +47,8 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    // Check PRO status
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { subscriptionStatus: true },
-    });
-    if (dbUser?.subscriptionStatus !== "PRO") {
-      timer.error(403, "Not PRO");
-      return apiError("FORBIDDEN", "API keys require a Pro subscription", 403);
-    }
+    // Gate "api" — remplace le legacy subscriptionStatus=PRO par le seuil totalPurchased >= 125
+    await assertFeatureAccess(user.id, "api");
 
     // Max 5 active keys
     const activeCount = await prisma.apiKey.count({
@@ -77,6 +76,10 @@ export async function POST(request: NextRequest) {
       201
     );
   } catch (error) {
+    if (error instanceof FeatureAccessError) {
+      timer.error(403, `feature locked: ${error.feature}`);
+      return NextResponse.json(serializeFeatureAccessError(error), { status: 403 });
+    }
     timer.error(500, error instanceof Error ? error.message : "Unknown");
     return handleApiError(error, "create API key");
   }
@@ -86,6 +89,8 @@ export async function DELETE(request: NextRequest) {
   const timer = createApiTimer("DELETE", "/api/v1/keys");
   try {
     const user = await requireAuth();
+    await assertFeatureAccess(user.id, "api");
+
     const body = await request.json();
     const keyId = body.id;
 
@@ -102,6 +107,10 @@ export async function DELETE(request: NextRequest) {
     timer.success(200);
     return apiSuccess({ revoked: true });
   } catch (error) {
+    if (error instanceof FeatureAccessError) {
+      timer.error(403, `feature locked: ${error.feature}`);
+      return NextResponse.json(serializeFeatureAccessError(error), { status: 403 });
+    }
     timer.error(500, error instanceof Error ? error.message : "Unknown");
     return handleApiError(error, "revoke API key");
   }

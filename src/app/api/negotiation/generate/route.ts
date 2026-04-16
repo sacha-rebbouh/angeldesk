@@ -3,6 +3,11 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateNegotiationStrategy, type AnalysisResults, type NegotiationStrategy } from "@/services/negotiation/strategist";
+import {
+  assertFeatureAccess,
+  FeatureAccessError,
+  serializeFeatureAccessError,
+} from "@/services/credits/feature-access";
 
 export const maxDuration = 60;
 
@@ -166,6 +171,9 @@ export async function POST(req: NextRequest) {
     if (process.env.NODE_ENV === "development") {
       console.log("[Negotiation API] User authenticated:", user.id);
     }
+
+    // 1bis. Gate feature "negotiation" — seuil totalPurchased >= 60
+    await assertFeatureAccess(user.id, "negotiation");
 
     // 2. Rate limiting
     const rateLimit = checkRateLimit(user.id);
@@ -343,6 +351,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ strategy, cached: false });
   } catch (error) {
+    if (error instanceof FeatureAccessError) {
+      return NextResponse.json(serializeFeatureAccessError(error), { status: 403 });
+    }
+
     // Handle authentication errors specifically (Clerk can throw various auth-related messages)
     if (error instanceof Error) {
       const errorMsg = error.message.toLowerCase();

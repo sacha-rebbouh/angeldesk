@@ -21,6 +21,7 @@ import {
   type CompleterBatchStats,
 } from '@/agents/maintenance/db-completer'
 import { prisma } from '@/lib/prisma'
+import { logger } from '@/lib/logger'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
 import type { SourceStats } from '@/agents/maintenance/types'
 
@@ -288,13 +289,18 @@ export const completerFunction = inngest.createFunction(
  * DEAL ANALYSIS via Inngest
  * Decouple l'analyse du request handler.
  * Chaque tier est un step separe pour resilience et observabilite.
+ *
+ * Retry logic:
+ *  - retries: 1 → l'Inngest worker refait un essai en cas de crash infra (OOM, timeout step)
+ *  - Le refund credit est gere par le handler cote route API en cas d'echec persistant
+ *    (Inngest ne sait pas rembourser le user, c'est une concern metier)
  */
 export const dealAnalysisFunction = inngest.createFunction(
   {
     id: 'deal-analysis',
     name: 'Deal Analysis',
     retries: 1,
-    // Concurrency: max 3 analyses simultanées par user
+    // Concurrency: max 3 analyses simultanees par user (evite l'epuisement du pool Neon et d'OpenRouter)
     concurrency: [{
       key: "event.data.userId",
       limit: 3,
@@ -303,7 +309,7 @@ export const dealAnalysisFunction = inngest.createFunction(
   { event: 'analysis/deal.analyze' },
   async ({ event, step }) => {
     const { orchestrator } = await import("@/agents");
-    const { dealId, type, enableTrace, userPlan } = event.data as {
+    const { dealId, type, enableTrace, userPlan, userId } = event.data as {
       dealId: string;
       type: string;
       enableTrace: boolean;
@@ -321,9 +327,71 @@ export const dealAnalysisFunction = inngest.createFunction(
       });
     });
 
+    // Compensation: si l'analyse a echoue (result.success=false), refund + reset deal.
+    // runAnalysis fait deja un completeAnalysis(FAILED) en interne; ici on s'assure
+    // que la compensation metier se deroule aussi (le route handler ne peut plus le faire
+    // car la reponse HTTP est deja envoyee quand on arrive ici).
+    if (!result.success) {
+      await step.run('refund-on-failure', async () => {
+        const { refundCredits, getActionForAnalysisType } = await import("@/services/credits");
+        try {
+          const action = getActionForAnalysisType(type);
+          await refundCredits(userId, action, dealId);
+        } catch (err) {
+          logger.error({ err, dealId, userId }, 'Inngest refund failed for failed analysis');
+        }
+        try {
+          await prisma.deal.update({ where: { id: dealId }, data: { status: 'IN_DD' } });
+        } catch (err) {
+          logger.error({ err, dealId }, 'Inngest deal status reset failed');
+        }
+      });
+    }
+
+    return result;
+  }
+);
+
+/**
+ * DEAL ANALYSIS RESUME via Inngest
+ * Reprend une analyse FAILED depuis le dernier checkpoint.
+ */
+export const dealAnalysisResumeFunction = inngest.createFunction(
+  {
+    id: 'deal-analysis-resume',
+    name: 'Deal Analysis Resume',
+    retries: 1,
+    concurrency: [{
+      key: "event.data.userId",
+      limit: 3,
+    }],
+  },
+  { event: 'analysis/deal.resume' },
+  async ({ event, step }) => {
+    const { orchestrator } = await import("@/agents");
+    const { analysisId, dealId } = event.data as {
+      analysisId: string;
+      dealId: string;
+      userId: string;
+    };
+
+    const result = await step.run('resume-analysis', async () => {
+      return await orchestrator.resumeAnalysis(analysisId);
+    });
+
+    if (!result.success) {
+      await step.run('reset-deal-on-failure', async () => {
+        try {
+          await prisma.deal.update({ where: { id: dealId }, data: { status: 'IN_DD' } });
+        } catch (err) {
+          logger.error({ err, dealId }, 'Inngest resume: deal status reset failed');
+        }
+      });
+    }
+
     return result;
   }
 );
 
 // Export all functions for the serve handler
-export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction]
+export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction]

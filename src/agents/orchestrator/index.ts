@@ -2274,8 +2274,18 @@ export class AgentOrchestrator {
           extractedText: v.explanation,
         }));
       if (factEvents.length > 0) {
-        await createFactEventsBatch(dealId, factEvents, 'RESOLVED', 'system');
-        console.log(`[Orchestrator] Persisted ${factEvents.length} validated facts to DB`);
+        const batchResult = await createFactEventsBatch(dealId, factEvents, 'RESOLVED', 'system');
+        if (!batchResult.success) {
+          // La contrainte unique (dealId, factKey, createdAt, eventType) peut
+          // rejeter un batch partiellement duplique sous concurrence Tier1/Tier2.
+          // On ne veut pas crasher l'analyse: on log et on continue, mais l'erreur
+          // est surfacee pour investigation (Sentry via logger centralise a venir).
+          console.error(
+            `[Orchestrator] createFactEventsBatch failed for deal ${dealId}: ${batchResult.error ?? "unknown"}`
+          );
+        } else {
+          console.log(`[Orchestrator] Persisted ${factEvents.length} validated facts to DB`);
+        }
       }
     }
 

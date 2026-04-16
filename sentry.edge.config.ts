@@ -5,5 +5,8 @@ Sentry.init({
 
   enabled: process.env.NODE_ENV === "production",
 
-  tracesSampleRate: 0.1,
+  release: process.env.VERCEL_GIT_COMMIT_SHA || undefined,
+  environment: process.env.VERCEL_ENV || process.env.NODE_ENV,
+
+  tracesSampleRate: 0.5,
 });

@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DocumentType, Prisma } from "@prisma/client";
-import { smartExtract, type ExtractionWarning } from "@/services/pdf";
+import { smartExtract, estimatePdfExtractionCost, type ExtractionWarning } from "@/services/pdf";
 import { extractFromExcel, type SheetData } from "@/services/excel";
 import { extractFromDocx } from "@/services/docx";
 import { extractFromPptx } from "@/services/pptx";
@@ -27,7 +27,7 @@ import {
   buildProgressSnapshot,
   setDocumentExtractionProgress,
 } from "@/services/documents/extraction-progress";
-import { deductCreditAmount } from "@/services/credits";
+import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import type { DocumentPageArtifact, ExtractionCreditEstimate } from "@/services/pdf";
 
 // CUID validation
@@ -239,6 +239,36 @@ export async function POST(request: NextRequest) {
 
     // Images (JPEG/PNG): OCR via Vision LLM to extract text content
     if (file.type === "image/jpeg" || file.type === "image/png") {
+      // P0.4: pre-check credits AVANT d'appeler le Vision LLM (coût OpenRouter engage).
+      const imagePreCheck = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", 2, {
+        dealId,
+        documentId: document.id,
+        idempotencyKey: `extraction:pre:image:${document.id}`,
+        description: `Pre-check image OCR for ${file.name}`,
+      });
+      if (!imagePreCheck.success) {
+        await prisma.document.update({
+          where: { id: document.id },
+          data: {
+            processingStatus: "FAILED",
+            extractionWarnings: [{
+              code: "INSUFFICIENT_CREDITS",
+              severity: "critical",
+              message: `Credits insuffisants pour l'OCR image (2 requis)`,
+              suggestion: "Acheter un pack de credits puis re-uploader.",
+            }] as Prisma.InputJsonValue,
+          },
+        });
+        return NextResponse.json(
+          {
+            error: "Credits insuffisants pour l'OCR image",
+            required: 2,
+            breakdown: { image: 2 },
+          },
+          { status: 402 }
+        );
+      }
+
       await prisma.document.update({
         where: { id: document.id },
         data: { processingStatus: "PROCESSING" },
@@ -277,15 +307,7 @@ export async function POST(request: NextRequest) {
             suggestion: "Le texte a été extrait par un modèle de vision IA."
           }],
         });
-        const creditCharge = await chargeExtractionCredits({
-          userId: user.id,
-          dealId,
-          documentId: document.id,
-          runId: extractionRun.id,
-          credits: imageManifest.creditEstimate.estimatedCredits,
-          description: `Image OCR extraction for ${file.name}`,
-        });
-
+        // P0.4: credits deja preleves avant OCR. Pas de charge supplementaire ici.
         await prisma.document.update({
           where: { id: document.id },
           data: {
@@ -298,7 +320,7 @@ export async function POST(request: NextRequest) {
               confidence: ocrResult.confidence,
               ocrCost: ocrResult.cost,
               latestExtractionRunId: extractionRun.id,
-              extractionCreditsCharged: creditCharge.creditsCharged,
+              extractionCreditsCharged: 2,
               ...summarizeManifestForLegacyMetrics(imageManifest),
             },
             extractionWarnings: [{
@@ -321,6 +343,14 @@ export async function POST(request: NextRequest) {
         if (process.env.NODE_ENV === "development") {
           console.error("Image OCR error:", ocrError);
         }
+        // P0.4: OCR a echoue apres pre-check. Remboursement integral (compute
+        // partiel peut avoir ete consomme mais on favorise l'UX).
+        await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", 2, {
+          dealId,
+          documentId: document.id,
+          idempotencyKey: `extraction:refund:image-fail:${document.id}`,
+          description: `Refund image OCR failed for ${file.name}`,
+        }).catch(() => undefined);
         await prisma.document.update({
           where: { id: document.id },
           data: {
@@ -342,7 +372,51 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    let pdfPreChargedCredits = 0;
+
     if (file.type === "application/pdf") {
+      // P0.4: pre-check credits avant de lancer smartExtract (qui peut engager
+      // du compute OpenRouter). Estimation conservatrice worst-case: 1 credit/page
+      // high_fidelity. Apres extraction reelle, on rembourse la difference si le
+      // plan effectif est plus economique.
+      const pdfEstimate = await estimatePdfExtractionCost(buffer);
+      const preCharge = Math.max(0, pdfEstimate.estimatedCredits);
+      if (preCharge > 0) {
+        const deduction = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", preCharge, {
+          dealId,
+          documentId: document.id,
+          idempotencyKey: `extraction:pre:pdf:${document.id}`,
+          description: `Pre-check PDF extraction (${pdfEstimate.pageCount} pages) for ${file.name}`,
+        });
+        if (!deduction.success) {
+          await prisma.document.update({
+            where: { id: document.id },
+            data: {
+              processingStatus: "FAILED",
+              extractionWarnings: [{
+                code: "INSUFFICIENT_CREDITS",
+                severity: "critical",
+                message: `Credits insuffisants (estime: ${preCharge} credits pour ${pdfEstimate.pageCount} pages)`,
+                suggestion: "Acheter un pack de credits puis re-uploader.",
+              }] as Prisma.InputJsonValue,
+            },
+          });
+          return NextResponse.json(
+            {
+              error: "Credits insuffisants pour l'extraction PDF",
+              required: preCharge,
+              breakdown: {
+                pageCount: pdfEstimate.pageCount,
+                worstCaseCreditsPerPage: 1,
+                totalCredits: preCharge,
+              },
+            },
+            { status: 402 }
+          );
+        }
+        pdfPreChargedCredits = preCharge;
+      }
+
       await prisma.document.update({
         where: { id: document.id },
         data: { processingStatus: "PROCESSING" },
@@ -457,14 +531,41 @@ export async function POST(request: NextRequest) {
             ? JSON.parse(JSON.stringify(extractionWarnings))
             : [],
         });
-        const creditCharge = await chargeExtractionCredits({
-          userId: user.id,
-          dealId,
-          documentId: document.id,
-          runId: extractionRun.id,
-          credits: result.manifest.creditEstimate.estimatedCredits,
-          description: `Enhanced PDF extraction for ${file.name}`,
-        });
+
+        // P0.4: reconciliation pre-charge vs cout reel
+        const actualCredits = Math.max(0, Math.ceil(result.manifest.creditEstimate.estimatedCredits));
+        let finalChargedCredits = pdfPreChargedCredits;
+        if (actualCredits > pdfPreChargedCredits) {
+          const delta = actualCredits - pdfPreChargedCredits;
+          const extra = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", delta, {
+            dealId,
+            documentId: document.id,
+            documentExtractionRunId: extractionRun.id,
+            idempotencyKey: `extraction:delta:pdf:${extractionRun.id}`,
+            description: `Delta PDF extraction (+${delta} credits) for ${file.name}`,
+          });
+          if (extra.success) {
+            finalChargedCredits += delta;
+          } else {
+            // Si le user n'a plus le delta, on accepte quand meme le resultat d'extraction
+            // (compute deja consomme cote OpenRouter). A investigation en prod.
+            console.warn(
+              `[upload] PDF extraction delta de ${delta} non facture (solde insuffisant) pour document ${document.id}`
+            );
+          }
+        } else if (actualCredits < pdfPreChargedCredits) {
+          const refundAmount = pdfPreChargedCredits - actualCredits;
+          const refund = await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", refundAmount, {
+            dealId,
+            documentId: document.id,
+            documentExtractionRunId: extractionRun.id,
+            idempotencyKey: `extraction:refund:pdf:${extractionRun.id}`,
+            description: `Refund surestimation PDF (-${refundAmount} credits) for ${file.name}`,
+          });
+          if (refund.success) {
+            finalChargedCredits -= refundAmount;
+          }
+        }
 
         // Check if quality is still low after OCR or if strict page-level controls blocked the run.
         requiresOCR = result.manifest.status === "needs_review" || result.manifest.status === "failed";
@@ -481,7 +582,7 @@ export async function POST(request: NextRequest) {
               pagesOCRd,
               ocrCost,
               latestExtractionRunId: extractionRun.id,
-              extractionCreditsCharged: creditCharge.creditsCharged,
+              extractionCreditsCharged: finalChargedCredits,
               ...summarizeManifestForLegacyMetrics(result.manifest),
             },
             extractionWarnings: extractionWarnings.length > 0
@@ -500,6 +601,16 @@ export async function POST(request: NextRequest) {
       } catch (extractionError) {
         if (process.env.NODE_ENV === "development") {
           console.error("PDF extraction error:", extractionError);
+        }
+
+        // P0.4: extraction crashee apres pre-check. Remboursement integral du pre-charge.
+        if (pdfPreChargedCredits > 0) {
+          await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", pdfPreChargedCredits, {
+            dealId,
+            documentId: document.id,
+            idempotencyKey: `extraction:refund:pdf-fail:${document.id}`,
+            description: `Refund PDF extraction failed for ${file.name}`,
+          }).catch(() => undefined);
         }
 
         await prisma.document.update({

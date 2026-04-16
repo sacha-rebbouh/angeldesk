@@ -1,6 +1,177 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-04-16 — feat: Sprint P0 — production-readiness (10 fixes bloquants)
+
+Sprint de durcissement complet avant les gros tests. 10 failles P0 traitees en
+parallele : orchestration serverless, integrite schema, invariants credits,
+observabilite, positionnement anti-hallucination. 538/538 tests verts,
+`npx tsc --noEmit` 0 erreur, 19/20 CVE fixees.
+
+### P0.1 + P0.2 + P0.10 — Inngest + pool Neon + FactEvents atomicite
+
+**Fichiers :**
+- `src/app/api/analyze/route.ts` — migration complete fire-and-forget -> `inngest.send('analysis/deal.analyze' | 'analysis/deal.resume')`. Rollback credit + deal status si dispatch echoue. Retourne `status: 'QUEUED'`.
+- `src/lib/inngest.ts` — cablage de `dealAnalysisFunction` (deja existant) + ajout `dealAnalysisResumeFunction`. Compensation metier (refund + reset deal) dans un step separe quand l'analyse echoue dans le worker. `retries: 1`, `concurrency: 3/user`.
+- `src/lib/prisma.ts` — `connection_limit` 25 -> 50 (41 agents en parallele + Inngest concurrency 3/user). `src/lib/__tests__/prisma-pool.test.ts` aligne.
+- `src/agents/orchestrator/index.ts` — `createFactEventsBatch` retour verifie et logue si echec (remplace le silent fail). L'atomicite est deja garantie par `prisma.$transaction` interne de `createFactEventsBatch`.
+
+**Probleme resolu :** Les analyses > 5 min (Deep Dive) etaient tronquees
+silencieusement par Vercel serverless. Le pool 25 connexions ne suffisait pas
+pour 41 agents parallels. Les FactEvents pouvaient etre persistes partiellement
+sans que l'orchestrateur le sache.
+
+### P0.3 — Stream polling backoff + select minimal
+
+**Fichiers :**
+- `src/app/api/analyze/stream/route.ts` — supprime le fetch de `Analysis.results` (JSON 5-10MB). Select minimal (id, status, completedAgents, totalAgents, summary, timestamps). Backoff exponentiel par type d'analyse (quick=500ms->2s, deep=2s->5s), reset a la progression active. Hard timeout 10 min.
+- `src/app/api/analyze/stream/backoff.ts` (nouveau) — `nextStreamBackoffMs`, `getStreamBackoffConfig`, `DEFAULT_STREAM_HARD_TIMEOUT_MS`.
+- `src/app/api/analyze/stream/__tests__/backoff.test.ts` (nouveau) — 7 tests (config, reset, doublement, cap, timeout).
+
+**Probleme resolu :** Chaque poll rechargeait le JSON complet de l'analyse
+(jusqu'a 360 reads x 5-10MB par analyse). Tres couteux en bande passante Neon
++ Vercel sous charge.
+
+### P0.4 — Extraction pre-check credits avant OCR
+
+**Fichiers :**
+- `src/services/pdf/extractor.ts` — ajout `getPdfPageCount()` (lecture `numPages` sans rendu) et `estimatePdfExtractionCost()` (estimation conservatrice worst-case 1 credit/page).
+- `src/services/pdf/index.ts` — exports ajoutes.
+- `src/services/credits/usage-gate.ts` — ajout `refundCreditAmount()` (refund d'un montant arbitraire avec idempotency key variable). Utilise pour les deltas d'extraction et les refunds sur failure.
+- `src/services/credits/index.ts` — exports mis a jour.
+- `src/app/api/documents/upload/route.ts` — pre-deduct AVANT `smartExtract()` / `processImageOCR()`. Retourne 402 si credits insuffisants SANS lancer l'OCR. Reconciliation post-extraction : debit delta si reel > estime, refund si reel < estime. Refund integral si l'OCR crash.
+
+**Probleme resolu :** L'OCR etait lance AVANT la verification de credits. Si le
+user n'avait pas assez, le compute OpenRouter etait deja consomme et le message
+d'erreur etait masque en "file corrupted" generique. Fuite directe de budget
+Angel Desk + UX trompeuse.
+
+### P0.5 + P0.6 — Prisma schema hardening + migration
+
+**Fichiers :**
+- `prisma/schema.prisma` :
+  - `AnalysisExtractionRun.run` ON DELETE : `Restrict` -> `Cascade`
+  - `LiveSession.deal` ON DELETE : `SetNull` -> `Cascade`
+  - `LiveSession.document` ON DELETE : `SetNull` -> `Cascade`
+  - `FactEvent` : `@@unique([dealId, factKey, createdAt, eventType])`
+  - Nouveau modele `AnalysisDocument` (table de jointure FK-contrainte, CASCADE des deux cotes). Remplace progressivement `Analysis.documentIds String[]` qui laissait des refs obsoletes apres suppression de documents. Relations bidirectionnelles ajoutees sur `Analysis` et `Document`.
+- `prisma/migrations/20260416150000_p0_schema_hardening/migration.sql` (nouveau) — DDL complet : DROP + ADD FK pour les 3 cascade, dedup pre-migration pour FactEvent (DELETE duplicates exact match par cuid-id), CREATE UNIQUE INDEX, CREATE TABLE `AnalysisDocument` + index + FK, backfill `INSERT ... FROM Analysis.documentIds`.
+- `src/agents/orchestrator/persistence.ts` — `createAnalysis()` ecrit dans les 2 endroits (legacy `documentIds` + nouvelle jointure `documents`).
+- `src/services/analysis-versioning/index.ts` — lecture avec fallback : si la jointure est peuplee, l'utiliser ; sinon fallback sur `documentIds` legacy.
+
+**Probleme resolu :** Suppression de deal en cascade pouvait echouer (Restrict
+sur AnalysisExtractionRun), laisser des transcripts orphelins (LiveSession
+SetNull), ou contenir des IDs de documents supprimes (String[] sans FK). Les
+FactEvents concurrents pouvaient dupliquer la meme entree.
+
+**Migration NON appliquee automatiquement.** A lancer avec `npx prisma migrate
+deploy` apres validation sur staging (la dedup FactEvent est destructive — ne
+supprime que les duplicates exacts mais requiert verification prealable du
+volume).
+
+### P0.7 — 9 fallbacks LLM anti-hallucination
+
+**Fichiers :**
+- `src/agents/orchestration/prompts/anti-hallucination.ts` (nouveau) — helper centralise `getFiveAntiHallucinationDirectives()` et `buildFallbackSystemPrompt(role, options)`. Source unique des 5 directives en version complete (verbatim CLAUDE.md).
+- `src/agents/board/board-orchestrator.ts` — fallback dedup des key points (~L927) : ajout du `systemPrompt` avec les 5 directives (auparavant : aucune directive).
+- `src/agents/tier0/fact-extractor.ts` — fallback meta-evaluation (~L1109) : remplacement du systemPrompt hardcoded avec directives abregees par l'appel au helper (version complete).
+
+Les 7 autres fallbacks (consensus-engine x4, reflexion x3) avaient deja les 5
+directives inline. Leur consolidation via le helper est une optimisation P1
+(reduction duplication) — non bloquante pour la production-readiness.
+
+**Probleme resolu :** Quand la validation Zod echoue (20-30% des cas en prod),
+les fallbacks LLM sans directives anti-hallucination augmentent drastiquement
+le taux d'hallucination sur les cas les plus difficiles.
+
+### P0.8 — Feature access backend middleware
+
+**Fichiers :**
+- `src/services/credits/feature-access.ts` (nouveau) — `canAccessFeature(userId, feature)`, `assertFeatureAccess(userId, feature)`, classe `FeatureAccessError`, helper `serializeFeatureAccessError(err)`.
+- `src/services/credits/__tests__/feature-access.test.ts` (nouveau) — 9 tests (seuils 0/59/60/124/125/300, feature inconnue, assert vs try/catch, serialisation 403).
+- `src/services/credits/index.ts` — reexports.
+- `src/app/api/v1/keys/route.ts` — POST + DELETE : remplace le legacy `subscriptionStatus === "PRO"` par `assertFeatureAccess(user.id, "api")`. Handler `FeatureAccessError` -> 403 avec payload structure.
+- `src/app/api/negotiation/generate/route.ts` — POST : gate `"negotiation"` apres `requireAuth()`. Handler 403 dans le catch.
+- `src/app/api/negotiation/update/route.ts` — PATCH : idem.
+
+**Probleme resolu :** Les seuils `FEATURE_ACCESS` (Negotiation=60, API=125) etaient
+verifies uniquement au frontend. Un utilisateur pouvait POST directement sur les
+routes sans avoir atteint le seuil d'achat cumule -> revenue leak (clef API
+creee gratuitement).
+
+### P0.9a — Logger centralise + Sentry durci
+
+**Fichiers :**
+- `src/lib/logger.ts` (nouveau) — logger structure avec niveaux (debug/info/warn/error/fatal), redaction automatique des champs PII (email, token, apiKey, clerkId, stripePaymentId, extractedText, prompts, etc.), output JSON en production / console lisible en dev, hook automatique vers Sentry sur error+fatal, breadcrumbs sur warn. API : `logger.info({ ctx }, "msg")` + `logger.child({ bindings })`.
+- `sentry.client.config.ts` — `tracesSampleRate: 0.1 -> 0.5`, ajout `release` (VERCEL_GIT_COMMIT_SHA), `environment`, `beforeSend` scrubber (URL params, cookies, headers), `replayIntegration({ maskAllText, blockAllMedia })`, `ignoreErrors` pour les events Next non-bugs.
+- `sentry.server.config.ts` — meme trajectoire + beforeSend server-side.
+- `sentry.edge.config.ts` — release + environment + tracesSampleRate=0.5.
+
+### P0.9b — Migration console.log -> logger (hot paths critiques)
+
+**Fichiers migres (priorite maximale : routes API d'analyse + credits + orchestration + versioning) :**
+- `src/app/api/analyze/route.ts` — tous les `console.error/log` hot paths remplaces.
+- `src/agents/orchestrator/persistence.ts` — `logPersistenceError()` utilise maintenant `logger.error`. Blob cache logs via logger.debug/warn.
+- `src/services/credits/usage-gate.ts` — 10 sites migres (deductCreditAmount, addCredits, grantFreeCredits, refundCredits, refundCreditAmount, getOrCreateBalance).
+- `src/lib/inngest.ts` — 3 sites migres (compensation logic).
+- `src/services/analysis-versioning/index.ts` — 4 sites migres.
+
+Le reste des ~700 appels `console.*` (Tier 2/3, UI, connectors) sera migre
+progressivement en P1+. La couche observabilite critique (money path + analyse
+path) est deja sur Sentry via le logger.
+
+### P0 — npm audit fix
+
+**Commandes :** `npm audit fix` x2 passes. Fixed 19/20 high/moderate CVE :
+`@xmldom/xmldom`, `ajv`, `brace-expansion`, `defu`, `effect`, `minimatch`,
+`next`, `picomatch`, `rollup`, `serialize-javascript`, `vite`, `yaml`, etc.
+
+**1 CVE restante : `xlsx` (SheetJS)** — prototype pollution + ReDoS. Pas de fix
+upstream. Usage circonscrit a la lecture de fichiers Excel en extraction
+documents. **Action P1** : remplacer par `exceljs` (fork maintenu) ou sandboxer
+l'appel dans un worker isole.
+
+### Validation finale
+
+- `npx prisma validate` OK
+- `npx prisma generate` OK
+- `npx tsc --noEmit` : **0 erreur**
+- `npx vitest run` : **538/538 tests passed** (16 tests P0 ajoutes : 9 feature-access + 7 stream/backoff)
+- Migration SQL `20260416150000_p0_schema_hardening` : generee manuellement, NON appliquee (a valider en staging d'abord)
+
+### A faire avant deploy prod
+
+1. Verifier le volume de duplicates FactEvent en prod avant migration (la section `DELETE a USING b WHERE a.id > b.id ...` supprime les duplicates exacts — ne devrait pas etre massif mais a controler).
+2. Tester sous charge (10-50 analyses concurrentes) pour valider le pool=50 + concurrency Inngest 3/user.
+3. Monitorer Sentry sur la premiere semaine (tracesSampleRate=0.5 genere plus d'events qu'avant).
+4. Exercer le flow 402 extraction (upload gros PDF sans credits) pour valider l'UX client.
+5. Documenter la nouvelle API feature-access pour les integrateurs API (README ou CHANGELOG API).
+
+---
+## 2026-04-16 — feat: evidence ledger, contrats agents, artefacts DOCX/PPTX/Excel
+
+**Evidence ledger (nouveau service) :**
+- `src/services/evidence-ledger/index.ts` + tests — registre centralisé des évidences injecté dans le contexte des agents via `formatEvidenceLedgerForPrompt`.
+
+**BaseAgent / agents :**
+- `src/agents/base-agent.ts` — `contractStatus` + `contractIssues` dans `AgentResult`, budget documentaire global partagé entre docs, routing doc affiné par relevance.
+- `src/agents/document-context-retriever.ts` + tests — sélection de fenêtres documentaires plus fine.
+- `src/agents/orchestration/tier1-cross-validation.ts` (+ nouveaux tests) — cross-validation durcie.
+- `src/agents/orchestrator/index.ts`, `persistence.ts` — propagation du contrat.
+- `src/agents/tier1/financial-auditor.ts`, `tier3/synthesis-deal-scorer.ts`, `tier2/saas-expert.ts`, `types.ts`, `schemas/common.ts` — durcissements.
+
+**Extraction documents :**
+- `src/app/api/documents/upload/route.ts` — artefacts structurés pour DOCX, PPTX, Excel ; OCR des médias embarqués.
+- `src/services/docx.ts`, `pptx.ts`, `pdf/ocr-service.ts` — extraction enrichie (sections, tables, médias).
+- `src/services/documents/extraction-runs.ts` + tests ; routes extraction-audit / retry mises à jour ; dialog UI d'audit étendu.
+- `src/services/pdf/__tests__/document-extraction-golden.test.ts` — golden tests étendus.
+
+**Context Engine :**
+- `src/services/context-engine/{index,parallel-fetcher,persistence,types}.ts` — persistence et fetcher étendus.
+
+**TypeScript : OK. Commit `9c07c09` poussé sur `main`.**
+
+---
 ## 2026-04-13 — fix: financial-auditor timeout cascade + LinkedIn rate limit
 
 **Orchestrator abort logic (1 fichier) :**

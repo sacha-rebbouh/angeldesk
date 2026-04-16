@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { logger } from "@/lib/logger";
 import type {
   AgentResult,
   RedFlagResult,
@@ -18,19 +19,7 @@ function logPersistenceError(
   error: unknown,
   metadata?: Record<string, unknown>
 ): void {
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  const errorStack = error instanceof Error ? error.stack : undefined;
-
-  // Always log in all environments
-  console.error(
-    `[Persistence] FAILED ${operation}: ${errorMessage}`,
-    metadata ? JSON.stringify(metadata) : "",
-  );
-
-  // In development, also log the full stack
-  if (process.env.NODE_ENV === "development" && errorStack) {
-    console.error(errorStack);
-  }
+  logger.error({ err: error, operation, ...(metadata ?? {}) }, `Persistence failed: ${operation}`);
 }
 
 /**
@@ -44,6 +33,7 @@ export async function createAnalysis(params: {
   mode?: string;
   documentIds?: string[];
 }) {
+  const docIds = params.documentIds ?? [];
   return prisma.analysis.create({
     data: {
       dealId: params.dealId,
@@ -53,7 +43,10 @@ export async function createAnalysis(params: {
       completedAgents: 0,
       startedAt: new Date(),
       mode: params.mode,
-      documentIds: params.documentIds ?? [],
+      documentIds: docIds,
+      documents: docIds.length > 0
+        ? { create: docIds.map((documentId) => ({ documentId })) }
+        : undefined,
     },
   });
 }
@@ -111,10 +104,13 @@ export async function completeAnalysis(params: {
     const { uploadFile } = await import("@/services/storage");
     const jsonBuffer = Buffer.from(JSON.stringify(serializedResults));
     await uploadFile(`analysis-results/${params.analysisId}.json`, jsonBuffer, { access: "private" });
-    console.log(`[Persistence] Results cached to blob: analysis-results/${params.analysisId}.json (${(jsonBuffer.length / 1024).toFixed(0)}KB)`);
+    logger.debug({
+      analysisId: params.analysisId,
+      sizeKb: Math.round(jsonBuffer.length / 1024),
+    }, "Results cached to blob");
   } catch (err) {
     // Non-blocking: DB has the data, blob is just a fast cache
-    console.warn("[Persistence] Failed to cache results to blob:", err);
+    logger.warn({ err, analysisId: params.analysisId }, "Failed to cache results to blob");
   }
 
   return analysis;

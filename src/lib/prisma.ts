@@ -14,7 +14,7 @@ export function buildDatasourceUrl(): string | undefined {
   if (!baseUrl) return undefined;
 
   const separator = baseUrl.includes("?") ? "&" : "?";
-  return `${baseUrl}${separator}connection_limit=25&pool_timeout=30`;
+  return `${baseUrl}${separator}connection_limit=50&pool_timeout=30`;
 }
 
 /**
@@ -25,7 +25,9 @@ export function buildDatasourceUrl(): string | undefined {
  * - For direct connections (migrations), use DIRECT_DATABASE_URL without pgbouncer
  *
  * Pool settings:
- * - connection_limit=25: increased from 15 for concurrent analyses (Neon pool ~29 connections)
+ * - connection_limit=50: un Deep Dive lance 41 agents en parallele, chacun faisant 3-5 queries.
+ *   Pic theorique ~200 connexions; Inngest bride maintenant a 3 analyses simultanees par user,
+ *   mais on conserve un budget confortable pour l'ensemble du workload (cron, board, chat).
  * - pool_timeout=30: increases timeout from 10s to 30s for breathing room during analysis
  */
 export const prisma =

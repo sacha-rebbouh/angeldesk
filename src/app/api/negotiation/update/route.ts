@@ -3,6 +3,11 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import type { NegotiationStrategy } from "@/services/negotiation/strategist";
+import {
+  assertFeatureAccess,
+  FeatureAccessError,
+  serializeFeatureAccessError,
+} from "@/services/credits/feature-access";
 
 export const maxDuration = 30;
 
@@ -25,6 +30,7 @@ const updatePointStatusSchema = z.object({
 export async function PATCH(req: NextRequest) {
   try {
     const user = await requireAuth();
+    await assertFeatureAccess(user.id, "negotiation");
 
     let body: unknown;
     try {
@@ -128,6 +134,10 @@ export async function PATCH(req: NextRequest) {
       strategy,
     });
   } catch (error) {
+    if (error instanceof FeatureAccessError) {
+      return NextResponse.json(serializeFeatureAccessError(error), { status: 403 });
+    }
+
     if (error instanceof Error) {
       const errorMsg = error.message.toLowerCase();
       if (errorMsg === "unauthorized" || errorMsg.includes("unauthenticated") || errorMsg.includes("not authenticated")) {

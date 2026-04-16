@@ -6,12 +6,25 @@ export {
   addCredits,
   grantFreeCredits,
   refundCredits,
+  refundCreditAmount,
   getCreditBalance,
   // Legacy compatibility
   checkQuota,
   getUserQuotaInfo,
   recordUsage,
 } from './usage-gate';
+
+// Feature access gating (backend enforcement of paid feature unlocks)
+export {
+  canAccessFeature,
+  assertFeatureAccess,
+  FeatureAccessError,
+  serializeFeatureAccessError,
+} from './feature-access';
+export type {
+  FeatureKey,
+  FeatureAccessResult,
+} from './feature-access';
 
 export type {
   CreditActionType,

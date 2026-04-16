@@ -924,6 +924,7 @@ REGLES:
 - En francais
 - JSON seulement, rien d'autre`;
 
+      const { buildFallbackSystemPrompt } = await import("@/agents/orchestration/prompts/anti-hallucination");
       const result = await completeJSON<{
         consensusPoints: string[];
         frictionPoints: string[];
@@ -932,6 +933,9 @@ REGLES:
         model: "SONNET",
         maxTokens: 2000,
         temperature: 0.1,
+        systemPrompt: buildFallbackSystemPrompt(
+          "Tu es un analyste qui dedoublonne semantiquement les points de consensus, de friction et les questions produits par un board d'analystes IA. Tu ne produis AUCUN jugement d'investissement, tu fais de la fusion de formulations redondantes uniquement."
+        ),
       });
 
       // Validate the response structure

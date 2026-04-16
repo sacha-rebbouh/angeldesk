@@ -10,11 +10,11 @@ datasource db {
 
 // USER
 model User {
-  id            String    @id @default(cuid())
-  clerkId       String    @unique
-  email         String    @unique
-  name          String?
-  image         String?
+  id      String  @id @default(cuid())
+  clerkId String  @unique
+  email   String  @unique
+  name    String?
+  image   String?
 
   subscriptionStatus SubscriptionStatus @default(FREE)
 
@@ -22,21 +22,21 @@ model User {
   // Stocké en JSON pour flexibilité (voir BAPreferences dans services/benchmarks/types.ts)
   investmentPreferences Json?
 
-  deals         Deal[]
-  apiKeys       ApiKey[]
-  webhooks      Webhook[]
-  liveSessions  LiveSession[]
+  deals                       Deal[]
+  apiKeys                     ApiKey[]
+  webhooks                    Webhook[]
+  liveSessions                LiveSession[]
   documentExtractionOverrides DocumentExtractionOverride[]
 
   // Credit system
-  creditBalance    UserCreditBalance?
+  creditBalance      UserCreditBalance?
   creditTransactions CreditTransaction[]
 
   // CGU/IA consent — null means not yet accepted
   cguAcceptedAt DateTime?
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum SubscriptionStatus {
@@ -51,143 +51,143 @@ enum SubscriptionStatus {
 
 // Available credit packs for purchase
 model CreditPack {
-  id            String   @id @default(cuid())
-  name          String   @unique  // "starter", "standard", "pro", "expert", "fund"
-  displayName   String             // "Starter", "Standard", etc.
-  credits       Int                // 10, 30, 60, 125, 300
-  priceEur      Int                // 49, 99, 179, 329, 749 (in cents: 4900, 9900... or EUR int)
-  perCredit     Float              // 4.90, 3.30, etc.
-  stripePriceId String?            // Stripe Price ID for checkout
-  stripeRefillPriceId String?      // Stripe Price ID for auto-refill (-15%)
-  isActive      Boolean  @default(true)
-  sortOrder     Int      @default(0)
+  id                  String  @id @default(cuid())
+  name                String  @unique // "starter", "standard", "pro", "expert", "fund"
+  displayName         String // "Starter", "Standard", etc.
+  credits             Int // 10, 30, 60, 125, 300
+  priceEur            Int // 49, 99, 179, 329, 749 (in cents: 4900, 9900... or EUR int)
+  perCredit           Float // 4.90, 3.30, etc.
+  stripePriceId       String? // Stripe Price ID for checkout
+  stripeRefillPriceId String? // Stripe Price ID for auto-refill (-15%)
+  isActive            Boolean @default(true)
+  sortOrder           Int     @default(0)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // User's credit balance
 model UserCreditBalance {
-  id            String   @id @default(cuid())
-  userId        String   @unique
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  balance       Int      @default(0)     // Current credit balance
-  totalPurchased Int     @default(0)     // Lifetime credits purchased (for tier access)
-  lastPackName  String?                  // Last pack purchased (for rate limits)
+  balance        Int     @default(0) // Current credit balance
+  totalPurchased Int     @default(0) // Lifetime credits purchased (for tier access)
+  lastPackName   String? // Last pack purchased (for rate limits)
 
   // Free tier: 5 credits granted at signup (1 Deep Dive)
   freeCreditsGranted Boolean @default(false)
 
   // Auto-refill
-  autoRefill    Boolean  @default(false)
-  autoRefillPackName String?           // Which pack to auto-refill
+  autoRefill         Boolean @default(false)
+  autoRefillPackName String? // Which pack to auto-refill
 
   // Expiry tracking
-  expiresAt     DateTime?              // Credits expire 6 months after last purchase
+  expiresAt DateTime? // Credits expire 6 months after last purchase
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
 
 // Credit transaction log
 model CreditTransaction {
-  id            String   @id @default(cuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  amount        Int                    // Positive = added, negative = consumed
-  balanceAfter  Int                    // Balance after this transaction
-  action        CreditAction           // What triggered this transaction
-  description   String?                // Human-readable description
-  dealId        String?                // Associated deal (if applicable)
-  documentId    String?                // Associated document for extraction credits
-  documentExtractionRunId String?       // Associated extraction run for extraction credits
-  pageNumber    Int?                   // Associated page/artifact number for page-level extraction
-  idempotencyKey String?               // Prevents duplicate credit debits for the same operation
+  amount                  Int // Positive = added, negative = consumed
+  balanceAfter            Int // Balance after this transaction
+  action                  CreditAction // What triggered this transaction
+  description             String? // Human-readable description
+  dealId                  String? // Associated deal (if applicable)
+  documentId              String? // Associated document for extraction credits
+  documentExtractionRunId String? // Associated extraction run for extraction credits
+  pageNumber              Int? // Associated page/artifact number for page-level extraction
+  idempotencyKey          String? // Prevents duplicate credit debits for the same operation
 
   // For purchases
-  packName      String?                // Pack purchased
-  stripePaymentId String?              // Stripe payment intent ID
+  packName        String? // Pack purchased
+  stripePaymentId String? // Stripe payment intent ID
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
+  @@unique([idempotencyKey])
   @@index([userId])
   @@index([userId, createdAt])
   @@index([userId, action])
   @@index([dealId])
   @@index([documentId, pageNumber])
   @@index([documentExtractionRunId])
-  @@unique([idempotencyKey])
 }
 
 enum CreditAction {
-  PURCHASE          // Bought a pack
-  AUTO_REFILL       // Auto-refill purchase
-  FREE_GRANT        // Free credits at signup
-  QUICK_SCAN        // -1 credit (Tier 1 only)
-  DEEP_DIVE         // -5 credits (Tier 1+2+3)
-  AI_BOARD          // -10 credits
-  LIVE_COACHING     // -8 credits
-  RE_ANALYSIS       // -3 credits
+  PURCHASE // Bought a pack
+  AUTO_REFILL // Auto-refill purchase
+  FREE_GRANT // Free credits at signup
+  QUICK_SCAN // -1 credit (Tier 1 only)
+  DEEP_DIVE // -5 credits (Tier 1+2+3)
+  AI_BOARD // -10 credits
+  LIVE_COACHING // -8 credits
+  RE_ANALYSIS // -3 credits
   EXTRACTION_STANDARD_PAGE // Standard OCR page extraction
   EXTRACTION_HIGH_PAGE // High fidelity page extraction
   EXTRACTION_SUPREME_PAGE // Supreme extraction for one page/artifact
-  REFUND            // Credit refund (failed action)
-  ADMIN_ADJUSTMENT  // Manual admin adjustment
-  EXPIRED           // Credits expired
+  REFUND // Credit refund (failed action)
+  ADMIN_ADJUSTMENT // Manual admin adjustment
+  EXPIRED // Credits expired
 }
 
 // DEAL
 model Deal {
-  id              String   @id @default(cuid())
-  userId          String
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name            String
-  companyName     String?
-  website         String?
-  description     String?  @db.Text
+  name        String
+  companyName String?
+  website     String?
+  description String? @db.Text
 
-  sector          String?
-  stage           DealStage?
-  instrument      FundingInstrument?
-  geography       String?
+  sector     String?
+  stage      DealStage?
+  instrument FundingInstrument?
+  geography  String?
 
   arr             Decimal? @db.Decimal(12, 2)
   growthRate      Decimal? @db.Decimal(5, 2)
   amountRequested Decimal? @db.Decimal(12, 2)
   valuationPre    Decimal? @db.Decimal(14, 2)
 
-  status          DealStatus @default(SCREENING)
+  status DealStatus @default(SCREENING)
 
   // Scores (after analysis)
-  globalScore        Int?    // Score final (synthesis-deal-scorer, 0-100)
-  fundamentalsScore  Int?    // Score fondamentaux seul (stage-relative, 0-100)
-  conditionsScore    Int?    // Score conditions (0-100, AI conditions-analyst)
-  teamScore       Int?
-  marketScore     Int?
-  productScore    Int?
-  financialsScore Int?
+  globalScore       Int? // Score final (synthesis-deal-scorer, 0-100)
+  fundamentalsScore Int? // Score fondamentaux seul (stage-relative, 0-100)
+  conditionsScore   Int? // Score conditions (0-100, AI conditions-analyst)
+  teamScore         Int?
+  marketScore       Int?
+  productScore      Int?
+  financialsScore   Int?
 
   // Conditions analysis cache (full AI output)
-  conditionsAnalysis Json?   // Cache résultat complet conditions-analyst
+  conditionsAnalysis Json? // Cache résultat complet conditions-analyst
 
-  documents       Document[]
-  founders        Founder[]
-  redFlags        RedFlag[]
-  analyses        Analysis[]
-  factEvents      FactEvent[]
-  dealTerms       DealTerms?
-  dealStructure   DealStructure?
+  documents         Document[]
+  founders          Founder[]
+  redFlags          RedFlag[]
+  analyses          Analysis[]
+  factEvents        FactEvent[]
+  dealTerms         DealTerms?
+  dealStructure     DealStructure?
   dealTermsVersions DealTermsVersion[]
   alertResolutions  AlertResolution[]
   liveSessions      LiveSession[]
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([status])
@@ -221,76 +221,79 @@ enum DealStatus {
 
 // FOUNDER
 model Founder {
-  id              String   @id @default(cuid())
-  dealId          String
-  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  name            String
-  role            String
-  linkedinUrl     String?
+  name        String
+  role        String
+  linkedinUrl String?
 
   previousVentures Json?
-  verifiedInfo    Json?
+  verifiedInfo     Json?
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([dealId])
 }
 
 // LINKEDIN PROFILE CACHE — avoid redundant RapidAPI calls
 model LinkedInProfileCache {
-  id              String   @id @default(cuid())
-  linkedinUrl     String   @unique  // normalized URL (lowercase, trimmed)
-  profileData     Json     // NormalizedProfile from RapidAPI
-  fetchedAt       DateTime @default(now())
-  createdAt       DateTime @default(now())
+  id          String   @id @default(cuid())
+  linkedinUrl String   @unique // normalized URL (lowercase, trimmed)
+  profileData Json // NormalizedProfile from RapidAPI
+  fetchedAt   DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([linkedinUrl])
 }
 
 // DOCUMENT
 model Document {
-  id               String   @id @default(cuid())
-  dealId           String
-  deal             Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  name             String
-  type             DocumentType
-  customType       String?   // For OTHER type - user-specified description
-  comments         String?   @db.Text  // Additional context/notes
-  storagePath      String
-  storageUrl       String?
-  mimeType         String?
-  sizeBytes        Int?
+  name        String
+  type        DocumentType
+  customType  String? // For OTHER type - user-specified description
+  comments    String?      @db.Text // Additional context/notes
+  storagePath String
+  storageUrl  String?
+  mimeType    String?
+  sizeBytes   Int?
 
-  processingStatus ProcessingStatus @default(PENDING)
-  extractedText    String?  @db.Text
+  processingStatus ProcessingStatus        @default(PENDING)
+  extractedText    String?                 @db.Text
   factEvents       FactEvent[]
   extractionRuns   DocumentExtractionRun[]
 
   // Extraction quality tracking
-  extractionQuality   Int?      // 0-100 quality score
-  extractionMetrics   Json?     // Full quality metrics
-  extractionWarnings  Json?     // Array of warnings
-  requiresOCR         Boolean   @default(false)
-  ocrProcessed        Boolean   @default(false)
-  ocrText             String?   @db.Text  // Text from OCR if processed
+  extractionQuality  Int? // 0-100 quality score
+  extractionMetrics  Json? // Full quality metrics
+  extractionWarnings Json? // Array of warnings
+  requiresOCR        Boolean @default(false)
+  ocrProcessed       Boolean @default(false)
+  ocrText            String? @db.Text // Text from OCR if processed
 
   // F63: Content hash for dedup + cache invalidation
-  contentHash      String?   // SHA-256 hash of the file content
+  contentHash String? // SHA-256 hash of the file content
 
   // F62: Document versioning
-  version          Int       @default(1)
-  parentDocumentId String?   // Points to the original document this replaces
-  parentDocument   Document? @relation("DocumentVersions", fields: [parentDocumentId], references: [id])
+  version          Int        @default(1)
+  parentDocumentId String? // Points to the original document this replaces
+  parentDocument   Document?  @relation("DocumentVersions", fields: [parentDocumentId], references: [id])
   childVersions    Document[] @relation("DocumentVersions")
-  isLatest         Boolean   @default(true)
+  isLatest         Boolean    @default(true)
   supersededAt     DateTime? // When this version was replaced by a newer one
 
   // Live coaching session link (auto-generated post-call document)
-  liveSession      LiveSession?
+  liveSession LiveSession?
 
-  uploadedAt       DateTime @default(now())
+  // Analyses qui ont consomme ce document (remplace Analysis.documentIds String[])
+  analyses AnalysisDocument[]
+
+  uploadedAt DateTime @default(now())
 
   @@index([dealId])
   @@index([processingStatus])
@@ -350,21 +353,21 @@ enum ExtractionOverrideType {
 }
 
 model DocumentExtractionRun {
-  id                String              @id @default(cuid())
-  documentId        String
-  document          Document            @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  documentVersion   Int
+  id              String   @id @default(cuid())
+  documentId      String
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentVersion Int
 
-  status            ExtractionRunStatus @default(PENDING)
-  pageCount         Int                 @default(0)
-  pagesProcessed    Int                 @default(0)
-  pagesSucceeded    Int                 @default(0)
-  pagesFailed       Int                 @default(0)
-  pagesSkipped      Int                 @default(0)
-  coverageRatio     Decimal             @default(0) @db.Decimal(5, 4)
-  qualityScore      Int?
-  readyForAnalysis  Boolean             @default(false)
-  blockedReason     String?             @db.Text
+  status           ExtractionRunStatus @default(PENDING)
+  pageCount        Int                 @default(0)
+  pagesProcessed   Int                 @default(0)
+  pagesSucceeded   Int                 @default(0)
+  pagesFailed      Int                 @default(0)
+  pagesSkipped     Int                 @default(0)
+  coverageRatio    Decimal             @default(0) @db.Decimal(5, 4)
+  qualityScore     Int?
+  readyForAnalysis Boolean             @default(false)
+  blockedReason    String?             @db.Text
 
   extractionVersion String
   pipelineVersion   String
@@ -373,12 +376,12 @@ model DocumentExtractionRun {
   summaryMetrics    Json?
   warnings          Json?
 
-  startedAt         DateTime            @default(now())
-  completedAt       DateTime?
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
 
-  pages             DocumentExtractionPage[]
-  overrides         DocumentExtractionOverride[]
-  analysisLinks     AnalysisExtractionRun[]
+  pages         DocumentExtractionPage[]
+  overrides     DocumentExtractionOverride[]
+  analysisLinks AnalysisExtractionRun[]
 
   @@index([documentId])
   @@index([status])
@@ -387,32 +390,32 @@ model DocumentExtractionRun {
 }
 
 model DocumentExtractionPage {
-  id                    String              @id @default(cuid())
-  runId                 String
-  run                   DocumentExtractionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id    String                @id @default(cuid())
+  runId String
+  run   DocumentExtractionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
-  pageNumber            Int
-  status                ExtractionPageStatus
-  method                ExtractionMethod
-  charCount             Int                 @default(0)
-  wordCount             Int                 @default(0)
-  qualityScore          Int?
-  confidence            String?
-  hasTables             Boolean             @default(false)
-  hasCharts             Boolean             @default(false)
-  hasFinancialKeywords  Boolean             @default(false)
-  hasTeamKeywords       Boolean             @default(false)
-  hasMarketKeywords     Boolean             @default(false)
-  requiresOCR           Boolean             @default(false)
-  ocrProcessed          Boolean             @default(false)
-  contentHash           String?
-  artifactVersion       String?
-  artifact              Json?
-  pageImageHash         String?
-  errorMessage          String?             @db.Text
-  textPreview           String?             @db.Text
+  pageNumber           Int
+  status               ExtractionPageStatus
+  method               ExtractionMethod
+  charCount            Int                  @default(0)
+  wordCount            Int                  @default(0)
+  qualityScore         Int?
+  confidence           String?
+  hasTables            Boolean              @default(false)
+  hasCharts            Boolean              @default(false)
+  hasFinancialKeywords Boolean              @default(false)
+  hasTeamKeywords      Boolean              @default(false)
+  hasMarketKeywords    Boolean              @default(false)
+  requiresOCR          Boolean              @default(false)
+  ocrProcessed         Boolean              @default(false)
+  contentHash          String?
+  artifactVersion      String?
+  artifact             Json?
+  pageImageHash        String?
+  errorMessage         String?              @db.Text
+  textPreview          String?              @db.Text
 
-  createdAt             DateTime            @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([runId, pageNumber])
   @@index([runId])
@@ -439,36 +442,52 @@ model DocumentExtractionOverride {
 }
 
 model AnalysisExtractionRun {
-  id          String                @id @default(cuid())
-  analysisId  String
-  analysis    Analysis              @relation(fields: [analysisId], references: [id], onDelete: Cascade)
-  runId       String
-  run         DocumentExtractionRun @relation(fields: [runId], references: [id], onDelete: Restrict)
-  createdAt   DateTime              @default(now())
+  id         String                @id @default(cuid())
+  analysisId String
+  analysis   Analysis              @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  runId      String
+  run        DocumentExtractionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  createdAt  DateTime              @default(now())
 
   @@unique([analysisId, runId])
   @@index([analysisId])
   @@index([runId])
 }
 
+// Table de jointure Analysis ↔ Document.
+// Remplace Analysis.documentIds String[] qui ne pouvait pas contraindre les FK
+// et laissait des IDs obsoletes apres suppression de document.
+// Cascade des deux cotes: suppression d'une analyse ou d'un document nettoie la jointure.
+model AnalysisDocument {
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([analysisId, documentId])
+  @@index([documentId])
+  @@index([analysisId])
+}
+
 // RED FLAG
 model RedFlag {
-  id              String   @id @default(cuid())
-  dealId          String
-  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   category        RedFlagCategory
   title           String
-  description     String   @db.Text
+  description     String          @db.Text
   severity        RedFlagSeverity
-  confidenceScore Decimal  @db.Decimal(3, 2)
+  confidenceScore Decimal         @db.Decimal(3, 2)
 
-  evidence        Json
-  questionsToAsk  String[]
+  evidence       Json
+  questionsToAsk String[]
 
-  status          RedFlagStatus @default(OPEN)
+  status RedFlagStatus @default(OPEN)
 
-  detectedAt      DateTime @default(now())
+  detectedAt DateTime @default(now())
 
   @@index([dealId])
   @@index([severity])
@@ -498,48 +517,51 @@ enum RedFlagStatus {
 
 // ANALYSIS
 model Analysis {
-  id              String   @id @default(cuid())
-  dealId          String
-  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  type            AnalysisType
-  mode            String?  // tier1_complete, tier2_synthesis, full_analysis, etc.
-  status          AnalysisStatus @default(PENDING)
+  type   AnalysisType
+  mode   String? // tier1_complete, tier2_synthesis, full_analysis, etc.
+  status AnalysisStatus @default(PENDING)
 
   totalAgents     Int
-  completedAgents Int      @default(0)
+  completedAgents Int @default(0)
 
-  summary         String?  @db.Text
-  results         Json?    // Full agent results stored as JSON
+  summary String? @db.Text
+  results Json? // Full agent results stored as JSON
 
-  startedAt       DateTime?
-  completedAt     DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
 
-  totalCost       Decimal? @db.Decimal(6, 4)
-  totalTimeMs     Int?
+  totalCost   Decimal? @db.Decimal(6, 4)
+  totalTimeMs Int?
 
   // Cache invalidation: fingerprint of deal state at analysis time
   // If deal changes, fingerprint changes, cache is invalid
   dealFingerprint String?
-  useReAct        Boolean  @default(false)
+  useReAct        Boolean @default(false)
 
   // Document versioning: track which documents were analyzed
   // Allows detecting "stale" analyses when new docs are added
-  documentIds     String[] @default([])
+  // @deprecated — usage legacy. Nouveau chemin: relation AnalysisDocument (FK + CASCADE).
+  // Conservé le temps de la migration des consommateurs (lecture double source).
+  documentIds String[]           @default([])
+  documents   AnalysisDocument[]
 
   // Cached negotiation strategy (generated after Tier 3 analysis)
   negotiationStrategy Json?
 
   // Relations to sub-models (cascade delete)
-  scoredFindings    ScoredFinding[]
-  reasoningTraces   ReasoningTrace[]
-  debateRecords     DebateRecord[]
-  agentMessages     AgentMessage[]
-  stateTransitions  StateTransition[]
-  checkpoints       AnalysisCheckpoint[]
+  scoredFindings     ScoredFinding[]
+  reasoningTraces    ReasoningTrace[]
+  debateRecords      DebateRecord[]
+  agentMessages      AgentMessage[]
+  stateTransitions   StateTransition[]
+  checkpoints        AnalysisCheckpoint[]
   extractionRunLinks AnalysisExtractionRun[]
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([dealId])
   @@index([status])
@@ -560,19 +582,19 @@ enum AnalysisStatus {
 
 // BENCHMARK (pre-seeded) - Generic metrics
 model Benchmark {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  sector          String
-  stage           String
-  metricName      String
+  sector     String
+  stage      String
+  metricName String
 
-  p25             Decimal  @db.Decimal(10, 2)
-  median          Decimal  @db.Decimal(10, 2)
-  p75             Decimal  @db.Decimal(10, 2)
+  p25    Decimal @db.Decimal(10, 2)
+  median Decimal @db.Decimal(10, 2)
+  p75    Decimal @db.Decimal(10, 2)
 
-  source          String
+  source String
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([sector, stage, metricName])
   @@index([sector, stage])
@@ -581,19 +603,19 @@ model Benchmark {
 // SECTOR BENCHMARK - Rich sector-specific benchmarks (Tier 3 experts)
 // Stored as JSON for flexibility - can be updated without schema changes
 model SectorBenchmark {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  sector          String   @unique // e.g., "SaaS B2B", "FinTech", "Marketplace"
+  sector String @unique // e.g., "SaaS B2B", "FinTech", "Marketplace"
 
   // Full benchmark data as JSON (primaryMetrics, secondaryMetrics, exitMultiples, etc.)
-  data            Json
+  data Json
 
   // Versioning for cache invalidation and audit
-  version         Int      @default(1)
-  source          String?  // e.g., "OpenVC 2024", "First Round State of Startups"
+  version Int     @default(1)
+  source  String? // e.g., "OpenVC 2024", "First Round State of Startups"
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([sector])
 }
@@ -604,35 +626,35 @@ model SectorBenchmark {
 
 // SCORED FINDING - Individual metric with benchmark comparison
 model ScoredFinding {
-  id              String   @id @default(cuid())
-  analysisId      String
-  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
-  agentName       String
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  agentName  String
 
   metric          String
-  category        String   // financial, team, market, product, etc.
-  value           String?  // Stored as string for flexibility
+  category        String // financial, team, market, product, etc.
+  value           String? // Stored as string for flexibility
   unit            String
-  normalizedValue Float?   // 0-100 normalized score
+  normalizedValue Float? // 0-100 normalized score
 
-  percentile      Int?     // 0-100 percentile vs benchmark
-  assessment      String   // below_average, average, above_average, etc.
+  percentile Int? // 0-100 percentile vs benchmark
+  assessment String // below_average, average, above_average, etc.
 
   // Benchmark comparison
-  benchmarkData   Json?    // { sector, stage, p25, median, p75, source }
+  benchmarkData Json? // { sector, stage, p25, median, p75, source }
 
   // Confidence breakdown
-  confidenceLevel String   // high, medium, low, insufficient
-  confidenceScore Int      // 0-100
-  confidenceFactors Json?  // Array of { name, weight, score, reason }
+  confidenceLevel   String // high, medium, low, insufficient
+  confidenceScore   Int // 0-100
+  confidenceFactors Json? // Array of { name, weight, score, reason }
 
   // Evidence chain
-  evidence        Json?    // Array of { type, content, source, confidence }
+  evidence Json? // Array of { type, content, source, confidence }
 
   // Link to reasoning trace
   reasoningTraceId String?
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([analysisId])
   @@index([agentName])
@@ -641,25 +663,25 @@ model ScoredFinding {
 
 // REASONING TRACE - Full ReAct trace for an agent run
 model ReasoningTrace {
-  id              String   @id @default(cuid())
-  analysisId      String
-  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
-  agentName       String
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  agentName  String
 
-  taskDescription String   @db.Text
+  taskDescription String @db.Text
 
   // ReAct steps as JSON array
   // Each step: { stepNumber, thought, action?, observation?, confidenceAfterStep }
-  steps           Json
+  steps Json
 
   totalIterations Int
   finalConfidence Float
   executionTimeMs Int
 
   // Self-critique results if any
-  selfCritique    Json?    // { critiques, overallAssessment, suggestedImprovements }
+  selfCritique Json? // { critiques, overallAssessment, suggestedImprovements }
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([analysisId])
   @@index([agentName])
@@ -667,37 +689,37 @@ model ReasoningTrace {
 
 // DEBATE RECORD - Structured debate between agents
 model DebateRecord {
-  id              String   @id @default(cuid())
-  analysisId      String
-  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
-  contradictionId String   @unique
+  contradictionId String @unique
   topic           String
-  severity        String   // minor, moderate, major, critical
+  severity        String // minor, moderate, major, critical
 
   // Participating agents
-  participants    String[] // Array of agent names
+  participants String[] // Array of agent names
 
   // Claims being debated
-  claims          Json     // Array of { agentName, findingId, claim, value, confidence }
+  claims Json // Array of { agentName, findingId, claim, value, confidence }
 
   // Debate rounds
   // Each round: { roundNumber, positions: [{ agentName, position, evidence, counterArgs }] }
-  rounds          Json
+  rounds Json
 
   // Resolution
-  resolvedBy      String?  // consensus, arbitration, accepted
-  winner          String?  // Winning agent name
-  resolution      String?  @db.Text
-  finalValue      String?
+  resolvedBy String? // consensus, arbitration, accepted
+  winner     String? // Winning agent name
+  resolution String? @db.Text
+  finalValue String?
 
   // Resolution confidence
   resolutionConfidence Int?
 
-  status          String   @default("detected") // detected, debating, resolved, accepted
+  status String @default("detected") // detected, debating, resolved, accepted
 
-  createdAt       DateTime @default(now())
-  resolvedAt      DateTime?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
 
   @@index([analysisId])
   @@index([status])
@@ -705,28 +727,28 @@ model DebateRecord {
 
 // AGENT MESSAGE - Inter-agent communication log
 model AgentMessage {
-  id              String   @id @default(cuid())
-  analysisId      String
-  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
-  messageType     String   // finding, question, contradiction, request, response, etc.
-  topic           String   // financial, team, market, etc.
-  priority        String   // low, normal, high, critical
+  messageType String // finding, question, contradiction, request, response, etc.
+  topic       String // financial, team, market, etc.
+  priority    String // low, normal, high, critical
 
-  fromAgent       String
-  toAgent         String   // Can be "*" for broadcast
+  fromAgent String
+  toAgent   String // Can be "*" for broadcast
 
-  subject         String
-  payload         Json
+  subject String
+  payload Json
 
-  correlationId   String?  // For request/response pairs
-  replyTo         String?  // Message ID this is replying to
+  correlationId String? // For request/response pairs
+  replyTo       String? // Message ID this is replying to
 
-  acknowledged    Boolean  @default(false)
-  processedBy     String[] // Array of agent names that processed this
+  acknowledged Boolean  @default(false)
+  processedBy  String[] // Array of agent names that processed this
 
-  createdAt       DateTime @default(now())
-  expiresAt       DateTime?
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
 
   @@index([analysisId])
   @@index([fromAgent])
@@ -736,37 +758,37 @@ model AgentMessage {
 
 // STATE TRANSITION - Analysis state machine history
 model StateTransition {
-  id              String   @id @default(cuid())
-  analysisId      String
-  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
-  fromState       String
-  toState         String
-  trigger         String
+  fromState String
+  toState   String
+  trigger   String
 
-  metadata        Json?
+  metadata Json?
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([analysisId])
 }
 
 // ANALYSIS CHECKPOINT - Recovery points
 model AnalysisCheckpoint {
-  id              String   @id @default(cuid())
-  analysisId      String
-  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
-  state           String
+  state String
 
   completedAgents String[]
   pendingAgents   String[]
-  failedAgents    Json?    // Array of { agent, error, retries }
+  failedAgents    Json? // Array of { agent, error, retries }
 
-  findings        Json?    // Snapshot of findings at this point
-  results         Json?    // Snapshot of results
+  findings Json? // Snapshot of findings at this point
+  results  Json? // Snapshot of results
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([analysisId])
 }
@@ -777,33 +799,33 @@ model AnalysisCheckpoint {
 
 // AI BOARD SESSION - A deliberation session on a deal
 model AIBoardSession {
-  id              String   @id @default(cuid())
-  dealId          String
-  userId          String
+  id     String @id @default(cuid())
+  dealId String
+  userId String
 
-  status          BoardStatus @default(INITIALIZING)
+  status BoardStatus @default(INITIALIZING)
 
   // Verdict outcome
-  verdict         BoardVerdict?
-  consensusLevel  ConsensusLevel?
-  stoppingReason  String?  // consensus, majority_stable, max_rounds, stagnation
+  verdict        BoardVerdict?
+  consensusLevel ConsensusLevel?
+  stoppingReason String? // consensus, majority_stable, max_rounds, stagnation
 
   // Summary outputs
-  consensusPoints Json?    // Array of agreed points
-  frictionPoints  Json?    // Array of disagreed points
+  consensusPoints     Json? // Array of agreed points
+  frictionPoints      Json? // Array of disagreed points
   questionsForFounder Json? // Array of follow-up questions
 
   // Execution details
-  totalRounds     Int      @default(0)
-  totalCost       Decimal? @db.Decimal(8, 4)
-  totalTimeMs     Int?
+  totalRounds Int      @default(0)
+  totalCost   Decimal? @db.Decimal(8, 4)
+  totalTimeMs Int?
 
-  members         AIBoardMember[]
-  rounds          AIBoardRound[]
+  members AIBoardMember[]
+  rounds  AIBoardRound[]
 
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([dealId])
   @@index([userId])
@@ -827,75 +849,75 @@ enum BoardVerdict {
   VIGILANCE
   ALERT_DOMINANT
   NEED_MORE_INFO
-  GO        // @deprecated - kept for migration of existing data
-  NO_GO     // @deprecated - kept for migration of existing data
+  GO // @deprecated - kept for migration of existing data
+  NO_GO // @deprecated - kept for migration of existing data
 }
 
 enum ConsensusLevel {
-  UNANIMOUS      // 4/4
-  STRONG         // 3/4
-  SPLIT          // 2/2
-  MINORITY       // 1/3
+  UNANIMOUS // 4/4
+  STRONG // 3/4
+  SPLIT // 2/2
+  MINORITY // 1/3
 }
 
 // AI BOARD MEMBER - A participating LLM in the board
 model AIBoardMember {
-  id              String   @id @default(cuid())
-  sessionId       String
-  session         AIBoardSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String         @id @default(cuid())
+  sessionId String
+  session   AIBoardSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  modelId         String   // e.g., "CLAUDE_OPUS_45", "GPT4_TURBO"
-  modelName       String   // Human-readable name
-  color           String   // Color for UI display
+  modelId   String // e.g., "CLAUDE_OPUS_45", "GPT4_TURBO"
+  modelName String // Human-readable name
+  color     String // Color for UI display
 
   // Initial analysis
-  initialAnalysis Json?    // { verdict, arguments, concerns, confidence }
+  initialAnalysis Json? // { verdict, arguments, concerns, confidence }
 
   // Final vote
-  finalVote       BoardVerdict?
-  finalConfidence Int?     // 0-100
-  voteJustification String? @db.Text
+  finalVote         BoardVerdict?
+  finalConfidence   Int? // 0-100
+  voteJustification String?       @db.Text
 
   // Execution details
-  analysisCost    Decimal? @db.Decimal(6, 4)
-  debateCost      Decimal? @db.Decimal(6, 4)
-  voteCost        Decimal? @db.Decimal(6, 4)
-  totalCost       Decimal? @db.Decimal(6, 4)
+  analysisCost Decimal? @db.Decimal(6, 4)
+  debateCost   Decimal? @db.Decimal(6, 4)
+  voteCost     Decimal? @db.Decimal(6, 4)
+  totalCost    Decimal? @db.Decimal(6, 4)
 
   // Error tracking
-  failedAt        String?  // Phase where it failed
-  errorMessage    String?
+  failedAt     String? // Phase where it failed
+  errorMessage String?
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([sessionId])
 }
 
 // AI BOARD ROUND - A debate round
 model AIBoardRound {
-  id              String   @id @default(cuid())
-  sessionId       String
-  session         AIBoardSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String         @id @default(cuid())
+  sessionId String
+  session   AIBoardSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  roundNumber     Int
-  roundType       RoundType
+  roundNumber Int
+  roundType   RoundType
 
   // Responses from each member
   // Array of { memberId, modelId, response, positionChanged, respondingTo, timestamp }
-  responses       Json
+  responses Json
 
   // Consensus check after this round
-  currentVerdicts Json?    // { memberId: verdict }
+  currentVerdicts  Json? // { memberId: verdict }
   consensusReached Boolean @default(false)
-  majorityStable  Boolean  @default(false)
+  majorityStable   Boolean @default(false)
 
-  totalCost       Decimal? @db.Decimal(6, 4)
-  durationMs      Int?
+  totalCost  Decimal? @db.Decimal(6, 4)
+  durationMs Int?
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  @@index([sessionId])
   @@unique([sessionId, roundNumber])
+  @@index([sessionId])
 }
 
 enum RoundType {
@@ -906,46 +928,46 @@ enum RoundType {
 
 // USER BOARD CREDITS - Credits for AI Board usage
 model UserBoardCredits {
-  id              String   @id @default(cuid())
-  userId          String   @unique
+  id     String @id @default(cuid())
+  userId String @unique
 
   // Monthly allocation based on subscription
-  monthlyAllocation Int    @default(0)  // 0 for FREE, 5 for PRO
-  usedThisMonth   Int      @default(0)
+  monthlyAllocation Int @default(0) // 0 for FREE, 5 for PRO
+  usedThisMonth     Int @default(0)
 
   // Extra purchased credits (never expire)
-  extraCredits    Int      @default(0)
+  extraCredits Int @default(0)
 
   // Reset tracking
-  lastResetAt     DateTime @default(now())
+  lastResetAt DateTime @default(now())
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
 
 // USER DEAL USAGE - Track monthly deal analysis usage
 model UserDealUsage {
-  id              String   @id @default(cuid())
-  userId          String   @unique
+  id     String @id @default(cuid())
+  userId String @unique
 
   // Monthly limits based on subscription
   // FREE = 5 deals/month (Tier 1 only)
   // PRO = unlimited
-  monthlyLimit    Int      @default(5)
-  usedThisMonth   Int      @default(0)
+  monthlyLimit  Int @default(5)
+  usedThisMonth Int @default(0)
 
   // Track highest tier used this month (for analytics)
-  tier1Count      Int      @default(0)
-  tier2Count      Int      @default(0)
-  tier3Count      Int      @default(0)
+  tier1Count Int @default(0)
+  tier2Count Int @default(0)
+  tier3Count Int @default(0)
 
   // Reset tracking
-  lastResetAt     DateTime @default(now())
+  lastResetAt DateTime @default(now())
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
@@ -956,79 +978,79 @@ model UserDealUsage {
 
 // COMPANY - Master record for each startup
 model Company {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Identity
-  name            String   // Official company name
-  slug            String   @unique // Normalized for deduplication (lowercase, no special chars)
-  aliases         String[] // Alternative names, previous names
+  name    String // Official company name
+  slug    String   @unique // Normalized for deduplication (lowercase, no special chars)
+  aliases String[] // Alternative names, previous names
 
   // Description
-  description     String?  @db.Text
+  description      String? @db.Text
   shortDescription String? // One-liner
-  website         String?
-  linkedinUrl     String?
-  crunchbaseUrl   String?
+  website          String?
+  linkedinUrl      String?
+  crunchbaseUrl    String?
 
   // Classification
-  industry        String?  // Primary industry from taxonomy
-  subIndustry     String?  // More specific classification
-  businessModel   String?  // SaaS, Marketplace, Transactional, Hardware, Services
-  targetMarket    String?  // B2B, B2C, B2B2C
-  useCases        String[] // Problems solved (for competitor matching)
+  industry      String? // Primary industry from taxonomy
+  subIndustry   String? // More specific classification
+  businessModel String? // SaaS, Marketplace, Transactional, Hardware, Services
+  targetMarket  String? // B2B, B2C, B2B2C
+  useCases      String[] // Problems solved (for competitor matching)
 
   // Location
-  headquarters    String?  // Country
-  city            String?
-  region          String?  // europe, north_america, asia, etc.
+  headquarters String? // Country
+  city         String?
+  region       String? // europe, north_america, asia, etc.
 
   // Company details
-  foundedYear     Int?
-  founders        Json?    // Array of {name, role, background, linkedinUrl}
-  employeeCount   Int?
-  employeeRange   String?  // "1-10", "11-50", "51-200", etc.
+  foundedYear   Int?
+  founders      Json? // Array of {name, role, background, linkedinUrl}
+  employeeCount Int?
+  employeeRange String? // "1-10", "11-50", "51-200", etc.
 
   // Status
   status          CompanyStatus @default(ACTIVE)
-  statusDetails   String?  // e.g., "Acquis par Google en 2024", "Liquidation judiciaire"
+  statusDetails   String? // e.g., "Acquis par Google en 2024", "Liquidation judiciaire"
   statusUpdatedAt DateTime? // Last time status was verified
-  acquiredBy      String?  // If acquired, by whom
+  acquiredBy      String? // If acquired, by whom
   acquiredDate    DateTime?
   shutdownDate    DateTime?
 
   // Financials (latest known)
-  totalRaised     Decimal? @db.Decimal(14, 2)
-  lastValuation   Decimal? @db.Decimal(14, 2)
-  lastRoundStage  String?
-  lastRoundDate   DateTime?
+  totalRaised    Decimal?  @db.Decimal(14, 2)
+  lastValuation  Decimal?  @db.Decimal(14, 2)
+  lastRoundStage String?
+  lastRoundDate  DateTime?
 
   // Metrics (latest known)
-  arr             Decimal? @db.Decimal(14, 2)
-  mrr             Decimal? @db.Decimal(14, 2)
-  revenue         Decimal? @db.Decimal(14, 2)
-  growthRate      Int?     // YoY growth %
-  customers       Int?
-  nrr             Int?     // Net Revenue Retention %
-  isProfitable    Boolean?
+  arr              Decimal? @db.Decimal(14, 2)
+  mrr              Decimal? @db.Decimal(14, 2)
+  revenue          Decimal? @db.Decimal(14, 2)
+  growthRate       Int? // YoY growth %
+  customers        Int?
+  nrr              Int? // Net Revenue Retention %
+  isProfitable     Boolean?
   isEbitdaPositive Boolean?
 
   // Competitive landscape
-  competitors     String[] // Slugs of competitor companies
-  notableClients  String[]
+  competitors    String[] // Slugs of competitor companies
+  notableClients String[]
 
   // Relations
-  fundingRounds   FundingRound[]
-  enrichments     CompanyEnrichment[]
+  fundingRounds FundingRound[]
+  enrichments   CompanyEnrichment[]
 
   // Metadata
-  dataQuality     Int?     @default(0) // 0-100 score
-  lastEnrichedAt  DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  dataQuality    Int?      @default(0) // 0-100 score
+  lastEnrichedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   // Enrichment locking (prevent concurrent processing)
   enrichmentLockedAt DateTime? // When the lock was acquired
-  enrichmentLockedBy String?   // Run ID that holds the lock
+  enrichmentLockedBy String? // Run ID that holds the lock
 
   @@index([name])
   @@index([industry])
@@ -1049,25 +1071,25 @@ enum CompanyStatus {
 
 // COMPANY ENRICHMENT - History of data additions/updates
 model CompanyEnrichment {
-  id              String   @id @default(cuid())
-  companyId       String
-  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   // What was added/updated
-  source          EnrichmentSource
-  sourceUrl       String?  // Article URL, search result, etc.
-  sourceDate      DateTime? // Date of the source
+  source     EnrichmentSource
+  sourceUrl  String? // Article URL, search result, etc.
+  sourceDate DateTime? // Date of the source
 
   // Data changes
-  fieldsUpdated   String[] // List of fields that were updated
-  previousData    Json?    // Previous values (for audit)
-  newData         Json     // New values added
+  fieldsUpdated String[] // List of fields that were updated
+  previousData  Json? // Previous values (for audit)
+  newData       Json // New values added
 
   // Quality
-  confidence      Int?     // 0-100
-  verifiedBy      String?  // If manually verified
+  confidence Int? // 0-100
+  verifiedBy String? // If manually verified
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([companyId])
   @@index([source])
@@ -1075,12 +1097,12 @@ model CompanyEnrichment {
 }
 
 enum EnrichmentSource {
-  ARTICLE_IMPORT    // From FrenchWeb, Maddyness, etc.
-  WEB_SEARCH        // From searching for competitors/info
-  PITCH_DECK        // From analyzing a deal's pitch deck
-  MANUAL            // Manual data entry
-  API               // From external API (Crunchbase, etc.)
-  LLM_EXTRACTION    // From LLM analysis
+  ARTICLE_IMPORT // From FrenchWeb, Maddyness, etc.
+  WEB_SEARCH // From searching for competitors/info
+  PITCH_DECK // From analyzing a deal's pitch deck
+  MANUAL // Manual data entry
+  API // From external API (Crunchbase, etc.)
+  LLM_EXTRACTION // From LLM analysis
 }
 
 // ============================================================================
@@ -1089,93 +1111,93 @@ enum EnrichmentSource {
 
 // FUNDING ROUND - Individual funding event
 model FundingRound {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Link to Company (optional for migration, will become required)
-  companyId       String?
-  company         Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
 
   // Company info (legacy - will be deprecated after migration)
-  companyName     String
-  companySlug     String?  // Normalized name for deduplication
-  description     String?  @db.Text
-  tagline         String?  // One-liner (e.g., "Slack for healthcare")
-  website         String?
-  linkedinUrl     String?  // LinkedIn company page
+  companyName String
+  companySlug String? // Normalized name for deduplication
+  description String? @db.Text
+  tagline     String? // One-liner (e.g., "Slack for healthcare")
+  website     String?
+  linkedinUrl String? // LinkedIn company page
 
   // ============================================================================
   // USE CASES & BUSINESS MODEL (for competitor detection)
   // ============================================================================
-  useCases        String[] // Problems solved (e.g., ["invoice management", "expense tracking"])
-  businessModel   String?  // SaaS, Marketplace, Transactional, Hardware, Services
-  targetMarket    String?  // B2B, B2C, B2B2C
+  useCases      String[] // Problems solved (e.g., ["invoice management", "expense tracking"])
+  businessModel String? // SaaS, Marketplace, Transactional, Hardware, Services
+  targetMarket  String? // B2B, B2C, B2B2C
 
   // Funding details
-  amount          Decimal? @db.Decimal(14, 2) // In original currency
-  amountUsd       Decimal? @db.Decimal(14, 2) // Converted to USD for comparison
-  currency        String   @default("USD")
+  amount    Decimal? @db.Decimal(14, 2) // In original currency
+  amountUsd Decimal? @db.Decimal(14, 2) // Converted to USD for comparison
+  currency  String   @default("USD")
 
   // Round info
-  stage           String?  // seed, series_a, series_b, etc.
-  stageNormalized String?  // Normalized stage for filtering
+  stage           String? // seed, series_a, series_b, etc.
+  stageNormalized String? // Normalized stage for filtering
 
   // Location (legacy - prefer Company.headquarters)
-  geography       String?  // Country
-  city            String?
-  region          String?  // e.g., "Europe", "North America"
+  geography String? // Country
+  city      String?
+  region    String? // e.g., "Europe", "North America"
 
   // Sector (legacy - prefer Company.industry)
-  sector          String?
+  sector           String?
   sectorNormalized String? // Normalized sector for filtering
-  subSector       String?
+  subSector        String?
 
   // Investors for THIS round
-  investors       String[] // Array of investor names
-  investorsFunds  String[] // VC/PE funds
-  investorsAngels String[] // Business angels (individuals)
+  investors           String[] // Array of investor names
+  investorsFunds      String[] // VC/PE funds
+  investorsAngels     String[] // Business angels (individuals)
   investorsCorporates String[] // Corporate investors
-  leadInvestor    String?
+  leadInvestor        String?
 
   // ============================================================================
   // VALUATION & METRICS AT RAISE (for benchmark comparison)
   // ============================================================================
-  valuationPre    Decimal? @db.Decimal(14, 2)
-  valuationPost   Decimal? @db.Decimal(14, 2)
+  valuationPre      Decimal? @db.Decimal(14, 2)
+  valuationPost     Decimal? @db.Decimal(14, 2)
   valuationMultiple Float? // Multiple ARR (e.g., 25x) - calculated or reported
-  isDownRound     Boolean? // True if valuation < previous round
+  isDownRound       Boolean? // True if valuation < previous round
 
   // Metrics at the time of raise (for accurate benchmarking)
-  arrAtRaise      Decimal? @db.Decimal(14, 2) // ARR at time of funding
-  mrrAtRaise      Decimal? @db.Decimal(14, 2) // MRR at time of funding
+  arrAtRaise        Decimal? @db.Decimal(14, 2) // ARR at time of funding
+  mrrAtRaise        Decimal? @db.Decimal(14, 2) // MRR at time of funding
   growthRateAtRaise Float? // YoY growth % at time of funding
-  employeesAtRaise Int?    // Headcount at time of funding
+  employeesAtRaise  Int? // Headcount at time of funding
 
   // Dates
-  fundingDate     DateTime?
-  announcedDate   DateTime?
+  fundingDate   DateTime?
+  announcedDate DateTime?
 
   // Source tracking
-  source          String   // "kaggle_crunchbase", "frenchweb", "techcrunch", etc.
-  sourceUrl       String?
-  sourceId        String?  // Original ID from source (for deduplication)
+  source    String // "kaggle_crunchbase", "frenchweb", "techcrunch", etc.
+  sourceUrl String?
+  sourceId  String? // Original ID from source (for deduplication)
 
   // Metadata (legacy - prefer Company fields)
-  employeeCount   Int?
-  foundedYear     Int?
+  employeeCount Int?
+  foundedYear   Int?
 
   // Use of funds for this round
-  useOfFunds      String?  @db.Text
-  hiringPlans     String?
-  expansionPlans  String?
+  useOfFunds     String? @db.Text
+  hiringPlans    String?
+  expansionPlans String?
 
   // Enriched data (from LLM extraction)
-  enrichedData    Json?    // Full extracted data
-  confidenceScore Int?     // 0-100 extraction confidence
-  isEnriched      Boolean  @default(false)
-  isMigrated      Boolean  @default(false) // True when linked to Company
+  enrichedData    Json? // Full extracted data
+  confidenceScore Int? // 0-100 extraction confidence
+  isEnriched      Boolean @default(false)
+  isMigrated      Boolean @default(false) // True when linked to Company
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([source, sourceId]) // Prevent duplicate imports
   // Note: Duplicate round prevention handled in application logic
@@ -1197,32 +1219,32 @@ model FundingRound {
 
 // FUNDING SOURCE - Track data sources and their freshness
 model FundingSource {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  name            String   @unique // "kaggle_crunchbase", "frenchweb", etc.
-  displayName     String
-  description     String?
-  sourceType      String   @default("rss") // "rss", "api", "scrape", "archive"
-  sourceUrl       String?  // Base URL for the source
+  name        String  @unique // "kaggle_crunchbase", "frenchweb", etc.
+  displayName String
+  description String?
+  sourceType  String  @default("rss") // "rss", "api", "scrape", "archive"
+  sourceUrl   String? // Base URL for the source
 
   // Stats
-  totalRounds     Int      @default(0)
+  totalRounds     Int       @default(0)
   lastImportAt    DateTime?
   lastImportCount Int?
 
   // Pagination state for historical imports
-  cursor          String?  // Current position (page number, date, offset, etc.)
-  cursorType      String?  // "page", "date", "offset", "token"
-  historicalImportComplete Boolean @default(false)
-  oldestDateImported DateTime? // Track how far back we've gone
+  cursor                   String? // Current position (page number, date, offset, etc.)
+  cursorType               String? // "page", "date", "offset", "token"
+  historicalImportComplete Boolean   @default(false)
+  oldestDateImported       DateTime? // Track how far back we've gone
 
   // Config
-  isActive        Boolean  @default(true)
-  autoRefresh     Boolean  @default(false)
+  isActive             Boolean @default(true)
+  autoRefresh          Boolean @default(false)
   refreshIntervalHours Int?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ============================================================================
@@ -1231,33 +1253,33 @@ model FundingSource {
 
 // COST EVENT - Individual API call for detailed tracking
 model CostEvent {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Linking
-  userId          String   // Owner of the deal
-  dealId          String
-  analysisId      String?  // Optional: linked analysis
-  boardSessionId  String?  // Optional: linked board session
+  userId         String // Owner of the deal
+  dealId         String
+  analysisId     String? // Optional: linked analysis
+  boardSessionId String? // Optional: linked board session
 
   // Call details
-  model           String   // e.g., "claude-3-5-sonnet", "gpt-4o"
-  agent           String   // e.g., "deal-screener", "market-expert", "board-opus"
-  operation       String   // e.g., "screening", "extraction", "board-analysis", "board-debate"
+  model     String // e.g., "claude-3-5-sonnet", "gpt-4o"
+  agent     String // e.g., "deal-screener", "market-expert", "board-opus"
+  operation String // e.g., "screening", "extraction", "board-analysis", "board-debate"
 
   // Tokens
-  inputTokens     Int
-  outputTokens    Int
+  inputTokens  Int
+  outputTokens Int
 
   // Cost (in USD)
-  cost            Decimal  @db.Decimal(8, 6)
+  cost Decimal @db.Decimal(8, 6)
 
   // Execution time
-  durationMs      Int?
+  durationMs Int?
 
   // Additional context
-  metadata        Json?    // Any extra context for debugging
+  metadata Json? // Any extra context for debugging
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([dealId])
@@ -1271,35 +1293,35 @@ model CostEvent {
 
 // COST ALERT - Persisted alerts for threshold violations
 model CostAlert {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Alert details
-  type            CostAlertType
-  severity        CostAlertSeverity
+  type     CostAlertType
+  severity CostAlertSeverity
 
-  message         String   @db.Text
+  message String @db.Text
 
   // Context
-  userId          String?
-  dealId          String?
-  dealName        String?
-  analysisId      String?
+  userId     String?
+  dealId     String?
+  dealName   String?
+  analysisId String?
 
   // Values
-  currentCost     Decimal  @db.Decimal(10, 4)
-  threshold       Decimal  @db.Decimal(10, 4)
+  currentCost Decimal @db.Decimal(10, 4)
+  threshold   Decimal @db.Decimal(10, 4)
 
   // Status
-  acknowledged    Boolean  @default(false)
-  acknowledgedAt  DateTime?
-  acknowledgedBy  String?  // Admin user ID
+  acknowledged   Boolean   @default(false)
+  acknowledgedAt DateTime?
+  acknowledgedBy String? // Admin user ID
 
   // Notification tracking
-  notificationSent Boolean @default(false)
-  notificationSentAt DateTime?
+  notificationSent    Boolean   @default(false)
+  notificationSentAt  DateTime?
   notificationChannel String? // "email", "in-app"
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([dealId])
@@ -1310,11 +1332,11 @@ model CostAlert {
 }
 
 enum CostAlertType {
-  DEAL_THRESHOLD      // Deal total cost exceeded
-  USER_DAILY          // User daily cost exceeded
-  ANALYSIS_ANOMALY    // Single analysis cost anomaly
-  BOARD_COST          // Board session cost exceeded
-  MONTHLY_BUDGET      // Monthly budget threshold
+  DEAL_THRESHOLD // Deal total cost exceeded
+  USER_DAILY // User daily cost exceeded
+  ANALYSIS_ANOMALY // Single analysis cost anomaly
+  BOARD_COST // Board session cost exceeded
+  MONTHLY_BUDGET // Monthly budget threshold
 }
 
 enum CostAlertSeverity {
@@ -1325,27 +1347,27 @@ enum CostAlertSeverity {
 
 // COST THRESHOLD CONFIG - Configurable thresholds per user/global
 model CostThreshold {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Scope: null = global, userId = user-specific
-  userId          String?  @unique
+  userId String? @unique
 
   // Thresholds (in USD)
-  dealWarning     Decimal  @db.Decimal(8, 2) @default(5.00)
-  dealCritical    Decimal  @db.Decimal(8, 2) @default(15.00)
-  userDailyWarning Decimal @db.Decimal(8, 2) @default(10.00)
-  userDailyCritical Decimal @db.Decimal(8, 2) @default(25.00)
-  analysisMax     Decimal  @db.Decimal(8, 2) @default(5.00)
-  boardMax        Decimal  @db.Decimal(8, 2) @default(2.00)
-  monthlyBudget   Decimal? @db.Decimal(10, 2) // Optional monthly cap
+  dealWarning       Decimal  @default(5.00) @db.Decimal(8, 2)
+  dealCritical      Decimal  @default(15.00) @db.Decimal(8, 2)
+  userDailyWarning  Decimal  @default(10.00) @db.Decimal(8, 2)
+  userDailyCritical Decimal  @default(25.00) @db.Decimal(8, 2)
+  analysisMax       Decimal  @default(5.00) @db.Decimal(8, 2)
+  boardMax          Decimal  @default(2.00) @db.Decimal(8, 2)
+  monthlyBudget     Decimal? @db.Decimal(10, 2) // Optional monthly cap
 
   // Notification preferences
-  notifyOnWarning Boolean  @default(true)
-  notifyOnCritical Boolean @default(true)
+  notifyOnWarning   Boolean @default(true)
+  notifyOnCritical  Boolean @default(true)
   notificationEmail String?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
@@ -1356,42 +1378,42 @@ model CostThreshold {
 
 // MAINTENANCE RUN - Individual execution of a maintenance agent
 model MaintenanceRun {
-  id              String            @id @default(cuid())
+  id String @id @default(cuid())
 
-  agent           MaintenanceAgent
-  status          MaintenanceStatus @default(PENDING)
+  agent  MaintenanceAgent
+  status MaintenanceStatus @default(PENDING)
 
   // Trigger info
-  triggeredBy     TriggerSource     @default(CRON)
-  parentRunId     String?           // If retry, link to original run
-  retryAttempt    Int               @default(0)  // 0 = original, 1 = 1st retry, etc.
+  triggeredBy  TriggerSource @default(CRON)
+  parentRunId  String? // If retry, link to original run
+  retryAttempt Int           @default(0) // 0 = original, 1 = 1st retry, etc.
 
   // Execution timing
-  scheduledAt     DateTime?         // When it was supposed to run
-  startedAt       DateTime?
-  completedAt     DateTime?
-  durationMs      Int?
+  scheduledAt DateTime? // When it was supposed to run
+  startedAt   DateTime?
+  completedAt DateTime?
+  durationMs  Int?
 
   // Stats
-  itemsProcessed  Int               @default(0)
-  itemsUpdated    Int               @default(0)
-  itemsCreated    Int               @default(0)
-  itemsFailed     Int               @default(0)
-  itemsSkipped    Int               @default(0)
+  itemsProcessed Int @default(0)
+  itemsUpdated   Int @default(0)
+  itemsCreated   Int @default(0)
+  itemsFailed    Int @default(0)
+  itemsSkipped   Int @default(0)
 
   // Details (agent-specific)
-  details         Json?             // { duplicatesMerged, sourcesScraped, companiesEnriched, ... }
-  errors          Json?             // Array of { message, stack, itemId? }
+  details Json? // { duplicatesMerged, sourcesScraped, companiesEnriched, ... }
+  errors  Json? // Array of { message, stack, itemId? }
 
   // Cost tracking
-  totalCost       Decimal?          @db.Decimal(8, 4)
-  llmCalls        Int               @default(0)
-  webSearches     Int               @default(0)
+  totalCost   Decimal? @db.Decimal(8, 4)
+  llmCalls    Int      @default(0)
+  webSearches Int      @default(0)
 
   // Supervisor tracking
   supervisorCheck SupervisorCheck?
 
-  createdAt       DateTime          @default(now())
+  createdAt DateTime @default(now())
 
   @@index([agent])
   @@index([status])
@@ -1402,30 +1424,30 @@ model MaintenanceRun {
 
 // SUPERVISOR CHECK - Verification of a maintenance run
 model SupervisorCheck {
-  id              String            @id @default(cuid())
+  id String @id @default(cuid())
 
   // Link to the run being checked
-  runId           String            @unique
-  run             MaintenanceRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId String         @unique
+  run   MaintenanceRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   // Check result
-  checkStatus     CheckStatus
-  checkDetails    Json?             // { expectedMinItems, actualItems, qualityBefore, qualityAfter, ... }
+  checkStatus  CheckStatus
+  checkDetails Json? // { expectedMinItems, actualItems, qualityBefore, qualityAfter, ... }
 
   // Action taken
-  actionTaken     SupervisorAction  @default(NONE)
-  retryRunId      String?           // ID of the retry run if triggered
+  actionTaken SupervisorAction @default(NONE)
+  retryRunId  String? // ID of the retry run if triggered
 
   // Notifications sent
-  telegramSent    Boolean           @default(false)
-  telegramMsgId   String?           // Message ID for potential updates
-  emailSent       Boolean           @default(false)
+  telegramSent  Boolean @default(false)
+  telegramMsgId String? // Message ID for potential updates
+  emailSent     Boolean @default(false)
 
   // For retry verification
-  isRetryCheck    Boolean           @default(false)
-  retryCheckAt    DateTime?         // When to check the retry result
+  isRetryCheck Boolean   @default(false)
+  retryCheckAt DateTime? // When to check the retry result
 
-  checkedAt       DateTime          @default(now())
+  checkedAt DateTime @default(now())
 
   @@index([checkStatus])
   @@index([checkedAt])
@@ -1434,46 +1456,46 @@ model SupervisorCheck {
 
 // WEEKLY REPORT - Generated summary of maintenance activity
 model WeeklyReport {
-  id              String            @id @default(cuid())
+  id String @id @default(cuid())
 
   // Period covered
-  weekStart       DateTime
-  weekEnd         DateTime
+  weekStart DateTime
+  weekEnd   DateTime
 
   // Overall health assessment
-  overallStatus   HealthStatus
+  overallStatus HealthStatus
 
   // Agent summaries (JSON for flexibility)
-  cleanerSummary  Json              // { runs, successful, failed, itemsProcessed, ... }
-  sourcerSummary  Json
+  cleanerSummary   Json // { runs, successful, failed, itemsProcessed, ... }
+  sourcerSummary   Json
   completerSummary Json
 
   // Data quality metrics comparison
-  dataQualityStart Json             // Snapshot at week start
-  dataQualityEnd   Json             // Snapshot at week end
-  qualityDelta     Json             // Computed changes
+  dataQualityStart Json // Snapshot at week start
+  dataQualityEnd   Json // Snapshot at week end
+  qualityDelta     Json // Computed changes
 
   // Issues & recovery stats
-  issuesDetected  Int               @default(0)
-  retriesTriggered Int              @default(0)
-  retriesSuccessful Int             @default(0)
-  retriesFailed    Int              @default(0)
+  issuesDetected    Int @default(0)
+  retriesTriggered  Int @default(0)
+  retriesSuccessful Int @default(0)
+  retriesFailed     Int @default(0)
 
   // Cost summary
-  totalCost       Decimal           @db.Decimal(8, 4) @default(0)
-  costByAgent     Json?             // { cleaner: 0, sourcer: 0.12, completer: 1.87 }
+  totalCost   Decimal @default(0) @db.Decimal(8, 4)
+  costByAgent Json? // { cleaner: 0, sourcer: 0.12, completer: 1.87 }
 
   // Delivery tracking
-  emailSent       Boolean           @default(false)
-  emailSentAt     DateTime?
-  telegramSent    Boolean           @default(false)
-  telegramSentAt  DateTime?
+  emailSent      Boolean   @default(false)
+  emailSentAt    DateTime?
+  telegramSent   Boolean   @default(false)
+  telegramSentAt DateTime?
 
   // Raw report content (for re-sending)
-  reportHtml      String?           @db.Text
-  reportText      String?           @db.Text
+  reportHtml String? @db.Text
+  reportText String? @db.Text
 
-  generatedAt     DateTime          @default(now())
+  generatedAt DateTime @default(now())
 
   @@unique([weekStart])
   @@index([overallStatus])
@@ -1482,45 +1504,45 @@ model WeeklyReport {
 
 // DATA QUALITY SNAPSHOT - Point-in-time DB health metrics
 model DataQualitySnapshot {
-  id              String            @id @default(cuid())
+  id String @id @default(cuid())
 
   // Counts
-  totalCompanies  Int
+  totalCompanies     Int
   totalFundingRounds Int
 
   // Quality metrics
-  avgDataQuality  Float             // 0-100 average
-  companiesWithIndustry Int
+  avgDataQuality           Float // 0-100 average
+  companiesWithIndustry    Int
   companiesWithDescription Int
-  companiesWithFounders Int
-  companiesWithWebsite Int
-  companiesWithInvestors Int
+  companiesWithFounders    Int
+  companiesWithWebsite     Int
+  companiesWithInvestors   Int
 
   // Activity Status metrics
-  companiesActive    Int            @default(0)
-  companiesShutdown  Int            @default(0)
-  companiesAcquired  Int            @default(0)
-  companiesInactive  Int            @default(0)
-  companiesStatusUnknown Int        @default(0)
+  companiesActive        Int @default(0)
+  companiesShutdown      Int @default(0)
+  companiesAcquired      Int @default(0)
+  companiesInactive      Int @default(0)
+  companiesStatusUnknown Int @default(0)
 
   // Issues
-  duplicateCompanies Int            @default(0)
-  orphanedRounds     Int            @default(0)
-  staleCompanies     Int            @default(0)  // Not enriched in 30+ days
+  duplicateCompanies Int @default(0)
+  orphanedRounds     Int @default(0)
+  staleCompanies     Int @default(0) // Not enriched in 30+ days
 
   // Percentages (computed)
   withIndustryPct    Float
   withDescriptionPct Float
   withFoundersPct    Float
   withInvestorsPct   Float
-  withStatusPct      Float          // Companies with known status
+  withStatusPct      Float // Companies with known status
   stalePct           Float
 
   // Trigger (what caused this snapshot)
-  trigger         String            @default("scheduled") // scheduled, before_agent, after_agent, manual
-  relatedRunId    String?           // If triggered by agent run
+  trigger      String  @default("scheduled") // scheduled, before_agent, after_agent, manual
+  relatedRunId String? // If triggered by agent run
 
-  capturedAt      DateTime          @default(now())
+  capturedAt DateTime @default(now())
 
   @@index([capturedAt])
   @@index([trigger])
@@ -1534,74 +1556,74 @@ enum MaintenanceAgent {
 }
 
 enum MaintenanceStatus {
-  PENDING      // Created, not yet started
-  RUNNING      // Currently executing
-  COMPLETED    // Finished successfully
-  PARTIAL      // Finished but with some failures
-  FAILED       // Total failure
-  TIMEOUT      // Exceeded max duration (2h)
-  CANCELLED    // Cancelled by supervisor or manual
+  PENDING // Created, not yet started
+  RUNNING // Currently executing
+  COMPLETED // Finished successfully
+  PARTIAL // Finished but with some failures
+  FAILED // Total failure
+  TIMEOUT // Exceeded max duration (2h)
+  CANCELLED // Cancelled by supervisor or manual
 }
 
 enum TriggerSource {
-  CRON         // Scheduled cron job
-  SUPERVISOR   // Retry triggered by supervisor
-  MANUAL       // Manual trigger via admin/telegram
-  WEBHOOK      // External webhook
+  CRON // Scheduled cron job
+  SUPERVISOR // Retry triggered by supervisor
+  MANUAL // Manual trigger via admin/telegram
+  WEBHOOK // External webhook
 }
 
 enum CheckStatus {
-  PASSED       // All OK
-  WARNING      // OK but degraded metrics
-  FAILED       // The run failed
-  MISSED       // The run didn't happen
-  TIMEOUT      // The run timed out
-  PENDING      // Check scheduled but not yet performed
+  PASSED // All OK
+  WARNING // OK but degraded metrics
+  FAILED // The run failed
+  MISSED // The run didn't happen
+  TIMEOUT // The run timed out
+  PENDING // Check scheduled but not yet performed
 }
 
 enum SupervisorAction {
-  NONE         // No action needed
-  RETRY        // Triggered a retry
-  ALERT_ONLY   // Alert sent (max retries reached)
-  ESCALATE     // Critical escalation
+  NONE // No action needed
+  RETRY // Triggered a retry
+  ALERT_ONLY // Alert sent (max retries reached)
+  ESCALATE // Critical escalation
 }
 
 enum HealthStatus {
-  HEALTHY      // Everything OK
-  DEGRADED     // Functional but minor issues
-  CRITICAL     // Major problems
+  HEALTHY // Everything OK
+  DEGRADED // Functional but minor issues
+  CRITICAL // Major problems
 }
 
 // COMPANY MERGE LOG - Audit trail for company deduplication
 model CompanyMergeLog {
-  id                  String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Companies involved
-  mergedFromId        String   // Company that was deleted
-  mergedIntoId        String   // Company that was kept
-  mergedFromName      String
-  mergedIntoName      String
+  mergedFromId   String // Company that was deleted
+  mergedIntoId   String // Company that was kept
+  mergedFromName String
+  mergedIntoName String
 
   // Full state snapshots for audit/recovery
-  beforeState         Json     // Complete state of both companies before merge
-  afterState          Json     // State of kept company after merge
+  beforeState Json // Complete state of both companies before merge
+  afterState  Json // State of kept company after merge
 
   // What was transferred
-  fieldsTransferred   String[] // List of fields that were copied
-  fundingRoundsTransferred Int @default(0)
-  enrichmentsTransferred   Int @default(0)
+  fieldsTransferred        String[] // List of fields that were copied
+  fundingRoundsTransferred Int      @default(0)
+  enrichmentsTransferred   Int      @default(0)
 
   // Matching details
-  similarityScore     Float    // Combined similarity score (0-1)
-  similarityDetails   Json?    // { levenshtein, jaroWinkler, phonetic, normalized }
-  matchReason         String?  // Why these were considered duplicates
+  similarityScore   Float // Combined similarity score (0-1)
+  similarityDetails Json? // { levenshtein, jaroWinkler, phonetic, normalized }
+  matchReason       String? // Why these were considered duplicates
 
   // Execution context
-  mergedBy            String   @default("DB_CLEANER") // Agent or user who performed merge
-  dryRun              Boolean  @default(false) // Was this a dry-run preview?
-  maintenanceRunId    String?  // Link to the maintenance run if applicable
+  mergedBy         String  @default("DB_CLEANER") // Agent or user who performed merge
+  dryRun           Boolean @default(false) // Was this a dry-run preview?
+  maintenanceRunId String? // Link to the maintenance run if applicable
 
-  createdAt           DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([mergedFromId])
   @@index([mergedIntoId])
@@ -1611,15 +1633,15 @@ model CompanyMergeLog {
 
 // CACHE ENTRY - Persistent cache for expensive operations
 model CacheEntry {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  key             String   @unique
-  value           Json
+  key   String @unique
+  value Json
 
-  expiresAt       DateTime
+  expiresAt DateTime
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([expiresAt])
 }
@@ -1631,28 +1653,28 @@ model CacheEntry {
 // CONTEXT ENGINE SNAPSHOT - Persisted enrichment data for a deal
 // Saves Context Engine results to avoid re-fetching on reanalysis
 model ContextEngineSnapshot {
-  id              String   @id @default(cuid())
-  dealId          String
+  id     String @id @default(cuid())
+  dealId String
 
   // Context Engine output (full JSON)
-  dealIntelligence    Json?  // { similarDeals, fundingContext, competitors }
-  marketData          Json?  // { marketSize, trends, news }
+  dealIntelligence     Json? // { similarDeals, fundingContext, competitors }
+  marketData           Json? // { marketSize, trends, news }
   competitiveLandscape Json? // { directCompetitors, indirectCompetitors }
-  newsSentiment       Json?  // { articles, overallSentiment }
-  peopleGraph         Json?  // { founders, connections }
+  newsSentiment        Json? // { articles, overallSentiment }
+  peopleGraph          Json? // { founders, connections }
 
   // Metadata
-  completeness    Int      @default(0) // 0-100 how complete the data is
-  connectorResults Json?   // { pappers: true, github: false, ... }
+  completeness     Int   @default(0) // 0-100 how complete the data is
+  connectorResults Json? // { pappers: true, github: false, ... }
 
   // Source tracking (what was available when enriched)
-  inputData       Json?    // { companyName, sector, stage, tagline, ... }
+  inputData Json? // { companyName, sector, stage, tagline, ... }
 
   // Validity
-  expiresAt       DateTime // When to consider stale (default: 7 days)
+  expiresAt DateTime // When to consider stale (default: 7 days)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([dealId]) // One snapshot per deal (overwritten on refresh)
   @@index([dealId])
@@ -1661,46 +1683,46 @@ model ContextEngineSnapshot {
 
 // LLM CALL LOG - Raw prompts and responses for debugging/audit
 model LLMCallLog {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Linking
-  analysisId      String?
-  boardSessionId  String?
-  agentName       String   // Which agent made the call
+  analysisId     String?
+  boardSessionId String?
+  agentName      String // Which agent made the call
 
   // Model info
-  model           String   // e.g., "claude-3-5-sonnet-20241022"
-  provider        String   @default("openrouter") // openrouter, anthropic, openai
+  model    String // e.g., "claude-3-5-sonnet-20241022"
+  provider String @default("openrouter") // openrouter, anthropic, openai
 
   // Request
-  systemPrompt    String?  @db.Text
-  userPrompt      String   @db.Text
-  temperature     Float?
-  maxTokens       Int?
+  systemPrompt String? @db.Text
+  userPrompt   String  @db.Text
+  temperature  Float?
+  maxTokens    Int?
 
   // Response
-  response        String   @db.Text
-  finishReason    String?  // stop, length, content_filter, etc.
+  response     String  @db.Text
+  finishReason String? // stop, length, content_filter, etc.
 
   // Tokens & Cost
-  inputTokens     Int
-  outputTokens    Int
-  totalTokens     Int
-  cost            Decimal  @db.Decimal(10, 6)
+  inputTokens  Int
+  outputTokens Int
+  totalTokens  Int
+  cost         Decimal @db.Decimal(10, 6)
 
   // Timing
-  durationMs      Int
-  firstTokenMs    Int?     // Time to first token (TTFT)
+  durationMs   Int
+  firstTokenMs Int? // Time to first token (TTFT)
 
   // Error tracking (if failed)
-  isError         Boolean  @default(false)
-  errorMessage    String?  @db.Text
-  errorType       String?  // rate_limit, timeout, content_filter, etc.
+  isError      Boolean @default(false)
+  errorMessage String? @db.Text
+  errorType    String? // rate_limit, timeout, content_filter, etc.
 
   // Metadata
-  metadata        Json?    // Additional context (retry count, etc.)
+  metadata Json? // Additional context (retry count, etc.)
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([analysisId])
   @@index([boardSessionId])
@@ -1716,39 +1738,40 @@ model LLMCallLog {
 
 // FACT EVENT - Individual fact with full provenance (Event Sourcing pattern)
 model FactEvent {
-  id                  String        @id @default(cuid())
-  dealId              String
-  deal                Deal          @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   // Identification
-  factKey             String        // "financial.arr", "team.size", etc.
-  category            String        // FINANCIAL, TEAM, MARKET, PRODUCT, LEGAL, COMPETITION, TRACTION, OTHER
+  factKey  String // "financial.arr", "team.size", etc.
+  category String // FINANCIAL, TEAM, MARKET, PRODUCT, LEGAL, COMPETITION, TRACTION, OTHER
 
   // Valeur
-  value               Json
-  displayValue        String
-  unit                String?
+  value        Json
+  displayValue String
+  unit         String?
 
   // Provenance
-  source              String        // DATA_ROOM, FINANCIAL_MODEL, FOUNDER_RESPONSE, PITCH_DECK, CONTEXT_ENGINE, BA_OVERRIDE
-  sourceDocumentId    String?
-  sourceDocument      Document?     @relation(fields: [sourceDocumentId], references: [id])
-  sourceConfidence    Int           // 0-100
-  extractedText       String?       @db.Text
+  source           String // DATA_ROOM, FINANCIAL_MODEL, FOUNDER_RESPONSE, PITCH_DECK, CONTEXT_ENGINE, BA_OVERRIDE
+  sourceDocumentId String?
+  sourceDocument   Document? @relation(fields: [sourceDocumentId], references: [id])
+  sourceConfidence Int // 0-100
+  extractedText    String?   @db.Text
 
   // Temporal fields
-  validAt             DateTime?     // When this fact was valid
-  periodType          String?       // POINT_IN_TIME, QUARTER, YEAR, MONTH
-  periodLabel         String?       // "Q4 2024", "FY2024"
+  validAt     DateTime? // When this fact was valid
+  periodType  String? // POINT_IN_TIME, QUARTER, YEAR, MONTH
+  periodLabel String? // "Q4 2024", "FY2024"
 
   // Event
-  eventType           String        // CREATED, SUPERSEDED, DISPUTED, RESOLVED, DELETED
-  supersedesEventId   String?
+  eventType         String // CREATED, SUPERSEDED, DISPUTED, RESOLVED, DELETED
+  supersedesEventId String?
 
-  createdAt           DateTime      @default(now())
-  createdBy           String        // 'system' | 'ba'
-  reason              String?
+  createdAt DateTime @default(now())
+  createdBy String // 'system' | 'ba'
+  reason    String?
 
+  @@unique([dealId, factKey, createdAt, eventType], name: "factEvent_natural_key")
   @@index([dealId])
   @@index([dealId, factKey])
   @@index([dealId, category])
@@ -1765,34 +1788,34 @@ model FactEvent {
 // DEAL CHAT CONTEXT - Pre-computed context for fast chat responses
 // Contains aggregated facts, summaries and key data points for a deal
 model DealChatContext {
-  id                  String        @id @default(cuid())
-  dealId              String        @unique
+  id     String @id @default(cuid())
+  dealId String @unique
 
   // Pre-computed key facts (most important facts from FactEvent)
-  keyFacts            Json          // Array of { factKey, value, displayValue, confidence, source }
+  keyFacts Json // Array of { factKey, value, displayValue, confidence, source }
 
   // Agent summaries (condensed outputs from each agent)
-  agentSummaries      Json          // { [agentName]: { summary, keyFindings, confidence } }
+  agentSummaries Json // { [agentName]: { summary, keyFindings, confidence } }
 
   // Red flags context (structured for quick access)
-  redFlagsContext     Json          // Array of { title, severity, description, questionsToAsk }
+  redFlagsContext Json // Array of { title, severity, description, questionsToAsk }
 
   // Extracted document data (raw facts not in FactEvent)
-  extractedData       Json?         // { [documentType]: { key facts extracted } }
+  extractedData Json? // { [documentType]: { key facts extracted } }
 
   // Analysis metadata
-  lastAnalysisId      String?       // ID of the analysis used to build context
-  lastAnalysisMode    String?       // Mode of the analysis (tier1, tier2, tier3, full)
+  lastAnalysisId   String? // ID of the analysis used to build context
+  lastAnalysisMode String? // Mode of the analysis (tier1, tier2, tier3, full)
 
   // Benchmarks & comparables (for simulation tools)
-  benchmarkData       Json?         // Sector benchmarks snapshot
-  comparableDeals     Json?         // Similar deals for comparison
+  benchmarkData   Json? // Sector benchmarks snapshot
+  comparableDeals Json? // Similar deals for comparison
 
   // Context versioning
-  version             Int           @default(1)
-  lastUpdatedAt       DateTime      @updatedAt
+  version       Int      @default(1)
+  lastUpdatedAt DateTime @updatedAt
 
-  createdAt           DateTime      @default(now())
+  createdAt DateTime @default(now())
 
   @@index([dealId])
   @@index([lastAnalysisId])
@@ -1800,27 +1823,27 @@ model DealChatContext {
 
 // CHAT CONVERSATION - A conversation thread about a deal
 model ChatConversation {
-  id                  String        @id @default(cuid())
-  dealId              String
-  userId              String
+  id     String @id @default(cuid())
+  dealId String
+  userId String
 
-  title               String?       // Auto-generated or user-defined
-  status              ConversationStatus @default(ACTIVE)
+  title  String? // Auto-generated or user-defined
+  status ConversationStatus @default(ACTIVE)
 
   // Conversation metadata
-  messageCount        Int           @default(0)
-  lastMessageAt       DateTime?
+  messageCount  Int       @default(0)
+  lastMessageAt DateTime?
 
   // Cost tracking for this conversation
-  totalCost           Decimal?      @db.Decimal(8, 4)
-  totalInputTokens    Int           @default(0)
-  totalOutputTokens   Int           @default(0)
+  totalCost         Decimal? @db.Decimal(8, 4)
+  totalInputTokens  Int      @default(0)
+  totalOutputTokens Int      @default(0)
 
   // Messages in this conversation
-  messages            ChatMessage[]
+  messages ChatMessage[]
 
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([dealId])
   @@index([userId])
@@ -1836,33 +1859,33 @@ enum ConversationStatus {
 
 // CHAT MESSAGE - Individual message in a conversation
 model ChatMessage {
-  id                  String        @id @default(cuid())
-  conversationId      String
-  conversation        ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
-  role                ChatRole
-  content             String        @db.Text
+  role    ChatRole
+  content String   @db.Text
 
   // For assistant messages: what context was used
-  contextUsed         Json?         // { facts: [...], agentResults: [...], documents: [...] }
+  contextUsed Json? // { facts: [...], agentResults: [...], documents: [...] }
 
   // For assistant messages: what tools were called
-  toolsCalled         Json?         // Array of { tool, input, output }
+  toolsCalled Json? // Array of { tool, input, output }
 
   // Intent classification (for assistant to understand the message)
-  intent              String?       // clarification, comparison, simulation, deep_dive, follow_up
-  intentConfidence    Float?        // 0-1
+  intent           String? // clarification, comparison, simulation, deep_dive, follow_up
+  intentConfidence Float? // 0-1
 
   // Cost tracking for this message
-  cost                Decimal?      @db.Decimal(8, 6)
-  inputTokens         Int?
-  outputTokens        Int?
-  model               String?       // Model used for this response
+  cost         Decimal? @db.Decimal(8, 6)
+  inputTokens  Int?
+  outputTokens Int?
+  model        String? // Model used for this response
 
   // Timing
-  responseTimeMs      Int?          // Time to generate response
+  responseTimeMs Int? // Time to generate response
 
-  createdAt           DateTime      @default(now())
+  createdAt DateTime @default(now())
 
   @@index([conversationId])
   @@index([role])
@@ -1877,19 +1900,19 @@ enum ChatRole {
 
 // F83: API Keys for public API access
 model ApiKey {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name        String    // User-friendly name (e.g. "My Integration")
-  keyHash     String    @unique // bcrypt hash of the key (never store raw)
-  keyPrefix   String    // First 8 chars for identification (adk_live_xxxxxxxx)
+  name      String // User-friendly name (e.g. "My Integration")
+  keyHash   String @unique // bcrypt hash of the key (never store raw)
+  keyPrefix String // First 8 chars for identification (adk_live_xxxxxxxx)
 
-  lastUsedAt  DateTime?
-  expiresAt   DateTime?
-  revokedAt   DateTime?
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
 
-  createdAt   DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([keyPrefix])
@@ -1897,19 +1920,19 @@ model ApiKey {
 
 // F83: Webhooks for event notifications
 model Webhook {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  url         String    // HTTPS endpoint
-  secret      String    // HMAC secret for signature verification
-  events      String[]  // List of event types (e.g. ["analysis.completed", "red_flag.detected"])
-  active      Boolean   @default(true)
+  url    String // HTTPS endpoint
+  secret String // HMAC secret for signature verification
+  events String[] // List of event types (e.g. ["analysis.completed", "red_flag.detected"])
+  active Boolean  @default(true)
 
   lastTriggeredAt DateTime?
   failureCount    Int       @default(0)
 
-  createdAt   DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId])
 }
@@ -1917,25 +1940,25 @@ model Webhook {
 // DEAL TERMS — Conditions du deal renseignées par le BA
 // Relation 1:1 avec Deal. Le BA remplit ce qu'il a (null = pas d'info = neutre).
 model DealTerms {
-  id                    String   @id @default(cuid())
-  dealId                String   @unique
-  deal                  Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  dealId String @unique
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   // ── Valorisation ──
-  valuationPre          Decimal? @db.Decimal(14, 2)  // Pre-money
-  amountRaised          Decimal? @db.Decimal(12, 2)
-  dilutionPct           Decimal? @db.Decimal(5, 2)
+  valuationPre Decimal? @db.Decimal(14, 2) // Pre-money
+  amountRaised Decimal? @db.Decimal(12, 2)
+  dilutionPct  Decimal? @db.Decimal(5, 2)
 
   // ── Instrument ──
-  instrumentType        String?  // BSA_AIR, CONVERTIBLE_NOTE, EQUITY_ORDINARY, EQUITY_PREFERRED, LOAN, MIXED, OTHER
-  instrumentDetails     String?  // Détails libres si OTHER/MIXED
+  instrumentType    String? // BSA_AIR, CONVERTIBLE_NOTE, EQUITY_ORDINARY, EQUITY_PREFERRED, LOAN, MIXED, OTHER
+  instrumentDetails String? // Détails libres si OTHER/MIXED
 
   // ── Protections investisseur ──
-  liquidationPref       String?  // 1x_non_participating, 1x_participating, 2x_participating, none
-  antiDilution          String?  // full_ratchet, weighted_average_broad, weighted_average_narrow, none
-  proRataRights         Boolean?
-  informationRights     Boolean?
-  boardSeat             String?  // full_seat, observer, none
+  liquidationPref   String? // 1x_non_participating, 1x_participating, 2x_participating, none
+  antiDilution      String? // full_ratchet, weighted_average_broad, weighted_average_narrow, none
+  proRataRights     Boolean?
+  informationRights Boolean?
+  boardSeat         String? // full_seat, observer, none
 
   // ── Gouvernance / Fondateurs ──
   founderVesting        Boolean?
@@ -1946,40 +1969,40 @@ model DealTerms {
   tagAlong              Boolean?
 
   // ── Clauses spéciales ──
-  ratchet               Boolean?
-  payToPlay             Boolean?
-  milestoneTranches     Boolean?
-  nonCompete            Boolean?
+  ratchet           Boolean?
+  payToPlay         Boolean?
+  milestoneTranches Boolean?
+  nonCompete        Boolean?
 
   // ── Champ libre ──
-  customConditions      String?  @db.Text  // Le BA met ce qu'il veut
-  notes                 String?  @db.Text
+  customConditions String? @db.Text // Le BA met ce qu'il veut
+  notes            String? @db.Text
 
   // ── Source tracking ──
-  source                String   @default("manual") // manual, extracted, negotiated
+  source String @default("manual") // manual, extracted, negotiated
 
   // ── AI analysis tracking ──
-  aiAnalysisAt          DateTime?  // Timestamp dernière analyse IA conditions
+  aiAnalysisAt DateTime? // Timestamp dernière analyse IA conditions
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // DEAL STRUCTURE — Mode structuré avec N tranches (1:0..1 avec Deal)
 // Coexiste avec DealTerms. Le champ `mode` détermine quelle source est active.
 model DealStructure {
-  id              String   @id @default(cuid())
-  dealId          String   @unique
-  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  dealId String @unique
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   mode            DealMode @default(SIMPLE) // SIMPLE = DealTerms, STRUCTURED = tranches
   totalInvestment Decimal? @db.Decimal(14, 2)
   notes           String?  @db.Text
 
-  tranches        DealTranche[]
+  tranches DealTranche[]
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([dealId])
 }
@@ -1992,30 +2015,30 @@ enum DealMode {
 // DEAL TRANCHE — Une tranche d'investissement dans un deal structuré
 // Ex: Tranche 1 = CCA 30k, Tranche 2 = Equity 10% sur valo 1M si milestone atteint
 model DealTranche {
-  id              String   @id @default(cuid())
-  structureId     String
-  structure       DealStructure @relation(fields: [structureId], references: [id], onDelete: Cascade)
+  id          String        @id @default(cuid())
+  structureId String
+  structure   DealStructure @relation(fields: [structureId], references: [id], onDelete: Cascade)
 
   // Ordering
-  orderIndex      Int      @default(0)
-  label           String?  // "Tranche 1 - CCA", "Tranche 2 - Equity Option"
+  orderIndex Int     @default(0)
+  label      String? // "Tranche 1 - CCA", "Tranche 2 - Equity Option"
 
   // Type
-  trancheType     String   // CCA, EQUITY_ORDINARY, EQUITY_PREFERRED, BSA_AIR, CONVERTIBLE_NOTE, OPTION, LOAN, OTHER
-  typeDetails     String?  // Détails libres si OTHER
+  trancheType String // CCA, EQUITY_ORDINARY, EQUITY_PREFERRED, BSA_AIR, CONVERTIBLE_NOTE, OPTION, LOAN, OTHER
+  typeDetails String? // Détails libres si OTHER
 
   // Financial
-  amount          Decimal? @db.Decimal(14, 2)
-  valuationPre    Decimal? @db.Decimal(14, 2)
-  equityPct       Decimal? @db.Decimal(5, 2)
+  amount       Decimal? @db.Decimal(14, 2)
+  valuationPre Decimal? @db.Decimal(14, 2)
+  equityPct    Decimal? @db.Decimal(5, 2)
 
   // Conditions / Triggers
-  triggerType     String?  // UNCONDITIONAL, MILESTONE, DATE, OPTION, CONVERSION
-  triggerDetails  String?  @db.Text  // "Phase 1 success", "12 months from closing"
+  triggerType     String? // UNCONDITIONAL, MILESTONE, DATE, OPTION, CONVERSION
+  triggerDetails  String?   @db.Text // "Phase 1 success", "12 months from closing"
   triggerDeadline DateTime?
 
   // Instrument-specific fields (flexible JSON)
-  instrumentTerms Json?    // { interestRate, maturityMonths, conversionDiscount, conversionCap, ... }
+  instrumentTerms Json? // { interestRate, maturityMonths, conversionDiscount, conversionCap, ... }
 
   // Protections per-tranche (can differ between tranches)
   liquidationPref String?
@@ -2023,21 +2046,21 @@ model DealTranche {
   proRataRights   Boolean?
 
   // Status
-  status          TrancheStatus @default(PENDING)
+  status TrancheStatus @default(PENDING)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([structureId])
   @@index([structureId, orderIndex])
 }
 
 enum TrancheStatus {
-  PENDING       // Not yet executed
-  ACTIVE        // Currently active
-  CONVERTED     // Converted (for CCA/convertibles)
-  EXPIRED       // Trigger not met, expired
-  CANCELLED     // Cancelled by parties
+  PENDING // Not yet executed
+  ACTIVE // Currently active
+  CONVERTED // Converted (for CCA/convertibles)
+  EXPIRED // Trigger not met, expired
+  CANCELLED // Cancelled by parties
 }
 
 // ============================================================================
@@ -2056,12 +2079,12 @@ enum ResolutionStatus {
 }
 
 model AlertResolution {
-  id            String           @id @default(cuid())
-  dealId        String
-  deal          Deal             @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  userId        String
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  userId String
 
-  alertKey      String           // Stable key: "{TYPE}::{identifier}"
+  alertKey      String // Stable key: "{TYPE}::{identifier}"
   alertType     AlertType
   status        ResolutionStatus
   justification String           @db.Text
@@ -2071,8 +2094,8 @@ model AlertResolution {
   alertSeverity String
   alertCategory String?
 
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([dealId, alertKey])
   @@index([dealId])
@@ -2081,25 +2104,25 @@ model AlertResolution {
 // DEAL TERMS VERSION — Historique des conditions pour suivi de négociation
 // Chaque save crée une version. Permet de visualiser l'évolution de la négo.
 model DealTermsVersion {
-  id              String   @id @default(cuid())
-  dealId          String
-  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
-  version         Int      @default(1)
-  label           String?  // "Offre initiale", "Contre-proposition", "Accord final"
+  version Int     @default(1)
+  label   String? // "Offre initiale", "Contre-proposition", "Accord final"
 
   // Full state snapshot (DealTermsData or { mode: "structured", tranches: [...] })
-  termsSnapshot   Json
+  termsSnapshot Json
 
   // AI analysis at this version
-  conditionsScore Int?
+  conditionsScore  Int?
   analysisSnapshot Json?
 
   // Metadata
-  source          String   @default("manual") // manual, extracted, negotiated
-  changeNote      String?  @db.Text // "Pre-money baissé de 2M à 1.5M"
+  source     String  @default("manual") // manual, extracted, negotiated
+  changeNote String? @db.Text // "Pre-money baissé de 2M à 1.5M"
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([dealId])
   @@index([dealId, version])
@@ -2110,50 +2133,50 @@ model DealTermsVersion {
 // ============================================================================
 
 model LiveSession {
-  id              String   @id @default(cuid())
-  dealId          String?
-  deal            Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  userId          String
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String  @id @default(cuid())
+  dealId String?
+  deal   Deal?   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  userId String
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Meeting info
   meetingUrl      String
-  meetingPlatform String   // "zoom" | "meet" | "teams"
-  botId           String?  // Recall.ai bot ID
+  meetingPlatform String // "zoom" | "meet" | "teams"
+  botId           String? // Recall.ai bot ID
   botJoinUrl      String?
 
   // Session state
-  status          String   @default("created")
+  status       String  @default("created")
   // Values: "created" | "bot_joining" | "live" | "processing" | "completed" | "failed"
-  errorMessage    String?  @db.Text
+  errorMessage String? @db.Text
 
   // Participants mapping (BA labels who is who)
-  participants    Json     @default("[]")
+  participants Json @default("[]")
   // Format: [{ name: string, role: string, speakerId: string }]
 
   // Settings
-  language        String   @default("fr-en")
-  llmModel        String   @default("claude-sonnet-4-5")
+  language String @default("fr-en")
+  llmModel String @default("claude-sonnet-4-5")
 
   // Cost tracking
-  totalCost       Decimal? @db.Decimal(8, 4)
+  totalCost Decimal? @db.Decimal(8, 4)
 
   // Timestamps
-  startedAt       DateTime?
-  endedAt         DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  startedAt DateTime?
+  endedAt   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   // Screen share state
   screenShareActive Boolean @default(false)
 
   // Relations
-  transcriptChunks  TranscriptChunk[]
-  coachingCards     CoachingCard[]
+  transcriptChunks TranscriptChunk[]
+  coachingCards    CoachingCard[]
   screenCaptures   ScreenCapture[]
-  summary           SessionSummary?
-  documentId        String?          @unique
-  document          Document?        @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  summary          SessionSummary?
+  documentId       String?           @unique
+  document         Document?         @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([dealId])
   @@index([userId])
@@ -2164,23 +2187,23 @@ model LiveSession {
 }
 
 model TranscriptChunk {
-  id          String   @id @default(cuid())
-  sessionId   String
-  session     LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String      @id @default(cuid())
+  sessionId String
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  speaker     String   // Display name from meeting
-  speakerRole String   // "founder" | "co-founder" | "ba" | "investor" | etc.
-  text        String   @db.Text
-  isFinal     Boolean  @default(true)
+  speaker     String // Display name from meeting
+  speakerRole String // "founder" | "co-founder" | "ba" | "investor" | etc.
+  text        String  @db.Text
+  isFinal     Boolean @default(true)
 
-  timestampStart Float  // Seconds since call start
+  timestampStart Float // Seconds since call start
   timestampEnd   Float
 
   // Classification by Utterance Router
   classification String? // "financial_claim" | "small_talk" | "filler" | etc.
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([sessionId])
   @@index([sessionId, speakerRole])
@@ -2188,22 +2211,22 @@ model TranscriptChunk {
 }
 
 model CoachingCard {
-  id          String   @id @default(cuid())
-  sessionId   String
-  session     LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String      @id @default(cuid())
+  sessionId String
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  type        String   // "question" | "contradiction" | "new_info" | "negotiation"
-  priority    String   // "high" | "medium" | "low"
-  content     String   @db.Text  // The coaching suggestion text
-  context     String?  @db.Text  // What triggered this (founder utterance)
-  reference   String?  // Which part of the analysis is concerned
+  type              String // "question" | "contradiction" | "new_info" | "negotiation"
+  priority          String // "high" | "medium" | "low"
+  content           String  @db.Text // The coaching suggestion text
+  context           String? @db.Text // What triggered this (founder utterance)
+  reference         String? // Which part of the analysis is concerned
   suggestedQuestion String? @db.Text // Naturally formulated question
 
   // State
-  status      String   @default("active")
+  status      String    @default("active")
   // "active" | "addressed" | "dismissed" | "expired"
   addressedAt DateTime?
-  addressedBy String?  // "auto" (transcript detection) | "manual"
+  addressedBy String? // "auto" (transcript detection) | "manual"
 
   // Link to triggering transcript chunk
   triggeredByChunkId String?
@@ -2211,62 +2234,62 @@ model CoachingCard {
   // Visual trigger (screen capture V2)
   isVisualTrigger Boolean @default(false)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([sessionId])
   @@index([sessionId, status])
 }
 
 model ScreenCapture {
-  id             String   @id @default(cuid())
-  sessionId      String
-  session        LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String      @id @default(cuid())
+  sessionId String
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   // Frame metadata
-  timestamp      Float    // Seconds since call start
-  contentType    String   // "slide" | "dashboard" | "demo" | "code" | "spreadsheet" | "document" | "other"
-  description    String   @db.Text
+  timestamp   Float // Seconds since call start
+  contentType String // "slide" | "dashboard" | "demo" | "code" | "spreadsheet" | "document" | "other"
+  description String @db.Text
 
   // Analysis results (stored only for frames with new content)
-  keyData           Json     // Array<{ dataPoint, category, relevance }>
-  contradictions    Json     // Array<{ visualClaim, analysisClaim, severity }>
-  newInsights       Json     // string[]
-  suggestedQuestion String?  @db.Text
+  keyData           Json // Array<{ dataPoint, category, relevance }>
+  contradictions    Json // Array<{ visualClaim, analysisClaim, severity }>
+  newInsights       Json // string[]
+  suggestedQuestion String? @db.Text
 
   // Dedup
   perceptualHash String
 
   // Cost tracking
-  analysisCost   Decimal  @db.Decimal(8, 6)
+  analysisCost Decimal @db.Decimal(8, 6)
 
-  createdAt      DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([sessionId])
   @@index([sessionId, timestamp])
 }
 
 model SessionSummary {
-  id          String   @id @default(cuid())
-  sessionId   String   @unique
-  session     LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String      @id @default(cuid())
+  sessionId String      @unique
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   // Report content
-  executiveSummary  String   @db.Text
-  keyPoints         Json     // Array<{ topic, summary, speakerQuotes }>
-  actionItems       Json     // Array<{ description, owner, deadline? }>
-  newInformation    Json     // Array<{ fact, impact, agentsAffected }>
-  contradictions    Json     // Array<{ claimInDeck, claimInCall, severity }>
-  questionsAsked    Json     // Array<{ question, answer, wasFromCoaching }>
-  remainingQuestions Json    // string[]
-  confidenceDelta   Json     // { before, after, reason }
-  sessionStats      Json     // { duration, totalUtterances, coachingCards*, topics* }
+  executiveSummary   String @db.Text
+  keyPoints          Json // Array<{ topic, summary, speakerQuotes }>
+  actionItems        Json // Array<{ description, owner, deadline? }>
+  newInformation     Json // Array<{ fact, impact, agentsAffected }>
+  contradictions     Json // Array<{ claimInDeck, claimInCall, severity }>
+  questionsAsked     Json // Array<{ question, answer, wasFromCoaching }>
+  remainingQuestions Json // string[]
+  confidenceDelta    Json // { before, after, reason }
+  sessionStats       Json // { duration, totalUtterances, coachingCards*, topics* }
 
   // Full markdown report (for document creation)
-  markdownReport    String   @db.Text
+  markdownReport String @db.Text
 
   // Condensed transcript intelligence for agent injection + coaching enrichment
-  condensedIntel    Json?    // CondensedTranscriptIntel — structured, token-efficient extract
+  condensedIntel Json? // CondensedTranscriptIntel — structured, token-efficient extract
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 }
