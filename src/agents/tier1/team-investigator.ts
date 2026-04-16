@@ -266,7 +266,10 @@ export class TeamInvestigatorAgent extends BaseAgent<TeamInvestigatorData, TeamI
       description: "Investigation exhaustive de l'équipe fondatrice standard VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      // 180s: P0 bump depuis 120s. LinkedIn est maintenant sequentialise + retry
+      // backoff 429 (voir changes-log 2026-04-13); pour 5 fondateurs avec rate
+      // limit actif, 120s ne couvre pas la latence cumulative.
+      timeoutMs: 180000,
       dependencies: ["document-extractor"],
     });
   }

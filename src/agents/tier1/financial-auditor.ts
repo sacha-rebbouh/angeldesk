@@ -161,7 +161,10 @@ export class FinancialAuditorAgent extends BaseAgent<FinancialAuditData, Financi
       description: "Audit financier exhaustif standard Big4 + Partner VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 180000,
+      // 240s: P0 bump depuis 180s pour couvrir les gros pitch decks (80+ pages)
+      // + modele complex sans risquer le timeout Phase B (non-fatal mais cascade
+      // sur Tier3 scorer vide de red flags financiers).
+      timeoutMs: 240000,
       dependencies: ["document-extractor"],
     });
   }

@@ -1,6 +1,20 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-04-16 — fix: timeouts Tier1 critiques (financial-auditor, team-investigator)
+
+**Fichiers (2) :**
+- `src/agents/tier1/financial-auditor.ts` — `timeoutMs` 180000 -> 240000 (4 min).
+  Couvre les gros pitch decks (80+ pages) avec modele complex. Phase B est non-
+  fatale depuis le fix 2026-04-13, mais un timeout cascadait sur Tier3 scorer
+  (red flags financiers vides, biais optimiste).
+- `src/agents/tier1/team-investigator.ts` — `timeoutMs` 120000 -> 180000 (3 min).
+  LinkedIn est desormais sequentialise avec retry backoff 429; pour 5 fondateurs
+  la latence cumulative peut depasser 120s.
+
+**Valide avant gros tests :** `npx tsc --noEmit` 0 erreur, 538/538 tests.
+
+---
 ## 2026-04-16 — feat: Sprint P0 — production-readiness (10 fixes bloquants)
 
 Sprint de durcissement complet avant les gros tests. 10 failles P0 traitees en
