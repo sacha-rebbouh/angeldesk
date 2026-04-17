@@ -1,6 +1,49 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-04-17 — fix: Audit-driven hardening — 24+ items P0/P1/P2 corriges (pipeline, credits, UI, board, chat)
+
+Suite a 5 audits paralleles (orchestrator, UI, API/data, credits, board/chat) qui ont
+identifie 24+ bugs dont 13 P0 (money / fonctionnel), corrections chirurgicales pour
+un systeme thesis-first production-ready.
+
+### P0 — Fonctionnel & money
+1. **Checkpoint manquant sur pause** (`orchestrator/index.ts`) : `saveCheckpoint` desormais appele pendant pauseAfterThesis. Avant : `resumeAnalysis` throwait "no checkpoint" → continue/contest casse.
+2. **Thesis stale sur resume** (`orchestrator/index.ts`) : `resumeAnalysis` rehydrate enrichedContext.thesis via thesisService.getLatest(). Avant : Tier 1/2/3 reconciler repartaient sans contexte.
+3. **Non-fatal thesis fail + refund** (`orchestrator/index.ts`) : si thesis-extractor null avec pauseAfterThesis=true, l'analyse abort FAILED. Avant : silent fallthrough sans gate.
+4. **/decision refund mint 2cr** (`decision/route.ts`) : valide mode="full_analysis" + refundedAt=null avant refund. Avant : route mintait 2cr pour n'importe quel deal avec these.
+5. **Admin backfill idempotency** (`backfill/route.ts`) : key stable `admin-thesis-backfill:${admin}:${deal}:${prevThesisId}`. Avant : Date.now() = double-charge sur click.
+6. **Admin + upload double-charge** (`inngest.ts`) : thesisReextractFunction skip BA deduct si triggeredByAdminId. Avant : admin 2cr + BA 1cr meme operation.
+7. **Thesis.create() race** (`thesis/index.ts`) : advisory lock Postgres pg_advisory_xact_lock + SERIALIZABLE + updateMany({isLatest:false}). Avant : 2 rows isLatest=true possibles.
+8. **Refund amounts alignes 3cr partout** (decision route + modal) : 5cr Deep Dive - 2cr Tier0/extraction = 3cr. Avant : modal 2cr, phase3 3cr, mismatch.
+9. **Null event broadcast** (`decision/route.ts`) : inngest.send skip si pausedAnalysis null. Avant : analysisId:null pollue.
+10. **THESIS_DEBATE invisible** (`ai-board-panel.tsx` + nouveau `thesis-debate-view.tsx`) : filter roundType, render dedie avec solidite/critique/recommandations. Avant : persist DB mais UI vide.
+11. **Chat intent THESIS dead code** (`deal-chat-agent.ts`) : classifier liste THESIS + keywords (these, why-now, moat, YC, Thiel, PMF, monopoly, contrarian). Avant : jamais emis.
+12. **5 directives anti-hallucination** (`thesis/types.ts` helper + 4 prompts injectes) : CLAUDE.md respecte. Avant : violations dans thesis-extractor + YC/Thiel/Angel Desk.
+13. **Chat thesisBypass hardcoded false** (`chat/[dealId]/route.ts`) : propage depuis Analysis.thesisBypass. Avant : chat ignorait le bypass BA.
+
+### P1 — Robustesse
+14. **compensate double-compensation** (`inngest.ts`) : phase3 fail apres paused=true → refund PARTIEL 3cr au lieu de integral 5cr. Avant : user gagne 5cr + these.
+15. **Rebuttal cap race** (`thesis/index.ts` + routes) : recordDecision("contest") en tx SERIALIZABLE avec SELECT FOR UPDATE. Retourne null si race → routes refund + 429.
+16. **Rate limits** (decision 10/min + rebuttal 5/min) : checkRateLimitDistributed.
+17. **Deals/page orderBy** sur include theses.
+18. **getHistory pagination** take=20 par defaut.
+
+### P2 — UX & consistance
+19. **thesis_only mode label** ajoute.
+20. **ThesisPayload.createdAt** exposé → RevisionBanner utilise vrai timestamp.
+21. **Modal auto-open race guard** : !!thesis required.
+22. **Alerts board capped** top 10 severity-sorted + "+N autres".
+23. **Thesis section en tete chat prompt** : resume avant deal info pour anti-truncation.
+24. **Thesis-extractor + reconciler dans contract penalty list**.
+25. **Legacy refund marque refundedAt** : audit trail complet.
+26. **Devise incohérence** : `$1M+`, `$2M+` → `€1M+`, `€2M+` dans angel-desk.ts.
+
+### Validations
+- `npx tsc --noEmit` → 0 erreur
+- `npx vitest run` → 559/559 tests verts (mock prisma mis a jour : updateMany, $executeRawUnsafe, $transaction avec options)
+
+---
 ## 2026-04-17 — feat: Thesis-first completeness — 3 UI components + chat loader + deals-table + admin backfill + transition Quick Scan
 
 Complete du rollout thesis-first avec les 6 items manquants par rapport au plan initial :

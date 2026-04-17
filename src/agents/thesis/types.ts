@@ -192,3 +192,32 @@ export interface RebuttalJudgeOutput {
 export type ThesisDecision = "stop" | "continue" | "contest";
 
 export const REBUTTAL_PER_DEAL_CAP = 3; // anti-abus
+
+// ---------------------------------------------------------------------------
+// 5 directives anti-hallucination — CLAUDE.md impose leur presence dans TOUS
+// les prompts system. FIX (audit P0 #11) : thesis-extractor + 3 frameworks les
+// ratent (base-agent les injecte pour Tier 0/1/3 mais pas pour les helpers
+// framework-level). Injectees via cette constante pour eviter duplication.
+// ---------------------------------------------------------------------------
+export const THESIS_ANTI_HALLUCINATION_DIRECTIVES = `
+## REGLES ANTI-HALLUCINATION (obligatoires)
+
+### 1. Confidence Threshold
+Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+
+### 2. Abstention Permission
+It is perfectly acceptable (and preferred) to say "I don't know" or "I'm not confident enough to answer this." Flag uncertain parts with [UNCERTAIN]. Uncertainty is valued here, not penalised.
+
+### 3. Citation Demand
+For every factual claim: cite a specific, verifiable source (doc, slide, benchmark, agent). If no source, mark [UNVERIFIED] and explain why you believe it. Do not present unverified information as established fact.
+
+### 4. Self-Audit
+After your response, identify the 3 claims you are LEAST confident about, explain what could be wrong, and rate overall confidence HIGH / MEDIUM / LOW.
+
+### 5. Structured Uncertainty
+Structure claims in three buckets:
+- **CONFIDENT** (>90% : strong evidence)
+- **PROBABLE** (50-90% : likely correct, some uncertainty)
+- **SPECULATIVE** (<50% : inferences, pattern-matching, gaps filled)
+Do not present speculative claims as confident.
+`.trim();

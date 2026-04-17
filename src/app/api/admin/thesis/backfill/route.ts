@@ -122,10 +122,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // FIX (audit P0 #2) : idempotencyKey stable par (admin, deal, previousThesisId).
+    // Avant : Date.now() = double-charge sur double-click. Maintenant un admin ne peut
+    // plus payer 2x pour le meme backfill tant que la these n'a pas evolue.
+    const idempotencyKey = `admin-thesis-backfill:${admin.id}:${dealId}:${deal.theses[0]?.id ?? "none"}`;
+
     // Facture l'admin (pas le BA proprietaire du deal)
     const creditResult = await deductCreditAmount(admin.id, "THESIS_REEXTRACT", ADMIN_BACKFILL_COST, {
       dealId,
-      idempotencyKey: `admin-thesis-backfill:${dealId}:${Date.now()}`,
+      idempotencyKey,
       description: `Admin backfill these pour deal ${dealId} (${ADMIN_BACKFILL_COST}cr admin)`,
     });
 
@@ -136,7 +141,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Declenche re-extraction via Inngest
+    // FIX (audit P0 #5) : passer triggeredByAdminId pour que thesisReextractFunction
+    // NE PAS re-debiter le BA (sinon admin 2cr + BA 1cr pour le meme backfill).
     await inngest.send({
       name: "analysis/thesis.reextract",
       data: {
@@ -144,7 +150,7 @@ export async function POST(request: NextRequest) {
         userId: deal.userId,
         triggeredByDocumentId: completedDocs[0].id,
         previousThesisId: deal.theses[0]?.id,
-        triggeredByAdminId: admin.id,
+        triggeredByAdminId: admin.id, // flag utilise par l'Inngest handler pour skip deduct
       },
     });
 

@@ -125,7 +125,7 @@ export function ThesisReviewModal(props: ThesisReviewModalProps) {
                 disabled={mode === "menu" ? false : true}
               >
                 <Pause className="h-4 w-4 mr-2" />
-                Arrêter l&apos;analyse ici — rapport thèse-only, remboursement partiel (2 cr)
+                Arrêter l&apos;analyse ici — rapport thèse-only, remboursement partiel (3 cr)
               </Button>
               <Button
                 variant={isFragile ? "outline" : "default"}

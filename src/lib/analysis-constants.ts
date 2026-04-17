@@ -127,6 +127,7 @@ export const ANALYSIS_MODE_NAMES: Record<string, string> = {
   tier2_sector: "Expert Sectoriel",
   tier3_synthesis: "Synthèse Tier 3",
   full_analysis: "Analyse Complète",
+  thesis_only: "Thèse-only (analyse arrêtée au verdict thèse)",
   FULL_DD: "Due Diligence",
 };
 

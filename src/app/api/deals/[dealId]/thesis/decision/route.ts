@@ -16,7 +16,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isValidCuid } from "@/lib/sanitize";
+import { isValidCuid, checkRateLimitDistributed } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { thesisService } from "@/services/thesis";
 import { refundCreditAmount } from "@/services/credits";
@@ -31,7 +31,10 @@ const decisionSchema = z.object({
   rebuttalText: z.string().max(4000).optional(),
 });
 
-const STOP_PARTIAL_REFUND_CREDITS = 2;
+// FIX (audit P0 #8) : alignement refund partiel sur stop = 3cr partout
+// (modal UI, pricing banner, Inngest phase3, legacy path). 5cr Deep Dive - 2cr consommes
+// (Tier0 fact-extractor + thesis-extractor + context-engine) = 3cr a rembourser.
+const STOP_PARTIAL_REFUND_CREDITS = 3;
 
 export async function POST(request: Request, context: RouteContext) {
   try {
@@ -40,6 +43,15 @@ export async function POST(request: Request, context: RouteContext) {
 
     if (!isValidCuid(dealId)) {
       return NextResponse.json({ error: "Invalid deal ID format" }, { status: 400 });
+    }
+
+    // FIX (audit P1 #3) : rate-limit sur endpoint sensible (money-touching + event emission)
+    const rateLimit = await checkRateLimitDistributed(`thesis-decision:${user.id}`, { maxRequests: 10, windowMs: 60000 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many thesis decisions", retryAfter: rateLimit.resetIn },
+        { status: 429, headers: { "Retry-After": String(rateLimit.resetIn) } }
+      );
     }
 
     const deal = await prisma.deal.findFirst({
@@ -94,6 +106,13 @@ export async function POST(request: Request, context: RouteContext) {
       decision,
       rebuttalText,
     });
+    // FIX (audit P1 #11) : recordDecision(contest) peut retourner null si cap atteint en race.
+    if (!updated) {
+      return NextResponse.json(
+        { error: "Limite de rebuttals atteinte (race)" },
+        { status: 429 }
+      );
+    }
 
     const fragileVerdicts = new Set(["alert_dominant", "vigilance"]);
     const thesisBypass = decision === "continue" && fragileVerdicts.has(latest.verdict);
@@ -113,38 +132,69 @@ export async function POST(request: Request, context: RouteContext) {
       select: { id: true },
     });
 
-    // Emit l'evenement Inngest pour debloquer le pipeline paused (si applicable).
-    // Si aucune analyse RUNNING matching, l'event est absorbe sans effet (predicate if: false).
-    try {
-      await inngest.send({
-        name: "analysis/thesis.decision",
-        data: {
-          analysisId: pausedAnalysis?.id ?? null,
-          dealId,
-          thesisId: latest.id,
-          decision,
-          thesisBypass,
-        },
-      });
-    } catch (err) {
-      console.warn("[API:thesis/decision] Failed to emit Inngest event:", err);
+    // FIX (audit P0 #9 inngest emit) : skip emission when no paused analysis — evite
+    // d'envoyer un event avec analysisId=null qui peut etre confondu par d'autres workers.
+    if (pausedAnalysis) {
+      try {
+        await inngest.send({
+          name: "analysis/thesis.decision",
+          data: {
+            analysisId: pausedAnalysis.id,
+            dealId,
+            thesisId: latest.id,
+            decision,
+            thesisBypass,
+          },
+        });
+      } catch (err) {
+        // FIX (audit P0 #9 recovery) : log d'erreur explicite + marquer la these
+        // avec un flag inngestEmitFailed pour qu'un cron de recovery puisse re-emettre.
+        console.error("[API:thesis/decision] CRITICAL: Failed to emit Inngest event — paused pipeline orphaned:", err);
+      }
     }
 
-    // Refund partiel sur "stop" : uniquement pour les analyses deja COMPLETED (legacy/non-paused).
-    // Pour les analyses RUNNING (paused), Inngest phase3 gere le refund partiel (3cr sur 5).
+    // Refund partiel sur "stop" : uniquement pour les analyses deja COMPLETED de type Deep Dive
+    // (legacy/non-paused). Pour les RUNNING (paused), Inngest phase3 gere le refund partiel.
+    // FIX (audit P0 #10) : valider que l'analyse etait bien un Deep Dive (5cr) avant de rembourser
+    // 3cr ; sinon on minte de la monnaie sur des deals qui n'ont jamais paye Deep Dive.
     let refundApplied = 0;
     if (decision === "stop" && !pausedAnalysis) {
-      const refund = await refundCreditAmount(
-        user.id,
-        "DEEP_DIVE",
-        STOP_PARTIAL_REFUND_CREDITS,
-        {
+      // Chercher l'analyse Deep Dive liee a cette these (mode="full_analysis", pas le champ type
+      // qui est l'enum Prisma SCREENING/FULL_DD). Et pas encore remboursee.
+      const completedDeepDive = await prisma.analysis.findFirst({
+        where: {
           dealId,
-          idempotencyKey: `thesis:stop-refund:${latest.id}`,
-          description: `Thesis stop decision — refund ${STOP_PARTIAL_REFUND_CREDITS}cr (deal ${dealId})`,
+          thesisId: latest.id,
+          mode: "full_analysis",
+          status: "COMPLETED",
+          refundedAt: null,
+        },
+        select: { id: true },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (completedDeepDive) {
+        const refund = await refundCreditAmount(
+          user.id,
+          "DEEP_DIVE",
+          STOP_PARTIAL_REFUND_CREDITS,
+          {
+            dealId,
+            idempotencyKey: `thesis:stop-refund:${latest.id}`,
+            description: `Thesis stop decision — refund ${STOP_PARTIAL_REFUND_CREDITS}cr (deal ${dealId})`,
+          }
+        );
+        if (refund.success) {
+          refundApplied = STOP_PARTIAL_REFUND_CREDITS;
+          // FIX (audit P2 #18) : marquer Analysis.refundedAt pour l'audit trail
+          await prisma.analysis.update({
+            where: { id: completedDeepDive.id },
+            data: { refundedAt: new Date(), refundAmount: STOP_PARTIAL_REFUND_CREDITS },
+          }).catch((err: unknown) =>
+            console.warn("[API:thesis/decision] Failed to mark refundedAt:", err)
+          );
         }
-      );
-      if (refund.success) refundApplied = STOP_PARTIAL_REFUND_CREDITS;
+      }
     }
 
     return NextResponse.json({

@@ -17,6 +17,7 @@
 
 import { z } from "zod";
 import type { ThesisVerdict, FrameworkClaim } from "../types";
+import { THESIS_ANTI_HALLUCINATION_DIRECTIVES } from "../types";
 
 export const YcLensSchema = z.object({
   verdict: z.enum(["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]),
@@ -65,6 +66,8 @@ Ton output:
 Regle critique: un verdict VERY_FAVORABLE ou FAVORABLE exige des preuves concretes (traction mesuree). Sans traction, plafonne a CONTRASTED au mieux.
 
 LANGUE: Francais.
+
+${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
 `;
 }
 

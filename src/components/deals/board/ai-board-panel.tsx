@@ -9,6 +9,7 @@ import { Users, Square, Loader2, Crown, Sparkles, Zap, Shield, Vote, MessageSqua
 import { VoteBoard } from "./vote-board";
 import { KeyPointsSection } from "./key-points-section";
 import { DebateViewer } from "./debate-viewer";
+import { ThesisDebateView } from "./thesis-debate-view";
 import { BoardProgress } from "./board-progress";
 import { BoardTeaser } from "./board-teaser";
 import { BOARD_MEMBERS_PROD, BOARD_MEMBERS_TEST } from "@/agents/board/types";
@@ -17,6 +18,7 @@ import type {
   BoardVerdictResult,
   InitialAnalysis,
   DebateResponse,
+  ThesisDebateResponse,
 } from "@/agents/board/types";
 
 interface BoardCreditsStatus {
@@ -105,15 +107,31 @@ function hydrateSavedSession(session: SavedBoardSession) {
     }
   }
 
-  // Map debateResponses from rounds
+  // Map debateResponses from rounds — FIX (audit P0 #10) : filter by roundType
+  // pour ne pas injecter les ThesisDebateResponse (round 0) dans les views DebateResponse.
   const debateResponses: {
     roundNumber: number;
     memberId: string;
     memberName: string;
     response: DebateResponse;
   }[] = [];
+  const thesisDebateResponses: {
+    memberId: string;
+    memberName: string;
+    response: ThesisDebateResponse;
+  }[] = [];
   for (const round of session.rounds) {
     if (!Array.isArray(round.responses)) continue;
+    if (round.roundType === "THESIS_DEBATE") {
+      for (const r of round.responses as unknown as Array<{ memberId: string; memberName: string; response: ThesisDebateResponse }>) {
+        thesisDebateResponses.push({
+          memberId: r.memberId,
+          memberName: r.memberName,
+          response: r.response,
+        });
+      }
+      continue;
+    }
     for (const r of round.responses) {
       debateResponses.push({
         roundNumber: round.roundNumber,
@@ -147,7 +165,7 @@ function hydrateSavedSession(session: SavedBoardSession) {
     totalTimeMs: session.totalTimeMs ?? 0,
   };
 
-  return { memberAnalyses, debateResponses, result };
+  return { memberAnalyses, debateResponses, thesisDebateResponses, result };
 }
 
 export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIBoardPanelProps) {
@@ -223,6 +241,7 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
   // Resolve displayed data: live overrides saved
   const memberAnalyses = isLiveSession ? liveMemberAnalyses : (savedHydrated?.memberAnalyses ?? {});
   const debateResponses = isLiveSession ? liveDebateResponses : (savedHydrated?.debateResponses ?? []);
+  const thesisDebateResponses = isLiveSession ? [] : (savedHydrated?.thesisDebateResponses ?? []);
   const result = isLiveSession ? liveResult : (savedHydrated?.result ?? null);
 
   const hasResults = result !== null || Object.keys(memberAnalyses).length > 0;
@@ -448,6 +467,17 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
                 frictionPoints={result.frictionPoints}
                 questionsForFounder={result.questionsForFounder}
               />
+            </>
+          )}
+
+          {/* Round 0 : Thesis debate (thesis-first) — affiche AVANT les debats classiques */}
+          {thesisDebateResponses.length > 0 && (
+            <>
+              <SectionDivider
+                icon={<MessageSquareMore className="h-4 w-4" />}
+                label="Round 0 — Débat sur la thèse"
+              />
+              <ThesisDebateView responses={thesisDebateResponses} />
             </>
           )}
 

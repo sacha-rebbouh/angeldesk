@@ -23,7 +23,7 @@ import type {
   ThesisAlert,
   FrameworkLens,
 } from "../thesis/types";
-import { worstVerdict } from "../thesis/types";
+import { worstVerdict, THESIS_ANTI_HALLUCINATION_DIRECTIVES } from "../thesis/types";
 import {
   YcLensSchema,
   buildYcLensSystemPrompt,
@@ -146,7 +146,10 @@ Toutes les alertes structurelles (pas limite arbitraire). Chaque alerte:
 - Si les sources (deck / fact-store / context-engine) ne permettent pas d'etablir un champ, tu le laisses vague ou null. Tu ne comble pas le vide.
 - Tu respectes la Regle N°1 Angel Desk : ANALYSE, ne DECIDE JAMAIS. Ton sortie est analytique, pas prescriptive.
 
-LANGUE: Francais.`;
+LANGUE: Francais.
+
+${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
+`;
   }
 
   protected async execute(context: AgentContext): Promise<ThesisExtractorOutput> {

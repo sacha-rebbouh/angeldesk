@@ -140,14 +140,16 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
       }
     }
 
-    // Ordre canonique des verdicts these (du meilleur au pire pour ASC).
+    // Ordre canonique : deals SANS these en premier (priorite admin/backfill),
+    // puis du meilleur au pire pour les deals avec these.
     const thesisVerdictOrder: Record<string, number> = {
-      very_favorable: 1,
-      favorable: 2,
-      contrasted: 3,
-      vigilance: 4,
-      alert_dominant: 5,
+      very_favorable: 2,
+      favorable: 3,
+      contrasted: 4,
+      vigilance: 5,
+      alert_dominant: 6,
     };
+    // Null (no thesis) = rang 1 → apparait en tete en ASC ; en queue en DESC.
 
     result.sort((a, b) => {
       let cmp = 0;
@@ -162,9 +164,9 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
           cmp = (Number(a.valuationPre) || 0) - (Number(b.valuationPre) || 0);
           break;
         case "thesisVerdict": {
-          // Deals sans these → en bas (ordre 999)
-          const orderA = a.thesisVerdict ? thesisVerdictOrder[a.thesisVerdict] ?? 999 : 999;
-          const orderB = b.thesisVerdict ? thesisVerdictOrder[b.thesisVerdict] ?? 999 : 999;
+          // Deals sans these → rang 1 (en tete ASC, en queue DESC pour priorite admin)
+          const orderA = a.thesisVerdict ? (thesisVerdictOrder[a.thesisVerdict] ?? 999) : 1;
+          const orderB = b.thesisVerdict ? (thesisVerdictOrder[b.thesisVerdict] ?? 999) : 1;
           cmp = orderA - orderB;
           break;
         }

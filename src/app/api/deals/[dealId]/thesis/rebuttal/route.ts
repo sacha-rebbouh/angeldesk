@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isValidCuid } from "@/lib/sanitize";
+import { isValidCuid, checkRateLimitDistributed } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { thesisService } from "@/services/thesis";
 import { thesisRebuttalJudgeAgent } from "@/agents/thesis/rebuttal-judge";
@@ -31,6 +31,15 @@ export async function POST(request: Request, context: RouteContext) {
 
     if (!isValidCuid(dealId)) {
       return NextResponse.json({ error: "Invalid deal ID format" }, { status: 400 });
+    }
+
+    // FIX (audit P1 #3) : rate-limit car endpoint LLM + touches credits
+    const rateLimit = await checkRateLimitDistributed(`thesis-rebuttal:${user.id}`, { maxRequests: 5, windowMs: 60000 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many rebuttals", retryAfter: rateLimit.resetIn },
+        { status: 429, headers: { "Retry-After": String(rateLimit.resetIn) } }
+      );
     }
 
     const deal = await prisma.deal.findFirst({
@@ -136,11 +145,25 @@ export async function POST(request: Request, context: RouteContext) {
 
     const judgment = judgeResult.data as { verdict: "valid" | "rejected"; reasoning: string; regenerate: boolean };
 
-    await thesisService.recordDecision({
+    // FIX (audit P1 #11) : recordDecision pour "contest" fait maintenant check+increment
+    // atomique ; retourne null si cap atteint entre le check et l'increment (race).
+    const recorded = await thesisService.recordDecision({
       thesisId: latest.id,
       decision: "contest",
       rebuttalText,
     });
+    if (!recorded) {
+      // Cap atteint en race — refund le credit et renvoyer 429
+      await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
+        dealId,
+        idempotencyKey: `thesis:rebuttal-refund:${latest.id}:${latest.rebuttalCount}`,
+        description: `Thesis rebuttal refund (cap race)`,
+      }).catch(() => undefined);
+      return NextResponse.json(
+        { error: "Limite de rebuttals atteinte (race)" },
+        { status: 429 }
+      );
+    }
     await thesisService.recordRebuttalVerdict({
       thesisId: latest.id,
       verdict: judgment.verdict,

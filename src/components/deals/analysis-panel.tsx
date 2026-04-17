@@ -466,6 +466,9 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     ycLens: ThesisFrameworkLens;
     thielLens: ThesisFrameworkLens;
     angelDeskLens: ThesisFrameworkLens;
+    // FIX (audit P2 #13) : expose createdAt pour que le RevisionBanner utilise le vrai
+    // timestamp de la these latest, pas `new Date()` fake.
+    createdAt: string;
   };
   type ThesisHistoryEntry = {
     id: string;
@@ -514,15 +517,17 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     return thesisHistory.find((h) => h.version === thesis.version - 1) ?? null;
   }, [thesis, thesisHistory]);
 
-  // Auto-open modal dès que hasPendingDecision devient vrai (Tier 0.5 termine, attend BA)
+  // Auto-open modal dès que hasPendingDecision devient vrai ET thesis dispo (Tier 0.5 termine)
+  // FIX (audit P2 #24) : guard `!!thesis` pour eviter boucle ouverture si serveur en
+  // etat incoherent (pendingDecision=true mais thesis=null).
   useEffect(() => {
-    if (hasPendingDecision && !isThesisModalOpen) {
+    if (hasPendingDecision && !!thesis && !isThesisModalOpen) {
       setIsThesisModalOpen(true);
     }
-    if (!hasPendingDecision && isThesisModalOpen) {
+    if ((!hasPendingDecision || !thesis) && isThesisModalOpen) {
       setIsThesisModalOpen(false);
     }
-  }, [hasPendingDecision, isThesisModalOpen]);
+  }, [hasPendingDecision, thesis, isThesisModalOpen]);
 
   const handleThesisDecided = useCallback(
     (decision: "stop" | "continue" | "contest") => {
@@ -1201,7 +1206,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
             moat: thesis.moat,
             pathToExit: thesis.pathToExit,
             loadBearing: thesis.loadBearing,
-            createdAt: new Date().toISOString(),
+            createdAt: thesis.createdAt,
           }}
           onDismiss={() => setRevisionBannerDismissed(true)}
         />

@@ -102,6 +102,7 @@ import {
   loadAnalysisForRecovery,
   markAnalysisAsFailed,
   loadPreviousAnalysisQuestions,
+  saveCheckpoint,
 } from "./persistence";
 import {
   generateSummary,
@@ -1391,16 +1392,65 @@ export class AgentOrchestrator {
       // Si pauseAfterThesis=true, on persiste l'etat et on retourne early. L'analyse reste
       // en RUNNING en DB. Inngest ensuite : step.waitForEvent('thesis.decision', 24h) puis
       // orchestrator.continueAnalysisAfterThesis(analysisId, decision) pour reprendre.
-      if (pauseAfterThesis && thesisOutput && enrichedContext.thesis) {
+      if (pauseAfterThesis) {
+        // FIX (audit P0 #7) : si thesis-extractor a echoue (thesisOutput null) OU si la these
+        // n'a pas ete persistee, on ne peut pas continuer le flow gate. On abort proprement
+        // avec refund integral puisque le BA a paye Deep Dive (5cr) pour une analyse gated.
+        if (!thesisOutput || !enrichedContext.thesis) {
+          console.error(
+            `[Orchestrator:FullAnalysis] pauseAfterThesis=true mais thesis-extractor a echoue (output=${!!thesisOutput}, thesisCtx=${!!enrichedContext.thesis}). Abort avec refund.`
+          );
+          await stateMachine.complete();
+          await completeAnalysis({
+            analysisId: analysis.id,
+            success: false,
+            totalCost,
+            totalTimeMs: Date.now() - startTime,
+            summary: "Extraction de these echouee — analyse annulee, credits rembourses.",
+            results: allResults,
+            statusOverride: "FAILED",
+          });
+          return {
+            sessionId: analysis.id,
+            dealId,
+            type: "full_analysis" as const,
+            success: false,
+            results: allResults,
+            totalCost,
+            totalTimeMs: Date.now() - startTime,
+            summary: "Extraction de these echouee",
+            earlyWarnings: collectedWarnings,
+            hasCriticalWarnings: collectedWarnings.some(w => w.severity === "critical"),
+          };
+        }
+
         console.log(
           `[Orchestrator:FullAnalysis] Pause-after-thesis triggered (analysisId=${analysis.id}, thesisId=${enrichedContext.thesis.id}, verdict=${thesisOutput.verdict})`
         );
 
         // Checkpoint state (resumeAnalysis pourra reprendre d'ici)
         await stateMachine.startAnalysis();
-        // Persist intermediate results to analysis (fact-extractor, document-extractor,
-        // deck-coherence, thesis-extractor sont dans allResults). Le resume flow ira
-        // rechercher ces results dans analysis.results pour reconstituer le contexte.
+
+        // FIX (audit P0 #1) : saveCheckpoint OBLIGATOIRE pour que resumeAnalysis retrouve
+        // l'etat sur le continue/contest. Sans ca resumeAnalysis throws "no checkpoint".
+        const pendingTier1 = [...TIER1_AGENT_NAMES];
+        const pendingTier3 = [...TIER3_AGENT_NAMES];
+        const completedAgentsSet = Object.keys(allResults).filter((k) => allResults[k]?.success);
+        await saveCheckpoint(analysis.id, {
+          state: "ANALYZING",
+          completedAgents: completedAgentsSet,
+          pendingAgents: [...pendingTier1, ...pendingTier3],
+          failedAgents: Object.entries(allResults)
+            .filter(([, r]) => r && !r.success)
+            .map(([name, r]) => ({ agent: name, error: r.error ?? "unknown", retries: 0 })),
+          findings: [],
+          results: allResults as Record<string, AgentResult>,
+          totalCost,
+          startTime: new Date(startTime).toISOString(),
+        }).catch((err: unknown) =>
+          console.warn("[Orchestrator:FullAnalysis] Failed to save checkpoint for pause:", err)
+        );
+
         await updateAnalysisProgress(analysis.id, completedCount, totalCost);
         await prisma.analysis.update({
           where: { id: analysis.id },
@@ -3642,6 +3692,42 @@ export class AgentOrchestrator {
         factStore,
         factStoreFormatted,
       });
+
+      // FIX (audit P0 #5) : thesis-first — rehydrater la these persistee pour que Tier1/2/3
+      // agents (notamment thesis-reconciler) aient acces a context.thesis sur resume.
+      try {
+        const latestThesis = await thesisService.getLatest(deal.id);
+        if (latestThesis) {
+          type ThesisVerdictStr = "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
+          type LoadBearingStatus = "verified" | "declared" | "projected" | "speculative";
+          const loadBearing = ((latestThesis.loadBearing as unknown) as Array<{
+            id: string; statement: string; status: LoadBearingStatus; impact: string; validationPath: string;
+          }>) ?? [];
+          const alerts = ((latestThesis.alerts as unknown) as Array<{ severity: string; category: string; title: string; detail: string }>) ?? [];
+          const yc = ((latestThesis.ycLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
+          const thiel = ((latestThesis.thielLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
+          const ad = ((latestThesis.angelDeskLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
+          enrichedContext.thesis = {
+            id: latestThesis.id,
+            reformulated: latestThesis.reformulated,
+            problem: latestThesis.problem,
+            solution: latestThesis.solution,
+            whyNow: latestThesis.whyNow,
+            moat: latestThesis.moat,
+            pathToExit: latestThesis.pathToExit,
+            verdict: latestThesis.verdict as ThesisVerdictStr,
+            confidence: latestThesis.confidence,
+            loadBearing,
+            alertsCount: alerts.length,
+            ycVerdict: yc.verdict,
+            thielVerdict: thiel.verdict,
+            angelDeskVerdict: ad.verdict,
+          };
+          console.log(`[Orchestrator:Resume] Thesis rehydrated: verdict=${latestThesis.verdict} confidence=${latestThesis.confidence}`);
+        }
+      } catch (err) {
+        console.warn("[Orchestrator:Resume] Failed to rehydrate thesis context:", err);
+      }
 
       // Resume based on current state
       if (currentState === "ANALYZING" || currentState === "GATHERING") {

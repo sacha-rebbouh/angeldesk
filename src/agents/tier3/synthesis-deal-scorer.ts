@@ -1682,11 +1682,15 @@ Aucune incohérence majeure détectée entre les agents.`;
     // dimensions manquantes, etc.). Ces agents ne doivent PAS peser autant qu'un
     // output VALID dans le score global. On applique -2 pts par agent partiel
     // (cap a -10) + on baisse la confidence.
+    // FIX (audit P1 #9) : thesis-extractor est maintenant dans la liste des contributeurs
+    // soumis a la contract penalty. Si l'extracteur retourne PARTIAL_UNVERIFIED
+    // (ex: loadBearing vide, alerts manquant), meme penalite -2 pts que les Tier 1.
     const tier1Contributors = [
       "financial-auditor", "team-investigator", "competitive-intel",
       "market-intelligence", "tech-stack-dd", "tech-ops-dd",
       "legal-regulatory", "gtm-analyst", "customer-intel",
       "exit-strategist", "deck-forensics", "cap-table-auditor", "question-master",
+      "thesis-extractor", "thesis-reconciler",
     ];
     const partialAgents: string[] = [];
     for (const name of tier1Contributors) {

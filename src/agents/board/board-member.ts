@@ -387,8 +387,17 @@ Reponds en JSON:
     const loadBearingStr = t.loadBearing
       .map((lb) => `- [${lb.status.toUpperCase()}] ${lb.statement} (impact si fausse : ${lb.impact})`)
       .join("\n");
-    const alertsStr = t.alerts.length > 0
-      ? t.alerts.map((a) => `- [${a.severity.toUpperCase()}] ${a.title} — ${a.detail}`).join("\n")
+    // FIX (audit P2 #4) : capper les alertes pour eviter de saturer le prompt Gemini/Grok
+    // (context 8k-32k). Top 10 severity-sorted, le reste resume en "+N autres".
+    const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    const sortedAlerts = [...t.alerts].sort((a, b) =>
+      (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99)
+    );
+    const topAlerts = sortedAlerts.slice(0, 10);
+    const extraCount = sortedAlerts.length - topAlerts.length;
+    const alertsStr = sortedAlerts.length > 0
+      ? topAlerts.map((a) => `- [${a.severity.toUpperCase()}] ${a.title} — ${a.detail}`).join("\n")
+        + (extraCount > 0 ? `\n- (+${extraCount} autres alertes omises pour concision)` : "")
       : "(aucune alerte)";
 
     return `ROUND 0 — DEBAT SUR LA THESE D'INVESTISSEMENT (thesis-first)

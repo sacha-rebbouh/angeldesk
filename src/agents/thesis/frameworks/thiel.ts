@@ -17,6 +17,7 @@
  */
 
 import { z } from "zod";
+import { THESIS_ANTI_HALLUCINATION_DIRECTIVES } from "../types";
 
 export const ThielLensSchema = z.object({
   verdict: z.enum(["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]),
@@ -65,6 +66,8 @@ Ton output:
 Regle critique: Thiel refuse VERY_FAVORABLE sans preuve structurelle de defensibilite (moat reel, pas "execution"). Un deal avec equipe exceptionnelle mais sans moat = CONTRASTED au mieux. Une these "we'll outexecute incumbents" sans asymetrie = VIGILANCE.
 
 LANGUE: Francais.
+
+${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
 `;
 }
 

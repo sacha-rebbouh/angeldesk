@@ -138,7 +138,20 @@ const mockPrisma = {
       record.updatedAt = new Date();
       return record;
     }),
+    updateMany: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      let count = 0;
+      for (const record of store) {
+        if (where.dealId && record.dealId !== where.dealId) continue;
+        if (where.isLatest !== undefined && record.isLatest !== where.isLatest) continue;
+        for (const [k, v] of Object.entries(data)) {
+          (record as unknown as Record<string, unknown>)[k] = v;
+        }
+        count++;
+      }
+      return { count };
+    }),
   },
+  $executeRawUnsafe: vi.fn(async () => 0),
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -150,8 +163,15 @@ vi.mock("@/lib/prisma", () => ({
       count: (args: unknown) => mockPrisma.thesis.count(args as never),
       create: (args: unknown) => mockPrisma.thesis.create(args as never),
       update: (args: unknown) => mockPrisma.thesis.update(args as never),
+      updateMany: (args: unknown) => mockPrisma.thesis.updateMany(args as never),
     },
-    $transaction: async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma),
+    // $transaction accepts (fn, options?) — ignore options in mock. Tx exposes
+    // $executeRawUnsafe since thesisService.create uses it for the advisory lock.
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>, _options?: { isolationLevel?: string }) => {
+      void _options;
+      return fn(mockPrisma);
+    },
+    $executeRawUnsafe: (..._args: unknown[]) => mockPrisma.$executeRawUnsafe(),
   },
 }));
 
@@ -300,8 +320,9 @@ describe("thesisService.recordDecision", () => {
       thesisId: thesis.id,
       decision: "stop",
     });
-    expect(updated.decision).toBe("stop");
-    expect(updated.rebuttalCount).toBe(0);
+    expect(updated).not.toBeNull();
+    expect(updated!.decision).toBe("stop");
+    expect(updated!.rebuttalCount).toBe(0);
   });
 
   it("contest: enregistre rebuttal + incremente count", async () => {
@@ -311,8 +332,9 @@ describe("thesisService.recordDecision", () => {
       decision: "contest",
       rebuttalText: "Je conteste",
     });
-    expect(updated.rebuttalCount).toBe(1);
-    expect(updated.rebuttalText).toBe("Je conteste");
+    expect(updated).not.toBeNull();
+    expect(updated!.rebuttalCount).toBe(1);
+    expect(updated!.rebuttalText).toBe("Je conteste");
   });
 
   it("hasReachedRebuttalCap: true a 3 rebuttals", async () => {

@@ -17,6 +17,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { createHash } from "crypto";
 import { logger } from "@/lib/logger";
 import type {
   ThesisExtractorOutput,
@@ -25,6 +26,22 @@ import type {
   ThesisVerdict,
 } from "@/agents/thesis/types";
 import { REBUTTAL_PER_DEAL_CAP } from "@/agents/thesis/types";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Hash a string into a signed 64-bit integer suitable for pg_advisory_xact_lock.
+ * Uses SHA-256 then takes first 8 bytes as int64. Ensures per-dealId lock consistency.
+ */
+function hashStringToBigInt(input: string): string {
+  const hash = createHash("sha256").update(input).digest();
+  // Read signed 64-bit BE — returns a BigInt. Stringify for raw SQL injection safety
+  // (BigInt is not JSON-safe; we interpolate as a numeric literal below).
+  const bigint = hash.readBigInt64BE(0);
+  return bigint.toString();
+}
 
 // ---------------------------------------------------------------------------
 // Types shared
@@ -99,18 +116,29 @@ export const thesisService = {
   }): Promise<ThesisRecord> {
     const { dealId, extractorOutput } = params;
 
+    // FIX (audit P0 #6) : advisory lock Postgres pour serialiser les create() concurrents
+    // par dealId. Empeche que deux extractions simultanees aboutissent a 2 rows isLatest=true.
+    // pg_advisory_xact_lock prend un BIGINT ; on hash le dealId pour obtenir un entier 64-bit.
+    // Le lock est libere automatiquement a la fin de la transaction.
+    const hashForLock = hashStringToBigInt(dealId);
+
     return prisma.$transaction(async (tx) => {
-      // Marquer l'ancienne latest comme non-latest
-      const previous = await tx.thesis.findFirst({
+      // Acquire advisory lock — bloque si une autre tx tient le meme lock
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashForLock})`);
+
+      // Marquer l'ancienne latest comme non-latest (toutes les rows isLatest=true si multiple
+      // via race passee → on en force une seule)
+      await tx.thesis.updateMany({
         where: { dealId, isLatest: true },
-        orderBy: { version: "desc" },
+        data: { isLatest: false },
       });
-      if (previous) {
-        await tx.thesis.update({
-          where: { id: previous.id },
-          data: { isLatest: false },
-        });
-      }
+
+      // Trouver la version max pour incrementer
+      const previous = await tx.thesis.findFirst({
+        where: { dealId },
+        orderBy: { version: "desc" },
+        select: { version: true },
+      });
 
       const nextVersion = (previous?.version ?? 0) + 1;
 
@@ -138,7 +166,7 @@ export const thesisService = {
       });
 
       return created as unknown as ThesisRecord;
-    });
+    }, { isolationLevel: "Serializable" });
   },
 
   async getLatest(dealId: string): Promise<ThesisRecord | null> {
@@ -156,10 +184,13 @@ export const thesisService = {
     return (record as unknown as ThesisRecord) ?? null;
   },
 
-  async getHistory(dealId: string): Promise<ThesisRecord[]> {
+  async getHistory(dealId: string, take: number = 20): Promise<ThesisRecord[]> {
+    // FIX (audit P2 #18) : cap a 20 versions. Au-dela : historique consultable via
+    // endpoint dedie paginé (non-implemente — aucun deal ne devrait en avoir >20).
     const records = await prisma.thesis.findMany({
       where: { dealId },
       orderBy: { version: "desc" },
+      take,
     });
     return records as unknown as ThesisRecord[];
   },
@@ -188,29 +219,58 @@ export const thesisService = {
   /**
    * Enregistre la decision BA (stop | continue | contest).
    * Si decision = "contest", rebuttalText est requis.
+   *
+   * FIX (audit P1 #11) : pour "contest" on fait check + increment dans une seule tx
+   * avec SELECT FOR UPDATE, ce qui previent la race "2 rebuttals concurrents bypassent
+   * le cap de 3". Retourne null si cap atteint (au lieu d'incrementer).
    */
   async recordDecision(params: {
     thesisId: string;
     decision: ThesisDecision;
     rebuttalText?: string;
-  }): Promise<ThesisRecord> {
-    const data: Prisma.ThesisUpdateInput = {
-      decision: params.decision,
-      decisionAt: new Date(),
-    };
-    if (params.decision === "contest" && params.rebuttalText) {
-      data.rebuttalText = params.rebuttalText;
-      data.rebuttalCount = { increment: 1 };
+  }): Promise<ThesisRecord | null> {
+    // Cas simple : stop / continue → update direct
+    if (params.decision !== "contest") {
+      const updated = await prisma.thesis.update({
+        where: { id: params.thesisId },
+        data: {
+          decision: params.decision,
+          decisionAt: new Date(),
+        },
+      });
+      return updated as unknown as ThesisRecord;
     }
-    const updated = await prisma.thesis.update({
-      where: { id: params.thesisId },
-      data,
-    });
-    return updated as unknown as ThesisRecord;
+
+    // Cas "contest" : transaction atomique avec lock sur la row
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `SELECT id FROM "Thesis" WHERE id = $1 FOR UPDATE`,
+        params.thesisId
+      );
+      const existing = await tx.thesis.findUnique({
+        where: { id: params.thesisId },
+        select: { rebuttalCount: true },
+      });
+      if (!existing) return null;
+      if ((existing.rebuttalCount ?? 0) >= REBUTTAL_PER_DEAL_CAP) {
+        return null;
+      }
+      const updated = await tx.thesis.update({
+        where: { id: params.thesisId },
+        data: {
+          decision: params.decision,
+          decisionAt: new Date(),
+          rebuttalText: params.rebuttalText,
+          rebuttalCount: { increment: 1 },
+        },
+      });
+      return updated as unknown as ThesisRecord;
+    }, { isolationLevel: "Serializable" });
   },
 
   /**
    * Retourne true si le BA a atteint le cap de rebuttals sur ce deal (anti-abus).
+   * Check informatif seulement — recordDecision fait le check atomique definitif.
    */
   async hasReachedRebuttalCap(dealId: string): Promise<boolean> {
     const latest = await prisma.thesis.findFirst({

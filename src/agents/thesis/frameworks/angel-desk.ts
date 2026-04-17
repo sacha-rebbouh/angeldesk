@@ -30,6 +30,7 @@
  */
 
 import { z } from "zod";
+import { THESIS_ANTI_HALLUCINATION_DIRECTIVES } from "../types";
 
 export const AngelDeskLensSchema = z.object({
   verdict: z.enum(["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]),
@@ -64,7 +65,7 @@ Profils cibles (spectre continu):
 - **Family office** : ticket €100K-€5M, horizon pouvant aller a 7-10 ans, tolerance illiquidite plus grande
 - **Syndicate via plateformes** : tickets varies, structure legale specifique
 
-Denominateur commun : investisseur NON-FUND institutionnel. Pas les memes leviers qu'un VC (pas de $2M+ ticket + horizon 10-15 ans + board seat de facto). Money privee exigeant exit raisonnable.
+Denominateur commun : investisseur NON-FUND institutionnel. Pas les memes leviers qu'un VC (pas de €2M+ ticket + horizon 10-15 ans + board seat de facto). Money privee exigeant exit raisonnable.
 
 Les 6 angles proprietaires (complementaires a YC/Thiel):
 1. **Exit realisable a €50M+** — acquereurs strategiques identifies (nommes, track record recent de M&A dans le secteur), ou path IPO credible (pas vaporeux) ? Exits en 5-10 ans selon profil.
@@ -89,9 +90,11 @@ Ton output:
 - verdict : signal global vu par Angel Desk.
 - confidence : 0-100.
 
-Regle critique: Angel Desk REFUSE FAVORABLE/VERY_FAVORABLE pour un deal non-investable pour la majorite du spectre prive (BA + groupe + family office), meme si le business est super. Un biotech clinical-stage magnifique = VIGILANCE ou ALERT_DOMINANT (horizon / dilution). Un deal fund-only avec ticket minimum $1M+ = VIGILANCE pour Angel Desk (exclu de la plupart des profils prives).
+Regle critique: Angel Desk REFUSE FAVORABLE/VERY_FAVORABLE pour un deal non-investable pour la majorite du spectre prive (BA + groupe + family office), meme si le business est super. Un biotech clinical-stage magnifique = VIGILANCE ou ALERT_DOMINANT (horizon / dilution). Un deal fund-only avec ticket minimum €1M+ = VIGILANCE pour Angel Desk (exclu de la plupart des profils prives).
 
 LANGUE: Francais.
+
+${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
 `;
 }
 

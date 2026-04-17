@@ -405,10 +405,37 @@ export const dealAnalysisFunction = inngest.createFunction(
       });
     }
 
-    // Compensation si phase3 echoue
+    // Compensation si phase3 echoue — CAS SPECIAL : si paused, le BA a deja recu
+    // la valeur "these" (Tier 0.5 complet). Refund partiel UNIQUEMENT du reste
+    // (Tier 1/2/3 non livre). FIX (audit P1 #10) : avant on refund integral = double valeur.
     if (!phase3.success) {
       await step.run('refund-on-phase3-failure', async () => {
-        await compensateFailedAnalysis({ analysisId: phase3.sessionId, userId, dealId, type });
+        if (paused) {
+          // Phase3 fail apres continue/contest → rembourser 3cr (meme montant que stop)
+          // car les Tier 1/2/3 n'ont pas produit la valeur finale.
+          const { refundCreditAmount, CREDIT_COSTS } = await import("@/services/credits");
+          const partialRefund = Math.max(0, (CREDIT_COSTS["DEEP_DIVE"] ?? 5) - 2);
+          try {
+            await refundCreditAmount(userId, "DEEP_DIVE", partialRefund, {
+              dealId,
+              idempotencyKey: `thesis:phase3-fail-refund:${analysisId}`,
+              description: `Partial refund apres echec phase3 (these livree, Tier 1/2/3 non-livre)`,
+            });
+            await prisma.analysis.update({
+              where: { id: analysisId },
+              data: { refundedAt: new Date(), refundAmount: partialRefund },
+            }).catch((err: unknown) => logger.warn({ err, analysisId }, 'Could not mark refundedAt'));
+          } catch (err) {
+            logger.error({ err, dealId, userId, analysisId }, 'Partial refund on phase3 failure (paused path) failed');
+          }
+          try {
+            await prisma.deal.update({ where: { id: dealId }, data: { status: 'IN_DD' } });
+          } catch (err) {
+            logger.error({ err, dealId }, 'Deal status reset failed');
+          }
+        } else {
+          await compensateFailedAnalysis({ analysisId: phase3.sessionId, userId, dealId, type });
+        }
       });
     }
 
@@ -498,25 +525,35 @@ export const thesisReextractFunction = inngest.createFunction(
   },
   { event: 'analysis/thesis.reextract' },
   async ({ event, step }) => {
-    const { dealId, userId, previousThesisId } = event.data as {
+    const { dealId, userId, previousThesisId, triggeredByAdminId } = event.data as {
       dealId: string;
       userId: string;
       triggeredByDocumentId?: string;
       previousThesisId?: string;
+      triggeredByAdminId?: string;
     };
 
-    // Step 1 : facturation 1 credit (idempotent par deal + previousThesisId)
-    const creditResult = await step.run('deduct-reextract-credit', async () => {
-      const { deductCreditAmount } = await import("@/services/credits");
-      return await deductCreditAmount(userId, "THESIS_REEXTRACT", 1, {
-        dealId,
-        idempotencyKey: `thesis-reextract:${dealId}:${previousThesisId ?? 'first'}`,
-        description: `Re-extraction these apres upload document (deal ${dealId})`,
+    // FIX (audit P0 #5) : si triggered par admin (backfill), l'admin a deja paye
+    // ADMIN_BACKFILL_COST (2cr) sur son compte. On ne deduit PAS le BA.
+    // Autrement : upload doc auto → facturation 1cr au BA (idempotent).
+    let creditResult: { success: boolean; error?: string } = { success: true };
+    if (!triggeredByAdminId) {
+      creditResult = await step.run('deduct-reextract-credit', async () => {
+        const { deductCreditAmount } = await import("@/services/credits");
+        return await deductCreditAmount(userId, "THESIS_REEXTRACT", 1, {
+          dealId,
+          idempotencyKey: `thesis-reextract:${dealId}:${previousThesisId ?? 'first'}`,
+          description: `Re-extraction these apres upload document (deal ${dealId})`,
+        });
       });
-    });
+    } else {
+      logger.info({ dealId, adminId: triggeredByAdminId, userId }, 'Thesis re-extract triggered by admin — skipping BA deduction');
+    }
 
     if (!creditResult.success) {
-      logger.warn({ dealId, userId, reason: creditResult.error }, 'Thesis re-extract : credit deduction failed');
+      // FIX (audit P2 #9) : logger explicite (error, pas warn) + remonter l'erreur
+      // pour que le monitoring / le produit puisse alerter le user via notif.
+      logger.error({ dealId, userId, reason: creditResult.error }, 'Thesis re-extract : credit deduction failed (user will not see updated thesis)');
       return { success: false, error: creditResult.error };
     }
 
@@ -540,15 +577,24 @@ export const thesisReextractFunction = inngest.createFunction(
       }
     });
 
-    // Step 3 : si echec → refund du credit
+    // Step 3 : si echec → refund le credit DU COMPTE qui a paye (admin OU user)
     if (!result.success) {
       await step.run('refund-reextract-credit', async () => {
         const { refundCreditAmount } = await import("@/services/credits");
-        await refundCreditAmount(userId, "THESIS_REEXTRACT", 1, {
-          dealId,
-          idempotencyKey: `thesis-reextract-refund:${dealId}:${previousThesisId ?? 'first'}`,
-          description: `Refund re-extraction these (echec extraction)`,
-        });
+        if (triggeredByAdminId) {
+          // Admin a paye 2cr via backfill → rembourser 2cr a admin
+          await refundCreditAmount(triggeredByAdminId, "THESIS_REEXTRACT", 2, {
+            dealId,
+            idempotencyKey: `thesis-reextract-refund:admin:${triggeredByAdminId}:${dealId}:${previousThesisId ?? 'first'}`,
+            description: `Refund admin backfill (echec extraction)`,
+          });
+        } else {
+          await refundCreditAmount(userId, "THESIS_REEXTRACT", 1, {
+            dealId,
+            idempotencyKey: `thesis-reextract-refund:${dealId}:${previousThesisId ?? 'first'}`,
+            description: `Refund re-extraction these (echec extraction)`,
+          });
+        }
       });
     }
 

@@ -183,7 +183,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       });
     }
 
-    // Fetch full context, conversation history, and thesis in parallel
+    // Fetch full context, conversation history, thesis, and analysis-linked thesisBypass in parallel
     // La these est injectee dans le contexte chat pour permettre a l'agent d'y repondre
     // de maniere informee (intent=THESIS). Si aucune these persistee : null → agent skip section.
     const { thesisService } = await import("@/services/thesis");
@@ -192,6 +192,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
       conversationId ? getConversationHistoryForLLM(conversationId) : Promise.resolve([]),
       thesisService.getLatest(dealId),
     ]);
+
+    // FIX (audit P0 #13) : propager thesisBypass depuis l'analyse la plus recente.
+    // Sans ca le chat disait toujours "bypass actif: false" meme si le BA avait continue
+    // apres une these fragile — le chat ne pouvait pas raisonner correctement sur le score.
+    let thesisBypass = false;
+    if (latestThesis) {
+      const linkedAnalysis = await prisma.analysis.findFirst({
+        where: { dealId, thesisId: latestThesis.id },
+        select: { thesisBypass: true },
+        orderBy: { createdAt: "desc" },
+      });
+      thesisBypass = linkedAnalysis?.thesisBypass ?? false;
+    }
 
     // Build FullChatContext for the agent
     const fullContext: FullChatContext = {
@@ -282,7 +295,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               strengths: string[];
             }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
             decision: latestThesis.decision,
-            thesisBypass: false, // Propagation depuis l'analyse est complexe; fallback false.
+            thesisBypass,
             rebuttalCount: latestThesis.rebuttalCount,
           }
         : null,

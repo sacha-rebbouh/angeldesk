@@ -355,7 +355,23 @@ Do not present speculative claims as confident ones.`;
 
     const { deal, chatContext, documents, latestAnalysis } = this.chatContext;
 
-    let contextPrompt = `# CONTEXTE DU DEAL
+    // FIX (audit P2 #27) : thesis-first — placer la these en TETE du contexte
+    // pour que l'LLM la lise avant les docs/founders (risque de truncation au milieu).
+    // Si pas de these, cette section est vide.
+    const thesisCtxEarly = this.chatContext.thesis;
+    const thesisEarlySummary = thesisCtxEarly
+      ? `# THESE D'INVESTISSEMENT (thesis-first — contexte structurel prioritaire)
+
+**Verdict** : ${thesisCtxEarly.verdict} (confiance ${thesisCtxEarly.confidence}/100, version ${thesisCtxEarly.version})
+**Reformulation** : ${thesisCtxEarly.reformulated}
+**Frameworks** : YC=${thesisCtxEarly.ycLens.verdict} · Thiel=${thesisCtxEarly.thielLens.verdict} · Angel Desk=${thesisCtxEarly.angelDeskLens.verdict}
+${thesisCtxEarly.decision ? `**Decision BA** : ${thesisCtxEarly.decision}${thesisCtxEarly.thesisBypass ? " (bypass these fragile actif)" : ""}\n` : ""}
+(Voir section "Thèse d'investissement" plus bas pour le detail complet avec load-bearing et alertes.)
+
+`
+      : "";
+
+    let contextPrompt = `${thesisEarlySummary}# CONTEXTE DU DEAL
 
 ## Informations de base
 - **Nom**: ${deal.name}
@@ -1040,6 +1056,7 @@ Classifie l'intention parmi:
 - DEEP_DIVE: Veut une analyse approfondie sur un sujet specifique
 - FOLLOW_UP: Suite a une reponse precedente
 - NEGOTIATION: Cherche des arguments de negociation
+- THESIS: Question sur la THESE d'investissement, ses hypotheses, sa solidite, ou les frameworks YC/Thiel/Angel Desk. Mots-cles : these, thesis, why-now, moat, vision, hypothese, load-bearing, framework, fragile, solide, YC, Thiel, PMF, monopoly, contrarian
 - GENERAL: Question generale sur le deal
 
 Reponds en JSON:

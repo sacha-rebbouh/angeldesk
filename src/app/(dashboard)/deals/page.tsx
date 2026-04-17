@@ -29,6 +29,7 @@ async function getDeals(userId: string) {
       theses: {
         where: { isLatest: true },
         select: { verdict: true },
+        orderBy: { version: "desc" },
         take: 1,
       },
     },
