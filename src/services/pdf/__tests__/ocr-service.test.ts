@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const findManyMock = vi.fn();
+const createDefaultPdfProviderStackMock = vi.fn();
+const createPdfJsNativeExtractionProviderMock = vi.fn();
 
 vi.mock("../../openrouter/client", () => ({
   openrouter: {},
@@ -8,6 +10,14 @@ vi.mock("../../openrouter/client", () => ({
     GPT4O_MINI: { inputCost: 0.001, outputCost: 0.002 },
     GPT4O: { inputCost: 0.01, outputCost: 0.03 },
   },
+}));
+
+vi.mock("../providers/router", () => ({
+  createDefaultPdfProviderStack: createDefaultPdfProviderStackMock,
+}));
+
+vi.mock("../providers/native-pdf-provider", () => ({
+  createPdfJsNativeExtractionProvider: createPdfJsNativeExtractionProviderMock,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -25,11 +35,20 @@ const {
   isLowInformationWarningOnlyPage,
   isCachedOCRModeReusable,
   processImageArtifactOCR,
+  smartExtract,
 } = await import("../ocr-service");
 
 beforeEach(() => {
   findManyMock.mockReset();
   findManyMock.mockResolvedValue([]);
+  createDefaultPdfProviderStackMock.mockReset();
+  createPdfJsNativeExtractionProviderMock.mockReset();
+  createDefaultPdfProviderStackMock.mockReturnValue({
+    native: undefined,
+    pageOcr: undefined,
+    structuredPrimary: undefined,
+    structuredFallback: undefined,
+  });
 });
 
 describe("detectPageSignals", () => {
@@ -162,6 +181,19 @@ describe("processImageArtifactOCR cache reuse", () => {
           numericClaims: [{ label: "Revenue", value: "12.4m", sourceText: "Revenue 12.4m", confidence: "high" }],
           needsHumanReview: false,
           ocrMode: "supreme",
+          provider: {
+            kind: "openrouter-vlm",
+            modelId: "openai/gpt-4o",
+            mode: "supreme",
+            providerVersion: "openrouter-v1",
+            promptVersion: "ocr-structured-v2",
+            schemaVersion: "ocr-structured-schema-v1",
+            transport: "json_schema",
+          },
+          verification: {
+            state: "provider_structured",
+            evidence: ["table_count=0", "chart_count=1"],
+          },
         },
       },
     ]);
@@ -173,5 +205,80 @@ describe("processImageArtifactOCR cache reuse", () => {
     expect(result.mode).toBe("supreme");
     expect(result.text).toContain("Revenue bridge");
     expect(findManyMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("smartExtract structured provider routing", () => {
+  it("uses the configured structured layout provider before falling back to VLM OCR", async () => {
+    createPdfJsNativeExtractionProviderMock.mockReturnValue({
+      extractFromBuffer: vi.fn().mockResolvedValue({
+        provider: { id: "pdfjs-native", label: "PDF.js", kind: "native_text" },
+        success: true,
+        text: "Revenue bridge 12",
+        pageTexts: ["Revenue bridge 12"],
+        pageCount: 1,
+        metadata: {},
+        quality: {
+          score: 20,
+          metrics: {
+            qualityScore: 20,
+            pageContentDistribution: [17],
+          },
+          warnings: [],
+        },
+        raw: {
+          success: true,
+          text: "Revenue bridge 12",
+          pageTexts: ["Revenue bridge 12"],
+          pageCount: 1,
+          info: {},
+          quality: {
+            metrics: {
+              qualityScore: 20,
+              pageContentDistribution: [17],
+            },
+          },
+        },
+      }),
+    });
+
+    createDefaultPdfProviderStackMock.mockReturnValue({
+      native: undefined,
+      pageOcr: undefined,
+      structuredPrimary: {
+        descriptor: { id: "google-document-ai", label: "Google Document AI", kind: "structured_layout" },
+        extractFromBuffer: vi.fn().mockResolvedValue({
+          provider: { id: "google-document-ai", label: "Google Document AI", kind: "structured_layout" },
+          success: true,
+          pageCount: 1,
+          pages: [
+            {
+              pageNumber: 1,
+              text: "Revenue bridge\n2025A 12.4m\n2026F 18.1m",
+              confidence: "high",
+              visualBlocks: [{ type: "table", description: "Extracted table", confidence: "high" }],
+              tables: [{ markdown: "| Metric | Value |\n| Revenue | 12.4m |", rows: [["Metric", "Value"], ["Revenue", "12.4m"]], confidence: "high" }],
+              charts: [],
+              unreadableRegions: [],
+              numericClaims: [{ label: "Revenue", value: "12.4m", sourceText: "Revenue 12.4m", confidence: "high" }],
+            },
+          ],
+          raw: {},
+        }),
+      },
+      structuredFallback: undefined,
+    });
+
+    const result = await smartExtract(Buffer.from("fake-pdf"), {
+      autoOCR: true,
+      strict: false,
+      maxOCRPages: 10,
+    });
+
+    expect(result.method).toBe("hybrid");
+    expect(result.pagesOCRd).toBe(1);
+    expect(result.estimatedCost).toBeGreaterThan(0);
+    expect(result.ocrResult?.pageResults[0]?.artifact?.provider?.kind).toBe("google-document-ai");
+    expect(result.manifest.pages[0]?.artifact?.verification?.state).toBe("provider_structured");
   });
 });

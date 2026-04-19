@@ -2,12 +2,14 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
   CheckCircle,
   Clipboard,
+  ExternalLink,
   FileSearch,
   Loader2,
   Search,
@@ -76,6 +78,20 @@ interface AuditPage {
     numericClaims?: Array<{ label: string; value: string; unit?: string; confidence: string }>;
     confidence?: string;
     needsHumanReview?: boolean;
+  } | null;
+  provider?: {
+    kind?: string | null;
+    modelId?: string | null;
+    mode?: string | null;
+    providerVersion?: string | null;
+    schemaVersion?: string | null;
+    promptVersion?: string | null;
+    transport?: string | null;
+  } | null;
+  verification?: {
+    state?: string | null;
+    evidence?: string[];
+    issues?: string[];
   } | null;
   evidenceSummary?: {
     visualBlocks: number;
@@ -304,14 +320,16 @@ type PageRetryParams = {
 };
 
 function pageRequiresDecision(page: AuditPage) {
-  return !page.override && page.blocksAnalysis;
+  return !page.override && (
+    page.status === "NEEDS_REVIEW" ||
+    page.status === "FAILED"
+  );
 }
 
 function pageNeedsInspection(page: AuditPage) {
   return !page.override && (
-    page.needsInspection ||
-    page.evidenceSummary?.missingExpectedStructure === true ||
-    page.evidenceSummary?.needsHumanReview === true
+    page.status === "NEEDS_REVIEW" ||
+    page.status === "FAILED"
   );
 }
 
@@ -336,6 +354,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   const [batchRetryProgress, setBatchRetryProgress] = useState<{ done: number; total: number } | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const queryClient = useQueryClient();
+  const router = useRouter();
   const auditQueryKey = useMemo(
     () => ["document-extraction-audit", document?.id] as const,
     [document?.id]
@@ -349,6 +368,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
 
   const audit = data?.data;
   const excelModelAudit = audit?.document.excelModelAudit ?? null;
+  const isPdfDocument = audit?.document.mimeType === "application/pdf";
   const pages = useMemo(() => audit?.latestRun?.pages ?? [], [audit?.latestRun?.pages]);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredPages = useMemo(() => {
@@ -446,6 +466,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         queryClient.invalidateQueries({ queryKey: auditQueryKey }),
         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
       ]);
+      router.refresh();
     },
   });
 
@@ -463,6 +484,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       toast.success("Extraction renforcee terminee");
       queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] });
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] });
+      router.refresh();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -488,6 +510,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       toast.success(`Page ${params.pageNumber} retraitee`);
       queryClient.invalidateQueries({ queryKey: auditQueryKey });
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] });
+      router.refresh();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -521,6 +544,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         queryClient.invalidateQueries({ queryKey: auditQueryKey }),
         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
       ]);
+      router.refresh();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -737,9 +761,9 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                   </TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="pages" className="min-h-0 flex-1 overflow-hidden">
+                <TabsContent value="pages" className="min-h-0 flex-1 overflow-y-auto">
                   <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-                    <div className="flex min-h-0 flex-col gap-3">
+                    <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1">
                       <div className="relative">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
@@ -848,9 +872,6 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                               )}
                             </div>
                           )}
-                          {pageToInspect.artifact && (
-                            <ArtifactSummary page={pageToInspect} />
-                          )}
                           {pageNeedsInspection(pageToInspect) && (
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -920,6 +941,14 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                               </div>
                             </div>
                           )}
+                          {pageToInspect.artifact && (
+                            <ArtifactSummary
+                              page={pageToInspect}
+                              documentId={audit.document.id}
+                              documentName={audit.document.name}
+                              isPdf={isPdfDocument}
+                            />
+                          )}
                           {!pageToInspect.blocksAnalysis && pageNeedsInspection(pageToInspect) && !pageToInspect.override && (
                             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
                               <p className="font-medium">Inspection recommandee, non bloquante</p>
@@ -957,7 +986,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                   </div>
                 </TabsContent>
 
-                <TabsContent value="corpus" className="min-h-0 flex-1 overflow-hidden">
+                <TabsContent value="corpus" className="min-h-0 flex-1 overflow-y-auto">
                   <div className="h-full min-h-[420px] rounded-lg border">
                     <Textarea
                       readOnly
@@ -973,7 +1002,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                   </TabsContent>
                 )}
 
-                <TabsContent value="review" className="min-h-0 flex-1 overflow-hidden">
+                <TabsContent value="review" className="min-h-0 flex-1 overflow-y-auto">
                   {reviewPages.length > 0 && reviewPageToInspect ? (
                     <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
                       <div className="min-h-0 space-y-2 overflow-y-auto pr-1">
@@ -1006,7 +1035,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                         ))}
                       </div>
 
-                      <div className="flex min-h-0 flex-col gap-3">
+                      <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <p className="font-medium">Page {reviewPageToInspect.pageNumber}</p>
@@ -1104,7 +1133,12 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                         )}
 
                         {reviewPageToInspect.artifact && (
-                          <ArtifactSummary page={reviewPageToInspect} />
+                          <ArtifactSummary
+                            page={reviewPageToInspect}
+                            documentId={audit.document.id}
+                            documentName={audit.document.name}
+                            isPdf={isPdfDocument}
+                          />
                         )}
 
                         <div className="min-h-[300px] flex-1 rounded-lg border">
@@ -1219,9 +1253,21 @@ function MiniBadge({ label }: { label: string }) {
   );
 }
 
-function ArtifactSummary({ page }: { page: AuditPage }) {
+function ArtifactSummary({
+  page,
+  documentId,
+  documentName,
+  isPdf,
+}: {
+  page: AuditPage;
+  documentId: string;
+  documentName: string;
+  isPdf: boolean;
+}) {
   const artifact = page.artifact;
   const summary = page.evidenceSummary;
+  const provider = page.provider;
+  const verification = page.verification;
   if (!artifact) return null;
   const visualCount = summary?.visualBlocks ?? artifact.visualBlocks?.length ?? 0;
   const tableCount = summary?.tables ?? artifact.tables?.length ?? 0;
@@ -1233,6 +1279,15 @@ function ArtifactSummary({ page }: { page: AuditPage }) {
     return null;
   }
 
+  const previewImageUrl = isPdf
+    ? `/api/documents/${documentId}/preview-pages/${page.pageNumber}${
+        page.pageImageHash ? `?v=${encodeURIComponent(page.pageImageHash)}` : ""
+      }`
+    : null;
+  const pageUrl = isPdf
+    ? `/api/documents/${documentId}/download?disposition=inline#page=${page.pageNumber}&toolbar=0&navpanes=0&zoom=page-fit`
+    : null;
+
   return (
     <div className="rounded-lg border bg-muted/30 p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -1240,9 +1295,50 @@ function ArtifactSummary({ page }: { page: AuditPage }) {
         {(summary?.confidence ?? artifact.confidence) && (
           <Badge variant="outline">Confiance {summary?.confidence ?? artifact.confidence}</Badge>
         )}
+        {provider?.kind && <Badge variant="outline">Provider {provider.kind}</Badge>}
+        {provider?.modelId && <Badge variant="outline">{provider.modelId}</Badge>}
+        {verification?.state && <Badge variant="outline">Verification {verification.state}</Badge>}
         {(summary?.needsHumanReview || artifact.needsHumanReview) && <Badge className="bg-amber-100 text-amber-700">Review</Badge>}
         {summary?.missingExpectedStructure && <Badge variant="destructive">Structure manquante</Badge>}
       </div>
+      {previewImageUrl && (
+        <div className="mt-3 overflow-hidden rounded-lg border bg-background">
+          <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
+            <div>
+              <p className="text-sm font-medium">Page source</p>
+              <p className="text-xs text-muted-foreground">PDF original, page {page.pageNumber}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => window.open(previewImageUrl, "_blank", "noopener,noreferrer")}
+              >
+                <ExternalLink className="mr-2 h-4 w-4" />
+                Ouvrir l'image
+              </Button>
+              {pageUrl && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => window.open(pageUrl, "_blank", "noopener,noreferrer")}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Ouvrir la page
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="max-h-[520px] overflow-auto bg-muted/20 p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewImageUrl}
+              alt={`${documentName} - page ${page.pageNumber}`}
+              className="mx-auto h-auto max-w-full rounded border bg-background shadow-sm"
+            />
+          </div>
+        </div>
+      )}
       {summary?.recommendedAction && summary.recommendedAction !== "NONE" && (
         <p className="mt-2 text-xs text-muted-foreground">
           Action recommandee: {formatRecommendedAction(summary.recommendedAction)}
@@ -1279,6 +1375,16 @@ function ArtifactSummary({ page }: { page: AuditPage }) {
       )}
       {artifact.unreadableRegions?.[0]?.reason && (
         <p className="mt-2 text-amber-800">{artifact.unreadableRegions[0].reason}</p>
+      )}
+      {(verification?.issues?.length ?? 0) > 0 && (
+        <p className="mt-2 text-xs text-amber-800">
+          Verification issues: {verification?.issues?.slice(0, 3).join(", ")}
+        </p>
+      )}
+      {(verification?.evidence?.length ?? 0) > 0 && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Evidence: {verification?.evidence?.slice(0, 3).join(", ")}
+        </p>
       )}
     </div>
   );

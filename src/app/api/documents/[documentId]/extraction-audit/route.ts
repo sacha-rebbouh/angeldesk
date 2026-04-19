@@ -108,6 +108,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
                   (override) => override.pageNumber === page.pageNumber && override.approvedAt
                 );
                 const qualityPlan = pageQualityPlan.get(page.pageNumber);
+                const evidenceSummary = buildPageEvidenceSummary(page.artifact, page.status, page.hasTables, page.hasCharts);
                 return {
                   id: page.id,
                   pageNumber: page.pageNumber,
@@ -128,12 +129,14 @@ export async function GET(_request: NextRequest, context: RouteParams) {
                   textPreview: page.textPreview,
                   artifactVersion: page.artifactVersion,
                   artifact: page.artifact,
-                  evidenceSummary: buildPageEvidenceSummary(page.artifact, page.status, page.hasTables, page.hasCharts),
+                  provider: extractArtifactProvider(page.artifact),
+                  verification: extractArtifactVerification(page.artifact),
+                  evidenceSummary,
                   pageImageHash: page.pageImageHash,
                   blocksAnalysis: blockingPages.has(page.pageNumber),
                   needsInspection: !pageOverride && (
-                    page.status !== "READY" &&
-                    page.status !== "SKIPPED"
+                    page.status === "NEEDS_REVIEW" ||
+                    page.status === "FAILED"
                   ),
                   extractionTier: qualityPlan?.extractionTier ?? null,
                   visualRiskScore: qualityPlan?.visualRiskScore ?? null,
@@ -241,6 +244,20 @@ function extractSemanticAssessment(artifact: unknown, qualityPlan?: PageQualityP
   };
 }
 
+function extractArtifactProvider(artifact: unknown) {
+  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return null;
+  const candidate = (artifact as { provider?: unknown }).provider;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  return candidate;
+}
+
+function extractArtifactVerification(artifact: unknown) {
+  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return null;
+  const candidate = (artifact as { verification?: unknown }).verification;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  return candidate;
+}
+
 function buildPageEvidenceSummary(
   artifact: unknown,
   status: string,
@@ -256,6 +273,8 @@ function buildPageEvidenceSummary(
   const numericClaims = Array.isArray(record.numericClaims) ? record.numericClaims.length : 0;
   const unreadableRegions = Array.isArray(record.unreadableRegions) ? record.unreadableRegions.length : 0;
   const needsHumanReview = record.needsHumanReview === true || status === "NEEDS_REVIEW" || status === "FAILED";
+  const provider = extractArtifactProvider(record);
+  const verification = extractArtifactVerification(record);
   const missingExpectedStructure = (hasTables && tables === 0) || (hasCharts && charts === 0 && numericClaims < 3);
   const completeness = calculateArtifactCompleteness({
     hasTables,
@@ -271,6 +290,15 @@ function buildPageEvidenceSummary(
     unreadableRegions,
     confidence: typeof record.confidence === "string" ? record.confidence : null,
     needsHumanReview,
+    providerKind: provider && typeof provider === "object" && "kind" in provider ? (provider as { kind?: unknown }).kind ?? null : null,
+    providerModelId: provider && typeof provider === "object" && "modelId" in provider ? (provider as { modelId?: unknown }).modelId ?? null : null,
+    verificationState: verification && typeof verification === "object" && "state" in verification ? (verification as { state?: unknown }).state ?? null : null,
+    verificationIssueCount: verification && typeof verification === "object" && Array.isArray((verification as { issues?: unknown[] }).issues)
+      ? ((verification as { issues?: unknown[] }).issues?.length ?? 0)
+      : 0,
+    verificationEvidenceCount: verification && typeof verification === "object" && Array.isArray((verification as { evidence?: unknown[] }).evidence)
+      ? ((verification as { evidence?: unknown[] }).evidence?.length ?? 0)
+      : 0,
     missingExpectedStructure,
     artifactCompleteness: completeness.score,
     expectedVisualBlocks: completeness.expectedVisualBlocks,
@@ -287,7 +315,7 @@ function buildPageEvidenceSummary(
 }
 
 function isDocumentPageArtifact(value: Record<string, unknown>): boolean {
-  return value.version === "document-page-artifact-v1" &&
+  return (value.version === "document-page-artifact-v1" || value.version === "document-page-artifact-v2") &&
     typeof value.text === "string" &&
     Array.isArray(value.visualBlocks) &&
     Array.isArray(value.tables) &&

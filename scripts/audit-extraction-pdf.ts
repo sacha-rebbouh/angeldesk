@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 
-import { smartExtract } from "../src/services/pdf";
-import { getBlockingPageNumbersFromManifest } from "../src/services/documents/extraction-runs";
+import { extractTextFromPDF, smartExtract } from "../src/services/pdf";
+import {
+  buildGoldenAuditSnapshot,
+  buildGoldenNativePdfSnapshot,
+  buildGoldenStackComparisonSnapshot,
+} from "../src/services/pdf/golden-corpus";
 
 async function main() {
   const file = process.argv[2];
@@ -11,17 +15,16 @@ async function main() {
   }
 
   const buffer = await fs.readFile(file);
+  const native = await extractTextFromPDF(buffer);
   const result = await smartExtract(buffer, {
     qualityThreshold: 40,
     maxOCRPages: Number.POSITIVE_INFINITY,
     autoOCR: true,
     strict: true,
   });
-
-  const blockingPages = getBlockingPageNumbersFromManifest(result.manifest);
-  const inspectionPages = result.manifest.pages
-    .filter((page) => page.status === "needs_review" || page.status === "failed")
-    .map((page) => page.pageNumber);
+  const nativeSnapshot = buildGoldenNativePdfSnapshot(native);
+  const strictSnapshot = buildGoldenAuditSnapshot(result.manifest);
+  const stackComparison = buildGoldenStackComparisonSnapshot(nativeSnapshot, strictSnapshot);
 
   const payload = {
     file,
@@ -29,10 +32,10 @@ async function main() {
     quality: result.quality,
     pagesOCRd: result.pagesOCRd,
     estimatedCost: result.estimatedCost,
-    manifestStatus: result.manifest.status,
-    blockingPages,
-    inspectionPages,
-    pages: result.manifest.pages.map((page) => ({
+    nativeSnapshot,
+    strictSnapshot,
+    stackComparison,
+    rawPages: result.manifest.pages.map((page) => ({
       pageNumber: page.pageNumber,
       status: page.status,
       method: page.method,

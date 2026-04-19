@@ -115,7 +115,7 @@ function getExtractionMetricSummary(metrics: unknown): {
   const failedPages = Array.isArray(record.failedPages) ? record.failedPages : [];
   const inspectionCount =
     status === "needs_review"
-      ? Math.max(blockingPages.length, failedPages.length, 1)
+      ? Math.max(blockingPages.length, failedPages.length)
       : failedPages.length;
 
   return {

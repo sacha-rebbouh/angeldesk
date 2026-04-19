@@ -791,7 +791,16 @@ export async function refreshRunReadinessWithOverrides(runId: string) {
 export async function refreshRunExtractionStats(runId: string, corpusText?: string | null) {
   const run = await prisma.documentExtractionRun.findUnique({
     where: { id: runId },
-    include: { pages: true, overrides: true },
+    include: {
+      pages: true,
+      overrides: true,
+      document: {
+        select: {
+          id: true,
+          extractionMetrics: true,
+        },
+      },
+    },
   });
 
   if (!run) return null;
@@ -821,7 +830,7 @@ export async function refreshRunExtractionStats(runId: string, corpusText?: stri
       ? "FAILED"
       : "BLOCKED";
 
-  return prisma.documentExtractionRun.update({
+  const updatedRun = await prisma.documentExtractionRun.update({
     where: { id: runId },
     data: {
       pageCount,
@@ -838,6 +847,54 @@ export async function refreshRunExtractionStats(runId: string, corpusText?: stri
       completedAt: new Date(),
     },
   });
+
+  const unresolvedFailedPages = run.pages
+    .filter((page) => page.status === "FAILED")
+    .map((page) => page.pageNumber)
+    .filter((pageNumber) => unresolvedPages.includes(pageNumber));
+
+  const baseMetrics =
+    run.document.extractionMetrics &&
+    typeof run.document.extractionMetrics === "object" &&
+    !Array.isArray(run.document.extractionMetrics)
+      ? { ...(run.document.extractionMetrics as Record<string, unknown>) }
+      : {};
+
+  await prisma.document.update({
+    where: { id: run.document.id },
+    data: {
+      extractionMetrics: {
+        ...baseMetrics,
+        latestExtractionRunId: updatedRun.id,
+        status: mapRunStatusToLegacyStatus(updatedRun.status),
+        blockingPages: unresolvedPages,
+        failedPages: unresolvedFailedPages,
+        pagesFailed: unresolvedFailedPages.length,
+        pageCount: updatedRun.pageCount,
+        pagesProcessed: updatedRun.pagesProcessed,
+        pagesSucceeded: updatedRun.pagesSucceeded,
+        pagesSkipped: updatedRun.pagesSkipped,
+        coverageRatio: Number(updatedRun.coverageRatio),
+        quality: updatedRun.qualityScore,
+      },
+    },
+  });
+
+  return updatedRun;
+}
+
+function mapRunStatusToLegacyStatus(status: RunStatus): "ready" | "ready_with_warnings" | "needs_review" | "failed" {
+  switch (status) {
+    case "READY":
+      return "ready";
+    case "READY_WITH_WARNINGS":
+      return "ready_with_warnings";
+    case "BLOCKED":
+      return "needs_review";
+    case "FAILED":
+    default:
+      return "failed";
+  }
 }
 
 export async function evaluateDealDocumentReadiness(dealId: string): Promise<DealDocumentReadiness> {

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { buildGoldenAuditSnapshot, compareGoldenAudit } from "../golden-corpus";
+import {
+  buildGoldenAuditSnapshot,
+  buildGoldenNativePdfSnapshot,
+  buildGoldenStackComparisonSnapshot,
+  compareGoldenAudit,
+} from "../golden-corpus";
+import type { PDFExtractionResult } from "../extractor";
 import type { ExtractionManifest } from "../ocr-service";
 
 describe("golden-corpus helpers", () => {
@@ -89,9 +95,59 @@ describe("golden-corpus helpers", () => {
 
     expect(snapshot.blockingPages).toEqual([2]);
     expect(snapshot.inspectionPages).toEqual([2]);
+    expect(snapshot.manifestStatus).toBe("needs_review");
+    expect(snapshot.summary).toMatchObject({
+      blockerCount: 1,
+      inspectionCount: 1,
+      statusCounts: {
+        ready: 1,
+        needs_review: 1,
+      },
+      methodCounts: {
+        native_text: 1,
+        hybrid: 1,
+      },
+      extractionTierCounts: {
+        native_only: 1,
+        high_fidelity: 1,
+      },
+      evidenceCounts: {
+        tables: 1,
+        charts: 1,
+        financialKeywordPages: 1,
+        teamKeywordPages: 0,
+        marketKeywordPages: 0,
+        pagesNeedingReview: 1,
+        blocksAnalysis: 1,
+      },
+      quality: {
+        totalCharCount: 520,
+        totalWordCount: 100,
+        avgCharCount: 260,
+        avgWordCount: 50,
+        avgQualityScore: 75,
+        minQualityScore: 70,
+        maxVisualRiskScore: 90,
+        avgVisualRiskScore: 45,
+        maxAnalyticalValueScore: 90,
+        avgAnalyticalValueScore: 90,
+      },
+    });
     expect(snapshot.pages[1]).toMatchObject({
       pageNumber: 2,
+      method: "hybrid",
+      extractionTier: "high_fidelity",
+      charCount: 400,
+      wordCount: 70,
+      qualityScore: 70,
+      visualRiskScore: 90,
+      hasTables: true,
+      hasCharts: true,
+      hasFinancialKeywords: true,
       pageClass: "mixed_visual_analytics",
+      labelValueIntegrity: "strong",
+      analyticalValueScore: 90,
+      minimumEvidence: ["table mapping"],
       blocksAnalysis: true,
     });
   });
@@ -100,20 +156,90 @@ describe("golden-corpus helpers", () => {
     const diffs = compareGoldenAudit(
       {
         blockingPages: [2],
+        summary: {
+          manifestStatus: "needs_review",
+          pageCount: 2,
+          blockerCount: 1,
+          statusCounts: { ready: 1 },
+          quality: {
+            avgQualityScore: { min: 80 },
+          },
+        },
         pageExpectations: [
-          { pageNumber: 2, pageClass: "chart_kpi", blocksAnalysis: true },
+          {
+            pageNumber: 2,
+            pageClass: "chart_kpi",
+            method: "ocr",
+            qualityScore: { min: 80 },
+            minimumEvidenceIncludes: ["table mapping"],
+            blocksAnalysis: true,
+          },
         ],
       },
       {
+        version: "golden-audit-v2",
+        manifestStatus: "ready_with_warnings",
+        pageCount: 1,
+        pagesProcessed: 1,
+        pagesSucceeded: 1,
+        pagesFailed: 0,
+        pagesSkipped: 0,
+        coverageRatio: 1,
         blockingPages: [1],
         inspectionPages: [1],
+        summary: {
+          blockerCount: 1,
+          inspectionCount: 1,
+          statusCounts: { needs_review: 1 },
+          methodCounts: { hybrid: 1 },
+          extractionTierCounts: { high_fidelity: 1 },
+          pageClassCounts: { mixed_visual_analytics: 1 },
+          structureDependencyCounts: { critical: 1 },
+          semanticSufficiencyCounts: { partial: 1 },
+          labelValueIntegrityCounts: { unknown: 1 },
+          evidenceCounts: {
+            tables: 0,
+            charts: 0,
+            financialKeywordPages: 0,
+            teamKeywordPages: 0,
+            marketKeywordPages: 0,
+            pagesNeedingReview: 1,
+            blocksAnalysis: 1,
+          },
+          quality: {
+            totalCharCount: 0,
+            totalWordCount: 0,
+            avgCharCount: 0,
+            avgWordCount: 0,
+            avgQualityScore: 70,
+            minQualityScore: 70,
+            maxVisualRiskScore: 0,
+            avgVisualRiskScore: 0,
+            maxAnalyticalValueScore: null,
+            avgAnalyticalValueScore: null,
+          },
+        },
         pages: [
           {
             pageNumber: 2,
             status: "needs_review",
+            method: "hybrid",
+            extractionTier: "high_fidelity",
+            charCount: 400,
+            wordCount: 70,
+            qualityScore: 70,
+            visualRiskScore: 0,
+            hasTables: false,
+            hasCharts: false,
+            hasFinancialKeywords: false,
+            hasTeamKeywords: false,
+            hasMarketKeywords: false,
             pageClass: "mixed_visual_analytics",
             structureDependency: "critical",
             semanticSufficiency: "partial",
+            labelValueIntegrity: null,
+            analyticalValueScore: null,
+            minimumEvidence: [],
             blocksAnalysis: false,
           },
         ],
@@ -122,8 +248,208 @@ describe("golden-corpus helpers", () => {
 
     expect(diffs).toEqual([
       "blockingPages mismatch: expected [2] but got [1]",
+      "summary manifestStatus mismatch: expected needs_review but got ready_with_warnings",
+      "summary pageCount mismatch: expected 2 but got 1",
+      "summary statusCounts.ready mismatch: expected 1 but got 0",
+      "summary quality.avgQualityScore mismatch: expected >= 80 but got 70",
+      "page 2 method mismatch: expected ocr but got hybrid",
       "page 2 pageClass mismatch: expected chart_kpi but got mixed_visual_analytics",
+      "page 2 qualityScore mismatch: expected >= 80 but got 70",
+      "page 2 minimumEvidence missing expected item: table mapping",
       "page 2 blocksAnalysis mismatch: expected true but got false",
     ]);
+  });
+
+  it("builds native and strict stack snapshots for richer baseline comparison", () => {
+    const native = {
+      text: "[Page 1 - Native PDF text]\nRevenue is up\n\f\n[Page 2 - Native PDF text]\nCharts",
+      pageTexts: [
+        "[Page 1 - Native PDF text]\nRevenue is up",
+        "[Page 2 - Native PDF text]\nCharts",
+      ],
+      pageCount: 2,
+      info: {},
+      success: true,
+      quality: {
+        metrics: {
+          qualityScore: 42,
+          totalCharacters: 500,
+          totalWords: 80,
+          pageCount: 2,
+          charsPerPage: 250,
+          wordsPerPage: 40,
+          emptyPages: 0,
+          lowContentPages: 1,
+          goodContentPages: 1,
+          pageContentDistribution: [300, 200],
+          uniqueWordsRatio: 0.6,
+          averageWordLength: 5,
+          sentenceCount: 4,
+          hasStructuredContent: true,
+          keywordMatchCount: 3,
+          matchedKeywords: ["revenue", "market", "team"],
+          missingCriticalSections: ["solution"],
+          isPitchDeckLikely: true,
+          hasGarbageCharacters: false,
+          hasFragmentedText: false,
+          hasRepetitiveContent: false,
+          confidenceLevel: "medium",
+          confidenceReasons: ["Partial text extraction"],
+        },
+        warnings: [
+          {
+            code: "LOW_TEXT_DENSITY",
+            severity: "high",
+            message: "low density",
+            suggestion: "ocr",
+          },
+        ],
+        isUsable: true,
+        requiresOCR: true,
+        summary: "native summary",
+      },
+    } satisfies PDFExtractionResult;
+
+    const strictManifest = {
+      version: "strict-pdf-v1",
+      status: "ready_with_warnings",
+      pageCount: 2,
+      pagesProcessed: 2,
+      pagesSucceeded: 2,
+      pagesFailed: 0,
+      pagesSkipped: 0,
+      coverageRatio: 1,
+      textPages: 1,
+      ocrPages: 1,
+      hybridPages: 1,
+      failedPages: [],
+      skippedPages: [],
+      criticalPages: [2],
+      hardBlockers: [],
+      creditEstimate: {
+        estimatedCredits: 1,
+        estimatedUsd: 0.1,
+        pagesByTier: { native_only: 1, standard_ocr: 0, high_fidelity: 1, supreme: 0 },
+        unitCredits: { native_only: 0, standard_ocr: 1, high_fidelity: 2, supreme: 3 },
+        unitUsd: { native_only: 0, standard_ocr: 0.1, high_fidelity: 0.2, supreme: 0.3 },
+      },
+      completedAt: new Date().toISOString(),
+      pages: [
+        {
+          pageNumber: 1,
+          status: "ready",
+          method: "native_text",
+          charCount: 260,
+          wordCount: 42,
+          qualityScore: 78,
+          hasTables: false,
+          hasCharts: false,
+          hasFinancialKeywords: true,
+          hasTeamKeywords: false,
+          hasMarketKeywords: false,
+          requiresOCR: false,
+          ocrProcessed: false,
+          extractionTier: "native_only",
+          visualRiskScore: 0,
+          visualRiskReasons: [],
+        },
+        {
+          pageNumber: 2,
+          status: "ready_with_warnings",
+          method: "hybrid",
+          charCount: 340,
+          wordCount: 51,
+          qualityScore: 64,
+          hasTables: true,
+          hasCharts: true,
+          hasFinancialKeywords: true,
+          hasTeamKeywords: false,
+          hasMarketKeywords: true,
+          requiresOCR: true,
+          ocrProcessed: true,
+          extractionTier: "high_fidelity",
+          visualRiskScore: 72,
+          visualRiskReasons: ["visual"],
+          semanticAssessment: {
+            pageClass: "mixed_visual_analytics",
+            classConfidence: "medium",
+            classReasons: ["visual"],
+            structureDependency: "high",
+            semanticSufficiency: "partial",
+            labelValueIntegrity: "mixed",
+            visualNoiseScore: 30,
+            analyticalValueScore: 77,
+            requiresStructuredPreservation: true,
+            shouldBlockIfStructureMissing: false,
+            canDegradeToWarning: true,
+            minimumEvidence: ["chart values"],
+            rationale: [],
+          },
+        },
+      ],
+    } satisfies ExtractionManifest;
+
+    const nativeSnapshot = buildGoldenNativePdfSnapshot(native);
+    const strictSnapshot = buildGoldenAuditSnapshot(strictManifest);
+    const comparison = buildGoldenStackComparisonSnapshot(nativeSnapshot, strictSnapshot);
+
+    expect(nativeSnapshot).toMatchObject({
+      version: "golden-native-pdf-v1",
+      totalCharCount: 500,
+      totalWordCount: 80,
+      charsPerPage: 250,
+      wordsPerPage: 40,
+      qualityScore: 42,
+      confidenceLevel: "medium",
+      requiresOCR: true,
+      warningCodes: ["LOW_TEXT_DENSITY"],
+      warningSeverityCounts: { high: 1 },
+      keywordMatchCount: 3,
+      missingCriticalSections: ["solution"],
+    });
+    expect(comparison).toMatchObject({
+      version: "golden-stack-comparison-v1",
+      pageCountDelta: 0,
+      totalCharCountDelta: 100,
+      totalWordCountDelta: 13,
+      charsPerPageDelta: 50,
+      wordsPerPageDelta: 6.5,
+      native: {
+        qualityScore: 42,
+        requiresOCR: true,
+        warningCodes: ["LOW_TEXT_DENSITY"],
+      },
+      strict: {
+        manifestStatus: "ready_with_warnings",
+        blockerCount: 0,
+        inspectionCount: 0,
+        methodCounts: {
+          native_text: 1,
+          hybrid: 1,
+        },
+        extractionTierCounts: {
+          native_only: 1,
+          high_fidelity: 1,
+        },
+        pageClassCounts: {
+          unknown: 1,
+          mixed_visual_analytics: 1,
+        },
+        evidenceCounts: {
+          tables: 1,
+          charts: 1,
+          financialKeywordPages: 2,
+          marketKeywordPages: 1,
+        },
+        quality: {
+          avgQualityScore: 71,
+          minQualityScore: 64,
+          maxVisualRiskScore: 72,
+          avgVisualRiskScore: 36,
+          maxAnalyticalValueScore: 77,
+          avgAnalyticalValueScore: 77,
+        },
+      },
+    });
   });
 });

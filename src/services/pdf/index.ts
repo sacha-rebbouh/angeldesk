@@ -41,6 +41,34 @@ export {
 } from "./ocr-service";
 
 export {
+  DOCUMENT_PAGE_ARTIFACT_V1,
+  DOCUMENT_PAGE_ARTIFACT_V2,
+  OPENROUTER_VLM_PROVIDER_KIND,
+  OPENROUTER_VLM_PROVIDER_VERSION,
+  STANDARD_OCR_PROMPT_VERSION,
+  STRUCTURED_OCR_PROMPT_VERSION,
+  STRUCTURED_OCR_SCHEMA_VERSION,
+  buildStructuredOCRResponseFormat,
+  normalizeStructuredOCRPayload,
+  summarizeStructuredOCREvidence,
+  type ArtifactProviderMetadata,
+  type ArtifactTransport,
+  type ArtifactVerificationMetadata,
+  type ArtifactVerificationState,
+  type DocumentPageArtifactVersion,
+  type StructuredOCRChart,
+  type StructuredOCRNumericClaim,
+  type StructuredOCRPagePayload,
+  type StructuredOCRTable,
+  type StructuredOCRUnreadableRegion,
+  type StructuredOCRVisualBlock,
+} from "./canonical-artifact";
+
+export * from "./providers";
+export * from "./page-router";
+export * from "./semantic-verifier";
+
+export {
   getPagesNeedingOCR,
   estimateOCRCost as estimateOCRCostFromPages
 } from "./quality-analyzer";

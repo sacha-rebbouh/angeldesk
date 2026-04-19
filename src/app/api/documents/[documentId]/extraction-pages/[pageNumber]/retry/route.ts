@@ -139,13 +139,14 @@ export async function POST(_request: Request, context: RouteParams) {
       );
     }
 
-    const replacementText = `[Page ${pageNumber} - Supreme OCR retry]\n${retryPage.text.trim()}`;
+    const retryModeLabel = (retryPage.mode ?? "supreme").replace("_", " ");
+    const replacementText = `[Page ${pageNumber} - ${retryModeLabel} OCR retry]\n${retryPage.text.trim()}`;
     const updatedCorpus = replacePageText(existingCorpus, pageNumber, replacementText);
     const signals = detectPageSignals(retryPage.text);
     const charCount = retryPage.text.length;
     const wordCount = retryPage.text.split(/\s+/).filter(Boolean).length;
     const qualityScore = scoreRetriedPage(charCount, signals);
-    const pageArtifact = buildDocumentPageArtifact({
+    const pageArtifact = retryPage.artifact ?? buildDocumentPageArtifact({
       pageNumber,
       label: `Page ${pageNumber}`,
       text: retryPage.text,
@@ -153,7 +154,7 @@ export async function POST(_request: Request, context: RouteParams) {
       hasCharts: signals.hasCharts,
       confidence: retryPage.confidence,
       needsHumanReview: retryPage.confidence === "low",
-      ocrMode: "supreme",
+      ocrMode: retryPage.mode ?? "supreme",
     });
     const semanticAssessment = assessExtractionSemantics({
       pageNumber,
@@ -178,7 +179,7 @@ export async function POST(_request: Request, context: RouteParams) {
       pageNumber,
       extractionTier: "supreme",
       visualRiskScore: 95,
-      visualRiskReasons: ["targeted_page_retry", "supreme_ocr"],
+      visualRiskReasons: ["targeted_page_retry", `${retryPage.mode ?? "supreme"}_ocr`],
     });
 
     await prisma.$transaction([
@@ -225,7 +226,7 @@ export async function POST(_request: Request, context: RouteParams) {
             latestExtractionRunId: latestRun.id,
             lastPageRetry: {
               pageNumber,
-              mode: "supreme",
+              mode: retryPage.mode ?? "supreme",
               status,
               charCount,
               wordCount,

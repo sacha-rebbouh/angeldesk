@@ -106,7 +106,7 @@ export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
     );
   }
 
-  if (extractionStatus === "failed" || blockingCount > 0) {
+  if (processingStatus === "FAILED" || extractionStatus === "failed" || blockingCount > 0) {
     return (
       <ExtractionWarningDialog
         quality={quality}
@@ -125,7 +125,7 @@ export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
     );
   }
 
-  if (extractionStatus === "needs_review" || inspectionCount > 0) {
+  if (inspectionCount > 0) {
     return (
       <ExtractionWarningDialog
         quality={quality}
