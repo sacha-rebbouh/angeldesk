@@ -3462,8 +3462,8 @@ export class AgentOrchestrator {
    *  - "stop"    : completes analysis as thesis-only (status=COMPLETED, mode=thesis_only).
    *                Partial refund (3 credits on 5 for Deep Dive) handled by Inngest post-call.
    *  - "continue": runs Tier 1/2/3 via resumeAnalysis. If verdict fragile, sets thesisBypass=true.
-   *  - "contest" : loops until rebuttal-judge resolves. On valid rebuttal, triggers re-extract + new pause.
-   *                On rejection, treats as "continue" without bypass (verdict stands).
+   *  - "contest" : closes the current paused review as superseded. The new thesis review
+   *                cycle is handled by analysis/thesis.reextract.
    *  - "timeout" : completes analysis as expired, full refund (5 credits).
    */
   async continueAnalysisAfterThesis(
@@ -3526,7 +3526,32 @@ export class AgentOrchestrator {
       };
     }
 
-    // continue / contest → reprendre via resumeAnalysis (qui rebuildd le state et lance Tier 1/2/3)
+    if (decision === "contest") {
+      const existingResults = (analysis.results as unknown as Record<string, AgentResult> | null) ?? {};
+
+      await completeAnalysis({
+        analysisId,
+        success: true,
+        summary: "Analyse initiale remplacee apres contest valide. Une nouvelle these est en review.",
+        totalCost: Number(analysis.totalCost ?? 0),
+        totalTimeMs: analysis.totalTimeMs ?? 0,
+        results: existingResults,
+        mode: "thesis_only",
+      });
+
+      return {
+        sessionId: analysisId,
+        dealId: analysis.dealId,
+        type: (analysis.type as AnalysisType) ?? "full_analysis",
+        success: true,
+        results: existingResults,
+        totalCost: Number(analysis.totalCost ?? 0),
+        totalTimeMs: analysis.totalTimeMs ?? 0,
+        summary: "Analyse initiale superseded after valid rebuttal.",
+      };
+    }
+
+    // continue → reprendre via resumeAnalysis (qui rebuildd le state et lance Tier 1/2/3)
     return this.resumeAnalysis(analysisId);
   }
 

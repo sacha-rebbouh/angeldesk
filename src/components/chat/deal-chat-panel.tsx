@@ -74,22 +74,22 @@ type InvestorLevel = "beginner" | "intermediate" | "expert";
 
 const QUICK_ACTIONS_BY_LEVEL: Record<InvestorLevel, Array<{ label: string; prompt: string }>> = {
   beginner: [
-    { label: "C'est quoi ce score ?", prompt: "Explique-moi simplement ce que signifie le score de ce deal et si c'est bien ou pas." },
-    { label: "Quels sont les risques ?", prompt: "Quels sont les principaux risques de cet investissement, expliques simplement ?" },
-    { label: "Que demander au fondateur ?", prompt: "Quelles questions simples mais importantes devrais-je poser au fondateur avant de me décider ?" },
-    { label: "Résumé pour moi", prompt: "Résume cette analyse comme si tu l'expliquais à quelqu'un qui n'a jamais investi dans une startup." },
+    { label: "Explique la thèse", prompt: "Explique-moi simplement la thèse d'investissement de ce deal." },
+    { label: "Pourquoi solide ou fragile ?", prompt: "Pourquoi la thèse est-elle jugée solide ou fragile ? Explique-le simplement." },
+    { label: "Hypothèses clés", prompt: "Quelles sont les hypothèses les plus importantes qui soutiennent cette thèse ?" },
+    { label: "Fit investisseur", prompt: "Pour quel type d'investisseur ce deal est-il adapté, et pour qui il l'est moins ?" },
   ],
   intermediate: [
-    { label: "Explique les red flags", prompt: "Explique-moi les red flags identifiés dans cette analyse et leur impact potentiel." },
-    { label: "Compare aux benchmarks", prompt: "Compare ce deal aux benchmarks du secteur. Les métriques sont-elles au-dessus ou en-dessous de la médiane ?" },
-    { label: "Questions au fondateur", prompt: "Quelles questions devrais-je poser au fondateur, classées par priorité ?" },
-    { label: "Points de négociation", prompt: "Quels sont mes leviers de négociation sur la valorisation et les termes ?" },
+    { label: "Explique la thèse", prompt: "Explique-moi précisément la thèse d'investissement formulée sur ce deal." },
+    { label: "Fragilités de thèse", prompt: "Quels éléments rendent la thèse fragile, contestable ou dépendante d'hypothèses fortes ?" },
+    { label: "Assumptions à valider", prompt: "Quelles assumptions portent cette thèse et lesquelles doivent être validées en priorité ?" },
+    { label: "Profil investisseur", prompt: "Pour quel profil d'investisseur ce deal est-il adapté, et pourquoi ?" },
   ],
   expert: [
-    { label: "Red flags & risques critiques", prompt: "Analyse les red flags détectés. Lesquels sont des risques critiques absolus vs conditionnels ?" },
-    { label: "Benchmark & valo", prompt: "Compare les multiples de valorisation aux comparables. La valo est-elle justifiée ?" },
-    { label: "Due diligence gaps", prompt: "Quels points de la DD restent insuffisamment couverts ? Quelles données manquent ?" },
-    { label: "Structuration du deal", prompt: "Quels termes devrais-je négocier (liquidation pref, pro-rata, anti-dilution) ?" },
+    { label: "Déconstruis la thèse", prompt: "Déconstruis la thèse d'investissement: quelles prémisses portent réellement le cas d'investissement ?" },
+    { label: "Pourquoi la thèse casse", prompt: "Quels faits, manques ou contradictions feraient casser la thèse d'investissement ?" },
+    { label: "Load-bearing assumptions", prompt: "Identifie les load-bearing assumptions de la thèse et classe-les par criticité." },
+    { label: "Investor-fit nuancé", prompt: "Distingue clairement qualité de thèse, accessibilité du deal et investor-fit selon différents profils d'investisseurs." },
   ],
 };
 
@@ -183,7 +183,7 @@ const QuickActions = memo(function QuickActions({
     <div className="flex flex-wrap gap-2 px-4 py-3 border-t bg-muted/30">
       <div className="flex w-full items-center gap-1.5 text-xs text-muted-foreground mb-1">
         <Sparkles className="size-3" />
-        <span>Suggestions</span>
+        <span>Suggestions thèse-first</span>
       </div>
       {actions.map((action) => (
         <Button
@@ -300,9 +300,9 @@ const EmptyState = memo(function EmptyState({ dealName }: EmptyStateProps) {
       </div>
       <h3 className="font-semibold text-lg mb-2">Chat IA</h3>
       <p className="text-sm text-muted-foreground max-w-[280px]">
-        Posez des questions sur l&apos;analyse de{" "}
+        Commencez par la thèse d&apos;investissement de{" "}
         <span className="font-medium text-foreground">{dealName}</span>.
-        Utilisez les suggestions ci-dessous pour commencer.
+        Puis approfondissez les hypothèses, fragilités et le fit investisseur.
       </p>
     </div>
   );

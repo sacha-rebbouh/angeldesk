@@ -387,9 +387,13 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
 
     // Get raw financial model content (Excel with multiple sheets)
     const financialModelContent = this.getFinancialModelContent(context);
+    const financialModelAuditSummary = this.getFinancialModelAuditSummary(context);
     let financialModelSection = "";
+    if (financialModelAuditSummary) {
+      financialModelSection += `\n## AUDIT STRUCTUREL DU MODELE EXCEL\n${financialModelAuditSummary}`;
+    }
     if (financialModelContent) {
-      financialModelSection = `\n## FINANCIAL MODEL EXCEL (ANALYSE CHAQUE ONGLET)\n${financialModelContent}`;
+      financialModelSection += `\n## FINANCIAL MODEL EXCEL (ANALYSE CHAQUE ONGLET)\n${financialModelContent}`;
     }
 
     const deal = context.deal;

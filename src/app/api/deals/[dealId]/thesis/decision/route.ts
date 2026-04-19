@@ -1,15 +1,14 @@
 /**
  * POST /api/deals/[dealId]/thesis/decision
  *
- * Enregistre la decision du BA apres verdict thesis (stop | continue | contest).
+ * Enregistre la decision du BA apres verdict thesis (stop | continue).
  * Met a jour la these courante + Analysis.thesisDecision + thesisBypass.
  *
- * Si decision = "stop" : refund partiel (2 credits) pour conserver la valeur
+ * Si decision = "stop" : refund partiel (3 credits) pour conserver la valeur
  * du thesis-only deja delivree.
  * Si decision = "continue" : marque thesisBypass=true si verdict fragile
  * (alert_dominant / vigilance), sinon bypass reste false.
- * Si decision = "contest" : le BA doit ensuite appeler /rebuttal endpoint avec
- * rebuttalText. On marque juste decision=contest ici.
+ * Le flux contest est gere exclusivement par /thesis/rebuttal.
  */
 
 import { NextResponse } from "next/server";
@@ -21,14 +20,14 @@ import { handleApiError } from "@/lib/api-error";
 import { thesisService } from "@/services/thesis";
 import { refundCreditAmount } from "@/services/credits";
 import { inngest } from "@/lib/inngest";
+import { logger } from "@/lib/logger";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
 };
 
 const decisionSchema = z.object({
-  decision: z.enum(["stop", "continue", "contest"]),
-  rebuttalText: z.string().max(4000).optional(),
+  decision: z.enum(["stop", "continue"]),
 });
 
 // FIX (audit P0 #8) : alignement refund partiel sur stop = 3cr partout
@@ -70,67 +69,75 @@ export async function POST(request: Request, context: RouteContext) {
         { status: 400 }
       );
     }
-    const { decision, rebuttalText } = parsed.data;
+    const { decision } = parsed.data;
 
     const latest = await thesisService.getLatest(dealId);
     if (!latest) {
       return NextResponse.json({ error: "No thesis found for this deal" }, { status: 404 });
     }
 
-    if (latest.decision) {
+    if (latest.decision === "stop" || latest.decision === "continue") {
       return NextResponse.json(
         { error: "Decision already recorded", existing: latest.decision },
         { status: 409 }
       );
     }
 
-    if (decision === "contest" && !rebuttalText?.trim()) {
+    if (latest.decision === "contest" && latest.rebuttalVerdict !== "rejected") {
       return NextResponse.json(
-        { error: "rebuttalText requis pour 'contest'" },
-        { status: 400 }
+        { error: "A rebuttal is currently in progress for this thesis" },
+        { status: 409 }
       );
     }
 
-    if (decision === "contest") {
-      const reached = await thesisService.hasReachedRebuttalCap(dealId);
-      if (reached) {
-        return NextResponse.json(
-          { error: "Limite de rebuttals atteinte pour ce deal (3 max)" },
-          { status: 429 }
-        );
-      }
+    // Trouver l'analyse paused correspondante (RUNNING avec thesisId) — la decision
+    // va debloquer le step.waitForEvent dans Inngest pour lancer Tier 1/2/3 ou stopper.
+    const pausedAnalyses = await prisma.analysis.findMany({
+      where: { dealId, thesisId: latest.id, status: "RUNNING" },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (pausedAnalyses.length > 1) {
+      logger.error(
+        { dealId, thesisId: latest.id, analysisIds: pausedAnalyses.map((analysis) => analysis.id) },
+        "Multiple paused analyses found for one thesis decision"
+      );
+      return NextResponse.json(
+        { error: "Multiple paused analyses found for this thesis. Manual recovery required." },
+        { status: 409 }
+      );
     }
+
+    const pausedAnalysis = pausedAnalyses[0] ?? null;
+    const fragileVerdicts = new Set(["alert_dominant", "vigilance"]);
+    const thesisBypass = decision === "continue" && fragileVerdicts.has(latest.verdict);
+    const nextDecisionAt = new Date();
 
     const updated = await thesisService.recordDecision({
       thesisId: latest.id,
       decision,
-      rebuttalText,
     });
-    // FIX (audit P1 #11) : recordDecision(contest) peut retourner null si cap atteint en race.
-    if (!updated) {
-      return NextResponse.json(
-        { error: "Limite de rebuttals atteinte (race)" },
-        { status: 429 }
-      );
+
+    if (pausedAnalysis) {
+      await prisma.analysis.update({
+        where: { id: pausedAnalysis.id },
+        data: {
+          thesisDecision: decision,
+          thesisDecisionAt: nextDecisionAt,
+          thesisBypass,
+        },
+      });
+    } else {
+      await prisma.analysis.updateMany({
+        where: { dealId, thesisId: latest.id },
+        data: {
+          thesisDecision: decision,
+          thesisDecisionAt: nextDecisionAt,
+          thesisBypass,
+        },
+      });
     }
-
-    const fragileVerdicts = new Set(["alert_dominant", "vigilance"]);
-    const thesisBypass = decision === "continue" && fragileVerdicts.has(latest.verdict);
-    await prisma.analysis.updateMany({
-      where: { dealId, thesisId: latest.id },
-      data: {
-        thesisDecision: decision,
-        thesisDecisionAt: new Date(),
-        thesisBypass,
-      },
-    });
-
-    // Trouver l'analyse paused correspondante (RUNNING avec thesisId) — la decision
-    // va debloquer le step.waitForEvent dans Inngest pour lancer Tier 1/2/3 ou stopper.
-    const pausedAnalysis = await prisma.analysis.findFirst({
-      where: { dealId, thesisId: latest.id, status: "RUNNING" },
-      select: { id: true },
-    });
 
     // FIX (audit P0 #9 inngest emit) : skip emission when no paused analysis — evite
     // d'envoyer un event avec analysisId=null qui peut etre confondu par d'autres workers.
@@ -147,9 +154,31 @@ export async function POST(request: Request, context: RouteContext) {
           },
         });
       } catch (err) {
-        // FIX (audit P0 #9 recovery) : log d'erreur explicite + marquer la these
-        // avec un flag inngestEmitFailed pour qu'un cron de recovery puisse re-emettre.
-        console.error("[API:thesis/decision] CRITICAL: Failed to emit Inngest event — paused pipeline orphaned:", err);
+        await Promise.allSettled([
+          prisma.thesis.update({
+            where: { id: latest.id },
+            data: {
+              decision: latest.decision,
+              decisionAt: latest.decisionAt,
+            },
+          }),
+          prisma.analysis.update({
+            where: { id: pausedAnalysis.id },
+            data: {
+              thesisDecision: null,
+              thesisDecisionAt: null,
+              thesisBypass: false,
+            },
+          }),
+        ]);
+        logger.error(
+          { err, dealId, thesisId: latest.id, analysisId: pausedAnalysis.id, decision },
+          "Failed to emit thesis decision event; rolled back paused analysis state"
+        );
+        return NextResponse.json(
+          { error: "Failed to dispatch thesis decision. No state change was kept." },
+          { status: 502 }
+        );
       }
     }
 
@@ -202,7 +231,6 @@ export async function POST(request: Request, context: RouteContext) {
         decision,
         thesisBypass,
         refundedCredits: refundApplied,
-        rebuttalSubmitted: decision === "contest",
         thesis: {
           id: updated.id,
           verdict: updated.verdict,

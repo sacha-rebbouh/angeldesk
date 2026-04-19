@@ -12,8 +12,13 @@
  * Serverless-compatible: No @napi-rs/canvas or native dependencies.
  */
 
+import { createHash } from "crypto";
+import { Prisma } from "@prisma/client";
+
+import { prisma } from "@/lib/prisma";
 import { openrouter, MODELS } from "../openrouter/client";
 import { getPagesNeedingOCR, analyzeExtractionQuality } from "./quality-analyzer";
+import { assessExtractionSemantics, type ExtractionSemanticAssessment } from "./extraction-semantics";
 
 export interface OCRResult {
   success: boolean;
@@ -35,6 +40,8 @@ export interface PageOCRResult {
   processingTimeMs: number;
   cost: number;
   mode?: OCRMode;
+  pageImageHash?: string;
+  cacheHit?: boolean;
   artifact?: DocumentPageArtifact;
 }
 
@@ -66,6 +73,8 @@ export interface ExtractionPageManifest {
   extractionTier: ExtractionTier;
   visualRiskScore: number;
   visualRiskReasons: string[];
+  semanticAssessment?: ExtractionSemanticAssessment;
+  cacheHit?: boolean;
   artifact?: DocumentPageArtifact;
   pageImageHash?: string;
   error?: string;
@@ -109,7 +118,9 @@ export interface DocumentPageArtifact {
   }>;
   confidence: "high" | "medium" | "low";
   needsHumanReview: boolean;
+  ocrMode?: OCRMode;
   sourceHash?: string;
+  semanticAssessment?: ExtractionSemanticAssessment;
 }
 
 export interface ExtractionManifest {
@@ -139,6 +150,7 @@ export interface ExtractionCreditEstimate {
   pagesByTier: Record<ExtractionTier, number>;
   unitCredits: Record<ExtractionTier, number>;
   unitUsd: Record<ExtractionTier, number>;
+  cachedPages: number;
 }
 
 // Use GPT-4o Mini for OCR - cheapest with vision + data privacy
@@ -180,6 +192,56 @@ const HIGH_FIDELITY_COST_PER_PAGE = (ESTIMATED_INPUT_TOKENS / 1000) * OCR_HIGH_F
 
 const SUPREME_COST_PER_PAGE = (ESTIMATED_INPUT_TOKENS / 1000) * OCR_HIGH_FIDELITY_MODEL.inputCost +
                               (3000 / 1000) * OCR_HIGH_FIDELITY_MODEL.outputCost;
+const OCR_REFUSAL_RE =
+  /\b(i['’]?(?:m| am) unable to|i cannot|i can'?t|unable to perform ocr|unable to extract|unable to read|cannot perform ocr|cannot extract text|let me know how i can assist|however, i can help guide you)\b/i;
+
+export function sanitizeVisionOCRText(text: string): { text: string; refusalLike: boolean } {
+  const refusalLike = OCR_REFUSAL_RE.test(text);
+  return {
+    text: refusalLike ? "" : text.trim(),
+    refusalLike,
+  };
+}
+
+export function shouldLowConfidencePageRequireReview(params: {
+  confidence: "high" | "medium" | "low" | undefined;
+  semanticAssessment: Pick<
+    ExtractionSemanticAssessment,
+    "semanticSufficiency" | "canDegradeToWarning" | "structureDependency"
+  >;
+}): boolean {
+  if (params.confidence !== "low") return false;
+
+  return (
+    params.semanticAssessment.semanticSufficiency === "insufficient" ||
+    (
+      params.semanticAssessment.semanticSufficiency !== "sufficient" &&
+      !params.semanticAssessment.canDegradeToWarning &&
+      (
+        params.semanticAssessment.structureDependency === "high" ||
+        params.semanticAssessment.structureDependency === "critical"
+      )
+    )
+  );
+}
+
+export function isLowInformationWarningOnlyPage(
+  semanticAssessment: Pick<
+    ExtractionSemanticAssessment,
+    "pageClass" | "semanticSufficiency" | "structureDependency" | "analyticalValueScore"
+  >
+): boolean {
+  return (
+    LOW_INFORMATION_WARNING_ONLY_CLASSES.has(semanticAssessment.pageClass) &&
+    semanticAssessment.semanticSufficiency === "sufficient" &&
+    semanticAssessment.structureDependency === "low" &&
+    (semanticAssessment.analyticalValueScore ?? 100) <= 25
+  );
+}
+
+function hashBuffer(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
 
 const EXTRACTION_CREDIT_UNITS: Record<ExtractionTier, number> = {
   native_only: 0,
@@ -227,6 +289,29 @@ function isRetryableOpenRouterError(error: unknown): boolean {
 }
 
 export type OCRMode = "standard" | "high_fidelity" | "supreme";
+
+const OCR_MODE_RANK: Record<OCRMode, number> = {
+  standard: 0,
+  high_fidelity: 1,
+  supreme: 2,
+};
+
+const LOW_INFORMATION_WARNING_ONLY_CLASSES = new Set([
+  "cover_page",
+  "table_of_contents",
+  "section_divider",
+  "closing_contact",
+  "branding_transition",
+  "decorative",
+]);
+
+export function isCachedOCRModeReusable(
+  cachedMode: OCRMode | undefined,
+  requestedMode: OCRMode
+): boolean {
+  if (!cachedMode) return false;
+  return OCR_MODE_RANK[cachedMode] >= OCR_MODE_RANK[requestedMode];
+}
 
 function buildOCRPrompt(mode: OCRMode): string {
   if (mode === "supreme") {
@@ -587,6 +672,83 @@ export async function extractTextWithOCR(
   }
 }
 
+async function getCachedOCRPageResult(params: {
+  pageImageHash: string;
+  pageNumber: number;
+  mode: OCRMode;
+}): Promise<PageOCRResult | null> {
+  const cachedPages = await prisma.documentExtractionPage.findMany({
+    where: {
+      pageImageHash: params.pageImageHash,
+      ocrProcessed: true,
+      artifactVersion: "document-page-artifact-v1",
+      status: {
+        in: ["READY", "READY_WITH_WARNINGS", "NEEDS_REVIEW"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: 8,
+    select: {
+      createdAt: true,
+      confidence: true,
+      hasCharts: true,
+      artifact: true,
+    },
+  });
+
+  if (cachedPages.length === 0) return null;
+
+  const candidate = cachedPages
+    .flatMap((cachedPage) => {
+      const artifact = normalizeDocumentPageArtifact(cachedPage.artifact);
+      const artifactMode = artifact?.ocrMode;
+      if (!artifact || !artifactMode || !isCachedOCRModeReusable(artifactMode, params.mode)) {
+        return [];
+      }
+
+      const sanitized = sanitizeVisionOCRText(artifact.text);
+      if (sanitized.text.trim().length === 0) {
+        return [];
+      }
+
+      return [{
+        confidence: cachedPage.confidence,
+        hasCharts: cachedPage.hasCharts,
+        createdAt: cachedPage.createdAt,
+        artifact: {
+          ...artifact,
+          text: sanitized.text.trim(),
+        },
+        mode: artifactMode,
+        rank: OCR_MODE_RANK[artifactMode],
+      }];
+    })
+    .sort((left, right) => {
+      if (right.rank !== left.rank) return right.rank - left.rank;
+      return right.createdAt.getTime() - left.createdAt.getTime();
+    })[0];
+
+  if (!candidate) {
+    return null;
+  }
+
+  return {
+    pageNumber: params.pageNumber,
+    text: candidate.artifact.text,
+    confidence: normalizeConfidence(candidate.confidence),
+    hasCharts: candidate.hasCharts || candidate.artifact.charts.length > 0,
+    hasImages: candidate.artifact.visualBlocks.some((block) => block.type === "image" || block.type === "diagram"),
+    processingTimeMs: 0,
+    cost: 0,
+    mode: candidate.mode,
+    pageImageHash: params.pageImageHash,
+    cacheHit: true,
+    artifact: candidate.artifact,
+  };
+}
+
 /**
  * Process a single page image with Vision OCR
  */
@@ -596,25 +758,43 @@ async function processPageImage(
   mode: OCRMode = "standard"
 ): Promise<PageOCRResult> {
   const pageStart = Date.now();
+  const pageImageHash = hashBuffer(imageBuffer);
 
   try {
+    const cached = await getCachedOCRPageResult({
+      pageImageHash,
+      pageNumber,
+      mode,
+    });
+    if (cached) {
+      return {
+        ...cached,
+        processingTimeMs: Date.now() - pageStart,
+        pageImageHash,
+        cacheHit: true,
+      };
+    }
+
     const base64Image = imageBuffer.toString('base64');
     const dataUrl = `data:image/png;base64,${base64Image}`;
     const extractedText = await generateOCRText(dataUrl, mode);
+    const { text: sanitizedText, refusalLike: refusalLikeResponse } = sanitizeVisionOCRText(extractedText);
 
-    const hasCharts = /chart|graph|%|\d+[KMB]|\$\d/i.test(extractedText);
-    const hasImages = /logo|image|photo|diagram/i.test(extractedText);
+    const hasCharts = sanitizedText.length > 0 && detectPageSignals(sanitizedText).hasCharts;
+    const hasImages = /logo|image|photo|diagram/i.test(sanitizedText);
 
     let confidence: 'high' | 'medium' | 'low' = 'medium';
-    if (extractedText.length > 150) {
+    if (refusalLikeResponse) {
+      confidence = 'low';
+    } else if (sanitizedText.length > 150) {
       confidence = 'high';
-    } else if (extractedText.length < 30) {
+    } else if (sanitizedText.length < 30) {
       confidence = 'low';
     }
 
     return {
       pageNumber,
-      text: extractedText.trim(),
+      text: sanitizedText,
       confidence,
       hasCharts,
       hasImages,
@@ -625,7 +805,9 @@ async function processPageImage(
           ? HIGH_FIDELITY_COST_PER_PAGE
           : COST_PER_PAGE,
       mode,
-      artifact: buildArtifactFromOCRText(pageNumber, extractedText, confidence, mode),
+      pageImageHash,
+      cacheHit: false,
+      artifact: sanitizedText.length > 0 ? buildArtifactFromOCRText(pageNumber, sanitizedText, confidence, mode) : undefined,
     };
   } catch (error) {
     console.error(`OCR error on page ${pageNumber}:`, error);
@@ -642,6 +824,8 @@ async function processPageImage(
           ? HIGH_FIDELITY_COST_PER_PAGE
           : COST_PER_PAGE,
       mode,
+      pageImageHash,
+      cacheHit: false,
     };
   }
 }
@@ -712,6 +896,7 @@ function buildArtifactFromOCRText(
     numericClaims,
     confidence: fallbackConfidence,
     needsHumanReview,
+    ocrMode: mode,
     sourceHash: hashText(text),
   };
 }
@@ -915,6 +1100,35 @@ function normalizeConfidence(value: unknown): "high" | "medium" | "low" {
 
 function normalizeSeverity(value: unknown): "low" | "medium" | "high" {
   return value === "low" || value === "medium" || value === "high" ? value : "medium";
+}
+
+function normalizeDocumentPageArtifact(value: Prisma.JsonValue | null): DocumentPageArtifact | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.version !== "document-page-artifact-v1" || typeof record.pageNumber !== "number" || typeof record.text !== "string") {
+    return null;
+  }
+
+  return {
+    version: "document-page-artifact-v1",
+    pageNumber: record.pageNumber,
+    label: typeof record.label === "string" ? record.label : undefined,
+    text: record.text,
+    visualBlocks: normalizeVisualBlocks(record.visualBlocks),
+    tables: normalizeTables(record.tables),
+    charts: normalizeCharts(record.charts),
+    unreadableRegions: normalizeUnreadableRegions(record.unreadableRegions),
+    numericClaims: normalizeNumericClaims(record.numericClaims),
+    confidence: normalizeConfidence(record.confidence),
+    needsHumanReview: Boolean(record.needsHumanReview),
+    ocrMode: record.ocrMode === "standard" || record.ocrMode === "high_fidelity" || record.ocrMode === "supreme"
+      ? record.ocrMode
+      : undefined,
+    sourceHash: typeof record.sourceHash === "string" ? record.sourceHash : undefined,
+    semanticAssessment: record.semanticAssessment && typeof record.semanticAssessment === "object" && !Array.isArray(record.semanticAssessment)
+      ? record.semanticAssessment as ExtractionSemanticAssessment
+      : undefined,
+  };
 }
 
 function hashText(text: string): string {
@@ -1199,7 +1413,7 @@ export async function smartExtract(
   const pagesToOCR = getPagesNeedingOCR(
     pageDistribution,
     maxOCRPages,
-    regularResult.text  // Pass existing text for keyword-based prioritization
+    regularResult.pageTexts ?? regularResult.text
   );
 
   if (pagesToOCR.length === 0) {
@@ -1395,8 +1609,34 @@ function buildExtractionManifest(params: {
           ? "standard_ocr"
           : plannedTier;
     const qualityScore = scorePageQuality(charCount, flags);
-    const hasDomainCriticalSignals = flags.hasFinancialKeywords || flags.hasTeamKeywords || flags.hasMarketKeywords;
+    const hasBlockingCriticalSignals =
+      flags.hasFinancialKeywords || flags.hasMarketKeywords || flags.hasTables || flags.hasCharts;
     const hasVisualExtractionRisk = flags.hasTables || flags.hasCharts;
+    const pageArtifact = ocr?.artifact ?? buildArtifactFromOCRText(pageNumber, combinedText, qualityScore >= 75 ? "high" : qualityScore >= 45 ? "medium" : "low");
+    const semanticAssessment = assessExtractionSemantics({
+      pageNumber,
+      text: combinedText,
+      nativeText,
+      charCount,
+      wordCount,
+      hasTables: flags.hasTables,
+      hasCharts: flags.hasCharts,
+      hasFinancialKeywords: flags.hasFinancialKeywords,
+      hasTeamKeywords: flags.hasTeamKeywords,
+      hasMarketKeywords: flags.hasMarketKeywords,
+      artifact: pageArtifact,
+      isEdgePage,
+    });
+    pageArtifact.semanticAssessment = semanticAssessment;
+    const lowConfidenceNeedsReview = shouldLowConfidencePageRequireReview({
+      confidence: ocr?.confidence,
+      semanticAssessment,
+    });
+    const lowInformationWarningOnly = isLowInformationWarningOnlyPage(semanticAssessment);
+    const lowQualityNeedsReview =
+      semanticAssessment.semanticSufficiency === "insufficient" ||
+      (!lowInformationWarningOnly && hasBlockingCriticalSignals) ||
+      (!lowInformationWarningOnly && hasVisualExtractionRisk && !ocrProcessed);
 
     let status: ExtractionPageManifest["status"] = "ready";
     let method: ExtractionPageManifest["method"] = ocrProcessed
@@ -1405,24 +1645,29 @@ function buildExtractionManifest(params: {
     let error: string | undefined;
 
     if (ocrRequested && !ocrProcessed) {
-      status = hasDomainCriticalSignals ? "failed" : "needs_review";
+      status = hasBlockingCriticalSignals ? "failed" : "needs_review";
       method = "skipped";
       error = "OCR was required but did not complete for this page";
     } else if (charCount < 40) {
-      status = hasDomainCriticalSignals ? "failed" : "needs_review";
-      error = "Very little text was extracted from this page";
+      status = lowInformationWarningOnly
+        ? "ready_with_warnings"
+        : hasBlockingCriticalSignals
+          ? "failed"
+          : "needs_review";
+      error = lowInformationWarningOnly
+        ? "Very little text was extracted, but the page appears low-information and non-blocking"
+        : "Very little text was extracted from this page";
     } else if (qualityScore < 55 || ocr?.confidence === "low") {
-      status = hasDomainCriticalSignals || (hasVisualExtractionRisk && !ocrProcessed)
-        ? "needs_review"
-        : "ready_with_warnings";
+      const shouldReview = ocr?.confidence === "low" ? lowConfidenceNeedsReview : lowQualityNeedsReview;
+      status = shouldReview ? "needs_review" : "ready_with_warnings";
       error = ocr?.confidence === "low"
-        ? "OCR confidence is low"
+        ? shouldReview
+          ? "OCR confidence is low"
+          : "OCR confidence is low, but semantic coverage appears sufficient"
         : hasVisualExtractionRisk
           ? "Visual/table-like page extracted with limited text"
           : "Low page extraction quality";
     }
-
-    const pageArtifact = ocr?.artifact ?? buildArtifactFromOCRText(pageNumber, combinedText, qualityScore >= 75 ? "high" : qualityScore >= 45 ? "medium" : "low");
     const hasIncompleteStructuredVisual = (
       (flags.hasTables && pageArtifact.tables.length === 0) ||
       (flags.hasCharts && (
@@ -1432,11 +1677,19 @@ function buildExtractionManifest(params: {
       pageArtifact.unreadableRegions.some((region) => region.severity === "high")
     );
     if ((status === "ready" || status === "ready_with_warnings") && hasIncompleteStructuredVisual) {
-      status = "needs_review";
-      error = "Visual/table-like page has incomplete structured extraction";
+      const shouldBlockForStructuredGap =
+        semanticAssessment.semanticSufficiency === "insufficient" ||
+        (semanticAssessment.shouldBlockIfStructureMissing &&
+          !semanticAssessment.canDegradeToWarning &&
+          semanticAssessment.semanticSufficiency !== "sufficient");
+
+      status = shouldBlockForStructuredGap ? "needs_review" : "ready_with_warnings";
+      error = shouldBlockForStructuredGap
+        ? "Structured extraction does not yet preserve the page's decision-critical semantics"
+        : "Structured extraction is partial, but semantic coverage appears sufficient";
     }
 
-    if (status === "failed" && hasDomainCriticalSignals) {
+    if (status === "failed" && hasBlockingCriticalSignals) {
       hardBlockers.push({
         code: "CRITICAL_PAGE_UNREADABLE",
         pageNumber,
@@ -1457,8 +1710,10 @@ function buildExtractionManifest(params: {
       extractionTier,
       visualRiskScore: visualRisk.score,
       visualRiskReasons: visualRisk.reasons,
+      semanticAssessment,
+      cacheHit: ocr?.cacheHit ?? false,
       artifact: pageArtifact,
-      pageImageHash: ocr?.artifact?.sourceHash,
+      pageImageHash: ocr?.pageImageHash,
       error,
     });
   }
@@ -1505,14 +1760,51 @@ function buildExtractionManifest(params: {
   };
 }
 
-function detectPageSignals(text: string, options: { isEdgePage?: boolean } = {}): Pick<
+export function detectPageSignals(text: string, options: { isEdgePage?: boolean } = {}): Pick<
   ExtractionPageManifest,
   "hasTables" | "hasCharts" | "hasFinancialKeywords" | "hasTeamKeywords" | "hasMarketKeywords"
 > {
   const lower = text.toLowerCase();
   const numberMatches = text.match(/\d+([.,]\d+)?\s?(%|€|eur|k€|m€|m|k|x)?/gi) ?? [];
-  const hasTables = /\|/.test(text) || (!options.isEdgePage && numberMatches.length >= 8);
-  const hasCharts = /chart|graph|diagram|courbe|graphique|histogram|axis|axe/i.test(text);
+  const lines = text.split(/\n+/).map((line) => line.trim()).filter((line) => line.length > 0);
+  const lineCount = lines.length;
+  const timeAxisMatches =
+    text.match(/\b(?:20\d{2}|q[1-4]|fy(?:\s|-)?\d{2,4}|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|janv|fev|fév|mars|avr|mai|juin|juil|aout|août)\b/gi) ?? [];
+  const percentageMatches = text.match(/\d+([.,]\d+)?\s?%/g) ?? [];
+  const denseMetricLines = lines.filter((line) => {
+    const inlineNumbers = line.match(/\d+([.,]\d+)?/g) ?? [];
+    const hasTimeAxis = /\b(?:20\d{2}|q[1-4]|fy(?:\s|-)?\d{2,4}|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b/i.test(line);
+    return inlineNumbers.length >= 2 && (hasTimeAxis || /%/.test(line));
+  }).length;
+  const delimiterLines = lines.filter((line) => /\|/.test(line) || /\t/.test(line)).length;
+  const labelValueLines = lines.filter((line) => {
+    const inlineNumbers = line.match(/\d+([.,]\d+)?/g) ?? [];
+    return inlineNumbers.length >= 1 && /[A-Za-z]{3,}/.test(line);
+  }).length;
+  const alignedMetricLines = lines.filter((line) => {
+    const inlineNumbers = line.match(/\d+([.,]\d+)?/g) ?? [];
+    const separatorCount = (line.match(/\s{2,}/g) ?? []).length;
+    return inlineNumbers.length >= 2 && separatorCount >= 1;
+  }).length;
+  const chartKeywordMatch = /\b(chart|graph|bar|line|scatter|axis|legend|trend|waterfall|donut|pie|histogram|heatmap)\b/i.test(text);
+  const diagramKeywordMatch = /\b(diagram|flow|workflow|roadmap|timeline|funnel|sequence|step)\b/i.test(text);
+  const tableKeywordMatch = /\b(table|sources?|uses?|bridge|breakdown|schedule|by month|by year)\b/i.test(text);
+  const hasTables =
+    delimiterLines > 0 ||
+    (tableKeywordMatch && labelValueLines >= 2 && numberMatches.length >= 8) ||
+    (!options.isEdgePage && numberMatches.length >= 16 && (alignedMetricLines >= 2 || denseMetricLines >= 2));
+  const chartSignalScore =
+    (chartKeywordMatch ? 2 : 0) +
+    (diagramKeywordMatch ? 1 : 0) +
+    (timeAxisMatches.length >= 3 ? 1 : 0) +
+    (percentageMatches.length >= 2 ? 1 : 0) +
+    (denseMetricLines >= 1 ? 1 : 0) +
+    (numberMatches.length >= 8 && lineCount >= 4 ? 1 : 0) +
+    (alignedMetricLines >= 2 ? 1 : 0);
+  const hasCharts =
+    chartKeywordMatch ||
+    (!hasTables && chartSignalScore >= 2) ||
+    (hasTables && chartSignalScore >= 3);
   const hasFinancialKeywords = /\b(arr|mrr|revenue|ca|chiffre d'affaires|burn|runway|ebitda|gross margin|marge|ltv|cac|churn|nrr|valuation|valorisation|cap table|dilution|funding|levée|levee|pré-money|pre-money|post-money)\b/i.test(lower);
   const hasTeamKeywords = /\b(team|équipe|equipe|founder|fondateur|ceo|cto|coo|cfo|advisor|conseiller|linkedin)\b/i.test(lower);
   const hasMarketKeywords = /\b(tam|sam|som|market|marché|marche|cagr|segmentation|concurrence|competition|competitor)\b/i.test(lower);
@@ -1534,8 +1826,13 @@ function estimateExtractionCredits(pages: ExtractionPageManifest[]): ExtractionC
     high_fidelity: 0,
     supreme: 0,
   };
+  let cachedPages = 0;
 
   for (const page of pages) {
+    if (page.cacheHit) {
+      cachedPages += 1;
+      continue;
+    }
     pagesByTier[page.extractionTier] += 1;
   }
 
@@ -1554,6 +1851,7 @@ function estimateExtractionCredits(pages: ExtractionPageManifest[]): ExtractionC
     pagesByTier,
     unitCredits: EXTRACTION_CREDIT_UNITS,
     unitUsd: EXTRACTION_USD_UNITS,
+    cachedPages,
   };
 }
 
@@ -1608,10 +1906,18 @@ function scoreVisualExtractionRisk(
   const reasons: string[] = [];
   const numberMatches = text.match(/\d+([.,]\d+)?\s?(%|€|eur|k€|m€|m|k|x)?/gi) ?? [];
   const percentMatches = text.match(/\d+([.,]\d+)?\s?%/g) ?? [];
-  const chartLanguageMatches = text.match(
-    /\b(chart|graph|bar|axis|legend|margin|growth|rate|revenue|customer|expense|breakdown|cagr|nri|cohort|churn|retained|market|waterfall|cohort|funnel|roadmap|timeline|benchmark)\b/gi
-  ) ?? [];
-  const multiVisualHints = text.match(/\b(table|chart|graph|figure|diagram|source|legend|commentary)\b/gi) ?? [];
+  const timeAxisMatches =
+    text.match(/\b(?:20\d{2}|q[1-4]|fy(?:\s|-)?\d{2,4}|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b/gi) ?? [];
+  const structuralMarkers = text.match(/\b(table|chart|graph|figure|diagram|legend|axis|sources?|uses?|bridge|schedule|timeline|workflow|funnel)\b/gi) ?? [];
+  const alignedMetricLines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const numbers = line.match(/\d+([.,]\d+)?/g) ?? [];
+      const separators = (line.match(/\s{2,}/g) ?? []).length;
+      return numbers.length >= 2 && separators >= 1;
+    }).length;
 
   if (flags.hasTables) {
     score += 25;
@@ -1636,13 +1942,17 @@ function scoreVisualExtractionRisk(
     score += 20;
     reasons.push("many percentages");
   }
-  if (chartLanguageMatches.length >= 8) {
-    score += 18;
-    reasons.push("multiple chart/metric labels");
+  if (timeAxisMatches.length >= 4) {
+    score += 14;
+    reasons.push("strong period-axis evidence");
   }
-  if (multiVisualHints.length >= 6) {
+  if (alignedMetricLines >= 2) {
+    score += 14;
+    reasons.push("aligned metric rows");
+  }
+  if (structuralMarkers.length >= 5) {
     score += 12;
-    reasons.push("multiple visual block hints");
+    reasons.push("multiple structural visual markers");
   }
 
   return { score: Math.min(100, score), reasons };

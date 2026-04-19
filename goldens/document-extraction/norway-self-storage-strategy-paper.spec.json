@@ -1,0 +1,26 @@
+{
+  "label": "Norway Self Storage Strategy Paper",
+  "documentPath": "/Users/sacharebbouh/Desktop/Pithos/Norway Self Storage Strategy Paper.pdf",
+  "expectation": {
+    "blockingPages": [],
+    "inspectionPages": [],
+    "pageExpectations": [
+      {
+        "pageNumber": 3,
+        "status": "ready_with_warnings",
+        "pageClass": "table_of_contents",
+        "structureDependency": "low",
+        "semanticSufficiency": "sufficient",
+        "blocksAnalysis": false
+      },
+      {
+        "pageNumber": 50,
+        "status": "ready",
+        "pageClass": "asset_tear_sheet",
+        "structureDependency": "critical",
+        "semanticSufficiency": "sufficient",
+        "blocksAnalysis": false
+      }
+    ]
+  }
+}

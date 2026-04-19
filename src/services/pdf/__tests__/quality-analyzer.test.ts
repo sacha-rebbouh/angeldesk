@@ -61,6 +61,20 @@ describe('getPagesNeedingOCR', () => {
     expect(result.indexOf(1)).toBeLessThan(result.indexOf(2));
   });
 
+  it('should use exact page texts when provided instead of approximate corpus chunking', () => {
+    const distribution = [50, 50, 50];
+    const pageTexts = [
+      "Cover page confidential",
+      "Revenue ARR MRR growth EBITDA 2025 2026",
+      "Thank you contact",
+    ];
+
+    const result = getPagesNeedingOCR(distribution, 3, pageTexts);
+
+    expect(result[0]).toBe(1);
+    expect(result.indexOf(1)).toBeLessThan(result.indexOf(2));
+  });
+
   it('should handle empty distribution', () => {
     expect(getPagesNeedingOCR([], 20)).toEqual([]);
   });

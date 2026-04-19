@@ -29,6 +29,7 @@ export {
   smartExtract,
   estimateOCRCost,
   processImageOCR,
+  detectPageSignals,
   type OCRResult,
   type PageOCRResult,
   type ExtractionManifest,

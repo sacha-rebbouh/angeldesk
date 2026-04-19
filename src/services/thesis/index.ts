@@ -102,6 +102,18 @@ export interface ThesisDashboardRow {
   createdAt: Date;
 }
 
+type ThesisReviewDecision = Exclude<ThesisDecision, "contest">;
+
+export interface BeginRebuttalAttemptResult {
+  status: "accepted" | "duplicate" | "in_progress" | "not_contestable" | "cap_reached";
+  thesis: ThesisRecord;
+}
+
+export interface FinalizeRebuttalAttemptResult {
+  status: "finalized" | "duplicate" | "stale" | "conflict" | "not_found";
+  thesis: ThesisRecord | null;
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -217,81 +229,262 @@ export const thesisService = {
   },
 
   /**
-   * Enregistre la decision BA (stop | continue | contest).
-   * Si decision = "contest", rebuttalText est requis.
-   *
-   * FIX (audit P1 #11) : pour "contest" on fait check + increment dans une seule tx
-   * avec SELECT FOR UPDATE, ce qui previent la race "2 rebuttals concurrents bypassent
-   * le cap de 3". Retourne null si cap atteint (au lieu d'incrementer).
+   * Enregistre la decision BA thesis-first (stop | continue).
+   * Le flux contest est gere exclusivement par /thesis/rebuttal.
    */
   async recordDecision(params: {
     thesisId: string;
-    decision: ThesisDecision;
-    rebuttalText?: string;
-  }): Promise<ThesisRecord | null> {
-    // Cas simple : stop / continue → update direct
-    if (params.decision !== "contest") {
-      const updated = await prisma.thesis.update({
-        where: { id: params.thesisId },
-        data: {
-          decision: params.decision,
-          decisionAt: new Date(),
-        },
-      });
-      return updated as unknown as ThesisRecord;
-    }
+    decision: ThesisReviewDecision;
+  }): Promise<ThesisRecord> {
+    const updated = await prisma.thesis.update({
+      where: { id: params.thesisId },
+      data: {
+        decision: params.decision,
+        decisionAt: new Date(),
+      },
+    });
+    return updated as unknown as ThesisRecord;
+  },
 
-    // Cas "contest" : transaction atomique avec lock sur la row
+  /**
+   * Retourne true si le BA a atteint le cap de rebuttals sur ce deal (anti-abus).
+   * Check informatif seulement — beginRebuttalAttempt fait le check atomique definitif.
+   */
+  async hasReachedRebuttalCap(dealId: string): Promise<boolean> {
+    const aggregate = await prisma.thesis.aggregate({
+      where: { dealId },
+      _sum: { rebuttalCount: true },
+    });
+    return (aggregate._sum.rebuttalCount ?? 0) >= REBUTTAL_PER_DEAL_CAP;
+  },
+
+  /**
+   * Reserve de maniere atomique l'unique tentative de contestation
+   * autorisee pour la version courante de these.
+   */
+  async beginRebuttalAttempt(params: {
+    dealId: string;
+    thesisId: string;
+    rebuttalText: string;
+  }): Promise<BeginRebuttalAttemptResult | null> {
+    const normalizedText = params.rebuttalText.trim();
+
     return prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `SELECT id FROM "Thesis" WHERE id = $1 FOR UPDATE`,
-        params.thesisId
-      );
-      const existing = await tx.thesis.findUnique({
+      await tx.$queryRaw`SELECT id FROM "Thesis" WHERE id = ${params.thesisId} FOR UPDATE`;
+
+      const thesis = await tx.thesis.findUnique({
         where: { id: params.thesisId },
-        select: { rebuttalCount: true },
       });
-      if (!existing) return null;
-      if ((existing.rebuttalCount ?? 0) >= REBUTTAL_PER_DEAL_CAP) {
+
+      if (!thesis || thesis.dealId !== params.dealId) {
         return null;
       }
+
+      if (!thesis.isLatest || thesis.decision === "stop" || thesis.decision === "continue") {
+        return {
+          status: "not_contestable",
+          thesis: thesis as unknown as ThesisRecord,
+        };
+      }
+
+      if (thesis.rebuttalText) {
+        const sameText = thesis.rebuttalText.trim() === normalizedText;
+        if (sameText && thesis.rebuttalVerdict) {
+          return {
+            status: "duplicate",
+            thesis: thesis as unknown as ThesisRecord,
+          };
+        }
+        if (sameText) {
+          return {
+            status: "in_progress",
+            thesis: thesis as unknown as ThesisRecord,
+          };
+        }
+        return {
+          status: "not_contestable",
+          thesis: thesis as unknown as ThesisRecord,
+        };
+      }
+
+      const aggregate = await tx.thesis.aggregate({
+        where: { dealId: params.dealId },
+        _sum: { rebuttalCount: true },
+      });
+
+      if ((aggregate._sum.rebuttalCount ?? 0) >= REBUTTAL_PER_DEAL_CAP) {
+        return {
+          status: "cap_reached",
+          thesis: thesis as unknown as ThesisRecord,
+        };
+      }
+
       const updated = await tx.thesis.update({
         where: { id: params.thesisId },
         data: {
-          decision: params.decision,
+          decision: "contest",
           decisionAt: new Date(),
-          rebuttalText: params.rebuttalText,
+          rebuttalText: normalizedText,
+          rebuttalVerdict: null,
           rebuttalCount: { increment: 1 },
         },
       });
+
+      return {
+        status: "accepted",
+        thesis: updated as unknown as ThesisRecord,
+      };
+    }, { isolationLevel: "Serializable" });
+  },
+
+  /**
+   * Annule une tentative de rebuttal reservee mais non finalisee
+   * (echec de debit, crash du judge, emission Inngest KO).
+   */
+  async cancelRebuttalAttempt(params: {
+    thesisId: string;
+    rebuttalText: string;
+  }): Promise<ThesisRecord | null> {
+    const normalizedText = params.rebuttalText.trim();
+
+    return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Thesis" WHERE id = ${params.thesisId} FOR UPDATE`;
+
+      const thesis = await tx.thesis.findUnique({
+        where: { id: params.thesisId },
+      });
+
+      if (!thesis) {
+        return null;
+      }
+
+      if (
+        thesis.decision !== "contest" ||
+        thesis.rebuttalVerdict !== null ||
+        thesis.rebuttalText?.trim() !== normalizedText
+      ) {
+        return thesis as unknown as ThesisRecord;
+      }
+
+      const updated = await tx.thesis.update({
+        where: { id: params.thesisId },
+        data: {
+          decision: null,
+          decisionAt: null,
+          rebuttalText: null,
+          rebuttalVerdict: null,
+          rebuttalCount: thesis.rebuttalCount > 0 ? { decrement: 1 } : undefined,
+        },
+      });
+
       return updated as unknown as ThesisRecord;
     }, { isolationLevel: "Serializable" });
   },
 
   /**
-   * Retourne true si le BA a atteint le cap de rebuttals sur ce deal (anti-abus).
-   * Check informatif seulement — recordDecision fait le check atomique definitif.
+   * Persiste le verdict rebuttal-judge (valid | rejected) pour la tentative reservee.
    */
-  async hasReachedRebuttalCap(dealId: string): Promise<boolean> {
-    const latest = await prisma.thesis.findFirst({
-      where: { dealId, isLatest: true },
-      select: { rebuttalCount: true },
-    });
-    return (latest?.rebuttalCount ?? 0) >= REBUTTAL_PER_DEAL_CAP;
+  async finalizeRebuttalAttempt(params: {
+    thesisId: string;
+    rebuttalText: string;
+    verdict: "valid" | "rejected";
+  }): Promise<FinalizeRebuttalAttemptResult> {
+    const normalizedText = params.rebuttalText.trim();
+
+    return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Thesis" WHERE id = ${params.thesisId} FOR UPDATE`;
+
+      const thesis = await tx.thesis.findUnique({
+        where: { id: params.thesisId },
+      });
+
+      if (!thesis) {
+        return { status: "not_found", thesis: null };
+      }
+
+      if (
+        thesis.rebuttalText?.trim() !== normalizedText ||
+        thesis.decision !== "contest"
+      ) {
+        return { status: "stale", thesis: thesis as unknown as ThesisRecord };
+      }
+
+      if (thesis.rebuttalVerdict === params.verdict) {
+        return { status: "duplicate", thesis: thesis as unknown as ThesisRecord };
+      }
+
+      if (thesis.rebuttalVerdict && thesis.rebuttalVerdict !== params.verdict) {
+        logger.warn(
+          { thesisId: params.thesisId, currentVerdict: thesis.rebuttalVerdict, requestedVerdict: params.verdict },
+          "Ignoring conflicting rebuttal verdict finalization"
+        );
+        return { status: "conflict", thesis: thesis as unknown as ThesisRecord };
+      }
+
+      const updated = await tx.thesis.update({
+        where: { id: params.thesisId },
+        data: { rebuttalVerdict: params.verdict },
+      });
+
+      return { status: "finalized", thesis: updated as unknown as ThesisRecord };
+    }, { isolationLevel: "Serializable" });
   },
 
   /**
-   * Persiste le verdict rebuttal-judge (valid | rejected).
+   * Revertit une tentative finalisee si le dispatch du re-extract echoue
+   * apres persistence du verdict. Permet de ne pas laisser une these "valid"
+   * sans nouveau run planifie.
    */
-  async recordRebuttalVerdict(params: {
+  async revertRebuttalAttempt(params: {
     thesisId: string;
-    verdict: "valid" | "rejected";
-  }): Promise<ThesisRecord> {
-    const updated = await prisma.thesis.update({
-      where: { id: params.thesisId },
-      data: { rebuttalVerdict: params.verdict },
-    });
-    return updated as unknown as ThesisRecord;
+    rebuttalText: string;
+    expectedVerdict?: "valid" | "rejected";
+  }): Promise<ThesisRecord | null> {
+    const normalizedText = params.rebuttalText.trim();
+
+    return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Thesis" WHERE id = ${params.thesisId} FOR UPDATE`;
+
+      const thesis = await tx.thesis.findUnique({
+        where: { id: params.thesisId },
+      });
+
+      if (!thesis) {
+        return null;
+      }
+
+      if (
+        thesis.rebuttalText?.trim() !== normalizedText ||
+        thesis.decision !== "contest"
+      ) {
+        return thesis as unknown as ThesisRecord;
+      }
+
+      if (params.expectedVerdict && thesis.rebuttalVerdict !== params.expectedVerdict) {
+        logger.warn(
+          {
+            thesisId: params.thesisId,
+            currentVerdict: thesis.rebuttalVerdict,
+            expectedVerdict: params.expectedVerdict,
+          },
+          "Skipping rebuttal revert because thesis verdict no longer matches"
+        );
+        return thesis as unknown as ThesisRecord;
+      }
+
+      const updated = await tx.thesis.update({
+        where: { id: params.thesisId },
+        data: {
+          decision: null,
+          decisionAt: null,
+          rebuttalText: null,
+          rebuttalVerdict: null,
+          rebuttalCount: thesis.rebuttalCount > 0 ? { decrement: 1 } : undefined,
+        },
+      });
+
+      return updated as unknown as ThesisRecord;
+    }, { isolationLevel: "Serializable" });
   },
 
   /**

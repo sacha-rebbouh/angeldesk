@@ -12,12 +12,12 @@ export const ANALYSIS_CONFIGS = {
   },
   full_dd: {
     agents: ["document-extractor", "deal-scorer", "red-flag-detector"] as BaseAgentName[],
-    description: "Complete due diligence analysis",
+    description: "Legacy alias retired from public API; kept only for historical compatibility",
     parallel: false,
   },
   tier1_complete: {
     agents: [] as BaseAgentName[], // Special handling - uses Tier 1 agents
-    description: "Investigation complete par 13 agents en parallele",
+    description: "Legacy Quick Scan path retired from public API; kept only for historical compatibility",
     parallel: true,
   },
   tier2_sector: {
@@ -32,7 +32,7 @@ export const ANALYSIS_CONFIGS = {
   },
   full_analysis: {
     agents: [] as BaseAgentName[], // Special handling - Tier 1 + Tier 2 + Tier 3
-    description: "Analyse complete: Tier 1 (13) + Tier 2 Sector Expert (1) + Tier 3 (6)",
+    description: "Thesis-first Deep Dive: thesis gate, then Tier 1 (13) + Tier 2 (1) + Tier 3 (6)",
     parallel: false,
   },
 } as const;
@@ -375,7 +375,7 @@ export const TIER2_SECTOR_EXPERT_COUNT = 1 as const;
 // Agent counts by analysis type
 export const AGENT_COUNTS: Record<AnalysisType, number> = {
   extraction: ANALYSIS_CONFIGS.extraction.agents.length,
-  full_dd: ANALYSIS_CONFIGS.full_dd.agents.length,
+  full_dd: TIER1_AGENT_NAMES.length + TIER2_SECTOR_EXPERT_COUNT + TIER3_AGENT_NAMES.length,
   tier1_complete: TIER1_AGENT_NAMES.length,
   tier2_sector: TIER2_SECTOR_EXPERT_COUNT,
   tier3_synthesis: TIER3_AGENT_NAMES.length,

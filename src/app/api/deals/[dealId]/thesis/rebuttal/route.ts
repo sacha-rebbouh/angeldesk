@@ -2,11 +2,13 @@
  * POST /api/deals/[dealId]/thesis/rebuttal
  *
  * Invoque le rebuttal-judge pour evaluer un rebuttal ecrit du BA.
- * Facture 1 credit (THESIS_REBUTTAL). Si valide, regenere la these.
+ * Facture 1 credit (THESIS_REBUTTAL). Si valide, declenche une vraie
+ * re-extraction thesis-first avec nouvelle version et nouvelle pause review.
  */
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { createHash } from "crypto";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isValidCuid, checkRateLimitDistributed } from "@/lib/sanitize";
@@ -15,6 +17,8 @@ import { thesisService } from "@/services/thesis";
 import { thesisRebuttalJudgeAgent } from "@/agents/thesis/rebuttal-judge";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import type { ThesisExtractorOutput } from "@/agents/thesis/types";
+import { inngest } from "@/lib/inngest";
+import { logger } from "@/lib/logger";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -58,28 +62,99 @@ export async function POST(request: Request, context: RouteContext) {
         { status: 400 }
       );
     }
-    const { rebuttalText } = parsed.data;
+    const rebuttalText = parsed.data.rebuttalText.trim();
 
     const latest = await thesisService.getLatest(dealId);
     if (!latest) {
       return NextResponse.json({ error: "No thesis found for this deal" }, { status: 404 });
     }
 
-    const reached = await thesisService.hasReachedRebuttalCap(dealId);
-    if (reached) {
+    if (latest.decision === "stop" || latest.decision === "continue") {
+      return NextResponse.json(
+        { error: "This thesis is no longer contestable", existing: latest.decision },
+        { status: 409 }
+      );
+    }
+
+    const pausedAnalyses = await prisma.analysis.findMany({
+      where: { dealId, thesisId: latest.id, status: "RUNNING" },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (pausedAnalyses.length === 0) {
+      return NextResponse.json(
+        { error: "No paused thesis-first analysis found for this thesis" },
+        { status: 409 }
+      );
+    }
+    if (pausedAnalyses.length > 1) {
+      logger.error(
+        { dealId, thesisId: latest.id, pausedAnalysisIds: pausedAnalyses.map((analysis) => analysis.id) },
+        "Refusing rebuttal dispatch because multiple paused analyses exist for the same thesis"
+      );
+      return NextResponse.json(
+        { error: "Corrupted thesis state: multiple paused analyses found for this thesis" },
+        { status: 409 }
+      );
+    }
+    const pausedAnalysis = pausedAnalyses[0];
+
+    const beginAttempt = await thesisService.beginRebuttalAttempt({
+      dealId,
+      thesisId: latest.id,
+      rebuttalText,
+    });
+    if (!beginAttempt) {
+      return NextResponse.json({ error: "Thesis not found" }, { status: 404 });
+    }
+
+    if (beginAttempt.status === "cap_reached") {
       return NextResponse.json(
         { error: "Limite de rebuttals atteinte pour ce deal (3 max)" },
         { status: 429 }
       );
     }
 
-    const idempotencyKey = `thesis:rebuttal:${latest.id}:${latest.rebuttalCount}`;
+    if (beginAttempt.status === "duplicate") {
+      return NextResponse.json({
+        data: {
+          verdict: beginAttempt.thesis.rebuttalVerdict,
+          reasoning: null,
+          regenerate: beginAttempt.thesis.rebuttalVerdict === "valid",
+          creditsCharged: 0,
+          thesisId: beginAttempt.thesis.id,
+        },
+      });
+    }
+
+    if (beginAttempt.status === "in_progress") {
+      return NextResponse.json(
+        { error: "A rebuttal for this thesis is already being processed" },
+        { status: 409 }
+      );
+    }
+
+    if (beginAttempt.status === "not_contestable") {
+      return NextResponse.json(
+        { error: "This thesis state is no longer contestable" },
+        { status: 409 }
+      );
+    }
+
+    const rebuttalHash = createHash("sha256").update(rebuttalText).digest("hex").slice(0, 16);
+    const chargeKey = `thesis:rebuttal:${latest.id}:${rebuttalHash}`;
+    const refundKey = `thesis:rebuttal-refund:${latest.id}:${rebuttalHash}`;
+
     const deduction = await deductCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
       dealId,
-      idempotencyKey,
+      idempotencyKey: chargeKey,
       description: `Thesis rebuttal judge for deal ${dealId}`,
     });
     if (!deduction.success) {
+      await thesisService.cancelRebuttalAttempt({
+        thesisId: latest.id,
+        rebuttalText,
+      });
       return NextResponse.json(
         {
           error: "Credits insuffisants pour le rebuttal (1 credit requis)",
@@ -125,8 +200,12 @@ export async function POST(request: Request, context: RouteContext) {
     } catch (err) {
       await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
         dealId,
-        idempotencyKey: `thesis:rebuttal-refund:${latest.id}:${latest.rebuttalCount}`,
+        idempotencyKey: refundKey,
         description: `Thesis rebuttal refund (judge crash)`,
+      }).catch(() => undefined);
+      await thesisService.cancelRebuttalAttempt({
+        thesisId: latest.id,
+        rebuttalText,
       }).catch(() => undefined);
       throw err;
     }
@@ -134,8 +213,12 @@ export async function POST(request: Request, context: RouteContext) {
     if (!judgeResult.success || !("data" in judgeResult)) {
       await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
         dealId,
-        idempotencyKey: `thesis:rebuttal-refund:${latest.id}:${latest.rebuttalCount}`,
+        idempotencyKey: refundKey,
         description: `Thesis rebuttal refund (judge failed)`,
+      }).catch(() => undefined);
+      await thesisService.cancelRebuttalAttempt({
+        thesisId: latest.id,
+        rebuttalText,
       }).catch(() => undefined);
       return NextResponse.json(
         { error: "Rebuttal judge failed", details: judgeResult.error },
@@ -145,29 +228,72 @@ export async function POST(request: Request, context: RouteContext) {
 
     const judgment = judgeResult.data as { verdict: "valid" | "rejected"; reasoning: string; regenerate: boolean };
 
-    // FIX (audit P1 #11) : recordDecision pour "contest" fait maintenant check+increment
-    // atomique ; retourne null si cap atteint entre le check et l'increment (race).
-    const recorded = await thesisService.recordDecision({
+    const finalized = await thesisService.finalizeRebuttalAttempt({
       thesisId: latest.id,
-      decision: "contest",
       rebuttalText,
-    });
-    if (!recorded) {
-      // Cap atteint en race — refund le credit et renvoyer 429
-      await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
-        dealId,
-        idempotencyKey: `thesis:rebuttal-refund:${latest.id}:${latest.rebuttalCount}`,
-        description: `Thesis rebuttal refund (cap race)`,
-      }).catch(() => undefined);
-      return NextResponse.json(
-        { error: "Limite de rebuttals atteinte (race)" },
-        { status: 429 }
-      );
-    }
-    await thesisService.recordRebuttalVerdict({
-      thesisId: latest.id,
       verdict: judgment.verdict,
     });
+    if (finalized.status === "not_found") {
+      await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
+        dealId,
+        idempotencyKey: refundKey,
+        description: `Thesis rebuttal refund (finalization failed)`,
+      }).catch(() => undefined);
+      await thesisService.cancelRebuttalAttempt({
+        thesisId: latest.id,
+        rebuttalText,
+      }).catch(() => undefined);
+      return NextResponse.json(
+        { error: "Could not finalize rebuttal" },
+        { status: 409 }
+      );
+    }
+    if (finalized.status === "stale" || finalized.status === "conflict") {
+      await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
+        dealId,
+        idempotencyKey: refundKey,
+        description: `Thesis rebuttal refund (finalization ${finalized.status})`,
+      }).catch(() => undefined);
+      await thesisService.cancelRebuttalAttempt({
+        thesisId: latest.id,
+        rebuttalText,
+      }).catch(() => undefined);
+      return NextResponse.json(
+        { error: `Could not finalize rebuttal (${finalized.status})` },
+        { status: 409 }
+      );
+    }
+
+    if (judgment.verdict === "valid") {
+      try {
+        await inngest.send({
+          name: "analysis/thesis.reextract",
+          data: {
+            dealId,
+            userId: user.id,
+            previousThesisId: latest.id,
+            supersededAnalysisId: pausedAnalysis.id,
+            triggeredByRebuttal: true,
+          },
+        });
+      } catch (err) {
+        await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
+          dealId,
+          idempotencyKey: refundKey,
+          description: `Thesis rebuttal refund (reextract enqueue failed)`,
+        }).catch(() => undefined);
+        await thesisService.revertRebuttalAttempt({
+          thesisId: latest.id,
+          rebuttalText,
+          expectedVerdict: "valid",
+        }).catch(() => undefined);
+        logger.error(
+          { err, dealId, thesisId: latest.id, pausedAnalysisId: pausedAnalysis.id },
+          "Failed to dispatch thesis reextract after valid rebuttal; reverted rebuttal state"
+        );
+        throw err;
+      }
+    }
 
     return NextResponse.json({
       data: {
@@ -175,6 +301,7 @@ export async function POST(request: Request, context: RouteContext) {
         reasoning: judgment.reasoning,
         regenerate: judgment.regenerate,
         creditsCharged: 1,
+        thesisId: finalized.thesis?.id ?? latest.id,
       },
     });
   } catch (error) {

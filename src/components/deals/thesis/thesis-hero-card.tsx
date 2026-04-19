@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronUp, AlertTriangle, ShieldAlert, Target } from "lucide-react";
 import { RECOMMENDATION_CONFIG } from "@/lib/ui-configs";
+import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
 
 interface LoadBearing {
   id: string;
@@ -44,6 +45,7 @@ interface ThesisHeroCardProps {
   confidence: number;
   loadBearing: LoadBearing[];
   alerts: AlertItem[];
+  evaluationAxes: NormalizedThesisEvaluation;
   hasPendingDecision: boolean;
   decision: string | null;
   onReviewDecisionClick?: () => void;
@@ -113,6 +115,30 @@ export function ThesisHeroCard(props: ThesisHeroCardProps) {
           <ThesisField label="Moat" value={props.moat} fallback="Non déclaré" />
           <div className="md:col-span-2">
             <ThesisField label="Path to exit" value={props.pathToExit} fallback="Non déclaré" />
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">Axes canoniques</h3>
+          <div className="grid gap-3 md:grid-cols-3">
+            {[
+              props.evaluationAxes.thesisQuality,
+              props.evaluationAxes.investorProfileFit,
+              props.evaluationAxes.dealAccessibility,
+            ].map((axis) => {
+              const axisCfg = RECOMMENDATION_CONFIG[axis.verdict] ?? RECOMMENDATION_CONFIG.contrasted;
+              return (
+                <div key={axis.key} className="rounded-lg border bg-white/60 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{axis.label}</p>
+                    <Badge variant="outline" className={axisCfg.color}>
+                      {axisCfg.label}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-900">{axis.summary}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
 

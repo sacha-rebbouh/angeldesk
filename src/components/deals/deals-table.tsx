@@ -60,7 +60,29 @@ interface Deal {
   thesisVerdict?: string | null;
 }
 
-type SortField = "name" | "sector" | "stage" | "valuationPre" | "status" | "globalScore" | "thesisVerdict" | "updatedAt";
+const FRAGILE_THESIS_VERDICTS = new Set(["alert_dominant", "vigilance"]);
+
+function renderThesisBadge(
+  thesisVerdict: string | null | undefined,
+  onAnalyze?: () => void
+) {
+  if (!thesisVerdict) {
+    return <ThesisStaleBadge variant="inline" onAnalyze={onAnalyze} />;
+  }
+
+  const cfg = THESIS_VERDICT_CONFIG[thesisVerdict];
+  if (!cfg) {
+    return <span className="text-muted-foreground text-xs">-</span>;
+  }
+
+  return (
+    <Badge variant="outline" className={cn("text-[10px]", cfg.color, cfg.bg)}>
+      {cfg.shortLabel}
+    </Badge>
+  );
+}
+
+type SortField = "name" | "sector" | "stage" | "valuationPre" | "status" | "thesisVerdict" | "updatedAt";
 type SortDir = "asc" | "desc";
 
 interface DealsTableProps {
@@ -91,7 +113,6 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [sectorFilter, setSectorFilter] = useState<string>("all");
   const [stageFilter, setStageFilter] = useState<string>("all");
-  const [scoreMin, setScoreMin] = useState<string>("");
   const [showFilters, setShowFilters] = useState(false);
   const [sortField, setSortField] = useState<SortField>("updatedAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -133,13 +154,6 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
     if (stageFilter !== "all") {
       result = result.filter(d => d.stage === stageFilter);
     }
-    if (scoreMin) {
-      const min = parseInt(scoreMin, 10);
-      if (!isNaN(min)) {
-        result = result.filter(d => (d.globalScore ?? 0) >= min);
-      }
-    }
-
     // Ordre canonique : deals SANS these en premier (priorite admin/backfill),
     // puis du meilleur au pire pour les deals avec these.
     const thesisVerdictOrder: Record<string, number> = {
@@ -156,9 +170,6 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
       switch (sortField) {
         case "name":
           cmp = a.name.localeCompare(b.name);
-          break;
-        case "globalScore":
-          cmp = (a.globalScore ?? 0) - (b.globalScore ?? 0);
           break;
         case "valuationPre":
           cmp = (Number(a.valuationPre) || 0) - (Number(b.valuationPre) || 0);
@@ -180,7 +191,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
     });
 
     return result;
-  }, [deals, searchQuery, sectorFilter, stageFilter, scoreMin, sortField, sortDir]);
+  }, [deals, searchQuery, sectorFilter, stageFilter, sortField, sortDir]);
 
   const renderSortIcon = useCallback((field: SortField) => {
     if (sortField !== field) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-30" />;
@@ -190,9 +201,8 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
   }, [sortField, sortDir]);
 
   const handleToggleFilters = useCallback(() => setShowFilters(v => !v), []);
-  const handleClearFilters = useCallback(() => { setSectorFilter("all"); setStageFilter("all"); setScoreMin(""); }, []);
+  const handleClearFilters = useCallback(() => { setSectorFilter("all"); setStageFilter("all"); }, []);
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value), []);
-  const handleScoreMinChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => setScoreMin(e.target.value), []);
 
   const toggleDealSelection = useCallback((dealId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -261,14 +271,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
                 {availableStages.map(s => <SelectItem key={s} value={s}>{getStageLabel(s)}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Input
-              type="number"
-              placeholder="Score min"
-              value={scoreMin}
-              onChange={handleScoreMinChange}
-              className="w-[100px]"
-            />
-            {(sectorFilter !== "all" || stageFilter !== "all" || scoreMin) && (
+            {(sectorFilter !== "all" || stageFilter !== "all") && (
               <Button variant="ghost" size="sm" onClick={handleClearFilters}>
                 <X className="h-3 w-3 mr-1" /> Réinitialiser
               </Button>
@@ -283,6 +286,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
           const criticalFlags = deal.redFlags.filter(
             (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
           ).length;
+          const thesisGated = !!deal.thesisVerdict && FRAGILE_THESIS_VERDICTS.has(deal.thesisVerdict);
 
           return (
             <div
@@ -296,9 +300,13 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
               <div className="flex items-center justify-between mb-2">
                 <span className="font-medium text-sm truncate flex-1">{deal.name}</span>
                 <div className="flex items-center gap-2 shrink-0">
-                  {deal.globalScore ? (
+                  {!thesisGated && deal.globalScore != null ? (
                     <ScoreBadge score={deal.globalScore} size="sm" />
-                  ) : null}
+                  ) : (
+                    <span className="text-[11px] font-medium text-muted-foreground">
+                      {thesisGated ? "Thèse d'abord" : ""}
+                    </span>
+                  )}
                   <Badge variant="secondary" className={cn("text-xs", getStatusColor(deal.status))}>
                     {getStatusLabel(deal.status)}
                   </Badge>
@@ -308,6 +316,14 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
                 {deal.sector && <span>{deal.sector}</span>}
                 {deal.stage && <><span>•</span><span>{getStageLabel(deal.stage)}</span></>}
                 {deal.valuationPre && <><span>•</span><span>{formatCurrencyEUR(deal.valuationPre)}</span></>}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                {renderThesisBadge(deal.thesisVerdict, () => router.push(`/deals/${deal.id}`))}
+                {thesisGated && (
+                  <span className="text-[11px] text-muted-foreground">
+                    Verdict thèse prioritaire
+                  </span>
+                )}
               </div>
               <div className="flex items-center justify-between mt-2">
                 <span className="text-xs text-muted-foreground">
@@ -343,9 +359,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
               <TableHead className="hidden md:table-cell cursor-pointer" onClick={() => handleSort("valuationPre")}>
                 <span className="flex items-center">Valorisation {renderSortIcon("valuationPre")}</span>
               </TableHead>
-              <TableHead className="hidden sm:table-cell cursor-pointer" onClick={() => handleSort("globalScore")}>
-                <span className="flex items-center">Score {renderSortIcon("globalScore")}</span>
-              </TableHead>
+              <TableHead className="hidden sm:table-cell">Score</TableHead>
               <TableHead className="hidden lg:table-cell cursor-pointer" onClick={() => handleSort("thesisVerdict")}>
                 <span className="flex items-center">Thèse {renderSortIcon("thesisVerdict")}</span>
               </TableHead>
@@ -362,6 +376,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
               const criticalFlags = deal.redFlags.filter(
                 (f) => f.severity === "CRITICAL" || f.severity === "HIGH"
               ).length;
+              const thesisGated = !!deal.thesisVerdict && FRAGILE_THESIS_VERDICTS.has(deal.thesisVerdict);
 
               return (
                 <TableRow
@@ -399,27 +414,16 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
                   <TableCell className="hidden lg:table-cell">{getStageLabel(deal.stage)}</TableCell>
                   <TableCell className="hidden md:table-cell">{formatCurrencyEUR(deal.valuationPre)}</TableCell>
                   <TableCell className="hidden sm:table-cell">
-                    {deal.globalScore ? (
+                    {!thesisGated && deal.globalScore != null ? (
                       <ScoreBadge score={deal.globalScore} size="sm" />
                     ) : (
-                      <span className="text-muted-foreground text-xs">-</span>
+                      <span className="text-muted-foreground text-xs">
+                        {thesisGated ? "Thèse d'abord" : "-"}
+                      </span>
                     )}
                   </TableCell>
                   <TableCell className="hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
-                    {deal.thesisVerdict ? (
-                      (() => {
-                        const cfg = THESIS_VERDICT_CONFIG[deal.thesisVerdict];
-                        return cfg ? (
-                          <Badge variant="outline" className={cn("text-[10px]", cfg.color, cfg.bg)}>
-                            {cfg.shortLabel}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">-</span>
-                        );
-                      })()
-                    ) : (
-                      <ThesisStaleBadge variant="inline" onAnalyze={() => router.push(`/deals/${deal.id}`)} />
-                    )}
+                    {renderThesisBadge(deal.thesisVerdict, () => router.push(`/deals/${deal.id}`))}
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className={getStatusColor(deal.status)}>

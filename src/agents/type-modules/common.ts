@@ -18,6 +18,7 @@ export interface AgentContext {
     name: string;
     type: string;
     extractedText?: string | null;
+    extractionMetrics?: unknown;
     /** Date of upload/import — used for document chronology awareness */
     uploadedAt?: Date;
   }[];

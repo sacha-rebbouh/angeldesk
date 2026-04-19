@@ -231,6 +231,16 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
       }));
   }, [events]);
 
+  const liveThesisDebateEvents = useMemo(() => {
+    return events
+      .filter((e) => e.type === "debate_response" && e.roundNumber === 0)
+      .map((e) => ({
+        memberId: e.memberId ?? "",
+        memberName: e.memberName ?? "",
+        message: e.message ?? "",
+      }));
+  }, [events]);
+
   // Extract failed members from events
   const failedMembers = useMemo(() => {
     return events
@@ -244,7 +254,11 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
   const thesisDebateResponses = isLiveSession ? [] : (savedHydrated?.thesisDebateResponses ?? []);
   const result = isLiveSession ? liveResult : (savedHydrated?.result ?? null);
 
-  const hasResults = result !== null || Object.keys(memberAnalyses).length > 0;
+  const hasResults =
+    result !== null
+    || Object.keys(memberAnalyses).length > 0
+    || thesisDebateResponses.length > 0
+    || liveThesisDebateEvents.length > 0;
 
   // When a live session completes, invalidate to refresh saved data
   const prevLiveResultRef = useRef<BoardVerdictResult | null>(null);
@@ -443,6 +457,21 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
       {/* Results section with clear phase separators */}
       {hasResults && (
         <>
+          {/* Round 0: Thesis debate */}
+          {(thesisDebateResponses.length > 0 || liveThesisDebateEvents.length > 0) && (
+            <>
+              <SectionDivider
+                icon={<MessageSquareMore className="h-4 w-4" />}
+                label="Round 0 — Débat sur la thèse"
+              />
+              {thesisDebateResponses.length > 0 ? (
+                <ThesisDebateView responses={thesisDebateResponses} />
+              ) : (
+                <LiveThesisDebate events={liveThesisDebateEvents} />
+              )}
+            </>
+          )}
+
           {/* Phase 1: Votes individuels */}
           <SectionDivider
             icon={<Vote className="h-4 w-4" />}
@@ -467,17 +496,6 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
                 frictionPoints={result.frictionPoints}
                 questionsForFounder={result.questionsForFounder}
               />
-            </>
-          )}
-
-          {/* Round 0 : Thesis debate (thesis-first) — affiche AVANT les debats classiques */}
-          {thesisDebateResponses.length > 0 && (
-            <>
-              <SectionDivider
-                icon={<MessageSquareMore className="h-4 w-4" />}
-                label="Round 0 — Débat sur la thèse"
-              />
-              <ThesisDebateView responses={thesisDebateResponses} />
             </>
           )}
 
@@ -537,3 +555,31 @@ function SectionDivider({ icon, label }: { icon: React.ReactNode; label: string 
     </div>
   );
 }
+
+const LiveThesisDebate = memo(function LiveThesisDebate({
+  events,
+}: {
+  events: Array<{ memberId: string; memberName: string; message: string }>;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
+      <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-wider text-slate-400">
+        <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+        <span>Lecture live du Round 0</span>
+      </div>
+      <div className="space-y-3">
+        {events.map((event) => (
+          <div
+            key={`${event.memberId}-${event.message}`}
+            className="rounded-xl border border-slate-800 bg-slate-900/70 p-3"
+          >
+            <p className="text-sm font-medium text-white">{event.memberName || "Membre du board"}</p>
+            <p className="mt-1 text-sm leading-relaxed text-slate-300">
+              {event.message || "Réponse reçue en cours de stream."}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});

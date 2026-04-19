@@ -9,6 +9,7 @@ import { handleApiError } from "@/lib/api-error";
 import { encryptText } from "@/lib/encryption";
 import {
   completeDocumentExtractionRun,
+  getBlockingPageNumbersFromManifest,
   markExtractionRunProgress,
   recordExtractionPageProgress,
   summarizeManifestForLegacyMetrics,
@@ -159,7 +160,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     if (extraction.text) {
       const extractionQuality = extraction.quality;
-      const requiresOCR = extraction.manifest.status === "needs_review" || extraction.manifest.status === "failed";
+      const requiresOCR =
+        extraction.manifest.status === "failed" ||
+        getBlockingPageNumbersFromManifest(extraction.manifest).length > 0;
 
       const updated = await prisma.document.update({
         where: { id: documentId },

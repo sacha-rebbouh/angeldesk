@@ -18,26 +18,27 @@ import { logger } from "@/lib/logger";
 // Without this, the fire-and-forget promise may be killed after 10s.
 export const maxDuration = 300; // 5 minutes
 
-// Thesis-first (2026-04-17) — Quick Scan supprime. Le tier d'entree est
-// desormais Deep Dive qui inclut thesis-extractor (Tier 0.5) + bifurcation.
-// Les types "screening" / "quick_scan" / "tier1_complete" ne sont plus acceptes
-// en creation de nouvelle analyse. Les analyses historiques de ces types
-// restent consultables en base (compatibilite lecture).
+// Thesis-first (2026-04-17) — l'entree publique est desormais full_analysis.
+// Les alias legacy quick_scan / tier1_complete / full_dd restent lisibles en
+// historique, mais ne sont plus acceptes pour demarrer une nouvelle analyse.
 const analyzeSchema = z.object({
   dealId: z.string().min(1, "Deal ID is required").regex(CUID_PATTERN, "Invalid deal ID format"),
   type: z.enum([
     "extraction", // technique, conserve
-    "full_dd", // Deep Dive
     "tier2_sector", // re-run ciblee
     "tier3_synthesis", // re-run ciblee
-    "full_analysis", // Full DD
-  ]).default("full_dd"),
+    "full_analysis", // Deep Dive thesis-first
+  ]).default("full_analysis"),
   enableTrace: z.boolean().default(true),
   stream: z.boolean().default(true),
 });
 
-// Types legacy supprimes mais tolerees en query pour retourner un message clair
-const LEGACY_REMOVED_TYPES = new Set(["screening", "quick_scan", "tier1_complete"]);
+const LEGACY_TYPE_REPLACEMENTS: Record<string, string> = {
+  screening: "full_analysis",
+  quick_scan: "full_analysis",
+  tier1_complete: "full_analysis",
+  full_dd: "full_analysis",
+};
 
 // Map analysis types to tiers.
 // Thesis-first : Quick Scan (tier 1) retire, Deep Dive est le tier d'entree.
@@ -46,8 +47,6 @@ function getAnalysisTier(type: string): AnalysisTier {
     case "extraction":
       return 1; // technique, pas d'analyse metier
     case "tier2_sector":
-    case "full_dd":
-      return 2;
     case "tier3_synthesis":
     case "full_analysis":
       return 3;
@@ -79,13 +78,16 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
-    // Thesis-first: messages clairs pour les types legacy retires
-    if (body && typeof body === "object" && LEGACY_REMOVED_TYPES.has(String((body as { type?: unknown }).type))) {
+    // Thesis-first: refuser explicitement les aliases legacy au lieu de les
+    // remapper silencieusement, pour verrouiller le contrat public.
+    const rawType = body && typeof body === "object" ? String((body as { type?: unknown }).type ?? "") : "";
+    const replacementType = LEGACY_TYPE_REPLACEMENTS[rawType];
+    if (replacementType) {
       return NextResponse.json(
         {
-          error: "Quick Scan a ete remplace par Deep Dive (qui inclut l'analyse de these). Utilisez type='full_dd' ou 'full_analysis'.",
-          retiredType: (body as { type?: unknown }).type,
-          replacement: "full_dd",
+          error: `Legacy analysis type '${rawType}' is no longer accepted. Use type='${replacementType}' for the thesis-first Deep Dive flow.`,
+          retiredType: rawType,
+          replacement: replacementType,
         },
         { status: 400 }
       );
@@ -123,22 +125,37 @@ export async function POST(request: NextRequest) {
     // This saves LLM cost by not re-running already completed agents.
     // ================================================================
     // Pick the FAILED analysis with the MOST completed agents (best progress)
-    const resumableAnalysis = await prisma.analysis.findFirst({
-      where: {
-        dealId,
-        status: "FAILED",
-        completedAgents: { gt: 0 },
-        // Only resume recent failures (< 6 hours)
-        completedAt: { gte: new Date(Date.now() - 6 * 60 * 60 * 1000) },
-      },
-      orderBy: { completedAgents: "desc" },
-      include: {
-        checkpoints: {
-          orderBy: { createdAt: "desc" },
-          take: 1,
-        },
-      },
-    });
+    const latestThesis = type === "full_analysis"
+      ? await prisma.thesis.findFirst({
+          where: { dealId, isLatest: true },
+          select: { id: true },
+          orderBy: { version: "desc" },
+        })
+      : null;
+
+    const resumableAnalysis = type === "full_analysis"
+      ? await prisma.analysis.findFirst({
+          where: {
+            dealId,
+            status: "FAILED",
+            mode: "full_analysis",
+            completedAgents: { gt: 0 },
+            // Thesis-first hardening: ne reprendre que les runs alignés à la
+            // thèse canonique active. Si aucune thèse n’existe encore, seuls les
+            // runs sans thesisId sont éligibles.
+            thesisId: latestThesis?.id ?? null,
+            // Only resume recent failures (< 6 hours)
+            completedAt: { gte: new Date(Date.now() - 6 * 60 * 60 * 1000) },
+          },
+          orderBy: { completedAgents: "desc" },
+          include: {
+            checkpoints: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+            },
+          },
+        })
+      : null;
 
     // Resume is possible if we have an analysis with results in DB (even without checkpoints,
     // the resume logic merges DB results with checkpoint data)

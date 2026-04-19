@@ -178,6 +178,19 @@ export const VerdictPanel = memo(function VerdictPanel({
 
           {/* Right column: weaknesses + flags + conditions + steps */}
           <div className="flex-1 min-w-0 space-y-5">
+            {thesisGated && (
+              <div className="rounded-lg border border-red-200 bg-red-50/80 p-3">
+                <div className="flex items-center gap-2">
+                  <Handshake className="h-4 w-4 text-red-700" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-red-700">
+                    Verdict thèse avant score
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-red-800">
+                  Lisez d&apos;abord la solidité de la thèse et ses fragilités. Le score ne doit pas créer un faux confort analytique.
+                </p>
+              </div>
+            )}
 
             {/* Weak Dimensions — THE KEY SECTION: shows WHY the score is low */}
             {weakDimensions.length > 0 && (

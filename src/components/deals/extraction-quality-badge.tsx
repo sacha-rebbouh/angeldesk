@@ -38,6 +38,8 @@ interface ExtractionQualityBadgeProps {
   requiresOCR: boolean;
   processingStatus: string;
   extractionStatus?: string | null;
+  blockingCount?: number;
+  inspectionCount?: number;
 }
 
 export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
@@ -46,6 +48,8 @@ export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
   requiresOCR,
   processingStatus,
   extractionStatus,
+  blockingCount = 0,
+  inspectionCount = 0,
 }: ExtractionQualityBadgeProps) {
   // Processing states
   if (processingStatus === "PENDING") {
@@ -102,12 +106,13 @@ export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
     );
   }
 
-  if (extractionStatus === "needs_review" || extractionStatus === "failed") {
+  if (extractionStatus === "failed" || blockingCount > 0) {
     return (
       <ExtractionWarningDialog
         quality={quality}
         warnings={warningList}
         requiresOCR={requiresOCR}
+        title="Review requis"
       >
         <Badge
           variant="secondary"
@@ -115,6 +120,25 @@ export const ExtractionQualityBadge = memo(function ExtractionQualityBadge({
         >
           <AlertCircle className="h-3 w-3" />
           Review requis
+        </Badge>
+      </ExtractionWarningDialog>
+    );
+  }
+
+  if (extractionStatus === "needs_review" || inspectionCount > 0) {
+    return (
+      <ExtractionWarningDialog
+        quality={quality}
+        warnings={warningList}
+        requiresOCR={requiresOCR}
+        title="Inspection recommandee"
+      >
+        <Badge
+          variant="secondary"
+          className="flex cursor-pointer items-center gap-1 border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+        >
+          <AlertTriangle className="h-3 w-3" />
+          Inspection
         </Badge>
       </ExtractionWarningDialog>
     );
@@ -191,6 +215,7 @@ interface ExtractionWarningDialogProps {
   quality: number;
   warnings: ExtractionWarning[];
   requiresOCR: boolean;
+  title?: string;
   children: React.ReactNode;
 }
 
@@ -198,6 +223,7 @@ function ExtractionWarningDialog({
   quality,
   warnings,
   requiresOCR,
+  title,
   children,
 }: ExtractionWarningDialogProps) {
   const getSeverityIcon = (severity: ExtractionWarning["severity"]) => {
@@ -233,7 +259,7 @@ function ExtractionWarningDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileWarning className="h-5 w-5 text-yellow-500" />
-            Qualite d&apos;extraction: {quality}%
+            {title ? `${title} - ` : ""}Qualite d&apos;extraction: {quality}%
           </DialogTitle>
           <DialogDescription>
             L&apos;extraction du PDF a rencontre des problemes qui peuvent affecter

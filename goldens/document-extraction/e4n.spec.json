@@ -1,0 +1,110 @@
+{
+  "label": "e4n confidential presentation",
+  "documentPath": "/Users/sacharebbouh/Downloads/e4n - Confidential Presentation_BD.pdf",
+  "expectation": {
+    "blockingPages": [
+      3,
+      9,
+      11,
+      14,
+      20,
+      21,
+      23,
+      24,
+      31
+    ],
+    "inspectionPages": [
+      3,
+      9,
+      11,
+      14,
+      20,
+      21,
+      23,
+      24,
+      31
+    ],
+    "pageExpectations": [
+      {
+        "pageNumber": 3,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "insufficient",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 5,
+        "status": "ready_with_warnings",
+        "pageClass": "narrative",
+        "structureDependency": "low",
+        "semanticSufficiency": "sufficient",
+        "blocksAnalysis": false
+      },
+      {
+        "pageNumber": 9,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "partial",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 11,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "insufficient",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 14,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "insufficient",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 20,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "insufficient",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 21,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "partial",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 23,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "insufficient",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 24,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "sufficient",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 31,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "insufficient",
+        "blocksAnalysis": true
+      }
+    ]
+  }
+}

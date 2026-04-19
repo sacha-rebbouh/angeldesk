@@ -284,6 +284,14 @@ ${compressedContext}
 
 Analyse ce deal et forme ton verdict independant.
 
+Priorite de raisonnement:
+1. Solidite de la these et des hypotheses porteuses
+2. Qualite des preuves et fiabilite des donnees
+3. Modes d'echec, contradictions et risques critiques
+4. Les scores et recommandations de synthese sont des signaux secondaires seulement
+
+N'ancre jamais ton verdict sur un score unique ou une recommandation deja formulee.
+
 Reponds en JSON avec ce format exact:
 \`\`\`json
 {
@@ -353,9 +361,10 @@ ${othersSection}
 INSTRUCTIONS:
 1. Lis attentivement les analyses des autres
 2. Evalue si leurs arguments sont convaincants
-3. Si tu es convaincu, change de position et explique pourquoi
-4. Reponds aux points specifiques des autres membres
-5. Ajoute de nouveaux points si pertinent
+3. Commence par les hypotheses, preuves et modes d'echec avant toute consideration de score
+4. Si tu es convaincu, change de position et explique pourquoi
+5. Reponds aux points specifiques des autres membres
+6. Ajoute de nouveaux points si pertinent
 
 Reponds en JSON:
 \`\`\`json
@@ -414,14 +423,19 @@ ${t.reformulated}
 - **Moat** : ${t.moat ?? "Non declare"}
 - **Path to exit** : ${t.pathToExit ?? "Non declare"}
 
-### Verdict unifie (worst-of-3)
-- Verdict : **${t.verdict}**
+### Axes canoniques
+- **Thesis Quality** : ${t.evaluationAxes.thesisQuality.verdict} — ${t.evaluationAxes.thesisQuality.summary}
+- **Investor Profile Fit** : ${t.evaluationAxes.investorProfileFit.verdict} — ${t.evaluationAxes.investorProfileFit.summary}
+- **Deal Accessibility** : ${t.evaluationAxes.dealAccessibility.verdict} — ${t.evaluationAxes.dealAccessibility.summary}
+
+### Verdict consolide (a challenger, pas a suivre aveuglement)
+- Verdict consolide : **${t.verdict}**
 - Confiance : ${t.confidence}/100
 
 ### Par framework
 - **YC** : ${t.ycLens.verdict}
 - **Thiel** : ${t.thielLens.verdict}
-- **Angel Desk (BA + groupe + family office + syndicat)** : ${t.angelDeskLens.verdict}
+- **Angel Desk (capital prive: fit profil + accessibilite + realisme execution)** : ${t.angelDeskLens.verdict}
 
 ### Load-bearing assumptions (hypotheses porteuses)
 ${loadBearingStr}
@@ -437,9 +451,10 @@ La question centrale : **cette these tient-elle debout comme objet structurel ?*
 
 Ne decide pas d'investir ou pas. Evalue la SOLIDITE de la these :
 1. Les hypotheses porteuses sont-elles verifiees ou purement speculatives ?
-2. Le verdict unifie est-il aligne avec la qualite objective de la these ?
+2. Le verdict consolide est-il aligne avec l'axe **Thesis Quality**, ou contaminateur par du fit/accessibility ?
 3. Quelle est l'hypothese la plus fragile qui pourrait faire ecrouler la these ?
 4. Quel est le defaut structurel majeur que les autres frameworks pourraient avoir rate ?
+5. Si Angel Desk signale un probleme de ticket, d'horizon ou de profil investisseur, distingue explicitement s'il s'agit d'un **fit/accessibility mismatch** ou d'une vraie faiblesse de these.
 
 Reponds en JSON strict :
 \`\`\`json
@@ -497,6 +512,7 @@ ${debateSection}
 
 INSTRUCTIONS:
 C'est le moment du vote final. Apres avoir ecoute tous les debats, donne ton verdict definitif.
+Le score global ou les recommandations de synthese ne sont pas des arbitres finaux: traite-les comme des signaux secondaires derriere Thesis Quality, la qualite des preuves et les risques de rupture.
 
 Reponds en JSON:
 \`\`\`json

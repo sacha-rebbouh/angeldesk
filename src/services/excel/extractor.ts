@@ -11,6 +11,38 @@ import * as XLSX from "xlsx";
 
 const MAX_PROMPT_TEXT_PER_WORKBOOK = 120_000;
 const MAX_CHARS_PER_SHEET = 6_000;
+const MAX_FORMULA_SAMPLES_PER_SHEET = 12;
+const MAX_KEY_METRICS_PER_SHEET = 16;
+
+export interface FormulaSample {
+  cell: string;
+  formula: string;
+  value: string;
+  precedentRefs: string[];
+}
+
+export interface SheetAuditSummary {
+  role: SheetRole;
+  formulaDensity: number;
+  nonEmptyCellCount: number;
+  inputCellCount: number;
+  formulaCellCount: number;
+  hardcodedNumericCount: number;
+  dateColumnCount: number;
+  keyMetricLabels: string[];
+  formulaSamples: FormulaSample[];
+  warningFlags: string[];
+}
+
+export interface WorkbookAuditSummary {
+  hiddenSheets: string[];
+  assumptionSheets: string[];
+  outputSheets: string[];
+  calcSheets: string[];
+  criticalSheets: string[];
+  formulaHeavySheets: string[];
+  warningFlags: string[];
+}
 
 export interface ExcelExtractionResult {
   success: boolean;
@@ -23,13 +55,16 @@ export interface ExcelExtractionResult {
     hasFormulas: boolean;
     formulaCount: number;
     hasCharts: boolean;
+    hiddenSheetCount: number;
   };
+  workbookAudit: WorkbookAuditSummary;
   error?: string;
 }
 
 export interface SheetData {
   name: string;
   classification: SheetClassification;
+  role: SheetRole;
   hidden: boolean;
   includedInPrompt: boolean;
   truncated: boolean;
@@ -39,6 +74,7 @@ export interface SheetData {
   headers?: string[]; // First row if detected as headers
   textContent: string; // Formatted text representation
   formulaCount: number;
+  audit: SheetAuditSummary;
 }
 
 export type SheetClassification =
@@ -50,6 +86,14 @@ export type SheetClassification =
   | "TIMESERIES"
   | "OTHER";
 
+export type SheetRole =
+  | "INPUTS"
+  | "CALC_ENGINE"
+  | "OUTPUTS"
+  | "SUPPORTING_DATA"
+  | "LEGAL"
+  | "UNKNOWN";
+
 /**
  * Extract text content from an Excel buffer
  */
@@ -58,7 +102,7 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
     // Parse the workbook
     const workbook = XLSX.read(buffer, {
       type: "buffer",
-      cellFormula: false,
+      cellFormula: true,
       cellNF: false,
       cellStyles: false, // Skip styles for performance
     });
@@ -66,8 +110,7 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
     const sheets: SheetData[] = [];
     let totalRows = 0;
     let totalCells = 0;
-    const hasFormulas = false;
-    const formulaCount = 0;
+    let formulaCount = 0;
     const textParts: string[] = [];
 
     textParts.push(`=== FINANCIAL MODEL EXCEL ===`);
@@ -98,20 +141,23 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
       // Detect headers (first row with content)
       const headers = data.length > 0 ? data[0].map(String) : undefined;
 
-      // Formulas are intentionally not extracted into prompt text. The xlsx file
-      // remains the audit source of truth; values are enough for LLM analysis.
-      for (const cellAddress in worksheet) {
-        if (cellAddress[0] === "!") continue;
-        const cell = worksheet[cellAddress];
-        if (cell.v !== undefined) totalCells++;
-      }
-
       const classification = classifySheet(sheetName, data);
+      const role = inferSheetRole(sheetName, classification, data);
+      const audit = buildSheetAudit({
+        sheetName,
+        classification,
+        role,
+        worksheet,
+        data,
+      });
+      totalCells += audit.nonEmptyCellCount;
+      formulaCount += audit.formulaCellCount;
       const includedInPrompt = !hidden && classification !== "CALCULATIONS";
       const sheetText = includedInPrompt
         ? formatSheetForLLM({
           name: sheetName,
           classification,
+          role,
           hidden,
           includedInPrompt,
           truncated: false,
@@ -120,13 +166,15 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
           data,
           headers,
           textContent: "",
-          formulaCount: 0,
+          formulaCount: audit.formulaCellCount,
+          audit,
         }, MAX_CHARS_PER_SHEET)
         : `\n=== FEUILLE: ${sheetName} ===\nClassification: ${classification} | Dimensions: ${rowCount} lignes x ${columnCount} colonnes\n[Feuille exclue du prompt: ${hidden ? "hidden sheet" : "calculation/helper sheet"}]\n`;
 
       parsedSheets.push({
         name: sheetName,
         classification,
+        role,
         hidden,
         includedInPrompt,
         truncated: sheetText.length >= MAX_CHARS_PER_SHEET,
@@ -135,17 +183,24 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
         data,
         headers,
         textContent: sheetText,
-        formulaCount: 0,
+        formulaCount: audit.formulaCellCount,
+        audit,
       });
 
       totalRows += rowCount;
     }
 
+    const workbookAudit = buildWorkbookAudit(parsedSheets);
+
     for (const [index, sheet] of parsedSheets.entries()) {
-      textParts.push(`${index + 1}. [${sheet.name}] - ${sheet.classification} - ${sheet.rowCount} lignes x ${sheet.columnCount} colonnes${sheet.hidden ? " - HIDDEN" : ""}${sheet.includedInPrompt ? "" : " - STUB_ONLY"}`);
+      textParts.push(`${index + 1}. [${sheet.name}] - ${sheet.classification} / ${sheet.role} - ${sheet.rowCount} lignes x ${sheet.columnCount} colonnes${sheet.hidden ? " - HIDDEN" : ""}${sheet.includedInPrompt ? "" : " - STUB_ONLY"}`);
     }
     textParts.push("");
-    textParts.push("IMPORTANT: Les formules ne sont pas dumpées dans le prompt. Les valeurs calculées sont extraites; le fichier Excel original reste la source d'audit.");
+    textParts.push(`Formules detectees: ${formulaCount} | Feuilles cachees: ${workbookAudit.hiddenSheets.length}`);
+    if (workbookAudit.warningFlags.length > 0) {
+      textParts.push(`Signaux workbook: ${workbookAudit.warningFlags.join(" | ")}`);
+    }
+    textParts.push("IMPORTANT: Les formules ne sont pas dumpées intégralement dans le prompt. Les valeurs calculées, échantillons de lineage et signaux d'audit sont extraits; le fichier Excel original reste la source d'audit.");
     textParts.push("");
 
     for (const sheet of parsedSheets) {
@@ -173,10 +228,12 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
         sheetCount: workbook.SheetNames.length,
         totalRows,
         totalCells,
-        hasFormulas,
+        hasFormulas: formulaCount > 0,
         formulaCount,
         hasCharts,
+        hiddenSheetCount: workbookAudit.hiddenSheets.length,
       },
+      workbookAudit,
     };
   } catch (error) {
     console.error("[ExcelExtractor] Error:", error);
@@ -191,6 +248,16 @@ export function extractFromExcel(buffer: Buffer): ExcelExtractionResult {
         hasFormulas: false,
         formulaCount: 0,
         hasCharts: false,
+        hiddenSheetCount: 0,
+      },
+      workbookAudit: {
+        hiddenSheets: [],
+        assumptionSheets: [],
+        outputSheets: [],
+        calcSheets: [],
+        criticalSheets: [],
+        formulaHeavySheets: [],
+        warningFlags: [],
       },
       error: error instanceof Error ? error.message : "Unknown error parsing Excel file",
     };
@@ -233,11 +300,182 @@ function classifySheet(sheetName: string, data: string[][]): SheetClassification
   return "OTHER";
 }
 
+function inferSheetRole(sheetName: string, classification: SheetClassification, data: string[][]): SheetRole {
+  const normalizedName = normalizeForClassification(sheetName);
+  const sample = normalizeForClassification(data.slice(0, 12).flat().join(" "));
+  const annualSummaryLike = looksLikeCompactAnnualSummarySheet(data);
+  const operationalTimeseriesLike = looksLikeOperationalTimeseriesSheet(data);
+
+  if (/confidential|disclaimer|non-reliance/.test(normalizedName)) return "LEGAL";
+  if (/output|overview|summary|pptx/.test(normalizedName)) return "OUTPUTS";
+  if (annualSummaryLike) return "OUTPUTS";
+  if (classification === "ASSUMPTIONS" || /driver|input/.test(normalizedName)) return "INPUTS";
+  if (classification === "CALCULATIONS" || /^p\d+$/.test(normalizedName) || /^uw$/.test(normalizedName)) return "CALC_ENGINE";
+  if (operationalTimeseriesLike) return "CALC_ENGINE";
+  if (classification === "PNL" || classification === "CASHFLOW" || classification === "TIMESERIES") {
+    if (/overview|output|metric|kpi|return|uses|sources/.test(sample)) return "OUTPUTS";
+    return "CALC_ENGINE";
+  }
+  if (classification === "CAPTABLE") return "OUTPUTS";
+  if (/historical|comp|benchmark|budget|cost/.test(normalizedName)) return "SUPPORTING_DATA";
+  return "UNKNOWN";
+}
+
+function buildSheetAudit(params: {
+  sheetName: string;
+  classification: SheetClassification;
+  role: SheetRole;
+  worksheet: XLSX.WorkSheet;
+  data: string[][];
+}): SheetAuditSummary {
+  let nonEmptyCellCount = 0;
+  let formulaCellCount = 0;
+  let inputCellCount = 0;
+  let hardcodedNumericCount = 0;
+  const formulaSamples: FormulaSample[] = [];
+
+  for (const cellAddress in params.worksheet) {
+    if (cellAddress[0] === "!") continue;
+    const cell = params.worksheet[cellAddress] as XLSX.CellObject | undefined;
+    if (!cell || (cell.v == null && cell.w == null && cell.f == null)) continue;
+    nonEmptyCellCount++;
+
+    const displayValue = formatCellValue(cell.w ?? cell.v ?? "");
+    if (typeof cell.f === "string" && cell.f.trim().length > 0) {
+      formulaCellCount++;
+      if (formulaSamples.length < MAX_FORMULA_SAMPLES_PER_SHEET) {
+        formulaSamples.push({
+          cell: cellAddress,
+          formula: cell.f,
+          value: displayValue,
+          precedentRefs: extractFormulaRefs(cell.f),
+        });
+      }
+    } else {
+      inputCellCount++;
+      if (isNumericValue(displayValue)) {
+        hardcodedNumericCount++;
+      }
+    }
+  }
+
+  const dateColumnCount = Math.max(0, ...params.data.slice(0, 12).map((row) => detectDateColumns(row).length));
+  const keyMetricLabels = extractKeyMetricLabels(params.data);
+  const formulaDensity = nonEmptyCellCount > 0 ? formulaCellCount / nonEmptyCellCount : 0;
+  const warningFlags: string[] = [];
+
+  if (formulaDensity >= 0.7) warningFlags.push("formula_heavy");
+  if (hardcodedNumericCount >= 100 && params.role !== "INPUTS") warningFlags.push("hardcoded_numeric_load");
+  if (params.role === "OUTPUTS" && formulaCellCount < 10 && hardcodedNumericCount > 20) warningFlags.push("output_sheet_hardcoded");
+  if (params.role === "INPUTS" && hardcodedNumericCount < 10) warningFlags.push("few_manual_drivers_detected");
+  if (params.classification === "TIMESERIES" && dateColumnCount < 4) warningFlags.push("weak_timeseries_header_detection");
+
+  return {
+    role: params.role,
+    formulaDensity,
+    nonEmptyCellCount,
+    inputCellCount,
+    formulaCellCount,
+    hardcodedNumericCount,
+    dateColumnCount,
+    keyMetricLabels,
+    formulaSamples,
+    warningFlags,
+  };
+}
+
+function buildWorkbookAudit(sheets: SheetData[]): WorkbookAuditSummary {
+  const hiddenSheets = sheets.filter((sheet) => sheet.hidden).map((sheet) => sheet.name);
+  const assumptionSheets = sheets.filter((sheet) => sheet.role === "INPUTS").map((sheet) => sheet.name);
+  const outputSheets = sheets.filter((sheet) => sheet.role === "OUTPUTS").map((sheet) => sheet.name);
+  const calcSheets = sheets.filter((sheet) => sheet.role === "CALC_ENGINE").map((sheet) => sheet.name);
+  const criticalSheets = sheets
+    .filter((sheet) => sheet.role === "INPUTS" || sheet.role === "OUTPUTS" || /uw/i.test(sheet.name))
+    .map((sheet) => sheet.name);
+  const formulaHeavySheets = sheets
+    .filter((sheet) => sheet.audit.formulaDensity >= 0.7)
+    .map((sheet) => sheet.name);
+  const warningFlags: string[] = [];
+
+  if (assumptionSheets.length === 0) warningFlags.push("no_assumption_sheet_detected");
+  if (outputSheets.length === 0) warningFlags.push("no_output_sheet_detected");
+  if (hiddenSheets.some((name) => criticalSheets.includes(name))) warningFlags.push("hidden_critical_sheet");
+  if (formulaHeavySheets.length >= Math.max(3, Math.ceil(sheets.length / 3))) warningFlags.push("model_is_formula_dense");
+
+  return {
+    hiddenSheets,
+    assumptionSheets,
+    outputSheets,
+    calcSheets,
+    criticalSheets,
+    formulaHeavySheets,
+    warningFlags,
+  };
+}
+
 function normalizeForClassification(value: string): string {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+function looksLikeCompactAnnualSummarySheet(data: string[][]): boolean {
+  const sampleRows = data.slice(0, 24);
+  const annualHeaderRows = sampleRows.filter((row) => countAnnualSummaryHeaders(row) >= 4).length;
+  const kpiRows = sampleRows.filter((row) => isSummaryKpiRow(row)).length;
+  const majorKpiRows = sampleRows.filter((row) => {
+    const label = extractPrimaryTextLabel(row);
+    return /\b(total revenue|revenue|sales|ebitda|cash flow|profit|arr|mrr|valuation|irr|moic)\b/i.test(label);
+  }).length;
+  const totalRows = sampleRows.filter((row) => row.some((cell) => /\btotal\b/i.test(String(cell ?? "").trim()))).length;
+
+  return annualHeaderRows >= 1 && kpiRows >= 4 && majorKpiRows >= 2 && totalRows >= 1;
+}
+
+function looksLikeOperationalTimeseriesSheet(data: string[][]): boolean {
+  const sampleRows = data.slice(0, 24);
+  const monthlyHeaderRows = sampleRows.filter((row) => detectDateColumns(row).length >= 4).length;
+  const metricRows = sampleRows.filter((row) => {
+    const label = extractPrimaryTextLabel(row);
+    if (!label) return false;
+    const numericCells = row.filter((cell) => /\$|€|£|%|-?\d/.test(String(cell ?? "").trim())).length;
+    return numericCells >= 4;
+  }).length;
+
+  return monthlyHeaderRows >= 1 && metricRows >= 4;
+}
+
+function countAnnualSummaryHeaders(row: string[]): number {
+  return row.filter((cell) => {
+    const trimmed = String(cell ?? "").trim();
+    return /^(20\d{2}|fy\d{2,4}|total)$/i.test(trimmed);
+  }).length;
+}
+
+function isSummaryKpiRow(row: string[]): boolean {
+  const label = extractPrimaryTextLabel(row);
+  if (!label) return false;
+  if (!/\b(revenue|sales|ebitda|cash flow|profit|income|arr|mrr|cost|opex|capex|debt|equity|valuation|irr|moic|margin)\b/i.test(label)) {
+    return false;
+  }
+
+  const numericCells = row.filter((cell) => {
+    const trimmed = String(cell ?? "").trim();
+    return /\$|€|£|%|-?\d/.test(trimmed);
+  }).length;
+
+  return numericCells >= 3;
+}
+
+function extractPrimaryTextLabel(row: string[]): string {
+  for (const cell of row.slice(0, 4)) {
+    const trimmed = String(cell ?? "").trim();
+    if (!trimmed) continue;
+    if (/^\$?-?\d[\d,]*(?:\.\d+)?%?$/.test(trimmed)) continue;
+    return trimmed;
+  }
+  return "";
 }
 
 /**
@@ -252,7 +490,20 @@ function formatSheetForLLM(sheet: SheetData, maxChars: number = 5000): string {
   if (data.length === 0) return `\n--- ${name.toUpperCase()} --- (Vide)\n`;
 
   let output = `\n=== FEUILLE: ${name} ===\n`;
-  output += `Classification: ${sheet.classification} | Dimensions: ${sheet.rowCount} lignes x ${sheet.columnCount} colonnes\n`;
+  output += `Classification: ${sheet.classification} | Role: ${sheet.role} | Dimensions: ${sheet.rowCount} lignes x ${sheet.columnCount} colonnes\n`;
+  output += `Audit: ${sheet.audit.nonEmptyCellCount} cellules non vides | ${sheet.audit.formulaCellCount} formules | ${sheet.audit.inputCellCount} cellules manuelles | densite formules ${(sheet.audit.formulaDensity * 100).toFixed(1)}%\n`;
+  if (sheet.audit.keyMetricLabels.length > 0) {
+    output += `Lignes clefs: ${sheet.audit.keyMetricLabels.join(" | ")}\n`;
+  }
+  if (sheet.audit.warningFlags.length > 0) {
+    output += `Points de vigilance: ${sheet.audit.warningFlags.join(" | ")}\n`;
+  }
+  if (sheet.audit.formulaSamples.length > 0) {
+    output += "Lineage (echantillon):\n";
+    for (const sample of sheet.audit.formulaSamples.slice(0, 4)) {
+      output += `- ${sample.cell}: =${sample.formula} => ${sample.value}${sample.precedentRefs.length > 0 ? ` | refs: ${sample.precedentRefs.slice(0, 6).join(", ")}` : ""}\n`;
+    }
+  }
 
   // Detect if this looks like a financial table (many date columns)
   const firstRow = data[0] || [];
@@ -273,6 +524,12 @@ function formatSheetForLLM(sheet: SheetData, maxChars: number = 5000): string {
   }
 
   return output;
+}
+
+export function summarizeForLLM(result: ExcelExtractionResult, maxChars: number = 50_000): string {
+  return result.text.length <= maxChars
+    ? result.text
+    : `${result.text.slice(0, maxChars - 120)}\n\n[TRONQUE: resume workbook borne a ${maxChars} caracteres pour le prompt.]`;
 }
 
 /**
@@ -435,4 +692,30 @@ function formatCellValue(val: unknown): string {
   }
 
   return str;
+}
+
+function extractKeyMetricLabels(data: string[][]): string[] {
+  const keywords = [
+    "revenue", "ebitda", "cash", "irr", "moic", "ltv", "ltc", "yield", "occupancy",
+    "rent", "capex", "opex", "debt", "equity", "exit", "entry", "margin", "valuation",
+    "sources", "uses", "stabilized", "niy", "yoc"
+  ];
+  const labels: string[] = [];
+  for (const row of data.slice(0, 160)) {
+    for (const cell of row.slice(0, 4)) {
+      const text = String(cell ?? "").trim();
+      if (!text) continue;
+      const lower = normalizeForClassification(text);
+      if (keywords.some((keyword) => lower.includes(keyword)) && !labels.includes(text)) {
+        labels.push(text);
+        if (labels.length >= MAX_KEY_METRICS_PER_SHEET) return labels;
+      }
+    }
+  }
+  return labels;
+}
+
+function extractFormulaRefs(formula: string): string[] {
+  const refs = formula.match(/(?:'[^']+'|[A-Za-z0-9_]+)?!?[$]?[A-Z]{1,3}[$]?\d+(?::[$]?[A-Z]{1,3}[$]?\d+)?/g) ?? [];
+  return Array.from(new Set(refs)).slice(0, 12);
 }

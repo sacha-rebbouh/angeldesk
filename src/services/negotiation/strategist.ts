@@ -7,7 +7,8 @@
  * Inputs:
  * - Resultats de financial-auditor (valo, multiples, benchmarks)
  * - Resultats de cap-table-auditor (equity, dilution, clauses)
- * - Resultats de synthesis-deal-scorer (score global, red flags)
+ * - Resultats de synthesis-deal-scorer (forces/faiblesses analytiques)
+ * - These canonique normalisee (thesis quality, investor-fit, accessibility)
  *
  * Outputs:
  * - Points de negociation priorises
@@ -16,6 +17,7 @@
  */
 
 import { completeJSON } from "@/services/openrouter/router";
+import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
 
 // =============================================================================
 // TYPES
@@ -64,6 +66,15 @@ export interface TradeOff {
 export interface NegotiationStrategy {
   dealName: string;
   generatedAt: string;
+  cacheMeta?: {
+    schemaVersion: number;
+    analysisId: string;
+    thesisId: string;
+    thesisSourceHash: string;
+    thesisUpdatedAt: string;
+    thesisDecision: string | null;
+    thesisBypass: boolean;
+  };
   overallLeverage: "strong" | "moderate" | "weak";
   leverageRationale: string;
   negotiationPoints: NegotiationPoint[];
@@ -72,11 +83,6 @@ export interface NegotiationStrategy {
   tradeoffs: TradeOff[];
   suggestedApproach: string;
   keyArguments: string[];
-  improvedDealScore?: {
-    before: number;
-    after: number;
-    improvement: number;
-  };
 }
 
 export interface AnalysisResults {
@@ -138,6 +144,12 @@ export interface AnalysisResults {
       description: string;
     }>;
   };
+  thesis?: {
+    verdict?: string;
+    confidence?: number;
+    reformulated?: string;
+    evaluationAxes?: NormalizedThesisEvaluation;
+  };
 }
 
 // =============================================================================
@@ -175,7 +187,6 @@ interface LLMNegotiationResponse {
   }[];
   suggestedApproach: string;
   keyArguments: string[];
-  estimatedScoreImprovement?: number;
 }
 
 // =============================================================================
@@ -271,7 +282,8 @@ Produis un JSON structure avec tous les elements du plan de negociation.
 2. Les asks doivent etre REALISTES et CHIFFRES quand possible
 3. Toujours proposer un fallback (position de repli)
 4. Les conditions bloquantes doivent etre justifiees par des risques critiques concrets
-5. Les trade-offs doivent avoir un net benefit positif ou neutre`;
+5. Les trade-offs doivent avoir un net benefit positif ou neutre
+6. Ne confonds jamais amelioration des terms avec amelioration de la qualite de la these`;
 
 export async function generateNegotiationStrategy(
   dealName: string,
@@ -334,8 +346,7 @@ ${context}
     }
   ],
   "suggestedApproach": "Approche globale recommandee pour la negociation",
-  "keyArguments": ["Argument 1", "Argument 2", "Argument 3"],
-  "estimatedScoreImprovement": 0-20
+  "keyArguments": ["Argument 1", "Argument 2", "Argument 3"]
 }
 \`\`\``;
 
@@ -358,6 +369,15 @@ ${context}
 
 function buildAnalysisContext(results: AnalysisResults): string {
   let context = "";
+
+  if (results.thesis?.evaluationAxes) {
+    context += `### THESE CANONIQUE\n`;
+    context += `Verdict consolide: ${results.thesis.verdict ?? "N/A"}\n`;
+    context += `These: ${results.thesis.reformulated ?? "N/A"}\n`;
+    context += `Thesis Quality: ${results.thesis.evaluationAxes.thesisQuality.verdict} — ${results.thesis.evaluationAxes.thesisQuality.summary}\n`;
+    context += `Investor Profile Fit: ${results.thesis.evaluationAxes.investorProfileFit.verdict} — ${results.thesis.evaluationAxes.investorProfileFit.summary}\n`;
+    context += `Deal Accessibility: ${results.thesis.evaluationAxes.dealAccessibility.verdict} — ${results.thesis.evaluationAxes.dealAccessibility.summary}\n\n`;
+  }
 
   // Financial Auditor Results
   if (results.financialAuditor) {
@@ -438,8 +458,8 @@ function buildAnalysisContext(results: AnalysisResults): string {
   if (results.synthesisDealScorer) {
     const sds = results.synthesisDealScorer;
     context += `### SYNTHESIS DEAL SCORER\n`;
-    context += `Score Global: ${sds.overallScore ?? sds.score?.value ?? "N/A"}/100\n`;
     context += `Verdict: ${sds.verdict ?? "N/A"}\n`;
+    context += `Lecture: utiliser ce bloc comme support analytique, jamais comme substitut de la these canonique.\n`;
 
     if (sds.keyStrengths && sds.keyStrengths.length > 0) {
       context += `\nPoints Forts:\n`;
@@ -522,17 +542,6 @@ function normalizeResponse(
       }))
     : [];
 
-  // Calculate improved deal score if possible
-  const currentScore = results.synthesisDealScorer?.overallScore ?? results.synthesisDealScorer?.score?.value ?? 0;
-  const improvement = response.estimatedScoreImprovement ?? 0;
-  const improvedDealScore = currentScore > 0
-    ? {
-        before: currentScore,
-        after: Math.min(100, currentScore + improvement),
-        improvement,
-      }
-    : undefined;
-
   return {
     dealName,
     generatedAt: new Date().toISOString(),
@@ -545,7 +554,6 @@ function normalizeResponse(
     tradeoffs,
     suggestedApproach: response.suggestedApproach ?? "",
     keyArguments: Array.isArray(response.keyArguments) ? response.keyArguments : [],
-    improvedDealScore,
   };
 }
 
@@ -580,10 +588,6 @@ export function calculateImprovedScore(strategy: NegotiationStrategy): number {
 
   // Weighted score improvement
   const improvement = obtainedMustHave * 5 + obtainedNiceToHave * 2 + obtainedOptional * 1;
-
-  if (strategy.improvedDealScore) {
-    return Math.min(100, strategy.improvedDealScore.before + improvement);
-  }
 
   return improvement;
 }

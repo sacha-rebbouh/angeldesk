@@ -137,6 +137,11 @@ export interface BoardInput {
     ycLens: { verdict: string };
     thielLens: { verdict: string };
     angelDeskLens: { verdict: string };
+    evaluationAxes: {
+      thesisQuality: { verdict: string; summary: string };
+      investorProfileFit: { verdict: string; summary: string };
+      dealAccessibility: { verdict: string; summary: string };
+    };
   } | null;
 
   // Extracted documents

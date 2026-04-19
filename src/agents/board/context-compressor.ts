@@ -27,32 +27,36 @@ export function compressBoardContext(input: BoardInput): string {
   const safeCompanyName = sanitizeName(input.companyName);
   sections.push(`# DEAL: ${safeDealName}\nEntreprise: ${safeCompanyName}`);
 
-  // 2. Tier 3 Syntheses (the core — already digested all Tier 1 data)
+  // 2. Thesis-first canonical view
+  const thesisSection = buildThesisSection(input);
+  if (thesisSection) sections.push(thesisSection);
+
+  // 3. Tier 3 Syntheses
   const tier3Section = buildTier3Section(input);
   if (tier3Section) sections.push(tier3Section);
 
-  // 3. Fact Store (pre-formatted, high-quality)
+  // 4. Fact Store (pre-formatted, high-quality)
   if (input.agentOutputs.factStore?.formatted) {
     sections.push(`## FAITS VERIFIES (Fact Store)\n${input.agentOutputs.factStore.formatted}`);
   }
 
-  // 4. Tier 1 compact summaries (verdict + top findings only)
+  // 5. Tier 1 compact summaries (verdict + top findings only)
   const tier1Section = buildTier1Summaries(input);
   if (tier1Section) sections.push(tier1Section);
 
-  // 5. Tier 2 Sector Expert summary
+  // 6. Tier 2 Sector Expert summary
   const tier2Section = buildTier2Summary(input);
   if (tier2Section) sections.push(tier2Section);
 
-  // 6. Documents (already limited by existing sanitization)
+  // 7. Documents (already limited by existing sanitization)
   const docsSection = buildDocumentsSection(input);
   if (docsSection) sections.push(docsSection);
 
-  // 7. Enriched data (Context Engine) — compact summary
+  // 8. Enriched data (Context Engine) — compact summary
   const enrichedSection = buildEnrichedSection(input);
   if (enrichedSection) sections.push(enrichedSection);
 
-  // 8. Sources
+  // 9. Sources
   const sourcesSection = buildSourcesSection(input);
   if (sourcesSection) sections.push(sourcesSection);
 
@@ -73,16 +77,16 @@ export function buildDealSummary(input: BoardInput): string {
   const safeDealName = sanitizeName(input.dealName);
   const parts: string[] = [`RAPPEL: Deal "${safeDealName}"`];
 
-  // Score from synthesis
-  const synthesis = input.agentOutputs.tier3?.synthesisDealScorer;
-  if (synthesis && typeof synthesis === "object") {
-    const s = synthesis as Record<string, unknown>;
-    if (s.globalScore !== undefined || s.score !== undefined || s.finalScore !== undefined) {
-      const score = s.globalScore ?? s.score ?? s.finalScore;
-      parts.push(`Score global: ${score}/100`);
-    }
-    if (s.verdict) {
-      parts.push(`Verdict Tier 3: ${s.verdict}`);
+  if (input.thesis) {
+    parts.push(`Thesis Quality: ${input.thesis.evaluationAxes.thesisQuality.verdict}`);
+    parts.push(`Investor Profile Fit: ${input.thesis.evaluationAxes.investorProfileFit.verdict}`);
+    parts.push(`Deal Accessibility: ${input.thesis.evaluationAxes.dealAccessibility.verdict}`);
+    parts.push(`These reformulee: ${input.thesis.reformulated.slice(0, 240)}`);
+    const weakestLoadBearing = input.thesis.loadBearing.find(
+      (item) => item.status === "speculative" || item.status === "projected"
+    );
+    if (weakestLoadBearing) {
+      parts.push(`Hypothese porteuse fragile: ${weakestLoadBearing.statement.slice(0, 180)}`);
     }
   }
 
@@ -109,6 +113,23 @@ export function buildDealSummary(input: BoardInput): string {
   return parts.join("\n");
 }
 
+function buildThesisSection(input: BoardInput): string | null {
+  if (!input.thesis) return null;
+
+  const t = input.thesis;
+  const parts = [
+    "## THESE CANONIQUE (thesis-first)",
+    `Verdict consolide: ${t.verdict}`,
+    `Thesis Quality: ${t.evaluationAxes.thesisQuality.verdict} — ${t.evaluationAxes.thesisQuality.summary}`,
+    `Investor Profile Fit: ${t.evaluationAxes.investorProfileFit.verdict} — ${t.evaluationAxes.investorProfileFit.summary}`,
+    `Deal Accessibility: ${t.evaluationAxes.dealAccessibility.verdict} — ${t.evaluationAxes.dealAccessibility.summary}`,
+    `Confiance indicative: ${t.confidence}/100`,
+    `These: ${sanitizeForLLM(t.reformulated).slice(0, 800)}`,
+  ];
+
+  return parts.join("\n");
+}
+
 // ============================================================================
 // SECTION BUILDERS
 // ============================================================================
@@ -118,11 +139,6 @@ function buildTier3Section(input: BoardInput): string | null {
   if (!t3) return null;
 
   const parts: string[] = ["## SYNTHESE (Tier 3)"];
-
-  // Synthesis Deal Scorer
-  if (t3.synthesisDealScorer) {
-    parts.push(`### Score Final (synthesis-deal-scorer)\n${extractStructuredSummary(t3.synthesisDealScorer, 2000)}`);
-  }
 
   // Memo Generator
   if (t3.memoGenerator) {
@@ -142,6 +158,13 @@ function buildTier3Section(input: BoardInput): string | null {
   // Scenario Modeler
   if (t3.scenarioModeler) {
     parts.push(`### Scenarios (scenario-modeler)\n${extractStructuredSummary(t3.scenarioModeler, 2000)}`);
+  }
+
+  // Quant score kept last to avoid anchoring the board on a single number.
+  if (t3.synthesisDealScorer) {
+    parts.push(
+      `### Signal quantitatif secondaire (synthesis-deal-scorer)\n${extractStructuredSummary(t3.synthesisDealScorer, 2000)}`
+    );
   }
 
   return parts.length > 1 ? parts.join("\n\n") : null;
@@ -271,7 +294,7 @@ function buildSourcesSection(input: BoardInput): string | null {
  * Looks for common fields: verdict, score, confidence, findings, redFlags, etc.
  * Returns ~200-400 chars.
  */
-function extractAgentSummary(data: unknown): string {
+export function extractAgentSummary(data: unknown): string {
   if (data == null) return "Pas de donnees";
   if (typeof data === "string") return data.slice(0, MAX_TIER1_SUMMARY_CHARS);
   if (typeof data !== "object") return String(data).slice(0, MAX_TIER1_SUMMARY_CHARS);
@@ -279,14 +302,11 @@ function extractAgentSummary(data: unknown): string {
   const obj = data as Record<string, unknown>;
   const parts: string[] = [];
 
-  // Verdict / Score line
+  const signalParts: string[] = [];
   const verdict = obj.verdict ?? obj.recommendation ?? obj.assessment;
   const score = obj.score ?? obj.globalScore ?? obj.overallScore ?? obj.confidence;
-  if (verdict || score !== undefined) {
-    parts.push(
-      `Verdict: ${verdict ?? "N/A"}${score !== undefined ? ` | Score: ${score}` : ""}`
-    );
-  }
+  if (verdict) signalParts.push(`Verdict: ${verdict}`);
+  if (score !== undefined) signalParts.push(`Signal quantitatif secondaire: ${score}`);
 
   // Top findings
   const findings =
@@ -321,6 +341,10 @@ function extractAgentSummary(data: unknown): string {
       return String(f);
     });
     parts.push(`Red flags: ${topFlags.map((f) => String(f).slice(0, 80)).join(" | ")}`);
+  }
+
+  if (signalParts.length > 0) {
+    parts.push(signalParts.join(" | "));
   }
 
   const result = parts.join("\n");

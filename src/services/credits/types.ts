@@ -3,9 +3,8 @@
 // ============================================================================
 
 // --- Credit costs per action ---
-// Thesis-first (2026-04-17) : QUICK_SCAN est deprecated (tier retire). Le type
-// reste pour les historiques de transactions mais n'est plus consomme a la
-// creation d'une nouvelle analyse. THESIS_REBUTTAL + THESIS_REEXTRACT ajoutes.
+// Thesis-first (2026-04-17) : QUICK_SCAN reste uniquement pour l'historique
+// de transactions. Les nouvelles analyses publiques passent par DEEP_DIVE.
 export type CreditActionType =
   | 'QUICK_SCAN'      // DEPRECATED — tier retire, conserve pour historique
   | 'DEEP_DIVE'       // Tier 0.5 (thesis) + Tier 1+2+3 + reconciler
@@ -53,7 +52,7 @@ export const CREDIT_PACKS: CreditPackConfig[] = [
     credits: 10,
     priceEur: 49,
     perCredit: 4.90,
-    description: '2 Deep Dives, ou 1 Deep Dive + 5 Quick Scans',
+    description: '2 Deep Dives thesis-first',
   },
   {
     name: 'standard',
@@ -69,7 +68,7 @@ export const CREDIT_PACKS: CreditPackConfig[] = [
     credits: 60,
     priceEur: 179,
     perCredit: 2.98,
-    description: '2 deals full + 8 crédits de screening',
+    description: '2 deals full + crédits restants pour board, coaching et re-analysis',
     highlight: true,
   },
   {
@@ -78,7 +77,7 @@ export const CREDIT_PACKS: CreditPackConfig[] = [
     credits: 125,
     priceEur: 329,
     perCredit: 2.63,
-    description: '4 deals full + 21 crédits de screening',
+    description: '4 deals full + crédits restants pour usages avancés',
   },
   {
     name: 'fund',
@@ -147,6 +146,6 @@ export function getActionForAnalysisType(analysisType: string): CreditActionType
     case 'tier3_synthesis':
       return 'DEEP_DIVE';
     default:
-      return 'QUICK_SCAN';
+      return 'DEEP_DIVE';
   }
 }

@@ -16,6 +16,7 @@ import { getBoardMembers } from "./types";
 import { enrichDeal } from "@/services/context-engine";
 import { getCurrentFacts, getDisputedFacts, formatFactStoreForAgents } from "@/services/fact-store";
 import { completeJSON } from "@/services/openrouter/router";
+import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 
 const DEFAULT_MAX_ROUNDS = 3;
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
@@ -257,8 +258,18 @@ export class BoardOrchestrator {
         founders: true,
         redFlags: true,
         analyses: {
-          orderBy: { createdAt: "desc" },
+          where: {
+            status: "COMPLETED",
+            completedAt: { not: null },
+          },
+          orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
           take: 1,
+          select: {
+            id: true,
+            results: true,
+            thesisId: true,
+            completedAt: true,
+          },
         },
       },
     });
@@ -402,33 +413,23 @@ export class BoardOrchestrator {
       `Tier1=${tier1Count}/13, Tier2=${agentOutputs.tier2 ? 1 : 0}, Tier3=${tier3Count}/5`
     );
 
-    // Thesis-first : charger la these latest persistee
+    // Thesis-first : charger en priorite la these liee a l'analyse retenue.
     let thesisInput: BoardInput["thesis"] = null;
     try {
       const { thesisService } = await import("@/services/thesis");
-      const latest = await thesisService.getLatest(dealId);
-      if (latest) {
-        const loadBearingArr = Array.isArray(latest.loadBearing) ? latest.loadBearing : [];
-        const alertsArr = Array.isArray(latest.alerts) ? latest.alerts : [];
-        thesisInput = {
-          id: latest.id,
-          reformulated: latest.reformulated,
-          problem: latest.problem,
-          solution: latest.solution,
-          whyNow: latest.whyNow,
-          moat: latest.moat,
-          pathToExit: latest.pathToExit,
-          verdict: latest.verdict,
-          confidence: latest.confidence,
-          loadBearing: loadBearingArr as BoardInput["thesis"] extends null ? never : NonNullable<BoardInput["thesis"]>["loadBearing"],
-          alerts: alertsArr as BoardInput["thesis"] extends null ? never : NonNullable<BoardInput["thesis"]>["alerts"],
-          ycLens: (latest.ycLens as { verdict: string }) ?? { verdict: "unknown" },
-          thielLens: (latest.thielLens as { verdict: string }) ?? { verdict: "unknown" },
-          angelDeskLens: (latest.angelDeskLens as { verdict: string }) ?? { verdict: "unknown" },
-        };
-        console.log(`[BoardOrchestrator] Thesis loaded for round THESIS_DEBATE: verdict=${latest.verdict}`);
+      const pairedThesis = latestAnalysis?.thesisId
+        ? await thesisService.getById(latestAnalysis.thesisId)
+        : await thesisService.getLatest(dealId);
+
+      if (pairedThesis) {
+        thesisInput = mapBoardThesisInput(pairedThesis);
+        console.log(
+          `[BoardOrchestrator] Thesis loaded for round THESIS_DEBATE: thesisId=${pairedThesis.id} verdict=${pairedThesis.verdict}`
+        );
       } else {
-        console.log(`[BoardOrchestrator] No thesis found for deal ${dealId} — THESIS_DEBATE round will be skipped`);
+        console.log(
+          `[BoardOrchestrator] No paired thesis found for deal ${dealId} — THESIS_DEBATE round will be skipped`
+        );
       }
     } catch (err) {
       console.warn(`[BoardOrchestrator] Failed to load thesis:`, err);
@@ -1217,4 +1218,50 @@ REGLES:
       },
     });
   }
+}
+
+function mapBoardThesisInput(
+  thesis: {
+    id: string;
+    reformulated: string;
+    problem: string;
+    solution: string;
+    whyNow: string;
+    moat: string | null;
+    pathToExit: string | null;
+    verdict: string;
+    confidence: number;
+    loadBearing: unknown;
+    alerts: unknown;
+    ycLens: unknown;
+    thielLens: unknown;
+    angelDeskLens: unknown;
+  }
+): NonNullable<BoardInput["thesis"]> {
+  const loadBearingArr = Array.isArray(thesis.loadBearing) ? thesis.loadBearing : [];
+  const alertsArr = Array.isArray(thesis.alerts) ? thesis.alerts : [];
+
+  return {
+    id: thesis.id,
+    reformulated: thesis.reformulated,
+    problem: thesis.problem,
+    solution: thesis.solution,
+    whyNow: thesis.whyNow,
+    moat: thesis.moat,
+    pathToExit: thesis.pathToExit,
+    verdict: thesis.verdict,
+    confidence: thesis.confidence,
+    loadBearing: loadBearingArr as NonNullable<BoardInput["thesis"]>["loadBearing"],
+    alerts: alertsArr as NonNullable<BoardInput["thesis"]>["alerts"],
+    ycLens: (thesis.ycLens as { verdict: string }) ?? { verdict: "unknown" },
+    thielLens: (thesis.thielLens as { verdict: string }) ?? { verdict: "unknown" },
+    angelDeskLens: (thesis.angelDeskLens as { verdict: string }) ?? { verdict: "unknown" },
+    evaluationAxes: normalizeThesisEvaluation({
+      verdict: thesis.verdict as never,
+      confidence: thesis.confidence,
+      ycLens: thesis.ycLens as never,
+      thielLens: thesis.thielLens as never,
+      angelDeskLens: thesis.angelDeskLens as never,
+    }),
+  };
 }

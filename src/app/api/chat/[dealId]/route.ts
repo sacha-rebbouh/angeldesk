@@ -13,9 +13,11 @@ import {
   getConversationHistoryForLLM,
 } from "@/services/chat-context/conversation";
 import { getChatContext, getFullChatContext } from "@/services/chat-context";
+import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 import { checkRateLimitDistributed, isValidCuid, CUID_PATTERN } from "@/lib/sanitize";
 import { dealChatAgent, type FullChatContext } from "@/agents/chat";
 import { handleApiError } from "@/lib/api-error";
+import type { DealChatContextData } from "@/services/chat-context";
 
 // ============================================================================
 // SCHEMAS
@@ -187,8 +189,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // La these est injectee dans le contexte chat pour permettre a l'agent d'y repondre
     // de maniere informee (intent=THESIS). Si aucune these persistee : null → agent skip section.
     const { thesisService } = await import("@/services/thesis");
-    const [fullContextData, history, latestThesis] = await Promise.all([
-      getFullChatContext(dealId),
+    const [history, latestThesis] = await Promise.all([
       conversationId ? getConversationHistoryForLLM(conversationId) : Promise.resolve([]),
       thesisService.getLatest(dealId),
     ]);
@@ -197,14 +198,63 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // Sans ca le chat disait toujours "bypass actif: false" meme si le BA avait continue
     // apres une these fragile — le chat ne pouvait pas raisonner correctement sur le score.
     let thesisBypass = false;
+    let linkedThesisAnalysis:
+      | {
+          id: string;
+          mode: string | null;
+          summary: string | null;
+          completedAt: Date | null;
+          hasResults: boolean;
+        }
+      | null = null;
+    const normalizedThesisEvaluation = latestThesis
+      ? normalizeThesisEvaluation({
+          verdict: latestThesis.verdict as never,
+          confidence: latestThesis.confidence,
+          ycLens: latestThesis.ycLens as never,
+          thielLens: latestThesis.thielLens as never,
+          angelDeskLens: latestThesis.angelDeskLens as never,
+        })
+      : null;
     if (latestThesis) {
       const linkedAnalysis = await prisma.analysis.findFirst({
-        where: { dealId, thesisId: latestThesis.id },
-        select: { thesisBypass: true },
-        orderBy: { createdAt: "desc" },
+        where: { dealId, thesisId: latestThesis.id, status: "COMPLETED" },
+        select: {
+          thesisBypass: true,
+          id: true,
+          mode: true,
+          summary: true,
+          completedAt: true,
+          results: true,
+        },
+        orderBy: { completedAt: "desc" },
       });
       thesisBypass = linkedAnalysis?.thesisBypass ?? false;
+      linkedThesisAnalysis = linkedAnalysis
+        ? {
+            id: linkedAnalysis.id,
+            mode: linkedAnalysis.mode,
+            summary: linkedAnalysis.summary,
+            completedAt: linkedAnalysis.completedAt,
+            hasResults: !!linkedAnalysis.results,
+          }
+        : null;
     }
+
+    const thesisGated = normalizedThesisEvaluation
+      ? new Set(["alert_dominant", "vigilance"]).has(normalizedThesisEvaluation.thesisQuality.verdict) && !thesisBypass
+      : false;
+
+    const fullContextData = latestThesis
+      ? await getFullChatContext(dealId, { analysisId: linkedThesisAnalysis?.id ?? null })
+      : await getFullChatContext(dealId);
+    const effectiveLatestAnalysis = latestThesis
+      ? linkedThesisAnalysis
+      : fullContextData.latestAnalysis;
+    const sanitizedChatContext = sanitizeChatContextForThesisGate(
+      fullContextData.chatContext,
+      thesisGated
+    );
 
     // Build FullChatContext for the agent
     const fullContext: FullChatContext = {
@@ -228,23 +278,26 @@ export async function POST(request: NextRequest, context: RouteContext) {
             valuationPre: fullContextData.deal.valuationPre != null
               ? Number(fullContextData.deal.valuationPre)
               : null,
-            globalScore: fullContextData.deal.globalScore,
-            teamScore: fullContextData.deal.teamScore,
-            marketScore: fullContextData.deal.marketScore,
-            productScore: fullContextData.deal.productScore,
-            financialsScore: fullContextData.deal.financialsScore,
+            globalScore: thesisGated ? null : fullContextData.deal.globalScore,
+            teamScore: thesisGated ? null : fullContextData.deal.teamScore,
+            marketScore: thesisGated ? null : fullContextData.deal.marketScore,
+            productScore: thesisGated ? null : fullContextData.deal.productScore,
+            financialsScore: thesisGated ? null : fullContextData.deal.financialsScore,
             founders: fullContextData.deal.founders,
           }
         : {
             id: dealId,
             name: "Unknown Deal",
           },
-      chatContext: fullContextData.chatContext,
+      chatContext: sanitizedChatContext,
       documents: fullContextData.documents,
-      latestAnalysis: fullContextData.latestAnalysis
+      latestAnalysis: effectiveLatestAnalysis
         ? {
-            ...fullContextData.latestAnalysis,
-            mode: fullContextData.latestAnalysis.mode ?? "unknown",
+            id: effectiveLatestAnalysis.id,
+            mode: effectiveLatestAnalysis.mode ?? "unknown",
+            summary: effectiveLatestAnalysis.summary ?? null,
+            completedAt: effectiveLatestAnalysis.completedAt ?? null,
+            hasResults: effectiveLatestAnalysis.hasResults ?? false,
           }
         : null,
       liveSessions: fullContextData.liveSessions,
@@ -294,6 +347,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               failures: string[];
               strengths: string[];
             }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+            evaluationAxes: normalizedThesisEvaluation!,
             decision: latestThesis.decision,
             thesisBypass,
             rebuttalCount: latestThesis.rebuttalCount,
@@ -352,4 +406,21 @@ export async function POST(request: NextRequest, context: RouteContext) {
       { status: 500 }
     );
   }
+}
+
+function sanitizeChatContextForThesisGate(
+  chatContext: DealChatContextData | null,
+  thesisGated: boolean
+): DealChatContextData | null {
+  if (!chatContext || !thesisGated) return chatContext;
+
+  return {
+    ...chatContext,
+    agentSummaries: Object.fromEntries(
+      Object.entries(chatContext.agentSummaries).map(([agentName, summary]) => [
+        agentName,
+        { ...summary, score: undefined },
+      ])
+    ),
+  };
 }

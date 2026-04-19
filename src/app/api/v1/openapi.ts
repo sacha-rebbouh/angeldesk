@@ -160,7 +160,9 @@ export const openApiSpec = {
         properties: {
           id: { type: "string" },
           type: { type: "string", enum: ["SCREENING", "FULL_DD"] },
+          mode: { type: "string", nullable: true, description: "Canonical execution mode, e.g. full_analysis" },
           status: { type: "string", enum: ["PENDING", "RUNNING", "COMPLETED", "FAILED"] },
+          thesisDecision: { type: "string", nullable: true, description: "stop | continue | contest | null" },
           results: { type: "object", nullable: true },
           startedAt: { type: "string", format: "date-time", nullable: true },
           completedAt: { type: "string", format: "date-time", nullable: true },
@@ -309,13 +311,13 @@ export const openApiSpec = {
         tags: ["Analyses"],
         parameters: [{ name: "dealId", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          "200": { description: "Liste des analyses", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, data: { type: "array", items: { $ref: "#/components/schemas/Analysis" } } } } } } },
+          "200": { description: "Liste des analyses", content: { "application/json": { schema: { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/Analysis" } }, meta: { type: "object" } } } } } },
           "404": { description: "Deal introuvable", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
         },
       },
       post: {
         operationId: "launchAnalysis",
-        summary: "Lancer une analyse",
+        summary: "Lancer un Deep Dive thesis-first",
         tags: ["Analyses"],
         parameters: [{ name: "dealId", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
@@ -324,15 +326,43 @@ export const openApiSpec = {
               schema: {
                 type: "object",
                 properties: {
-                  type: { type: "string", enum: ["quick", "full"], default: "full", description: "quick = screening (4 agents), full = DD complete (18 agents)" },
+                  type: {
+                    type: "string",
+                    enum: ["full_analysis"],
+                    default: "full_analysis",
+                    description: "Public API thesis-first Deep Dive only.",
+                  },
                 },
               },
             },
           },
         },
         responses: {
-          "202": { description: "Analyse lancee", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" }, data: { $ref: "#/components/schemas/Analysis" } } } } } },
-          "409": { description: "Analyse deja en cours", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "202": {
+            description: "Analyse queuee",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    data: {
+                      type: "object",
+                      properties: {
+                        status: { type: "string", enum: ["QUEUED"] },
+                        dealId: { type: "string" },
+                        type: { type: "string", enum: ["full_analysis"] },
+                      },
+                    },
+                    meta: { type: "object" },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Type d'analyse invalide ou legacy", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "403": { description: "Credits insuffisants", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "409": { description: "Analyse deja en cours ou documents non prets", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "500": { description: "Dispatch impossible", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
         },
       },
     },

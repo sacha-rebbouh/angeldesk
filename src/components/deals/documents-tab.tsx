@@ -94,10 +94,35 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
   return response.json();
 }
 
-function getExtractionMetricStatus(metrics: unknown): string | null {
-  if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) return null;
-  const status = (metrics as { status?: unknown }).status;
-  return typeof status === "string" ? status : null;
+function getExtractionMetricSummary(metrics: unknown): {
+  status: string | null;
+  blockingCount: number;
+  inspectionCount: number;
+} {
+  if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) {
+    return { status: null, blockingCount: 0, inspectionCount: 0 };
+  }
+
+  const record = metrics as {
+    status?: unknown;
+    blockingPages?: unknown;
+    failedPages?: unknown;
+    pageCount?: unknown;
+  };
+
+  const status = typeof record.status === "string" ? record.status : null;
+  const blockingPages = Array.isArray(record.blockingPages) ? record.blockingPages : [];
+  const failedPages = Array.isArray(record.failedPages) ? record.failedPages : [];
+  const inspectionCount =
+    status === "needs_review"
+      ? Math.max(blockingPages.length, failedPages.length, 1)
+      : failedPages.length;
+
+  return {
+    status,
+    blockingCount: blockingPages.length,
+    inspectionCount,
+  };
 }
 
 export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
@@ -251,7 +276,9 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                       }}
                     />
                   ))}
-                {documents.map((doc) => (
+                {documents.map((doc) => {
+                  const extractionSummary = getExtractionMetricSummary(doc.extractionMetrics);
+                  return (
                   <div
                     key={doc.id}
                     className="flex items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors"
@@ -285,7 +312,9 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                           warnings={doc.extractionWarnings}
                           requiresOCR={doc.requiresOCR}
                           processingStatus={doc.processingStatus}
-                          extractionStatus={getExtractionMetricStatus(doc.extractionMetrics)}
+                          extractionStatus={extractionSummary.status}
+                          blockingCount={extractionSummary.blockingCount}
+                          inspectionCount={extractionSummary.inspectionCount}
                         />
                       ) : (
                         <Badge
@@ -363,7 +392,8 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                       </DropdownMenu>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </TooltipProvider>

@@ -18,14 +18,17 @@ import {
   BodyText,
 } from "../pdf-components";
 import { s, sup } from "../pdf-helpers";
-import type { AgentResult } from "../generate-analysis-pdf";
+import type { AgentResult, PdfExportData } from "../generate-analysis-pdf";
+import { hasFragileThesis } from "../thesis-gating";
 
 export function ExecutiveSummarySection({
   results,
   dealName,
+  thesis,
 }: {
   results: Record<string, AgentResult>;
   dealName: string;
+  thesis: PdfExportData["thesis"];
 }) {
   const memoResult = results["memo-generator"];
   if (!memoResult?.success || !memoResult.data) return null;
@@ -47,9 +50,10 @@ export function ExecutiveSummarySection({
     residualRisk: string;
   }> | undefined;
   const financial = data.financialSummary as Record<string, unknown> | undefined;
-  const thesis = data.investmentThesis;
+  const memoThesis = data.investmentThesis;
   const ddFindings = data.dueDiligenceFindings;
   const nextSteps = data.nextSteps as string[] | undefined;
+  const thesisGated = hasFragileThesis(thesis);
 
   return (
     <PdfPage dealName={dealName}>
@@ -61,10 +65,20 @@ export function ExecutiveSummarySection({
         <Text style={[gs.h3, { marginBottom: 8 }]}>{exec.oneLiner}</Text>
       )}
 
-      {/* Recommendation badge */}
-      {exec?.recommendation && (
+      {thesis && (
         <View style={{ marginBottom: 10 }}>
-          <Text style={[gs.label, { marginBottom: 4 }]}>RECOMMANDATION</Text>
+          <Text style={[gs.label, { marginBottom: 4 }]}>THÈSE CANONIQUE</Text>
+          <BodyText>{thesis.reformulated}</BodyText>
+          <LabelValue label="Thesis Quality" value={sup(thesis.evaluationAxes.thesisQuality.verdict)} />
+          <LabelValue label="Investor Profile Fit" value={sup(thesis.evaluationAxes.investorProfileFit.verdict)} />
+          <LabelValue label="Deal Accessibility" value={sup(thesis.evaluationAxes.dealAccessibility.verdict)} />
+        </View>
+      )}
+
+      {/* Recommendation badge */}
+      {exec?.recommendation && !thesisGated && (
+        <View style={{ marginBottom: 10 }}>
+          <Text style={[gs.label, { marginBottom: 4 }]}>LECTURE TIER 3</Text>
           <RecommendationBadge recommendation={exec.recommendation} />
         </View>
       )}
@@ -211,32 +225,32 @@ export function ExecutiveSummarySection({
       })()}
 
       {/* Investment thesis */}
-      {!!thesis && (
+      {!!memoThesis && (
         <>
-          <SubsectionTitle>These d&apos;investissement</SubsectionTitle>
-          {typeof thesis === "string" ? (
-            <BodyText>{thesis}</BodyText>
-          ) : typeof thesis === "object" ? (
+          <SubsectionTitle>These d&apos;investissement (memo)</SubsectionTitle>
+          {typeof memoThesis === "string" ? (
+            <BodyText>{memoThesis}</BodyText>
+          ) : typeof memoThesis === "object" ? (
             <>
-              {!!(thesis as Record<string, unknown>).thesis && (
+              {!!(memoThesis as Record<string, unknown>).thesis && (
                 <BodyText>
-                  {String((thesis as Record<string, unknown>).thesis)}
+                  {String((memoThesis as Record<string, unknown>).thesis)}
                 </BodyText>
               )}
-              {!!(thesis as Record<string, unknown>).conviction && (
+              {!!(memoThesis as Record<string, unknown>).conviction && (
                 <LabelValue
                   label="Conviction"
-                  value={sup((thesis as Record<string, unknown>).conviction)}
+                  value={sup((memoThesis as Record<string, unknown>).conviction)}
                 />
               )}
               {Array.isArray(
-                (thesis as Record<string, unknown>).keyAssumptions
+                (memoThesis as Record<string, unknown>).keyAssumptions
               ) && (
                 <>
                   <H3>Hypotheses cles</H3>
                   <BulletList
                     items={(
-                      (thesis as Record<string, unknown>)
+                      (memoThesis as Record<string, unknown>)
                         .keyAssumptions as unknown[]
                     ).map(String)}
                   />
@@ -288,24 +302,23 @@ export function ExecutiveSummarySection({
           <PdfTable
             columns={[
               { header: "Domaine", width: 20 },
-              { header: "Constatation", width: 35 },
+              { header: "Constatation", width: thesisGated ? 50 : 35 },
               { header: "Severite", width: 15 },
-              { header: "Recommandation", width: 30 },
+              ...(!thesisGated ? [{ header: "Recommandation", width: 30 }] : []),
             ]}
             rows={(ddFindings as Array<Record<string, unknown>>)
               .slice(0, 10)
-              .map((d) => [
-                s(d.area),
-                s(d.finding),
-                s(d.severity),
-                s(d.recommendation),
-              ])}
+              .map((d) =>
+                thesisGated
+                  ? [s(d.area), s(d.finding), s(d.severity)]
+                  : [s(d.area), s(d.finding), s(d.severity), s(d.recommendation)]
+              )}
           />
         </>
       )}
 
       {/* Next steps */}
-      {!!(nextSteps && nextSteps.length > 0) && (
+      {!!(nextSteps && nextSteps.length > 0) && !thesisGated && (
         <>
           <SubsectionTitle>Prochaines etapes</SubsectionTitle>
           <BulletList items={nextSteps} />

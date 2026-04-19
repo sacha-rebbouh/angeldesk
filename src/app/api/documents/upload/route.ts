@@ -6,7 +6,13 @@ import { requireAuth } from "@/lib/auth";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DocumentType, Prisma } from "@prisma/client";
 import { smartExtract, estimatePdfExtractionCost, type ExtractionWarning } from "@/services/pdf";
-import { extractFromExcel, type SheetData } from "@/services/excel";
+import {
+  extractFromExcel,
+  buildExcelModelIntelligence,
+  runExcelFinancialAudit,
+  generateExcelAnalystReport,
+  type SheetData,
+} from "@/services/excel";
 import { extractFromDocx } from "@/services/docx";
 import { extractFromPptx } from "@/services/pptx";
 import { uploadFile } from "@/services/storage";
@@ -17,6 +23,7 @@ import { isValidDocumentSignature } from "@/lib/file-signatures";
 import {
   buildStructuredDocumentManifest,
   completeDocumentExtractionRun,
+  getBlockingPageNumbersFromManifest,
   markExtractionRunProgress,
   recordExtractionPageProgress,
   recordDocumentExtractionRun,
@@ -573,8 +580,10 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Check if quality is still low after OCR or if strict page-level controls blocked the run.
-        requiresOCR = result.manifest.status === "needs_review" || result.manifest.status === "failed";
+        // Keep OCR / review blocking only for genuinely unresolved critical pages.
+        requiresOCR =
+          result.manifest.status === "failed" ||
+          getBlockingPageNumbersFromManifest(result.manifest).length > 0;
 
         await prisma.document.update({
           where: { id: document.id },
@@ -663,6 +672,13 @@ export async function POST(request: NextRequest) {
           // Persist the complete workbook corpus. Summaries are useful for prompts,
           // but they are not an acceptable storage format for audit-grade extraction.
           const textContent = result.text;
+          const modelIntelligence = buildExcelModelIntelligence(buffer, result);
+          const financialAudit = runExcelFinancialAudit(result, modelIntelligence);
+          const analystReport = await generateExcelAnalystReport({
+            extraction: result,
+            intelligence: modelIntelligence,
+            financialAudit,
+          });
 
           extractionQuality = result.metadata.totalCells > 0 ? 80 : 50;
           const excelManifest = buildStructuredDocumentManifest({
@@ -687,6 +703,30 @@ export async function POST(request: NextRequest) {
               suggestion: "Les valeurs calculées ont été extraites."
             });
           }
+          for (const flag of financialAudit.consistencyFlags.slice(0, 3)) {
+            extractionWarnings.push({
+              code: "EXCEL_MODEL_CONSISTENCY",
+              severity: flag.severity === "critical" ? "critical" : flag.severity === "high" ? "high" : "medium",
+              message: flag.title,
+              suggestion: flag.message,
+            });
+          }
+          for (const flag of financialAudit.reconciliationFlags.slice(0, 3)) {
+            extractionWarnings.push({
+              code: "EXCEL_MODEL_RECONCILIATION",
+              severity: flag.severity === "critical" ? "critical" : flag.severity === "high" ? "high" : "medium",
+              message: flag.title,
+              suggestion: flag.message,
+            });
+          }
+          for (const flag of financialAudit.plausibilityFlags.slice(0, 3)) {
+            extractionWarnings.push({
+              code: "EXCEL_MODEL_PLAUSIBILITY",
+              severity: flag.severity === "critical" ? "critical" : flag.severity === "high" ? "high" : "medium",
+              message: flag.title,
+              suggestion: flag.message,
+            });
+          }
 
           const extractionRun = await recordDocumentExtractionRun({
             documentId: document.id,
@@ -698,6 +738,12 @@ export async function POST(request: NextRequest) {
             warnings: extractionWarnings.length > 0
               ? JSON.parse(JSON.stringify(extractionWarnings))
               : [],
+            extraSummaryMetrics: JSON.parse(JSON.stringify({
+              workbookAudit: result.workbookAudit,
+              modelIntelligence,
+              financialAudit,
+              analystReport,
+            })) as Prisma.InputJsonObject,
           });
 
           await prisma.document.update({
@@ -712,6 +758,11 @@ export async function POST(request: NextRequest) {
                 totalCells: result.metadata.totalCells,
                 hasFormulas: result.metadata.hasFormulas,
                 formulaCount: result.metadata.formulaCount,
+                hiddenSheetCount: result.metadata.hiddenSheetCount,
+                workbookAudit: JSON.parse(JSON.stringify(result.workbookAudit)),
+                modelIntelligence: JSON.parse(JSON.stringify(modelIntelligence)),
+                financialAudit: JSON.parse(JSON.stringify(financialAudit)),
+                analystReport: analystReport ? JSON.parse(JSON.stringify(analystReport)) : null,
                 extractorVersion: 2,
                 promptTextChars: textContent.length,
                 truncated: textContent.length >= 120_000,
@@ -1100,12 +1151,32 @@ export async function POST(request: NextRequest) {
     }
 
     // Thesis-first : si le deal a deja une these persistee ET le document a ete extrait avec succes,
-    // declencher une re-extraction auto (1 credit). La these peut avoir evolue avec le nouveau doc.
+    // declencher une re-extraction auto (1 credit). Garde metier: si une re-extraction
+    // recente est deja en cours pour ce deal, on coalesce au lieu de multiplier les versions.
     if (updatedDocument?.processingStatus === "COMPLETED") {
       try {
         const { thesisService } = await import("@/services/thesis");
         const existingThesis = await thesisService.getLatest(dealId);
         if (existingThesis) {
+          const recentPendingThesisReview = await prisma.analysis.findFirst({
+            where: {
+              dealId,
+              mode: "full_analysis",
+              status: "RUNNING",
+              thesisDecision: null,
+              createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
+            },
+            select: { id: true, thesisId: true, createdAt: true },
+            orderBy: { createdAt: "desc" },
+          });
+
+          if (recentPendingThesisReview) {
+            console.log(
+              `[upload] Thesis re-extract skipped for deal ${dealId}: pending thesis review already in flight (analysisId=${recentPendingThesisReview.id}, thesisId=${recentPendingThesisReview.thesisId ?? "pending-link"})`
+            );
+            return NextResponse.json(response, { status: 201 });
+          }
+
           const { inngest } = await import("@/lib/inngest");
           await inngest.send({
             name: "analysis/thesis.reextract",
@@ -1344,7 +1415,7 @@ function buildExcelSheetArtifact(sheet: SheetData, pageNumber: number): Document
       ? [{
         type: "table",
         title: sheet.name,
-        description: `Excel sheet classified as ${sheet.classification}; ${sheet.rowCount} rows x ${sheet.columnCount} columns.`,
+        description: `Excel sheet classified as ${sheet.classification}/${sheet.role}; ${sheet.rowCount} rows x ${sheet.columnCount} columns; ${sheet.audit.formulaCellCount} formulas.`,
         confidence,
       }]
       : [],
@@ -1369,6 +1440,27 @@ function buildExcelSheetArtifact(sheet: SheetData, pageNumber: number): Document
     numericClaims,
     confidence,
     needsHumanReview: sheet.truncated || (!sheet.includedInPrompt && sheet.classification !== "CALCULATIONS"),
+    semanticAssessment: {
+      pageClass: sheet.role === "OUTPUTS" ? "structured_table" : sheet.role === "INPUTS" ? "narrative" : "mixed_visual_analytics",
+      classConfidence: "medium",
+      classReasons: [`excel sheet role: ${sheet.role}`],
+      structureDependency: sheet.role === "OUTPUTS" ? "critical" : sheet.role === "INPUTS" ? "medium" : "high",
+      semanticSufficiency: sheet.truncated ? "partial" : "sufficient",
+      labelValueIntegrity: numericClaims.length >= 10 ? "strong" : numericClaims.length >= 3 ? "mixed" : "weak",
+      visualNoiseScore: 0,
+      analyticalValueScore: Math.min(100, 30 + sheet.audit.keyMetricLabels.length * 3 + Math.round(sheet.audit.formulaDensity * 40)),
+      requiresStructuredPreservation: sheet.role === "OUTPUTS",
+      shouldBlockIfStructureMissing: sheet.role === "OUTPUTS" && !sheet.truncated,
+      canDegradeToWarning: sheet.truncated || sheet.role !== "OUTPUTS",
+      minimumEvidence: sheet.role === "OUTPUTS"
+        ? ["key outputs", "formula lineage sample", "metric labels", "values"]
+        : ["sheet labels", "sampled values"],
+      rationale: [
+        `role=${sheet.role}`,
+        `formulaDensity=${(sheet.audit.formulaDensity * 100).toFixed(1)}%`,
+        ...(sheet.audit.warningFlags.length > 0 ? [`warnings=${sheet.audit.warningFlags.join(",")}`] : []),
+      ],
+    } as never,
   };
 }
 

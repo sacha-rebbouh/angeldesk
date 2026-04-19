@@ -3,43 +3,34 @@
 // Hoisted outside components to prevent recreation on every render
 // =============================================================================
 
-// Analysis type options (kept for internal use / API compatibility)
+// Analysis type options exposed in the thesis-first product.
 export const ANALYSIS_TYPES = [
   { value: "extraction", label: "Extraction documents", description: "~1min", tier: 1 },
-  { value: "tier1_complete", label: "Investigation Tier 1", description: "13 agents en parallèle", tier: 1 },
   { value: "tier2_sector", label: "Expert Sectoriel Tier 2", description: "1 expert selon secteur", tier: 2 },
-  { value: "full_dd", label: "Due Diligence complète", description: "~2min", tier: 2 },
   { value: "tier3_synthesis", label: "Synthèse Tier 3", description: "6 agents (nécessite Tier 1)", tier: 3 },
-  { value: "full_analysis", label: "Analyse Complète", description: "20 agents d'analyse + 2 étapes techniques", tier: 3 },
+  { value: "full_analysis", label: "Deep Dive thesis-first", description: "Thèse d'abord, puis analyse complète si la gate le permet", tier: 3 },
 ] as const;
 
 export type AnalysisTypeValue = typeof ANALYSIS_TYPES[number]["value"];
 
 // =============================================================================
 // CREDIT-BASED ANALYSIS CONFIGURATION
-// Quick Scan = 1 credit (Tier 1), Deep Dive = 5 credits (Tier 1+2+3)
+// Single public entrypoint: thesis-first Deep Dive
 // =============================================================================
 
 export const CREDIT_ANALYSIS_CONFIG = {
-  QUICK_SCAN: {
-    analysisType: "tier1_complete" as AnalysisTypeValue,
-    label: "Quick Scan",
-    description: "Screening rapide (13 agents Tier 1)",
-    credits: 1,
-    includes: ["extraction", "tier1_complete"],
-  },
   DEEP_DIVE: {
     analysisType: "full_analysis" as AnalysisTypeValue,
     label: "Deep Dive",
-    description: "Analyse complète (Tier 1+2+3)",
+    description: "Analyse thesis-first complete",
     credits: 5,
-    includes: ["extraction", "tier1_complete", "tier2_sector", "tier3_synthesis", "full_analysis"],
+    includes: ["extraction", "tier2_sector", "tier3_synthesis", "full_analysis"],
   },
 } as const;
 
-// Legacy aliases for backward compatibility
+// Plans now resolve to the same thesis-first Deep Dive product entrypoint.
 export const PLAN_ANALYSIS_CONFIG = {
-  FREE: CREDIT_ANALYSIS_CONFIG.QUICK_SCAN,
+  FREE: CREDIT_ANALYSIS_CONFIG.DEEP_DIVE,
   PRO: CREDIT_ANALYSIS_CONFIG.DEEP_DIVE,
   ENTERPRISE: CREDIT_ANALYSIS_CONFIG.DEEP_DIVE,
 } as const;
@@ -122,13 +113,13 @@ export { AGENT_DISPLAY_NAMES, formatAgentName } from "@/lib/format-utils";
 // Analysis mode display names
 export const ANALYSIS_MODE_NAMES: Record<string, string> = {
   extraction: "Extraction",
-  full_dd: "Due Diligence",
-  tier1_complete: "Investigation Tier 1",
+  full_dd: "Deep Dive (alias legacy, lecture seule)",
+  tier1_complete: "Quick Scan (alias legacy, retiré)",
   tier2_sector: "Expert Sectoriel",
   tier3_synthesis: "Synthèse Tier 3",
-  full_analysis: "Analyse Complète",
-  thesis_only: "Thèse-only (analyse arrêtée au verdict thèse)",
-  FULL_DD: "Due Diligence",
+  full_analysis: "Deep Dive thesis-first",
+  thesis_only: "Thèse prioritaire (arrêt après verdict)",
+  FULL_DD: "Deep Dive (alias legacy, lecture seule)",
 };
 
 // =============================================================================

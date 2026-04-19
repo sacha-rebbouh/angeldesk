@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronUp, Check, X, HelpCircle, Minus, Target, TrendingUp, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RECOMMENDATION_CONFIG } from "@/lib/ui-configs";
+import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
 
 interface FrameworkClaim {
   claim: string;
@@ -39,6 +40,7 @@ interface ThesisFrameworksExpandProps {
   ycLens: FrameworkLens;
   thielLens: FrameworkLens;
   angelDeskLens: FrameworkLens;
+  evaluationAxes: NormalizedThesisEvaluation;
   defaultOpen?: boolean;
 }
 
@@ -55,8 +57,8 @@ const FRAMEWORK_META: Record<FrameworkLens["framework"], { label: string; questi
   },
   "angel-desk": {
     label: "Angel Desk Framework",
-    question: "Cette these est-elle investable pour un BA / groupe / family office / syndicat ?",
-    focus: "Exit realisable, ticket compatibility, dilution control, key-person risk, liquidity path, instrument protection",
+    question: "Comment cette these se comporte-t-elle sous contraintes reelles de capital prive, et pour quels profils / conditions ?",
+    focus: "Thesis quality sous contraintes reelles, investor profile fit, deal accessibility, exit realisable, ticket compatibility, dilution control, liquidity path",
   },
 };
 
@@ -67,7 +69,7 @@ const CLAIM_STATUS_CONFIG: Record<FrameworkClaim["status"], { label: string; ico
   partial: { label: "Partiel", icon: Minus, className: "bg-amber-50 text-amber-700 border-amber-300" },
 };
 
-export function ThesisFrameworksExpand({ ycLens, thielLens, angelDeskLens, defaultOpen = false }: ThesisFrameworksExpandProps) {
+export function ThesisFrameworksExpand({ ycLens, thielLens, angelDeskLens, evaluationAxes, defaultOpen = false }: ThesisFrameworksExpandProps) {
   const [open, setOpen] = useState(defaultOpen);
 
   const lenses = [ycLens, thielLens, angelDeskLens];
@@ -92,8 +94,28 @@ export function ThesisFrameworksExpand({ ycLens, thielLens, angelDeskLens, defau
       {open && (
         <CardContent className="space-y-6">
           <p className="text-xs text-muted-foreground italic">
-            Verdict unifie = worst-of-3. Si une lunette fail, la these est flaggee meme si 2 autres passent.
+            Le verdict consolide ne doit jamais remplacer la lecture des axes canoniques: qualite de these, fit investisseur, accessibilite du deal.
           </p>
+          <div className="grid gap-3 md:grid-cols-3">
+            {[
+              evaluationAxes.thesisQuality,
+              evaluationAxes.investorProfileFit,
+              evaluationAxes.dealAccessibility,
+            ].map((axis) => {
+              const axisCfg = RECOMMENDATION_CONFIG[axis.verdict] ?? RECOMMENDATION_CONFIG.contrasted;
+              return (
+                <div key={axis.key} className="rounded-md border bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{axis.label}</p>
+                    <Badge variant="outline" className={axisCfg.color}>
+                      {axisCfg.label}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-700">{axis.summary}</p>
+                </div>
+              );
+            })}
+          </div>
           {lenses.map((lens) => (
             <FrameworkSection key={lens.framework} lens={lens} />
           ))}

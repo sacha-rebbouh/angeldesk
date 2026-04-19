@@ -8,6 +8,7 @@ import { colors, styles as gs } from "../pdf-theme";
 import { ScoreCircle, KpiBox } from "../pdf-components";
 import { fmtEur, recLabel } from "../pdf-helpers";
 import type { PdfExportData } from "../generate-analysis-pdf";
+import { hasFragileThesis } from "../thesis-gating";
 
 export function CoverPage({ data }: { data: PdfExportData }) {
   const deal = data.deal;
@@ -20,6 +21,9 @@ export function CoverPage({ data }: { data: PdfExportData }) {
     : null;
   const overallScore = (scorerData?.overallScore as number) ?? 0;
   const verdict = (scorerData?.verdict as string) ?? "";
+  const thesis = data.thesis;
+  const thesisGated = hasFragileThesis(thesis);
+  const thesisQuality = thesis?.evaluationAxes.thesisQuality;
 
   const formatDate = () =>
     new Date().toLocaleDateString("fr-FR", {
@@ -74,7 +78,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
             </Text>
           </View>
 
-          {overallScore > 0 && (
+          {overallScore > 0 && !thesisGated && (
             <View style={{ alignItems: "center" }}>
               <ScoreCircle score={overallScore} size={80} />
               {verdict && (
@@ -90,6 +94,19 @@ export function CoverPage({ data }: { data: PdfExportData }) {
                   {recLabel(verdict)}
                 </Text>
               )}
+            </View>
+          )}
+          {thesisGated && thesisQuality && (
+            <View style={{ width: 120 }}>
+              <Text style={{ fontSize: 10, fontWeight: 700, color: colors.primary }}>
+                THÈSE PRIORITAIRE
+              </Text>
+              <Text style={{ fontSize: 9, color: colors.text, marginTop: 4 }}>
+                Thesis Quality: {thesisQuality.verdict}
+              </Text>
+              <Text style={{ fontSize: 8, color: colors.muted, marginTop: 4 }}>
+                Score global masqué tant que la thèse reste fragile.
+              </Text>
             </View>
           )}
         </View>
@@ -125,6 +142,18 @@ export function CoverPage({ data }: { data: PdfExportData }) {
         )}
 
         {/* Description */}
+        {thesis && (
+          <View style={{ marginTop: 16 }}>
+            <Text style={[gs.label, { marginBottom: 6 }]}>THÈSE CANONIQUE</Text>
+            <Text style={[gs.body, { color: colors.text }]}>
+              {thesis.reformulated}
+            </Text>
+            <Text style={[gs.small, { marginTop: 6 }]}>
+              Thesis Quality: {thesis.evaluationAxes.thesisQuality.verdict} · Investor Fit: {thesis.evaluationAxes.investorProfileFit.verdict} · Accessibility: {thesis.evaluationAxes.dealAccessibility.verdict}
+            </Text>
+          </View>
+        )}
+
         {deal.description && (
           <View style={{ marginTop: 16 }}>
             <Text style={[gs.body, { color: colors.muted }]}>

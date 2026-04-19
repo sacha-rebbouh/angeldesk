@@ -86,6 +86,29 @@ export interface FrameworkLens {
   summary: string;              // 2-3 phrases de synthese
 }
 
+export type ThesisAxisKey =
+  | "thesis_quality"
+  | "investor_profile_fit"
+  | "deal_accessibility";
+
+export interface ThesisAxisEvaluation {
+  key: ThesisAxisKey;
+  label: string;
+  verdict: ThesisVerdict;
+  confidence: number;
+  summary: string;
+  strengths: string[];
+  failures: string[];
+  claims: string[];
+  sourceFrameworks: Array<FrameworkLens["framework"]>;
+}
+
+export interface NormalizedThesisEvaluation {
+  thesisQuality: ThesisAxisEvaluation;
+  investorProfileFit: ThesisAxisEvaluation;
+  dealAccessibility: ThesisAxisEvaluation;
+}
+
 // ---------------------------------------------------------------------------
 // Alert — point a surveiller pour le BA
 // ---------------------------------------------------------------------------

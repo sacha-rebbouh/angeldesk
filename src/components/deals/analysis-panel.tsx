@@ -48,6 +48,7 @@ import { DeltaIndicator } from "./delta-indicator";
 import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
 import { DeckCoherenceReport as DeckCoherenceReportPanel } from "./deck-coherence-report";
+import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
 import { NextStepsGuide } from "./next-steps-guide";
 import { PartialAnalysisBanner } from "./partial-analysis-banner";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
@@ -463,6 +464,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     }>;
     decision: string | null;
     thesisBypass: boolean;
+    evaluationAxes: NormalizedThesisEvaluation;
     ycLens: ThesisFrameworkLens;
     thielLens: ThesisFrameworkLens;
     angelDeskLens: ThesisFrameworkLens;
@@ -485,6 +487,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     moat?: string | null;
     pathToExit?: string | null;
     loadBearing?: ThesisPayload["loadBearing"];
+    evaluationAxes?: NormalizedThesisEvaluation;
   };
 
   const { data: thesisData } = useQuery({
@@ -505,7 +508,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   });
 
   const thesis = thesisData?.thesis ?? null;
-  const thesisHistory = thesisData?.history ?? [];
+  const thesisHistory = useMemo(() => thesisData?.history ?? [], [thesisData?.history]);
   const hasPendingDecision = thesisData?.hasPendingDecision ?? false;
   const [isThesisModalOpen, setIsThesisModalOpen] = useState(false);
   const [revisionBannerDismissed, setRevisionBannerDismissed] = useState(false);
@@ -676,6 +679,9 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
 
   const staleness = stalenessData?.staleness;
   const isAnalysisStale = staleness?.isStale ?? false;
+  const thesisGated = !!thesis
+    && new Set(["alert_dominant", "vigilance"]).has(thesis.verdict)
+    && !thesis.thesisBypass;
 
   // Determine analysis type based on credit balance (not subscription plan)
   // Thesis-first : tier1_complete retire. Seul Deep Dive (full_analysis) existe.
@@ -1477,7 +1483,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     {displayedResult.isLive ? "Résultats" : "Analyse sauvegardée"}
                   </CardTitle>
                   {/* Delta Indicator for score when previous version exists */}
-                  {previousScore != null && previousScore > 0 && currentScore != null && currentScore > 0 && (
+                  {!thesisGated && previousScore != null && previousScore > 0 && currentScore != null && currentScore > 0 && (
                     <DeltaIndicator
                       currentValue={currentScore!}
                       previousValue={previousScore!}
@@ -1579,6 +1585,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     confidence={thesis.confidence}
                     loadBearing={thesis.loadBearing}
                     alerts={thesis.alerts}
+                    evaluationAxes={thesis.evaluationAxes}
                     hasPendingDecision={hasPendingDecision}
                     decision={thesis.decision}
                     onReviewDecisionClick={() => setIsThesisModalOpen(true)}
@@ -1591,6 +1598,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     ycLens={thesis.ycLens}
                     thielLens={thesis.thielLens}
                     angelDeskLens={thesis.angelDeskLens}
+                    evaluationAxes={thesis.evaluationAxes}
                   />
                 )}
 

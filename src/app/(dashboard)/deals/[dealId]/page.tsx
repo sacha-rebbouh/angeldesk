@@ -70,6 +70,8 @@ async function getDeal(dealId: string, userId: string) {
         orderBy: { createdAt: "desc" },
         select: {
           id: true,
+          thesisId: true,
+          thesisBypass: true,
           type: true,
           mode: true,
           status: true,
@@ -83,6 +85,15 @@ async function getDeal(dealId: string, userId: string) {
           createdAt: true,
           // results excluded — loaded separately for the latest completed analysis only
         },
+      },
+      theses: {
+        where: { isLatest: true },
+        select: {
+          id: true,
+          verdict: true,
+        },
+        orderBy: { version: "desc" },
+        take: 1,
       },
       // Conditions tab: prefetch to avoid extra API roundtrip on tab click
       dealTerms: true,
@@ -127,6 +138,16 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
       tranches,
     );
   })();
+
+  const latestThesis = deal.theses[0] ?? null;
+  const overviewAnalysisForThesis = latestThesis
+    ? deal.analyses.find((analysis) => analysis.thesisId === latestThesis.id) ?? null
+    : null;
+  const thesisGated =
+    !!latestThesis &&
+    new Set(["alert_dominant", "vigilance"]).has(latestThesis.verdict) &&
+    !overviewAnalysisForThesis?.thesisBypass;
+  const showOverviewScores = deal.globalScore != null && !!latestThesis && !thesisGated;
 
 
   const content = (
@@ -188,14 +209,14 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
         </div>
       </div>
 
-      {/* 4 Tabs: Vue d'ensemble | Analyse IA | Documents & Team | Conditions */}
-      <Tabs defaultValue={tab || "overview"} className="space-y-4">
+      {/* Thesis-first: ouvrir l'analyse IA par defaut pour montrer la these avant tout score */}
+      <Tabs defaultValue={tab || "analysis"} className="space-y-4">
         <TabsList className="flex w-full overflow-x-auto">
-          <TabsTrigger value="overview" className="whitespace-nowrap">Vue d&apos;ensemble</TabsTrigger>
           <TabsTrigger value="analysis" className="whitespace-nowrap">
             <Brain className="mr-1 h-4 w-4" />
             Analyse IA
           </TabsTrigger>
+          <TabsTrigger value="overview" className="whitespace-nowrap">Vue d&apos;ensemble</TabsTrigger>
           <TabsTrigger value="docs-team" className="whitespace-nowrap">
             Documents & Team
           </TabsTrigger>
@@ -220,12 +241,12 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                   </div>
                   <h3 className="text-[15px] font-semibold tracking-tight">Scores</h3>
                 </div>
-                {deal.globalScore != null && (
+                {showOverviewScores && (
                   <span className="text-[11px] text-muted-foreground/60 font-medium">Analyse IA</span>
                 )}
               </div>
               <div className="px-6 py-5">
-                {deal.globalScore != null ? (
+                {showOverviewScores ? (
                   <ScoreGrid
                     scores={{
                       global: deal.globalScore,
@@ -243,9 +264,13 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                     <div className="rounded-2xl bg-muted/50 p-4">
                       <Brain className="h-10 w-10 text-muted-foreground/40" />
                     </div>
-                    <p className="mt-5 text-sm font-semibold">Aucune analyse effectuée</p>
+                    <p className="mt-5 text-sm font-semibold">
+                      {thesisGated ? "Score masqué par la thèse canonique" : "Score indisponible dans la vue d'ensemble"}
+                    </p>
                     <p className="mt-1.5 text-xs text-muted-foreground max-w-xs">
-                      Allez dans l&apos;onglet &quot;Analyse IA&quot; pour lancer une analyse
+                      {thesisGated
+                        ? "La thèse reste prioritaire tant qu'un verdict fragile n'a pas été explicitement bypass."
+                        : "Consultez l'onglet \"Analyse IA\" pour lire la thèse canonique et les résultats alignés."}
                     </p>
                   </div>
                 )}

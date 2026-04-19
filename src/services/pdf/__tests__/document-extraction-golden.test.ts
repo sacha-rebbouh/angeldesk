@@ -154,22 +154,25 @@ describe("extractFromExcel", () => {
     if (!result.success) return;
 
     expect(result.metadata.sheetCount).toBe(2);
-    expect(result.metadata.hasFormulas).toBe(false);
-    expect(result.metadata.formulaCount).toBe(0);
+    expect(result.metadata.hasFormulas).toBe(true);
+    expect(result.metadata.formulaCount).toBeGreaterThan(0);
     expect(result.sheets).toHaveLength(2);
 
     expect(result.sheets[0]).toMatchObject({
       name: "Summary",
       classification: "PNL",
+      role: "OUTPUTS",
       rowCount: 3,
       columnCount: 4,
-      formulaCount: 0,
+      formulaCount: 1,
     });
 
     expect(result.sheets[0].data[1]).toEqual(["Revenue", "100", "120", "220"]);
     expect(result.sheets[0].textContent).toContain("Revenue: 100 | 120 | 220");
-    expect(result.sheets[0].textContent).not.toMatch(/\[[A-Z]+\d+=/);
+    expect(result.sheets[0].textContent).toContain("Lineage (echantillon)");
+    expect(result.sheets[0].textContent).toContain("D2: =B2+C2");
     expect(result.sheets[1].textContent).toContain("=== FEUILLE: Team ===");
+    expect(result.workbookAudit.outputSheets).toContain("Summary");
   });
 
   it("bounds formula-heavy workbooks and stubs hidden/calculation sheets", () => {
@@ -199,7 +202,7 @@ describe("extractFromExcel", () => {
     if (!result.success) return;
 
     expect(result.text.length).toBeLessThanOrEqual(120_000);
-    expect(result.text).not.toMatch(/\[[A-Z]+\d+=/);
+    expect(result.text).toContain("Formules detectees:");
     expect(result.sheets.find((sheet) => sheet.name === "Calcs")).toMatchObject({
       classification: "CALCULATIONS",
       includedInPrompt: false,
@@ -217,7 +220,6 @@ describe("extractFromExcel", () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.text.length).toBeLessThanOrEqual(120_000);
-    expect(result.text).not.toMatch(/\[[A-Z]+\d+=/);
     expect(result.metadata.sheetCount).toBe(2);
   });
 });

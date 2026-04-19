@@ -3,6 +3,8 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateNegotiationStrategy, type AnalysisResults, type NegotiationStrategy } from "@/services/negotiation/strategist";
+import { thesisService } from "@/services/thesis";
+import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 import {
   assertFeatureAccess,
   FeatureAccessError,
@@ -39,6 +41,20 @@ interface RateLimitEntry {
   count: number;
   windowStart: number;
 }
+
+interface NegotiationStrategyCacheMeta {
+  schemaVersion: 2;
+  analysisId: string;
+  thesisId: string;
+  thesisSourceHash: string;
+  thesisUpdatedAt: string;
+  thesisDecision: string | null;
+  thesisBypass: boolean;
+}
+
+type CachedNegotiationStrategy = NegotiationStrategy & {
+  cacheMeta?: NegotiationStrategyCacheMeta;
+};
 
 const rateLimitMap = new Map<string, RateLimitEntry>();
 
@@ -89,6 +105,61 @@ function sanitizeDealName(name: string): string {
     .slice(0, 100); // Limit length
 }
 
+function buildNegotiationCacheMeta(params: {
+  analysisId: string;
+  thesisId: string;
+  thesisSourceHash: string;
+  thesisUpdatedAt: Date;
+  thesisDecision: string | null;
+  thesisBypass: boolean;
+}): NegotiationStrategyCacheMeta {
+  return {
+    schemaVersion: 2,
+    analysisId: params.analysisId,
+    thesisId: params.thesisId,
+    thesisSourceHash: params.thesisSourceHash,
+    thesisUpdatedAt: params.thesisUpdatedAt.toISOString(),
+    thesisDecision: params.thesisDecision,
+    thesisBypass: params.thesisBypass,
+  };
+}
+
+function isNegotiationCacheValid(params: {
+  strategy: NegotiationStrategy | null;
+  analysisId: string;
+  analysisThesisId: string | null;
+  thesisBypass: boolean;
+  latestThesis: NonNullable<Awaited<ReturnType<typeof thesisService.getLatest>>> | null;
+}): params is {
+  strategy: CachedNegotiationStrategy;
+  analysisId: string;
+  analysisThesisId: string;
+  thesisBypass: boolean;
+  latestThesis: NonNullable<Awaited<ReturnType<typeof thesisService.getLatest>>>;
+} {
+  if (!params.strategy || !params.latestThesis || !params.analysisThesisId) {
+    return false;
+  }
+
+  if (params.analysisThesisId !== params.latestThesis.id) {
+    return false;
+  }
+
+  const cacheMeta = (params.strategy as CachedNegotiationStrategy).cacheMeta;
+  if (!cacheMeta || cacheMeta.schemaVersion !== 2) {
+    return false;
+  }
+
+  return (
+    cacheMeta.analysisId === params.analysisId &&
+    cacheMeta.thesisId === params.latestThesis.id &&
+    cacheMeta.thesisSourceHash === params.latestThesis.sourceHash &&
+    cacheMeta.thesisUpdatedAt === params.latestThesis.updatedAt.toISOString() &&
+    cacheMeta.thesisDecision === params.latestThesis.decision &&
+    cacheMeta.thesisBypass === params.thesisBypass
+  );
+}
+
 // =============================================================================
 // GET Handler - Load cached strategy
 // =============================================================================
@@ -122,6 +193,9 @@ export async function GET(req: NextRequest) {
         },
       },
       select: {
+        id: true,
+        thesisId: true,
+        thesisBypass: true,
         negotiationStrategy: true,
       },
     });
@@ -133,10 +207,20 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Return cached strategy or null
+    const latestThesis = await thesisService.getLatest(dealId);
+    const strategy = analysis.negotiationStrategy as NegotiationStrategy | null;
+    const cacheValid = isNegotiationCacheValid({
+      strategy,
+      analysisId: analysis.id,
+      analysisThesisId: analysis.thesisId,
+      thesisBypass: analysis.thesisBypass ?? false,
+      latestThesis,
+    });
+
     return NextResponse.json({
-      strategy: analysis.negotiationStrategy as unknown as NegotiationStrategy | null,
-      cached: analysis.negotiationStrategy !== null,
+      strategy: cacheValid ? strategy : null,
+      cached: cacheValid,
+      canonicalAligned: !!latestThesis && analysis.thesisId === latestThesis.id,
     });
   } catch (error) {
     if (error instanceof Error) {
@@ -237,10 +321,33 @@ export async function POST(req: NextRequest) {
       console.log("[Negotiation API] Analysis found, hasCache:", !!analysis.negotiationStrategy);
     }
 
+    const latestThesis = await thesisService.getLatest(dealId);
+    if (!latestThesis) {
+      return NextResponse.json(
+        { error: "Negotiation requires a current canonical thesis. Run the thesis-first analysis flow first." },
+        { status: 409 }
+      );
+    }
+
+    if (!analysis.thesisId || analysis.thesisId !== latestThesis.id) {
+      return NextResponse.json(
+        { error: "This analysis is no longer aligned with the latest canonical thesis. Re-run the thesis-first Deep Dive before generating negotiation." },
+        { status: 409 }
+      );
+    }
+
     // 5. Check cache first (unless forceRegenerate)
-    if (!forceRegenerate && analysis.negotiationStrategy) {
+    const cachedStrategy = analysis.negotiationStrategy as NegotiationStrategy | null;
+    const cacheValid = isNegotiationCacheValid({
+      strategy: cachedStrategy,
+      analysisId: analysis.id,
+      analysisThesisId: analysis.thesisId,
+      thesisBypass: analysis.thesisBypass ?? false,
+      latestThesis,
+    });
+    if (!forceRegenerate && cacheValid) {
       return NextResponse.json({
-        strategy: analysis.negotiationStrategy as unknown as NegotiationStrategy,
+        strategy: cachedStrategy,
         cached: true,
       });
     }
@@ -260,7 +367,6 @@ export async function POST(req: NextRequest) {
       success: boolean;
       data?: Record<string, unknown>;
     }>;
-
     // 8. Build AnalysisResults from agent outputs - match the expected interface
     const analysisResults: AnalysisResults = {};
 
@@ -323,6 +429,21 @@ export async function POST(req: NextRequest) {
       };
     }
 
+    if (latestThesis) {
+      analysisResults.thesis = {
+        verdict: latestThesis.verdict,
+        confidence: latestThesis.confidence,
+        reformulated: latestThesis.reformulated,
+        evaluationAxes: normalizeThesisEvaluation({
+          verdict: latestThesis.verdict as never,
+          confidence: latestThesis.confidence,
+          ycLens: latestThesis.ycLens as never,
+          thielLens: latestThesis.thielLens as never,
+          angelDeskLens: latestThesis.angelDeskLens as never,
+        }),
+      };
+    }
+
     // 9. Sanitize deal name and generate the negotiation strategy
     const safeDealName = sanitizeDealName(dealName ?? "Deal");
     if (process.env.NODE_ENV === "development") {
@@ -344,12 +465,24 @@ export async function POST(req: NextRequest) {
     }
 
     // 10. Save strategy to database for caching
+    const strategyWithMeta: CachedNegotiationStrategy = {
+      ...strategy,
+      cacheMeta: buildNegotiationCacheMeta({
+        analysisId: analysis.id,
+        thesisId: latestThesis.id,
+        thesisSourceHash: latestThesis.sourceHash,
+        thesisUpdatedAt: latestThesis.updatedAt,
+        thesisDecision: latestThesis.decision,
+        thesisBypass: analysis.thesisBypass ?? false,
+      }),
+    };
+
     await prisma.analysis.update({
       where: { id: analysisId },
-      data: { negotiationStrategy: JSON.parse(JSON.stringify(strategy)) },
+      data: { negotiationStrategy: JSON.parse(JSON.stringify(strategyWithMeta)) },
     });
 
-    return NextResponse.json({ strategy, cached: false });
+    return NextResponse.json({ strategy: strategyWithMeta, cached: false });
   } catch (error) {
     if (error instanceof FeatureAccessError) {
       return NextResponse.json(serializeFeatureAccessError(error), { status: 403 });

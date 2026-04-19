@@ -537,27 +537,28 @@ export async function complete(
 // Extract the first valid JSON object from a string (handles trailing text)
 // Exported for use by agents that call complete() instead of completeJSON()
 export function extractFirstJSON(content: string): string {
+  const normalizedContent = content.replace(/^\uFEFF/, "");
   // Try multiple approaches to extract JSON
 
   // Approach 1: Extract from markdown code blocks (handle different backtick styles)
   const codeBlockPatterns = [
-    /```(?:json)?\s*([\s\S]*?)```/,      // Standard markdown
-    /`{3,}(?:json)?\s*([\s\S]*?)`{3,}/,  // Variable backticks
-    /~~~(?:json)?\s*([\s\S]*?)~~~/,      // Tilde code blocks
+    /```(?:json)?\s*([\s\S]*?)```/i,      // Standard markdown
+    /`{3,}(?:json)?\s*([\s\S]*?)`{3,}/i,  // Variable backticks
+    /~~~(?:json)?\s*([\s\S]*?)~~~/i,      // Tilde code blocks
   ];
 
   // Check if content contains backticks at all
-  const backtickIndex = content.indexOf('`');
+  const backtickIndex = normalizedContent.indexOf('`');
   if (process.env.NODE_ENV === 'development') {
     console.log(`[extractFirstJSON] Backtick char found at index: ${backtickIndex}`);
     if (backtickIndex >= 0) {
-      const surroundingChars = content.substring(Math.max(0, backtickIndex - 5), backtickIndex + 10);
+      const surroundingChars = normalizedContent.substring(Math.max(0, backtickIndex - 5), backtickIndex + 10);
       console.log(`[extractFirstJSON] Chars around backtick: "${surroundingChars}" (charCodes: ${[...surroundingChars].map(c => c.charCodeAt(0)).join(',')})`);
     }
   }
 
   for (const pattern of codeBlockPatterns) {
-    const match = content.match(pattern);
+    const match = normalizedContent.match(pattern);
     if (process.env.NODE_ENV === 'development') {
       console.log(`[extractFirstJSON] Pattern ${pattern}: match=${!!match}`);
     }
@@ -580,9 +581,9 @@ export function extractFirstJSON(content: string): string {
   }
 
   // Approach 2: If content starts with ```json but has no closing ```, strip the header
-  const unclosedCodeBlockMatch = content.match(/^`{3,}(?:json)?\s*/);
+  const unclosedCodeBlockMatch = normalizedContent.match(/^\s*`{3,}(?:json)?\s*/i);
   if (unclosedCodeBlockMatch) {
-    const strippedContent = content.substring(unclosedCodeBlockMatch[0].length);
+    const strippedContent = normalizedContent.substring(unclosedCodeBlockMatch[0].length);
     if (process.env.NODE_ENV === 'development') {
       console.log(`[extractFirstJSON] Unclosed code block detected, stripped header (${unclosedCodeBlockMatch[0].length} chars)`);
     }
@@ -597,9 +598,9 @@ export function extractFirstJSON(content: string): string {
 
   // Approach 3: Find JSON object directly in content (skip preceding text)
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[extractFirstJSON] No code block match, trying direct extraction from content (${content.length} chars)`);
+    console.log(`[extractFirstJSON] No code block match, trying direct extraction from content (${normalizedContent.length} chars)`);
   }
-  const json = extractBracedJSON(content);
+  const json = extractBracedJSON(normalizedContent);
   if (json) {
     if (process.env.NODE_ENV === 'development') {
       console.log(`[extractFirstJSON] Direct extraction succeeded (${json.length} chars)`);
@@ -611,7 +612,7 @@ export function extractFirstJSON(content: string): string {
   if (process.env.NODE_ENV === 'development') {
     console.log(`[extractFirstJSON] FALLBACK - returning trimmed content`);
   }
-  return content.trim();
+  return normalizedContent.trim();
 }
 
 // Helper to extract JSON by matching braces

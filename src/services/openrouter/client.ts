@@ -42,8 +42,14 @@ export const MODELS = {
     capabilities: ["balanced", "reasoning", "analysis"],
   },
 
-  // SONNET_4 alias removed - was duplicating SONNET with confusing name
-  // If Claude Sonnet 4 becomes available on OpenRouter, add it here with correct model ID
+  CLAUDE_SONNET_45: {
+    id: "anthropic/claude-sonnet-4.5",
+    name: "Claude Sonnet 4.5",
+    inputCost: 0.003, // $3/M
+    outputCost: 0.015, // $15/M
+    contextWindow: 1000000,
+    capabilities: ["frontier", "reasoning", "analysis", "best-quality"],
+  },
 
   GPT4O_MINI: {
     id: "openai/gpt-4o-mini",
@@ -72,6 +78,15 @@ export const MODELS = {
     outputCost: 0.015,
     contextWindow: 128000,
     capabilities: ["powerful", "reasoning", "analysis"],
+  },
+
+  GPT_54: {
+    id: "openai/gpt-5.4",
+    name: "GPT-5.4",
+    inputCost: 0.0025, // $2.50/M
+    outputCost: 0.015, // $15/M
+    contextWindow: 1050000,
+    capabilities: ["frontier", "reasoning", "analysis", "best-quality"],
   },
 
   OPUS: {
@@ -131,6 +146,15 @@ export const MODELS = {
     outputCost: 0.01,
     contextWindow: 1000000,
     capabilities: ["balanced", "reasoning", "large-context"],
+  },
+
+  GEMINI_31_PRO: {
+    id: "google/gemini-3.1-pro-preview",
+    name: "Gemini 3.1 Pro",
+    inputCost: 0.002, // $2/M
+    outputCost: 0.012, // $12/M
+    contextWindow: 1000000,
+    capabilities: ["frontier", "reasoning", "analysis", "large-context"],
   },
 
   GEMINI_ULTRA: {

@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import type { DocumentPageArtifact, ExtractionManifest, ExtractionPageManifest, PageOCRResult } from "@/services/pdf";
+import { assessExtractionSemantics, type ExtractionSemanticAssessment } from "@/services/pdf/extraction-semantics";
 
 export const STRICT_EXTRACTION_PIPELINE_VERSION = "strict-document-extraction-v1";
 
@@ -53,6 +54,7 @@ export function buildDocumentPageArtifact(params: {
   confidence?: "high" | "medium" | "low";
   needsHumanReview?: boolean;
   sourceHash?: string;
+  ocrMode?: "standard" | "high_fidelity" | "supreme";
   error?: string;
 }): DocumentPageArtifact {
   const confidence = params.confidence ?? (params.error ? "low" : params.text.length >= 300 ? "high" : "medium");
@@ -110,6 +112,7 @@ export function buildDocumentPageArtifact(params: {
     numericClaims,
     confidence,
     needsHumanReview: params.needsHumanReview ?? Boolean(params.error),
+    ocrMode: params.ocrMode,
     sourceHash: params.sourceHash ?? (params.text ? hashExtractedCorpus(params.text) : undefined),
   };
 }
@@ -170,7 +173,24 @@ export function calculateArtifactCompleteness(params: {
   };
 }
 
+function extractSemanticAssessment(value: unknown): ExtractionSemanticAssessment | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = (value as { semanticAssessment?: unknown }).semanticAssessment;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
+  const record = candidate as Record<string, unknown>;
+  if (
+    typeof record.pageClass !== "string" ||
+    typeof record.structureDependency !== "string" ||
+    typeof record.semanticSufficiency !== "string" ||
+    typeof record.labelValueIntegrity !== "string"
+  ) {
+    return undefined;
+  }
+  return candidate as ExtractionSemanticAssessment;
+}
+
 export function summarizeManifestForLegacyMetrics(manifest: ExtractionManifest) {
+  const blockingPages = getBlockingPageNumbersFromManifest(manifest);
   const summary = {
     strictExtraction: true,
     manifestVersion: manifest.version,
@@ -184,16 +204,130 @@ export function summarizeManifestForLegacyMetrics(manifest: ExtractionManifest) 
     failedPages: manifest.failedPages,
     skippedPages: manifest.skippedPages,
     criticalPages: manifest.criticalPages,
+    blockingPages,
     hardBlockers: manifest.hardBlockers,
     creditEstimate: manifest.creditEstimate,
+    cachedPages: manifest.creditEstimate.cachedPages,
     pageQualityPlan: manifest.pages.map((page) => ({
       pageNumber: page.pageNumber,
       extractionTier: page.extractionTier,
       visualRiskScore: page.visualRiskScore,
       visualRiskReasons: page.visualRiskReasons,
+      pageClass: page.semanticAssessment?.pageClass ?? null,
+      structureDependency: page.semanticAssessment?.structureDependency ?? null,
+      semanticSufficiency: page.semanticAssessment?.semanticSufficiency ?? null,
+      labelValueIntegrity: page.semanticAssessment?.labelValueIntegrity ?? null,
+      visualNoiseScore: page.semanticAssessment?.visualNoiseScore ?? null,
+      analyticalValueScore: page.semanticAssessment?.analyticalValueScore ?? null,
     })),
   };
   return JSON.parse(JSON.stringify(summary)) as Prisma.InputJsonObject;
+}
+
+type ExtractionPageReviewShape = Pick<
+  ExtractionPageManifest,
+  | "pageNumber"
+  | "status"
+  | "charCount"
+  | "hasTables"
+  | "hasCharts"
+  | "hasFinancialKeywords"
+  | "hasMarketKeywords"
+  | "hasTeamKeywords"
+  | "error"
+> & {
+  qualityScore?: number | null;
+  errorMessage?: string | null;
+  semanticAssessment?: ExtractionSemanticAssessment;
+};
+
+function isBlockingReviewPage(page: ExtractionPageReviewShape): boolean {
+  if (page.status === "failed") return true;
+  if (page.status !== "needs_review") return false;
+
+  if (page.semanticAssessment) {
+    if (
+      page.semanticAssessment.semanticSufficiency === "insufficient" &&
+      (page.semanticAssessment.analyticalValueScore ?? 100) >= 35
+    ) {
+      return true;
+    }
+    if (
+      page.semanticAssessment.shouldBlockIfStructureMissing &&
+      !page.semanticAssessment.canDegradeToWarning &&
+      page.semanticAssessment.semanticSufficiency !== "sufficient"
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  const errorText = (page.errorMessage ?? page.error ?? "").toLowerCase();
+  const qualityScore = page.qualityScore ?? 0;
+  const isAnalyticallyCritical =
+    page.hasFinancialKeywords || page.hasMarketKeywords || page.hasTables || page.hasCharts;
+
+  if (/did not complete|returned no text|could not be extracted reliably|very little text/i.test(errorText)) {
+    return true;
+  }
+
+  if (!isAnalyticallyCritical) {
+    return false;
+  }
+
+  if (page.charCount < 180) return true;
+  if (qualityScore < 60) return true;
+  if ((page.hasTables || page.hasCharts) && page.charCount < 320) return true;
+
+  return false;
+}
+
+export function getBlockingPageNumbersFromManifest(manifest: ExtractionManifest): number[] {
+  return manifest.pages
+    .filter(isBlockingReviewPage)
+    .map((page) => page.pageNumber);
+}
+
+export function getBlockingPageNumbersFromStoredPages(
+  pages: Array<{
+    pageNumber: number;
+    status: PageStatus;
+    charCount: number;
+    qualityScore: number | null;
+    hasTables: boolean;
+    hasCharts: boolean;
+    hasFinancialKeywords: boolean;
+    hasMarketKeywords: boolean;
+    hasTeamKeywords: boolean;
+    errorMessage?: string | null;
+    artifact?: unknown;
+  }>
+): number[] {
+  return pages
+    .filter((page) =>
+      isBlockingReviewPage({
+        pageNumber: page.pageNumber,
+        status: page.status === "READY"
+          ? "ready"
+          : page.status === "READY_WITH_WARNINGS"
+            ? "ready_with_warnings"
+            : page.status === "FAILED"
+              ? "failed"
+              : page.status === "SKIPPED"
+                ? "skipped"
+                : "needs_review",
+        charCount: page.charCount,
+        qualityScore: page.qualityScore,
+        hasTables: page.hasTables,
+        hasCharts: page.hasCharts,
+        hasFinancialKeywords: page.hasFinancialKeywords,
+        hasMarketKeywords: page.hasMarketKeywords,
+        hasTeamKeywords: page.hasTeamKeywords,
+        errorMessage: page.errorMessage,
+        semanticAssessment: extractSemanticAssessment(page.artifact),
+      })
+    )
+    .map((page) => page.pageNumber);
 }
 
 export function buildStructuredDocumentManifest(params: {
@@ -245,9 +379,36 @@ export function buildStructuredDocumentManifest(params: {
       hasCharts,
       artifact: pageArtifact,
     });
-    const finalStatus: ExtractionPageManifest["status"] = status === "ready" && visualArtifactIncomplete
+    const semanticAssessment = assessExtractionSemantics({
+      pageNumber: artifact.index,
+      text: artifact.text,
+      charCount,
+      wordCount,
+      hasTables,
+      hasCharts,
+      hasFinancialKeywords: artifact.hasFinancialKeywords ?? /\b(arr|mrr|revenue|cash|burn|runway|ebitda|margin|valuation|cap table|forecast|budget)\b/i.test(artifact.text),
+      hasTeamKeywords: artifact.hasTeamKeywords ?? /\b(team|founder|ceo|cto|cfo|coo|linkedin)\b/i.test(artifact.text),
+      hasMarketKeywords: artifact.hasMarketKeywords ?? /\b(tam|sam|som|market|cagr|competitor|competition)\b/i.test(artifact.text),
+      artifact: pageArtifact,
+    });
+    pageArtifact.semanticAssessment = semanticAssessment;
+    const finalStatus: ExtractionPageManifest["status"] = (
+      status === "ready" &&
+      visualArtifactIncomplete &&
+      (
+        (
+          semanticAssessment.semanticSufficiency === "insufficient" &&
+          (semanticAssessment.analyticalValueScore ?? 100) >= 35
+        ) ||
+        (semanticAssessment.shouldBlockIfStructureMissing &&
+          !semanticAssessment.canDegradeToWarning &&
+          semanticAssessment.semanticSufficiency !== "sufficient")
+      )
+    )
       ? "needs_review"
-      : status;
+      : status === "ready" && visualArtifactIncomplete
+        ? "ready_with_warnings"
+        : status;
 
     return {
       pageNumber: artifact.index,
@@ -270,8 +431,9 @@ export function buildStructuredDocumentManifest(params: {
         ...(visualArtifactIncomplete ? [`${artifact.label} has incomplete structured visual extraction`] : []),
         ...artifactCompleteness.missing.map((missing) => `${artifact.label} missing ${missing}`),
       ],
+      semanticAssessment,
       artifact: pageArtifact,
-      pageImageHash: pageArtifact.sourceHash,
+      pageImageHash: undefined,
       error: artifact.error,
     };
   });
@@ -321,6 +483,7 @@ export function buildStructuredDocumentManifest(params: {
       },
       unitCredits: { native_only: 0, standard_ocr: 0, high_fidelity: 1, supreme: 2 },
       unitUsd: { native_only: 0, standard_ocr: 0.002, high_fidelity: 0.006, supreme: 0.015 },
+      cachedPages: 0,
     },
     pages,
     completedAt: new Date().toISOString(),
@@ -335,6 +498,7 @@ export async function recordDocumentExtractionRun(params: {
   qualityScore: number | null;
   manifest: ExtractionManifest;
   warnings?: unknown;
+  extraSummaryMetrics?: Prisma.InputJsonObject;
 }) {
   const blockedReason = buildBlockedReason(params.manifest);
   const status = mapRunStatus(params.manifest);
@@ -358,7 +522,10 @@ export async function recordDocumentExtractionRun(params: {
       pipelineVersion: STRICT_EXTRACTION_PIPELINE_VERSION,
       contentHash: params.contentHash ?? null,
       corpusTextHash: params.text ? hashExtractedCorpus(params.text) : null,
-      summaryMetrics: summarizeManifestForLegacyMetrics(params.manifest),
+      summaryMetrics: {
+        ...summarizeManifestForLegacyMetrics(params.manifest),
+        ...(params.extraSummaryMetrics ?? {}),
+      },
       warnings: params.warnings === undefined ? Prisma.DbNull : (params.warnings as Prisma.InputJsonValue),
       completedAt: new Date(params.manifest.completedAt),
       pages: {
@@ -455,6 +622,7 @@ export async function recordExtractionPageProgress(params: {
     hasCharts: params.page.hasCharts,
     confidence: params.page.confidence,
     needsHumanReview: params.page.confidence === "low",
+    ocrMode: params.page.mode,
   });
   const charCount = params.page.text.length;
   const wordCount = params.page.text.trim().split(/\s+/).filter(Boolean).length;
@@ -491,7 +659,7 @@ export async function recordExtractionPageProgress(params: {
       contentHash: artifact.sourceHash ?? null,
       artifactVersion: artifact.version,
       artifact: JSON.parse(JSON.stringify(artifact)) as Prisma.InputJsonValue,
-      pageImageHash: artifact.sourceHash ?? null,
+      pageImageHash: params.page.pageImageHash ?? null,
       errorMessage: params.page.text.trim().length === 0 ? "OCR returned no text for this page" : null,
       textPreview: params.page.text.slice(0, 300),
     },
@@ -508,7 +676,7 @@ export async function recordExtractionPageProgress(params: {
       contentHash: artifact.sourceHash ?? null,
       artifactVersion: artifact.version,
       artifact: JSON.parse(JSON.stringify(artifact)) as Prisma.InputJsonValue,
-      pageImageHash: artifact.sourceHash ?? null,
+      pageImageHash: params.page.pageImageHash ?? null,
       errorMessage: params.page.text.trim().length === 0 ? "OCR returned no text for this page" : null,
       textPreview: params.page.text.slice(0, 300),
     },
@@ -772,6 +940,9 @@ export async function evaluateDealDocumentReadiness(dealId: string): Promise<Dea
 function mapRunStatus(manifest: ExtractionManifest): RunStatus {
   if (manifest.status === "ready") return "READY";
   if (manifest.status === "ready_with_warnings") return "READY_WITH_WARNINGS";
+  if (manifest.status === "needs_review" && getBlockingPageNumbersFromManifest(manifest).length === 0) {
+    return "READY_WITH_WARNINGS";
+  }
   if (manifest.status === "failed" && manifest.pagesProcessed === 0) return "FAILED";
   return "BLOCKED";
 }
@@ -803,7 +974,7 @@ function buildExtractionPageCreateInput(page: ExtractionPageManifest) {
     contentHash: artifact.sourceHash ?? null,
     artifactVersion: artifact.version,
     artifact: JSON.parse(JSON.stringify(artifact)) as Prisma.InputJsonValue,
-    pageImageHash: page.pageImageHash ?? artifact.sourceHash ?? null,
+    pageImageHash: page.pageImageHash ?? null,
     errorMessage: page.error ?? null,
     textPreview: buildPagePreview(page),
   };
@@ -884,11 +1055,9 @@ function buildBlockedReason(manifest: ExtractionManifest): string | null {
     return manifest.hardBlockers.map((blocker) => blocker.message).join("; ");
   }
 
-  if (manifest.status === "needs_review") {
-    return `Pages requiring review: ${manifest.pages
-      .filter((page) => page.status === "needs_review" || page.status === "failed")
-      .map((page) => page.pageNumber)
-      .join(", ")}`;
+  const blockingPages = getBlockingPageNumbersFromManifest(manifest);
+  if (blockingPages.length > 0) {
+    return `Pages requiring explicit review: ${blockingPages.join(", ")}`;
   }
 
   if (manifest.coverageRatio < 1) {
@@ -918,9 +1087,10 @@ function getUnresolvedBlockingPages(run: Pick<ExtractionRunWithDetails, "pages" 
       .map((override) => override.pageNumber)
       .filter((pageNumber): pageNumber is number => typeof pageNumber === "number")
   );
+  const blockingPages = new Set(getBlockingPageNumbersFromStoredPages(run.pages));
 
   return run.pages
-    .filter((page) => page.status === "FAILED" || page.status === "NEEDS_REVIEW")
+    .filter((page) => blockingPages.has(page.pageNumber))
     .filter((page) => !overriddenPages.has(page.pageNumber))
     .map((page) => page.pageNumber);
 }

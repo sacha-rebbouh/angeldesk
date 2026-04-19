@@ -13,6 +13,8 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateAnalysisPdf, type PdfExportData, type PdfFormat } from "@/lib/pdf/generate-analysis-pdf";
 import { loadResults } from "@/services/analysis-results/load-results";
+import { thesisService } from "@/services/thesis";
+import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 
 export async function GET(
   request: NextRequest,
@@ -29,7 +31,9 @@ export async function GET(
     // Load deal and analysis metadata in parallel (excludes heavy results blob)
     const analysisSelect = {
       id: true,
+      thesisId: true,
       type: true,
+      status: true,
       completedAt: true,
       totalAgents: true,
       completedAgents: true,
@@ -57,12 +61,23 @@ export async function GET(
       }),
       analysisId
         ? prisma.analysis.findFirst({
-            where: { id: analysisId, dealId, deal: { userId: user.id } },
+            where: {
+              id: analysisId,
+              dealId,
+              status: "COMPLETED",
+              completedAt: { not: null },
+              deal: { userId: user.id },
+            },
             select: analysisSelect,
           })
         : prisma.analysis.findFirst({
-            where: { dealId, status: "COMPLETED", deal: { userId: user.id } },
-            orderBy: { createdAt: "desc" },
+            where: {
+              dealId,
+              status: "COMPLETED",
+              completedAt: { not: null },
+              deal: { userId: user.id },
+            },
+            orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
             select: analysisSelect,
           }),
     ]);
@@ -77,6 +92,10 @@ export async function GET(
         { status: 404 }
       );
     }
+
+    const pairedThesis = analysisMeta.thesisId
+      ? await thesisService.getById(analysisMeta.thesisId)
+      : await thesisService.getLatest(dealId);
 
     // PERF: Load results from Blob cache (fast) instead of DB (slow, 30s+ for multi-MB JSON)
     const results = await loadResults(analysisMeta.id);
@@ -135,6 +154,20 @@ export async function GET(
           confidenceScore: f.confidenceScore != null ? Number(f.confidenceScore) : null,
         })),
       },
+      thesis: pairedThesis
+        ? {
+            reformulated: pairedThesis.reformulated,
+            verdict: pairedThesis.verdict,
+            confidence: pairedThesis.confidence,
+            evaluationAxes: normalizeThesisEvaluation({
+              verdict: pairedThesis.verdict as never,
+              confidence: pairedThesis.confidence,
+              ycLens: pairedThesis.ycLens as never,
+              thielLens: pairedThesis.thielLens as never,
+              angelDeskLens: pairedThesis.angelDeskLens as never,
+            }),
+          }
+        : null,
       analysis: {
         id: analysisMeta.id,
         type: analysisMeta.type,

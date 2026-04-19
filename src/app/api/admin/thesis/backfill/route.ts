@@ -18,7 +18,7 @@ import { prisma } from "@/lib/prisma";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { inngest } from "@/lib/inngest";
-import { deductCreditAmount } from "@/services/credits";
+import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 
 const backfillSchema = z.object({
   dealId: z.string().regex(/^c[a-z0-9]{24,}$/, "Invalid CUID"),
@@ -143,16 +143,39 @@ export async function POST(request: NextRequest) {
 
     // FIX (audit P0 #5) : passer triggeredByAdminId pour que thesisReextractFunction
     // NE PAS re-debiter le BA (sinon admin 2cr + BA 1cr pour le meme backfill).
-    await inngest.send({
-      name: "analysis/thesis.reextract",
-      data: {
+    try {
+      await inngest.send({
+        name: "analysis/thesis.reextract",
+        data: {
+          dealId,
+          userId: deal.userId,
+          triggeredByDocumentId: completedDocs[0].id,
+          previousThesisId: deal.theses[0]?.id,
+          triggeredByAdminId: admin.id, // flag utilise par l'Inngest handler pour skip deduct
+        },
+      });
+    } catch (enqueueError) {
+      await refundCreditAmount(admin.id, "THESIS_REEXTRACT", ADMIN_BACKFILL_COST, {
         dealId,
-        userId: deal.userId,
-        triggeredByDocumentId: completedDocs[0].id,
-        previousThesisId: deal.theses[0]?.id,
-        triggeredByAdminId: admin.id, // flag utilise par l'Inngest handler pour skip deduct
-      },
-    });
+        idempotencyKey: `admin-thesis-backfill-refund:${admin.id}:${dealId}:${deal.theses[0]?.id ?? "none"}`,
+        description: `Rollback admin backfill these pour deal ${dealId} (enqueue Inngest echoue)`,
+      }).catch(() => undefined);
+
+      console.error("[admin/thesis/backfill] Failed to enqueue thesis re-extract, admin refunded:", {
+        adminId: admin.id,
+        dealId,
+        previousThesisId: deal.theses[0]?.id ?? null,
+        error: enqueueError,
+      });
+
+      return NextResponse.json(
+        {
+          error: "Failed to enqueue thesis re-extraction",
+          refundedAdminCredits: ADMIN_BACKFILL_COST,
+        },
+        { status: 502 }
+      );
+    }
 
     return NextResponse.json({
       data: {

@@ -128,7 +128,13 @@ export type ChatIntent =
   | "DEEP_DIVE"
   | "FOLLOW_UP"
   | "NEGOTIATION"
+  | "THESIS"
   | "GENERAL";
+
+interface RetrieveContextOptions {
+  analysisId?: string | null;
+  includeScores?: boolean;
+}
 
 // Pre-fetched deal info to avoid redundant queries across enrichment functions
 interface DealInfo {
@@ -235,13 +241,17 @@ const TOPIC_TO_AGENTS: Record<string, string[]> = {
 export async function retrieveContext(
   dealId: string,
   message: string,
-  intent: ChatIntent
+  intent: ChatIntent,
+  options?: RetrieveContextOptions
 ): Promise<RetrievedContext> {
+  const includeScores = options?.includeScores ?? true;
+  const analysisId = options?.analysisId;
+
   // Pre-fetch ALL data sources in parallel for maximum DB coverage
   const [facts, redFlags, chatContext, dealInfo, scoredFindings, debateRecords, boardResult, latestAnalysisMeta] = await Promise.all([
     getCurrentFacts(dealId),
     getRedFlags(dealId),
-    getDealChatContext(dealId),
+    getDealChatContext(dealId, analysisId),
     prisma.deal.findUnique({
       where: { id: dealId },
       select: {
@@ -258,10 +268,10 @@ export async function retrieveContext(
         financialsScore: true,
       },
     }),
-    getScoredFindings(dealId),
-    getDebateRecords(dealId),
+    includeScores ? getScoredFindings(dealId, analysisId) : Promise.resolve([]),
+    getDebateRecords(dealId, analysisId),
     getBoardResult(dealId),
-    getLatestAnalysisMeta(dealId),
+    getLatestAnalysisMeta(dealId, analysisId),
   ]);
 
   // Convert Decimal fields to number | null
@@ -293,7 +303,7 @@ export async function retrieveContext(
           agent,
           summary: (summary as { summary?: string }).summary ?? "",
           findings: (summary as { keyFindings?: string[] }).keyFindings ?? [],
-          score: (summary as { score?: number }).score,
+          score: includeScores ? (summary as { score?: number }).score : undefined,
           confidence: (summary as { confidence?: number }).confidence,
         }))
       : [],
@@ -308,32 +318,36 @@ export async function retrieveContext(
   // Intent-specific retrieval (pass pre-fetched deal info to avoid redundant queries)
   switch (intent) {
     case "CLARIFICATION":
-      await enrichForClarification(context, dealId, message, facts);
+      await enrichForClarification(context, dealId, message, facts, analysisId);
       break;
 
     case "COMPARISON":
-      await enrichForComparison(context, dealId, deal, chatContext);
+      await enrichForComparison(context, dealId, deal, chatContext, analysisId);
       break;
 
     case "SIMULATION":
-      await enrichForSimulation(context, dealId, deal);
+      await enrichForSimulation(context, dealId, deal, analysisId);
       break;
 
     case "DEEP_DIVE":
-      await enrichForDeepDive(context, dealId, message);
+      await enrichForDeepDive(context, dealId, message, analysisId);
       break;
 
     case "FOLLOW_UP":
-      await enrichForFollowUp(context, dealId);
+      await enrichForFollowUp(context, dealId, analysisId);
       break;
 
     case "NEGOTIATION":
-      await enrichForNegotiation(context, dealId, deal);
+      await enrichForNegotiation(context, dealId, deal, analysisId);
+      break;
+
+    case "THESIS":
+      await enrichForThesis(context, dealId, message, analysisId, includeScores);
       break;
 
     case "GENERAL":
     default:
-      await enrichForGeneral(context, dealId, deal);
+      await enrichForGeneral(context, dealId, deal, analysisId);
       break;
   }
 
@@ -352,7 +366,8 @@ async function enrichForClarification(
   context: RetrievedContext,
   dealId: string,
   message: string,
-  facts: CurrentFact[]
+  facts: CurrentFact[],
+  analysisId?: string | null
 ): Promise<void> {
   // Extract keywords from the message
   const keywords = extractKeywords(message);
@@ -374,7 +389,7 @@ async function enrichForClarification(
   const [documents, founders, agentResults] = await Promise.all([
     getDocuments(dealId),
     getFounders(dealId),
-    getAgentResultsForTopic(dealId, topic),
+    getAgentResultsForTopic(dealId, topic, analysisId),
   ]);
 
   if (documents.length > 0) {
@@ -406,7 +421,8 @@ async function enrichForComparison(
   context: RetrievedContext,
   dealId: string,
   deal: DealInfo | null,
-  chatContext: Awaited<ReturnType<typeof getDealChatContext>> | null
+  chatContext: Awaited<ReturnType<typeof getDealChatContext>> | null,
+  analysisId?: string | null
 ): Promise<void> {
   if (!deal?.sector) return;
 
@@ -414,7 +430,7 @@ async function enrichForComparison(
   const [benchmarks, founders, financialResults] = await Promise.all([
     getBenchmarks(deal.sector, deal.stage ?? undefined),
     getFounders(dealId),
-    getAgentResultsForTopic(dealId, "financial"),
+    getAgentResultsForTopic(dealId, "financial", analysisId),
   ]);
 
   if (benchmarks) {
@@ -453,15 +469,16 @@ async function enrichForComparison(
 async function enrichForSimulation(
   context: RetrievedContext,
   dealId: string,
-  deal: DealInfo | null
+  deal: DealInfo | null,
+  analysisId?: string | null
 ): Promise<void> {
   if (!deal) return;
 
   // Fetch benchmarks, scenario results, financial results, and founders in parallel
   const [benchmarks, scenarioResults, financialResults, founders] = await Promise.all([
     deal.sector ? getBenchmarks(deal.sector, deal.stage ?? undefined) : null,
-    getAgentResultsForTopic(dealId, "scenario"),
-    getAgentResultsForTopic(dealId, "financial"),
+    getAgentResultsForTopic(dealId, "scenario", analysisId),
+    getAgentResultsForTopic(dealId, "financial", analysisId),
     getFounders(dealId),
   ]);
 
@@ -491,14 +508,15 @@ async function enrichForSimulation(
 async function enrichForDeepDive(
   context: RetrievedContext,
   dealId: string,
-  message: string
+  message: string,
+  analysisId?: string | null
 ): Promise<void> {
   // Detect topic from message
   const topic = detectTopic(message);
 
   // Get relevant agent results and documents in parallel
   const [topicAgentResults, documents] = await Promise.all([
-    getAgentResultsForTopic(dealId, topic),
+    getAgentResultsForTopic(dealId, topic, analysisId),
     getDocumentsForTopic(dealId, topic),
   ]);
 
@@ -531,13 +549,14 @@ async function enrichForDeepDive(
  */
 async function enrichForFollowUp(
   context: RetrievedContext,
-  dealId: string
+  dealId: string,
+  analysisId?: string | null
 ): Promise<void> {
   // Get conversation history, founders, and all agent results in parallel
   const [recentConversation, founders, allResults] = await Promise.all([
     getRecentConversationHistory(dealId),
     getFounders(dealId),
-    getAgentResultsForTopic(dealId, "overall"),
+    getAgentResultsForTopic(dealId, "overall", analysisId),
   ]);
 
   if (recentConversation.length > 0) {
@@ -560,18 +579,15 @@ async function enrichForFollowUp(
 async function enrichForNegotiation(
   context: RetrievedContext,
   dealId: string,
-  deal: DealInfo | null
+  deal: DealInfo | null,
+  analysisId?: string | null
 ): Promise<void> {
   // Get the latest completed analysis with negotiation strategy
-  const analysis = await prisma.analysis.findFirst({
-    where: { dealId, status: "COMPLETED" },
-    orderBy: { completedAt: "desc" },
-    select: {
-      id: true,
-      negotiationStrategy: true,
-      results: true,
-    },
-  });
+  const analysis = await getResolvedAnalysis(
+    dealId,
+    analysisId,
+    { id: true, negotiationStrategy: true, results: true }
+  );
 
   if (analysis?.negotiationStrategy) {
     // Add negotiation strategy to benchmarks for access in chat
@@ -606,7 +622,7 @@ async function enrichForNegotiation(
   // Get founders and all agent results for negotiation context
   const [founders, allResults] = await Promise.all([
     getFounders(dealId),
-    getAgentResultsForTopic(dealId, "overall"),
+    getAgentResultsForTopic(dealId, "overall", analysisId),
   ]);
 
   if (founders.length > 0) {
@@ -625,14 +641,15 @@ async function enrichForNegotiation(
 async function enrichForGeneral(
   context: RetrievedContext,
   dealId: string,
-  deal: DealInfo | null
+  deal: DealInfo | null,
+  analysisId?: string | null
 ): Promise<void> {
   // Fetch benchmarks, documents, founders, and ALL agent results in parallel
   const [benchmarks, documents, founders, allAgentResults] = await Promise.all([
     deal?.sector ? getBenchmarks(deal.sector, deal.stage ?? undefined) : null,
     getDocuments(dealId),
     getFounders(dealId),
-    getAgentResultsForTopic(dealId, "overall"),
+    getAgentResultsForTopic(dealId, "overall", analysisId),
   ]);
 
   if (benchmarks) {
@@ -654,6 +671,35 @@ async function enrichForGeneral(
   // Include ALL agent results for general questions
   if (allAgentResults.length > 0) {
     context.agentResults = allAgentResults;
+  }
+}
+
+async function enrichForThesis(
+  context: RetrievedContext,
+  dealId: string,
+  message: string,
+  analysisId?: string | null,
+  includeScores: boolean = true
+): Promise<void> {
+  const topic = detectTopic(message);
+  const [documents, founders, thesisAgentResults] = await Promise.all([
+    getDocumentsForTopic(dealId, topic),
+    getFounders(dealId),
+    getAgentResultsForTopic(dealId, "overall", analysisId),
+  ]);
+
+  if (documents.length > 0) {
+    context.documents = documents;
+  }
+
+  if (founders.length > 0) {
+    context.founders = founders;
+  }
+
+  if (thesisAgentResults.length > 0) {
+    context.agentResults = includeScores
+      ? thesisAgentResults
+      : thesisAgentResults.map((result) => ({ ...result, score: undefined }));
   }
 }
 
@@ -707,21 +753,22 @@ function searchFactsByKeywords(
  */
 export async function getAgentResultsForTopic(
   dealId: string,
-  topic: string
+  topic: string,
+  analysisId?: string | null
 ): Promise<RetrievedAgentResult[]> {
   // Get relevant agent names for this topic
   const agentNames = TOPIC_TO_AGENTS[topic.toLowerCase()] ?? [];
 
   if (agentNames.length === 0) {
     // If no specific mapping, return all agent results
-    const analysis = await getLatestAnalysis(dealId);
+    const analysis = await getLatestAnalysis(dealId, analysisId);
     if (!analysis?.results) return [];
 
     return extractAgentResults(analysis.results as Record<string, unknown>);
   }
 
   // Get the latest analysis
-  const analysis = await getLatestAnalysis(dealId);
+  const analysis = await getLatestAnalysis(dealId, analysisId);
   if (!analysis?.results) return [];
 
   const results = analysis.results as Record<string, unknown>;
@@ -775,7 +822,7 @@ async function getRedFlags(
 /**
  * Get pre-computed chat context for a deal.
  */
-async function getDealChatContext(dealId: string): Promise<{
+async function getDealChatContext(dealId: string, analysisId?: string | null): Promise<{
   keyFacts: unknown[];
   agentSummaries: Record<string, unknown>;
   redFlagsContext: unknown[];
@@ -786,7 +833,7 @@ async function getDealChatContext(dealId: string): Promise<{
     where: { dealId },
   });
 
-  if (!context) return null;
+  if (!context || (analysisId !== undefined && context.lastAnalysisId !== analysisId)) return null;
 
   return {
     keyFacts: context.keyFacts as unknown[],
@@ -953,26 +1000,28 @@ async function getRecentConversationHistory(
  * Get the latest completed analysis for a deal.
  */
 async function getLatestAnalysis(
-  dealId: string
+  dealId: string,
+  analysisId?: string | null
 ): Promise<{ id: string; mode: string | null; results: Prisma.JsonValue } | null> {
-  return prisma.analysis.findFirst({
-    where: { dealId, status: "COMPLETED" },
-    orderBy: { completedAt: "desc" },
-    select: { id: true, mode: true, results: true },
-  });
+  return getResolvedAnalysis(
+    dealId,
+    analysisId,
+    { id: true, mode: true, results: true }
+  );
 }
 
 /**
  * Get latest analysis metadata (summary + negotiation strategy).
  */
 async function getLatestAnalysisMeta(
-  dealId: string
+  dealId: string,
+  analysisId?: string | null
 ): Promise<{ summary: string | null; negotiationStrategy: unknown } | null> {
-  const analysis = await prisma.analysis.findFirst({
-    where: { dealId, status: "COMPLETED" },
-    orderBy: { completedAt: "desc" },
-    select: { summary: true, negotiationStrategy: true },
-  });
+  const analysis = await getResolvedAnalysis(
+    dealId,
+    analysisId,
+    { summary: true, negotiationStrategy: true }
+  );
   return analysis;
 }
 
@@ -980,14 +1029,11 @@ async function getLatestAnalysisMeta(
  * Get scored findings for a deal (quantified metrics with benchmarks).
  */
 async function getScoredFindings(
-  dealId: string
+  dealId: string,
+  analysisId?: string | null
 ): Promise<RetrievedScoredFinding[]> {
   // Get the latest analysis ID first
-  const analysis = await prisma.analysis.findFirst({
-    where: { dealId, status: "COMPLETED" },
-    orderBy: { completedAt: "desc" },
-    select: { id: true },
-  });
+  const analysis = await getResolvedAnalysis(dealId, analysisId, { id: true });
   if (!analysis) return [];
 
   const findings = await prisma.scoredFinding.findMany({
@@ -1015,13 +1061,10 @@ async function getScoredFindings(
  * Get debate records for a deal (contradiction resolutions).
  */
 async function getDebateRecords(
-  dealId: string
+  dealId: string,
+  analysisId?: string | null
 ): Promise<RetrievedDebateRecord[]> {
-  const analysis = await prisma.analysis.findFirst({
-    where: { dealId, status: "COMPLETED" },
-    orderBy: { completedAt: "desc" },
-    select: { id: true },
-  });
+  const analysis = await getResolvedAnalysis(dealId, analysisId, { id: true });
   if (!analysis) return [];
 
   const records = await prisma.debateRecord.findMany({
@@ -1088,6 +1131,37 @@ async function getBoardResult(
       initialAnalysis: m.initialAnalysis as Record<string, unknown> | null,
     })),
   };
+}
+
+async function getResolvedAnalysis<TSelect extends Prisma.AnalysisSelect>(
+  dealId: string,
+  analysisId: string | null | undefined,
+  select: TSelect
+): Promise<Prisma.AnalysisGetPayload<{ select: TSelect }> | null> {
+  if (analysisId) {
+    const candidate = await prisma.analysis.findUnique({
+      where: { id: analysisId },
+      select: {
+        dealId: true,
+        status: true,
+      },
+    });
+
+    if (!candidate || candidate.dealId !== dealId || candidate.status !== "COMPLETED") {
+      return null;
+    }
+
+    return prisma.analysis.findUnique({
+      where: { id: analysisId },
+      select,
+    });
+  }
+
+  return prisma.analysis.findFirst({
+    where: { dealId, status: "COMPLETED" },
+    orderBy: { completedAt: "desc" },
+    select,
+  });
 }
 
 // ============================================================================

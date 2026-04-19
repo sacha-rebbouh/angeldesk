@@ -20,6 +20,7 @@ export interface AgentContext {
     name: string;
     type: string;
     extractedText?: string | null;
+    extractionMetrics?: unknown;
     /** Date of upload/import — used for document chronology awareness */
     uploadedAt?: Date;
     /** Latest strict extraction run, when available. Used for artifact-aware retrieval. */
@@ -3767,7 +3768,7 @@ export type Tier2AgentName = Tier3AgentName;
 export interface AnalysisSession {
   id: string;
   dealId: string;
-  type: "screening" | "full_dd";
+  type: "screening" | "full_analysis" | "full_dd";
   status: "pending" | "running" | "completed" | "failed";
   agents: {
     name: string;

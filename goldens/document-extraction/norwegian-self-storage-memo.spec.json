@@ -1,0 +1,38 @@
+{
+  "label": "Norwegian Self Storage Memo",
+  "documentPath": "/Users/sacharebbouh/Desktop/Pithos/Norwegian Self Storage Memo.pdf",
+  "expectation": {
+    "blockingPages": [
+      12
+    ],
+    "inspectionPages": [
+      12
+    ],
+    "pageExpectations": [
+      {
+        "pageNumber": 3,
+        "status": "ready_with_warnings",
+        "pageClass": "table_of_contents",
+        "structureDependency": "low",
+        "semanticSufficiency": "sufficient",
+        "blocksAnalysis": false
+      },
+      {
+        "pageNumber": 12,
+        "status": "needs_review",
+        "pageClass": "mixed_visual_analytics",
+        "structureDependency": "critical",
+        "semanticSufficiency": "insufficient",
+        "blocksAnalysis": true
+      },
+      {
+        "pageNumber": 37,
+        "status": "ready",
+        "pageClass": "asset_tear_sheet",
+        "structureDependency": "critical",
+        "semanticSufficiency": "sufficient",
+        "blocksAnalysis": false
+      }
+    ]
+  }
+}

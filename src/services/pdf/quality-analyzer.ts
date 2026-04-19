@@ -413,7 +413,7 @@ export function quickOCRCheck(text: string, pageCount: number): boolean {
 export function getPagesNeedingOCR(
   pageContentDistribution: number[],
   maxPages: number = 20,
-  existingText?: string
+  existingText?: string | string[]
 ): number[] {
   const totalPages = pageContentDistribution.length;
   if (totalPages === 0) return [];
@@ -434,7 +434,11 @@ export function getPagesNeedingOCR(
 
   // Split existing text into approximate per-page chunks for keyword matching
   const pageTexts: string[] = [];
-  if (existingText) {
+  if (Array.isArray(existingText)) {
+    for (let i = 0; i < totalPages; i++) {
+      pageTexts.push((existingText[i] ?? "").toLowerCase());
+    }
+  } else if (existingText) {
     const sections = existingText.split(/\n{3,}|\f/);
     const groupSize = Math.max(1, Math.ceil(sections.length / totalPages));
     for (let i = 0; i < totalPages; i++) {

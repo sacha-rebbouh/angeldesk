@@ -275,6 +275,14 @@ Produire un INVESTMENT MEMO de qualité institutionnelle qui:
 - Chaque chiffre avec benchmark de référence
 - Arguments de négociation quantifiés
 
+## Étape 5bis: Séparation conceptuelle obligatoire
+- Distinguer explicitement:
+  - **thesis / deal quality**: qualité intrinsèque, exécution, preuves, risques fondamentaux
+  - **investor profile fit**: adéquation avec le mandat, le ticket, l'horizon ou les préférences du BA
+  - **deal accessibility**: ticket minimum, allocation, structure, liquidité, instrument
+- Ne jamais présenter un mismatch investisseur ou une contrainte d'accessibilité comme preuve que la thèse est faible
+- Si un deal est solide mais peu adapté au BA, le dire comme mismatch ou contrainte, pas comme verdict négatif sur la société
+
 # FRAMEWORK D'ÉVALUATION DU MEMO
 
 | Critère | Poids | Score 0-25 | Score 25-50 | Score 50-75 | Score 75-100 |
@@ -333,6 +341,7 @@ L'outil ANALYSE et GUIDE. Il ne DÉCIDE JAMAIS à la place du Business Angel.
 - nextSteps : actions d'investigation ("Clarifier X", "Vérifier Y", "Demander Z") jamais des décisions ("Ne pas investir", "Classer")
 - negotiationPoints : constats factuels ("La structure CCA positionne le BA en créancier, non en actionnaire") pas des ordres ("Refuser la structure")
 - oneLiner : factuel et neutre ("SaaS B2B vertical RH, NRR 130%, valorisation P78 du secteur") pas alarmiste
+- Si tu mentionnes le profil BA, explicite s'il s'agit de **fit investisseur** ou de **deal accessibility**. Ne dégrade pas la thèse pour cette seule raison.
 - Chaque phrase doit pouvoir se terminer par "...à vous de décider" sans être absurde
 
 **Exemples :**
@@ -1062,7 +1071,7 @@ Probabilité Bear: ${(d.scenarios as Array<{ name?: string; probability?: number
       const genericOwnership = postMoney > 0 ? (genericTicket / postMoney) * 100 : 0;
       return `**Ticket suggéré (calcul générique):** €${genericTicket.toLocaleString()} pour ${genericOwnership.toFixed(2)}% du capital post-money.
 
-Note: Préférences BA non configurées - calcul basé sur 10% du round plafonné à 50K€.`;
+Note: Préférences BA non configurées - calcul basé sur 10% du round plafonné à 50K€. Cette section concerne le fit investisseur et l'accessibilité du ticket, pas la qualité intrinsèque du deal.`;
     }
 
     const ticketSize = calculateBATicketSize(amount, prefs);
@@ -1085,7 +1094,7 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
     }
 
     // Alignement avec le profil
-    lines.push(`\n### Alignement avec votre profil`);
+    lines.push(`\n### Alignement avec votre profil (fit investisseur, distinct de la these)`);
     const sectorLower = (deal.sector ?? "").toLowerCase();
     const isPreferredSector = prefs.preferredSectors.some((s) =>
       sectorLower.includes(s.toLowerCase())
@@ -1095,9 +1104,9 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
     );
 
     if (isExcludedSector) {
-      lines.push(`- ATTENTION: Secteur ${deal.sector} est dans vos exclusions`);
+      lines.push(`- ATTENTION: Secteur ${deal.sector} est dans vos exclusions. A traiter comme mismatch investisseur, pas comme faiblesse intrinsèque du deal.`);
     } else if (isPreferredSector) {
-      lines.push(`- OK: Secteur ${deal.sector} correspond à vos préférences`);
+      lines.push(`- OK: Secteur ${deal.sector} correspond à vos préférences investisseur`);
     }
 
     const stageLower = (deal.stage ?? "").toLowerCase().replace(/[^a-z]/g, "");
@@ -1105,14 +1114,14 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
       stageLower.includes(s.toLowerCase().replace(/[^a-z]/g, ""))
     );
     if (isPreferredStage) {
-      lines.push(`- OK: Stage ${deal.stage} correspond à vos préférences`);
+      lines.push(`- OK: Stage ${deal.stage} correspond à vos préférences investisseur`);
     }
 
     // Thèse d'investissement (F72)
     if (prefs.investmentThesis) {
       lines.push(`\n### Thèse d'investissement du BA`);
       lines.push(`"${prefs.investmentThesis}"`);
-      lines.push(`\n**INSTRUCTION LLM:** Compare ce deal à la thèse ci-dessus. Indique clairement:`);
+      lines.push(`\n**INSTRUCTION LLM:** Compare ce deal à la thèse ci-dessus en séparant clairement qualité intrinsèque, fit investisseur et accessibilité. Indique clairement:`);
       lines.push(`- Ce qui COLLE avec la thèse (avec preuves)`);
       lines.push(`- Ce qui NE COLLE PAS (avec preuves)`);
       lines.push(`- Score d'alignement thèse (0-100%)`);

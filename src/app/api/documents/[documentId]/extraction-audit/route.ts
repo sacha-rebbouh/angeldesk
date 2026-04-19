@@ -5,7 +5,7 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/api-error";
 import { safeDecrypt } from "@/lib/encryption";
 import { prisma } from "@/lib/prisma";
-import { calculateArtifactCompleteness } from "@/services/documents/extraction-runs";
+import { calculateArtifactCompleteness, getBlockingPageNumbersFromStoredPages } from "@/services/documents/extraction-runs";
 import type { DocumentPageArtifact } from "@/services/pdf";
 
 const cuidSchema = z.string().cuid();
@@ -58,6 +58,9 @@ export async function GET(_request: NextRequest, context: RouteParams) {
     const textByPage = splitExtractedTextByPage(extractedText);
     const pageQualityPlan = latestRun ? extractPageQualityPlan(latestRun.summaryMetrics) : new Map<number, PageQualityPlan>();
     const creditEstimate = latestRun ? extractCreditEstimate(latestRun.summaryMetrics) : null;
+    const blockingPages = latestRun
+      ? new Set(getBlockingPageNumbersFromStoredPages(latestRun.pages))
+      : new Set<number>();
 
     return NextResponse.json({
       data: {
@@ -72,6 +75,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
           extractionWarnings: document.extractionWarnings,
           requiresOCR: document.requiresOCR,
           ocrProcessed: document.ocrProcessed,
+          excelModelAudit: extractExcelModelAudit(document.extractionMetrics),
         },
         corpus: {
           text: extractedText,
@@ -126,9 +130,15 @@ export async function GET(_request: NextRequest, context: RouteParams) {
                   artifact: page.artifact,
                   evidenceSummary: buildPageEvidenceSummary(page.artifact, page.status, page.hasTables, page.hasCharts),
                   pageImageHash: page.pageImageHash,
+                  blocksAnalysis: blockingPages.has(page.pageNumber),
+                  needsInspection: !pageOverride && (
+                    page.status !== "READY" &&
+                    page.status !== "SKIPPED"
+                  ),
                   extractionTier: qualityPlan?.extractionTier ?? null,
                   visualRiskScore: qualityPlan?.visualRiskScore ?? null,
                   visualRiskReasons: qualityPlan?.visualRiskReasons ?? [],
+                  semanticAssessment: extractSemanticAssessment(page.artifact, qualityPlan),
                   extractedText: textByPage.find((entry) => entry.pageNumber === page.pageNumber)?.text ?? "",
                   override: pageOverride
                     ? {
@@ -163,6 +173,12 @@ interface PageQualityPlan {
   extractionTier: string;
   visualRiskScore: number;
   visualRiskReasons: string[];
+  pageClass?: string | null;
+  structureDependency?: string | null;
+  semanticSufficiency?: string | null;
+  labelValueIntegrity?: string | null;
+  visualNoiseScore?: number | null;
+  analyticalValueScore?: number | null;
 }
 
 function extractPageQualityPlan(summaryMetrics: unknown): Map<number, PageQualityPlan> {
@@ -190,6 +206,39 @@ function extractCreditEstimate(summaryMetrics: unknown): unknown {
     return null;
   }
   return (summaryMetrics as { creditEstimate?: unknown }).creditEstimate ?? null;
+}
+
+function extractExcelModelAudit(extractionMetrics: unknown) {
+  if (!extractionMetrics || typeof extractionMetrics !== "object" || Array.isArray(extractionMetrics)) {
+    return null;
+  }
+  const record = extractionMetrics as Record<string, unknown>;
+  return {
+    workbookAudit: record.workbookAudit ?? null,
+    modelIntelligence: record.modelIntelligence ?? null,
+    financialAudit: record.financialAudit ?? null,
+    analystReport: record.analystReport ?? null,
+  };
+}
+
+function extractSemanticAssessment(artifact: unknown, qualityPlan?: PageQualityPlan) {
+  if (artifact && typeof artifact === "object" && !Array.isArray(artifact)) {
+    const candidate = (artifact as { semanticAssessment?: unknown }).semanticAssessment;
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  if (!qualityPlan?.pageClass) return null;
+
+  return {
+    pageClass: qualityPlan.pageClass,
+    structureDependency: qualityPlan.structureDependency ?? null,
+    semanticSufficiency: qualityPlan.semanticSufficiency ?? null,
+    labelValueIntegrity: qualityPlan.labelValueIntegrity ?? null,
+    visualNoiseScore: qualityPlan.visualNoiseScore ?? null,
+    analyticalValueScore: qualityPlan.analyticalValueScore ?? null,
+  };
 }
 
 function buildPageEvidenceSummary(

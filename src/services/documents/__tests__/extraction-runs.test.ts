@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildStructuredDocumentManifest,
+  getBlockingPageNumbersFromManifest,
   summarizeManifestForLegacyMetrics,
 } from "../extraction-runs";
 
@@ -133,12 +134,15 @@ describe("buildStructuredDocumentManifest", () => {
       coverageRatio: 1,
       failedPages: [],
       criticalPages: [1],
+      blockingPages: [],
       pageQualityPlan: [
         {
           pageNumber: 1,
           extractionTier: "high_fidelity",
           visualRiskScore: 0,
           visualRiskReasons: [],
+          pageClass: "structured_table",
+          structureDependency: "critical",
         },
       ],
     });
@@ -177,5 +181,42 @@ describe("buildStructuredDocumentManifest", () => {
       visualRiskScore: 100,
     });
     expect(manifest.pages[0].visualRiskReasons).toContain("visual page has incomplete structured visual extraction");
+  });
+
+  it("does not block dense, well-covered visual pages just because structured extraction is partial", () => {
+    const manifest = buildStructuredDocumentManifest({
+      artifacts: [
+        {
+          index: 1,
+          label: "financial overview",
+          text: "Revenue growth EBITDA margin cash conversion valuation 2023A 2024A 2025A 12.4 13.9 15.1 4.6 5.2 17.5x 18.0x 19.1x ".repeat(12),
+          method: "hybrid",
+          hasTables: true,
+          hasFinancialKeywords: true,
+          requiresReview: true,
+        },
+      ],
+    });
+
+    expect(getBlockingPageNumbersFromManifest(manifest)).toEqual([]);
+    expect(manifest.pages[0].semanticAssessment?.semanticSufficiency).toBe("partial");
+  });
+
+  it("still blocks a critical page when extraction is too sparse", () => {
+    const manifest = buildStructuredDocumentManifest({
+      artifacts: [
+        {
+          index: 1,
+          label: "transaction terms",
+          text: "EBITDA 8.5x",
+          method: "hybrid",
+          hasTables: true,
+          hasFinancialKeywords: true,
+          requiresReview: true,
+        },
+      ],
+    });
+
+    expect(getBlockingPageNumbersFromManifest(manifest)).toEqual([1]);
   });
 });

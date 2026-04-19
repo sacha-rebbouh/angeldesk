@@ -13,6 +13,7 @@
 import React from "react";
 import { Document, renderToStream } from "@react-pdf/renderer";
 import { categorizeResults } from "@/lib/analysis-constants";
+import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
 
 // Section components
 import { CoverPage } from "./pdf-sections/cover";
@@ -137,6 +138,12 @@ export type PdfFormat = "full" | "summary";
 
 export interface PdfExportData {
   deal: DealData;
+  thesis: {
+    reformulated: string;
+    verdict: string;
+    confidence: number;
+    evaluationAxes: NormalizedThesisEvaluation;
+  } | null;
   analysis: {
     id: string;
     type: string;
@@ -178,11 +185,11 @@ function FullReport({ data }: { data: PdfExportData }) {
         dealName={dealName}
       />
 
-      {/* 3. Executive Summary (memo-generator) */}
-      <ExecutiveSummarySection results={results} dealName={dealName} />
+      {/* 3. Executive Summary (memo-generator + canonique thesis-first) */}
+      <ExecutiveSummarySection results={results} dealName={dealName} thesis={data.thesis} />
 
-      {/* 4. Score Breakdown (synthesis-deal-scorer) */}
-      <ScoreBreakdownSection results={results} dealName={dealName} />
+      {/* 4. Score Breakdown (secondary to thesis) */}
+      <ScoreBreakdownSection results={results} dealName={dealName} thesis={data.thesis} />
 
       {/* 5. Tier 3 Synthesis (contradictions, devil's advocate, scenarios) */}
       <Tier3SynthesisSection
@@ -241,10 +248,10 @@ function SummaryReport({ data }: { data: PdfExportData }) {
       <CoverPage data={data} />
 
       {/* 2. Executive Summary */}
-      <ExecutiveSummarySection results={results} dealName={dealName} />
+      <ExecutiveSummarySection results={results} dealName={dealName} thesis={data.thesis} />
 
       {/* 3. Score Breakdown */}
-      <ScoreBreakdownSection results={results} dealName={dealName} />
+      <ScoreBreakdownSection results={results} dealName={dealName} thesis={data.thesis} />
 
       {/* 4. Red Flags & Key Questions (combined) */}
       <SummaryRedFlagsAndQuestions

@@ -90,6 +90,20 @@ const mockPrisma = {
         return true;
       }).length;
     }),
+    aggregate: vi.fn(async ({ where }: { where: Record<string, unknown>; _sum: Record<string, boolean> }) => {
+      const rebuttalCount = store
+        .filter((t) => {
+          if (where.dealId && t.dealId !== where.dealId) return false;
+          return true;
+        })
+        .reduce((sum, thesis) => sum + (thesis.rebuttalCount ?? 0), 0);
+
+      return {
+        _sum: {
+          rebuttalCount,
+        },
+      };
+    }),
     create: vi.fn(async ({ data }: { data: Partial<MockThesis> }) => {
       const created: MockThesis = {
         id: cuid(),
@@ -131,6 +145,9 @@ const mockPrisma = {
         if (typeof value === "object" && value !== null && "increment" in value) {
           const inc = (value as { increment: number }).increment;
           (record as unknown as Record<string, unknown>)[key] = ((record as unknown as Record<string, number>)[key] ?? 0) + inc;
+        } else if (typeof value === "object" && value !== null && "decrement" in value) {
+          const dec = (value as { decrement: number }).decrement;
+          (record as unknown as Record<string, unknown>)[key] = ((record as unknown as Record<string, number>)[key] ?? 0) - dec;
         } else {
           (record as unknown as Record<string, unknown>)[key] = value;
         }
@@ -152,6 +169,7 @@ const mockPrisma = {
     }),
   },
   $executeRawUnsafe: vi.fn(async () => 0),
+  $queryRaw: vi.fn(async () => []),
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -161,6 +179,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: (args: unknown) => mockPrisma.thesis.findUnique(args as never),
       findMany: (args: unknown) => mockPrisma.thesis.findMany(args as never),
       count: (args: unknown) => mockPrisma.thesis.count(args as never),
+      aggregate: (args: unknown) => mockPrisma.thesis.aggregate(args as never),
       create: (args: unknown) => mockPrisma.thesis.create(args as never),
       update: (args: unknown) => mockPrisma.thesis.update(args as never),
       updateMany: (args: unknown) => mockPrisma.thesis.updateMany(args as never),
@@ -172,6 +191,7 @@ vi.mock("@/lib/prisma", () => ({
       return fn(mockPrisma);
     },
     $executeRawUnsafe: (..._args: unknown[]) => mockPrisma.$executeRawUnsafe(),
+    $queryRaw: (..._args: unknown[]) => mockPrisma.$queryRaw(),
   },
 }));
 
@@ -324,29 +344,125 @@ describe("thesisService.recordDecision", () => {
     expect(updated!.decision).toBe("stop");
     expect(updated!.rebuttalCount).toBe(0);
   });
+});
 
-  it("contest: enregistre rebuttal + incremente count", async () => {
+describe("thesisService.beginRebuttalAttempt", () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  it("accepte la premiere contestation et incremente le compteur visible", async () => {
     const thesis = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
-    const updated = await thesisService.recordDecision({
+    const result = await thesisService.beginRebuttalAttempt({
+      dealId: "deal_1",
       thesisId: thesis.id,
-      decision: "contest",
-      rebuttalText: "Je conteste",
+      rebuttalText: "  Je conteste avec des faits  ",
     });
-    expect(updated).not.toBeNull();
-    expect(updated!.rebuttalCount).toBe(1);
-    expect(updated!.rebuttalText).toBe("Je conteste");
+
+    expect(result).not.toBeNull();
+    expect(result?.status).toBe("accepted");
+    expect(result?.thesis.rebuttalCount).toBe(1);
+    expect(result?.thesis.rebuttalText).toBe("Je conteste avec des faits");
+    expect(result?.thesis.decision).toBe("contest");
+  });
+
+  it("retourne duplicate pour le meme rebuttal deja finalise sans re-incrementer", async () => {
+    const thesis = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
+    const first = await thesisService.beginRebuttalAttempt({
+      dealId: "deal_1",
+      thesisId: thesis.id,
+      rebuttalText: "Je conteste avec des faits",
+    });
+    expect(first?.status).toBe("accepted");
+
+    const finalized = await thesisService.finalizeRebuttalAttempt({
+      thesisId: thesis.id,
+      rebuttalText: "Je conteste avec des faits",
+      verdict: "rejected",
+    });
+    expect(finalized.status).toBe("finalized");
+
+    const duplicate = await thesisService.beginRebuttalAttempt({
+      dealId: "deal_1",
+      thesisId: thesis.id,
+      rebuttalText: "  Je conteste avec des faits  ",
+    });
+
+    const latest = await thesisService.getLatest("deal_1");
+
+    expect(duplicate?.status).toBe("duplicate");
+    expect(latest?.rebuttalCount).toBe(1);
+    expect(latest?.rebuttalVerdict).toBe("rejected");
+    expect(latest?.decision).toBe("contest");
   });
 
   it("hasReachedRebuttalCap: true a 3 rebuttals", async () => {
-    const thesis = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
     for (let i = 0; i < 3; i++) {
-      await thesisService.recordDecision({
-        thesisId: thesis.id,
-        decision: "contest",
-        rebuttalText: `r${i}`,
+      const thesis = await thesisService.create({
+        dealId: "deal_1",
+        extractorOutput: makeExtractorOutput({ sourceHash: `hash-${i}` }),
       });
+      const result = await thesisService.beginRebuttalAttempt({
+        dealId: "deal_1",
+        thesisId: thesis.id,
+        rebuttalText: `rebuttal-${i}`,
+      });
+      expect(result?.status).toBe("accepted");
+      const finalized = await thesisService.finalizeRebuttalAttempt({
+        thesisId: thesis.id,
+        rebuttalText: `rebuttal-${i}`,
+        verdict: "rejected",
+      });
+      expect(finalized.status).toBe("finalized");
+    }
+
+    const latest = await thesisService.create({
+      dealId: "deal_1",
+      extractorOutput: makeExtractorOutput({ sourceHash: "hash-4" }),
+    });
+
+    const blocked = await thesisService.beginRebuttalAttempt({
+      dealId: "deal_1",
+      thesisId: latest.id,
+      rebuttalText: "rebuttal-4",
+    });
+
+    expect(blocked?.status).toBe("cap_reached");
+    for (let i = 0; i < 3; i++) {
+      expect(store[i]?.rebuttalCount).toBe(1);
     }
     expect(await thesisService.hasReachedRebuttalCap("deal_1")).toBe(true);
+  });
+
+  it("revertit une tentative finalisee pour permettre un retry propre du rebuttal", async () => {
+    const thesis = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
+
+    const first = await thesisService.beginRebuttalAttempt({
+      dealId: "deal_1",
+      thesisId: thesis.id,
+      rebuttalText: "Je conteste avec des faits",
+    });
+    expect(first?.status).toBe("accepted");
+
+    const finalized = await thesisService.finalizeRebuttalAttempt({
+      thesisId: thesis.id,
+      rebuttalText: "Je conteste avec des faits",
+      verdict: "valid",
+    });
+    expect(finalized.status).toBe("finalized");
+
+    const reverted = await thesisService.revertRebuttalAttempt({
+      thesisId: thesis.id,
+      rebuttalText: "Je conteste avec des faits",
+      expectedVerdict: "valid",
+    });
+
+    expect(reverted).not.toBeNull();
+    expect(reverted?.decision).toBeNull();
+    expect(reverted?.rebuttalText).toBeNull();
+    expect(reverted?.rebuttalVerdict).toBeNull();
+    expect(reverted?.rebuttalCount).toBe(0);
   });
 });
 

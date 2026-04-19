@@ -44,6 +44,7 @@ export interface DealChatContextData {
   extractedData?: Record<string, unknown>;
   benchmarkData?: unknown;
   comparableDeals?: unknown[];
+  lastAnalysisId?: string | null;
 }
 
 // ============================================================================
@@ -142,12 +143,18 @@ export async function buildChatContext(
 /**
  * Get chat context for a deal
  */
-export async function getChatContext(dealId: string): Promise<DealChatContextData | null> {
+export async function getChatContext(
+  dealId: string,
+  options?: { analysisId?: string | null }
+): Promise<DealChatContextData | null> {
   const context = await prisma.dealChatContext.findUnique({
     where: { dealId },
   });
 
   if (!context) return null;
+  if ("analysisId" in (options ?? {}) && context.lastAnalysisId !== options?.analysisId) {
+    return null;
+  }
 
   return {
     keyFacts: context.keyFacts as unknown as KeyFact[],
@@ -156,6 +163,7 @@ export async function getChatContext(dealId: string): Promise<DealChatContextDat
     extractedData: context.extractedData as Record<string, unknown> | undefined,
     benchmarkData: context.benchmarkData,
     comparableDeals: context.comparableDeals as unknown[] | undefined,
+    lastAnalysisId: context.lastAnalysisId,
   };
 }
 
@@ -180,7 +188,10 @@ export interface LiveSessionContextData {
  * Get full context for chat agent (includes raw data)
  * This is the comprehensive context used by DealChatAgent
  */
-export async function getFullChatContext(dealId: string): Promise<{
+export async function getFullChatContext(
+  dealId: string,
+  options?: { analysisId?: string | null }
+): Promise<{
   chatContext: DealChatContextData | null;
   deal: Awaited<ReturnType<typeof getDealBasicInfo>>;
   documents: Awaited<ReturnType<typeof getDocumentSummaries>>;
@@ -188,10 +199,10 @@ export async function getFullChatContext(dealId: string): Promise<{
   liveSessions: LiveSessionContextData[];
 }> {
   const [chatContext, deal, documents, latestAnalysis, liveSessions] = await Promise.all([
-    getChatContext(dealId),
+    getChatContext(dealId, options),
     getDealBasicInfo(dealId),
     getDocumentSummaries(dealId),
-    getLatestAnalysisResults(dealId),
+    getLatestAnalysisResults(dealId, options),
     getCompletedLiveSessions(dealId),
   ]);
 
@@ -425,20 +436,40 @@ async function getDocumentSummaries(dealId: string) {
   }));
 }
 
-async function getLatestAnalysisResults(dealId: string) {
-  const analysis = await prisma.analysis.findFirst({
-    where: { dealId, status: "COMPLETED" },
-    orderBy: { completedAt: "desc" },
-    select: {
-      id: true,
-      mode: true,
-      summary: true,
-      completedAt: true,
-      negotiationStrategy: true,
-    },
-  });
+async function getLatestAnalysisResults(
+  dealId: string,
+  options?: { analysisId?: string | null }
+) {
+  const analysis = "analysisId" in (options ?? {})
+    ? options?.analysisId
+      ? await prisma.analysis.findUnique({
+          where: { id: options.analysisId },
+          select: {
+            id: true,
+            dealId: true,
+            status: true,
+            mode: true,
+            summary: true,
+            completedAt: true,
+            negotiationStrategy: true,
+          },
+        })
+      : null
+    : await prisma.analysis.findFirst({
+        where: { dealId, status: "COMPLETED" },
+        orderBy: { completedAt: "desc" },
+        select: {
+          id: true,
+          dealId: true,
+          status: true,
+          mode: true,
+          summary: true,
+          completedAt: true,
+          negotiationStrategy: true,
+        },
+      });
 
-  if (!analysis) return null;
+  if (!analysis || analysis.dealId !== dealId || analysis.status !== "COMPLETED") return null;
 
   return {
     id: analysis.id,

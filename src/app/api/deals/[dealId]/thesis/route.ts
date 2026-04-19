@@ -11,6 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { thesisService } from "@/services/thesis";
+import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -60,6 +61,13 @@ export async function GET(_request: Request, context: RouteContext) {
     const latestEnriched = {
       ...latest,
       thesisBypass: linkedAnalysis?.thesisBypass ?? false,
+      evaluationAxes: normalizeThesisEvaluation({
+        verdict: latest.verdict as never,
+        confidence: latest.confidence,
+        ycLens: latest.ycLens as never,
+        thielLens: latest.thielLens as never,
+        angelDeskLens: latest.angelDeskLens as never,
+      }),
     };
 
     return NextResponse.json({
@@ -81,6 +89,13 @@ export async function GET(_request: Request, context: RouteContext) {
           moat: h.moat,
           pathToExit: h.pathToExit,
           loadBearing: h.loadBearing,
+          evaluationAxes: normalizeThesisEvaluation({
+            verdict: h.verdict as never,
+            confidence: h.confidence,
+            ycLens: h.ycLens as never,
+            thielLens: h.thielLens as never,
+            angelDeskLens: h.angelDeskLens as never,
+          }),
         })),
         hasPendingDecision,
       },

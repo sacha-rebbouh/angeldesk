@@ -56,6 +56,16 @@ interface AuditPage {
   extractionTier: "native_only" | "standard_ocr" | "high_fidelity" | "supreme" | null;
   visualRiskScore: number | null;
   visualRiskReasons: string[];
+  semanticAssessment?: {
+    pageClass?: string | null;
+    structureDependency?: string | null;
+    semanticSufficiency?: string | null;
+    labelValueIntegrity?: string | null;
+    visualNoiseScore?: number | null;
+    analyticalValueScore?: number | null;
+    minimumEvidence?: string[];
+    rationale?: string[];
+  } | null;
   errorMessage: string | null;
   artifactVersion: string | null;
   artifact: {
@@ -83,6 +93,8 @@ interface AuditPage {
     recommendedAction: "NONE" | "REVIEW_PAGE" | "RETRY_PAGE" | "RETRY_OR_REVIEW_PAGE";
   };
   pageImageHash: string | null;
+  blocksAnalysis: boolean;
+  needsInspection: boolean;
   extractedText: string;
   override: {
     id: string;
@@ -97,8 +109,11 @@ interface ExtractionAuditResponse {
     document: {
       id: string;
       name: string;
+      type?: string;
+      mimeType?: string | null;
       processingStatus: string;
       extractionQuality: number | null;
+      excelModelAudit?: ExcelModelAuditPayload | null;
     };
     corpus: {
       text: string;
@@ -140,6 +155,142 @@ interface ExtractionAuditResponse {
   };
 }
 
+interface ExcelWorkbookAudit {
+  hiddenSheets?: string[];
+  assumptionSheets?: string[];
+  outputSheets?: string[];
+  calcSheets?: string[];
+  criticalSheets?: string[];
+  formulaHeavySheets?: string[];
+  warningFlags?: string[];
+}
+
+interface ExcelDriverSignal {
+  sheet: string;
+  cell: string;
+  label: string;
+  value: string;
+  kind: string;
+  confidence: string;
+}
+
+interface ExcelOutputSignal {
+  sheet: string;
+  cell: string;
+  label: string;
+  value: string;
+  supportingRefs?: string[];
+  confidence: string;
+}
+
+interface ExcelHardcodeSignal {
+  sheet: string;
+  cell: string;
+  label: string;
+  value: string;
+  severity: "low" | "medium" | "high";
+  reason: string;
+}
+
+interface ExcelHiddenStructureSignal {
+  type: string;
+  sheet: string;
+  index?: number;
+  reason: string;
+}
+
+interface ExcelDisconnectedCalcSignal {
+  sheet: string;
+  cell: string;
+  formula: string;
+  reason: string;
+}
+
+interface ExcelCriticalDependency {
+  output: string;
+  precedentCount: number;
+  hardcodedPrecedentCount: number;
+  crossSheetPrecedentCount: number;
+}
+
+interface ExcelModelIntelligencePayload {
+  workbookMap?: {
+    sheetCount?: number;
+    hiddenSheets?: string[];
+    roles?: Array<{
+      name: string;
+      role: string;
+      classification: string;
+      hidden: boolean;
+      formulaDensity: number;
+    }>;
+  };
+  lineage?: {
+    nodes?: number;
+    edges?: number;
+    crossSheetEdges?: number;
+    lineageSamples?: Array<{
+      target: string;
+      formula: string;
+      precedents: string[];
+      precedentDepthEstimate: number;
+    }>;
+  };
+  drivers?: { count?: number; top?: ExcelDriverSignal[] };
+  outputs?: { count?: number; top?: ExcelOutputSignal[] };
+  hardcodes?: { count?: number; highSeverityCount?: number; top?: ExcelHardcodeSignal[] };
+  hiddenStructures?: ExcelHiddenStructureSignal[];
+  disconnectedCalcs?: ExcelDisconnectedCalcSignal[];
+  criticalDependencies?: ExcelCriticalDependency[];
+  warnings?: string[];
+}
+
+interface ExcelFinancialAuditFlag {
+  severity: "critical" | "high" | "medium" | "low";
+  title: string;
+  message: string;
+  evidence: string[];
+}
+
+interface ExcelFinancialAuditPayload {
+  consistencyFlags?: ExcelFinancialAuditFlag[];
+  reconciliationFlags?: ExcelFinancialAuditFlag[];
+  plausibilityFlags?: ExcelFinancialAuditFlag[];
+  heroicAssumptionFlags?: ExcelFinancialAuditFlag[];
+  dependencyFlags?: ExcelFinancialAuditFlag[];
+  greenFlags?: ExcelFinancialAuditFlag[];
+  keyMetrics?: Array<{
+    label: string;
+    value: string;
+    sheet: string;
+    category: string;
+  }>;
+  topSensitivities?: Array<{
+    driver: string;
+    reason: string;
+    sensitivity: "high" | "medium" | "low";
+  }>;
+  overallRisk?: "low" | "medium" | "high" | "critical";
+  warnings?: string[];
+}
+
+interface ExcelAnalystReport {
+  executiveSummary: string;
+  topRedFlags: string[];
+  topGreenFlags: string[];
+  keyQuestions: string[];
+  priorityChecks: string[];
+  confidence: "low" | "medium" | "high";
+  reasoningNotes: string[];
+}
+
+interface ExcelModelAuditPayload {
+  workbookAudit?: ExcelWorkbookAudit | null;
+  modelIntelligence?: ExcelModelIntelligencePayload | null;
+  financialAudit?: ExcelFinancialAuditPayload | null;
+  analystReport?: { report?: ExcelAnalystReport; cost?: number } | ExcelAnalystReport | null;
+}
+
 type ExtractionDecisionAction = "BYPASS_PAGE" | "EXCLUDE_PAGE";
 
 type ExtractionDecisionParams = {
@@ -153,8 +304,12 @@ type PageRetryParams = {
 };
 
 function pageRequiresDecision(page: AuditPage) {
+  return !page.override && page.blocksAnalysis;
+}
+
+function pageNeedsInspection(page: AuditPage) {
   return !page.override && (
-    (page.status !== "READY" && page.status !== "SKIPPED") ||
+    page.needsInspection ||
     page.evidenceSummary?.missingExpectedStructure === true ||
     page.evidenceSummary?.needsHumanReview === true
   );
@@ -193,6 +348,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   });
 
   const audit = data?.data;
+  const excelModelAudit = audit?.document.excelModelAudit ?? null;
   const pages = useMemo(() => audit?.latestRun?.pages ?? [], [audit?.latestRun?.pages]);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredPages = useMemo(() => {
@@ -205,6 +361,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     return pages.find((page) => page.pageNumber === selectedPage) ?? filteredPages[0] ?? null;
   }, [filteredPages, pages, selectedPage]);
   const reviewPages = useMemo(() => pages.filter(pageRequiresDecision), [pages]);
+  const inspectionPages = useMemo(() => pages.filter(pageNeedsInspection), [pages]);
   const reviewPageToInspect = useMemo(() => {
     if (reviewPages.length === 0) return null;
     return reviewPages.find((page) => page.pageNumber === selectedPage) ?? reviewPages[0];
@@ -569,6 +726,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                 <TabsList className="max-w-full overflow-x-auto">
                   <TabsTrigger value="pages">Pages</TabsTrigger>
                   <TabsTrigger value="corpus">Corpus complet</TabsTrigger>
+                  {excelModelAudit && <TabsTrigger value="model">Audit modele</TabsTrigger>}
                   <TabsTrigger
                     value="review"
                     onClick={() => {
@@ -662,10 +820,30 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                                 {pageToInspect.extractionTier && (
                                   <Badge variant="outline">{formatTierLabel(pageToInspect.extractionTier)}</Badge>
                                 )}
+                                {pageToInspect.semanticAssessment?.pageClass && (
+                                  <Badge variant="outline">{formatPageClassLabel(pageToInspect.semanticAssessment.pageClass)}</Badge>
+                                )}
+                                {pageToInspect.semanticAssessment?.structureDependency && (
+                                  <Badge variant="outline">Structure {pageToInspect.semanticAssessment.structureDependency}</Badge>
+                                )}
+                                {pageToInspect.semanticAssessment?.semanticSufficiency && (
+                                  <Badge variant="outline">Fidelite {pageToInspect.semanticAssessment.semanticSufficiency}</Badge>
+                                )}
+                                {typeof pageToInspect.semanticAssessment?.analyticalValueScore === "number" && (
+                                  <Badge variant="outline">Valeur {pageToInspect.semanticAssessment.analyticalValueScore}/100</Badge>
+                                )}
+                                {typeof pageToInspect.semanticAssessment?.visualNoiseScore === "number" && (
+                                  <Badge variant="outline">Bruit {pageToInspect.semanticAssessment.visualNoiseScore}/100</Badge>
+                                )}
                               </div>
                               {pageToInspect.visualRiskReasons.length > 0 && (
                                 <p className="mt-1 text-muted-foreground">
                                   {pageToInspect.visualRiskReasons.join(", ")}
+                                </p>
+                              )}
+                              {pageToInspect.semanticAssessment?.rationale && pageToInspect.semanticAssessment.rationale.length > 0 && (
+                                <p className="mt-1 text-muted-foreground">
+                                  {pageToInspect.semanticAssessment.rationale.join(", ")}
                                 </p>
                               )}
                             </div>
@@ -673,7 +851,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                           {pageToInspect.artifact && (
                             <ArtifactSummary page={pageToInspect} />
                           )}
-                          {pageRequiresDecision(pageToInspect) && (
+                          {pageNeedsInspection(pageToInspect) && (
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <p className="text-sm font-medium text-amber-900">
@@ -742,6 +920,14 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                               </div>
                             </div>
                           )}
+                          {!pageToInspect.blocksAnalysis && pageNeedsInspection(pageToInspect) && !pageToInspect.override && (
+                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                              <p className="font-medium">Inspection recommandee, non bloquante</p>
+                              <p className="mt-1">
+                                La page merite un spot-check humain, mais elle ne bloque pas l&apos;analyse car le texte extrait parait suffisant.
+                              </p>
+                            </div>
+                          )}
                           {pageToInspect.override && (
                             <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
                               <p className="font-medium">
@@ -754,11 +940,11 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                               </p>
                             </div>
                           )}
-                          <div className="min-h-[300px] flex-1 overflow-hidden rounded-lg border">
+                          <div className="min-h-[300px] flex-1 rounded-lg border">
                             <Textarea
                               readOnly
                               value={pageToInspect.extractedText}
-                              className="h-full min-h-[300px] resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
+                              className="h-full min-h-[300px] overflow-y-auto resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
                             />
                           </div>
                         </>
@@ -772,14 +958,20 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                 </TabsContent>
 
                 <TabsContent value="corpus" className="min-h-0 flex-1 overflow-hidden">
-                  <div className="h-full min-h-[420px] overflow-hidden rounded-lg border">
+                  <div className="h-full min-h-[420px] rounded-lg border">
                     <Textarea
                       readOnly
                       value={audit.corpus.text}
-                      className="h-full min-h-[420px] resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
+                      className="h-full min-h-[420px] overflow-y-auto resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
                     />
                   </div>
                 </TabsContent>
+
+                {excelModelAudit && (
+                  <TabsContent value="model" className="min-h-0 flex-1 overflow-y-auto pr-1">
+                    <ExcelModelAuditPanel audit={excelModelAudit} />
+                  </TabsContent>
+                )}
 
                 <TabsContent value="review" className="min-h-0 flex-1 overflow-hidden">
                   {reviewPages.length > 0 && reviewPageToInspect ? (
@@ -915,18 +1107,20 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                           <ArtifactSummary page={reviewPageToInspect} />
                         )}
 
-                        <div className="min-h-[300px] flex-1 overflow-hidden rounded-lg border">
+                        <div className="min-h-[300px] flex-1 rounded-lg border">
                           <Textarea
                             readOnly
                             value={reviewPageToInspect.extractedText}
-                            className="h-full min-h-[300px] resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
+                            className="h-full min-h-[300px] overflow-y-auto resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
                           />
                         </div>
                       </div>
                     </div>
                   ) : (
                     <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-                      Aucune page ne necessite de decision.
+                      {inspectionPages.length > 0
+                        ? "Aucune page ne bloque l'analyse. Les pages restantes peuvent etre inspectees depuis l'onglet Pages."
+                        : "Aucune page ne necessite de decision."}
                     </div>
                   )}
                 </TabsContent>
@@ -1103,6 +1297,295 @@ function formatRecommendedAction(action: NonNullable<AuditPage["evidenceSummary"
   }
 }
 
+function ExcelModelAuditPanel({ audit }: { audit: ExcelModelAuditPayload }) {
+  const workbookAudit = audit.workbookAudit;
+  const intelligence = audit.modelIntelligence;
+  const financialAudit = audit.financialAudit;
+  const analystReport = extractAnalystReport(audit.analystReport);
+  const analystCost = extractAnalystCost(audit.analystReport);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric label="Risque modele" value={formatExcelRisk(financialAudit?.overallRisk)} />
+        <Metric label="Drivers" value={String(intelligence?.drivers?.count ?? 0)} />
+        <Metric label="Outputs" value={String(intelligence?.outputs?.count ?? 0)} />
+        <Metric label="Hardcodes critiques" value={String(intelligence?.hardcodes?.highSeverityCount ?? 0)} />
+      </div>
+
+      {workbookAudit && (
+        <section className="rounded-lg border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-medium">Workbook Map</h3>
+            {workbookAudit.warningFlags?.map((flag) => (
+              <Badge key={flag} variant="outline">{formatFlagLabel(flag)}</Badge>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <SignalList title="Assumption sheets" items={workbookAudit.assumptionSheets ?? []} />
+            <SignalList title="Output sheets" items={workbookAudit.outputSheets ?? []} />
+            <SignalList title="Calc sheets" items={workbookAudit.calcSheets ?? []} />
+            <SignalList title="Hidden sheets" items={workbookAudit.hiddenSheets ?? []} />
+          </div>
+          {intelligence?.workbookMap?.roles && intelligence.workbookMap.roles.length > 0 && (
+            <div className="mt-3 rounded-lg border bg-muted/30 p-3">
+              <p className="text-sm font-medium">Roles de feuilles</p>
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                {intelligence.workbookMap.roles.slice(0, 16).map((role) => (
+                  <div key={role.name} className="rounded border bg-background p-2 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{role.name}</span>
+                      <Badge variant="outline">{role.role}</Badge>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">
+                      {role.classification} · densite formules {Math.round(role.formulaDensity * 100)}%
+                      {role.hidden ? " · hidden" : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {financialAudit && (
+        <section className="rounded-lg border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-medium">Financial Audit</h3>
+            <Badge variant="outline">Overall risk: {formatExcelRisk(financialAudit.overallRisk)}</Badge>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <FlagGroup title="Consistency" flags={financialAudit.consistencyFlags} />
+            <FlagGroup title="Reconciliation" flags={financialAudit.reconciliationFlags} />
+            <FlagGroup title="Plausibility" flags={financialAudit.plausibilityFlags} />
+            <FlagGroup title="Heroic assumptions" flags={financialAudit.heroicAssumptionFlags} />
+            <FlagGroup title="Dependencies" flags={financialAudit.dependencyFlags} />
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <SimpleListCard
+              title="Key metrics"
+              items={(financialAudit.keyMetrics ?? []).slice(0, 12).map((metric) => (
+                `${metric.sheet}: ${metric.label} = ${metric.value}`
+              ))}
+              emptyLabel="Aucune metrique critique detectee"
+            />
+            <SimpleListCard
+              title="Top sensitivities"
+              items={(financialAudit.topSensitivities ?? []).slice(0, 12).map((item) => (
+                `${item.sensitivity.toUpperCase()} · ${item.driver} — ${item.reason}`
+              ))}
+              emptyLabel="Aucune sensibilite prioritaire detectee"
+            />
+          </div>
+          {(financialAudit.greenFlags?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              <FlagGroup title="Green flags" flags={financialAudit.greenFlags} />
+            </div>
+          )}
+        </section>
+      )}
+
+      {intelligence && (
+        <section className="rounded-lg border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-medium">Model Intelligence</h3>
+            {intelligence.warnings?.map((flag) => (
+              <Badge key={flag} variant="outline">{formatFlagLabel(flag)}</Badge>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <SimpleListCard
+              title="Top drivers"
+              items={(intelligence.drivers?.top ?? []).slice(0, 12).map((driver) => (
+                `${driver.sheet}!${driver.cell} ${driver.label} = ${driver.value} (${driver.kind})`
+              ))}
+              emptyLabel="Aucun driver manuel saillant"
+            />
+            <SimpleListCard
+              title="Top outputs"
+              items={(intelligence.outputs?.top ?? []).slice(0, 12).map((output) => (
+                `${output.sheet}!${output.cell} ${output.label} = ${output.value}`
+              ))}
+              emptyLabel="Aucun output saillant"
+            />
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <SimpleListCard
+              title="Hardcodes a challenger"
+              items={(intelligence.hardcodes?.top ?? []).slice(0, 12).map((signal) => (
+                `${signal.severity.toUpperCase()} · ${signal.sheet}!${signal.cell} ${signal.label} = ${signal.value} — ${signal.reason}`
+              ))}
+              emptyLabel="Aucun hardcode saillant"
+            />
+            <SimpleListCard
+              title="Hidden / disconnected structures"
+              items={[
+                ...(intelligence.hiddenStructures ?? []).slice(0, 8).map((signal) => (
+                  `${signal.type} · ${signal.sheet}${signal.index ? `#${signal.index}` : ""} — ${signal.reason}`
+                )),
+                ...(intelligence.disconnectedCalcs ?? []).slice(0, 8).map((signal) => (
+                  `disconnected · ${signal.sheet}!${signal.cell} — ${signal.reason}`
+                )),
+              ]}
+              emptyLabel="Aucune structure masquee ou deconnectee"
+            />
+          </div>
+          {(intelligence.criticalDependencies?.length ?? 0) > 0 && (
+            <div className="mt-3 rounded-lg border bg-muted/30 p-3">
+              <p className="text-sm font-medium">Critical dependencies</p>
+              <div className="mt-2 space-y-2 text-xs">
+                {intelligence.criticalDependencies?.slice(0, 10).map((dependency) => (
+                  <div key={dependency.output} className="rounded border bg-background p-2">
+                    <p className="font-medium">{dependency.output}</p>
+                    <p className="mt-1 text-muted-foreground">
+                      precedents={dependency.precedentCount} · hardcoded={dependency.hardcodedPrecedentCount} · cross-sheet={dependency.crossSheetPrecedentCount}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {analystReport && (
+        <section className="rounded-lg border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-medium">LLM Analyst Layer</h3>
+            <Badge variant="outline">Confidence: {analystReport.confidence}</Badge>
+            {typeof analystCost === "number" && (
+              <Badge variant="outline">Cost: ${analystCost.toFixed(4)}</Badge>
+            )}
+          </div>
+          <p className="mt-3 text-sm">{analystReport.executiveSummary}</p>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <SimpleListCard title="Top red flags" items={analystReport.topRedFlags} emptyLabel="Aucun red flag remonte" />
+            <SimpleListCard title="Top green flags" items={analystReport.topGreenFlags} emptyLabel="Aucun green flag remonte" />
+            <SimpleListCard title="Key questions" items={analystReport.keyQuestions} emptyLabel="Aucune question prioritaire" />
+            <SimpleListCard title="Priority checks" items={analystReport.priorityChecks} emptyLabel="Aucun check prioritaire" />
+          </div>
+          {(analystReport.reasoningNotes?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              <SimpleListCard title="Reasoning notes" items={analystReport.reasoningNotes} emptyLabel="Aucune note supplementaire" />
+            </div>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function FlagGroup({ title, flags }: { title: string; flags?: ExcelFinancialAuditFlag[] }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <p className="text-sm font-medium">{title}</p>
+      <div className="mt-2 space-y-2">
+        {(flags ?? []).length > 0 ? (
+          flags!.slice(0, 8).map((flag, index) => (
+            <div key={`${flag.title}-${index}`} className="rounded border bg-background p-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={flag.severity === "critical" || flag.severity === "high" ? "destructive" : "outline"}>
+                  {flag.severity}
+                </Badge>
+                <span className="font-medium">{flag.title}</span>
+              </div>
+              <p className="mt-1 text-muted-foreground">{flag.message}</p>
+              {flag.evidence.length > 0 && (
+                <p className="mt-1 text-muted-foreground">
+                  {flag.evidence.slice(0, 3).join(" · ")}
+                </p>
+              )}
+            </div>
+          ))
+        ) : (
+          <p className="text-xs text-muted-foreground">Aucun signal remonte.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SignalList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <p className="text-sm font-medium">{title}</p>
+      {items.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {items.slice(0, 12).map((item) => (
+            <Badge key={item} variant="outline">{item}</Badge>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-muted-foreground">Aucun element detecte.</p>
+      )}
+    </div>
+  );
+}
+
+function SimpleListCard({
+  title,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  items: string[];
+  emptyLabel: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <p className="text-sm font-medium">{title}</p>
+      {items.length > 0 ? (
+        <div className="mt-2 space-y-2 text-xs">
+          {items.map((item, index) => (
+            <div key={`${title}-${index}-${item.slice(0, 24)}`} className="rounded border bg-background p-2">
+              {item}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-muted-foreground">{emptyLabel}</p>
+      )}
+    </div>
+  );
+}
+
+function extractAnalystReport(
+  analystReport: ExcelModelAuditPayload["analystReport"]
+): ExcelAnalystReport | null {
+  if (!analystReport || typeof analystReport !== "object" || Array.isArray(analystReport)) {
+    return null;
+  }
+  if ("report" in analystReport && analystReport.report && typeof analystReport.report === "object") {
+    return analystReport.report as ExcelAnalystReport;
+  }
+  if ("executiveSummary" in analystReport) {
+    return analystReport as ExcelAnalystReport;
+  }
+  return null;
+}
+
+function extractAnalystCost(
+  analystReport: ExcelModelAuditPayload["analystReport"]
+): number | null {
+  if (!analystReport || typeof analystReport !== "object" || Array.isArray(analystReport)) {
+    return null;
+  }
+  if ("cost" in analystReport && typeof analystReport.cost === "number") {
+    return analystReport.cost;
+  }
+  return null;
+}
+
+function formatExcelRisk(risk?: string | null) {
+  if (!risk) return "N/A";
+  return risk.replace(/_/g, " ").toUpperCase();
+}
+
+function formatFlagLabel(flag: string) {
+  return flag.replace(/_/g, " ");
+}
+
 function formatTierLabel(tier: string): string {
   switch (tier) {
     case "native_only":
@@ -1115,6 +1598,45 @@ function formatTierLabel(tier: string): string {
       return "Supreme";
     default:
       return tier;
+  }
+}
+
+function formatPageClassLabel(pageClass: string): string {
+  switch (pageClass) {
+    case "cover_page":
+      return "Cover page";
+    case "table_of_contents":
+      return "Table of contents";
+    case "closing_contact":
+      return "Closing / contact";
+    case "branding_transition":
+      return "Branding transition";
+    case "decorative":
+      return "Decorative";
+    case "narrative":
+      return "Narrative";
+    case "section_divider":
+      return "Section divider";
+    case "structured_table":
+      return "Structured table";
+    case "chart_kpi":
+      return "Chart / KPI";
+    case "asset_tear_sheet":
+      return "Asset tear sheet";
+    case "mixed_visual_analytics":
+      return "Mixed analytics";
+    case "org_diagram":
+      return "Org diagram";
+    case "process_diagram":
+      return "Process diagram";
+    case "market_map":
+      return "Market map";
+    case "transaction_terms":
+      return "Transaction terms";
+    case "legal_dense":
+      return "Legal dense";
+    default:
+      return pageClass;
   }
 }
 

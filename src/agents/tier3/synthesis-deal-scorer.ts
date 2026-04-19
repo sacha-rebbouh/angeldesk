@@ -174,7 +174,7 @@ interface SynthesisDealScorerFindings {
     keyInsights: string[];
   };
 
-  // Alignment avec préférences BA
+  // Alignment avec préférences BA (fit investisseur, distinct de la qualité intrinsèque du deal)
   baAlignment: {
     sectorMatch: boolean;
     stageMatch: boolean;
@@ -346,12 +346,20 @@ Ajuster le score base selon:
 - Incohérences détectées (contradiction-detector): -5 à -15 points
 - Données manquantes (dataCompleteness < 70%): -10 points
 - Sector expert négatif: -5 à -10 points
-- BA preferences mismatch: -5 points
+- BA preferences mismatch: NE PAS penaliser automatiquement le score intrinsèque. Reporter dans baAlignment, risks ou conditions seulement.
 
 Bonifications possibles:
 - Top decile sur dimension clé: +5 points
 - Serial founder avec exit: +5 points
 - Investor signal fort (lead connu): +3 points
+
+## Étape 3bis: SÉPARATION CONCEPTUELLE OBLIGATOIRE
+- Distingue explicitement:
+  - **qualite intrinsèque du deal / de la these**
+  - **investor profile fit** (mandat, préférences, ticket, horizon)
+  - **deal accessibility** (ticket minimum, allocation, structure, liquidité)
+- Un mismatch BA ne doit jamais, a lui seul, dégrader les dimensions fondamentales.
+- Ne traite une contrainte d'accessibilité comme faiblesse intrinsèque que si elle révèle un problème causal documenté sur l'exécution du deal.
 
 ## Étape 4: CROSS-REFERENCE FUNDING DB
 Obligatoire:
@@ -840,6 +848,12 @@ ${weightsTable}
 
 6. **LISTE LES NEXT STEPS** concrets
 
+7. **SEPARE EXPLICITEMENT LES AXES**:
+   - Qualite intrinsèque du deal / de la these
+   - Investor profile fit (préférences, mandat, ticket, horizon)
+   - Deal accessibility (ticket minimum, allocation, structure, liquidité)
+   - Un mismatch BA ne doit jamais, a lui seul, dégrader les dimensions fondamentales ni le verdict thesis-first.
+
 ---
 
 ## RAPPELS CRITIQUES
@@ -848,9 +862,10 @@ ${weightsTable}
 ⚠️ **SOURCE CHAQUE AFFIRMATION** - Cite l'agent qui a fourni la donnée
 ⚠️ **SOIS INFORMATIF** — Profil de signal clair, le BA décide
 ⚠️ **CONSOLIDE LES RED FLAGS** - Ne répète pas, synthétise avec priorité
-⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences
+⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences dans \`baAlignment\`, les conditions et le narratif, sans confondre cela avec la qualité intrinsèque du deal
 ⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les scénarios ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal alert_dominant avec scepticisme >80 ne peut pas avoir un score > 40.
 ⚠️ **score.value = Σ(breakdown weights × breakdown scores)** — Le score.value DOIT être la moyenne pondérée de ton breakdown. Si ton breakdown donne 50, score.value DOIT être ~50, PAS 2 ou 5. C'est un entier 0-100.
+⚠️ **NE CONFONDS PAS FIT ET QUALITÉ** — ticket minimum, secteur hors mandat BA, ou horizon peu adapté au profil investisseur doivent etre surfaces comme \`baAlignment\` / \`conditions\`, pas comme preuve que la these est faible.
 
 **CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
 - dimensionScores: 7 items, adjustments: MAX 5, comparableDeals: MAX 3
@@ -951,7 +966,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
   /**
    * F23: Build deal source analysis section for the prompt.
-   * Analyzes why this deal arrived at a BA solo instead of a VC fund.
+   * Analyse le contexte de levee sans le transformer en malus automatique de qualite.
    */
   private buildDealSourceSection(context: EnrichedAgentContext): string {
     const deal = context.deal as Record<string, unknown>;
@@ -972,7 +987,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
         const durationMonths = Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24 * 30));
         lines.push(`**Duree de la levee**: ${durationMonths} mois`);
         if (durationMonths > 6) {
-          lines.push(`**WARNING**: Levee en cours depuis > 6 mois. Signal negatif potentiel.`);
+          lines.push(`**WARNING**: Levee en cours depuis > 6 mois. Signal de fundraising a analyser, sans deduction automatique.`);
         }
       }
     }
@@ -988,9 +1003,9 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
     if (investors && investors.length > 0) {
       if (hasVC) {
-        lines.push(`**VC present dans le tour**: Oui → signal positif (validation institutionnelle)`);
+        lines.push(`**VC present dans le tour**: Oui → information de contexte. Peut renforcer la lisibilite du tour sans valider a lui seul la qualite du deal.`);
       } else {
-        lines.push(`**Aucun VC dans le tour**: Investisseurs: ${investors.join(", ")}. Pourquoi pas de VC ? A analyser.`);
+        lines.push(`**Aucun VC dans le tour**: Investisseurs: ${investors.join(", ")}. Pourquoi pas de VC ? A analyser sans conclusion automatique sur la qualite du deal.`);
       }
     } else {
       lines.push(`**Investisseurs**: Information non disponible.`);
@@ -1003,13 +1018,13 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
 3. Combien d'investisseurs ont ete contactes ?
 4. Depuis combien de temps dure la levee ?
 
-**IMPACT SUR LE SCORE** :
-- Si levee > 6 mois sans closing : -5 points sur le score global
-- Si aucun VC n'a regarde : -3 points (compense si stage trop early pour VC)
-- Si referral qualifie d'un investisseur connu : +3 points
+**TRAITEMENT ATTENDU** :
+- Utilise ces elements comme contexte de marketability / investor-fit / accessibilite du tour
+- Ne convertis PAS automatiquement ces elements en bonus/malus du score global
+- Ne les traite comme faiblesse intrinsèque que s'ils revelent un probleme causal documente (ex: refus VC motives par un defaut fondamental verifie)
 
-**AJOUTER DANS topWeaknesses OU topStrengths** :
-- "Deal source: [analyse de pourquoi ce deal arrive a un BA]"
+**AJOUTER DANS topWeaknesses OU topStrengths si pertinent** :
+- "Deal source / fundraising context: [analyse factuelle de pourquoi ce deal arrive a ce type d'investisseur]"
 
 **AJOUTER DANS questions (TOUJOURS)** :
 - "Avez-vous presente ce deal a des fonds VC ? Si oui, quels retours avez-vous eus ?"
@@ -1479,7 +1494,7 @@ Aucune incohérence majeure détectée entre les agents.`;
 
   private formatBAPreferences(prefs: BAPreferences | undefined, dealSector: string | null, dealStage: string | null): string {
     if (!prefs) {
-      return "Aucune préférence BA configurée - utiliser les critères standards.";
+      return "Aucune préférence BA configurée - utiliser les critères standards. Ne pas inférer de mismatch investisseur.";
     }
 
     const lines: string[] = [];
@@ -1494,11 +1509,11 @@ Aucune incohérence majeure détectée entre les agents.`;
       const isExcluded = prefs.excludedSectors.some(s => sectorLower.includes(s.toLowerCase()));
 
       if (isExcluded) {
-        lines.push(`**Secteur**: ⚠️ EXCLU - ${dealSector} est dans les exclusions du BA`);
+        lines.push(`**Secteur**: ⚠️ EXCLU POUR CE BA - ${dealSector} est dans les exclusions du BA. Information de fit, pas jugement intrinsèque sur le deal.`);
       } else if (isPreferred) {
-        lines.push(`**Secteur**: ✅ PRÉFÉRÉ - ${dealSector} match les préférences`);
+        lines.push(`**Secteur**: ✅ PRÉFÉRÉ POUR CE BA - ${dealSector} match les préférences`);
       } else {
-        lines.push(`**Secteur**: ℹ️ NEUTRE - ${dealSector} (préférés: ${prefs.preferredSectors.join(", ")})`);
+        lines.push(`**Secteur**: ℹ️ FIT NEUTRE - ${dealSector} (préférés: ${prefs.preferredSectors.join(", ")})`);
       }
     }
 
@@ -1508,9 +1523,9 @@ Aucune incohérence majeure détectée entre les agents.`;
         dealStage.toLowerCase().replace(/[^a-z]/g, "").includes(s.toLowerCase().replace(/[^a-z]/g, ""))
       );
       if (isPreferredStage) {
-        lines.push(`**Stage**: ✅ PRÉFÉRÉ - ${dealStage}`);
+        lines.push(`**Stage**: ✅ PRÉFÉRÉ POUR CE BA - ${dealStage}`);
       } else {
-        lines.push(`**Stage**: ℹ️ HORS PRÉFÉRENCES - ${dealStage} (préférés: ${prefs.preferredStages.join(", ")})`);
+        lines.push(`**Stage**: ℹ️ HORS PRÉFÉRENCES BA - ${dealStage} (préférés: ${prefs.preferredStages.join(", ")})`);
       }
     }
 

@@ -21,7 +21,7 @@ export type Tier3AgentName = "contradiction-detector" | "scenario-modeler" | "sy
 /** @deprecated Use Tier3AgentName */
 export type Tier2AgentName = Tier3AgentName;
 
-export interface AnalysisSession { id: string; dealId: string; type: "screening" | "full_dd"; status: "pending" | "running" | "completed" | "failed"; agents: { name: string; status: "pending" | "running" | "completed" | "failed"; result?: AnalysisAgentResult }[]; totalCost: number; startedAt: Date; completedAt?: Date }
+export interface AnalysisSession { id: string; dealId: string; type: "screening" | "full_analysis" | "full_dd"; status: "pending" | "running" | "completed" | "failed"; agents: { name: string; status: "pending" | "running" | "completed" | "failed"; result?: AnalysisAgentResult }[]; totalCost: number; startedAt: Date; completedAt?: Date }
 
 // Agent configuration
 export interface AgentConfig { name: string; description: string; modelComplexity: "simple" | "medium" | "complex" | "critical"; maxRetries: number; timeoutMs: number; dependencies?: string[] }

@@ -1,11 +1,14 @@
 /**
  * LLM Call Logger
  *
- * Logs all LLM API calls (prompts and responses) for debugging, audit, and replay.
- * Also tracks detailed costs per call.
+ * Logs LLM API calls for debugging and audit without persisting raw prompt/response
+ * bodies by default. Raw storage must be explicitly re-enabled via env for controlled
+ * debugging sessions only.
  */
 
+import { createHash } from "node:crypto";
 import { prisma } from "@/lib/prisma";
+import { logger } from "@/lib/logger";
 import { Prisma } from "@prisma/client";
 
 export interface LLMCallLogEntry {
@@ -46,6 +49,44 @@ export interface LLMCallLogEntry {
   metadata?: Record<string, unknown>;
 }
 
+function isRawLoggingEnabled(): boolean {
+  return process.env.LLM_LOG_RAW_TEXT === "true";
+}
+
+function hashText(value: string | undefined): string | null {
+  if (!value) return null;
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function protectText(value: string | undefined, label: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (isRawLoggingEnabled()) return value;
+
+  const hash = hashText(value);
+  return `[REDACTED:${label}; len=${value.length}; sha256=${hash?.slice(0, 16) ?? "none"}]`;
+}
+
+function buildProtectedMetadata(entry: LLMCallLogEntry): Record<string, unknown> | undefined {
+  const hashes = {
+    loggingMode: isRawLoggingEnabled() ? "raw" : "redacted",
+    systemPromptHash: hashText(entry.systemPrompt),
+    systemPromptLength: entry.systemPrompt?.length ?? 0,
+    userPromptHash: hashText(entry.userPrompt),
+    userPromptLength: entry.userPrompt.length,
+    responseHash: hashText(entry.response),
+    responseLength: entry.response.length,
+  };
+
+  if (!entry.metadata) {
+    return hashes;
+  }
+
+  return {
+    ...entry.metadata,
+    llmTrace: hashes,
+  };
+}
+
 /**
  * Log an LLM call to the database
  *
@@ -53,6 +94,11 @@ export interface LLMCallLogEntry {
  */
 export async function logLLMCall(entry: LLMCallLogEntry): Promise<string | null> {
   try {
+    const protectedSystemPrompt = protectText(entry.systemPrompt, "system");
+    const protectedUserPrompt = protectText(entry.userPrompt, "user") ?? "[REDACTED:user]";
+    const protectedResponse = protectText(entry.response, "response") ?? "[REDACTED:response]";
+    const protectedMetadata = buildProtectedMetadata(entry);
+
     const log = await prisma.lLMCallLog.create({
       data: {
         analysisId: entry.analysisId,
@@ -60,11 +106,11 @@ export async function logLLMCall(entry: LLMCallLogEntry): Promise<string | null>
         agentName: entry.agentName,
         model: entry.model,
         provider: entry.provider ?? "openrouter",
-        systemPrompt: entry.systemPrompt,
-        userPrompt: entry.userPrompt,
+        systemPrompt: protectedSystemPrompt,
+        userPrompt: protectedUserPrompt,
         temperature: entry.temperature,
         maxTokens: entry.maxTokens,
-        response: entry.response,
+        response: protectedResponse,
         finishReason: entry.finishReason,
         inputTokens: entry.inputTokens,
         outputTokens: entry.outputTokens,
@@ -75,15 +121,15 @@ export async function logLLMCall(entry: LLMCallLogEntry): Promise<string | null>
         isError: entry.isError ?? false,
         errorMessage: entry.errorMessage,
         errorType: entry.errorType,
-        metadata: entry.metadata
-          ? (JSON.parse(JSON.stringify(entry.metadata)) as Prisma.InputJsonValue)
+        metadata: protectedMetadata
+          ? (JSON.parse(JSON.stringify(protectedMetadata)) as Prisma.InputJsonValue)
           : Prisma.JsonNull,
       },
     });
 
     return log.id;
   } catch (error) {
-    console.error("[LLMLogger] Failed to log call:", error);
+    logger.error({ err: error }, "Failed to persist LLM call log");
     return null;
   }
 }
@@ -93,7 +139,7 @@ export async function logLLMCall(entry: LLMCallLogEntry): Promise<string | null>
  */
 export function logLLMCallAsync(entry: LLMCallLogEntry): void {
   logLLMCall(entry).catch((err) => {
-    console.error("[LLMLogger] Async log failed:", err);
+    logger.error({ err }, "Async LLM call log failed");
   });
 }
 
@@ -138,13 +184,13 @@ export async function getLLMCallsForAnalysis(
       cost: Number(log.cost),
     }));
   } catch (error) {
-    console.error("[LLMLogger] Failed to get calls:", error);
+    logger.error({ err: error, analysisId }, "Failed to load LLM calls for analysis");
     return [];
   }
 }
 
 /**
- * Get full LLM call details (including prompts/response)
+ * Get stored LLM call details. By default prompts/responses are redacted at write time.
  */
 export async function getLLMCallDetails(callId: string): Promise<LLMCallLogEntry | null> {
   try {
@@ -177,7 +223,7 @@ export async function getLLMCallDetails(callId: string): Promise<LLMCallLogEntry
       metadata: log.metadata as Record<string, unknown> | undefined,
     };
   } catch (error) {
-    console.error("[LLMLogger] Failed to get call details:", error);
+    logger.error({ err: error, callId }, "Failed to get LLM call details");
     return null;
   }
 }
@@ -251,7 +297,7 @@ export async function getAnalysisCostBreakdown(
 
     return result;
   } catch (error) {
-    console.error("[LLMLogger] Failed to get cost breakdown:", error);
+    logger.error({ err: error, analysisId }, "Failed to compute LLM call cost breakdown");
     return {
       totalCost: 0,
       totalTokens: { input: 0, output: 0 },

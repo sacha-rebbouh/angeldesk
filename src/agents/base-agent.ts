@@ -17,6 +17,7 @@ import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
 import { getStageCalibrationBlock } from "@/agents/stage-calibration";
 import { formatRetrievedDocumentWindows } from "./document-context-retriever";
 import { formatEvidenceLedgerForPrompt } from "@/services/evidence-ledger";
+import { buildExcelPromptSummaryFromMetrics } from "@/services/excel/prompt-summary";
 
 // Generic type for agent results with data
 export interface AgentResultWithData<T> extends AgentResult {
@@ -892,6 +893,27 @@ ${sanitizedDeal.description}
     // Sanitize financial model content (preserve structure for analysis)
     return sanitizeForLLM(retrieved.text, {
       maxLength: 100000,
+      preserveNewlines: true,
+    });
+  }
+
+  protected getFinancialModelAuditSummary(context: AgentContext): string | null {
+    const { documents } = context;
+    if (!documents) return null;
+
+    const summaries = documents
+      .filter((doc) => doc.type === "FINANCIAL_MODEL")
+      .map((doc) => {
+        const summary = buildExcelPromptSummaryFromMetrics(doc.extractionMetrics);
+        if (!summary) return null;
+        return `### AUDIT STRUCTUREL EXCEL — ${sanitizeName(doc.name)}\n${summary}`;
+      })
+      .filter((value): value is string => Boolean(value));
+
+    if (summaries.length === 0) return null;
+
+    return sanitizeForLLM(summaries.join("\n\n"), {
+      maxLength: 18000,
       preserveNewlines: true,
     });
   }

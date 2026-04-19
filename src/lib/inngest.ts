@@ -364,10 +364,47 @@ export const dealAnalysisFunction = inngest.createFunction(
     const decision: "stop" | "continue" | "contest" | "timeout" = decisionData?.decision ?? "timeout";
     const thesisBypass = decisionData?.thesisBypass ?? false;
 
+    const currentAnalysis = await step.run('load-analysis-after-thesis-wait', async () => {
+      return await prisma.analysis.findUnique({
+        where: { id: analysisId },
+        select: { status: true, thesisDecision: true, completedAt: true },
+      });
+    });
+
+    if (!currentAnalysis) {
+      logger.warn({ analysisId }, 'Thesis gate analysis disappeared while waiting for decision');
+      return {
+        ...phase1,
+        success: false,
+        summary: "Analysis disappeared while waiting for thesis decision.",
+      };
+    }
+
+    if (currentAnalysis.status !== "RUNNING") {
+      logger.info(
+        { analysisId, status: currentAnalysis.status, thesisDecision: currentAnalysis.thesisDecision },
+        'Skipping thesis wait continuation because analysis is no longer running'
+      );
+      return {
+        sessionId: analysisId,
+        dealId,
+        type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
+        success: true,
+        results: phase1.results,
+        totalCost: phase1.totalCost,
+        totalTimeMs: phase1.totalTimeMs,
+        summary: currentAnalysis.thesisDecision === "contest"
+          ? "Original thesis review superseded by a valid rebuttal re-extraction."
+          : "Analysis already closed while waiting for thesis decision.",
+      };
+    }
+
     // ========================================================================
     // PHASE 3 : Reprise selon la decision
     //  - stop/timeout : completer these-only + refund partiel/complet
-    //  - continue/contest : lancer Tier 1/2/3 via continueAnalysisAfterThesis
+    //  - continue : lancer Tier 1/2/3 via continueAnalysisAfterThesis
+    //  - contest : ferme l'analyse initiale comme superseded, la nouvelle review
+    //              est portee par analysis/thesis.reextract
     // ========================================================================
     const phase3 = await step.run('phase3-post-thesis', async () => {
       const { orchestrator } = await import("@/agents");
@@ -408,7 +445,7 @@ export const dealAnalysisFunction = inngest.createFunction(
     // Compensation si phase3 echoue — CAS SPECIAL : si paused, le BA a deja recu
     // la valeur "these" (Tier 0.5 complet). Refund partiel UNIQUEMENT du reste
     // (Tier 1/2/3 non livre). FIX (audit P1 #10) : avant on refund integral = double valeur.
-    if (!phase3.success) {
+    if (!phase3.success && decision !== "contest") {
       await step.run('refund-on-phase3-failure', async () => {
         if (paused) {
           // Phase3 fail apres continue/contest → rembourser 3cr (meme montant que stop)
@@ -525,19 +562,23 @@ export const thesisReextractFunction = inngest.createFunction(
   },
   { event: 'analysis/thesis.reextract' },
   async ({ event, step }) => {
-    const { dealId, userId, previousThesisId, triggeredByAdminId } = event.data as {
+    const { dealId, userId, previousThesisId, triggeredByAdminId, triggeredByRebuttal, supersededAnalysisId } = event.data as {
       dealId: string;
       userId: string;
       triggeredByDocumentId?: string;
       previousThesisId?: string;
       triggeredByAdminId?: string;
+      triggeredByRebuttal?: boolean;
+      supersededAnalysisId?: string;
     };
 
     // FIX (audit P0 #5) : si triggered par admin (backfill), l'admin a deja paye
     // ADMIN_BACKFILL_COST (2cr) sur son compte. On ne deduit PAS le BA.
+    // Si triggered par rebuttal valide, le BA a deja paye le rebuttal judge (1cr)
+    // et la re-extraction fait partie du meme flux, sans debit supplementaire.
     // Autrement : upload doc auto → facturation 1cr au BA (idempotent).
     let creditResult: { success: boolean; error?: string } = { success: true };
-    if (!triggeredByAdminId) {
+    if (!triggeredByAdminId && !triggeredByRebuttal) {
       creditResult = await step.run('deduct-reextract-credit', async () => {
         const { deductCreditAmount } = await import("@/services/credits");
         return await deductCreditAmount(userId, "THESIS_REEXTRACT", 1, {
@@ -546,6 +587,8 @@ export const thesisReextractFunction = inngest.createFunction(
           description: `Re-extraction these apres upload document (deal ${dealId})`,
         });
       });
+    } else if (triggeredByRebuttal) {
+      logger.info({ dealId, userId, previousThesisId }, 'Thesis re-extract triggered by valid rebuttal — skipping extra deduction');
     } else {
       logger.info({ dealId, adminId: triggeredByAdminId, userId }, 'Thesis re-extract triggered by admin — skipping BA deduction');
     }
@@ -588,7 +631,7 @@ export const thesisReextractFunction = inngest.createFunction(
             idempotencyKey: `thesis-reextract-refund:admin:${triggeredByAdminId}:${dealId}:${previousThesisId ?? 'first'}`,
             description: `Refund admin backfill (echec extraction)`,
           });
-        } else {
+        } else if (!triggeredByRebuttal) {
           await refundCreditAmount(userId, "THESIS_REEXTRACT", 1, {
             dealId,
             idempotencyKey: `thesis-reextract-refund:${dealId}:${previousThesisId ?? 'first'}`,
@@ -596,9 +639,71 @@ export const thesisReextractFunction = inngest.createFunction(
           });
         }
       });
+      return result;
     }
 
-    return result;
+    const reextractAnalysisId = result.sessionId;
+    const reextractThesisId = (result as { thesisId?: string }).thesisId;
+    const reextractPaused = (result as { pausedAfterThesis?: boolean }).pausedAfterThesis === true;
+
+    if (triggeredByRebuttal && supersededAnalysisId && reextractPaused) {
+      await step.run('mark-superseded-analysis-contested', async () => {
+        await prisma.analysis.update({
+          where: { id: supersededAnalysisId },
+          data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+            thesisDecision: 'contest',
+            thesisDecisionAt: new Date(),
+            thesisBypass: false,
+            summary: 'Initial thesis review superseded after valid rebuttal. A new thesis version is awaiting review.',
+          },
+        });
+      });
+    }
+
+    if (!reextractPaused) {
+      return result;
+    }
+
+    const decisionEvent = await step.waitForEvent('wait-reextracted-thesis-decision', {
+      event: 'analysis/thesis.decision',
+      timeout: '24h',
+      if: `async.data.analysisId == "${reextractAnalysisId}"`,
+    });
+
+    const decisionData = decisionEvent?.data as
+      | { analysisId: string; decision: "stop" | "continue"; thesisBypass?: boolean }
+      | undefined;
+
+    const decision: "stop" | "continue" | "timeout" = decisionData?.decision ?? "timeout";
+    const thesisBypass = decisionData?.thesisBypass ?? false;
+
+    const liveAnalysis = await step.run('load-reextract-analysis-after-wait', async () => {
+      return await prisma.analysis.findUnique({
+        where: { id: reextractAnalysisId },
+        select: { status: true },
+      });
+    });
+
+    if (!liveAnalysis || liveAnalysis.status !== "RUNNING") {
+      logger.info({ reextractAnalysisId, status: liveAnalysis?.status }, 'Skipping reextract continuation because analysis is no longer running');
+      return result;
+    }
+
+    const postDecisionResult = await step.run('continue-after-reextracted-thesis', async () => {
+      const { orchestrator } = await import("@/agents");
+      return await orchestrator.continueAnalysisAfterThesis(reextractAnalysisId, decision, { thesisBypass });
+    });
+
+    return {
+      ...postDecisionResult,
+      sessionId: reextractAnalysisId,
+      dealId,
+      summary: reextractThesisId
+        ? postDecisionResult.summary
+        : `${postDecisionResult.summary} (new thesis review cycle)`,
+    };
   }
 );
 

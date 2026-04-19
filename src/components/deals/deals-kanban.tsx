@@ -8,6 +8,8 @@ import { AlertTriangle, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ScoreBadge } from "@/components/shared/score-badge";
+import { ThesisStaleBadge } from "./thesis/thesis-stale-badge";
+import { THESIS_VERDICT_CONFIG } from "@/lib/ui-configs";
 import { getStatusLabel, getStageLabel, formatCurrencyEUR } from "@/lib/format-utils";
 
 interface Deal {
@@ -21,6 +23,7 @@ interface Deal {
   updatedAt: Date;
   redFlags: { severity: string; title?: string }[];
   globalScore?: number | null;
+  thesisVerdict?: string | null;
 }
 
 interface DealsKanbanProps {
@@ -35,6 +38,8 @@ const COLUMNS: { key: string; color: string }[] = [
   { key: "PASSED", color: "border-t-gray-400" },
   { key: "ARCHIVED", color: "border-t-gray-300" },
 ];
+
+const FRAGILE_THESIS_VERDICTS = new Set(["alert_dominant", "vigilance"]);
 
 export const DealsKanban = memo(function DealsKanban({ deals }: DealsKanbanProps) {
   const router = useRouter();
@@ -111,6 +116,8 @@ const KanbanCard = memo(function KanbanCard({
   const criticalFlags = deal.redFlags.filter(
     f => f.severity === "CRITICAL" || f.severity === "HIGH"
   ).length;
+  const thesisGated = !!deal.thesisVerdict && FRAGILE_THESIS_VERDICTS.has(deal.thesisVerdict);
+  const thesisConfig = deal.thesisVerdict ? THESIS_VERDICT_CONFIG[deal.thesisVerdict] : null;
 
   return (
     <div
@@ -123,9 +130,23 @@ const KanbanCard = memo(function KanbanCard({
       {/* Name + score */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="text-sm font-medium leading-tight line-clamp-2">{deal.name}</span>
-        {deal.globalScore ? (
+        {!thesisGated && deal.globalScore != null ? (
           <ScoreBadge score={deal.globalScore} size="sm" />
-        ) : null}
+        ) : (
+          <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+            {thesisGated ? "Thèse d'abord" : ""}
+          </span>
+        )}
+      </div>
+
+      <div className="mb-2 flex items-center gap-2">
+        {thesisConfig ? (
+          <Badge variant="outline" className={cn("text-[10px]", thesisConfig.color, thesisConfig.bg)}>
+            {thesisConfig.shortLabel}
+          </Badge>
+        ) : (
+          <ThesisStaleBadge variant="inline" onAnalyze={() => onClick(deal.id)} />
+        )}
       </div>
 
       {/* Meta */}

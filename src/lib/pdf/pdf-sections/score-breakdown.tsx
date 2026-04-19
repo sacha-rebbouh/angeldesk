@@ -21,14 +21,17 @@ import {
   BodyText,
 } from "../pdf-components";
 import { fmtWeight, sup } from "../pdf-helpers";
-import type { AgentResult } from "../generate-analysis-pdf";
+import type { AgentResult, PdfExportData } from "../generate-analysis-pdf";
+import { hasFragileThesis } from "../thesis-gating";
 
 export function ScoreBreakdownSection({
   results,
   dealName,
+  thesis,
 }: {
   results: Record<string, AgentResult>;
   dealName: string;
+  thesis: PdfExportData["thesis"];
 }) {
   const scorerResult = results["synthesis-deal-scorer"];
   if (!scorerResult?.success || !scorerResult.data) return null;
@@ -69,13 +72,24 @@ export function ScoreBreakdownSection({
   const strengths = data.keyStrengths as string[] | undefined;
   const weaknesses = data.keyWeaknesses as string[] | undefined;
   const criticalRisks = data.criticalRisks as string[] | undefined;
+  const thesisQuality = thesis?.evaluationAxes.thesisQuality;
+  const thesisGated = hasFragileThesis(thesis);
 
   return (
     <PdfPage dealName={dealName}>
       <SectionTitle>Score &amp; Verdict</SectionTitle>
 
+      {thesisGated && thesisQuality && (
+        <View style={{ marginBottom: 16 }}>
+          <BodyText>
+            Le score global est secondaire tant que la thèse reste fragile. Référence canonique: Thesis Quality = {thesisQuality.verdict}.
+          </BodyText>
+          <BodyText>{thesisQuality.summary}</BodyText>
+        </View>
+      )}
+
       {/* Score display */}
-      <View
+      {!thesisGated && <View
         style={{
           flexDirection: "row",
           alignItems: "center",
@@ -91,10 +105,10 @@ export function ScoreBreakdownSection({
             Score global: {score}/100 — Confiance: {confidence}%
           </Text>
         </View>
-      </View>
+      </View>}
 
       {/* Score breakdown */}
-      {breakdown && (
+      {breakdown && !thesisGated && (
         <>
           <SubsectionTitle>Decomposition du score</SubsectionTitle>
           <PdfTable
@@ -122,7 +136,7 @@ export function ScoreBreakdownSection({
       )}
 
       {/* Comparative ranking */}
-      {ranking && (
+      {ranking && !thesisGated && (
         <>
           <SubsectionTitle>Positionnement comparatif</SubsectionTitle>
           {ranking.percentileOverall !== undefined && (
@@ -153,7 +167,7 @@ export function ScoreBreakdownSection({
       )}
 
       {/* Dimension scores with score bars */}
-      {dimensions && dimensions.length > 0 && (
+      {dimensions && dimensions.length > 0 && !thesisGated && (
         <>
           <SubsectionTitle>Scores par dimension</SubsectionTitle>
           {dimensions.map((d, i) => (
@@ -184,7 +198,7 @@ export function ScoreBreakdownSection({
       )}
 
       {/* Investment recommendation */}
-      {rec && (
+      {rec && !thesisGated && (
         <>
           <SubsectionTitle>Recommandation d&apos;investissement</SubsectionTitle>
           {rec.action && <RecommendationBadge recommendation={rec.action} />}

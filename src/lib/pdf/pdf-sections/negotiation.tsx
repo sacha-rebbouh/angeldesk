@@ -51,25 +51,6 @@ export function NegotiationSection({
         </>
       )}
 
-      {/* Improved score */}
-      {negotiation.improvedDealScore && (
-        <>
-          <H3>Impact sur le score</H3>
-          <LabelValue
-            label="Avant"
-            value={`${negotiation.improvedDealScore.before}/100`}
-          />
-          <LabelValue
-            label="Après"
-            value={`${negotiation.improvedDealScore.after}/100`}
-          />
-          <LabelValue
-            label="Amélioration"
-            value={`+${negotiation.improvedDealScore.improvement} points`}
-          />
-        </>
-      )}
-
       {/* Negotiation points */}
       {negotiation.negotiationPoints.length > 0 && (
         <>

@@ -417,18 +417,18 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
   // --------------------------------------------------------------------------
 
   it('getActionForAnalysisType should map correctly', () => {
-    // Tier 1 types → QUICK_SCAN (1 credit)
+    // Legacy historique interne uniquement
     expect(getActionForAnalysisType('tier1_complete')).toBe('QUICK_SCAN');
     expect(getActionForAnalysisType('extraction')).toBe('QUICK_SCAN');
 
-    // Tier 2/3 types → DEEP_DIVE (5 credits)
+    // Thesis-first Deep Dive et reruns analytiques → DEEP_DIVE (5 credits)
     expect(getActionForAnalysisType('full_analysis')).toBe('DEEP_DIVE');
     expect(getActionForAnalysisType('full_dd')).toBe('DEEP_DIVE');
     expect(getActionForAnalysisType('tier2_sector')).toBe('DEEP_DIVE');
     expect(getActionForAnalysisType('tier3_synthesis')).toBe('DEEP_DIVE');
 
-    // Unknown → QUICK_SCAN (safe default)
-    expect(getActionForAnalysisType('unknown_type')).toBe('QUICK_SCAN');
+    // Unknown → DEEP_DIVE (safe default thesis-first)
+    expect(getActionForAnalysisType('unknown_type')).toBe('DEEP_DIVE');
   });
 
   // --------------------------------------------------------------------------
@@ -589,13 +589,9 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
   // --------------------------------------------------------------------------
 
   describe('API route credit mapping', () => {
-    it('POST /api/analyze (tier1_complete) → QUICK_SCAN = 1 credit', async () => {
-      await setupUser();
-      const action = getActionForAnalysisType('tier1_complete');
-      expect(action).toBe('QUICK_SCAN');
-      const r = await deductCredits(USER, action, DEAL);
-      expect(r.success).toBe(true);
-      expect(r.balanceAfter).toBe(99);
+    it('POST /api/analyze refuse les types legacy; seul full_analysis reste l entree publique', async () => {
+      expect(getActionForAnalysisType('full_dd')).toBe('DEEP_DIVE');
+      expect(getActionForAnalysisType('full_analysis')).toBe('DEEP_DIVE');
     });
 
     it('POST /api/analyze (full_analysis) → DEEP_DIVE = 5 credits', async () => {

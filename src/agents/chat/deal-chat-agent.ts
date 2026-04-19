@@ -25,6 +25,7 @@ import {
   type ChatIntent as RetrieverChatIntent,
   type RetrievedScoredFinding,
 } from "./context-retriever";
+import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
 
 // ============================================================================
 // TYPES
@@ -155,6 +156,7 @@ export interface FullChatContext {
     ycLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
     thielLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
     angelDeskLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
+    evaluationAxes: NormalizedThesisEvaluation;
     decision: string | null;
     thesisBypass: boolean;
     rebuttalCount: number;
@@ -314,6 +316,7 @@ Angel Desk ANALYSE et GUIDE. Angel Desk ne DÉCIDE JAMAIS. Le Business Angel est
 **OBLIGATOIRE :**
 - Ton analytique : "Les données montrent...", "Les signaux indiquent...", "X dimensions présentent..."
 - Constater des faits, rapporter des signaux, laisser le BA conclure
+- Si tu parles de ticket, mandat, horizon, secteur exclu ou structure du tour, distingue toujours "fit investisseur" / "accessibilite du deal" de la "qualite intrinseque de la these"
 - Chaque phrase doit pouvoir se terminer par "...à vous de décider" sans être absurde
 
 ## Anti-Hallucination Directive — Confidence Threshold
@@ -364,7 +367,8 @@ Do not present speculative claims as confident ones.`;
 
 **Verdict** : ${thesisCtxEarly.verdict} (confiance ${thesisCtxEarly.confidence}/100, version ${thesisCtxEarly.version})
 **Reformulation** : ${thesisCtxEarly.reformulated}
-**Frameworks** : YC=${thesisCtxEarly.ycLens.verdict} · Thiel=${thesisCtxEarly.thielLens.verdict} · Angel Desk=${thesisCtxEarly.angelDeskLens.verdict}
+**Frameworks** : YC=${thesisCtxEarly.ycLens.verdict} · Thiel=${thesisCtxEarly.thielLens.verdict} · Angel Desk=${thesisCtxEarly.angelDeskLens.verdict} (attention: cette lunette separe thesis quality, investor-fit et accessibilite)
+**Axes canoniques** : thesisQuality=${thesisCtxEarly.evaluationAxes.thesisQuality.verdict} · investorProfileFit=${thesisCtxEarly.evaluationAxes.investorProfileFit.verdict} · dealAccessibility=${thesisCtxEarly.evaluationAxes.dealAccessibility.verdict}
 ${thesisCtxEarly.decision ? `**Decision BA** : ${thesisCtxEarly.decision}${thesisCtxEarly.thesisBypass ? " (bypass these fragile actif)" : ""}\n` : ""}
 (Voir section "Thèse d'investissement" plus bas pour le detail complet avec load-bearing et alertes.)
 
@@ -636,6 +640,9 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       contextPrompt += `- **Why-now** : ${thesisCtx.whyNow}\n`;
       contextPrompt += `- **Moat** : ${thesisCtx.moat ?? "Non declare"}\n`;
       contextPrompt += `- **Path to exit** : ${thesisCtx.pathToExit ?? "Non declare"}\n`;
+      contextPrompt += `- **Axe Thesis Quality** : ${thesisCtx.evaluationAxes.thesisQuality.verdict} — ${thesisCtx.evaluationAxes.thesisQuality.summary}\n`;
+      contextPrompt += `- **Axe Investor Profile Fit** : ${thesisCtx.evaluationAxes.investorProfileFit.verdict} — ${thesisCtx.evaluationAxes.investorProfileFit.summary}\n`;
+      contextPrompt += `- **Axe Deal Accessibility** : ${thesisCtx.evaluationAxes.dealAccessibility.verdict} — ${thesisCtx.evaluationAxes.dealAccessibility.summary}\n`;
 
       if (thesisCtx.decision) {
         contextPrompt += `- **Decision BA** : ${thesisCtx.decision}${thesisCtx.thesisBypass ? " (bypass these fragile actif)" : ""}\n`;
@@ -673,7 +680,7 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       };
       contextPrompt += formatLens("YC (problem reality / PMF / distribution)", thesisCtx.ycLens);
       contextPrompt += formatLens("Thiel (contrarian / 10x / monopoly)", thesisCtx.thielLens);
-      contextPrompt += formatLens("Angel Desk (investable BA / groupe / family office / syndicat)", thesisCtx.angelDeskLens);
+      contextPrompt += formatLens("Angel Desk (thesis quality sous contraintes reelles + investor-fit + accessibilite)", thesisCtx.angelDeskLens);
     }
 
     return contextPrompt;
@@ -708,6 +715,7 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
    */
   private buildRetrievedContextPrompt(retrievedCtx: RetrievedContext): string {
     const sections: string[] = [];
+    const scoresAllowed = !this.chatContext?.thesis || this.chatContext.thesis.thesisBypass;
 
     // Facts from Fact Store (full data, not summaries)
     if (retrievedCtx.facts.length > 0) {
@@ -734,7 +742,7 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       let agentsSection = "## RÉSULTATS D'AGENTS (Données COMPLÈTES)\n";
       for (const result of retrievedCtx.agentResults) {
         agentsSection += `\n### ${this.formatAgentName(result.agent)}\n`;
-        if (result.score !== undefined) {
+        if (scoresAllowed && result.score !== undefined) {
           agentsSection += `**Score**: ${result.score}/100\n`;
         }
         if (result.confidence !== undefined) {
@@ -840,7 +848,7 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
     }
 
     // Scored Findings (quantified metrics with benchmarks)
-    if (retrievedCtx.scoredFindings && retrievedCtx.scoredFindings.length > 0) {
+    if (scoresAllowed && retrievedCtx.scoredFindings && retrievedCtx.scoredFindings.length > 0) {
       let findingsSection = `## MÉTRIQUES QUANTIFIÉES (${retrievedCtx.scoredFindings.length} findings)\n`;
       // Group by category
       const byCategory: Record<string, RetrievedScoredFinding[]> = {};
@@ -1056,7 +1064,7 @@ Classifie l'intention parmi:
 - DEEP_DIVE: Veut une analyse approfondie sur un sujet specifique
 - FOLLOW_UP: Suite a une reponse precedente
 - NEGOTIATION: Cherche des arguments de negociation
-- THESIS: Question sur la THESE d'investissement, ses hypotheses, sa solidite, ou les frameworks YC/Thiel/Angel Desk. Mots-cles : these, thesis, why-now, moat, vision, hypothese, load-bearing, framework, fragile, solide, YC, Thiel, PMF, monopoly, contrarian
+- THESIS: Question sur la THESE d'investissement, ses hypotheses, sa solidite, ou les frameworks YC/Thiel/Angel Desk. Inclut aussi les questions qui demandent si un probleme releve d'une these fragile, d'un investor-fit mismatch, ou d'une contrainte d'accessibilite. Mots-cles : these, thesis, why-now, moat, vision, hypothese, load-bearing, framework, fragile, solide, YC, Thiel, PMF, monopoly, contrarian
 - GENERAL: Question generale sur le deal
 
 Reponds en JSON:
@@ -1122,7 +1130,11 @@ Reponds en JSON:
         const retrievedCtx = await retrieveContext(
           dealId,
           sanitizedUserMessage,
-          intent as RetrieverChatIntent
+          intent as RetrieverChatIntent,
+          {
+            analysisId: context.latestAnalysis?.id,
+            includeScores: !context.thesis || context.thesis.thesisBypass,
+          }
         );
         retrievedContextPrompt = this.buildRetrievedContextPrompt(retrievedCtx);
         console.log(`[DealChatAgent] Retrieved context for intent ${intent}: ${retrievedCtx.facts.length} facts, ${retrievedCtx.agentResults.length} agent results, ${retrievedCtx.redFlags.length} red flags`);
@@ -1268,8 +1280,10 @@ Pouvez-vous reformuler votre question ou essayer a nouveau?`,
 - Structure ta reponse :
   1. Le verdict courant (solide/fragile/invalide) avec les labels existants (signaux tres favorables → alerte dominante)
   2. La raison structurelle (quelle assumption casse, quel framework tire dans quel sens)
-  3. Ce que le BA peut concretement approfondir (questions au fondateur, signaux a confirmer)
+  3. Quand pertinent, distingue explicitement: **qualite de these**, **investor profile fit**, **deal accessibility**
+  4. Ce que le BA peut concretement approfondir (questions au fondateur, signaux a confirmer)
 - Respecte la Regle N°1 : ANALYSE, ne DECIDE jamais. Pas d'imperatif "Investir" ou "Ne pas investir".
+- Ne degrade pas une these uniquement parce que le deal est hors mandat, hors ticket ou peu liquide pour ce BA.
 - Si la these a un red flag THESIS_VS_REALITY, cite explicitement l'agent source et le claim contredit.`,
 
       GENERAL: `# GUIDE POUR QUESTION GENERALE

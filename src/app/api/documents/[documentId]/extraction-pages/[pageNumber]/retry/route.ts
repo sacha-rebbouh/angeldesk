@@ -12,7 +12,8 @@ import {
   refreshRunExtractionStats,
 } from "@/services/documents/extraction-runs";
 import { deductCreditAmount } from "@/services/credits";
-import { selectiveOCR } from "@/services/pdf";
+import { detectPageSignals, selectiveOCR } from "@/services/pdf";
+import { assessExtractionSemantics } from "@/services/pdf/extraction-semantics";
 import { downloadFile } from "@/services/storage";
 
 export const maxDuration = 300;
@@ -144,7 +145,6 @@ export async function POST(_request: Request, context: RouteParams) {
     const charCount = retryPage.text.length;
     const wordCount = retryPage.text.split(/\s+/).filter(Boolean).length;
     const qualityScore = scoreRetriedPage(charCount, signals);
-    const status = determineRetriedPageStatus(charCount, qualityScore, retryPage.confidence);
     const pageArtifact = buildDocumentPageArtifact({
       pageNumber,
       label: `Page ${pageNumber}`,
@@ -152,7 +152,27 @@ export async function POST(_request: Request, context: RouteParams) {
       hasTables: signals.hasTables,
       hasCharts: signals.hasCharts,
       confidence: retryPage.confidence,
-      needsHumanReview: status === "NEEDS_REVIEW",
+      needsHumanReview: retryPage.confidence === "low",
+      ocrMode: "supreme",
+    });
+    const semanticAssessment = assessExtractionSemantics({
+      pageNumber,
+      text: retryPage.text,
+      charCount,
+      wordCount,
+      hasTables: signals.hasTables,
+      hasCharts: signals.hasCharts,
+      hasFinancialKeywords: signals.hasFinancialKeywords,
+      hasTeamKeywords: signals.hasTeamKeywords,
+      hasMarketKeywords: signals.hasMarketKeywords,
+      artifact: pageArtifact,
+    });
+    pageArtifact.semanticAssessment = semanticAssessment;
+    const status = determineRetriedPageStatus({
+      charCount,
+      qualityScore,
+      confidence: retryPage.confidence,
+      semanticAssessment,
     });
     const summaryMetrics = updateSummaryMetrics(latestRun.summaryMetrics, {
       pageNumber,
@@ -181,7 +201,7 @@ export async function POST(_request: Request, context: RouteParams) {
           contentHash: hashExtractedCorpus(retryPage.text),
           artifactVersion: pageArtifact.version,
           artifact: JSON.parse(JSON.stringify(pageArtifact)) as Prisma.InputJsonValue,
-          pageImageHash: pageArtifact.sourceHash ?? null,
+          pageImageHash: retryPage.pageImageHash ?? null,
           errorMessage: status === "NEEDS_REVIEW" ? "Targeted supreme OCR completed but still needs review" : null,
           textPreview: buildPreview(retryPage.text),
         },
@@ -290,17 +310,6 @@ function replacePageText(corpus: string, pageNumber: number, replacementText: st
   return rebuilt.filter(Boolean).join("\n\n");
 }
 
-function detectPageSignals(text: string) {
-  const normalized = text.toLowerCase();
-  return {
-    hasTables: /\|.+\||table|row|column|cohort|breakdown|segment|legend/.test(normalized),
-    hasCharts: /chart|graph|axis|legend|bar|line|stacked|waterfall|scatter|donut|heatmap|%|\d+\.\d+%/.test(normalized),
-    hasFinancialKeywords: /revenue|ebitda|margin|arr|mrr|burn|runway|valuation|cash|growth|capex|opex|profit|loss/.test(normalized),
-    hasTeamKeywords: /founder|ceo|cto|cfo|team|headcount|employee/.test(normalized),
-    hasMarketKeywords: /market|tam|sam|som|competitor|competition|customer|segment|industry/.test(normalized),
-  };
-}
-
 function scoreRetriedPage(
   charCount: number,
   signals: ReturnType<typeof detectPageSignals>
@@ -342,14 +351,39 @@ function getVisualRiskScore(summaryMetrics: Prisma.JsonValue | null, pageNumber:
   return isPlainObject(entry) && typeof entry.visualRiskScore === "number" ? entry.visualRiskScore : 0;
 }
 
-function determineRetriedPageStatus(
-  charCount: number,
-  qualityScore: number,
-  confidence: "high" | "medium" | "low"
-): PageStatus {
+function determineRetriedPageStatus(params: {
+  charCount: number;
+  qualityScore: number;
+  confidence: "high" | "medium" | "low";
+  semanticAssessment: {
+    semanticSufficiency: "sufficient" | "partial" | "insufficient";
+    shouldBlockIfStructureMissing: boolean;
+    canDegradeToWarning: boolean;
+    analyticalValueScore?: number;
+  };
+}): PageStatus {
+  const { charCount, qualityScore, confidence, semanticAssessment } = params;
   if (charCount < 40) return "FAILED";
-  if (confidence === "low" || qualityScore < 55 || charCount < 180) return "NEEDS_REVIEW";
-  return "READY_WITH_WARNINGS";
+  if (
+    (
+      semanticAssessment.semanticSufficiency === "insufficient" &&
+      (semanticAssessment.analyticalValueScore ?? 100) >= 35
+    ) ||
+    (semanticAssessment.shouldBlockIfStructureMissing &&
+      !semanticAssessment.canDegradeToWarning &&
+      semanticAssessment.semanticSufficiency !== "sufficient")
+  ) {
+    return "NEEDS_REVIEW";
+  }
+  if (
+    confidence === "low" ||
+    qualityScore < 55 ||
+    charCount < 180 ||
+    semanticAssessment.semanticSufficiency === "partial"
+  ) {
+    return "READY_WITH_WARNINGS";
+  }
+  return "READY";
 }
 
 function buildPreview(text: string): string {

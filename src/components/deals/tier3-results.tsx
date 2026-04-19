@@ -136,7 +136,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
     ...(devilsData?.findings?.concernsSummary?.conditional ?? []).map(c => ({ text: c, level: "conditional" as const })),
     ...(devilsData?.findings?.concernsSummary?.serious ?? []).map(c => ({ text: c, level: "serious" as const })),
   ], [devilsData]);
-  const skepticismScore = devilsData?.findings?.skepticismAssessment?.score ?? 0;
+  const skepticismScore = devilsData?.findings?.skepticismAssessment?.score;
 
   const [daDialogState, setDaDialogState] = useState<{
     alertKey: string; title: string; severity: string; description?: string;
@@ -303,7 +303,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
         )}
 
         {/* DA Skepticism — merged from Devil's Advocate */}
-        {devilsData && skepticismScore > 0 && (
+        {devilsData && skepticismScore != null && (
           <div className="pt-3 border-t">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-medium flex items-center gap-2">
@@ -1046,21 +1046,18 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
       ? devilsData.findings.skepticismAssessment.score
       : undefined;
     const daIsFallback = devilsData?.findings?.skepticismAssessment?.isFallback ?? false;
-    const derivedSkepticism = scorerData
-      ? Math.max(0, Math.min(100, 100 - scorerData.overallScore))
-      : null;
     const killReasons = devilsData?.findings?.killReasons?.filter(kr => kr.dealBreakerLevel === "ABSOLUTE")?.length ?? 0;
     const contradictions = contradictionData?.findings?.contradictions?.filter(c => c.severity === "CRITICAL" || c.severity === "HIGH")?.length ?? 0;
 
     return {
-      skepticism: daSkepticism ?? derivedSkepticism ?? 0,
+      skepticism: daSkepticism ?? null,
       skepticismSource: daSkepticism != null
         ? (daIsFallback ? "da-derived" as const : "da" as const)
-        : derivedSkepticism != null ? "derived" as const : "none" as const,
+        : "none" as const,
       killReasons,
       contradictions,
     };
-  }, [devilsData, contradictionData, scorerData]);
+  }, [devilsData, contradictionData]);
 
   return (
     <div className="space-y-6">
@@ -1075,23 +1072,44 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
                 Synthèse Due Diligence
               </CardTitle>
               <CardDescription className="text-slate-300 mt-1">
-                {totalAgentsRun ?? successfulAgents} agents d&apos;analyse • Score, Risques, Memo
+                {totalAgentsRun ?? successfulAgents} agents d&apos;analyse • Verdict, risques, memo
               </CardDescription>
             </div>
             {scorerData && (
               <div className="text-right">
-                <div className="text-4xl font-bold text-white">{scorerData.overallScore}<span className="text-xl text-slate-400">/100</span></div>
-                <VerdictBadge verdict={
-                  scorerData.overallScore >= 85 ? "very_favorable" :
-                  scorerData.overallScore >= 70 ? "favorable" :
-                  scorerData.overallScore >= 55 ? "contrasted" :
-                  scorerData.overallScore >= 40 ? "vigilance" : "alert_dominant"
-                } />
+                {thesisGated ? (
+                  <div className="max-w-[220px] rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-left">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-red-300">
+                      Thèse prioritaire
+                    </p>
+                    <p className="mt-1 text-sm text-red-100">
+                      Score global masqué tant que la thèse reste fragile.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-4xl font-bold text-white">{scorerData.overallScore}<span className="text-xl text-slate-400">/100</span></div>
+                    <VerdictBadge verdict={scorerData.verdict} />
+                  </>
+                )}
               </div>
             )}
           </div>
         </CardHeader>
         <CardContent className="relative">
+          {thesisGated && (
+            <div className="mb-4 rounded-lg border border-red-400/30 bg-red-500/10 p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-300" />
+                <div>
+                  <p className="text-sm font-semibold text-red-100">Score global non applicable</p>
+                  <p className="mt-1 text-sm leading-relaxed text-red-100/90">
+                    Le verdict thèse reste prioritaire. Les métriques ci-dessous servent à lire les risques, pas à contourner une thèse jugée fragile.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
             {/* Skepticism Score */}
             <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
@@ -1102,21 +1120,27 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
                   <div className="text-xs text-slate-500 mt-1">Donnees indisponibles</div>
                 </>
               ) : (
+                (() => {
+                  const skepticismValue = headerMetrics.skepticism ?? 0;
+
+                  return (
                 <>
                   <div className={cn(
                     "text-3xl font-bold",
-                    headerMetrics.skepticism <= 30 ? "text-green-400" :
-                    headerMetrics.skepticism <= 50 ? "text-yellow-400" :
-                    headerMetrics.skepticism <= 70 ? "text-orange-400" : "text-red-400"
+                    skepticismValue <= 30 ? "text-green-400" :
+                    skepticismValue <= 50 ? "text-yellow-400" :
+                    skepticismValue <= 70 ? "text-orange-400" : "text-red-400"
                   )}>
-                    {headerMetrics.skepticism}/100
+                    {skepticismValue}/100
                   </div>
                   <div className="text-xs text-slate-400 mt-1">
                     {headerMetrics.skepticismSource === "da" ? "Devil's Advocate" :
                      headerMetrics.skepticismSource === "da-derived" ? "Devil's Advocate (estime)" :
-                     "Estime depuis le score"}
+                     "Donnees indisponibles"}
                   </div>
                 </>
+                  );
+                })()
               )}
             </div>
 
@@ -1156,7 +1180,7 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
           </div>
 
           {/* Recommendation Banner */}
-          {scorerData && (
+          {scorerData && !thesisGated && (
             <div className="flex items-center justify-between bg-white/5 rounded-lg p-4 border border-white/10">
               <div className="flex items-center gap-4">
                 <RecommendationBadge action={scorerData.investmentRecommendation.action} />

@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import {
   BarChart3,
+  Brain,
   FolderKanban,
   Home,
   Settings,
@@ -45,6 +46,11 @@ const sidebarNavItems = [
     title: "Tous les deals",
     href: "/deals",
     icon: FolderKanban,
+  },
+  {
+    title: "Thèses",
+    href: "/theses",
+    icon: Brain,
   },
   {
     title: "Paramètres",
@@ -92,8 +98,7 @@ const FEATURES: ReadonlyArray<{
   minBalance: number;
   costLabel: string;
 }> = [
-  { label: "Quick Scan", minBalance: CREDIT_COSTS.QUICK_SCAN, costLabel: `${CREDIT_COSTS.QUICK_SCAN} cr` },
-  { label: "Deep Dive", minBalance: CREDIT_COSTS.DEEP_DIVE, costLabel: `${CREDIT_COSTS.DEEP_DIVE} cr` },
+  { label: "Thesis-first Deep Dive", minBalance: CREDIT_COSTS.DEEP_DIVE, costLabel: `${CREDIT_COSTS.DEEP_DIVE} cr` },
   { label: "AI Board", minBalance: CREDIT_COSTS.AI_BOARD, costLabel: `${CREDIT_COSTS.AI_BOARD} cr` },
   { label: "Live Coaching", minBalance: CREDIT_COSTS.LIVE_COACHING, costLabel: `${CREDIT_COSTS.LIVE_COACHING} cr` },
 ];
