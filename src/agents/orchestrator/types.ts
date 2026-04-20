@@ -32,7 +32,7 @@ export const ANALYSIS_CONFIGS = {
   },
   full_analysis: {
     agents: [] as BaseAgentName[], // Special handling - Tier 1 + Tier 2 + Tier 3
-    description: "Thesis-first Deep Dive: thesis gate, then Tier 1 (13) + Tier 2 (1) + Tier 3 (6)",
+    description: "Thesis-first Deep Dive: thesis gate, then Tier 1 (13) + Tier 2 (1) + Tier 3 (7 incl. thesis-reconciler)",
     parallel: false,
   },
 } as const;
@@ -100,9 +100,13 @@ export type UserPlan = "FREE" | "PRO";
 export interface AnalysisOptions {
   dealId: string;
   type: AnalysisType;
+  /** Optional canonical document scope for this run. When omitted, uses the current latest deal documents. */
+  documentIds?: string[];
   /** Enable detailed traces for transparency and reproducibility (default: true) */
   enableTrace?: boolean;
   forceRefresh?: boolean; // Bypass cache and force re-analysis
+  /** Optional persistence mode override for product-specific runs (ex: post_call_reanalysis). */
+  analysisModeOverride?: string;
   mode?: AnalysisMode; // Execution mode (default: "full")
   failFastOnCritical?: boolean; // Stop analysis on critical red flags (default: false)
   maxCostUsd?: number; // Maximum cost in USD before stopping (default: no limit)
@@ -170,6 +174,8 @@ export interface AdvancedAnalysisOptions {
   onEarlyWarning?: OnEarlyWarning;
   /** Enable detailed traces for transparency (default: true) */
   enableTrace?: boolean;
+  /** Optional persistence mode override for product-specific runs (ex: post_call_reanalysis). */
+  analysisModeOverride?: string;
   /** If true, uses UPDATE_ANALYSIS credits instead of INITIAL_ANALYSIS */
   isUpdate?: boolean;
   /** User subscription plan for tier gating */
@@ -231,13 +237,26 @@ export const TIER1_PHASES = [TIER1_PHASE_A, TIER1_PHASE_B, TIER1_PHASE_C, TIER1_
 /** Phases where reflexion is ALWAYS applied (regardless of confidence) */
 export const TIER1_ALWAYS_REFLECT_PHASES: ReadonlyArray<string> = [...TIER1_PHASE_A, ...TIER1_PHASE_B];
 
-// Tier 3 agent names (6 synthesis agents)
+// Tier 3 agent names for standalone `tier3_synthesis` (6 agents).
 export const TIER3_AGENT_NAMES = [
   "conditions-analyst",
   "contradiction-detector",
   "scenario-modeler",
   "synthesis-deal-scorer",
   "devils-advocate",
+  "memo-generator",
+] as const;
+
+// Tier 3 topology for thesis-first `full_analysis`.
+// `thesis-reconciler` is tracked separately here so full-analysis / resume can
+// preserve its ordering without changing legacy `tier3_synthesis` semantics.
+export const FULL_ANALYSIS_TIER3_AGENT_NAMES = [
+  "conditions-analyst",
+  "contradiction-detector",
+  "scenario-modeler",
+  "devils-advocate",
+  "thesis-reconciler",
+  "synthesis-deal-scorer",
   "memo-generator",
 ] as const;
 
@@ -260,7 +279,7 @@ export const TIER3_DEPENDENCIES: Record<typeof TIER3_AGENT_NAMES[number], string
 };
 
 /**
- * Execution batches for Tier 3 (computed from dependencies)
+ * Execution batches for standalone `tier3_synthesis` (computed from dependencies)
  * Agents in same batch can run in parallel
  *
  * IMPORTANT: synthesis-deal-scorer runs AFTER Tier 2 to include sector expert insights
@@ -298,6 +317,19 @@ export const TIER3_BATCHES_AFTER_TIER2 = [
   ["synthesis-deal-scorer"],
   // memo-generator: Investment memo with complete analysis
   ["memo-generator"],
+] as const;
+
+/**
+ * FREE full-analysis resumes/runs only the final scorer after Tier 1.
+ * Keep this explicit so thesis-reconciler ordering never depends on array indices.
+ */
+export const FREE_TIER3_BATCHES_AFTER_TIER2 = [
+  ["synthesis-deal-scorer"],
+] as const;
+
+export const FULL_ANALYSIS_TIER3_EXECUTION_BATCHES = [
+  ...TIER3_BATCHES_BEFORE_TIER2,
+  ...TIER3_BATCHES_AFTER_TIER2,
 ] as const;
 
 /**
@@ -375,9 +407,9 @@ export const TIER2_SECTOR_EXPERT_COUNT = 1 as const;
 // Agent counts by analysis type
 export const AGENT_COUNTS: Record<AnalysisType, number> = {
   extraction: ANALYSIS_CONFIGS.extraction.agents.length,
-  full_dd: TIER1_AGENT_NAMES.length + TIER2_SECTOR_EXPERT_COUNT + TIER3_AGENT_NAMES.length,
+  full_dd: TIER1_AGENT_NAMES.length + TIER2_SECTOR_EXPERT_COUNT + FULL_ANALYSIS_TIER3_AGENT_NAMES.length,
   tier1_complete: TIER1_AGENT_NAMES.length,
   tier2_sector: TIER2_SECTOR_EXPERT_COUNT,
   tier3_synthesis: TIER3_AGENT_NAMES.length,
-  full_analysis: TIER1_AGENT_NAMES.length + TIER2_SECTOR_EXPERT_COUNT + TIER3_AGENT_NAMES.length,
+  full_analysis: TIER1_AGENT_NAMES.length + TIER2_SECTOR_EXPERT_COUNT + FULL_ANALYSIS_TIER3_AGENT_NAMES.length,
 };

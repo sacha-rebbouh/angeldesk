@@ -19,6 +19,10 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 import { logger } from "@/lib/logger";
+import {
+  ensureCorpusSnapshotForDeal,
+  loadCorpusSnapshot,
+} from "@/services/corpus";
 import type {
   ThesisExtractorOutput,
   ThesisReconcilerOutput,
@@ -73,6 +77,7 @@ export interface ThesisRecord {
   rebuttalCount: number;
   sourceDocumentIds: string[];
   sourceHash: string;
+  corpusSnapshotId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -104,6 +109,13 @@ export interface ThesisDashboardRow {
 
 type ThesisReviewDecision = Exclude<ThesisDecision, "contest">;
 
+export interface ThesisSourceScope {
+  corpusSnapshotId: string | null;
+  sourceDocumentIds: string[];
+  sourceHash: string;
+  isCanonicalSnapshot: boolean;
+}
+
 export interface BeginRebuttalAttemptResult {
   status: "accepted" | "duplicate" | "in_progress" | "not_contestable" | "cap_reached";
   thesis: ThesisRecord;
@@ -125,14 +137,90 @@ export const thesisService = {
   async create(params: {
     dealId: string;
     extractorOutput: ThesisExtractorOutput;
+    corpusSnapshotId?: string | null;
+    sourceDocumentIds?: string[];
+    sourceHash?: string;
   }): Promise<ThesisRecord> {
-    const { dealId, extractorOutput } = params;
+    const {
+      dealId,
+      extractorOutput,
+      corpusSnapshotId,
+      sourceDocumentIds = extractorOutput.sourceDocumentIds,
+      sourceHash = extractorOutput.sourceHash,
+    } = params;
 
     // FIX (audit P0 #6) : advisory lock Postgres pour serialiser les create() concurrents
     // par dealId. Empeche que deux extractions simultanees aboutissent a 2 rows isLatest=true.
     // pg_advisory_xact_lock prend un BIGINT ; on hash le dealId pour obtenir un entier 64-bit.
     // Le lock est libere automatiquement a la fin de la transaction.
     const hashForLock = hashStringToBigInt(dealId);
+    let resolvedCorpusSnapshotId = corpusSnapshotId ?? null;
+    let resolvedSourceDocumentIds = [...sourceDocumentIds];
+    let resolvedSourceHash = sourceHash;
+
+    if (!resolvedCorpusSnapshotId && sourceDocumentIds.length > 0) {
+      try {
+        const snapshot = await ensureCorpusSnapshotForDeal({
+          dealId,
+          documentIds: sourceDocumentIds,
+        });
+        resolvedCorpusSnapshotId = snapshot?.id ?? null;
+        if (snapshot) {
+          resolvedSourceDocumentIds = snapshot.documentIds;
+          resolvedSourceHash = snapshot.sourceHash;
+        }
+      } catch (error) {
+        logger.warn(
+          { err: error, dealId, sourceHash },
+          "Failed to materialize thesis corpus snapshot; continuing with legacy persistence"
+        );
+      }
+    } else if (resolvedCorpusSnapshotId) {
+      try {
+        const snapshot = await loadCorpusSnapshot(resolvedCorpusSnapshotId);
+        if (snapshot) {
+          resolvedSourceDocumentIds = snapshot.documentIds;
+          resolvedSourceHash = snapshot.sourceHash;
+        }
+      } catch (error) {
+        logger.warn(
+          { err: error, dealId, corpusSnapshotId: resolvedCorpusSnapshotId },
+          "Failed to load canonical thesis corpus snapshot; keeping provided legacy source scope"
+        );
+      }
+    }
+
+    // Coerce-or-default les champs JSON obligatoires au cas ou le LLM
+    // retourne une sortie partielle (Zod fallback path dans base-agent).
+    // Prisma rejette undefined sur un champ Json non-null ; on le force a [] / {}.
+    const safeLoadBearing = Array.isArray(extractorOutput.loadBearing) ? extractorOutput.loadBearing : [];
+    const safeAlerts = Array.isArray(extractorOutput.alerts) ? extractorOutput.alerts : [];
+    const emptyLens = (framework: "yc" | "thiel" | "angel-desk") => ({
+      framework,
+      verdict: "contrasted" as const,
+      confidence: 50,
+      question: `${framework} lens`,
+      claims: [],
+      failures: [],
+      strengths: [],
+      summary: `${framework} lens summary unavailable`,
+    });
+    const safeYcLens = extractorOutput.ycLens && typeof extractorOutput.ycLens === "object"
+      ? extractorOutput.ycLens
+      : emptyLens("yc");
+    const safeThielLens = extractorOutput.thielLens && typeof extractorOutput.thielLens === "object"
+      ? extractorOutput.thielLens
+      : emptyLens("thiel");
+    const safeAngelDeskLens = extractorOutput.angelDeskLens && typeof extractorOutput.angelDeskLens === "object"
+      ? extractorOutput.angelDeskLens
+      : emptyLens("angel-desk");
+    const safeVerdict: ThesisVerdict = ["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]
+      .includes(extractorOutput.verdict as ThesisVerdict)
+      ? (extractorOutput.verdict as ThesisVerdict)
+      : "contrasted";
+    const safeConfidence = typeof extractorOutput.confidence === "number" && Number.isFinite(extractorOutput.confidence)
+      ? Math.max(0, Math.min(100, Math.round(extractorOutput.confidence)))
+      : 50;
 
     return prisma.$transaction(async (tx) => {
       // Acquire advisory lock — bloque si une autre tx tient le meme lock
@@ -159,21 +247,22 @@ export const thesisService = {
           dealId,
           version: nextVersion,
           isLatest: true,
-          reformulated: extractorOutput.reformulated,
-          problem: extractorOutput.problem,
-          solution: extractorOutput.solution,
-          whyNow: extractorOutput.whyNow,
-          moat: extractorOutput.moat,
-          pathToExit: extractorOutput.pathToExit,
-          verdict: extractorOutput.verdict,
-          confidence: extractorOutput.confidence,
-          loadBearing: extractorOutput.loadBearing as unknown as Prisma.InputJsonValue,
-          ycLens: extractorOutput.ycLens as unknown as Prisma.InputJsonValue,
-          thielLens: extractorOutput.thielLens as unknown as Prisma.InputJsonValue,
-          angelDeskLens: extractorOutput.angelDeskLens as unknown as Prisma.InputJsonValue,
-          alerts: extractorOutput.alerts as unknown as Prisma.InputJsonValue,
-          sourceDocumentIds: extractorOutput.sourceDocumentIds,
-          sourceHash: extractorOutput.sourceHash,
+          reformulated: extractorOutput.reformulated ?? "",
+          problem: extractorOutput.problem ?? "",
+          solution: extractorOutput.solution ?? "",
+          whyNow: extractorOutput.whyNow ?? "",
+          moat: extractorOutput.moat ?? null,
+          pathToExit: extractorOutput.pathToExit ?? null,
+          verdict: safeVerdict,
+          confidence: safeConfidence,
+          loadBearing: safeLoadBearing as unknown as Prisma.InputJsonValue,
+          ycLens: safeYcLens as unknown as Prisma.InputJsonValue,
+          thielLens: safeThielLens as unknown as Prisma.InputJsonValue,
+          angelDeskLens: safeAngelDeskLens as unknown as Prisma.InputJsonValue,
+          alerts: safeAlerts as unknown as Prisma.InputJsonValue,
+          sourceDocumentIds: resolvedSourceDocumentIds,
+          sourceHash: resolvedSourceHash,
+          corpusSnapshotId: resolvedCorpusSnapshotId,
         },
       });
 
@@ -207,6 +296,47 @@ export const thesisService = {
     return records as unknown as ThesisRecord[];
   },
 
+  async resolveSourceScope(
+    thesisOrRecord: string | Pick<ThesisRecord, "id" | "dealId" | "corpusSnapshotId" | "sourceDocumentIds" | "sourceHash">
+  ): Promise<ThesisSourceScope | null> {
+    const record =
+      typeof thesisOrRecord === "string"
+        ? await this.getById(thesisOrRecord)
+        : thesisOrRecord;
+
+    if (!record) {
+      return null;
+    }
+
+    if (record.corpusSnapshotId) {
+      const snapshot = await loadCorpusSnapshot(record.corpusSnapshotId);
+      if (snapshot) {
+        return {
+          corpusSnapshotId: snapshot.id,
+          sourceDocumentIds: snapshot.documentIds,
+          sourceHash: snapshot.sourceHash,
+          isCanonicalSnapshot: true,
+        };
+      }
+
+      logger.warn(
+        {
+          thesisId: record.id,
+          dealId: record.dealId,
+          corpusSnapshotId: record.corpusSnapshotId,
+        },
+        "Falling back to legacy thesis source scope because canonical snapshot could not be loaded"
+      );
+    }
+
+    return {
+      corpusSnapshotId: record.corpusSnapshotId ?? null,
+      sourceDocumentIds: record.sourceDocumentIds,
+      sourceHash: record.sourceHash,
+      isCanonicalSnapshot: false,
+    };
+  },
+
   /**
    * Applique les resultats de thesis-reconciler (Tier 3) a la these latest.
    * Met a jour le verdict + confidence + reconcileNotes.
@@ -216,6 +346,22 @@ export const thesisService = {
     reconcilerOutput: ThesisReconcilerOutput;
   }): Promise<ThesisRecord> {
     const { thesisId, reconcilerOutput } = params;
+    const thesis = await prisma.thesis.findUnique({
+      where: { id: thesisId },
+    });
+
+    if (!thesis) {
+      throw new Error(`Thesis ${thesisId} not found`);
+    }
+
+    if (!thesis.isLatest) {
+      logger.warn(
+        { thesisId, dealId: thesis.dealId },
+        "Skipping thesis reconciliation because the thesis is no longer latest"
+      );
+      return thesis as unknown as ThesisRecord;
+    }
+
     const updated = await prisma.thesis.update({
       where: { id: thesisId },
       data: {
@@ -236,14 +382,33 @@ export const thesisService = {
     thesisId: string;
     decision: ThesisReviewDecision;
   }): Promise<ThesisRecord> {
-    const updated = await prisma.thesis.update({
-      where: { id: params.thesisId },
-      data: {
-        decision: params.decision,
-        decisionAt: new Date(),
-      },
-    });
-    return updated as unknown as ThesisRecord;
+    return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Thesis" WHERE id = ${params.thesisId} FOR UPDATE`;
+
+      const thesis = await tx.thesis.findUnique({
+        where: { id: params.thesisId },
+      });
+
+      if (!thesis) {
+        throw new Error(`Thesis ${params.thesisId} not found`);
+      }
+
+      if (thesis.decision === "stop" || thesis.decision === "continue") {
+        const error = new Error("Decision already recorded");
+        (error as Error & { code?: string }).code = "DECISION_ALREADY_RECORDED";
+        throw error;
+      }
+
+      const updated = await tx.thesis.update({
+        where: { id: params.thesisId },
+        data: {
+          decision: params.decision,
+          decisionAt: new Date(),
+        },
+      });
+
+      return updated as unknown as ThesisRecord;
+    }, { isolationLevel: "Serializable" });
   },
 
   /**
@@ -561,10 +726,22 @@ export const thesisService = {
    * Detecte si la these latest est stale (nouveau doc upload apres extraction).
    * Compare le sourceHash de la these a un hash calcule sur les docs courants.
    */
-  async isStale(params: { dealId: string; currentSourceHash: string }): Promise<boolean> {
+  async isStale(params: {
+    dealId: string;
+    currentSourceHash: string;
+    corpusSnapshotId?: string | null;
+  }): Promise<boolean> {
     const latest = await this.getLatest(params.dealId);
     if (!latest) return false;
-    return latest.sourceHash !== params.currentSourceHash;
+
+    const sourceScope = await this.resolveSourceScope(latest);
+    if (!sourceScope) return false;
+
+    if (sourceScope.corpusSnapshotId && params.corpusSnapshotId) {
+      return sourceScope.corpusSnapshotId !== params.corpusSnapshotId;
+    }
+
+    return sourceScope.sourceHash !== params.currentSourceHash;
   },
 
   /**

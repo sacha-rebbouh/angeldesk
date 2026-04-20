@@ -11,6 +11,19 @@ import { authenticateApiRequest } from "../../middleware";
 import { apiSuccess, apiError } from "@/lib/api-key-auth";
 import { handleApiError } from "@/lib/api-error";
 import { createApiTimer } from "@/lib/api-logger";
+import {
+  getCurrentFactNumber,
+  getCurrentFactString,
+  loadCanonicalDealSignals,
+  resolveCanonicalAnalysisScores,
+} from "@/services/deals/canonical-read-model";
+import {
+  buildDealUpdateData,
+  buildManualFactOverrides,
+  persistManualFactOverrides,
+  updateDealSchema,
+} from "@/services/deals/manual-fact-overrides";
+import { refreshCurrentFactsView } from "@/services/fact-store/current-facts";
 
 const cuidSchema = z.string().cuid();
 
@@ -74,13 +87,39 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return apiError("NOT_FOUND", "Deal not found", 404);
     }
 
+    const signals = await loadCanonicalDealSignals([deal.id]);
+    const factMap = signals.factMapByDealId.get(deal.id) ?? new Map();
+    const scores = resolveCanonicalAnalysisScores(deal.id, signals, {
+      globalScore: deal.globalScore,
+      teamScore: deal.teamScore,
+      marketScore: deal.marketScore,
+      productScore: deal.productScore,
+      financialsScore: deal.financialsScore,
+    });
+
     timer.success(200);
     return apiSuccess({
       ...deal,
-      valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
-      arr: deal.arr != null ? Number(deal.arr) : null,
-      amountRequested: deal.amountRequested != null ? Number(deal.amountRequested) : null,
-      growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
+      companyName:
+        getCurrentFactString(factMap, "company.name") ?? deal.companyName,
+      website: getCurrentFactString(factMap, "other.website") ?? deal.website,
+      valuationPre:
+        getCurrentFactNumber(factMap, "financial.valuation_pre") ??
+        (deal.valuationPre != null ? Number(deal.valuationPre) : null),
+      arr:
+        getCurrentFactNumber(factMap, "financial.arr") ??
+        (deal.arr != null ? Number(deal.arr) : null),
+      amountRequested:
+        getCurrentFactNumber(factMap, "financial.amount_raising") ??
+        (deal.amountRequested != null ? Number(deal.amountRequested) : null),
+      growthRate:
+        getCurrentFactNumber(factMap, "financial.revenue_growth_yoy") ??
+        (deal.growthRate != null ? Number(deal.growthRate) : null),
+      globalScore: scores.globalScore,
+      teamScore: scores.teamScore,
+      marketScore: scores.marketScore,
+      productScore: scores.productScore,
+      financialsScore: scores.financialsScore,
     });
   } catch (error) {
     timer.error(500, error instanceof Error ? error.message : "Unknown");
@@ -112,25 +151,41 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     const body = await request.json();
-    const allowedFields = [
-      "name", "companyName", "sector", "stage", "status",
-      "geography", "description", "website", "arr",
-      "growthRate", "amountRequested", "valuationPre",
-    ];
-
-    const data: Record<string, unknown> = {};
-    for (const field of allowedFields) {
-      if (field in body) {
-        data[field] = body[field];
-      }
+    const parseResult = updateDealSchema.safeParse(body);
+    if (!parseResult.success) {
+      timer.error(400, "Validation failed");
+      return apiError(
+        "VALIDATION_ERROR",
+        parseResult.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join(", "),
+        400
+      );
     }
 
-    const deal = await prisma.deal.update({
-      where: { id: dealId },
-      data,
+    const presentKeys = new Set(Object.keys(body));
+    const validatedData = parseResult.data;
+    const manualFactOverrides = buildManualFactOverrides(validatedData, presentKeys);
+
+    const deal = await prisma.$transaction(async (tx) => {
+      const updatedDeal = await tx.deal.update({
+        where: { id: dealId },
+        data: buildDealUpdateData(validatedData, presentKeys),
+      });
+
+      await persistManualFactOverrides(
+        tx,
+        dealId,
+        manualFactOverrides,
+        "Updated from public v1 API"
+      );
+
+      return updatedDeal;
     });
 
-    timer.success(200, { fields: Object.keys(data) });
+    if (manualFactOverrides.length > 0) {
+      await refreshCurrentFactsView();
+    }
+
+    timer.success(200, { fields: Array.from(presentKeys) });
     return apiSuccess({
       ...deal,
       valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,

@@ -12,7 +12,9 @@ import { createApiTimer } from "@/lib/api-logger";
 import { evaluateDealDocumentReadiness } from "@/services/documents/extraction-runs";
 import { recordDealAnalysis } from "@/services/deal-limits";
 import { refundCredits, getActionForAnalysisType } from "@/services/credits";
+import { reserveFullAnalysisDispatch } from "@/services/analysis/guards";
 import { logger } from "@/lib/logger";
+import { loadResults } from "@/services/analysis-results/load-results";
 
 interface RouteParams {
   params: Promise<{ dealId: string }>;
@@ -54,7 +56,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         mode: true,
         status: true,
         thesisDecision: true,
-        results: true,
         startedAt: true,
         completedAt: true,
         totalCost: true,
@@ -62,9 +63,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
     });
 
-    timer.success(200, { count: analyses.length });
+    const analysesWithResults = await Promise.all(
+      analyses.map(async (analysis) => ({
+        ...analysis,
+        results: await loadResults(analysis.id),
+      }))
+    );
+
+    timer.success(200, { count: analysesWithResults.length });
     return apiSuccess(
-      analyses.map((a) => ({
+      analysesWithResults.map((a) => ({
         ...a,
         totalCost: a.totalCost != null ? Number(a.totalCost) : null,
       }))
@@ -77,6 +85,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const timer = createApiTimer("POST", "/api/v1/deals/:id/analyses");
+  let reservedDispatchDealId: string | null = null;
   try {
     const ctx = await authenticateApiRequest(request);
     if (ctx instanceof Response) return ctx;
@@ -92,22 +101,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!deal) {
       timer.error(404, "Deal not found");
       return apiError("NOT_FOUND", "Deal not found", 404);
-    }
-
-    // Check for running analysis
-    const running = await prisma.analysis.findFirst({
-      where: {
-        dealId,
-        status: { in: ["PENDING", "RUNNING"] },
-      },
-    });
-    if (running) {
-      timer.error(409, "Analysis already running");
-      return apiError(
-        "ANALYSIS_IN_PROGRESS",
-        "An analysis is already running for this deal",
-        409
-      );
     }
 
     const body = await request.json().catch(() => ({}));
@@ -140,21 +133,58 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const deduction = await recordDealAnalysis(ctx.userId, 3, dealId, "full_analysis");
+    const dispatchReservation = await reserveFullAnalysisDispatch(dealId);
+    if (dispatchReservation.kind === "pending_thesis") {
+      timer.error(409, "Thesis review already pending");
+      return apiError(
+        "THESIS_REVIEW_PENDING",
+        "A thesis review is already pending for this deal.",
+        409
+      );
+    }
+    if (dispatchReservation.kind === "running") {
+      timer.error(409, "Analysis already running");
+      return apiError(
+        "ANALYSIS_IN_PROGRESS",
+        "An analysis is already running for this deal",
+        409
+      );
+    }
+    if (dispatchReservation.kind === "pending_dispatch") {
+      timer.success(202, { type: "full_analysis", duplicate: true });
+      return apiSuccess(
+        {
+          status: "QUEUED",
+          dealId,
+          type: "full_analysis",
+        },
+        202
+      );
+    }
+    reservedDispatchDealId = dealId;
+
+    const analysisAttemptId = crypto.randomUUID();
+    const analysisChargeKey = `dd:${dealId}:no-snap:${ctx.userId}:${analysisAttemptId}`;
+    const deduction = await recordDealAnalysis(ctx.userId, 3, dealId, "full_analysis", {
+      idempotencyKey: analysisChargeKey,
+    });
     if (!deduction.success) {
+      await prisma.deal.update({
+        where: { id: dealId },
+        data: { status: "IN_DD" },
+      }).catch(() => undefined);
       timer.error(403, "Insufficient credits");
       return apiError("INSUFFICIENT_CREDITS", "Insufficient credits for this analysis.", 403);
     }
 
-    await prisma.deal.update({
-      where: { id: dealId },
-      data: { status: "ANALYZING" },
-    });
+    const dispatchRefundKey = `refund:v1-analyze-dispatch:${dealId}:${analysisAttemptId}`;
+    const dispatchEventId = `analysis:v1.deal.analyze:${dealId}:${analysisAttemptId}`;
 
     // Trigger thesis-first Deep Dive via the same worker contract as /api/analyze
     try {
       const { inngest } = await import("@/lib/inngest");
       await inngest.send({
+        id: dispatchEventId,
         name: "analysis/deal.analyze",
         data: {
           dealId,
@@ -162,12 +192,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           enableTrace: true,
           userPlan: "PRO",
           userId: ctx.userId,
+          dispatchRefundKey,
         },
       });
     } catch (sendErr) {
+      logger.error({ err: sendErr, dealId, userId: ctx.userId }, "Failed to dispatch v1 analysis");
       try {
         const creditAction = getActionForAnalysisType("full_analysis");
-        await refundCredits(ctx.userId, creditAction, dealId);
+        await refundCredits(ctx.userId, creditAction, dealId, {
+          idempotencyKey: dispatchRefundKey,
+        });
       } catch (refundErr) {
         logger.error({ err: refundErr, dealId, userId: ctx.userId }, "Refund failed after v1 analysis dispatch error");
       }
@@ -189,6 +223,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       202
     );
   } catch (error) {
+    if (reservedDispatchDealId) {
+      await prisma.deal.update({
+        where: { id: reservedDispatchDealId },
+        data: { status: "IN_DD" },
+      }).catch(() => undefined);
+    }
     timer.error(500, error instanceof Error ? error.message : "Unknown");
     return handleApiError(error, "launch analysis (v1)");
   }

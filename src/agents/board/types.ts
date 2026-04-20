@@ -158,6 +158,9 @@ export interface BoardInput {
     competitorData?: unknown;
     fundingHistory?: unknown;
     newsArticles?: unknown[];
+    websiteContent?: unknown;
+    contextQuality?: unknown;
+    sourceHealth?: unknown;
   } | null;
 
   // Previous agent outputs (Tier 0-1-2-3) - ALL AGENTS
@@ -390,6 +393,7 @@ export interface BoardProgressEvent {
 export interface BoardOrchestratorOptions {
   dealId: string;
   userId: string;
+  sessionId?: string;
   maxRounds?: number; // Default: 3
   timeoutMs?: number; // Default: 600000 (10 min)
   onProgress?: (event: BoardProgressEvent) => void;

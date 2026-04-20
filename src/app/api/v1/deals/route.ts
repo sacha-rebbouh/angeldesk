@@ -11,6 +11,12 @@ import { authenticateApiRequest } from "../middleware";
 import { apiSuccess, apiError } from "@/lib/api-key-auth";
 import { handleApiError } from "@/lib/api-error";
 import { createApiTimer } from "@/lib/api-logger";
+import {
+  getCurrentFactNumber,
+  getCurrentFactString,
+  loadCanonicalDealSignals,
+  resolveCanonicalAnalysisScores,
+} from "@/services/deals/canonical-read-model";
 
 const createDealSchema = z.object({
   name: z.string().min(1).max(200),
@@ -69,12 +75,34 @@ export async function GET(request: NextRequest) {
       prisma.deal.count({ where }),
     ]);
 
+    const signals = await loadCanonicalDealSignals(deals.map((deal) => deal.id));
+
     timer.success(200, { count: deals.length, total });
     return apiSuccess({
       deals: deals.map((d) => ({
         ...d,
-        valuationPre: d.valuationPre != null ? Number(d.valuationPre) : null,
-        arr: d.arr != null ? Number(d.arr) : null,
+        companyName:
+          getCurrentFactString(
+            signals.factMapByDealId.get(d.id) ?? new Map(),
+            "company.name"
+          ) ?? d.companyName,
+        globalScore: resolveCanonicalAnalysisScores(d.id, signals, {
+          globalScore: d.globalScore,
+          teamScore: null,
+          marketScore: null,
+          productScore: null,
+          financialsScore: null,
+        }).globalScore,
+        valuationPre:
+          getCurrentFactNumber(
+            signals.factMapByDealId.get(d.id) ?? new Map(),
+            "financial.valuation_pre"
+          ) ?? (d.valuationPre != null ? Number(d.valuationPre) : null),
+        arr:
+          getCurrentFactNumber(
+            signals.factMapByDealId.get(d.id) ?? new Map(),
+            "financial.arr"
+          ) ?? (d.arr != null ? Number(d.arr) : null),
         documentsCount: d._count.documents,
         redFlagsCount: d._count.redFlags,
         _count: undefined,

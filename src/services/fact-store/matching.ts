@@ -34,6 +34,35 @@ const SIGNIFICANT_CONTRADICTION_THRESHOLD = 0.15;
  */
 const MINOR_CONTRADICTION_THRESHOLD = 0.05;
 
+function readContextEngineCorpusSnapshotId(
+  fact: Pick<ExtractedFact, "source" | "sourceMetadata"> | Pick<CurrentFact, "currentSource" | "sourceMetadata">
+): string | null {
+  const source = "source" in fact ? fact.source : fact.currentSource;
+  if (source !== "CONTEXT_ENGINE") {
+    return null;
+  }
+
+  const snapshotId = fact.sourceMetadata?.corpusSnapshotId;
+  return typeof snapshotId === "string" && snapshotId.length > 0 ? snapshotId : null;
+}
+
+function readContextEngineEnrichedAt(
+  fact: Pick<ExtractedFact, "source" | "sourceMetadata"> | Pick<CurrentFact, "currentSource" | "sourceMetadata">
+): number | null {
+  const source = "source" in fact ? fact.source : fact.currentSource;
+  if (source !== "CONTEXT_ENGINE") {
+    return null;
+  }
+
+  const enrichedAt = fact.sourceMetadata?.enrichedAt;
+  if (typeof enrichedAt !== "string" || enrichedAt.length === 0) {
+    return null;
+  }
+
+  const timestamp = Date.parse(enrichedAt);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // MAIN MATCHING FUNCTION
 // ═══════════════════════════════════════════════════════════════════════
@@ -73,6 +102,35 @@ export function matchFact(
 
   // Check for contradictions (only for numeric/percentage types)
   const contradiction = detectContradiction(newFact, existingFact);
+
+  const newContextSnapshotId = readContextEngineCorpusSnapshotId(newFact);
+  const existingContextSnapshotId = readContextEngineCorpusSnapshotId(existingFact);
+  if (
+    newContextSnapshotId &&
+    existingContextSnapshotId &&
+    newContextSnapshotId !== existingContextSnapshotId
+  ) {
+    const newEnrichedAt = readContextEngineEnrichedAt(newFact);
+    const existingEnrichedAt = readContextEngineEnrichedAt(existingFact);
+
+    if (
+      newEnrichedAt != null &&
+      existingEnrichedAt != null &&
+      newEnrichedAt < existingEnrichedAt
+    ) {
+      return {
+        type: 'IGNORE',
+        existingFact,
+        reason: `Older context-engine enrichment ignored: ${newContextSnapshotId} predates ${existingContextSnapshotId}`,
+      };
+    }
+
+    return {
+      type: 'SUPERSEDE',
+      existingFact,
+      reason: `Context-engine corpus changed: ${existingContextSnapshotId} -> ${newContextSnapshotId}`,
+    };
+  }
 
   // Case 2: Major contradiction -> needs human review
   if (contradiction && contradiction.significance === 'MAJOR') {

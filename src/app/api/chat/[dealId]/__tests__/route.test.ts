@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   generateResponse: vi.fn(),
   thesisGetLatest: vi.fn(),
   chatConversationUpdate: vi.fn(),
-  analysisFindFirst: vi.fn(),
+  analysisFindMany: vi.fn(),
+  loadResults: vi.fn(),
+  getCorpusSnapshotDocumentIds: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -43,6 +45,14 @@ vi.mock("@/services/chat-context", () => ({
   getFullChatContext: mocks.getFullChatContext,
 }));
 
+vi.mock("@/services/analysis-results/load-results", () => ({
+  loadResults: mocks.loadResults,
+}));
+
+vi.mock("@/services/corpus", () => ({
+  getCorpusSnapshotDocumentIds: mocks.getCorpusSnapshotDocumentIds,
+}));
+
 vi.mock("@/services/thesis/normalization", () => ({
   normalizeThesisEvaluation: mocks.normalizeThesisEvaluation,
 }));
@@ -65,7 +75,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.chatConversationUpdate,
     },
     analysis: {
-      findFirst: mocks.analysisFindFirst,
+      findMany: mocks.analysisFindMany,
     },
   },
 }));
@@ -170,10 +180,13 @@ describe("POST /api/chat/[dealId] thesis-first pairing", () => {
     });
     mocks.thesisGetLatest.mockResolvedValue(thesisRecord);
     mocks.getFullChatContext.mockResolvedValue(baseFullChatContext);
+    mocks.analysisFindMany.mockResolvedValue([]);
+    mocks.getCorpusSnapshotDocumentIds.mockResolvedValue(["doc_a", "doc_b"]);
+    mocks.loadResults.mockResolvedValue({ ok: true });
   });
 
   it("ignores stale unrelated analysis context when the latest thesis has no completed linked analysis", async () => {
-    mocks.analysisFindFirst.mockResolvedValue(null);
+    mocks.analysisFindMany.mockResolvedValue([]);
 
     const request = new Request("http://localhost/api/chat/deal_1", {
       method: "POST",
@@ -195,14 +208,18 @@ describe("POST /api/chat/[dealId] thesis-first pairing", () => {
   });
 
   it("pins chat to the completed analysis linked to the active thesis", async () => {
-    mocks.analysisFindFirst.mockResolvedValue({
-      thesisBypass: true,
-      id: "analysis_linked",
-      mode: "full_analysis",
-      summary: "Linked summary",
-      completedAt: new Date("2026-04-15T10:00:00Z"),
-      results: { ok: true },
-    });
+    mocks.analysisFindMany.mockResolvedValue([
+      {
+        thesisBypass: true,
+        id: "analysis_linked",
+        mode: "full_analysis",
+        summary: "Linked summary",
+        completedAt: new Date("2026-04-15T10:00:00Z"),
+        createdAt: new Date("2026-04-15T09:00:00Z"),
+        thesisId: "thesis_1",
+        corpusSnapshotId: null,
+      },
+    ]);
 
     const request = new Request("http://localhost/api/chat/deal_1", {
       method: "POST",
@@ -220,6 +237,56 @@ describe("POST /api/chat/[dealId] thesis-first pairing", () => {
     expect(agentContext.latestAnalysis).toMatchObject({
       id: "analysis_linked",
       summary: "Linked summary",
+    });
+  });
+
+  it("falls back to snapshot-aligned completed analysis when thesisId link is missing", async () => {
+    mocks.thesisGetLatest.mockResolvedValue({
+      ...thesisRecord,
+      corpusSnapshotId: "snap_1",
+    });
+    mocks.analysisFindMany.mockResolvedValue([
+      {
+        thesisBypass: false,
+        id: "analysis_old",
+        mode: "full_analysis",
+        summary: "Old unrelated summary",
+        completedAt: new Date("2026-04-10T10:00:00Z"),
+        createdAt: new Date("2026-04-10T09:00:00Z"),
+        thesisId: "thesis_old",
+        corpusSnapshotId: "snap_old",
+      },
+      {
+        thesisBypass: true,
+        id: "analysis_snapshot",
+        mode: "full_analysis",
+        summary: "Snapshot aligned summary",
+        completedAt: new Date("2026-04-15T10:00:00Z"),
+        createdAt: new Date("2026-04-15T09:00:00Z"),
+        thesisId: null,
+        corpusSnapshotId: "snap_1",
+      },
+    ]);
+
+    const request = new Request("http://localhost/api/chat/deal_1", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "Give me the aligned context" }),
+    });
+
+    await POST(request as never, {
+      params: Promise.resolve({ dealId: "deal_1" }),
+    });
+
+    expect(mocks.getFullChatContext).toHaveBeenCalledWith("deal_1", {
+      analysisId: "analysis_snapshot",
+      documentIds: ["doc_a", "doc_b"],
+    });
+
+    const agentContext = mocks.generateResponse.mock.calls.at(-1)?.[1];
+    expect(agentContext.latestAnalysis).toMatchObject({
+      id: "analysis_snapshot",
+      summary: "Snapshot aligned summary",
     });
   });
 });

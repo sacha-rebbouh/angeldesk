@@ -93,7 +93,12 @@ export async function POST(request: Request, context: RouteContext) {
     // Trouver l'analyse paused correspondante (RUNNING avec thesisId) — la decision
     // va debloquer le step.waitForEvent dans Inngest pour lancer Tier 1/2/3 ou stopper.
     const pausedAnalyses = await prisma.analysis.findMany({
-      where: { dealId, thesisId: latest.id, status: "RUNNING" },
+      where: {
+        dealId,
+        thesisId: latest.id,
+        status: "RUNNING",
+        ...(latest.corpusSnapshotId ? { corpusSnapshotId: latest.corpusSnapshotId } : {}),
+      },
       select: { id: true },
       orderBy: { createdAt: "desc" },
     });
@@ -114,10 +119,26 @@ export async function POST(request: Request, context: RouteContext) {
     const thesisBypass = decision === "continue" && fragileVerdicts.has(latest.verdict);
     const nextDecisionAt = new Date();
 
-    const updated = await thesisService.recordDecision({
-      thesisId: latest.id,
-      decision,
-    });
+    let updated;
+    try {
+      updated = await thesisService.recordDecision({
+        thesisId: latest.id,
+        decision,
+      });
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "DECISION_ALREADY_RECORDED"
+      ) {
+        return NextResponse.json(
+          { error: "Decision already recorded", existing: latest.decision ?? "already_set" },
+          { status: 409 }
+        );
+      }
+      throw error;
+    }
 
     if (pausedAnalysis) {
       await prisma.analysis.update({
@@ -130,7 +151,11 @@ export async function POST(request: Request, context: RouteContext) {
       });
     } else {
       await prisma.analysis.updateMany({
-        where: { dealId, thesisId: latest.id },
+        where: {
+          dealId,
+          thesisId: latest.id,
+          ...(latest.corpusSnapshotId ? { corpusSnapshotId: latest.corpusSnapshotId } : {}),
+        },
         data: {
           thesisDecision: decision,
           thesisDecisionAt: nextDecisionAt,

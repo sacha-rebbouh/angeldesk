@@ -5,20 +5,21 @@ import { cn } from "@/lib/utils";
 import { Check, Loader2, XCircle } from "lucide-react";
 import { formatAgentName } from "@/lib/format-utils";
 
-// Agent count thresholds for mapping completedAgents → current step
-// PRO: fact-extractor(1) + document-extractor(1) + 13 Tier1 + 1 Tier2 + 5 Tier3 = 21
-// These thresholds represent the cumulative agent count at the END of each step
+// Agent count thresholds for mapping completedAgents -> current step.
+// They reflect the thesis-first runtime semantics shown in the UI:
+// corpus T0 -> these -> analyse approfondie -> expertise sectorielle -> synthese.
 const STEP_THRESHOLDS_PRO = {
-  extraction: 2,   // fact-extractor + document-extractor
-  tier1: 15,       // + 13 Tier1 agents
-  tier2: 16,       // + 1 sector expert
-  tier3: 21,       // + 5 Tier3 agents
+  corpus: 2,       // fact-extractor + document-extractor
+  thesis: 3,       // + thesis-extractor
+  tier1: 16,       // + 13 Tier1 agents
+  tier2: 17,       // + 1 sector expert
+  tier3: 24,       // + 7 Tier3 agents incl. thesis-reconciler
 } as const;
 
 const STEP_THRESHOLDS_FREE = {
-  extraction: 2,   // fact-extractor + document-extractor
-  investigation: 15, // + 13 Tier1 agents
-  scoring: 16,     // + synthesis-deal-scorer
+  corpus: 2,          // fact-extractor + document-extractor
+  investigation: 15,  // + 13 Tier1 agents
+  scoring: 16,        // legacy scoring/finalisation step
 } as const;
 
 export interface AgentStatus {
@@ -73,17 +74,18 @@ export const AnalysisProgress = memo(function AnalysisProgress({
   const steps = useMemo<StepConfig[]>(() => {
     if (analysisType === "tier1_complete") {
       return [
-        { id: "extraction", label: "Extraction des documents", threshold: STEP_THRESHOLDS_FREE.extraction },
-        { id: "investigation", label: "Investigation", threshold: STEP_THRESHOLDS_FREE.investigation },
-        { id: "scoring", label: "Scoring", threshold: STEP_THRESHOLDS_FREE.scoring },
+        { id: "corpus", label: "Construction du corpus T0", threshold: STEP_THRESHOLDS_FREE.corpus },
+        { id: "investigation", label: "Analyse initiale", threshold: STEP_THRESHOLDS_FREE.investigation },
+        { id: "scoring", label: "Cloture & scoring", threshold: STEP_THRESHOLDS_FREE.scoring },
       ];
     }
 
     return [
-      { id: "extraction", label: "Extraction des documents", threshold: STEP_THRESHOLDS_PRO.extraction },
-      { id: "tier1", label: "Investigation approfondie", threshold: STEP_THRESHOLDS_PRO.tier1 },
-      { id: "tier2", label: "Expert sectoriel", threshold: STEP_THRESHOLDS_PRO.tier2 },
-      { id: "tier3", label: "Synthese & Scoring", threshold: STEP_THRESHOLDS_PRO.tier3 },
+      { id: "corpus", label: "Construction du corpus T0", threshold: STEP_THRESHOLDS_PRO.corpus },
+      { id: "thesis", label: "These d'investissement", threshold: STEP_THRESHOLDS_PRO.thesis },
+      { id: "tier1", label: "Analyse approfondie", threshold: STEP_THRESHOLDS_PRO.tier1 },
+      { id: "tier2", label: "Expertise sectorielle", threshold: STEP_THRESHOLDS_PRO.tier2 },
+      { id: "tier3", label: "Synthese finale", threshold: STEP_THRESHOLDS_PRO.tier3 },
     ];
   }, [analysisType]);
 
@@ -152,7 +154,7 @@ export const AnalysisProgress = memo(function AnalysisProgress({
                 Analyse en cours
                 {totalAgents > 0 && (
                   <span className="text-muted-foreground font-normal ml-1">
-                    ({completedAgents}/{totalAgents} étapes — {progressPercent}%)
+                    ({completedAgents}/{totalAgents} agents - {progressPercent}%)
                   </span>
                 )}
               </span>

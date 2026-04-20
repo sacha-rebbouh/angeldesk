@@ -456,7 +456,7 @@ Be ruthlessly honest. I will not penalise you for uncertainty.`;
 // ============================================================================
 
 function buildUserPrompt(context: EnrichedAgentContext): string {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage || "SEED";
   const previousResults = context.previousResults || {};
 
@@ -768,7 +768,7 @@ export const proptechExpert = {
     const startTime = Date.now();
 
     try {
-      const stage = context.deal.stage || "SEED";
+      const stage = context.canonicalDeal.stage || "SEED";
       const systemPromptText = buildSystemPrompt(stage);
       const userPromptText = buildUserPrompt(context);
 

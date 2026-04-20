@@ -439,13 +439,13 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<ExitStrategistData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
 
     // Extract key parameters
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     const investmentAmount = Number(extractedInfo?.amountRaising) || (deal.amountRequested != null ? Number(deal.amountRequested) : 500000);
     const valuation = Number(extractedInfo?.valuationPre) || (deal.valuationPre != null ? Number(deal.valuationPre) : 3000000);
     const arr = Number(extractedInfo?.arr) || (deal.arr != null ? Number(deal.arr) : 0);
@@ -644,8 +644,8 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
       });
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "exit-strategist", extractedMetrics, sector, stage, EXIT_STRATEGIST_CRITERIA,
         );

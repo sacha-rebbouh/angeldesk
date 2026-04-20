@@ -627,7 +627,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TeamInvestigatorData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
@@ -666,7 +666,7 @@ ${JSON.stringify(teamMembers, null, 2)}`;
       peopleGraphSection = `\n## PEOPLE GRAPH (Context Engine)\n${JSON.stringify(context.contextEngine.peopleGraph, null, 2)}`;
     }
 
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     const sector = deal.sector || "Tech";
 
     // =====================================================
@@ -1077,8 +1077,8 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "team-investigator", extractedMetrics, sector, stage, TEAM_INVESTIGATOR_CRITERIA,
         );
@@ -1162,7 +1162,7 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       previousVentures?: unknown;
     }
 
-    const deal = context.deal as unknown as { founders?: FounderWithLinkedIn[] };
+    const deal = context.canonicalDeal as unknown as { founders?: FounderWithLinkedIn[] };
 
     if (!deal.founders || deal.founders.length === 0) {
       return null;

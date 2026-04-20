@@ -17,7 +17,33 @@ type RouteContext = {
   params: Promise<{ dealId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+async function resolveAnalysisThesis(params: {
+  dealId: string;
+  thesisId: string | null;
+  corpusSnapshotId: string | null;
+}) {
+  const directlyLinked = params.thesisId
+    ? await thesisService.getById(params.thesisId)
+    : null;
+
+  if (directlyLinked) {
+    return directlyLinked;
+  }
+
+  if (!params.corpusSnapshotId) {
+    return null;
+  }
+
+  return prisma.thesis.findFirst({
+    where: {
+      dealId: params.dealId,
+      corpusSnapshotId: params.corpusSnapshotId,
+    },
+    orderBy: [{ version: "desc" }, { createdAt: "desc" }],
+  });
+}
+
+export async function GET(request: Request, context: RouteContext) {
   try {
     const user = await requireAuth();
     const { dealId } = await context.params;
@@ -34,12 +60,39 @@ export async function GET(_request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
-    const [latest, history] = await Promise.all([
+    const url = new URL(request.url);
+    const requestedAnalysisId = url.searchParams.get("analysisId");
+
+    if (requestedAnalysisId && !isValidCuid(requestedAnalysisId)) {
+      return NextResponse.json({ error: "Invalid analysis ID format" }, { status: 400 });
+    }
+
+    const [latest, history, requestedAnalysis] = await Promise.all([
       thesisService.getLatest(dealId),
       thesisService.getHistory(dealId),
+      requestedAnalysisId
+        ? prisma.analysis.findFirst({
+            where: { id: requestedAnalysisId, dealId },
+            select: {
+              id: true,
+              thesisId: true,
+              thesisBypass: true,
+              corpusSnapshotId: true,
+              createdAt: true,
+            },
+          })
+        : Promise.resolve(null),
     ]);
 
-    if (!latest) {
+    const selectedThesis = requestedAnalysis
+      ? await resolveAnalysisThesis({
+          dealId,
+          thesisId: requestedAnalysis.thesisId,
+          corpusSnapshotId: requestedAnalysis.corpusSnapshotId,
+        })
+      : latest;
+
+    if (!selectedThesis) {
       return NextResponse.json({
         data: {
           thesis: null,
@@ -49,24 +102,29 @@ export async function GET(_request: Request, context: RouteContext) {
       });
     }
 
-    const hasPendingDecision = latest.decision === null;
+    const hasPendingDecision = selectedThesis.decision === null;
 
     // Propagation de thesisBypass depuis l'analyse la plus recente liee a cette these
     const linkedAnalysis = await prisma.analysis.findFirst({
-      where: { dealId, thesisId: latest.id },
-      select: { thesisBypass: true },
+      where: { dealId, thesisId: selectedThesis.id },
+      select: { thesisBypass: true, corpusSnapshotId: true },
       orderBy: { createdAt: "desc" },
     });
 
     const latestEnriched = {
-      ...latest,
-      thesisBypass: linkedAnalysis?.thesisBypass ?? false,
+      ...selectedThesis,
+      thesisBypass: requestedAnalysis?.thesisId === selectedThesis.id
+        ? requestedAnalysis.thesisBypass
+        : linkedAnalysis?.thesisBypass ?? false,
+      linkedCorpusSnapshotId: requestedAnalysis?.thesisId === selectedThesis.id
+        ? requestedAnalysis.corpusSnapshotId ?? selectedThesis.corpusSnapshotId ?? null
+        : linkedAnalysis?.corpusSnapshotId ?? selectedThesis.corpusSnapshotId ?? null,
       evaluationAxes: normalizeThesisEvaluation({
-        verdict: latest.verdict as never,
-        confidence: latest.confidence,
-        ycLens: latest.ycLens as never,
-        thielLens: latest.thielLens as never,
-        angelDeskLens: latest.angelDeskLens as never,
+        verdict: selectedThesis.verdict as never,
+        confidence: selectedThesis.confidence,
+        ycLens: selectedThesis.ycLens as never,
+        thielLens: selectedThesis.thielLens as never,
+        angelDeskLens: selectedThesis.angelDeskLens as never,
       }),
     };
 
@@ -82,6 +140,7 @@ export async function GET(_request: Request, context: RouteContext) {
           confidence: h.confidence,
           createdAt: h.createdAt,
           decision: h.decision,
+          corpusSnapshotId: h.corpusSnapshotId,
           reformulated: h.reformulated,
           problem: h.problem,
           solution: h.solution,

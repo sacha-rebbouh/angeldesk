@@ -25,6 +25,10 @@ import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
 import { formatAnalysisMode } from "@/lib/analysis-constants";
 import { getCreditBalance } from "@/services/credits/usage-gate";
+import {
+  loadCanonicalDealSignals,
+  resolveCanonicalDealFields,
+} from "@/services/deals/canonical-read-model";
 
 const PIPELINE_STATUSES = [
   { value: "SCREENING", label: "Screening", color: "bg-blue-500" },
@@ -37,7 +41,7 @@ const PIPELINE_STATUSES = [
 
 async function getDashboardStats(userId: string) {
   noStore();
-  const [totalDeals, activeDeals, recentDeals, redFlagsCount, topRedFlags, dealsByStatus, recentAnalyses, dealsWithScores, creditBalance] =
+  const [totalDeals, activeDeals, recentDealsRaw, redFlagsCount, topRedFlags, dealsByStatus, recentAnalyses, metricDeals, creditBalance] =
     await Promise.all([
       prisma.deal.count({ where: { userId } }),
       prisma.deal.count({
@@ -93,8 +97,8 @@ async function getDashboardStats(userId: string) {
       }),
       // Deals with scores for portfolio metrics (F87)
       prisma.deal.findMany({
-        where: { userId, globalScore: { not: null } },
-        select: { globalScore: true, sector: true },
+        where: { userId },
+        select: { id: true, globalScore: true, sector: true },
       }),
       // Credit balance
       getCreditBalance(userId),
@@ -106,10 +110,104 @@ async function getDashboardStats(userId: string) {
     pipelineCounts[s.status] = s._count.id;
   }
 
+  const signals = await loadCanonicalDealSignals(metricDeals.map((deal) => deal.id));
+  const recentDealSignals = await loadCanonicalDealSignals(
+    recentDealsRaw.map((deal) => deal.id)
+  );
+  const recentDeals = recentDealsRaw.map((deal) => ({
+    ...deal,
+    ...resolveCanonicalDealFields(deal.id, recentDealSignals, {
+      companyName: deal.companyName,
+      website: deal.website,
+      arr: deal.arr != null ? Number(deal.arr) : null,
+      growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
+      amountRequested:
+        deal.amountRequested != null ? Number(deal.amountRequested) : null,
+      valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+      sector: deal.sector,
+      stage: deal.stage,
+      instrument: deal.instrument,
+      geography: deal.geography,
+      description: deal.description,
+      globalScore: deal.globalScore,
+      teamScore: deal.teamScore,
+      marketScore: deal.marketScore,
+      productScore: deal.productScore,
+      financialsScore: deal.financialsScore,
+    }),
+  }));
+
   // Portfolio metrics
-  const scores = dealsWithScores.map(d => d.globalScore!);
+  const scores = metricDeals
+    .map((deal) =>
+      resolveCanonicalDealFields(deal.id, signals, {
+        companyName: null,
+        website: null,
+        arr: null,
+        growthRate: null,
+        amountRequested: null,
+        valuationPre: null,
+        sector: deal.sector,
+        stage: null,
+        instrument: null,
+        geography: null,
+        description: null,
+        globalScore: deal.globalScore,
+        teamScore: null,
+        marketScore: null,
+        productScore: null,
+        financialsScore: null,
+      }).globalScore
+    )
+    .filter((score): score is number => typeof score === "number");
   const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
-  const sectorDistribution = [...new Set(dealsWithScores.map(d => d.sector).filter(Boolean))];
+  const sectorDistribution = [
+    ...new Set(
+      metricDeals
+        .filter((deal) => {
+          const score = resolveCanonicalDealFields(deal.id, signals, {
+            companyName: null,
+            website: null,
+            arr: null,
+            growthRate: null,
+            amountRequested: null,
+            valuationPre: null,
+            sector: deal.sector,
+            stage: null,
+            instrument: null,
+            geography: null,
+            description: null,
+            globalScore: deal.globalScore,
+            teamScore: null,
+            marketScore: null,
+            productScore: null,
+            financialsScore: null,
+          }).globalScore;
+          return typeof score === "number";
+        })
+        .map((deal) =>
+          resolveCanonicalDealFields(deal.id, signals, {
+            companyName: null,
+            website: null,
+            arr: null,
+            growthRate: null,
+            amountRequested: null,
+            valuationPre: null,
+            sector: deal.sector,
+            stage: null,
+            instrument: null,
+            geography: null,
+            description: null,
+            globalScore: deal.globalScore,
+            teamScore: null,
+            marketScore: null,
+            productScore: null,
+            financialsScore: null,
+          }).sector
+        )
+        .filter(Boolean)
+    ),
+  ];
 
   return {
     totalDeals,
@@ -121,7 +219,7 @@ async function getDashboardStats(userId: string) {
     recentAnalyses,
     avgScore,
     sectorDistribution,
-    dealsWithScoresCount: dealsWithScores.length,
+    dealsWithScoresCount: scores.length,
     creditBalance,
   };
 }

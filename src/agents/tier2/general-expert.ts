@@ -374,7 +374,7 @@ Be ruthlessly honest. I will not penalise you for uncertainty.`;
 // ============================================================================
 
 function buildUserPrompt(context: EnrichedAgentContext): string {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage || "SEED";
   const previousResults = context.previousResults || {};
 

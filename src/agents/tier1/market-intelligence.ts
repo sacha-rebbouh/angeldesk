@@ -303,7 +303,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<MarketIntelData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
@@ -393,7 +393,7 @@ Dans findings.marketSize, ajoute pour sam et som :
 - Un "validated" qui est ton estimation bottom-up (PAS le chiffre du deck)
 `;
 
-    const prompt = `# ANALYSE MARKET INTELLIGENCE - ${context.deal.name}
+    const prompt = `# ANALYSE MARKET INTELLIGENCE - ${context.canonicalDeal.name}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -678,8 +678,8 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "market-intelligence", extractedMetrics, sector, stage, MARKET_INTELLIGENCE_CRITERIA,
         );

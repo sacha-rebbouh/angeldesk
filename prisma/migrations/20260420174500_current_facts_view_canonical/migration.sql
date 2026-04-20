@@ -1,11 +1,5 @@
 -- ============================================================================
--- CURRENT FACTS MATERIALIZED VIEW
--- ============================================================================
--- Creates a materialized view for fast current facts lookups.
---
--- To apply:
---   npx dotenv -e .env.local -- npx prisma db execute --schema prisma/schema.prisma --file prisma/migrations/manual_current_facts_view.sql
---
+-- CURRENT FACTS MATERIALIZED VIEW (canonical P0 schema)
 -- ============================================================================
 
 DROP MATERIALIZED VIEW IF EXISTS current_facts_mv;
@@ -22,29 +16,31 @@ SELECT DISTINCT ON ("dealId", "factKey")
   source,
   "sourceDocumentId",
   "sourceConfidence",
+  "truthConfidence",
   "extractedText",
+  "sourceMetadata",
+  "validAt",
+  "periodType",
+  "periodLabel",
+  reliability,
   "eventType",
   "supersedesEventId",
   "createdAt",
   "createdBy",
   reason
 FROM "FactEvent"
-WHERE "eventType" NOT IN ('DELETED', 'SUPERSEDED')
+WHERE "eventType" NOT IN ('DELETED', 'SUPERSEDED', 'PENDING_REVIEW')
 ORDER BY "dealId", "factKey", "createdAt" DESC;
 
--- Unique index required for CONCURRENTLY refresh
 CREATE UNIQUE INDEX idx_current_facts_mv_deal_fact
 ON current_facts_mv ("dealId", "factKey");
 
--- Index for all facts of a deal
 CREATE INDEX idx_current_facts_mv_deal
 ON current_facts_mv ("dealId");
 
--- Index for category filtering
 CREATE INDEX idx_current_facts_mv_category
 ON current_facts_mv ("dealId", category);
 
--- Function for concurrent refresh
 CREATE OR REPLACE FUNCTION refresh_current_facts_mv()
 RETURNS void AS $$
 BEGIN

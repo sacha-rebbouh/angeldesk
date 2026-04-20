@@ -26,6 +26,10 @@ import { DealInfoCard } from "@/components/deals/deal-info-card";
 import { ChatWrapper } from "@/components/chat/chat-wrapper";
 import LiveTabLoader from "@/components/deals/live-tab-loader";
 import { getStatusColor, getStatusLabel, getStageLabel, formatCurrencyEUR } from "@/lib/format-utils";
+import {
+  loadCanonicalDealSignals,
+  resolveCanonicalDealFields,
+} from "@/services/deals/canonical-read-model";
 
 async function getDeal(dealId: string, userId: string) {
   return prisma.deal.findFirst({
@@ -122,6 +126,30 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
     notFound();
   }
 
+  const signals = await loadCanonicalDealSignals([deal.id]);
+  const canonicalDeal = {
+    ...deal,
+    ...resolveCanonicalDealFields(deal.id, signals, {
+      companyName: deal.companyName,
+      website: deal.website,
+      amountRequested:
+        deal.amountRequested != null ? Number(deal.amountRequested) : null,
+      arr: deal.arr != null ? Number(deal.arr) : null,
+      growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
+      valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+      sector: deal.sector,
+      stage: deal.stage,
+      instrument: deal.instrument,
+      geography: deal.geography,
+      description: deal.description,
+      globalScore: deal.globalScore,
+      teamScore: deal.teamScore,
+      marketScore: deal.marketScore,
+      productScore: deal.productScore,
+      financialsScore: deal.financialsScore,
+    }),
+  };
+
   // Build initialData for ConditionsTab (avoids extra API roundtrip on tab click)
   const conditionsInitialData: TermsResponse = (() => {
     const cached = deal.conditionsAnalysis as ConditionsAnalystData | null;
@@ -139,7 +167,8 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
     );
   })();
 
-  const latestThesis = deal.theses[0] ?? null;
+  const latestThesis =
+    signals.latestThesisByDealId.get(deal.id) ?? deal.theses[0] ?? null;
   const overviewAnalysisForThesis = latestThesis
     ? deal.analyses.find((analysis) => analysis.thesisId === latestThesis.id) ?? null
     : null;
@@ -147,7 +176,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
     !!latestThesis &&
     new Set(["alert_dominant", "vigilance"]).has(latestThesis.verdict) &&
     !overviewAnalysisForThesis?.thesisBypass;
-  const showOverviewScores = deal.globalScore != null && !!latestThesis && !thesisGated;
+  const showOverviewScores = canonicalDeal.globalScore != null && !!latestThesis && !thesisGated;
 
 
   const content = (
@@ -178,24 +207,24 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
               </Badge>
             </div>
             <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
-              {deal.companyName && deal.companyName !== deal.name && (
-                <span>{deal.companyName}</span>
+              {canonicalDeal.companyName && canonicalDeal.companyName !== deal.name && (
+                <span>{canonicalDeal.companyName}</span>
               )}
-              {deal.stage && (
+              {canonicalDeal.stage && (
                 <Badge variant="outline" className="text-xs">
-                  {getStageLabel(deal.stage, deal.stage)}
+                  {getStageLabel(canonicalDeal.stage, canonicalDeal.stage)}
                 </Badge>
               )}
-              {deal.sector && <span>{deal.sector}</span>}
-              {deal.valuationPre != null && (
+              {canonicalDeal.sector && <span>{canonicalDeal.sector}</span>}
+              {canonicalDeal.valuationPre != null && (
                 <>
                   <span className="text-muted-foreground/50">·</span>
-                  <span>{formatCurrencyEUR(Number(deal.valuationPre))}</span>
+                  <span>{formatCurrencyEUR(Number(canonicalDeal.valuationPre))}</span>
                 </>
               )}
-              {deal.website && (
+              {canonicalDeal.website && (
                 <a
-                  href={deal.website}
+                  href={canonicalDeal.website}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center text-primary hover:underline"
@@ -249,13 +278,13 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                 {showOverviewScores ? (
                   <ScoreGrid
                     scores={{
-                      global: deal.globalScore,
+                      global: canonicalDeal.globalScore,
                       fundamentals: deal.fundamentalsScore,
                       conditions: deal.conditionsScore,
-                      team: deal.teamScore,
-                      market: deal.marketScore,
-                      product: deal.productScore,
-                      financials: deal.financialsScore,
+                      team: canonicalDeal.teamScore,
+                      market: canonicalDeal.marketScore,
+                      product: canonicalDeal.productScore,
+                      financials: canonicalDeal.financialsScore,
                     }}
                     stage={deal.stage}
                   />
@@ -285,10 +314,10 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                 instrument: deal.instrument,
                 geography: deal.geography,
                 description: deal.description,
-                amountRequested: deal.amountRequested != null ? Number(deal.amountRequested) : null,
-                arr: deal.arr != null ? Number(deal.arr) : null,
-                growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
-                valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+                amountRequested: canonicalDeal.amountRequested,
+                arr: canonicalDeal.arr,
+                growthRate: canonicalDeal.growthRate,
+                valuationPre: canonicalDeal.valuationPre,
               }}
             />
           </div>

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   dealFindFirst: vi.fn(),
   analysisFindFirst: vi.fn(),
   analysisFindMany: vi.fn(),
+  loadResults: vi.fn(),
   dealUpdate: vi.fn(),
   apiSuccess: vi.fn(),
   apiError: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   createApiTimer: vi.fn(),
   evaluateDealDocumentReadiness: vi.fn(),
   recordDealAnalysis: vi.fn(),
+  reserveFullAnalysisDispatch: vi.fn(),
   refundCredits: vi.fn(),
   getActionForAnalysisType: vi.fn(),
   inngestSend: vi.fn(),
@@ -34,6 +36,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/services/analysis-results/load-results", () => ({
+  loadResults: mocks.loadResults,
+}));
+
 vi.mock("@/lib/api-key-auth", () => ({
   apiSuccess: mocks.apiSuccess,
   apiError: mocks.apiError,
@@ -53,6 +59,10 @@ vi.mock("@/services/documents/extraction-runs", () => ({
 
 vi.mock("@/services/deal-limits", () => ({
   recordDealAnalysis: mocks.recordDealAnalysis,
+}));
+
+vi.mock("@/services/analysis/guards", () => ({
+  reserveFullAnalysisDispatch: mocks.reserveFullAnalysisDispatch,
 }));
 
 vi.mock("@/services/credits", () => ({
@@ -84,17 +94,20 @@ const errorResponse = (code: string, message: string, status: number) =>
     headers: { "content-type": "application/json" },
   });
 
-const { POST } = await import("../route");
+const { GET, POST } = await import("../route");
 
-describe("POST /api/v1/deals/[dealId]/analyses", () => {
+describe("/api/v1/deals/[dealId]/analyses", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
     mocks.authenticateApiRequest.mockResolvedValue({ userId: "user_1", keyId: "key_1" });
     mocks.dealFindFirst.mockResolvedValue({ id: "deal_1", status: "IN_DD" });
     mocks.analysisFindFirst.mockResolvedValue(null);
+    mocks.analysisFindMany.mockResolvedValue([]);
+    mocks.loadResults.mockResolvedValue(null);
     mocks.evaluateDealDocumentReadiness.mockResolvedValue({ ready: true });
     mocks.recordDealAnalysis.mockResolvedValue({ success: true });
+    mocks.reserveFullAnalysisDispatch.mockResolvedValue({ kind: "reserved" });
     mocks.getActionForAnalysisType.mockReturnValue("DEEP_DIVE");
     mocks.inngestSend.mockResolvedValue(undefined);
     mocks.apiSuccess.mockImplementation(successResponse);
@@ -103,6 +116,40 @@ describe("POST /api/v1/deals/[dealId]/analyses", () => {
       errorResponse("INTERNAL_ERROR", error instanceof Error ? error.message : "unknown", 500)
     );
     mocks.createApiTimer.mockReturnValue(timer);
+  });
+
+  it("lists analyses via the canonical results loader instead of raw DB blobs", async () => {
+    mocks.analysisFindMany.mockResolvedValue([
+      {
+        id: "analysis_1",
+        type: "FULL_DD",
+        mode: "full_analysis",
+        status: "COMPLETED",
+        thesisDecision: "continue",
+        startedAt: new Date("2026-04-19T10:00:00Z"),
+        completedAt: new Date("2026-04-19T10:10:00Z"),
+        totalCost: 12.34,
+        createdAt: new Date("2026-04-19T10:00:00Z"),
+      },
+    ]);
+    mocks.loadResults.mockResolvedValue({ synthesis: { summary: "ok" } });
+
+    const response = await GET(
+      new Request("http://localhost/api/v1/deals/deal_1/analyses") as never,
+      { params: Promise.resolve({ dealId: "deal_1" }) }
+    );
+
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mocks.loadResults).toHaveBeenCalledWith("analysis_1");
+    expect(payload.data).toEqual([
+      expect.objectContaining({
+        id: "analysis_1",
+        results: { synthesis: { summary: "ok" } },
+        totalCost: 12.34,
+      }),
+    ]);
   });
 
   it("rejects legacy public analysis types instead of mapping them silently", async () => {
@@ -136,17 +183,29 @@ describe("POST /api/v1/deals/[dealId]/analyses", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(202);
-    expect(mocks.recordDealAnalysis).toHaveBeenCalledWith("user_1", 3, "deal_1", "full_analysis");
-    expect(mocks.inngestSend).toHaveBeenCalledWith({
-      name: "analysis/deal.analyze",
-      data: {
-        dealId: "deal_1",
-        type: "full_analysis",
-        enableTrace: true,
-        userPlan: "PRO",
-        userId: "user_1",
-      },
-    });
+    expect(mocks.recordDealAnalysis).toHaveBeenCalledWith(
+      "user_1",
+      3,
+      "deal_1",
+      "full_analysis",
+      expect.objectContaining({
+        idempotencyKey: expect.stringContaining("dd:deal_1:"),
+      })
+    );
+    expect(mocks.inngestSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: expect.stringContaining("analysis:v1.deal.analyze:deal_1:"),
+        name: "analysis/deal.analyze",
+        data: expect.objectContaining({
+          dealId: "deal_1",
+          type: "full_analysis",
+          enableTrace: true,
+          userPlan: "PRO",
+          userId: "user_1",
+          dispatchRefundKey: expect.stringContaining("refund:v1-analyze-dispatch:deal_1:"),
+        }),
+      })
+    );
     expect(payload.data).toEqual({
       status: "QUEUED",
       dealId: "deal_1",

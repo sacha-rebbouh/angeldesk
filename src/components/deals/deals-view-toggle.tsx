@@ -6,25 +6,12 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { DealsTable } from "@/components/deals/deals-table";
 import { DealsKanban } from "@/components/deals/deals-kanban";
+import type { CanonicalDealListItem } from "./types";
 
 type ViewMode = "table" | "kanban";
 
-interface Deal {
-  id: string;
-  name: string;
-  sector: string | null;
-  stage: string | null;
-  valuationPre: number | string | null;
-  status: string;
-  website: string | null;
-  updatedAt: Date;
-  redFlags: { severity: string; title?: string }[];
-  globalScore?: number | null;
-  thesisVerdict?: string | null;
-}
-
 interface DealsViewToggleProps {
-  deals: Deal[];
+  deals: CanonicalDealListItem[];
 }
 
 export const DealsViewToggle = memo(function DealsViewToggle({ deals }: DealsViewToggleProps) {

@@ -8,9 +8,10 @@ import {
   getUsageStatus,
   type AnalysisTier,
 } from "@/services/deal-limits";
-import { refundCredits, getActionForAnalysisType } from "@/services/credits";
+import { refundCredits, getActionForAnalysisType, CREDIT_COSTS } from "@/services/credits";
 import { CUID_PATTERN } from "@/lib/sanitize";
 import { evaluateDealDocumentReadiness } from "@/services/documents/extraction-runs";
+import { claimFailedAnalysisResume, reserveFullAnalysisDispatch } from "@/services/analysis/guards";
 import { inngest } from "@/lib/inngest";
 import { logger } from "@/lib/logger";
 
@@ -57,6 +58,7 @@ function getAnalysisTier(type: string): AnalysisTier {
 
 // POST /api/analyze - Start an analysis
 export async function POST(request: NextRequest) {
+  let reservedDispatchDealId: string | null = null;
   try {
     const user = await requireAuth();
 
@@ -128,7 +130,7 @@ export async function POST(request: NextRequest) {
     const latestThesis = type === "full_analysis"
       ? await prisma.thesis.findFirst({
           where: { dealId, isLatest: true },
-          select: { id: true },
+          select: { id: true, corpusSnapshotId: true },
           orderBy: { version: "desc" },
         })
       : null;
@@ -144,6 +146,9 @@ export async function POST(request: NextRequest) {
             // thèse canonique active. Si aucune thèse n’existe encore, seuls les
             // runs sans thesisId sont éligibles.
             thesisId: latestThesis?.id ?? null,
+            ...(latestThesis?.corpusSnapshotId
+              ? { corpusSnapshotId: latestThesis.corpusSnapshotId }
+              : {}),
             // Only resume recent failures (< 6 hours)
             completedAt: { gte: new Date(Date.now() - 6 * 60 * 60 * 1000) },
           },
@@ -159,70 +164,123 @@ export async function POST(request: NextRequest) {
 
     // Resume is possible if we have an analysis with results in DB (even without checkpoints,
     // the resume logic merges DB results with checkpoint data)
-    const canResume = resumableAnalysis && (
-      resumableAnalysis.checkpoints.length > 0 || resumableAnalysis.completedAgents > 0
+    const canResume = Boolean(
+      resumableAnalysis &&
+      latestThesis?.id &&
+      latestThesis.corpusSnapshotId &&
+      resumableAnalysis.corpusSnapshotId === latestThesis.corpusSnapshotId &&
+      (resumableAnalysis.checkpoints.length > 0 || resumableAnalysis.completedAgents > 0)
     );
 
-    if (canResume) {
+    const resumeCandidate = canResume ? resumableAnalysis : null;
+
+    if (resumeCandidate) {
       logger.info(
         {
-          analysisId: resumableAnalysis.id,
+          analysisId: resumeCandidate.id,
           dealId,
-          completed: resumableAnalysis.completedAgents,
-          total: resumableAnalysis.totalAgents,
-          alreadyRefunded: !!resumableAnalysis.refundedAt,
+          completed: resumeCandidate.completedAgents,
+          total: resumeCandidate.totalAgents,
+          alreadyRefunded: !!resumeCandidate.refundedAt,
         },
         "Found resumable analysis, resuming from checkpoint"
       );
+
+      const resumeAttemptId = crypto.randomUUID();
+      const resumeRefundKey = `refund:resume:${resumeCandidate.id}:${resumeAttemptId}`;
+      const resumeChargeKey = `resume:${user.id}:${resumeCandidate.id}:${resumeAttemptId}`;
+      const resumeAction = getActionForAnalysisType(type);
+      let resumeWasRedebited = false;
+
+      const resumeClaimed = await claimFailedAnalysisResume(resumeCandidate.id, dealId);
+      if (!resumeClaimed) {
+        return NextResponse.json({
+          data: {
+            status: "RESUMING",
+            dealId,
+            resumedFrom: resumeCandidate.id,
+            completedAgents: resumeCandidate.completedAgents,
+            totalAgents: resumeCandidate.totalAgents,
+          },
+        });
+      }
 
       // P1 — Si l'analyse precedente a deja ete remboursee, elle a couvert
       // l'ancien paiement. On re-facture la reprise (le user avait reçu son refund
       // et decide de re-tenter). Sinon (pas de refund), l'analyse precedente est
       // encore consideree comme "en cours" cote credits, pas de nouvelle facturation.
-      if (resumableAnalysis.refundedAt) {
-        const resumeDeduction = await recordDealAnalysis(user.id, requestedTier, dealId, type);
+      if (resumeCandidate.refundedAt) {
+        const resumeDeduction = await recordDealAnalysis(user.id, requestedTier, dealId, type, {
+          idempotencyKey: resumeChargeKey,
+        });
         if (!resumeDeduction.success) {
+          await prisma.analysis.update({
+            where: { id: resumeCandidate.id },
+            data: {
+              status: "FAILED",
+              completedAt: new Date(),
+              refundedAt: resumeCandidate.refundedAt,
+              refundAmount: resumeCandidate.refundAmount,
+            },
+          }).catch(() => undefined);
+          await prisma.deal.update({
+            where: { id: dealId },
+            data: { status: "IN_DD" },
+          }).catch(() => undefined);
           return NextResponse.json(
             { error: "Credits insuffisants pour la reprise", upgradeRequired: true, remainingDeals: 0 },
             { status: 403 }
           );
         }
+        resumeWasRedebited = true;
+        await prisma.analysis.update({
+          where: { id: resumeCandidate.id },
+          data: {
+            refundedAt: null,
+            refundAmount: null,
+          },
+        });
       }
 
-      // Set analysis back to RUNNING for resumeAnalysis to work
-      await prisma.analysis.update({
-        where: { id: resumableAnalysis.id },
-        data: { status: "RUNNING", completedAt: null },
-      });
-
-      // Update deal status
-      await prisma.deal.update({
-        where: { id: dealId },
-        data: { status: "ANALYZING" },
-      });
-
-      // Durable background via Inngest — le request handler rend la main immediatement,
-      // le worker Inngest survit au-dela des 5 min de la fonction Vercel.
       try {
+        // Durable background via Inngest — le request handler rend la main immediatement,
+        // le worker Inngest survit au-dela des 5 min de la fonction Vercel.
         await inngest.send({
           name: "analysis/deal.resume",
           data: {
-            analysisId: resumableAnalysis.id,
+            analysisId: resumeCandidate.id,
             dealId,
             userId: user.id,
+            resumeRefundKey,
           },
         });
       } catch (sendErr) {
+        if (resumeWasRedebited) {
+          await refundCredits(user.id, resumeAction, dealId, {
+            analysisId: resumeCandidate.id,
+            idempotencyKey: resumeRefundKey,
+          });
+        }
+
         // Rollback: remettre l'analyse en FAILED et le deal en IN_DD
         await prisma.analysis.update({
-          where: { id: resumableAnalysis.id },
-          data: { status: "FAILED", completedAt: new Date() },
+          where: { id: resumeCandidate.id },
+          data: {
+            status: "FAILED",
+            completedAt: new Date(),
+            ...(resumeWasRedebited
+              ? {
+                  refundedAt: new Date(),
+                  refundAmount: CREDIT_COSTS[resumeAction] ?? null,
+                }
+              : {}),
+          },
         }).catch(() => undefined);
         await prisma.deal.update({
           where: { id: dealId },
           data: { status: "IN_DD" },
         }).catch(() => undefined);
-        logger.error({ err: sendErr, dealId, analysisId: resumableAnalysis.id }, "Inngest resume dispatch failed");
+        logger.error({ err: sendErr, dealId, analysisId: resumeCandidate.id }, "Inngest resume dispatch failed");
         return NextResponse.json(
           { error: "Failed to schedule analysis resume" },
           { status: 502 }
@@ -233,9 +291,9 @@ export async function POST(request: NextRequest) {
         data: {
           status: "RESUMING",
           dealId,
-          resumedFrom: resumableAnalysis.id,
-          completedAgents: resumableAnalysis.completedAgents,
-          totalAgents: resumableAnalysis.totalAgents,
+          resumedFrom: resumeCandidate.id,
+          completedAgents: resumeCandidate.completedAgents,
+          totalAgents: resumeCandidate.totalAgents,
         },
       });
     }
@@ -244,41 +302,55 @@ export async function POST(request: NextRequest) {
     // NEW ANALYSIS (no resumable analysis found)
     // ================================================================
 
-    // Check for already running analysis
-    const runningAnalysis = await prisma.analysis.findFirst({
-      where: { dealId, status: "RUNNING" },
-    });
+    const dispatchReservation = await reserveFullAnalysisDispatch(dealId);
 
-    if (runningAnalysis) {
-      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
-      if (runningAnalysis.createdAt < thirtyMinAgo) {
-        await prisma.analysis.update({
-          where: { id: runningAnalysis.id },
-          data: { status: "FAILED" },
-        });
-      } else {
-        return NextResponse.json({ error: "An analysis is already running for this deal" }, { status: 409 });
-      }
+    if (dispatchReservation.kind === "pending_thesis") {
+      return NextResponse.json(
+        {
+          error: "Une revue de these est deja en attente pour ce deal. Finalisez-la avant de relancer un Deep Dive.",
+          analysisId: dispatchReservation.analysisId,
+          thesisId: dispatchReservation.thesisId,
+        },
+        { status: 409 }
+      );
     }
 
+    if (dispatchReservation.kind === "running") {
+      return NextResponse.json({ error: "An analysis is already running for this deal" }, { status: 409 });
+    }
+
+    if (dispatchReservation.kind === "pending_dispatch") {
+      return NextResponse.json({
+        data: {
+          status: "QUEUED",
+          dealId,
+        },
+      });
+    }
+    reservedDispatchDealId = dealId;
+
     // Deduct credits for this analysis
-    const deduction = await recordDealAnalysis(user.id, requestedTier, dealId, type);
+    const analysisAttemptId = crypto.randomUUID();
+    const analysisChargeKey = `dd:${dealId}:${latestThesis?.corpusSnapshotId ?? "no-snap"}:${user.id}:${analysisAttemptId}`;
+    const deduction = await recordDealAnalysis(user.id, requestedTier, dealId, type, {
+      idempotencyKey: analysisChargeKey,
+    });
     if (!deduction.success) {
+      await prisma.deal.update({
+        where: { id: dealId },
+        data: { status: "IN_DD" },
+      }).catch(() => undefined);
       return NextResponse.json(
         { error: "Crédits insuffisants", upgradeRequired: true, remainingDeals: 0 },
         { status: 403 }
       );
     }
 
-    // Update deal status
-    await prisma.deal.update({
-      where: { id: dealId },
-      data: { status: "ANALYZING" },
-    });
-
     // Use the requested analysis type directly — credit check already validated the tier
     const effectiveType: AnalysisType = type as AnalysisType;
     const effectivePlan = requestedTier >= 2 ? "PRO" : "FREE";
+    const dispatchRefundKey = `refund:analyze-dispatch:${dealId}:${analysisAttemptId}`;
+    const dispatchEventId = `analysis:deal.analyze:${dealId}:${analysisAttemptId}`;
 
     // Durable background via Inngest: le worker encapsule la creation d'analyse,
     // l'orchestration Tier 1/2/3 et le completeAnalysis. Le handler HTTP retourne
@@ -286,6 +358,7 @@ export async function POST(request: NextRequest) {
     // maxDuration=300s du runtime Vercel serverless).
     try {
       await inngest.send({
+        id: dispatchEventId,
         name: "analysis/deal.analyze",
         data: {
           dealId,
@@ -293,6 +366,7 @@ export async function POST(request: NextRequest) {
           enableTrace,
           userPlan: effectivePlan,
           userId: user.id,
+          dispatchRefundKey,
         },
       });
     } catch (sendErr) {
@@ -300,7 +374,9 @@ export async function POST(request: NextRequest) {
       // immediatement et on reset le statut du deal.
       try {
         const creditAction = getActionForAnalysisType(type);
-        await refundCredits(user.id, creditAction, dealId);
+        await refundCredits(user.id, creditAction, dealId, {
+          idempotencyKey: dispatchRefundKey,
+        });
       } catch (refundErr) {
         logger.error({ err: refundErr, dealId, userId: user.id }, "Refund failed after Inngest dispatch error");
       }
@@ -324,6 +400,13 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (reservedDispatchDealId) {
+      await prisma.deal.update({
+        where: { id: reservedDispatchDealId },
+        data: { status: "IN_DD" },
+      }).catch(() => undefined);
+    }
+
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: "Validation error", details: error.issues },

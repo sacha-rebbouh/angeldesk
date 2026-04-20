@@ -638,7 +638,7 @@ function buildBlockchainUserPrompt(
   context: EnrichedAgentContext,
   previousResults: Record<string, unknown> | null
 ): string {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage ?? "SEED";
 
   // Extract relevant info from previous Tier 1 results
@@ -846,7 +846,7 @@ export const blockchainExpert = {
 
     try {
       const previousResults = context.previousResults ?? null;
-      const stage = context.deal.stage ?? "SEED";
+      const stage = context.canonicalDeal.stage ?? "SEED";
 
       const userPrompt = buildBlockchainUserPrompt(context, previousResults as Record<string, unknown> | null);
 

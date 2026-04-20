@@ -375,7 +375,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<FinancialAuditData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
@@ -396,7 +396,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
       financialModelSection += `\n## FINANCIAL MODEL EXCEL (ANALYSE CHAQUE ONGLET)\n${financialModelContent}`;
     }
 
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     const sector = deal.sector || "SaaS B2B";
     const stage = deal.stage || "SEED";
 

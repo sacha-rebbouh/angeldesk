@@ -353,7 +353,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
 // ============================================================================
 
 function buildUserPrompt(context: EnrichedAgentContext): string {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage || "SEED";
   const previousResults = context.previousResults || {};
 
@@ -697,7 +697,7 @@ export const saasExpert = {
     const startTime = Date.now();
 
     try {
-      const stage = context.deal.stage || "SEED";
+      const stage = context.canonicalDeal.stage || "SEED";
       const systemPromptText = buildSystemPrompt(stage);
       const userPromptText = buildUserPrompt(context);
 

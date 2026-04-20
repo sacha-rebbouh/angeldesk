@@ -43,16 +43,39 @@ export async function calculateAnalysisDelta(
   previousAnalysisId: string
 ): Promise<AnalysisDelta | null> {
   const { prisma } = await import("@/lib/prisma");
+  const { loadResults } = await import("@/services/analysis-results/load-results");
 
   const [current, previous] = await Promise.all([
-    prisma.analysis.findUnique({ where: { id: currentAnalysisId } }),
-    prisma.analysis.findUnique({ where: { id: previousAnalysisId } }),
+    prisma.analysis.findUnique({
+      where: { id: currentAnalysisId },
+      select: { id: true, completedAt: true },
+    }),
+    prisma.analysis.findUnique({
+      where: { id: previousAnalysisId },
+      select: { id: true, completedAt: true },
+    }),
   ]);
 
-  if (!current?.results || !previous?.results) return null;
+  if (!current || !previous) return null;
 
-  const currentResults = current.results as Record<string, unknown>;
-  const previousResults = previous.results as Record<string, unknown>;
+  const [currentResultsRaw, previousResultsRaw] = await Promise.all([
+    loadResults(current.id),
+    loadResults(previous.id),
+  ]);
+
+  if (
+    !currentResultsRaw ||
+    typeof currentResultsRaw !== "object" ||
+    Array.isArray(currentResultsRaw) ||
+    !previousResultsRaw ||
+    typeof previousResultsRaw !== "object" ||
+    Array.isArray(previousResultsRaw)
+  ) {
+    return null;
+  }
+
+  const currentResults = currentResultsRaw as Record<string, unknown>;
+  const previousResults = previousResultsRaw as Record<string, unknown>;
 
   const extractScore = (results: Record<string, unknown>) => {
     const scorer = results["synthesis-deal-scorer"] as {

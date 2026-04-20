@@ -322,7 +322,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DeckForensicsDataV2> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
@@ -619,8 +619,8 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
       });
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "deck-forensics", extractedMetrics, sector, stage, DECK_FORENSICS_CRITERIA,
         );

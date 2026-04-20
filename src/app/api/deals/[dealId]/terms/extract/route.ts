@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
+import { safeDecrypt } from "@/lib/encryption";
 import { extractTermsFromDocument } from "@/services/term-sheet-extractor";
 
 type RouteContext = {
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const result = await extractTermsFromDocument({
-      documentText: document.extractedText,
+      documentText: safeDecrypt(document.extractedText),
       documentName: document.name,
     });
 

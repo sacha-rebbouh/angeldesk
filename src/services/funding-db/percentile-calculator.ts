@@ -5,6 +5,22 @@
  * Aucun LLM utilise - pur calcul statistique.
  */
 
+const RESULTS_LOAD_BATCH_SIZE = 25;
+const PERCENTILE_CACHE_TTL_MS = 60_000;
+
+interface ScoredAnalysisCohortEntry {
+  score: number;
+  sector: string | null;
+  stage: string | null;
+}
+
+interface ScoredAnalysisCohortCache {
+  expiresAt: number;
+  entries: ScoredAnalysisCohortEntry[];
+}
+
+let scoredAnalysisCohortCache: ScoredAnalysisCohortCache | null = null;
+
 export interface DealPercentileResult {
   percentileOverall: number;
   percentileSector: number;
@@ -21,21 +37,35 @@ export interface DealPercentileResult {
   calculationDetail: string;
 }
 
-export async function calculateDealPercentile(
-  dealScore: number,
-  dealSector: string | null,
-  dealStage: string | null,
-): Promise<DealPercentileResult> {
-  const { prisma } = await import("@/lib/prisma");
-  const { Prisma } = await import("@prisma/client");
+export function clearDealPercentileCacheForTests(): void {
+  scoredAnalysisCohortCache = null;
+}
 
-  // Retrieve completed analyses with scores
+async function loadScoredAnalysisCohort(): Promise<ScoredAnalysisCohortEntry[]> {
+  const now = Date.now();
+  if (scoredAnalysisCohortCache && scoredAnalysisCohortCache.expiresAt > now) {
+    return scoredAnalysisCohortCache.entries;
+  }
+
+  const [
+    { prisma },
+    { Prisma },
+    { loadResults },
+    { extractAnalysisScores },
+  ] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@prisma/client"),
+    import("@/services/analysis-results/load-results"),
+    import("@/services/analysis-results/score-extraction"),
+  ]);
+
   const analyses = await prisma.analysis.findMany({
     where: {
       status: "COMPLETED",
       results: { not: Prisma.JsonNull },
     },
-    include: {
+    select: {
+      id: true,
       deal: {
         select: { sector: true, stage: true },
       },
@@ -44,26 +74,63 @@ export async function calculateDealPercentile(
     take: 500,
   });
 
+  const entries: ScoredAnalysisCohortEntry[] = [];
+
+  for (let index = 0; index < analyses.length; index += RESULTS_LOAD_BATCH_SIZE) {
+    const batch = analyses.slice(index, index + RESULTS_LOAD_BATCH_SIZE);
+    const loadedBatch = await Promise.all(
+      batch.map(async (analysis) => ({
+        analysis,
+        results: await loadResults(analysis.id),
+      }))
+    );
+
+    for (const { analysis, results } of loadedBatch) {
+      const score = extractAnalysisScores(results).globalScore;
+      if (typeof score !== "number") continue;
+
+      entries.push({
+        score,
+        sector: analysis.deal?.sector ?? null,
+        stage: analysis.deal?.stage ?? null,
+      });
+    }
+  }
+
+  scoredAnalysisCohortCache = {
+    expiresAt: now + PERCENTILE_CACHE_TTL_MS,
+    entries,
+  };
+
+  return entries;
+}
+
+export async function calculateDealPercentile(
+  dealScore: number,
+  dealSector: string | null,
+  dealStage: string | null,
+): Promise<DealPercentileResult> {
+  const cohort = await loadScoredAnalysisCohort();
+
   // Extract scores
   const allScores: number[] = [];
   const sectorScores: number[] = [];
   const stageScores: number[] = [];
 
-  for (const analysis of analyses) {
-    const results = analysis.results as Record<string, unknown> | null;
-    if (!results) continue;
+  for (const entry of cohort) {
+    allScores.push(entry.score);
 
-    const scorer = results["synthesis-deal-scorer"] as { data?: { overallScore?: number } } | undefined;
-    const score = scorer?.data?.overallScore;
-    if (typeof score !== "number") continue;
-
-    allScores.push(score);
-
-    if (dealSector && analysis.deal?.sector?.toLowerCase().includes(dealSector.toLowerCase())) {
-      sectorScores.push(score);
+    if (
+      dealSector &&
+      entry.sector?.toLowerCase().includes(dealSector.toLowerCase())
+    ) {
+      sectorScores.push(entry.score);
     }
-    if (dealStage && analysis.deal?.stage?.toLowerCase() === dealStage.toLowerCase()) {
-      stageScores.push(score);
+    if (
+      dealStage &&
+      entry.stage?.toLowerCase() === dealStage.toLowerCase()
+    ) {
+      stageScores.push(entry.score);
     }
   }
 

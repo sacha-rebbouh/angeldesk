@@ -59,17 +59,40 @@ export async function detectVariance(
   analysisId2: string
 ): Promise<VarianceReport | null> {
   const { prisma } = await import("@/lib/prisma");
+  const { loadResults } = await import("@/services/analysis-results/load-results");
 
   const [a1, a2] = await Promise.all([
-    prisma.analysis.findUnique({ where: { id: analysisId1 } }),
-    prisma.analysis.findUnique({ where: { id: analysisId2 } }),
+    prisma.analysis.findUnique({
+      where: { id: analysisId1 },
+      select: { id: true, dealId: true, dealFingerprint: true },
+    }),
+    prisma.analysis.findUnique({
+      where: { id: analysisId2 },
+      select: { id: true, dealId: true, dealFingerprint: true },
+    }),
   ]);
 
-  if (!a1?.results || !a2?.results) return null;
+  if (!a1 || !a2) return null;
   if (a1.dealId !== a2.dealId) return null;
 
-  const r1 = a1.results as Record<string, unknown>;
-  const r2 = a2.results as Record<string, unknown>;
+  const [results1Raw, results2Raw] = await Promise.all([
+    loadResults(a1.id),
+    loadResults(a2.id),
+  ]);
+
+  if (
+    !results1Raw ||
+    typeof results1Raw !== "object" ||
+    Array.isArray(results1Raw) ||
+    !results2Raw ||
+    typeof results2Raw !== "object" ||
+    Array.isArray(results2Raw)
+  ) {
+    return null;
+  }
+
+  const r1 = results1Raw as Record<string, unknown>;
+  const r2 = results2Raw as Record<string, unknown>;
 
   const extractData = (results: Record<string, unknown>) => {
     const scorer = results["synthesis-deal-scorer"] as {

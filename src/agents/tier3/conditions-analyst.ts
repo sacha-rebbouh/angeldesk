@@ -323,7 +323,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   // ============================================================================
 
   protected async execute(context: EnrichedAgentContext): Promise<ConditionsAnalystData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
 
     // 1. Resoudre les sources de conditions
     const termsSource = this.resolveTermsSource(context);
@@ -482,7 +482,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   // ============================================================================
 
   private formatBenchmarks(context: EnrichedAgentContext): string {
-    const stage = this.normalizeDealStage(context.deal.stage);
+    const stage = this.normalizeDealStage(context.canonicalDeal.stage);
     const lines: string[] = ["## BENCHMARKS DE VALORISATION"];
 
     // Check Funding DB first
@@ -541,9 +541,9 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
     const sections: string[] = [];
 
     // Deal info
-    sections.push(`# ANALYSE CONDITIONS - ${context.deal.name ?? "Deal"}
-Stage: ${context.deal.stage ?? "Non specifie"}
-Secteur: ${context.deal.sector ?? "Non specifie"}`);
+    sections.push(`# ANALYSE CONDITIONS - ${context.canonicalDeal.name ?? "Deal"}
+Stage: ${context.canonicalDeal.stage ?? "Non specifie"}
+Secteur: ${context.canonicalDeal.sector ?? "Non specifie"}`);
 
     // Terms data (primary source)
     if (termsSource.formData) {

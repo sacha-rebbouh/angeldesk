@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import { prisma } from '@/lib/prisma';
-import type { FactEvent, Prisma } from '@prisma/client';
+import { Prisma, type FactEvent } from '@prisma/client';
 import type {
   ExtractedFact,
   FactEventType,
@@ -38,6 +38,47 @@ export interface MarkSupersededResult {
   error?: string;
 }
 
+function toJsonValue(
+  value: unknown
+): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  if (value === undefined || value === null) {
+    return Prisma.JsonNull;
+  }
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function buildFactEventCreateData(
+  dealId: string,
+  fact: ExtractedFact,
+  eventType: FactEventType,
+  createdBy: 'system' | 'ba',
+  supersedesEventId?: string,
+  reason?: string
+): Prisma.FactEventUncheckedCreateInput {
+  return {
+    dealId,
+    factKey: fact.factKey,
+    category: fact.category,
+    value: toJsonValue(fact.value),
+    displayValue: fact.displayValue,
+    unit: fact.unit,
+    source: fact.source,
+    sourceDocumentId: fact.sourceDocumentId,
+    sourceConfidence: fact.sourceConfidence,
+    truthConfidence: fact.truthConfidence,
+    extractedText: fact.extractedText,
+    sourceMetadata: fact.sourceMetadata ? toJsonValue(fact.sourceMetadata) : undefined,
+    validAt: fact.validAt,
+    periodType: fact.periodType,
+    periodLabel: fact.periodLabel,
+    reliability: fact.reliability ? toJsonValue(fact.reliability) : undefined,
+    eventType,
+    supersedesEventId,
+    createdBy,
+    reason,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // CREATE
 // ═══════════════════════════════════════════════════════════════════════
@@ -64,22 +105,14 @@ export async function createFactEvent(
 ): Promise<CreateFactEventResult> {
   try {
     const event = await prisma.factEvent.create({
-      data: {
+      data: buildFactEventCreateData(
         dealId,
-        factKey: fact.factKey,
-        category: fact.category,
-        value: fact.value as object,
-        displayValue: fact.displayValue,
-        unit: fact.unit,
-        source: fact.source,
-        sourceDocumentId: fact.sourceDocumentId,
-        sourceConfidence: fact.sourceConfidence,
-        extractedText: fact.extractedText,
+        fact,
         eventType,
-        supersedesEventId,
         createdBy,
-        reason,
-      },
+        supersedesEventId,
+        reason
+      ),
     });
 
     return { success: true, event };
@@ -109,28 +142,12 @@ export async function createFactEventsBatch(
     const events = await prisma.$transaction(
       facts.map((fact) =>
         prisma.factEvent.create({
-          data: {
-            dealId,
-            factKey: fact.factKey,
-            category: fact.category,
-            value: fact.value as object,
-            displayValue: fact.displayValue,
-            unit: fact.unit,
-            source: fact.source,
-            sourceDocumentId: fact.sourceDocumentId,
-            sourceConfidence: fact.sourceConfidence,
-            extractedText: fact.extractedText,
-            eventType,
-            createdBy,
-          },
+          data: buildFactEventCreateData(dealId, fact, eventType, createdBy),
         })
       )
     );
 
-    // Refresh materialized view (fire and forget, don't block)
-    refreshCurrentFactsView().catch((err) =>
-      console.warn('[createFactEventsBatch] View refresh failed:', err)
-    );
+    await refreshCurrentFactsView();
 
     return { success: true, events };
   } catch (error) {
@@ -356,7 +373,13 @@ export function toFactEventRecord(event: FactEvent): FactEventRecord {
     source: event.source as ExtractedFact['source'],
     sourceDocumentId: event.sourceDocumentId ?? undefined,
     sourceConfidence: event.sourceConfidence,
+    truthConfidence: event.truthConfidence ?? undefined,
     extractedText: event.extractedText ?? undefined,
+    sourceMetadata: event.sourceMetadata as Record<string, unknown> | undefined,
+    validAt: event.validAt ?? undefined,
+    periodType: event.periodType as ExtractedFact['periodType'],
+    periodLabel: event.periodLabel ?? undefined,
+    reliability: event.reliability as unknown as ExtractedFact['reliability'],
     eventType: event.eventType as FactEventType,
     supersedesEventId: event.supersedesEventId ?? undefined,
     createdAt: event.createdAt,
@@ -458,26 +481,18 @@ export async function getFactKeysForDeal(dealId: string): Promise<string[]> {
 export async function createPendingReviewFact(
   dealId: string,
   fact: ExtractedFact,
-  existingFact: CurrentFact,
+  _existingFact: CurrentFact,
   contradictionReason: string
 ): Promise<{ id: string }> {
   const result = await prisma.factEvent.create({
-    data: {
+    data: buildFactEventCreateData(
       dealId,
-      factKey: fact.factKey,
-      category: fact.category,
-      value: fact.value as Prisma.InputJsonValue,
-      displayValue: fact.displayValue,
-      unit: fact.unit,
-      source: fact.source,
-      sourceDocumentId: fact.sourceDocumentId,
-      sourceConfidence: fact.sourceConfidence,
-      extractedText: fact.extractedText,
-      eventType: 'PENDING_REVIEW',
-      supersedesEventId: null, // Not superseding yet - awaits human decision
-      createdBy: 'system',
-      reason: contradictionReason,
-    },
+      fact,
+      'PENDING_REVIEW',
+      'system',
+      undefined,
+      contradictionReason
+    ),
   });
 
   return { id: result.id };

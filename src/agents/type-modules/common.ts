@@ -12,7 +12,16 @@ import type { BAPreferences } from "@/services/benchmarks";
 // Agent execution context
 export interface AgentContext {
   dealId: string;
+  /**
+   * Legacy compatibility alias. In orchestrated runtime this should mirror
+   * `canonicalDeal` until all agents are migrated away from direct `deal.*` reads.
+   */
   deal: Deal;
+  /**
+   * Canonical T0-first deal summary resolved from facts -> extracted snapshot -> legacy row.
+   * This is the explicit source of truth for prompt/runtime consumers.
+   */
+  canonicalDeal: Deal;
   documents?: {
     id: string;
     name: string;

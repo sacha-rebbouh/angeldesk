@@ -58,8 +58,12 @@ export async function saveContextSnapshot(
         competitiveLandscape: toJson(context.competitiveLandscape),
         newsSentiment: toJson(context.newsSentiment),
         peopleGraph: toJson(context.peopleGraph),
+        websiteContent: toJson(context.websiteContent),
         completeness: Math.round((context.completeness ?? 0) * 100),
         connectorResults: toJson(connectorResults),
+        sources: toJson(context.sources),
+        contextQuality: toJson(context.contextQuality),
+        sourceHealth: toJson(context.sourceHealth),
         inputData: toJson(inputData),
         expiresAt,
       },
@@ -69,8 +73,12 @@ export async function saveContextSnapshot(
         competitiveLandscape: toJson(context.competitiveLandscape),
         newsSentiment: toJson(context.newsSentiment),
         peopleGraph: toJson(context.peopleGraph),
+        websiteContent: toJson(context.websiteContent),
         completeness: Math.round((context.completeness ?? 0) * 100),
         connectorResults: toJson(connectorResults),
+        sources: toJson(context.sources),
+        contextQuality: toJson(context.contextQuality),
+        sourceHealth: toJson(context.sourceHealth),
         inputData: toJson(inputData),
         expiresAt,
         updatedAt: new Date(),
@@ -173,25 +181,13 @@ export async function loadContextSnapshot(
       competitiveLandscape: snapshot.competitiveLandscape as unknown as DealContext["competitiveLandscape"],
       newsSentiment: snapshot.newsSentiment as unknown as DealContext["newsSentiment"],
       peopleGraph: snapshot.peopleGraph as unknown as DealContext["peopleGraph"],
+      websiteContent: snapshot.websiteContent as unknown as DealContext["websiteContent"],
       enrichedAt: snapshot.updatedAt.toISOString(),
       completeness: snapshot.completeness / 100,
-      sources: [], // Sources are reconstructed from connectorResults
+      sources: (snapshot.sources as unknown as DealContext["sources"]) ?? [],
+      contextQuality: snapshot.contextQuality as unknown as DealContext["contextQuality"],
+      sourceHealth: snapshot.sourceHealth as unknown as DealContext["sourceHealth"],
     };
-
-    // Rebuild sources from connectorResults
-    const connectorResults = snapshot.connectorResults as Record<string, boolean> | null;
-    if (connectorResults) {
-      for (const [name, success] of Object.entries(connectorResults)) {
-        if (success) {
-          context.sources.push({
-            type: "database", // Type not stored, use a valid generic type
-            name,
-            retrievedAt: snapshot.updatedAt.toISOString(),
-            confidence: 0.85,
-          });
-        }
-      }
-    }
 
     console.log(
       `[ContextEngine:Persistence] Loaded snapshot for deal ${dealId} ` +

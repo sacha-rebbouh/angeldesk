@@ -543,7 +543,7 @@ function buildLegaltechUserPrompt(
   context: EnrichedAgentContext,
   previousResults: Record<string, unknown> | null
 ): string {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage ?? "SEED";
 
   // Extract relevant info from previous Tier 1 results
@@ -735,7 +735,7 @@ export const legaltechExpert = {
 
   async run(context: EnrichedAgentContext): Promise<SectorExpertResult> {
     const startTime = Date.now();
-    const stage = context.deal.stage ?? "SEED";
+    const stage = context.canonicalDeal.stage ?? "SEED";
 
     try {
       // Get previous results from context

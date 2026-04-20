@@ -10,6 +10,10 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import type { CurrentFact } from "@/services/fact-store/types";
 import { getCurrentFacts } from "@/services/fact-store/current-facts";
+import { loadResults } from "@/services/analysis-results/load-results";
+import { extractAnalysisScores } from "@/services/analysis-results/score-extraction";
+import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
+import { safeDecrypt } from "@/lib/encryption";
 
 // ============================================================================
 // TYPES
@@ -257,10 +261,6 @@ export async function retrieveContext(
       select: {
         sector: true,
         stage: true,
-        arr: true,
-        growthRate: true,
-        valuationPre: true,
-        amountRequested: true,
         globalScore: true,
         teamScore: true,
         marketScore: true,
@@ -279,15 +279,16 @@ export async function retrieveContext(
     ? {
         sector: dealInfo.sector,
         stage: dealInfo.stage,
-        arr: dealInfo.arr != null ? Number(dealInfo.arr) : null,
-        growthRate: dealInfo.growthRate != null ? Number(dealInfo.growthRate) : null,
-        valuationPre: dealInfo.valuationPre != null ? Number(dealInfo.valuationPre) : null,
-        amountRequested: dealInfo.amountRequested != null ? Number(dealInfo.amountRequested) : null,
-        globalScore: dealInfo.globalScore,
-        teamScore: dealInfo.teamScore,
-        marketScore: dealInfo.marketScore,
-        productScore: dealInfo.productScore,
-        financialsScore: dealInfo.financialsScore,
+        arr: getCurrentFactNumber(facts, "financial.arr"),
+        growthRate: getCurrentFactNumber(facts, "financial.revenue_growth_yoy"),
+        valuationPre: getCurrentFactNumber(facts, "financial.valuation_pre"),
+        amountRequested: getCurrentFactNumber(facts, "financial.amount_raising"),
+        globalScore: latestAnalysisMeta?.scores.globalScore ?? dealInfo.globalScore,
+        teamScore: latestAnalysisMeta?.scores.teamScore ?? dealInfo.teamScore,
+        marketScore: latestAnalysisMeta?.scores.marketScore ?? dealInfo.marketScore,
+        productScore: latestAnalysisMeta?.scores.productScore ?? dealInfo.productScore,
+        financialsScore:
+          latestAnalysisMeta?.scores.financialsScore ?? dealInfo.financialsScore,
       }
     : null;
 
@@ -387,7 +388,7 @@ async function enrichForClarification(
   // Fetch documents, founders, and relevant agent results in parallel
   const topic = detectTopic(message);
   const [documents, founders, agentResults] = await Promise.all([
-    getDocuments(dealId),
+    getDocuments(dealId, analysisId),
     getFounders(dealId),
     getAgentResultsForTopic(dealId, topic, analysisId),
   ]);
@@ -517,7 +518,7 @@ async function enrichForDeepDive(
   // Get relevant agent results and documents in parallel
   const [topicAgentResults, documents] = await Promise.all([
     getAgentResultsForTopic(dealId, topic, analysisId),
-    getDocumentsForTopic(dealId, topic),
+    getDocumentsForTopic(dealId, topic, analysisId),
   ]);
 
   if (topicAgentResults.length > 0) {
@@ -586,7 +587,7 @@ async function enrichForNegotiation(
   const analysis = await getResolvedAnalysis(
     dealId,
     analysisId,
-    { id: true, negotiationStrategy: true, results: true }
+    { id: true, negotiationStrategy: true }
   );
 
   if (analysis?.negotiationStrategy) {
@@ -647,7 +648,7 @@ async function enrichForGeneral(
   // Fetch benchmarks, documents, founders, and ALL agent results in parallel
   const [benchmarks, documents, founders, allAgentResults] = await Promise.all([
     deal?.sector ? getBenchmarks(deal.sector, deal.stage ?? undefined) : null,
-    getDocuments(dealId),
+    getDocuments(dealId, analysisId),
     getFounders(dealId),
     getAgentResultsForTopic(dealId, "overall", analysisId),
   ]);
@@ -683,7 +684,7 @@ async function enrichForThesis(
 ): Promise<void> {
   const topic = detectTopic(message);
   const [documents, founders, thesisAgentResults] = await Promise.all([
-    getDocumentsForTopic(dealId, topic),
+    getDocumentsForTopic(dealId, topic, analysisId),
     getFounders(dealId),
     getAgentResultsForTopic(dealId, "overall", analysisId),
   ]);
@@ -746,6 +747,22 @@ function searchFactsByKeywords(
 
     return normalizedKeywords.some((keyword) => factText.includes(keyword));
   });
+}
+
+function getCurrentFactNumber(
+  facts: CurrentFact[],
+  factKey: string
+): number | null {
+  const fact = facts.find((candidate) => candidate.factKey === factKey);
+  if (!fact) return null;
+  if (typeof fact.currentValue === "number" && Number.isFinite(fact.currentValue)) {
+    return fact.currentValue;
+  }
+  if (typeof fact.currentValue === "string") {
+    const parsed = Number(fact.currentValue);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
 }
 
 /**
@@ -915,12 +932,37 @@ async function getFounders(dealId: string): Promise<RetrievedFounder[]> {
  * Get documents for a deal (including extracted text for full context).
  */
 async function getDocuments(
-  dealId: string
+  dealId: string,
+  analysisId?: string | null
 ): Promise<Array<{ id: string; name: string; type: string; extractedText: string | null }>> {
-  return prisma.document.findMany({
+  const scopedDocumentIds = await getAnalysisSnapshotDocumentIds(dealId, analysisId);
+  const documents = await prisma.document.findMany({
     where: { dealId },
-    select: { id: true, name: true, type: true, extractedText: true },
+    select: { id: true, name: true, type: true, extractedText: true, processingStatus: true },
   });
+
+  const filteredDocuments = scopedDocumentIds?.length
+    ? documents.filter((document) => scopedDocumentIds.includes(document.id))
+    : documents;
+
+  const orderedDocuments = scopedDocumentIds?.length
+    ? filteredDocuments
+        .slice()
+        .sort(
+          (left, right) =>
+            scopedDocumentIds.indexOf(left.id) - scopedDocumentIds.indexOf(right.id)
+        )
+    : filteredDocuments;
+
+  return orderedDocuments.map((document) => ({
+    id: document.id,
+    name: document.name,
+    type: document.type,
+    extractedText:
+      document.processingStatus === "COMPLETED" && document.extractedText
+        ? safeDecrypt(document.extractedText)
+        : null,
+  }));
 }
 
 /**
@@ -928,9 +970,10 @@ async function getDocuments(
  */
 async function getDocumentsForTopic(
   dealId: string,
-  topic: string
+  topic: string,
+  analysisId?: string | null
 ): Promise<RetrievedDocument[]> {
-  const documents = await getDocuments(dealId);
+  const documents = await getDocuments(dealId, analysisId);
 
   // Map topics to relevant document types
   const topicToDocTypes: Record<string, string[]> = {
@@ -1003,11 +1046,33 @@ async function getLatestAnalysis(
   dealId: string,
   analysisId?: string | null
 ): Promise<{ id: string; mode: string | null; results: Prisma.JsonValue } | null> {
-  return getResolvedAnalysis(
+  const analysis = await getResolvedAnalysis(
     dealId,
     analysisId,
-    { id: true, mode: true, results: true }
+    { id: true, mode: true }
   );
+
+  if (!analysis) return null;
+
+  return {
+    id: analysis.id,
+    mode: analysis.mode,
+    results: (await loadResults(analysis.id)) as Prisma.JsonValue,
+  };
+}
+
+async function getAnalysisSnapshotDocumentIds(
+  dealId: string,
+  analysisId?: string | null
+): Promise<string[] | null> {
+  if (!analysisId) return null;
+
+  const analysis = await getResolvedAnalysis(dealId, analysisId, {
+    corpusSnapshotId: true,
+  });
+
+  if (!analysis?.corpusSnapshotId) return null;
+  return getCorpusSnapshotDocumentIds(analysis.corpusSnapshotId);
 }
 
 /**
@@ -1016,13 +1081,32 @@ async function getLatestAnalysis(
 async function getLatestAnalysisMeta(
   dealId: string,
   analysisId?: string | null
-): Promise<{ summary: string | null; negotiationStrategy: unknown } | null> {
+): Promise<{
+  summary: string | null;
+  negotiationStrategy: unknown;
+  scores: {
+    globalScore: number | null;
+    teamScore: number | null;
+    marketScore: number | null;
+    productScore: number | null;
+    financialsScore: number | null;
+  };
+} | null> {
   const analysis = await getResolvedAnalysis(
     dealId,
     analysisId,
-    { summary: true, negotiationStrategy: true }
+    { id: true, summary: true, negotiationStrategy: true }
   );
-  return analysis;
+
+  if (!analysis) return null;
+
+  const results = await loadResults(analysis.id);
+
+  return {
+    summary: analysis.summary,
+    negotiationStrategy: analysis.negotiationStrategy,
+    scores: extractAnalysisScores(results),
+  };
 }
 
 /**

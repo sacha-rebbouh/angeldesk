@@ -4,6 +4,7 @@
  * Background jobs pour les agents de maintenance (pas de limite de temps)
  */
 
+import { createHash } from 'crypto'
 import { Inngest } from 'inngest'
 import { runCleaner } from '@/agents/maintenance/db-cleaner'
 import {
@@ -30,6 +31,11 @@ export const inngest = new Inngest({
   id: 'angeldesk',
   name: 'Angel Desk',
 })
+
+function hashStringToBigInt(input: string): string {
+  const digest = createHash("sha256").update(input).digest();
+  return digest.readBigInt64BE(0).toString();
+}
 
 // ============================================================================
 // FUNCTIONS
@@ -308,12 +314,13 @@ export const dealAnalysisFunction = inngest.createFunction(
   },
   { event: 'analysis/deal.analyze' },
   async ({ event, step }) => {
-    const { dealId, type, enableTrace, userPlan, userId } = event.data as {
+    const { dealId, type, enableTrace, userPlan, userId, dispatchRefundKey } = event.data as {
       dealId: string;
       type: string;
       enableTrace: boolean;
       userPlan: string;
       userId: string;
+      dispatchRefundKey?: string;
     };
 
     // Thesis-first gate actif uniquement pour full_analysis (Deep Dive).
@@ -323,16 +330,29 @@ export const dealAnalysisFunction = inngest.createFunction(
     // ========================================================================
     // PHASE 1 : Analyse jusqu'a l'extraction de la these (Tier 0.5)
     // ========================================================================
-    const phase1 = await step.run('phase1-extract-thesis', async () => {
-      const { orchestrator } = await import("@/agents");
-      return await orchestrator.runAnalysis({
-        dealId,
-        type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
-        enableTrace,
-        userPlan: userPlan as "FREE" | "PRO",
-        pauseAfterThesis: withThesisGate,
+    let phase1;
+    try {
+      phase1 = await step.run('phase1-extract-thesis', async () => {
+        const { orchestrator } = await import("@/agents");
+        return await orchestrator.runAnalysis({
+          dealId,
+          type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
+          enableTrace,
+          userPlan: userPlan as "FREE" | "PRO",
+          pauseAfterThesis: withThesisGate,
+        });
       });
-    });
+    } catch (error) {
+      await step.run('compensate-phase1-throw', async () => {
+        await compensateFailedAnalysis({
+          userId,
+          dealId,
+          type,
+          refundIdempotencyKey: dispatchRefundKey,
+        });
+      });
+      throw error;
+    }
 
     // Pas de pause (non-Deep-Dive ou pause non appliquee) → on se comporte comme avant
     const paused = withThesisGate && (phase1 as { pausedAfterThesis?: boolean }).pausedAfterThesis === true;
@@ -483,11 +503,22 @@ export const dealAnalysisFunction = inngest.createFunction(
 /**
  * Helper — compensation d'une analyse qui a echoue (refund + reset deal status).
  */
-async function compensateFailedAnalysis(params: { analysisId?: string; userId: string; dealId: string; type: string }) {
+async function compensateFailedAnalysis(params: {
+  analysisId?: string;
+  userId: string;
+  dealId: string;
+  type: string;
+  refundIdempotencyKey?: string;
+}) {
   const { refundCredits, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
   const action = getActionForAnalysisType(params.type);
   try {
-    await refundCredits(params.userId, action, params.dealId, { analysisId: params.analysisId });
+    await refundCredits(params.userId, action, params.dealId, {
+      analysisId: params.analysisId,
+      ...(params.refundIdempotencyKey
+        ? { idempotencyKey: params.refundIdempotencyKey }
+        : {}),
+    });
     if (params.analysisId) {
       await prisma.analysis.update({
         where: { id: params.analysisId },
@@ -498,7 +529,17 @@ async function compensateFailedAnalysis(params: { analysisId?: string; userId: s
     logger.error({ err, dealId: params.dealId, userId: params.userId }, 'Inngest refund failed for failed analysis');
   }
   try {
-    await prisma.deal.update({ where: { id: params.dealId }, data: { status: 'IN_DD' } });
+    const anotherRunningAnalysis = await prisma.analysis.findFirst({
+      where: {
+        dealId: params.dealId,
+        status: "RUNNING",
+      },
+      select: { id: true },
+    });
+
+    if (!anotherRunningAnalysis) {
+      await prisma.deal.update({ where: { id: params.dealId }, data: { status: 'IN_DD' } });
+    }
   } catch (err) {
     logger.error({ err, dealId: params.dealId }, 'Inngest deal status reset failed');
   }
@@ -521,27 +562,43 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
   { event: 'analysis/deal.resume' },
   async ({ event, step }) => {
     const { orchestrator } = await import("@/agents");
-    const { analysisId, dealId } = event.data as {
+    const { analysisId, dealId, userId, resumeRefundKey } = event.data as {
       analysisId: string;
       dealId: string;
       userId: string;
+      resumeRefundKey?: string | null;
     };
 
-    const result = await step.run('resume-analysis', async () => {
-      return await orchestrator.resumeAnalysis(analysisId);
-    });
-
-    if (!result.success) {
-      await step.run('reset-deal-on-failure', async () => {
-        try {
-          await prisma.deal.update({ where: { id: dealId }, data: { status: 'IN_DD' } });
-        } catch (err) {
-          logger.error({ err, dealId }, 'Inngest resume: deal status reset failed');
-        }
+    const compensateResumeFailure = async (stepId: string) => {
+      await step.run(stepId, async () => {
+        const analysis = await prisma.analysis.findUnique({
+          where: { id: analysisId },
+          select: { type: true },
+        });
+        await compensateFailedAnalysis({
+          analysisId,
+          userId,
+          dealId,
+          type: analysis?.type ?? "full_analysis",
+          refundIdempotencyKey: resumeRefundKey ?? undefined,
+        });
       });
-    }
+    };
 
-    return result;
+    try {
+      const result = await step.run('resume-analysis', async () => {
+        return await orchestrator.resumeAnalysis(analysisId);
+      });
+
+      if (!result.success) {
+        await compensateResumeFailure('compensate-resume-failure');
+      }
+
+      return result;
+    } catch (error) {
+      await compensateResumeFailure('compensate-resume-throw');
+      throw error;
+    }
   }
 );
 
@@ -556,8 +613,8 @@ export const thesisReextractFunction = inngest.createFunction(
     name: 'Thesis Re-extraction',
     retries: 1,
     concurrency: [{
-      key: "event.data.userId",
-      limit: 2,
+      key: "event.data.dealId",
+      limit: 1,
     }],
   },
   { event: 'analysis/thesis.reextract' },
@@ -572,12 +629,83 @@ export const thesisReextractFunction = inngest.createFunction(
       supersededAnalysisId?: string;
     };
 
+    const reextractRefundAttemptKey = await step.run('prepare-reextract-refund-key', async () => crypto.randomUUID());
+
+    let userReextractChargeApplied = false;
+
+    const refundReextractCharge = async (stepId: string, reason: string) => {
+      await step.run(stepId, async () => {
+        const { refundCreditAmount } = await import("@/services/credits");
+
+        if (triggeredByAdminId) {
+          await refundCreditAmount(triggeredByAdminId, "THESIS_REEXTRACT", 2, {
+            dealId,
+            idempotencyKey: `thesis-reextract-refund:admin:${triggeredByAdminId}:${dealId}:${previousThesisId ?? 'first'}:${reextractRefundAttemptKey}:${reason}`,
+            description: `Refund admin backfill (thesis re-extract ${reason})`,
+          });
+          return;
+        }
+
+        if (!triggeredByRebuttal && userReextractChargeApplied) {
+          await refundCreditAmount(userId, "THESIS_REEXTRACT", 1, {
+            dealId,
+            idempotencyKey: `thesis-reextract-refund:${dealId}:${previousThesisId ?? 'first'}:${reextractRefundAttemptKey}:${reason}`,
+            description: `Refund thesis re-extract (${reason})`,
+          });
+        }
+      });
+    };
+
+    if (!triggeredByRebuttal) {
+      const pausedAnalysis = await step.run('check-existing-paused-thesis-review', async () => {
+        return await prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashStringToBigInt(`thesis-reextract:${dealId}`)})`);
+          return await tx.analysis.findFirst({
+            where: {
+              dealId,
+              status: "RUNNING",
+              mode: "full_analysis",
+            },
+            select: {
+              id: true,
+              thesisId: true,
+              thesisDecision: true,
+            },
+            orderBy: { createdAt: "desc" },
+          });
+        });
+      });
+
+      if (pausedAnalysis) {
+        logger.warn(
+          {
+            dealId,
+            runningAnalysisId: pausedAnalysis.id,
+            thesisId: pausedAnalysis.thesisId,
+            thesisDecision: pausedAnalysis.thesisDecision,
+            triggeredByAdminId,
+          },
+          'Skipping thesis re-extract because a full analysis is already in progress'
+        );
+        if (triggeredByAdminId) {
+          await refundReextractCharge('refund-admin-skip-existing-analysis', 'skip-existing-analysis');
+        }
+        return {
+          success: false,
+          skipped: true,
+          reason: "analysis_in_progress",
+          analysisId: pausedAnalysis.id,
+          dealId,
+        };
+      }
+    }
+
     // FIX (audit P0 #5) : si triggered par admin (backfill), l'admin a deja paye
     // ADMIN_BACKFILL_COST (2cr) sur son compte. On ne deduit PAS le BA.
     // Si triggered par rebuttal valide, le BA a deja paye le rebuttal judge (1cr)
     // et la re-extraction fait partie du meme flux, sans debit supplementaire.
     // Autrement : upload doc auto → facturation 1cr au BA (idempotent).
-    let creditResult: { success: boolean; error?: string } = { success: true };
+    let creditResult: { success: boolean; error?: string; alreadyDeducted?: boolean } = { success: true };
     if (!triggeredByAdminId && !triggeredByRebuttal) {
       creditResult = await step.run('deduct-reextract-credit', async () => {
         const { deductCreditAmount } = await import("@/services/credits");
@@ -587,6 +715,7 @@ export const thesisReextractFunction = inngest.createFunction(
           description: `Re-extraction these apres upload document (deal ${dealId})`,
         });
       });
+      userReextractChargeApplied = creditResult.success && creditResult.alreadyDeducted !== true;
     } else if (triggeredByRebuttal) {
       logger.info({ dealId, userId, previousThesisId }, 'Thesis re-extract triggered by valid rebuttal — skipping extra deduction');
     } else {
@@ -601,44 +730,34 @@ export const thesisReextractFunction = inngest.createFunction(
     }
 
     // Step 2 : re-extraction via orchestrator (charge tous les docs COMPLETED du deal)
-    const result = await step.run('run-thesis-reextract', async () => {
-      const { orchestrator } = await import("@/agents");
-      try {
-        // runAnalysis en mode "extraction" + pauseAfterThesis = uniquement Tier 0 + thesis.
-        // Apres pause, BA decide via modal. Le pipeline ne poursuit PAS automatiquement.
-        const res = await orchestrator.runAnalysis({
-          dealId,
-          type: "full_analysis",
-          userPlan: "PRO",
-          pauseAfterThesis: true,
-          forceRefresh: true,
-        });
-        return res;
-      } catch (err) {
-        logger.error({ err, dealId }, 'Thesis re-extract run failed');
-        throw err;
-      }
-    });
+    let result;
+    try {
+      result = await step.run('run-thesis-reextract', async () => {
+        const { orchestrator } = await import("@/agents");
+        try {
+          // runAnalysis en mode "extraction" + pauseAfterThesis = uniquement Tier 0 + thesis.
+          // Apres pause, BA decide via modal. Le pipeline ne poursuit PAS automatiquement.
+          const res = await orchestrator.runAnalysis({
+            dealId,
+            type: "full_analysis",
+            userPlan: "PRO",
+            pauseAfterThesis: true,
+            forceRefresh: true,
+          });
+          return res;
+        } catch (err) {
+          logger.error({ err, dealId }, 'Thesis re-extract run failed');
+          throw err;
+        }
+      });
+    } catch (error) {
+      await refundReextractCharge('refund-reextract-credit-on-throw', 'throw');
+      throw error;
+    }
 
     // Step 3 : si echec → refund le credit DU COMPTE qui a paye (admin OU user)
     if (!result.success) {
-      await step.run('refund-reextract-credit', async () => {
-        const { refundCreditAmount } = await import("@/services/credits");
-        if (triggeredByAdminId) {
-          // Admin a paye 2cr via backfill → rembourser 2cr a admin
-          await refundCreditAmount(triggeredByAdminId, "THESIS_REEXTRACT", 2, {
-            dealId,
-            idempotencyKey: `thesis-reextract-refund:admin:${triggeredByAdminId}:${dealId}:${previousThesisId ?? 'first'}`,
-            description: `Refund admin backfill (echec extraction)`,
-          });
-        } else if (!triggeredByRebuttal) {
-          await refundCreditAmount(userId, "THESIS_REEXTRACT", 1, {
-            dealId,
-            idempotencyKey: `thesis-reextract-refund:${dealId}:${previousThesisId ?? 'first'}`,
-            description: `Refund re-extraction these (echec extraction)`,
-          });
-        }
-      });
+      await refundReextractCharge('refund-reextract-credit', 'result-failure');
       return result;
     }
 
@@ -689,6 +808,10 @@ export const thesisReextractFunction = inngest.createFunction(
     if (!liveAnalysis || liveAnalysis.status !== "RUNNING") {
       logger.info({ reextractAnalysisId, status: liveAnalysis?.status }, 'Skipping reextract continuation because analysis is no longer running');
       return result;
+    }
+
+    if (decision === "timeout") {
+      await refundReextractCharge('refund-reextract-on-timeout', 'timeout');
     }
 
     const postDecisionResult = await step.run('continue-after-reextracted-thesis', async () => {

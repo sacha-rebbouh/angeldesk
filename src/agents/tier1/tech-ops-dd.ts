@@ -189,7 +189,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechOpsDDData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     // Filter documents: exclude FINANCIAL_MODEL (not relevant for tech-ops, saves ~50k chars)
     const filteredContext = {
       ...context,
@@ -256,7 +256,7 @@ ${contextEngineData}`
 → Réduire confidenceLevel de 10-15 points
 → Marquer les benchmarks comme "estimés sans données marché"`;
 
-    const prompt = `# ANALYSE TECH-OPS-DD - ${context.deal.name}
+    const prompt = `# ANALYSE TECH-OPS-DD - ${context.canonicalDeal.name}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -546,8 +546,8 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "tech-ops-dd", extractedMetrics, sector, stage, TECH_OPS_DD_CRITERIA,
         );

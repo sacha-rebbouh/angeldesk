@@ -60,10 +60,15 @@ export async function checkCredits(
 export async function deductCredits(
   userId: string,
   action: CreditActionType,
-  dealId?: string
-): Promise<{ success: boolean; balanceAfter: number; error?: string }> {
+  dealId?: string,
+  context: Pick<CreditDeductionContext, "idempotencyKey" | "description"> = {}
+): Promise<{ success: boolean; balanceAfter: number; error?: string; alreadyDeducted?: boolean }> {
   const cost = CREDIT_COSTS[action];
-  return deductCreditAmount(userId, action, cost, { dealId });
+  return deductCreditAmount(userId, action, cost, {
+    dealId,
+    idempotencyKey: context.idempotencyKey,
+    description: context.description,
+  });
 }
 
 export interface CreditDeductionContext {

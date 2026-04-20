@@ -449,7 +449,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<GTMAnalystData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
@@ -580,8 +580,8 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "gtm-analyst", extractedMetrics, sector, stage, GTM_ANALYST_CRITERIA,
         );
@@ -665,8 +665,8 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
           : [],
       },
       cacBenchmark: {
-        sector: data.findings?.cacBenchmark?.sector ?? context.deal.sector ?? "Unknown",
-        stage: data.findings?.cacBenchmark?.stage ?? context.deal.stage ?? "Seed",
+        sector: data.findings?.cacBenchmark?.sector ?? context.canonicalDeal.sector ?? "Unknown",
+        stage: data.findings?.cacBenchmark?.stage ?? context.canonicalDeal.stage ?? "Seed",
         p25: data.findings?.cacBenchmark?.p25 ?? 0,
         median: data.findings?.cacBenchmark?.median ?? 0,
         p75: data.findings?.cacBenchmark?.p75 ?? 0,

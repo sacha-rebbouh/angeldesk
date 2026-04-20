@@ -19,6 +19,7 @@ import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { inngest } from "@/lib/inngest";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
+import { getRunningAnalysisForDeal, isFullAnalysisInProgress } from "@/services/analysis/guards";
 
 const backfillSchema = z.object({
   dealId: z.string().regex(/^c[a-z0-9]{24,}$/, "Invalid CUID"),
@@ -103,6 +104,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
+    const runningAnalysis = await getRunningAnalysisForDeal(dealId);
+    if (runningAnalysis && isFullAnalysisInProgress(runningAnalysis)) {
+      return NextResponse.json(
+        {
+          error: "Une analyse Deep Dive est deja en cours sur ce deal. Le backfill admin est differe tant que le run n'est pas termine.",
+          analysisId: runningAnalysis.id,
+          thesisId: runningAnalysis.thesisId,
+        },
+        { status: 409 }
+      );
+    }
+
     if (deal.theses.length > 0 && !force) {
       return NextResponse.json(
         {
@@ -139,6 +152,20 @@ export async function POST(request: NextRequest) {
         { error: "Credit deduction failed", details: creditResult.error },
         { status: 402 }
       );
+    }
+
+    if (creditResult.alreadyDeducted) {
+      return NextResponse.json({
+        data: {
+          dealId,
+          dealName: deal.name,
+          adminId: admin.id,
+          creditsDeductedFromAdmin: 0,
+          previousThesisId: deal.theses[0]?.id ?? null,
+          triggered: false,
+          alreadyScheduled: true,
+        },
+      });
     }
 
     // FIX (audit P0 #5) : passer triggeredByAdminId pour que thesisReextractFunction

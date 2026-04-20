@@ -1,7 +1,8 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
+import { Prisma, type ProcessingStatus } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { downloadFile } from "@/services/storage";
@@ -15,7 +16,8 @@ import {
   summarizeManifestForLegacyMetrics,
   startDocumentExtractionRun,
 } from "@/services/documents/extraction-runs";
-import { deductCreditAmount } from "@/services/credits";
+import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
+import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 
 // CUID validation schema
 const cuidSchema = z.string().cuid();
@@ -28,6 +30,10 @@ interface RouteParams {
 
 // POST /api/documents/[documentId]/process - Reprocess a document
 export async function POST(request: NextRequest, { params }: RouteParams) {
+  let claimedDocumentId: string | null = null;
+  let claimedOriginalStatus: ProcessingStatus | null = null;
+  let chargedCredits = 0;
+  let refundContext: { userId: string; dealId: string; documentId: string; requestId: string } | null = null;
   try {
     const user = await requireAuth();
     const { documentId } = await params;
@@ -63,6 +69,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (document.deal.userId !== user.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
+    const runningAnalysis = await getRunningAnalysisForDeal(document.dealId);
+    if (runningAnalysis) {
+      return NextResponse.json(
+        {
+          error: "Une analyse est en cours sur ce deal. Finalisez-la avant de relancer l'extraction du document.",
+          analysisId: runningAnalysis.id,
+        },
+        { status: 409 }
+      );
+    }
 
     // Only process PDFs
     if (document.mimeType !== "application/pdf") {
@@ -79,27 +95,55 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const processingClaim = await prisma.document.updateMany({
+      where: {
+        id: documentId,
+        processingStatus: { not: "PROCESSING" },
+      },
+      data: { processingStatus: "PROCESSING" },
+    });
+
+    if (processingClaim.count === 0) {
+      const latestStatus = await prisma.document.findUnique({
+        where: { id: documentId },
+        select: { processingStatus: true },
+      });
+      return NextResponse.json(
+        { error: `Document cannot be reprocessed from status "${latestStatus?.processingStatus ?? document.processingStatus}".` },
+        { status: 409 }
+      );
+    }
+
+    claimedDocumentId = documentId;
+    claimedOriginalStatus = document.processingStatus;
+
     const estimatedCredits = extractEstimatedCredits(document.extractionRuns[0]?.summaryMetrics);
     if (estimatedCredits > 0) {
+      const reprocessRequestId = randomUUID();
+      refundContext = {
+        userId: user.id,
+        dealId: document.dealId,
+        documentId,
+        requestId: reprocessRequestId,
+      };
       const deduction = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", estimatedCredits, {
         dealId: document.dealId,
         documentId,
-        idempotencyKey: `extraction:reprocess:${documentId}:${document.version}:${document.contentHash ?? "nohash"}:${Math.floor(Date.now() / 60000)}`,
+        idempotencyKey: `extraction:reprocess:${documentId}:${reprocessRequestId}`,
         description: `Enhanced document re-extraction for ${document.name}`,
       });
       if (!deduction.success) {
+        await prisma.document.updateMany({
+          where: { id: documentId, processingStatus: "PROCESSING" },
+          data: { processingStatus: document.processingStatus },
+        }).catch(() => undefined);
         return NextResponse.json(
           { error: deduction.error ?? "Credits insuffisants pour relancer l'extraction", requiredCredits: estimatedCredits },
           { status: 402 }
         );
       }
+      chargedCredits = estimatedCredits;
     }
-
-    // Update status to PROCESSING
-    await prisma.document.update({
-      where: { id: documentId },
-      data: { processingStatus: "PROCESSING" },
-    });
     const progressRun = await startDocumentExtractionRun({
       documentId,
       documentVersion: document.version,
@@ -232,6 +276,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
   } catch (error) {
+    if (refundContext && chargedCredits > 0) {
+      await refundCreditAmount(refundContext.userId, "EXTRACTION_HIGH_PAGE", chargedCredits, {
+        dealId: refundContext.dealId,
+        documentId: refundContext.documentId,
+        idempotencyKey: `extraction:refund:reprocess:${refundContext.requestId}`,
+        description: `Refund failed document re-extraction for ${refundContext.documentId}`,
+      }).catch(() => undefined);
+    }
+    if (claimedDocumentId && claimedOriginalStatus) {
+      await prisma.document.updateMany({
+        where: { id: claimedDocumentId, processingStatus: "PROCESSING" },
+        data: { processingStatus: claimedOriginalStatus },
+      }).catch(() => undefined);
+    }
     return handleApiError(error, "process document");
   }
 }

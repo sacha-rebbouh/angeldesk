@@ -487,7 +487,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<CapTableAuditDataV2> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
@@ -510,7 +510,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
     // Extract dilution benchmarks from Context Engine if available
     if (context.contextEngine?.dealIntelligence?.fundingContext) {
       const fc = context.contextEngine.dealIntelligence.fundingContext;
-      const deal = context.deal;
+      const deal = context.canonicalDeal;
 
       // Calculate dilution for this deal if we have the data
       let thisDealDilution: number | null = null;
@@ -542,7 +542,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
       ? `\n## Benchmark Dilution (Context Engine)\n${JSON.stringify(dilutionBenchmark, null, 2)}`
       : "";
 
-    const prompt = `# ANALYSE CAP TABLE - ${context.deal.name || "Deal"}
+    const prompt = `# ANALYSE CAP TABLE - ${context.canonicalDeal.name || "Deal"}
 
 ## CONTEXTE DU DEAL
 ${dealContext}
@@ -664,7 +664,7 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       try {
         const ownership = data.findings.ownershipBreakdown;
         const terms = data.findings.roundTerms;
-        const baInvestment = context.deal.amountRequested != null ? Number(context.deal.amountRequested) * 0.10 : 50000;
+        const baInvestment = context.canonicalDeal.amountRequested != null ? Number(context.canonicalDeal.amountRequested) * 0.10 : 50000;
         const postMoney = terms.postMoneyValuation ?? (
           (terms.preMoneyValuation ?? 0) + (terms.roundSize ?? 0)
         );
@@ -839,8 +839,8 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "cap-table-auditor", extractedMetrics, sector, stage, CAP_TABLE_AUDITOR_CRITERIA,
         );

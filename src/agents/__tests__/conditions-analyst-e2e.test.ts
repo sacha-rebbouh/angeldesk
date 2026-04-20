@@ -340,6 +340,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     const context: EnrichedAgentContext = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDocuments,
       previousResults: {},
       dealTerms: mockDealTerms,
@@ -447,6 +448,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     const context: EnrichedAgentContext = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDocuments,
       previousResults: { ...mockTier1Results },
       dealTerms: mockDealTerms,
@@ -492,6 +494,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     const context: EnrichedAgentContext = {
       dealId: mockDeal.id,
       deal: { ...mockDeal, valuation: null } as never,
+      canonicalDeal: { ...mockDeal, valuation: null } as never,
       documents: [
         {
           id: "doc-001",
@@ -554,6 +557,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     const context: EnrichedAgentContext = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDocuments,
       previousResults: {},
       dealTerms: mockDealTerms,
@@ -575,6 +579,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     const context: EnrichedAgentContext = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDocuments,
       previousResults: {},
       dealTerms: mockDealTerms,
@@ -625,6 +630,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     const pipelineCtx: EnrichedAgentContext = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDocuments,
       previousResults: { ...mockTier1Results },
       dealTerms: mockDealTerms,
@@ -636,6 +642,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     const standaloneCtx: EnrichedAgentContext = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDocuments,
       previousResults: {},
       dealTerms: {

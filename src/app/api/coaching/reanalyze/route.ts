@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash, randomUUID } from "crypto";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
@@ -11,6 +13,78 @@ import {
   identifyImpactedAgents,
 } from "@/lib/live/post-call-reanalyzer";
 import type { PostCallReport } from "@/lib/live/types";
+
+const REANALYSIS_STALE_WINDOW_MS = 30 * 60 * 1000;
+
+function hashStringToBigInt(input: string): string {
+  const digest = createHash("sha256").update(input).digest();
+  return digest.readBigInt64BE(0).toString();
+}
+
+async function reserveSessionReanalysis(sessionId: string, userId: string, mode: "targeted" | "full"): Promise<
+  | { kind: "reserved"; requestId: string }
+  | { kind: "active" }
+> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashStringToBigInt(`session-reanalysis:${sessionId}`)})`);
+
+    const session = await tx.liveSession.findFirst({
+      where: {
+        id: sessionId,
+        userId,
+        status: { in: ["completed", "processing"] },
+      },
+      select: {
+        id: true,
+        reanalysisRequestId: true,
+        reanalysisRequestedAt: true,
+      },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND_OR_INVALID_STATE");
+    }
+
+    if (
+      session.reanalysisRequestId &&
+      session.reanalysisRequestedAt &&
+      session.reanalysisRequestedAt >= new Date(Date.now() - REANALYSIS_STALE_WINDOW_MS)
+    ) {
+      return { kind: "active" as const };
+    }
+
+    const requestId = randomUUID();
+    await tx.liveSession.update({
+      where: { id: sessionId },
+      data: {
+        reanalysisRequestId: requestId,
+        reanalysisMode: mode,
+        reanalysisRequestedAt: new Date(),
+      },
+    });
+
+    return {
+      kind: "reserved" as const,
+      requestId,
+    };
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  });
+}
+
+async function clearSessionReanalysisReservation(sessionId: string, requestId: string): Promise<void> {
+  await prisma.liveSession.updateMany({
+    where: {
+      id: sessionId,
+      reanalysisRequestId: requestId,
+    },
+    data: {
+      reanalysisRequestId: null,
+      reanalysisMode: null,
+      reanalysisRequestedAt: null,
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Full list of Tier 1 + Tier 3 agent names for "full" reanalysis mode
@@ -131,9 +205,23 @@ export async function POST(request: NextRequest) {
       agentNames = ALL_AGENT_NAMES;
     }
 
+    const reanalysisReservation = await reserveSessionReanalysis(sessionId, user.id, mode);
+    if (reanalysisReservation.kind === "active") {
+      return NextResponse.json(
+        { error: "Une re-analyse est deja en cours pour cette session" },
+        { status: 409 }
+      );
+    }
+
+    const reanalysisRequestId = reanalysisReservation.requestId;
+
     // --- Deduct credits (RE_ANALYSIS = 3 credits) — after all preconditions pass ---
-    const deduction = await deductCredits(user.id, 'RE_ANALYSIS', session.dealId);
+    const deduction = await deductCredits(user.id, 'RE_ANALYSIS', session.dealId, {
+      idempotencyKey: `reanalysis:${reanalysisRequestId}`,
+      description: `Post-call reanalysis (${mode}) for session ${sessionId}`,
+    });
     if (!deduction.success) {
+      await clearSessionReanalysisReservation(sessionId, reanalysisRequestId).catch(() => undefined);
       return NextResponse.json(
         { error: deduction.error ?? "Crédits insuffisants pour la re-analyse" },
         { status: 402 }
@@ -141,34 +229,33 @@ export async function POST(request: NextRequest) {
     }
 
     // --- Trigger re-analysis (refund on failure) ---
+    const refundKey = `refund:RE_ANALYSIS:session:${sessionId}:${reanalysisRequestId}`;
     try {
-      await triggerTargetedReanalysis(session.dealId, agentNames, sessionId);
+      const reanalysis = await triggerTargetedReanalysis(
+        session.dealId,
+        agentNames,
+        sessionId
+      );
+
+      await clearSessionReanalysisReservation(sessionId, reanalysisRequestId).catch(() => undefined);
+
+      return NextResponse.json({
+        data: {
+          agents: agentNames,
+          analysisId: reanalysis.analysisId,
+        },
+      });
     } catch (reanalysisError) {
       // Refund credits — re-analysis failed to start.
       // P1 — idempotency scope fine: par (sessionId, dealId) pour permettre plusieurs
       // tentatives successives sans bloquer les refunds legitimes.
       await refundCredits(user.id, 'RE_ANALYSIS', session.dealId, {
-        idempotencyKey: `refund:RE_ANALYSIS:session:${sessionId}`,
+        idempotencyKey: refundKey,
       });
+      await clearSessionReanalysisReservation(sessionId, reanalysisRequestId).catch(() => undefined);
       throw reanalysisError;
     }
 
-    // Fetch the created analysis to return its ID
-    const analysis = await prisma.analysis.findFirst({
-      where: {
-        dealId: session.dealId,
-        mode: "post_call_reanalysis",
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true },
-    });
-
-    return NextResponse.json({
-      data: {
-        agents: agentNames,
-        analysisId: analysis?.id ?? null,
-      },
-    });
   } catch (error) {
     return handleApiError(error, "trigger post-call reanalysis");
   }

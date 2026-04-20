@@ -732,7 +732,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   // ===========================================================================
 
   protected async execute(context: EnrichedAgentContext): Promise<SynthesisDealScorerData> {
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     this._dealStage = deal.stage;
     // Get dynamic weights based on stage and sector
     const dealStage = deal.stage || (context.previousResults?.['document-extractor'] as { data?: { extractedInfo?: { stage?: string } } })?.data?.extractedInfo?.stage;
@@ -914,8 +914,8 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
       const dbPercentile = await Promise.race([
         calculateDealPercentile(
           result.overallScore,
-          context.deal.sector ?? null,
-          context.deal.stage ?? null,
+          context.canonicalDeal.sector ?? null,
+          context.canonicalDeal.stage ?? null,
         ),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("F37 percentile DB timeout (10s)")), 10000)
@@ -969,7 +969,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
    * Analyse le contexte de levee sans le transformer en malus automatique de qualite.
    */
   private buildDealSourceSection(context: EnrichedAgentContext): string {
-    const deal = context.deal as Record<string, unknown>;
+    const deal = context.canonicalDeal as Record<string, unknown>;
     const lines: string[] = [];
 
     // Collect source info from deal data

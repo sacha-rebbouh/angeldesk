@@ -4,6 +4,16 @@
 
 import { prisma } from "@/lib/prisma";
 import type { DealContext, CondensedTranscriptIntel } from "@/lib/live/types";
+import { loadResults } from "@/services/analysis-results/load-results";
+import { extractAnalysisScores } from "@/services/analysis-results/score-extraction";
+import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
+import {
+  pickCanonicalAnalysis,
+  type CanonicalCompletedAnalysis,
+  type CanonicalLatestThesis,
+} from "@/services/deals/canonical-read-model";
+import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
+import type { CurrentFact } from "@/services/fact-store/types";
 
 // ---------------------------------------------------------------------------
 // In-memory cache — compileDealContext is called ~100-150 times per 30min
@@ -105,21 +115,50 @@ function safeString(val: unknown, fallback = ""): string {
   return typeof val === "string" ? val : fallback;
 }
 
+function buildCurrentFactMap(currentFacts: CurrentFact[]): Map<string, CurrentFact> {
+  return new Map(currentFacts.map((fact) => [fact.factKey, fact]));
+}
+
+function getCurrentFactString(
+  factMap: Map<string, CurrentFact>,
+  factKey: string
+): string | null {
+  const fact = factMap.get(factKey);
+  if (!fact) return null;
+  if (typeof fact.currentValue === "string") return fact.currentValue;
+  if (typeof fact.currentDisplayValue === "string" && fact.currentDisplayValue.length > 0) {
+    return fact.currentDisplayValue;
+  }
+  return null;
+}
+
+function getCurrentFactNumber(
+  factMap: Map<string, CurrentFact>,
+  factKey: string
+): number | null {
+  const fact = factMap.get(factKey);
+  if (!fact) return null;
+  if (typeof fact.currentValue === "number" && Number.isFinite(fact.currentValue)) {
+    return fact.currentValue;
+  }
+  if (typeof fact.currentValue === "string") {
+    const parsed = Number(fact.currentValue);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // compileDealContext — main function
 // ---------------------------------------------------------------------------
 
 export async function compileDealContext(dealId: string): Promise<DealContext> {
   // Fetch all data in parallel
-  const [deal, latestAnalysis, previousSessions] = await Promise.all([
+  const [deal, latestThesis, completedAnalyses, previousSessions, currentFacts] = await Promise.all([
     prisma.deal.findUnique({
       where: { id: dealId },
       include: {
         redFlags: { orderBy: [{ severity: "asc" }, { detectedAt: "desc" }] },
-        documents: {
-          where: { isLatest: true },
-          select: { id: true, name: true, type: true },
-        },
         founders: {
           select: {
             name: true,
@@ -129,18 +168,31 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
             previousVentures: true,
           },
         },
-        factEvents: {
-          where: { eventType: "CREATED" },
-          select: { factKey: true, displayValue: true, sourceDocumentId: true },
-          take: 50,
-          orderBy: { createdAt: "desc" },
-        },
       },
     }),
-    prisma.analysis.findFirst({
-      where: { dealId, status: "COMPLETED" },
+    prisma.thesis.findFirst({
+      where: { dealId, isLatest: true },
       orderBy: { createdAt: "desc" },
-      select: { id: true, results: true, negotiationStrategy: true },
+      select: {
+        id: true,
+        dealId: true,
+        verdict: true,
+        corpusSnapshotId: true,
+      },
+    }),
+    prisma.analysis.findMany({
+      where: { dealId, status: "COMPLETED" },
+      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        id: true,
+        dealId: true,
+        mode: true,
+        thesisId: true,
+        corpusSnapshotId: true,
+        completedAt: true,
+        createdAt: true,
+        negotiationStrategy: true,
+      },
     }),
     prisma.liveSession.findMany({
       where: { dealId, status: "completed" },
@@ -160,14 +212,66 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
         },
       },
     }),
+    getCurrentFactsFromView(dealId),
   ]);
 
   if (!deal) {
     throw new Error(`Deal ${dealId} not found`);
   }
 
+  const selectedAnalysis = pickCanonicalAnalysis(
+    latestThesis as CanonicalLatestThesis | null,
+    completedAnalyses as CanonicalCompletedAnalysis[]
+  );
+  const selectedAnalysisDetails = selectedAnalysis
+    ? completedAnalyses.find((analysis) => analysis.id === selectedAnalysis.id) ?? null
+    : null;
+
+  const scopedDocumentIds = selectedAnalysisDetails?.corpusSnapshotId
+    ? await getCorpusSnapshotDocumentIds(selectedAnalysisDetails.corpusSnapshotId)
+    : [];
+
+  const [scopedDocuments, scopedFactEvents] = await Promise.all([
+    prisma.document.findMany({
+      where: selectedAnalysisDetails?.corpusSnapshotId
+        ? { id: { in: scopedDocumentIds } }
+        : { dealId, isLatest: true },
+      select: { id: true, name: true, type: true },
+    }),
+    prisma.factEvent.findMany({
+      where: selectedAnalysisDetails?.corpusSnapshotId
+        ? {
+            dealId,
+            eventType: "CREATED",
+            sourceDocumentId: { in: scopedDocumentIds },
+          }
+        : {
+            dealId,
+            eventType: "CREATED",
+          },
+      select: { factKey: true, displayValue: true, sourceDocumentId: true },
+      take: 50,
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  if (selectedAnalysisDetails?.corpusSnapshotId && scopedDocumentIds.length > 0) {
+    const documentOrder = new Map(
+      scopedDocumentIds.map((documentId, index) => [documentId, index])
+    );
+    scopedDocuments.sort(
+      (left, right) =>
+        (documentOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (documentOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+    );
+  }
+
   // Parse agent results
-  const agentResults = latestAnalysis?.results as AgentResults | null;
+  const agentResults = selectedAnalysisDetails
+    ? (await loadResults(selectedAnalysisDetails.id)) as AgentResults | null
+    : null;
+  const factMap = buildCurrentFactMap(currentFacts);
+  const analysisScores = extractAnalysisScores(agentResults);
 
   // --- Financial summary ---
   const financialData = getAgentData(agentResults, "financial-auditor");
@@ -342,7 +446,7 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
   // --- Document summaries ---
   // Group factEvents by document for keyClaims
   const factsByDoc = new Map<string, string[]>();
-  for (const fe of deal.factEvents) {
+  for (const fe of scopedFactEvents) {
     if (fe.sourceDocumentId) {
       const existing = factsByDoc.get(fe.sourceDocumentId) ?? [];
       existing.push(fe.displayValue);
@@ -350,7 +454,7 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     }
   }
 
-  const documentSummaries: DealContext["documentSummaries"] = deal.documents.map(
+  const documentSummaries: DealContext["documentSummaries"] = scopedDocuments.map(
     (doc) => ({
       name: doc.name,
       type: doc.type,
@@ -417,9 +521,11 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
 
   // --- Negotiation strategy ---
   const negotiationStrategy = safeString(
-    (latestAnalysis?.negotiationStrategy as Record<string, unknown> | null)?.summary ??
-    (latestAnalysis?.negotiationStrategy as Record<string, unknown> | null)?.strategy ??
-    (typeof latestAnalysis?.negotiationStrategy === "string" ? latestAnalysis.negotiationStrategy : "")
+    (selectedAnalysisDetails?.negotiationStrategy as Record<string, unknown> | null)?.summary ??
+    (selectedAnalysisDetails?.negotiationStrategy as Record<string, unknown> | null)?.strategy ??
+    (typeof selectedAnalysisDetails?.negotiationStrategy === "string"
+      ? selectedAnalysisDetails.negotiationStrategy
+      : "")
   );
 
   // --- Previous sessions ---
@@ -512,24 +618,31 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
 
   return {
     dealId: deal.id,
-    companyName: deal.companyName ?? deal.name,
+    companyName:
+      getCurrentFactString(factMap, "company.name") ?? deal.companyName ?? deal.name,
     sector: deal.sector,
     stage: deal.stage,
     dealBasics: {
-      arr: deal.arr ? Number(deal.arr) : null,
-      growthRate: deal.growthRate ? Number(deal.growthRate) : null,
-      amountRequested: deal.amountRequested ? Number(deal.amountRequested) : null,
-      valuationPre: deal.valuationPre ? Number(deal.valuationPre) : null,
+      arr: getCurrentFactNumber(factMap, "financial.arr") ?? (deal.arr ? Number(deal.arr) : null),
+      growthRate:
+        getCurrentFactNumber(factMap, "financial.revenue_growth_yoy") ??
+        (deal.growthRate ? Number(deal.growthRate) : null),
+      amountRequested:
+        getCurrentFactNumber(factMap, "financial.amount_raising") ??
+        (deal.amountRequested ? Number(deal.amountRequested) : null),
+      valuationPre:
+        getCurrentFactNumber(factMap, "financial.valuation_pre") ??
+        (deal.valuationPre ? Number(deal.valuationPre) : null),
       geography: deal.geography,
       description: deal.description,
-      website: deal.website,
+      website: getCurrentFactString(factMap, "other.website") ?? deal.website,
     },
     scores: {
-      global: deal.globalScore,
-      team: deal.teamScore,
-      market: deal.marketScore,
-      product: deal.productScore,
-      financials: deal.financialsScore,
+      global: analysisScores.globalScore ?? deal.globalScore,
+      team: analysisScores.teamScore ?? deal.teamScore,
+      market: analysisScores.marketScore ?? deal.marketScore,
+      product: analysisScores.productScore ?? deal.productScore,
+      financials: analysisScores.financialsScore ?? deal.financialsScore,
     },
     financialSummary,
     teamSummary,
@@ -539,8 +652,8 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     redFlags,
     questionsToAsk,
     benchmarks,
-    overallScore: deal.globalScore,
-    signalProfile: getSignalProfile(deal.globalScore),
+    overallScore: analysisScores.globalScore ?? deal.globalScore,
+    signalProfile: getSignalProfile(analysisScores.globalScore ?? deal.globalScore),
     keyContradictions,
     allAgentFindings,
     negotiationStrategy,

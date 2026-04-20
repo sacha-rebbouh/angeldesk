@@ -1489,6 +1489,7 @@ function buildMockContext() {
   return {
     dealId: deal.id,
     deal: deal as unknown as import("@prisma/client").Deal,
+    canonicalDeal: deal as unknown as import("@prisma/client").Deal,
     documents,
     previousResults: {
       "document-extractor": {
@@ -1964,6 +1965,33 @@ describe("Agent Pipeline Tests", () => {
       expect(agentNames).toContain("thesis-reconciler");
     });
 
+    it("full-analysis Tier 3 topology should keep thesis-reconciler between pre-Tier2 work and final scoring", async () => {
+      const {
+        TIER3_AGENT_NAMES,
+        FULL_ANALYSIS_TIER3_AGENT_NAMES,
+        TIER3_BATCHES_BEFORE_TIER2,
+        TIER3_BATCHES_AFTER_TIER2,
+        FREE_TIER3_BATCHES_AFTER_TIER2,
+        AGENT_COUNTS,
+        TIER1_AGENT_NAMES,
+        TIER2_SECTOR_EXPERT_COUNT,
+      } = await import("@/agents/orchestrator/types");
+
+      expect(TIER3_AGENT_NAMES).not.toContain("thesis-reconciler");
+      expect(FULL_ANALYSIS_TIER3_AGENT_NAMES).toContain("thesis-reconciler");
+      expect(TIER3_BATCHES_AFTER_TIER2[0]).toEqual(["thesis-reconciler"]);
+      expect(TIER3_BATCHES_AFTER_TIER2[1]).toEqual(["synthesis-deal-scorer"]);
+      expect(FREE_TIER3_BATCHES_AFTER_TIER2).toEqual([["synthesis-deal-scorer"]]);
+      expect([
+        ...TIER3_BATCHES_BEFORE_TIER2.flat(),
+        ...TIER3_BATCHES_AFTER_TIER2.flat(),
+      ]).toEqual(FULL_ANALYSIS_TIER3_AGENT_NAMES);
+      expect(AGENT_COUNTS.tier3_synthesis).toBe(TIER3_AGENT_NAMES.length);
+      expect(AGENT_COUNTS.full_analysis).toBe(
+        TIER1_AGENT_NAMES.length + TIER2_SECTOR_EXPERT_COUNT + FULL_ANALYSIS_TIER3_AGENT_NAMES.length
+      );
+    });
+
     it("each Tier 1 agent should have a run method", async () => {
       const { getTier1Agents } = await import("@/agents/orchestrator/agent-registry");
 
@@ -2030,6 +2058,7 @@ describe("Agent Pipeline Tests", () => {
       const minimalContext = {
         dealId: "test",
         deal: { id: "test", name: "Test" } as unknown as import("@prisma/client").Deal,
+        canonicalDeal: { id: "test", name: "Test" } as unknown as import("@prisma/client").Deal,
         documents: [],
         previousResults: {},
       };
@@ -2049,6 +2078,7 @@ describe("Agent Pipeline Tests", () => {
       const context = {
         dealId: "test",
         deal: { id: "test", name: "Empty Deal" } as unknown as import("@prisma/client").Deal,
+        canonicalDeal: { id: "test", name: "Empty Deal" } as unknown as import("@prisma/client").Deal,
         documents: [],
         previousResults: {},
       };

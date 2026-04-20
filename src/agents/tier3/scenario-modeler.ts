@@ -408,8 +408,8 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<ScenarioModelerData> {
-    this._dealStage = context.deal.stage;
-    const deal = context.deal;
+    this._dealStage = context.canonicalDeal.stage;
+    const deal = context.canonicalDeal;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const tier1Insights = this.extractTier1Insights(context);
@@ -898,8 +898,8 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
     const basedOnComparables: ScenarioComparable[] = Array.isArray(data.basedOnComparables)
       ? data.basedOnComparables.map((c) => ({
           company: c.company ?? "Unknown",
-          sector: c.sector ?? context.deal.sector ?? "Unknown",
-          stage: c.stage ?? context.deal.stage ?? "Unknown",
+          sector: c.sector ?? context.canonicalDeal.sector ?? "Unknown",
+          stage: c.stage ?? context.canonicalDeal.stage ?? "Unknown",
           trajectory: c.trajectory ?? "Non disponible",
           outcome: validOutcomes.includes(c.outcome as typeof validOutcomes[number])
             ? (c.outcome as typeof validOutcomes[number])
@@ -1075,7 +1075,7 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
     scenarios: ScenarioV2[],
     context: EnrichedAgentContext
   ): ScenarioV2[] {
-    const currentARR = context.deal.arr != null ? Number(context.deal.arr) : 0;
+    const currentARR = context.canonicalDeal.arr != null ? Number(context.canonicalDeal.arr) : 0;
     if (currentARR <= 0) return scenarios;
 
     // CAGR annuel max et exit multiple max par scenario
@@ -1186,7 +1186,7 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
   }
 
   private getDefaultScenarios(context: EnrichedAgentContext): ScenarioV2[] {
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     const investment = deal.amountRequested != null ? Number(deal.amountRequested) * 0.1 : 50000;
 
     const defaultScenario = (
@@ -1246,7 +1246,7 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
     const limitations: string[] = [];
 
     // Check data completeness
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     if (!deal.arr) limitations.push("ARR non disponible - projections moins fiables");
     if (!deal.growthRate) limitations.push("Taux de croissance non disponible");
     if (!deal.valuationPre) limitations.push("Valorisation pre-money non disponible");

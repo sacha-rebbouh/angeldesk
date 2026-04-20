@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { loadResults } from "@/services/analysis-results/load-results";
 import { generateNegotiationStrategy, type AnalysisResults, type NegotiationStrategy } from "@/services/negotiation/strategist";
 import { thesisService } from "@/services/thesis";
 import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
@@ -43,10 +44,11 @@ interface RateLimitEntry {
 }
 
 interface NegotiationStrategyCacheMeta {
-  schemaVersion: 2;
+  schemaVersion: 3;
   analysisId: string;
   thesisId: string;
   thesisSourceHash: string;
+  thesisCorpusSnapshotId: string | null;
   thesisUpdatedAt: string;
   thesisDecision: string | null;
   thesisBypass: boolean;
@@ -109,15 +111,17 @@ function buildNegotiationCacheMeta(params: {
   analysisId: string;
   thesisId: string;
   thesisSourceHash: string;
+  thesisCorpusSnapshotId: string | null;
   thesisUpdatedAt: Date;
   thesisDecision: string | null;
   thesisBypass: boolean;
 }): NegotiationStrategyCacheMeta {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     analysisId: params.analysisId,
     thesisId: params.thesisId,
     thesisSourceHash: params.thesisSourceHash,
+    thesisCorpusSnapshotId: params.thesisCorpusSnapshotId,
     thesisUpdatedAt: params.thesisUpdatedAt.toISOString(),
     thesisDecision: params.thesisDecision,
     thesisBypass: params.thesisBypass,
@@ -130,14 +134,16 @@ function isNegotiationCacheValid(params: {
   analysisThesisId: string | null;
   thesisBypass: boolean;
   latestThesis: NonNullable<Awaited<ReturnType<typeof thesisService.getLatest>>> | null;
+  latestThesisScope: Awaited<ReturnType<typeof thesisService.resolveSourceScope>> | null;
 }): params is {
   strategy: CachedNegotiationStrategy;
   analysisId: string;
   analysisThesisId: string;
   thesisBypass: boolean;
   latestThesis: NonNullable<Awaited<ReturnType<typeof thesisService.getLatest>>>;
+  latestThesisScope: NonNullable<Awaited<ReturnType<typeof thesisService.resolveSourceScope>>>;
 } {
-  if (!params.strategy || !params.latestThesis || !params.analysisThesisId) {
+  if (!params.strategy || !params.latestThesis || !params.analysisThesisId || !params.latestThesisScope) {
     return false;
   }
 
@@ -146,14 +152,18 @@ function isNegotiationCacheValid(params: {
   }
 
   const cacheMeta = (params.strategy as CachedNegotiationStrategy).cacheMeta;
-  if (!cacheMeta || cacheMeta.schemaVersion !== 2) {
+  if (!cacheMeta || cacheMeta.schemaVersion !== 3) {
     return false;
   }
+
+  const snapshotAligned = cacheMeta.thesisCorpusSnapshotId && params.latestThesisScope.corpusSnapshotId
+    ? cacheMeta.thesisCorpusSnapshotId === params.latestThesisScope.corpusSnapshotId
+    : cacheMeta.thesisSourceHash === params.latestThesisScope.sourceHash;
 
   return (
     cacheMeta.analysisId === params.analysisId &&
     cacheMeta.thesisId === params.latestThesis.id &&
-    cacheMeta.thesisSourceHash === params.latestThesis.sourceHash &&
+    snapshotAligned &&
     cacheMeta.thesisUpdatedAt === params.latestThesis.updatedAt.toISOString() &&
     cacheMeta.thesisDecision === params.latestThesis.decision &&
     cacheMeta.thesisBypass === params.thesisBypass
@@ -208,6 +218,9 @@ export async function GET(req: NextRequest) {
     }
 
     const latestThesis = await thesisService.getLatest(dealId);
+    const latestThesisScope = latestThesis
+      ? await thesisService.resolveSourceScope(latestThesis)
+      : null;
     const strategy = analysis.negotiationStrategy as NegotiationStrategy | null;
     const cacheValid = isNegotiationCacheValid({
       strategy,
@@ -215,6 +228,7 @@ export async function GET(req: NextRequest) {
       analysisThesisId: analysis.thesisId,
       thesisBypass: analysis.thesisBypass ?? false,
       latestThesis,
+      latestThesisScope,
     });
 
     return NextResponse.json({
@@ -297,7 +311,7 @@ export async function POST(req: NextRequest) {
       console.log("[Negotiation API] Request params:", { dealId, analysisId, forceRegenerate });
     }
 
-    // 4. Fetch the analysis with results
+    // 4. Fetch the analysis metadata, then load results via the canonical loader
     const analysis = await prisma.analysis.findFirst({
       where: {
         id: analysisId,
@@ -306,9 +320,15 @@ export async function POST(req: NextRequest) {
           userId: user.id,
         },
       },
+      select: {
+        id: true,
+        thesisId: true,
+        thesisBypass: true,
+        negotiationStrategy: true,
+      },
     });
 
-    if (!analysis || !analysis.results) {
+    if (!analysis) {
       if (process.env.NODE_ENV === "development") {
         console.log("[Negotiation API] Analysis not found or no results");
       }
@@ -321,10 +341,28 @@ export async function POST(req: NextRequest) {
       console.log("[Negotiation API] Analysis found, hasCache:", !!analysis.negotiationStrategy);
     }
 
+    const rawResults = await loadResults(analysis.id);
+    if (!rawResults) {
+      if (process.env.NODE_ENV === "development") {
+        console.log("[Negotiation API] Analysis not found or no results");
+      }
+      return NextResponse.json(
+        { error: "Analysis not found or has no results" },
+        { status: 404 }
+      );
+    }
+
     const latestThesis = await thesisService.getLatest(dealId);
     if (!latestThesis) {
       return NextResponse.json(
         { error: "Negotiation requires a current canonical thesis. Run the thesis-first analysis flow first." },
+        { status: 409 }
+      );
+    }
+    const latestThesisScope = await thesisService.resolveSourceScope(latestThesis);
+    if (!latestThesisScope) {
+      return NextResponse.json(
+        { error: "Latest thesis source scope could not be resolved. Re-run the thesis-first Deep Dive before generating negotiation." },
         { status: 409 }
       );
     }
@@ -344,6 +382,7 @@ export async function POST(req: NextRequest) {
       analysisThesisId: analysis.thesisId,
       thesisBypass: analysis.thesisBypass ?? false,
       latestThesis,
+      latestThesisScope,
     });
     if (!forceRegenerate && cacheValid) {
       return NextResponse.json({
@@ -353,7 +392,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Verify results is not empty
-    const resultsObj = analysis.results as Record<string, unknown>;
+    const resultsObj = rawResults as Record<string, unknown>;
     if (Object.keys(resultsObj).length === 0) {
       return NextResponse.json(
         { error: "Analysis has no agent results to generate negotiation strategy from" },
@@ -362,7 +401,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 7. Extract relevant data from analysis results
-    const results = analysis.results as Record<string, {
+    const results = rawResults as Record<string, {
       agentName: string;
       success: boolean;
       data?: Record<string, unknown>;
@@ -470,7 +509,8 @@ export async function POST(req: NextRequest) {
       cacheMeta: buildNegotiationCacheMeta({
         analysisId: analysis.id,
         thesisId: latestThesis.id,
-        thesisSourceHash: latestThesis.sourceHash,
+        thesisSourceHash: latestThesisScope.sourceHash,
+        thesisCorpusSnapshotId: latestThesisScope.corpusSnapshotId,
         thesisUpdatedAt: latestThesis.updatedAt,
         thesisDecision: latestThesis.decision,
         thesisBypass: analysis.thesisBypass ?? false,

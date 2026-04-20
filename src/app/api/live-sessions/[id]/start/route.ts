@@ -48,9 +48,43 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
+    const claim = await prisma.liveSession.updateMany({
+      where: {
+        id,
+        userId: user.id,
+        status: "created",
+      },
+      data: {
+        status: "bot_joining",
+      },
+    });
+
+    if (claim.count === 0) {
+      const latest = await prisma.liveSession.findFirst({
+        where: {
+          id,
+          userId: user.id,
+        },
+        select: { status: true },
+      });
+
+      return NextResponse.json(
+        { error: `Session cannot be started from status "${latest?.status ?? session.status}". Must be "created".` },
+        { status: 409 }
+      );
+    }
+
     // Deduct credits for live coaching (8 credits)
-    const deduction = await deductCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined);
+    const chargeKey = `live:${id}:${session.updatedAt.getTime()}`;
+    const deduction = await deductCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined, {
+      idempotencyKey: chargeKey,
+      description: `Live coaching session ${id}`,
+    });
     if (!deduction.success) {
+      await prisma.liveSession.updateMany({
+        where: { id, userId: user.id, status: "bot_joining" },
+        data: { status: "created" },
+      }).catch(() => undefined);
       return NextResponse.json(
         { error: deduction.error ?? "Crédits insuffisants" },
         { status: 402 }
@@ -128,6 +162,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     };
 
     // Try with video_separate_png, fallback without if Recall rejects it
+    const refundKey = `refund:LIVE_COACHING:session:${id}:${crypto.randomUUID()}`;
     let bot;
     try {
       bot = await createBot(botConfig);
@@ -149,12 +184,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
           bot = await createBot(botConfig);
         } catch (retryErr) {
           // Refund credits — bot deploy failed completely
-          await refundCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined);
+          await refundCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined, {
+            idempotencyKey: refundKey,
+          });
+          await prisma.liveSession.updateMany({
+            where: { id, userId: user.id, status: "bot_joining" },
+            data: { status: "created" },
+          }).catch(() => undefined);
           throw retryErr;
         }
       } else {
         // Refund credits — bot deploy failed
-        await refundCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined);
+        await refundCredits(user.id, 'LIVE_COACHING', session.dealId ?? undefined, {
+          idempotencyKey: refundKey,
+        });
+        await prisma.liveSession.updateMany({
+          where: { id, userId: user.id, status: "bot_joining" },
+          data: { status: "created" },
+        }).catch(() => undefined);
         throw err;
       }
     }

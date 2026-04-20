@@ -5,11 +5,15 @@ import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
+import { safeDecrypt } from "@/lib/encryption";
 import { ConditionsAnalystAgent } from "@/agents/tier3/conditions-analyst";
 import type { EnrichedAgentContext, ConditionsAnalystData } from "@/agents/types";
 import type { Deal } from "@prisma/client";
 import type { DealMode, TrancheData } from "@/components/deals/conditions/types";
 import { normalizeTranche, buildTermsResponse } from "@/services/terms-normalization";
+import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
+import { formatFactStoreForAgents, getCurrentFacts } from "@/services/fact-store";
+import { buildCanonicalRuntimeDeal } from "@/agents/utils/canonical-runtime-deal";
 
 const dealTermsSchema = z.object({
   // Valorisation
@@ -53,6 +57,57 @@ const dealTermsSchema = z.object({
 type RouteContext = {
   params: Promise<{ dealId: string }>;
 };
+
+type StandaloneContextDocument = {
+  id: string;
+  name: string;
+  type: string;
+  extractedText?: string | null;
+  uploadedAt?: Date;
+};
+
+async function loadStandaloneContextDocuments(
+  dealId: string,
+  corpusSnapshotId?: string | null
+): Promise<StandaloneContextDocument[]> {
+  const snapshotDocumentIds = corpusSnapshotId
+    ? await getCorpusSnapshotDocumentIds(corpusSnapshotId)
+    : [];
+
+  const requestedDocumentIds = snapshotDocumentIds.length > 0 ? snapshotDocumentIds : null;
+  const documents = await prisma.document.findMany({
+    where: {
+      dealId,
+      processingStatus: "COMPLETED",
+      ...(requestedDocumentIds
+        ? { id: { in: requestedDocumentIds } }
+        : { isLatest: true }),
+    },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      extractedText: true,
+      uploadedAt: true,
+    },
+  });
+
+  const hydrated = documents.map((document) => ({
+    ...document,
+    extractedText: document.extractedText ? safeDecrypt(document.extractedText) : null,
+  }));
+
+  if (requestedDocumentIds) {
+    const order = new Map(requestedDocumentIds.map((documentId, index) => [documentId, index]));
+    hydrated.sort(
+      (left, right) =>
+        (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (order.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+    );
+  }
+
+  return hydrated;
+}
 
 // GET /api/deals/[dealId]/terms — Get deal terms + cached conditions analysis
 export async function GET(request: NextRequest, context: RouteContext) {
@@ -150,7 +205,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const deal = await prisma.deal.findFirst({
       where: { id: dealId, userId: user.id },
       include: {
-        documents: true,
         dealTerms: true,
         dealStructure: { include: { tranches: true } },
       },
@@ -205,7 +259,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const latestAnalysisPromise = prisma.analysis.findFirst({
       where: { dealId, status: "COMPLETED" },
       orderBy: { completedAt: "desc" },
-      select: { summary: true },
+      select: { id: true, summary: true, corpusSnapshotId: true },
     });
 
     // Handle structured mode: upsert DealStructure + replace tranches
@@ -258,11 +312,21 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       latestAnalysisPromise,
       structurePromise,
     ]);
+    const [standaloneDocuments, factStore] = await Promise.all([
+      loadStandaloneContextDocuments(dealId, latestAnalysis?.corpusSnapshotId ?? null),
+      getCurrentFacts(dealId),
+    ]);
 
     // --- 2. Run AI conditions analysis (standalone mode) ---
     const agent = new ConditionsAnalystAgent({ standaloneTimeoutMs: 50_000 });
     const standaloneContext = buildStandaloneContextSync(
-      deal, upsertedTerms, latestAnalysis?.summary ?? null,
+      deal,
+      standaloneDocuments,
+      factStore,
+      latestAnalysis?.id ?? null,
+      latestAnalysis?.corpusSnapshotId ?? null,
+      upsertedTerms,
+      latestAnalysis?.summary ?? null,
       mode === "STRUCTURED" ? inputTranches : undefined,
     );
 
@@ -335,7 +399,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
 // Build lightweight context for standalone conditions analysis (synchronous — DB queries done upstream)
 function buildStandaloneContextSync(
-  deal: Deal & { documents: Array<{ id: string; name: string; type: string; extractedText?: string | null }> },
+  deal: Deal,
+  documents: StandaloneContextDocument[],
+  factStore: Awaited<ReturnType<typeof getCurrentFacts>>,
+  analysisId: string | null,
+  corpusSnapshotId: string | null,
   terms: {
     valuationPre: unknown; amountRaised: unknown; dilutionPct: unknown;
     instrumentType: string | null; instrumentDetails: string | null;
@@ -351,11 +419,23 @@ function buildStandaloneContextSync(
   analysisSummary: string | null,
   structuredTranches?: Array<z.infer<typeof trancheSchema>>,
 ): EnrichedAgentContext {
+  const canonicalDeal = buildCanonicalRuntimeDeal(deal, {
+    factStore,
+  });
   const ctx: EnrichedAgentContext = {
     dealId: deal.id,
-    deal,
-    documents: deal.documents,
+    deal: canonicalDeal,
+    canonicalDeal,
+    analysis: analysisId
+      ? {
+          id: analysisId,
+          corpusSnapshotId,
+        }
+      : undefined,
+    documents,
     previousResults: {},
+    factStore,
+    factStoreFormatted: formatFactStoreForAgents(factStore),
     dealTerms: {
       valuationPre: terms.valuationPre != null ? Number(terms.valuationPre) : null,
       amountRaised: terms.amountRaised != null ? Number(terms.amountRaised) : null,

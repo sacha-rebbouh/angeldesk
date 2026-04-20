@@ -190,6 +190,66 @@ describe('matchFact', () => {
     expect(result.reason).toContain('newer data');
   });
 
+  it('should supersede CONTEXT_ENGINE facts when the corpus snapshot changes', () => {
+    const newFact = createExtractedFact({
+      factKey: 'market.tam',
+      source: 'CONTEXT_ENGINE',
+      value: 3000000000,
+      displayValue: '3B EUR',
+      sourceMetadata: {
+        corpusSnapshotId: 'snapshot_2',
+        enrichedAt: '2026-04-20T12:00:00.000Z',
+      },
+    });
+    const existingFacts: CurrentFact[] = [
+      createCurrentFact({
+        factKey: 'market.tam',
+        currentSource: 'CONTEXT_ENGINE',
+        currentValue: 10000000000,
+        currentDisplayValue: '10B EUR',
+        sourceMetadata: {
+          corpusSnapshotId: 'snapshot_1',
+          enrichedAt: '2026-04-20T11:00:00.000Z',
+        },
+      }),
+    ];
+
+    const result = matchFact(newFact, existingFacts);
+
+    expect(result.type).toBe('SUPERSEDE');
+    expect(result.reason).toContain('Context-engine corpus changed');
+  });
+
+  it('should ignore older CONTEXT_ENGINE facts when a newer snapshot is already current', () => {
+    const newFact = createExtractedFact({
+      factKey: 'market.tam',
+      source: 'CONTEXT_ENGINE',
+      value: 3000000000,
+      displayValue: '3B EUR',
+      sourceMetadata: {
+        corpusSnapshotId: 'snapshot_older',
+        enrichedAt: '2026-04-20T10:00:00.000Z',
+      },
+    });
+    const existingFacts: CurrentFact[] = [
+      createCurrentFact({
+        factKey: 'market.tam',
+        currentSource: 'CONTEXT_ENGINE',
+        currentValue: 10000000000,
+        currentDisplayValue: '10B EUR',
+        sourceMetadata: {
+          corpusSnapshotId: 'snapshot_newer',
+          enrichedAt: '2026-04-20T12:00:00.000Z',
+        },
+      }),
+    ];
+
+    const result = matchFact(newFact, existingFacts);
+
+    expect(result.type).toBe('IGNORE');
+    expect(result.reason).toContain('Older context-engine enrichment ignored');
+  });
+
   it('should return SUPERSEDE when same priority even if lower confidence', () => {
     // Same source, newer fact with lower confidence still wins
     const newFact = createExtractedFact({

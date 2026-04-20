@@ -43,6 +43,8 @@ interface SavedBoardSession {
   id: string;
   dealId: string;
   status: string;
+  thesisId?: string | null;
+  corpusSnapshotId?: string | null;
   verdict: string;
   consensusLevel: string;
   stoppingReason: string;
@@ -186,6 +188,7 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
       return {
         credits: data.status as BoardCreditsStatus,
         savedSession: data.latestSession as SavedBoardSession | null,
+        staleSession: data.staleSession as SavedBoardSession | null,
       };
     },
     staleTime: 30_000,
@@ -198,6 +201,7 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
     if (!boardData?.savedSession) return null;
     return hydrateSavedSession(boardData.savedSession);
   }, [boardData?.savedSession]);
+  const hasStaleSession = Boolean(boardData?.staleSession);
 
   // Determine what to display: live (from SSE) or saved (from DB)
   const isLiveSession = isRunning || events.length > 0;
@@ -450,6 +454,12 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
           </div>
         </div>
       </div>
+
+      {hasStaleSession && !hasResults && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          Un board précédent existe mais il n&apos;est plus aligné avec la thèse courante. Relance un board pour obtenir un verdict à jour.
+        </div>
+      )}
 
       {/* Progress indicator during run */}
       {isRunning && <BoardProgress events={events} />}

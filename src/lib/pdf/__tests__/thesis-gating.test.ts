@@ -1,38 +1,45 @@
 import { describe, expect, it } from "vitest";
 
+import type { ThesisAxisEvaluation, ThesisVerdict } from "@/agents/thesis/types";
+
 import { hasFragileThesis } from "../thesis-gating";
 import type { PdfExportData } from "../generate-analysis-pdf";
 
-function makeThesis(verdict: string): NonNullable<PdfExportData["thesis"]> {
+function makeAxis(
+  key: ThesisAxisEvaluation["key"],
+  label: string,
+  verdict: ThesisVerdict
+): ThesisAxisEvaluation {
+  return {
+    key,
+    label,
+    verdict,
+    confidence: 70,
+    summary: "Resume",
+    strengths: [],
+    claims: [],
+    failures: [],
+    sourceFrameworks: ["angel-desk"],
+  };
+}
+
+function makeThesis(verdict: ThesisVerdict): NonNullable<PdfExportData["thesis"]> {
   return {
     reformulated: "These test",
     verdict,
     confidence: 70,
     evaluationAxes: {
-      thesisQuality: {
-        key: "thesis_quality",
-        label: "Thesis Quality",
-        verdict,
-        summary: "Resume",
-        claims: [],
-        failures: [],
-      },
-      investorProfileFit: {
-        key: "investor_profile_fit",
-        label: "Investor Profile Fit",
-        verdict: "favorable",
-        summary: "Resume",
-        claims: [],
-        failures: [],
-      },
-      dealAccessibility: {
-        key: "deal_accessibility",
-        label: "Deal Accessibility",
-        verdict: "favorable",
-        summary: "Resume",
-        claims: [],
-        failures: [],
-      },
+      thesisQuality: makeAxis("thesis_quality", "Thesis Quality", verdict),
+      investorProfileFit: makeAxis(
+        "investor_profile_fit",
+        "Investor Profile Fit",
+        "favorable"
+      ),
+      dealAccessibility: makeAxis(
+        "deal_accessibility",
+        "Deal Accessibility",
+        "favorable"
+      ),
     },
   };
 }

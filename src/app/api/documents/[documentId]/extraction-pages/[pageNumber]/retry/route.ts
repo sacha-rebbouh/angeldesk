@@ -1,5 +1,6 @@
+import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { Prisma, type ProcessingStatus } from "@prisma/client";
 import { z } from "zod";
 
 import { handleApiError } from "@/lib/api-error";
@@ -11,7 +12,8 @@ import {
   hashExtractedCorpus,
   refreshRunExtractionStats,
 } from "@/services/documents/extraction-runs";
-import { deductCreditAmount } from "@/services/credits";
+import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
+import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import { detectPageSignals, selectiveOCR } from "@/services/pdf";
 import { assessExtractionSemantics } from "@/services/pdf/extraction-semantics";
 import { downloadFile } from "@/services/storage";
@@ -28,6 +30,10 @@ type RouteParams = {
 type PageStatus = "READY" | "READY_WITH_WARNINGS" | "NEEDS_REVIEW" | "FAILED";
 
 export async function POST(_request: Request, context: RouteParams) {
+  let claimedDocumentId: string | null = null;
+  let claimedOriginalStatus: ProcessingStatus | null = null;
+  let refundContext: { userId: string; dealId: string; documentId: string; pageNumber: number; requestId: string } | null = null;
+  let chargedCredits = 0;
   try {
     const user = await requireAuth();
     const { documentId, pageNumber: rawPageNumber } = await context.params;
@@ -56,6 +62,16 @@ export async function POST(_request: Request, context: RouteParams) {
     if (!document) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
+    const runningAnalysis = await getRunningAnalysisForDeal(document.dealId);
+    if (runningAnalysis) {
+      return NextResponse.json(
+        {
+          error: "Une analyse est en cours sur ce deal. Finalisez-la avant de relancer une page d'extraction.",
+          analysisId: runningAnalysis.id,
+        },
+        { status: 409 }
+      );
+    }
     if (document.mimeType !== "application/pdf") {
       return NextResponse.json({ error: "Only PDF documents can be retried page by page" }, { status: 400 });
     }
@@ -82,25 +98,56 @@ export async function POST(_request: Request, context: RouteParams) {
       );
     }
 
+    const processingClaim = await prisma.document.updateMany({
+      where: {
+        id: documentId,
+        processingStatus: { not: "PROCESSING" },
+      },
+      data: { processingStatus: "PROCESSING" },
+    });
+
+    if (processingClaim.count === 0) {
+      const latestStatus = await prisma.document.findUnique({
+        where: { id: documentId },
+        select: { processingStatus: true },
+      });
+      return NextResponse.json(
+        { error: `Document cannot retry extraction from status "${latestStatus?.processingStatus ?? document.processingStatus}".` },
+        { status: 409 }
+      );
+    }
+
+    claimedDocumentId = documentId;
+    claimedOriginalStatus = document.processingStatus;
+
+    const retryRequestId = randomUUID();
+    refundContext = {
+      userId: user.id,
+      dealId: document.dealId,
+      documentId,
+      pageNumber,
+      requestId: retryRequestId,
+    };
+
     const creditDeduction = await deductCreditAmount(user.id, "EXTRACTION_SUPREME_PAGE", 2, {
       dealId: document.dealId,
       documentId,
       documentExtractionRunId: latestRun.id,
       pageNumber,
-      idempotencyKey: `extraction:supreme-page:${latestRun.id}:${pageNumber}`,
+      idempotencyKey: `extraction:supreme-page:${latestRun.id}:${pageNumber}:${retryRequestId}`,
       description: `Supreme OCR retry for ${document.name}, page ${pageNumber}`,
     });
     if (!creditDeduction.success) {
+      await prisma.document.updateMany({
+        where: { id: documentId, processingStatus: "PROCESSING" },
+        data: { processingStatus: document.processingStatus },
+      }).catch(() => undefined);
       return NextResponse.json(
         { error: creditDeduction.error ?? "Credits insuffisants pour relancer cette page", requiredCredits: 2 },
-        { status: 402 }
+          { status: 402 }
       );
     }
-
-    await prisma.document.update({
-      where: { id: documentId },
-      data: { processingStatus: "PROCESSING" },
-    });
+    chargedCredits = 2;
 
     const existingCorpus = document.extractedText ? safeDecrypt(document.extractedText) : "";
     const buffer = await downloadFile(document.storageUrl);
@@ -263,16 +310,20 @@ export async function POST(_request: Request, context: RouteParams) {
       },
     });
   } catch (error) {
-    try {
-      const { documentId } = await context.params;
-      if (cuidSchema.safeParse(documentId).success) {
-        await prisma.document.update({
-          where: { id: documentId },
-          data: { processingStatus: "FAILED" },
-        });
-      }
-    } catch {
-      // Keep the original API error.
+    if (refundContext && chargedCredits > 0) {
+      await refundCreditAmount(refundContext.userId, "EXTRACTION_SUPREME_PAGE", chargedCredits, {
+        dealId: refundContext.dealId,
+        documentId: refundContext.documentId,
+        pageNumber: refundContext.pageNumber,
+        idempotencyKey: `extraction:refund:supreme-page:${refundContext.requestId}`,
+        description: `Refund failed supreme OCR retry for ${refundContext.documentId} page ${refundContext.pageNumber}`,
+      }).catch(() => undefined);
+    }
+    if (claimedDocumentId && claimedOriginalStatus) {
+      await prisma.document.updateMany({
+        where: { id: claimedDocumentId, processingStatus: "PROCESSING" },
+        data: { processingStatus: claimedOriginalStatus },
+      }).catch(() => undefined);
     }
     return handleApiError(error, "retry extraction page");
   }

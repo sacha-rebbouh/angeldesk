@@ -96,6 +96,8 @@ export interface ExtractedFact {
   /** Confiance dans la veracite: sourceConfidence * RELIABILITY_WEIGHT (0-100) (F57) */
   truthConfidence?: number;
   extractedText?: string;
+  /** Additional provenance for non-document sources (connectors, URLs, crawl metadata, etc.) */
+  sourceMetadata?: Record<string, unknown>;
 
   // Temporal fields - for facts that vary over time (ARR, MRR, headcount, etc.)
   validAt?: Date; // Date at which this fact was valid
@@ -114,6 +116,7 @@ export interface CurrentFact {
   currentDisplayValue: string;
   currentSource: FactSource;
   currentConfidence: number;
+  currentTruthConfidence?: number;
   isDisputed: boolean;
   disputeDetails?: {
     conflictingValue: unknown;
@@ -125,6 +128,10 @@ export interface CurrentFact {
 
   // Data Reliability Classification
   reliability?: ReliabilityClassification;
+  sourceMetadata?: Record<string, unknown>;
+  validAt?: Date;
+  periodType?: PeriodType;
+  periodLabel?: string;
 }
 
 export interface FactEventRecord {
@@ -137,7 +144,13 @@ export interface FactEventRecord {
   source: FactSource;
   sourceDocumentId?: string;
   sourceConfidence: number;
+  truthConfidence?: number;
   extractedText?: string;
+  sourceMetadata?: Record<string, unknown>;
+  validAt?: Date;
+  periodType?: PeriodType;
+  periodLabel?: string;
+  reliability?: ReliabilityClassification;
   eventType: FactEventType;
   supersedesEventId?: string;
   createdAt: Date;

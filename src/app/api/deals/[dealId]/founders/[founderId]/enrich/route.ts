@@ -8,6 +8,8 @@ import {
 } from "@/services/context-engine/connectors/rapidapi-linkedin";
 import { handleApiError } from "@/lib/api-error";
 import { validateLinkedInProfileUrl } from "@/lib/url-validator";
+import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
+import { getCurrentFactString } from "@/services/deals/canonical-read-model";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -118,6 +120,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
+    const currentFacts = await getCurrentFactsFromView(dealId);
+    const factMap = new Map(currentFacts.map((fact) => [fact.factKey, fact]));
+    const canonicalSector =
+      getCurrentFactString(factMap, "other.sector") ??
+      getCurrentFactString(factMap, "market.vertical") ??
+      deal.sector ??
+      undefined;
+
     // Get founder with LinkedIn URL
     const founder = await prisma.founder.findFirst({
       where: { id: founderId, dealId },
@@ -149,7 +159,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const result = await analyzeFounderLinkedIn(
       founder.linkedinUrl,
       founder.role,
-      deal.sector ?? undefined
+      canonicalSector
     );
 
     if (!result.success) {

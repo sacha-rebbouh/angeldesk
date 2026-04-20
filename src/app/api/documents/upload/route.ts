@@ -35,6 +35,7 @@ import {
   setDocumentExtractionProgress,
 } from "@/services/documents/extraction-progress";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
+import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
 import type { DocumentPageArtifact, ExtractionCreditEstimate } from "@/services/pdf";
 
 // CUID validation
@@ -111,6 +112,21 @@ export async function POST(request: NextRequest) {
 
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+
+    const runningAnalysis = await getRunningAnalysisForDeal(dealId);
+
+    if (runningAnalysis) {
+      return NextResponse.json(
+        {
+          error: isPendingThesisReview(runningAnalysis)
+            ? "Une revue de these est en attente. Finalisez-la avant d'uploader un nouveau document sur ce deal."
+            : "Une analyse est deja en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
+          pendingAnalysisId: runningAnalysis.id,
+          pendingThesisId: runningAnalysis.thesisId,
+        },
+        { status: 409 }
+      );
     }
 
     // Validate file type
@@ -1158,25 +1174,6 @@ export async function POST(request: NextRequest) {
         const { thesisService } = await import("@/services/thesis");
         const existingThesis = await thesisService.getLatest(dealId);
         if (existingThesis) {
-          const recentPendingThesisReview = await prisma.analysis.findFirst({
-            where: {
-              dealId,
-              mode: "full_analysis",
-              status: "RUNNING",
-              thesisDecision: null,
-              createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
-            },
-            select: { id: true, thesisId: true, createdAt: true },
-            orderBy: { createdAt: "desc" },
-          });
-
-          if (recentPendingThesisReview) {
-            console.log(
-              `[upload] Thesis re-extract skipped for deal ${dealId}: pending thesis review already in flight (analysisId=${recentPendingThesisReview.id}, thesisId=${recentPendingThesisReview.thesisId ?? "pending-link"})`
-            );
-            return NextResponse.json(response, { status: 201 });
-          }
-
           const { inngest } = await import("@/lib/inngest");
           await inngest.send({
             name: "analysis/thesis.reextract",

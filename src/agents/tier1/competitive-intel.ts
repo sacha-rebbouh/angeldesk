@@ -322,7 +322,7 @@ Réponds UNIQUEMENT en JSON valide, pas de texte avant ou après.`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<CompetitiveIntelData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     // Build comprehensive context
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
@@ -334,8 +334,8 @@ Réponds UNIQUEMENT en JSON valide, pas de texte avant ou après.`;
     let webSearchSection = "";
 
     try {
-      const companyName = (context.deal as Record<string, unknown>).companyName as string || context.deal.name;
-      const sector = context.deal.sector || "tech";
+      const companyName = (context.canonicalDeal as Record<string, unknown>).companyName as string || context.canonicalDeal.name;
+      const sector = context.canonicalDeal.sector || "tech";
       const tagline = extractedInfo?.tagline as string || extractedInfo?.productDescription as string || "";
 
       const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
@@ -567,8 +567,8 @@ RAPPELS:
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "competitive-intel", extractedMetrics, sector, stage, COMPETITIVE_INTEL_CRITERIA,
         );

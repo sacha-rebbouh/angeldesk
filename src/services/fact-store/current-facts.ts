@@ -15,6 +15,43 @@ import type {
 import { toFactEventRecord } from './persistence';
 import { getFactKeyDefinition } from './fact-keys';
 
+let currentFactsRefreshPromise: Promise<void> | null = null;
+
+type SourceDocumentCarrier = {
+  sourceDocumentId?: string | null;
+};
+
+function isSourceDocumentCurrent(
+  sourceDocumentId: string | null | undefined,
+  staleSourceDocumentIds: Set<string>
+): boolean {
+  return !sourceDocumentId || !staleSourceDocumentIds.has(sourceDocumentId);
+}
+
+async function loadStaleSourceDocumentIds(
+  items: SourceDocumentCarrier[]
+): Promise<Set<string>> {
+  const sourceDocumentIds = [...new Set(
+    items
+      .map((item) => item.sourceDocumentId)
+      .filter((documentId): documentId is string => typeof documentId === 'string' && documentId.length > 0)
+  )];
+
+  if (sourceDocumentIds.length === 0) {
+    return new Set();
+  }
+
+  const staleDocuments = await prisma.document.findMany({
+    where: {
+      id: { in: sourceDocumentIds },
+      isLatest: false,
+    },
+    select: { id: true },
+  });
+
+  return new Set(staleDocuments.map((document) => document.id));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // MAIN FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════
@@ -35,6 +72,10 @@ import { getFactKeyDefinition } from './fact-keys';
  */
 export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFact[]> {
   try {
+    if (currentFactsRefreshPromise) {
+      await currentFactsRefreshPromise;
+    }
+
     // Try to use the materialized view
     // SECURITY NOTE: Using Prisma's tagged template literal which auto-parameterizes ${dealId}
     // This is NOT string interpolation - Prisma handles SQL injection prevention
@@ -50,13 +91,27 @@ export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFa
         source: string;
         sourceDocumentId: string | null;
         sourceConfidence: number;
+        truthConfidence: number | null;
         extractedText: string | null;
+        sourceMetadata: Record<string, unknown> | null;
+        validAt: Date | null;
+        periodType: string | null;
+        periodLabel: string | null;
+        reliability: Record<string, unknown> | null;
         createdAt: Date;
         createdBy: string;
       }>
     >`
       SELECT * FROM current_facts_mv WHERE "dealId" = ${dealId}
     `;
+
+    const staleSourceDocumentIds = await loadStaleSourceDocumentIds(rows);
+    if (staleSourceDocumentIds.size > 0) {
+      console.warn(
+        '[getCurrentFactsFromView] Stale source documents detected in current_facts_mv, falling back to computed facts'
+      );
+      return getCurrentFacts(dealId);
+    }
 
     return rows.map((row) => ({
       dealId: row.dealId,
@@ -66,10 +121,16 @@ export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFa
       currentDisplayValue: row.displayValue,
       currentSource: row.source as FactSource,
       currentConfidence: row.sourceConfidence,
+      currentTruthConfidence: row.truthConfidence ?? undefined,
       isDisputed: false, // View doesn't track disputes yet
       eventHistory: [], // View doesn't include history
       firstSeenAt: row.createdAt,
       lastUpdatedAt: row.createdAt,
+      sourceMetadata: row.sourceMetadata ?? undefined,
+      validAt: row.validAt ?? undefined,
+      periodType: row.periodType as CurrentFact['periodType'],
+      periodLabel: row.periodLabel ?? undefined,
+      reliability: row.reliability as unknown as CurrentFact['reliability'],
     }));
   } catch {
     // Fallback to computed version if view doesn't exist
@@ -88,11 +149,19 @@ export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFa
  * Fails silently if the view doesn't exist.
  */
 export async function refreshCurrentFactsView(): Promise<void> {
-  try {
-    await prisma.$executeRaw`SELECT refresh_current_facts_mv()`;
-  } catch (error) {
-    console.warn('[refreshCurrentFactsView] Failed to refresh materialized view:', error);
+  if (!currentFactsRefreshPromise) {
+    currentFactsRefreshPromise = (async () => {
+      try {
+        await prisma.$executeRaw`SELECT refresh_current_facts_mv()`;
+      } catch (error) {
+        console.warn('[refreshCurrentFactsView] Failed to refresh materialized view:', error);
+      }
+    })().finally(() => {
+      currentFactsRefreshPromise = null;
+    });
   }
+
+  await currentFactsRefreshPromise;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -123,6 +192,8 @@ export async function getCurrentFacts(dealId: string): Promise<CurrentFact[]> {
     return [];
   }
 
+  const staleSourceDocumentIds = await loadStaleSourceDocumentIds(events);
+
   // Build set of superseded event IDs
   const supersededIds = new Set<string>();
   for (const event of events) {
@@ -145,7 +216,11 @@ export async function getCurrentFacts(dealId: string): Promise<CurrentFact[]> {
   for (const [factKey, factEvents] of eventsByKey) {
     // Find the latest non-superseded event
     const currentEvent = factEvents.find(
-      (e) => !supersededIds.has(e.id) && e.eventType !== 'DELETED'
+      (e) =>
+        !supersededIds.has(e.id) &&
+        e.eventType !== 'DELETED' &&
+        e.eventType !== 'PENDING_REVIEW' &&
+        isSourceDocumentCurrent(e.sourceDocumentId, staleSourceDocumentIds)
     );
 
     if (!currentEvent) {
@@ -184,11 +259,17 @@ export async function getCurrentFacts(dealId: string): Promise<CurrentFact[]> {
       currentDisplayValue: currentEvent.displayValue,
       currentSource: currentEvent.source as FactSource,
       currentConfidence: currentEvent.sourceConfidence,
+      currentTruthConfidence: currentEvent.truthConfidence ?? undefined,
       isDisputed,
       disputeDetails,
       eventHistory,
       firstSeenAt,
       lastUpdatedAt,
+      sourceMetadata: currentEvent.sourceMetadata as CurrentFact['sourceMetadata'],
+      validAt: currentEvent.validAt ?? undefined,
+      periodType: currentEvent.periodType as CurrentFact['periodType'],
+      periodLabel: currentEvent.periodLabel ?? undefined,
+      reliability: currentEvent.reliability as unknown as CurrentFact['reliability'],
     });
   }
 

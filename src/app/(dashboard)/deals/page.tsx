@@ -12,6 +12,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { DealsViewToggle } from "@/components/deals/deals-view-toggle";
+import {
+  loadCanonicalDealSignals,
+  resolveCanonicalDealFields,
+} from "@/services/deals/canonical-read-model";
 
 async function getDeals(userId: string) {
   noStore();
@@ -26,21 +30,39 @@ async function getDeals(userId: string) {
         where: { status: "OPEN" },
         select: { severity: true, title: true },
       },
-      theses: {
-        where: { isLatest: true },
-        select: { verdict: true },
-        orderBy: { version: "desc" },
-        take: 1,
-      },
     },
   });
 
-  // Serialize Decimal fields for client component + flatten thesis verdict
-  return deals.map((deal) => ({
-    ...deal,
-    valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
-    thesisVerdict: deal.theses[0]?.verdict ?? null,
-  }));
+  const signals = await loadCanonicalDealSignals(deals.map((deal) => deal.id));
+
+  return deals.map((deal) => {
+    const canonicalFields = resolveCanonicalDealFields(deal.id, signals, {
+      companyName: deal.companyName,
+      website: deal.website,
+      arr: deal.arr != null ? Number(deal.arr) : null,
+      growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
+      amountRequested:
+        deal.amountRequested != null ? Number(deal.amountRequested) : null,
+      valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+      sector: deal.sector,
+      stage: deal.stage,
+      instrument: deal.instrument,
+      geography: deal.geography,
+      description: deal.description,
+      globalScore: deal.globalScore,
+      teamScore: deal.teamScore,
+      marketScore: deal.marketScore,
+      productScore: deal.productScore,
+      financialsScore: deal.financialsScore,
+    });
+
+    return {
+      ...deal,
+      ...canonicalFields,
+      thesisVerdict:
+        signals.latestThesisByDealId.get(deal.id)?.verdict ?? null,
+    };
+  });
 }
 
 export default async function DealsPage() {

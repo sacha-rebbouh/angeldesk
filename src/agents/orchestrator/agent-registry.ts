@@ -46,8 +46,8 @@ export async function getTier1Agents(): Promise<Record<string, DynamicAgent>> {
 }
 
 /**
- * Get Tier 3 agents (7 synthesis agents, incluant thesis-reconciler qui tourne
- * apres les autres Tier 1/2 pour confronter la these initiale aux findings).
+ * Get all Tier 3 agent modules (7 total). `thesis-reconciler` only participates
+ * in thesis-first full-analysis/resume flows after Tier 1/2 findings are ready.
  */
 export async function getTier3Agents(): Promise<Record<string, DynamicAgent>> {
   if (!tier3Agents) {

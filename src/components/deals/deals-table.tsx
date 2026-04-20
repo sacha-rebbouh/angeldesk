@@ -44,21 +44,10 @@ import { getStatusColor, getStatusLabel, getStageLabel, formatCurrencyEUR } from
 import { useDealActions } from "./use-deal-actions";
 import { DealRenameDialog, DealDeleteDialog } from "./deal-action-dialogs";
 import { DealComparison } from "./deal-comparison";
-
-interface Deal {
-  id: string;
-  name: string;
-  sector: string | null;
-  stage: string | null;
-  valuationPre: number | string | null;
-  status: string;
-  website: string | null;
-  updatedAt: Date;
-  redFlags: { severity: string; title?: string }[];
-  globalScore?: number | null;
-  /** Thesis-first : verdict courant de la these (null si pas encore analysee) */
-  thesisVerdict?: string | null;
-}
+import {
+  getDealDisplayName,
+  type CanonicalDealListItem,
+} from "./types";
 
 const FRAGILE_THESIS_VERDICTS = new Set(["alert_dominant", "vigilance"]);
 
@@ -86,7 +75,7 @@ type SortField = "name" | "sector" | "stage" | "valuationPre" | "status" | "thes
 type SortDir = "asc" | "desc";
 
 interface DealsTableProps {
-  deals: Deal[];
+  deals: CanonicalDealListItem[];
 }
 
 export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
@@ -144,6 +133,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(d =>
+        getDealDisplayName(d).toLowerCase().includes(q) ||
         d.name.toLowerCase().includes(q) ||
         (d.sector?.toLowerCase().includes(q))
       );
@@ -169,7 +159,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
       let cmp = 0;
       switch (sortField) {
         case "name":
-          cmp = a.name.localeCompare(b.name);
+          cmp = getDealDisplayName(a).localeCompare(getDealDisplayName(b));
           break;
         case "valuationPre":
           cmp = (Number(a.valuationPre) || 0) - (Number(b.valuationPre) || 0);
@@ -298,7 +288,9 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
               className="p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors active:bg-muted"
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="font-medium text-sm truncate flex-1">{deal.name}</span>
+                <span className="font-medium text-sm truncate flex-1">
+                  {getDealDisplayName(deal)}
+                </span>
                 <div className="flex items-center gap-2 shrink-0">
                   {!thesisGated && deal.globalScore != null ? (
                     <ScoreBadge score={deal.globalScore} size="sm" />
@@ -397,7 +389,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
                     />
                   </TableCell>
                   <TableCell className="font-medium max-w-[200px] truncate">
-                    {deal.name}
+                    {getDealDisplayName(deal)}
                     {deal.website && (
                       <a
                         href={deal.website}

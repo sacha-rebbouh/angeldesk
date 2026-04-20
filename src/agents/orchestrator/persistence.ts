@@ -1,6 +1,12 @@
+import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { logger } from "@/lib/logger";
+import {
+  ensureCorpusSnapshotForDeal,
+  getCorpusSnapshotDocumentIds,
+} from "@/services/corpus";
+import { loadResults } from "@/services/analysis-results/load-results";
 import type {
   AgentResult,
   RedFlagResult,
@@ -22,6 +28,11 @@ function logPersistenceError(
   logger.error({ err: error, operation, ...(metadata ?? {}) }, `Persistence failed: ${operation}`);
 }
 
+function hashStringToBigInt(input: string): string {
+  const digest = createHash("sha256").update(input).digest();
+  return digest.readBigInt64BE(0).toString();
+}
+
 /**
  * Create a new analysis record
  * @param documentIds - IDs of documents being analyzed (for versioning/staleness detection)
@@ -32,22 +43,79 @@ export async function createAnalysis(params: {
   totalAgents: number;
   mode?: string;
   documentIds?: string[];
+  corpusSnapshotId?: string | null;
+  extractionRunIds?: string[];
 }) {
   const docIds = params.documentIds ?? [];
-  return prisma.analysis.create({
-    data: {
-      dealId: params.dealId,
-      type: params.type === "extraction" ? "SCREENING" : "FULL_DD",
-      status: "RUNNING",
-      totalAgents: params.totalAgents,
-      completedAgents: 0,
-      startedAt: new Date(),
-      mode: params.mode,
-      documentIds: docIds,
-      documents: docIds.length > 0
-        ? { create: docIds.map((documentId) => ({ documentId })) }
-        : undefined,
-    },
+  let corpusSnapshotId = params.corpusSnapshotId ?? null;
+  let extractionRunIds = params.extractionRunIds ?? [];
+
+  if (docIds.length > 0 && (!corpusSnapshotId || extractionRunIds.length === 0)) {
+    try {
+      const snapshot = await ensureCorpusSnapshotForDeal({
+        dealId: params.dealId,
+        documentIds: docIds,
+      });
+
+      if (snapshot) {
+        corpusSnapshotId = corpusSnapshotId ?? snapshot.id;
+        if (extractionRunIds.length === 0) {
+          extractionRunIds = snapshot.extractionRunIds;
+        }
+      }
+    } catch (error) {
+      logPersistenceError("createAnalysis.ensureCorpusSnapshotForDeal", error, {
+        dealId: params.dealId,
+        documentCount: docIds.length,
+      });
+    }
+  }
+
+  const hashForLock = hashStringToBigInt(params.dealId);
+
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashForLock})`);
+
+    if (params.type === "full_analysis") {
+      const runningAnalysis = await tx.analysis.findFirst({
+        where: {
+          dealId: params.dealId,
+          status: "RUNNING",
+        },
+        select: {
+          id: true,
+          mode: true,
+        },
+      });
+
+      if (runningAnalysis) {
+        throw new Error(
+          `Cannot create a new full analysis for deal ${params.dealId}: ` +
+          `analysis ${runningAnalysis.id} (${runningAnalysis.mode ?? "unknown"}) is already running`
+        );
+      }
+    }
+
+    return tx.analysis.create({
+      data: {
+        dealId: params.dealId,
+        type: params.type === "extraction" ? "SCREENING" : "FULL_DD",
+        status: "RUNNING",
+        totalAgents: params.totalAgents,
+        completedAgents: 0,
+        startedAt: new Date(),
+        mode: params.mode,
+        corpusSnapshotId,
+        documents: docIds.length > 0
+          ? { create: docIds.map((documentId) => ({ documentId })) }
+          : undefined,
+        extractionRunLinks: extractionRunIds.length > 0
+          ? { create: extractionRunIds.map((runId) => ({ runId })) }
+          : undefined,
+      },
+    });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
   });
 }
 
@@ -593,15 +661,26 @@ export async function updateDealStatus(
  * Get deal with documents and founders.
  * Decrypts extractedText on the fly (F48: application-level encryption).
  */
-export async function getDealWithRelations(dealId: string) {
+export async function getDealWithRelations(
+  dealId: string,
+  options: { documentIds?: string[]; allowSupersededDocuments?: boolean } = {}
+) {
   const { safeDecrypt } = await import("@/lib/encryption");
+  const requestedDocumentIds = options.documentIds?.length ? options.documentIds : null;
 
   const deal = await prisma.deal.findUnique({
     where: { id: dealId },
     include: {
       documents: {
+        where: requestedDocumentIds
+          ? {
+              id: { in: requestedDocumentIds },
+              ...(options.allowSupersededDocuments ? {} : { isLatest: true }),
+            }
+          : { isLatest: true },
         select: {
           id: true,
+          isLatest: true,
           name: true,
           type: true,
           extractedText: true,
@@ -661,6 +740,15 @@ export async function getDealWithRelations(dealId: string) {
       extractedText: decryptedText,
     };
   });
+
+  if (requestedDocumentIds) {
+    const documentRank = new Map(requestedDocumentIds.map((documentId, index) => [documentId, index]));
+    deal.documents.sort(
+      (left, right) =>
+        (documentRank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (documentRank.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+    );
+  }
 
   return deal;
 }
@@ -846,6 +934,9 @@ export async function loadAnalysisForRecovery(analysisId: string): Promise<{
     mode: string | null;
     totalAgents: number;
     startedAt: Date | null;
+    thesisBypass: boolean;
+    thesisId: string | null;
+    corpusSnapshotId: string | null;
   };
   deal: Awaited<ReturnType<typeof getDealWithRelations>>;
   checkpoint: CheckpointData | null;
@@ -860,6 +951,9 @@ export async function loadAnalysisForRecovery(analysisId: string): Promise<{
         mode: true,
         totalAgents: true,
         startedAt: true,
+        thesisBypass: true,
+        thesisId: true,
+        corpusSnapshotId: true,
         status: true,
       },
     });
@@ -868,7 +962,13 @@ export async function loadAnalysisForRecovery(analysisId: string): Promise<{
       return null;
     }
 
-    const deal = await getDealWithRelations(analysis.dealId);
+    const snapshotDocumentIds = analysis.corpusSnapshotId
+      ? await getCorpusSnapshotDocumentIds(analysis.corpusSnapshotId)
+      : undefined;
+    const deal = await getDealWithRelations(analysis.dealId, {
+      documentIds: snapshotDocumentIds,
+      allowSupersededDocuments: Boolean(snapshotDocumentIds?.length),
+    });
     if (!deal) {
       return null;
     }
@@ -883,6 +983,9 @@ export async function loadAnalysisForRecovery(analysisId: string): Promise<{
         mode: analysis.mode,
         totalAgents: analysis.totalAgents,
         startedAt: analysis.startedAt,
+        thesisBypass: analysis.thesisBypass,
+        thesisId: analysis.thesisId,
+        corpusSnapshotId: analysis.corpusSnapshotId,
       },
       deal,
       checkpoint,
@@ -975,7 +1078,7 @@ export async function loadPreviousAnalysisQuestions(dealId: string): Promise<{
       prisma.analysis.findMany({
         where: { dealId, status: "COMPLETED" },
         orderBy: { completedAt: "desc" },
-        select: { id: true, results: true, completedAt: true },
+        select: { id: true, completedAt: true },
       }),
       prisma.factEvent.findMany({
         where: {
@@ -1006,8 +1109,9 @@ export async function loadPreviousAnalysisQuestions(dealId: string): Promise<{
     const prioRank: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
 
     for (const analysis of allAnalyses) {
-      if (!analysis.results) continue;
-      const results = analysis.results as Record<string, { success: boolean; data?: unknown }>;
+      const rawResults = await loadResults(analysis.id);
+      if (!rawResults || typeof rawResults !== "object" || Array.isArray(rawResults)) continue;
+      const results = rawResults as Record<string, { success: boolean; data?: unknown }>;
 
       for (const [agentName, result] of Object.entries(results)) {
         if (!result.success || !result.data) continue;

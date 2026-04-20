@@ -34,6 +34,10 @@ export interface AnalysisCostReport {
   timestamp: Date;
 }
 
+interface EndAnalysisOptions {
+  persistAnalysisSummary?: boolean;
+}
+
 export interface DealCostSummary {
   dealId: string;
   dealName: string;
@@ -273,7 +277,7 @@ class CostMonitor {
   /**
    * End tracking and persist the cost report
    */
-  async endAnalysis(): Promise<AnalysisCostReport | null> {
+  async endAnalysis(options: EndAnalysisOptions = {}): Promise<AnalysisCostReport | null> {
     if (!this.currentAnalysis) {
       return null;
     }
@@ -338,7 +342,7 @@ class CostMonitor {
     };
 
     // Persist to database
-    await this.persistReport(report);
+    await this.persistReport(report, options);
 
     // Check thresholds and create alerts if needed
     await this.checkThresholds(report);
@@ -352,15 +356,20 @@ class CostMonitor {
   /**
    * Persist cost report to database
    */
-  private async persistReport(report: AnalysisCostReport): Promise<void> {
+  private async persistReport(
+    report: AnalysisCostReport,
+    options: EndAnalysisOptions = {}
+  ): Promise<void> {
     try {
-      // Get existing results
-      const existing = await prisma.analysis.findUnique({
-        where: { id: report.analysisId },
-        select: { results: true },
+      const { loadResults } = await import("@/services/analysis-results/load-results");
+      const rawResults = await loadResults(report.analysisId, {
+        preferDb: true,
+        backfillCache: false,
       });
-
-      const existingResults = (existing?.results as Record<string, unknown>) ?? {};
+      const existingResults =
+        rawResults && typeof rawResults === "object" && !Array.isArray(rawResults)
+          ? (rawResults as Record<string, unknown>)
+          : {};
 
       const costReportData = {
         totalCalls: report.totalCalls,
@@ -381,13 +390,27 @@ class CostMonitor {
       await prisma.analysis.update({
         where: { id: report.analysisId },
         data: {
-          totalCost: report.totalCost,
-          totalTimeMs: report.duration,
+          ...(options.persistAnalysisSummary === false
+            ? {}
+            : {
+                totalCost: report.totalCost,
+                totalTimeMs: report.duration,
+              }),
           // Store detailed cost breakdown in results JSON
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           results: mergedResults as any,
         },
       });
+
+      try {
+        const { uploadFile } = await import("@/services/storage");
+        const jsonBuffer = Buffer.from(JSON.stringify(mergedResults));
+        await uploadFile(`analysis-results/${report.analysisId}.json`, jsonBuffer, {
+          access: "private",
+        });
+      } catch (cacheError) {
+        console.warn("[CostMonitor] Failed to refresh analysis results cache:", cacheError);
+      }
     } catch (error) {
       console.error("[CostMonitor] Failed to persist report:", error);
     }
@@ -526,7 +549,6 @@ class CostMonitor {
           dealId: true,
           mode: true,
           totalCost: true,
-          results: true,
           createdAt: true,
           deal: {
             select: { name: true, userId: true, user: { select: { name: true, email: true } } },

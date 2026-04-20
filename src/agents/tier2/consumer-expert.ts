@@ -254,7 +254,7 @@ function buildConsumerPrompt(context: EnrichedAgentContext): {
   user: string;
 } {
   const extContext = context as ExtendedAgentContext;
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage ?? "SEED";
 
   // Extract funding DB data

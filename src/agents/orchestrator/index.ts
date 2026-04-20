@@ -6,8 +6,10 @@ import type {
   AnalysisAgentResult,
 } from "../types";
 import { enrichDeal, invalidateDealContext, getContextEngineCacheStats, type FounderInput } from "@/services/context-engine";
+import { extractFactsFromDealContext } from "@/services/context-engine/fact-normalizer";
 import { getCacheManager } from "@/services/cache";
 import { prisma } from "@/lib/prisma";
+import { logger } from "@/lib/logger";
 import { getBAPreferences, type BAPreferences } from "@/services/benchmarks";
 import {
   generateDealFingerprint,
@@ -39,6 +41,7 @@ import { costMonitor } from "@/services/cost-monitor";
 import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
 import { setAnalysisContext, runWithLLMContext } from "@/services/openrouter/router";
 import { runJob } from "@/services/jobs";
+import { ensureCorpusSnapshot, type CorpusSnapshotMaterialization } from "@/services/corpus";
 import {
   buildEvidenceLedgerFromContext,
   formatEvidenceLedgerForPrompt,
@@ -51,15 +54,18 @@ import { deckCoherenceChecker, type DeckCoherenceReport } from "@/agents/tier0/d
 import { thesisExtractorAgent } from "@/agents/tier0/thesis-extractor";
 import type { ThesisExtractorOutput, ThesisReconcilerOutput } from "@/agents/thesis/types";
 import { thesisService } from "@/services/thesis";
+import { loadResults } from "@/services/analysis-results/load-results";
 import {
   getCurrentFacts,
   formatFactStoreForAgents,
   createFactEventsBatch,
+  persistExtractedFactsWithMatching,
   updateFactsInMemory,
   reformatFactStoreWithValidations,
 } from "@/services/fact-store";
 import type { CurrentFact, FactCategory } from "@/services/fact-store/types";
 import { replaceUnreliableWithPlaceholders, formatFactsForScoringAgents } from "@/services/fact-store/fact-filter";
+import { buildCanonicalRuntimeDeal } from "@/agents/utils/canonical-runtime-deal";
 
 // Import modular components
 import {
@@ -77,9 +83,11 @@ import {
   TIER1_PHASE_C,
   TIER1_PHASE_D,
   TIER3_AGENT_NAMES,
+  FULL_ANALYSIS_TIER3_AGENT_NAMES,
   TIER3_EXECUTION_BATCHES,
   TIER3_BATCHES_BEFORE_TIER2,
   TIER3_BATCHES_AFTER_TIER2,
+  FREE_TIER3_BATCHES_AFTER_TIER2,
 } from "./types";
 import {
   BASE_AGENTS,
@@ -161,10 +169,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function toAgentResultsRecord(value: unknown): Record<string, AgentResult> | null {
+  return isRecord(value) ? (value as Record<string, AgentResult>) : null;
+}
+
+function scopeDocumentsToSnapshot<T extends { id: string }>(
+  documents: T[],
+  snapshotDocumentIds?: string[] | null
+): T[] {
+  if (!snapshotDocumentIds?.length) {
+    return documents;
+  }
+
+  const order = new Map(
+    snapshotDocumentIds.map((documentId, index) => [documentId, index])
+  );
+
+  return documents
+    .filter((document) => order.has(document.id))
+    .sort(
+      (left, right) =>
+        (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (order.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+    );
+}
+
 function attachEvidenceLedger(context: EnrichedAgentContext): EnrichedAgentContext {
-  const evidenceLedger = buildEvidenceLedgerFromContext(context);
-  return {
+  const canonicalDeal = buildCanonicalRuntimeDeal(
+    context.canonicalDeal,
+    {
+      factStore: context.factStore,
+      previousResults: context.previousResults,
+      extractedData: context.extractedData,
+    }
+  );
+  const canonicalContext: EnrichedAgentContext = {
     ...context,
+    deal: canonicalDeal,
+    canonicalDeal,
+  };
+  const evidenceLedger = buildEvidenceLedgerFromContext(canonicalContext);
+  return {
+    ...canonicalContext,
     evidenceLedger,
     evidenceLedgerFormatted: formatEvidenceLedgerForPrompt(evidenceLedger),
   };
@@ -194,9 +240,11 @@ export class AgentOrchestrator {
     const {
       dealId,
       type,
+      documentIds,
       onProgress,
       enableTrace = true, // Enable traces by default for transparency
       forceRefresh = false,
+      analysisModeOverride,
       mode = "full",
       failFastOnCritical = false,
       maxCostUsd,
@@ -207,7 +255,10 @@ export class AgentOrchestrator {
     const startTime = Date.now();
 
     // Get deal with documents
-    const deal = await getDealWithRelations(dealId);
+    const deal = await getDealWithRelations(dealId, {
+      documentIds,
+      allowSupersededDocuments: analysisModeOverride === "post_call_reanalysis",
+    });
     if (!deal) {
       throw new Error(`Deal not found: ${dealId}`);
     }
@@ -217,9 +268,12 @@ export class AgentOrchestrator {
 
     // === CACHE CHECK ===
     // Only check cache for expensive analysis types
-    const cacheableTypes: AnalysisType[] = ["tier1_complete", "tier3_synthesis", "tier2_sector", "full_analysis"];
+    // `full_analysis` is thesis-first and may trigger user-facing credit debits
+    // plus a review gate. Serving it from cache would bypass thesis extraction
+    // and can produce misleading "fresh" Deep Dives without a new thesis pass.
+    const cacheableTypes: AnalysisType[] = ["tier1_complete", "tier3_synthesis", "tier2_sector"];
 
-    if (!forceRefresh && cacheableTypes.includes(type)) {
+    if (!forceRefresh && !documentIds?.length && cacheableTypes.includes(type)) {
       const cachedResult = await this.checkAnalysisCache(dealId, type);
       if (cachedResult) {
         console.log(`[Orchestrator] Returning cached analysis for deal ${dealId}, type=${type}`);
@@ -244,6 +298,7 @@ export class AgentOrchestrator {
           maxCostUsd,
           onEarlyWarning,
           enableTrace,
+          analysisModeOverride,
           isUpdate,
           userPlan,
         });
@@ -255,19 +310,42 @@ export class AgentOrchestrator {
           maxCostUsd,
           onEarlyWarning,
           enableTrace,
+          analysisModeOverride,
           isUpdate,
           userPlan,
           pauseAfterThesis: options.pauseAfterThesis,
         });
         break;
       case "tier3_synthesis":
-        result = await this.runTier3Synthesis(deal as DealWithDocs, dealId, onProgress, onEarlyWarning);
+        result = await this.runTier3Synthesis(
+          deal as DealWithDocs,
+          dealId,
+          onProgress,
+          onEarlyWarning,
+          undefined,
+          undefined,
+          analysisModeOverride
+        );
         break;
       case "tier2_sector":
-        result = await this.runTier2SectorAnalysis(deal as DealWithDocs, dealId, onProgress);
+        result = await this.runTier2SectorAnalysis(
+          deal as DealWithDocs,
+          dealId,
+          onProgress,
+          undefined,
+          analysisModeOverride
+        );
         break;
       default:
-        result = await this.runBaseAnalysis(deal as DealWithDocs, dealId, type, onProgress, onEarlyWarning, startTime);
+        result = await this.runBaseAnalysis(
+          deal as DealWithDocs,
+          dealId,
+          type,
+          onProgress,
+          onEarlyWarning,
+          startTime,
+          analysisModeOverride
+        );
     }
 
     // === STORE FINGERPRINT FOR CACHE ===
@@ -343,10 +421,9 @@ export class AgentOrchestrator {
       const mode = type; // mode in DB matches type
       const cached = await lookupCachedAnalysis(dealId, mode, fingerprint);
 
-      if (!cached.found || !cached.analysis) return null;
+      if (!cached.found || !cached.analysis || !cached.results) return null;
 
-      // Parse results from JSON (Prisma Json type needs cast through unknown)
-      const results = (cached.analysis.results ?? {}) as unknown as Record<string, AgentResult>;
+      const results = cached.results as Record<string, AgentResult>;
 
       return {
         sessionId: cached.analysis.id,
@@ -403,13 +480,23 @@ export class AgentOrchestrator {
     type: AnalysisType,
     onProgress: AnalysisOptions["onProgress"],
     onEarlyWarning: AnalysisOptions["onEarlyWarning"],
-    startTime: number
+    startTime: number,
+    analysisModeOverride?: string
   ): Promise<AnalysisResult> {
     const config = ANALYSIS_CONFIGS[type];
     const collectedWarnings: EarlyWarning[] = [];
+    const initialFactStore = await getCurrentFacts(dealId).catch(() => []);
+
+    const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
+      allowSupersededDocuments: analysisModeOverride === "post_call_reanalysis",
+    });
+    const scopedDocuments = scopeDocumentsToSnapshot(
+      deal.documents,
+      corpusSnapshot?.documentIds ?? null
+    );
 
     // Get document IDs for versioning
-    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+    const documentIds = corpusSnapshot?.documentIds ?? (deal.documents as Array<{ id: string; processingStatus?: string }>)
       .filter((d) => d.processingStatus === "COMPLETED")
       .map((d) => d.id);
 
@@ -418,17 +505,29 @@ export class AgentOrchestrator {
       dealId,
       type,
       totalAgents: config.agents.length,
+      mode: analysisModeOverride ?? type,
       documentIds,
+      corpusSnapshotId: corpusSnapshot?.id,
+      extractionRunIds: corpusSnapshot?.extractionRunIds,
     });
 
     // Set analysis context for LLM logging
     setAnalysisContext(analysis.id);
 
     // Build context
+    const canonicalDeal = buildCanonicalRuntimeDeal(deal, {
+      factStore: initialFactStore,
+    });
     const context: AgentContext = {
       dealId,
-      deal,
-      documents: deal.documents,
+      deal: canonicalDeal,
+      canonicalDeal,
+      analysis: {
+        id: analysis.id,
+        thesisBypass: false,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
+      documents: scopedDocuments,
       previousResults: {},
     };
 
@@ -487,7 +586,7 @@ export class AgentOrchestrator {
       totalTimeMs,
       summary,
       results,
-      mode: type,
+      mode: analysisModeOverride ?? type,
     });
 
     const baseResult: AnalysisResult = {
@@ -513,13 +612,21 @@ export class AgentOrchestrator {
     onProgress: AnalysisOptions["onProgress"],
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { onEarlyWarning, isUpdate = false } = advancedOptions;
+    const { onEarlyWarning, isUpdate = false, analysisModeOverride } = advancedOptions;
     const startTime = Date.now();
     const TIER1_AGENT_COUNT = TIER1_AGENT_NAMES.length; // 13
     const collectedWarnings: EarlyWarning[] = [];
 
+    const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
+      allowSupersededDocuments: analysisModeOverride === "post_call_reanalysis",
+    });
+    const scopedDocuments = scopeDocumentsToSnapshot(
+      deal.documents,
+      corpusSnapshot?.documentIds ?? null
+    );
+
     // Get document IDs for versioning
-    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+    const documentIds = corpusSnapshot?.documentIds ?? (deal.documents as Array<{ id: string; processingStatus?: string }>)
       .filter((d) => d.processingStatus === "COMPLETED")
       .map((d) => d.id);
 
@@ -527,7 +634,10 @@ export class AgentOrchestrator {
       dealId,
       type: "tier1_complete",
       totalAgents: TIER1_AGENT_COUNT + 2, // +1 extractor +1 fact-extractor
+      mode: analysisModeOverride ?? "tier1_complete",
       documentIds,
+      corpusSnapshotId: corpusSnapshot?.id,
+      extractionRunIds: corpusSnapshot?.extractionRunIds,
     });
 
     // Set analysis context for LLM logging
@@ -535,12 +645,22 @@ export class AgentOrchestrator {
 
     const results: Record<string, AgentResult> = {};
     let totalCost = 0;
+    const initialFactStore = await getCurrentFacts(dealId).catch(() => []);
 
     // Build base context
+    const canonicalDeal = buildCanonicalRuntimeDeal(deal, {
+      factStore: initialFactStore,
+    });
     const baseContext: AgentContext = {
       dealId,
-      deal,
-      documents: deal.documents,
+      deal: canonicalDeal,
+      canonicalDeal,
+      analysis: {
+        id: analysis.id,
+        thesisBypass: false,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
+      documents: scopedDocuments,
       previousResults: {},
     };
 
@@ -550,8 +670,12 @@ export class AgentOrchestrator {
     let factStoreFormatted = "";
     let founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }> = [];
 
-    if (deal.documents.length > 0) {
-      const tier0Result = await this.runTier0FactExtraction(deal, isUpdate, onProgress);
+    if (scopedDocuments.length > 0) {
+      const tier0Result = await this.runTier0FactExtraction(
+        { ...deal, documents: scopedDocuments },
+        isUpdate,
+        onProgress
+      );
       factStore = tier0Result.factStore;
       factStoreFormatted = tier0Result.factStoreFormatted;
       founderResponses = tier0Result.founderResponses;
@@ -574,7 +698,7 @@ export class AgentOrchestrator {
     // Extract data needed for Context Engine (tagline, competitors, founders)
     let extractedData: ContextSeed = {};
 
-    if (deal.documents.length > 0) {
+    if (scopedDocuments.length > 0) {
       onProgress?.({
         currentAgent: "document-extractor",
         completedAgents: 0,
@@ -618,9 +742,9 @@ export class AgentOrchestrator {
     // STEP 1.5: Run Deck Coherence Check (Tier 0.5)
     // Verifies data consistency before Tier 1 agents analyze
     let deckCoherenceReport: DeckCoherenceReport | null = null;
-    if (deal.documents.length > 0 && results["document-extractor"]?.success) {
+    if (scopedDocuments.length > 0 && results["document-extractor"]?.success) {
       const coherenceResult = await this.runDeckCoherenceCheck(
-        deal,
+        { ...deal, documents: scopedDocuments },
         extractedData as Record<string, unknown> | undefined,
         onProgress
       );
@@ -641,7 +765,15 @@ export class AgentOrchestrator {
     }
 
     // STEP 2: Enrich with Context Engine (using extracted data)
-    const contextEngineData = await this.enrichContext(deal, extractedData);
+    const contextEngineData = await this.enrichContext(deal, extractedData, factStore);
+    const mergedContextFacts = await this.mergeContextEngineFacts(
+      dealId,
+      contextEngineData,
+      factStore,
+      corpusSnapshot?.id ?? null
+    );
+    factStore = mergedContextFacts.factStore;
+    factStoreFormatted = mergedContextFacts.factStoreFormatted;
 
     // Build enriched context for Tier 1 agents with Fact Store
     // SECURITY: Replace PROJECTED/UNVERIFIABLE facts with placeholders
@@ -669,6 +801,12 @@ export class AgentOrchestrator {
       contextEngine: contextEngineData,
       factStore: filteredFactStore,
       factStoreFormatted: filteredFactStoreFormatted,
+      extractedData: this.toExtractedContextData(extractedData),
+      analysis: {
+        id: analysis.id,
+        thesisBypass: false,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
       deckCoherenceReport: deckCoherenceReport ?? undefined,
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
       previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
@@ -676,13 +814,12 @@ export class AgentOrchestrator {
 
     // STEP 3: Run Tier 1 agents in 4 sequential phases (A→B→C→D)
     const tier1AgentMap = await getTier1Agents();
-    let completedCount = deal.documents.length > 0 ? 1 : 0;
+    let completedCount = scopedDocuments.length > 0 ? 1 : 0;
 
     const phasesResult = await this.runTier1Phases({
       enrichedContext,
       tier1AgentMap,
       analysisId: analysis.id,
-      deal,
       dealId,
       onProgress,
       totalAgents: TIER1_AGENT_COUNT + 2,
@@ -701,7 +838,10 @@ export class AgentOrchestrator {
 
     // Global consensus across all phases
     const verificationContext = await this.buildVerificationContext(
-      enrichedContext, extractedData ?? {}, phasesResult.updatedFactStoreFormatted, deal
+      enrichedContext,
+      extractedData ?? {},
+      phasesResult.updatedFactStoreFormatted,
+      enrichedContext.deal,
     );
     if (phasesResult.allFindings.length > 1) {
       const consensusStats = await this.runConsensusDebate(analysis.id, phasesResult.allFindings, verificationContext, enrichedContext);
@@ -720,7 +860,7 @@ export class AgentOrchestrator {
       totalTimeMs,
       summary,
       results,
-      mode: "tier1_complete",
+      mode: analysisModeOverride ?? "tier1_complete",
     });
 
     await updateDealStatus(dealId, "IN_DD");
@@ -753,14 +893,24 @@ export class AgentOrchestrator {
     onProgress: AnalysisOptions["onProgress"],
     onEarlyWarning?: OnEarlyWarning,
     tier1Results?: Record<string, AgentResult>,
-    maxCostUsd?: number
+    maxCostUsd?: number,
+    analysisModeOverride?: string
   ): Promise<AnalysisResult> {
     const startTime = Date.now();
-    const TIER3_AGENT_COUNT = 6;
+    const TIER3_AGENT_COUNT = TIER3_AGENT_NAMES.length;
     const collectedWarnings: EarlyWarning[] = [];
+    const currentFacts = await getCurrentFacts(dealId).catch(() => []);
+
+    const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
+      allowSupersededDocuments: analysisModeOverride === "post_call_reanalysis",
+    });
+    const scopedDocuments = scopeDocumentsToSnapshot(
+      deal.documents,
+      corpusSnapshot?.documentIds ?? null
+    );
 
     // Get document IDs for versioning
-    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+    const documentIds = corpusSnapshot?.documentIds ?? (deal.documents as Array<{ id: string; processingStatus?: string }>)
       .filter((d) => d.processingStatus === "COMPLETED")
       .map((d) => d.id);
 
@@ -768,7 +918,10 @@ export class AgentOrchestrator {
       dealId,
       type: "tier3_synthesis",
       totalAgents: TIER3_AGENT_COUNT,
+      mode: analysisModeOverride ?? "tier3_synthesis",
       documentIds,
+      corpusSnapshotId: corpusSnapshot?.id,
+      extractionRunIds: corpusSnapshot?.extractionRunIds,
     });
 
     // Set analysis context for LLM logging
@@ -804,6 +957,7 @@ export class AgentOrchestrator {
         include: { tranches: { orderBy: { orderIndex: "asc" } } },
       }),
     ]);
+    const extractedData = this.extractContextSeedFromResults(tier1Results);
     const dealTerms = rawDealTerms ? {
       valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
       amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
@@ -829,12 +983,26 @@ export class AgentOrchestrator {
       notes: rawDealTerms.notes,
     } : null;
 
+    const canonicalDeal = buildCanonicalRuntimeDeal(deal, {
+      factStore: currentFacts,
+      previousResults: tier1Results,
+      extractedData: this.toExtractedContextData(extractedData),
+    });
     const context: EnrichedAgentContext = attachEvidenceLedger({
       dealId,
-      deal,
-      documents: deal.documents,
+      deal: canonicalDeal,
+      canonicalDeal,
+      documents: scopedDocuments,
       previousResults: tier1Results ?? {},
+      extractedData: this.toExtractedContextData(extractedData),
+      analysis: {
+        id: analysis.id,
+        thesisBypass: false,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
       baPreferences, // Only passed to Tier 3 agents
+      factStore: currentFacts,
+      factStoreFormatted: formatFactStoreForAgents(currentFacts),
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
       dealTerms,
       conditionsAnalystMode: "pipeline",
@@ -1002,7 +1170,7 @@ export class AgentOrchestrator {
       totalTimeMs,
       summary,
       results,
-      mode: "tier3_synthesis",
+      mode: analysisModeOverride ?? "tier3_synthesis",
     });
 
     const baseResult: AnalysisResult = {
@@ -1026,11 +1194,17 @@ export class AgentOrchestrator {
     deal: DealWithDocs,
     dealId: string,
     onProgress: AnalysisOptions["onProgress"],
-    previousResults?: Record<string, AgentResult>
+    previousResults?: Record<string, AgentResult>,
+    analysisModeOverride?: string
   ): Promise<AnalysisResult> {
     const startTime = Date.now();
+    const initialFactStore = await getCurrentFacts(dealId).catch(() => []);
+    const initialCanonicalDeal = buildCanonicalRuntimeDeal(deal, {
+      factStore: initialFactStore,
+      previousResults,
+    });
 
-    const sectorExpert = await getTier2SectorExpert(deal.sector);
+    const sectorExpert = await getTier2SectorExpert(initialCanonicalDeal.sector);
 
     if (!sectorExpert) {
       return {
@@ -1041,12 +1215,20 @@ export class AgentOrchestrator {
         results: {},
         totalCost: 0,
         totalTimeMs: Date.now() - startTime,
-        summary: `No sector expert available for sector: ${deal.sector ?? "unknown"}`,
+        summary: `No sector expert available for sector: ${initialCanonicalDeal.sector ?? "unknown"}`,
       };
     }
 
+    const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
+      allowSupersededDocuments: analysisModeOverride === "post_call_reanalysis",
+    });
+    const scopedDocuments = scopeDocumentsToSnapshot(
+      deal.documents,
+      corpusSnapshot?.documentIds ?? null
+    );
+
     // Get document IDs for versioning
-    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+    const documentIds = corpusSnapshot?.documentIds ?? (deal.documents as Array<{ id: string; processingStatus?: string }>)
       .filter((d) => d.processingStatus === "COMPLETED")
       .map((d) => d.id);
 
@@ -1054,8 +1236,10 @@ export class AgentOrchestrator {
       dealId,
       type: "tier2_sector",
       totalAgents: 1,
-      mode: "tier2_sector",
+      mode: analysisModeOverride ?? "tier2_sector",
       documentIds,
+      corpusSnapshotId: corpusSnapshot?.id,
+      extractionRunIds: corpusSnapshot?.extractionRunIds,
     });
 
     // Set analysis context for LLM logging
@@ -1072,7 +1256,17 @@ export class AgentOrchestrator {
       extractedData = this.extractContextSeed(extractorResult);
     }
 
-    const contextEngineData = await this.enrichContext(deal, extractedData);
+    const contextEngineData = await this.enrichContext(
+      deal,
+      extractedData,
+      initialFactStore,
+    );
+    const mergedContextFacts = await this.mergeContextEngineFacts(
+      dealId,
+      contextEngineData,
+      [],
+      corpusSnapshot?.id ?? null
+    );
 
     // Load founder responses for Tier 2 context
     const founderResponseFacts = await prisma.factEvent.findMany({
@@ -1090,12 +1284,25 @@ export class AgentOrchestrator {
       category: fact.category,
     }));
 
+    const canonicalDeal = buildCanonicalRuntimeDeal(deal, {
+      factStore: mergedContextFacts.factStore,
+      previousResults,
+      extractedData: this.toExtractedContextData(extractedData),
+    });
     const context: EnrichedAgentContext = attachEvidenceLedger({
       dealId,
-      deal,
-      documents: deal.documents,
+      deal: canonicalDeal,
+      canonicalDeal,
+      analysis: {
+        id: analysis.id,
+        thesisBypass: false,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
+      documents: scopedDocuments,
       previousResults: previousResults ?? {},
       contextEngine: contextEngineData,
+      factStore: mergedContextFacts.factStore,
+      factStoreFormatted: mergedContextFacts.factStoreFormatted,
       founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
     });
 
@@ -1163,7 +1370,16 @@ export class AgentOrchestrator {
     onProgress: AnalysisOptions["onProgress"],
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
-    const { failFastOnCritical, maxCostUsd, onEarlyWarning, isUpdate = false, userPlan = "FREE", enableTrace = true, pauseAfterThesis = false } = advancedOptions;
+    const {
+      failFastOnCritical,
+      maxCostUsd,
+      onEarlyWarning,
+      isUpdate = false,
+      userPlan = "FREE",
+      enableTrace = true,
+      pauseAfterThesis = false,
+      analysisModeOverride,
+    } = advancedOptions;
     const startTime = Date.now();
     const collectedWarnings: EarlyWarning[] = [];
 
@@ -1174,20 +1390,34 @@ export class AgentOrchestrator {
 
     const includeTier2 = availableTiers.includes("TIER_2");
     const includeFullTier3 = availableTiers.includes("TIER_3");
+    const initialFactStore = await getCurrentFacts(dealId).catch(() => []);
+    const initialCanonicalDeal = buildCanonicalRuntimeDeal(deal, {
+      factStore: initialFactStore,
+    });
 
     console.log(`[Orchestrator] Tier gating: plan=${userPlan}, tiers=${availableTiers.join(",")}`);
 
-    const sectorExpert = includeTier2 ? await getTier2SectorExpert(deal.sector) : null;
+    const sectorExpert = includeTier2
+      ? await getTier2SectorExpert(initialCanonicalDeal.sector)
+      : null;
     const hasSectorExpert = sectorExpert !== null;
 
     // Adjust total agent count based on plan
     // FREE: 13 Tier1 + 1 extractor + 1 fact-extractor + 1 synthesis-deal-scorer = 16
-    // PRO:  13 Tier1 + 6 Tier3 + 1 extractor + 1 fact-extractor + (0-1 sector expert) = 21-22
-    const tier3AgentCount = includeFullTier3 ? TIER3_AGENT_NAMES.length : 1; // Only synthesis-deal-scorer for FREE
+    // PRO:  13 Tier1 + 7 Tier3 + 1 extractor + 1 fact-extractor + (0-1 sector expert) = 22-23
+    const tier3AgentCount = includeFullTier3 ? FULL_ANALYSIS_TIER3_AGENT_NAMES.length : 1;
     const TOTAL_AGENTS = TIER1_AGENT_NAMES.length + tier3AgentCount + 1 + 1 + (hasSectorExpert ? 1 : 0);
 
+    const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
+      allowSupersededDocuments: analysisModeOverride === "post_call_reanalysis",
+    });
+    const scopedDocuments = scopeDocumentsToSnapshot(
+      deal.documents,
+      corpusSnapshot?.documentIds ?? null
+    );
+
     // Get document IDs for versioning
-    const documentIds = (deal.documents as Array<{ id: string; processingStatus?: string }>)
+    const documentIds = corpusSnapshot?.documentIds ?? (deal.documents as Array<{ id: string; processingStatus?: string }>)
       .filter((d) => d.processingStatus === "COMPLETED")
       .map((d) => d.id);
 
@@ -1195,7 +1425,10 @@ export class AgentOrchestrator {
       dealId,
       type: "full_analysis",
       totalAgents: TOTAL_AGENTS,
+      mode: analysisModeOverride ?? "full_analysis",
       documentIds,
+      corpusSnapshotId: corpusSnapshot?.id,
+      extractionRunIds: corpusSnapshot?.extractionRunIds,
     });
 
     // Set analysis context for LLM logging
@@ -1214,7 +1447,7 @@ export class AgentOrchestrator {
       analysisId: analysis.id,
       dealId,
       mode: "full_analysis",
-      agents: ["document-extractor", ...TIER1_AGENT_NAMES, ...TIER3_AGENT_NAMES],
+      agents: ["document-extractor", ...TIER1_AGENT_NAMES, ...FULL_ANALYSIS_TIER3_AGENT_NAMES],
       enableCheckpointing: true,
     });
 
@@ -1239,15 +1472,27 @@ export class AgentOrchestrator {
 
       const baseContext: AgentContext = {
         dealId,
-        deal,
-        documents: deal.documents,
+        deal: initialCanonicalDeal,
+        canonicalDeal: initialCanonicalDeal,
+        analysis: {
+          id: analysis.id,
+          mode: analysis.mode ?? analysisModeOverride ?? "full_analysis",
+          thesisBypass: false,
+          thesisId: null,
+          corpusSnapshotId: corpusSnapshot?.id ?? null,
+        },
+        documents: scopedDocuments,
         previousResults: {},
       };
 
       // STEP 0: TIER 0 FACT EXTRACTION (runs BEFORE everything)
       // Extracts structured facts that will be available to all agents
-      if (deal.documents.length > 0) {
-        const tier0Result = await this.runTier0FactExtraction(deal, isUpdate, onProgress);
+      if (scopedDocuments.length > 0) {
+        const tier0Result = await this.runTier0FactExtraction(
+          { ...deal, documents: scopedDocuments },
+          isUpdate,
+          onProgress
+        );
         factStore = tier0Result.factStore;
         factStoreFormatted = tier0Result.factStoreFormatted;
         founderResponses = tier0Result.founderResponses;
@@ -1280,7 +1525,7 @@ export class AgentOrchestrator {
       // Extract data from documents first
       let extractedData: ContextSeed = {};
 
-      if (deal.documents.length > 0) {
+      if (scopedDocuments.length > 0) {
         try {
           const extractorResult = await BASE_AGENTS["document-extractor"].run(baseContext);
           allResults["document-extractor"] = extractorResult;
@@ -1316,9 +1561,9 @@ export class AgentOrchestrator {
       // STEP 1.5: DECK COHERENCE CHECK (Tier 0.5)
       // Verifies data consistency before Tier 1 agents analyze
       let deckCoherenceReport: DeckCoherenceReport | null = null;
-      if (deal.documents.length > 0 && allResults["document-extractor"]?.success) {
+      if (scopedDocuments.length > 0 && allResults["document-extractor"]?.success) {
         const coherenceResult = await this.runDeckCoherenceCheck(
-          deal,
+          { ...deal, documents: scopedDocuments },
           extractedData as Record<string, unknown> | undefined,
           onProgress
         );
@@ -1347,7 +1592,20 @@ export class AgentOrchestrator {
         totalAgents: TOTAL_AGENTS,
       });
 
-      const contextEngineData = await this.enrichContext(deal, extractedData);
+      const contextEngineData = await this.enrichContext(deal, extractedData, factStore);
+      const mergedContextFacts = await this.mergeContextEngineFacts(
+        dealId,
+        contextEngineData,
+        factStore,
+        corpusSnapshot?.id ?? null
+      );
+      factStore = mergedContextFacts.factStore;
+      factStoreFormatted = mergedContextFacts.factStoreFormatted;
+
+      const filteredFactStore = replaceUnreliableWithPlaceholders(factStore);
+      const filteredFactStoreFormatted = factStore.length > 0
+        ? formatFactsForScoringAgents(factStore)
+        : factStoreFormatted;
 
       // Load questions from previous analysis for cross-run persistence
       const prevQuestions = await loadPreviousAnalysisQuestions(dealId);
@@ -1366,8 +1624,15 @@ export class AgentOrchestrator {
       const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
         ...baseContext,
         contextEngine: contextEngineData,
-        factStore,
-        factStoreFormatted,
+        factStore: filteredFactStore,
+        factStoreFormatted: filteredFactStoreFormatted,
+        extractedData: this.toExtractedContextData(extractedData),
+        analysis: {
+          id: analysis.id,
+          thesisBypass: false,
+          thesisId: null,
+          corpusSnapshotId: corpusSnapshot?.id ?? null,
+        },
         deckCoherenceReport: deckCoherenceReport ?? undefined,
         founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
         previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
@@ -1376,16 +1641,46 @@ export class AgentOrchestrator {
       // STEP 2.5: THESIS EXTRACTION (Tier 0.5) — thesis-first architecture
       // Extrait la these d'investissement, la teste contre 3 frameworks (YC/Thiel/AD),
       // persiste en DB, injecte dans enrichedContext pour que Tier 1/2/3 l'utilisent.
-      const thesisOutput = await this.runThesisExtraction(
-        enrichedContext,
-        analysis.id,
-        dealId,
-        allResults,
-        enableTrace,
-      );
-      if (allResults["thesis-extractor"]?.cost) {
-        totalCost += allResults["thesis-extractor"].cost;
-        completedCount++;
+      const shouldReuseLatestThesis = analysisModeOverride === "post_call_reanalysis";
+      let thesisOutput: ThesisExtractorOutput | null = null;
+
+      if (shouldReuseLatestThesis) {
+        const latestThesis = await thesisService.getLatest(dealId);
+        if (!latestThesis) {
+          throw new Error("Cannot run post-call reanalysis without a canonical latest thesis");
+        }
+
+        await this.rehydrateResumeThesis(analysis.id, latestThesis.id, enrichedContext);
+        enrichedContext.analysis = {
+          ...(enrichedContext.analysis ?? { id: analysis.id }),
+          mode: enrichedContext.analysis?.mode ?? analysis.mode ?? analysisModeOverride ?? "full_analysis",
+          thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
+          thesisId: latestThesis.id,
+          corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
+        };
+
+        await prisma.analysis.update({
+          where: { id: analysis.id },
+          data: { thesisId: latestThesis.id },
+        });
+
+        console.log(
+          `[Orchestrator:FullAnalysis] Reusing canonical latest thesis for post-call reanalysis ` +
+          `(analysisId=${analysis.id}, thesisId=${latestThesis.id})`
+        );
+      } else {
+        thesisOutput = await this.runThesisExtraction(
+          enrichedContext,
+          analysis.id,
+          dealId,
+          allResults,
+          enableTrace,
+          corpusSnapshot,
+        );
+        if (allResults["thesis-extractor"]?.cost) {
+          totalCost += allResults["thesis-extractor"].cost;
+          completedCount++;
+        }
       }
 
       // STEP 2.6: THESIS GATE — pause pipeline mi-analyse pour Inngest step.waitForEvent
@@ -1400,7 +1695,7 @@ export class AgentOrchestrator {
           console.error(
             `[Orchestrator:FullAnalysis] pauseAfterThesis=true mais thesis-extractor a echoue (output=${!!thesisOutput}, thesisCtx=${!!enrichedContext.thesis}). Abort avec refund.`
           );
-          await stateMachine.complete();
+          await stateMachine.fail(new Error("Thesis extraction failed before review gate"));
           await completeAnalysis({
             analysisId: analysis.id,
             success: false,
@@ -1434,12 +1729,15 @@ export class AgentOrchestrator {
         // FIX (audit P0 #1) : saveCheckpoint OBLIGATOIRE pour que resumeAnalysis retrouve
         // l'etat sur le continue/contest. Sans ca resumeAnalysis throws "no checkpoint".
         const pendingTier1 = [...TIER1_AGENT_NAMES];
-        const pendingTier3 = [...TIER3_AGENT_NAMES];
+        const pendingTier2 = includeTier2 && sectorExpert ? [sectorExpert.name] : [];
+        const pendingTier3 = includeFullTier3
+          ? [...FULL_ANALYSIS_TIER3_AGENT_NAMES]
+          : FREE_TIER3_BATCHES_AFTER_TIER2.flat();
         const completedAgentsSet = Object.keys(allResults).filter((k) => allResults[k]?.success);
         await saveCheckpoint(analysis.id, {
           state: "ANALYZING",
           completedAgents: completedAgentsSet,
-          pendingAgents: [...pendingTier1, ...pendingTier3],
+          pendingAgents: [...pendingTier1, ...pendingTier2, ...pendingTier3],
           failedAgents: Object.entries(allResults)
             .filter(([, r]) => r && !r.success)
             .map(([name, r]) => ({ agent: name, error: r.error ?? "unknown", retries: 0 })),
@@ -1509,7 +1807,6 @@ export class AgentOrchestrator {
         enrichedContext,
         tier1AgentMap,
         analysisId: analysis.id,
-        deal,
         dealId,
         onProgress,
         totalAgents: TOTAL_AGENTS,
@@ -1532,7 +1829,10 @@ export class AgentOrchestrator {
 
       // Rebuild verificationContext for global consensus and downstream use
       const verificationContext = await this.buildVerificationContext(
-        enrichedContext, extractedData, factStoreFormatted, deal
+        enrichedContext,
+        extractedData,
+        factStoreFormatted,
+        enrichedContext.deal,
       );
 
       // Publish all findings to message bus
@@ -1566,8 +1866,6 @@ export class AgentOrchestrator {
           const summary = `**CRITICAL WARNINGS DETECTED - Analysis stopped early**\n\n${criticalWarnings.map(w => `- ${w.title}: ${w.description}`).join("\n")}`;
           const totalTimeMs = Date.now() - startTime;
 
-          await costMonitor.endAnalysis();
-
           await completeAnalysis({
             analysisId: analysis.id,
             success: true,
@@ -1575,7 +1873,11 @@ export class AgentOrchestrator {
             totalTimeMs,
             summary,
             results: allResults,
-            mode: "full_analysis",
+            mode: analysisModeOverride ?? "full_analysis",
+          });
+
+          await costMonitor.endAnalysis({
+            persistAnalysisSummary: false,
           });
 
           return this.addWarningsToResult({
@@ -1617,7 +1919,19 @@ export class AgentOrchestrator {
         const summary = generateFullAnalysisSummary(allResults);
         const totalTimeMs = Date.now() - startTime;
 
-        await costMonitor.endAnalysis();
+        await completeAnalysis({
+          analysisId: analysis.id,
+          success: true,
+          totalCost,
+          totalTimeMs,
+          summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
+          results: allResults,
+          mode: analysisModeOverride ?? "full_analysis",
+        });
+
+        await costMonitor.endAnalysis({
+          persistAnalysisSummary: false,
+        });
 
         return this.addWarningsToResult({
           sessionId: analysis.id,
@@ -1748,10 +2062,10 @@ export class AgentOrchestrator {
       }
       enrichedContext.conditionsAnalystMode = "pipeline";
 
-      // Cost check before Tier 3 (pre-Tier2 batch: contradiction-detector, scenario-modeler, devils-advocate)
+      // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + scenario + devil's advocate)
       // Skip for FREE plan (these are TIER_3 agents, not SYNTHESIS)
       if (includeFullTier3 && !(maxCostUsd && totalCost >= maxCostUsd)) {
-        const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0]; // Single batch with 3 agents
+        const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0];
 
         onProgress?.({
           currentAgent: `tier3-parallel (${tier3BeforeAgents.join(", ")})`,
@@ -1935,7 +2249,7 @@ export class AgentOrchestrator {
               sectorExpert.name,
               sectorResult as AnalysisAgentResult,
               sectorFindings,
-              `Deal: ${deal.name}, Sector: ${deal.sector}`,
+              `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
               2,
               verificationContext,
               allResults,
@@ -1957,7 +2271,7 @@ export class AgentOrchestrator {
       // FREE plan: only synthesis-deal-scorer; PRO plan: synthesis-deal-scorer + memo-generator
       const finalSynthesisBatches = includeFullTier3
         ? TIER3_BATCHES_AFTER_TIER2
-        : [TIER3_BATCHES_AFTER_TIER2[0]]; // Only synthesis-deal-scorer for FREE
+        : FREE_TIER3_BATCHES_AFTER_TIER2;
 
       for (const batch of finalSynthesisBatches) {
         // REAL-TIME COST CHECK: Before each batch
@@ -2018,29 +2332,11 @@ export class AgentOrchestrator {
 
           // Thesis-first — apres thesis-reconciler, persister la reconciliation sur
           // la these initiale (maj verdict + confidence + reconciliationJson + notes)
-          if (agentName === "thesis-reconciler" && agentResult.success && "data" in agentResult) {
-            const thesisId = enrichedContext.thesis?.id;
-            if (thesisId) {
-              try {
-                const reconcilerOutput = (agentResult as AgentResult & { data: ThesisReconcilerOutput }).data;
-                await thesisService.applyReconciliation({
-                  thesisId,
-                  reconcilerOutput,
-                });
-                // Met a jour enrichedContext.thesis pour que synthesis-deal-scorer (batch suivant)
-                // voie le verdict raffine lors du meta-gate.
-                if (enrichedContext.thesis) {
-                  enrichedContext.thesis = {
-                    ...enrichedContext.thesis,
-                    verdict: reconcilerOutput.updatedVerdict,
-                    confidence: reconcilerOutput.updatedConfidence,
-                  };
-                }
-                console.log(`[Orchestrator:FullAnalysis] Thesis reconciled: verdict=${reconcilerOutput.updatedVerdict} (changed=${reconcilerOutput.verdictChanged})`);
-              } catch (reconErr) {
-                console.error(`[Orchestrator:FullAnalysis] Failed to persist thesis reconciliation:`, reconErr);
-              }
-            }
+          if (
+            agentName === "thesis-reconciler" &&
+            enrichedContext.analysis?.mode !== "post_call_reanalysis"
+          ) {
+            await this.applyThesisReconciliation(enrichedContext, agentResult);
           }
 
           onProgress?.({
@@ -2067,14 +2363,6 @@ export class AgentOrchestrator {
       const allSuccess = Object.values(allResults).every((r) => r.success);
       const orchestrationSummary = stateMachine.getSummary();
 
-      // End cost monitoring
-      const costReport = await costMonitor.endAnalysis();
-      if (costReport) {
-        console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
-      }
-
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.log(`[Orchestrator:DEBUG] allSuccess=${allSuccess}, calling completeAnalysis...`);
       await completeAnalysis({
         analysisId: analysis.id,
         success: allSuccess,
@@ -2082,8 +2370,16 @@ export class AgentOrchestrator {
         totalTimeMs,
         summary: `${summary}\n\n**Orchestration**: ${orchestrationSummary.transitions} state transitions, ${orchestrationSummary.totalFindings} findings`,
         results: allResults,
-        mode: "full_analysis",
+        mode: analysisModeOverride ?? "full_analysis",
       });
+      // End cost monitoring after final results are persisted so `_costReport`
+      // is merged into the canonical completed payload instead of being overwritten.
+      const costReport = await costMonitor.endAnalysis({
+        persistAnalysisSummary: false,
+      });
+      if (costReport) {
+        console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
+      }
       // DEBUG log removed for production - uncomment for debugging:
       // console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
 
@@ -2150,9 +2446,6 @@ export class AgentOrchestrator {
 
       const totalTimeMs = Date.now() - startTime;
 
-      // End cost monitoring on error
-      await costMonitor.endAnalysis();
-
       await completeAnalysis({
         analysisId: analysis.id,
         success: false,
@@ -2160,8 +2453,14 @@ export class AgentOrchestrator {
         totalTimeMs,
         summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
         results: allResults,
-        mode: "full_analysis",
+        mode: analysisModeOverride ?? "full_analysis",
         statusOverride: "FAILED",
+      });
+
+      // End cost monitoring after final results are persisted so `_costReport`
+      // survives the failed completion payload as well.
+      await costMonitor.endAnalysis({
+        persistAnalysisSummary: false,
       });
 
       return this.addWarningsToResult({
@@ -2198,7 +2497,6 @@ export class AgentOrchestrator {
     enrichedContext: EnrichedAgentContext;
     tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
     analysisId: string;
-    deal: DealWithDocs;
     dealId: string;
     onProgress?: AnalysisOptions["onProgress"];
     totalAgents: number;
@@ -2217,6 +2515,7 @@ export class AgentOrchestrator {
       businessModel?: string;
     };
     stateMachine?: AnalysisStateMachine;
+    phases?: Array<{ name: string; agents: readonly string[] }>;
   }): Promise<{
     allFindings: ScoredFinding[];
     agentConfidences: Map<string, ConfidenceScore>;
@@ -2227,7 +2526,7 @@ export class AgentOrchestrator {
     completedInPhases: number;
   }> {
     const {
-      enrichedContext, tier1AgentMap, analysisId, deal, dealId,
+      enrichedContext, tier1AgentMap, analysisId, dealId,
       onProgress, totalAgents, onEarlyWarning, collectedWarnings,
       allResults, extractedData, stateMachine,
     } = params;
@@ -2240,15 +2539,19 @@ export class AgentOrchestrator {
 
     // Build initial VerificationContext (needed for inline reflexion)
     let verificationContext: VerificationContext = await this.buildVerificationContext(
-      enrichedContext, extractedData, factStoreFormatted, deal
+      enrichedContext,
+      extractedData,
+      factStoreFormatted,
+      enrichedContext.deal,
     );
 
-    const tier1Phases: { name: string; agents: readonly string[] }[] = [
-      { name: "Phase A: deck-forensics", agents: TIER1_PHASE_A },
-      { name: "Phase B: financial-auditor", agents: TIER1_PHASE_B },
-      { name: "Phase C: team + competitive + market", agents: TIER1_PHASE_C },
-      { name: "Phase D: remaining agents", agents: TIER1_PHASE_D },
-    ];
+    const tier1Phases =
+      params.phases ?? [
+        { name: "Phase A: deck-forensics", agents: TIER1_PHASE_A },
+        { name: "Phase B: financial-auditor", agents: TIER1_PHASE_B },
+        { name: "Phase C: team + competitive + market", agents: TIER1_PHASE_C },
+        { name: "Phase D: remaining agents", agents: TIER1_PHASE_D },
+      ];
 
     for (const phase of tier1Phases) {
       onProgress?.({
@@ -2335,7 +2638,7 @@ export class AgentOrchestrator {
             agentName,
             result as AnalysisAgentResult,
             agentFindings,
-            `Deal: ${deal.name}, Sector: ${deal.sector}`,
+            `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
             1,
             verificationContext,
             allResults,
@@ -2366,7 +2669,10 @@ export class AgentOrchestrator {
       // Rebuild verificationContext after Phase B and Phase C (factStoreFormatted has changed)
       if (phase.name.includes("Phase B") || phase.name.includes("Phase C")) {
         verificationContext = await this.buildVerificationContext(
-          enrichedContext, extractedData, factStoreFormatted, deal
+          enrichedContext,
+          extractedData,
+          factStoreFormatted,
+          enrichedContext.deal,
         );
         console.log(`[Orchestrator] Rebuilt verificationContext after ${phase.name} with updated factStore`);
       }
@@ -2510,10 +2816,11 @@ export class AgentOrchestrator {
     });
 
     try {
+      const currentFactsForContext = await getCurrentFacts(deal.id).catch(() => []);
+
       // Load existing facts if this is an update (for contradiction detection)
-      let existingFacts: CurrentFact[] = [];
+      const existingFacts: CurrentFact[] = currentFactsForContext;
       if (isUpdate) {
-        existingFacts = await getCurrentFacts(deal.id);
         console.log(`[Orchestrator:Tier0] Loaded ${existingFacts.length} existing facts for update`);
       }
 
@@ -2544,7 +2851,12 @@ export class AgentOrchestrator {
       // can detect contradictions. We use type assertion since AgentResult base doesn't have data.
       const factContext: AgentContext & { founderResponses?: typeof founderResponses } = {
         dealId: deal.id,
-        deal,
+        deal: buildCanonicalRuntimeDeal(deal, {
+          factStore: currentFactsForContext,
+        }),
+        canonicalDeal: buildCanonicalRuntimeDeal(deal, {
+          factStore: currentFactsForContext,
+        }),
         documents: deal.documents,
         founderResponses, // Pass founder responses to fact-extractor
         // Pass existing facts via previousResults (fact-extractor extracts them)
@@ -2716,10 +3028,39 @@ export class AgentOrchestrator {
     });
 
     try {
+      const currentFactsForContext = await getCurrentFacts(deal.id).catch(() => []);
+
       // Build context for coherence checker
       const coherenceContext: AgentContext = {
         dealId: deal.id,
-        deal,
+        deal: buildCanonicalRuntimeDeal(deal, {
+          factStore: currentFactsForContext,
+          previousResults: extractedData
+            ? {
+                "document-extractor": {
+                  agentName: "document-extractor",
+                  success: true,
+                  executionTimeMs: 0,
+                  cost: 0,
+                  data: extractedData,
+                } as unknown as AgentResult,
+              }
+            : {},
+        }),
+        canonicalDeal: buildCanonicalRuntimeDeal(deal, {
+          factStore: currentFactsForContext,
+          previousResults: extractedData
+            ? {
+                "document-extractor": {
+                  agentName: "document-extractor",
+                  success: true,
+                  executionTimeMs: 0,
+                  cost: 0,
+                  data: extractedData,
+                } as unknown as AgentResult,
+              }
+            : {},
+        }),
         documents: deal.documents,
         previousResults: extractedData ? {
           "document-extractor": {
@@ -2805,6 +3146,7 @@ export class AgentOrchestrator {
     dealId: string,
     allResults: Record<string, AgentResult>,
     enableTrace: boolean,
+    corpusSnapshot?: CorpusSnapshotMaterialization | null,
   ): Promise<ThesisExtractorOutput | null> {
     try {
       const thesisResult = await thesisExtractorAgent.run(enrichedContext, { enableTrace });
@@ -2818,13 +3160,24 @@ export class AgentOrchestrator {
       const thesisOutput = (thesisResult as AgentResult & { data: ThesisExtractorOutput }).data;
 
       // Persist Thesis (cree une nouvelle version, marque l'ancienne isLatest=false)
-      const persisted = await thesisService.create({ dealId, extractorOutput: thesisOutput });
+      const persisted = await thesisService.create({
+        dealId,
+        extractorOutput: thesisOutput,
+        corpusSnapshotId: corpusSnapshot?.id ?? enrichedContext.analysis?.corpusSnapshotId ?? null,
+      });
 
       // Link to Analysis
       await prisma.analysis.update({
         where: { id: analysisId },
         data: { thesisId: persisted.id },
       });
+
+      enrichedContext.analysis = {
+        ...(enrichedContext.analysis ?? { id: analysisId }),
+        thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
+        thesisId: persisted.id,
+        corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
+      };
 
       // Injection dans enrichedContext pour Tier 1/2/3
       enrichedContext.thesis = {
@@ -2908,6 +3261,216 @@ export class AgentOrchestrator {
     };
   }
 
+  private extractContextSeedFromResults(results?: Record<string, AgentResult>): ContextSeed {
+    const extractorResult = results?.["document-extractor"];
+    if (!extractorResult?.success) {
+      return {};
+    }
+    return this.extractContextSeed(extractorResult);
+  }
+
+  private hasContextSeed(seed: ContextSeed | undefined): boolean {
+    if (!seed) return false;
+    return Object.values(seed).some((value) => Array.isArray(value) ? value.length > 0 : value != null);
+  }
+
+  private toExtractedContextData(
+    seed: ContextSeed | undefined
+  ): EnrichedAgentContext["extractedData"] | undefined {
+    if (!this.hasContextSeed(seed)) {
+      return undefined;
+    }
+    return seed as unknown as EnrichedAgentContext["extractedData"];
+  }
+
+  private async materializeAnalysisCorpusSnapshot(
+    dealId: string,
+    documents: DealWithDocs["documents"],
+    options: { allowSupersededDocuments?: boolean } = {}
+  ): Promise<CorpusSnapshotMaterialization | null> {
+    return ensureCorpusSnapshot({
+      dealId,
+      documents,
+      allowSupersededDocuments: options.allowSupersededDocuments,
+    });
+  }
+
+  private inferFullAnalysisResumeTopology(totalAgents: number, hasSectorExpert: boolean): {
+    includeFullTier3: boolean;
+    includeTier2: boolean;
+  } {
+    const freeTotal =
+      TIER1_AGENT_NAMES.length +
+      FREE_TIER3_BATCHES_AFTER_TIER2.flat().length +
+      2; // fact-extractor + document-extractor
+    const proTotalWithoutTier2 =
+      TIER1_AGENT_NAMES.length +
+      FULL_ANALYSIS_TIER3_AGENT_NAMES.length +
+      2;
+
+    return {
+      includeFullTier3: totalAgents >= proTotalWithoutTier2,
+      includeTier2: hasSectorExpert && totalAgents >= proTotalWithoutTier2 + 1 && totalAgents > freeTotal,
+    };
+  }
+
+  private async applyThesisReconciliation(
+    enrichedContext: EnrichedAgentContext,
+    agentResult: AgentResult
+  ): Promise<void> {
+    if (enrichedContext.analysis?.mode === "post_call_reanalysis") {
+      logger.info(
+        { analysisId: enrichedContext.analysis?.id },
+        "Skipping thesis reconciliation persistence for post-call reanalysis"
+      );
+      return;
+    }
+
+    const thesisId = enrichedContext.thesis?.id;
+    if (!thesisId || !agentResult.success || !("data" in agentResult)) {
+      return;
+    }
+
+    const boundThesisId = enrichedContext.analysis?.thesisId;
+    if (boundThesisId && boundThesisId !== thesisId) {
+      logger.warn(
+        {
+          analysisId: enrichedContext.analysis?.id,
+          boundThesisId,
+          hydratedThesisId: thesisId,
+        },
+        "Skipping thesis reconciliation because the hydrated thesis does not match the analysis binding"
+      );
+      return;
+    }
+
+    try {
+      const reconcilerOutput = (agentResult as AgentResult & { data: ThesisReconcilerOutput }).data;
+      await thesisService.applyReconciliation({
+        thesisId,
+        reconcilerOutput,
+      });
+
+      if (enrichedContext.thesis) {
+        enrichedContext.thesis = {
+          ...enrichedContext.thesis,
+          verdict: reconcilerOutput.updatedVerdict,
+          confidence: reconcilerOutput.updatedConfidence,
+        };
+      }
+
+      console.log(
+        `[Orchestrator] Thesis reconciled: verdict=${reconcilerOutput.updatedVerdict} ` +
+        `(changed=${reconcilerOutput.verdictChanged})`
+      );
+    } catch (error) {
+      console.error("[Orchestrator] Failed to persist thesis reconciliation:", error);
+    }
+  }
+
+  private async rehydrateResumeThesis(
+    analysisId: string,
+    thesisId: string | null | undefined,
+    enrichedContext: EnrichedAgentContext
+  ): Promise<void> {
+    if (!thesisId) {
+      console.warn("[Orchestrator:Resume] Analysis has no thesisId; skipping thesis rehydration");
+      return;
+    }
+
+    const persistedThesis = await thesisService.getById(thesisId);
+    if (!persistedThesis) {
+      throw new Error(`Cannot resume analysis ${analysisId}: linked thesis ${thesisId} not found`);
+    }
+    if (!persistedThesis.isLatest) {
+      throw new Error(`Cannot resume analysis ${analysisId}: linked thesis ${thesisId} has been superseded`);
+    }
+
+    type ThesisVerdictStr = "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
+    type LoadBearingStatus = "verified" | "declared" | "projected" | "speculative";
+    const loadBearing = ((persistedThesis.loadBearing as unknown) as Array<{
+      id: string; statement: string; status: LoadBearingStatus; impact: string; validationPath: string;
+    }>) ?? [];
+    const alerts = ((persistedThesis.alerts as unknown) as Array<{
+      severity: string; category: string; title: string; detail: string;
+    }>) ?? [];
+    const yc = ((persistedThesis.ycLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
+    const thiel = ((persistedThesis.thielLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
+    const ad = ((persistedThesis.angelDeskLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
+
+    enrichedContext.thesis = {
+      id: persistedThesis.id,
+      reformulated: persistedThesis.reformulated,
+      problem: persistedThesis.problem,
+      solution: persistedThesis.solution,
+      whyNow: persistedThesis.whyNow,
+      moat: persistedThesis.moat,
+      pathToExit: persistedThesis.pathToExit,
+      verdict: persistedThesis.verdict as ThesisVerdictStr,
+      confidence: persistedThesis.confidence,
+      loadBearing,
+      alertsCount: alerts.length,
+      ycVerdict: yc.verdict,
+      thielVerdict: thiel.verdict,
+      angelDeskVerdict: ad.verdict,
+    };
+
+    console.log(
+      `[Orchestrator:Resume] Thesis rehydrated from analysis binding: ` +
+      `thesisId=${persistedThesis.id} verdict=${persistedThesis.verdict} confidence=${persistedThesis.confidence}`
+    );
+  }
+
+  private async mergeContextEngineFacts(
+    dealId: string,
+    contextEngineData: EnrichedAgentContext["contextEngine"],
+    currentFactStore: CurrentFact[],
+    corpusSnapshotId?: string | null
+  ): Promise<{
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+  }> {
+    if (!contextEngineData) {
+      return {
+        factStore: currentFactStore,
+        factStoreFormatted: formatFactStoreForAgents(currentFactStore),
+      };
+    }
+
+    const contextFacts = extractFactsFromDealContext(contextEngineData, {
+      corpusSnapshotId,
+    });
+
+    if (contextFacts.length === 0) {
+      return {
+        factStore: currentFactStore,
+        factStoreFormatted: formatFactStoreForAgents(currentFactStore),
+      };
+    }
+
+    const result = await persistExtractedFactsWithMatching(dealId, contextFacts, "system");
+    if (!result.success) {
+      console.error(
+        `[Orchestrator] Failed to persist Context Engine facts for deal ${dealId}: ${result.error ?? "unknown"}`
+      );
+      return {
+        factStore: currentFactStore,
+        factStoreFormatted: formatFactStoreForAgents(currentFactStore),
+      };
+    }
+
+    console.log(
+      `[Orchestrator] Context Engine facts persisted: ` +
+        `created=${result.createdCount}, superseded=${result.supersededCount}, ` +
+        `ignored=${result.ignoredCount}, pending_review=${result.pendingReviewCount}`
+    );
+
+    return {
+      factStore: result.currentFacts,
+      factStoreFormatted: formatFactStoreForAgents(result.currentFacts),
+    };
+  }
+
   /**
    * Enrich deal context with Context Engine
    *
@@ -2922,9 +3485,18 @@ export class AgentOrchestrator {
    */
   private async enrichContext(
     deal: DealWithDocs,
-    extractedData?: ContextSeed
+    extractedData?: ContextSeed,
+    currentFacts?: CurrentFact[],
   ): Promise<EnrichedAgentContext["contextEngine"]> {
     try {
+      const resolvedFacts = currentFacts ?? await getCurrentFacts(deal.id).catch(() => []);
+      const canonicalDeal = buildCanonicalRuntimeDeal(deal, {
+        factStore: resolvedFacts,
+        extractedData,
+      });
+      const canonicalCompanyName = canonicalDeal.companyName ?? canonicalDeal.name;
+      const canonicalWebsite = canonicalDeal.website ?? undefined;
+
       // Merge founders: extracted founders (from deck) take priority over DB founders
       const extractedFounders = extractedData?.founders || [];
       const dbFounders = (deal.founders || []).map((f) => ({
@@ -2957,16 +3529,16 @@ export class AgentOrchestrator {
 
       const contextResult = await enrichDeal(
         {
-          companyName: deal.companyName ?? deal.name,
-          sector: deal.sector ?? undefined,
-          stage: deal.stage ?? undefined,
-          geography: deal.geography ?? undefined,
+          companyName: canonicalCompanyName,
+          sector: canonicalDeal.sector ?? undefined,
+          stage: canonicalDeal.stage ?? undefined,
+          geography: canonicalDeal.geography ?? undefined,
         },
         {
           dealId: deal.id,
           includeFounders: hasFoundersToEnrich,
           founders: hasFoundersToEnrich ? mergedFounders : undefined,
-          startupSector: deal.sector ?? undefined,
+          startupSector: canonicalDeal.sector ?? undefined,
           // Pass extracted data for richer context
           extractedTagline: extractedData?.tagline,
           extractedCompetitors: extractedData?.competitors,
@@ -2977,7 +3549,7 @@ export class AgentOrchestrator {
           extractedUseCases: extractedData?.useCases,
           extractedKeyDifferentiators: extractedData?.keyDifferentiators,
           extractedWebsiteUrl: extractedData?.websiteUrl,
-          formWebsiteUrl: deal.website ?? undefined,
+          formWebsiteUrl: canonicalWebsite,
           extractionCorpusHashes,
         }
       );
@@ -2988,9 +3560,12 @@ export class AgentOrchestrator {
         competitiveLandscape: contextResult.competitiveLandscape,
         newsSentiment: contextResult.newsSentiment,
         peopleGraph: contextResult.peopleGraph,
+        websiteContent: contextResult.websiteContent,
         enrichedAt: contextResult.enrichedAt,
         completeness: contextResult.completeness,
         contextQuality: contextResult.contextQuality,
+        sourceHealth: contextResult.sourceHealth,
+        sources: contextResult.sources,
       };
     } catch (error) {
       console.error("Context Engine error:", error);
@@ -3239,7 +3814,7 @@ export class AgentOrchestrator {
       businessModel?: string;
     },
     factStoreFormatted: string,
-    deal: DealWithDocs
+    deal: Pick<AgentContext["deal"], "sector" | "stage" | "geography">
   ): Promise<VerificationContext> {
     // Build deck extracts from document-extractor results
     let deckExtracts: string | undefined;
@@ -3477,11 +4052,37 @@ export class AgentOrchestrator {
 
     const analysis = await prisma.analysis.findUnique({
       where: { id: analysisId },
-      include: { deal: true },
+      select: {
+        id: true,
+        dealId: true,
+        type: true,
+        mode: true,
+        status: true,
+        totalCost: true,
+        totalTimeMs: true,
+        deal: true,
+      },
     });
 
     if (!analysis) {
       throw new Error(`Analysis ${analysisId} not found`);
+    }
+
+    if (analysis.status !== "RUNNING") {
+      logger.warn(
+        { analysisId, status: analysis.status, decision },
+        "Skipping thesis decision continuation because analysis is no longer running"
+      );
+      return {
+        sessionId: analysisId,
+        dealId: analysis.dealId,
+        type: (analysis.type as AnalysisType) ?? "full_analysis",
+        success: false,
+        results: {},
+        totalCost: Number(analysis.totalCost ?? 0),
+        totalTimeMs: analysis.totalTimeMs ?? 0,
+        summary: `Skipped thesis decision because analysis is ${analysis.status.toLowerCase()}.`,
+      };
     }
 
     // Persist decision metadata
@@ -3500,7 +4101,11 @@ export class AgentOrchestrator {
         ? "Analyse expiree : 24h sans decision sur la these. Les credits ont ete rembourses integralement."
         : "Analyse arretee par le BA apres extraction de la these. Rapport these-only genere.";
 
-      const existingResults = (analysis.results as unknown as Record<string, AgentResult> | null) ?? {};
+      const existingResultsRaw = await loadResults(analysisId, {
+        preferDb: true,
+        backfillCache: false,
+      });
+      const existingResults = toAgentResultsRecord(existingResultsRaw) ?? {};
 
       await completeAnalysis({
         analysisId,
@@ -3527,7 +4132,11 @@ export class AgentOrchestrator {
     }
 
     if (decision === "contest") {
-      const existingResults = (analysis.results as unknown as Record<string, AgentResult> | null) ?? {};
+      const existingResultsRaw = await loadResults(analysisId, {
+        preferDb: true,
+        backfillCache: false,
+      });
+      const existingResults = toAgentResultsRecord(existingResultsRaw) ?? {};
 
       await completeAnalysis({
         analysisId,
@@ -3600,14 +4209,15 @@ export class AgentOrchestrator {
 
     // Restore results: merge checkpoint results with analysis DB results (DB may have more)
     const checkpointResults = (checkpoint.results ?? {}) as Record<string, AgentResult>;
-    const analysisDbResults = await prisma.analysis.findUnique({
+    const analysisDbMeta = await prisma.analysis.findUnique({
       where: { id: analysisId },
-      select: { results: true, totalCost: true },
+      select: { totalCost: true, thesisBypass: true, corpusSnapshotId: true },
     });
-    const rawDbResults = analysisDbResults?.results;
-    const dbResults = (rawDbResults != null && typeof rawDbResults === "object" && !Array.isArray(rawDbResults))
-      ? rawDbResults as unknown as Record<string, AgentResult>
-      : {};
+    const rawDbResults = await loadResults(analysisId, {
+      preferDb: true,
+      backfillCache: false,
+    });
+    const dbResults = toAgentResultsRecord(rawDbResults) ?? {};
 
     console.log(
       `[Orchestrator:Resume] Merge: checkpoint=${Object.keys(checkpointResults).length} results, ` +
@@ -3627,15 +4237,19 @@ export class AgentOrchestrator {
     ]);
     const failedSet = new Set(checkpoint.failedAgents.map((f) => f.agent));
 
-    let totalCost = Number(analysisDbResults?.totalCost ?? checkpoint.totalCost ?? 0);
+    let totalCost = Number(analysisDbMeta?.totalCost ?? checkpoint.totalCost ?? 0);
     let completedCount = completedSet.size;
+    const isFullAnalysis = analysis.type === "full_analysis";
+    const tier3AgentNamesForRecovery = isFullAnalysis
+      ? FULL_ANALYSIS_TIER3_AGENT_NAMES
+      : TIER3_AGENT_NAMES;
 
     // Initialize state machine with recovery
     const stateMachine = new AnalysisStateMachine({
       analysisId: analysis.id,
       dealId: analysis.dealId,
       mode: analysis.mode ?? "full_analysis",
-      agents: [...TIER1_AGENT_NAMES, ...TIER3_AGENT_NAMES],
+      agents: [...TIER1_AGENT_NAMES, ...tier3AgentNamesForRecovery],
       enableCheckpointing: true,
     });
 
@@ -3681,9 +4295,33 @@ export class AgentOrchestrator {
         }
       }
 
+      let factStore: CurrentFact[] = [];
+      let factStoreFormatted = "";
+      try {
+        factStore = await getCurrentFacts(deal.id);
+        factStoreFormatted = formatFactStoreForAgents(factStore);
+        console.log(`[Orchestrator:Resume] Restored ${factStore.length} facts from DB`);
+      } catch (error) {
+        console.error("[Orchestrator:Resume] Failed to restore fact store:", error);
+      }
+
       const baseContext: AgentContext = {
         dealId: deal.id,
-        deal,
+        deal: buildCanonicalRuntimeDeal(deal, {
+          factStore,
+          previousResults: sanitizedPreviousResults,
+        }),
+        canonicalDeal: buildCanonicalRuntimeDeal(deal, {
+          factStore,
+          previousResults: sanitizedPreviousResults,
+        }),
+        analysis: {
+          id: analysis.id,
+          mode: analysis.mode ?? null,
+          thesisBypass: analysisDbMeta?.thesisBypass ?? analysis.thesisBypass ?? false,
+          thesisId: analysis.thesisId ?? null,
+          corpusSnapshotId: analysisDbMeta?.corpusSnapshotId ?? analysis.corpusSnapshotId ?? null,
+        },
         documents: deal.documents,
         previousResults: sanitizedPreviousResults,
       };
@@ -3695,63 +4333,44 @@ export class AgentOrchestrator {
         totalAgents: analysis.totalAgents,
       });
 
-      const contextEngineData = await this.enrichContext(deal as DealWithDocs, {});
-
-      // Restore Fact Store from DB so remaining agents have validated facts
-      // COMPROMISE: We restore the factStore but use Promise.all for remaining agents
-      // rather than determining the exact interrupted phase. This is acceptable because
-      // the factStore contains all validations that occurred before the interruption.
-      let factStore: CurrentFact[] = [];
-      let factStoreFormatted = "";
-      try {
-        factStore = await getCurrentFacts(deal.id);
-        factStoreFormatted = formatFactStoreForAgents(factStore);
-        console.log(`[Orchestrator:Resume] Restored ${factStore.length} facts from DB`);
-      } catch (error) {
-        console.error("[Orchestrator:Resume] Failed to restore fact store:", error);
+      const extractedData = this.extractContextSeedFromResults(allResults);
+      if (this.hasContextSeed(extractedData)) {
+        console.log(
+          `[Orchestrator:Resume] Restored context seed: ` +
+          `tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, ` +
+          `competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`
+        );
       }
+
+      const contextEngineData = await this.enrichContext(
+        deal as DealWithDocs,
+        extractedData,
+        factStore,
+      );
+      const mergedContextFacts = await this.mergeContextEngineFacts(
+        deal.id,
+        contextEngineData,
+        factStore,
+        analysisDbMeta?.corpusSnapshotId ?? analysis.corpusSnapshotId ?? null
+      );
+      factStore = mergedContextFacts.factStore;
+      factStoreFormatted = mergedContextFacts.factStoreFormatted;
 
       const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
         ...baseContext,
         contextEngine: contextEngineData,
         factStore,
         factStoreFormatted,
+        extractedData: this.toExtractedContextData(extractedData),
       });
 
-      // FIX (audit P0 #5) : thesis-first — rehydrater la these persistee pour que Tier1/2/3
-      // agents (notamment thesis-reconciler) aient acces a context.thesis sur resume.
+      // A resumed analysis must stay bound to the thesis it originally ran with.
+      // Rehydrating the latest thesis would silently mix two thesis generations.
       try {
-        const latestThesis = await thesisService.getLatest(deal.id);
-        if (latestThesis) {
-          type ThesisVerdictStr = "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
-          type LoadBearingStatus = "verified" | "declared" | "projected" | "speculative";
-          const loadBearing = ((latestThesis.loadBearing as unknown) as Array<{
-            id: string; statement: string; status: LoadBearingStatus; impact: string; validationPath: string;
-          }>) ?? [];
-          const alerts = ((latestThesis.alerts as unknown) as Array<{ severity: string; category: string; title: string; detail: string }>) ?? [];
-          const yc = ((latestThesis.ycLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
-          const thiel = ((latestThesis.thielLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
-          const ad = ((latestThesis.angelDeskLens as unknown) as { verdict: ThesisVerdictStr }) ?? { verdict: "contrasted" };
-          enrichedContext.thesis = {
-            id: latestThesis.id,
-            reformulated: latestThesis.reformulated,
-            problem: latestThesis.problem,
-            solution: latestThesis.solution,
-            whyNow: latestThesis.whyNow,
-            moat: latestThesis.moat,
-            pathToExit: latestThesis.pathToExit,
-            verdict: latestThesis.verdict as ThesisVerdictStr,
-            confidence: latestThesis.confidence,
-            loadBearing,
-            alertsCount: alerts.length,
-            ycVerdict: yc.verdict,
-            thielVerdict: thiel.verdict,
-            angelDeskVerdict: ad.verdict,
-          };
-          console.log(`[Orchestrator:Resume] Thesis rehydrated: verdict=${latestThesis.verdict} confidence=${latestThesis.confidence}`);
-        }
+        await this.rehydrateResumeThesis(analysis.id, analysis.thesisId, enrichedContext);
       } catch (err) {
         console.warn("[Orchestrator:Resume] Failed to rehydrate thesis context:", err);
+        throw err;
       }
 
       // Resume based on current state
@@ -3770,34 +4389,139 @@ export class AgentOrchestrator {
           });
 
           const tier1AgentMap = await getTier1Agents();
+          const resumeTier1Phases = [
+            { name: "Phase A: deck-forensics", agents: TIER1_PHASE_A.filter((name) => pendingTier1.includes(name)) },
+            { name: "Phase B: financial-auditor", agents: TIER1_PHASE_B.filter((name) => pendingTier1.includes(name)) },
+            { name: "Phase C: team + competitive + market", agents: TIER1_PHASE_C.filter((name) => pendingTier1.includes(name)) },
+            { name: "Phase D: remaining agents", agents: TIER1_PHASE_D.filter((name) => pendingTier1.includes(name)) },
+          ].filter((phase) => phase.agents.length > 0);
 
-          // Use Promise.all with restored factStore for remaining agents.
-          // NOTE: We don't re-run the full 4-phase pipeline here because determining
-          // the exact interrupted phase is complex and error-prone. Instead, all remaining
-          // agents run in parallel with the validated facts available at interruption time.
-          const tier1Results = await Promise.all(
-            pendingTier1.map(async (agentName) => {
-              const agent = tier1AgentMap[agentName];
-              try {
-                const result = await agent.run(enrichedContext);
-                return { agentName, result };
-              } catch (error) {
-                return {
-                  agentName,
-                  result: {
-                    agentName,
-                    success: false,
-                    executionTimeMs: 0,
-                    cost: 0,
-                    error: error instanceof Error ? error.message : "Unknown error",
-                  } as AgentResult,
-                };
-              }
-            })
+          const resumePhasesResult = await this.runTier1Phases({
+            enrichedContext,
+            tier1AgentMap,
+            analysisId: analysis.id,
+            dealId: deal.id,
+            onProgress,
+            totalAgents: analysis.totalAgents,
+            onEarlyWarning,
+            collectedWarnings,
+            allResults,
+            initialTotalCost: totalCost,
+            initialCompletedCount: completedCount,
+            factStore,
+            factStoreFormatted,
+            extractedData,
+            stateMachine,
+            phases: resumeTier1Phases,
+          });
+
+          factStore = resumePhasesResult.updatedFactStore;
+          factStoreFormatted = resumePhasesResult.updatedFactStoreFormatted;
+          totalCost += resumePhasesResult.costIncurred;
+          completedCount += resumePhasesResult.completedInPhases;
+        }
+      }
+
+      const canResumeSynthesis =
+        currentState === "ANALYZING" ||
+        currentState === "SYNTHESIZING" ||
+        currentState === "DEBATING";
+
+      const sectorExpert = isFullAnalysis
+        ? await getTier2SectorExpert(enrichedContext.deal.sector)
+        : null;
+      const fullAnalysisTopology = isFullAnalysis
+        ? this.inferFullAnalysisResumeTopology(analysis.totalAgents, sectorExpert !== null)
+        : { includeFullTier3: true, includeTier2: false };
+
+      if (canResumeSynthesis) {
+        const hydrateTier3Context = async (): Promise<void> => {
+          enrichedContext.baPreferences = await this.loadBAPreferences(deal.userId);
+
+          if (enrichedContext.dealTerms) {
+            return;
+          }
+
+          const [rawDealTerms, rawDealStructure] = await Promise.all([
+            prisma.dealTerms.findUnique({ where: { dealId: deal.id } }),
+            prisma.dealStructure.findUnique({
+              where: { dealId: deal.id },
+              include: { tranches: { orderBy: { orderIndex: "asc" } } },
+            }),
+          ]);
+
+          if (rawDealTerms) {
+            enrichedContext.dealTerms = {
+              valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
+              amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
+              dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
+              instrumentType: rawDealTerms.instrumentType,
+              instrumentDetails: rawDealTerms.instrumentDetails,
+              liquidationPref: rawDealTerms.liquidationPref,
+              antiDilution: rawDealTerms.antiDilution,
+              proRataRights: rawDealTerms.proRataRights,
+              informationRights: rawDealTerms.informationRights,
+              boardSeat: rawDealTerms.boardSeat,
+              founderVesting: rawDealTerms.founderVesting,
+              vestingDurationMonths: rawDealTerms.vestingDurationMonths,
+              vestingCliffMonths: rawDealTerms.vestingCliffMonths,
+              esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
+              dragAlong: rawDealTerms.dragAlong,
+              tagAlong: rawDealTerms.tagAlong,
+              ratchet: rawDealTerms.ratchet,
+              payToPlay: rawDealTerms.payToPlay,
+              milestoneTranches: rawDealTerms.milestoneTranches,
+              nonCompete: rawDealTerms.nonCompete,
+              customConditions: rawDealTerms.customConditions,
+              notes: rawDealTerms.notes,
+            };
+          }
+
+          if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
+            enrichedContext.dealStructure = {
+              mode: "STRUCTURED",
+              totalInvestment: rawDealStructure.tranches.reduce(
+                (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
+              ),
+              tranches: rawDealStructure.tranches.map(t => ({
+                label: t.label || "Tranche",
+                trancheType: t.trancheType,
+                amount: t.amount != null ? Number(t.amount) : null,
+                valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+                equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+                triggerType: t.triggerType,
+                triggerDetails: t.triggerDetails,
+                status: t.status,
+              })),
+            };
+          }
+
+          enrichedContext.conditionsAnalystMode = "pipeline";
+        };
+
+        const tier3AgentMap = await getTier3Agents();
+        const restoreFullTier3Context = (): void => {
+          for (const [name, result] of Object.entries(allResults)) {
+            enrichedContext.previousResults![name] = result;
+          }
+        };
+
+        const runResumeTier3Batch = async (batch: readonly string[]): Promise<boolean> => {
+          const pendingInBatch = batch.filter(
+            (name) => !completedSet.has(name) && !failedSet.has(name)
           );
 
-          for (const { agentName, result } of tier1Results) {
-            // Sanitize narrative fields for prescriptive language (Rule #1)
+          if (pendingInBatch.length === 0) {
+            return false;
+          }
+
+          onProgress?.({
+            currentAgent: `resuming tier3 (${pendingInBatch.join(", ")})`,
+            completedAgents: completedCount,
+            totalAgents: analysis.totalAgents,
+          });
+
+          const recordTier3Result = async (agentName: string, result: AgentResult): Promise<void> => {
             if (result.success && "data" in result) {
               const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
               if (totalViolations > 0) {
@@ -3805,27 +4529,128 @@ export class AgentOrchestrator {
                 (result as { data: unknown }).data = sanitized;
               }
             }
+
             allResults[agentName] = result;
             totalCost += result.cost;
             completedCount++;
-            // Sanitize Tier 1 results to prevent bias in downstream agents (F52)
-            enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result);
+            enrichedContext.previousResults![agentName] = result;
+
+            if (result.success) {
+              completedSet.add(agentName);
+            } else {
+              failedSet.add(agentName);
+            }
+
             await processAgentResult(deal.id, agentName, result);
-            this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
+
+            if (
+              agentName === "thesis-reconciler" &&
+              enrichedContext.analysis?.mode !== "post_call_reanalysis"
+            ) {
+              await this.applyThesisReconciliation(enrichedContext, result);
+            }
+          };
+
+          if (pendingInBatch.length === 1) {
+            const agentName = pendingInBatch[0];
+            const agent = tier3AgentMap[agentName];
+
+            try {
+              await recordTier3Result(agentName, await agent.run(enrichedContext));
+            } catch (error) {
+              await recordTier3Result(agentName, {
+                agentName,
+                success: false,
+                executionTimeMs: 0,
+                cost: 0,
+                error: error instanceof Error ? error.message : "Unknown error",
+              });
+            }
+          } else {
+            const batchResults = await Promise.all(
+              pendingInBatch.map(async (agentName) => {
+                const agent = tier3AgentMap[agentName];
+                try {
+                  const result = await agent.run(enrichedContext);
+                  return { agentName, result };
+                } catch (error) {
+                  return {
+                    agentName,
+                    result: {
+                      agentName,
+                      success: false,
+                      executionTimeMs: 0,
+                      cost: 0,
+                      error: error instanceof Error ? error.message : "Unknown error",
+                    } as AgentResult,
+                  };
+                }
+              })
+            );
+
+            for (const { agentName, result } of batchResults) {
+              await recordTier3Result(agentName, result);
+            }
           }
 
           await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-        }
-      }
+          return true;
+        };
 
-      // Check if we need to run Tier 2 sector expert (PRO plan only)
-      if (
-        currentState === "ANALYZING" ||
-        currentState === "SYNTHESIZING" ||
-        currentState === "DEBATING"
-      ) {
-        const sectorExpert = await getTier2SectorExpert(deal.sector);
-        if (sectorExpert && !completedSet.has(sectorExpert.name) && !failedSet.has(sectorExpert.name)) {
+        const applyResumeTier3Coherence = async (): Promise<void> => {
+          const preTier3Agents = TIER3_BATCHES_BEFORE_TIER2.flat();
+          const readyForCoherence = preTier3Agents.every((name) => allResults[name]?.success);
+          if (!readyForCoherence) {
+            return;
+          }
+
+          const coherenceResult = applyTier3Coherence(enrichedContext.previousResults!);
+          if (coherenceResult.adjusted) {
+            injectCoherenceIntoContext(enrichedContext.previousResults!, coherenceResult);
+            console.log(
+              `[Orchestrator:Resume] Tier 3 coherence: ${coherenceResult.adjustments.length} adjustments ` +
+              `(score was ${coherenceResult.coherenceScore}/100)`
+            );
+          }
+
+          enrichedContext.tier3CoherenceResult = {
+            adjusted: coherenceResult.adjusted,
+            adjustments: coherenceResult.adjustments,
+            coherenceScore: coherenceResult.coherenceScore,
+            warnings: coherenceResult.warnings,
+          };
+
+          await persistReasoningTrace(analysis.id, "tier3-coherence", {
+            taskDescription: "Vérification cohérence inter-agents Tier 3",
+            totalIterations: 1,
+            finalConfidence: coherenceResult.coherenceScore,
+            executionTimeMs: 0,
+            selfCritique: {
+              adjusted: coherenceResult.adjusted,
+              adjustmentCount: coherenceResult.adjustments.length,
+              adjustments: coherenceResult.adjustments,
+              warnings: coherenceResult.warnings,
+            },
+          });
+        };
+
+        await hydrateTier3Context();
+        restoreFullTier3Context();
+
+        if (isFullAnalysis && fullAnalysisTopology.includeFullTier3) {
+          for (const batch of TIER3_BATCHES_BEFORE_TIER2) {
+            await runResumeTier3Batch(batch);
+          }
+          await applyResumeTier3Coherence();
+        }
+
+        if (
+          isFullAnalysis &&
+          fullAnalysisTopology.includeTier2 &&
+          sectorExpert &&
+          !completedSet.has(sectorExpert.name) &&
+          !failedSet.has(sectorExpert.name)
+        ) {
           onProgress?.({
             currentAgent: `resuming tier2-${sectorExpert.name}`,
             completedAgents: completedCount,
@@ -3838,181 +4663,39 @@ export class AgentOrchestrator {
             totalCost += sectorResult.cost;
             completedCount++;
             enrichedContext.previousResults![sectorExpert.name] = sectorResult;
+
+            if (sectorResult.success) {
+              completedSet.add(sectorExpert.name);
+            } else {
+              failedSet.add(sectorExpert.name);
+            }
+
             await processAgentResult(deal.id, sectorExpert.name, sectorResult);
             await updateAnalysisProgress(analysis.id, completedCount, totalCost);
           } catch (error) {
-            allResults[sectorExpert.name] = {
+            const sectorError: AgentResult = {
               agentName: sectorExpert.name,
               success: false,
               executionTimeMs: 0,
               cost: 0,
               error: error instanceof Error ? error.message : "Unknown error",
             };
+            allResults[sectorExpert.name] = sectorError;
+            failedSet.add(sectorExpert.name);
             completedCount++;
           }
         }
-      }
 
-      // Check if we need to run Tier 3
-      if (
-        currentState === "ANALYZING" ||
-        currentState === "SYNTHESIZING" ||
-        currentState === "DEBATING"
-      ) {
-        const pendingTier3 = TIER3_AGENT_NAMES.filter(
-          (name) => !completedSet.has(name) && !failedSet.has(name)
-        );
+        restoreFullTier3Context();
 
-        if (pendingTier3.length > 0) {
-          // Load BA preferences for Tier 3
-          const baPreferences = await this.loadBAPreferences(deal.userId);
-          enrichedContext.baPreferences = baPreferences;
+        const tier3Batches = isFullAnalysis
+          ? (fullAnalysisTopology.includeFullTier3 ? TIER3_BATCHES_AFTER_TIER2 : FREE_TIER3_BATCHES_AFTER_TIER2)
+          : TIER3_EXECUTION_BATCHES;
 
-          // Load DealTerms + DealStructure for conditions-analyst (Tier 3)
-          if (!enrichedContext.dealTerms) {
-            const [rawDealTerms, rawDealStructure] = await Promise.all([
-              prisma.dealTerms.findUnique({ where: { dealId: deal.id } }),
-              prisma.dealStructure.findUnique({
-                where: { dealId: deal.id },
-                include: { tranches: { orderBy: { orderIndex: "asc" } } },
-              }),
-            ]);
-            if (rawDealTerms) {
-              enrichedContext.dealTerms = {
-                valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
-                amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
-                dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
-                instrumentType: rawDealTerms.instrumentType,
-                instrumentDetails: rawDealTerms.instrumentDetails,
-                liquidationPref: rawDealTerms.liquidationPref,
-                antiDilution: rawDealTerms.antiDilution,
-                proRataRights: rawDealTerms.proRataRights,
-                informationRights: rawDealTerms.informationRights,
-                boardSeat: rawDealTerms.boardSeat,
-                founderVesting: rawDealTerms.founderVesting,
-                vestingDurationMonths: rawDealTerms.vestingDurationMonths,
-                vestingCliffMonths: rawDealTerms.vestingCliffMonths,
-                esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
-                dragAlong: rawDealTerms.dragAlong,
-                tagAlong: rawDealTerms.tagAlong,
-                ratchet: rawDealTerms.ratchet,
-                payToPlay: rawDealTerms.payToPlay,
-                milestoneTranches: rawDealTerms.milestoneTranches,
-                nonCompete: rawDealTerms.nonCompete,
-                customConditions: rawDealTerms.customConditions,
-                notes: rawDealTerms.notes,
-              };
-            }
-            if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
-              enrichedContext.dealStructure = {
-                mode: "STRUCTURED",
-                totalInvestment: rawDealStructure.tranches.reduce(
-                  (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
-                ),
-                tranches: rawDealStructure.tranches.map(t => ({
-                  label: t.label || "Tranche",
-                  trancheType: t.trancheType,
-                  amount: t.amount != null ? Number(t.amount) : null,
-                  valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
-                  equityPct: t.equityPct != null ? Number(t.equityPct) : null,
-                  triggerType: t.triggerType,
-                  triggerDetails: t.triggerDetails,
-                  status: t.status,
-                })),
-              };
-            }
-            enrichedContext.conditionsAnalystMode = "pipeline";
-          }
-
-          const tier3AgentMap = await getTier3Agents();
-
-          // Restore full (unsanitized) results for Tier 3 synthesis agents.
-          // Sanitization (F52) was only needed between Tier 1 agents to prevent confirmation bias.
-          for (const [name, result] of Object.entries(allResults)) {
-            enrichedContext.previousResults![name] = result;
-          }
-
-          // Run remaining Tier 3 agents in dependency order
-          for (const batch of TIER3_EXECUTION_BATCHES) {
-            const pendingInBatch = batch.filter((name) => pendingTier3.includes(name));
-
-            if (pendingInBatch.length === 0) continue;
-
-            onProgress?.({
-              currentAgent: `resuming tier3 (${pendingInBatch.join(", ")})`,
-              completedAgents: completedCount,
-              totalAgents: analysis.totalAgents,
-            });
-
-            if (pendingInBatch.length === 1) {
-              const agentName = pendingInBatch[0];
-              const agent = tier3AgentMap[agentName];
-
-              try {
-                const result = await agent.run(enrichedContext);
-                // Sanitize narrative fields for prescriptive language (Rule #1)
-                if (result.success && "data" in result) {
-                  const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
-                  if (totalViolations > 0) {
-                    console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
-                    (result as { data: unknown }).data = sanitized;
-                  }
-                }
-                allResults[agentName] = result;
-                totalCost += result.cost;
-                completedCount++;
-                enrichedContext.previousResults![agentName] = result;
-                await processAgentResult(deal.id, agentName, result);
-              } catch (error) {
-                allResults[agentName] = {
-                  agentName,
-                  success: false,
-                  executionTimeMs: 0,
-                  cost: 0,
-                  error: error instanceof Error ? error.message : "Unknown error",
-                };
-                completedCount++;
-              }
-            } else {
-              const batchResults = await Promise.all(
-                pendingInBatch.map(async (agentName) => {
-                  const agent = tier3AgentMap[agentName];
-                  try {
-                    const result = await agent.run(enrichedContext);
-                    return { agentName, result };
-                  } catch (error) {
-                    return {
-                      agentName,
-                      result: {
-                        agentName,
-                        success: false,
-                        executionTimeMs: 0,
-                        cost: 0,
-                        error: error instanceof Error ? error.message : "Unknown error",
-                      } as AgentResult,
-                    };
-                  }
-                })
-              );
-
-              for (const { agentName, result } of batchResults) {
-                // Sanitize narrative fields for prescriptive language (Rule #1)
-                if (result.success && "data" in result) {
-                  const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
-                  if (totalViolations > 0) {
-                    console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
-                    (result as { data: unknown }).data = sanitized;
-                  }
-                }
-                allResults[agentName] = result;
-                totalCost += result.cost;
-                completedCount++;
-                enrichedContext.previousResults![agentName] = result;
-                await processAgentResult(deal.id, agentName, result);
-              }
-            }
-
-            await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+        for (const batch of tier3Batches) {
+          const ranBatch = await runResumeTier3Batch(batch);
+          if (!isFullAnalysis && ranBatch && batch === TIER3_EXECUTION_BATCHES[0]) {
+            await applyResumeTier3Coherence();
           }
         }
       }
@@ -4037,17 +4720,18 @@ export class AgentOrchestrator {
       );
 
       // SAFETY: Never overwrite existing results with fewer entries
-      const existingResults = await prisma.analysis.findUnique({
-        where: { id: analysis.id },
-        select: { results: true },
+      const existingResultsRaw = await loadResults(analysis.id, {
+        preferDb: true,
+        backfillCache: false,
       });
-      const existingCount = existingResults?.results ? Object.keys(existingResults.results as Record<string, unknown>).length : 0;
+      const existingResults = toAgentResultsRecord(existingResultsRaw);
+      const existingCount = existingResults ? Object.keys(existingResults).length : 0;
       if (Object.keys(allResults).length < existingCount) {
         console.error(
           `[Orchestrator:Resume] ABORT SAVE: allResults (${Object.keys(allResults).length}) < existing DB results (${existingCount}). Keeping existing results.`
         );
         // Merge: keep existing, add new
-        const existing = existingResults!.results as unknown as Record<string, AgentResult>;
+        const existing = { ...(existingResults ?? {}) };
         for (const [key, val] of Object.entries(allResults)) {
           if (val && val.success) {
             existing[key] = val; // only overwrite with successful results
@@ -4109,18 +4793,19 @@ export class AgentOrchestrator {
 
       // SAFETY: Never overwrite existing results with fewer entries on failure
       try {
-        const existingOnError = await prisma.analysis.findUnique({
-          where: { id: analysis.id },
-          select: { results: true },
+        const existingOnErrorRaw = await loadResults(analysis.id, {
+          preferDb: true,
+          backfillCache: false,
         });
-        const existingCountOnError = existingOnError?.results ? Object.keys(existingOnError.results as Record<string, unknown>).length : 0;
+        const existingOnError = toAgentResultsRecord(existingOnErrorRaw);
+        const existingCountOnError = existingOnError ? Object.keys(existingOnError).length : 0;
 
         let resultsToSave = allResults;
         if (Object.keys(allResults).length < existingCountOnError) {
           console.error(
             `[Orchestrator:Resume] CATCH SAFETY: allResults (${Object.keys(allResults).length}) < existing (${existingCountOnError}). Merging into existing.`
           );
-          const existing = existingOnError!.results as unknown as Record<string, AgentResult>;
+          const existing = { ...(existingOnError ?? {}) };
           for (const [key, val] of Object.entries(allResults)) {
             if (val && val.success) existing[key] = val;
           }

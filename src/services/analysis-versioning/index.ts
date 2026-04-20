@@ -7,6 +7,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
 
 /**
  * Information about analysis staleness
@@ -28,6 +29,123 @@ export interface AnalysisStalenessInfo {
   message: string | null;
 }
 
+type AnalysisScopeRecord = {
+  id: string;
+  dealId: string;
+  corpusSnapshotId: string | null;
+  documentIds: string[] | null;
+  documents: Array<{ documentId: string }>;
+};
+
+function dedupeDocumentIds(documentIds: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const documentId of documentIds) {
+    if (!documentId || seen.has(documentId)) continue;
+    seen.add(documentId);
+    deduped.push(documentId);
+  }
+
+  return deduped;
+}
+
+async function resolveAnalyzedDocumentIds(
+  analysis: AnalysisScopeRecord,
+  options: {
+    scope: string;
+    currentDocumentIds?: string[];
+    snapshotDocumentIds?: string[];
+  }
+): Promise<string[]> {
+  const joinedDocumentIds = dedupeDocumentIds(
+    analysis.documents.map((document) => document.documentId)
+  );
+  const legacyDocumentIds = dedupeDocumentIds(analysis.documentIds ?? []);
+
+  if (analysis.corpusSnapshotId) {
+    const snapshotDocumentIds = dedupeDocumentIds(
+      options.snapshotDocumentIds ??
+        (await getCorpusSnapshotDocumentIds(analysis.corpusSnapshotId))
+    );
+
+    if (snapshotDocumentIds.length > 0) {
+      return snapshotDocumentIds;
+    }
+
+    if (joinedDocumentIds.length > 0) {
+      return joinedDocumentIds;
+    }
+
+    if (legacyDocumentIds.length > 0) {
+      logger.warn(
+        {
+          analysisId: analysis.id,
+          dealId: analysis.dealId,
+          corpusSnapshotId: analysis.corpusSnapshotId,
+          legacyDocumentCount: legacyDocumentIds.length,
+          scope: options.scope,
+        },
+        "Ignoring legacy analysis.documentIds fallback because canonical snapshot scope is unavailable"
+      );
+    }
+
+    return [];
+  }
+
+  if (joinedDocumentIds.length > 0) {
+    return joinedDocumentIds;
+  }
+
+  if (legacyDocumentIds.length === 0) {
+    return [];
+  }
+
+  const currentDocumentIds = options.currentDocumentIds ?? [];
+  if (currentDocumentIds.length === 0) {
+    logger.warn(
+      {
+        analysisId: analysis.id,
+        dealId: analysis.dealId,
+        legacyDocumentCount: legacyDocumentIds.length,
+        scope: options.scope,
+      },
+      "Ignoring legacy analysis.documentIds fallback without a current document scope"
+    );
+    return [];
+  }
+
+  const currentDocumentIdSet = new Set(currentDocumentIds);
+  const restrictedLegacyDocumentIds = legacyDocumentIds.filter((documentId) =>
+    currentDocumentIdSet.has(documentId)
+  );
+
+  if (restrictedLegacyDocumentIds.length > 0) {
+    logger.warn(
+      {
+        analysisId: analysis.id,
+        dealId: analysis.dealId,
+        legacyDocumentCount: legacyDocumentIds.length,
+        reconciledDocumentCount: restrictedLegacyDocumentIds.length,
+        scope: options.scope,
+      },
+      "Using restricted legacy analysis.documentIds fallback"
+    );
+    return restrictedLegacyDocumentIds;
+  }
+
+  logger.warn(
+    {
+      analysisId: analysis.id,
+      dealId: analysis.dealId,
+      legacyDocumentCount: legacyDocumentIds.length,
+      scope: options.scope,
+    },
+    "Legacy analysis.documentIds fallback could not be reconciled; treating analysis scope as empty"
+  );
+  return [];
+}
+
 /**
  * Check if an analysis is stale compared to current deal documents
  *
@@ -42,15 +160,15 @@ export async function getAnalysisStaleness(
   analysisId: string
 ): Promise<AnalysisStalenessInfo | null> {
   try {
-    // Get the analysis with its documentIds (legacy) + AnalysisDocument (new)
+    // Get the analysis with its canonical snapshot / AnalysisDocument scope.
     const analysis = await prisma.analysis.findUnique({
       where: { id: analysisId },
       select: {
         id: true,
         dealId: true,
+        corpusSnapshotId: true,
         documentIds: true,
         documents: { select: { documentId: true } },
-        createdAt: true,
       },
     });
 
@@ -63,7 +181,7 @@ export async function getAnalysisStaleness(
       where: { id: analysis.dealId },
       include: {
         documents: {
-          where: { processingStatus: "COMPLETED" },
+          where: { processingStatus: "COMPLETED", isLatest: true },
           select: { id: true, name: true, uploadedAt: true },
           orderBy: { uploadedAt: "desc" },
         },
@@ -74,10 +192,11 @@ export async function getAnalysisStaleness(
       return null;
     }
 
-    // Prefer the FK-backed jointure if populated; fallback to the legacy String[] field
-    const joinedIds = analysis.documents.map((d) => d.documentId);
-    const analyzedDocumentIds = joinedIds.length > 0 ? joinedIds : (analysis.documentIds || []);
     const currentDocumentIds = deal.documents.map((d) => d.id);
+    const analyzedDocumentIds = await resolveAnalyzedDocumentIds(analysis, {
+      currentDocumentIds,
+      scope: "AnalysisVersioning.getAnalysisStaleness",
+    });
 
     // Find new documents (in current but not in analyzed)
     const newDocumentIds = currentDocumentIds.filter(
@@ -136,12 +255,13 @@ export async function getAnalysesStaleness(
   }
 
   try {
-    // Batch fetch all analyses (legacy documentIds + FK-backed documents)
+    // Batch fetch all analyses with their canonical snapshot / AnalysisDocument scope.
     const analyses = await prisma.analysis.findMany({
       where: { id: { in: analysisIds } },
       select: {
         id: true,
         dealId: true,
+        corpusSnapshotId: true,
         documentIds: true,
         documents: { select: { documentId: true } },
       },
@@ -155,11 +275,20 @@ export async function getAnalysesStaleness(
       where: { id: { in: dealIds } },
       include: {
         documents: {
-          where: { processingStatus: "COMPLETED" },
+          where: { processingStatus: "COMPLETED", isLatest: true },
           select: { id: true },
         },
       },
     });
+
+    const snapshotDocumentIdsByAnalysisId = new Map<string, string[]>();
+    await Promise.all(
+      analyses.map(async (analysis) => {
+        if (!analysis.corpusSnapshotId) return;
+        const documentIds = await getCorpusSnapshotDocumentIds(analysis.corpusSnapshotId);
+        snapshotDocumentIdsByAnalysisId.set(analysis.id, documentIds);
+      })
+    );
 
     // Create a map of dealId -> current document IDs
     const dealDocumentsMap = new Map<string, string[]>();
@@ -172,9 +301,12 @@ export async function getAnalysesStaleness(
 
     // Calculate staleness for each analysis
     for (const analysis of analyses) {
-      const joinedIds = analysis.documents.map((d) => d.documentId);
-      const analyzedDocumentIds = joinedIds.length > 0 ? joinedIds : (analysis.documentIds || []);
       const currentDocumentIds = dealDocumentsMap.get(analysis.dealId) || [];
+      const analyzedDocumentIds = await resolveAnalyzedDocumentIds(analysis, {
+        currentDocumentIds,
+        scope: "AnalysisVersioning.getAnalysesStaleness",
+        snapshotDocumentIds: snapshotDocumentIdsByAnalysisId.get(analysis.id),
+      });
 
       const newDocumentIds = currentDocumentIds.filter(
         (id) => !analyzedDocumentIds.includes(id)
@@ -235,8 +367,6 @@ export async function getLatestAnalysisStaleness(
       select: {
         id: true,
         type: true,
-        documentIds: true,
-        documents: { select: { documentId: true } },
       },
     });
 
@@ -274,35 +404,43 @@ export async function getUnanalyzedDocuments(
   analysisId?: string
 ): Promise<Array<{ id: string; name: string; type: string; uploadedAt: Date }>> {
   try {
+    const currentDocumentsPromise = prisma.document.findMany({
+      where: { dealId, processingStatus: "COMPLETED", isLatest: true },
+      select: { id: true, name: true, type: true, uploadedAt: true },
+      orderBy: { uploadedAt: "desc" },
+    });
+
     // Get the analysis to compare against
-    let analysis;
-    if (analysisId) {
-      analysis = await prisma.analysis.findUnique({
+    const analysisPromise = analysisId
+      ? prisma.analysis.findUnique({
         where: { id: analysisId },
         select: {
+          id: true,
+          dealId: true,
+          corpusSnapshotId: true,
           documentIds: true,
           documents: { select: { documentId: true } },
         },
-      });
-    } else {
-      analysis = await prisma.analysis.findFirst({
+      })
+      : prisma.analysis.findFirst({
         where: { dealId, status: "COMPLETED" },
         orderBy: { createdAt: "desc" },
         select: {
+          id: true,
+          dealId: true,
+          corpusSnapshotId: true,
           documentIds: true,
           documents: { select: { documentId: true } },
         },
       });
-    }
+
+    const [analysis, currentDocuments] = await Promise.all([
+      analysisPromise,
+      currentDocumentsPromise,
+    ]);
 
     if (!analysis) {
-      // No analysis exists - all documents are "unanalyzed"
-      const allDocs = await prisma.document.findMany({
-        where: { dealId, processingStatus: "COMPLETED" },
-        select: { id: true, name: true, type: true, uploadedAt: true },
-        orderBy: { uploadedAt: "desc" },
-      });
-      return allDocs.map((d) => ({
+      return currentDocuments.map((d) => ({
         id: d.id,
         name: d.name,
         type: d.type,
@@ -310,20 +448,16 @@ export async function getUnanalyzedDocuments(
       }));
     }
 
-    const joinedIds = analysis.documents.map((d) => d.documentId);
-    const preferred = joinedIds.length > 0 ? joinedIds : (analysis.documentIds || []);
-    const analyzedDocumentIds = new Set(preferred);
+    const analyzedDocumentIds = new Set(
+      await resolveAnalyzedDocumentIds(analysis, {
+        currentDocumentIds: currentDocuments.map((document) => document.id),
+        scope: "AnalysisVersioning.getUnanalyzedDocuments",
+      })
+    );
 
-    // Get documents not in the analyzed set
-    const unanalyzedDocs = await prisma.document.findMany({
-      where: {
-        dealId,
-        processingStatus: "COMPLETED",
-        id: { notIn: [...analyzedDocumentIds] },
-      },
-      select: { id: true, name: true, type: true, uploadedAt: true },
-      orderBy: { uploadedAt: "desc" },
-    });
+    const unanalyzedDocs = currentDocuments.filter(
+      (document) => !analyzedDocumentIds.has(document.id)
+    );
 
     return unanalyzedDocs.map((d) => ({
       id: d.id,

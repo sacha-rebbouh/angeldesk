@@ -22,6 +22,7 @@ import type {
   LoadBearingAssumption,
   ThesisAlert,
   FrameworkLens,
+  FrameworkClaim,
 } from "../thesis/types";
 import { worstVerdict, THESIS_ANTI_HALLUCINATION_DIRECTIVES } from "../thesis/types";
 import {
@@ -90,6 +91,21 @@ type ThesisCore = z.infer<typeof ThesisCoreSchema>;
 // Agent
 // ---------------------------------------------------------------------------
 export class ThesisExtractorAgent extends BaseAgent<ThesisExtractorOutput> {
+  private static readonly VALID_VERDICTS: ThesisVerdict[] = [
+    "very_favorable",
+    "favorable",
+    "contrasted",
+    "vigilance",
+    "alert_dominant",
+  ];
+
+  private static readonly VALID_CLAIM_STATUSES = [
+    "supported",
+    "contradicted",
+    "unverifiable",
+    "partial",
+  ] as const;
+
   constructor() {
     super({
       name: "thesis-extractor",
@@ -159,26 +175,49 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     const sourceHash = this.hashSources(context);
 
     // 2. Extraction core de la these (1 call LLM complex)
+    // fallbackDefaults : si le LLM omet loadBearing/alerts (arrays requis),
+    // Zod echoue mais on merge avec des arrays vides pour eviter undefined
+    // en aval (thesisService.create fait aussi un garde mais on limite ici).
     const coreUserPrompt = this.buildCoreUserPrompt(context, contextSummary);
     const coreResult = await this.llmCompleteJSONValidated<ThesisCore>(
       coreUserPrompt,
       ThesisCoreSchema,
-      { temperature: 0.2 }
+      {
+        temperature: 0.2,
+        fallbackDefaults: {
+          loadBearing: [],
+          alerts: [],
+          moat: null,
+          pathToExit: null,
+        },
+      }
     );
     const core = coreResult.data;
+    // Dernier filet si le LLM a retourne un output totalement vide qu'on a
+    // quand meme laisse passer (raw fallback dans base-agent).
+    const safeCore: ThesisCore = {
+      reformulated: typeof core?.reformulated === "string" ? core.reformulated : "",
+      problem: typeof core?.problem === "string" ? core.problem : "",
+      solution: typeof core?.solution === "string" ? core.solution : "",
+      whyNow: typeof core?.whyNow === "string" ? core.whyNow : "",
+      moat: typeof core?.moat === "string" ? core.moat : null,
+      pathToExit: typeof core?.pathToExit === "string" ? core.pathToExit : null,
+      loadBearing: Array.isArray(core?.loadBearing) ? core.loadBearing : [],
+      alerts: Array.isArray(core?.alerts) ? core.alerts : [],
+    };
 
     // 3. 3 frameworks en parallele (Promise.all pour reduire la latence)
     const frameworkInput = {
-      reformulated: core.reformulated,
-      problem: core.problem,
-      solution: core.solution,
-      whyNow: core.whyNow,
-      moat: core.moat,
-      pathToExit: core.pathToExit,
+      reformulated: safeCore.reformulated,
+      problem: safeCore.problem,
+      solution: safeCore.solution,
+      whyNow: safeCore.whyNow,
+      moat: safeCore.moat,
+      pathToExit: safeCore.pathToExit,
       contextSummary,
     };
 
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
 
     const [yc, thiel, ad] = await Promise.all([
       this.runYcLens(frameworkInput),
@@ -200,7 +239,7 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     // 5. Alerts consolidees — on prend celles extraites par le core PLUS celles derivees des
     // failures des frameworks (severity "high" par defaut)
     const alerts: ThesisAlert[] = [
-      ...core.alerts.map((a) => ({
+      ...safeCore.alerts.map((a) => ({
         severity: a.severity,
         category: a.category,
         title: a.title,
@@ -214,19 +253,19 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     this.appendFrameworkFailuresAsAlerts(alerts, thiel, "thiel");
     this.appendFrameworkFailuresAsAlerts(alerts, ad, "angel-desk");
 
-    const loadBearing: LoadBearingAssumption[] = core.loadBearing;
+    const loadBearing: LoadBearingAssumption[] = safeCore.loadBearing;
 
     const ycLens: FrameworkLens = this.toFrameworkLens("yc", yc);
     const thielLens: FrameworkLens = this.toFrameworkLens("thiel", thiel);
     const angelDeskLens: FrameworkLens = this.toFrameworkLens("angel-desk", ad);
 
     return {
-      reformulated: core.reformulated,
-      problem: core.problem,
-      solution: core.solution,
-      whyNow: core.whyNow,
-      moat: core.moat,
-      pathToExit: core.pathToExit,
+      reformulated: safeCore.reformulated,
+      problem: safeCore.problem,
+      solution: safeCore.solution,
+      whyNow: safeCore.whyNow,
+      moat: safeCore.moat,
+      pathToExit: safeCore.pathToExit,
       verdict,
       confidence,
       loadBearing,
@@ -366,7 +405,7 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
   }
 
   private buildCoreUserPrompt(context: AgentContext, contextSummary: string): string {
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     const dealBlock = `
 ## DEAL META
 - Nom: ${deal?.name ?? "N/A"}
@@ -398,11 +437,12 @@ OUTPUT ATTENDU: JSON strict conforme au schema ThesisCore, en francais, sans auc
 
   private appendFrameworkFailuresAsAlerts(
     alerts: ThesisAlert[],
-    lens: { failures: string[]; verdict: ThesisVerdict },
+    lens: { failures: unknown; verdict: unknown },
     source: "yc" | "thiel" | "angel-desk"
   ): void {
-    const severity = lens.verdict === "alert_dominant" ? "critical" : lens.verdict === "vigilance" ? "high" : "medium";
-    for (const f of lens.failures) {
+    const verdict = this.normalizeVerdict(lens.verdict);
+    const severity = verdict === "alert_dominant" ? "critical" : verdict === "vigilance" ? "high" : "medium";
+    for (const f of this.normalizeTextList(lens.failures)) {
       // Evite les doublons triviaux
       if (alerts.some((a) => a.title.toLowerCase() === f.toLowerCase().slice(0, 80))) continue;
       alerts.push({
@@ -420,20 +460,90 @@ OUTPUT ATTENDU: JSON strict conforme au schema ThesisCore, en francais, sans auc
   ): FrameworkLens {
     return {
       framework,
-      verdict: lens.verdict,
-      confidence: lens.confidence,
-      question: lens.question,
-      claims: lens.claims.map((c) => ({
-        claim: c.claim,
-        derivedFrom: c.derivedFrom,
-        status: c.status,
-        evidence: c.evidence,
-        concern: c.concern,
-      })),
-      failures: lens.failures,
-      strengths: lens.strengths,
-      summary: lens.summary,
+      verdict: this.normalizeVerdict(lens.verdict),
+      confidence: this.normalizeConfidence(lens.confidence),
+      question: this.normalizeNonEmptyString(lens.question, `${framework} lens`),
+      claims: this.normalizeFrameworkClaims(lens.claims),
+      failures: this.normalizeTextList(lens.failures),
+      strengths: this.normalizeTextList(lens.strengths),
+      summary: this.normalizeNonEmptyString(lens.summary, `${framework} lens summary unavailable`),
     };
+  }
+
+  private normalizeVerdict(value: unknown): ThesisVerdict {
+    return ThesisExtractorAgent.VALID_VERDICTS.includes(value as ThesisVerdict)
+      ? (value as ThesisVerdict)
+      : "contrasted";
+  }
+
+  private normalizeConfidence(value: unknown): number {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+      return 50;
+    }
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  private normalizeNonEmptyString(value: unknown, fallback: string): string {
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+  }
+
+  private normalizeTextList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((entry) => {
+        if (typeof entry === "string") {
+          return entry.trim();
+        }
+        if (entry && typeof entry === "object") {
+          const record = entry as Record<string, unknown>;
+          for (const key of ["failure", "title", "detail", "reason", "message", "summary", "claim"]) {
+            const candidate = record[key];
+            if (typeof candidate === "string" && candidate.trim().length > 0) {
+              return candidate.trim();
+            }
+          }
+          try {
+            const serialized = JSON.stringify(entry);
+            return serialized && serialized !== "{}" ? serialized : "";
+          } catch {
+            return "";
+          }
+        }
+        if (typeof entry === "number" || typeof entry === "boolean") {
+          return String(entry);
+        }
+        return "";
+      })
+      .filter((entry): entry is string => entry.length > 0);
+  }
+
+  private normalizeFrameworkClaims(value: unknown): FrameworkClaim[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.reduce<FrameworkClaim[]>((claims, entry, index) => {
+      if (!entry || typeof entry !== "object") {
+        return claims;
+      }
+
+      const record = entry as Record<string, unknown>;
+      const status = ThesisExtractorAgent.VALID_CLAIM_STATUSES.includes(record.status as (typeof ThesisExtractorAgent.VALID_CLAIM_STATUSES)[number])
+        ? (record.status as FrameworkClaim["status"])
+        : "unverifiable";
+
+      claims.push({
+        claim: this.normalizeNonEmptyString(record.claim, `Claim ${index + 1}`),
+        derivedFrom: this.normalizeNonEmptyString(record.derivedFrom, "Source non structuree"),
+        status,
+        evidence: typeof record.evidence === "string" && record.evidence.trim().length > 0 ? record.evidence.trim() : undefined,
+        concern: typeof record.concern === "string" && record.concern.trim().length > 0 ? record.concern.trim() : undefined,
+      });
+      return claims;
+    }, []);
   }
 
   private hashSources(context: AgentContext): string {

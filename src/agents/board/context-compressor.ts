@@ -254,6 +254,10 @@ function buildEnrichedSection(input: BoardInput): string | null {
     parts.push(`### Historique Funding\n${extractStructuredSummary(ed.fundingHistory, 1000)}`);
   }
 
+  if (ed.websiteContent) {
+    parts.push(`### Website\n${extractStructuredSummary(ed.websiteContent, 1500)}`);
+  }
+
   // News — just titles
   if (Array.isArray(ed.newsArticles) && ed.newsArticles.length > 0) {
     const news = ed.newsArticles.slice(0, 5).map((n) => {
@@ -264,6 +268,14 @@ function buildEnrichedSection(input: BoardInput): string | null {
       return `- ${String(n).slice(0, 100)}`;
     });
     parts.push(`### Actualites\n${news.join("\n")}`);
+  }
+
+  if (ed.contextQuality) {
+    parts.push(`### Qualite Context Engine\n${extractStructuredSummary(ed.contextQuality, 600)}`);
+  }
+
+  if (ed.sourceHealth) {
+    parts.push(`### Sante Sources\n${extractStructuredSummary(ed.sourceHealth, 800)}`);
   }
 
   const result = parts.join("\n\n");

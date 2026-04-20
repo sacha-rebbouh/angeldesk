@@ -1,30 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
-import { DealStage, DealStatus, FundingInstrument } from "@prisma/client";
 import { handleApiError } from "@/lib/api-error";
-
-const updateDealSchema = z.object({
-  name: z.string().min(1).optional(),
-  companyName: z.string().optional(),
-  website: z.string().url().optional().or(z.literal("")),
-  description: z.string().optional(),
-  sector: z.string().optional(),
-  stage: z.nativeEnum(DealStage).optional(),
-  instrument: z.nativeEnum(FundingInstrument).optional(),
-  geography: z.string().optional(),
-  arr: z.number().positive().optional(),
-  growthRate: z.number().optional(),
-  amountRequested: z.number().positive().optional(),
-  valuationPre: z.number().positive().optional(),
-  status: z.nativeEnum(DealStatus).optional(),
-});
+import {
+  loadCanonicalDealSignals,
+  resolveCanonicalDealFields,
+} from "@/services/deals/canonical-read-model";
+import {
+  buildDealUpdateData,
+  buildManualFactOverrides,
+  persistManualFactOverrides,
+  updateDealSchema,
+} from "@/services/deals/manual-fact-overrides";
+import { refreshCurrentFactsView } from "@/services/fact-store/current-facts";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
 };
+
+function normalizeDealDetail(deal: {
+  id: string;
+  companyName: string | null;
+  website: string | null;
+  amountRequested: unknown;
+  arr: unknown;
+  growthRate: unknown;
+  valuationPre: unknown;
+  sector: string | null;
+  stage: string | null;
+  instrument: string | null;
+  geography: string | null;
+  description: string | null;
+  globalScore: number | null;
+  teamScore: number | null;
+  marketScore: number | null;
+  productScore: number | null;
+  financialsScore: number | null;
+}) {
+  return loadCanonicalDealSignals([deal.id]).then((signals) => ({
+    ...deal,
+    ...resolveCanonicalDealFields(deal.id, signals, {
+      companyName: deal.companyName,
+      website: deal.website,
+      amountRequested:
+        deal.amountRequested != null ? Number(deal.amountRequested) : null,
+      arr: deal.arr != null ? Number(deal.arr) : null,
+      growthRate: deal.growthRate != null ? Number(deal.growthRate) : null,
+      valuationPre: deal.valuationPre != null ? Number(deal.valuationPre) : null,
+      sector: deal.sector,
+      stage: deal.stage,
+      instrument: deal.instrument,
+      geography: deal.geography,
+      description: deal.description,
+      globalScore: deal.globalScore,
+      teamScore: deal.teamScore,
+      marketScore: deal.marketScore,
+      productScore: deal.productScore,
+      financialsScore: deal.financialsScore,
+    }),
+  }));
+}
 
 // GET /api/deals/[dealId] - Get a specific deal
 export async function GET(request: NextRequest, context: RouteContext) {
@@ -98,7 +134,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ data: deal });
+    return NextResponse.json({ data: await normalizeDealDetail(deal) });
   } catch (error) {
     return handleApiError(error, "fetch deal");
   }
@@ -119,6 +155,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     const body = await request.json();
+    const presentKeys = new Set(Object.keys(body));
 
     // Verify ownership
     const existingDeal = await prisma.deal.findFirst({
@@ -133,61 +170,69 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     const validatedData = updateDealSchema.parse(body);
+    const manualFactOverrides = buildManualFactOverrides(validatedData, presentKeys);
 
-    const deal = await prisma.deal.update({
-      where: { id: dealId },
-      data: {
-        ...validatedData,
-        website: validatedData.website || null,
-      },
-      include: {
-        founders: {
-          select: {
-            id: true,
-            name: true,
-            role: true,
-            linkedinUrl: true,
-            previousVentures: true,
-            verifiedInfo: true,
-            createdAt: true,
+    const deal = await prisma.$transaction(async (tx) => {
+      const updatedDeal = await tx.deal.update({
+        where: { id: dealId },
+        data: buildDealUpdateData(validatedData, presentKeys),
+        include: {
+          founders: {
+            select: {
+              id: true,
+              name: true,
+              role: true,
+              linkedinUrl: true,
+              previousVentures: true,
+              verifiedInfo: true,
+              createdAt: true,
+            },
+          },
+          documents: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              customType: true,
+              comments: true,
+              storageUrl: true,
+              mimeType: true,
+              sizeBytes: true,
+              processingStatus: true,
+              extractionQuality: true,
+              requiresOCR: true,
+              ocrProcessed: true,
+            },
+          },
+          redFlags: true,
+          analyses: {
+            select: {
+              id: true,
+              type: true,
+              mode: true,
+              status: true,
+              completedAgents: true,
+              totalAgents: true,
+              summary: true,
+              totalCost: true,
+              createdAt: true,
+              completedAt: true,
+            },
+            orderBy: { createdAt: "desc" },
           },
         },
-        documents: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            customType: true,
-            comments: true,
-            storageUrl: true,
-            mimeType: true,
-            sizeBytes: true,
-            processingStatus: true,
-            extractionQuality: true,
-            requiresOCR: true,
-            ocrProcessed: true,
-          },
-        },
-        redFlags: true,
-        analyses: {
-          select: {
-            id: true,
-            type: true,
-            mode: true,
-            status: true,
-            completedAgents: true,
-            totalAgents: true,
-            summary: true,
-            totalCost: true,
-            createdAt: true,
-            completedAt: true,
-          },
-          orderBy: { createdAt: "desc" },
-        },
-      },
+      });
+
+      await persistManualFactOverrides(tx, dealId, manualFactOverrides);
+
+      return updatedDeal;
     });
 
-    return NextResponse.json({ data: deal });
+    if (manualFactOverrides.length > 0) {
+      await refreshCurrentFactsView();
+    }
+
+    return NextResponse.json({ data: await normalizeDealDetail(deal) });
   } catch (error) {
     return handleApiError(error, "update deal");
   }

@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
+import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
+import { getCurrentFactString } from "@/services/deals/canonical-read-model";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -87,7 +89,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
-    const stageKey = normalizeStage(deal.stage);
+    const currentFacts = await getCurrentFactsFromView(dealId);
+    const factMap = new Map(currentFacts.map((fact) => [fact.factKey, fact]));
+    const canonicalStage = getCurrentFactString(factMap, "product.stage") ?? deal.stage;
+    const stageKey = normalizeStage(canonicalStage);
     const benchmarks = STAGE_BENCHMARKS[stageKey] ?? STAGE_BENCHMARKS.SEED;
     const terms = deal.dealTerms as Record<string, unknown> | null;
 

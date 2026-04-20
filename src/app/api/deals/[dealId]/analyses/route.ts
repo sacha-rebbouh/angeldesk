@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { loadResults } from "@/services/analysis-results/load-results";
+import { pickCanonicalAnalysis } from "@/services/deals/canonical-read-model";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -38,6 +39,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     }
 
     const specificId = _request.nextUrl.searchParams.get("id");
+    if (specificId && !isValidCuid(specificId)) {
+      return NextResponse.json({ error: "Invalid analysis ID format" }, { status: 400 });
+    }
 
     // PERF: Always query metadata WITHOUT the results blob.
     const metaSelect = {
@@ -45,6 +49,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       status: true,
       type: true,
       mode: true,
+      thesisId: true,
+      thesisBypass: true,
+      corpusSnapshotId: true,
       completedAgents: true,
       totalAgents: true,
       summary: true,
@@ -55,16 +62,56 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       createdAt: true,
     } as const;
 
-    const analysisMeta = specificId
+    let analysisMeta = specificId
       ? await prisma.analysis.findFirst({
           where: { dealId, id: specificId },
           select: metaSelect,
         })
-      : await prisma.analysis.findFirst({
-          where: { dealId },
-          orderBy: { createdAt: "desc" },
-          select: metaSelect,
-        });
+      : null;
+
+    if (!specificId) {
+      const activeAnalysis = await prisma.analysis.findFirst({
+        where: {
+          dealId,
+          status: { in: ["PENDING", "RUNNING"] },
+          mode: { not: "post_call_reanalysis" },
+        },
+        orderBy: { createdAt: "desc" },
+        select: metaSelect,
+      });
+
+      if (activeAnalysis) {
+        analysisMeta = activeAnalysis;
+      } else {
+        const [latestThesis, completedAnalyses] = await Promise.all([
+          prisma.thesis.findFirst({
+            where: { dealId, isLatest: true },
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              corpusSnapshotId: true,
+            },
+          }),
+          prisma.analysis.findMany({
+            where: {
+              dealId,
+              status: "COMPLETED",
+              completedAt: { not: null },
+            },
+            orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+            select: {
+              ...metaSelect,
+              dealId: true,
+            },
+          }),
+        ]);
+
+        const canonical = pickCanonicalAnalysis(latestThesis, completedAnalyses);
+        analysisMeta = canonical
+          ? completedAnalyses.find((analysis) => analysis.id === canonical.id) ?? null
+          : null;
+      }
+    }
 
     if (!analysisMeta) {
       return NextResponse.json({ data: null });
@@ -122,6 +169,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         status: effectiveStatus,
         type: analysisMeta.type,
         mode: analysisMeta.mode,
+        thesisId: analysisMeta.thesisId,
+        thesisBypass: analysisMeta.thesisBypass ?? false,
+        corpusSnapshotId: analysisMeta.corpusSnapshotId,
         completedAgents: analysisMeta.completedAgents,
         totalAgents: analysisMeta.totalAgents,
         results,

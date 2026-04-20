@@ -696,7 +696,8 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
   // Format deal info for prompts (with sanitization to prevent prompt injection)
   protected formatDealContext(context: AgentContext): string {
-    const { deal, documents } = context;
+    const deal = context.canonicalDeal;
+    const { documents } = context;
 
     // Sanitize all user-provided fields to prevent prompt injection
     const sanitizedDeal = {
@@ -1337,7 +1338,7 @@ ${sanitizedDeal.description}
     }
 
     // F70: Geography coverage warning
-    const geography = context.deal?.geography;
+    const geography = context.canonicalDeal.geography;
     if (geography) {
       const geoWarning = formatGeographyCoverageForPrompt(geography);
       if (geoWarning) {

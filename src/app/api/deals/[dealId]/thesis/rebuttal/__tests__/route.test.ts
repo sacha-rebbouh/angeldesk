@@ -4,9 +4,11 @@ const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
   dealFindFirst: vi.fn(),
   analysisFindMany: vi.fn(),
+  getCurrentFactsFromView: vi.fn(),
   isValidCuid: vi.fn(),
   checkRateLimitDistributed: vi.fn(),
   getLatest: vi.fn(),
+  resolveSourceScope: vi.fn(),
   beginRebuttalAttempt: vi.fn(),
   cancelRebuttalAttempt: vi.fn(),
   finalizeRebuttalAttempt: vi.fn(),
@@ -33,6 +35,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/services/fact-store/current-facts", () => ({
+  getCurrentFactsFromView: mocks.getCurrentFactsFromView,
+}));
+
 vi.mock("@/lib/sanitize", () => ({
   isValidCuid: mocks.isValidCuid,
   checkRateLimitDistributed: mocks.checkRateLimitDistributed,
@@ -45,6 +51,7 @@ vi.mock("@/lib/api-error", () => ({
 vi.mock("@/services/thesis", () => ({
   thesisService: {
     getLatest: mocks.getLatest,
+    resolveSourceScope: mocks.resolveSourceScope,
     beginRebuttalAttempt: mocks.beginRebuttalAttempt,
     cancelRebuttalAttempt: mocks.cancelRebuttalAttempt,
     finalizeRebuttalAttempt: mocks.finalizeRebuttalAttempt,
@@ -92,6 +99,47 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
       sector: "deeptech",
       stage: "seed",
     });
+    mocks.getCurrentFactsFromView.mockResolvedValue([
+      {
+        dealId: "deal_1",
+        factKey: "company.name",
+        category: "OTHER",
+        currentValue: "Canonical Deal",
+        currentDisplayValue: "Canonical Deal",
+        currentSource: "PITCH_DECK",
+        currentConfidence: 90,
+        isDisputed: false,
+        eventHistory: [],
+        firstSeenAt: new Date("2026-04-20T09:00:00Z"),
+        lastUpdatedAt: new Date("2026-04-20T09:00:00Z"),
+      },
+      {
+        dealId: "deal_1",
+        factKey: "other.sector",
+        category: "OTHER",
+        currentValue: "healthtech",
+        currentDisplayValue: "Healthtech",
+        currentSource: "PITCH_DECK",
+        currentConfidence: 88,
+        isDisputed: false,
+        eventHistory: [],
+        firstSeenAt: new Date("2026-04-20T09:00:00Z"),
+        lastUpdatedAt: new Date("2026-04-20T09:00:00Z"),
+      },
+      {
+        dealId: "deal_1",
+        factKey: "product.stage",
+        category: "PRODUCT",
+        currentValue: "series_a",
+        currentDisplayValue: "Series A",
+        currentSource: "PITCH_DECK",
+        currentConfidence: 84,
+        isDisputed: false,
+        eventHistory: [],
+        firstSeenAt: new Date("2026-04-20T09:00:00Z"),
+        lastUpdatedAt: new Date("2026-04-20T09:00:00Z"),
+      },
+    ]);
     mocks.analysisFindMany.mockResolvedValue([{ id: "analysis_1" }]);
     mocks.getLatest.mockResolvedValue({
       id: "thesis_1",
@@ -113,6 +161,12 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
       rebuttalCount: 0,
       decision: null,
     });
+    mocks.resolveSourceScope.mockImplementation(async (thesis: { sourceDocumentIds?: string[]; sourceHash?: string; corpusSnapshotId?: string | null }) => ({
+      corpusSnapshotId: thesis.corpusSnapshotId ?? null,
+      sourceDocumentIds: thesis.sourceDocumentIds ?? [],
+      sourceHash: thesis.sourceHash ?? "hash_1",
+      isCanonicalSnapshot: !!thesis.corpusSnapshotId,
+    }));
     mocks.beginRebuttalAttempt.mockResolvedValue({
       status: "accepted",
       thesis: {
@@ -255,6 +309,34 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
       1,
       expect.objectContaining({
         dealId: "deal_1",
+      })
+    );
+  });
+
+  it("prefers canonical facts for the rebuttal judge input", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
+        method: "POST",
+        body: JSON.stringify({ rebuttalText: "Un rebuttal suffisamment long pour etre valide." }),
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({ dealId: "deal_1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.judgeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deal: {
+          id: "deal_1",
+          name: "Canonical Deal",
+          sector: "healthtech",
+          stage: "series_a",
+        },
+        rebuttalInput: expect.objectContaining({
+          dealName: "Canonical Deal",
+          dealSector: "healthtech",
+          dealStage: "series_a",
+        }),
       })
     );
   });

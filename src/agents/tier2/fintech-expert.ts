@@ -376,7 +376,7 @@ function buildFintechUserPrompt(
   context: EnrichedAgentContext,
   previousResults: Record<string, unknown> | null
 ): string {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage ?? "SEED";
 
   // Extract relevant info from previous Tier 1 results
@@ -550,7 +550,7 @@ export const fintechExpert = {
     try {
       // Get previous results from context
       const previousResults = context.previousResults ?? null;
-      const stage = context.deal.stage ?? "SEED";
+      const stage = context.canonicalDeal.stage ?? "SEED";
 
       // Build prompts
       const userPrompt = buildFintechUserPrompt(context, previousResults as Record<string, unknown> | null);

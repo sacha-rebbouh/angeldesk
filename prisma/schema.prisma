@@ -187,6 +187,7 @@ model Deal {
   dealTermsVersions DealTermsVersion[]
   alertResolutions  AlertResolution[]
   liveSessions      LiveSession[]
+  corpusSnapshots   CorpusSnapshot[]
   theses            Thesis[] // Thesis-first — toutes les versions de these extraites pour ce deal
 
   createdAt DateTime @default(now())
@@ -295,7 +296,8 @@ model Document {
   liveSession LiveSession?
 
   // Analyses qui ont consomme ce document (remplace Analysis.documentIds String[])
-  analyses AnalysisDocument[]
+  analyses              AnalysisDocument[]
+  corpusSnapshotMembers CorpusSnapshotMember[]
 
   uploadedAt DateTime @default(now())
 
@@ -386,6 +388,7 @@ model DocumentExtractionRun {
   pages         DocumentExtractionPage[]
   overrides     DocumentExtractionOverride[]
   analysisLinks AnalysisExtractionRun[]
+  corpusSnapshotMembers CorpusSnapshotMember[]
 
   @@index([documentId])
   @@index([status])
@@ -559,6 +562,10 @@ model Analysis {
   // Cached negotiation strategy (generated after Tier 3 analysis)
   negotiationStrategy Json?
 
+  // Canonical corpus snapshot utilise pour cette analyse (nullable pre-migration/backfill).
+  corpusSnapshotId String?
+  corpusSnapshot   CorpusSnapshot? @relation(fields: [corpusSnapshotId], references: [id], onDelete: SetNull)
+
   // P1 — Refund tracking: set when credits have been refunded pour cette analyse.
   // Utilise par le resume logic pour savoir si l'ancienne analyse a deja rembourse
   // avant de re-tenter. UI peut aussi afficher "credits rembourses" au user.
@@ -588,6 +595,7 @@ model Analysis {
   @@index([status])
   @@index([dealId, mode, dealFingerprint]) // For cache lookup
   @@index([dealId, status, createdAt])
+  @@index([corpusSnapshotId])
   @@index([thesisId])
 }
 
@@ -648,8 +656,11 @@ model Thesis {
   rebuttalCount   Int       @default(0) // anti-abus, cap 3/deal
 
   // Source tracking
+  // Legacy fields conserves le temps de migrer les consommateurs vers CorpusSnapshot.
   sourceDocumentIds String[] // IDs des Document utilises pour l'extraction
   sourceHash        String // hash du corpus utilise — pour detecter staleness sur nouveau doc
+  corpusSnapshotId  String?
+  corpusSnapshot    CorpusSnapshot? @relation(fields: [corpusSnapshotId], references: [id], onDelete: SetNull)
 
   // Back-relation pour Analysis.thesis (Analysis.thesisId → Thesis.id)
   analyses Analysis[]
@@ -660,7 +671,46 @@ model Thesis {
   @@index([dealId, isLatest])
   @@index([dealId, version])
   @@index([verdict])
+  @@index([corpusSnapshotId])
   @@index([dealId, createdAt])
+}
+
+// CANONICAL CORPUS SNAPSHOT
+// Snapshot immuable du corpus de documents retenu pour une these / analyse.
+// Permet d'aligner Analysis et Thesis sur une meme version canonique du corpus.
+model CorpusSnapshot {
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  sourceHash String
+
+  members  CorpusSnapshotMember[]
+  analyses Analysis[]
+  theses   Thesis[]
+
+  createdAt DateTime @default(now())
+
+  @@index([dealId])
+  @@index([dealId, createdAt])
+  @@unique([dealId, sourceHash])
+}
+
+// Table de jointure CorpusSnapshot ↔ Document.
+// Additive only: ne remplace pas encore AnalysisDocument / Thesis.sourceDocumentIds.
+model CorpusSnapshotMember {
+  corpusSnapshotId String
+  corpusSnapshot   CorpusSnapshot @relation(fields: [corpusSnapshotId], references: [id], onDelete: Cascade)
+  documentId       String
+  document         Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  extractionRunId  String?
+  extractionRun    DocumentExtractionRun? @relation(fields: [extractionRunId], references: [id], onDelete: SetNull)
+  createdAt        DateTime       @default(now())
+
+  @@id([corpusSnapshotId, documentId])
+  @@index([documentId])
+  @@index([corpusSnapshotId])
+  @@index([extractionRunId])
 }
 
 enum AnalysisStatus {
@@ -893,6 +943,9 @@ model AIBoardSession {
   dealId String
   userId String
 
+  thesisId         String?
+  corpusSnapshotId String?
+
   status BoardStatus @default(INITIALIZING)
 
   // Verdict outcome
@@ -920,6 +973,8 @@ model AIBoardSession {
   @@index([dealId])
   @@index([userId])
   @@index([status])
+  @@index([thesisId])
+  @@index([corpusSnapshotId])
 }
 
 enum BoardStatus {
@@ -1753,10 +1808,14 @@ model ContextEngineSnapshot {
   competitiveLandscape Json? // { directCompetitors, indirectCompetitors }
   newsSentiment        Json? // { articles, overallSentiment }
   peopleGraph          Json? // { founders, connections }
+  websiteContent       Json? // { baseUrl, pages, insights, crawlStats, redFlags }
 
   // Metadata
   completeness     Int   @default(0) // 0-100 how complete the data is
   connectorResults Json? // { pappers: true, github: false, ... }
+  sources          Json? // Full connector/source provenance
+  contextQuality   Json? // Weighted completeness/reliability scoring
+  sourceHealth     Json? // Failed/unconfigured critical sources
 
   // Source tracking (what was available when enriched)
   inputData Json? // { companyName, sector, stage, tagline, ... }
@@ -1847,12 +1906,15 @@ model FactEvent {
   sourceDocumentId String?
   sourceDocument   Document? @relation(fields: [sourceDocumentId], references: [id])
   sourceConfidence Int // 0-100
+  truthConfidence  Int? // 0-100 after reliability adjustment
   extractedText    String?   @db.Text
+  sourceMetadata   Json? // External provenance, connector details, URLs, etc.
 
   // Temporal fields
   validAt     DateTime? // When this fact was valid
   periodType  String? // POINT_IN_TIME, QUARTER, YEAR, MONTH
   periodLabel String? // "Q4 2024", "FY2024"
+  reliability Json? // ReliabilityClassification JSON payload
 
   // Event
   eventType         String // CREATED, SUPERSEDED, DISPUTED, RESOLVED, DELETED
@@ -2240,6 +2302,9 @@ model LiveSession {
   status       String  @default("created")
   // Values: "created" | "bot_joining" | "live" | "processing" | "completed" | "failed"
   errorMessage String? @db.Text
+  reanalysisRequestId String?
+  reanalysisMode      String?
+  reanalysisRequestedAt DateTime?
 
   // Participants mapping (BA labels who is who)
   participants Json @default("[]")
@@ -2275,6 +2340,7 @@ model LiveSession {
   @@index([botId])
   @@index([userId, status])
   @@index([userId, createdAt])
+  @@index([reanalysisRequestedAt])
 }
 
 model TranscriptChunk {

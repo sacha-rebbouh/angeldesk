@@ -297,7 +297,7 @@ function buildBioTechPrompt(context: EnrichedAgentContext): {
   system: string;
   user: string;
 } {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage ?? "SEED";
 
   // Extract funding DB data

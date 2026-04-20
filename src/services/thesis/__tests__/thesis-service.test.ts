@@ -4,6 +4,11 @@ import type {
   ThesisReconcilerOutput,
 } from "@/agents/thesis/types";
 
+const corpusMocks = vi.hoisted(() => ({
+  ensureCorpusSnapshotForDeal: vi.fn(),
+  loadCorpusSnapshot: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // In-memory mock store
 // ---------------------------------------------------------------------------
@@ -34,6 +39,7 @@ interface MockThesis {
   rebuttalCount: number;
   sourceDocumentIds: string[];
   sourceHash: string;
+  corpusSnapshotId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -132,6 +138,7 @@ const mockPrisma = {
         rebuttalCount: 0,
         sourceDocumentIds: (data.sourceDocumentIds as string[]) ?? [],
         sourceHash: (data.sourceHash as string) ?? "hash",
+        corpusSnapshotId: (data.corpusSnapshotId as string | null) ?? null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -190,9 +197,20 @@ vi.mock("@/lib/prisma", () => ({
       void _options;
       return fn(mockPrisma);
     },
-    $executeRawUnsafe: (..._args: unknown[]) => mockPrisma.$executeRawUnsafe(),
-    $queryRaw: (..._args: unknown[]) => mockPrisma.$queryRaw(),
+    $executeRawUnsafe: (...args: unknown[]) => {
+      void args;
+      return mockPrisma.$executeRawUnsafe();
+    },
+    $queryRaw: (...args: unknown[]) => {
+      void args;
+      return mockPrisma.$queryRaw();
+    },
   },
+}));
+
+vi.mock("@/services/corpus", () => ({
+  ensureCorpusSnapshotForDeal: corpusMocks.ensureCorpusSnapshotForDeal,
+  loadCorpusSnapshot: corpusMocks.loadCorpusSnapshot,
 }));
 
 const { thesisService } = await import("../index");
@@ -255,6 +273,8 @@ describe("thesisService.create", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
+    corpusMocks.ensureCorpusSnapshotForDeal.mockResolvedValue(null);
+    corpusMocks.loadCorpusSnapshot.mockResolvedValue(null);
   });
 
   it("cree une these v1 si aucune n'existe", async () => {
@@ -286,6 +306,8 @@ describe("thesisService.getLatest", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
+    corpusMocks.ensureCorpusSnapshotForDeal.mockResolvedValue(null);
+    corpusMocks.loadCorpusSnapshot.mockResolvedValue(null);
   });
 
   it("retourne null si aucune these", async () => {
@@ -306,6 +328,8 @@ describe("thesisService.applyReconciliation", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
+    corpusMocks.ensureCorpusSnapshotForDeal.mockResolvedValue(null);
+    corpusMocks.loadCorpusSnapshot.mockResolvedValue(null);
   });
 
   it("met a jour verdict + confidence + reconciledAt", async () => {
@@ -326,12 +350,44 @@ describe("thesisService.applyReconciliation", () => {
     expect(updated.confidence).toBe(40);
     expect(updated.reconciledAt).toBeInstanceOf(Date);
   });
+
+  it("n'ecrase pas une these superseded", async () => {
+    const oldThesis = await thesisService.create({
+      dealId: "deal_1",
+      extractorOutput: makeExtractorOutput({ verdict: "favorable", confidence: 72 }),
+    });
+    await thesisService.create({
+      dealId: "deal_1",
+      extractorOutput: makeExtractorOutput({ verdict: "alert_dominant", confidence: 31 }),
+    });
+
+    const reconcilerOutput: ThesisReconcilerOutput = {
+      updatedVerdict: "vigilance",
+      updatedConfidence: 40,
+      verdictChanged: true,
+      newRedFlags: [],
+      reconciliationNotes: [],
+      hiddenStrengths: [],
+    };
+
+    const updated = await thesisService.applyReconciliation({
+      thesisId: oldThesis.id,
+      reconcilerOutput,
+    });
+
+    expect(updated.id).toBe(oldThesis.id);
+    expect(updated.verdict).toBe("favorable");
+    expect(updated.confidence).toBe(72);
+    expect(updated.reconciledAt).toBeNull();
+  });
 });
 
 describe("thesisService.recordDecision", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
+    corpusMocks.ensureCorpusSnapshotForDeal.mockResolvedValue(null);
+    corpusMocks.loadCorpusSnapshot.mockResolvedValue(null);
   });
 
   it("stop: enregistre decision sans rebuttal", async () => {
@@ -344,12 +400,29 @@ describe("thesisService.recordDecision", () => {
     expect(updated!.decision).toBe("stop");
     expect(updated!.rebuttalCount).toBe(0);
   });
+
+  it("refuse une seconde decision sur la meme these", async () => {
+    const thesis = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
+    await thesisService.recordDecision({
+      thesisId: thesis.id,
+      decision: "stop",
+    });
+
+    await expect(
+      thesisService.recordDecision({
+        thesisId: thesis.id,
+        decision: "continue",
+      })
+    ).rejects.toMatchObject({ code: "DECISION_ALREADY_RECORDED" });
+  });
 });
 
 describe("thesisService.beginRebuttalAttempt", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
+    corpusMocks.ensureCorpusSnapshotForDeal.mockResolvedValue(null);
+    corpusMocks.loadCorpusSnapshot.mockResolvedValue(null);
   });
 
   it("accepte la premiere contestation et incremente le compteur visible", async () => {
@@ -470,6 +543,8 @@ describe("thesisService.isStale", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
+    corpusMocks.ensureCorpusSnapshotForDeal.mockResolvedValue(null);
+    corpusMocks.loadCorpusSnapshot.mockResolvedValue(null);
   });
 
   it("false si aucune these", async () => {
@@ -491,12 +566,50 @@ describe("thesisService.isStale", () => {
     });
     expect(await thesisService.isStale({ dealId: "deal_1", currentSourceHash: "new" })).toBe(true);
   });
+
+  it("privilegie le scope canonique du snapshot quand il existe", async () => {
+    const created = await thesisService.create({
+      dealId: "deal_1",
+      extractorOutput: makeExtractorOutput({ sourceHash: "legacy-hash" }),
+    });
+
+    await mockPrisma.thesis.update({
+      where: { id: created.id },
+      data: { corpusSnapshotId: "snap_1" },
+    });
+    corpusMocks.loadCorpusSnapshot.mockResolvedValue({
+      id: "snap_1",
+      dealId: "deal_1",
+      sourceHash: "snapshot-hash",
+      documentIds: ["doc-a", "doc-b"],
+      extractionRunIds: [],
+      createdAt: new Date("2026-04-20T00:00:00.000Z"),
+    });
+
+    expect(
+      await thesisService.isStale({
+        dealId: "deal_1",
+        currentSourceHash: "snapshot-hash",
+        corpusSnapshotId: "snap_1",
+      })
+    ).toBe(false);
+
+    expect(
+      await thesisService.isStale({
+        dealId: "deal_1",
+        currentSourceHash: "snapshot-hash",
+        corpusSnapshotId: "snap_other",
+      })
+    ).toBe(true);
+  });
 });
 
 describe("thesisService.hasThesis", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
+    corpusMocks.ensureCorpusSnapshotForDeal.mockResolvedValue(null);
+    corpusMocks.loadCorpusSnapshot.mockResolvedValue(null);
   });
 
   it("false pour deal sans these (backfill candidate)", async () => {

@@ -490,7 +490,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<QuestionMasterData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
 
@@ -500,7 +500,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
     // Format previous analysis questions for injection
     const previousQuestionsSection = this.formatPreviousQuestions(context);
 
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
 
     // Build user prompt
     const prompt = `# ANALYSE QUESTION MASTER - ${deal.companyName || deal.name}
@@ -802,8 +802,8 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       });
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "question-master", extractedMetrics, sector, stage, QUESTION_MASTER_CRITERIA,
         );

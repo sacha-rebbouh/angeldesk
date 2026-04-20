@@ -101,8 +101,9 @@ export async function recordDealAnalysis(
   userId: string,
   tier: AnalysisTier,
   dealId?: string,
-  analysisType?: string
-): Promise<{ success: boolean; remainingDeals: number }> {
+  analysisType?: string,
+  options: { idempotencyKey?: string; description?: string } = {}
+): Promise<{ success: boolean; remainingDeals: number; alreadyDeducted?: boolean }> {
   // Determine credit action from analysis type or tier
   let action: CreditActionType;
   if (analysisType) {
@@ -111,11 +112,15 @@ export async function recordDealAnalysis(
     action = tier <= 1 ? 'QUICK_SCAN' : 'DEEP_DIVE';
   }
 
-  const result = await deductCredits(userId, action, dealId);
+  const result = await deductCredits(userId, action, dealId, {
+    idempotencyKey: options.idempotencyKey,
+    description: options.description,
+  });
 
   return {
     success: result.success,
     remainingDeals: result.balanceAfter,
+    alreadyDeducted: result.alreadyDeducted,
   };
 }
 

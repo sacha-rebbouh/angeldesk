@@ -7,6 +7,7 @@ import type {
   PeopleGraph,
   ContextQualityScore,
   SourceHealth,
+  DataSource,
 } from "@/services/context-engine/types";
 import type { BAPreferences } from "@/services/benchmarks";
 import type { EvidenceLedger } from "@/services/evidence-ledger";
@@ -14,7 +15,23 @@ import type { EvidenceLedger } from "@/services/evidence-ledger";
 // Agent execution context
 export interface AgentContext {
   dealId: string;
+  /**
+   * Legacy compatibility alias. In orchestrated runtime this should mirror
+   * `canonicalDeal` until all agents are migrated away from direct `deal.*` reads.
+   */
   deal: Deal;
+  /**
+   * Canonical T0-first deal summary resolved from facts -> extracted snapshot -> legacy row.
+   * This is the explicit source of truth for prompt/runtime consumers.
+   */
+  canonicalDeal: Deal;
+  analysis?: {
+    id: string;
+    mode?: string | null;
+    thesisBypass?: boolean;
+    thesisId?: string | null;
+    corpusSnapshotId?: string | null;
+  };
   documents?: {
     id: string;
     name: string;
@@ -68,6 +85,8 @@ export interface EnrichedAgentContext extends AgentContext {
     contextQuality?: ContextQualityScore;
     /** Connector health surfaced to agents */
     sourceHealth?: SourceHealth;
+    /** Detailed external source provenance from Context Engine */
+    sources?: DataSource[];
     // Traction data from App Store, GitHub, Product Hunt connectors (F71)
     tractionData?: {
       appStore?: {

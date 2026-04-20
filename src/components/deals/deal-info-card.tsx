@@ -126,27 +126,29 @@ export const DealInfoCard = memo(function DealInfoCard({ deal }: DealInfoCardPro
     setIsLoading(true);
     try {
       const body: Record<string, unknown> = {};
+      const normalizedGeography = geography.trim();
+      const normalizedDescription = description.trim();
 
       if (sector !== (deal.sector ?? "")) body.sector = sector || undefined;
       if (stage !== (deal.stage ?? "")) body.stage = stage || undefined;
       if (instrument !== (deal.instrument ?? "")) body.instrument = instrument || undefined;
-      if (geography !== (deal.geography ?? "")) body.geography = geography || undefined;
-      if (description !== (deal.description ?? "")) body.description = description || undefined;
+      if (geography !== (deal.geography ?? "")) body.geography = normalizedGeography || null;
+      if (description !== (deal.description ?? "")) body.description = normalizedDescription || null;
 
-      const newArr = arr ? parseFloat(arr) : undefined;
-      const oldArr = deal.arr != null ? deal.arr : undefined;
+      const newArr = arr.trim() ? parseFloat(arr) : null;
+      const oldArr = deal.arr != null ? deal.arr : null;
       if (newArr !== oldArr) body.arr = newArr;
 
-      const newGrowth = growthRate ? parseFloat(growthRate) : undefined;
-      const oldGrowth = deal.growthRate != null ? deal.growthRate : undefined;
+      const newGrowth = growthRate.trim() ? parseFloat(growthRate) : null;
+      const oldGrowth = deal.growthRate != null ? deal.growthRate : null;
       if (newGrowth !== oldGrowth) body.growthRate = newGrowth;
 
-      const newAmount = amountRequested ? parseFloat(amountRequested) : undefined;
-      const oldAmount = deal.amountRequested != null ? deal.amountRequested : undefined;
+      const newAmount = amountRequested.trim() ? parseFloat(amountRequested) : null;
+      const oldAmount = deal.amountRequested != null ? deal.amountRequested : null;
       if (newAmount !== oldAmount) body.amountRequested = newAmount;
 
-      const newValuation = valuationPre ? parseFloat(valuationPre) : undefined;
-      const oldValuation = deal.valuationPre != null ? deal.valuationPre : undefined;
+      const newValuation = valuationPre.trim() ? parseFloat(valuationPre) : null;
+      const oldValuation = deal.valuationPre != null ? deal.valuationPre : null;
       if (newValuation !== oldValuation) body.valuationPre = newValuation;
 
       if (Object.keys(body).length === 0) {

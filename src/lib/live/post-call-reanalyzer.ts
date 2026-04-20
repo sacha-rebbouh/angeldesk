@@ -4,6 +4,8 @@
 
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { loadResults } from "@/services/analysis-results/load-results";
+import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
 import type { PostCallReport, DeltaReport } from "@/lib/live/types";
 
 // ---------------------------------------------------------------------------
@@ -106,6 +108,96 @@ export function identifyImpactedAgents(report: PostCallReport): string[] {
   return [...impactedSet];
 }
 
+type SessionReanalysisScope = {
+  sessionDocumentId: string | null;
+  baselineAnalysis: {
+    id: string;
+    summary: string | null;
+    corpusSnapshotId: string | null;
+    documentIds: string[];
+  } | null;
+  scopedDocumentIds: string[];
+};
+
+function dedupeDocumentIds(documentIds: Array<string | null | undefined>): string[] {
+  return [...new Set(documentIds.filter((documentId): documentId is string => Boolean(documentId)))];
+}
+
+function resolveAnalysisDocumentIds(
+  analysis: {
+    documentIds?: Array<string | null | undefined>;
+    documents?: Array<{ documentId: string | null | undefined }>;
+  } | null
+): string[] {
+  if (!analysis) return [];
+
+  return dedupeDocumentIds([
+    ...(analysis.documents?.map((document) => document.documentId) ?? []),
+    ...(analysis.documentIds ?? []),
+  ]);
+}
+
+async function resolveSessionReanalysisScope(
+  sessionId: string,
+  dealId: string
+): Promise<SessionReanalysisScope> {
+  const session = await prisma.liveSession.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      dealId: true,
+      documentId: true,
+      startedAt: true,
+      createdAt: true,
+    },
+  });
+
+  if (!session || session.dealId !== dealId) {
+    throw new Error(`LiveSession ${sessionId} not found for deal ${dealId}`);
+  }
+
+  const cutoff = session.startedAt ?? session.createdAt;
+  const baselineAnalysis = await prisma.analysis.findFirst({
+    where: {
+      dealId,
+      status: "COMPLETED",
+      ...(cutoff ? { completedAt: { lte: cutoff } } : {}),
+      OR: [
+        { mode: null },
+        { mode: { not: "post_call_reanalysis" } },
+      ],
+    },
+    orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      summary: true,
+      corpusSnapshotId: true,
+      documentIds: true,
+      documents: {
+        select: { documentId: true },
+      },
+    },
+  });
+
+  const baselineDocumentIds = baselineAnalysis?.corpusSnapshotId
+    ? await getCorpusSnapshotDocumentIds(baselineAnalysis.corpusSnapshotId)
+    : resolveAnalysisDocumentIds(baselineAnalysis);
+
+  return {
+    sessionDocumentId: session.documentId ?? null,
+    baselineAnalysis: baselineAnalysis
+      ? {
+          ...baselineAnalysis,
+          documentIds: baselineDocumentIds,
+        }
+      : null,
+    scopedDocumentIds:
+      baselineDocumentIds.length > 0
+        ? dedupeDocumentIds([...baselineDocumentIds, session.documentId])
+        : [],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // triggerTargetedReanalysis
 // ---------------------------------------------------------------------------
@@ -114,7 +206,11 @@ export async function triggerTargetedReanalysis(
   dealId: string,
   agentNames: string[],
   sessionId: string
-): Promise<void> {
+): Promise<{
+  analysisId: string;
+  baselineAnalysisId: string | null;
+  documentIds: string[];
+}> {
   // Dynamic imports to avoid circular dependencies
   const { AgentOrchestrator } = await import("@/agents/orchestrator");
   const { clearContextCache } = await import("@/lib/live/context-compiler");
@@ -129,30 +225,16 @@ export async function triggerTargetedReanalysis(
   ];
   const hasTier1Agents = agentNames.some((name) => !tier3Names.includes(name));
   const analysisType = hasTier1Agents ? "full_analysis" : "tier3_synthesis";
-
-  // 3. Create Analysis record for tracking
-  const analysis = await prisma.analysis.create({
-    data: {
-      dealId,
-      type: "FULL_DD",
-      mode: "post_call_reanalysis",
-      status: "RUNNING",
-      totalAgents: agentNames.length,
-      completedAgents: 0,
-      startedAt: new Date(),
-      results: {
-        triggeredBy: sessionId,
-        targetedAgents: agentNames,
-      },
-    },
-  });
+  const scope = await resolveSessionReanalysisScope(sessionId, dealId);
 
   console.log(
     `[post-call-reanalyzer] Starting reanalysis for deal ${dealId}. ` +
-      `Type: ${analysisType}. Targeted agents: ${agentNames.join(", ")}.`
+      `Type: ${analysisType}. Targeted agents: ${agentNames.join(", ")}. ` +
+      `Baseline analysis: ${scope.baselineAnalysis?.id ?? "none"}. ` +
+      `Scoped documents: ${scope.scopedDocumentIds.length > 0 ? scope.scopedDocumentIds.length : "latest deal corpus"}.`
   );
 
-  // 4. Run the orchestrator — the CALL_TRANSCRIPT document (enriched with condensed intel)
+  // 3. Run the orchestrator — the CALL_TRANSCRIPT document (enriched with condensed intel)
   //    is automatically loaded via getDealWithRelations() in the orchestrator.
   const orchestrator = new AgentOrchestrator();
 
@@ -162,40 +244,27 @@ export async function triggerTargetedReanalysis(
       type: analysisType as "full_analysis" | "tier3_synthesis",
       forceRefresh: true,
       isUpdate: true,
-    });
-
-    // 5. Update the tracking record
-    await prisma.analysis.update({
-      where: { id: analysis.id },
-      data: {
-        status: result.success ? "COMPLETED" : "FAILED",
-        completedAt: new Date(),
-        completedAgents: Object.values(result.results).filter((r) => r.success).length,
-        totalCost: result.totalCost,
-        totalTimeMs: result.totalTimeMs,
-        summary: result.summary,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        results: result.results as any,
-      },
+      analysisModeOverride: "post_call_reanalysis",
+      ...(scope.scopedDocumentIds.length > 0
+        ? { documentIds: scope.scopedDocumentIds }
+        : {}),
     });
 
     console.log(
       `[post-call-reanalyzer] Reanalysis completed for deal ${dealId}. ` +
-        `Success: ${result.success}. Cost: $${result.totalCost.toFixed(4)}.`
+        `Analysis: ${result.sessionId}. Success: ${result.success}. Cost: $${result.totalCost.toFixed(4)}.`
     );
+    return {
+      analysisId: result.sessionId,
+      baselineAnalysisId: scope.baselineAnalysis?.id ?? null,
+      documentIds: scope.scopedDocumentIds,
+    };
   } catch (error) {
-    await prisma.analysis.update({
-      where: { id: analysis.id },
-      data: {
-        status: "FAILED",
-        completedAt: new Date(),
-        summary: `Reanalysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-      },
-    });
     console.error(
       `[post-call-reanalyzer] Reanalysis failed for deal ${dealId}:`,
       error
     );
+    throw error;
   }
 }
 
@@ -254,16 +323,12 @@ export async function generateDeltaReport(
   sessionId: string,
   dealId: string
 ): Promise<DeltaReport> {
-  // Fetch session summary and latest analysis in parallel
-  const [sessionSummary, latestAnalysis] = await Promise.all([
+  // Fetch session summary and its pre-call baseline in parallel
+  const [sessionSummary, scope] = await Promise.all([
     prisma.sessionSummary.findUnique({
       where: { sessionId },
     }),
-    prisma.analysis.findFirst({
-      where: { dealId, status: "COMPLETED" },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, results: true, summary: true },
-    }),
+    resolveSessionReanalysisScope(sessionId, dealId),
   ]);
 
   if (!sessionSummary) {
@@ -272,13 +337,17 @@ export async function generateDeltaReport(
     );
   }
 
+  const baselineResults = scope.baselineAnalysis
+    ? await loadResults(scope.baselineAnalysis.id)
+    : null;
+
   // Build comparison prompt
-  const analysisContext = latestAnalysis
+  const analysisContext = scope.baselineAnalysis
     ? `## Résultats de l'analyse pré-call
-${latestAnalysis.summary ?? "Pas de résumé disponible."}
+${scope.baselineAnalysis.summary ?? "Pas de résumé disponible."}
 
 Données agents (JSON) :
-${JSON.stringify(latestAnalysis.results, null, 2).slice(0, 8000)}`
+${JSON.stringify(baselineResults, null, 2).slice(0, 8000)}`
     : "## Aucune analyse pré-call disponible.";
 
   const sessionContext = `## Résumé du call

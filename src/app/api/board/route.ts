@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
+import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { BoardOrchestrator, type BoardProgressEvent } from "@/agents/board";
@@ -14,6 +16,11 @@ import { handleApiError } from "@/lib/api-error";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes max (Vercel limit)
 
+function hashStringToBigInt(input: string): string {
+  const digest = createHash("sha256").update(input).digest();
+  return digest.readBigInt64BE(0).toString();
+}
+
 /**
  * POST /api/board
  * Start a new AI Board deliberation session
@@ -22,6 +29,7 @@ export const maxDuration = 300; // 5 minutes max (Vercel limit)
  * Returns: SSE stream of progress events
  */
 export async function POST(req: NextRequest) {
+  let reservedSessionId: string | null = null;
   try {
     const user = await requireAuth();
 
@@ -78,10 +86,64 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const boardReservation = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashStringToBigInt(`board:${dealId}:${user.id}`)})`);
+
+      const activeSession = await tx.aIBoardSession.findFirst({
+        where: {
+          dealId,
+          userId: user.id,
+          status: { in: ["INITIALIZING", "ANALYZING", "DEBATING", "VOTING"] },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true },
+      });
+
+      if (activeSession) {
+        return {
+          kind: "active" as const,
+          sessionId: activeSession.id,
+          status: activeSession.status,
+        };
+      }
+
+      const session = await tx.aIBoardSession.create({
+        data: {
+          dealId,
+          userId: user.id,
+          status: "INITIALIZING",
+          startedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
+      return {
+        kind: "reserved" as const,
+        sessionId: session.id,
+      };
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+
+    if (boardReservation.kind === "active") {
+      return NextResponse.json(
+        {
+          error: "Une session AI Board est deja en cours pour ce deal",
+          sessionId: boardReservation.sessionId,
+        },
+        { status: 409 }
+      );
+    }
+
+    reservedSessionId = boardReservation.sessionId;
+
     // Check credits
     const { canStart, status: creditsStatus } = await canStartBoard(user.id);
 
     if (!canStart) {
+      await prisma.aIBoardSession.delete({
+        where: { id: reservedSessionId },
+      }).catch(() => undefined);
       return NextResponse.json(
         {
           error: creditsStatus.reason ?? "Credits insuffisants",
@@ -92,9 +154,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Consume a credit before starting
-    const consumeResult = await consumeCredit(user.id);
+    const consumeResult = await consumeCredit(user.id, {
+      dealId,
+      idempotencyKey: `board:${reservedSessionId}`,
+      description: `AI Board for deal ${dealId}`,
+    });
 
     if (!consumeResult.success) {
+      await prisma.aIBoardSession.delete({
+        where: { id: reservedSessionId },
+      }).catch(() => undefined);
       return NextResponse.json(
         { error: consumeResult.error },
         { status: 402 }
@@ -105,7 +174,7 @@ export async function POST(req: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
-        let sessionId: string | null = null;
+        let sessionId: string | null = reservedSessionId;
 
         const sendEvent = (event: BoardProgressEvent) => {
           const data = JSON.stringify(event);
@@ -127,6 +196,7 @@ export async function POST(req: NextRequest) {
           const result = await orchestrator.runBoard({
             dealId,
             userId: user.id,
+            sessionId: reservedSessionId ?? undefined,
           });
 
           // Send final result
@@ -144,8 +214,18 @@ export async function POST(req: NextRequest) {
             console.error("Board orchestration error:", error);
           }
 
+          if (sessionId) {
+            await prisma.aIBoardSession.update({
+              where: { id: sessionId },
+              data: {
+                status: "FAILED",
+                completedAt: new Date(),
+              },
+            }).catch(() => undefined);
+          }
+
           // Refund credit on failure (scope par sessionId pour dedup fin)
-          await refundCredit(user.id, sessionId ?? undefined);
+          await refundCredit(user.id, sessionId ?? undefined, dealId);
 
           sendEvent({
             type: "error",
@@ -167,6 +247,11 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
+    if (reservedSessionId) {
+      await prisma.aIBoardSession.delete({
+        where: { id: reservedSessionId },
+      }).catch(() => undefined);
+    }
     return handleApiError(error, "start board session");
   }
 }
@@ -185,27 +270,40 @@ export async function GET(req: NextRequest) {
 
     // If dealId provided, also fetch the latest completed session
     let latestSession = null;
+    let staleSession = null;
     if (dealId) {
-      const session = await prisma.aIBoardSession.findFirst({
-        where: {
-          dealId,
-          userId: user.id,
-          status: "COMPLETED",
-        },
-        orderBy: { completedAt: "desc" },
-        include: {
-          members: true,
-          rounds: {
-            orderBy: { roundNumber: "asc" },
+      const [session, latestThesis] = await Promise.all([
+        prisma.aIBoardSession.findFirst({
+          where: {
+            dealId,
+            userId: user.id,
+            status: "COMPLETED",
           },
-        },
-      });
+          orderBy: { completedAt: "desc" },
+          include: {
+            members: true,
+            rounds: {
+              orderBy: { roundNumber: "asc" },
+            },
+          },
+        }),
+        prisma.thesis.findFirst({
+          where: { dealId, isLatest: true },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            corpusSnapshotId: true,
+          },
+        }),
+      ]);
 
       if (session) {
-        latestSession = {
+        const serializedSession = {
           id: session.id,
           dealId: session.dealId,
           status: session.status,
+          thesisId: session.thesisId,
+          corpusSnapshotId: session.corpusSnapshotId,
           verdict: session.verdict,
           consensusLevel: session.consensusLevel,
           stoppingReason: session.stoppingReason,
@@ -232,10 +330,21 @@ export async function GET(req: NextRequest) {
           totalTimeMs: session.totalTimeMs,
           completedAt: session.completedAt?.toISOString(),
         };
+
+        const isStale =
+          (Boolean(latestThesis?.id) && session.thesisId !== latestThesis?.id) ||
+          (Boolean(latestThesis?.corpusSnapshotId) &&
+            session.corpusSnapshotId !== latestThesis?.corpusSnapshotId);
+
+        if (isStale) {
+          staleSession = serializedSession;
+        } else {
+          latestSession = serializedSession;
+        }
       }
     }
 
-    return NextResponse.json({ status, latestSession });
+    return NextResponse.json({ status, latestSession, staleSession });
   } catch (error) {
     return handleApiError(error, "fetch board status");
   }

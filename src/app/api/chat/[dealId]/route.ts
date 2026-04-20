@@ -14,10 +14,14 @@ import {
 } from "@/services/chat-context/conversation";
 import { getChatContext, getFullChatContext } from "@/services/chat-context";
 import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
+import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
+import { loadResults } from "@/services/analysis-results/load-results";
 import { checkRateLimitDistributed, isValidCuid, CUID_PATTERN } from "@/lib/sanitize";
 import { dealChatAgent, type FullChatContext } from "@/agents/chat";
 import { handleApiError } from "@/lib/api-error";
 import type { DealChatContextData } from "@/services/chat-context";
+import { pickCanonicalAnalysis } from "@/services/deals/canonical-read-model";
+import { logger } from "@/lib/logger";
 
 // ============================================================================
 // SCHEMAS
@@ -205,6 +209,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           summary: string | null;
           completedAt: Date | null;
           hasResults: boolean;
+          corpusSnapshotId: string | null;
         }
       | null = null;
     const normalizedThesisEvaluation = latestThesis
@@ -217,18 +222,31 @@ export async function POST(request: NextRequest, context: RouteContext) {
         })
       : null;
     if (latestThesis) {
-      const linkedAnalysis = await prisma.analysis.findFirst({
-        where: { dealId, thesisId: latestThesis.id, status: "COMPLETED" },
+      const completedAnalyses = await prisma.analysis.findMany({
+        where: { dealId, status: "COMPLETED" },
         select: {
           thesisBypass: true,
           id: true,
+          dealId: true,
           mode: true,
           summary: true,
           completedAt: true,
-          results: true,
+          createdAt: true,
+          thesisId: true,
+          corpusSnapshotId: true,
         },
-        orderBy: { completedAt: "desc" },
+        orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
       });
+      const linkedAnalysis = pickCanonicalAnalysis(
+        {
+          id: latestThesis.id,
+          corpusSnapshotId: latestThesis.corpusSnapshotId,
+        },
+        completedAnalyses
+      ) as (typeof completedAnalyses)[number] | null;
+      const linkedAnalysisResults = linkedAnalysis
+        ? await loadResults(linkedAnalysis.id)
+        : null;
       thesisBypass = linkedAnalysis?.thesisBypass ?? false;
       linkedThesisAnalysis = linkedAnalysis
         ? {
@@ -236,18 +254,40 @@ export async function POST(request: NextRequest, context: RouteContext) {
             mode: linkedAnalysis.mode,
             summary: linkedAnalysis.summary,
             completedAt: linkedAnalysis.completedAt,
-            hasResults: !!linkedAnalysis.results,
+            hasResults: !!linkedAnalysisResults,
+            corpusSnapshotId: linkedAnalysis.corpusSnapshotId,
           }
         : null;
+
+      if (!linkedAnalysis) {
+        logger.warn(
+          {
+            dealId,
+            thesisId: latestThesis.id,
+            corpusSnapshotId: latestThesis.corpusSnapshotId,
+          },
+          "Chat route could not resolve a canonical completed analysis for the latest thesis"
+        );
+      }
     }
 
     const thesisGated = normalizedThesisEvaluation
       ? new Set(["alert_dominant", "vigilance"]).has(normalizedThesisEvaluation.thesisQuality.verdict) && !thesisBypass
       : false;
 
+    const snapshotDocumentIds = latestThesis?.corpusSnapshotId
+      ? await getCorpusSnapshotDocumentIds(latestThesis.corpusSnapshotId)
+      : linkedThesisAnalysis?.corpusSnapshotId
+        ? await getCorpusSnapshotDocumentIds(linkedThesisAnalysis.corpusSnapshotId)
+        : null;
+
     const fullContextData = latestThesis
-      ? await getFullChatContext(dealId, { analysisId: linkedThesisAnalysis?.id ?? null })
+      ? await getFullChatContext(dealId, {
+          analysisId: linkedThesisAnalysis?.id ?? null,
+          ...(snapshotDocumentIds?.length ? { documentIds: snapshotDocumentIds } : {}),
+        })
       : await getFullChatContext(dealId);
+    const canonicalDeal = fullContextData.canonicalDeal ?? fullContextData.deal;
     const effectiveLatestAnalysis = latestThesis
       ? linkedThesisAnalysis
       : fullContextData.latestAnalysis;
@@ -258,32 +298,63 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     // Build FullChatContext for the agent
     const fullContext: FullChatContext = {
-      deal: fullContextData.deal
+      canonicalDeal: canonicalDeal
         ? {
-            id: fullContextData.deal.id,
-            name: fullContextData.deal.name,
-            companyName: fullContextData.deal.companyName,
-            sector: fullContextData.deal.sector,
-            stage: fullContextData.deal.stage,
-            geography: fullContextData.deal.geography,
-            description: fullContextData.deal.description,
-            website: fullContextData.deal.website,
-            arr: fullContextData.deal.arr != null ? Number(fullContextData.deal.arr) : null,
-            growthRate: fullContextData.deal.growthRate != null
-              ? Number(fullContextData.deal.growthRate)
+            id: canonicalDeal.id,
+            name: canonicalDeal.name,
+            companyName: canonicalDeal.companyName,
+            sector: canonicalDeal.sector,
+            stage: canonicalDeal.stage,
+            geography: canonicalDeal.geography,
+            description: canonicalDeal.description,
+            website: canonicalDeal.website,
+            arr: canonicalDeal.arr != null ? Number(canonicalDeal.arr) : null,
+            growthRate: canonicalDeal.growthRate != null
+              ? Number(canonicalDeal.growthRate)
               : null,
-            amountRequested: fullContextData.deal.amountRequested != null
-              ? Number(fullContextData.deal.amountRequested)
+            amountRequested: canonicalDeal.amountRequested != null
+              ? Number(canonicalDeal.amountRequested)
               : null,
-            valuationPre: fullContextData.deal.valuationPre != null
-              ? Number(fullContextData.deal.valuationPre)
+            valuationPre: canonicalDeal.valuationPre != null
+              ? Number(canonicalDeal.valuationPre)
               : null,
-            globalScore: thesisGated ? null : fullContextData.deal.globalScore,
-            teamScore: thesisGated ? null : fullContextData.deal.teamScore,
-            marketScore: thesisGated ? null : fullContextData.deal.marketScore,
-            productScore: thesisGated ? null : fullContextData.deal.productScore,
-            financialsScore: thesisGated ? null : fullContextData.deal.financialsScore,
-            founders: fullContextData.deal.founders,
+            globalScore: thesisGated ? null : canonicalDeal.globalScore,
+            teamScore: thesisGated ? null : canonicalDeal.teamScore,
+            marketScore: thesisGated ? null : canonicalDeal.marketScore,
+            productScore: thesisGated ? null : canonicalDeal.productScore,
+            financialsScore: thesisGated ? null : canonicalDeal.financialsScore,
+            founders: canonicalDeal.founders,
+          }
+        : {
+            id: dealId,
+            name: "Unknown Deal",
+          },
+      deal: canonicalDeal
+        ? {
+            id: canonicalDeal.id,
+            name: canonicalDeal.name,
+            companyName: canonicalDeal.companyName,
+            sector: canonicalDeal.sector,
+            stage: canonicalDeal.stage,
+            geography: canonicalDeal.geography,
+            description: canonicalDeal.description,
+            website: canonicalDeal.website,
+            arr: canonicalDeal.arr != null ? Number(canonicalDeal.arr) : null,
+            growthRate: canonicalDeal.growthRate != null
+              ? Number(canonicalDeal.growthRate)
+              : null,
+            amountRequested: canonicalDeal.amountRequested != null
+              ? Number(canonicalDeal.amountRequested)
+              : null,
+            valuationPre: canonicalDeal.valuationPre != null
+              ? Number(canonicalDeal.valuationPre)
+              : null,
+            globalScore: thesisGated ? null : canonicalDeal.globalScore,
+            teamScore: thesisGated ? null : canonicalDeal.teamScore,
+            marketScore: thesisGated ? null : canonicalDeal.marketScore,
+            productScore: thesisGated ? null : canonicalDeal.productScore,
+            financialsScore: thesisGated ? null : canonicalDeal.financialsScore,
+            founders: canonicalDeal.founders,
           }
         : {
             id: dealId,

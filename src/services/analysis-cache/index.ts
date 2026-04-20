@@ -13,7 +13,10 @@
 
 import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
-import type { Deal, Document, Founder, Analysis } from "@prisma/client";
+import type { Deal, Document, Founder } from "@prisma/client";
+import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
+import type { CurrentFact } from "@/services/fact-store/types";
+import { loadResults } from "@/services/analysis-results/load-results";
 
 // Cache TTL: 24 hours (analysis results are expensive, keep them longer)
 const ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -32,19 +35,58 @@ type DealWithRelations = Deal & {
     }>;
   })[];
   founders: Pick<Founder, "id" | "name" | "role">[];
+  currentFacts: CurrentFact[];
 };
 
-export interface CachedAnalysisResult {
-  analysis: Analysis;
-  fromCache: true;
-  cacheAge: number; // ms since analysis was created
-}
+type CachedAnalysisRecord = {
+  id: string;
+  status: string;
+  totalCost: number | { toString(): string } | null;
+  totalTimeMs: number | null;
+  summary: string | null;
+  completedAt: Date | null;
+  dealFingerprint: string | null;
+};
 
 export interface AnalysisCacheLookupResult {
   found: boolean;
-  analysis?: Analysis;
+  analysis?: CachedAnalysisRecord;
+  results?: Record<string, unknown>;
   cacheAge?: number;
   reason?: "fingerprint_mismatch" | "expired" | "not_found" | "incomplete";
+}
+
+function buildCurrentFactMap(currentFacts: CurrentFact[]): Map<string, CurrentFact> {
+  return new Map(currentFacts.map((fact) => [fact.factKey, fact]));
+}
+
+function getCurrentFactString(
+  factMap: Map<string, CurrentFact>,
+  factKey: string
+): string | null {
+  const fact = factMap.get(factKey);
+  if (!fact) return null;
+  if (typeof fact.currentValue === "string") return fact.currentValue;
+  if (typeof fact.currentDisplayValue === "string" && fact.currentDisplayValue.length > 0) {
+    return fact.currentDisplayValue;
+  }
+  return null;
+}
+
+function getCurrentFactNumber(
+  factMap: Map<string, CurrentFact>,
+  factKey: string
+): number | null {
+  const fact = factMap.get(factKey);
+  if (!fact) return null;
+  if (typeof fact.currentValue === "number" && Number.isFinite(fact.currentValue)) {
+    return fact.currentValue;
+  }
+  if (typeof fact.currentValue === "string") {
+    const parsed = Number(fact.currentValue);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
 }
 
 /**
@@ -57,21 +99,31 @@ export interface AnalysisCacheLookupResult {
  * - Founder info
  */
 export function generateDealFingerprint(deal: DealWithRelations): string {
+  const factMap = buildCurrentFactMap(deal.currentFacts);
+
   const data = {
     // Core deal info
     name: deal.name,
-    companyName: deal.companyName,
+    companyName: getCurrentFactString(factMap, "company.name") ?? deal.companyName,
     description: deal.description,
-    website: deal.website,
+    website: getCurrentFactString(factMap, "other.website") ?? deal.website,
     sector: deal.sector,
     stage: deal.stage,
     geography: deal.geography,
 
     // Financial metrics
-    arr: deal.arr?.toString(),
-    growthRate: deal.growthRate?.toString(),
-    amountRequested: deal.amountRequested?.toString(),
-    valuationPre: deal.valuationPre?.toString(),
+    arr:
+      getCurrentFactNumber(factMap, "financial.arr")?.toString() ??
+      deal.arr?.toString(),
+    growthRate:
+      getCurrentFactNumber(factMap, "financial.revenue_growth_yoy")?.toString() ??
+      deal.growthRate?.toString(),
+    amountRequested:
+      getCurrentFactNumber(factMap, "financial.amount_raising")?.toString() ??
+      deal.amountRequested?.toString(),
+    valuationPre:
+      getCurrentFactNumber(factMap, "financial.valuation_pre")?.toString() ??
+      deal.valuationPre?.toString(),
 
     // Documents (sorted by ID for consistency)
     documents: deal.documents
@@ -91,9 +143,11 @@ export function generateDealFingerprint(deal: DealWithRelations): string {
               completedAt: d.extractionRuns[0].completedAt?.toISOString() ?? null,
             }
           : null,
-        extractedTextHash: d.extractedText
-          ? createHash("sha256").update(d.extractedText, "utf8").digest("hex")
-          : null,
+        corpusFingerprint:
+          d.extractionRuns?.[0]?.corpusTextHash ??
+          (d.extractedText
+            ? createHash("sha256").update(d.extractedText, "utf8").digest("hex")
+            : null),
       })),
 
     // Founders (sorted by name for consistency)
@@ -129,6 +183,15 @@ export async function lookupCachedAnalysis(
       mode,
       status: "COMPLETED",
     },
+    select: {
+      id: true,
+      status: true,
+      totalCost: true,
+      totalTimeMs: true,
+      summary: true,
+      completedAt: true,
+      dealFingerprint: true,
+    },
     orderBy: {
       completedAt: "desc",
     },
@@ -156,8 +219,13 @@ export async function lookupCachedAnalysis(
     return { found: false, reason: "expired" };
   }
 
-  // Check if analysis has results
-  if (!analysis.results) {
+  const loadedResults = await loadResults(analysis.id);
+  if (
+    !loadedResults ||
+    typeof loadedResults !== "object" ||
+    Array.isArray(loadedResults) ||
+    Object.keys(loadedResults).length === 0
+  ) {
     return { found: false, reason: "incomplete" };
   }
 
@@ -169,6 +237,7 @@ export async function lookupCachedAnalysis(
   return {
     found: true,
     analysis,
+    results: loadedResults as Record<string, unknown>,
     cacheAge,
   };
 }
@@ -179,39 +248,52 @@ export async function lookupCachedAnalysis(
 export async function getDealForFingerprint(
   dealId: string
 ): Promise<DealWithRelations | null> {
-  return prisma.deal.findUnique({
-    where: { id: dealId },
-    include: {
-      documents: {
-        select: {
-          id: true,
-          extractedText: true,
-          processingStatus: true,
-          uploadedAt: true,
-          extractionRuns: {
-            orderBy: { completedAt: "desc" },
-            take: 1,
-            select: {
-              id: true,
-              documentVersion: true,
-              contentHash: true,
-              corpusTextHash: true,
-              status: true,
-              readyForAnalysis: true,
-              completedAt: true,
+  const [deal, currentFacts] = await Promise.all([
+    prisma.deal.findUnique({
+      where: { id: dealId },
+      include: {
+        documents: {
+          where: {
+            isLatest: true,
+          },
+          select: {
+            id: true,
+            extractedText: true,
+            processingStatus: true,
+            uploadedAt: true,
+            extractionRuns: {
+              orderBy: { completedAt: "desc" },
+              take: 1,
+              select: {
+                id: true,
+                documentVersion: true,
+                contentHash: true,
+                corpusTextHash: true,
+                status: true,
+                readyForAnalysis: true,
+                completedAt: true,
+              },
             },
           },
         },
-      },
-      founders: {
-        select: {
-          id: true,
-          name: true,
-          role: true,
+        founders: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
         },
       },
-    },
-  });
+    }),
+    getCurrentFactsFromView(dealId).catch(() => []),
+  ]);
+
+  return deal
+    ? {
+        ...deal,
+        currentFacts,
+      }
+    : null;
 }
 
 /**

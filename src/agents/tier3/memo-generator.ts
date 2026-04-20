@@ -448,8 +448,8 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<MemoGeneratorData> {
-    this._dealStage = context.deal.stage;
-    const deal = context.deal;
+    this._dealStage = context.canonicalDeal.stage;
+    const deal = context.canonicalDeal;
 
     // Formater le contexte de manière exhaustive
     const dealContext = this.formatDealContext(context);

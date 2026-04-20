@@ -822,7 +822,7 @@ function buildHardwarePrompt(context: EnrichedAgentContext): {
   system: string;
   user: string;
 } {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage ?? "SEED";
   const benchmarks = HARDWARE_BENCHMARK_DATA;
   void benchmarks;

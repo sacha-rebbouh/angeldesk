@@ -5,6 +5,12 @@ import { requireAuth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/sanitize";
 import { DealStage, FundingInstrument } from "@prisma/client";
 import { handleApiError } from "@/lib/api-error";
+import {
+  getCurrentFactNumber,
+  getCurrentFactString,
+  loadCanonicalDealSignals,
+  resolveCanonicalAnalysisScores,
+} from "@/services/deals/canonical-read-model";
 
 const createDealSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -92,8 +98,45 @@ export async function GET(request: NextRequest) {
       }),
     ]);
 
+    const signals = await loadCanonicalDealSignals(deals.map((deal) => deal.id));
+
+    const canonicalDeals = deals.map((deal) => {
+      const factMap = signals.factMapByDealId.get(deal.id) ?? new Map();
+      const scores = resolveCanonicalAnalysisScores(deal.id, signals, {
+        globalScore: deal.globalScore,
+        teamScore: deal.teamScore,
+        marketScore: deal.marketScore,
+        productScore: deal.productScore,
+        financialsScore: deal.financialsScore,
+      });
+
+      return {
+        ...deal,
+        companyName:
+          getCurrentFactString(factMap, "company.name") ?? deal.companyName,
+        website: getCurrentFactString(factMap, "other.website") ?? deal.website,
+        arr:
+          getCurrentFactNumber(factMap, "financial.arr") ??
+          (deal.arr != null ? Number(deal.arr) : null),
+        growthRate:
+          getCurrentFactNumber(factMap, "financial.revenue_growth_yoy") ??
+          (deal.growthRate != null ? Number(deal.growthRate) : null),
+        amountRequested:
+          getCurrentFactNumber(factMap, "financial.amount_raising") ??
+          (deal.amountRequested != null ? Number(deal.amountRequested) : null),
+        valuationPre:
+          getCurrentFactNumber(factMap, "financial.valuation_pre") ??
+          (deal.valuationPre != null ? Number(deal.valuationPre) : null),
+        globalScore: scores.globalScore,
+        teamScore: scores.teamScore,
+        marketScore: scores.marketScore,
+        productScore: scores.productScore,
+        financialsScore: scores.financialsScore,
+      };
+    });
+
     return NextResponse.json({
-      data: deals,
+      data: canonicalDeals,
       pagination: {
         page,
         limit,

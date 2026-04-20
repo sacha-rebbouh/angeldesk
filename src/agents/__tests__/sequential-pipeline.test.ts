@@ -1507,6 +1507,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     const context = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDeal.documents.map((d) => ({
         id: d.id,
         name: d.name,
@@ -1539,6 +1540,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     const context = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDeal.documents.map((d) => ({
         id: d.id,
         name: d.name,
@@ -1565,6 +1567,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     enrichedContext = {
       dealId: mockDeal.id,
       deal: mockDeal as never,
+      canonicalDeal: mockDeal as never,
       documents: mockDeal.documents.map((d) => ({
         id: d.id,
         name: d.name,

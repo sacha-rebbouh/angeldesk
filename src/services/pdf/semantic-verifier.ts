@@ -1,5 +1,6 @@
 import type {
   ArtifactProviderMetadata,
+  DocumentPageArtifactVersion,
   ArtifactVerificationMetadata,
   ArtifactVerificationState,
 } from "./canonical-artifact";
@@ -13,11 +14,25 @@ export type SourceAgreement = "strong" | "mixed" | "weak" | "unknown";
 export type VerificationRecommendation = "clear" | "warning" | "blocking";
 
 export interface PageArtifactLike {
+  version?: DocumentPageArtifactVersion;
+  pageNumber?: number;
   text: string;
   confidence: Confidence;
-  tables: Array<{ rows?: string[][]; markdown?: string; confidence: Confidence }>;
-  charts: Array<{ values?: Array<{ label: string; value: string }>; series?: string[]; chartType?: string; confidence: Confidence }>;
-  visualBlocks: Array<{ type: "table" | "chart" | "diagram" | "image" | "text" | "unknown"; confidence: Confidence }>;
+  tables: Array<{ title?: string | null; rows?: string[][]; markdown?: string; confidence: Confidence }>;
+  charts: Array<{
+    title?: string | null;
+    description?: string;
+    values?: Array<{ label: string; value: string }>;
+    series?: string[];
+    chartType?: string;
+    confidence: Confidence;
+  }>;
+  visualBlocks: Array<{
+    type: "table" | "chart" | "diagram" | "image" | "text" | "unknown";
+    title?: string | null;
+    description?: string;
+    confidence: Confidence;
+  }>;
   unreadableRegions: Array<{ reason: string; severity: "low" | "medium" | "high" }>;
   numericClaims: Array<{ label: string; value: string; sourceText?: string; confidence: Confidence }>;
   needsHumanReview: boolean;

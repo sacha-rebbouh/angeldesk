@@ -405,21 +405,21 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<LegalRegulatoryData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
 
     // F79: Check legal registries based on geography
     let registrySection = "";
-    const geography = context.deal.geography ?? "";
+    const geography = context.canonicalDeal.geography ?? "";
     if (geography) {
       try {
         const { checkLegalRegistries, formatRegistryResults } = await import(
           "@/services/legal-registry-check"
         );
         const registryResult = checkLegalRegistries(
-          context.deal.companyName ?? context.deal.name ?? "",
+          context.canonicalDeal.companyName ?? context.canonicalDeal.name ?? "",
           geography
         );
         registrySection = formatRegistryResults(registryResult);
@@ -430,7 +430,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
       registrySection = "\n## VERIFICATION REGISTRES PUBLICS\nGeographie du deal inconnue. AUCUN registre public n'a ete verifie.\n**TOUTES les conclusions legales doivent etre marquees 'NON VERIFIE'.**\n";
     }
 
-    const prompt = `# ANALYSE LEGAL & REGULATORY - ${context.deal.name}
+    const prompt = `# ANALYSE LEGAL & REGULATORY - ${context.canonicalDeal.name}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -443,7 +443,7 @@ ${contextEngineData || "Aucune donnée Context Engine disponible"}
 ${registrySection}
 ${this.formatFactStoreData(context)}
 ## SECTEUR DU DEAL
-${context.deal.sector ?? "Non spécifié"} - Adapte ton analyse réglementaire en conséquence.
+${context.canonicalDeal.sector ?? "Non spécifié"} - Adapte ton analyse réglementaire en conséquence.
 
 ## INSTRUCTIONS SPECIFIQUES
 
@@ -740,8 +740,8 @@ RAPPELS CRITIQUES:
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "legal-regulatory", extractedMetrics, sector, stage, LEGAL_REGULATORY_CRITERIA,
         );

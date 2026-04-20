@@ -483,8 +483,8 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DevilsAdvocateData> {
-    this._dealStage = context.deal.stage;
-    const deal = context.deal;
+    this._dealStage = context.canonicalDeal.stage;
+    const deal = context.canonicalDeal;
     const tier1Results = this.formatTier1Results(context);
     const tier2Results = this.formatTier2Results(context);
     const contextEngineData = this.formatContextEngineData(context);

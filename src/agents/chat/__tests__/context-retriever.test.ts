@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCurrentFacts: vi.fn(),
+  loadResults: vi.fn(),
+  getCorpusSnapshotDocumentIds: vi.fn(),
   redFlagFindMany: vi.fn(),
   dealChatContextFindUnique: vi.fn(),
   dealFindUnique: vi.fn(),
@@ -18,6 +20,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/services/fact-store/current-facts", () => ({
   getCurrentFacts: mocks.getCurrentFacts,
+}));
+
+vi.mock("@/services/analysis-results/load-results", () => ({
+  loadResults: mocks.loadResults,
+}));
+
+vi.mock("@/services/corpus", () => ({
+  getCorpusSnapshotDocumentIds: mocks.getCorpusSnapshotDocumentIds,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -72,6 +82,18 @@ describe("context-retriever thesis-first analysis binding", () => {
     vi.clearAllMocks();
     mocks.getCurrentFacts.mockResolvedValue([]);
     mocks.redFlagFindMany.mockResolvedValue([]);
+    mocks.loadResults.mockResolvedValue({
+      "financial-auditor": {
+        success: true,
+        data: {
+          summary: "Linked full result",
+          keyFindings: ["Finding A"],
+          score: 44,
+          confidence: 80,
+        },
+      },
+    });
+    mocks.getCorpusSnapshotDocumentIds.mockResolvedValue([]);
     mocks.dealFindUnique.mockResolvedValue({
       sector: "SaaS",
       stage: "Seed",
@@ -130,17 +152,6 @@ describe("context-retriever thesis-first analysis binding", () => {
       dealId: "deal_1",
       status: "COMPLETED",
       mode: "full_analysis",
-      results: {
-        "financial-auditor": {
-          success: true,
-          data: {
-            summary: "Linked full result",
-            keyFindings: ["Finding A"],
-            score: 44,
-            confidence: 80,
-          },
-        },
-      },
       summary: "Linked analysis summary",
       negotiationStrategy: { anchor: "low" },
     });
@@ -157,6 +168,7 @@ describe("context-retriever thesis-first analysis binding", () => {
 
     expect(mocks.analysisFindUnique).toHaveBeenCalled();
     expect(mocks.analysisFindFirst).not.toHaveBeenCalled();
+    expect(mocks.loadResults).toHaveBeenCalledWith("analysis_linked");
     expect(context.agentResults[0]?.score).toBeUndefined();
     expect(context.scoredFindings).toBeUndefined();
     expect(context.analysisSummary).toBe("Linked analysis summary");
@@ -176,14 +188,6 @@ describe("context-retriever thesis-first analysis binding", () => {
       dealId: "deal_1",
       status: "PROCESSING",
       mode: "full_analysis",
-      results: {
-        "financial-auditor": {
-          success: true,
-          data: {
-            summary: "Should not leak",
-          },
-        },
-      },
       summary: "Should not leak",
       negotiationStrategy: { anchor: "high" },
     });

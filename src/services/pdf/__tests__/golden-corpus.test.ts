@@ -332,6 +332,7 @@ describe("golden-corpus helpers", () => {
         pagesByTier: { native_only: 1, standard_ocr: 0, high_fidelity: 1, supreme: 0 },
         unitCredits: { native_only: 0, standard_ocr: 1, high_fidelity: 2, supreme: 3 },
         unitUsd: { native_only: 0, standard_ocr: 0.1, high_fidelity: 0.2, supreme: 0.3 },
+        cachedPages: 0,
       },
       completedAt: new Date().toISOString(),
       pages: [

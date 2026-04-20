@@ -382,7 +382,7 @@ Tu DOIS répondre avec un JSON valide correspondant exactement au schema fourni.
   }
 
   private buildUserPrompt(context: AgentContext): string {
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     const enrichedContext = context as EnrichedAgentContext;
     const tier1Results = context.previousResults ?? {};
 
@@ -541,7 +541,7 @@ Réponds UNIQUEMENT avec un JSON valide.`;
       return text;
     }
 
-    const deal = context.deal;
+    const deal = context.canonicalDeal;
     const sector = deal.sector?.toLowerCase() ?? "";
 
     if (sector.includes("marketplace") || sector.includes("platform")) {

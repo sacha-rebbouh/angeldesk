@@ -165,11 +165,17 @@ export async function GET(
       currentDisplayValue: fact.currentDisplayValue,
       currentSource: fact.currentSource,
       currentConfidence: fact.currentConfidence,
+      currentTruthConfidence: fact.currentTruthConfidence,
       isDisputed: fact.isDisputed,
       disputeDetails: fact.disputeDetails,
       ...(includeHistory ? { eventHistory: fact.eventHistory } : {}),
       firstSeenAt: fact.firstSeenAt,
       lastUpdatedAt: fact.lastUpdatedAt,
+      reliability: fact.reliability,
+      sourceMetadata: fact.sourceMetadata,
+      validAt: fact.validAt,
+      periodType: fact.periodType,
+      periodLabel: fact.periodLabel,
     }));
 
     return NextResponse.json({

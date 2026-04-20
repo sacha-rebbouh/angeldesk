@@ -359,7 +359,7 @@ Tu CONSTATES des contradictions. Tu ne DECIDES jamais.
   // ============================================================================
 
   protected async execute(context: EnrichedAgentContext): Promise<ContradictionDetectorData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     // 1. Formater tous les inputs
     const formattedInputs = this.formatAllInputs(context);
 
@@ -639,7 +639,7 @@ Tu CONSTATES des contradictions. Tu ne DECIDES jamais.
     const dbCompetitors = (context.fundingDbContext?.competitors ?? context.fundingContext?.competitors ?? [])
       .map(c => (c as { name: string }).name);
 
-    return `# ANALYSE CONTRADICTION DETECTOR - ${context.deal.name}
+    return `# ANALYSE CONTRADICTION DETECTOR - ${context.canonicalDeal.name}
 
 ## TOUS LES INPUTS A ANALYSER
 

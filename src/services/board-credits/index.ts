@@ -27,6 +27,12 @@ export interface ConsumeResult {
   error?: string;
 }
 
+export interface BoardCreditConsumeOptions {
+  dealId?: string;
+  idempotencyKey?: string;
+  description?: string;
+}
+
 /**
  * Check if a user can start a new AI Board session
  */
@@ -67,8 +73,14 @@ export async function getCreditsStatus(userId: string): Promise<BoardCreditsStat
 /**
  * Consume credits for a board session
  */
-export async function consumeCredit(userId: string): Promise<ConsumeResult> {
-  const result = await deductCredits(userId, 'AI_BOARD');
+export async function consumeCredit(
+  userId: string,
+  options: BoardCreditConsumeOptions = {}
+): Promise<ConsumeResult> {
+  const result = await deductCredits(userId, 'AI_BOARD', options.dealId, {
+    idempotencyKey: options.idempotencyKey,
+    description: options.description,
+  });
 
   return {
     success: result.success,
@@ -93,11 +105,11 @@ export async function addExtraCredits(): Promise<{ newTotal: number }> {
  * eviter les double-refunds silencieux mais aussi les blocages d'ancien refund
  * deja enregistre.
  */
-export async function refundCredit(userId: string, sessionId?: string): Promise<void> {
+export async function refundCredit(userId: string, sessionId?: string, dealId?: string): Promise<void> {
   const idempotencyKey = sessionId
     ? `refund:AI_BOARD:session:${sessionId}`
     : `refund:AI_BOARD:user:${userId}:${Math.floor(Date.now() / 60_000)}`;
-  await refundCredits(userId, 'AI_BOARD', undefined, { idempotencyKey });
+  await refundCredits(userId, 'AI_BOARD', dealId, { idempotencyKey });
 }
 
 // Legacy export

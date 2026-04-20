@@ -195,7 +195,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechStackDDData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
@@ -211,7 +211,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
       techSection = `\n## Données Techniques Extraites du Deck\n${JSON.stringify(techData, null, 2)}`;
     }
 
-    const prompt = `# ANALYSE TECH-STACK-DD - ${context.deal.name}
+    const prompt = `# ANALYSE TECH-STACK-DD - ${context.canonicalDeal.name}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -449,8 +449,8 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "tech-stack-dd", extractedMetrics, sector, stage, TECH_STACK_DD_CRITERIA,
         );

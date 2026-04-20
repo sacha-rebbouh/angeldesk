@@ -215,7 +215,7 @@ function buildClimatePrompt(context: EnrichedAgentContext): {
   system: string;
   user: string;
 } {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage ?? "SEED";
   const benchmarks = EXTENDED_CLIMATE_BENCHMARKS;
   void benchmarks;

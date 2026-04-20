@@ -7,6 +7,11 @@
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { safeDecrypt } from "@/lib/encryption";
+import { loadResults } from "@/services/analysis-results/load-results";
+import { extractAnalysisScores } from "@/services/analysis-results/score-extraction";
+import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
+import type { CurrentFact } from "@/services/fact-store/types";
 
 // ============================================================================
 // TYPES
@@ -84,7 +89,7 @@ export async function buildChatContext(
     // Get analysis results
     prisma.analysis.findUnique({
       where: { id: analysisId },
-      select: { results: true, mode: true },
+      select: { id: true, mode: true },
     }),
 
     // Get documents for extracted data
@@ -103,7 +108,8 @@ export async function buildChatContext(
   const keyFacts = buildKeyFacts(factEvents);
 
   // Build agent summaries from analysis results
-  const agentSummaries = buildAgentSummaries(analysis?.results as Record<string, unknown> | null);
+  const analysisResults = analysis ? await loadResults(analysis.id) : null;
+  const agentSummaries = buildAgentSummaries(analysisResults as Record<string, unknown> | null);
 
   // Build red flags context
   const redFlagsContext = buildRedFlagsContext(redFlags);
@@ -190,9 +196,10 @@ export interface LiveSessionContextData {
  */
 export async function getFullChatContext(
   dealId: string,
-  options?: { analysisId?: string | null }
+  options?: { analysisId?: string | null; documentIds?: string[] | null }
 ): Promise<{
   chatContext: DealChatContextData | null;
+  canonicalDeal: Awaited<ReturnType<typeof getDealBasicInfo>>;
   deal: Awaited<ReturnType<typeof getDealBasicInfo>>;
   documents: Awaited<ReturnType<typeof getDocumentSummaries>>;
   latestAnalysis: Awaited<ReturnType<typeof getLatestAnalysisResults>>;
@@ -201,14 +208,27 @@ export async function getFullChatContext(
   const [chatContext, deal, documents, latestAnalysis, liveSessions] = await Promise.all([
     getChatContext(dealId, options),
     getDealBasicInfo(dealId),
-    getDocumentSummaries(dealId),
+    getDocumentSummaries(dealId, options),
     getLatestAnalysisResults(dealId, options),
     getCompletedLiveSessions(dealId),
   ]);
 
+  const canonicalDeal = deal
+    ? {
+        ...deal,
+        globalScore: latestAnalysis?.scores.globalScore ?? deal.globalScore,
+        teamScore: latestAnalysis?.scores.teamScore ?? deal.teamScore,
+        marketScore: latestAnalysis?.scores.marketScore ?? deal.marketScore,
+        productScore: latestAnalysis?.scores.productScore ?? deal.productScore,
+        financialsScore:
+          latestAnalysis?.scores.financialsScore ?? deal.financialsScore,
+      }
+    : deal;
+
   return {
     chatContext,
-    deal,
+    canonicalDeal,
+    deal: canonicalDeal,
     documents,
     latestAnalysis,
     liveSessions,
@@ -381,43 +401,110 @@ function buildExtractedData(
   return data;
 }
 
-async function getDealBasicInfo(dealId: string) {
-  return prisma.deal.findUnique({
-    where: { id: dealId },
-    select: {
-      id: true,
-      name: true,
-      companyName: true,
-      sector: true,
-      stage: true,
-      geography: true,
-      description: true,
-      website: true,
-      arr: true,
-      growthRate: true,
-      amountRequested: true,
-      valuationPre: true,
-      globalScore: true,
-      teamScore: true,
-      marketScore: true,
-      productScore: true,
-      financialsScore: true,
-      founders: {
-        select: {
-          name: true,
-          role: true,
-          linkedinUrl: true,
-          verifiedInfo: true,
-          previousVentures: true,
-        },
-      },
-    },
-  });
+function buildCurrentFactMap(currentFacts: CurrentFact[]): Map<string, CurrentFact> {
+  return new Map(currentFacts.map((fact) => [fact.factKey, fact]));
 }
 
-async function getDocumentSummaries(dealId: string) {
+function getCurrentFactString(
+  factMap: Map<string, CurrentFact>,
+  factKey: string
+): string | null {
+  const fact = factMap.get(factKey);
+  if (!fact) return null;
+  if (typeof fact.currentValue === "string") return fact.currentValue;
+  if (typeof fact.currentDisplayValue === "string" && fact.currentDisplayValue.length > 0) {
+    return fact.currentDisplayValue;
+  }
+  return null;
+}
+
+function getCurrentFactNumber(
+  factMap: Map<string, CurrentFact>,
+  factKey: string
+): number | null {
+  const fact = factMap.get(factKey);
+  if (!fact) return null;
+  if (typeof fact.currentValue === "number" && Number.isFinite(fact.currentValue)) {
+    return fact.currentValue;
+  }
+  if (typeof fact.currentValue === "string") {
+    const parsed = Number(fact.currentValue);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+async function getDealBasicInfo(dealId: string) {
+  const [deal, currentFacts] = await Promise.all([
+    prisma.deal.findUnique({
+      where: { id: dealId },
+      select: {
+        id: true,
+        name: true,
+        companyName: true,
+        sector: true,
+        stage: true,
+        geography: true,
+        description: true,
+        website: true,
+        arr: true,
+        growthRate: true,
+        amountRequested: true,
+        valuationPre: true,
+        globalScore: true,
+        teamScore: true,
+        marketScore: true,
+        productScore: true,
+        financialsScore: true,
+        founders: {
+          select: {
+            name: true,
+            role: true,
+            linkedinUrl: true,
+            verifiedInfo: true,
+            previousVentures: true,
+          },
+        },
+      },
+    }),
+    getCurrentFactsFromView(dealId),
+  ]);
+
+  if (!deal) {
+    return null;
+  }
+
+  const factMap = buildCurrentFactMap(currentFacts);
+
+  return {
+    ...deal,
+    companyName: getCurrentFactString(factMap, "company.name") ?? deal.companyName,
+    website: getCurrentFactString(factMap, "other.website") ?? deal.website,
+    arr: getCurrentFactNumber(factMap, "financial.arr") ?? (deal.arr != null ? Number(deal.arr) : null),
+    growthRate:
+      getCurrentFactNumber(factMap, "financial.revenue_growth_yoy") ??
+      (deal.growthRate != null ? Number(deal.growthRate) : null),
+    amountRequested:
+      getCurrentFactNumber(factMap, "financial.amount_raising") ??
+      (deal.amountRequested != null ? Number(deal.amountRequested) : null),
+    valuationPre:
+      getCurrentFactNumber(factMap, "financial.valuation_pre") ??
+      (deal.valuationPre != null ? Number(deal.valuationPre) : null),
+  };
+}
+
+async function getDocumentSummaries(
+  dealId: string,
+  options?: { documentIds?: string[] | null }
+) {
+  const requestedDocumentIds = options?.documentIds?.length ? options.documentIds : null;
   const documents = await prisma.document.findMany({
-    where: { dealId },
+    where: {
+      dealId,
+      ...(requestedDocumentIds
+        ? { id: { in: requestedDocumentIds } }
+        : { isLatest: true }),
+    },
     select: {
       id: true,
       name: true,
@@ -427,12 +514,26 @@ async function getDocumentSummaries(dealId: string) {
     },
   });
 
-  return documents.map((doc) => ({
+  const documentOrder = requestedDocumentIds
+    ? new Map(requestedDocumentIds.map((documentId, index) => [documentId, index]))
+    : null;
+
+  const orderedDocuments = requestedDocumentIds
+    ? documents
+        .slice()
+        .sort(
+          (left, right) =>
+            (documentOrder?.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+            (documentOrder?.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+        )
+    : documents;
+
+  return orderedDocuments.map((doc) => ({
     id: doc.id,
     name: doc.name,
     type: doc.type,
     isProcessed: doc.processingStatus === "COMPLETED",
-    extractedText: doc.extractedText,
+    extractedText: doc.extractedText ? safeDecrypt(doc.extractedText) : null,
   }));
 }
 
@@ -471,12 +572,16 @@ async function getLatestAnalysisResults(
 
   if (!analysis || analysis.dealId !== dealId || analysis.status !== "COMPLETED") return null;
 
+  const results = await loadResults(analysis.id);
+  const scores = extractAnalysisScores(results);
+
   return {
     id: analysis.id,
     mode: analysis.mode,
     summary: analysis.summary,
     completedAt: analysis.completedAt,
-    hasResults: true,
+    hasResults: !!results,
+    scores,
   };
 }
 

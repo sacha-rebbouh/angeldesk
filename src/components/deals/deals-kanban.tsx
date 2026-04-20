@@ -11,23 +11,13 @@ import { ScoreBadge } from "@/components/shared/score-badge";
 import { ThesisStaleBadge } from "./thesis/thesis-stale-badge";
 import { THESIS_VERDICT_CONFIG } from "@/lib/ui-configs";
 import { getStatusLabel, getStageLabel, formatCurrencyEUR } from "@/lib/format-utils";
-
-interface Deal {
-  id: string;
-  name: string;
-  sector: string | null;
-  stage: string | null;
-  valuationPre: number | string | null;
-  status: string;
-  website: string | null;
-  updatedAt: Date;
-  redFlags: { severity: string; title?: string }[];
-  globalScore?: number | null;
-  thesisVerdict?: string | null;
-}
+import {
+  getDealDisplayName,
+  type CanonicalDealListItem,
+} from "./types";
 
 interface DealsKanbanProps {
-  deals: Deal[];
+  deals: CanonicalDealListItem[];
 }
 
 const COLUMNS: { key: string; color: string }[] = [
@@ -45,7 +35,7 @@ export const DealsKanban = memo(function DealsKanban({ deals }: DealsKanbanProps
   const router = useRouter();
 
   const columns = useMemo(() => {
-    const grouped: Record<string, Deal[]> = {};
+    const grouped: Record<string, CanonicalDealListItem[]> = {};
     for (const col of COLUMNS) {
       grouped[col.key] = [];
     }
@@ -110,7 +100,7 @@ const KanbanCard = memo(function KanbanCard({
   deal,
   onClick,
 }: {
-  deal: Deal;
+  deal: CanonicalDealListItem;
   onClick: (id: string) => void;
 }) {
   const criticalFlags = deal.redFlags.filter(
@@ -129,7 +119,9 @@ const KanbanCard = memo(function KanbanCard({
     >
       {/* Name + score */}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <span className="text-sm font-medium leading-tight line-clamp-2">{deal.name}</span>
+        <span className="text-sm font-medium leading-tight line-clamp-2">
+          {getDealDisplayName(deal)}
+        </span>
         {!thesisGated && deal.globalScore != null ? (
           <ScoreBadge score={deal.globalScore} size="sm" />
         ) : (

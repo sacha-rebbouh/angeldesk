@@ -399,7 +399,7 @@ Answer only if you are >90% confident, since mistakes are penalised 9 points, wh
   // ============================================================================
 
   protected async execute(context: EnrichedAgentContext): Promise<CustomerIntelData> {
-    this._dealStage = context.deal.stage;
+    this._dealStage = context.canonicalDeal.stage;
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
@@ -834,8 +834,8 @@ IMPORTANT:
       }
 
       if (extractedMetrics.length > 0) {
-        const sector = context.deal.sector ?? "general";
-        const stage = context.deal.stage ?? "seed";
+        const sector = context.canonicalDeal.sector ?? "general";
+        const stage = context.canonicalDeal.stage ?? "seed";
         const deterministicScore = await calculateAgentScore(
           "customer-intel", extractedMetrics, sector, stage, CUSTOMER_INTEL_CRITERIA,
         );

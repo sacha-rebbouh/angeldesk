@@ -19,6 +19,8 @@ import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import type { ThesisExtractorOutput } from "@/agents/thesis/types";
 import { inngest } from "@/lib/inngest";
 import { logger } from "@/lib/logger";
+import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
+import { getCurrentFactString } from "@/services/deals/canonical-read-model";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -54,6 +56,16 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
+    const currentFacts = await getCurrentFactsFromView(dealId);
+    const factMap = new Map(currentFacts.map((fact) => [fact.factKey, fact]));
+    const canonicalDealName = getCurrentFactString(factMap, "company.name") ?? deal.name;
+    const canonicalSector =
+      getCurrentFactString(factMap, "other.sector") ??
+      getCurrentFactString(factMap, "market.vertical") ??
+      deal.sector ??
+      undefined;
+    const canonicalStage = getCurrentFactString(factMap, "product.stage") ?? deal.stage ?? undefined;
+
     const body = await request.json();
     const parsed = rebuttalSchema.safeParse(body);
     if (!parsed.success) {
@@ -64,9 +76,47 @@ export async function POST(request: Request, context: RouteContext) {
     }
     const rebuttalText = parsed.data.rebuttalText.trim();
 
-    const latest = await thesisService.getLatest(dealId);
+    let latest = await thesisService.getLatest(dealId);
     if (!latest) {
       return NextResponse.json({ error: "No thesis found for this deal" }, { status: 404 });
+    }
+
+    const staleRebuttalCutoff = new Date(Date.now() - 10 * 60 * 1000);
+    if (
+      latest.decision === "contest" &&
+      latest.rebuttalVerdict == null &&
+      latest.rebuttalText &&
+      latest.updatedAt < staleRebuttalCutoff
+    ) {
+      const staleRebuttalHash = createHash("sha256").update(latest.rebuttalText).digest("hex").slice(0, 16);
+      logger.warn(
+        {
+          dealId,
+          thesisId: latest.id,
+          updatedAt: latest.updatedAt,
+        },
+        "Releasing stale rebuttal attempt before accepting a new rebuttal request"
+      );
+
+      await thesisService.cancelRebuttalAttempt({
+        thesisId: latest.id,
+        rebuttalText: latest.rebuttalText,
+      }).catch((err) => {
+        logger.error({ err, dealId, thesisId: latest?.id }, "Failed to release stale rebuttal attempt");
+      });
+
+      await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
+        dealId,
+        idempotencyKey: `thesis:rebuttal-refund:${latest.id}:${staleRebuttalHash}`,
+        description: "Refund stale thesis rebuttal attempt",
+      }).catch((err) => {
+        logger.error({ err, dealId, thesisId: latest?.id }, "Failed to refund stale rebuttal attempt");
+      });
+
+      latest = await thesisService.getLatest(dealId);
+      if (!latest) {
+        return NextResponse.json({ error: "No thesis found for this deal" }, { status: 404 });
+      }
     }
 
     if (latest.decision === "stop" || latest.decision === "continue") {
@@ -77,7 +127,12 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const pausedAnalyses = await prisma.analysis.findMany({
-      where: { dealId, thesisId: latest.id, status: "RUNNING" },
+      where: {
+        dealId,
+        thesisId: latest.id,
+        status: "RUNNING",
+        ...(latest.corpusSnapshotId ? { corpusSnapshotId: latest.corpusSnapshotId } : {}),
+      },
       select: { id: true },
       orderBy: { createdAt: "desc" },
     });
@@ -164,6 +219,7 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
+    const latestSourceScope = await thesisService.resolveSourceScope(latest);
     const originalThesis: ThesisExtractorOutput = {
       reformulated: latest.reformulated,
       problem: latest.problem,
@@ -178,23 +234,23 @@ export async function POST(request: Request, context: RouteContext) {
       ycLens: latest.ycLens as ThesisExtractorOutput["ycLens"],
       thielLens: latest.thielLens as ThesisExtractorOutput["thielLens"],
       angelDeskLens: latest.angelDeskLens as ThesisExtractorOutput["angelDeskLens"],
-      sourceDocumentIds: latest.sourceDocumentIds,
-      sourceHash: latest.sourceHash,
+      sourceDocumentIds: latestSourceScope!.sourceDocumentIds,
+      sourceHash: latestSourceScope!.sourceHash,
     };
 
     let judgeResult: Awaited<ReturnType<typeof thesisRebuttalJudgeAgent.run>>;
     try {
       judgeResult = await thesisRebuttalJudgeAgent.run({
         dealId,
-        deal: { id: deal.id, name: deal.name, sector: deal.sector, stage: deal.stage },
+        deal: { id: deal.id, name: canonicalDealName, sector: canonicalSector, stage: canonicalStage },
         documents: [],
         previousResults: {},
         rebuttalInput: {
           originalThesis,
           rebuttalText,
-          dealName: deal.name,
-          dealSector: deal.sector ?? undefined,
-          dealStage: deal.stage ?? undefined,
+          dealName: canonicalDealName,
+          dealSector: canonicalSector,
+          dealStage: canonicalStage,
         },
       } as unknown as Parameters<typeof thesisRebuttalJudgeAgent.run>[0]);
     } catch (err) {

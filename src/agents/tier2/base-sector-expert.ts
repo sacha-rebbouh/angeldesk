@@ -384,7 +384,7 @@ export function buildSectorExpertPrompt(
   context: EnrichedAgentContext,
   config: SectorConfig
 ): { system: string; user: string } {
-  const deal = context.deal;
+  const deal = context.canonicalDeal;
   const stage = deal.stage ?? "SEED";
   const benchmarks = config.benchmarkData;
 

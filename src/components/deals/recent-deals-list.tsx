@@ -12,21 +12,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getStatusColor, getStatusLabel } from "@/lib/format-utils";
+import { getStageLabel, getStatusColor, getStatusLabel } from "@/lib/format-utils";
 import { useDealActions } from "./use-deal-actions";
 import { DealRenameDialog, DealDeleteDialog } from "./deal-action-dialogs";
-
-interface Deal {
-  id: string;
-  name: string;
-  sector: string | null;
-  stage: string | null;
-  status: string;
-  redFlags: { severity: string }[];
-}
+import {
+  getDealDisplayName,
+  type CanonicalDealListItem,
+} from "./types";
 
 interface RecentDealsListProps {
-  deals: Deal[];
+  deals: CanonicalDealListItem[];
 }
 
 export const RecentDealsList = memo(function RecentDealsList({ deals }: RecentDealsListProps) {
@@ -64,7 +59,7 @@ export const RecentDealsList = memo(function RecentDealsList({ deals }: RecentDe
             >
               <div className="space-y-1 min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium">{deal.name}</span>
+                  <span className="font-medium">{getDealDisplayName(deal)}</span>
                   <Badge variant="secondary" className={getStatusColor(deal.status)}>
                     {getStatusLabel(deal.status)}
                   </Badge>
@@ -76,7 +71,7 @@ export const RecentDealsList = memo(function RecentDealsList({ deals }: RecentDe
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {deal.sector ?? "Secteur non défini"} • {deal.stage ?? "Stade non défini"}
+                  {deal.sector ?? "Secteur non défini"} • {getStageLabel(deal.stage, "Stade non défini")}
                 </p>
               </div>
 

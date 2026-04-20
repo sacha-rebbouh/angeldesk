@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { safeDecrypt } from "@/lib/encryption";
 import { BoardMember } from "./board-member";
 import type {
   BoardOrchestratorOptions,
@@ -13,17 +14,69 @@ import type {
   StoppingConditionResult,
 } from "./types";
 import { getBoardMembers } from "./types";
+import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
 import { enrichDeal } from "@/services/context-engine";
+import {
+  getCurrentFactString,
+  pickCanonicalAnalysis,
+} from "@/services/deals/canonical-read-model";
 import { getCurrentFacts, getDisputedFacts, formatFactStoreForAgents } from "@/services/fact-store";
 import { completeJSON } from "@/services/openrouter/router";
+import { loadResults } from "@/services/analysis-results/load-results";
 import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 
 const DEFAULT_MAX_ROUNDS = 3;
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
 const MIN_MEMBERS_REQUIRED = 2; // Continue if at least 2 members are working (graceful degradation)
 
+type BoardContextDocument = {
+  id: string;
+  name: string;
+  type: string;
+  extractedText: string | null;
+};
+
+type BoardDealSignals = {
+  companyName: string;
+  sector?: string;
+  stage?: string;
+  geography?: string;
+  website?: string;
+};
+
+function resolveBoardDealSignals(
+  deal: {
+    name: string;
+    companyName: string | null;
+    sector: string | null;
+    stage: string | null;
+    geography: string | null;
+    website: string | null;
+  },
+  currentFacts: Awaited<ReturnType<typeof getCurrentFacts>>
+): BoardDealSignals {
+  const factMap = new Map(currentFacts.map((fact) => [fact.factKey, fact]));
+
+  return {
+    companyName: getCurrentFactString(factMap, "company.name") ?? deal.companyName ?? deal.name,
+    sector:
+      getCurrentFactString(factMap, "other.sector") ??
+      getCurrentFactString(factMap, "market.vertical") ??
+      deal.sector ??
+      undefined,
+    stage: getCurrentFactString(factMap, "product.stage") ?? deal.stage ?? undefined,
+    geography:
+      getCurrentFactString(factMap, "market.geography_primary") ??
+      deal.geography ??
+      undefined,
+    website: getCurrentFactString(factMap, "other.website") ?? deal.website ?? undefined,
+  };
+}
+
 export class BoardOrchestrator {
   private sessionId: string | null = null;
+  private thesisId: string | null = null;
+  private corpusSnapshotId: string | null = null;
   private members: BoardMember[] = [];
   private startTime = 0;
   private onProgress?: (event: BoardProgressEvent) => void;
@@ -51,15 +104,20 @@ export class BoardOrchestrator {
   async runBoard(options: BoardOrchestratorOptions): Promise<BoardVerdictResult> {
     this.startTime = Date.now();
 
-    // 1. Create session in DB
-    const session = await prisma.aIBoardSession.create({
-      data: {
-        dealId: options.dealId,
-        userId: options.userId,
-        status: "INITIALIZING",
-        startedAt: new Date(),
-      },
-    });
+    // 1. Create or reuse session in DB
+    const session = options.sessionId
+      ? await prisma.aIBoardSession.findUniqueOrThrow({
+          where: { id: options.sessionId },
+          select: { id: true },
+        })
+      : await prisma.aIBoardSession.create({
+          data: {
+            dealId: options.dealId,
+            userId: options.userId,
+            status: "INITIALIZING",
+            startedAt: new Date(),
+          },
+        });
     this.sessionId = session.id;
 
     this.emitProgress({
@@ -79,7 +137,11 @@ export class BoardOrchestrator {
       // 3. Update status to ANALYZING
       await prisma.aIBoardSession.update({
         where: { id: session.id },
-        data: { status: "ANALYZING" },
+        data: {
+          status: "ANALYZING",
+          thesisId: this.thesisId,
+          corpusSnapshotId: this.corpusSnapshotId,
+        },
       });
 
       // 3.5 ROUND 0 — Thesis debate (thesis-first) : debat sur la these AVANT analyse deal
@@ -254,7 +316,6 @@ export class BoardOrchestrator {
     const deal = await prisma.deal.findUnique({
       where: { id: dealId },
       include: {
-        documents: true,
         founders: true,
         redFlags: true,
         analyses: {
@@ -263,12 +324,14 @@ export class BoardOrchestrator {
             completedAt: { not: null },
           },
           orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
-          take: 1,
           select: {
             id: true,
-            results: true,
+            dealId: true,
+            mode: true,
             thesisId: true,
+            corpusSnapshotId: true,
             completedAt: true,
+            createdAt: true,
           },
         },
       },
@@ -278,9 +341,80 @@ export class BoardOrchestrator {
       throw new Error(`Deal ${dealId} non trouve`);
     }
 
-    // Get the latest analysis results
-    const latestAnalysis = deal.analyses[0];
-    const analysisResults = latestAnalysis?.results as Record<string, unknown> | null;
+    let currentFacts: Awaited<ReturnType<typeof getCurrentFacts>> = [];
+    let disputedFacts: Awaited<ReturnType<typeof getDisputedFacts>> = [];
+    try {
+      console.log(`[BoardOrchestrator] Fetching Fact Store for deal ${dealId}...`);
+      [currentFacts, disputedFacts] = await Promise.all([
+        getCurrentFacts(dealId),
+        getDisputedFacts(dealId),
+      ]);
+    } catch (error) {
+      console.error(`[BoardOrchestrator] Fact Store fetch failed:`, error);
+      // Continue without fact store - board can still function
+    }
+
+    const canonicalDeal = resolveBoardDealSignals(deal, currentFacts);
+
+    const { thesisService } = await import("@/services/thesis");
+    const latestThesis = await thesisService.getLatest(dealId);
+    const canonicalAnalysis = pickCanonicalAnalysis(
+      latestThesis
+        ? {
+            id: latestThesis.id,
+            corpusSnapshotId: latestThesis.corpusSnapshotId ?? null,
+          }
+        : null,
+      deal.analyses
+    );
+
+    if (latestThesis && !canonicalAnalysis) {
+      throw new Error(
+        "Cannot run board deliberation without a completed analysis aligned to the latest thesis"
+      );
+    }
+
+    this.thesisId = latestThesis?.id ?? null;
+    this.corpusSnapshotId = canonicalAnalysis?.corpusSnapshotId ?? latestThesis?.corpusSnapshotId ?? null;
+
+    // Get the canonical analysis results aligned to the current thesis
+    const analysisResults = canonicalAnalysis
+      ? (await loadResults(canonicalAnalysis.id)) as Record<string, unknown> | null
+      : null;
+    const snapshotDocumentIds = canonicalAnalysis?.corpusSnapshotId
+      ? await getCorpusSnapshotDocumentIds(canonicalAnalysis.corpusSnapshotId)
+      : [];
+    const requestedDocumentIds = snapshotDocumentIds.length > 0 ? snapshotDocumentIds : null;
+    const documents = await prisma.document.findMany({
+      where: {
+        dealId,
+        processingStatus: "COMPLETED",
+        ...(requestedDocumentIds
+          ? { id: { in: requestedDocumentIds } }
+          : { isLatest: true }),
+      },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        extractedText: true,
+      },
+    });
+    const boardDocuments: BoardContextDocument[] = documents.map((document) => ({
+      id: document.id,
+      name: document.name,
+      type: document.type,
+      extractedText: document.extractedText ? safeDecrypt(document.extractedText) : null,
+    }));
+
+    if (requestedDocumentIds) {
+      const order = new Map(requestedDocumentIds.map((documentId, index) => [documentId, index]));
+      boardDocuments.sort(
+        (left, right) =>
+          (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+          (order.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+      );
+    }
 
     // Enrich with Context Engine data
     let enrichedData: BoardInput["enrichedData"] = null;
@@ -288,10 +422,11 @@ export class BoardOrchestrator {
       console.log(`[BoardOrchestrator] Enriching deal ${dealId} with Context Engine...`);
       const contextData = await enrichDeal(
         {
-          companyName: deal.companyName ?? deal.name,
-          sector: deal.sector ?? undefined,
-          stage: deal.stage ?? undefined,
-          geography: deal.geography ?? undefined,
+          companyName: canonicalDeal.companyName,
+          sector: canonicalDeal.sector,
+          stage: canonicalDeal.stage,
+          geography: canonicalDeal.geography,
+          websiteUrl: canonicalDeal.website,
         },
         {
           dealId,
@@ -312,6 +447,9 @@ export class BoardOrchestrator {
           competitorData: contextData.competitiveLandscape,
           fundingHistory: contextData.dealIntelligence,
           newsArticles: contextData.newsSentiment?.articles,
+          websiteContent: contextData.websiteContent,
+          contextQuality: contextData.contextQuality,
+          sourceHealth: contextData.sourceHealth,
         };
         console.log(`[BoardOrchestrator] Context Engine enrichment complete`);
       }
@@ -375,30 +513,18 @@ export class BoardOrchestrator {
 
     }
 
-    // Fact Store: Fetch directly from service (not from analysis results)
-    try {
-      console.log(`[BoardOrchestrator] Fetching Fact Store for deal ${dealId}...`);
-      const [currentFacts, disputedFacts] = await Promise.all([
-        getCurrentFacts(dealId),
-        getDisputedFacts(dealId),
-      ]);
+    // Fact Store: fetched from service once and reused for the board input
+    if (currentFacts.length > 0 || disputedFacts.length > 0) {
+      const formattedFactStore = formatFactStoreForAgents(currentFacts);
 
-      if (currentFacts.length > 0 || disputedFacts.length > 0) {
-        // Format for LLM consumption
-        const formattedFactStore = formatFactStoreForAgents(currentFacts);
-
-        agentOutputs.factStore = {
-          facts: currentFacts,
-          contradictions: disputedFacts,
-          formatted: formattedFactStore, // Pre-formatted for LLM
-        };
-        console.log(
-          `[BoardOrchestrator] Fact Store: ${currentFacts.length} facts, ${disputedFacts.length} disputed`
-        );
-      }
-    } catch (error) {
-      console.error(`[BoardOrchestrator] Fact Store fetch failed:`, error);
-      // Continue without fact store - board can still function
+      agentOutputs.factStore = {
+        facts: currentFacts,
+        contradictions: disputedFacts,
+        formatted: formattedFactStore, // Pre-formatted for LLM
+      };
+      console.log(
+        `[BoardOrchestrator] Fact Store: ${currentFacts.length} facts, ${disputedFacts.length} disputed`
+      );
     }
 
     // Count how many agents have data
@@ -413,18 +539,19 @@ export class BoardOrchestrator {
       `Tier1=${tier1Count}/13, Tier2=${agentOutputs.tier2 ? 1 : 0}, Tier3=${tier3Count}/5`
     );
 
-    // Thesis-first : charger en priorite la these liee a l'analyse retenue.
+    // Thesis-first : charger en priorite la these canonique courante.
     let thesisInput: BoardInput["thesis"] = null;
     try {
-      const { thesisService } = await import("@/services/thesis");
-      const pairedThesis = latestAnalysis?.thesisId
-        ? await thesisService.getById(latestAnalysis.thesisId)
-        : await thesisService.getLatest(dealId);
+      const pairedThesis =
+        latestThesis ??
+        (canonicalAnalysis?.thesisId
+          ? await thesisService.getById(canonicalAnalysis.thesisId)
+          : null);
 
       if (pairedThesis) {
         thesisInput = mapBoardThesisInput(pairedThesis);
         console.log(
-          `[BoardOrchestrator] Thesis loaded for round THESIS_DEBATE: thesisId=${pairedThesis.id} verdict=${pairedThesis.verdict}`
+          `[BoardOrchestrator] Thesis loaded for round THESIS_DEBATE: thesisId=${pairedThesis.id} verdict=${pairedThesis.verdict} canonicalAnalysis=${canonicalAnalysis?.id ?? "none"}`
         );
       } else {
         console.log(
@@ -438,12 +565,12 @@ export class BoardOrchestrator {
     return {
       dealId: deal.id,
       dealName: deal.name,
-      companyName: deal.companyName ?? deal.name,
+      companyName: canonicalDeal.companyName,
       thesis: thesisInput,
-      documents: deal.documents.map((doc) => ({
-        name: doc.name,
-        type: doc.type,
-        extractedText: doc.extractedText,
+      documents: boardDocuments.map(({ name, type, extractedText }) => ({
+        name,
+        type,
+        extractedText,
       })),
       enrichedData,
       agentOutputs,
@@ -451,9 +578,9 @@ export class BoardOrchestrator {
         {
           source: "Pitch Deck",
           reliability: "medium" as const,
-          dataPoints: deal.documents
-            .filter((d) => d.type === "PITCH_DECK")
-            .map((d) => d.name),
+          dataPoints: boardDocuments
+            .filter((document) => document.type === "PITCH_DECK")
+            .map((document) => document.name),
         },
         {
           source: "Agent Analysis",

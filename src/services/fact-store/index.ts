@@ -73,6 +73,10 @@ export {
 } from './current-facts';
 export type { AgentFactValidation } from './current-facts';
 
+// Canonical ingestion helpers
+export { persistExtractedFactsWithMatching } from './ingestion';
+export type { PersistExtractedFactsResult } from './ingestion';
+
 // Calibration Analytics
 export { getCalibrationMetrics } from './calibration';
 export type { CalibrationMetrics } from './calibration';

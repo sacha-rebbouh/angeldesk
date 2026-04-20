@@ -1,4 +1,6 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import type { ProcessingStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
@@ -12,7 +14,8 @@ import {
   summarizeManifestForLegacyMetrics,
   startDocumentExtractionRun,
 } from "@/services/documents/extraction-runs";
-import { deductCreditAmount } from "@/services/credits";
+import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
+import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 
 export const maxDuration = 300;
 
@@ -22,6 +25,10 @@ interface RouteParams {
 
 // POST /api/documents/[documentId]/ocr - Force OCR on a PDF document
 export async function POST(request: NextRequest, { params }: RouteParams) {
+  let claimedDocumentId: string | null = null;
+  let claimedOriginalStatus: ProcessingStatus | null = null;
+  let refundContext: { userId: string; dealId: string; documentId: string; requestId: string } | null = null;
+  let chargedCredits = 0;
   try {
     const user = await requireAuth();
     const { documentId } = await params;
@@ -38,6 +45,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (document.deal.userId !== user.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
+    const runningAnalysis = await getRunningAnalysisForDeal(document.dealId);
+    if (runningAnalysis) {
+      return NextResponse.json(
+        {
+          error: "Une analyse est en cours sur ce deal. Finalisez-la avant de relancer un OCR complet.",
+          analysisId: runningAnalysis.id,
+        },
+        { status: 409 }
+      );
+    }
 
     if (document.mimeType !== "application/pdf") {
       return NextResponse.json({ error: "Only PDF documents support OCR" }, { status: 400 });
@@ -47,17 +64,40 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Document has no storage URL" }, { status: 400 });
     }
 
-    await prisma.document.update({
-      where: { id: documentId },
+    const processingClaim = await prisma.document.updateMany({
+      where: {
+        id: documentId,
+        processingStatus: { not: "PROCESSING" },
+      },
       data: { processingStatus: "PROCESSING" },
     });
+
+    if (processingClaim.count === 0) {
+      const latestStatus = await prisma.document.findUnique({
+        where: { id: documentId },
+        select: { processingStatus: true },
+      });
+      return NextResponse.json(
+        { error: `Document cannot start OCR from status "${latestStatus?.processingStatus ?? document.processingStatus}".` },
+        { status: 409 }
+      );
+    }
+
+    claimedDocumentId = documentId;
+    claimedOriginalStatus = document.processingStatus;
     const progressRun = await startDocumentExtractionRun({
       documentId,
       documentVersion: document.version,
       contentHash: document.contentHash,
       extractionVersion: "strict-pdf-v1",
     });
-    let creditsCharged = 0;
+    const ocrRequestId = randomUUID();
+    refundContext = {
+      userId: user.id,
+      dealId: document.dealId,
+      documentId,
+      requestId: ocrRequestId,
+    };
 
     // Download the PDF buffer from storage
     const buffer = await downloadFile(document.storageUrl);
@@ -71,12 +111,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       onProgress: async (event) => {
         if (event.phase === "native_extracted") {
           const estimatedCredits = Math.max(0, event.pageCount);
-          if (estimatedCredits > 0 && creditsCharged === 0) {
+          if (estimatedCredits > 0 && chargedCredits === 0) {
             const deduction = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", estimatedCredits, {
               dealId: document.dealId,
               documentId,
               documentExtractionRunId: progressRun.id,
-              idempotencyKey: `extraction:full-ocr:${progressRun.id}`,
+              idempotencyKey: `extraction:full-ocr:${documentId}:${ocrRequestId}`,
               description: `Full OCR extraction for ${document.name}`,
             });
             if (!deduction.success) {
@@ -94,7 +134,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
               });
               throw new Error(message);
             }
-            creditsCharged = estimatedCredits;
+            chargedCredits = estimatedCredits;
           }
           await markExtractionRunProgress({
             runId: progressRun.id,
@@ -165,7 +205,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           method: "ocr",
           pagesOCRd: result.pagesOCRd,
           ocrCost: result.estimatedCost,
-          extractionCreditsCharged: creditsCharged,
+          extractionCreditsCharged: chargedCredits,
           latestExtractionRunId: extractionRun.id,
           ...summarizeManifestForLegacyMetrics(result.manifest),
         },
@@ -186,6 +226,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error) {
+    if (refundContext && chargedCredits > 0) {
+      await refundCreditAmount(refundContext.userId, "EXTRACTION_HIGH_PAGE", chargedCredits, {
+        dealId: refundContext.dealId,
+        documentId: refundContext.documentId,
+        idempotencyKey: `extraction:refund:full-ocr:${refundContext.requestId}`,
+        description: `Refund failed full OCR for ${refundContext.documentId}`,
+      }).catch(() => undefined);
+    }
+    if (claimedDocumentId && claimedOriginalStatus) {
+      await prisma.document.updateMany({
+        where: { id: claimedDocumentId, processingStatus: "PROCESSING" },
+        data: { processingStatus: claimedOriginalStatus },
+      }).catch(() => undefined);
+    }
     return handleApiError(error, "process OCR");
   }
 }

@@ -490,10 +490,15 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     evaluationAxes?: NormalizedThesisEvaluation;
   };
 
+  const thesisAnalysisId = selectedAnalysisId
+    ?? analyses.find((analysis) => analysis.status === "COMPLETED")?.id
+    ?? null;
+
   const { data: thesisData } = useQuery({
-    queryKey: queryKeys.thesis.byDeal(dealId),
+    queryKey: [...queryKeys.thesis.byDeal(dealId), thesisAnalysisId ?? "latest"],
     queryFn: async () => {
-      const response = await fetch(`/api/deals/${dealId}/thesis`);
+      const search = thesisAnalysisId ? `?analysisId=${thesisAnalysisId}` : "";
+      const response = await fetch(`/api/deals/${dealId}/thesis${search}`);
       if (!response.ok) throw new Error("Failed to fetch thesis");
       const json = await response.json();
       return json.data as {
@@ -1013,10 +1018,8 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
 
   // Get current analysis ID for timeline selection
   const currentAnalysisId = useMemo(() => {
-    if (selectedAnalysisId) return selectedAnalysisId;
-    // Note: même si liveResult existe, on permet la navigation entre versions
-    return completedAnalyses[0]?.id ?? null;
-  }, [selectedAnalysisId, completedAnalyses]);
+    return thesisAnalysisId;
+  }, [thesisAnalysisId]);
 
   // Ref pour détecter l'ajout d'une nouvelle analyse
   const prevAnalysesCountRef = useRef(completedAnalyses.length);

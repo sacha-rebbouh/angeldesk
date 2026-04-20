@@ -77,6 +77,33 @@ export interface Message {
  */
 export interface FullChatContext {
   // Deal basic info
+  canonicalDeal: {
+    id: string;
+    name: string;
+    companyName?: string | null;
+    sector?: string | null;
+    stage?: string | null;
+    geography?: string | null;
+    description?: string | null;
+    website?: string | null;
+    arr?: number | null;
+    growthRate?: number | null;
+    amountRequested?: number | null;
+    valuationPre?: number | null;
+    globalScore?: number | null;
+    teamScore?: number | null;
+    marketScore?: number | null;
+    productScore?: number | null;
+    financialsScore?: number | null;
+    founders?: Array<{
+      name: string;
+      role: string;
+      linkedinUrl?: string | null;
+      verifiedInfo?: unknown;
+      previousVentures?: unknown;
+    }>;
+  };
+  // Legacy alias kept during migration. Prefer canonicalDeal in new code.
   deal: {
     id: string;
     name: string;
@@ -356,7 +383,7 @@ Do not present speculative claims as confident ones.`;
   private buildContextPrompt(): string {
     if (!this.chatContext) return "";
 
-    const { deal, chatContext, documents, latestAnalysis } = this.chatContext;
+    const { canonicalDeal: deal, chatContext, documents, latestAnalysis } = this.chatContext;
 
     // FIX (audit P2 #27) : thesis-first — placer la these en TETE du contexte
     // pour que l'LLM la lise avant les docs/founders (risque de truncation au milieu).
@@ -1126,7 +1153,7 @@ Reponds en JSON:
       // Step 2: Retrieve intent-specific context from DB (SMART RETRIEVAL)
       let retrievedContextPrompt = "";
       try {
-        const dealId = context.deal.id;
+        const dealId = context.canonicalDeal.id;
         const retrievedCtx = await retrieveContext(
           dealId,
           sanitizedUserMessage,
