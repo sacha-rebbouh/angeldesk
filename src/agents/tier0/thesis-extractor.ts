@@ -54,42 +54,55 @@ import { getThesisCallOptions } from "@/lib/thesis/call-options";
 // ---------------------------------------------------------------------------
 // LLM response schemas (core thesis extraction)
 // ---------------------------------------------------------------------------
-const ThesisCoreSchema = z.object({
-  reformulated: z.string().min(1),
-  problem: z.string().min(1),
-  solution: z.string().min(1),
-  whyNow: z.string().min(1),
-  moat: z.string().nullable(),
-  pathToExit: z.string().nullable(),
-  loadBearing: z.array(
-    z.object({
-      id: z.string().min(1),
-      statement: z.string().min(1),
-      status: z.enum(["verified", "declared", "projected", "speculative"]),
-      impact: z.string().min(1),
-      validationPath: z.string().min(1),
-    })
-  ),
-  alerts: z.array(
-    z.object({
-      severity: z.enum(["critical", "high", "medium", "low"]),
-      category: z.enum([
-        "why_now",
-        "problem_reality",
-        "solution_fit",
-        "moat",
-        "unit_economics",
-        "path_to_exit",
-        "team_dependency",
-        "market_size",
-        "assumption_fragile",
-      ]),
-      title: z.string().min(1),
-      detail: z.string().min(1),
-      linkedAssumptionId: z.string().optional(),
-    })
-  ),
-});
+const ThesisCoreSchema = z.preprocess(
+  (raw) => {
+    if (
+      raw &&
+      typeof raw === "object" &&
+      "thesis" in raw &&
+      !("reformulated" in raw)
+    ) {
+      return (raw as { thesis: unknown }).thesis;
+    }
+    return raw;
+  },
+  z.object({
+    reformulated: z.string().min(1),
+    problem: z.string().min(1),
+    solution: z.string().min(1),
+    whyNow: z.string().min(1),
+    moat: z.string().nullable(),
+    pathToExit: z.string().nullable(),
+    loadBearing: z.array(
+      z.object({
+        id: z.string().min(1),
+        statement: z.string().min(1),
+        status: z.enum(["verified", "declared", "projected", "speculative"]),
+        impact: z.string().min(1),
+        validationPath: z.string().min(1),
+      })
+    ),
+    alerts: z.array(
+      z.object({
+        severity: z.enum(["critical", "high", "medium", "low"]),
+        category: z.enum([
+          "why_now",
+          "problem_reality",
+          "solution_fit",
+          "moat",
+          "unit_economics",
+          "path_to_exit",
+          "team_dependency",
+          "market_size",
+          "assumption_fragile",
+        ]),
+        title: z.string().min(1),
+        detail: z.string().min(1),
+        linkedAssumptionId: z.string().optional(),
+      })
+    ),
+  })
+);
 
 type ThesisCore = z.infer<typeof ThesisCoreSchema>;
 type FrameworkExecutionResult<T> = {
@@ -123,7 +136,7 @@ export class ThesisExtractorAgent extends BaseAgent<ThesisExtractorOutput> {
       description: "Extraction et validation structurelle de la these d'investissement (Tier 0.5)",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 180000, // 3 min — 1 extraction core + 3 frameworks parallel + 1 consolidation
+      timeoutMs: 300000, // 5 min — absorbe une chain core Claude + Gemini + Haiku avant abort
       dependencies: ["fact-extractor", "deck-coherence-checker"],
     });
   }
@@ -448,7 +461,22 @@ ${contextSummary}
 
 Applique ta mission: extrait la these en 6 champs (reformulated, problem, solution, whyNow, moat, pathToExit), identifie 3-5 load-bearing assumptions structurelles, et remonte les alertes (pas de limite arbitraire).
 
-OUTPUT ATTENDU: JSON strict conforme au schema ThesisCore, en francais, sans aucun texte hors JSON.`;
+OUTPUT ATTENDU: JSON strict SANS wrapping. Les champs reformulated, problem, solution, whyNow, moat, pathToExit, loadBearing et alerts doivent etre a la RACINE du JSON.
+PAS de cle enveloppante type "thesis", "data", "output" ou "result".
+
+Exemple attendu:
+{
+  "reformulated": "...",
+  "problem": "...",
+  "solution": "...",
+  "whyNow": "...",
+  "moat": null,
+  "pathToExit": null,
+  "loadBearing": [],
+  "alerts": []
+}
+
+Francais obligatoire. Aucun texte hors JSON.`;
   }
 
   private appendFrameworkFailuresAsAlerts(

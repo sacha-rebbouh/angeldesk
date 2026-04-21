@@ -30,6 +30,88 @@ vi.mock("@/lib/logger", () => ({
 const { ThesisExtractorAgent } = await import("../thesis-extractor");
 
 describe("ThesisExtractorAgent degradation handling", () => {
+  it("accepts a core thesis payload wrapped under a thesis key", async () => {
+    const agent = new ThesisExtractorAgent();
+    const llmSpy = vi.spyOn(agent as any, "llmCompleteJSON") as any;
+
+    llmSpy
+      .mockResolvedValueOnce({
+        data: {
+          thesis: {
+            reformulated: "Bodhotell construit une infrastructure hôtelière pour chiens.",
+            problem: "Les propriétaires peinent à trouver une garde fiable et premium.",
+            solution: "Un réseau d'hôtels canins opérés avec standardisation forte.",
+            whyNow: "La premiumisation du pet care accélère maintenant.",
+            moat: null,
+            pathToExit: null,
+            loadBearing: [
+              {
+                id: "lb_1",
+                statement: "La demande premium restera soutenue.",
+                status: "declared",
+                impact: "Le remplissage des hôtels décroche.",
+                validationPath: "Analyser le repeat booking sur 12 mois",
+              },
+            ],
+            alerts: [],
+          },
+        },
+        cost: 1,
+        model: "anthropic/claude-sonnet-4.5",
+      })
+      .mockResolvedValueOnce({
+        data: {
+          verdict: "favorable",
+          confidence: 78,
+          question: "PMF ?",
+          claims: [],
+          failures: [],
+          strengths: ["Usage récurrent"],
+          summary: "YC voit un vrai signal de PMF.",
+        },
+        cost: 1,
+        model: "google/gemini-2.5-pro",
+      })
+      .mockResolvedValueOnce({
+        data: {
+          verdict: "favorable",
+          confidence: 72,
+          question: "Monopole ?",
+          claims: [],
+          failures: [],
+          strengths: ["Densité opérationnelle"],
+          summary: "Thiel voit une différenciation défendable.",
+        },
+        cost: 1,
+        model: "google/gemini-2.5-pro",
+      })
+      .mockResolvedValueOnce({
+        data: {
+          verdict: "contrasted",
+          confidence: 61,
+          question: "Capital privé ?",
+          claims: [],
+          failures: ["Capex initial significatif"],
+          strengths: [],
+          summary: "Angel Desk reste plus prudent sur l'intensité capitalistique.",
+        },
+        cost: 1,
+        model: "google/gemini-2.5-pro",
+      });
+
+    const result = await (agent as any).execute({
+      documents: [],
+      canonicalDeal: {
+        id: "deal_1",
+        name: "Bodhotell",
+      },
+    });
+
+    expect(result.reformulated).toContain("Bodhotell");
+    expect(result.loadBearing).toHaveLength(1);
+    expect(llmSpy).toHaveBeenCalledTimes(4);
+  });
+
   it("excludes degraded framework lenses from verdict consolidation and BA alerts", async () => {
     const agent = new ThesisExtractorAgent();
     const validatedSpy = vi.spyOn(agent as any, "llmCompleteJSONValidated") as any;
@@ -150,5 +232,23 @@ describe("ThesisExtractorAgent degradation handling", () => {
         },
       })
     ).rejects.toThrow("All thesis frameworks degraded");
+  });
+
+  it("states in the core prompt that thesis fields must stay at the root", () => {
+    const agent = new ThesisExtractorAgent();
+
+    const prompt = (agent as any).buildCoreUserPrompt(
+      {
+        documents: [],
+        canonicalDeal: {
+          id: "deal_1",
+          name: "Bodhotell",
+        },
+      },
+      "context"
+    );
+
+    expect(prompt).toContain("PAS de cle enveloppante type \"thesis\"");
+    expect(prompt).toContain("\"reformulated\": \"...\"");
   });
 });
