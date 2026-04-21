@@ -215,6 +215,7 @@ describe("compileDealContext", () => {
       select: {
         id: true,
         dealId: true,
+        mode: true,
         thesisId: true,
         corpusSnapshotId: true,
         completedAt: true,
