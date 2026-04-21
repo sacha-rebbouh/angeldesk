@@ -18,8 +18,8 @@ export const FrameworkClaimSchema = z.object({
   claim: z.string().min(1),
   derivedFrom: z.string().min(1),
   status: z.enum(["supported", "contradicted", "unverifiable", "partial"]),
-  evidence: z.string().min(1).optional(),
-  concern: z.string().min(1).optional(),
+  evidence: z.string().min(1).nullish(),
+  concern: z.string().min(1).nullish(),
 });
 
 export const FrameworkLensSchema = z.object({
@@ -69,8 +69,8 @@ export const ThesisAlertSchema = z.object({
   ]),
   title: z.string().min(1),
   detail: z.string().min(1),
-  linkedAssumptionId: z.string().min(1).optional(),
-  linkedClaim: z.string().min(1).optional(),
+  linkedAssumptionId: z.string().min(1).nullish(),
+  linkedClaim: z.string().min(1).nullish(),
 });
 
 export const ThesisExtractorOutputSchema = z.object({

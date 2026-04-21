@@ -53,7 +53,15 @@ describe("ThesisExtractorAgent degradation handling", () => {
                 validationPath: "Analyser le repeat booking sur 12 mois",
               },
             ],
-            alerts: [],
+            alerts: [
+              {
+                severity: "medium",
+                category: "assumption_fragile",
+                title: "Traction encore à confirmer",
+                detail: "Les signaux existent mais restent précoces.",
+                linkedAssumptionId: null,
+              },
+            ],
           },
         },
         cost: 1,
@@ -109,6 +117,7 @@ describe("ThesisExtractorAgent degradation handling", () => {
 
     expect(result.reformulated).toContain("Bodhotell");
     expect(result.loadBearing).toHaveLength(1);
+    expect(result.alerts[0]?.linkedAssumptionId).toBeUndefined();
     expect(llmSpy).toHaveBeenCalledTimes(4);
   });
 

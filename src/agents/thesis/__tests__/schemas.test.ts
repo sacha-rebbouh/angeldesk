@@ -120,4 +120,36 @@ describe("ThesisExtractorOutputSchema", () => {
     expect(parsed.error?.issues.some((issue) => issue.path.join(".") === "confidence")).toBe(true);
     expect(parsed.error?.issues.some((issue) => issue.path.join(".").startsWith("alerts.0"))).toBe(true);
   });
+
+  it("accepts nullish optional claim and alert references", () => {
+    const parsed = ThesisExtractorOutputSchema.safeParse({
+      ...makeValidOutput(),
+      alerts: [
+        {
+          severity: "medium" as const,
+          category: "assumption_fragile" as const,
+          title: "Hypothèse encore fragile",
+          detail: "Le payback CAC n'est pas encore démontré.",
+          linkedAssumptionId: null,
+          linkedClaim: null,
+        },
+      ],
+      ycLens: {
+        ...makeValidOutput().ycLens,
+        claims: [
+          {
+            claim: "Les clients reviennent naturellement.",
+            derivedFrom: "Deck retention slide",
+            status: "partial" as const,
+            evidence: null,
+            concern: null,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.alerts[0]?.linkedAssumptionId).toBeNull();
+    expect(parsed.data?.ycLens.claims[0]?.evidence).toBeNull();
+  });
 });

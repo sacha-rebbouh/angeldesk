@@ -45,8 +45,8 @@ export const AngelDeskLensSchema = z.object({
       claim: z.string(),
       derivedFrom: z.string(),
       status: z.enum(["supported", "contradicted", "unverifiable", "partial"]),
-      evidence: z.string().optional(),
-      concern: z.string().optional(),
+      evidence: z.string().nullish(),
+      concern: z.string().nullish(),
     })
   ),
   failures: z.array(z.string()),

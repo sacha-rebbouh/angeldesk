@@ -98,7 +98,7 @@ const ThesisCoreSchema = z.preprocess(
         ]),
         title: z.string().min(1),
         detail: z.string().min(1),
-        linkedAssumptionId: z.string().optional(),
+        linkedAssumptionId: z.string().nullish(),
       })
     ),
   })
@@ -262,7 +262,7 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
         category: a.category,
         title: a.title,
         detail: a.detail,
-        linkedAssumptionId: a.linkedAssumptionId,
+        linkedAssumptionId: a.linkedAssumptionId ?? undefined,
       })),
     ];
 
