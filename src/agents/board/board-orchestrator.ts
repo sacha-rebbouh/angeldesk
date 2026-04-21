@@ -1380,9 +1380,9 @@ function mapBoardThesisInput(
     confidence: thesis.confidence,
     loadBearing: loadBearingArr as NonNullable<BoardInput["thesis"]>["loadBearing"],
     alerts: alertsArr as NonNullable<BoardInput["thesis"]>["alerts"],
-    ycLens: (thesis.ycLens as { verdict: string }) ?? { verdict: "unknown" },
-    thielLens: (thesis.thielLens as { verdict: string }) ?? { verdict: "unknown" },
-    angelDeskLens: (thesis.angelDeskLens as { verdict: string }) ?? { verdict: "unknown" },
+    ycLens: (thesis.ycLens as { verdict: string; availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted" }) ?? { verdict: "unknown", availability: "evaluated" },
+    thielLens: (thesis.thielLens as { verdict: string; availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted" }) ?? { verdict: "unknown", availability: "evaluated" },
+    angelDeskLens: (thesis.angelDeskLens as { verdict: string; availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted" }) ?? { verdict: "unknown", availability: "evaluated" },
     evaluationAxes: normalizeThesisEvaluation({
       verdict: thesis.verdict as never,
       confidence: thesis.confidence,

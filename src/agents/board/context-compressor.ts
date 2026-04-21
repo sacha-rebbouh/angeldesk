@@ -7,6 +7,10 @@
  */
 
 import { sanitizeName, sanitizeDocumentText, sanitizeForLLM } from "@/lib/sanitize";
+import {
+  formatAxisPromptLine,
+  formatAxisVerdictToken,
+} from "@/agents/thesis/prompt-formatting";
 import type { BoardInput } from "./types";
 
 // Target ~60-80K tokens (~240-320K chars at ~4 chars/token)
@@ -78,9 +82,9 @@ export function buildDealSummary(input: BoardInput): string {
   const parts: string[] = [`RAPPEL: Deal "${safeDealName}"`];
 
   if (input.thesis) {
-    parts.push(`Thesis Quality: ${input.thesis.evaluationAxes.thesisQuality.verdict}`);
-    parts.push(`Investor Profile Fit: ${input.thesis.evaluationAxes.investorProfileFit.verdict}`);
-    parts.push(`Deal Accessibility: ${input.thesis.evaluationAxes.dealAccessibility.verdict}`);
+    parts.push(formatAxisVerdictToken("Thesis Quality", input.thesis.evaluationAxes.thesisQuality));
+    parts.push(formatAxisVerdictToken("Investor Profile Fit", input.thesis.evaluationAxes.investorProfileFit));
+    parts.push(formatAxisVerdictToken("Deal Accessibility", input.thesis.evaluationAxes.dealAccessibility));
     parts.push(`These reformulee: ${input.thesis.reformulated.slice(0, 240)}`);
     const weakestLoadBearing = input.thesis.loadBearing.find(
       (item) => item.status === "speculative" || item.status === "projected"
@@ -120,9 +124,9 @@ function buildThesisSection(input: BoardInput): string | null {
   const parts = [
     "## THESE CANONIQUE (thesis-first)",
     `Verdict consolide: ${t.verdict}`,
-    `Thesis Quality: ${t.evaluationAxes.thesisQuality.verdict} — ${t.evaluationAxes.thesisQuality.summary}`,
-    `Investor Profile Fit: ${t.evaluationAxes.investorProfileFit.verdict} — ${t.evaluationAxes.investorProfileFit.summary}`,
-    `Deal Accessibility: ${t.evaluationAxes.dealAccessibility.verdict} — ${t.evaluationAxes.dealAccessibility.summary}`,
+    formatAxisPromptLine("Thesis Quality", t.evaluationAxes.thesisQuality).trimEnd(),
+    formatAxisPromptLine("Investor Profile Fit", t.evaluationAxes.investorProfileFit).trimEnd(),
+    formatAxisPromptLine("Deal Accessibility", t.evaluationAxes.dealAccessibility).trimEnd(),
     `Confiance indicative: ${t.confidence}/100`,
     `These: ${sanitizeForLLM(t.reformulated).slice(0, 800)}`,
   ];

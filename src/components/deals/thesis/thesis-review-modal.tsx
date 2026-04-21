@@ -37,16 +37,31 @@ interface ThesisReviewModalProps {
 
 type DecisionMode = "menu" | "contest" | "submitting";
 
+export function isRetryableRebuttalResponse(
+  status: number,
+  payload: unknown
+): payload is { error?: string; retryable: true; refundedCredits?: number } {
+  return (
+    status === 503 &&
+    !!payload &&
+    typeof payload === "object" &&
+    "retryable" in payload &&
+    (payload as { retryable?: unknown }).retryable === true
+  );
+}
+
 export function ThesisReviewModal(props: ThesisReviewModalProps) {
   const [mode, setMode] = useState<DecisionMode>("menu");
   const [rebuttalText, setRebuttalText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isRetryable, setIsRetryable] = useState(false);
 
   const verdictCfg = RECOMMENDATION_CONFIG[props.verdict] ?? RECOMMENDATION_CONFIG.contrasted;
   const isFragile = props.verdict === "alert_dominant" || props.verdict === "vigilance" || props.verdict === "contrasted";
 
   async function submitDecision(decision: "stop" | "continue" | "contest") {
     setError(null);
+    setIsRetryable(false);
     setMode("submitting");
     try {
       const payload: Record<string, unknown> = { decision };
@@ -60,8 +75,17 @@ export function ThesisReviewModal(props: ThesisReviewModalProps) {
           body: JSON.stringify({ rebuttalText }),
         });
         if (!response.ok) {
-          const err = await response.json().catch(() => ({}));
-          throw new Error(err.error ?? "Impossible de soumettre le rebuttal");
+          const err = await response.json().catch(() => ({} as Record<string, unknown>));
+          if (isRetryableRebuttalResponse(response.status, err)) {
+            setError(
+              err.error ??
+              "Juge temporairement indisponible. Votre crédit a été remboursé."
+            );
+            setIsRetryable(true);
+            setMode("contest");
+            return;
+          }
+          throw new Error((err as { error?: string }).error ?? "Impossible de soumettre le rebuttal");
         }
         const data = await response.json();
         props.onDecided("contest", data);
@@ -80,6 +104,7 @@ export function ThesisReviewModal(props: ThesisReviewModalProps) {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur inconnue");
+      setIsRetryable(false);
       setMode(decision === "contest" ? "contest" : "menu");
     }
   }
@@ -160,16 +185,37 @@ export function ThesisReviewModal(props: ThesisReviewModalProps) {
                 {rebuttalText.length}/4000 caractères. Soyez précis et factuel.
               </p>
               <div className="flex gap-2 justify-end">
-                <Button variant="outline" onClick={() => setMode("menu")}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setMode("menu");
+                    setIsRetryable(false);
+                    setError(null);
+                  }}
+                >
                   Retour
                 </Button>
                 <Button
-                  onClick={() => submitDecision("contest")}
-                  disabled={rebuttalText.trim().length < 20 || mode === "submitting" as DecisionMode}
+                  onClick={() => {
+                    setIsRetryable(false);
+                    setError(null);
+                    void submitDecision("contest");
+                  }}
+                  disabled={rebuttalText.trim().length < 20}
                 >
-                  Soumettre rebuttal (1 cr)
+                  {isRetryable ? "Réessayer (crédit déjà remboursé)" : "Soumettre rebuttal (1 cr)"}
                 </Button>
               </div>
+              {error && (
+                <p className={`text-sm font-medium ${isRetryable ? "text-orange-600" : "text-red-600"}`}>
+                  {error}
+                  {isRetryable && (
+                    <span className="block text-xs mt-1 text-slate-600">
+                      Votre crédit a été remboursé. Vous pouvez réessayer immédiatement.
+                    </span>
+                  )}
+                </p>
+              )}
             </div>
           )}
 
@@ -179,7 +225,7 @@ export function ThesisReviewModal(props: ThesisReviewModalProps) {
             </div>
           )}
 
-          {error && (
+          {error && mode !== "contest" && (
             <p className="text-sm text-red-600 font-medium">{error}</p>
           )}
         </div>

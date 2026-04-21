@@ -25,7 +25,16 @@ import {
   type ChatIntent as RetrieverChatIntent,
   type RetrievedScoredFinding,
 } from "./context-retriever";
-import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
+import type {
+  FrameworkLensAvailability,
+  NormalizedThesisEvaluation,
+} from "@/agents/thesis/types";
+import {
+  formatAxisPromptLine,
+  formatAxisVerdictToken,
+  formatDetailedFrameworkSection,
+  formatFrameworkVerdictToken,
+} from "@/agents/thesis/prompt-formatting";
 
 // ============================================================================
 // TYPES
@@ -180,9 +189,9 @@ export interface FullChatContext {
       title: string;
       detail: string;
     }>;
-    ycLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
-    thielLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
-    angelDeskLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[] };
+    ycLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[]; availability?: FrameworkLensAvailability };
+    thielLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[]; availability?: FrameworkLensAvailability };
+    angelDeskLens: { verdict: string; confidence: number; summary: string; failures: string[]; strengths: string[]; availability?: FrameworkLensAvailability };
     evaluationAxes: NormalizedThesisEvaluation;
     decision: string | null;
     thesisBypass: boolean;
@@ -394,8 +403,8 @@ Do not present speculative claims as confident ones.`;
 
 **Verdict** : ${thesisCtxEarly.verdict} (confiance ${thesisCtxEarly.confidence}/100, version ${thesisCtxEarly.version})
 **Reformulation** : ${thesisCtxEarly.reformulated}
-**Frameworks** : YC=${thesisCtxEarly.ycLens.verdict} · Thiel=${thesisCtxEarly.thielLens.verdict} · Angel Desk=${thesisCtxEarly.angelDeskLens.verdict} (attention: cette lunette separe thesis quality, investor-fit et accessibilite)
-**Axes canoniques** : thesisQuality=${thesisCtxEarly.evaluationAxes.thesisQuality.verdict} · investorProfileFit=${thesisCtxEarly.evaluationAxes.investorProfileFit.verdict} · dealAccessibility=${thesisCtxEarly.evaluationAxes.dealAccessibility.verdict}
+**Frameworks** : ${formatFrameworkVerdictToken("YC", thesisCtxEarly.ycLens)} · ${formatFrameworkVerdictToken("Thiel", thesisCtxEarly.thielLens)} · ${formatFrameworkVerdictToken("Angel Desk", thesisCtxEarly.angelDeskLens)} (attention: cette lunette separe thesis quality, investor-fit et accessibilite)
+**Axes canoniques** : ${formatAxisVerdictToken("thesisQuality", thesisCtxEarly.evaluationAxes.thesisQuality)} · ${formatAxisVerdictToken("investorProfileFit", thesisCtxEarly.evaluationAxes.investorProfileFit)} · ${formatAxisVerdictToken("dealAccessibility", thesisCtxEarly.evaluationAxes.dealAccessibility)}
 ${thesisCtxEarly.decision ? `**Decision BA** : ${thesisCtxEarly.decision}${thesisCtxEarly.thesisBypass ? " (bypass these fragile actif)" : ""}\n` : ""}
 (Voir section "Thèse d'investissement" plus bas pour le detail complet avec load-bearing et alertes.)
 
@@ -667,9 +676,9 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       contextPrompt += `- **Why-now** : ${thesisCtx.whyNow}\n`;
       contextPrompt += `- **Moat** : ${thesisCtx.moat ?? "Non declare"}\n`;
       contextPrompt += `- **Path to exit** : ${thesisCtx.pathToExit ?? "Non declare"}\n`;
-      contextPrompt += `- **Axe Thesis Quality** : ${thesisCtx.evaluationAxes.thesisQuality.verdict} — ${thesisCtx.evaluationAxes.thesisQuality.summary}\n`;
-      contextPrompt += `- **Axe Investor Profile Fit** : ${thesisCtx.evaluationAxes.investorProfileFit.verdict} — ${thesisCtx.evaluationAxes.investorProfileFit.summary}\n`;
-      contextPrompt += `- **Axe Deal Accessibility** : ${thesisCtx.evaluationAxes.dealAccessibility.verdict} — ${thesisCtx.evaluationAxes.dealAccessibility.summary}\n`;
+      contextPrompt += formatAxisPromptLine("Axe Thesis Quality", thesisCtx.evaluationAxes.thesisQuality);
+      contextPrompt += formatAxisPromptLine("Axe Investor Profile Fit", thesisCtx.evaluationAxes.investorProfileFit);
+      contextPrompt += formatAxisPromptLine("Axe Deal Accessibility", thesisCtx.evaluationAxes.dealAccessibility);
 
       if (thesisCtx.decision) {
         contextPrompt += `- **Decision BA** : ${thesisCtx.decision}${thesisCtx.thesisBypass ? " (bypass these fragile actif)" : ""}\n`;
@@ -693,21 +702,9 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       }
 
       contextPrompt += `\n### Analyse par framework\n`;
-      const formatLens = (name: string, lens: typeof thesisCtx.ycLens) => {
-        let section = `#### ${name}\n`;
-        section += `- Verdict : ${lens.verdict} (confiance ${lens.confidence}/100)\n`;
-        section += `- Synthese : ${lens.summary}\n`;
-        if (lens.strengths.length > 0) {
-          section += `- Points d'adherence :\n${lens.strengths.map((s) => `  - ${s}`).join("\n")}\n`;
-        }
-        if (lens.failures.length > 0) {
-          section += `- Points de fragilite :\n${lens.failures.map((f) => `  - ${f}`).join("\n")}\n`;
-        }
-        return section;
-      };
-      contextPrompt += formatLens("YC (problem reality / PMF / distribution)", thesisCtx.ycLens);
-      contextPrompt += formatLens("Thiel (contrarian / 10x / monopoly)", thesisCtx.thielLens);
-      contextPrompt += formatLens("Angel Desk (thesis quality sous contraintes reelles + investor-fit + accessibilite)", thesisCtx.angelDeskLens);
+      contextPrompt += formatDetailedFrameworkSection("YC (problem reality / PMF / distribution)", thesisCtx.ycLens);
+      contextPrompt += formatDetailedFrameworkSection("Thiel (contrarian / 10x / monopoly)", thesisCtx.thielLens);
+      contextPrompt += formatDetailedFrameworkSection("Angel Desk (thesis quality sous contraintes reelles + investor-fit + accessibilite)", thesisCtx.angelDeskLens);
     }
 
     return contextPrompt;

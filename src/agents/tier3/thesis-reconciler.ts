@@ -19,7 +19,9 @@ import type {
   ThesisExtractorOutput,
 } from "../thesis/types";
 import { worstVerdict, THESIS_VERDICT_ORDER } from "../thesis/types";
+import { formatReconcilerLensSection } from "../thesis/prompt-formatting";
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { getThesisCallOptions } from "@/lib/thesis/call-options";
 
 // ---------------------------------------------------------------------------
 // LLM response schema
@@ -167,7 +169,13 @@ LANGUE: Francais.`;
     const { data } = await this.llmCompleteJSONValidated<LLMReconcilerOutput>(
       userPrompt,
       ThesisReconcilerSchema,
-      { temperature: 0.2 }
+      {
+        temperature: 0.2,
+        ...getThesisCallOptions<LLMReconcilerOutput>("reconciler", {
+          initialVerdict,
+          initialConfidence: thesis.confidence,
+        }),
+      }
     );
 
     const updatedVerdict: ThesisVerdict = data.updatedVerdict;
@@ -265,14 +273,9 @@ LANGUE: Francais.`;
 ${thesis.loadBearing.map((a) => `- [${a.status}] ${a.statement} — impact: ${a.impact}`).join("\n")}
 
 ## CLAIMS DES 3 LUNETTES (YC / Thiel / Angel Desk)
-**YC:** ${thesis.ycLens.summary}
-Claims: ${thesis.ycLens.claims.map((c) => `${c.claim} (${c.status})`).join(" | ")}
-
-**Thiel:** ${thesis.thielLens.summary}
-Claims: ${thesis.thielLens.claims.map((c) => `${c.claim} (${c.status})`).join(" | ")}
-
-**Angel Desk:** ${thesis.angelDeskLens.summary}
-Claims: ${thesis.angelDeskLens.claims.map((c) => `${c.claim} (${c.status})`).join(" | ")}
+${formatReconcilerLensSection("YC", thesis.ycLens)}
+${formatReconcilerLensSection("Thiel", thesis.thielLens)}
+${formatReconcilerLensSection("Angel Desk", thesis.angelDeskLens)}
 
 ---
 

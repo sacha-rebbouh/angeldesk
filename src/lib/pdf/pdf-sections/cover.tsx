@@ -7,6 +7,7 @@ import { Page, View, Text } from "@react-pdf/renderer";
 import { colors, styles as gs } from "../pdf-theme";
 import { ScoreCircle, KpiBox } from "../pdf-components";
 import { fmtEur, recLabel } from "../pdf-helpers";
+import { isThesisAxisUnavailable } from "@/agents/thesis/types";
 import type { PdfExportData } from "../generate-analysis-pdf";
 import { hasFragileThesis } from "../thesis-gating";
 
@@ -24,6 +25,18 @@ export function CoverPage({ data }: { data: PdfExportData }) {
   const thesis = data.thesis;
   const thesisGated = hasFragileThesis(thesis);
   const thesisQuality = thesis?.evaluationAxes.thesisQuality;
+  const thesisQualityLabel =
+    thesis && isThesisAxisUnavailable(thesis.evaluationAxes.thesisQuality)
+      ? "indisponible"
+      : thesis?.evaluationAxes.thesisQuality.verdict;
+  const investorFitLabel =
+    thesis && isThesisAxisUnavailable(thesis.evaluationAxes.investorProfileFit)
+      ? "indisponible"
+      : thesis?.evaluationAxes.investorProfileFit.verdict;
+  const accessibilityLabel =
+    thesis && isThesisAxisUnavailable(thesis.evaluationAxes.dealAccessibility)
+      ? "indisponible"
+      : thesis?.evaluationAxes.dealAccessibility.verdict;
 
   const formatDate = () =>
     new Date().toLocaleDateString("fr-FR", {
@@ -102,7 +115,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
                 THÈSE PRIORITAIRE
               </Text>
               <Text style={{ fontSize: 9, color: colors.text, marginTop: 4 }}>
-                Thesis Quality: {thesisQuality.verdict}
+                Thesis Quality: {thesisQualityLabel}
               </Text>
               <Text style={{ fontSize: 8, color: colors.muted, marginTop: 4 }}>
                 Score global masqué tant que la thèse reste fragile.
@@ -149,7 +162,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
               {thesis.reformulated}
             </Text>
             <Text style={[gs.small, { marginTop: 6 }]}>
-              Thesis Quality: {thesis.evaluationAxes.thesisQuality.verdict} · Investor Fit: {thesis.evaluationAxes.investorProfileFit.verdict} · Accessibility: {thesis.evaluationAxes.dealAccessibility.verdict}
+              Thesis Quality: {thesisQualityLabel} · Investor Fit: {investorFitLabel} · Accessibility: {accessibilityLabel}
             </Text>
           </View>
         )}

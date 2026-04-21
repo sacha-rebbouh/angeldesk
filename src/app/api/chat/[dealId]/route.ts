@@ -403,21 +403,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
               summary: string;
               failures: string[];
               strengths: string[];
-            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+              availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted";
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [], availability: "evaluated" },
             thielLens: (latestThesis.thielLens as {
               verdict: string;
               confidence: number;
               summary: string;
               failures: string[];
               strengths: string[];
-            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+              availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted";
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [], availability: "evaluated" },
             angelDeskLens: (latestThesis.angelDeskLens as {
               verdict: string;
               confidence: number;
               summary: string;
               failures: string[];
               strengths: string[];
-            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+              availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted";
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [], availability: "evaluated" },
             evaluationAxes: normalizedThesisEvaluation!,
             decision: latestThesis.decision,
             thesisBypass,

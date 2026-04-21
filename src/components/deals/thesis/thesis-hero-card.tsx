@@ -17,7 +17,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronUp, AlertTriangle, ShieldAlert, Target } from "lucide-react";
 import { RECOMMENDATION_CONFIG } from "@/lib/ui-configs";
-import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
+import type { NormalizedThesisEvaluation, ThesisAxisEvaluation } from "@/agents/thesis/types";
+import { isThesisAxisUnavailable } from "@/agents/thesis/types";
 
 interface LoadBearing {
   id: string;
@@ -65,6 +66,20 @@ const SEVERITY_BADGE: Record<AlertItem["severity"], { label: string; className: 
   medium: { label: "Moyenne", className: "bg-yellow-500 text-white" },
   low: { label: "Faible", className: "bg-slate-400 text-white" },
 };
+
+export function getAxisDisplayState(axis: ThesisAxisEvaluation) {
+  if (isThesisAxisUnavailable(axis)) {
+    return {
+      label: "Indisponible",
+      className: "bg-slate-100 text-slate-700 border-slate-300",
+    };
+  }
+  const axisCfg = RECOMMENDATION_CONFIG[axis.verdict] ?? RECOMMENDATION_CONFIG.contrasted;
+  return {
+    label: axisCfg.label,
+    className: axisCfg.color,
+  };
+}
 
 export function ThesisHeroCard(props: ThesisHeroCardProps) {
   const [expandedAlerts, setExpandedAlerts] = useState(false);
@@ -126,13 +141,13 @@ export function ThesisHeroCard(props: ThesisHeroCardProps) {
               props.evaluationAxes.investorProfileFit,
               props.evaluationAxes.dealAccessibility,
             ].map((axis) => {
-              const axisCfg = RECOMMENDATION_CONFIG[axis.verdict] ?? RECOMMENDATION_CONFIG.contrasted;
+              const axisDisplay = getAxisDisplayState(axis);
               return (
                 <div key={axis.key} className="rounded-lg border bg-white/60 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{axis.label}</p>
-                    <Badge variant="outline" className={axisCfg.color}>
-                      {axisCfg.label}
+                    <Badge variant="outline" className={axisDisplay.className}>
+                      {axisDisplay.label}
                     </Badge>
                   </div>
                   <p className="mt-2 text-sm text-slate-900">{axis.summary}</p>
