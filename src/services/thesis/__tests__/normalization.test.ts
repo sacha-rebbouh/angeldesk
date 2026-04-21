@@ -17,6 +17,7 @@ function makeOutput(overrides: Partial<ThesisExtractorOutput> = {}): ThesisExtra
     alerts: [],
     ycLens: {
       framework: "yc",
+      availability: "evaluated",
       verdict: "favorable",
       confidence: 80,
       question: "YC?",
@@ -27,6 +28,7 @@ function makeOutput(overrides: Partial<ThesisExtractorOutput> = {}): ThesisExtra
     },
     thielLens: {
       framework: "thiel",
+      availability: "evaluated",
       verdict: "favorable",
       confidence: 78,
       question: "Thiel?",
@@ -37,6 +39,7 @@ function makeOutput(overrides: Partial<ThesisExtractorOutput> = {}): ThesisExtra
     },
     angelDeskLens: {
       framework: "angel-desk",
+      availability: "evaluated",
       verdict: "contrasted",
       confidence: 76,
       question: "AD?",
@@ -80,6 +83,7 @@ describe("normalizeThesisEvaluation", () => {
         verdict: "vigilance",
         ycLens: {
           framework: "yc",
+          availability: "evaluated",
           verdict: "vigilance",
           confidence: 75,
           question: "YC?",
@@ -100,6 +104,7 @@ describe("normalizeThesisEvaluation", () => {
       makeOutput({
         angelDeskLens: {
           framework: "angel-desk",
+          availability: "evaluated",
           verdict: "contrasted",
           confidence: 60,
           question: "AD?",
@@ -113,5 +118,52 @@ describe("normalizeThesisEvaluation", () => {
 
     expect(evaluation.dealAccessibility.claims[0]).toContain("Ticket minimum");
     expect(evaluation.investorProfileFit.summary.length).toBeGreaterThan(0);
+  });
+
+  it("ignore une lens degradée pour la quality axis et les signaux métier", () => {
+    const evaluation = normalizeThesisEvaluation(
+      makeOutput({
+        ycLens: {
+          framework: "yc",
+          availability: "degraded_chain_exhausted",
+          verdict: "alert_dominant",
+          confidence: 0,
+          question: "YC?",
+          claims: [],
+          failures: ["[THESIS QUALITY] YC indisponible"],
+          strengths: [],
+          summary: "yc lens evaluation unavailable (chain exhausted)",
+        },
+      })
+    );
+
+    expect(evaluation.thesisQuality.verdict).toBe("favorable");
+    expect(evaluation.thesisQuality.sourceFrameworks).not.toContain("yc");
+    expect(evaluation.thesisQuality.failures).not.toContain("YC indisponible");
+  });
+
+  it("marque investor fit et accessibility indisponibles si Angel Desk est dégradée", () => {
+    const evaluation = normalizeThesisEvaluation(
+      makeOutput({
+        angelDeskLens: {
+          framework: "angel-desk",
+          availability: "degraded_chain_exhausted",
+          verdict: "contrasted",
+          confidence: 0,
+          question: "AD?",
+          claims: [],
+          failures: ["Angel Desk indisponible"],
+          strengths: [],
+          summary: "angel-desk lens evaluation unavailable (chain exhausted)",
+        },
+      })
+    );
+
+    expect(evaluation.investorProfileFit.sourceFrameworks).toEqual([]);
+    expect(evaluation.dealAccessibility.sourceFrameworks).toEqual([]);
+    expect(evaluation.investorProfileFit.confidence).toBe(0);
+    expect(evaluation.dealAccessibility.confidence).toBe(0);
+    expect(evaluation.investorProfileFit.summary).toContain("indisponible");
+    expect(evaluation.dealAccessibility.summary).toContain("indisponible");
   });
 });

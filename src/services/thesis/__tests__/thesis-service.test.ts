@@ -232,33 +232,36 @@ function makeExtractorOutput(overrides: Partial<ThesisExtractorOutput> = {}): Th
     alerts: [],
     ycLens: {
       framework: "yc",
+      availability: "evaluated",
       verdict: "contrasted",
       confidence: 60,
       question: "Q?",
       claims: [],
       failures: [],
       strengths: [],
-      summary: "",
+      summary: "YC summary",
     },
     thielLens: {
       framework: "thiel",
+      availability: "evaluated",
       verdict: "vigilance",
       confidence: 50,
       question: "Q?",
       claims: [],
       failures: [],
       strengths: [],
-      summary: "",
+      summary: "Thiel summary",
     },
     angelDeskLens: {
       framework: "angel-desk",
+      availability: "evaluated",
       verdict: "contrasted",
       confidence: 55,
       question: "Q?",
       claims: [],
       failures: [],
       strengths: [],
-      summary: "",
+      summary: "Angel Desk summary",
     },
     sourceDocumentIds: ["doc1"],
     sourceHash: "hash1",
@@ -299,6 +302,30 @@ describe("thesisService.create", () => {
     await thesisService.create({ dealId: "deal_A", extractorOutput: makeExtractorOutput() });
     const b1 = await thesisService.create({ dealId: "deal_B", extractorOutput: makeExtractorOutput() });
     expect(b1.version).toBe(1);
+  });
+
+  it("rejette un extractorOutput invalide au trust boundary", async () => {
+    await expect(
+      thesisService.create({
+        dealId: "deal_invalid",
+        extractorOutput: makeExtractorOutput({
+          confidence: 999,
+        }),
+      })
+    ).rejects.toThrow("thesisService.create trust boundary rejection");
+  });
+
+  it("accepte moat et pathToExit null", async () => {
+    const created = await thesisService.create({
+      dealId: "deal_nullables",
+      extractorOutput: makeExtractorOutput({
+        moat: null,
+        pathToExit: null,
+      }),
+    });
+
+    expect(created.moat).toBeNull();
+    expect(created.pathToExit).toBeNull();
   });
 });
 
