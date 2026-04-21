@@ -75,8 +75,14 @@ export interface FrameworkClaim {
 // ---------------------------------------------------------------------------
 // Output d'une lunette framework (YC, Thiel, Angel Desk)
 // ---------------------------------------------------------------------------
+export type FrameworkLensAvailability =
+  | "evaluated"
+  | "degraded_schema_recovered"
+  | "degraded_chain_exhausted";
+
 export interface FrameworkLens {
   framework: "yc" | "thiel" | "angel-desk";
+  availability?: FrameworkLensAvailability;
   verdict: ThesisVerdict;
   confidence: number;           // 0-100
   question: string;             // la question centrale que ce framework tranche
@@ -84,6 +90,19 @@ export interface FrameworkLens {
   failures: string[];           // points structurels qui font casser ce framework
   strengths: string[];          // points structurels qui soutiennent ce framework
   summary: string;              // 2-3 phrases de synthese
+}
+
+export function getFrameworkLensAvailability(
+  lens: { availability?: FrameworkLensAvailability | null }
+): FrameworkLensAvailability {
+  // Backward compatibility: persisted theses created before V8 have no availability field.
+  return lens.availability ?? "evaluated";
+}
+
+export function isFrameworkLensEvaluated(
+  lens: { availability?: FrameworkLensAvailability | null }
+): boolean {
+  return getFrameworkLensAvailability(lens) === "evaluated";
 }
 
 export type ThesisAxisKey =
@@ -100,7 +119,13 @@ export interface ThesisAxisEvaluation {
   strengths: string[];
   failures: string[];
   claims: string[];
-  sourceFrameworks: Array<FrameworkLens["framework"]>;
+  sourceFrameworks: Array<FrameworkLens["framework"]>; // [] = axis unavailable / degraded
+}
+
+export function isThesisAxisUnavailable(
+  axis: Pick<ThesisAxisEvaluation, "sourceFrameworks">
+): boolean {
+  return axis.sourceFrameworks.length === 0;
 }
 
 export interface NormalizedThesisEvaluation {

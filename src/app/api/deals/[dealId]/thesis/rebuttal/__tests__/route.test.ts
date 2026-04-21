@@ -340,4 +340,42 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
       })
     );
   });
+
+  it("returns 503 retryable and refunds when the judge returns success=false", async () => {
+    mocks.judgeRun.mockResolvedValue({
+      success: false,
+      error: "All models exhausted",
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
+        method: "POST",
+        body: JSON.stringify({ rebuttalText: "Un rebuttal suffisamment long pour etre valide." }),
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({ dealId: "deal_1" }) }
+    );
+
+    const payload = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBe("60");
+    expect(payload).toEqual({
+      error: "Juge temporairement indisponible. Votre crédit a été remboursé, vous pouvez réessayer.",
+      retryable: true,
+      refundedCredits: 1,
+    });
+    expect(mocks.refundCreditAmount).toHaveBeenCalledWith(
+      "user_1",
+      "THESIS_REBUTTAL",
+      1,
+      expect.objectContaining({
+        dealId: "deal_1",
+      })
+    );
+    expect(mocks.cancelRebuttalAttempt).toHaveBeenCalledWith({
+      thesisId: "thesis_1",
+      rebuttalText: "Un rebuttal suffisamment long pour etre valide.",
+    });
+  });
 });

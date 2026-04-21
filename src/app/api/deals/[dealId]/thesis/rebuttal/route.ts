@@ -276,9 +276,21 @@ export async function POST(request: Request, context: RouteContext) {
         thesisId: latest.id,
         rebuttalText,
       }).catch(() => undefined);
+      logger.error(
+        {
+          dealId,
+          thesisId: latest.id,
+          judgeError: judgeResult.error,
+        },
+        "Rebuttal judge unavailable after fallback chain exhausted"
+      );
       return NextResponse.json(
-        { error: "Rebuttal judge failed", details: judgeResult.error },
-        { status: 500 }
+        {
+          error: "Juge temporairement indisponible. Votre crédit a été remboursé, vous pouvez réessayer.",
+          retryable: true,
+          refundedCredits: 1,
+        },
+        { status: 503, headers: { "Retry-After": "60" } }
       );
     }
 

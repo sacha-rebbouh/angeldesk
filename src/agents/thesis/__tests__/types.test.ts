@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { worstVerdict, THESIS_VERDICT_ORDER, REBUTTAL_PER_DEAL_CAP } from "../types";
+import {
+  worstVerdict,
+  THESIS_VERDICT_ORDER,
+  REBUTTAL_PER_DEAL_CAP,
+  getFrameworkLensAvailability,
+  isFrameworkLensEvaluated,
+  isThesisAxisUnavailable,
+} from "../types";
 
 describe("worstVerdict", () => {
   it("returns vigilance for empty array (fallback)", () => {
@@ -39,5 +46,24 @@ describe("worstVerdict", () => {
 describe("REBUTTAL_PER_DEAL_CAP", () => {
   it("is set to 3 (anti-abus)", () => {
     expect(REBUTTAL_PER_DEAL_CAP).toBe(3);
+  });
+});
+
+describe("framework degradation helpers", () => {
+  it("defaults missing availability to evaluated for backward compatibility", () => {
+    expect(getFrameworkLensAvailability({})).toBe("evaluated");
+    expect(isFrameworkLensEvaluated({})).toBe(true);
+  });
+
+  it("marks degraded lenses as non-evaluated", () => {
+    expect(isFrameworkLensEvaluated({ availability: "degraded_schema_recovered" })).toBe(false);
+    expect(isFrameworkLensEvaluated({ availability: "degraded_chain_exhausted" })).toBe(false);
+  });
+});
+
+describe("isThesisAxisUnavailable", () => {
+  it("detects axes without any source framework", () => {
+    expect(isThesisAxisUnavailable({ sourceFrameworks: [] })).toBe(true);
+    expect(isThesisAxisUnavailable({ sourceFrameworks: ["angel-desk"] })).toBe(false);
   });
 });

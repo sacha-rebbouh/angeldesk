@@ -23,8 +23,13 @@ import type {
   ThesisAlert,
   FrameworkLens,
   FrameworkClaim,
+  FrameworkLensAvailability,
 } from "../thesis/types";
-import { worstVerdict, THESIS_ANTI_HALLUCINATION_DIRECTIVES } from "../thesis/types";
+import {
+  worstVerdict,
+  THESIS_ANTI_HALLUCINATION_DIRECTIVES,
+  isFrameworkLensEvaluated,
+} from "../thesis/types";
 import {
   YcLensSchema,
   buildYcLensSystemPrompt,
@@ -44,24 +49,25 @@ import {
   type AngelDeskLensOutput,
 } from "../thesis/frameworks/angel-desk";
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { getThesisCallOptions } from "@/lib/thesis/call-options";
 
 // ---------------------------------------------------------------------------
 // LLM response schemas (core thesis extraction)
 // ---------------------------------------------------------------------------
 const ThesisCoreSchema = z.object({
-  reformulated: z.string(),
-  problem: z.string(),
-  solution: z.string(),
-  whyNow: z.string(),
+  reformulated: z.string().min(1),
+  problem: z.string().min(1),
+  solution: z.string().min(1),
+  whyNow: z.string().min(1),
   moat: z.string().nullable(),
   pathToExit: z.string().nullable(),
   loadBearing: z.array(
     z.object({
-      id: z.string(),
-      statement: z.string(),
+      id: z.string().min(1),
+      statement: z.string().min(1),
       status: z.enum(["verified", "declared", "projected", "speculative"]),
-      impact: z.string(),
-      validationPath: z.string(),
+      impact: z.string().min(1),
+      validationPath: z.string().min(1),
     })
   ),
   alerts: z.array(
@@ -78,14 +84,19 @@ const ThesisCoreSchema = z.object({
         "market_size",
         "assumption_fragile",
       ]),
-      title: z.string(),
-      detail: z.string(),
+      title: z.string().min(1),
+      detail: z.string().min(1),
       linkedAssumptionId: z.string().optional(),
     })
   ),
 });
 
 type ThesisCore = z.infer<typeof ThesisCoreSchema>;
+type FrameworkExecutionResult<T> = {
+  data: T;
+  availability: FrameworkLensAvailability;
+  model?: string;
+};
 
 // ---------------------------------------------------------------------------
 // Agent
@@ -175,45 +186,25 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     const sourceHash = this.hashSources(context);
 
     // 2. Extraction core de la these (1 call LLM complex)
-    // fallbackDefaults : si le LLM omet loadBearing/alerts (arrays requis),
-    // Zod echoue mais on merge avec des arrays vides pour eviter undefined
-    // en aval (thesisService.create fait aussi un garde mais on limite ici).
     const coreUserPrompt = this.buildCoreUserPrompt(context, contextSummary);
     const coreResult = await this.llmCompleteJSONValidated<ThesisCore>(
       coreUserPrompt,
       ThesisCoreSchema,
       {
         temperature: 0.2,
-        fallbackDefaults: {
-          loadBearing: [],
-          alerts: [],
-          moat: null,
-          pathToExit: null,
-        },
+        ...getThesisCallOptions<ThesisCore>("core"),
       }
     );
     const core = coreResult.data;
-    // Dernier filet si le LLM a retourne un output totalement vide qu'on a
-    // quand meme laisse passer (raw fallback dans base-agent).
-    const safeCore: ThesisCore = {
-      reformulated: typeof core?.reformulated === "string" ? core.reformulated : "",
-      problem: typeof core?.problem === "string" ? core.problem : "",
-      solution: typeof core?.solution === "string" ? core.solution : "",
-      whyNow: typeof core?.whyNow === "string" ? core.whyNow : "",
-      moat: typeof core?.moat === "string" ? core.moat : null,
-      pathToExit: typeof core?.pathToExit === "string" ? core.pathToExit : null,
-      loadBearing: Array.isArray(core?.loadBearing) ? core.loadBearing : [],
-      alerts: Array.isArray(core?.alerts) ? core.alerts : [],
-    };
 
     // 3. 3 frameworks en parallele (Promise.all pour reduire la latence)
     const frameworkInput = {
-      reformulated: safeCore.reformulated,
-      problem: safeCore.problem,
-      solution: safeCore.solution,
-      whyNow: safeCore.whyNow,
-      moat: safeCore.moat,
-      pathToExit: safeCore.pathToExit,
+      reformulated: core.reformulated,
+      problem: core.problem,
+      solution: core.solution,
+      whyNow: core.whyNow,
+      moat: core.moat,
+      pathToExit: core.pathToExit,
       contextSummary,
     };
 
@@ -232,14 +223,28 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
       }),
     ]);
 
-    // 4. Verdict consolide worst-of-3 + confidence moyenne
-    const verdict: ThesisVerdict = worstVerdict([yc.verdict, thiel.verdict, ad.verdict]);
-    const confidence = Math.round((yc.confidence + thiel.confidence + ad.confidence) / 3);
+    const ycLens: FrameworkLens = this.toFrameworkLens("yc", yc.data, yc.availability);
+    const thielLens: FrameworkLens = this.toFrameworkLens("thiel", thiel.data, thiel.availability);
+    const angelDeskLens: FrameworkLens = this.toFrameworkLens("angel-desk", ad.data, ad.availability);
+
+    const evaluatedLenses = [ycLens, thielLens, angelDeskLens].filter(isFrameworkLensEvaluated);
+    if (evaluatedLenses.length === 0) {
+      throw new Error(
+        "All thesis frameworks degraded; refusing to persist a thesis without any evaluated framework lens"
+      );
+    }
+
+    // 4. Verdict consolide sur les seules lenses réellement évaluées.
+    const verdict: ThesisVerdict = worstVerdict(evaluatedLenses.map((lens) => lens.verdict));
+    const confidence = Math.round(
+      evaluatedLenses.reduce((sum, lens) => sum + lens.confidence, 0) / evaluatedLenses.length
+    );
 
     // 5. Alerts consolidees — on prend celles extraites par le core PLUS celles derivees des
-    // failures des frameworks (severity "high" par defaut)
+    // failures des frameworks reellement evalues. Une lens degradee est un incident
+    // systeme, pas un signal metier a remonter au BA.
     const alerts: ThesisAlert[] = [
-      ...safeCore.alerts.map((a) => ({
+      ...core.alerts.map((a) => ({
         severity: a.severity,
         category: a.category,
         title: a.title,
@@ -249,23 +254,19 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     ];
 
     // Ajouter les failures de chaque framework comme alerts si pas deja presents
-    this.appendFrameworkFailuresAsAlerts(alerts, yc, "yc");
-    this.appendFrameworkFailuresAsAlerts(alerts, thiel, "thiel");
-    this.appendFrameworkFailuresAsAlerts(alerts, ad, "angel-desk");
+    this.appendFrameworkFailuresAsAlerts(alerts, ycLens, "yc");
+    this.appendFrameworkFailuresAsAlerts(alerts, thielLens, "thiel");
+    this.appendFrameworkFailuresAsAlerts(alerts, angelDeskLens, "angel-desk");
 
-    const loadBearing: LoadBearingAssumption[] = safeCore.loadBearing;
-
-    const ycLens: FrameworkLens = this.toFrameworkLens("yc", yc);
-    const thielLens: FrameworkLens = this.toFrameworkLens("thiel", thiel);
-    const angelDeskLens: FrameworkLens = this.toFrameworkLens("angel-desk", ad);
+    const loadBearing: LoadBearingAssumption[] = core.loadBearing;
 
     return {
-      reformulated: safeCore.reformulated,
-      problem: safeCore.problem,
-      solution: safeCore.solution,
-      whyNow: safeCore.whyNow,
-      moat: safeCore.moat,
-      pathToExit: safeCore.pathToExit,
+      reformulated: core.reformulated,
+      problem: core.problem,
+      solution: core.solution,
+      whyNow: core.whyNow,
+      moat: core.moat,
+      pathToExit: core.pathToExit,
       verdict,
       confidence,
       loadBearing,
@@ -289,16 +290,21 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     moat: string | null;
     pathToExit: string | null;
     contextSummary: string;
-  }): Promise<YcLensOutput> {
-    const { data } = await this.llmCompleteJSONValidated<YcLensOutput>(
+  }): Promise<FrameworkExecutionResult<YcLensOutput>> {
+    const result = await this.llmCompleteJSONValidated<YcLensOutput>(
       buildYcLensUserPrompt(input),
       YcLensSchema,
       {
         systemPrompt: buildYcLensSystemPrompt(),
         temperature: 0.2,
+        ...getThesisCallOptions<YcLensOutput>("yc-lens"),
       }
     );
-    return data;
+    return {
+      data: result.data,
+      availability: this.mapResolutionToAvailability(result.resolution),
+      model: result.model,
+    };
   }
 
   private async runThielLens(input: {
@@ -309,16 +315,21 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     moat: string | null;
     pathToExit: string | null;
     contextSummary: string;
-  }): Promise<ThielLensOutput> {
-    const { data } = await this.llmCompleteJSONValidated<ThielLensOutput>(
+  }): Promise<FrameworkExecutionResult<ThielLensOutput>> {
+    const result = await this.llmCompleteJSONValidated<ThielLensOutput>(
       buildThielLensUserPrompt(input),
       ThielLensSchema,
       {
         systemPrompt: buildThielLensSystemPrompt(),
         temperature: 0.2,
+        ...getThesisCallOptions<ThielLensOutput>("thiel-lens"),
       }
     );
-    return data;
+    return {
+      data: result.data,
+      availability: this.mapResolutionToAvailability(result.resolution),
+      model: result.model,
+    };
   }
 
   private async runAngelDeskLens(input: {
@@ -334,16 +345,21 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     dealInstrument?: string;
     dealAmountRequested?: number;
     dealValuationPre?: number;
-  }): Promise<AngelDeskLensOutput> {
-    const { data } = await this.llmCompleteJSONValidated<AngelDeskLensOutput>(
+  }): Promise<FrameworkExecutionResult<AngelDeskLensOutput>> {
+    const result = await this.llmCompleteJSONValidated<AngelDeskLensOutput>(
       buildAngelDeskLensUserPrompt(input),
       AngelDeskLensSchema,
       {
         systemPrompt: buildAngelDeskLensSystemPrompt(),
         temperature: 0.2,
+        ...getThesisCallOptions<AngelDeskLensOutput>("angel-desk-lens"),
       }
     );
-    return data;
+    return {
+      data: result.data,
+      availability: this.mapResolutionToAvailability(result.resolution),
+      model: result.model,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -437,9 +453,12 @@ OUTPUT ATTENDU: JSON strict conforme au schema ThesisCore, en francais, sans auc
 
   private appendFrameworkFailuresAsAlerts(
     alerts: ThesisAlert[],
-    lens: { failures: unknown; verdict: unknown },
+    lens: FrameworkLens,
     source: "yc" | "thiel" | "angel-desk"
   ): void {
+    if (!isFrameworkLensEvaluated(lens)) {
+      return;
+    }
     const verdict = this.normalizeVerdict(lens.verdict);
     const severity = verdict === "alert_dominant" ? "critical" : verdict === "vigilance" ? "high" : "medium";
     for (const f of this.normalizeTextList(lens.failures)) {
@@ -456,10 +475,12 @@ OUTPUT ATTENDU: JSON strict conforme au schema ThesisCore, en francais, sans auc
 
   private toFrameworkLens(
     framework: "yc" | "thiel" | "angel-desk",
-    lens: YcLensOutput | ThielLensOutput | AngelDeskLensOutput
+    lens: YcLensOutput | ThielLensOutput | AngelDeskLensOutput,
+    availability: FrameworkLensAvailability
   ): FrameworkLens {
     return {
       framework,
+      availability,
       verdict: this.normalizeVerdict(lens.verdict),
       confidence: this.normalizeConfidence(lens.confidence),
       question: this.normalizeNonEmptyString(lens.question, `${framework} lens`),
@@ -468,6 +489,19 @@ OUTPUT ATTENDU: JSON strict conforme au schema ThesisCore, en francais, sans auc
       strengths: this.normalizeTextList(lens.strengths),
       summary: this.normalizeNonEmptyString(lens.summary, `${framework} lens summary unavailable`),
     };
+  }
+
+  private mapResolutionToAvailability(
+    resolution: "model_success" | "schema_recovered" | "terminal_fallback"
+  ): FrameworkLensAvailability {
+    switch (resolution) {
+      case "model_success":
+        return "evaluated";
+      case "schema_recovered":
+        return "degraded_schema_recovered";
+      case "terminal_fallback":
+        return "degraded_chain_exhausted";
+    }
   }
 
   private normalizeVerdict(value: unknown): ThesisVerdict {

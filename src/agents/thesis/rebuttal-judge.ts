@@ -21,6 +21,7 @@ import { BaseAgent } from "../base-agent";
 import type { RebuttalJudgeOutput } from "./types";
 import type { ThesisExtractorOutput } from "./types";
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { getThesisCallOptions } from "@/lib/thesis/call-options";
 
 // ---------------------------------------------------------------------------
 // Input contract (passe via execute directement, pas via AgentContext classique)
@@ -130,7 +131,10 @@ LANGUE: Francais.`;
     const { data } = await this.llmCompleteJSONValidated(
       userPrompt,
       RebuttalJudgeSchema,
-      { temperature: 0.2 }
+      {
+        temperature: 0.2,
+        ...getThesisCallOptions("judge"),
+      }
     );
 
     return {

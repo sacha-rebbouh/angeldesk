@@ -8,9 +8,11 @@ import {
   type TaskComplexity,
   type StreamCallbacks,
 } from "@/services/openrouter/router";
+import type { ModelKey } from "@/services/openrouter/client";
 import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed, AgentTraceMetrics } from "./types";
 import { createHash } from "crypto";
 import { sanitizeForLLM, sanitizeName, PromptInjectionError } from "@/lib/sanitize";
+import { logger } from "@/lib/logger";
 import { z } from "zod";
 import { formatGeographyCoverageForPrompt } from "@/services/context-engine/geography-coverage";
 import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
@@ -43,13 +45,28 @@ export interface LLMCallOptions {
   temperature?: number;
   timeoutMs?: number; // Per-step timeout (default: config.timeoutMs)
   maxTokens?: number;
-  model?: "HAIKU" | "SONNET" | "OPUS" | "GPT4O" | "GPT4O_MINI" | "DEEPSEEK" | "GEMINI_FLASH" | "GEMINI_PRO" | "GEMINI_3_FLASH";
+  maxRetries?: number;
+  model?: ModelKey;
+  fallbackChain?: ModelKey[];
 }
 
 export interface LLMStreamOptions extends LLMCallOptions {
   onToken?: (token: string) => void;
   onComplete?: (content: string) => void;
   onError?: (error: Error) => void;
+}
+
+export interface ValidatedLLMCallOptions<T> extends LLMCallOptions {
+  fallbackDefaults?: Partial<T>;
+  terminalFallbackData?: T;
+}
+
+export interface ValidatedLLMResult<T> {
+  data: T;
+  cost: number;
+  model?: string;
+  validationErrors?: string[];
+  resolution: "model_success" | "schema_recovered" | "terminal_fallback";
 }
 
 // ============================================================================
@@ -394,6 +411,8 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         systemPrompt,
         temperature,
         maxTokens: options.maxTokens,
+        model: options.model,
+        maxRetries: options.maxRetries,
       }),
       timeoutMs,
       `LLM call timed out after ${timeoutMs}ms`
@@ -426,7 +445,13 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   protected async llmCompleteJSON<T>(
     prompt: string,
     options: LLMCallOptions = {}
-  ): Promise<{ data: T; cost: number }> {
+  ): Promise<{
+    data: T;
+    cost: number;
+    model?: string;
+    raw?: string;
+    usage?: { inputTokens: number; outputTokens: number };
+  }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
     const systemPrompt = this.buildFullSystemPrompt(options.systemPrompt);
     const temperature = options.temperature ?? 0.2;
@@ -439,6 +464,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         temperature,
         maxTokens: options.maxTokens,
         model: options.model,
+        maxRetries: options.maxRetries,
       }),
       timeoutMs,
       `LLM JSON call timed out after ${timeoutMs}ms`
@@ -488,45 +514,133 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
   /**
    * Call LLM with JSON response + Zod validation.
-   * On validation failure: logs warnings but returns partial data with defaults.
-   * Progressive migration path - agents can opt-in without breaking.
+   * On validation failure: tries per-model recovery, then model fallback chain,
+   * then optional terminal fallback data. Otherwise throws fail-closed.
    */
   protected async llmCompleteJSONValidated<T>(
     prompt: string,
     schema: z.ZodSchema<T>,
-    options: LLMCallOptions & { fallbackDefaults?: Partial<T> } = {}
-  ): Promise<{ data: T; cost: number; validationErrors?: string[] }> {
-    const result = await this.llmCompleteJSON<T>(prompt, options);
+    options: ValidatedLLMCallOptions<T> = {}
+  ): Promise<ValidatedLLMResult<T>> {
+    const rawChain: Array<ModelKey | undefined> =
+      options.fallbackChain?.length ? options.fallbackChain : [options.model];
+    const chain = rawChain.length > 0 ? rawChain : [undefined];
 
-    const parseResult = schema.safeParse(result.data);
+    let lastError: Error | null = null;
+    let schemaErrorsLast: string[] = [];
 
-    if (parseResult.success) {
-      return { data: parseResult.data, cost: result.cost };
-    }
+    for (const model of chain) {
+      try {
+        const result = await this.llmCompleteJSON<T>(prompt, {
+          ...options,
+          model,
+        });
 
-    const errors = parseResult.error.issues.map(
-      (issue) => `${issue.path.join(".")}: ${issue.message}`
-    );
-    console.warn(
-      `[${this.config.name}] Zod validation failed (${errors.length} issues):`,
-      errors.slice(0, 5).join("; ")
-    );
+        const parsed = schema.safeParse(result.data);
+        if (parsed.success) {
+          return {
+            data: parsed.data,
+            cost: result.cost,
+            model: result.model,
+            resolution: "model_success",
+          };
+        }
 
-    // Try partial parse: merge raw data with defaults
-    if (options.fallbackDefaults) {
-      const merged = { ...options.fallbackDefaults, ...result.data } as T;
-      const retryParse = schema.safeParse(merged);
-      if (retryParse.success) {
-        return { data: retryParse.data, cost: result.cost, validationErrors: errors };
+        schemaErrorsLast = parsed.error.issues.map(
+          (issue) => `${issue.path.join(".")}: ${issue.message}`
+        );
+
+        if (options.fallbackDefaults) {
+          const merged = { ...options.fallbackDefaults, ...result.data } as T;
+          const retryParsed = schema.safeParse(merged);
+          if (retryParsed.success) {
+            logger.warn(
+              {
+                agent: this.config.name,
+                modelAttempted: model,
+                modelResolved: result.model,
+                mergedFields: Object.keys(options.fallbackDefaults),
+                schemaErrorCount: parsed.error.issues.length,
+              },
+              "Schema recovered via fallbackDefaults merge"
+            );
+
+            return {
+              data: retryParsed.data,
+              cost: result.cost,
+              model: result.model,
+              validationErrors: schemaErrorsLast,
+              resolution: "schema_recovered",
+            };
+          }
+        }
+
+        lastError = new Error(
+          `Schema validation failed on ${result.model ?? "default"}: ${schemaErrorsLast.slice(0, 3).join("; ")}`
+        );
+        logger.warn(
+          {
+            agent: this.config.name,
+            modelAttempted: model,
+            modelResolved: result.model,
+            schemaErrorCount: parsed.error.issues.length,
+            firstErrors: schemaErrorsLast.slice(0, 3),
+          },
+          "Schema fail, trying next model in chain"
+        );
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        logger.warn(
+          {
+            agent: this.config.name,
+            modelAttempted: model,
+            error: lastError.message,
+          },
+          "Call fail, trying next model in chain"
+        );
       }
     }
 
-    // Last resort: return raw data with TypeScript cast (backward compatible)
-    return {
-      data: result.data,
-      cost: result.cost,
-      validationErrors: errors,
-    };
+    if (options.terminalFallbackData !== undefined) {
+      const terminalParsed = schema.safeParse(options.terminalFallbackData);
+      if (terminalParsed.success) {
+        logger.warn(
+          {
+            agent: this.config.name,
+            chainLength: chain.length,
+            lastError: lastError?.message,
+            schemaErrors: schemaErrorsLast.slice(0, 3),
+          },
+          "Fallback chain exhausted, using terminalFallbackData"
+        );
+
+        return {
+          data: terminalParsed.data,
+          cost: 0,
+          model: undefined,
+          validationErrors: schemaErrorsLast.length > 0 ? schemaErrorsLast : undefined,
+          resolution: "terminal_fallback",
+        };
+      }
+
+      logger.error(
+        {
+          agent: this.config.name,
+          terminalSchemaErrors: terminalParsed.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .slice(0, 5),
+        },
+        "terminalFallbackData is schema-invalid"
+      );
+    }
+
+    throw new Error(
+      `[${this.config.name}] All ${chain.length} model(s) in fallback chain exhausted. ` +
+      `Last error: ${lastError?.message ?? "unknown"}. ` +
+      (schemaErrorsLast.length > 0
+        ? `Last schema errors: ${schemaErrorsLast.slice(0, 5).join("; ")}`
+        : "")
+    );
   }
 
   // Helper to call LLM with JSON response + fallback (Haiku 4.5 -> Haiku 3.5)
