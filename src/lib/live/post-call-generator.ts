@@ -104,11 +104,29 @@ export async function generatePostCallReport(sessionId: string): Promise<PostCal
     throw new Error(`LiveSession ${sessionId} not found`);
   }
 
-  // Compile deal context if a deal is attached
+  // Compile deal context if a deal is attached.
+  // ARC-LIGHT Phase 1 soft-gate: if the deal's corpus is not yet verified,
+  // we do NOT 409 this live-triggered flow. Instead we degrade to a
+  // transcript-only report (no pre-call context enrichment) and log the skip.
   let dealContextText = "";
   if (session.dealId) {
-    const dealContext = await compileDealContext(session.dealId);
-    dealContextText = serializeContext(dealContext);
+    const { evaluateDealCorpusReadinessSoft } = await import(
+      "@/services/documents/readiness-gate"
+    );
+    const readiness = await evaluateDealCorpusReadinessSoft(session.dealId);
+    if (readiness.ready) {
+      const dealContext = await compileDealContext(session.dealId);
+      dealContextText = serializeContext(dealContext);
+    } else {
+      console.warn(
+        "[extraction.post_call.skipped_enrichment]",
+        JSON.stringify({
+          sessionId,
+          dealId: session.dealId,
+          reasonCode: readiness.reasonCode,
+        })
+      );
+    }
   }
 
   // Build transcription text (truncate if too long for LLM context)

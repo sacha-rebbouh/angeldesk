@@ -19,6 +19,8 @@ import type { CurrentFact } from "@/services/fact-store/types";
 import { thesisService } from "@/services/thesis";
 import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 import { pickCanonicalAnalysis } from "@/services/deals/canonical-read-model";
+import { assertAnalysisCorpusReady, CorpusNotReadyError } from "@/services/documents/readiness-gate";
+import { corpusNotReadyResponse } from "@/lib/api/corpus-not-ready-response";
 
 async function resolveAnalysisThesis(params: {
   dealId: string;
@@ -191,6 +193,19 @@ export async function GET(
         { error: "Aucune analyse canonique completee trouvee pour la these courante" },
         { status: analysisId ? 404 : 409 }
       );
+    }
+
+    // ARC-LIGHT Phase 1 gate (snapshot-aware): verify the corpus snapshot used
+    // by this specific analysis is trustworthy. Prevents replaying a past PDF
+    // memo built on a contaminated corpus even if the deal's latest documents
+    // have since been cleaned.
+    try {
+      await assertAnalysisCorpusReady(dealId, analysisMeta.id);
+    } catch (error) {
+      if (error instanceof CorpusNotReadyError) {
+        return corpusNotReadyResponse(error);
+      }
+      throw error;
     }
 
     const [pairedThesis, results, currentFacts] = await Promise.all([

@@ -4,6 +4,11 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { DocumentPageArtifact, ExtractionManifest, ExtractionPageManifest, PageOCRResult } from "@/services/pdf";
 import { assessExtractionSemantics, type ExtractionSemanticAssessment } from "@/services/pdf/extraction-semantics";
+import {
+  isExtractionStrictReadinessEnabled,
+  isPageArtifactToxic,
+  readPageVerificationState,
+} from "./extraction-readiness-policy";
 
 export const STRICT_EXTRACTION_PIPELINE_VERSION = "strict-document-extraction-v1";
 
@@ -936,7 +941,21 @@ export async function evaluateDealDocumentReadiness(dealId: string): Promise<Dea
 
     runIds.push(run.id);
     const unresolvedPages = getUnresolvedBlockingPages(run);
-    if (!run.readyForAnalysis || unresolvedPages.length > 0) {
+    const unresolvedPageSet = new Set<number>(unresolvedPages);
+
+    // Toxic check MUST be computed before the gate so it fires even when
+    // run.readyForAnalysis === true and unresolvedPages is empty - which is
+    // precisely the angle mort we are closing (run marked READY_WITH_WARNINGS
+    // but pages carry heuristic_fallback / unverified / parse_failed).
+    const toxicPages = isExtractionStrictReadinessEnabled()
+      ? run.pages.filter(
+          (page) =>
+            isPageArtifactToxic(page.artifact) &&
+            !unresolvedPageSet.has(page.pageNumber)
+        )
+      : [];
+
+    if (!run.readyForAnalysis || unresolvedPages.length > 0 || toxicPages.length > 0) {
       for (const pageNumber of unresolvedPages) {
         blockers.push({
           documentId: document.id,
@@ -949,7 +968,23 @@ export async function evaluateDealDocumentReadiness(dealId: string): Promise<Dea
           canBypass: true,
         });
       }
-      if (unresolvedPages.length === 0) {
+
+      for (const page of toxicPages) {
+        const state = readPageVerificationState(page.artifact);
+        blockers.push({
+          documentId: document.id,
+          documentName: document.name,
+          runId: run.id,
+          pageNumber: page.pageNumber,
+          code: "UNVERIFIED_ARTIFACT",
+          message: `${document.name}, page ${page.pageNumber}, extraction was not verified by a trusted provider (state: ${state ?? "unknown"}).`,
+          actionRequired: "REPROCESS",
+          canBypass: false,
+        });
+      }
+
+      // EXTRACTION_BLOCKED only if no page-level blocker already explains the block.
+      if (unresolvedPages.length === 0 && toxicPages.length === 0) {
         blockers.push({
           documentId: document.id,
           documentName: document.name,

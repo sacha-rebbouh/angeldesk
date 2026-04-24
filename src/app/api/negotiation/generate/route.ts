@@ -11,6 +11,8 @@ import {
   FeatureAccessError,
   serializeFeatureAccessError,
 } from "@/services/credits/feature-access";
+import { assertAnalysisCorpusReady, CorpusNotReadyError } from "@/services/documents/readiness-gate";
+import { corpusNotReadyResponse } from "@/lib/api/corpus-not-ready-response";
 
 export const maxDuration = 60;
 
@@ -339,6 +341,18 @@ export async function POST(req: NextRequest) {
     }
     if (process.env.NODE_ENV === "development") {
       console.log("[Negotiation API] Analysis found, hasCache:", !!analysis.negotiationStrategy);
+    }
+
+    // ARC-LIGHT Phase 1 gate (snapshot-aware): verify the corpus snapshot
+    // used by this analysis is trustworthy before returning a cached
+    // strategy OR spending tokens to regenerate one.
+    try {
+      await assertAnalysisCorpusReady(dealId, analysis.id);
+    } catch (error) {
+      if (error instanceof CorpusNotReadyError) {
+        return corpusNotReadyResponse(error);
+      }
+      throw error;
     }
 
     const rawResults = await loadResults(analysis.id);

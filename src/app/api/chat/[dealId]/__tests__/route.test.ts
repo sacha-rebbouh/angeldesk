@@ -86,6 +86,17 @@ vi.mock("@/lib/api-error", () => ({
   }),
 }));
 
+// ARC-LIGHT Phase 1 gate: neutralize for these flow tests. Dedicated gate
+// coverage lives in __tests__/route-gate.test.ts.
+vi.mock("@/services/documents/readiness-gate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/documents/readiness-gate")>();
+  return {
+    ...actual,
+    assertDealCorpusReady: vi.fn().mockResolvedValue(undefined),
+    assertAnalysisCorpusReady: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 const { POST } = await import("../route");
 
 const thesisRecord = {

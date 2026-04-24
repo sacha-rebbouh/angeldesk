@@ -6,6 +6,8 @@ import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { safeDecrypt } from "@/lib/encryption";
 import { extractTermsFromDocument } from "@/services/term-sheet-extractor";
+import { assertDealCorpusReady, CorpusNotReadyError } from "@/services/documents/readiness-gate";
+import { corpusNotReadyResponse } from "@/lib/api/corpus-not-ready-response";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -52,6 +54,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
         { error: "Document has no extracted text. Upload and process the document first." },
         { status: 400 }
       );
+    }
+
+    // ARC-LIGHT Phase 1 gate: block before LLM call + safeDecrypt on toxic corpus.
+    try {
+      await assertDealCorpusReady(dealId);
+    } catch (error) {
+      if (error instanceof CorpusNotReadyError) {
+        return corpusNotReadyResponse(error);
+      }
+      throw error;
     }
 
     const result = await extractTermsFromDocument({

@@ -65,6 +65,17 @@ vi.mock("@/lib/pdf/generate-analysis-pdf", () => ({
   generateAnalysisPdf: mocks.generateAnalysisPdf,
 }));
 
+// ARC-LIGHT Phase 1 gate: these existing flow tests are not about the gate,
+// so neutralize it here. Gate coverage lives in __tests__/route-gate.test.ts.
+vi.mock("@/services/documents/readiness-gate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/documents/readiness-gate")>();
+  return {
+    ...actual,
+    assertAnalysisCorpusReady: vi.fn().mockResolvedValue(undefined),
+    assertDealCorpusReady: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 const { GET } = await import("../route");
 
 const baseDeal = {
