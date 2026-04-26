@@ -49,7 +49,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "decimal.js": "^10.6.0",
-    "inngest": "^3.49.3",
+    "inngest": "^3.54.0",
     "lucide-react": "^0.562.0",
     "mammoth": "^1.11.0",
     "next": "^16.1.6",
