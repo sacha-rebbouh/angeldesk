@@ -1,17 +1,47 @@
-import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 import path from "path";
-
-// Point to the actual worker file for Node.js/serverless environments
-GlobalWorkerOptions.workerSrc = path.resolve(
-  process.cwd(),
-  "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"
-);
+import type { PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 import {
   analyzeExtractionQuality,
   QualityAnalysisResult,
   ExtractionQualityMetrics,
   ExtractionWarning
 } from "./quality-analyzer";
+
+type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+
+let pdfjsModulePromise: Promise<PdfJsModule> | null = null;
+
+async function ensurePdfJsDomPolyfills(): Promise<void> {
+  const globalScope = globalThis as unknown as {
+    DOMMatrix?: unknown;
+    ImageData?: unknown;
+    Path2D?: unknown;
+  };
+
+  if (typeof globalScope.DOMMatrix === "function") return;
+
+  // node-canvas is a direct dependency and is listed in serverExternalPackages.
+  // Loading it before pdfjs-dist gives pdfjs the DOMMatrix/ImageData globals it
+  // expects in browser-like runtimes, without pulling @napi-rs/canvas into
+  // Turbopack's ESM chunks.
+  const canvas = await import("canvas");
+  globalScope.DOMMatrix ??= canvas.DOMMatrix;
+  globalScope.ImageData ??= canvas.ImageData;
+}
+
+async function getPdfJs(): Promise<PdfJsModule> {
+  pdfjsModulePromise ??= (async () => {
+    await ensurePdfJsDomPolyfills();
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    // Point to the actual worker file for Node.js/serverless environments.
+    pdfjs.GlobalWorkerOptions.workerSrc = path.resolve(
+      process.cwd(),
+      "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"
+    );
+    return pdfjs;
+  })();
+  return pdfjsModulePromise;
+}
 
 export interface PDFExtractionResult {
   text: string;
@@ -48,6 +78,7 @@ interface PDFMetadataInfo {
  */
 export async function getPdfPageCount(buffer: Buffer): Promise<number> {
   try {
+    const { getDocument } = await getPdfJs();
     const loadingTask = getDocument({
       data: new Uint8Array(buffer),
       useWorkerFetch: false,
@@ -92,6 +123,7 @@ export async function extractTextFromPDF(
   buffer: Buffer
 ): Promise<PDFExtractionResult> {
   try {
+    const { getDocument } = await getPdfJs();
     const loadingTask = getDocument({ data: new Uint8Array(buffer), useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true });
     const pdf: PDFDocumentProxy = await loadingTask.promise;
     const totalPages = pdf.numPages;
