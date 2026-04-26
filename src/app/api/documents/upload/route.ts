@@ -5,16 +5,6 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DocumentType, Prisma } from "@prisma/client";
-import { smartExtract, estimatePdfExtractionCost, type ExtractionWarning } from "@/services/pdf";
-import {
-  extractFromExcel,
-  buildExcelModelIntelligence,
-  runExcelFinancialAudit,
-  generateExcelAnalystReport,
-  type SheetData,
-} from "@/services/excel";
-import { extractFromDocx } from "@/services/docx";
-import { extractFromPptx } from "@/services/pptx";
 import { uploadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 import { computeContentHash, checkDuplicateDocument } from "@/services/document-hash";
@@ -36,7 +26,12 @@ import {
 } from "@/services/documents/extraction-progress";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
-import type { DocumentPageArtifact, ExtractionCreditEstimate } from "@/services/pdf";
+import type {
+  DocumentPageArtifact,
+  ExtractionCreditEstimate,
+  ExtractionWarning,
+} from "@/services/pdf";
+import type { SheetData } from "@/services/excel";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -404,6 +399,7 @@ export async function POST(request: NextRequest) {
     let pdfPreChargedCredits = 0;
 
     if (file.type === "application/pdf") {
+      const { estimatePdfExtractionCost, smartExtract } = await import("@/services/pdf");
       // P0.4: pre-check credits avant de lancer smartExtract (qui peut engager
       // du compute OpenRouter). Estimation conservatrice worst-case: 1 credit/page
       // high_fidelity. Apres extraction reelle, on rembourse la difference si le
@@ -682,6 +678,12 @@ export async function POST(request: NextRequest) {
       });
 
       try {
+        const {
+          extractFromExcel,
+          buildExcelModelIntelligence,
+          runExcelFinancialAudit,
+          generateExcelAnalystReport,
+        } = await import("@/services/excel");
         const result = extractFromExcel(buffer);
 
         if (result.success) {
@@ -840,6 +842,7 @@ export async function POST(request: NextRequest) {
       });
 
       try {
+        const { extractFromDocx } = await import("@/services/docx");
         const result = await extractFromDocx(buffer);
 
         if (result.success) {
@@ -975,6 +978,7 @@ export async function POST(request: NextRequest) {
       });
 
       try {
+        const { extractFromPptx } = await import("@/services/pptx");
         const result = await extractFromPptx(buffer);
 
         if (result.success) {

@@ -162,8 +162,23 @@ export const FileUpload = memo(function FileUpload({
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error ?? "Upload failed");
+          const responseText = await response.text();
+          let errorMessage = `Upload failed (${response.status})`;
+          try {
+            const errorData = JSON.parse(responseText) as {
+              error?: string;
+              debug?: { name?: string; code?: string; message?: string };
+            };
+            const debugSuffix = errorData.debug
+              ? ` — ${[errorData.debug.name, errorData.debug.code, errorData.debug.message].filter(Boolean).join(": ")}`
+              : "";
+            errorMessage = `${errorData.error ?? errorMessage}${debugSuffix}`;
+          } catch {
+            if (responseText.includes("FUNCTION_PAYLOAD_TOO_LARGE")) {
+              errorMessage = "Upload failed: file exceeds Vercel's 4.5 MB function payload limit";
+            }
+          }
+          throw new Error(errorMessage);
         }
 
         const result = await response.json();
