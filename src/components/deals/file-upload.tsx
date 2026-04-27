@@ -230,8 +230,10 @@ export const FileUpload = memo(function FileUpload({
     const fileBaseline = (completedFiles / totalFilesToProcess) * 100;
     const perFileCap = 100 / totalFilesToProcess;
     const currentFileExpectedSeconds = Math.max(45, Math.ceil(((uploadingFile?.file.size ?? 5_000_000) / (1024 * 1024)) * 10));
-    const currentFileProgress = Math.min(0.95, elapsedSeconds / currentFileExpectedSeconds) * perFileCap;
-    return Math.min(95, Math.max(5, Math.round(fileBaseline + currentFileProgress)));
+    // Without backend progress we only show upload/preparation progress. Do not
+    // pretend extraction is 95% complete while the server is still doing OCR.
+    const currentFileProgress = Math.min(0.35, elapsedSeconds / currentFileExpectedSeconds * 0.35) * perFileCap;
+    return Math.min(95, Math.max(3, Math.round(fileBaseline + currentFileProgress)));
   }, [completedFiles, elapsedSeconds, isUploading, serverProgress, totalFilesToProcess, uploadingFile?.file.size]);
 
   useEffect(() => {
@@ -247,23 +249,33 @@ export const FileUpload = memo(function FileUpload({
   useEffect(() => {
     if (!isUploading || !activeProgressId) return;
     let cancelled = false;
-    const poll = async () => {
+    let timeoutId: number | null = null;
+    let attempts = 0;
+    const poll = async (): Promise<void> => {
       try {
         const response = await fetch(`/api/documents/upload/progress/${activeProgressId}`);
-        if (!response.ok) return;
-        const payload = await response.json() as { data: UploadProgressSnapshot | null };
-        if (!cancelled && payload.data) {
-          setServerProgress(payload.data);
+        if (response.ok) {
+          const payload = await response.json() as { data: UploadProgressSnapshot | null };
+          if (!cancelled && payload.data) {
+            setServerProgress(payload.data);
+            if (payload.data.phase === "completed" || payload.data.phase === "failed") {
+              return;
+            }
+          }
         }
       } catch {
         // Keep the local elapsed-time fallback if progress polling is temporarily unavailable.
       }
+      if (!cancelled) {
+        attempts += 1;
+        const delayMs = attempts < 10 ? 2_000 : attempts < 30 ? 4_000 : 7_000;
+        timeoutId = window.setTimeout(poll, delayMs);
+      }
     };
     poll();
-    const intervalId = window.setInterval(poll, 1500);
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
   }, [activeProgressId, isUploading]);
 

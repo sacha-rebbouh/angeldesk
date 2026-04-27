@@ -455,6 +455,7 @@ export async function POST(request: NextRequest) {
           extractionVersion: "strict-pdf-v1",
         });
         let uploadPageCount = 0;
+        const processedUploadPages = new Set<number>();
         // Smart extraction: regular + auto OCR for low-quality pages
         const result = await smartExtract(buffer, {
           qualityThreshold: 40,
@@ -480,14 +481,17 @@ export async function POST(request: NextRequest) {
               return;
             }
             if (event.phase === "page_processed") {
+              processedUploadPages.add(event.page.pageNumber);
+              const pagesProcessed = processedUploadPages.size;
+              const pageCount = Math.max(uploadPageCount, event.page.pageNumber);
               await recordExtractionPageProgress({
                 runId: progressRun.id,
                 page: event.page,
               });
               await publishUploadProgress({
                 phase: event.phase,
-                pageCount: Math.max(uploadPageCount, event.page.pageNumber),
-                pagesProcessed: event.pageNumber,
+                pageCount,
+                pagesProcessed,
                 message: event.message,
               });
               return;

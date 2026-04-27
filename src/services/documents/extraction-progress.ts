@@ -44,13 +44,25 @@ export function buildProgressSnapshot(params: {
 }): DocumentExtractionProgressSnapshot {
   const pageCount = Math.max(0, params.pageCount ?? 0);
   const pagesProcessed = Math.max(0, params.pagesProcessed ?? 0);
-  const percent = pageCount > 0
-    ? Math.min(99, Math.max(1, Math.round((pagesProcessed / pageCount) * 100)))
-    : params.phase === "queued"
-      ? 1
-      : params.phase === "completed"
-        ? 100
-        : 5;
+  const pageRatio = pageCount > 0 ? Math.min(1, pagesProcessed / pageCount) : 0;
+  const percent = (() => {
+    switch (params.phase) {
+      case "queued":
+        return 1;
+      case "started":
+        return 3;
+      case "native_extracted":
+        return 8;
+      case "page_processed":
+        // Keep room for post-OCR persistence/reconciliation work. This avoids
+        // showing 99% while the server is still doing expensive extraction.
+        return Math.min(95, Math.max(10, Math.round(10 + pageRatio * 85)));
+      case "completed":
+        return 100;
+      case "failed":
+        return Math.max(1, Math.min(99, Math.round(10 + pageRatio * 85)));
+    }
+  })();
 
   return {
     id: params.id,
@@ -60,7 +72,7 @@ export function buildProgressSnapshot(params: {
     phase: params.phase,
     pageCount,
     pagesProcessed,
-    percent: params.phase === "completed" ? 100 : percent,
+    percent,
     message: params.message,
     updatedAt: new Date().toISOString(),
   };
