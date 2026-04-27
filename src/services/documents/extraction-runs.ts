@@ -950,7 +950,7 @@ export async function evaluateDealDocumentReadiness(dealId: string): Promise<Dea
     const toxicPages = isExtractionStrictReadinessEnabled()
       ? run.pages.filter(
           (page) =>
-            isPageArtifactToxic(page.artifact) &&
+            isPageArtifactToxic(page.artifact, page.status) &&
             !unresolvedPageSet.has(page.pageNumber)
         )
       : [];

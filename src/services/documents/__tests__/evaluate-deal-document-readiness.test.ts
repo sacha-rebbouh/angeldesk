@@ -109,7 +109,16 @@ describe("evaluateDealDocumentReadiness (toxic-artifact gate)", () => {
         readyForAnalysis: true,
         status: "READY_WITH_WARNINGS",
         pages: [
-          { pageNumber: 16, status: "READY_WITH_WARNINGS", artifact: { verification: { state: "heuristic_fallback" } } },
+          {
+            pageNumber: 16,
+            status: "READY_WITH_WARNINGS",
+            artifact: {
+              verification: {
+                state: "heuristic_fallback",
+                evidence: ["legacy_text_fallback"],
+              },
+            },
+          },
         ],
       }),
     ]);
@@ -139,17 +148,17 @@ describe("evaluateDealDocumentReadiness (toxic-artifact gate)", () => {
     expect(result.blockers.some((b) => b.code === "UNVERIFIED_ARTIFACT")).toBe(true);
   });
 
-  it("blocks on unverified state", async () => {
+  it("does not block READY native pages only because verification.state is unverified", async () => {
     mocks.documentFindMany.mockResolvedValue([
       makeFakeDocument({
-        pages: [{ pageNumber: 1, artifact: { verification: { state: "unverified" } } }],
+        pages: [{ pageNumber: 1, status: "READY", artifact: { verification: { state: "unverified" } } }],
       }),
     ]);
 
     const result = await evaluateDealDocumentReadiness("deal_1");
 
-    expect(result.ready).toBe(false);
-    expect(result.blockers.some((b) => b.code === "UNVERIFIED_ARTIFACT")).toBe(true);
+    expect(result.ready).toBe(true);
+    expect(result.blockers).toHaveLength(0);
   });
 
   it("lets native-legacy pages pass (no verification.state present)", async () => {
@@ -250,7 +259,17 @@ describe("evaluateDealDocumentReadiness (toxic-artifact gate)", () => {
         documentId: "doc_toxic",
         documentName: "toxic.pdf",
         runId: "run_toxic",
-        pages: [{ pageNumber: 3, artifact: { verification: { state: "heuristic_fallback" } } }],
+        pages: [
+          {
+            pageNumber: 3,
+            artifact: {
+              verification: {
+                state: "heuristic_fallback",
+                evidence: ["legacy_text_fallback"],
+              },
+            },
+          },
+        ],
       }),
     ]);
 

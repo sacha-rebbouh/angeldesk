@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useState, memo } from "react";
-import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -12,14 +11,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { FileUpload } from "./file-upload";
+import { FileUpload, type UploadedDocumentSummary } from "./file-upload";
 import { queryKeys } from "@/lib/query-keys";
 
 interface DocumentUploadDialogProps {
   dealId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onUploadSuccess?: () => void;
+  onUploadSuccess?: (document?: UploadedDocumentSummary) => void;
 }
 
 export const DocumentUploadDialog = memo(function DocumentUploadDialog({
@@ -28,28 +27,26 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
   onOpenChange,
   onUploadSuccess,
 }: DocumentUploadDialogProps) {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [uploadedCount, setUploadedCount] = useState(0);
   const [hasUploaded, setHasUploaded] = useState(false);
 
-  const handleUploadComplete = useCallback(() => {
+  const handleUploadComplete = useCallback((document: UploadedDocumentSummary) => {
     setUploadedCount((prev) => prev + 1);
     setHasUploaded(true);
-  }, []);
+    onUploadSuccess?.(document);
+  }, [onUploadSuccess]);
 
   const handleAllComplete = useCallback(() => {
     toast.success("Documents uploadés avec succès");
     // Auto-close after short delay to show success state
     setTimeout(() => {
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
-      router.refresh();
-      onUploadSuccess?.();
       setUploadedCount(0);
       setHasUploaded(false);
       onOpenChange(false);
     }, 500);
-  }, [queryClient, dealId, onUploadSuccess, onOpenChange, router]);
+  }, [queryClient, dealId, onOpenChange]);
 
   const handleError = useCallback((error: string) => {
     toast.error(error);
@@ -58,13 +55,11 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
   const handleClose = useCallback(() => {
     if (hasUploaded) {
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
-      router.refresh();
-      onUploadSuccess?.();
     }
     setUploadedCount(0);
     setHasUploaded(false);
     onOpenChange(false);
-  }, [hasUploaded, queryClient, dealId, onUploadSuccess, onOpenChange, router]);
+  }, [hasUploaded, queryClient, dealId, onOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>

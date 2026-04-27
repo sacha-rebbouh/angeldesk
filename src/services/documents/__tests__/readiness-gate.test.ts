@@ -88,7 +88,12 @@ function makeToxicDocument() {
             hasMarketKeywords: false,
             hasTeamKeywords: false,
             errorMessage: null,
-            artifact: { verification: { state: "heuristic_fallback" } },
+            artifact: {
+              verification: {
+                state: "heuristic_fallback",
+                evidence: ["legacy_text_fallback"],
+              },
+            },
           },
         ],
       },

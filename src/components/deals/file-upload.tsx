@@ -56,9 +56,23 @@ interface UploadProgressSnapshot {
   message?: string;
 }
 
+export interface UploadedDocumentSummary {
+  id: string;
+  name: string;
+  type: string;
+  storageUrl?: string | null;
+  mimeType?: string | null;
+  processingStatus?: string;
+  extractionQuality?: number | null;
+  extractionMetrics?: unknown;
+  extractionWarnings?: Array<{ code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }> | null;
+  requiresOCR?: boolean;
+  uploadedAt?: string | Date;
+}
+
 interface FileUploadProps {
   dealId: string;
-  onUploadComplete?: (document: { id: string; name: string; type: string }) => void;
+  onUploadComplete?: (document: UploadedDocumentSummary) => void;
   onError?: (error: string) => void;
   onAllComplete?: () => void;
   disabled?: boolean;
@@ -183,7 +197,12 @@ export const FileUpload = memo(function FileUpload({
 
         const result = await response.json();
         updateFile(fileData.id, { status: "success" });
-        onUploadComplete?.({ id: result.data.id, name: fileData.file.name, type: fileData.documentType });
+        onUploadComplete?.({
+          ...result.data,
+          id: result.data.id,
+          name: result.data.name ?? fileData.file.name,
+          type: result.data.type ?? fileData.documentType,
+        });
         return true;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Upload failed";

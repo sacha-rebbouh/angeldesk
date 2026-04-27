@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useState, useMemo, memo } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState, useMemo, memo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { format } from "date-fns";
@@ -44,6 +43,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DocumentUploadDialog } from "./document-upload-dialog";
+import type { UploadedDocumentSummary } from "./file-upload";
 import { DocumentExtractionAuditDialog } from "./document-extraction-audit-dialog";
 import { DocumentPreviewDialog } from "./document-preview-dialog";
 import {
@@ -126,8 +126,8 @@ function getExtractionMetricSummary(metrics: unknown): {
 }
 
 export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
-  const router = useRouter();
   const queryClient = useQueryClient();
+  const [localDocuments, setLocalDocuments] = useState<Document[]>(documents);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
   const [auditDoc, setAuditDoc] = useState<Document | null>(null);
@@ -135,6 +135,10 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
   const [newName, setNewName] = useState("");
   const [deleteDoc, setDeleteDoc] = useState<Document | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    setLocalDocuments(documents);
+  }, [documents]);
 
   // Fetch staleness info to know which documents were analyzed
   const { data: stalenessData } = useQuery({
@@ -154,8 +158,29 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
   // Check if there's at least one analysis
   const hasAnalysis = stalenessData?.hasAnalysis ?? false;
 
-  const handleUploadSuccess = useCallback(() => {
+  const handleUploadSuccess = useCallback((uploadedDocument?: UploadedDocumentSummary) => {
+    if (uploadedDocument) {
+      const normalizedDocument: Document = {
+        id: uploadedDocument.id,
+        name: uploadedDocument.name,
+        type: uploadedDocument.type,
+        storageUrl: uploadedDocument.storageUrl ?? null,
+        mimeType: uploadedDocument.mimeType ?? null,
+        processingStatus: uploadedDocument.processingStatus ?? "COMPLETED",
+        extractionQuality: uploadedDocument.extractionQuality ?? null,
+        extractionMetrics: uploadedDocument.extractionMetrics,
+        extractionWarnings: uploadedDocument.extractionWarnings ?? null,
+        requiresOCR: uploadedDocument.requiresOCR ?? false,
+        uploadedAt: uploadedDocument.uploadedAt ? new Date(uploadedDocument.uploadedAt) : new Date(),
+      };
+      setLocalDocuments((currentDocuments) => [
+        normalizedDocument,
+        ...currentDocuments.filter((document) => document.id !== normalizedDocument.id),
+      ]);
+    }
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+    queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
   }, [queryClient, dealId]);
 
   const openUploadDialog = useCallback(() => {
@@ -192,6 +217,11 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       }
 
       toast.success("Document renommé");
+      setLocalDocuments((currentDocuments) =>
+        currentDocuments.map((document) =>
+          document.id === renameDoc.id ? { ...document, name: newName.trim() } : document
+        )
+      );
       setRenameDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     } catch (error) {
@@ -216,8 +246,13 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       }
 
       toast.success("Document supprimé");
+      setLocalDocuments((currentDocuments) =>
+        currentDocuments.filter((document) => document.id !== deleteDoc.id)
+      );
       setDeleteDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+      queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors de la suppression");
     } finally {
@@ -244,7 +279,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
         </CardHeader>
         <CardContent>
           <TooltipProvider>
-            {documents.length === 0 ? (
+            {localDocuments.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <FileText className="h-12 w-12 text-muted-foreground/50" />
                 <h3 className="mt-4 text-lg font-semibold">Aucun document</h3>
@@ -259,7 +294,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
               </div>
             ) : (
               <div className="space-y-2">
-                {documents
+                {localDocuments
                   .filter((doc) => doc.extractionQuality !== null && doc.extractionQuality < 40)
                   .slice(0, 1)
                   .map((doc) => (
@@ -272,11 +307,12 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                       onReupload={openUploadDialog}
                       onOCRComplete={() => {
                         toast.success("OCR terminé");
-                        router.refresh();
+                        queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+                        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
                       }}
                     />
                   ))}
-                {documents.map((doc) => {
+                {localDocuments.map((doc) => {
                   const extractionSummary = getExtractionMetricSummary(doc.extractionMetrics);
                   return (
                   <div

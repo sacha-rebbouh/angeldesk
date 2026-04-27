@@ -2,7 +2,6 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ChevronLeft,
@@ -354,7 +353,6 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   const [batchRetryProgress, setBatchRetryProgress] = useState<{ done: number; total: number } | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const queryClient = useQueryClient();
-  const router = useRouter();
   const auditQueryKey = useMemo(
     () => ["document-extraction-audit", document?.id] as const,
     [document?.id]
@@ -466,7 +464,6 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         queryClient.invalidateQueries({ queryKey: auditQueryKey }),
         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
       ]);
-      router.refresh();
     },
   });
 
@@ -484,7 +481,6 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       toast.success("Extraction renforcee terminee");
       queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] });
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] });
-      router.refresh();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -510,7 +506,6 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       toast.success(`Page ${params.pageNumber} retraitee`);
       queryClient.invalidateQueries({ queryKey: auditQueryKey });
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] });
-      router.refresh();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -544,7 +539,6 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         queryClient.invalidateQueries({ queryKey: auditQueryKey }),
         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
       ]);
-      router.refresh();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {

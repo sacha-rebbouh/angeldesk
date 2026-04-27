@@ -143,7 +143,7 @@ export async function assertAnalysisCorpusReady(
     select: {
       id: true,
       readyForAnalysis: true,
-      pages: { select: { pageNumber: true, artifact: true } },
+      pages: { select: { pageNumber: true, status: true, artifact: true } },
     },
   });
 
@@ -158,7 +158,7 @@ export async function assertAnalysisCorpusReady(
       toxicRunIds.push(run.id);
       continue;
     }
-    if (run.pages.some((page) => isPageArtifactToxic(page.artifact))) {
+    if (run.pages.some((page) => isPageArtifactToxic(page.artifact, page.status))) {
       toxicRunIds.push(run.id);
     }
   }

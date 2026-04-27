@@ -70,6 +70,34 @@ describe("isPageArtifactToxic", () => {
   it("does not flag unknown states as toxic (conservative - only explicit reject list)", () => {
     expect(isPageArtifactToxic({ verification: { state: "something_new" } })).toBe(false);
   });
+
+  it("does not flag ready native/standard pages just because state is unverified", () => {
+    expect(
+      isPageArtifactToxic({ verification: { state: "unverified" } }, "READY")
+    ).toBe(false);
+    expect(
+      isPageArtifactToxic({ verification: { state: "unverified" } }, "READY_WITH_WARNINGS")
+    ).toBe(false);
+  });
+
+  it("does not flag ready native heuristic_fallback without legacy fallback evidence", () => {
+    expect(
+      isPageArtifactToxic({ verification: { state: "heuristic_fallback" } }, "READY_WITH_WARNINGS")
+    ).toBe(false);
+  });
+
+  it("flags schema fallback to legacy OCR even when the page is otherwise ready", () => {
+    expect(
+      isPageArtifactToxic(
+        { verification: { state: "heuristic_fallback", evidence: ["legacy_text_fallback"] } },
+        "READY_WITH_WARNINGS"
+      )
+    ).toBe(true);
+  });
+
+  it("always flags parse_failed", () => {
+    expect(isPageArtifactToxic({ verification: { state: "parse_failed" } }, "READY")).toBe(true);
+  });
 });
 
 describe("isExtractionStrictReadinessEnabled", () => {
