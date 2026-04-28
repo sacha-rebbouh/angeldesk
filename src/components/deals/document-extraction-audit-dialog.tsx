@@ -322,14 +322,25 @@ type PageRetryParams = {
 function pageRequiresDecision(page: AuditPage) {
   return !page.override && (
     page.status === "NEEDS_REVIEW" ||
-    page.status === "FAILED"
+    page.status === "FAILED" ||
+    page.visualRiskReasons.includes("targeted_page_retry")
   );
 }
 
 function pageNeedsInspection(page: AuditPage) {
   return !page.override && (
     page.status === "NEEDS_REVIEW" ||
-    page.status === "FAILED"
+    page.status === "FAILED" ||
+    page.visualRiskReasons.includes("targeted_page_retry")
+  );
+}
+
+function canRetryAuditPage(page: AuditPage) {
+  return (
+    page.status === "FAILED" ||
+    page.status === "NEEDS_REVIEW" ||
+    page.evidenceSummary?.missingExpectedStructure ||
+    (page.visualRiskScore ?? 0) >= 55
   );
 }
 
@@ -623,12 +634,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   };
 
   const startReviewPagesRetry = () => {
-    const retryable = reviewPages.filter((page) => (
-      page.status === "FAILED" ||
-      page.status === "NEEDS_REVIEW" ||
-      page.evidenceSummary?.missingExpectedStructure ||
-      (page.visualRiskScore ?? 0) >= 55
-    ));
+    const retryable = reviewPages.filter(canRetryAuditPage);
     if (retryable.length === 0) return;
     setReprocessStartedAt(Date.now());
     setElapsedSeconds(0);
@@ -918,7 +924,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                                 Sinon, retente l&apos;extraction ou re-uploade un PDF plus lisible.
                               </p>
                               <div className="mt-3 flex flex-wrap gap-2">
-                                {(pageToInspect.status === "FAILED" || pageToInspect.status === "NEEDS_REVIEW") && (
+                                {canRetryAuditPage(pageToInspect) && (
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -1093,7 +1099,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                             Sinon, exclue la page ou relance l&apos;extraction renforcee.
                           </p>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {(reviewPageToInspect.status === "FAILED" || reviewPageToInspect.status === "NEEDS_REVIEW") && (
+                            {canRetryAuditPage(reviewPageToInspect) && (
                               <Button
                                 size="sm"
                                 variant="outline"
