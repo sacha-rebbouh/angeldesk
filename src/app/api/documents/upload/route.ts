@@ -456,61 +456,99 @@ export async function POST(request: NextRequest) {
         });
         let uploadPageCount = 0;
         const processedUploadPages = new Set<number>();
-        // Smart extraction: regular + auto OCR for low-quality pages
-        const result = await smartExtract(buffer, {
-          qualityThreshold: 40,
-          maxOCRPages: Number.POSITIVE_INFINITY,
-          autoOCR: true,
-          strict: true,
-          onProgress: async (event) => {
-            if (event.phase === "native_extracted") {
-              uploadPageCount = event.pageCount;
+        const extractionTimeoutGuard = setTimeout(() => {
+          const pageCount = uploadPageCount || undefined;
+          const pagesProcessed = processedUploadPages.size || undefined;
+          void Promise.all([
+            prisma.document.updateMany({
+              where: { id: document.id, processingStatus: "PROCESSING" },
+              data: {
+                processingStatus: "FAILED",
+                extractionWarnings: [{
+                  code: "EXTRACTION_TIMEOUT",
+                  severity: "critical",
+                  message: "PDF extraction exceeded the server execution window",
+                  suggestion: "Relancez l'extraction ou utilisez un document plus court pendant la stabilisation du pipeline.",
+                }] as Prisma.InputJsonValue,
+              },
+            }),
+            markExtractionRunProgress({
+              runId: progressRun.id,
+              phase: "failed",
+              message: "PDF extraction exceeded the server execution window",
+              pageCount,
+              pagesProcessed,
+            }),
+            publishUploadProgress({
+              phase: "failed",
+              message: "PDF extraction exceeded the server execution window",
+              pageCount,
+              pagesProcessed,
+            }),
+          ]).catch((guardError) => {
+            console.warn("[upload] Failed to mark timed-out extraction:", guardError);
+          });
+        }, Number(process.env.DOCUMENT_EXTRACTION_SOFT_TIMEOUT_MS ?? 270_000));
+        let result: Awaited<ReturnType<typeof smartExtract>>;
+        try {
+          // Smart extraction: regular + auto OCR for low-quality pages
+          result = await smartExtract(buffer, {
+            qualityThreshold: 40,
+            maxOCRPages: Number.POSITIVE_INFINITY,
+            autoOCR: true,
+            strict: true,
+            onProgress: async (event) => {
+              if (event.phase === "native_extracted") {
+                uploadPageCount = event.pageCount;
+                await publishUploadProgress({
+                  phase: event.phase,
+                  pageCount: event.pageCount,
+                  pagesProcessed: 0,
+                  message: event.message,
+                });
+                await markExtractionRunProgress({
+                  runId: progressRun.id,
+                  pageCount: event.pageCount,
+                  pagesProcessed: 0,
+                  phase: event.phase,
+                  message: event.message,
+                });
+                return;
+              }
+              if (event.phase === "page_processed") {
+                processedUploadPages.add(event.page.pageNumber);
+                const pagesProcessed = processedUploadPages.size;
+                const pageCount = Math.max(uploadPageCount, event.page.pageNumber);
+                await recordExtractionPageProgress({
+                  runId: progressRun.id,
+                  page: event.page,
+                });
+                await publishUploadProgress({
+                  phase: event.phase,
+                  pageCount,
+                  pagesProcessed,
+                  message: event.message,
+                });
+                return;
+              }
               await publishUploadProgress({
                 phase: event.phase,
-                pageCount: event.pageCount,
-                pagesProcessed: 0,
                 message: event.message,
+                pageCount: "pageCount" in event ? event.pageCount : undefined,
+                pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
               });
               await markExtractionRunProgress({
                 runId: progressRun.id,
-                pageCount: event.pageCount,
-                pagesProcessed: 0,
                 phase: event.phase,
                 message: event.message,
+                pageCount: "pageCount" in event ? event.pageCount : undefined,
+                pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
               });
-              return;
-            }
-            if (event.phase === "page_processed") {
-              processedUploadPages.add(event.page.pageNumber);
-              const pagesProcessed = processedUploadPages.size;
-              const pageCount = Math.max(uploadPageCount, event.page.pageNumber);
-              await recordExtractionPageProgress({
-                runId: progressRun.id,
-                page: event.page,
-              });
-              await publishUploadProgress({
-                phase: event.phase,
-                pageCount,
-                pagesProcessed,
-                message: event.message,
-              });
-              return;
-            }
-            await publishUploadProgress({
-              phase: event.phase,
-              message: event.message,
-              pageCount: "pageCount" in event ? event.pageCount : undefined,
-              pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
-            });
-            await markExtractionRunProgress({
-              runId: progressRun.id,
-              phase: event.phase,
-              message: event.message,
-              pageCount: "pageCount" in event ? event.pageCount : undefined,
-              pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
-            });
-          },
-        });
+            },
+          });
+        } finally {
+          clearTimeout(extractionTimeoutGuard);
+        }
 
         extractionQuality = result.quality;
         pagesOCRd = result.pagesOCRd;

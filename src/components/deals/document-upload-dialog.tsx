@@ -37,6 +37,11 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
     onUploadSuccess?.(document);
   }, [onUploadSuccess]);
 
+  const handleUploadQueued = useCallback((document: UploadedDocumentSummary) => {
+    setHasUploaded(true);
+    onUploadSuccess?.(document);
+  }, [onUploadSuccess]);
+
   const handleAllComplete = useCallback(() => {
     toast.success("Documents uploadés avec succès");
     // Auto-close after short delay to show success state
@@ -75,6 +80,7 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
         <div className="flex-1 overflow-y-auto min-h-0 -mx-6 px-6">
           <FileUpload
             dealId={dealId}
+            onUploadQueued={handleUploadQueued}
             onUploadComplete={handleUploadComplete}
             onAllComplete={handleAllComplete}
             onError={handleError}

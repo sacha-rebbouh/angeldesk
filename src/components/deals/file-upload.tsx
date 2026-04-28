@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import {
   Upload,
@@ -50,6 +50,8 @@ interface FileToUpload {
 
 interface UploadProgressSnapshot {
   phase: string;
+  documentId?: string;
+  documentName?: string;
   pageCount: number;
   pagesProcessed: number;
   percent: number;
@@ -72,6 +74,7 @@ export interface UploadedDocumentSummary {
 
 interface FileUploadProps {
   dealId: string;
+  onUploadQueued?: (document: UploadedDocumentSummary) => void;
   onUploadComplete?: (document: UploadedDocumentSummary) => void;
   onError?: (error: string) => void;
   onAllComplete?: () => void;
@@ -105,6 +108,7 @@ function formatFileSize(bytes: number): string {
 
 export const FileUpload = memo(function FileUpload({
   dealId,
+  onUploadQueued,
   onUploadComplete,
   onError,
   onAllComplete,
@@ -117,6 +121,7 @@ export const FileUpload = memo(function FileUpload({
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
   const [activeProgressId, setActiveProgressId] = useState<string | null>(null);
   const [serverProgress, setServerProgress] = useState<UploadProgressSnapshot | null>(null);
+  const announcedDocumentIdsRef = useRef<Set<string>>(new Set());
 
   const onDrop = useCallback(
     (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
@@ -243,6 +248,8 @@ export const FileUpload = memo(function FileUpload({
   const uploadingFile = files.find((file) => file.status === "uploading") ?? null;
   const totalFilesToProcess = files.filter((file) => file.status !== "error").length || 1;
   const completedFiles = files.filter((file) => file.status === "success").length;
+  const uploadingDocumentType = uploadingFile?.documentType;
+  const uploadingMimeType = uploadingFile?.file.type;
   const estimatedUploadProgress = useMemo(() => {
     if (serverProgress) return serverProgress.percent;
     if (!isUploading) return 0;
@@ -277,6 +284,28 @@ export const FileUpload = memo(function FileUpload({
           const payload = await response.json() as { data: UploadProgressSnapshot | null };
           if (!cancelled && payload.data) {
             setServerProgress(payload.data);
+            if (
+              payload.data.documentId &&
+              !announcedDocumentIdsRef.current.has(payload.data.documentId)
+            ) {
+              announcedDocumentIdsRef.current.add(payload.data.documentId);
+              onUploadQueued?.({
+                id: payload.data.documentId,
+                name: payload.data.documentName ?? activeFileName ?? uploadingFile?.file.name ?? "Document",
+                type: uploadingDocumentType ?? "OTHER",
+                mimeType: uploadingMimeType ?? null,
+                processingStatus: "PROCESSING",
+                extractionQuality: null,
+                extractionMetrics: {
+                  status: "processing",
+                  pageCount: payload.data.pageCount,
+                  pagesProcessed: payload.data.pagesProcessed,
+                },
+                extractionWarnings: null,
+                requiresOCR: uploadingMimeType === "application/pdf",
+                uploadedAt: new Date(),
+              });
+            }
             if (payload.data.phase === "completed" || payload.data.phase === "failed") {
               return;
             }
@@ -296,7 +325,7 @@ export const FileUpload = memo(function FileUpload({
       cancelled = true;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [activeProgressId, isUploading]);
+  }, [activeFileName, activeProgressId, isUploading, onUploadQueued, uploadingDocumentType, uploadingFile?.file.name, uploadingMimeType]);
 
   return (
     <div className="relative space-y-3">

@@ -218,7 +218,7 @@ export function getMaxOCRPages(documentType?: string): number {
 }
 
 // Batch size for parallel processing
-const BATCH_SIZE = 3;
+const BATCH_SIZE = 4;
 
 // Cost per page estimate (GPT-4o Mini vision)
 const ESTIMATED_INPUT_TOKENS = 800;  // Image ~800 tokens

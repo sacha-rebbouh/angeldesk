@@ -94,6 +94,13 @@ async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
   return response.json();
 }
 
+async function fetchDocument(documentId: string): Promise<Document | null> {
+  const response = await fetch(`/api/documents/${documentId}`);
+  if (!response.ok) return null;
+  const payload = await response.json() as { data?: Document };
+  return payload.data ?? null;
+}
+
 function getExtractionMetricSummary(metrics: unknown): {
   status: string | null;
   blockingCount: number;
@@ -140,6 +147,48 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     setLocalDocuments(documents);
   }, [documents]);
 
+  const processingDocumentIdsKey = useMemo(() => (
+    localDocuments
+      .filter((document) => document.processingStatus === "PROCESSING")
+      .map((document) => document.id)
+      .sort()
+      .join("|")
+  ), [localDocuments]);
+
+  useEffect(() => {
+    const processingIds = processingDocumentIdsKey
+      ? processingDocumentIdsKey.split("|")
+      : [];
+    if (processingIds.length === 0) return;
+
+    let cancelled = false;
+    const refreshProcessingDocuments = async () => {
+      const refreshedDocuments = await Promise.all(processingIds.map(fetchDocument));
+      if (cancelled) return;
+      const refreshedById = new Map(
+        refreshedDocuments
+          .filter((document): document is Document => Boolean(document))
+          .map((document) => [document.id, document])
+      );
+      if (refreshedById.size === 0) return;
+      setLocalDocuments((currentDocuments) =>
+        currentDocuments.map((document) => {
+          const refreshed = refreshedById.get(document.id);
+          return refreshed
+            ? { ...refreshed, uploadedAt: new Date(refreshed.uploadedAt) }
+            : document;
+        })
+      );
+    };
+
+    const intervalId = window.setInterval(refreshProcessingDocuments, 5_000);
+    void refreshProcessingDocuments();
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [processingDocumentIdsKey]);
+
   // Fetch staleness info to know which documents were analyzed
   const { data: stalenessData } = useQuery({
     queryKey: queryKeys.staleness.byDeal(dealId),
@@ -176,7 +225,9 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       setLocalDocuments((currentDocuments) => [
         normalizedDocument,
         ...currentDocuments.filter((document) => document.id !== normalizedDocument.id),
-      ]);
+      ].sort((left, right) => (
+        new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
+      )));
     }
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });

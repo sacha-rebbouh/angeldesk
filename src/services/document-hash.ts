@@ -10,6 +10,8 @@
 import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
 
+const STALE_PROCESSING_DUPLICATE_WINDOW_MS = 20 * 60 * 1000;
+
 /**
  * Compute SHA-256 hash of file content
  */
@@ -39,10 +41,15 @@ export async function checkDuplicateDocument(
   dealId: string,
   userId: string
 ): Promise<DuplicateCheckResult> {
+  const staleProcessingCutoff = new Date(Date.now() - STALE_PROCESSING_DUPLICATE_WINDOW_MS);
   const existing = await prisma.document.findFirst({
     where: {
       contentHash,
       deal: { userId },
+      OR: [
+        { processingStatus: { notIn: ["FAILED", "PROCESSING"] } },
+        { processingStatus: "PROCESSING", uploadedAt: { gt: staleProcessingCutoff } },
+      ],
     },
     select: {
       id: true,
