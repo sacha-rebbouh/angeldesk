@@ -100,6 +100,15 @@ export async function buildChatContext(
         type: true,
         name: true,
         extractedText: true,
+        sourceKind: true,
+        corpusRole: true,
+        sourceDate: true,
+        receivedAt: true,
+        sourceAuthor: true,
+        sourceSubject: true,
+        linkedQuestionSource: true,
+        linkedQuestionText: true,
+        linkedRedFlagId: true,
       },
     }),
   ]);
@@ -511,6 +520,15 @@ async function getDocumentSummaries(
       type: true,
       processingStatus: true,
       extractedText: true,
+      sourceKind: true,
+      corpusRole: true,
+      sourceDate: true,
+      receivedAt: true,
+      sourceAuthor: true,
+      sourceSubject: true,
+      linkedQuestionSource: true,
+      linkedQuestionText: true,
+      linkedRedFlagId: true,
     },
   });
 
@@ -534,6 +552,15 @@ async function getDocumentSummaries(
     type: doc.type,
     isProcessed: doc.processingStatus === "COMPLETED",
     extractedText: doc.extractedText ? safeDecrypt(doc.extractedText) : null,
+    sourceKind: doc.sourceKind,
+    corpusRole: doc.corpusRole,
+    sourceDate: doc.sourceDate,
+    receivedAt: doc.receivedAt,
+    sourceAuthor: doc.sourceAuthor,
+    sourceSubject: doc.sourceSubject,
+    linkedQuestionSource: doc.linkedQuestionSource,
+    linkedQuestionText: doc.linkedQuestionText,
+    linkedRedFlagId: doc.linkedRedFlagId,
   }));
 }
 

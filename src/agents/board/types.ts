@@ -153,6 +153,11 @@ export interface BoardInput {
     name: string;
     type: string;
     extractedText: string | null;
+    sourceKind?: string | null;
+    corpusRole?: string | null;
+    sourceDate?: Date | string | null;
+    receivedAt?: Date | string | null;
+    linkedQuestionText?: string | null;
   }[];
 
   // Enriched data from Context Engine

@@ -1,4 +1,5 @@
 import type { AgentContext } from "./types";
+import { sanitizeForLLM } from "@/lib/sanitize";
 
 type AgentDocument = NonNullable<AgentContext["documents"]>[number];
 type ExtractionPage = NonNullable<AgentDocument["extractionRuns"]>[number]["pages"][number];
@@ -70,19 +71,23 @@ export function formatRetrievedDocumentWindows(
       ? buildHeadTailFallback(windows[0].text, options.maxChars)
       : windows[0]?.text ?? buildHeadTailFallback(corpus, options.maxChars);
     return {
-      text: artifactWindows.length > 0
+      text: withDocumentSourcePrelude(doc, artifactWindows.length > 0
         ? `${singleText}\n\n[RETRIEVAL: 1/1 artefacts retenus pour ${agentName}.]`
-        : singleText,
+        : singleText),
       omittedWindows: 0,
       totalWindows: 1,
     };
   }
 
+  const diligenceResponseBoost = doc.corpusRole === "DILIGENCE_RESPONSE" ? 30 : 0;
   const scored = windows
     .map((window, index) => ({
       ...window,
-      score: scoreWindow(window, agentName, index, windows.length),
-      reason: buildReason(window, agentName),
+      score: scoreWindow(window, agentName, index, windows.length) + diligenceResponseBoost,
+      reason: [
+        buildReason(window, agentName),
+        diligenceResponseBoost > 0 ? "diligence response boost" : null,
+      ].filter(Boolean).join(", "),
     }))
     .sort((left, right) => right.score - left.score);
 
@@ -102,7 +107,10 @@ export function formatRetrievedDocumentWindows(
     .join("\n\n");
 
   return {
-    text: `${text}\n\n[RETRIEVAL: ${ordered.length}/${windows.length} ${artifactWindows.length > 0 ? "artefacts" : "fenetres documentaires"} retenus pour ${agentName}.]`,
+    text: withDocumentSourcePrelude(
+      doc,
+      `${text}\n\n[RETRIEVAL: ${ordered.length}/${windows.length} ${artifactWindows.length > 0 ? "artefacts" : "fenetres documentaires"} retenus pour ${agentName}.]`
+    ),
     omittedWindows: Math.max(0, windows.length - ordered.length),
     totalWindows: windows.length,
   };
@@ -125,6 +133,36 @@ function buildArtifactWindows(doc: AgentDocument): Array<Omit<DocumentWindow, "s
       text,
     }];
   });
+}
+
+function withDocumentSourcePrelude(doc: AgentDocument, text: string): string {
+  const prelude = buildDocumentSourcePrelude(doc);
+  if (!prelude || text.trimStart().startsWith("[Source:")) return text;
+  return `${prelude}\n---\n${text}`;
+}
+
+function buildDocumentSourcePrelude(doc: AgentDocument): string | null {
+  if (!doc.sourceKind || doc.sourceKind === "FILE") return null;
+
+  const lines = [`[Source: ${doc.sourceKind.toLowerCase()}]`];
+  const sourceDate = formatSourceDate(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
+  if (sourceDate) lines.push(`[Date: ${sourceDate}]`);
+  if (doc.sourceAuthor) lines.push(`[From: ${sanitizePreludeValue(doc.sourceAuthor, 500)}]`);
+  if (doc.sourceSubject) lines.push(`[Subject: ${sanitizePreludeValue(doc.sourceSubject, 500)}]`);
+  if (doc.corpusRole === "DILIGENCE_RESPONSE") lines.push("[Role: diligence_response]");
+  if (doc.linkedQuestionText) lines.push(`[Répond à : "${sanitizePreludeValue(doc.linkedQuestionText, 1000)}"]`);
+  return lines.join("\n");
+}
+
+function sanitizePreludeValue(value: string, maxLength: number): string {
+  return sanitizeForLLM(value, { maxLength, preserveNewlines: false });
+}
+
+function formatSourceDate(value?: Date | string | null): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
 }
 
 function formatExtractionPageArtifact(page: ExtractionPage, documentType: string): string {

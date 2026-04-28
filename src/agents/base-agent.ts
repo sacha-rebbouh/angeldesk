@@ -934,14 +934,12 @@ ${sanitizedDeal.description}
     }
 
     if (documents && documents.length > 0) {
-      // Sort documents by uploadedAt (oldest first) for chronological context
+      // Sort documents by source chronology (oldest first) for dialogue context.
       const sortedDocs = [...documents].sort((a, b) => {
-        const dateA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
-        const dateB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
-        return dateA - dateB;
+        return this.getDocumentChronologyMs(a) - this.getDocumentChronologyMs(b);
       });
 
-      text += `\n## Documents (par ordre chronologique d'import)\n`;
+      text += `\n## Documents (par ordre chronologique de source)\n`;
       text += `**IMPORTANT — CHRONOLOGIE:** Les documents sont listés du plus ancien au plus récent.\n`;
       text += `Les documents ajoutés après le deck initial peuvent contenir des clarifications,\n`;
       text += `mises à jour ou réponses à des questions. En cas de divergence entre un document\n`;
@@ -949,7 +947,7 @@ ${sanitizedDeal.description}
 
       let remainingDocumentBudget = this.getGlobalDocumentContextBudget();
       for (const doc of sortedDocs) {
-        const routing = this.getDocumentRoutingDecision(doc.type);
+        const routing = this.getDocumentRoutingDecision(doc);
         if (!routing.include) {
           text += `\n### ${sanitizeName(doc.name)} (${sanitizeName(doc.type)})\n`;
           text += `[Document exclu du contexte de ${this.config.name}: ${routing.reason}.]\n`;
@@ -958,10 +956,16 @@ ${sanitizedDeal.description}
         // Sanitize document name and type
         const sanitizedDocName = sanitizeName(doc.name);
         const sanitizedDocType = sanitizeName(doc.type);
-        const dateLabel = doc.uploadedAt
-          ? new Date(doc.uploadedAt).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
-          : "date inconnue";
-        text += `\n### ${sanitizedDocName} (${sanitizedDocType}) — importé le ${dateLabel}\n`;
+        const sourceKindLabel = this.getDocumentSourceKindLabel(doc.sourceKind);
+        const producedAtLabel = this.formatDocumentDate(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
+        const importedAtLabel = this.formatDocumentDate(doc.uploadedAt);
+        text += `\n### ${sanitizedDocName} (${sourceKindLabel}, ${sanitizedDocType}) — produit le ${producedAtLabel}, importé le ${importedAtLabel}\n`;
+        if (doc.corpusRole === "DILIGENCE_RESPONSE") {
+          text += `[Réponse de diligence]\n`;
+        }
+        if (doc.linkedQuestionText) {
+          text += `[Répond à : ${sanitizeForLLM(doc.linkedQuestionText, { maxLength: 600, preserveNewlines: false })}]\n`;
+        }
         if (doc.extractedText) {
           const limit = Math.min(this.getDocumentContextLimit(doc.type), Math.max(0, remainingDocumentBudget));
           if (limit < 1_000) {
@@ -1033,8 +1037,53 @@ ${sanitizedDeal.description}
     });
   }
 
-  private getDocumentRoutingDecision(documentType: string): { include: boolean; reason: string } {
-    const relevance = this.getDocumentTypeRelevance(documentType);
+  private getDocumentChronologyMs(doc: {
+    sourceDate?: Date | string | null;
+    receivedAt?: Date | string | null;
+    uploadedAt?: Date | string | null;
+  }): number {
+    return this.getDocumentDateMs(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
+  }
+
+  private getDocumentDateMs(value?: Date | string | null): number {
+    if (!value) return 0;
+    const date = value instanceof Date ? value : new Date(value);
+    const timestamp = date.getTime();
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+  }
+
+  private formatDocumentDate(value?: Date | string | null): string {
+    const timestamp = this.getDocumentDateMs(value);
+    if (timestamp <= 0) return "date inconnue";
+    return new Date(timestamp).toLocaleDateString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  private getDocumentSourceKindLabel(sourceKind?: string | null): string {
+    if (sourceKind === "EMAIL") return "Email";
+    if (sourceKind === "NOTE") return "Note de call";
+    return "Fichier";
+  }
+
+  private getDocumentRoutingDecision(doc: {
+    type: string;
+    sourceKind?: string | null;
+    corpusRole?: string | null;
+  }): { include: boolean; reason: string } {
+    if (doc.sourceKind && doc.sourceKind !== "FILE") {
+      const sourceLabel = doc.sourceKind.toLowerCase();
+      const reason = doc.corpusRole === "DILIGENCE_RESPONSE"
+        ? `${sourceLabel} (réponse de diligence) — éligible avec priorité`
+        : `${sourceLabel} — éligible pour tous les agents`;
+      return { include: true, reason };
+    }
+
+    const relevance = this.getDocumentTypeRelevance(doc.type);
     if (relevance <= 0) {
       return { include: false, reason: "type documentaire non pertinent pour cet agent" };
     }

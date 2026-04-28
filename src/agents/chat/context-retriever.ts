@@ -934,11 +934,40 @@ async function getFounders(dealId: string): Promise<RetrievedFounder[]> {
 async function getDocuments(
   dealId: string,
   analysisId?: string | null
-): Promise<Array<{ id: string; name: string; type: string; extractedText: string | null }>> {
+): Promise<Array<{
+  id: string;
+  name: string;
+  type: string;
+  extractedText: string | null;
+  sourceKind?: string | null;
+  corpusRole?: string | null;
+  sourceDate?: Date | null;
+  receivedAt?: Date | null;
+  sourceAuthor?: string | null;
+  sourceSubject?: string | null;
+  linkedQuestionSource?: string | null;
+  linkedQuestionText?: string | null;
+  linkedRedFlagId?: string | null;
+}>> {
   const scopedDocumentIds = await getAnalysisSnapshotDocumentIds(dealId, analysisId);
   const documents = await prisma.document.findMany({
     where: { dealId },
-    select: { id: true, name: true, type: true, extractedText: true, processingStatus: true },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      extractedText: true,
+      processingStatus: true,
+      sourceKind: true,
+      corpusRole: true,
+      sourceDate: true,
+      receivedAt: true,
+      sourceAuthor: true,
+      sourceSubject: true,
+      linkedQuestionSource: true,
+      linkedQuestionText: true,
+      linkedRedFlagId: true,
+    },
   });
 
   const filteredDocuments = scopedDocumentIds?.length
@@ -958,6 +987,15 @@ async function getDocuments(
     id: document.id,
     name: document.name,
     type: document.type,
+    sourceKind: document.sourceKind,
+    corpusRole: document.corpusRole,
+    sourceDate: document.sourceDate,
+    receivedAt: document.receivedAt,
+    sourceAuthor: document.sourceAuthor,
+    sourceSubject: document.sourceSubject,
+    linkedQuestionSource: document.linkedQuestionSource,
+    linkedQuestionText: document.linkedQuestionText,
+    linkedRedFlagId: document.linkedRedFlagId,
     extractedText:
       document.processingStatus === "COMPLETED" && document.extractedText
         ? safeDecrypt(document.extractedText)

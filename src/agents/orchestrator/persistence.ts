@@ -687,6 +687,15 @@ export async function getDealWithRelations(
           extractionMetrics: true,
           processingStatus: true, // Required for document versioning/staleness detection
           uploadedAt: true, // Required for document chronology awareness by agents
+          sourceKind: true,
+          corpusRole: true,
+          sourceDate: true,
+          receivedAt: true,
+          sourceAuthor: true,
+          sourceSubject: true,
+          linkedQuestionSource: true,
+          linkedQuestionText: true,
+          linkedRedFlagId: true,
           extractionRuns: {
             orderBy: { completedAt: "desc" },
             take: 1,
