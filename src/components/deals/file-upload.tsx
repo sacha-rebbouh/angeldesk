@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 
-const DOCUMENT_TYPES = [
+export const DOCUMENT_TYPES = [
   { value: "PITCH_DECK", label: "Pitch Deck" },
   { value: "FINANCIAL_MODEL", label: "Financial Model" },
   { value: "CAP_TABLE", label: "Cap Table" },
@@ -37,7 +37,7 @@ const DOCUMENT_TYPES = [
   { value: "OTHER", label: "Autre" },
 ] as const;
 
-type DocumentType = (typeof DOCUMENT_TYPES)[number]["value"];
+export type DocumentType = (typeof DOCUMENT_TYPES)[number]["value"];
 
 interface FileToUpload {
   id: string;
@@ -63,6 +63,7 @@ export interface UploadedDocumentSummary {
   name: string;
   type: string;
   storageUrl?: string | null;
+  storagePath?: string | null;
   mimeType?: string | null;
   processingStatus?: string;
   extractionQuality?: number | null;
@@ -70,6 +71,15 @@ export interface UploadedDocumentSummary {
   extractionWarnings?: Array<{ code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }> | null;
   requiresOCR?: boolean;
   uploadedAt?: string | Date;
+  sourceKind?: "FILE" | "EMAIL" | "NOTE";
+  corpusRole?: "GENERAL" | "DILIGENCE_RESPONSE";
+  sourceDate?: string | Date | null;
+  receivedAt?: string | Date | null;
+  sourceAuthor?: string | null;
+  sourceSubject?: string | null;
+  linkedQuestionSource?: "RED_FLAG" | "QUESTION_TO_ASK" | null;
+  linkedQuestionText?: string | null;
+  linkedRedFlagId?: string | null;
 }
 
 interface FileUploadProps {

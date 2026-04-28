@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { safeDecrypt } from "@/lib/encryption";
 import { deleteFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 
@@ -13,7 +14,7 @@ interface RouteParams {
 }
 
 // GET /api/documents/[documentId] - Fetch one document status
-export async function GET(_request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
     const { documentId } = await params;
@@ -36,7 +37,13 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
+    const includeText = request.nextUrl.searchParams.get("includeText") === "1";
     const { deal, ...data } = document;
+    if (includeText && data.extractedText) {
+      data.extractedText = safeDecrypt(data.extractedText);
+    } else {
+      data.extractedText = null;
+    }
     return NextResponse.json({ data });
   } catch (error) {
     return handleApiError(error, "fetch document");
