@@ -278,6 +278,18 @@ export async function ensureCorpusSnapshotForDeal(params: {
       extractedText: true,
       processingStatus: true,
       uploadedAt: true,
+      // Source/role/link fields — required for the extended snapshot signature
+      // so a mutation on any of them (e.g. correcting sourceDate or relinking a
+      // question) invalidates the cached snapshot and forces a re-analysis.
+      sourceKind: true,
+      corpusRole: true,
+      sourceDate: true,
+      receivedAt: true,
+      sourceAuthor: true,
+      sourceSubject: true,
+      linkedQuestionSource: true,
+      linkedQuestionText: true,
+      linkedRedFlagId: true,
       extractionRuns: {
         orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
         take: 1,

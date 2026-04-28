@@ -365,8 +365,13 @@ export async function ingestTextCorpusItem(input: TextIngestionInput, options: {
   const documentName = deriveDocumentName(input, corpusRole);
   const encryptedText = encryptText(prefixedText);
 
-  const linkedRedFlagId =
-    linkedQuestion && linkedQuestion.source === "RED_FLAG" ? linkedQuestion.redFlagId : null;
+  // Persist linkedRedFlagId whenever a redFlagId is provided, regardless of source:
+  //   - source=RED_FLAG     → redFlagId is required by Zod, always set.
+  //   - source=QUESTION_TO_ASK → redFlagId is optional but, when present,
+  //     identifies the parent red flag (the question lives in its
+  //     questionsToAsk[]). The route layer has already verified ownership of
+  //     this RedFlag via the anti-IDOR check, so we can trust it here.
+  const linkedRedFlagId = linkedQuestion?.redFlagId ?? null;
   const linkedQuestionSource: LinkedQuestionSource | null = linkedQuestion ? linkedQuestion.source : null;
   const linkedQuestionText = linkedQuestion?.questionText ?? null;
 

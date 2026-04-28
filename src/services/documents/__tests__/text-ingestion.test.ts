@@ -360,6 +360,51 @@ describe("ingestTextCorpusItem", () => {
     );
   });
 
+  it("persists linkedRedFlagId when source is QUESTION_TO_ASK with parent redFlagId", async () => {
+    // The route layer is responsible for verifying that the redFlagId belongs
+    // to this deal and this user before forwarding the payload (anti-IDOR).
+    // The service trusts that check and persists the parent reference so the
+    // UI can group all responses under the same red flag, including those that
+    // answer a free-text questionsToAsk[] question rather than the flag title.
+    vi.mocked(prisma.document.create).mockResolvedValue({
+      id: "doc_qta_with_parent",
+      dealId: fakeDealId,
+      name: "Note",
+      type: "OTHER",
+      sourceKind: "NOTE",
+      corpusRole: "DILIGENCE_RESPONSE",
+      sourceDate: new Date("2026-04-22T15:00:00.000Z"),
+      receivedAt: null,
+      sourceAuthor: null,
+      sourceSubject: null,
+      linkedQuestionSource: "QUESTION_TO_ASK",
+      linkedQuestionText: "What is the CAC payback?",
+      linkedRedFlagId: fakeRedFlagId,
+      uploadedAt: new Date("2026-04-28T12:00:00.000Z"),
+    } as never);
+
+    await ingestTextCorpusItem(
+      {
+        dealId: fakeDealId,
+        sourceKind: "NOTE",
+        occurredAt: "2026-04-22T15:00:00.000Z",
+        body: "CFO mentioned 14 months payback during the call.",
+        noteType: "call",
+        linkedQuestion: {
+          source: "QUESTION_TO_ASK",
+          redFlagId: fakeRedFlagId,
+          questionText: "What is the CAC payback?",
+        },
+      },
+      { userId: fakeUserId }
+    );
+
+    const createArgs = vi.mocked(prisma.document.create).mock.calls[0]?.[0];
+    expect(createArgs?.data.linkedQuestionSource).toBe("QUESTION_TO_ASK");
+    expect(createArgs?.data.linkedRedFlagId).toBe(fakeRedFlagId);
+    expect(createArgs?.data.linkedQuestionText).toBe("What is the CAC payback?");
+  });
+
   it("does not set linkedRedFlagId when source is QUESTION_TO_ASK without parent", async () => {
     vi.mocked(prisma.document.create).mockResolvedValue({
       id: "doc_qta",
