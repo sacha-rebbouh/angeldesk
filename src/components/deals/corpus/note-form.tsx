@@ -19,6 +19,11 @@ import {
   type LinkedQuestionInput,
 } from "@/components/deals/corpus/question-picker";
 import {
+  AttachmentInput,
+  type CorpusAttachmentDraft,
+  uploadCorpusAttachment,
+} from "@/components/deals/corpus/attachment-input";
+import {
   DOCUMENT_TYPES,
   type DocumentType,
   type UploadedDocumentSummary,
@@ -52,6 +57,7 @@ export function NoteForm({
   const [body, setBody] = useState("");
   const [type, setType] = useState<DocumentType>("OTHER");
   const [linkedQuestion, setLinkedQuestion] = useState<LinkedQuestionInput | null>(null);
+  const [attachments, setAttachments] = useState<CorpusAttachmentDraft[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const submit = useCallback(async () => {
@@ -83,7 +89,37 @@ export function NoteForm({
         throw new Error(payload.error ?? "Impossible d'ajouter la note au corpus");
       }
 
-      onCreated(payload.data as UploadedDocumentSummary);
+      const parentDocument = payload.data as UploadedDocumentSummary;
+      onCreated(parentDocument);
+
+      const attachmentErrors: string[] = [];
+      for (const attachment of attachments) {
+        setAttachments((current) => current.map((item) => (
+          item.id === attachment.id ? { ...item, status: "uploading", error: undefined } : item
+        )));
+        try {
+          const uploadedAttachment = await uploadCorpusAttachment({
+            dealId,
+            corpusParentDocumentId: parentDocument.id,
+            attachment,
+          });
+          onCreated({
+            ...uploadedAttachment,
+            corpusParentDocumentId: parentDocument.id,
+            corpusParentDocument: { id: parentDocument.id, name: parentDocument.name },
+          });
+          setAttachments((current) => current.map((item) => (
+            item.id === attachment.id ? { ...item, status: "success" } : item
+          )));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Upload échoué";
+          attachmentErrors.push(`${attachment.file.name}: ${message}`);
+          setAttachments((current) => current.map((item) => (
+            item.id === attachment.id ? { ...item, status: "error", error: message } : item
+          )));
+        }
+      }
+
       setTitle("");
       setOccurredAt(toDateTimeLocal(new Date()));
       setParticipants("");
@@ -91,12 +127,17 @@ export function NoteForm({
       setBody("");
       setType("OTHER");
       setLinkedQuestion(null);
+      setAttachments([]);
+
+      if (attachmentErrors.length > 0) {
+        onError(`Note ajoutée, mais certaines pièces jointes ont échoué: ${attachmentErrors.join(" ; ")}`);
+      }
     } catch (error) {
       onError(error instanceof Error ? error.message : "Impossible d'ajouter la note au corpus");
     } finally {
       setIsSubmitting(false);
     }
-  }, [body, dealId, linkedQuestion, noteType, occurredAt, onCreated, onError, participants, title, type]);
+  }, [attachments, body, dealId, linkedQuestion, noteType, occurredAt, onCreated, onError, participants, title, type]);
 
   return (
     <div className="space-y-4">
@@ -173,9 +214,11 @@ export function NoteForm({
 
       <QuestionPicker dealId={dealId} value={linkedQuestion} onChange={setLinkedQuestion} />
 
+      <AttachmentInput value={attachments} onChange={setAttachments} disabled={isSubmitting} />
+
       <Button onClick={submit} disabled={isSubmitting || !body.trim()} className="w-full">
         {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-        Ajouter la note au corpus
+        Ajouter la note{attachments.length > 0 ? ` et ${attachments.length} fichier${attachments.length > 1 ? "s" : ""}` : ""} au corpus
       </Button>
     </div>
   );

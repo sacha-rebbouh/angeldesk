@@ -948,6 +948,8 @@ async function getDocuments(
   linkedQuestionSource?: string | null;
   linkedQuestionText?: string | null;
   linkedRedFlagId?: string | null;
+  corpusParentDocumentId?: string | null;
+  corpusParentDocumentName?: string | null;
 }>> {
   const scopedDocumentIds = await getAnalysisSnapshotDocumentIds(dealId, analysisId);
   const documents = await prisma.document.findMany({
@@ -967,6 +969,12 @@ async function getDocuments(
       linkedQuestionSource: true,
       linkedQuestionText: true,
       linkedRedFlagId: true,
+      corpusParentDocumentId: true,
+      corpusParentDocument: {
+        select: {
+          name: true,
+        },
+      },
     },
   });
 
@@ -996,6 +1004,8 @@ async function getDocuments(
     linkedQuestionSource: document.linkedQuestionSource,
     linkedQuestionText: document.linkedQuestionText,
     linkedRedFlagId: document.linkedRedFlagId,
+    corpusParentDocumentId: document.corpusParentDocumentId,
+    corpusParentDocumentName: document.corpusParentDocument?.name ?? null,
     extractedText:
       document.processingStatus === "COMPLETED" && document.extractedText
         ? safeDecrypt(document.extractedText)

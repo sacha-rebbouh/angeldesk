@@ -49,6 +49,8 @@ export interface AgentContext {
     linkedQuestionSource?: string | null;
     linkedQuestionText?: string | null;
     linkedRedFlagId?: string | null;
+    corpusParentDocumentId?: string | null;
+    corpusParentDocumentName?: string | null;
     /** Latest strict extraction run, when available. Used for artifact-aware retrieval. */
     extractionRuns?: Array<{
       id: string;

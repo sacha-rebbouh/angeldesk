@@ -79,6 +79,7 @@ export async function POST(request: NextRequest) {
     const customType = formData.get("customType") as string | null;
     const comments = formData.get("comments") as string | null;
     const uploadProgressId = formData.get("progressId") as string | null;
+    const corpusParentDocumentId = formData.get("corpusParentDocumentId") as string | null;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -107,6 +108,57 @@ export async function POST(request: NextRequest) {
 
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+
+    let corpusParentDocument: {
+      id: string;
+      name: string;
+      sourceKind: "EMAIL" | "NOTE" | "FILE";
+      corpusRole: "GENERAL" | "DILIGENCE_RESPONSE";
+      sourceDate: Date | null;
+      receivedAt: Date | null;
+      sourceAuthor: string | null;
+      sourceSubject: string | null;
+      linkedQuestionSource: "RED_FLAG" | "QUESTION_TO_ASK" | null;
+      linkedQuestionText: string | null;
+      linkedRedFlagId: string | null;
+    } | null = null;
+
+    if (corpusParentDocumentId) {
+      const parentIdResult = cuidSchema.safeParse(corpusParentDocumentId);
+      if (!parentIdResult.success) {
+        return NextResponse.json({ error: "Invalid corpus parent document ID format" }, { status: 400 });
+      }
+
+      corpusParentDocument = await prisma.document.findFirst({
+        where: {
+          id: corpusParentDocumentId,
+          dealId,
+          deal: { userId: user.id },
+          sourceKind: { in: ["EMAIL", "NOTE"] },
+          isLatest: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          sourceKind: true,
+          corpusRole: true,
+          sourceDate: true,
+          receivedAt: true,
+          sourceAuthor: true,
+          sourceSubject: true,
+          linkedQuestionSource: true,
+          linkedQuestionText: true,
+          linkedRedFlagId: true,
+        },
+      });
+
+      if (!corpusParentDocument) {
+        return NextResponse.json(
+          { error: "Parent email/note not found on this deal" },
+          { status: 404 }
+        );
+      }
     }
 
     const runningAnalysis = await getRunningAnalysisForDeal(dealId);
@@ -180,7 +232,12 @@ export async function POST(request: NextRequest) {
 
     // F62: Check if this is a new version of an existing document (same name, same deal)
     const existingDoc = await prisma.document.findFirst({
-      where: { dealId, name: file.name, isLatest: true },
+      where: {
+        dealId,
+        name: file.name,
+        isLatest: true,
+        corpusParentDocumentId: corpusParentDocument?.id ?? null,
+      },
       select: { id: true, version: true },
     });
 
@@ -217,6 +274,23 @@ export async function POST(request: NextRequest) {
         sizeBytes: file.size,
         processingStatus: "PENDING",
         contentHash,
+        sourceKind: "FILE",
+        corpusParentDocumentId: corpusParentDocument?.id ?? undefined,
+        sourceDate: corpusParentDocument?.sourceDate ?? undefined,
+        receivedAt: corpusParentDocument?.receivedAt ?? undefined,
+        sourceAuthor: corpusParentDocument?.sourceAuthor ?? undefined,
+        sourceSubject: corpusParentDocument?.sourceSubject ?? undefined,
+        sourceMetadata: corpusParentDocument
+          ? {
+              attachedToDocumentId: corpusParentDocument.id,
+              attachedToDocumentName: corpusParentDocument.name,
+              attachedToSourceKind: corpusParentDocument.sourceKind,
+            }
+          : undefined,
+        corpusRole: corpusParentDocument?.corpusRole ?? undefined,
+        linkedQuestionSource: corpusParentDocument?.linkedQuestionSource ?? undefined,
+        linkedQuestionText: corpusParentDocument?.linkedQuestionText ?? undefined,
+        linkedRedFlagId: corpusParentDocument?.linkedRedFlagId ?? undefined,
         // F62: Version tracking
         version: existingDoc ? existingDoc.version + 1 : 1,
         parentDocumentId: existingDoc?.id ?? undefined,
@@ -1153,7 +1227,9 @@ export async function POST(request: NextRequest) {
 
     // Build response with extraction health info
     const response: {
-      data: typeof updatedDocument;
+      data: (NonNullable<typeof updatedDocument> & {
+        corpusParentDocument?: { id: string; name: string } | null;
+      }) | null;
       extraction?: {
         quality: number | null;
         warnings: ExtractionWarning[];
@@ -1168,7 +1244,16 @@ export async function POST(request: NextRequest) {
       versioning?: { version: number; replacedDocumentId?: string };
       // F63: duplicate warning (cross-deal)
       duplicateWarning?: { existingDocument: NonNullable<typeof duplicateCheck.existingDocument> };
-    } = { data: updatedDocument };
+    } = {
+      data: updatedDocument
+        ? {
+            ...updatedDocument,
+            corpusParentDocument: corpusParentDocument
+              ? { id: corpusParentDocument.id, name: corpusParentDocument.name }
+              : null,
+          }
+        : null,
+    };
 
     // F62: Include versioning info
     if (existingDoc) {

@@ -75,6 +75,8 @@ interface Document {
   linkedQuestionSource?: "RED_FLAG" | "QUESTION_TO_ASK" | null;
   linkedQuestionText?: string | null;
   linkedRedFlagId?: string | null;
+  corpusParentDocumentId?: string | null;
+  corpusParentDocument?: { id: string; name: string } | null;
 }
 
 interface DocumentsTabProps {
@@ -182,7 +184,7 @@ function getSourceBadgeClass(sourceKind: "FILE" | "EMAIL" | "NOTE"): string {
   return "border-blue-200 bg-blue-50 text-blue-700";
 }
 
-function getSecondaryLine(doc: Document): string {
+function getSecondaryLine(doc: Document, parentName?: string | null): string {
   const sourceKind = getSourceKind(doc);
   if (sourceKind === "EMAIL") {
     return [
@@ -194,6 +196,12 @@ function getSecondaryLine(doc: Document): string {
     return [
       doc.sourceSubject ? `Titre: ${doc.sourceSubject}` : null,
       doc.type ? `Type: ${doc.type}` : null,
+    ].filter(Boolean).join(" · ");
+  }
+  if (doc.corpusParentDocumentId) {
+    return [
+      doc.type,
+      parentName ? `Joint à : ${parentName}` : "Fichier joint",
     ].filter(Boolean).join(" · ");
   }
   return doc.type;
@@ -276,6 +284,22 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
   // Check if there's at least one analysis
   const hasAnalysis = stalenessData?.hasAnalysis ?? false;
 
+  const documentNameById = useMemo(() => new Map(
+    localDocuments.map((document) => [document.id, document.name])
+  ), [localDocuments]);
+
+  const attachmentCountByParentId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const document of localDocuments) {
+      if (!document.corpusParentDocumentId) continue;
+      counts.set(
+        document.corpusParentDocumentId,
+        (counts.get(document.corpusParentDocumentId) ?? 0) + 1
+      );
+    }
+    return counts;
+  }, [localDocuments]);
+
   const timelineGroups = useMemo(() => {
     const filtered = localDocuments
       .filter((document) => {
@@ -327,6 +351,8 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
         linkedQuestionSource: uploadedDocument.linkedQuestionSource ?? null,
         linkedQuestionText: uploadedDocument.linkedQuestionText ?? null,
         linkedRedFlagId: uploadedDocument.linkedRedFlagId ?? null,
+        corpusParentDocumentId: uploadedDocument.corpusParentDocumentId ?? null,
+        corpusParentDocument: uploadedDocument.corpusParentDocument ?? null,
       };
       setLocalDocuments((currentDocuments) => [
         normalizedDocument,
@@ -521,7 +547,11 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                             const SourceIcon = getSourceIcon(sourceKind);
                             const extractionSummary = getExtractionMetricSummary(doc.extractionMetrics);
                             const isTextCorpus = sourceKind !== "FILE";
-                            const secondaryLine = getSecondaryLine(doc);
+                            const parentName = doc.corpusParentDocument?.name
+                              ?? (doc.corpusParentDocumentId ? documentNameById.get(doc.corpusParentDocumentId) : null)
+                              ?? null;
+                            const secondaryLine = getSecondaryLine(doc, parentName);
+                            const attachmentCount = attachmentCountByParentId.get(doc.id) ?? 0;
                             return (
                               <div
                                 key={doc.id}
@@ -553,6 +583,11 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                                     {doc.linkedQuestionText && (
                                       <p className="truncate text-xs text-emerald-700">
                                         Répond à : {doc.linkedQuestionText}
+                                      </p>
+                                    )}
+                                    {attachmentCount > 0 && (
+                                      <p className="truncate text-xs text-blue-700">
+                                        {attachmentCount} fichier{attachmentCount > 1 ? "s" : ""} joint{attachmentCount > 1 ? "s" : ""}
                                       </p>
                                     )}
                                   </div>

@@ -109,6 +109,12 @@ export async function buildChatContext(
         linkedQuestionSource: true,
         linkedQuestionText: true,
         linkedRedFlagId: true,
+        corpusParentDocumentId: true,
+        corpusParentDocument: {
+          select: {
+            name: true,
+          },
+        },
       },
     }),
   ]);
@@ -529,6 +535,12 @@ async function getDocumentSummaries(
       linkedQuestionSource: true,
       linkedQuestionText: true,
       linkedRedFlagId: true,
+      corpusParentDocumentId: true,
+      corpusParentDocument: {
+        select: {
+          name: true,
+        },
+      },
     },
   });
 
@@ -561,6 +573,8 @@ async function getDocumentSummaries(
     linkedQuestionSource: doc.linkedQuestionSource,
     linkedQuestionText: doc.linkedQuestionText,
     linkedRedFlagId: doc.linkedRedFlagId,
+    corpusParentDocumentId: doc.corpusParentDocumentId,
+    corpusParentDocumentName: doc.corpusParentDocument?.name ?? null,
   }));
 }
 

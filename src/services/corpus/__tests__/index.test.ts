@@ -170,6 +170,7 @@ describe("ensureCorpusSnapshot", () => {
       linkedQuestionSource: null,
       linkedQuestionText: null,
       linkedRedFlagId: null,
+      corpusParentDocumentId: null,
     };
     const afterMigration = computeCorpusSourceHash([migratedDoc]);
     expect(afterMigration.sourceHash).toBe(LEGACY_BASELINE_SOURCE_HASH);
@@ -203,6 +204,35 @@ describe("ensureCorpusSnapshot", () => {
     expect(emailVariant.sourceHash).not.toBe(fileVariant.sourceHash);
   });
 
+  it("changes the sourceHash when a FILE document is attached to a corpus parent", () => {
+    const baseDoc = {
+      id: "doc_file_attachment",
+      processingStatus: "COMPLETED",
+      uploadedAt: new Date("2026-04-20T09:00:00.000Z"),
+      extractedText: "financial model content",
+      sourceKind: "FILE" as const,
+      corpusRole: "GENERAL" as const,
+      extractionRuns: [
+        {
+          id: "run_file_attachment",
+          status: "READY",
+          readyForAnalysis: true,
+          corpusTextHash: "hash_file_attachment",
+          pages: [{ id: "p1" }],
+        },
+      ],
+    };
+    const standaloneFile = computeCorpusSourceHash([baseDoc]);
+    const attachedFile = computeCorpusSourceHash([
+      {
+        ...baseDoc,
+        corpusParentDocumentId: "doc_email_parent",
+      },
+    ]);
+
+    expect(attachedFile.sourceHash).not.toBe(standaloneFile.sourceHash);
+  });
+
   // ---------------------------------------------------------------------------
   // End-to-end signature plumbing through ensureCorpusSnapshotForDeal: the
   // database `select` MUST include every field that the extended signature
@@ -227,6 +257,7 @@ describe("ensureCorpusSnapshot", () => {
       linkedQuestionSource: null,
       linkedQuestionText: null,
       linkedRedFlagId: null,
+      corpusParentDocumentId: null,
       extractionRuns: [
         {
           id: "run_email_1",
@@ -293,6 +324,7 @@ describe("ensureCorpusSnapshot", () => {
       linkedQuestionSource: "RED_FLAG",
       linkedQuestionText: "Pourquoi le churn est-il monté en 2024 ?",
       linkedRedFlagId: "rf_churn",
+      corpusParentDocumentId: null,
       extractionRuns: [
         {
           id: "run_email_2",
@@ -353,6 +385,7 @@ describe("ensureCorpusSnapshot", () => {
       "linkedQuestionSource",
       "linkedQuestionText",
       "linkedRedFlagId",
+      "corpusParentDocumentId",
     ] as const) {
       expect(select).toHaveProperty(field, true);
     }

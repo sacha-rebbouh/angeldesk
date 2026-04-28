@@ -158,6 +158,8 @@ export interface BoardInput {
     sourceDate?: Date | string | null;
     receivedAt?: Date | string | null;
     linkedQuestionText?: string | null;
+    corpusParentDocumentId?: string | null;
+    corpusParentDocumentName?: string | null;
   }[];
 
   // Enriched data from Context Engine

@@ -288,6 +288,12 @@ model Document {
   linkedRedFlagId      String?
   linkedRedFlag        RedFlag? @relation("DocumentLinkedRedFlag", fields: [linkedRedFlagId], references: [id], onDelete: SetNull)
 
+  // Corpus attachment link: a FILE document can be attached to an EMAIL/NOTE
+  // without overloading parentDocumentId, which is reserved for F62 versioning.
+  corpusParentDocumentId String?
+  corpusParentDocument   Document?  @relation("CorpusDocumentAttachments", fields: [corpusParentDocumentId], references: [id], onDelete: SetNull)
+  corpusAttachments      Document[] @relation("CorpusDocumentAttachments")
+
   processingStatus ProcessingStatus        @default(PENDING)
   extractedText    String?                 @db.Text
   factEvents       FactEvent[]
@@ -329,6 +335,7 @@ model Document {
   @@index([dealId, sourceKind])
   @@index([dealId, corpusRole])
   @@index([linkedRedFlagId])
+  @@index([corpusParentDocumentId])
 }
 
 enum DocumentSourceKind {

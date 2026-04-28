@@ -15,7 +15,6 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
 import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/api-error";
@@ -158,7 +157,3 @@ export async function POST(request: NextRequest) {
     return handleApiError(error, "ingest text corpus item");
   }
 }
-
-// Surface the schema as a runtime guard (used by tests / observability).
-export const __schema = textIngestionInputSchema;
-export type __TextRouteInput = z.infer<typeof textIngestionInputSchema>;

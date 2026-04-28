@@ -26,7 +26,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const document = await prisma.document.findFirst({
       where: { id: documentId },
-      include: { deal: { select: { userId: true } } },
+      include: {
+        deal: { select: { userId: true } },
+        corpusParentDocument: { select: { id: true, name: true } },
+      },
     });
 
     if (!document) {
@@ -72,7 +75,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // Verify ownership through deal
     const document = await prisma.document.findFirst({
       where: { id: documentId },
-      include: { deal: { select: { userId: true } } },
+      include: {
+        deal: { select: { userId: true } },
+        corpusParentDocument: { select: { id: true, name: true } },
+      },
     });
 
     if (!document) {
@@ -109,7 +115,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     // Verify ownership through deal
     const document = await prisma.document.findFirst({
       where: { id: documentId },
-      include: { deal: { select: { userId: true } } },
+      include: {
+        deal: { select: { userId: true } },
+        corpusParentDocument: { select: { id: true, name: true } },
+      },
     });
 
     if (!document) {

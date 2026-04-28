@@ -39,6 +39,8 @@ type BoardContextDocument = {
   sourceDate?: Date | null;
   receivedAt?: Date | null;
   linkedQuestionText?: string | null;
+  corpusParentDocumentId?: string | null;
+  corpusParentDocumentName?: string | null;
 };
 
 type BoardDealSignals = {
@@ -408,6 +410,12 @@ export class BoardOrchestrator {
         sourceDate: true,
         receivedAt: true,
         linkedQuestionText: true,
+        corpusParentDocumentId: true,
+        corpusParentDocument: {
+          select: {
+            name: true,
+          },
+        },
       },
     });
     const boardDocuments: BoardContextDocument[] = documents.map((document) => ({
@@ -420,6 +428,8 @@ export class BoardOrchestrator {
       sourceDate: document.sourceDate,
       receivedAt: document.receivedAt,
       linkedQuestionText: document.linkedQuestionText,
+      corpusParentDocumentId: document.corpusParentDocumentId,
+      corpusParentDocumentName: document.corpusParentDocument?.name ?? null,
     }));
 
     if (requestedDocumentIds) {
@@ -582,7 +592,7 @@ export class BoardOrchestrator {
       dealName: deal.name,
       companyName: canonicalDeal.companyName,
       thesis: thesisInput,
-      documents: boardDocuments.map(({ name, type, extractedText, sourceKind, corpusRole, sourceDate, receivedAt, linkedQuestionText }) => ({
+      documents: boardDocuments.map(({ name, type, extractedText, sourceKind, corpusRole, sourceDate, receivedAt, linkedQuestionText, corpusParentDocumentId, corpusParentDocumentName }) => ({
         name,
         type,
         extractedText,
@@ -591,6 +601,8 @@ export class BoardOrchestrator {
         sourceDate,
         receivedAt,
         linkedQuestionText,
+        corpusParentDocumentId,
+        corpusParentDocumentName,
       })),
       enrichedData,
       agentOutputs,

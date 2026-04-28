@@ -696,6 +696,12 @@ export async function getDealWithRelations(
           linkedQuestionSource: true,
           linkedQuestionText: true,
           linkedRedFlagId: true,
+          corpusParentDocumentId: true,
+          corpusParentDocument: {
+            select: {
+              name: true,
+            },
+          },
           extractionRuns: {
             orderBy: { completedAt: "desc" },
             take: 1,
@@ -746,6 +752,7 @@ export async function getDealWithRelations(
     const decryptedText = doc.extractedText ? safeDecrypt(doc.extractedText) : null;
     return {
       ...doc,
+      corpusParentDocumentName: doc.corpusParentDocument?.name ?? null,
       extractedText: decryptedText,
     };
   });

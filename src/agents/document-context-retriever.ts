@@ -142,9 +142,15 @@ function withDocumentSourcePrelude(doc: AgentDocument, text: string): string {
 }
 
 function buildDocumentSourcePrelude(doc: AgentDocument): string | null {
-  if (!doc.sourceKind || doc.sourceKind === "FILE") return null;
+  const isCorpusAttachment = Boolean(doc.corpusParentDocumentId);
+  if ((!doc.sourceKind || doc.sourceKind === "FILE") && !isCorpusAttachment) return null;
 
-  const lines = [`[Source: ${doc.sourceKind.toLowerCase()}]`];
+  const sourceKind = doc.sourceKind ?? "FILE";
+  const lines = [`[Source: ${sourceKind.toLowerCase()}]`];
+  if (isCorpusAttachment) {
+    const parentLabel = doc.corpusParentDocumentName ?? doc.corpusParentDocumentId;
+    lines.push(`[Fichier joint à : ${sanitizePreludeValue(parentLabel ?? "email/note", 500)}]`);
+  }
   const sourceDate = formatSourceDate(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
   if (sourceDate) lines.push(`[Date: ${sourceDate}]`);
   if (doc.sourceAuthor) lines.push(`[From: ${sanitizePreludeValue(doc.sourceAuthor, 500)}]`);

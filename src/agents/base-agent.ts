@@ -966,6 +966,10 @@ ${sanitizedDeal.description}
         if (doc.linkedQuestionText) {
           text += `[Répond à : ${sanitizeForLLM(doc.linkedQuestionText, { maxLength: 600, preserveNewlines: false })}]\n`;
         }
+        if (doc.corpusParentDocumentId) {
+          const parentLabel = doc.corpusParentDocumentName ?? doc.corpusParentDocumentId;
+          text += `[Fichier joint à : ${sanitizeForLLM(parentLabel, { maxLength: 400, preserveNewlines: false })}]\n`;
+        }
         if (doc.extractedText) {
           const limit = Math.min(this.getDocumentContextLimit(doc.type), Math.max(0, remainingDocumentBudget));
           if (limit < 1_000) {

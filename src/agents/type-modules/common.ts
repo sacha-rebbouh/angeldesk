@@ -39,6 +39,8 @@ export interface AgentContext {
     linkedQuestionSource?: string | null;
     linkedQuestionText?: string | null;
     linkedRedFlagId?: string | null;
+    corpusParentDocumentId?: string | null;
+    corpusParentDocumentName?: string | null;
   }[];
   previousResults?: Record<string, AgentResult>;
 }

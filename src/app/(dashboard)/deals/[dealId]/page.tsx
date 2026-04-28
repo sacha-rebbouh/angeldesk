@@ -74,6 +74,13 @@ async function getDeal(dealId: string, userId: string) {
           linkedQuestionSource: true,
           linkedQuestionText: true,
           linkedRedFlagId: true,
+          corpusParentDocumentId: true,
+          corpusParentDocument: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
           // extractedText excluded — can be 200KB+ per document, not needed for display
         },
       },

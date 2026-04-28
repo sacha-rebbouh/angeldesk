@@ -80,6 +80,8 @@ export interface UploadedDocumentSummary {
   linkedQuestionSource?: "RED_FLAG" | "QUESTION_TO_ASK" | null;
   linkedQuestionText?: string | null;
   linkedRedFlagId?: string | null;
+  corpusParentDocumentId?: string | null;
+  corpusParentDocument?: { id: string; name: string } | null;
 }
 
 interface FileUploadProps {

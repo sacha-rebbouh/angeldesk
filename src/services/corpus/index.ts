@@ -30,6 +30,7 @@ export type CorpusDocument = {
   linkedQuestionSource?: string | null;
   linkedQuestionText?: string | null;
   linkedRedFlagId?: string | null;
+  corpusParentDocumentId?: string | null;
 };
 
 export interface CorpusSnapshotMaterialization {
@@ -75,7 +76,8 @@ function hasNonFileSourceMetadata(document: CorpusDocument): boolean {
     !!document.sourceSubject ||
     !!document.linkedQuestionSource ||
     !!document.linkedQuestionText ||
-    !!document.linkedRedFlagId
+    !!document.linkedRedFlagId ||
+    !!document.corpusParentDocumentId
   );
 }
 
@@ -116,6 +118,7 @@ function buildDocumentSignature(document: CorpusDocument) {
     linkedQuestionSource: document.linkedQuestionSource ?? null,
     linkedQuestionText: document.linkedQuestionText ?? null,
     linkedRedFlagId: document.linkedRedFlagId ?? null,
+    corpusParentDocumentId: document.corpusParentDocumentId ?? null,
   };
 }
 
@@ -290,6 +293,7 @@ export async function ensureCorpusSnapshotForDeal(params: {
       linkedQuestionSource: true,
       linkedQuestionText: true,
       linkedRedFlagId: true,
+      corpusParentDocumentId: true,
       extractionRuns: {
         orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
         take: 1,

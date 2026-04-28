@@ -20,6 +20,11 @@ import {
   type LinkedQuestionInput,
 } from "@/components/deals/corpus/question-picker";
 import {
+  AttachmentInput,
+  type CorpusAttachmentDraft,
+  uploadCorpusAttachment,
+} from "@/components/deals/corpus/attachment-input";
+import {
   DOCUMENT_TYPES,
   type DocumentType,
   type UploadedDocumentSummary,
@@ -61,6 +66,7 @@ export function EmailForm({
   const [receivedAt, setReceivedAt] = useState("");
   const [type, setType] = useState<DocumentType>("OTHER");
   const [linkedQuestion, setLinkedQuestion] = useState<LinkedQuestionInput | null>(null);
+  const [attachments, setAttachments] = useState<CorpusAttachmentDraft[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const applyExtraction = useCallback((raw: string) => {
@@ -103,7 +109,37 @@ export function EmailForm({
         throw new Error(payload.error ?? "Impossible d'ajouter l'email au corpus");
       }
 
-      onCreated(payload.data as UploadedDocumentSummary);
+      const parentDocument = payload.data as UploadedDocumentSummary;
+      onCreated(parentDocument);
+
+      const attachmentErrors: string[] = [];
+      for (const attachment of attachments) {
+        setAttachments((current) => current.map((item) => (
+          item.id === attachment.id ? { ...item, status: "uploading", error: undefined } : item
+        )));
+        try {
+          const uploadedAttachment = await uploadCorpusAttachment({
+            dealId,
+            corpusParentDocumentId: parentDocument.id,
+            attachment,
+          });
+          onCreated({
+            ...uploadedAttachment,
+            corpusParentDocumentId: parentDocument.id,
+            corpusParentDocument: { id: parentDocument.id, name: parentDocument.name },
+          });
+          setAttachments((current) => current.map((item) => (
+            item.id === attachment.id ? { ...item, status: "success" } : item
+          )));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Upload échoué";
+          attachmentErrors.push(`${attachment.file.name}: ${message}`);
+          setAttachments((current) => current.map((item) => (
+            item.id === attachment.id ? { ...item, status: "error", error: message } : item
+          )));
+        }
+      }
+
       setBody("");
       setSubject("");
       setFrom("");
@@ -112,12 +148,17 @@ export function EmailForm({
       setReceivedAt("");
       setType("OTHER");
       setLinkedQuestion(null);
+      setAttachments([]);
+
+      if (attachmentErrors.length > 0) {
+        onError(`Email ajouté, mais certaines pièces jointes ont échoué: ${attachmentErrors.join(" ; ")}`);
+      }
     } catch (error) {
       onError(error instanceof Error ? error.message : "Impossible d'ajouter l'email au corpus");
     } finally {
       setIsSubmitting(false);
     }
-  }, [body, dealId, from, linkedQuestion, onCreated, onError, receivedAt, sentAt, subject, to, type]);
+  }, [attachments, body, dealId, from, linkedQuestion, onCreated, onError, receivedAt, sentAt, subject, to, type]);
 
   return (
     <div className="space-y-4">
@@ -202,9 +243,11 @@ export function EmailForm({
 
       <QuestionPicker dealId={dealId} value={linkedQuestion} onChange={setLinkedQuestion} />
 
+      <AttachmentInput value={attachments} onChange={setAttachments} disabled={isSubmitting} />
+
       <Button onClick={submit} disabled={isSubmitting || !body.trim()} className="w-full">
         {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-        Ajouter l'email au corpus
+        Ajouter l'email{attachments.length > 0 ? ` et ${attachments.length} fichier${attachments.length > 1 ? "s" : ""}` : ""} au corpus
       </Button>
     </div>
   );
