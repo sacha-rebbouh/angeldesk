@@ -246,6 +246,22 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     setAuditDoc(doc);
   }, []);
 
+  const refreshLocalDocument = useCallback(async (documentId: string) => {
+    const refreshed = await fetchDocument(documentId);
+    if (!refreshed) return;
+    const normalized = { ...refreshed, uploadedAt: new Date(refreshed.uploadedAt) };
+    setLocalDocuments((currentDocuments) =>
+      currentDocuments.map((document) => (
+        document.id === documentId ? normalized : document
+      ))
+    );
+    setAuditDoc((current) => (
+      current?.id === documentId ? normalized : current
+    ));
+    queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+    queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
+  }, [dealId, queryClient]);
+
   const openRename = useCallback((doc: Document) => {
     setRenameDoc(doc);
     setNewName(doc.name);
@@ -506,6 +522,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
         open={!!auditDoc}
         onOpenChange={(open) => !open && setAuditDoc(null)}
         document={auditDoc}
+        onDocumentUpdated={refreshLocalDocument}
       />
 
       {/* Rename Dialog */}

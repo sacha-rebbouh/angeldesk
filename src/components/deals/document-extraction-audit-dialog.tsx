@@ -37,6 +37,7 @@ interface ExtractionAuditDialogProps {
     id: string;
     name: string;
   } | null;
+  onDocumentUpdated?: (documentId: string) => void | Promise<void>;
 }
 
 interface AuditPage {
@@ -345,6 +346,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   open,
   onOpenChange,
   document,
+  onDocumentUpdated,
 }: ExtractionAuditDialogProps) {
   const [query, setQuery] = useState("");
   const [selectedPage, setSelectedPage] = useState<number | null>(null);
@@ -392,6 +394,11 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     if (!audit?.corpus.text) return;
     await navigator.clipboard.writeText(audit.corpus.text);
     toast.success("Corpus extrait copie");
+  };
+
+  const notifyDocumentUpdated = async () => {
+    if (!document?.id) return;
+    await onDocumentUpdated?.(document.id);
   };
 
   const decisionMutation = useMutation({
@@ -464,6 +471,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         queryClient.invalidateQueries({ queryKey: auditQueryKey }),
         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
       ]);
+      await notifyDocumentUpdated();
     },
   });
 
@@ -477,10 +485,13 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       }
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Extraction renforcee terminee");
-      queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] });
-      queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
+      ]);
+      await notifyDocumentUpdated();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -502,10 +513,13 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       }
       return response.json();
     },
-    onSuccess: (_data, params) => {
+    onSuccess: async (_data, params) => {
       toast.success(`Page ${params.pageNumber} retraitee`);
-      queryClient.invalidateQueries({ queryKey: auditQueryKey });
-      queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: auditQueryKey }),
+        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
+      ]);
+      await notifyDocumentUpdated();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -539,6 +553,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         queryClient.invalidateQueries({ queryKey: auditQueryKey }),
         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
       ]);
+      await notifyDocumentUpdated();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
