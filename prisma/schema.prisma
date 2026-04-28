@@ -263,10 +263,30 @@ model Document {
   type        DocumentType
   customType  String? // For OTHER type - user-specified description
   comments    String?      @db.Text // Additional context/notes
-  storagePath String
+  storagePath String? // Optional: emails/notes have no blob (text stored in extractedText)
   storageUrl  String?
   mimeType    String?
   sizeBytes   Int?
+
+  // Provenance vs role (orthogonal). Voir docs corpus timeline / multi-source intake.
+  sourceKind DocumentSourceKind @default(FILE)
+  corpusRole CorpusRole         @default(GENERAL)
+
+  // Source metadata — populated for non-FILE pieces (emails, notes)
+  sourceDate     DateTime? // date réelle du contenu (mail/note/document)
+  receivedAt     DateTime? // date de réception si applicable (email)
+  sourceAuthor   String? // ex. "Jean CFO <jean@x.com>"
+  sourceSubject  String? // ex. "Follow-up on churn"
+  sourceMetadata Json? // whitelist server-side : messageId, threadId, participants, to, cc, replyTo
+
+  // Optional link to a question (typed, no hybrid FK)
+  // - linkedQuestionSource: where the question comes from (RED_FLAG row vs free-text questionsToAsk[])
+  // - linkedQuestionText: snapshot of the question text (always set when a link is active, stable across edits/deletions of the source)
+  // - linkedRedFlagId: FK ONLY when source = RED_FLAG (or QUESTION_TO_ASK with a known parent red flag)
+  linkedQuestionSource LinkedQuestionSource?
+  linkedQuestionText   String?
+  linkedRedFlagId      String?
+  linkedRedFlag        RedFlag? @relation("DocumentLinkedRedFlag", fields: [linkedRedFlagId], references: [id], onDelete: SetNull)
 
   processingStatus ProcessingStatus        @default(PENDING)
   extractedText    String?                 @db.Text
@@ -305,6 +325,26 @@ model Document {
   @@index([processingStatus])
   @@index([contentHash])
   @@index([parentDocumentId])
+  @@index([dealId, sourceDate])
+  @@index([dealId, sourceKind])
+  @@index([dealId, corpusRole])
+  @@index([linkedRedFlagId])
+}
+
+enum DocumentSourceKind {
+  FILE // upload classique (PDF/Excel/Image/PPT/Word)
+  EMAIL // email collé (corps + métadonnées)
+  NOTE // note de call / RDV / mémo libre
+}
+
+enum CorpusRole {
+  GENERAL // contribution standard au corpus
+  DILIGENCE_RESPONSE // pièce qui répond à une question — boost de pertinence agents, badge UI
+}
+
+enum LinkedQuestionSource {
+  RED_FLAG // la question vient d'un RedFlag.id (FK linkedRedFlagId)
+  QUESTION_TO_ASK // la question vient de RedFlag.questionsToAsk[i] ou question-master (texte libre)
 }
 
 enum DocumentType {
@@ -495,6 +535,9 @@ model RedFlag {
   status RedFlagStatus @default(OPEN)
 
   detectedAt DateTime @default(now())
+
+  // Documents collés en réponse à ce red flag (sourceKind=EMAIL/NOTE + corpusRole=DILIGENCE_RESPONSE)
+  linkedDocuments Document[] @relation("DocumentLinkedRedFlag")
 
   @@index([dealId])
   @@index([severity])
