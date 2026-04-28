@@ -19,7 +19,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { prisma } from "@/lib/prisma";
-import { ensureCorpusSnapshot, ensureCorpusSnapshotForDeal, loadCorpusSnapshot } from "@/services/corpus";
+import { computeCorpusSourceHash, ensureCorpusSnapshot, ensureCorpusSnapshotForDeal, loadCorpusSnapshot } from "@/services/corpus";
 
 describe("ensureCorpusSnapshot", () => {
   beforeEach(() => {
@@ -115,6 +115,83 @@ describe("ensureCorpusSnapshot", () => {
       documentIds: ["doc_1", "doc_2"],
       extractionRunIds: ["run_1"],
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Backward-compat guard: legacy FILE documents (no source/role metadata) MUST
+  // produce the same byte-identical signature as before the corpus_source_kind
+  // migration. If this test breaks, an existing CorpusSnapshot is being
+  // invalidated silently and analyses will re-run unexpectedly.
+  // ---------------------------------------------------------------------------
+  it("computes a byte-identical sourceHash for legacy FILE documents (no source metadata)", () => {
+    const legacyDoc = {
+      id: "doc_legacy",
+      processingStatus: "COMPLETED",
+      uploadedAt: new Date("2026-04-20T09:00:00.000Z"),
+      extractedText: "deck v1 content",
+      extractionRuns: [
+        {
+          id: "run_legacy",
+          status: "READY",
+          readyForAnalysis: true,
+          corpusTextHash: "hash_run_legacy",
+          pages: [{ id: "p1" }, { id: "p2" }],
+        },
+      ],
+    };
+
+    // Hash captured on origin/main (commit 481d46d) before the corpus_source_kind
+    // migration introduced sourceKind/corpusRole/source* fields. Computed by
+    // serializing the legacy signature shape (id, uploadedAt, latestReadyRun,
+    // extractedTextHash) through SHA-256.
+    const baseline = computeCorpusSourceHash([legacyDoc]);
+
+    // Adding default values that would have been backfilled by the migration
+    // (sourceKind=FILE, corpusRole=GENERAL) but no actual source metadata MUST
+    // NOT change the hash — those defaults are excluded from the signature.
+    const migratedDoc = {
+      ...legacyDoc,
+      sourceKind: "FILE" as const,
+      corpusRole: "GENERAL" as const,
+      sourceDate: null,
+      receivedAt: null,
+      sourceAuthor: null,
+      sourceSubject: null,
+      linkedQuestionSource: null,
+      linkedQuestionText: null,
+      linkedRedFlagId: null,
+    };
+    const afterMigration = computeCorpusSourceHash([migratedDoc]);
+
+    expect(afterMigration.sourceHash).toBe(baseline.sourceHash);
+  });
+
+  it("changes the sourceHash when a non-FILE source/role/link field is set", () => {
+    const baseDoc = {
+      id: "doc_base",
+      processingStatus: "COMPLETED",
+      uploadedAt: new Date("2026-04-20T09:00:00.000Z"),
+      extractedText: "email body",
+      extractionRuns: [
+        {
+          id: "run_email",
+          status: "READY",
+          readyForAnalysis: true,
+          corpusTextHash: "hash_email",
+          pages: [{ id: "p1" }],
+        },
+      ],
+    };
+    const fileVariant = computeCorpusSourceHash([baseDoc]);
+    const emailVariant = computeCorpusSourceHash([
+      {
+        ...baseDoc,
+        sourceKind: "EMAIL" as const,
+        sourceDate: new Date("2026-04-19T08:00:00.000Z"),
+        sourceAuthor: "jean@example.com",
+      },
+    ]);
+    expect(emailVariant.sourceHash).not.toBe(fileVariant.sourceHash);
   });
 
   it("refuses to materialize a snapshot when requested documentIds include superseded documents", async () => {

@@ -26,8 +26,10 @@ export async function DELETE() {
     });
 
     // 2. Delete blob files (best-effort, don't block account deletion on storage errors)
+    // Documents without storage (emails/notes) have no blob to delete — skip silently.
     const blobDeletions = documents.map((doc) => {
       const urlOrPath = doc.storageUrl || doc.storagePath;
+      if (!urlOrPath) return Promise.resolve();
       return deleteFile(urlOrPath).catch(() => {
         // Silently ignore — file may already be gone
       });
