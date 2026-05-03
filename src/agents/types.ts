@@ -40,6 +40,17 @@ export interface AgentContext {
     extractionMetrics?: unknown;
     /** Date of upload/import — used for document chronology awareness */
     uploadedAt?: Date;
+    sourceKind?: string | null;
+    corpusRole?: string | null;
+    sourceDate?: Date | null;
+    receivedAt?: Date | null;
+    sourceAuthor?: string | null;
+    sourceSubject?: string | null;
+    linkedQuestionSource?: string | null;
+    linkedQuestionText?: string | null;
+    linkedRedFlagId?: string | null;
+    corpusParentDocumentId?: string | null;
+    corpusParentDocumentName?: string | null;
     /** Latest strict extraction run, when available. Used for artifact-aware retrieval. */
     extractionRuns?: Array<{
       id: string;
@@ -3430,6 +3441,9 @@ export interface SynthesisDealScorerData {
     percentileSector: number;
     percentileStage: number;
     similarDealsAnalyzed: number;
+    method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE";
+    insufficientData?: boolean;
+    calculationDetail?: string;
   };
   investmentRecommendation: {
     action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";

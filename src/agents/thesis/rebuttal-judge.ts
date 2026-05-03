@@ -21,6 +21,8 @@ import { BaseAgent } from "../base-agent";
 import type { RebuttalJudgeOutput } from "./types";
 import type { ThesisExtractorOutput } from "./types";
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { getThesisCallOptions } from "@/lib/thesis/call-options";
+import type { ValidatedLLMCallOptions } from "../base-agent";
 
 // ---------------------------------------------------------------------------
 // Input contract (passe via execute directement, pas via AgentContext classique)
@@ -48,6 +50,7 @@ interface RebuttalAgentContext {
   documents?: unknown[];
   previousResults?: Record<string, unknown>;
   rebuttalInput: RebuttalJudgeInput;
+  judgeCallOptions?: Partial<ValidatedLLMCallOptions<RebuttalJudgeOutput>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +133,11 @@ LANGUE: Francais.`;
     const { data } = await this.llmCompleteJSONValidated(
       userPrompt,
       RebuttalJudgeSchema,
-      { temperature: 0.2 }
+      {
+        temperature: 0.2,
+        ...getThesisCallOptions("judge"),
+        ...(ctx.judgeCallOptions ?? {}),
+      }
     );
 
     return {

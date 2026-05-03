@@ -1,5 +1,5 @@
 import { BaseAgent } from "../base-agent";
-import { FACT_KEYS, getFactKeyDefinition, FACT_KEY_COUNT } from "@/services/fact-store/fact-keys";
+import { FACT_KEYS, getFactKeyDefinition, FACT_KEY_COUNT, canonicalizeFactKey } from "@/services/fact-store/fact-keys";
 import type { AgentContext } from "../types";
 import type {
   ExtractedFact,
@@ -9,6 +9,7 @@ import type {
   FactSource,
 } from "@/services/fact-store/types";
 import { RELIABILITY_WEIGHTS } from "@/services/fact-store/types";
+import { detectFactQualityIssues, summarizeFactQualityIssues } from "@/services/fact-store/quality";
 import { sanitizeForLLM, sanitizeName } from "@/lib/sanitize";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -184,6 +185,21 @@ Le confidence score mesure ta certitude sur la valeur extraite:
 - Si la confidence est inferieure a 70%, NE PAS inclure le fait
 - Mieux vaut manquer un fait qu'en extraire un faux
 - Tu peux mentionner dans extractionNotes ce qui n'a pas pu etre extrait
+
+# ANTI-CONFUSION METRIQUE (OBLIGATOIRE)
+
+NE JAMAIS mapper une metrique immobiliere ou capacitaire vers une metrique traction/client.
+
+Exemples INTERDITS:
+- "4,000 sqm Storage Units" -> PAS traction.customers_count
+- "17,682 sqm Self-Storage CLA" -> PAS traction.users_count
+- "81.6% Current Occupancy" -> PAS traction.mau
+
+Regles strictes:
+- \`traction.customers_count\` = nombre de clients payants, PAS d'unites, PAS de sqm
+- \`traction.users_count\` = nombre d'utilisateurs, PAS de surface, PAS de capacite
+- \`traction.mau\` = Monthly Active Users (compte absolu), PAS un pourcentage d'occupation
+- Si tu n'as pas la bonne metrique, N'EXTRAIS RIEN
 
 # EXTRACTION TEMPORELLE
 
@@ -771,10 +787,12 @@ Produis le JSON avec:
 
     if (Array.isArray(data.facts)) {
       for (const fact of data.facts) {
+        const canonicalFactKey = canonicalizeFactKey(fact.factKey);
+
         // Skip if missing required fields
         if (!fact.factKey || !fact.extractedText || fact.sourceConfidence === undefined) {
           ignoredFacts.push({
-            factKey: fact.factKey || 'unknown',
+            factKey: canonicalFactKey || fact.factKey || 'unknown',
             reason: 'Missing required fields (factKey, extractedText, or sourceConfidence)',
           });
           continue;
@@ -783,18 +801,34 @@ Produis le JSON avec:
         // Skip if confidence too low
         if (fact.sourceConfidence < 70) {
           ignoredFacts.push({
-            factKey: fact.factKey,
+            factKey: canonicalFactKey,
             reason: `Confidence too low: ${fact.sourceConfidence}% (minimum: 70%)`,
           });
           continue;
         }
 
         // Validate fact key exists
-        const factKeyDef = getFactKeyDefinition(fact.factKey);
+        const factKeyDef = getFactKeyDefinition(canonicalFactKey);
         if (!factKeyDef) {
           ignoredFacts.push({
-            factKey: fact.factKey,
+            factKey: canonicalFactKey,
             reason: 'Unknown factKey not in taxonomy',
+          });
+          continue;
+        }
+
+        const qualityIssues = detectFactQualityIssues({
+          factKey: canonicalFactKey,
+          value: fact.value,
+          displayValue: fact.displayValue,
+          unit: fact.unit ?? factKeyDef.unit,
+          extractedText: fact.extractedText,
+        });
+        const blockingIssue = qualityIssues.find((issue) => issue.autoQuarantine);
+        if (blockingIssue) {
+          ignoredFacts.push({
+            factKey: canonicalFactKey,
+            reason: summarizeFactQualityIssues(qualityIssues),
           });
           continue;
         }
@@ -806,15 +840,15 @@ Produis le JSON avec:
         }
 
         // Skip duplicates (keep highest confidence)
-        if (seenFactKeys.has(fact.factKey)) {
-          const existingIdx = validFacts.findIndex(f => f.factKey === fact.factKey);
+        if (seenFactKeys.has(canonicalFactKey)) {
+          const existingIdx = validFacts.findIndex(f => f.factKey === canonicalFactKey);
           if (existingIdx >= 0 && validFacts[existingIdx].sourceConfidence < fact.sourceConfidence) {
             validFacts.splice(existingIdx, 1);
           } else {
             continue;
           }
         }
-        seenFactKeys.add(fact.factKey);
+        seenFactKeys.add(canonicalFactKey);
 
         // Validate sourceDocumentId against real document IDs (F53)
         let sourceDoc = input.documents.find(d => d.id === fact.sourceDocumentId);
@@ -843,7 +877,7 @@ Produis le JSON avec:
 
           console.warn(
             `[FactExtractor] ⚠️ SOURCE NON VERIFIEE: LLM a retourne sourceDocumentId="${fact.sourceDocumentId}" ` +
-            `pour fact ${fact.factKey}, corrige vers "${sourceDoc?.id ?? 'AUCUN'}". ` +
+            `pour fact ${canonicalFactKey}, corrige vers "${sourceDoc?.id ?? 'AUCUN'}". ` +
             `L'attribution de source est incertaine.`
           );
         }
@@ -854,7 +888,7 @@ Produis le JSON avec:
         // Skip this fact if we can't determine a valid document ID
         if (!validSourceDocumentId) {
           ignoredFacts.push({
-            factKey: fact.factKey,
+            factKey: canonicalFactKey,
             reason: `Could not determine valid sourceDocumentId (LLM returned: ${fact.sourceDocumentId})`,
           });
           continue;
@@ -898,7 +932,7 @@ Produis le JSON avec:
         const truthConfidence = Math.round(adjustedConfidence * reliabilityWeight);
 
         validFacts.push({
-          factKey: fact.factKey,
+          factKey: canonicalFactKey,
           category: factKeyDef.category,
           value: fact.value,
           displayValue: fact.displayValue || String(fact.value),
@@ -1033,9 +1067,9 @@ Produis le JSON avec:
   ): Promise<Map<string, { reliability: import('@/services/fact-store/types').DataReliability; reasoning: string }>> {
     const criticalKeys = new Set([
       'financial.arr', 'financial.mrr', 'financial.revenue',
-      'financial.growth_rate_yoy', 'financial.burn_rate', 'financial.runway',
+      'financial.revenue_growth_yoy', 'financial.burn_rate', 'financial.runway_months',
       'financial.valuation_pre', 'financial.amount_raising',
-      'traction.customers', 'traction.users', 'traction.nrr', 'traction.churn_monthly',
+      'traction.customers_count', 'traction.users_count', 'traction.nrr', 'traction.churn_monthly',
     ]);
 
     const criticalFacts = facts.filter(f => criticalKeys.has(f.factKey));

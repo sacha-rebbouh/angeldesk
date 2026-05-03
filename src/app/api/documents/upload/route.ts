@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHash } from "crypto";
+import { createDecipheriv, createHash } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DocumentType, Prisma } from "@prisma/client";
-import { smartExtract, estimatePdfExtractionCost, type ExtractionWarning } from "@/services/pdf";
-import {
-  extractFromExcel,
-  buildExcelModelIntelligence,
-  runExcelFinancialAudit,
-  generateExcelAnalystReport,
-  type SheetData,
-} from "@/services/excel";
-import { extractFromDocx } from "@/services/docx";
-import { extractFromPptx } from "@/services/pptx";
-import { uploadFile } from "@/services/storage";
+import { deleteFile, uploadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 import { computeContentHash, checkDuplicateDocument } from "@/services/document-hash";
 import { encryptText } from "@/lib/encryption";
@@ -36,7 +26,12 @@ import {
 } from "@/services/documents/extraction-progress";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
-import type { DocumentPageArtifact, ExtractionCreditEstimate } from "@/services/pdf";
+import type {
+  DocumentPageArtifact,
+  ExtractionCreditEstimate,
+  ExtractionWarning,
+} from "@/services/pdf";
+import type { SheetData } from "@/services/excel";
 
 // CUID validation
 const cuidSchema = z.string().cuid();
@@ -47,9 +42,75 @@ export const maxDuration = 300;
 // requests can be rejected before Next materializes formData in memory.
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const MAX_MULTIPART_SIZE_BYTES = MAX_FILE_SIZE_BYTES + 2 * 1024 * 1024;
+const MAX_CLIENT_ENCRYPTED_FILE_BYTES = MAX_FILE_SIZE_BYTES + 64;
+const CLIENT_UPLOAD_ALGORITHM = "AES-256-GCM";
+const CLIENT_UPLOAD_AUTH_TAG_LENGTH = 16;
+
+const ALLOWED_MIME_TYPES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "image/png",
+  "image/jpeg",
+];
+
+const DOCUMENT_TYPE_VALUES = Object.values(DocumentType) as string[];
+
+const blobUploadBodySchema = z.object({
+  uploadSource: z.literal("blob"),
+  dealId: z.string(),
+  type: z.string().optional().nullable(),
+  customType: z.string().optional().nullable(),
+  comments: z.string().optional().nullable(),
+  progressId: z.string().uuid().optional().nullable(),
+  corpusParentDocumentId: z.string().optional().nullable(),
+  file: z.object({
+    name: z.string().min(1).max(255),
+    type: z.string().min(1),
+    size: z.number().int().positive().max(MAX_FILE_SIZE_BYTES),
+    blobUrl: z.string().url(),
+    blobPathname: z.string().min(1).max(1024).optional().nullable(),
+    encryption: z.object({
+      algorithm: z.literal(CLIENT_UPLOAD_ALGORITHM),
+      key: z.string().regex(/^[a-f0-9]{64}$/i),
+      iv: z.string().regex(/^[a-f0-9]{24}$/i),
+    }),
+  }),
+});
+
+type UploadFileInput = {
+  name: string;
+  type: string;
+  size: number;
+};
+
+type UploadInput = {
+  file: UploadFileInput;
+  buffer: Buffer;
+  dealId: string | null;
+  documentType: DocumentType | null;
+  customType: string | null;
+  comments: string | null;
+  uploadProgressId: string | null;
+  corpusParentDocumentId: string | null;
+  cleanupSourceUpload?: () => Promise<void>;
+};
+
+class UploadRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "UploadRequestError";
+  }
+}
 
 // POST /api/documents/upload - Upload a document
 export async function POST(request: NextRequest) {
+  let cleanupSourceUpload: (() => Promise<void>) | null = null;
+
   try {
     const user = await requireAuth();
 
@@ -62,28 +123,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const contentLengthHeader = request.headers.get("content-length");
-    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
-    if (contentLength == null || !Number.isFinite(contentLength) || contentLength <= 0) {
-      return NextResponse.json(
-        { error: "Content-Length header is required for document uploads" },
-        { status: 411 }
-      );
-    }
-    if (contentLength > MAX_MULTIPART_SIZE_BYTES) {
-      return NextResponse.json(
-        { error: "File too large. Maximum size is 50MB" },
-        { status: 413 }
-      );
-    }
-
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    const dealId = formData.get("dealId") as string | null;
-    const documentType = formData.get("type") as DocumentType | null;
-    const customType = formData.get("customType") as string | null;
-    const comments = formData.get("comments") as string | null;
-    const uploadProgressId = formData.get("progressId") as string | null;
+    const uploadInput = await readUploadInput(request);
+    cleanupSourceUpload = uploadInput.cleanupSourceUpload ?? null;
+    const {
+      file,
+      buffer,
+      dealId,
+      documentType,
+      customType,
+      comments,
+      uploadProgressId,
+      corpusParentDocumentId,
+    } = uploadInput;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -114,6 +165,57 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
+    let corpusParentDocument: {
+      id: string;
+      name: string;
+      sourceKind: "EMAIL" | "NOTE" | "FILE";
+      corpusRole: "GENERAL" | "DILIGENCE_RESPONSE";
+      sourceDate: Date | null;
+      receivedAt: Date | null;
+      sourceAuthor: string | null;
+      sourceSubject: string | null;
+      linkedQuestionSource: "RED_FLAG" | "QUESTION_TO_ASK" | null;
+      linkedQuestionText: string | null;
+      linkedRedFlagId: string | null;
+    } | null = null;
+
+    if (corpusParentDocumentId) {
+      const parentIdResult = cuidSchema.safeParse(corpusParentDocumentId);
+      if (!parentIdResult.success) {
+        return NextResponse.json({ error: "Invalid corpus parent document ID format" }, { status: 400 });
+      }
+
+      corpusParentDocument = await prisma.document.findFirst({
+        where: {
+          id: corpusParentDocumentId,
+          dealId,
+          deal: { userId: user.id },
+          sourceKind: { in: ["EMAIL", "NOTE"] },
+          isLatest: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          sourceKind: true,
+          corpusRole: true,
+          sourceDate: true,
+          receivedAt: true,
+          sourceAuthor: true,
+          sourceSubject: true,
+          linkedQuestionSource: true,
+          linkedQuestionText: true,
+          linkedRedFlagId: true,
+        },
+      });
+
+      if (!corpusParentDocument) {
+        return NextResponse.json(
+          { error: "Parent email/note not found on this deal" },
+          { status: 404 }
+        );
+      }
+    }
+
     const runningAnalysis = await getRunningAnalysisForDeal(dealId);
 
     if (runningAnalysis) {
@@ -129,20 +231,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file type
-    const allowedMimeTypes = [
-      "application/pdf",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      "application/vnd.ms-powerpoint",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/msword",
-      "image/png",
-      "image/jpeg",
-    ];
-
-    if (!allowedMimeTypes.includes(file.type)) {
+    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
       return NextResponse.json(
         { error: "Invalid file type. Allowed: PDF, Word, Excel, PowerPoint, Images (PNG, JPG)" },
         { status: 400 }
@@ -150,18 +241,18 @@ export async function POST(request: NextRequest) {
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
       return NextResponse.json(
         { error: "File too large. Maximum size is 50MB" },
         { status: 413 }
       );
     }
 
-    // Read file buffer ONCE (File stream can only be read once)
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
     const isValidSignature = await isValidDocumentSignature(buffer, file.type);
     if (!isValidSignature) {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
       return NextResponse.json(
         { error: "Invalid file signature. The uploaded file does not match its declared type." },
         { status: 400 }
@@ -174,6 +265,8 @@ export async function POST(request: NextRequest) {
     // F63: Check for duplicate content
     const duplicateCheck = await checkDuplicateDocument(contentHash, dealId, user.id);
     if (duplicateCheck.isDuplicate && duplicateCheck.sameDeal) {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
       return NextResponse.json(
         {
           error: "Document identique deja uploade",
@@ -185,7 +278,12 @@ export async function POST(request: NextRequest) {
 
     // F62: Check if this is a new version of an existing document (same name, same deal)
     const existingDoc = await prisma.document.findFirst({
-      where: { dealId, name: file.name, isLatest: true },
+      where: {
+        dealId,
+        name: file.name,
+        isLatest: true,
+        corpusParentDocumentId: corpusParentDocument?.id ?? null,
+      },
       select: { id: true, version: true },
     });
 
@@ -199,6 +297,8 @@ export async function POST(request: NextRequest) {
     const uploaded = await uploadFile(`deals/${dealId}/${sanitizedName}`, buffer, {
       access: "private",
     });
+    await cleanupUploadSource(cleanupSourceUpload);
+    cleanupSourceUpload = null;
 
     // F62: If re-uploading same filename, mark old as superseded
     if (existingDoc) {
@@ -222,6 +322,23 @@ export async function POST(request: NextRequest) {
         sizeBytes: file.size,
         processingStatus: "PENDING",
         contentHash,
+        sourceKind: "FILE",
+        corpusParentDocumentId: corpusParentDocument?.id ?? undefined,
+        sourceDate: corpusParentDocument?.sourceDate ?? undefined,
+        receivedAt: corpusParentDocument?.receivedAt ?? undefined,
+        sourceAuthor: corpusParentDocument?.sourceAuthor ?? undefined,
+        sourceSubject: corpusParentDocument?.sourceSubject ?? undefined,
+        sourceMetadata: corpusParentDocument
+          ? {
+              attachedToDocumentId: corpusParentDocument.id,
+              attachedToDocumentName: corpusParentDocument.name,
+              attachedToSourceKind: corpusParentDocument.sourceKind,
+            }
+          : undefined,
+        corpusRole: corpusParentDocument?.corpusRole ?? undefined,
+        linkedQuestionSource: corpusParentDocument?.linkedQuestionSource ?? undefined,
+        linkedQuestionText: corpusParentDocument?.linkedQuestionText ?? undefined,
+        linkedRedFlagId: corpusParentDocument?.linkedRedFlagId ?? undefined,
         // F62: Version tracking
         version: existingDoc ? existingDoc.version + 1 : 1,
         parentDocumentId: existingDoc?.id ?? undefined,
@@ -259,6 +376,33 @@ export async function POST(request: NextRequest) {
     let pagesOCRd = 0;
     let ocrCost = 0;
     let extractionCreditEstimate: ExtractionCreditEstimate | null = null;
+    const reusedExtraction = file.type === "application/pdf" &&
+      duplicateCheck.isDuplicate &&
+      !duplicateCheck.sameDeal &&
+      duplicateCheck.existingDocument
+      ? await reuseCompletedExtractionFromDuplicate({
+          sourceDocumentId: duplicateCheck.existingDocument.id,
+          targetDocumentId: document.id,
+          targetDocumentVersion: document.version,
+          contentHash,
+        })
+      : null;
+
+    if (reusedExtraction) {
+      extractionQuality = reusedExtraction.extractionQuality;
+      extractionWarnings = reusedExtraction.extractionWarnings;
+      requiresOCR = reusedExtraction.requiresOCR;
+      ocrProcessed = reusedExtraction.ocrProcessed;
+      pagesOCRd = reusedExtraction.pagesOCRd;
+      ocrCost = reusedExtraction.ocrCost;
+      extractionCreditEstimate = reusedExtraction.creditEstimate;
+      await publishUploadProgress({
+        phase: "completed",
+        pageCount: reusedExtraction.pageCount,
+        pagesProcessed: reusedExtraction.pagesProcessed,
+        message: "Extraction reused from identical document",
+      });
+    }
 
     // Images (JPEG/PNG): OCR via Vision LLM to extract text content
     let imageOcrCredits = 0;
@@ -403,7 +547,8 @@ export async function POST(request: NextRequest) {
 
     let pdfPreChargedCredits = 0;
 
-    if (file.type === "application/pdf") {
+    if (file.type === "application/pdf" && !reusedExtraction) {
+      const { estimatePdfExtractionCost, smartExtract } = await import("@/services/pdf");
       // P0.4: pre-check credits avant de lancer smartExtract (qui peut engager
       // du compute OpenRouter). Estimation conservatrice worst-case: 1 credit/page
       // high_fidelity. Apres extraction reelle, on rembourse la difference si le
@@ -459,58 +604,100 @@ export async function POST(request: NextRequest) {
           extractionVersion: "strict-pdf-v1",
         });
         let uploadPageCount = 0;
-        // Smart extraction: regular + auto OCR for low-quality pages
-        const result = await smartExtract(buffer, {
-          qualityThreshold: 40,
-          maxOCRPages: Number.POSITIVE_INFINITY,
-          autoOCR: true,
-          strict: true,
-          onProgress: async (event) => {
-            if (event.phase === "native_extracted") {
-              uploadPageCount = event.pageCount;
+        const processedUploadPages = new Set<number>();
+        const extractionTimeoutGuard = setTimeout(() => {
+          const pageCount = uploadPageCount || undefined;
+          const pagesProcessed = processedUploadPages.size || undefined;
+          void Promise.all([
+            prisma.document.updateMany({
+              where: { id: document.id, processingStatus: "PROCESSING" },
+              data: {
+                processingStatus: "FAILED",
+                extractionWarnings: [{
+                  code: "EXTRACTION_TIMEOUT",
+                  severity: "critical",
+                  message: "PDF extraction exceeded the server execution window",
+                  suggestion: "Relancez l'extraction ou utilisez un document plus court pendant la stabilisation du pipeline.",
+                }] as Prisma.InputJsonValue,
+              },
+            }),
+            markExtractionRunProgress({
+              runId: progressRun.id,
+              phase: "failed",
+              message: "PDF extraction exceeded the server execution window",
+              pageCount,
+              pagesProcessed,
+            }),
+            publishUploadProgress({
+              phase: "failed",
+              message: "PDF extraction exceeded the server execution window",
+              pageCount,
+              pagesProcessed,
+            }),
+          ]).catch((guardError) => {
+            console.warn("[upload] Failed to mark timed-out extraction:", guardError);
+          });
+        }, Number(process.env.DOCUMENT_EXTRACTION_SOFT_TIMEOUT_MS ?? 270_000));
+        let result: Awaited<ReturnType<typeof smartExtract>>;
+        try {
+          // Smart extraction: regular + auto OCR for low-quality pages
+          result = await smartExtract(buffer, {
+            qualityThreshold: 40,
+            maxOCRPages: Number.POSITIVE_INFINITY,
+            autoOCR: true,
+            strict: true,
+            onProgress: async (event) => {
+              if (event.phase === "native_extracted") {
+                uploadPageCount = event.pageCount;
+                await publishUploadProgress({
+                  phase: event.phase,
+                  pageCount: event.pageCount,
+                  pagesProcessed: 0,
+                  message: event.message,
+                });
+                await markExtractionRunProgress({
+                  runId: progressRun.id,
+                  pageCount: event.pageCount,
+                  pagesProcessed: 0,
+                  phase: event.phase,
+                  message: event.message,
+                });
+                return;
+              }
+              if (event.phase === "page_processed") {
+                processedUploadPages.add(event.page.pageNumber);
+                const pagesProcessed = processedUploadPages.size;
+                const pageCount = Math.max(uploadPageCount, event.page.pageNumber);
+                await recordExtractionPageProgress({
+                  runId: progressRun.id,
+                  page: event.page,
+                });
+                await publishUploadProgress({
+                  phase: event.phase,
+                  pageCount,
+                  pagesProcessed,
+                  message: event.message,
+                });
+                return;
+              }
               await publishUploadProgress({
                 phase: event.phase,
-                pageCount: event.pageCount,
-                pagesProcessed: 0,
                 message: event.message,
+                pageCount: "pageCount" in event ? event.pageCount : undefined,
+                pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
               });
               await markExtractionRunProgress({
                 runId: progressRun.id,
-                pageCount: event.pageCount,
-                pagesProcessed: 0,
                 phase: event.phase,
                 message: event.message,
+                pageCount: "pageCount" in event ? event.pageCount : undefined,
+                pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
               });
-              return;
-            }
-            if (event.phase === "page_processed") {
-              await recordExtractionPageProgress({
-                runId: progressRun.id,
-                page: event.page,
-              });
-              await publishUploadProgress({
-                phase: event.phase,
-                pageCount: Math.max(uploadPageCount, event.page.pageNumber),
-                pagesProcessed: event.pageNumber,
-                message: event.message,
-              });
-              return;
-            }
-            await publishUploadProgress({
-              phase: event.phase,
-              message: event.message,
-              pageCount: "pageCount" in event ? event.pageCount : undefined,
-              pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
-            });
-            await markExtractionRunProgress({
-              runId: progressRun.id,
-              phase: event.phase,
-              message: event.message,
-              pageCount: "pageCount" in event ? event.pageCount : undefined,
-              pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
-            });
-          },
-        });
+            },
+          });
+        } finally {
+          clearTimeout(extractionTimeoutGuard);
+        }
 
         extractionQuality = result.quality;
         pagesOCRd = result.pagesOCRd;
@@ -682,6 +869,12 @@ export async function POST(request: NextRequest) {
       });
 
       try {
+        const {
+          extractFromExcel,
+          buildExcelModelIntelligence,
+          runExcelFinancialAudit,
+          generateExcelAnalystReport,
+        } = await import("@/services/excel");
         const result = extractFromExcel(buffer);
 
         if (result.success) {
@@ -840,6 +1033,7 @@ export async function POST(request: NextRequest) {
       });
 
       try {
+        const { extractFromDocx } = await import("@/services/docx");
         const result = await extractFromDocx(buffer);
 
         if (result.success) {
@@ -975,6 +1169,7 @@ export async function POST(request: NextRequest) {
       });
 
       try {
+        const { extractFromPptx } = await import("@/services/pptx");
         const result = await extractFromPptx(buffer);
 
         if (result.success) {
@@ -1107,7 +1302,9 @@ export async function POST(request: NextRequest) {
 
     // Build response with extraction health info
     const response: {
-      data: typeof updatedDocument;
+      data: (NonNullable<typeof updatedDocument> & {
+        corpusParentDocument?: { id: string; name: string } | null;
+      }) | null;
       extraction?: {
         quality: number | null;
         warnings: ExtractionWarning[];
@@ -1122,7 +1319,16 @@ export async function POST(request: NextRequest) {
       versioning?: { version: number; replacedDocumentId?: string };
       // F63: duplicate warning (cross-deal)
       duplicateWarning?: { existingDocument: NonNullable<typeof duplicateCheck.existingDocument> };
-    } = { data: updatedDocument };
+    } = {
+      data: updatedDocument
+        ? {
+            ...updatedDocument,
+            corpusParentDocument: corpusParentDocument
+              ? { id: corpusParentDocument.id, name: corpusParentDocument.name }
+              : null,
+          }
+        : null,
+    };
 
     // F62: Include versioning info
     if (existingDoc) {
@@ -1194,8 +1400,341 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
+    await cleanupUploadSource(cleanupSourceUpload);
+    if (error instanceof UploadRequestError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return handleApiError(error, "upload document");
   }
+}
+
+async function cleanupUploadSource(cleanup: (() => Promise<void>) | null | undefined) {
+  if (!cleanup) return;
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    console.warn("[upload] Failed to clean temporary source upload:", cleanupError);
+  }
+}
+
+async function reuseCompletedExtractionFromDuplicate(params: {
+  sourceDocumentId: string;
+  targetDocumentId: string;
+  targetDocumentVersion: number;
+  contentHash: string;
+}): Promise<{
+  extractionQuality: number | null;
+  extractionWarnings: ExtractionWarning[];
+  requiresOCR: boolean;
+  ocrProcessed: boolean;
+  pagesOCRd: number;
+  ocrCost: number;
+  creditEstimate: ExtractionCreditEstimate | null;
+  pageCount: number;
+  pagesProcessed: number;
+} | null> {
+  const sourceDocument = await prisma.document.findFirst({
+    where: {
+      id: params.sourceDocumentId,
+      contentHash: params.contentHash,
+      processingStatus: "COMPLETED",
+      extractedText: { not: null },
+    },
+    include: {
+      extractionRuns: {
+        where: { status: { not: "FAILED" } },
+        orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
+        take: 1,
+        include: { pages: { orderBy: { pageNumber: "asc" } } },
+      },
+    },
+  });
+
+  const sourceRun = sourceDocument?.extractionRuns[0];
+  if (!sourceDocument?.extractedText || !sourceRun) return null;
+  if (sourceRun.pageCount > 0 && sourceRun.pagesProcessed < sourceRun.pageCount) return null;
+
+  const clonedRun = await prisma.$transaction(async (tx) => {
+    const createdRun = await tx.documentExtractionRun.create({
+      data: {
+        documentId: params.targetDocumentId,
+        documentVersion: params.targetDocumentVersion,
+        status: sourceRun.status,
+        pageCount: sourceRun.pageCount,
+        pagesProcessed: sourceRun.pagesProcessed,
+        pagesSucceeded: sourceRun.pagesSucceeded,
+        pagesFailed: sourceRun.pagesFailed,
+        pagesSkipped: sourceRun.pagesSkipped,
+        coverageRatio: sourceRun.coverageRatio,
+        qualityScore: sourceRun.qualityScore,
+        readyForAnalysis: sourceRun.readyForAnalysis,
+        blockedReason: sourceRun.blockedReason,
+        extractionVersion: sourceRun.extractionVersion,
+        pipelineVersion: sourceRun.pipelineVersion,
+        contentHash: params.contentHash,
+        corpusTextHash: sourceRun.corpusTextHash,
+        summaryMetrics: mergeJsonObject(sourceRun.summaryMetrics, {
+          reusedExtraction: true,
+          reusedFromDocumentId: sourceDocument.id,
+          reusedFromExtractionRunId: sourceRun.id,
+        }),
+        warnings: cloneJsonForPrisma(sourceRun.warnings),
+        completedAt: sourceRun.completedAt ?? new Date(),
+        pages: {
+          create: sourceRun.pages.map((page) => ({
+            pageNumber: page.pageNumber,
+            status: page.status,
+            method: page.method,
+            charCount: page.charCount,
+            wordCount: page.wordCount,
+            qualityScore: page.qualityScore,
+            confidence: page.confidence,
+            hasTables: page.hasTables,
+            hasCharts: page.hasCharts,
+            hasFinancialKeywords: page.hasFinancialKeywords,
+            hasTeamKeywords: page.hasTeamKeywords,
+            hasMarketKeywords: page.hasMarketKeywords,
+            requiresOCR: page.requiresOCR,
+            ocrProcessed: page.ocrProcessed,
+            contentHash: page.contentHash,
+            artifactVersion: page.artifactVersion,
+            artifact: cloneJsonForPrisma(page.artifact),
+            pageImageHash: page.pageImageHash,
+            errorMessage: page.errorMessage,
+            textPreview: page.textPreview,
+          })),
+        },
+      },
+    });
+
+    await tx.document.update({
+      where: { id: params.targetDocumentId },
+      data: {
+        extractedText: sourceDocument.extractedText,
+        processingStatus: "COMPLETED",
+        extractionQuality: sourceDocument.extractionQuality,
+        extractionMetrics: buildReusedExtractionMetrics(sourceDocument.extractionMetrics, {
+          latestExtractionRunId: createdRun.id,
+          reusedExtraction: true,
+          reusedFromDocumentId: sourceDocument.id,
+          reusedFromExtractionRunId: sourceRun.id,
+        }),
+        extractionWarnings: cloneJsonForPrisma(sourceDocument.extractionWarnings),
+        requiresOCR: sourceDocument.requiresOCR,
+        ocrProcessed: sourceDocument.ocrProcessed,
+      },
+    });
+
+    return createdRun;
+  });
+
+  const metrics = asJsonRecord(sourceDocument.extractionMetrics);
+  return {
+    extractionQuality: sourceDocument.extractionQuality,
+    extractionWarnings: Array.isArray(sourceDocument.extractionWarnings)
+      ? sourceDocument.extractionWarnings as unknown as ExtractionWarning[]
+      : [],
+    requiresOCR: sourceDocument.requiresOCR,
+    ocrProcessed: sourceDocument.ocrProcessed,
+    pagesOCRd: getMetricNumber(metrics, "pagesOCRd"),
+    ocrCost: getMetricNumber(metrics, "ocrCost"),
+    creditEstimate: getCreditEstimate(metrics),
+    pageCount: clonedRun.pageCount,
+    pagesProcessed: clonedRun.pagesProcessed,
+  };
+}
+
+function cloneJsonForPrisma(
+  value: Prisma.JsonValue | null | undefined
+): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  if (value === null || value === undefined) return Prisma.DbNull;
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function asJsonRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function mergeJsonObject(
+  value: Prisma.JsonValue | null | undefined,
+  extra: Record<string, unknown>
+): Prisma.InputJsonObject {
+  return {
+    ...asJsonRecord(value),
+    ...extra,
+  } as Prisma.InputJsonObject;
+}
+
+function buildReusedExtractionMetrics(
+  value: Prisma.JsonValue | null | undefined,
+  extra: Record<string, unknown>
+): Prisma.InputJsonObject {
+  const metrics = asJsonRecord(value);
+  const sourceCreditsCharged = metrics.extractionCreditsCharged;
+  if (sourceCreditsCharged !== undefined) {
+    metrics.reusedSourceExtractionCreditsCharged = sourceCreditsCharged;
+  }
+  metrics.extractionCreditsCharged = 0;
+  return {
+    ...metrics,
+    ...extra,
+  } as Prisma.InputJsonObject;
+}
+
+function getMetricNumber(metrics: Record<string, unknown>, key: string): number {
+  const value = metrics[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function getCreditEstimate(metrics: Record<string, unknown>): ExtractionCreditEstimate | null {
+  const value = metrics.creditEstimate;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as ExtractionCreditEstimate;
+}
+
+async function readUploadInput(request: NextRequest): Promise<UploadInput> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    return readBlobUploadInput(request);
+  }
+  return readMultipartUploadInput(request);
+}
+
+async function readMultipartUploadInput(request: NextRequest): Promise<UploadInput> {
+  const contentLengthHeader = request.headers.get("content-length");
+  const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
+  if (contentLength == null || !Number.isFinite(contentLength) || contentLength <= 0) {
+    throw new UploadRequestError("Content-Length header is required for document uploads", 411);
+  }
+  if (contentLength > MAX_MULTIPART_SIZE_BYTES) {
+    throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
+  }
+
+  const formData = await request.formData();
+  const rawFile = formData.get("file");
+  if (!(rawFile instanceof File)) {
+    throw new UploadRequestError("No file provided", 400);
+  }
+
+  const arrayBuffer = await rawFile.arrayBuffer();
+  return {
+    file: {
+      name: rawFile.name,
+      type: rawFile.type,
+      size: rawFile.size,
+    },
+    buffer: Buffer.from(arrayBuffer),
+    dealId: readNullableFormString(formData, "dealId"),
+    documentType: parseDocumentType(readNullableFormString(formData, "type")),
+    customType: readNullableFormString(formData, "customType"),
+    comments: readNullableFormString(formData, "comments"),
+    uploadProgressId: readNullableFormString(formData, "progressId"),
+    corpusParentDocumentId: readNullableFormString(formData, "corpusParentDocumentId"),
+  };
+}
+
+async function readBlobUploadInput(request: NextRequest): Promise<UploadInput> {
+  const body = blobUploadBodySchema.parse(await request.json());
+  validateTemporaryBlobUrl(body.file.blobUrl, body.file.blobPathname ?? null);
+
+  const encryptedResponse = await fetch(body.file.blobUrl);
+  if (!encryptedResponse.ok) {
+    throw new UploadRequestError("Unable to read uploaded file from Blob storage", 502);
+  }
+
+  const encryptedContentLength = encryptedResponse.headers.get("content-length");
+  if (encryptedContentLength && Number(encryptedContentLength) > MAX_CLIENT_ENCRYPTED_FILE_BYTES) {
+    throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
+  }
+
+  const encryptedBuffer = Buffer.from(await encryptedResponse.arrayBuffer());
+  if (encryptedBuffer.length > MAX_CLIENT_ENCRYPTED_FILE_BYTES) {
+    throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
+  }
+
+  const buffer = decryptClientUploadBuffer(encryptedBuffer, {
+    keyHex: body.file.encryption.key,
+    ivHex: body.file.encryption.iv,
+  });
+  if (buffer.length !== body.file.size) {
+    throw new UploadRequestError("Uploaded file integrity check failed", 400);
+  }
+
+  return {
+    file: {
+      name: body.file.name,
+      type: body.file.type,
+      size: body.file.size,
+    },
+    buffer,
+    dealId: body.dealId,
+    documentType: parseDocumentType(body.type ?? null),
+    customType: body.customType ?? null,
+    comments: body.comments ?? null,
+    uploadProgressId: body.progressId ?? null,
+    corpusParentDocumentId: body.corpusParentDocumentId ?? null,
+    cleanupSourceUpload: async () => {
+      await deleteFile(body.file.blobUrl);
+    },
+  };
+}
+
+function decryptClientUploadBuffer(
+  encryptedBuffer: Buffer,
+  params: { keyHex: string; ivHex: string }
+): Buffer {
+  if (encryptedBuffer.length <= CLIENT_UPLOAD_AUTH_TAG_LENGTH) {
+    throw new UploadRequestError("Uploaded file encryption is invalid", 400);
+  }
+
+  try {
+    const key = Buffer.from(params.keyHex, "hex");
+    const iv = Buffer.from(params.ivHex, "hex");
+    const authTag = encryptedBuffer.subarray(encryptedBuffer.length - CLIENT_UPLOAD_AUTH_TAG_LENGTH);
+    const ciphertext = encryptedBuffer.subarray(0, encryptedBuffer.length - CLIENT_UPLOAD_AUTH_TAG_LENGTH);
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  } catch {
+    throw new UploadRequestError("Uploaded file encryption is invalid", 400);
+  }
+}
+
+function validateTemporaryBlobUrl(blobUrl: string, pathname: string | null) {
+  let parsed: URL;
+  try {
+    parsed = new URL(blobUrl);
+  } catch {
+    throw new UploadRequestError("Invalid Blob upload URL", 400);
+  }
+
+  if (
+    parsed.protocol !== "https:" ||
+    !(
+      parsed.hostname.endsWith(".public.blob.vercel-storage.com") ||
+      parsed.hostname.endsWith(".blob.vercel-storage.com")
+    )
+  ) {
+    throw new UploadRequestError("Invalid Blob upload URL", 400);
+  }
+
+  if (!pathname || !pathname.startsWith("tmp/document-uploads/")) {
+    throw new UploadRequestError("Invalid temporary Blob pathname", 400);
+  }
+}
+
+function readNullableFormString(formData: FormData, key: string): string | null {
+  const value = formData.get(key);
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function parseDocumentType(value: string | null): DocumentType | null {
+  if (!value) return null;
+  if (!DOCUMENT_TYPE_VALUES.includes(value)) {
+    throw new UploadRequestError("Invalid document type", 400);
+  }
+  return value as DocumentType;
 }
 
 function formatExtractionTierSummary(pagesByTier: ExtractionCreditEstimate["pagesByTier"]): string {

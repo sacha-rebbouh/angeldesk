@@ -73,6 +73,7 @@ interface ParsedDeal {
 let cachedDeals: ParsedDeal[] = [];
 let lastFetchTime = 0;
 const CACHE_TTL = 2 * 60 * 60 * 1000; // 2 hours
+const RSS_TIMEOUT_MS = 30000;
 
 // ============================================================================
 // PARSING FUNCTIONS
@@ -339,31 +340,45 @@ function parseRSSItem(item: RSSItem): ParsedDeal | null {
 // ============================================================================
 
 async function fetchRSS(url: string, sourceName: string): Promise<RSSItem[]> {
-  try {
+  const maxAttempts = sourceName === "Hacker News Funding" ? 2 : 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), RSS_TIMEOUT_MS);
 
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "AngelDesk/1.0",
-        Accept: "application/rss+xml, application/xml, text/xml",
-      },
-    });
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "AngelDesk/1.0",
+          Accept: "application/rss+xml, application/xml, text/xml",
+        },
+      });
 
-    clearTimeout(timeoutId);
+      if (!response.ok) {
+        console.warn(`[US Funding] HTTP ${response.status} for ${sourceName}`);
+        return [];
+      }
 
-    if (!response.ok) {
-      console.warn(`[US Funding] HTTP ${response.status} for ${sourceName}`);
+      const xml = await response.text();
+      return parseRSSXml(xml, sourceName);
+    } catch (error) {
+      const isTimeout = error instanceof Error && error.name === "AbortError";
+      const canRetry = isTimeout && attempt < maxAttempts;
+
+      if (canRetry) {
+        console.warn(`[US Funding] Timeout fetching ${sourceName} (attempt ${attempt}/${maxAttempts}), retrying...`);
+        continue;
+      }
+
+      console.warn(`[US Funding] Error fetching ${sourceName}:`, error);
       return [];
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    const xml = await response.text();
-    return parseRSSXml(xml, sourceName);
-  } catch (error) {
-    console.warn(`[US Funding] Error fetching ${sourceName}:`, error);
-    return [];
   }
+
+  return [];
 }
 
 async function fetchAllFeeds(): Promise<RSSItem[]> {

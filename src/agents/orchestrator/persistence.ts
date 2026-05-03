@@ -687,6 +687,21 @@ export async function getDealWithRelations(
           extractionMetrics: true,
           processingStatus: true, // Required for document versioning/staleness detection
           uploadedAt: true, // Required for document chronology awareness by agents
+          sourceKind: true,
+          corpusRole: true,
+          sourceDate: true,
+          receivedAt: true,
+          sourceAuthor: true,
+          sourceSubject: true,
+          linkedQuestionSource: true,
+          linkedQuestionText: true,
+          linkedRedFlagId: true,
+          corpusParentDocumentId: true,
+          corpusParentDocument: {
+            select: {
+              name: true,
+            },
+          },
           extractionRuns: {
             orderBy: { completedAt: "desc" },
             take: 1,
@@ -737,6 +752,7 @@ export async function getDealWithRelations(
     const decryptedText = doc.extractedText ? safeDecrypt(doc.extractedText) : null;
     return {
       ...doc,
+      corpusParentDocumentName: doc.corpusParentDocument?.name ?? null,
       extractedText: decryptedText,
     };
   });
@@ -831,7 +847,7 @@ export async function loadLatestCheckpoint(
     // Get latest checkpoint (even FAILED ones have valid completedAgents/results data)
     const checkpoint = await prisma.analysisCheckpoint.findFirst({
       where: { analysisId },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
 
     if (!checkpoint) {
@@ -1233,7 +1249,7 @@ export async function cleanupOldCheckpoints(
   try {
     const checkpoints = await prisma.analysisCheckpoint.findMany({
       where: { analysisId },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: { id: true },
     });
 

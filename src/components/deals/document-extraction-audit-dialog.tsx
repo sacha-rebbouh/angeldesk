@@ -2,7 +2,6 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ChevronLeft,
@@ -38,6 +37,7 @@ interface ExtractionAuditDialogProps {
     id: string;
     name: string;
   } | null;
+  onDocumentUpdated?: (documentId: string) => void | Promise<void>;
 }
 
 interface AuditPage {
@@ -322,14 +322,25 @@ type PageRetryParams = {
 function pageRequiresDecision(page: AuditPage) {
   return !page.override && (
     page.status === "NEEDS_REVIEW" ||
-    page.status === "FAILED"
+    page.status === "FAILED" ||
+    page.visualRiskReasons.includes("targeted_page_retry")
   );
 }
 
 function pageNeedsInspection(page: AuditPage) {
   return !page.override && (
     page.status === "NEEDS_REVIEW" ||
-    page.status === "FAILED"
+    page.status === "FAILED" ||
+    page.visualRiskReasons.includes("targeted_page_retry")
+  );
+}
+
+function canRetryAuditPage(page: AuditPage) {
+  return (
+    page.status === "FAILED" ||
+    page.status === "NEEDS_REVIEW" ||
+    page.evidenceSummary?.missingExpectedStructure ||
+    (page.visualRiskScore ?? 0) >= 55
   );
 }
 
@@ -346,6 +357,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   open,
   onOpenChange,
   document,
+  onDocumentUpdated,
 }: ExtractionAuditDialogProps) {
   const [query, setQuery] = useState("");
   const [selectedPage, setSelectedPage] = useState<number | null>(null);
@@ -354,7 +366,6 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   const [batchRetryProgress, setBatchRetryProgress] = useState<{ done: number; total: number } | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const queryClient = useQueryClient();
-  const router = useRouter();
   const auditQueryKey = useMemo(
     () => ["document-extraction-audit", document?.id] as const,
     [document?.id]
@@ -394,6 +405,11 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     if (!audit?.corpus.text) return;
     await navigator.clipboard.writeText(audit.corpus.text);
     toast.success("Corpus extrait copie");
+  };
+
+  const notifyDocumentUpdated = async () => {
+    if (!document?.id) return;
+    await onDocumentUpdated?.(document.id);
   };
 
   const decisionMutation = useMutation({
@@ -466,7 +482,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         queryClient.invalidateQueries({ queryKey: auditQueryKey }),
         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
       ]);
-      router.refresh();
+      await notifyDocumentUpdated();
     },
   });
 
@@ -480,11 +496,13 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       }
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Extraction renforcee terminee");
-      queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] });
-      queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] });
-      router.refresh();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
+      ]);
+      await notifyDocumentUpdated();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -506,11 +524,13 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       }
       return response.json();
     },
-    onSuccess: (_data, params) => {
+    onSuccess: async (_data, params) => {
       toast.success(`Page ${params.pageNumber} retraitee`);
-      queryClient.invalidateQueries({ queryKey: auditQueryKey });
-      queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] });
-      router.refresh();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: auditQueryKey }),
+        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
+      ]);
+      await notifyDocumentUpdated();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -544,7 +564,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         queryClient.invalidateQueries({ queryKey: auditQueryKey }),
         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
       ]);
-      router.refresh();
+      await notifyDocumentUpdated();
     },
     onError: (error: Error) => toast.error(error.message),
     onSettled: () => {
@@ -614,12 +634,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   };
 
   const startReviewPagesRetry = () => {
-    const retryable = reviewPages.filter((page) => (
-      page.status === "FAILED" ||
-      page.status === "NEEDS_REVIEW" ||
-      page.evidenceSummary?.missingExpectedStructure ||
-      (page.visualRiskScore ?? 0) >= 55
-    ));
+    const retryable = reviewPages.filter(canRetryAuditPage);
     if (retryable.length === 0) return;
     setReprocessStartedAt(Date.now());
     setElapsedSeconds(0);
@@ -909,7 +924,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                                 Sinon, retente l&apos;extraction ou re-uploade un PDF plus lisible.
                               </p>
                               <div className="mt-3 flex flex-wrap gap-2">
-                                {(pageToInspect.status === "FAILED" || pageToInspect.status === "NEEDS_REVIEW") && (
+                                {canRetryAuditPage(pageToInspect) && (
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -1084,7 +1099,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                             Sinon, exclue la page ou relance l&apos;extraction renforcee.
                           </p>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {(reviewPageToInspect.status === "FAILED" || reviewPageToInspect.status === "NEEDS_REVIEW") && (
+                            {canRetryAuditPage(reviewPageToInspect) && (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -1315,7 +1330,7 @@ function ArtifactSummary({
                 onClick={() => window.open(previewImageUrl, "_blank", "noopener,noreferrer")}
               >
                 <ExternalLink className="mr-2 h-4 w-4" />
-                Ouvrir l'image
+                Ouvrir l&apos;image
               </Button>
               {pageUrl && (
                 <Button

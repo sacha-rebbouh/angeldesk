@@ -48,13 +48,6 @@ const nextConfig: NextConfig = {
         source: "/(.*)",
         headers: securityHeaders,
       },
-      // Cache immutable assets (Next.js hashed files)
-      {
-        source: "/_next/static/(.*)",
-        headers: [
-          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
-        ],
-      },
       // Cache fonts
       {
         source: "/fonts/(.*)",
@@ -67,8 +60,23 @@ const nextConfig: NextConfig = {
   // Optimize barrel imports - reduces cold start by 200-800ms
   // See: https://vercel.com/blog/how-we-optimized-package-imports-in-next-js
   serverExternalPackages: ["mammoth", "xlsx", "canvas", "pdf-to-img", "@react-pdf/renderer"],
+  // ARC-LIGHT Phase 2: ship the vendored Poppler bundle into every Lambda
+  // function that needs to rasterize PDFs. Paths are relative to repo root.
+  // See vendor/poppler/al2023-x64/MANIFEST for contents and THIRD_PARTY_NOTICES.md
+  // for license + rebuild procedure.
+  outputFileTracingIncludes: {
+    "/api/documents/upload": ["./vendor/poppler/al2023-x64/**"],
+    "/api/documents/[documentId]/process": ["./vendor/poppler/al2023-x64/**"],
+    "/api/documents/[documentId]/ocr": ["./vendor/poppler/al2023-x64/**"],
+    "/api/documents/[documentId]/extraction-pages/[pageNumber]/retry": [
+      "./vendor/poppler/al2023-x64/**",
+    ],
+    "/api/documents/[documentId]/preview-pages/[pageNumber]": [
+      "./vendor/poppler/al2023-x64/**",
+    ],
+  },
   experimental: {
-    middlewareClientMaxBodySize: "50mb",
+    proxyClientMaxBodySize: "50mb",
     optimizePackageImports: [
       // Icon library - 1583 modules without optimization
       "lucide-react",

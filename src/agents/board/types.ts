@@ -1,4 +1,8 @@
 import { ModelKey } from "@/services/openrouter/client";
+import type {
+  FrameworkLensAvailability,
+  ThesisAxisEvaluation,
+} from "@/agents/thesis/types";
 
 // ============================================================================
 // BOARD MEMBER CONFIGURATION
@@ -134,13 +138,13 @@ export interface BoardInput {
       title: string;
       detail: string;
     }>;
-    ycLens: { verdict: string };
-    thielLens: { verdict: string };
-    angelDeskLens: { verdict: string };
+    ycLens: { verdict: string; availability?: FrameworkLensAvailability };
+    thielLens: { verdict: string; availability?: FrameworkLensAvailability };
+    angelDeskLens: { verdict: string; availability?: FrameworkLensAvailability };
     evaluationAxes: {
-      thesisQuality: { verdict: string; summary: string };
-      investorProfileFit: { verdict: string; summary: string };
-      dealAccessibility: { verdict: string; summary: string };
+      thesisQuality: Pick<ThesisAxisEvaluation, "verdict" | "summary" | "sourceFrameworks">;
+      investorProfileFit: Pick<ThesisAxisEvaluation, "verdict" | "summary" | "sourceFrameworks">;
+      dealAccessibility: Pick<ThesisAxisEvaluation, "verdict" | "summary" | "sourceFrameworks">;
     };
   } | null;
 
@@ -149,6 +153,13 @@ export interface BoardInput {
     name: string;
     type: string;
     extractedText: string | null;
+    sourceKind?: string | null;
+    corpusRole?: string | null;
+    sourceDate?: Date | string | null;
+    receivedAt?: Date | string | null;
+    linkedQuestionText?: string | null;
+    corpusParentDocumentId?: string | null;
+    corpusParentDocumentName?: string | null;
   }[];
 
   // Enriched data from Context Engine

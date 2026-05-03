@@ -55,6 +55,23 @@ describe("Tier 1 Zod Schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  it("FinancialAuditResponseSchema accepte blockerReason=null", () => {
+    const data = {
+      meta: baseMeta,
+      score: baseScore,
+      findings: { metrics: [] },
+      redFlags: [],
+      questions: [],
+      alertSignal: {
+        ...baseAlertSignal,
+        blockerReason: null,
+      },
+      narrative: baseNarrative,
+    };
+    const result = FinancialAuditResponseSchema.safeParse(data);
+    expect(result.success).toBe(true);
+  });
+
   it("FinancialAuditResponseSchema rejects missing meta", () => {
     const data = {
       score: baseScore,

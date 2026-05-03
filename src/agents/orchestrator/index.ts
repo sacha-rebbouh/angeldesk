@@ -59,9 +59,12 @@ import {
   getCurrentFacts,
   formatFactStoreForAgents,
   createFactEventsBatch,
+  getCategoryFromFactKey,
   persistExtractedFactsWithMatching,
   updateFactsInMemory,
   reformatFactStoreWithValidations,
+  buildReliabilityFromValidation,
+  computeTruthConfidence,
 } from "@/services/fact-store";
 import type { CurrentFact, FactCategory } from "@/services/fact-store/types";
 import { replaceUnreliableWithPlaceholders, formatFactsForScoringAgents } from "@/services/fact-store/fact-filter";
@@ -132,6 +135,11 @@ export type { AnalysisOptions, AnalysisResult, AnalysisType, EarlyWarning, UserP
  * Example: "financial.arr" → "FINANCIAL", "team.cto_experience" → "TEAM"
  */
 function inferCategoryFromFactKey(factKey: string): FactCategory {
+  const taxonomyCategory = getCategoryFromFactKey(factKey);
+  if (taxonomyCategory) {
+    return taxonomyCategory;
+  }
+
   const prefix = factKey.split(".")[0]?.toLowerCase() ?? "";
   const mapping: Record<string, FactCategory> = {
     financial: "FINANCIAL",
@@ -2727,15 +2735,32 @@ export class AgentOrchestrator {
       const factEvents = allValidations
         .filter(v => v.status === 'VERIFIED' || v.status === 'CONTRADICTED')
         .filter(v => v.correctedValue !== undefined && v.correctedValue !== null)
-        .map(v => ({
-          factKey: v.factKey,
-          category: inferCategoryFromFactKey(v.factKey),
-          value: v.correctedValue,
-          displayValue: v.correctedDisplayValue ?? String(v.correctedValue),
-          source: 'DATA_ROOM' as const,
-          sourceConfidence: v.newConfidence,
-          extractedText: v.explanation,
-        }));
+        .map(v => {
+          const reliability = buildReliabilityFromValidation({
+            status: v.status,
+            validatedBy: v.validatedBy,
+            explanation: v.explanation,
+          });
+
+          return {
+            factKey: v.factKey,
+            category: inferCategoryFromFactKey(v.factKey),
+            value: v.correctedValue,
+            displayValue: v.correctedDisplayValue ?? String(v.correctedValue),
+            source: 'DATA_ROOM' as const,
+            sourceConfidence: v.newConfidence,
+            truthConfidence: reliability
+              ? computeTruthConfidence(v.newConfidence, reliability.reliability)
+              : undefined,
+            extractedText: v.explanation,
+            sourceMetadata: {
+              origin: "tier1-validation",
+              validatedBy: v.validatedBy,
+              validationStatus: v.status,
+            },
+            reliability,
+          };
+        });
       if (factEvents.length > 0) {
         const batchResult = await createFactEventsBatch(dealId, factEvents, 'RESOLVED', 'system');
         if (!batchResult.success) {
@@ -2871,8 +2896,19 @@ export class AgentOrchestrator {
               category: f.category,
               value: f.currentValue,
               displayValue: f.currentDisplayValue,
+              unit: undefined,
               source: f.currentSource,
               sourceConfidence: f.currentConfidence,
+              extractedText: "",
+              validAt: f.validAt?.toISOString(),
+              periodType: f.periodType,
+              periodLabel: f.periodLabel,
+              reliability: f.reliability?.reliability ?? "DECLARED",
+              reliabilityReasoning: f.reliability?.reasoning ?? "Existing fact store value",
+              isProjection: f.reliability?.isProjection ?? false,
+              documentDate: f.reliability?.temporalAnalysis?.documentDate,
+              dataPeriodEnd: f.reliability?.temporalAnalysis?.dataPeriodEnd,
+              projectionPercent: f.reliability?.temporalAnalysis?.projectionPercent,
             })) },
           } as unknown as AgentResult,
         } as Record<string, AgentResult> : {},
@@ -2928,7 +2964,13 @@ export class AgentOrchestrator {
               source: fact.source,
               sourceDocumentId: fact.sourceDocumentId,
               sourceConfidence: fact.sourceConfidence,
+              truthConfidence: fact.truthConfidence,
               extractedText: fact.extractedText,
+              sourceMetadata: fact.sourceMetadata,
+              validAt: fact.validAt,
+              periodType: fact.periodType,
+              periodLabel: fact.periodLabel,
+              reliability: fact.reliability,
             })),
             "CREATED", // eventType: new facts being created
             "system"
@@ -4046,6 +4088,17 @@ export class AgentOrchestrator {
     decision: "stop" | "continue" | "contest" | "timeout",
     options: { thesisBypass?: boolean } = {},
   ): Promise<AnalysisResult> {
+    return runWithLLMContext(
+      { agentName: null, analysisId },
+      () => this._continueAnalysisAfterThesisImpl(analysisId, decision, options)
+    );
+  }
+
+  private async _continueAnalysisAfterThesisImpl(
+    analysisId: string,
+    decision: "stop" | "continue" | "contest" | "timeout",
+    options: { thesisBypass?: boolean } = {},
+  ): Promise<AnalysisResult> {
     console.log(
       `[Orchestrator] Continuing analysis after thesis decision: analysisId=${analysisId}, decision=${decision}, bypass=${options.thesisBypass ?? false}`
     );
@@ -4174,6 +4227,17 @@ export class AgentOrchestrator {
    * 4. Skip already completed agents
    */
   async resumeAnalysis(
+    analysisId: string,
+    onProgress?: AnalysisOptions["onProgress"],
+    onEarlyWarning?: AnalysisOptions["onEarlyWarning"]
+  ): Promise<AnalysisResult> {
+    return runWithLLMContext(
+      { agentName: null, analysisId },
+      () => this._resumeAnalysisImpl(analysisId, onProgress, onEarlyWarning)
+    );
+  }
+
+  private async _resumeAnalysisImpl(
     analysisId: string,
     onProgress?: AnalysisOptions["onProgress"],
     onEarlyWarning?: AnalysisOptions["onEarlyWarning"]

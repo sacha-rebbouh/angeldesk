@@ -19,6 +19,18 @@ export type CorpusDocument = {
   processingStatus?: string;
   uploadedAt?: Date;
   extractionRuns?: CorpusRun[];
+  // Source/role metadata (corpus timeline & multi-source intake).
+  // Absent or null on legacy file uploads — the signature stays byte-identical in that case.
+  sourceKind?: string | null;
+  corpusRole?: string | null;
+  sourceDate?: Date | null;
+  receivedAt?: Date | null;
+  sourceAuthor?: string | null;
+  sourceSubject?: string | null;
+  linkedQuestionSource?: string | null;
+  linkedQuestionText?: string | null;
+  linkedRedFlagId?: string | null;
+  corpusParentDocumentId?: string | null;
 };
 
 export interface CorpusSnapshotMaterialization {
@@ -49,10 +61,32 @@ function getLatestReadyRun(document: CorpusDocument): CorpusRun | null {
   return latestRun?.readyForAnalysis ? latestRun : null;
 }
 
+/**
+ * True when the document carries any provenance/role/link metadata that should
+ * influence the corpus snapshot signature. Pure file uploads (default values
+ * everywhere) return false so that the legacy signature stays byte-identical.
+ */
+function hasNonFileSourceMetadata(document: CorpusDocument): boolean {
+  return (
+    (document.sourceKind != null && document.sourceKind !== "FILE") ||
+    (document.corpusRole != null && document.corpusRole !== "GENERAL") ||
+    document.sourceDate != null ||
+    document.receivedAt != null ||
+    !!document.sourceAuthor ||
+    !!document.sourceSubject ||
+    !!document.linkedQuestionSource ||
+    !!document.linkedQuestionText ||
+    !!document.linkedRedFlagId ||
+    !!document.corpusParentDocumentId
+  );
+}
+
 function buildDocumentSignature(document: CorpusDocument) {
   const latestReadyRun = getLatestReadyRun(document);
 
-  return {
+  // Legacy shape — emitted byte-identically for FILE documents without source/role metadata.
+  // Any change to the keys/order here will invalidate every existing CorpusSnapshot. Don't touch.
+  const legacySignature = {
     id: document.id,
     uploadedAt: document.uploadedAt?.toISOString() ?? null,
     latestReadyRun: latestReadyRun
@@ -64,6 +98,27 @@ function buildDocumentSignature(document: CorpusDocument) {
         }
       : null,
     extractedTextHash: hashExtractedText(document.extractedText),
+  };
+
+  if (!hasNonFileSourceMetadata(document)) {
+    return legacySignature;
+  }
+
+  // Extended shape — only emitted when at least one source/role/link field is set.
+  // Mutating any of these fields invalidates the snapshot and forces a re-analysis,
+  // which is the desired behavior for emails/notes whose chronology drives prompts.
+  return {
+    ...legacySignature,
+    sourceKind: document.sourceKind ?? null,
+    corpusRole: document.corpusRole ?? null,
+    sourceDate: document.sourceDate?.toISOString() ?? null,
+    receivedAt: document.receivedAt?.toISOString() ?? null,
+    sourceAuthor: document.sourceAuthor ?? null,
+    sourceSubject: document.sourceSubject ?? null,
+    linkedQuestionSource: document.linkedQuestionSource ?? null,
+    linkedQuestionText: document.linkedQuestionText ?? null,
+    linkedRedFlagId: document.linkedRedFlagId ?? null,
+    corpusParentDocumentId: document.corpusParentDocumentId ?? null,
   };
 }
 
@@ -226,6 +281,19 @@ export async function ensureCorpusSnapshotForDeal(params: {
       extractedText: true,
       processingStatus: true,
       uploadedAt: true,
+      // Source/role/link fields — required for the extended snapshot signature
+      // so a mutation on any of them (e.g. correcting sourceDate or relinking a
+      // question) invalidates the cached snapshot and forces a re-analysis.
+      sourceKind: true,
+      corpusRole: true,
+      sourceDate: true,
+      receivedAt: true,
+      sourceAuthor: true,
+      sourceSubject: true,
+      linkedQuestionSource: true,
+      linkedQuestionText: true,
+      linkedRedFlagId: true,
+      corpusParentDocumentId: true,
       extractionRuns: {
         orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
         take: 1,

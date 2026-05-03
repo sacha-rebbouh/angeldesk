@@ -47,9 +47,18 @@ function createStateMachine(
   return new AnalysisStateMachine({
     analysisId: "test-analysis-001",
     dealId: "test-deal-001",
-    agents: ["agent-a", "agent-b"],
+    agents: ["deck-forensics", "financial-auditor"],
     ...overrides,
   });
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver;
+  });
+
+  return { promise, resolve };
 }
 
 // ============================================================================
@@ -219,6 +228,80 @@ describe("AnalysisStateMachine — conditional checkpoints", () => {
     await sm.fail(new Error("cleanup"));
     await vi.advanceTimersByTimeAsync(0);
   });
+
+  it("periodic timer (force=false) saves when progress changes within the same state", async () => {
+    const sm = createStateMachine({ checkpointInterval: 500 });
+    await sm.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    mockSaveCheckpoint.mockClear();
+
+    sm.recordAgentComplete("deck-forensics", {
+      agentName: "deck-forensics",
+      success: true,
+      executionTimeMs: 10,
+      cost: 0.01,
+      data: {
+        meta: {
+          agentName: "deck-forensics",
+          analysisDate: new Date().toISOString(),
+          dataCompleteness: "minimal",
+          confidenceLevel: 70,
+          limitations: [],
+        },
+        score: {
+          value: 70,
+          grade: "B",
+          breakdown: [],
+        },
+        findings: {
+          narrativeAnalysis: {
+            storyCoherence: 70,
+            credibilityAssessment: "Minimal mock for checkpoint persistence test.",
+            narrativeStrengths: [],
+            narrativeWeaknesses: [],
+            criticalMissingInfo: [],
+          },
+          claimVerification: [],
+          inconsistencies: [],
+          deckQuality: {
+            professionalismScore: 70,
+            completenessScore: 70,
+            transparencyScore: 70,
+            issues: [],
+          },
+        },
+        dbCrossReference: {
+          claims: [],
+          uncheckedClaims: [],
+        },
+        redFlags: [],
+        questions: [],
+        alertSignal: {
+          hasBlocker: false,
+          recommendation: "PROCEED_WITH_CAUTION",
+          justification: "Checkpoint test mock.",
+        },
+        narrative: {
+          oneLiner: "Minimal mock deck result.",
+          summary: "Used only to verify checkpoint persistence logic.",
+          keyInsights: [],
+          forNegotiation: [],
+        },
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(mockSaveCheckpoint).toHaveBeenCalledTimes(1);
+    expect(mockSaveCheckpoint.mock.calls[0]?.[1]).toMatchObject({
+      completedAgents: ["deck-forensics"],
+      pendingAgents: ["financial-auditor"],
+    });
+
+    await sm.fail(new Error("cleanup"));
+    await vi.advanceTimersByTimeAsync(0);
+  });
 });
 
 // ============================================================================
@@ -282,6 +365,37 @@ describe("AnalysisStateMachine — transition-triggered checkpoints", () => {
     );
 
     // Cleanup
+    await sm.fail(new Error("cleanup"));
+  });
+
+  it("serializes checkpoint persistence to avoid out-of-order writes", async () => {
+    const firstCheckpoint = createDeferred<string>();
+    const secondCheckpoint = createDeferred<string>();
+
+    mockSaveCheckpoint
+      .mockImplementationOnce(() => firstCheckpoint.promise)
+      .mockImplementationOnce(() => secondCheckpoint.promise);
+
+    const sm = createStateMachine({
+      enableCheckpointing: true,
+      checkpointInterval: 999_999_999,
+    });
+
+    await sm.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSaveCheckpoint).toHaveBeenCalledTimes(1);
+
+    await sm.startExtraction();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSaveCheckpoint).toHaveBeenCalledTimes(1);
+
+    firstCheckpoint.resolve("checkpoint-1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSaveCheckpoint).toHaveBeenCalledTimes(2);
+
+    secondCheckpoint.resolve("checkpoint-2");
+    await new Promise((r) => setTimeout(r, 0));
+
     await sm.fail(new Error("cleanup"));
   });
 });

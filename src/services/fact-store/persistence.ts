@@ -14,6 +14,7 @@ import type {
   CurrentFact,
 } from './types';
 import { refreshCurrentFactsView } from './current-facts';
+import { canonicalizeFactKey, getFactKeyDefinition } from './fact-keys';
 
 // ═══════════════════════════════════════════════════════════════════════
 // TYPES
@@ -47,6 +48,43 @@ function toJsonValue(
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
+function sanitizeFactForPersistence(fact: ExtractedFact): ExtractedFact {
+  const factKey = canonicalizeFactKey(fact.factKey);
+  const definition = getFactKeyDefinition(factKey);
+
+  if (!definition) {
+    throw new Error(`Unknown factKey "${fact.factKey}"`);
+  }
+
+  const isArrayValue = Array.isArray(fact.value);
+  const isObjectValue =
+    typeof fact.value === 'object' &&
+    fact.value !== null &&
+    !isArrayValue;
+
+  if (definition.type === 'array') {
+    if (!isArrayValue) {
+      throw new Error(`Fact "${factKey}" expects an array value`);
+    }
+  } else if (isArrayValue || isObjectValue) {
+    throw new Error(`Fact "${factKey}" expects a scalar value, received structured data`);
+  }
+
+  const displayValue = fact.displayValue && fact.displayValue !== "[object Object]"
+    ? fact.displayValue
+    : typeof fact.value === 'string'
+      ? fact.value
+      : String(fact.value);
+
+  return {
+    ...fact,
+    factKey,
+    category: definition.category,
+    displayValue,
+    unit: fact.unit ?? definition.unit,
+  };
+}
+
 function buildFactEventCreateData(
   dealId: string,
   fact: ExtractedFact,
@@ -55,23 +93,25 @@ function buildFactEventCreateData(
   supersedesEventId?: string,
   reason?: string
 ): Prisma.FactEventUncheckedCreateInput {
+  const sanitizedFact = sanitizeFactForPersistence(fact);
+
   return {
     dealId,
-    factKey: fact.factKey,
-    category: fact.category,
-    value: toJsonValue(fact.value),
-    displayValue: fact.displayValue,
-    unit: fact.unit,
-    source: fact.source,
-    sourceDocumentId: fact.sourceDocumentId,
-    sourceConfidence: fact.sourceConfidence,
-    truthConfidence: fact.truthConfidence,
-    extractedText: fact.extractedText,
-    sourceMetadata: fact.sourceMetadata ? toJsonValue(fact.sourceMetadata) : undefined,
-    validAt: fact.validAt,
-    periodType: fact.periodType,
-    periodLabel: fact.periodLabel,
-    reliability: fact.reliability ? toJsonValue(fact.reliability) : undefined,
+    factKey: sanitizedFact.factKey,
+    category: sanitizedFact.category,
+    value: toJsonValue(sanitizedFact.value),
+    displayValue: sanitizedFact.displayValue,
+    unit: sanitizedFact.unit,
+    source: sanitizedFact.source,
+    sourceDocumentId: sanitizedFact.sourceDocumentId,
+    sourceConfidence: sanitizedFact.sourceConfidence,
+    truthConfidence: sanitizedFact.truthConfidence,
+    extractedText: sanitizedFact.extractedText,
+    sourceMetadata: sanitizedFact.sourceMetadata ? toJsonValue(sanitizedFact.sourceMetadata) : undefined,
+    validAt: sanitizedFact.validAt,
+    periodType: sanitizedFact.periodType,
+    periodLabel: sanitizedFact.periodLabel,
+    reliability: sanitizedFact.reliability ? toJsonValue(sanitizedFact.reliability) : undefined,
     eventType,
     supersedesEventId,
     createdBy,
@@ -139,8 +179,36 @@ export async function createFactEventsBatch(
   createdBy: 'system' | 'ba'
 ): Promise<{ success: boolean; events?: FactEvent[]; error?: string }> {
   try {
+    const validFacts: ExtractedFact[] = [];
+    const invalidReasons: string[] = [];
+
+    for (const fact of facts) {
+      try {
+        validFacts.push(sanitizeFactForPersistence(fact));
+      } catch (error) {
+        invalidReasons.push(
+          `${fact.factKey}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    if (invalidReasons.length > 0) {
+      console.warn(
+        `[FactStore] Skipped ${invalidReasons.length} invalid fact(s) during batch persistence: ${invalidReasons.join("; ")}`
+      );
+    }
+
+    if (validFacts.length === 0) {
+      return {
+        success: false,
+        error: invalidReasons.length > 0
+          ? `No valid facts to persist. ${invalidReasons.join("; ")}`
+          : "No facts to persist",
+      };
+    }
+
     const events = await prisma.$transaction(
-      facts.map((fact) =>
+      validFacts.map((fact) =>
         prisma.factEvent.create({
           data: buildFactEventCreateData(dealId, fact, eventType, createdBy),
         })
@@ -363,10 +431,13 @@ export async function createSupersessionEvent(
  * @returns A FactEventRecord
  */
 export function toFactEventRecord(event: FactEvent): FactEventRecord {
+  const factKey = canonicalizeFactKey(event.factKey);
+  const category = getFactKeyDefinition(factKey)?.category ?? (event.category as FactCategory);
+
   return {
     id: event.id,
-    factKey: event.factKey,
-    category: event.category as FactCategory,
+    factKey,
+    category,
     value: event.value,
     displayValue: event.displayValue,
     unit: event.unit ?? undefined,

@@ -15,18 +15,20 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronUp, Check, X, HelpCircle, Minus, Target, TrendingUp, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RECOMMENDATION_CONFIG } from "@/lib/ui-configs";
-import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
-
-interface FrameworkClaim {
-  claim: string;
-  derivedFrom: string;
-  status: "supported" | "contradicted" | "unverifiable" | "partial";
-  evidence?: string;
-  concern?: string;
-}
+import type {
+  FrameworkClaim,
+  FrameworkLensAvailability,
+  NormalizedThesisEvaluation,
+} from "@/agents/thesis/types";
+import {
+  getFrameworkLensAvailability,
+  isFrameworkLensEvaluated,
+  isThesisAxisUnavailable,
+} from "@/agents/thesis/types";
 
 interface FrameworkLens {
   framework: "yc" | "thiel" | "angel-desk";
+  availability?: FrameworkLensAvailability;
   verdict: string;
   confidence: number;
   question: string;
@@ -69,6 +71,30 @@ const CLAIM_STATUS_CONFIG: Record<FrameworkClaim["status"], { label: string; ico
   partial: { label: "Partiel", icon: Minus, className: "bg-amber-50 text-amber-700 border-amber-300" },
 };
 
+export function getFrameworkLensDisplayState(lens: Pick<FrameworkLens, "availability" | "verdict">) {
+  if (!isFrameworkLensEvaluated(lens)) {
+    return {
+      unavailable: true,
+      badgeLabel: "Indisponible",
+      badgeClassName: "bg-slate-100 text-slate-700 border-slate-300",
+      cardClassName: "bg-slate-50 border-slate-200",
+      detailLabel:
+        getFrameworkLensAvailability(lens) === "degraded_chain_exhausted"
+          ? "Aucun modèle de la chaîne n'a pu produire une évaluation exploitable."
+          : "Réponse partiellement récupérée, non retenue comme signal métier.",
+    };
+  }
+
+  const verdictCfg = RECOMMENDATION_CONFIG[lens.verdict] ?? RECOMMENDATION_CONFIG.contrasted;
+  return {
+    unavailable: false,
+    badgeLabel: verdictCfg.label,
+    badgeClassName: cn("font-semibold text-xs", verdictCfg.color),
+    cardClassName: verdictCfg.bg,
+    detailLabel: null,
+  };
+}
+
 export function ThesisFrameworksExpand({ ycLens, thielLens, angelDeskLens, evaluationAxes, defaultOpen = false }: ThesisFrameworksExpandProps) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -102,13 +128,19 @@ export function ThesisFrameworksExpand({ ycLens, thielLens, angelDeskLens, evalu
               evaluationAxes.investorProfileFit,
               evaluationAxes.dealAccessibility,
             ].map((axis) => {
-              const axisCfg = RECOMMENDATION_CONFIG[axis.verdict] ?? RECOMMENDATION_CONFIG.contrasted;
+              const axisUnavailable = isThesisAxisUnavailable(axis);
+              const axisCfg = axisUnavailable
+                ? null
+                : (RECOMMENDATION_CONFIG[axis.verdict] ?? RECOMMENDATION_CONFIG.contrasted);
               return (
                 <div key={axis.key} className="rounded-md border bg-slate-50 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{axis.label}</p>
-                    <Badge variant="outline" className={axisCfg.color}>
-                      {axisCfg.label}
+                    <Badge
+                      variant="outline"
+                      className={axisUnavailable ? "bg-slate-100 text-slate-700 border-slate-300" : axisCfg?.color}
+                    >
+                      {axisUnavailable ? "Indisponible" : axisCfg?.label}
                     </Badge>
                   </div>
                   <p className="mt-2 text-xs text-slate-700">{axis.summary}</p>
@@ -128,10 +160,10 @@ export function ThesisFrameworksExpand({ ycLens, thielLens, angelDeskLens, evalu
 function FrameworkSection({ lens }: { lens: FrameworkLens }) {
   const [claimsOpen, setClaimsOpen] = useState(false);
   const meta = FRAMEWORK_META[lens.framework];
-  const verdictCfg = RECOMMENDATION_CONFIG[lens.verdict] ?? RECOMMENDATION_CONFIG.contrasted;
+  const displayState = getFrameworkLensDisplayState(lens);
 
   return (
-    <div className={cn("rounded-md border p-4", verdictCfg.bg)}>
+    <div className={cn("rounded-md border p-4", displayState.cardClassName)}>
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="flex-1">
           <h4 className="font-semibold text-sm text-slate-900">{meta.label}</h4>
@@ -141,22 +173,24 @@ function FrameworkSection({ lens }: { lens: FrameworkLens }) {
           <p className="text-xs text-muted-foreground italic mt-1">{meta.focus}</p>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
-          <Badge variant="outline" className={cn("font-semibold text-xs", verdictCfg.color)}>
-            {verdictCfg.label}
+          <Badge variant="outline" className={displayState.badgeClassName}>
+            {displayState.badgeLabel}
           </Badge>
-          <span className="text-[10px] text-muted-foreground">Confiance {lens.confidence}/100</span>
+          <span className="text-[10px] text-muted-foreground">
+            {displayState.unavailable ? displayState.detailLabel : `Confiance ${lens.confidence}/100`}
+          </span>
         </div>
       </div>
 
       <p className="text-sm text-slate-800 leading-relaxed mb-3">{lens.summary}</p>
 
-      {(lens.strengths.length > 0 || lens.failures.length > 0) && (
+      {((!displayState.unavailable && lens.strengths.length > 0) || lens.failures.length > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-          {lens.strengths.length > 0 && (
+          {!displayState.unavailable && lens.strengths.length > 0 && (
             <div>
               <div className="flex items-center gap-1 text-xs font-medium text-green-700 mb-1">
                 <TrendingUp className="h-3 w-3" />
-                Points d'adherence
+                Points d&apos;adherence
               </div>
               <ul className="space-y-1">
                 {lens.strengths.map((s, i) => (
@@ -170,14 +204,17 @@ function FrameworkSection({ lens }: { lens: FrameworkLens }) {
           )}
           {lens.failures.length > 0 && (
             <div>
-              <div className="flex items-center gap-1 text-xs font-medium text-red-700 mb-1">
+              <div className={cn(
+                "flex items-center gap-1 text-xs font-medium mb-1",
+                displayState.unavailable ? "text-slate-700" : "text-red-700"
+              )}>
                 <AlertCircle className="h-3 w-3" />
-                Points de fragilite
+                {displayState.unavailable ? "Indisponibilité système" : "Points de fragilite"}
               </div>
               <ul className="space-y-1">
                 {lens.failures.map((f, i) => (
                   <li key={i} className="text-xs text-slate-700 flex items-start gap-1">
-                    <span className="text-red-600 mt-0.5">-</span>
+                    <span className={cn("mt-0.5", displayState.unavailable ? "text-slate-500" : "text-red-600")}>-</span>
                     <span>{f}</span>
                   </li>
                 ))}
@@ -187,7 +224,7 @@ function FrameworkSection({ lens }: { lens: FrameworkLens }) {
         </div>
       )}
 
-      {lens.claims.length > 0 && (
+      {!displayState.unavailable && lens.claims.length > 0 && (
         <div className="mt-2">
           <button
             type="button"

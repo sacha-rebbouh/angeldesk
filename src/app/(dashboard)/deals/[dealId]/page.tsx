@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft,
   ExternalLink,
@@ -17,6 +17,7 @@ import {
 import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
 import { ScoreGrid } from "@/components/deals/score-display";
 import { DocumentsTab } from "@/components/deals/documents-tab";
+import { DealDetailTabs } from "@/components/deals/deal-detail-tabs";
 import { TeamManagement } from "@/components/deals/team-management";
 import { ConditionsTab } from "@/components/deals/conditions/conditions-tab";
 import type { TermsResponse } from "@/components/deals/conditions/types";
@@ -64,6 +65,22 @@ async function getDeal(dealId: string, userId: string) {
           isLatest: true,
           supersededAt: true,
           uploadedAt: true,
+          sourceKind: true,
+          corpusRole: true,
+          sourceDate: true,
+          receivedAt: true,
+          sourceAuthor: true,
+          sourceSubject: true,
+          linkedQuestionSource: true,
+          linkedQuestionText: true,
+          linkedRedFlagId: true,
+          corpusParentDocumentId: true,
+          corpusParentDocument: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
           // extractedText excluded — can be 200KB+ per document, not needed for display
         },
       },
@@ -239,7 +256,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
       </div>
 
       {/* Thesis-first: ouvrir l'analyse IA par defaut pour montrer la these avant tout score */}
-      <Tabs defaultValue={tab || "analysis"} className="space-y-4">
+      <DealDetailTabs initialTab={tab || "analysis"}>
         <TabsList className="flex w-full overflow-x-auto">
           <TabsTrigger value="analysis" className="whitespace-nowrap">
             <Brain className="mr-1 h-4 w-4" />
@@ -386,7 +403,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
             founderNames={deal.founders.map((f) => f.name)}
           />
         </TabsContent>
-      </Tabs>
+      </DealDetailTabs>
 
       {/* Chat IA - split view on desktop (F86) */}
     </div>

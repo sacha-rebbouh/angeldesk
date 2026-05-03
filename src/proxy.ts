@@ -30,7 +30,6 @@ if (BYPASS_AUTH && typeof window === "undefined") {
 }
 
 export default clerkMiddleware(async (auth, req) => {
-  // In dev mode with BYPASS_AUTH, allow all routes
   if (BYPASS_AUTH) {
     return NextResponse.next();
   }

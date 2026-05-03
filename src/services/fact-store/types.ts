@@ -114,7 +114,10 @@ export interface CurrentFact {
   category: FactCategory;
   currentValue: unknown;
   currentDisplayValue: string;
+  currentUnit?: string;
+  currentExtractedText?: string;
   currentSource: FactSource;
+  currentSourceDocumentId?: string;
   currentConfidence: number;
   currentTruthConfidence?: number;
   isDisputed: boolean;

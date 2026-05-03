@@ -12,6 +12,8 @@ import {
 } from "@/services/board-credits";
 import { boardRequestSchema, checkRateLimit } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
+import { assertDealCorpusReady, CorpusNotReadyError } from "@/services/documents/readiness-gate";
+import { corpusNotReadyResponse } from "@/lib/api/corpus-not-ready-response";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes max (Vercel limit)
@@ -84,6 +86,17 @@ export async function POST(req: NextRequest) {
         { error: "Deal non trouve ou acces refuse" },
         { status: 404 }
       );
+    }
+
+    // ARC-LIGHT Phase 1 gate: block before session reservation + credit debit
+    // so a toxic corpus never costs the user credits nor triggers orchestration.
+    try {
+      await assertDealCorpusReady(dealId);
+    } catch (error) {
+      if (error instanceof CorpusNotReadyError) {
+        return corpusNotReadyResponse(error);
+      }
+      throw error;
     }
 
     const boardReservation = await prisma.$transaction(async (tx) => {

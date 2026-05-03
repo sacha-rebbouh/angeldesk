@@ -19,7 +19,9 @@ import type {
   ThesisExtractorOutput,
 } from "../thesis/types";
 import { worstVerdict, THESIS_VERDICT_ORDER } from "../thesis/types";
+import { formatReconcilerLensSection } from "../thesis/prompt-formatting";
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { getThesisCallOptions } from "@/lib/thesis/call-options";
 
 // ---------------------------------------------------------------------------
 // LLM response schema
@@ -50,6 +52,31 @@ const ThesisReconcilerSchema = z.object({
 });
 
 type LLMReconcilerOutput = z.infer<typeof ThesisReconcilerSchema>;
+
+type DeterministicThesisField =
+  | "problem"
+  | "solution"
+  | "whyNow"
+  | "moat"
+  | "pathToExit"
+  | "loadBearing";
+
+type DeterministicChallenge = {
+  field: DeterministicThesisField;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM";
+  agentName: string;
+  reason: string;
+};
+
+type DeterministicGuardrails = {
+  blockers: Array<{
+    agentName: string;
+    reason: string;
+    recommendation?: string;
+  }>;
+  challenges: DeterministicChallenge[];
+  verdictFloor?: ThesisVerdict;
+};
 
 // ---------------------------------------------------------------------------
 // Agent
@@ -159,31 +186,54 @@ LANGUE: Francais.`;
 
     // 2. Construire un resume des findings Tier 1/2/3
     const agentFindingsSummary = this.buildAgentFindingsSummary(context);
+    const deterministicGuardrails = this.buildDeterministicGuardrails(context);
 
     // 3. Construire le prompt user
-    const userPrompt = this.buildUserPrompt(thesis, agentFindingsSummary);
+    const userPrompt = this.buildUserPrompt(thesis, agentFindingsSummary, deterministicGuardrails);
 
     // 4. Appel LLM
     const { data } = await this.llmCompleteJSONValidated<LLMReconcilerOutput>(
       userPrompt,
       ThesisReconcilerSchema,
-      { temperature: 0.2 }
+      {
+        temperature: 0.2,
+        ...getThesisCallOptions<LLMReconcilerOutput>("reconciler", {
+          initialVerdict,
+          initialConfidence: thesis.confidence,
+        }),
+      }
     );
 
-    const updatedVerdict: ThesisVerdict = data.updatedVerdict;
-    const verdictChanged = updatedVerdict !== initialVerdict;
-
     // 5. Garde-fou : si updatedVerdict ameliore de plus d'1 cran, cap a +1
-    const clampedVerdict = this.clampVerdictChange(initialVerdict, updatedVerdict);
-    const finalVerdict = clampedVerdict;
+    const clampedVerdict = this.clampVerdictChange(initialVerdict, data.updatedVerdict);
+    const finalVerdict = this.applyDeterministicVerdictFloor(
+      clampedVerdict,
+      deterministicGuardrails.verdictFloor
+    );
     const finalChanged = finalVerdict !== initialVerdict;
+    const floorApplied = finalVerdict !== clampedVerdict;
+
+    const reconciliationNotes = [...data.reconciliationNotes];
+    if (floorApplied && deterministicGuardrails.verdictFloor) {
+      const blockerSummary = deterministicGuardrails.blockers
+        .slice(0, 2)
+        .map((blocker) => `${blocker.agentName}: ${blocker.reason}`)
+        .join(" | ");
+      reconciliationNotes.unshift({
+        title: "Garde-fou deterministe applique",
+        detail:
+          `Les signaux structures des agents imposent un floor de verdict a ` +
+          `${deterministicGuardrails.verdictFloor}. ${blockerSummary}`,
+        impact: "challenges",
+      });
+    }
 
     return {
       updatedVerdict: finalVerdict,
       updatedConfidence: data.updatedConfidence,
       verdictChanged: finalChanged,
       newRedFlags: data.newRedFlags,
-      reconciliationNotes: data.reconciliationNotes,
+      reconciliationNotes,
       hiddenStrengths: data.hiddenStrengths,
     };
   }
@@ -249,7 +299,172 @@ LANGUE: Francais.`;
     return sanitizeForLLM(combined, { maxLength: 30000, preserveNewlines: true });
   }
 
-  private buildUserPrompt(thesis: ThesisExtractorOutput, agentFindingsSummary: string): string {
+  private buildDeterministicGuardrails(context: AgentContext): DeterministicGuardrails {
+    const relevantAgents = [
+      "financial-auditor",
+      "market-intelligence",
+      "competitive-intel",
+      "team-investigator",
+      "customer-intel",
+      "gtm-analyst",
+      "tech-stack-dd",
+      "tech-ops-dd",
+      "legal-regulatory",
+      "cap-table-auditor",
+      "exit-strategist",
+      "deck-forensics",
+    ];
+
+    const blockers: DeterministicGuardrails["blockers"] = [];
+    const challenges: DeterministicChallenge[] = [];
+    const seenChallenges = new Set<string>();
+
+    for (const agentName of relevantAgents) {
+      const result = context.previousResults?.[agentName];
+      if (!result?.success || !("data" in result)) continue;
+
+      const data = (result as AgentResult & { data?: Record<string, unknown> }).data;
+      if (!data) continue;
+
+      const alertSignal = data.alertSignal as
+        | { hasBlocker?: boolean; blockerReason?: string; recommendation?: string }
+        | undefined;
+      if (alertSignal?.hasBlocker) {
+        const reason = alertSignal.blockerReason?.trim() || "Blocage critique signale par l'agent.";
+        blockers.push({
+          agentName,
+          reason,
+          recommendation: alertSignal.recommendation,
+        });
+        this.pushDeterministicChallenge(
+          challenges,
+          seenChallenges,
+          {
+            field: this.inferThesisField(reason),
+            severity: "CRITICAL",
+            agentName,
+            reason,
+          }
+        );
+      }
+
+      const redFlags = Array.isArray(data.redFlags)
+        ? (data.redFlags as Array<{ severity?: string; title?: string; description?: string }>)
+        : [];
+      for (const redFlag of redFlags) {
+        const severity = this.normalizeDeterministicSeverity(redFlag.severity);
+        if (severity === "MEDIUM") continue;
+        const reason = [redFlag.title, redFlag.description].filter(Boolean).join(" — ").trim();
+        if (!reason) continue;
+        this.pushDeterministicChallenge(
+          challenges,
+          seenChallenges,
+          {
+            field: this.inferThesisField(reason),
+            severity,
+            agentName,
+            reason,
+          }
+        );
+      }
+    }
+
+    const criticalSignals =
+      blockers.length +
+      challenges.filter((challenge) => challenge.severity === "CRITICAL").length;
+    const highSignals = challenges.filter((challenge) => challenge.severity === "HIGH").length;
+
+    let verdictFloor: ThesisVerdict | undefined;
+    if (criticalSignals >= 2) {
+      verdictFloor = "alert_dominant";
+    } else if (criticalSignals >= 1 || highSignals >= 3) {
+      verdictFloor = "vigilance";
+    }
+
+    return {
+      blockers,
+      challenges: challenges.slice(0, 8),
+      verdictFloor,
+    };
+  }
+
+  private pushDeterministicChallenge(
+    target: DeterministicChallenge[],
+    seen: Set<string>,
+    challenge: DeterministicChallenge
+  ): void {
+    const key = `${challenge.field}:${challenge.agentName}:${challenge.reason}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    target.push(challenge);
+  }
+
+  private normalizeDeterministicSeverity(value: string | undefined): "CRITICAL" | "HIGH" | "MEDIUM" {
+    const upper = (value ?? "").toUpperCase();
+    if (upper === "CRITICAL") return "CRITICAL";
+    if (upper === "HIGH") return "HIGH";
+    return "MEDIUM";
+  }
+
+  private inferThesisField(text: string): DeterministicThesisField {
+    const normalized = text.toLowerCase();
+    if (
+      /(moat|concurren|competition|diff[eé]renci|barri[eè]re|network effect|patent|commodity)/i.test(normalized)
+    ) {
+      return "moat";
+    }
+    if (/(why now|timing|fen[eê]tre|window|r[eé]glement|regulat|tailwind|headwind)/i.test(normalized)) {
+      return "whyNow";
+    }
+    if (/(exit|acqu[eé]reur|ipo|liquidit|m&a)/i.test(normalized)) {
+      return "pathToExit";
+    }
+    if (/(problem|douleur|pain|customer need|besoin|demande|adoption)/i.test(normalized)) {
+      return "problem";
+    }
+    if (/(solution|produit|product|tech|feasibility|impl[eé]mentation|fit)/i.test(normalized)) {
+      return "solution";
+    }
+    return "loadBearing";
+  }
+
+  private buildDeterministicGuardrailsSection(guardrails: DeterministicGuardrails): string {
+    if (guardrails.blockers.length === 0 && guardrails.challenges.length === 0) {
+      return "Aucun garde-fou deterministe critique n'a ete detecte avant appel LLM.";
+    }
+
+    const lines: string[] = [];
+    if (guardrails.blockers.length > 0) {
+      lines.push("## Blockers agents");
+      for (const blocker of guardrails.blockers) {
+        lines.push(`- ${blocker.agentName}: ${blocker.reason}`);
+      }
+    }
+
+    if (guardrails.challenges.length > 0) {
+      lines.push("## Challenges structures");
+      for (const challenge of guardrails.challenges) {
+        lines.push(
+          `- [${challenge.severity}] ${challenge.field} <- ${challenge.agentName}: ${challenge.reason}`
+        );
+      }
+    }
+
+    if (guardrails.verdictFloor) {
+      lines.push(`## Floor de verdict`);
+      lines.push(
+        `- Tu ne peux pas remonter au-dessus de ${guardrails.verdictFloor} sans preuve explicite contraire.`
+      );
+    }
+
+    return lines.join("\n");
+  }
+
+  private buildUserPrompt(
+    thesis: ThesisExtractorOutput,
+    agentFindingsSummary: string,
+    deterministicGuardrails: DeterministicGuardrails
+  ): string {
     return `# THESE INITIALE (extraite par thesis-extractor Tier 0.5)
 
 **Reformulee:** ${thesis.reformulated}
@@ -265,20 +480,21 @@ LANGUE: Francais.`;
 ${thesis.loadBearing.map((a) => `- [${a.status}] ${a.statement} — impact: ${a.impact}`).join("\n")}
 
 ## CLAIMS DES 3 LUNETTES (YC / Thiel / Angel Desk)
-**YC:** ${thesis.ycLens.summary}
-Claims: ${thesis.ycLens.claims.map((c) => `${c.claim} (${c.status})`).join(" | ")}
-
-**Thiel:** ${thesis.thielLens.summary}
-Claims: ${thesis.thielLens.claims.map((c) => `${c.claim} (${c.status})`).join(" | ")}
-
-**Angel Desk:** ${thesis.angelDeskLens.summary}
-Claims: ${thesis.angelDeskLens.claims.map((c) => `${c.claim} (${c.status})`).join(" | ")}
+${formatReconcilerLensSection("YC", thesis.ycLens)}
+${formatReconcilerLensSection("Thiel", thesis.thielLens)}
+${formatReconcilerLensSection("Angel Desk", thesis.angelDeskLens)}
 
 ---
 
 # FINDINGS DES AGENTS TIER 1/2/3
 
 ${agentFindingsSummary}
+
+---
+
+# GARDE-FOUS DETERMINISTES (pre-calcules cote TypeScript)
+
+${this.buildDeterministicGuardrailsSection(deterministicGuardrails)}
 
 ---
 
@@ -303,6 +519,16 @@ OUTPUT ATTENDU: JSON strict conforme au schema, en francais, sans texte hors JSO
       return THESIS_VERDICT_ORDER[initialIdx - 1];
     }
     return proposed;
+  }
+
+  private applyDeterministicVerdictFloor(
+    proposed: ThesisVerdict,
+    verdictFloor?: ThesisVerdict
+  ): ThesisVerdict {
+    if (!verdictFloor) return proposed;
+    return THESIS_VERDICT_ORDER.indexOf(verdictFloor) > THESIS_VERDICT_ORDER.indexOf(proposed)
+      ? verdictFloor
+      : proposed;
   }
 }
 

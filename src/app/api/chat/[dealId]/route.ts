@@ -22,6 +22,8 @@ import { handleApiError } from "@/lib/api-error";
 import type { DealChatContextData } from "@/services/chat-context";
 import { pickCanonicalAnalysis } from "@/services/deals/canonical-read-model";
 import { logger } from "@/lib/logger";
+import { assertDealCorpusReady, CorpusNotReadyError } from "@/services/documents/readiness-gate";
+import { corpusNotReadyResponse } from "@/lib/api/corpus-not-ready-response";
 
 // ============================================================================
 // SCHEMAS
@@ -144,6 +146,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (!ownsDeal) {
       console.error(`[Chat API] POST 404: deal=${dealId} user=${user.id} - deal not found or not owned`);
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+
+    // ARC-LIGHT Phase 1 gate: block chat BEFORE message persistence on a toxic
+    // corpus. Deal-level only for now; snapshot-aware variant (when analysisId
+    // is linked) is tracked under TODO arc-light-chat-snapshot and requires
+    // refactoring the canonical-analysis resolution to happen before addMessage.
+    try {
+      await assertDealCorpusReady(dealId);
+    } catch (error) {
+      if (error instanceof CorpusNotReadyError) {
+        return corpusNotReadyResponse(error);
+      }
+      throw error;
     }
 
     const body = await request.json();
@@ -403,21 +418,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
               summary: string;
               failures: string[];
               strengths: string[];
-            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+              availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted";
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [], availability: "evaluated" },
             thielLens: (latestThesis.thielLens as {
               verdict: string;
               confidence: number;
               summary: string;
               failures: string[];
               strengths: string[];
-            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+              availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted";
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [], availability: "evaluated" },
             angelDeskLens: (latestThesis.angelDeskLens as {
               verdict: string;
               confidence: number;
               summary: string;
               failures: string[];
               strengths: string[];
-            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [] },
+              availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted";
+            }) ?? { verdict: "unknown", confidence: 0, summary: "", failures: [], strengths: [], availability: "evaluated" },
             evaluationAxes: normalizedThesisEvaluation!,
             decision: latestThesis.decision,
             thesisBypass,

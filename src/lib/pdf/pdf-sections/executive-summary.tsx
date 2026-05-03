@@ -18,6 +18,7 @@ import {
   BodyText,
 } from "../pdf-components";
 import { s, sup } from "../pdf-helpers";
+import { isThesisAxisUnavailable } from "@/agents/thesis/types";
 import type { AgentResult, PdfExportData } from "../generate-analysis-pdf";
 import { hasFragileThesis } from "../thesis-gating";
 
@@ -69,9 +70,18 @@ export function ExecutiveSummarySection({
         <View style={{ marginBottom: 10 }}>
           <Text style={[gs.label, { marginBottom: 4 }]}>THÈSE CANONIQUE</Text>
           <BodyText>{thesis.reformulated}</BodyText>
-          <LabelValue label="Thesis Quality" value={sup(thesis.evaluationAxes.thesisQuality.verdict)} />
-          <LabelValue label="Investor Profile Fit" value={sup(thesis.evaluationAxes.investorProfileFit.verdict)} />
-          <LabelValue label="Deal Accessibility" value={sup(thesis.evaluationAxes.dealAccessibility.verdict)} />
+          <LabelValue
+            label="Thesis Quality"
+            value={isThesisAxisUnavailable(thesis.evaluationAxes.thesisQuality) ? "INDISPONIBLE" : sup(thesis.evaluationAxes.thesisQuality.verdict)}
+          />
+          <LabelValue
+            label="Investor Profile Fit"
+            value={isThesisAxisUnavailable(thesis.evaluationAxes.investorProfileFit) ? "INDISPONIBLE" : sup(thesis.evaluationAxes.investorProfileFit.verdict)}
+          />
+          <LabelValue
+            label="Deal Accessibility"
+            value={isThesisAxisUnavailable(thesis.evaluationAxes.dealAccessibility) ? "INDISPONIBLE" : sup(thesis.evaluationAxes.dealAccessibility.verdict)}
+          />
         </View>
       )}
 

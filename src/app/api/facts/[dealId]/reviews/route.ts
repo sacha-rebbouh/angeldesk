@@ -5,6 +5,10 @@ import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import type { Prisma } from "@prisma/client";
 import { handleApiError } from "@/lib/api-error";
+import {
+  buildDeclaredReliability,
+  validateTaxonomyFactInput,
+} from "@/services/fact-store";
 
 // ============================================================================
 // VALIDATION SCHEMAS
@@ -149,13 +153,40 @@ export async function POST(
       return NextResponse.json({ error: "Review not found" }, { status: 404 });
     }
 
+    const reviewValidation = validateTaxonomyFactInput({
+      factKey: review.factKey,
+      value: review.value,
+      displayValue: review.displayValue,
+      source: review.source as "DATA_ROOM" | "FINANCIAL_MODEL" | "FOUNDER_RESPONSE" | "PITCH_DECK" | "CONTEXT_ENGINE" | "BA_OVERRIDE",
+    });
+
+    if (!reviewValidation.ok) {
+      return NextResponse.json({ error: reviewValidation.error }, { status: 400 });
+    }
+
+    const normalizedReview = reviewValidation.data;
+    const candidateFactKeys = [...new Set([review.factKey, normalizedReview.factKey])];
+    const overrideValidation =
+      decision === "OVERRIDE"
+        ? validateTaxonomyFactInput({
+            factKey: normalizedReview.factKey,
+            value: overrideValue ?? review.value,
+            displayValue: overrideDisplayValue ?? review.displayValue,
+            source: "BA_OVERRIDE",
+          })
+        : null;
+
+    if (overrideValidation && !overrideValidation.ok) {
+      return NextResponse.json({ error: overrideValidation.error }, { status: 400 });
+    }
+
     await prisma.$transaction(async (tx) => {
       if (decision === "ACCEPT_NEW") {
         // Mark current fact as superseded, promote the review to CREATED
         await tx.factEvent.updateMany({
           where: {
             dealId,
-            factKey: review.factKey,
+            factKey: { in: candidateFactKeys },
             eventType: { notIn: ["DELETED", "SUPERSEDED", "PENDING_REVIEW"] },
           },
           data: { eventType: "SUPERSEDED" },
@@ -164,6 +195,9 @@ export async function POST(
         await tx.factEvent.update({
           where: { id: reviewId },
           data: {
+            factKey: normalizedReview.factKey,
+            category: normalizedReview.category,
+            unit: normalizedReview.unit,
             eventType: "CREATED",
             reason: `Accepted by user: ${reason}`,
           },
@@ -178,11 +212,13 @@ export async function POST(
           },
         });
       } else if (decision === "OVERRIDE") {
+        const normalizedOverride = overrideValidation!.data;
+
         // User provides a different value
         await tx.factEvent.updateMany({
           where: {
             dealId,
-            factKey: review.factKey,
+            factKey: { in: candidateFactKeys },
             eventType: { notIn: ["DELETED", "SUPERSEDED", "PENDING_REVIEW"] },
           },
           data: { eventType: "SUPERSEDED" },
@@ -194,16 +230,26 @@ export async function POST(
         });
 
         // Create new BA_OVERRIDE fact
+        const reliability = buildDeclaredReliability(
+          "Manual override submitted during review resolution",
+          "ba-review-override"
+        );
         await tx.factEvent.create({
           data: {
             dealId,
-            factKey: review.factKey,
-            category: review.category,
-            value: (overrideValue ?? review.value) as Prisma.InputJsonValue,
-            displayValue: overrideDisplayValue ?? review.displayValue,
-            unit: review.unit,
+            factKey: normalizedOverride.factKey,
+            category: normalizedOverride.category,
+            value: normalizedOverride.value as Prisma.InputJsonValue,
+            displayValue: normalizedOverride.displayValue,
+            unit: normalizedOverride.unit,
             source: "BA_OVERRIDE",
             sourceConfidence: 100,
+            truthConfidence: 100,
+            reliability: reliability as unknown as Prisma.InputJsonValue,
+            sourceMetadata: {
+              origin: "fact-review-override",
+              reviewId,
+            } as unknown as Prisma.InputJsonValue,
             eventType: "CREATED",
             createdBy: user.id,
             reason: reason,

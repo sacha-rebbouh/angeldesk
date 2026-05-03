@@ -1255,6 +1255,7 @@ vi.mock("@/services/openrouter/router", () => ({
   setAnalysisContext: vi.fn(),
   getAgentContext: vi.fn().mockReturnValue(null),
   getAnalysisContext: vi.fn().mockReturnValue(null),
+  runWithLLMContext: vi.fn().mockImplementation((_ctx: unknown, fn: () => unknown) => fn()),
   selectModel: vi.fn().mockReturnValue("HAIKU"),
 }));
 

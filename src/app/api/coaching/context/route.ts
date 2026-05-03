@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { compileDealContext } from "@/lib/live/context-compiler";
+import { evaluateDealCorpusReadinessSoft } from "@/services/documents/readiness-gate";
 
 // GET /api/coaching/context?dealId=xxx — Get compiled deal context for coaching
 export async function GET(request: NextRequest) {
@@ -40,6 +41,22 @@ export async function GET(request: NextRequest) {
         { error: "Deal not found" },
         { status: 404 }
       );
+    }
+
+    // ARC-LIGHT Phase 1 soft-gate: if the corpus is not ready, skip the
+    // (toxic) enrichment and return an empty context with a flag. This is a
+    // live coaching flow; blocking with 409 would disrupt the coach.
+    const readiness = await evaluateDealCorpusReadinessSoft(dealId);
+    if (!readiness.ready) {
+      console.warn(
+        "[extraction.coaching_context.skipped_enrichment]",
+        JSON.stringify({ dealId, reasonCode: readiness.reasonCode })
+      );
+      return NextResponse.json({
+        data: null,
+        corpusSkipped: true,
+        reasonCode: readiness.reasonCode,
+      });
     }
 
     const context = await compileDealContext(dealId);

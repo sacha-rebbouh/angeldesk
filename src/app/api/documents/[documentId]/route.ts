@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { safeDecrypt } from "@/lib/encryption";
 import { deleteFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 
@@ -10,6 +11,46 @@ const cuidSchema = z.string().cuid();
 
 interface RouteParams {
   params: Promise<{ documentId: string }>;
+}
+
+// GET /api/documents/[documentId] - Fetch one document status
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  try {
+    const user = await requireAuth();
+    const { documentId } = await params;
+
+    const cuidResult = cuidSchema.safeParse(documentId);
+    if (!cuidResult.success) {
+      return NextResponse.json({ error: "Invalid document ID format" }, { status: 400 });
+    }
+
+    const document = await prisma.document.findFirst({
+      where: { id: documentId },
+      include: {
+        deal: { select: { userId: true } },
+        corpusParentDocument: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!document) {
+      return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    }
+
+    if (document.deal.userId !== user.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    }
+
+    const includeText = request.nextUrl.searchParams.get("includeText") === "1";
+    const { deal, ...data } = document;
+    if (includeText && data.extractedText) {
+      data.extractedText = safeDecrypt(data.extractedText);
+    } else {
+      data.extractedText = null;
+    }
+    return NextResponse.json({ data });
+  } catch (error) {
+    return handleApiError(error, "fetch document");
+  }
 }
 
 // PATCH /api/documents/[documentId] - Rename a document
@@ -34,7 +75,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // Verify ownership through deal
     const document = await prisma.document.findFirst({
       where: { id: documentId },
-      include: { deal: { select: { userId: true } } },
+      include: {
+        deal: { select: { userId: true } },
+        corpusParentDocument: { select: { id: true, name: true } },
+      },
     });
 
     if (!document) {
@@ -71,7 +115,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     // Verify ownership through deal
     const document = await prisma.document.findFirst({
       where: { id: documentId },
-      include: { deal: { select: { userId: true } } },
+      include: {
+        deal: { select: { userId: true } },
+        corpusParentDocument: { select: { id: true, name: true } },
+      },
     });
 
     if (!document) {

@@ -28,13 +28,13 @@ function makeBoardInput(): BoardInput {
         },
       ],
       alerts: [],
-      ycLens: { verdict: "vigilance" },
-      thielLens: { verdict: "vigilance" },
-      angelDeskLens: { verdict: "contrasted" },
+      ycLens: { verdict: "vigilance", availability: "evaluated" },
+      thielLens: { verdict: "vigilance", availability: "evaluated" },
+      angelDeskLens: { verdict: "contrasted", availability: "evaluated" },
       evaluationAxes: {
-        thesisQuality: { verdict: "vigilance", summary: "La these reste fragile." },
-        investorProfileFit: { verdict: "contrasted", summary: "Le profil investisseur est mixte." },
-        dealAccessibility: { verdict: "favorable", summary: "Le ticket reste accessible." },
+        thesisQuality: { verdict: "vigilance", summary: "La these reste fragile.", sourceFrameworks: ["yc", "thiel"] },
+        investorProfileFit: { verdict: "contrasted", summary: "Le profil investisseur est mixte.", sourceFrameworks: ["angel-desk"] },
+        dealAccessibility: { verdict: "favorable", summary: "Le ticket reste accessible.", sourceFrameworks: ["angel-desk"] },
       },
     },
     documents: [],
@@ -82,6 +82,21 @@ describe("context-compressor", () => {
 
     expect(summary).toContain("Hypothese porteuse fragile");
     expect(summary).toContain("convertissent sans cycle enterprise lourd");
+  });
+
+  it("marks unavailable axes as system-unavailable rather than business verdicts", () => {
+    const input = makeBoardInput();
+    input.thesis!.evaluationAxes.investorProfileFit = {
+      verdict: "contrasted",
+      summary: "Indisponible",
+      sourceFrameworks: [],
+    };
+
+    const summary = buildDealSummary(input);
+    const context = compressBoardContext(input);
+
+    expect(summary).toContain("Investor Profile Fit=indisponible");
+    expect(context).toContain("**Investor Profile Fit** : indisponible");
   });
 
   it("keeps score as a secondary signal in tier-1 agent summaries", () => {

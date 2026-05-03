@@ -3,6 +3,7 @@ import { timingSafeEqual, createHmac } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { processVisualFrame } from "@/lib/live/visual-processor";
 import { compileDealContextCached, compileContextForColdMode } from "@/lib/live/context-compiler";
+import { evaluateDealCorpusReadinessSoft } from "@/services/documents/readiness-gate";
 import { publishCoachingCard, publishVisualAnalysis } from "@/lib/live/ably-server";
 import { isValidCuid } from "@/lib/sanitize";
 import { logCoachingError } from "@/lib/live/monitoring";
@@ -106,9 +107,28 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // Process inline (NOT in after() — LLM calls fail silently inside after() in dev mode)
     // The relay is fire-and-forget so response latency doesn't matter
     try {
-      const dealContext = session.dealId
-        ? await compileDealContextCached(session.dealId)
-        : compileContextForColdMode();
+      // ARC-LIGHT Phase 1 soft-gate: if the deal's corpus is not verified,
+      // process the frame in cold mode (no enrichment) instead of 409ing a
+      // high-frequency live webhook.
+      let dealContext;
+      if (session.dealId) {
+        const readiness = await evaluateDealCorpusReadinessSoft(session.dealId);
+        if (readiness.ready) {
+          dealContext = await compileDealContextCached(session.dealId);
+        } else {
+          console.warn(
+            "[extraction.visual_frame.skipped_enrichment]",
+            JSON.stringify({
+              sessionId: id,
+              dealId: session.dealId,
+              reasonCode: readiness.reasonCode,
+            })
+          );
+          dealContext = compileContextForColdMode();
+        }
+      } else {
+        dealContext = compileContextForColdMode();
+      }
 
       const result = await processVisualFrame(id, imageBase64, timestamp, dealContext);
 

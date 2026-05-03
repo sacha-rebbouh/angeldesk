@@ -30,6 +30,7 @@ import type {
   ThesisVerdict,
 } from "@/agents/thesis/types";
 import { REBUTTAL_PER_DEAL_CAP } from "@/agents/thesis/types";
+import { ThesisExtractorOutputSchema } from "@/agents/thesis/schemas";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -190,37 +191,15 @@ export const thesisService = {
       }
     }
 
-    // Coerce-or-default les champs JSON obligatoires au cas ou le LLM
-    // retourne une sortie partielle (Zod fallback path dans base-agent).
-    // Prisma rejette undefined sur un champ Json non-null ; on le force a [] / {}.
-    const safeLoadBearing = Array.isArray(extractorOutput.loadBearing) ? extractorOutput.loadBearing : [];
-    const safeAlerts = Array.isArray(extractorOutput.alerts) ? extractorOutput.alerts : [];
-    const emptyLens = (framework: "yc" | "thiel" | "angel-desk") => ({
-      framework,
-      verdict: "contrasted" as const,
-      confidence: 50,
-      question: `${framework} lens`,
-      claims: [],
-      failures: [],
-      strengths: [],
-      summary: `${framework} lens summary unavailable`,
-    });
-    const safeYcLens = extractorOutput.ycLens && typeof extractorOutput.ycLens === "object"
-      ? extractorOutput.ycLens
-      : emptyLens("yc");
-    const safeThielLens = extractorOutput.thielLens && typeof extractorOutput.thielLens === "object"
-      ? extractorOutput.thielLens
-      : emptyLens("thiel");
-    const safeAngelDeskLens = extractorOutput.angelDeskLens && typeof extractorOutput.angelDeskLens === "object"
-      ? extractorOutput.angelDeskLens
-      : emptyLens("angel-desk");
-    const safeVerdict: ThesisVerdict = ["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]
-      .includes(extractorOutput.verdict as ThesisVerdict)
-      ? (extractorOutput.verdict as ThesisVerdict)
-      : "contrasted";
-    const safeConfidence = typeof extractorOutput.confidence === "number" && Number.isFinite(extractorOutput.confidence)
-      ? Math.max(0, Math.min(100, Math.round(extractorOutput.confidence)))
-      : 50;
+    const parsed = ThesisExtractorOutputSchema.safeParse(extractorOutput);
+    if (!parsed.success) {
+      const errors = parsed.error.issues
+        .slice(0, 10)
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ");
+      throw new Error(`thesisService.create trust boundary rejection: ${errors}`);
+    }
+    const validatedOutput = parsed.data;
 
     return prisma.$transaction(async (tx) => {
       // Acquire advisory lock — bloque si une autre tx tient le meme lock
@@ -247,19 +226,19 @@ export const thesisService = {
           dealId,
           version: nextVersion,
           isLatest: true,
-          reformulated: extractorOutput.reformulated ?? "",
-          problem: extractorOutput.problem ?? "",
-          solution: extractorOutput.solution ?? "",
-          whyNow: extractorOutput.whyNow ?? "",
-          moat: extractorOutput.moat ?? null,
-          pathToExit: extractorOutput.pathToExit ?? null,
-          verdict: safeVerdict,
-          confidence: safeConfidence,
-          loadBearing: safeLoadBearing as unknown as Prisma.InputJsonValue,
-          ycLens: safeYcLens as unknown as Prisma.InputJsonValue,
-          thielLens: safeThielLens as unknown as Prisma.InputJsonValue,
-          angelDeskLens: safeAngelDeskLens as unknown as Prisma.InputJsonValue,
-          alerts: safeAlerts as unknown as Prisma.InputJsonValue,
+          reformulated: validatedOutput.reformulated,
+          problem: validatedOutput.problem,
+          solution: validatedOutput.solution,
+          whyNow: validatedOutput.whyNow,
+          moat: validatedOutput.moat ?? null,
+          pathToExit: validatedOutput.pathToExit ?? null,
+          verdict: validatedOutput.verdict,
+          confidence: validatedOutput.confidence,
+          loadBearing: validatedOutput.loadBearing as unknown as Prisma.InputJsonValue,
+          ycLens: validatedOutput.ycLens as unknown as Prisma.InputJsonValue,
+          thielLens: validatedOutput.thielLens as unknown as Prisma.InputJsonValue,
+          angelDeskLens: validatedOutput.angelDeskLens as unknown as Prisma.InputJsonValue,
+          alerts: validatedOutput.alerts as unknown as Prisma.InputJsonValue,
           sourceDocumentIds: resolvedSourceDocumentIds,
           sourceHash: resolvedSourceHash,
           corpusSnapshotId: resolvedCorpusSnapshotId,

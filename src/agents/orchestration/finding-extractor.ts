@@ -7,6 +7,7 @@ import type { ScoredFinding, ConfidenceScore, FindingCategory, Evidence } from "
 import { confidenceCalculator } from "@/scoring";
 import type { AgentResult } from "../types";
 import type { AgentFactValidation } from "@/services/fact-store/current-facts";
+import { canonicalizeFactKey } from "@/services/fact-store/fact-keys";
 
 // ============================================================================
 // TYPES
@@ -1461,14 +1462,14 @@ function extractTeamInvestigatorValidations(data: Record<string, unknown>): Agen
   const findings = data.findings as Record<string, unknown> | undefined;
   if (!findings) return [];
 
-  // Validate team.headcount from teamComposition
+  // Validate team.size from teamComposition
   const composition = findings.teamComposition as {
     teamSize?: number;
   } | undefined;
 
   if (composition?.teamSize !== undefined && composition.teamSize > 0) {
     validations.push({
-      factKey: 'team.headcount',
+      factKey: 'team.size',
       status: 'VERIFIED',
       newConfidence: 85,
       validatedBy: 'team-investigator',
@@ -1478,7 +1479,7 @@ function extractTeamInvestigatorValidations(data: Record<string, unknown>): Agen
     });
   } else if (composition?.teamSize === 0) {
     validations.push({
-      factKey: 'team.headcount',
+      factKey: 'team.size',
       status: 'UNVERIFIABLE',
       newConfidence: 30,
       validatedBy: 'team-investigator',
@@ -1511,7 +1512,7 @@ function extractCompetitiveIntelValidations(data: Record<string, unknown>): Agen
   const findings = data.findings as Record<string, unknown> | undefined;
   if (!findings) return [];
 
-  // Validate competition.competitor_count from competitors list
+  // Validate competition.competitors_count from competitors list
   const competitors = findings.competitors as Array<{
     name?: string;
     threatLevel?: string;
@@ -1519,7 +1520,7 @@ function extractCompetitiveIntelValidations(data: Record<string, unknown>): Agen
 
   if (competitors && competitors.length > 0) {
     validations.push({
-      factKey: 'competition.competitor_count',
+      factKey: 'competition.competitors_count',
       status: 'VERIFIED',
       newConfidence: 80,
       validatedBy: 'competitive-intel',
@@ -1529,7 +1530,7 @@ function extractCompetitiveIntelValidations(data: Record<string, unknown>): Agen
     });
   } else if (competitors && competitors.length === 0) {
     validations.push({
-      factKey: 'competition.competitor_count',
+      factKey: 'competition.competitors_count',
       status: 'UNVERIFIABLE',
       newConfidence: 40,
       validatedBy: 'competitive-intel',
@@ -1537,25 +1538,21 @@ function extractCompetitiveIntelValidations(data: Record<string, unknown>): Agen
     });
   }
 
-  // Validate competition.moat_strength from moatAnalysis
-  const moat = findings.moatAnalysis as {
-    overallMoatStrength?: string;
-    score?: number;
-  } | undefined;
-
-  if (moat?.score !== undefined) {
-    validations.push({
-      factKey: 'competition.moat_strength',
-      status: 'VERIFIED',
-      newConfidence: 75,
-      validatedBy: 'competitive-intel',
-      explanation: `Moat strength: ${moat.overallMoatStrength ?? 'unknown'} (score: ${moat.score}/100)`,
-      correctedValue: moat.score,
-      correctedDisplayValue: `${moat.score}/100 (${moat.overallMoatStrength ?? 'N/A'})`,
-    });
-  }
-
   return validations;
+}
+
+function pickPreferredNumericValue(
+  metric:
+    | { validated?: number; claimed?: number }
+    | undefined
+): number | undefined {
+  if (typeof metric?.validated === 'number' && Number.isFinite(metric.validated)) {
+    return metric.validated;
+  }
+  if (typeof metric?.claimed === 'number' && Number.isFinite(metric.claimed)) {
+    return metric.claimed;
+  }
+  return undefined;
 }
 
 function extractMarketIntelligenceValidations(data: Record<string, unknown>): AgentFactValidation[] {
@@ -1565,32 +1562,34 @@ function extractMarketIntelligenceValidations(data: Record<string, unknown>): Ag
 
   // Validate market.tam and market.sam from marketSize
   const marketSize = findings.marketSize as {
-    tam?: number;
-    sam?: number;
+    tam?: { validated?: number; claimed?: number; source?: string };
+    sam?: { validated?: number; claimed?: number; source?: string };
     assessment?: string;
   } | undefined;
 
-  if (marketSize?.tam !== undefined) {
+  const tam = pickPreferredNumericValue(marketSize?.tam);
+  if (tam !== undefined) {
     validations.push({
       factKey: 'market.tam',
       status: 'VERIFIED',
       newConfidence: 70,
       validatedBy: 'market-intelligence',
-      explanation: `TAM estimated at ${marketSize.tam} (assessment: ${marketSize.assessment ?? 'unknown'})`,
-      correctedValue: marketSize.tam,
-      correctedDisplayValue: `${marketSize.tam}`,
+      explanation: `TAM estimated at ${tam} (assessment: ${marketSize?.assessment ?? 'unknown'})`,
+      correctedValue: tam,
+      correctedDisplayValue: `${tam}`,
     });
   }
 
-  if (marketSize?.sam !== undefined) {
+  const sam = pickPreferredNumericValue(marketSize?.sam);
+  if (sam !== undefined) {
     validations.push({
       factKey: 'market.sam',
       status: 'VERIFIED',
       newConfidence: 70,
       validatedBy: 'market-intelligence',
-      explanation: `SAM estimated at ${marketSize.sam} (assessment: ${marketSize.assessment ?? 'unknown'})`,
-      correctedValue: marketSize.sam,
-      correctedDisplayValue: `${marketSize.sam}`,
+      explanation: `SAM estimated at ${sam} (assessment: ${marketSize?.assessment ?? 'unknown'})`,
+      correctedValue: sam,
+      correctedDisplayValue: `${sam}`,
     });
   }
 
@@ -1622,12 +1621,12 @@ function mapClaimCategoryToFactKey(category?: string, claimContent?: string): st
       { keywords: ['users', 'user count', 'utilisateurs'], factKey: 'traction.users_count' },
       { keywords: ['tam', 'total addressable'], factKey: 'market.tam' },
       { keywords: ['sam', 'serviceable addressable'], factKey: 'market.sam' },
-      { keywords: ['headcount', 'team size', 'employees'], factKey: 'team.headcount' },
+      { keywords: ['headcount', 'team size', 'employees'], factKey: 'team.size' },
       { keywords: ['founders', 'co-founders', 'cofounders'], factKey: 'team.founders_count' },
     ];
 
     for (const { keywords, factKey } of contentMapping) {
-      if (keywords.some(kw => contentLower.includes(kw))) return factKey;
+      if (keywords.some(kw => contentLower.includes(kw))) return canonicalizeFactKey(factKey);
     }
   }
 
@@ -1644,15 +1643,14 @@ function mapClaimCategoryToFactKey(category?: string, claimContent?: string): st
     'revenue': 'financial.arr',
     'financial': 'financial.arr',
     'market': 'market.tam',
-    'team': 'team.headcount',
+    'team': 'team.size',
     'growth': 'financial.revenue_growth_yoy',
-    'product': 'product.maturity',
     'customers': 'traction.customers_count',
     'users': 'traction.users_count',
   };
 
   for (const [key, factKey] of Object.entries(categoryMapping)) {
-    if (lower.includes(key)) return factKey;
+    if (lower.includes(key)) return canonicalizeFactKey(factKey);
   }
 
   console.warn(`[finding-extractor] Unmapped claim category: "${category}", content: "${claimContent?.slice(0, 80)}"`);
@@ -1678,7 +1676,7 @@ function mapMetricToFactKey(metric: string): string | null {
   };
 
   for (const [key, factKey] of Object.entries(mapping)) {
-    if (lower.includes(key)) return factKey;
+    if (lower.includes(key)) return canonicalizeFactKey(factKey);
   }
 
   return null;

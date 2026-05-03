@@ -6,7 +6,11 @@ import type {
   ThesisExtractorOutput,
   ThesisVerdict,
 } from "@/agents/thesis/types";
-import { THESIS_VERDICT_ORDER, worstVerdict } from "@/agents/thesis/types";
+import {
+  THESIS_VERDICT_ORDER,
+  worstVerdict,
+  isFrameworkLensEvaluated,
+} from "@/agents/thesis/types";
 
 type MinimalThesisInput = Pick<
   ThesisExtractorOutput,
@@ -134,76 +138,124 @@ function pickSummary(
   return firstMeaningful ?? fallback;
 }
 
+function buildUnavailableAxis(
+  key: ThesisAxisKey,
+  fallbackVerdict: ThesisVerdict,
+  summary: string
+): ThesisAxisEvaluation {
+  return {
+    key,
+    label: AXIS_META[key].label,
+    verdict: fallbackVerdict,
+    confidence: 0,
+    summary,
+    strengths: [],
+    failures: [],
+    claims: [],
+    sourceFrameworks: [],
+  };
+}
+
 export function normalizeThesisEvaluation(
   thesis: MinimalThesisInput
 ): NormalizedThesisEvaluation {
+  const evaluatedLenses = [thesis.ycLens, thesis.thielLens, thesis.angelDeskLens].filter(isFrameworkLensEvaluated);
+  const evaluatedQualityLenses = evaluatedLenses;
+  const evaluatedQualityVerdictInputs = [
+    thesis.verdict,
+    ...[thesis.ycLens, thesis.thielLens]
+      .filter(isFrameworkLensEvaluated)
+      .map((lens) => lens.verdict),
+  ];
+
   const qualityFailures = [
-    ...collectAxisItems(thesis.ycLens.failures, "thesis_quality"),
-    ...collectAxisItems(thesis.thielLens.failures, "thesis_quality"),
-    ...collectAxisItems(thesis.angelDeskLens.failures, "thesis_quality"),
+    ...evaluatedQualityLenses.flatMap((lens) => collectAxisItems(lens.failures, "thesis_quality")),
   ];
   const qualityStrengths = [
-    ...collectAxisItems(thesis.ycLens.strengths, "thesis_quality"),
-    ...collectAxisItems(thesis.thielLens.strengths, "thesis_quality"),
-    ...collectAxisItems(thesis.angelDeskLens.strengths, "thesis_quality"),
+    ...evaluatedQualityLenses.flatMap((lens) => collectAxisItems(lens.strengths, "thesis_quality")),
   ];
   const qualityClaims = [
-    ...collectAxisClaimTexts(thesis.ycLens, "thesis_quality"),
-    ...collectAxisClaimTexts(thesis.thielLens, "thesis_quality"),
-    ...collectAxisClaimTexts(thesis.angelDeskLens, "thesis_quality"),
+    ...evaluatedQualityLenses.flatMap((lens) => collectAxisClaimTexts(lens, "thesis_quality")),
   ];
 
-  const fitFailures = collectAxisItems(thesis.angelDeskLens.failures, "investor_profile_fit");
-  const fitStrengths = collectAxisItems(thesis.angelDeskLens.strengths, "investor_profile_fit");
-  const fitClaims = collectAxisClaimTexts(thesis.angelDeskLens, "investor_profile_fit");
+  const angelDeskAvailable = isFrameworkLensEvaluated(thesis.angelDeskLens);
+  const fitFailures = angelDeskAvailable ? collectAxisItems(thesis.angelDeskLens.failures, "investor_profile_fit") : [];
+  const fitStrengths = angelDeskAvailable ? collectAxisItems(thesis.angelDeskLens.strengths, "investor_profile_fit") : [];
+  const fitClaims = angelDeskAvailable ? collectAxisClaimTexts(thesis.angelDeskLens, "investor_profile_fit") : [];
 
-  const accessibilityFailures = collectAxisItems(thesis.angelDeskLens.failures, "deal_accessibility");
-  const accessibilityStrengths = collectAxisItems(thesis.angelDeskLens.strengths, "deal_accessibility");
-  const accessibilityClaims = collectAxisClaimTexts(thesis.angelDeskLens, "deal_accessibility");
+  const accessibilityFailures = angelDeskAvailable ? collectAxisItems(thesis.angelDeskLens.failures, "deal_accessibility") : [];
+  const accessibilityStrengths = angelDeskAvailable ? collectAxisItems(thesis.angelDeskLens.strengths, "deal_accessibility") : [];
+  const accessibilityClaims = angelDeskAvailable ? collectAxisClaimTexts(thesis.angelDeskLens, "deal_accessibility") : [];
 
   return {
-    thesisQuality: {
-      key: "thesis_quality",
-      label: AXIS_META.thesis_quality.label,
-      verdict: worstVerdict([thesis.verdict, thesis.ycLens.verdict, thesis.thielLens.verdict]),
-      confidence: Math.round((thesis.confidence + thesis.ycLens.confidence + thesis.thielLens.confidence) / 3),
-      summary: pickSummary(
-        [thesis.ycLens.summary, thesis.thielLens.summary, thesis.angelDeskLens.summary],
-        "La qualite intrinseque de la these doit etre lue a partir des hypotheses structurelles et de leur executabilite."
-      ),
-      strengths: qualityStrengths,
-      failures: qualityFailures,
-      claims: qualityClaims,
-      sourceFrameworks: ["yc", "thiel", "angel-desk"],
-    },
-    investorProfileFit: {
-      key: "investor_profile_fit",
-      label: AXIS_META.investor_profile_fit.label,
-      verdict: deriveSignalVerdict(fitFailures.length, fitStrengths.length, "contrasted"),
-      confidence: thesis.angelDeskLens.confidence,
-      summary: pickSummary(
-        fitClaims.length > 0 ? fitClaims : [thesis.angelDeskLens.summary],
-        "Le fit investisseur doit decrire quels profils prives sont compatibles ou non, sans polluer le jugement sur la these."
-      ),
-      strengths: fitStrengths,
-      failures: fitFailures,
-      claims: fitClaims,
-      sourceFrameworks: ["angel-desk"],
-    },
-    dealAccessibility: {
-      key: "deal_accessibility",
-      label: AXIS_META.deal_accessibility.label,
-      verdict: deriveSignalVerdict(accessibilityFailures.length, accessibilityStrengths.length, "contrasted"),
-      confidence: thesis.angelDeskLens.confidence,
-      summary: pickSummary(
-        accessibilityClaims.length > 0 ? accessibilityClaims : [thesis.angelDeskLens.summary],
-        "L'accessibilite du deal couvre ticket, instrument, dilution, liquidite et horizon de sortie."
-      ),
-      strengths: accessibilityStrengths,
-      failures: accessibilityFailures,
-      claims: accessibilityClaims,
-      sourceFrameworks: ["angel-desk"],
-    },
+    thesisQuality:
+      evaluatedQualityLenses.length === 0
+        ? buildUnavailableAxis(
+            "thesis_quality",
+            thesis.verdict,
+            "Thesis Quality indisponible : aucune lunette framework n'a été évaluée avec succès."
+          )
+        : {
+            key: "thesis_quality",
+            label: AXIS_META.thesis_quality.label,
+            verdict: worstVerdict(evaluatedQualityVerdictInputs),
+            confidence: Math.round(
+              (thesis.confidence + [thesis.ycLens, thesis.thielLens]
+                .filter(isFrameworkLensEvaluated)
+                .reduce((sum, lens) => sum + lens.confidence, 0)) /
+              (1 + [thesis.ycLens, thesis.thielLens].filter(isFrameworkLensEvaluated).length)
+            ),
+            summary: pickSummary(
+              evaluatedQualityLenses.map((lens) => lens.summary),
+              "La qualite intrinseque de la these doit etre lue a partir des hypotheses structurelles et de leur executabilite."
+            ),
+            strengths: qualityStrengths,
+            failures: qualityFailures,
+            claims: qualityClaims,
+            sourceFrameworks: evaluatedQualityLenses.map((lens) => lens.framework),
+          },
+    investorProfileFit:
+      !angelDeskAvailable
+        ? buildUnavailableAxis(
+            "investor_profile_fit",
+            "contrasted",
+            "Investor Profile Fit indisponible : la lunette Angel Desk n'a pas pu être évaluée."
+          )
+        : {
+            key: "investor_profile_fit",
+            label: AXIS_META.investor_profile_fit.label,
+            verdict: deriveSignalVerdict(fitFailures.length, fitStrengths.length, "contrasted"),
+            confidence: thesis.angelDeskLens.confidence,
+            summary: pickSummary(
+              fitClaims.length > 0 ? fitClaims : [thesis.angelDeskLens.summary],
+              "Le fit investisseur doit decrire quels profils prives sont compatibles ou non, sans polluer le jugement sur la these."
+            ),
+            strengths: fitStrengths,
+            failures: fitFailures,
+            claims: fitClaims,
+            sourceFrameworks: ["angel-desk"],
+          },
+    dealAccessibility:
+      !angelDeskAvailable
+        ? buildUnavailableAxis(
+            "deal_accessibility",
+            "contrasted",
+            "Deal Accessibility indisponible : la lunette Angel Desk n'a pas pu être évaluée."
+          )
+        : {
+            key: "deal_accessibility",
+            label: AXIS_META.deal_accessibility.label,
+            verdict: deriveSignalVerdict(accessibilityFailures.length, accessibilityStrengths.length, "contrasted"),
+            confidence: thesis.angelDeskLens.confidence,
+            summary: pickSummary(
+              accessibilityClaims.length > 0 ? accessibilityClaims : [thesis.angelDeskLens.summary],
+              "L'accessibilite du deal couvre ticket, instrument, dilution, liquidite et horizon de sortie."
+            ),
+            strengths: accessibilityStrengths,
+            failures: accessibilityFailures,
+            claims: accessibilityClaims,
+            sourceFrameworks: ["angel-desk"],
+          },
   };
 }
 

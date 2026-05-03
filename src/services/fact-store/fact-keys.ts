@@ -539,11 +539,23 @@ export const FACT_KEYS: Record<string, FactKeyDefinition> = {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════
 
+const FACT_KEY_ALIASES: Record<string, string> = {
+  "competition.competitor_count": "competition.competitors_count",
+  "team.headcount": "team.size",
+};
+
+/**
+ * Normalize legacy or drifted fact keys to the canonical taxonomy key.
+ */
+export function canonicalizeFactKey(factKey: string): string {
+  return FACT_KEY_ALIASES[factKey] ?? factKey;
+}
+
 /**
  * Get the definition for a specific fact key
  */
 export function getFactKeyDefinition(factKey: string): FactKeyDefinition | undefined {
-  return FACT_KEYS[factKey];
+  return FACT_KEYS[canonicalizeFactKey(factKey)];
 }
 
 /**
@@ -559,14 +571,14 @@ export function getFactKeysByCategory(category: FactCategory): string[] {
  * Check if a fact key is valid (exists in the taxonomy)
  */
 export function isValidFactKey(factKey: string): boolean {
-  return factKey in FACT_KEYS;
+  return canonicalizeFactKey(factKey) in FACT_KEYS;
 }
 
 /**
  * Get the category from a fact key
  */
 export function getCategoryFromFactKey(factKey: string): FactCategory | undefined {
-  const def = FACT_KEYS[factKey];
+  const def = FACT_KEYS[canonicalizeFactKey(factKey)];
   return def?.category;
 }
 

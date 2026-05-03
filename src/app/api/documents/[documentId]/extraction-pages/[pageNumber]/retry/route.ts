@@ -9,6 +9,7 @@ import { encryptText, safeDecrypt } from "@/lib/encryption";
 import { prisma } from "@/lib/prisma";
 import {
   buildDocumentPageArtifact,
+  calculateArtifactCompleteness,
   hashExtractedCorpus,
   refreshRunExtractionStats,
 } from "@/services/documents/extraction-runs";
@@ -189,7 +190,10 @@ export async function POST(_request: Request, context: RouteParams) {
     const retryModeLabel = (retryPage.mode ?? "supreme").replace("_", " ");
     const replacementText = `[Page ${pageNumber} - ${retryModeLabel} OCR retry]\n${retryPage.text.trim()}`;
     const updatedCorpus = replacePageText(existingCorpus, pageNumber, replacementText);
+    const qualityPlan = getPageQualityPlan(latestRun.summaryMetrics, pageNumber);
     const signals = detectPageSignals(retryPage.text);
+    const expectedHasTables = page.hasTables || signals.hasTables || isTableLikeQualityPlan(qualityPlan);
+    const expectedHasCharts = page.hasCharts || signals.hasCharts || isChartLikeQualityPlan(qualityPlan);
     const charCount = retryPage.text.length;
     const wordCount = retryPage.text.split(/\s+/).filter(Boolean).length;
     const qualityScore = scoreRetriedPage(charCount, signals);
@@ -197,8 +201,8 @@ export async function POST(_request: Request, context: RouteParams) {
       pageNumber,
       label: `Page ${pageNumber}`,
       text: retryPage.text,
-      hasTables: signals.hasTables,
-      hasCharts: signals.hasCharts,
+      hasTables: expectedHasTables,
+      hasCharts: expectedHasCharts,
       confidence: retryPage.confidence,
       needsHumanReview: retryPage.confidence === "low",
       ocrMode: retryPage.mode ?? "supreme",
@@ -208,20 +212,37 @@ export async function POST(_request: Request, context: RouteParams) {
       text: retryPage.text,
       charCount,
       wordCount,
-      hasTables: signals.hasTables,
-      hasCharts: signals.hasCharts,
+      hasTables: expectedHasTables,
+      hasCharts: expectedHasCharts,
       hasFinancialKeywords: signals.hasFinancialKeywords,
       hasTeamKeywords: signals.hasTeamKeywords,
       hasMarketKeywords: signals.hasMarketKeywords,
       artifact: pageArtifact,
     });
     pageArtifact.semanticAssessment = semanticAssessment;
+    const artifactCompleteness = calculateArtifactCompleteness({
+      hasTables: expectedHasTables,
+      hasCharts: expectedHasCharts,
+      artifact: pageArtifact,
+    });
     const status = determineRetriedPageStatus({
+      originalStatus: page.status,
       charCount,
       qualityScore,
       confidence: retryPage.confidence,
       semanticAssessment,
+      artifactCompletenessScore: artifactCompleteness.score,
+      visualRiskScore: readQualityPlanVisualRiskScore(qualityPlan),
     });
+    if (status === "NEEDS_REVIEW") {
+      pageArtifact.needsHumanReview = true;
+      if (!pageArtifact.unreadableRegions.some((region) => region.reason === "Targeted OCR retry requires human inspection before acceptance.")) {
+        pageArtifact.unreadableRegions.push({
+          reason: "Targeted OCR retry requires human inspection before acceptance.",
+          severity: "medium",
+        });
+      }
+    }
     const summaryMetrics = updateSummaryMetrics(latestRun.summaryMetrics, {
       pageNumber,
       extractionTier: "supreme",
@@ -239,8 +260,8 @@ export async function POST(_request: Request, context: RouteParams) {
           wordCount,
           qualityScore,
           confidence: retryPage.confidence,
-          hasTables: signals.hasTables,
-          hasCharts: signals.hasCharts,
+          hasTables: expectedHasTables,
+          hasCharts: expectedHasCharts,
           hasFinancialKeywords: signals.hasFinancialKeywords,
           hasTeamKeywords: signals.hasTeamKeywords,
           hasMarketKeywords: signals.hasMarketKeywords,
@@ -396,17 +417,41 @@ function canRetryPage(
 }
 
 function getVisualRiskScore(summaryMetrics: Prisma.JsonValue | null, pageNumber: number): number {
-  if (!isPlainObject(summaryMetrics) || !Array.isArray(summaryMetrics.pageQualityPlan)) return 0;
+  return readQualityPlanVisualRiskScore(getPageQualityPlan(summaryMetrics, pageNumber));
+}
+
+function getPageQualityPlan(summaryMetrics: Prisma.JsonValue | null, pageNumber: number): Record<string, unknown> | null {
+  if (!isPlainObject(summaryMetrics) || !Array.isArray(summaryMetrics.pageQualityPlan)) return null;
   const entry = summaryMetrics.pageQualityPlan.find((candidate) => (
     isPlainObject(candidate) && Number(candidate.pageNumber) === pageNumber
   ));
-  return isPlainObject(entry) && typeof entry.visualRiskScore === "number" ? entry.visualRiskScore : 0;
+  return isPlainObject(entry) ? entry : null;
+}
+
+function readQualityPlanVisualRiskScore(plan: Record<string, unknown> | null): number {
+  return typeof plan?.visualRiskScore === "number" ? plan.visualRiskScore : 0;
+}
+
+function isTableLikeQualityPlan(plan: Record<string, unknown> | null): boolean {
+  return plan?.pageClass === "structured_table" || plan?.pageClass === "transaction_terms";
+}
+
+function isChartLikeQualityPlan(plan: Record<string, unknown> | null): boolean {
+  return (
+    plan?.pageClass === "chart_kpi" ||
+    plan?.pageClass === "waterfall_summary" ||
+    plan?.pageClass === "segmented_infographic" ||
+    plan?.pageClass === "mixed_visual_analytics"
+  );
 }
 
 function determineRetriedPageStatus(params: {
+  originalStatus: string;
   charCount: number;
   qualityScore: number;
   confidence: "high" | "medium" | "low";
+  artifactCompletenessScore: number;
+  visualRiskScore: number;
   semanticAssessment: {
     semanticSufficiency: "sufficient" | "partial" | "insufficient";
     shouldBlockIfStructureMissing: boolean;
@@ -414,8 +459,24 @@ function determineRetriedPageStatus(params: {
     analyticalValueScore?: number;
   };
 }): PageStatus {
-  const { charCount, qualityScore, confidence, semanticAssessment } = params;
+  const {
+    originalStatus,
+    charCount,
+    qualityScore,
+    confidence,
+    semanticAssessment,
+    artifactCompletenessScore,
+    visualRiskScore,
+  } = params;
   if (charCount < 40) return "FAILED";
+  if (
+    originalStatus === "FAILED" ||
+    originalStatus === "NEEDS_REVIEW" ||
+    visualRiskScore >= 55 ||
+    artifactCompletenessScore < 80
+  ) {
+    return "NEEDS_REVIEW";
+  }
   if (
     (
       semanticAssessment.semanticSufficiency === "insufficient" &&
@@ -453,11 +514,17 @@ function updateSummaryMetrics(
 ): Prisma.InputJsonObject {
   const summary = isPlainObject(current) ? { ...current } : {};
   const existingPlan = Array.isArray(summary.pageQualityPlan) ? summary.pageQualityPlan : [];
+  const previousEntry = existingPlan.find((entry) => (
+    isPlainObject(entry) && entry.pageNumber === pagePlan.pageNumber
+  ));
+  const mergedPagePlan = isPlainObject(previousEntry)
+    ? { ...previousEntry, ...pagePlan }
+    : pagePlan;
   summary.pageQualityPlan = [
     ...existingPlan.filter((entry) => (
       !isPlainObject(entry) || entry.pageNumber !== pagePlan.pageNumber
     )),
-    pagePlan,
+    mergedPagePlan,
   ].sort((left, right) => {
     if (!isPlainObject(left) || !isPlainObject(right)) return 0;
     return Number(left.pageNumber ?? 0) - Number(right.pageNumber ?? 0);

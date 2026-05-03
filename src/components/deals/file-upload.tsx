@@ -1,7 +1,8 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
+import { put as putBlob } from "@vercel/blob/client";
 import {
   Upload,
   X,
@@ -24,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 
-const DOCUMENT_TYPES = [
+export const DOCUMENT_TYPES = [
   { value: "PITCH_DECK", label: "Pitch Deck" },
   { value: "FINANCIAL_MODEL", label: "Financial Model" },
   { value: "CAP_TABLE", label: "Cap Table" },
@@ -37,7 +38,7 @@ const DOCUMENT_TYPES = [
   { value: "OTHER", label: "Autre" },
 ] as const;
 
-type DocumentType = (typeof DOCUMENT_TYPES)[number]["value"];
+export type DocumentType = (typeof DOCUMENT_TYPES)[number]["value"];
 
 interface FileToUpload {
   id: string;
@@ -50,15 +51,44 @@ interface FileToUpload {
 
 interface UploadProgressSnapshot {
   phase: string;
+  documentId?: string;
+  documentName?: string;
   pageCount: number;
   pagesProcessed: number;
   percent: number;
   message?: string;
 }
 
+export interface UploadedDocumentSummary {
+  id: string;
+  name: string;
+  type: string;
+  storageUrl?: string | null;
+  storagePath?: string | null;
+  mimeType?: string | null;
+  processingStatus?: string;
+  extractionQuality?: number | null;
+  extractionMetrics?: unknown;
+  extractionWarnings?: Array<{ code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }> | null;
+  requiresOCR?: boolean;
+  uploadedAt?: string | Date;
+  sourceKind?: "FILE" | "EMAIL" | "NOTE";
+  corpusRole?: "GENERAL" | "DILIGENCE_RESPONSE";
+  sourceDate?: string | Date | null;
+  receivedAt?: string | Date | null;
+  sourceAuthor?: string | null;
+  sourceSubject?: string | null;
+  linkedQuestionSource?: "RED_FLAG" | "QUESTION_TO_ASK" | null;
+  linkedQuestionText?: string | null;
+  linkedRedFlagId?: string | null;
+  corpusParentDocumentId?: string | null;
+  corpusParentDocument?: { id: string; name: string } | null;
+}
+
 interface FileUploadProps {
   dealId: string;
-  onUploadComplete?: (document: { id: string; name: string; type: string }) => void;
+  onUploadQueued?: (document: UploadedDocumentSummary) => void;
+  onUploadComplete?: (document: UploadedDocumentSummary) => void;
   onError?: (error: string) => void;
   onAllComplete?: () => void;
   disabled?: boolean;
@@ -77,6 +107,11 @@ const ACCEPTED_TYPES = {
 };
 
 const MAX_SIZE = 50 * 1024 * 1024;
+const SERVER_UPLOAD_LIMIT_BYTES = 4 * 1024 * 1024;
+
+type UploadApiResult = {
+  data: UploadedDocumentSummary;
+};
 
 function getFileIcon(mimeType: string) {
   if (mimeType.includes("spreadsheet") || mimeType.includes("excel")) return FileSpreadsheet;
@@ -89,8 +124,84 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+async function parseUploadApiResponse(response: Response): Promise<UploadApiResult> {
+  if (response.ok) {
+    return response.json() as Promise<UploadApiResult>;
+  }
+  throw new Error(await getUploadErrorMessage(response));
+}
+
+async function getUploadErrorMessage(response: Response): Promise<string> {
+  const responseText = await response.text();
+  let errorMessage = `Upload failed (${response.status})`;
+  try {
+    const errorData = JSON.parse(responseText) as {
+      error?: string;
+      debug?: { name?: string; code?: string; message?: string };
+    };
+    const debugSuffix = errorData.debug
+      ? ` - ${[errorData.debug.name, errorData.debug.code, errorData.debug.message].filter(Boolean).join(": ")}`
+      : "";
+    errorMessage = `${errorData.error ?? errorMessage}${debugSuffix}`;
+  } catch {
+    if (responseText.includes("FUNCTION_PAYLOAD_TOO_LARGE")) {
+      errorMessage = "Upload failed: file exceeds Vercel's 4.5 MB function payload limit";
+    }
+  }
+  return errorMessage;
+}
+
+async function encryptFileForServer(file: File): Promise<{
+  encryptedBlob: Blob;
+  keyHex: string;
+  ivHex: string;
+}> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Le chiffrement navigateur est indisponible pour cet upload");
+  }
+
+  const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+  const ivBytes = crypto.getRandomValues(new Uint8Array(12));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    keyBytes,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt"]
+  );
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: ivBytes },
+    key,
+    await file.arrayBuffer()
+  );
+
+  return {
+    encryptedBlob: new Blob([new Uint8Array(encrypted)], { type: "application/octet-stream" }),
+    keyHex: bytesToHex(keyBytes),
+    ivHex: bytesToHex(ivBytes),
+  };
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function buildTemporaryBlobPathname(dealId: string, fileName: string): string {
+  const sanitizedName = fileName
+    .replace(/[/\\]/g, "_")
+    .replace(/\.\./g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "_");
+  return `tmp/document-uploads/${dealId}/${crypto.randomUUID()}-${sanitizedName}.enc`;
+}
+
+function canFallbackToServerUpload(): boolean {
+  if (typeof window === "undefined") return false;
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
 export const FileUpload = memo(function FileUpload({
   dealId,
+  onUploadQueued,
   onUploadComplete,
   onError,
   onAllComplete,
@@ -103,6 +214,7 @@ export const FileUpload = memo(function FileUpload({
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
   const [activeProgressId, setActiveProgressId] = useState<string | null>(null);
   const [serverProgress, setServerProgress] = useState<UploadProgressSnapshot | null>(null);
+  const announcedDocumentIdsRef = useRef<Set<string>>(new Set());
 
   const onDrop = useCallback(
     (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
@@ -147,34 +259,149 @@ export const FileUpload = memo(function FileUpload({
       setServerProgress(null);
 
       try {
-        const formData = new FormData();
-        formData.append("file", fileData.file);
-        formData.append("dealId", dealId);
-        formData.append("type", fileData.documentType);
-        formData.append("progressId", progressId);
-        if (fileData.documentType === "OTHER" && fileData.customType) {
-          formData.append("customType", fileData.customType);
-        }
-
-        const response = await fetch("/api/documents/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error ?? "Upload failed");
-        }
-
-        const result = await response.json();
+        const result = fileData.file.size > SERVER_UPLOAD_LIMIT_BYTES
+          ? await uploadViaClientBlob(fileData, progressId)
+          : await uploadViaServerRoute(fileData, progressId);
         updateFile(fileData.id, { status: "success" });
-        onUploadComplete?.({ id: result.data.id, name: fileData.file.name, type: fileData.documentType });
+        onUploadComplete?.({
+          ...result.data,
+          id: result.data.id,
+          name: result.data.name ?? fileData.file.name,
+          type: result.data.type ?? fileData.documentType,
+        });
         return true;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Upload failed";
         updateFile(fileData.id, { status: "error", error: errorMessage });
         onError?.(errorMessage);
         return false;
+      }
+
+      async function uploadViaServerRoute(
+        currentFile: FileToUpload,
+        currentProgressId: string
+      ): Promise<UploadApiResult> {
+        const formData = new FormData();
+        formData.append("file", currentFile.file);
+        formData.append("dealId", dealId);
+        formData.append("type", currentFile.documentType);
+        formData.append("progressId", currentProgressId);
+        if (currentFile.documentType === "OTHER" && currentFile.customType) {
+          formData.append("customType", currentFile.customType);
+        }
+
+        const response = await fetch("/api/documents/upload", {
+          method: "POST",
+          body: formData,
+        });
+        return parseUploadApiResponse(response);
+      }
+
+      async function uploadViaClientBlob(
+        currentFile: FileToUpload,
+        currentProgressId: string
+      ): Promise<UploadApiResult> {
+        setServerProgress({
+          phase: "started",
+          pageCount: 0,
+          pagesProcessed: 0,
+          percent: 2,
+          message: "Chiffrement local du fichier avant transfert",
+        });
+        const encryptedUpload = await encryptFileForServer(currentFile.file);
+        const pathname = buildTemporaryBlobPathname(dealId, currentFile.file.name);
+        const multipart = encryptedUpload.encryptedBlob.size >= 8 * 1024 * 1024;
+        const clientPayload = JSON.stringify({
+          dealId,
+          fileName: currentFile.file.name,
+          mimeType: currentFile.file.type,
+          sizeBytes: currentFile.file.size,
+        });
+        const tokenResponse = await fetch("/api/documents/upload/client", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "blob.generate-client-token",
+            payload: {
+              pathname,
+              multipart,
+              clientPayload,
+            },
+          }),
+        });
+
+        if (!tokenResponse.ok) {
+          const tokenErrorMessage = await getUploadErrorMessage(tokenResponse);
+          if (canFallbackToServerUpload()) {
+            setServerProgress({
+              phase: "started",
+              pageCount: 0,
+              pagesProcessed: 0,
+              percent: 3,
+              message: "Upload Blob indisponible en local, fallback serveur",
+            });
+            return uploadViaServerRoute(currentFile, currentProgressId);
+          }
+          throw new Error(tokenErrorMessage);
+        }
+
+        const tokenPayload = await tokenResponse.json() as { clientToken?: string };
+        if (!tokenPayload.clientToken) {
+          throw new Error("Upload token response is missing clientToken");
+        }
+
+        const blob = await putBlob(
+          pathname,
+          encryptedUpload.encryptedBlob,
+          {
+            access: "public",
+            token: tokenPayload.clientToken,
+            contentType: "application/octet-stream",
+            multipart,
+            onUploadProgress: ({ percentage }) => {
+              setServerProgress({
+                phase: "started",
+                pageCount: 0,
+                pagesProcessed: 0,
+                percent: Math.max(2, Math.min(35, Math.round(percentage * 0.35))),
+                message: `Transfert sécurisé vers le stockage (${Math.round(percentage)}%)`,
+              });
+            },
+          }
+        );
+
+        setServerProgress({
+          phase: "started",
+          pageCount: 0,
+          pagesProcessed: 0,
+          percent: 36,
+          message: "Transfert terminé, lancement de l'extraction",
+        });
+
+        const response = await fetch("/api/documents/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            uploadSource: "blob",
+            dealId,
+            type: currentFile.documentType,
+            customType: currentFile.documentType === "OTHER" ? currentFile.customType : null,
+            progressId: currentProgressId,
+            file: {
+              name: currentFile.file.name,
+              type: currentFile.file.type,
+              size: currentFile.file.size,
+              blobUrl: blob.url,
+              blobPathname: blob.pathname,
+              encryption: {
+                algorithm: "AES-256-GCM",
+                key: encryptedUpload.keyHex,
+                iv: encryptedUpload.ivHex,
+              },
+            },
+          }),
+        });
+        return parseUploadApiResponse(response);
       }
     },
     [dealId, updateFile, onUploadComplete, onError]
@@ -209,14 +436,18 @@ export const FileUpload = memo(function FileUpload({
   const uploadingFile = files.find((file) => file.status === "uploading") ?? null;
   const totalFilesToProcess = files.filter((file) => file.status !== "error").length || 1;
   const completedFiles = files.filter((file) => file.status === "success").length;
+  const uploadingDocumentType = uploadingFile?.documentType;
+  const uploadingMimeType = uploadingFile?.file.type;
   const estimatedUploadProgress = useMemo(() => {
     if (serverProgress) return serverProgress.percent;
     if (!isUploading) return 0;
     const fileBaseline = (completedFiles / totalFilesToProcess) * 100;
     const perFileCap = 100 / totalFilesToProcess;
     const currentFileExpectedSeconds = Math.max(45, Math.ceil(((uploadingFile?.file.size ?? 5_000_000) / (1024 * 1024)) * 10));
-    const currentFileProgress = Math.min(0.95, elapsedSeconds / currentFileExpectedSeconds) * perFileCap;
-    return Math.min(95, Math.max(5, Math.round(fileBaseline + currentFileProgress)));
+    // Without backend progress we only show upload/preparation progress. Do not
+    // pretend extraction is 95% complete while the server is still doing OCR.
+    const currentFileProgress = Math.min(0.35, elapsedSeconds / currentFileExpectedSeconds * 0.35) * perFileCap;
+    return Math.min(95, Math.max(3, Math.round(fileBaseline + currentFileProgress)));
   }, [completedFiles, elapsedSeconds, isUploading, serverProgress, totalFilesToProcess, uploadingFile?.file.size]);
 
   useEffect(() => {
@@ -232,25 +463,57 @@ export const FileUpload = memo(function FileUpload({
   useEffect(() => {
     if (!isUploading || !activeProgressId) return;
     let cancelled = false;
-    const poll = async () => {
+    let timeoutId: number | null = null;
+    let attempts = 0;
+    const poll = async (): Promise<void> => {
       try {
         const response = await fetch(`/api/documents/upload/progress/${activeProgressId}`);
-        if (!response.ok) return;
-        const payload = await response.json() as { data: UploadProgressSnapshot | null };
-        if (!cancelled && payload.data) {
-          setServerProgress(payload.data);
+        if (response.ok) {
+          const payload = await response.json() as { data: UploadProgressSnapshot | null };
+          if (!cancelled && payload.data) {
+            setServerProgress(payload.data);
+            if (
+              payload.data.documentId &&
+              !announcedDocumentIdsRef.current.has(payload.data.documentId)
+            ) {
+              announcedDocumentIdsRef.current.add(payload.data.documentId);
+              onUploadQueued?.({
+                id: payload.data.documentId,
+                name: payload.data.documentName ?? activeFileName ?? uploadingFile?.file.name ?? "Document",
+                type: uploadingDocumentType ?? "OTHER",
+                mimeType: uploadingMimeType ?? null,
+                processingStatus: "PROCESSING",
+                extractionQuality: null,
+                extractionMetrics: {
+                  status: "processing",
+                  pageCount: payload.data.pageCount,
+                  pagesProcessed: payload.data.pagesProcessed,
+                },
+                extractionWarnings: null,
+                requiresOCR: uploadingMimeType === "application/pdf",
+                uploadedAt: new Date(),
+              });
+            }
+            if (payload.data.phase === "completed" || payload.data.phase === "failed") {
+              return;
+            }
+          }
         }
       } catch {
         // Keep the local elapsed-time fallback if progress polling is temporarily unavailable.
       }
+      if (!cancelled) {
+        attempts += 1;
+        const delayMs = attempts < 10 ? 2_000 : attempts < 30 ? 4_000 : 7_000;
+        timeoutId = window.setTimeout(poll, delayMs);
+      }
     };
     poll();
-    const intervalId = window.setInterval(poll, 1500);
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [activeProgressId, isUploading]);
+  }, [activeFileName, activeProgressId, isUploading, onUploadQueued, uploadingDocumentType, uploadingFile?.file.name, uploadingMimeType]);
 
   return (
     <div className="relative space-y-3">
@@ -342,6 +605,7 @@ export const FileUpload = memo(function FileUpload({
                   {/* Remove button */}
                   {isPending && (
                     <Button
+                      type="button"
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6 shrink-0"
@@ -374,7 +638,7 @@ export const FileUpload = memo(function FileUpload({
 
       {/* Upload button */}
       {pendingCount > 0 && (
-        <Button onClick={handleUploadAll} disabled={isUploading} className="w-full">
+        <Button type="button" onClick={handleUploadAll} disabled={isUploading} className="w-full">
           {isUploading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback, useState, useEffect, memo, useSyncExternalStore } from "react";
+import { useMemo, useCallback, useState, useEffect, memo } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useChannel } from "ably/react";
 import type { Message } from "ably";
@@ -83,14 +83,14 @@ const EMPTY_SESSIONS: SessionData[] = [];
 const EMPTY_PARTICIPANTS: Array<{ name: string; role: string; speakerId: string }> = [];
 
 function useNow(intervalMs: number): number {
-  return useSyncExternalStore(
-    (onStoreChange) => {
-      const interval = setInterval(onStoreChange, intervalMs);
-      return () => clearInterval(interval);
-    },
-    () => Date.now(),
-    () => Date.now(),
-  );
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(interval);
+  }, [intervalMs]);
+
+  return now;
 }
 
 // =============================================================================

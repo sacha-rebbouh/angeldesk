@@ -424,6 +424,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   // thesis-extractor (Tier 0.5) produit sa these et attend la decision BA.
   type ThesisFrameworkLens = {
     framework: "yc" | "thiel" | "angel-desk";
+    availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted";
     verdict: string;
     confidence: number;
     question: string;

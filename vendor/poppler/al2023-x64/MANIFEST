@@ -1,0 +1,62 @@
+# ARC-LIGHT Poppler AL2023 bundle
+built_at=2026-04-24T10:32:55Z
+poppler_version=pdftoppm version 24.08.0
+arch=x86_64
+
+## files
+6230136	./lib/libcrypto.so.3
+4158472	./lib/libpoppler.so.140
+2556576	./lib/libstdc++.so.6
+2256224	./lib/libc.so.6
+1596072	./lib/libunistring.so.2
+1572432	./lib/libxml2.so.2
+1403760	./lib/libglib-2.0.so.0
+1286400	./lib/libnss3.so
+1065248	./lib/libharfbuzz.so.0
+1040112	./lib/libssl.so.3
+912336	./lib/libm.so.6
+910568	./lib/libkrb5.so.3
+886048	./lib/libfreetype.so.6
+779320	./lib/libzstd.so.1
+740952	./lib/libcurl.so.4
+645656	./lib/libpcre2-8.so.0
+609432	./lib/libwebp.so.7
+591744	./lib/libtiff.so.5
+561624	./lib/libjpeg.so.62
+444416	./lib/liblcms2.so.2
+412256	./lib/libopenjp2.so.7
+411832	./lib/libgpgmepp.so.6
+364056	./lib/libgpgme.so.11
+358656	./lib/libgssapi_krb5.so.2
+324952	./lib/libfontconfig.so.1
+265280	./lib/libnspr4.so
+249248	./lib/libpng16.so.16
+216896	./lib/libnssutil3.so
+190568	./lib/libgcc_s.so.1
+178736	./lib/liblzma.so.5
+176760	./lib/libselinux.so.1
+176080	./lib/libsmime3.so
+172848	./lib/libnghttp2.so.14
+153696	./lib/libgpg-error.so.0
+142936	./lib/libbrotlicommon.so.1
+137584	./lib/libgraphite2.so.3
+131080	./lib/libidn2.so.0
+106888	./lib/libz.so.1
+99248	./lib/libk5crypto.so.3
+87040	./lib/libassuan.so.0
+81184	./lib/libpsl.so.5
+81024	./lib/libbz2.so.1
+70760	./lib/libresolv.so.2
+66408	./lib/libkrb5support.so.0
+60128	./lib/libjbig.so.2.1
+53096	./lib/libbrotlidec.so.1
+43360	./bin/pdftoppm
+24656	./lib/libplc4.so
+24496	./lib/libcom_err.so.2
+24112	./lib/libkeyutils.so.1
+16400	./lib/libplds4.so
+1601	./MANIFEST
+
+## totals
+total_bytes=35151393
+file_count=52

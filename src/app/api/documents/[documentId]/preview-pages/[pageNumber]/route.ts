@@ -5,6 +5,8 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/api-error";
 import { prisma } from "@/lib/prisma";
 import { downloadFile } from "@/services/storage";
+import { getPdfPageCount } from "@/services/pdf/extractor";
+import { createRenderer } from "@/services/pdf/renderers";
 
 const cuidSchema = z.string().cuid();
 const pageNumberSchema = z.coerce.number().int().positive();
@@ -48,20 +50,25 @@ export async function GET(_request: NextRequest, context: RouteParams) {
     }
 
     const pdfBuffer = await downloadFile(fileUrl);
-    const { pdf } = await import("pdf-to-img");
-    const doc = await pdf(pdfBuffer, { scale: 2 });
-
-    if (pageCheck.data > doc.length) {
+    const pageCount = await getPdfPageCount(pdfBuffer);
+    if (pageCount <= 0) {
+      return NextResponse.json({ error: "Unable to read PDF page count" }, { status: 400 });
+    }
+    if (pageCheck.data > pageCount) {
       return NextResponse.json({ error: "Page number out of range" }, { status: 400 });
     }
 
-    const imageBuffer = await doc.getPage(pageCheck.data);
+    // ARC-LIGHT Phase 2: route the preview through the same PdfRenderer that
+    // feeds the OCR pipeline. This guarantees the audit dialog shows exactly
+    // what the OCR stack saw, not a different (broken) rasterization.
+    const renderer = createRenderer();
+    const rendered = await renderer.renderPage(pdfBuffer, pageCheck.data, { dpi: 144 });
 
-    return new NextResponse(new Uint8Array(imageBuffer), {
+    return new NextResponse(new Uint8Array(rendered.pngBuffer), {
       status: 200,
       headers: {
         "Content-Type": "image/png",
-        "Content-Length": String(imageBuffer.length),
+        "Content-Length": String(rendered.bytes),
         "Cache-Control": "private, no-cache",
       },
     });

@@ -22,6 +22,15 @@ const DEV_USER = {
   updatedAt: new Date(),
 };
 
+const PREVIEW_OWNER_EMAIL = "sacha@rebbouh.fr";
+
+function isPreviewOwnerBootstrapEmail(email: string | null | undefined): boolean {
+  return (
+    process.env.VERCEL_ENV === "preview" &&
+    email?.toLowerCase() === PREVIEW_OWNER_EMAIL
+  );
+}
+
 export async function getAuthUser() {
   if (DEV_MODE) {
     return DEV_USER;
@@ -96,6 +105,10 @@ export async function getOrCreateUser() {
     });
   }
 
+  if (isPreviewOwnerBootstrapEmail(user.email)) {
+    await ensureAdminCredits(user.id);
+  }
+
   return user;
 }
 
@@ -124,6 +137,11 @@ export async function getUserMetadata(): Promise<UserMetadata> {
   }
 
   const metadata = clerkUser.publicMetadata as UserMetadata;
+  const email = clerkUser.emailAddresses[0]?.emailAddress;
+  if (isPreviewOwnerBootstrapEmail(email)) {
+    return { role: "admin", isOwner: true };
+  }
+
   return {
     role: metadata?.role ?? "user",
     isOwner: metadata?.isOwner ?? false,

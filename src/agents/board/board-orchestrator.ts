@@ -21,7 +21,7 @@ import {
   pickCanonicalAnalysis,
 } from "@/services/deals/canonical-read-model";
 import { getCurrentFacts, getDisputedFacts, formatFactStoreForAgents } from "@/services/fact-store";
-import { completeJSON } from "@/services/openrouter/router";
+import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { loadResults } from "@/services/analysis-results/load-results";
 import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 
@@ -34,6 +34,13 @@ type BoardContextDocument = {
   name: string;
   type: string;
   extractedText: string | null;
+  sourceKind?: string | null;
+  corpusRole?: string | null;
+  sourceDate?: Date | null;
+  receivedAt?: Date | null;
+  linkedQuestionText?: string | null;
+  corpusParentDocumentId?: string | null;
+  corpusParentDocumentName?: string | null;
 };
 
 type BoardDealSignals = {
@@ -102,6 +109,13 @@ export class BoardOrchestrator {
    * Main entry point - runs the full board deliberation
    */
   async runBoard(options: BoardOrchestratorOptions): Promise<BoardVerdictResult> {
+    return runWithLLMContext(
+      { agentName: null, analysisId: null },
+      () => this._runBoardImpl(options)
+    );
+  }
+
+  private async _runBoardImpl(options: BoardOrchestratorOptions): Promise<BoardVerdictResult> {
     this.startTime = Date.now();
 
     // 1. Create or reuse session in DB
@@ -398,6 +412,17 @@ export class BoardOrchestrator {
         name: true,
         type: true,
         extractedText: true,
+        sourceKind: true,
+        corpusRole: true,
+        sourceDate: true,
+        receivedAt: true,
+        linkedQuestionText: true,
+        corpusParentDocumentId: true,
+        corpusParentDocument: {
+          select: {
+            name: true,
+          },
+        },
       },
     });
     const boardDocuments: BoardContextDocument[] = documents.map((document) => ({
@@ -405,6 +430,13 @@ export class BoardOrchestrator {
       name: document.name,
       type: document.type,
       extractedText: document.extractedText ? safeDecrypt(document.extractedText) : null,
+      sourceKind: document.sourceKind,
+      corpusRole: document.corpusRole,
+      sourceDate: document.sourceDate,
+      receivedAt: document.receivedAt,
+      linkedQuestionText: document.linkedQuestionText,
+      corpusParentDocumentId: document.corpusParentDocumentId,
+      corpusParentDocumentName: document.corpusParentDocument?.name ?? null,
     }));
 
     if (requestedDocumentIds) {
@@ -567,10 +599,17 @@ export class BoardOrchestrator {
       dealName: deal.name,
       companyName: canonicalDeal.companyName,
       thesis: thesisInput,
-      documents: boardDocuments.map(({ name, type, extractedText }) => ({
+      documents: boardDocuments.map(({ name, type, extractedText, sourceKind, corpusRole, sourceDate, receivedAt, linkedQuestionText, corpusParentDocumentId, corpusParentDocumentName }) => ({
         name,
         type,
         extractedText,
+        sourceKind,
+        corpusRole,
+        sourceDate,
+        receivedAt,
+        linkedQuestionText,
+        corpusParentDocumentId,
+        corpusParentDocumentName,
       })),
       enrichedData,
       agentOutputs,
@@ -1380,9 +1419,9 @@ function mapBoardThesisInput(
     confidence: thesis.confidence,
     loadBearing: loadBearingArr as NonNullable<BoardInput["thesis"]>["loadBearing"],
     alerts: alertsArr as NonNullable<BoardInput["thesis"]>["alerts"],
-    ycLens: (thesis.ycLens as { verdict: string }) ?? { verdict: "unknown" },
-    thielLens: (thesis.thielLens as { verdict: string }) ?? { verdict: "unknown" },
-    angelDeskLens: (thesis.angelDeskLens as { verdict: string }) ?? { verdict: "unknown" },
+    ycLens: (thesis.ycLens as { verdict: string; availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted" }) ?? { verdict: "unknown", availability: "evaluated" },
+    thielLens: (thesis.thielLens as { verdict: string; availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted" }) ?? { verdict: "unknown", availability: "evaluated" },
+    angelDeskLens: (thesis.angelDeskLens as { verdict: string; availability?: "evaluated" | "degraded_schema_recovered" | "degraded_chain_exhausted" }) ?? { verdict: "unknown", availability: "evaluated" },
     evaluationAxes: normalizeThesisEvaluation({
       verdict: thesis.verdict as never,
       confidence: thesis.confidence,

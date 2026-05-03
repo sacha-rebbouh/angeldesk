@@ -100,13 +100,6 @@ describe("compileDealContext", () => {
     vi.mocked(prisma.document.findMany).mockResolvedValue([
       { id: "doc_snapshot", name: "Snapshot Deck.pdf", type: "PITCH_DECK" },
     ] as never);
-    vi.mocked(prisma.factEvent.findMany).mockResolvedValue([
-      {
-        factKey: "financial.arr",
-        displayValue: "ARR €1.2M",
-        sourceDocumentId: "doc_snapshot",
-      },
-    ] as never);
     vi.mocked(getCurrentFactsFromView).mockResolvedValue([
       {
         dealId: "deal_1",
@@ -143,6 +136,7 @@ describe("compileDealContext", () => {
         currentValue: 1200000,
         currentDisplayValue: "€1.2M",
         currentSource: "DATA_ROOM",
+        currentSourceDocumentId: "doc_snapshot",
         currentConfidence: 97,
         currentTruthConfidence: 97,
         isDisputed: false,
@@ -215,6 +209,7 @@ describe("compileDealContext", () => {
       select: {
         id: true,
         dealId: true,
+        mode: true,
         thesisId: true,
         corpusSnapshotId: true,
         completedAt: true,
@@ -227,17 +222,6 @@ describe("compileDealContext", () => {
       where: { id: { in: ["doc_snapshot"] } },
       select: { id: true, name: true, type: true },
     });
-    expect(prisma.factEvent.findMany).toHaveBeenCalledWith({
-      where: {
-        dealId: "deal_1",
-        eventType: "CREATED",
-        sourceDocumentId: { in: ["doc_snapshot"] },
-      },
-      select: { factKey: true, displayValue: true, sourceDocumentId: true },
-      take: 50,
-      orderBy: { createdAt: "desc" },
-    });
-
     expect(context.companyName).toBe("Canonical Snapshot Co");
     expect(context.dealBasics.website).toBe("https://canonical.example");
     expect(context.dealBasics.arr).toBe(1200000);
@@ -256,7 +240,7 @@ describe("compileDealContext", () => {
       {
         name: "Snapshot Deck.pdf",
         type: "PITCH_DECK",
-        keyClaims: ["ARR €1.2M"],
+        keyClaims: ["€1.2M"],
       },
     ]);
   });

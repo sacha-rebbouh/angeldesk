@@ -4,6 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
+import {
+  buildDeclaredReliability,
+  computeTruthConfidence,
+} from "@/services/fact-store";
+import type { Prisma } from "@prisma/client";
 
 // ============================================================================
 // RATE LIMITING (with bounded Map to prevent memory exhaustion)
@@ -62,7 +67,7 @@ function checkRateLimit(identifier: string): boolean {
 // ============================================================================
 
 const responseItemSchema = z.object({
-  questionId: z.string().min(1, "questionId is required"),
+  questionId: z.string().min(1, "questionId is required").max(200, "questionId too long"),
   answer: z.string().min(1, "answer is required"),
 });
 
@@ -269,6 +274,11 @@ export async function POST(
 
       // Prepare data for batch create
       const validCategories = ['FINANCIAL', 'TEAM', 'MARKET', 'PRODUCT', 'LEGAL', 'COMPETITION', 'TRACTION'];
+      const founderResponseReliability = buildDeclaredReliability(
+        "Founder response submitted by the user",
+        "founder-response"
+      );
+      const founderResponseTruthConfidence = computeTruthConfidence(60, "DECLARED");
       const factsToCreate = responses.map(response => {
         const categoryFromKey = response.questionId.split('.')[0]?.toUpperCase();
         const category = validCategories.includes(categoryFromKey) ? categoryFromKey : 'OTHER';
@@ -282,6 +292,12 @@ export async function POST(
           displayValue: response.answer,
           source: 'FOUNDER_RESPONSE' as const,
           sourceConfidence: 60, // DECLARED — reponse fondateur non verifiee (F26)
+          truthConfidence: founderResponseTruthConfidence,
+          reliability: founderResponseReliability as unknown as Prisma.InputJsonValue,
+          sourceMetadata: {
+            origin: "founder-response",
+            submittedQuestionId: response.questionId,
+          } as unknown as Prisma.InputJsonValue,
           eventType: 'CREATED' as const,
           supersedesEventId: existingFact?.id ?? null,
           createdBy: 'system',
@@ -302,6 +318,12 @@ export async function POST(
           displayValue: freeNotes,
           source: 'FOUNDER_RESPONSE' as const,
           sourceConfidence: 60, // DECLARED — reponse fondateur non verifiee (F26)
+          truthConfidence: founderResponseTruthConfidence,
+          reliability: founderResponseReliability as unknown as Prisma.InputJsonValue,
+          sourceMetadata: {
+            origin: "founder-response",
+            submittedQuestionId: 'founder.free_notes',
+          } as unknown as Prisma.InputJsonValue,
           eventType: 'CREATED' as const,
           supersedesEventId: existingNotes?.id ?? null,
           createdBy: 'system',

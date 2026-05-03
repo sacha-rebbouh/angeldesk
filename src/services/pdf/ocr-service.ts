@@ -1,15 +1,17 @@
 /**
  * OCR Service for Image-Heavy PDFs
  *
- * Uses pdf-to-img (pure JS, no native bindings) to render PDF pages
- * as images, then sends them to a Vision LLM for text extraction.
+ * Uses the configured PdfRenderer (Poppler by default, pdf-to-img only behind
+ * explicit rollback) to render PDF pages as images, then sends them to a
+ * Vision LLM for text extraction.
  *
  * OPTIMIZED for cost in normal mode, strict in analysis-gating mode:
  * - Selective OCR: Only processes pages with low text content
  * - Uses GPT-4o Mini (cheapest vision model)
  * - Strict callers may explicitly remove page caps for full document coverage
  *
- * Serverless-compatible: No @napi-rs/canvas or native dependencies.
+ * Serverless-compatible: the Poppler binary bundle is traced into document
+ * processing functions via next.config.ts.
  */
 
 import { createHash } from "crypto";
@@ -48,6 +50,7 @@ import {
 } from "./canonical-artifact";
 import { createDefaultPdfProviderStack } from "./providers/router";
 import type { StructuredPdfExtractionOutput, StructuredPdfPageResult } from "./providers/types";
+import { createRenderer, readExtractionRendererId, type PdfRenderer, type RenderedPage } from "./renderers";
 
 export interface OCRResult {
   success: boolean;
@@ -215,7 +218,7 @@ export function getMaxOCRPages(documentType?: string): number {
 }
 
 // Batch size for parallel processing
-const BATCH_SIZE = 3;
+const BATCH_SIZE = 4;
 
 // Cost per page estimate (GPT-4o Mini vision)
 const ESTIMATED_INPUT_TOKENS = 800;  // Image ~800 tokens
@@ -667,6 +670,20 @@ function deriveStructuredOCRConfidence(payload: StructuredOCRPagePayload): "high
 /**
  * Render only selected PDF pages and OCR them in small batches.
  */
+// ARC-LIGHT Phase 2: scale -> DPI conversion. pdf-to-img's `scale` option was
+// relative to 72 DPI units. Preserve caller semantics by translating into DPI.
+const SCALE_TO_DPI = 72;
+
+async function renderPagesForOCR(
+  renderer: PdfRenderer,
+  buffer: Buffer,
+  pageNumbers: number[],
+  scale: number
+): Promise<RenderedPage[]> {
+  const dpi = Math.round(scale * SCALE_TO_DPI);
+  return renderer.renderPages(buffer, pageNumbers, { dpi });
+}
+
 async function processSelectedPdfPages(
   buffer: Buffer,
   pagesToProcess: number[],
@@ -677,48 +694,26 @@ async function processSelectedPdfPages(
     pageContexts?: Map<number, VisionPromptContext>;
   } = {}
 ): Promise<PageOCRResult[]> {
-  const { pdf } = await import("pdf-to-img");
-  const targetPages = new Set(pagesToProcess.map(pageIdx => pageIdx + 1));
+  const renderer = createRenderer();
+  const targetPageNumbers = [...new Set(pagesToProcess.map((idx) => idx + 1))].sort(
+    (a, b) => a - b
+  );
   const mode = options.mode ?? "standard";
   const scale = options.scale ?? 1.5;
   const pageResults: PageOCRResult[] = [];
-  let batch: Array<{ pageNum: number; imageBuffer: Buffer }> = [];
-  let pageNum = 1;
 
-  for await (const image of await pdf(buffer, { scale })) {
-    if (targetPages.has(pageNum)) {
-      batch.push({ pageNum, imageBuffer: Buffer.from(image) });
-
-      if (batch.length >= BATCH_SIZE) {
-        const processedBatch = await Promise.all(
-          batch.map(({ pageNum, imageBuffer }) => processPageImage(
-            imageBuffer,
-            pageNum,
-            mode,
-            options.pageContexts?.get(pageNum)
-          ))
-        );
-        pageResults.push(...processedBatch);
-        await notifyProcessedPages(processedBatch, options.onProgress);
-        batch = [];
-      }
-
-      if (pageResults.length + batch.length >= targetPages.size) {
-        break;
-      }
-    }
-
-    pageNum++;
-  }
-
-  if (batch.length > 0) {
+  for (let index = 0; index < targetPageNumbers.length; index += BATCH_SIZE) {
+    const pageNumberBatch = targetPageNumbers.slice(index, index + BATCH_SIZE);
+    const rendered = await renderPagesForOCR(renderer, buffer, pageNumberBatch, scale);
     const processedBatch = await Promise.all(
-      batch.map(({ pageNum, imageBuffer }) => processPageImage(
-        imageBuffer,
-        pageNum,
-        mode,
-        options.pageContexts?.get(pageNum)
-      ))
+      rendered.map((page) =>
+        processPageImage(
+          page.pngBuffer,
+          page.pageNumber,
+          mode,
+          options.pageContexts?.get(page.pageNumber)
+        )
+      )
     );
     pageResults.push(...processedBatch);
     await notifyProcessedPages(processedBatch, options.onProgress);
@@ -727,38 +722,41 @@ async function processSelectedPdfPages(
   return pageResults;
 }
 
-async function processAllPdfPages(buffer: Buffer, options: { mode?: OCRMode; scale?: number; onProgress?: ExtractionProgressCallback } = {}): Promise<PageOCRResult[]> {
-  const { pdf } = await import("pdf-to-img");
+async function processAllPdfPages(
+  buffer: Buffer,
+  options: { mode?: OCRMode; scale?: number; onProgress?: ExtractionProgressCallback } = {}
+): Promise<PageOCRResult[]> {
+  const renderer = createRenderer();
   const mode = options.mode ?? "standard";
   const scale = options.scale ?? 1.5;
+
+  // Discover page count via the native pdfjs path (cheap; no rasterization).
+  const { getPdfPageCount } = await import("./extractor");
+  const pageCount = await getPdfPageCount(buffer);
+  if (pageCount <= 0) return [];
+
+  const allPageNumbers = Array.from({ length: pageCount }, (_, i) => i + 1);
+
   const pageResults: PageOCRResult[] = [];
-  let batch: Array<{ pageNum: number; imageBuffer: Buffer }> = [];
-  let pageNum = 1;
-
-  for await (const image of await pdf(buffer, { scale })) {
-    batch.push({ pageNum, imageBuffer: Buffer.from(image) });
-
-    if (batch.length >= BATCH_SIZE) {
-      const processedBatch = await Promise.all(
-        batch.map(({ pageNum, imageBuffer }) => processPageImage(imageBuffer, pageNum, mode))
-      );
-      pageResults.push(...processedBatch);
-      await notifyProcessedPages(processedBatch, options.onProgress);
-      batch = [];
-    }
-
-    pageNum++;
-  }
-
-  if (batch.length > 0) {
+  for (let index = 0; index < allPageNumbers.length; index += BATCH_SIZE) {
+    const pageNumberBatch = allPageNumbers.slice(index, index + BATCH_SIZE);
+    const rendered = await renderPagesForOCR(renderer, buffer, pageNumberBatch, scale);
     const processedBatch = await Promise.all(
-      batch.map(({ pageNum, imageBuffer }) => processPageImage(imageBuffer, pageNum, mode))
+      rendered.map((page) => processPageImage(page.pngBuffer, page.pageNumber, mode))
     );
     pageResults.push(...processedBatch);
     await notifyProcessedPages(processedBatch, options.onProgress);
   }
 
   return pageResults;
+}
+
+/**
+ * ARC-LIGHT Phase 2 diagnostics: expose the active renderer id so callers /
+ * ops tools can verify which path is serving production traffic.
+ */
+export function getActiveRendererId() {
+  return readExtractionRendererId();
 }
 
 /**

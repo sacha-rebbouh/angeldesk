@@ -8,7 +8,8 @@ import type { PdfExportData } from "../generate-analysis-pdf";
 function makeAxis(
   key: ThesisAxisEvaluation["key"],
   label: string,
-  verdict: ThesisVerdict
+  verdict: ThesisVerdict,
+  sourceFrameworks: ThesisAxisEvaluation["sourceFrameworks"] = ["angel-desk"]
 ): ThesisAxisEvaluation {
   return {
     key,
@@ -19,7 +20,7 @@ function makeAxis(
     strengths: [],
     claims: [],
     failures: [],
-    sourceFrameworks: ["angel-desk"],
+    sourceFrameworks,
   };
 }
 
@@ -55,5 +56,17 @@ describe("hasFragileThesis", () => {
 
   it("leaves favorable theses ungated", () => {
     expect(hasFragileThesis(makeThesis("favorable"))).toBe(false);
+  });
+
+  it("does not gate an unavailable thesis-quality axis", () => {
+    const thesis = makeThesis("vigilance");
+    thesis.evaluationAxes.thesisQuality = makeAxis(
+      "thesis_quality",
+      "Thesis Quality",
+      "vigilance",
+      []
+    );
+
+    expect(hasFragileThesis(thesis)).toBe(false);
   });
 });

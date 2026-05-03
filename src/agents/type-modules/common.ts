@@ -30,6 +30,17 @@ export interface AgentContext {
     extractionMetrics?: unknown;
     /** Date of upload/import — used for document chronology awareness */
     uploadedAt?: Date;
+    sourceKind?: string | null;
+    corpusRole?: string | null;
+    sourceDate?: Date | null;
+    receivedAt?: Date | null;
+    sourceAuthor?: string | null;
+    sourceSubject?: string | null;
+    linkedQuestionSource?: string | null;
+    linkedQuestionText?: string | null;
+    linkedRedFlagId?: string | null;
+    corpusParentDocumentId?: string | null;
+    corpusParentDocumentName?: string | null;
   }[];
   previousResults?: Record<string, AgentResult>;
 }

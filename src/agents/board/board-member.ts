@@ -1,6 +1,10 @@
 import type { ModelKey } from "@/services/openrouter/client";
 import { setAgentContext, completeJSON } from "@/services/openrouter/router";
 import { compressBoardContext, buildDealSummary } from "./context-compressor";
+import {
+  formatAxisPromptLine,
+  formatFrameworkPromptLine,
+} from "@/agents/thesis/prompt-formatting";
 import type {
   BoardMemberConfig,
   BoardInput,
@@ -424,18 +428,16 @@ ${t.reformulated}
 - **Path to exit** : ${t.pathToExit ?? "Non declare"}
 
 ### Axes canoniques
-- **Thesis Quality** : ${t.evaluationAxes.thesisQuality.verdict} — ${t.evaluationAxes.thesisQuality.summary}
-- **Investor Profile Fit** : ${t.evaluationAxes.investorProfileFit.verdict} — ${t.evaluationAxes.investorProfileFit.summary}
-- **Deal Accessibility** : ${t.evaluationAxes.dealAccessibility.verdict} — ${t.evaluationAxes.dealAccessibility.summary}
+${formatAxisPromptLine("Thesis Quality", t.evaluationAxes.thesisQuality)}${formatAxisPromptLine("Investor Profile Fit", t.evaluationAxes.investorProfileFit)}${formatAxisPromptLine("Deal Accessibility", t.evaluationAxes.dealAccessibility)}
 
 ### Verdict consolide (a challenger, pas a suivre aveuglement)
 - Verdict consolide : **${t.verdict}**
 - Confiance : ${t.confidence}/100
 
-### Par framework
-- **YC** : ${t.ycLens.verdict}
-- **Thiel** : ${t.thielLens.verdict}
-- **Angel Desk (capital prive: fit profil + accessibilite + realisme execution)** : ${t.angelDeskLens.verdict}
+### Par framework (lenses evaluees uniquement)
+${formatFrameworkPromptLine("YC", t.ycLens)}
+${formatFrameworkPromptLine("Thiel", t.thielLens)}
+${formatFrameworkPromptLine("Angel Desk (capital prive: fit profil + accessibilite + realisme execution)", t.angelDeskLens)}
 
 ### Load-bearing assumptions (hypotheses porteuses)
 ${loadBearingStr}

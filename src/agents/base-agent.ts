@@ -3,14 +3,18 @@ import {
   completeJSON,
   completeJSONWithFallback,
   completeJSONStreaming,
+  getAnalysisContext,
+  runWithLLMContext,
   stream,
   setAgentContext,
   type TaskComplexity,
   type StreamCallbacks,
 } from "@/services/openrouter/router";
+import type { ModelKey } from "@/services/openrouter/client";
 import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed, AgentTraceMetrics } from "./types";
 import { createHash } from "crypto";
 import { sanitizeForLLM, sanitizeName, PromptInjectionError } from "@/lib/sanitize";
+import { logger } from "@/lib/logger";
 import { z } from "zod";
 import { formatGeographyCoverageForPrompt } from "@/services/context-engine/geography-coverage";
 import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
@@ -43,13 +47,28 @@ export interface LLMCallOptions {
   temperature?: number;
   timeoutMs?: number; // Per-step timeout (default: config.timeoutMs)
   maxTokens?: number;
-  model?: "HAIKU" | "SONNET" | "OPUS" | "GPT4O" | "GPT4O_MINI" | "DEEPSEEK" | "GEMINI_FLASH" | "GEMINI_PRO" | "GEMINI_3_FLASH";
+  maxRetries?: number;
+  model?: ModelKey;
+  fallbackChain?: ModelKey[];
 }
 
 export interface LLMStreamOptions extends LLMCallOptions {
   onToken?: (token: string) => void;
   onComplete?: (content: string) => void;
   onError?: (error: Error) => void;
+}
+
+export interface ValidatedLLMCallOptions<T> extends LLMCallOptions {
+  fallbackDefaults?: Partial<T>;
+  terminalFallbackData?: T;
+}
+
+export interface ValidatedLLMResult<T> {
+  data: T;
+  cost: number;
+  model?: string;
+  validationErrors?: string[];
+  resolution: "model_success" | "schema_recovered" | "terminal_fallback";
 }
 
 // ============================================================================
@@ -75,6 +94,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   private _llmCallTraces: LLMCallTrace[] = [];
   private _contextUsed: ContextUsed | null = null;
   private _contextHash = "";
+  private _contextualSystemPrompt = "";
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -126,6 +146,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     this._llmCallTraces = [];
     this._contextUsed = null;
     this._contextHash = "";
+    this._contextualSystemPrompt = "";
   }
 
   // Capture context used for trace
@@ -171,6 +192,9 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       contextEngine,
       extractedFields: extractedData?.fields,
       systemPrompt: createHash("sha256").update(this.buildSystemPrompt()).digest("hex").slice(0, 16),
+      contextualSystemPrompt: this._contextualSystemPrompt
+        ? createHash("sha256").update(this._contextualSystemPrompt).digest("hex").slice(0, 16)
+        : null,
       model: this.config.modelComplexity,
     });
     this._contextHash = createHash("sha256").update(contextString).digest("hex").slice(0, 32);
@@ -268,110 +292,119 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
   // Run the agent with error handling, timing, and cost tracking
   async run(context: AgentContext, options?: { enableTrace?: boolean }): Promise<TResult> {
-    const startTime = Date.now();
+    const analysisId = getAnalysisContext();
 
-    // Enable trace if requested
-    if (options?.enableTrace !== undefined) {
-      this._enableTrace = options.enableTrace;
-    }
+    return runWithLLMContext(
+      { agentName: this.config.name, analysisId },
+      async () => {
+        const startTime = Date.now();
 
-    // Reset cost tracking for this run
-    this.resetCostTracking();
+        // Enable trace if requested
+        if (options?.enableTrace !== undefined) {
+          this._enableTrace = options.enableTrace;
+        }
 
-    // Capture context for trace
-    this.captureContextUsed(context);
+        // Reset cost tracking for this run
+        this.resetCostTracking();
+        this._contextualSystemPrompt = this.buildContextualSystemPrompt(context);
 
-    // Set agent context for cost monitoring in router
-    setAgentContext(this.config.name);
+        // Capture context for trace
+        this.captureContextUsed(context);
 
-    try {
-      // Execute with global timeout
-      const data = await this.withTimeout(
-        this.execute(context),
-        this.config.timeoutMs,
-        `Agent ${this.config.name} timed out after ${this.config.timeoutMs}ms`
-      );
+        // Set agent context for cost monitoring in router
+        setAgentContext(this.config.name);
 
-      const executionTimeMs = Date.now() - startTime;
-      const contract = this.assessOutputContract(data);
+        try {
+          // Execute with global timeout
+          const data = await this.withTimeout(
+            this.execute(context),
+            this.config.timeoutMs,
+            `Agent ${this.config.name} timed out after ${this.config.timeoutMs}ms`
+          );
 
-      // Build trace if enabled
-      const trace = this.buildTrace();
-      if (trace) {
-        trace.totalDurationMs = executionTimeMs;
+          const executionTimeMs = Date.now() - startTime;
+          const contract = this.assessOutputContract(data);
+
+          // Build trace if enabled
+          const trace = this.buildTrace();
+          if (trace) {
+            trace.totalDurationMs = executionTimeMs;
+          }
+
+          // F80: Always build lightweight metrics
+          const traceMetrics: AgentTraceMetrics = {
+            id: this._traceId,
+            agentName: this.config.name,
+            totalDurationMs: executionTimeMs,
+            llmCallCount: this._llmCalls,
+            totalInputTokens: this._totalInputTokens,
+            totalOutputTokens: this._totalOutputTokens,
+            totalCost: this._totalCost,
+            contextHash: this._contextHash || 'no-hash',
+            promptVersion: this.computePromptVersionHash(),
+            startedAt: this._traceStartedAt,
+            completedAt: new Date().toISOString(),
+          };
+
+          return {
+            agentName: this.config.name,
+            success: contract.status !== "CONTRACT_BROKEN",
+            executionTimeMs,
+            cost: this._totalCost,
+            contractStatus: contract.status,
+            contractIssues: contract.issues,
+            ...(contract.status === "CONTRACT_BROKEN" && { error: `Agent output contract broken: ${contract.issues.join("; ")}` }),
+            data,
+            _traceMetrics: traceMetrics,
+            ...(trace && { _traceFull: trace }),
+          } as unknown as TResult;
+        } catch (error) {
+          const executionTimeMs = Date.now() - startTime;
+
+          // Specific handling for prompt injection
+          if (error instanceof PromptInjectionError) {
+            console.error(
+              `[${this.config.name}] PROMPT INJECTION BLOCKED: ${error.patterns.join(", ")}`
+            );
+          }
+
+          // Build trace even on failure
+          const trace = this.buildTrace();
+          if (trace) {
+            trace.totalDurationMs = executionTimeMs;
+          }
+
+          // F80: Always build lightweight metrics even on failure
+          const traceMetrics: AgentTraceMetrics = {
+            id: this._traceId,
+            agentName: this.config.name,
+            totalDurationMs: executionTimeMs,
+            llmCallCount: this._llmCalls,
+            totalInputTokens: this._totalInputTokens,
+            totalOutputTokens: this._totalOutputTokens,
+            totalCost: this._totalCost,
+            contextHash: this._contextHash || 'no-hash',
+            promptVersion: this.computePromptVersionHash(),
+            startedAt: this._traceStartedAt,
+            completedAt: new Date().toISOString(),
+          };
+
+          return {
+            agentName: this.config.name,
+            success: false,
+            executionTimeMs,
+            cost: this._totalCost,
+            error: error instanceof Error ? error.message : "Unknown error",
+            _traceMetrics: traceMetrics,
+            ...(trace && { _traceFull: trace }),
+          } as unknown as TResult;
+        } finally {
+          // Clear agent context within the scoped request context.
+          this._contextualSystemPrompt = "";
+          setAgentContext(null);
+        }
       }
-
-      // F80: Always build lightweight metrics
-      const traceMetrics: AgentTraceMetrics = {
-        id: this._traceId,
-        agentName: this.config.name,
-        totalDurationMs: executionTimeMs,
-        llmCallCount: this._llmCalls,
-        totalInputTokens: this._totalInputTokens,
-        totalOutputTokens: this._totalOutputTokens,
-        totalCost: this._totalCost,
-        contextHash: this._contextHash || 'no-hash',
-        promptVersion: this.computePromptVersionHash(),
-        startedAt: this._traceStartedAt,
-        completedAt: new Date().toISOString(),
-      };
-
-      return {
-        agentName: this.config.name,
-        success: contract.status !== "CONTRACT_BROKEN",
-        executionTimeMs,
-        cost: this._totalCost,
-        contractStatus: contract.status,
-        contractIssues: contract.issues,
-        ...(contract.status === "CONTRACT_BROKEN" && { error: `Agent output contract broken: ${contract.issues.join("; ")}` }),
-        data,
-        _traceMetrics: traceMetrics,
-        ...(trace && { _traceFull: trace }),
-      } as unknown as TResult;
-    } catch (error) {
-      const executionTimeMs = Date.now() - startTime;
-
-      // Specific handling for prompt injection
-      if (error instanceof PromptInjectionError) {
-        console.error(
-          `[${this.config.name}] PROMPT INJECTION BLOCKED: ${error.patterns.join(", ")}`
-        );
-      }
-
-      // Build trace even on failure
-      const trace = this.buildTrace();
-      if (trace) {
-        trace.totalDurationMs = executionTimeMs;
-      }
-
-      // F80: Always build lightweight metrics even on failure
-      const traceMetrics: AgentTraceMetrics = {
-        id: this._traceId,
-        agentName: this.config.name,
-        totalDurationMs: executionTimeMs,
-        llmCallCount: this._llmCalls,
-        totalInputTokens: this._totalInputTokens,
-        totalOutputTokens: this._totalOutputTokens,
-        totalCost: this._totalCost,
-        contextHash: this._contextHash || 'no-hash',
-        promptVersion: this.computePromptVersionHash(),
-        startedAt: this._traceStartedAt,
-        completedAt: new Date().toISOString(),
-      };
-
-      return {
-        agentName: this.config.name,
-        success: false,
-        executionTimeMs,
-        cost: this._totalCost,
-        error: error instanceof Error ? error.message : "Unknown error",
-        _traceMetrics: traceMetrics,
-        ...(trace && { _traceFull: trace }),
-      } as unknown as TResult;
-    } finally {
-      // Clear agent context
-      setAgentContext(null);
-    }
+    );
   }
 
   // ============================================================================
@@ -394,6 +427,8 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         systemPrompt,
         temperature,
         maxTokens: options.maxTokens,
+        model: options.model,
+        maxRetries: options.maxRetries,
       }),
       timeoutMs,
       `LLM call timed out after ${timeoutMs}ms`
@@ -426,7 +461,13 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   protected async llmCompleteJSON<T>(
     prompt: string,
     options: LLMCallOptions = {}
-  ): Promise<{ data: T; cost: number }> {
+  ): Promise<{
+    data: T;
+    cost: number;
+    model?: string;
+    raw?: string;
+    usage?: { inputTokens: number; outputTokens: number };
+  }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
     const systemPrompt = this.buildFullSystemPrompt(options.systemPrompt);
     const temperature = options.temperature ?? 0.2;
@@ -439,6 +480,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         temperature,
         maxTokens: options.maxTokens,
         model: options.model,
+        maxRetries: options.maxRetries,
       }),
       timeoutMs,
       `LLM JSON call timed out after ${timeoutMs}ms`
@@ -488,45 +530,133 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
   /**
    * Call LLM with JSON response + Zod validation.
-   * On validation failure: logs warnings but returns partial data with defaults.
-   * Progressive migration path - agents can opt-in without breaking.
+   * On validation failure: tries per-model recovery, then model fallback chain,
+   * then optional terminal fallback data. Otherwise throws fail-closed.
    */
   protected async llmCompleteJSONValidated<T>(
     prompt: string,
     schema: z.ZodSchema<T>,
-    options: LLMCallOptions & { fallbackDefaults?: Partial<T> } = {}
-  ): Promise<{ data: T; cost: number; validationErrors?: string[] }> {
-    const result = await this.llmCompleteJSON<T>(prompt, options);
+    options: ValidatedLLMCallOptions<T> = {}
+  ): Promise<ValidatedLLMResult<T>> {
+    const rawChain: Array<ModelKey | undefined> =
+      options.fallbackChain?.length ? options.fallbackChain : [options.model];
+    const chain = rawChain.length > 0 ? rawChain : [undefined];
 
-    const parseResult = schema.safeParse(result.data);
+    let lastError: Error | null = null;
+    let schemaErrorsLast: string[] = [];
 
-    if (parseResult.success) {
-      return { data: parseResult.data, cost: result.cost };
-    }
+    for (const model of chain) {
+      try {
+        const result = await this.llmCompleteJSON<T>(prompt, {
+          ...options,
+          model,
+        });
 
-    const errors = parseResult.error.issues.map(
-      (issue) => `${issue.path.join(".")}: ${issue.message}`
-    );
-    console.warn(
-      `[${this.config.name}] Zod validation failed (${errors.length} issues):`,
-      errors.slice(0, 5).join("; ")
-    );
+        const parsed = schema.safeParse(result.data);
+        if (parsed.success) {
+          return {
+            data: parsed.data,
+            cost: result.cost,
+            model: result.model,
+            resolution: "model_success",
+          };
+        }
 
-    // Try partial parse: merge raw data with defaults
-    if (options.fallbackDefaults) {
-      const merged = { ...options.fallbackDefaults, ...result.data } as T;
-      const retryParse = schema.safeParse(merged);
-      if (retryParse.success) {
-        return { data: retryParse.data, cost: result.cost, validationErrors: errors };
+        schemaErrorsLast = parsed.error.issues.map(
+          (issue) => `${issue.path.join(".")}: ${issue.message}`
+        );
+
+        if (options.fallbackDefaults) {
+          const merged = { ...options.fallbackDefaults, ...result.data } as T;
+          const retryParsed = schema.safeParse(merged);
+          if (retryParsed.success) {
+            logger.warn(
+              {
+                agent: this.config.name,
+                modelAttempted: model,
+                modelResolved: result.model,
+                mergedFields: Object.keys(options.fallbackDefaults),
+                schemaErrorCount: parsed.error.issues.length,
+              },
+              "Schema recovered via fallbackDefaults merge"
+            );
+
+            return {
+              data: retryParsed.data,
+              cost: result.cost,
+              model: result.model,
+              validationErrors: schemaErrorsLast,
+              resolution: "schema_recovered",
+            };
+          }
+        }
+
+        lastError = new Error(
+          `Schema validation failed on ${result.model ?? "default"}: ${schemaErrorsLast.slice(0, 3).join("; ")}`
+        );
+        logger.warn(
+          {
+            agent: this.config.name,
+            modelAttempted: model,
+            modelResolved: result.model,
+            schemaErrorCount: parsed.error.issues.length,
+            firstErrors: schemaErrorsLast.slice(0, 3),
+          },
+          "Schema fail, trying next model in chain"
+        );
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        logger.warn(
+          {
+            agent: this.config.name,
+            modelAttempted: model,
+            error: lastError.message,
+          },
+          "Call fail, trying next model in chain"
+        );
       }
     }
 
-    // Last resort: return raw data with TypeScript cast (backward compatible)
-    return {
-      data: result.data,
-      cost: result.cost,
-      validationErrors: errors,
-    };
+    if (options.terminalFallbackData !== undefined) {
+      const terminalParsed = schema.safeParse(options.terminalFallbackData);
+      if (terminalParsed.success) {
+        logger.warn(
+          {
+            agent: this.config.name,
+            chainLength: chain.length,
+            lastError: lastError?.message,
+            schemaErrors: schemaErrorsLast.slice(0, 3),
+          },
+          "Fallback chain exhausted, using terminalFallbackData"
+        );
+
+        return {
+          data: terminalParsed.data,
+          cost: 0,
+          model: undefined,
+          validationErrors: schemaErrorsLast.length > 0 ? schemaErrorsLast : undefined,
+          resolution: "terminal_fallback",
+        };
+      }
+
+      logger.error(
+        {
+          agent: this.config.name,
+          terminalSchemaErrors: terminalParsed.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .slice(0, 5),
+        },
+        "terminalFallbackData is schema-invalid"
+      );
+    }
+
+    throw new Error(
+      `[${this.config.name}] All ${chain.length} model(s) in fallback chain exhausted. ` +
+      `Last error: ${lastError?.message ?? "unknown"}. ` +
+      (schemaErrorsLast.length > 0
+        ? `Last schema errors: ${schemaErrorsLast.slice(0, 5).join("; ")}`
+        : "")
+    );
   }
 
   // Helper to call LLM with JSON response + fallback (Haiku 4.5 -> Haiku 3.5)
@@ -820,14 +950,12 @@ ${sanitizedDeal.description}
     }
 
     if (documents && documents.length > 0) {
-      // Sort documents by uploadedAt (oldest first) for chronological context
+      // Sort documents by source chronology (oldest first) for dialogue context.
       const sortedDocs = [...documents].sort((a, b) => {
-        const dateA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
-        const dateB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
-        return dateA - dateB;
+        return this.getDocumentChronologyMs(a) - this.getDocumentChronologyMs(b);
       });
 
-      text += `\n## Documents (par ordre chronologique d'import)\n`;
+      text += `\n## Documents (par ordre chronologique de source)\n`;
       text += `**IMPORTANT — CHRONOLOGIE:** Les documents sont listés du plus ancien au plus récent.\n`;
       text += `Les documents ajoutés après le deck initial peuvent contenir des clarifications,\n`;
       text += `mises à jour ou réponses à des questions. En cas de divergence entre un document\n`;
@@ -835,7 +963,7 @@ ${sanitizedDeal.description}
 
       let remainingDocumentBudget = this.getGlobalDocumentContextBudget();
       for (const doc of sortedDocs) {
-        const routing = this.getDocumentRoutingDecision(doc.type);
+        const routing = this.getDocumentRoutingDecision(doc);
         if (!routing.include) {
           text += `\n### ${sanitizeName(doc.name)} (${sanitizeName(doc.type)})\n`;
           text += `[Document exclu du contexte de ${this.config.name}: ${routing.reason}.]\n`;
@@ -844,10 +972,20 @@ ${sanitizedDeal.description}
         // Sanitize document name and type
         const sanitizedDocName = sanitizeName(doc.name);
         const sanitizedDocType = sanitizeName(doc.type);
-        const dateLabel = doc.uploadedAt
-          ? new Date(doc.uploadedAt).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
-          : "date inconnue";
-        text += `\n### ${sanitizedDocName} (${sanitizedDocType}) — importé le ${dateLabel}\n`;
+        const sourceKindLabel = this.getDocumentSourceKindLabel(doc.sourceKind);
+        const producedAtLabel = this.formatDocumentDate(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
+        const importedAtLabel = this.formatDocumentDate(doc.uploadedAt);
+        text += `\n### ${sanitizedDocName} (${sourceKindLabel}, ${sanitizedDocType}) — produit le ${producedAtLabel}, importé le ${importedAtLabel}\n`;
+        if (doc.corpusRole === "DILIGENCE_RESPONSE") {
+          text += `[Réponse de diligence]\n`;
+        }
+        if (doc.linkedQuestionText) {
+          text += `[Répond à : ${sanitizeForLLM(doc.linkedQuestionText, { maxLength: 600, preserveNewlines: false })}]\n`;
+        }
+        if (doc.corpusParentDocumentId) {
+          const parentLabel = doc.corpusParentDocumentName ?? doc.corpusParentDocumentId;
+          text += `[Fichier joint à : ${sanitizeForLLM(parentLabel, { maxLength: 400, preserveNewlines: false })}]\n`;
+        }
         if (doc.extractedText) {
           const limit = Math.min(this.getDocumentContextLimit(doc.type), Math.max(0, remainingDocumentBudget));
           if (limit < 1_000) {
@@ -919,8 +1057,53 @@ ${sanitizedDeal.description}
     });
   }
 
-  private getDocumentRoutingDecision(documentType: string): { include: boolean; reason: string } {
-    const relevance = this.getDocumentTypeRelevance(documentType);
+  private getDocumentChronologyMs(doc: {
+    sourceDate?: Date | string | null;
+    receivedAt?: Date | string | null;
+    uploadedAt?: Date | string | null;
+  }): number {
+    return this.getDocumentDateMs(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
+  }
+
+  private getDocumentDateMs(value?: Date | string | null): number {
+    if (!value) return 0;
+    const date = value instanceof Date ? value : new Date(value);
+    const timestamp = date.getTime();
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+  }
+
+  private formatDocumentDate(value?: Date | string | null): string {
+    const timestamp = this.getDocumentDateMs(value);
+    if (timestamp <= 0) return "date inconnue";
+    return new Date(timestamp).toLocaleDateString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  private getDocumentSourceKindLabel(sourceKind?: string | null): string {
+    if (sourceKind === "EMAIL") return "Email";
+    if (sourceKind === "NOTE") return "Note de call";
+    return "Fichier";
+  }
+
+  private getDocumentRoutingDecision(doc: {
+    type: string;
+    sourceKind?: string | null;
+    corpusRole?: string | null;
+  }): { include: boolean; reason: string } {
+    if (doc.sourceKind && doc.sourceKind !== "FILE") {
+      const sourceLabel = doc.sourceKind.toLowerCase();
+      const reason = doc.corpusRole === "DILIGENCE_RESPONSE"
+        ? `${sourceLabel} (réponse de diligence) — éligible avec priorité`
+        : `${sourceLabel} — éligible pour tous les agents`;
+      return { include: true, reason };
+    }
+
+    const relevance = this.getDocumentTypeRelevance(doc.type);
     if (relevance <= 0) {
       return { include: false, reason: "type documentaire non pertinent pour cet agent" };
     }
@@ -1588,9 +1771,68 @@ son deal sous le meilleur jour possible. Tu DOIS appliquer les regles suivantes:
     const stageCalibration = this._dealStage
       ? getStageCalibrationBlock(this._dealStage, this.config.name)
       : "";
+    const contextualPrompt = this._contextualSystemPrompt;
     const now = new Date();
     const dateContext = `\n\n## CONTEXTE TEMPOREL (CRITIQUE)\nDate actuelle : ${now.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.\nUtilise TOUJOURS cette date comme reference pour evaluer la fraicheur des donnees, les projections vs le realise, et les timelines. Ne JAMAIS deduire la date actuelle du contenu des documents analyses.\n`;
-    return base + dateContext + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance() + this.getDataReliabilityDirective() + this.getAnalyticalToneDirective() + this.getAbstentionPermission() + this.getCitationDemand() + this.getSelfAuditDirective() + this.getStructuredUncertaintyDirective();
+    return base
+      + contextualPrompt
+      + dateContext
+      + stageCalibration
+      + this.getAntiAnchoringGuidance()
+      + this.getConfidenceGuidance()
+      + this.getDataReliabilityDirective()
+      + this.getAnalyticalToneDirective()
+      + this.getAbstentionPermission()
+      + this.getCitationDemand()
+      + this.getSelfAuditDirective()
+      + this.getStructuredUncertaintyDirective();
+  }
+
+  protected buildContextualSystemPrompt(context: AgentContext): string {
+    const enrichedContext = context as EnrichedAgentContext;
+    const thesis = enrichedContext.thesis;
+    if (!thesis) return "";
+
+    const sanitize = (value: string | null | undefined, maxLength: number) =>
+      value ? sanitizeForLLM(value, { maxLength }) : "Non specifie";
+
+    const loadBearing = thesis.loadBearing.length > 0
+      ? thesis.loadBearing.slice(0, 5).map((assumption, index) => (
+        `${index + 1}. [${assumption.status}] ${sanitize(assumption.statement, 220)}\n` +
+        `   Impact: ${sanitize(assumption.impact, 220)}\n` +
+        `   Validation: ${sanitize(assumption.validationPath, 220)}`
+      )).join("\n")
+      : "Aucune hypothese porteuse explicite.";
+
+    const bypassInstruction = context.analysis?.thesisBypass
+      ? "Le BA a choisi de poursuivre MALGRE une these fragile. N'herite pas du verdict sans preuves nouvelles: traite cette these comme un prior conteste et challenge-la activement."
+      : "Utilise la these comme prior structurel du deal, mais valide-la ou contredis-la par les faits au lieu de la recopier.";
+
+    return `
+
+## THESE CANONIQUE DU DEAL (THESIS-FIRST)
+Contexte structurel prioritaire pour ce deal. Cette these n'est PAS une verite acquise.
+Ta mission est de tester si les faits de ton analyse renforcent ou fragilisent cette these.
+
+Verdict unifie: ${thesis.verdict} (confiance ${thesis.confidence}/100)
+Reformulation: ${sanitize(thesis.reformulated, 400)}
+Probleme: ${sanitize(thesis.problem, 280)}
+Solution: ${sanitize(thesis.solution, 280)}
+Why now: ${sanitize(thesis.whyNow, 280)}
+Moat: ${sanitize(thesis.moat, 240)}
+Path to exit: ${sanitize(thesis.pathToExit, 240)}
+Frameworks: YC=${thesis.ycVerdict} | Thiel=${thesis.thielVerdict} | AngelDesk=${thesis.angelDeskVerdict}
+Decision BA: ${context.analysis?.thesisBypass ? "continue (bypass these fragile actif)" : "alignement these standard"}
+Nombre d'alertes structurelles: ${thesis.alertsCount}
+
+Hypotheses porteuses (load-bearing assumptions):
+${loadBearing}
+
+Instruction critique:
+- Dis explicitement quelles hypotheses porteuses sont validees, fragilisees, ou restent non testables par ton analyse.
+- Si tes findings contredisent la these, priorise les faits et signale la contradiction.
+- ${bypassInstruction}
+`;
   }
 
   // Anti-Hallucination Directive — Abstention Permission (Prompt 2/5)

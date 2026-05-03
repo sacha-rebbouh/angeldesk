@@ -70,15 +70,8 @@ export async function buildChatContext(
   }
 
   // Fetch all required data in parallel
-  const [factEvents, redFlags, analysis, documents] = await Promise.all([
-    // Get all current facts (latest versions)
-    prisma.factEvent.findMany({
-      where: {
-        dealId,
-        eventType: "CREATED",
-      },
-      orderBy: { createdAt: "desc" },
-    }),
+  const [currentFacts, redFlags, analysis, documents] = await Promise.all([
+    getCurrentFactsFromView(dealId),
 
     // Get red flags
     prisma.redFlag.findMany({
@@ -100,12 +93,27 @@ export async function buildChatContext(
         type: true,
         name: true,
         extractedText: true,
+        sourceKind: true,
+        corpusRole: true,
+        sourceDate: true,
+        receivedAt: true,
+        sourceAuthor: true,
+        sourceSubject: true,
+        linkedQuestionSource: true,
+        linkedQuestionText: true,
+        linkedRedFlagId: true,
+        corpusParentDocumentId: true,
+        corpusParentDocument: {
+          select: {
+            name: true,
+          },
+        },
       },
     }),
   ]);
 
-  // Build key facts from FactEvents
-  const keyFacts = buildKeyFacts(factEvents);
+  // Build key facts from sanitized current facts, not raw FactEvents
+  const keyFacts = buildKeyFacts(currentFacts);
 
   // Build agent summaries from analysis results
   const analysisResults = analysis ? await loadResults(analysis.id) : null;
@@ -153,9 +161,12 @@ export async function getChatContext(
   dealId: string,
   options?: { analysisId?: string | null }
 ): Promise<DealChatContextData | null> {
-  const context = await prisma.dealChatContext.findUnique({
-    where: { dealId },
-  });
+  const [context, currentFacts] = await Promise.all([
+    prisma.dealChatContext.findUnique({
+      where: { dealId },
+    }),
+    getCurrentFactsFromView(dealId),
+  ]);
 
   if (!context) return null;
   if ("analysisId" in (options ?? {}) && context.lastAnalysisId !== options?.analysisId) {
@@ -163,7 +174,8 @@ export async function getChatContext(
   }
 
   return {
-    keyFacts: context.keyFacts as unknown as KeyFact[],
+    // Always override persisted keyFacts with the sanitized current fact store.
+    keyFacts: buildKeyFacts(currentFacts),
     agentSummaries: context.agentSummaries as unknown as Record<string, AgentSummary>,
     redFlagsContext: context.redFlagsContext as unknown as RedFlagContext[],
     extractedData: context.extractedData as Record<string, unknown> | undefined,
@@ -239,31 +251,15 @@ export async function getFullChatContext(
 // HELPER FUNCTIONS
 // ============================================================================
 
-function buildKeyFacts(factEvents: Array<{
-  factKey: string;
-  value: Prisma.JsonValue;
-  displayValue: string;
-  sourceConfidence: number;
-  source: string;
-  category: string;
-}>): KeyFact[] {
-  // Deduplicate by factKey, keeping most recent
-  const factMap = new Map<string, KeyFact>();
-
-  for (const event of factEvents) {
-    if (!factMap.has(event.factKey)) {
-      factMap.set(event.factKey, {
-        factKey: event.factKey,
-        value: event.value,
-        displayValue: event.displayValue,
-        confidence: event.sourceConfidence,
-        source: event.source,
-        category: event.category,
-      });
-    }
-  }
-
-  return Array.from(factMap.values());
+function buildKeyFacts(facts: CurrentFact[]): KeyFact[] {
+  return facts.map((fact) => ({
+    factKey: fact.factKey,
+    value: fact.currentValue as Prisma.JsonValue,
+    displayValue: fact.currentDisplayValue,
+    confidence: fact.currentConfidence,
+    source: fact.currentSource,
+    category: fact.category,
+  }));
 }
 
 function buildAgentSummaries(
@@ -511,6 +507,21 @@ async function getDocumentSummaries(
       type: true,
       processingStatus: true,
       extractedText: true,
+      sourceKind: true,
+      corpusRole: true,
+      sourceDate: true,
+      receivedAt: true,
+      sourceAuthor: true,
+      sourceSubject: true,
+      linkedQuestionSource: true,
+      linkedQuestionText: true,
+      linkedRedFlagId: true,
+      corpusParentDocumentId: true,
+      corpusParentDocument: {
+        select: {
+          name: true,
+        },
+      },
     },
   });
 
@@ -534,6 +545,17 @@ async function getDocumentSummaries(
     type: doc.type,
     isProcessed: doc.processingStatus === "COMPLETED",
     extractedText: doc.extractedText ? safeDecrypt(doc.extractedText) : null,
+    sourceKind: doc.sourceKind,
+    corpusRole: doc.corpusRole,
+    sourceDate: doc.sourceDate,
+    receivedAt: doc.receivedAt,
+    sourceAuthor: doc.sourceAuthor,
+    sourceSubject: doc.sourceSubject,
+    linkedQuestionSource: doc.linkedQuestionSource,
+    linkedQuestionText: doc.linkedQuestionText,
+    linkedRedFlagId: doc.linkedRedFlagId,
+    corpusParentDocumentId: doc.corpusParentDocumentId,
+    corpusParentDocumentName: doc.corpusParentDocument?.name ?? null,
   }));
 }
 

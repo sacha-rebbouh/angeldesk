@@ -50,6 +50,17 @@ vi.mock("@/services/negotiation/strategist", () => ({
   generateNegotiationStrategy: mocks.generateNegotiationStrategy,
 }));
 
+// ARC-LIGHT Phase 1 gate: neutralize for these flow tests. Dedicated gate
+// coverage lives in __tests__/route-gate.test.ts.
+vi.mock("@/services/documents/readiness-gate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/documents/readiness-gate")>();
+  return {
+    ...actual,
+    assertAnalysisCorpusReady: vi.fn().mockResolvedValue(undefined),
+    assertDealCorpusReady: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 const { GET, POST } = await import("../route");
 
 describe("/api/negotiation/generate cache + thesis alignment", () => {

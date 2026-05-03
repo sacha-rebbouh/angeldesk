@@ -13,6 +13,8 @@ import {
   identifyImpactedAgents,
 } from "@/lib/live/post-call-reanalyzer";
 import type { PostCallReport } from "@/lib/live/types";
+import { assertDealCorpusReady, CorpusNotReadyError } from "@/services/documents/readiness-gate";
+import { corpusNotReadyResponse } from "@/lib/api/corpus-not-ready-response";
 
 const REANALYSIS_STALE_WINDOW_MS = 30 * 60 * 1000;
 
@@ -164,6 +166,17 @@ export async function POST(request: NextRequest) {
         { error: "Cannot reanalyze a session without an associated deal" },
         { status: 400 }
       );
+    }
+
+    // ARC-LIGHT Phase 1 gate: block re-analysis (free or paid) on toxic corpus,
+    // before credit deduction and before any orchestration.
+    try {
+      await assertDealCorpusReady(session.dealId);
+    } catch (error) {
+      if (error instanceof CorpusNotReadyError) {
+        return corpusNotReadyResponse(error);
+      }
+      throw error;
     }
 
     // --- Delta mode: lightweight comparison, no agent re-run (free) ---

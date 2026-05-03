@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-04-22 — fix: Suppression middleware.ts deprecie (Next.js 16)
+
+Next.js 16 a deprecie la convention `middleware.ts` au profit de `proxy.ts`. Les deux fichiers coexistaient (contenu quasi-identique), ce qui bloquait le dev server au demarrage avec "Both middleware file and proxy file are detected".
+
+### Fichiers
+- `src/middleware.ts` **supprime** (doublon de `src/proxy.ts`)
+- `src/proxy.ts` conserve (clerkMiddleware + BYPASS_AUTH + isPublicRoute identiques)
+
+---
 ## 2026-04-17 — fix: Audit-driven hardening — 24+ items P0/P1/P2 corriges (pipeline, credits, UI, board, chat)
 
 Suite a 5 audits paralleles (orchestrator, UI, API/data, credits, board/chat) qui ont
