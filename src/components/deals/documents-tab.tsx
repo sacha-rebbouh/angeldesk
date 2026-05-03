@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useMemo, memo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { queryKeys } from "@/lib/query-keys";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -209,6 +210,7 @@ function getSecondaryLine(doc: Document, parentName?: string | null): string {
 
 export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [localDocuments, setLocalDocuments] = useState<Document[]>(documents);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
@@ -364,7 +366,8 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
     queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
-  }, [queryClient, dealId]);
+    router.refresh();
+  }, [queryClient, dealId, router]);
 
   const openUploadDialog = useCallback(() => {
     setIsUploadOpen(true);
@@ -423,12 +426,13 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       );
       setRenameDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors du renommage");
     } finally {
       setIsLoading(false);
     }
-  }, [renameDoc, newName, queryClient, dealId]);
+  }, [renameDoc, newName, queryClient, dealId, router]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteDoc) return;
@@ -448,16 +452,20 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       setLocalDocuments((currentDocuments) =>
         currentDocuments.filter((document) => document.id !== deleteDoc.id)
       );
+      setPreviewDoc((current) => current?.id === deleteDoc.id ? null : current);
+      setTextPreviewDoc((current) => current?.id === deleteDoc.id ? null : current);
+      setAuditDoc((current) => current?.id === deleteDoc.id ? null : current);
       setDeleteDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
+      router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors de la suppression");
     } finally {
       setIsLoading(false);
     }
-  }, [deleteDoc, queryClient, dealId]);
+  }, [deleteDoc, queryClient, dealId, router]);
 
   return (
     <>

@@ -35,18 +35,21 @@ export function TextPreviewDialog({
     if (!open || !document) return;
 
     let cancelled = false;
-    setIsLoading(true);
-    setError(null);
-    setText(null);
 
-    void fetch(`/api/documents/${document.id}?includeText=1`)
-      .then(async (response) => {
+    void Promise.resolve()
+      .then(async () => {
+        if (cancelled) return null;
+        setIsLoading(true);
+        setError(null);
+        setText(null);
+
+        const response = await fetch(`/api/documents/${document.id}?includeText=1`);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error ?? "Impossible de charger le texte");
         return payload.data?.extractedText ?? "";
       })
       .then((nextText) => {
-        if (!cancelled) setText(nextText);
+        if (!cancelled && nextText !== null) setText(nextText);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Impossible de charger le texte");

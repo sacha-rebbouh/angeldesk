@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHash } from "crypto";
+import { createDecipheriv, createHash } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DocumentType, Prisma } from "@prisma/client";
-import { uploadFile } from "@/services/storage";
+import { deleteFile, uploadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 import { computeContentHash, checkDuplicateDocument } from "@/services/document-hash";
 import { encryptText } from "@/lib/encryption";
@@ -42,9 +42,75 @@ export const maxDuration = 300;
 // requests can be rejected before Next materializes formData in memory.
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const MAX_MULTIPART_SIZE_BYTES = MAX_FILE_SIZE_BYTES + 2 * 1024 * 1024;
+const MAX_CLIENT_ENCRYPTED_FILE_BYTES = MAX_FILE_SIZE_BYTES + 64;
+const CLIENT_UPLOAD_ALGORITHM = "AES-256-GCM";
+const CLIENT_UPLOAD_AUTH_TAG_LENGTH = 16;
+
+const ALLOWED_MIME_TYPES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "image/png",
+  "image/jpeg",
+];
+
+const DOCUMENT_TYPE_VALUES = Object.values(DocumentType) as string[];
+
+const blobUploadBodySchema = z.object({
+  uploadSource: z.literal("blob"),
+  dealId: z.string(),
+  type: z.string().optional().nullable(),
+  customType: z.string().optional().nullable(),
+  comments: z.string().optional().nullable(),
+  progressId: z.string().uuid().optional().nullable(),
+  corpusParentDocumentId: z.string().optional().nullable(),
+  file: z.object({
+    name: z.string().min(1).max(255),
+    type: z.string().min(1),
+    size: z.number().int().positive().max(MAX_FILE_SIZE_BYTES),
+    blobUrl: z.string().url(),
+    blobPathname: z.string().min(1).max(1024).optional().nullable(),
+    encryption: z.object({
+      algorithm: z.literal(CLIENT_UPLOAD_ALGORITHM),
+      key: z.string().regex(/^[a-f0-9]{64}$/i),
+      iv: z.string().regex(/^[a-f0-9]{24}$/i),
+    }),
+  }),
+});
+
+type UploadFileInput = {
+  name: string;
+  type: string;
+  size: number;
+};
+
+type UploadInput = {
+  file: UploadFileInput;
+  buffer: Buffer;
+  dealId: string | null;
+  documentType: DocumentType | null;
+  customType: string | null;
+  comments: string | null;
+  uploadProgressId: string | null;
+  corpusParentDocumentId: string | null;
+  cleanupSourceUpload?: () => Promise<void>;
+};
+
+class UploadRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "UploadRequestError";
+  }
+}
 
 // POST /api/documents/upload - Upload a document
 export async function POST(request: NextRequest) {
+  let cleanupSourceUpload: (() => Promise<void>) | null = null;
+
   try {
     const user = await requireAuth();
 
@@ -57,29 +123,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const contentLengthHeader = request.headers.get("content-length");
-    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
-    if (contentLength == null || !Number.isFinite(contentLength) || contentLength <= 0) {
-      return NextResponse.json(
-        { error: "Content-Length header is required for document uploads" },
-        { status: 411 }
-      );
-    }
-    if (contentLength > MAX_MULTIPART_SIZE_BYTES) {
-      return NextResponse.json(
-        { error: "File too large. Maximum size is 50MB" },
-        { status: 413 }
-      );
-    }
-
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    const dealId = formData.get("dealId") as string | null;
-    const documentType = formData.get("type") as DocumentType | null;
-    const customType = formData.get("customType") as string | null;
-    const comments = formData.get("comments") as string | null;
-    const uploadProgressId = formData.get("progressId") as string | null;
-    const corpusParentDocumentId = formData.get("corpusParentDocumentId") as string | null;
+    const uploadInput = await readUploadInput(request);
+    cleanupSourceUpload = uploadInput.cleanupSourceUpload ?? null;
+    const {
+      file,
+      buffer,
+      dealId,
+      documentType,
+      customType,
+      comments,
+      uploadProgressId,
+      corpusParentDocumentId,
+    } = uploadInput;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -176,20 +231,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file type
-    const allowedMimeTypes = [
-      "application/pdf",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      "application/vnd.ms-powerpoint",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/msword",
-      "image/png",
-      "image/jpeg",
-    ];
-
-    if (!allowedMimeTypes.includes(file.type)) {
+    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
       return NextResponse.json(
         { error: "Invalid file type. Allowed: PDF, Word, Excel, PowerPoint, Images (PNG, JPG)" },
         { status: 400 }
@@ -197,18 +241,18 @@ export async function POST(request: NextRequest) {
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
       return NextResponse.json(
         { error: "File too large. Maximum size is 50MB" },
         { status: 413 }
       );
     }
 
-    // Read file buffer ONCE (File stream can only be read once)
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
     const isValidSignature = await isValidDocumentSignature(buffer, file.type);
     if (!isValidSignature) {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
       return NextResponse.json(
         { error: "Invalid file signature. The uploaded file does not match its declared type." },
         { status: 400 }
@@ -221,6 +265,8 @@ export async function POST(request: NextRequest) {
     // F63: Check for duplicate content
     const duplicateCheck = await checkDuplicateDocument(contentHash, dealId, user.id);
     if (duplicateCheck.isDuplicate && duplicateCheck.sameDeal) {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
       return NextResponse.json(
         {
           error: "Document identique deja uploade",
@@ -251,6 +297,8 @@ export async function POST(request: NextRequest) {
     const uploaded = await uploadFile(`deals/${dealId}/${sanitizedName}`, buffer, {
       access: "private",
     });
+    await cleanupUploadSource(cleanupSourceUpload);
+    cleanupSourceUpload = null;
 
     // F62: If re-uploading same filename, mark old as superseded
     if (existingDoc) {
@@ -1325,8 +1373,165 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
+    await cleanupUploadSource(cleanupSourceUpload);
+    if (error instanceof UploadRequestError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return handleApiError(error, "upload document");
   }
+}
+
+async function cleanupUploadSource(cleanup: (() => Promise<void>) | null | undefined) {
+  if (!cleanup) return;
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    console.warn("[upload] Failed to clean temporary source upload:", cleanupError);
+  }
+}
+
+async function readUploadInput(request: NextRequest): Promise<UploadInput> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    return readBlobUploadInput(request);
+  }
+  return readMultipartUploadInput(request);
+}
+
+async function readMultipartUploadInput(request: NextRequest): Promise<UploadInput> {
+  const contentLengthHeader = request.headers.get("content-length");
+  const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
+  if (contentLength == null || !Number.isFinite(contentLength) || contentLength <= 0) {
+    throw new UploadRequestError("Content-Length header is required for document uploads", 411);
+  }
+  if (contentLength > MAX_MULTIPART_SIZE_BYTES) {
+    throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
+  }
+
+  const formData = await request.formData();
+  const rawFile = formData.get("file");
+  if (!(rawFile instanceof File)) {
+    throw new UploadRequestError("No file provided", 400);
+  }
+
+  const arrayBuffer = await rawFile.arrayBuffer();
+  return {
+    file: {
+      name: rawFile.name,
+      type: rawFile.type,
+      size: rawFile.size,
+    },
+    buffer: Buffer.from(arrayBuffer),
+    dealId: readNullableFormString(formData, "dealId"),
+    documentType: parseDocumentType(readNullableFormString(formData, "type")),
+    customType: readNullableFormString(formData, "customType"),
+    comments: readNullableFormString(formData, "comments"),
+    uploadProgressId: readNullableFormString(formData, "progressId"),
+    corpusParentDocumentId: readNullableFormString(formData, "corpusParentDocumentId"),
+  };
+}
+
+async function readBlobUploadInput(request: NextRequest): Promise<UploadInput> {
+  const body = blobUploadBodySchema.parse(await request.json());
+  validateTemporaryBlobUrl(body.file.blobUrl, body.file.blobPathname ?? null);
+
+  const encryptedResponse = await fetch(body.file.blobUrl);
+  if (!encryptedResponse.ok) {
+    throw new UploadRequestError("Unable to read uploaded file from Blob storage", 502);
+  }
+
+  const encryptedContentLength = encryptedResponse.headers.get("content-length");
+  if (encryptedContentLength && Number(encryptedContentLength) > MAX_CLIENT_ENCRYPTED_FILE_BYTES) {
+    throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
+  }
+
+  const encryptedBuffer = Buffer.from(await encryptedResponse.arrayBuffer());
+  if (encryptedBuffer.length > MAX_CLIENT_ENCRYPTED_FILE_BYTES) {
+    throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
+  }
+
+  const buffer = decryptClientUploadBuffer(encryptedBuffer, {
+    keyHex: body.file.encryption.key,
+    ivHex: body.file.encryption.iv,
+  });
+  if (buffer.length !== body.file.size) {
+    throw new UploadRequestError("Uploaded file integrity check failed", 400);
+  }
+
+  return {
+    file: {
+      name: body.file.name,
+      type: body.file.type,
+      size: body.file.size,
+    },
+    buffer,
+    dealId: body.dealId,
+    documentType: parseDocumentType(body.type ?? null),
+    customType: body.customType ?? null,
+    comments: body.comments ?? null,
+    uploadProgressId: body.progressId ?? null,
+    corpusParentDocumentId: body.corpusParentDocumentId ?? null,
+    cleanupSourceUpload: async () => {
+      await deleteFile(body.file.blobUrl);
+    },
+  };
+}
+
+function decryptClientUploadBuffer(
+  encryptedBuffer: Buffer,
+  params: { keyHex: string; ivHex: string }
+): Buffer {
+  if (encryptedBuffer.length <= CLIENT_UPLOAD_AUTH_TAG_LENGTH) {
+    throw new UploadRequestError("Uploaded file encryption is invalid", 400);
+  }
+
+  try {
+    const key = Buffer.from(params.keyHex, "hex");
+    const iv = Buffer.from(params.ivHex, "hex");
+    const authTag = encryptedBuffer.subarray(encryptedBuffer.length - CLIENT_UPLOAD_AUTH_TAG_LENGTH);
+    const ciphertext = encryptedBuffer.subarray(0, encryptedBuffer.length - CLIENT_UPLOAD_AUTH_TAG_LENGTH);
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  } catch {
+    throw new UploadRequestError("Uploaded file encryption is invalid", 400);
+  }
+}
+
+function validateTemporaryBlobUrl(blobUrl: string, pathname: string | null) {
+  let parsed: URL;
+  try {
+    parsed = new URL(blobUrl);
+  } catch {
+    throw new UploadRequestError("Invalid Blob upload URL", 400);
+  }
+
+  if (
+    parsed.protocol !== "https:" ||
+    !(
+      parsed.hostname.endsWith(".public.blob.vercel-storage.com") ||
+      parsed.hostname.endsWith(".blob.vercel-storage.com")
+    )
+  ) {
+    throw new UploadRequestError("Invalid Blob upload URL", 400);
+  }
+
+  if (!pathname || !pathname.startsWith("tmp/document-uploads/")) {
+    throw new UploadRequestError("Invalid temporary Blob pathname", 400);
+  }
+}
+
+function readNullableFormString(formData: FormData, key: string): string | null {
+  const value = formData.get(key);
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function parseDocumentType(value: string | null): DocumentType | null {
+  if (!value) return null;
+  if (!DOCUMENT_TYPE_VALUES.includes(value)) {
+    throw new UploadRequestError("Invalid document type", 400);
+  }
+  return value as DocumentType;
 }
 
 function formatExtractionTierSummary(pagesByTier: ExtractionCreditEstimate["pagesByTier"]): string {

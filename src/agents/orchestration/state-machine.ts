@@ -84,8 +84,10 @@ export class AnalysisStateMachine {
   private stateStartTime: Date | null = null;
   private checkpointTimer: NodeJS.Timeout | null = null;
 
-  // Checkpoint dedup: skip periodic DB writes when state hasn't changed
-  private lastPersistedState: AnalysisState | null = null;
+  // Checkpoint dedup/ordering: persist only new snapshots and serialize DB writes.
+  private lastPersistedCheckpointSignature: string | null = null;
+  private queuedCheckpointSignatures = new Set<string>();
+  private checkpointPersistChain: Promise<void> = Promise.resolve();
 
   // Callbacks
   private onStateChangeCallbacks: ((
@@ -470,15 +472,10 @@ export class AnalysisStateMachine {
   /**
    * Create a checkpoint and persist to DB
    * Called on every state transition (force=true) and periodically via timer (force=false).
-   * When force=false, skips the DB write if the state hasn't changed since the last persist,
-   * preventing unnecessary connection pool usage during long-running analyses.
+   * When force=false, skips the DB write if the checkpoint snapshot is unchanged since the
+   * last persisted or queued snapshot, preventing unnecessary connection pool usage.
    */
   private async createCheckpoint(force: boolean = false): Promise<void> {
-    // Skip periodic checkpoints when state hasn't changed (no new data to persist)
-    if (!force && this.state === this.lastPersistedState) {
-      return;
-    }
-
     const checkpoint: AnalysisCheckpoint = {
       id: crypto.randomUUID(),
       state: this.state,
@@ -489,6 +486,17 @@ export class AnalysisStateMachine {
       results: Object.fromEntries(this.results),
       errors: this.getFailedAgents().map((f) => ({ agent: f.name, error: f.error })),
     };
+    const checkpointSignature = this.computeCheckpointSignature(checkpoint);
+
+    if (
+      !force &&
+      (
+        checkpointSignature === this.lastPersistedCheckpointSignature ||
+        this.queuedCheckpointSignatures.has(checkpointSignature)
+      )
+    ) {
+      return;
+    }
 
     this.checkpoints.push(checkpoint);
 
@@ -498,38 +506,62 @@ export class AnalysisStateMachine {
     }
 
     // Persist to database for crash recovery
-    try {
-      const totalCost = Array.from(this.results.values()).reduce(
-        (sum, r) => sum + (r.cost ?? 0),
-        0
-      );
+    const totalCost = Array.from(this.results.values()).reduce(
+      (sum, r) => sum + (r.cost ?? 0),
+      0
+    );
+    const checkpointIndex = this.checkpoints.length;
 
-      const checkpointData: CheckpointData = {
-        state: this.state,
-        completedAgents: checkpoint.completedAgents,
-        pendingAgents: checkpoint.pendingAgents,
-        failedAgents: this.getFailedAgents().map((f) => ({
-          agent: f.name,
-          error: f.error,
-          retries: f.retries,
-        })),
-        findings: checkpoint.findings,
-        results: checkpoint.results,
-        totalCost,
-        startTime: this.startTime?.toISOString() ?? new Date().toISOString(),
-      };
+    const checkpointData: CheckpointData = {
+      state: checkpoint.state,
+      completedAgents: checkpoint.completedAgents,
+      pendingAgents: checkpoint.pendingAgents,
+      failedAgents: this.getFailedAgents().map((f) => ({
+        agent: f.name,
+        error: f.error,
+        retries: f.retries,
+      })),
+      findings: checkpoint.findings,
+      results: checkpoint.results,
+      totalCost,
+      startTime: this.startTime?.toISOString() ?? new Date().toISOString(),
+    };
 
-      await saveCheckpoint(this.config.analysisId, checkpointData);
-      this.lastPersistedState = this.state;
+    this.queuedCheckpointSignatures.add(checkpointSignature);
+    const persistPromise = this.checkpointPersistChain
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await saveCheckpoint(this.config.analysisId, checkpointData);
+          this.lastPersistedCheckpointSignature = checkpointSignature;
 
-      // Cleanup old checkpoints periodically (every 3rd checkpoint)
-      if (this.checkpoints.length % 3 === 0) {
-        await cleanupOldCheckpoints(this.config.analysisId, 5);
-      }
-    } catch (error) {
-      // Log but don't fail the analysis - checkpointing is best-effort
-      console.error("[StateMachine] Failed to persist checkpoint:", error);
-    }
+          // Cleanup old checkpoints periodically (every 3rd checkpoint)
+          if (checkpointIndex % 3 === 0) {
+            await cleanupOldCheckpoints(this.config.analysisId, 5);
+          }
+        } catch (error) {
+          // Log but don't fail the analysis - checkpointing is best-effort
+          console.error("[StateMachine] Failed to persist checkpoint:", error);
+        } finally {
+          this.queuedCheckpointSignatures.delete(checkpointSignature);
+        }
+      });
+
+    this.checkpointPersistChain = persistPromise;
+    return persistPromise;
+  }
+
+  private computeCheckpointSignature(checkpoint: AnalysisCheckpoint): string {
+    return JSON.stringify({
+      state: checkpoint.state,
+      completedAgents: [...checkpoint.completedAgents].sort(),
+      pendingAgents: [...checkpoint.pendingAgents].sort(),
+      resultAgents: Object.keys(checkpoint.results).sort(),
+      errorAgents: checkpoint.errors
+        .map((entry) => `${entry.agent}:${entry.error}`)
+        .sort(),
+      findingCount: checkpoint.findings.length,
+    });
   }
 
   /**

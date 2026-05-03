@@ -42,6 +42,32 @@ describe("getThesisCallOptions", () => {
     expect(AngelDeskLensSchema.safeParse(angelDesk.terminalFallbackData).success).toBe(true);
   });
 
+  it("unwraps framework outputs when Haiku-style meta envelope is returned", () => {
+    const yc = YcLensSchema.safeParse({
+      meta: {
+        verdict: "FAVORABLE",
+        confidence: 77,
+        question: "PMF ?",
+        failures: ["Peu de preuves de retention"],
+        strengths: ["Usage repetitif"],
+        summary: "Le signal PMF existe mais reste incomplet.",
+      },
+      claims: [
+        {
+          claim: "La retention est naissante",
+          derivedFrom: "Deck + usage",
+          status: "PARTIAL",
+        },
+      ],
+    });
+
+    expect(yc.success).toBe(true);
+    expect(yc.data?.verdict).toBe("favorable");
+    expect(yc.data?.confidence).toBe(77);
+    expect(yc.data?.summary).toContain("signal PMF");
+    expect(yc.data?.claims[0]?.status).toBe("partial");
+  });
+
   it("returns reconciler defaults and terminal no-op when context is present", () => {
     delete process.env.THESIS_MODEL_TIER;
 

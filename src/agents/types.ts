@@ -3441,6 +3441,9 @@ export interface SynthesisDealScorerData {
     percentileSector: number;
     percentileStage: number;
     similarDealsAnalyzed: number;
+    method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE";
+    insufficientData?: boolean;
+    calculationDetail?: string;
   };
   investmentRecommendation: {
     action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";

@@ -108,4 +108,70 @@ describe("getCurrentFacts source document freshness", () => {
     expect(facts).toHaveLength(1);
     expect(facts[0]?.currentSource).toBe("BA_OVERRIDE");
   });
+
+  it("canonicalizes legacy alias fact keys when reading current facts", async () => {
+    mocks.factEventFindMany.mockResolvedValue([
+      makeFactEvent({
+        id: "event_alias",
+        factKey: "competition.competitor_count",
+        category: "COMPETITION",
+        value: 3,
+        displayValue: "3",
+      }),
+    ]);
+    mocks.documentFindMany.mockResolvedValue([]);
+
+    const { getCurrentFacts } = await import("../current-facts");
+    const facts = await getCurrentFacts("deal_1");
+
+    expect(facts).toHaveLength(1);
+    expect(facts[0]?.factKey).toBe("competition.competitors_count");
+    expect(facts[0]?.category).toBe("COMPETITION");
+  });
+
+  it("drops structurally invalid scalar facts already polluted in the event store", async () => {
+    mocks.factEventFindMany.mockResolvedValue([
+      makeFactEvent({
+        id: "event_market_tam",
+        factKey: "market.tam",
+        category: "MARKET",
+        value: { validated: 195000000 },
+        displayValue: "[object Object]",
+      }),
+    ]);
+    mocks.documentFindMany.mockResolvedValue([]);
+
+    const { getCurrentFacts } = await import("../current-facts");
+    const facts = await getCurrentFacts("deal_1");
+
+    expect(facts).toEqual([]);
+  });
+
+  it("drops semantically invalid historical facts that fail the quality gate", async () => {
+    mocks.factEventFindMany.mockResolvedValue([
+      makeFactEvent({
+        id: "event_revenue_currency",
+        factKey: "financial.revenue",
+        category: "FINANCIAL",
+        value: 241379,
+        unit: "EUR",
+        displayValue: "2.8M NOK",
+        extractedText: "€2.8m Revenue (2026)",
+      }),
+      makeFactEvent({
+        id: "event_traction",
+        factKey: "traction.mau",
+        category: "TRACTION",
+        value: 81.6,
+        displayValue: "81.6%",
+        extractedText: "81.6% Current Occupancy",
+      }),
+    ]);
+    mocks.documentFindMany.mockResolvedValue([]);
+
+    const { getCurrentFacts } = await import("../current-facts");
+    const facts = await getCurrentFacts("deal_1");
+
+    expect(facts).toEqual([]);
+  });
 });

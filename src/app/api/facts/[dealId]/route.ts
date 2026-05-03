@@ -4,9 +4,12 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { getCurrentFacts, getCurrentFactsByCategory } from "@/services/fact-store/current-facts";
-import type { FactCategory } from "@/services/fact-store/types";
 import type { Prisma } from "@prisma/client";
 import { handleApiError } from "@/lib/api-error";
+import {
+  buildDeclaredReliability,
+  validateTaxonomyFactInput,
+} from "@/services/fact-store";
 
 // ============================================================================
 // RATE LIMITING (with bounded Map to prevent memory exhaustion)
@@ -63,17 +66,6 @@ function checkRateLimit(identifier: string): boolean {
 // ============================================================================
 // VALIDATION SCHEMAS
 // ============================================================================
-
-const VALID_CATEGORIES: FactCategory[] = [
-  'FINANCIAL',
-  'TEAM',
-  'MARKET',
-  'PRODUCT',
-  'LEGAL',
-  'COMPETITION',
-  'TRACTION',
-  'OTHER',
-];
 
 const querySchema = z.object({
   category: z.enum(['FINANCIAL', 'TEAM', 'MARKET', 'PRODUCT', 'LEGAL', 'COMPETITION', 'TRACTION', 'OTHER']).optional(),
@@ -232,6 +224,22 @@ export async function POST(
     }
 
     const { factKey, value, displayValue, reason } = parseResult.data;
+    const validatedInput = validateTaxonomyFactInput({
+      factKey,
+      value,
+      displayValue,
+      source: "BA_OVERRIDE",
+    });
+
+    if (!validatedInput.ok) {
+      return NextResponse.json(
+        { error: validatedInput.error },
+        { status: 400 }
+      );
+    }
+
+    const normalizedFact = validatedInput.data;
+    const candidateFactKeys = [...new Set([factKey, normalizedFact.factKey])];
 
     // Verify deal ownership
     const deal = await prisma.deal.findFirst({
@@ -248,17 +256,11 @@ export async function POST(
       );
     }
 
-    // Get the category from the factKey (e.g., "financial.arr" -> "FINANCIAL")
-    const categoryFromKey = factKey.split('.')[0]?.toUpperCase();
-    const category = VALID_CATEGORIES.includes(categoryFromKey as FactCategory)
-      ? categoryFromKey
-      : 'OTHER';
-
     // Find the existing fact event to supersede (if any)
     const existingFact = await prisma.factEvent.findFirst({
       where: {
         dealId,
-        factKey,
+        factKey: { in: candidateFactKeys },
         eventType: {
           notIn: ['DELETED', 'SUPERSEDED'],
         },
@@ -270,24 +272,36 @@ export async function POST(
 
     // Use a transaction to create the new event and supersede the old one
     const result = await prisma.$transaction(async (tx) => {
-      // If there's an existing fact, mark it as superseded
-      if (existingFact) {
-        await tx.factEvent.update({
-          where: { id: existingFact.id },
-          data: { eventType: 'SUPERSEDED' },
-        });
-      }
+      await tx.factEvent.updateMany({
+        where: {
+          dealId,
+          factKey: { in: candidateFactKeys },
+          eventType: { notIn: ['DELETED', 'SUPERSEDED', 'PENDING_REVIEW'] },
+        },
+        data: { eventType: 'SUPERSEDED' },
+      });
 
       // Create the new BA_OVERRIDE event
+      const reliability = buildDeclaredReliability(
+        "Manual override submitted by BA user",
+        "ba-override"
+      );
       const newEvent = await tx.factEvent.create({
         data: {
           dealId,
-          factKey,
-          category,
-          value: value as Prisma.InputJsonValue,
-          displayValue,
+          factKey: normalizedFact.factKey,
+          category: normalizedFact.category,
+          value: normalizedFact.value as Prisma.InputJsonValue,
+          displayValue: normalizedFact.displayValue,
+          unit: normalizedFact.unit,
           source: 'BA_OVERRIDE',
           sourceConfidence: 100, // BA override has max confidence
+          truthConfidence: 100,
+          reliability: reliability as unknown as Prisma.InputJsonValue,
+          sourceMetadata: {
+            origin: "manual-fact-override",
+            requestedFactKey: factKey,
+          } as unknown as Prisma.InputJsonValue,
           eventType: existingFact ? 'SUPERSEDED' : 'CREATED',
           supersedesEventId: existingFact?.id,
           createdBy: user.id,
@@ -308,7 +322,7 @@ export async function POST(
       data: {
         id: result.id,
         dealId,
-        factKey,
+        factKey: result.factKey,
         category: result.category,
         value: result.value,
         displayValue: result.displayValue,

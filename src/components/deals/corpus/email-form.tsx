@@ -188,7 +188,7 @@ export function EmailForm({
             disabled={!body.trim()}
           >
             <RefreshCw className="mr-2 h-3.5 w-3.5" />
-            Re-tenter l'extraction
+            Re-tenter l&apos;extraction
           </Button>
         </div>
       </div>
@@ -247,7 +247,7 @@ export function EmailForm({
 
       <Button onClick={submit} disabled={isSubmitting || !body.trim()} className="w-full">
         {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-        Ajouter l'email{attachments.length > 0 ? ` et ${attachments.length} fichier${attachments.length > 1 ? "s" : ""}` : ""} au corpus
+        Ajouter l&apos;email{attachments.length > 0 ? ` et ${attachments.length} fichier${attachments.length > 1 ? "s" : ""}` : ""} au corpus
       </Button>
     </div>
   );

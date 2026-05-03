@@ -16,12 +16,11 @@ import { handleApiError } from "@/lib/api-error";
 import { thesisService } from "@/services/thesis";
 import { thesisRebuttalJudgeAgent } from "@/agents/thesis/rebuttal-judge";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
-import type { ThesisExtractorOutput } from "@/agents/thesis/types";
 import { inngest } from "@/lib/inngest";
 import { logger } from "@/lib/logger";
 import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
 import { getCurrentFactString } from "@/services/deals/canonical-read-model";
-
+import type { RebuttalJudgeOutput, ThesisExtractorOutput } from "@/agents/thesis/types";
 type RouteContext = {
   params: Promise<{ dealId: string }>;
 };
@@ -29,6 +28,116 @@ type RouteContext = {
 const rebuttalSchema = z.object({
   rebuttalText: z.string().min(20).max(4000),
 });
+
+const REBUTTAL_CONFIRMATION_CHAIN = ["CLAUDE_SONNET_45", "GEMINI_PRO", "HAIKU"] as const;
+const REBUTTAL_STRUCTURAL_PATTERNS = [
+  /\breformulation\b/i,
+  /\bth[eè]se\b/i,
+  /\bprobl[eè]me\b/i,
+  /\bsolution\b/i,
+  /\bwhy[\s-]?now\b/i,
+  /\bmoat\b/i,
+  /\bpath to exit\b/i,
+  /\bexit\b/i,
+  /\bhypoth[eè]se\b/i,
+  /\bassumption\b/i,
+  /\bload[-\s]?bearing\b/i,
+] as const;
+const REBUTTAL_EVIDENCE_PATTERNS = [
+  /\bslide\b/i,
+  /\bpage\b/i,
+  /\bdocument\b/i,
+  /\bdeck\b/i,
+  /\bfact\b/i,
+  /\bpreuve\b/i,
+  /\bcitation\b/i,
+  /\bbenchmark\b/i,
+  /\bcontrat\b/i,
+  /\bcohorte\b/i,
+  /\bARR\b/i,
+  /\bMRR\b/i,
+  /\bCAC\b/i,
+  /\bLTV\b/i,
+  /["“”]/,
+] as const;
+const REBUTTAL_VERDICT_ONLY_PATTERNS = [
+  /\bverdict\b/i,
+  /\brecommandation\b/i,
+  /\bscore\b/i,
+  /\bnote\b/i,
+  /\bfavorable\b/i,
+  /\bvigilance\b/i,
+  /\bcontrasted\b/i,
+  /\balert[_\s-]?dominant\b/i,
+  /\binvestir\b/i,
+  /\bcontinuer\b/i,
+] as const;
+const REBUTTAL_GENERIC_PATTERNS = [
+  /\bc['’]est faux\b/i,
+  /\bvous avez tort\b/i,
+  /\btu te trompes\b/i,
+  /\bje ne suis pas d['’]accord\b/i,
+  /\bn['’]importe quoi\b/i,
+] as const;
+
+function getDeterministicRebuttalRejection(rebuttalText: string): string | null {
+  const wordCount = rebuttalText.trim().split(/\s+/).filter(Boolean).length;
+  const hasStructuralAnchor = REBUTTAL_STRUCTURAL_PATTERNS.some((pattern) => pattern.test(rebuttalText));
+  const hasEvidenceAnchor = REBUTTAL_EVIDENCE_PATTERNS.some((pattern) => pattern.test(rebuttalText));
+  const isVerdictOnly = REBUTTAL_VERDICT_ONLY_PATTERNS.some((pattern) => pattern.test(rebuttalText));
+  const isGenericComplaint = REBUTTAL_GENERIC_PATTERNS.some((pattern) => pattern.test(rebuttalText));
+
+  if (isVerdictOnly && !hasStructuralAnchor && !hasEvidenceAnchor) {
+    return "Le rebuttal conteste surtout le verdict ou la recommandation. Il doit corriger la reformulation de la these avec un element structurel precis ou une preuve.";
+  }
+
+  if (isGenericComplaint && !hasStructuralAnchor && !hasEvidenceAnchor) {
+    return "Le rebuttal est trop generique pour etre juge. Citez le champ de these conteste (problem, solution, whyNow, moat, exit, load-bearing) et la preuve qui corrige l'AI.";
+  }
+
+  if (wordCount < 8 && !hasEvidenceAnchor) {
+    return "Le rebuttal est trop court pour corriger la reformulation. Ajoutez une correction precise et, idealement, une reference deck/fact/document.";
+  }
+
+  return null;
+}
+
+function buildJudgeContext(params: {
+  dealId: string;
+  deal: { id: string; name: string; sector?: string; stage?: string };
+  originalThesis: ThesisExtractorOutput;
+  rebuttalText: string;
+  judgeCallOptions?: {
+    fallbackChain?: readonly ("CLAUDE_SONNET_45" | "GEMINI_PRO" | "GEMINI_3_FLASH" | "HAIKU")[];
+  };
+}) {
+  return {
+    dealId: params.dealId,
+    deal: params.deal,
+    documents: [],
+    previousResults: {},
+    rebuttalInput: {
+      originalThesis: params.originalThesis,
+      rebuttalText: params.rebuttalText,
+      dealName: params.deal.name,
+      dealSector: params.deal.sector,
+      dealStage: params.deal.stage,
+    },
+    judgeCallOptions: params.judgeCallOptions,
+  } as unknown as Parameters<typeof thesisRebuttalJudgeAgent.run>[0];
+}
+
+function mergeAdjustedElements(
+  primary?: RebuttalJudgeOutput["adjustedElements"],
+  confirmation?: RebuttalJudgeOutput["adjustedElements"]
+): RebuttalJudgeOutput["adjustedElements"] {
+  const merged = {
+    ...(confirmation ?? {}),
+    ...(primary ?? {}),
+  };
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
 
 export async function POST(request: Request, context: RouteContext) {
   try {
@@ -154,6 +263,17 @@ export async function POST(request: Request, context: RouteContext) {
     }
     const pausedAnalysis = pausedAnalyses[0];
 
+    const deterministicRejection = getDeterministicRebuttalRejection(rebuttalText);
+    if (deterministicRejection) {
+      return NextResponse.json(
+        {
+          error: deterministicRejection,
+          code: "REBUTTAL_NOT_SPECIFIC",
+        },
+        { status: 422 }
+      );
+    }
+
     const beginAttempt = await thesisService.beginRebuttalAttempt({
       dealId,
       thesisId: latest.id,
@@ -237,22 +357,21 @@ export async function POST(request: Request, context: RouteContext) {
       sourceDocumentIds: latestSourceScope!.sourceDocumentIds,
       sourceHash: latestSourceScope!.sourceHash,
     };
+    const judgeBaseContext = {
+      dealId,
+      deal: {
+        id: deal.id,
+        name: canonicalDealName,
+        sector: canonicalSector,
+        stage: canonicalStage,
+      },
+      originalThesis,
+      rebuttalText,
+    };
 
     let judgeResult: Awaited<ReturnType<typeof thesisRebuttalJudgeAgent.run>>;
     try {
-      judgeResult = await thesisRebuttalJudgeAgent.run({
-        dealId,
-        deal: { id: deal.id, name: canonicalDealName, sector: canonicalSector, stage: canonicalStage },
-        documents: [],
-        previousResults: {},
-        rebuttalInput: {
-          originalThesis,
-          rebuttalText,
-          dealName: canonicalDealName,
-          dealSector: canonicalSector,
-          dealStage: canonicalStage,
-        },
-      } as unknown as Parameters<typeof thesisRebuttalJudgeAgent.run>[0]);
+      judgeResult = await thesisRebuttalJudgeAgent.run(buildJudgeContext(judgeBaseContext));
     } catch (err) {
       await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
         dealId,
@@ -294,7 +413,80 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
-    const judgment = judgeResult.data as { verdict: "valid" | "rejected"; reasoning: string; regenerate: boolean };
+    let judgment = judgeResult.data as RebuttalJudgeOutput;
+    if (judgment.verdict === "valid") {
+      let confirmationResult: Awaited<ReturnType<typeof thesisRebuttalJudgeAgent.run>>;
+      try {
+        confirmationResult = await thesisRebuttalJudgeAgent.run(
+          buildJudgeContext({
+            ...judgeBaseContext,
+            judgeCallOptions: {
+              fallbackChain: REBUTTAL_CONFIRMATION_CHAIN,
+            },
+          })
+        );
+      } catch (err) {
+        await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
+          dealId,
+          idempotencyKey: refundKey,
+          description: `Thesis rebuttal refund (confirmation judge crash)`,
+        }).catch(() => undefined);
+        await thesisService.cancelRebuttalAttempt({
+          thesisId: latest.id,
+          rebuttalText,
+        }).catch(() => undefined);
+        throw err;
+      }
+
+      if (!confirmationResult.success || !("data" in confirmationResult)) {
+        await refundCreditAmount(user.id, "THESIS_REBUTTAL", 1, {
+          dealId,
+          idempotencyKey: refundKey,
+          description: `Thesis rebuttal refund (confirmation judge failed)`,
+        }).catch(() => undefined);
+        await thesisService.cancelRebuttalAttempt({
+          thesisId: latest.id,
+          rebuttalText,
+        }).catch(() => undefined);
+        logger.error(
+          {
+            dealId,
+            thesisId: latest.id,
+            judgeError: confirmationResult.error,
+          },
+          "Rebuttal confirmation judge unavailable after primary valid verdict"
+        );
+        return NextResponse.json(
+          {
+            error: "Verification croisee du rebuttal temporairement indisponible. Votre credit a ete rembourse, vous pouvez reessayer.",
+            retryable: true,
+            refundedCredits: 1,
+          },
+          { status: 503, headers: { "Retry-After": "60" } }
+        );
+      }
+
+      const confirmedJudgment = confirmationResult.data as RebuttalJudgeOutput;
+      if (confirmedJudgment.verdict !== "valid") {
+        judgment = {
+          verdict: "rejected",
+          reasoning:
+            `Le rebuttal n'a pas ete confirme par la contre-evaluation independante. ` +
+            `${confirmedJudgment.reasoning}`,
+          regenerate: false,
+        };
+      } else {
+        judgment = {
+          verdict: "valid",
+          reasoning: judgment.reasoning,
+          regenerate: judgment.regenerate && confirmedJudgment.regenerate,
+          adjustedElements: mergeAdjustedElements(
+            judgment.adjustedElements,
+            confirmedJudgment.adjustedElements
+          ),
+        };
+      }
+    }
 
     const finalized = await thesisService.finalizeRebuttalAttempt({
       thesisId: latest.id,

@@ -48,13 +48,6 @@ const nextConfig: NextConfig = {
         source: "/(.*)",
         headers: securityHeaders,
       },
-      // Cache immutable assets (Next.js hashed files)
-      {
-        source: "/_next/static/(.*)",
-        headers: [
-          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
-        ],
-      },
       // Cache fonts
       {
         source: "/fonts/(.*)",
@@ -83,7 +76,7 @@ const nextConfig: NextConfig = {
     ],
   },
   experimental: {
-    middlewareClientMaxBodySize: "50mb",
+    proxyClientMaxBodySize: "50mb",
     optimizePackageImports: [
       // Icon library - 1583 modules without optimization
       "lucide-react",

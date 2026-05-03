@@ -7,6 +7,7 @@ import type {
   CurrentFact,
   ExtractedFact,
 } from "./types";
+import { canonicalizeFactKey, getFactKeyDefinition } from "./fact-keys";
 
 export interface PersistExtractedFactsResult {
   success: boolean;
@@ -36,13 +37,40 @@ function buildFactEventCreateData(
   supersedesEventId?: string,
   reason?: string
 ): Prisma.FactEventUncheckedCreateInput {
+  const canonicalFactKey = canonicalizeFactKey(fact.factKey);
+  const definition = getFactKeyDefinition(canonicalFactKey);
+
+  if (!definition) {
+    throw new Error(`Unknown factKey "${fact.factKey}"`);
+  }
+
+  const isArrayValue = Array.isArray(fact.value);
+  const isObjectValue =
+    typeof fact.value === "object" &&
+    fact.value !== null &&
+    !isArrayValue;
+
+  if (definition.type === "array") {
+    if (!isArrayValue) {
+      throw new Error(`Fact "${canonicalFactKey}" expects an array value`);
+    }
+  } else if (isArrayValue || isObjectValue) {
+    throw new Error(`Fact "${canonicalFactKey}" expects a scalar value, received structured data`);
+  }
+
+  const displayValue = fact.displayValue && fact.displayValue !== "[object Object]"
+    ? fact.displayValue
+    : typeof fact.value === "string"
+      ? fact.value
+      : String(fact.value);
+
   return {
     dealId,
-    factKey: fact.factKey,
-    category: fact.category,
+    factKey: canonicalFactKey,
+    category: definition.category,
     value: toJsonValue(fact.value),
-    displayValue: fact.displayValue,
-    unit: fact.unit,
+    displayValue,
+    unit: fact.unit ?? definition.unit,
     source: fact.source,
     sourceDocumentId: fact.sourceDocumentId,
     sourceConfidence: fact.sourceConfidence,
@@ -64,9 +92,13 @@ function dedupeFactsByKey(facts: ExtractedFact[]): ExtractedFact[] {
   const byKey = new Map<string, ExtractedFact>();
 
   for (const fact of facts) {
-    const existing = byKey.get(fact.factKey);
+    const canonicalFactKey = canonicalizeFactKey(fact.factKey);
+    const normalizedFact = canonicalFactKey === fact.factKey
+      ? fact
+      : { ...fact, factKey: canonicalFactKey };
+    const existing = byKey.get(canonicalFactKey);
     if (!existing || fact.sourceConfidence >= existing.sourceConfidence) {
-      byKey.set(fact.factKey, fact);
+      byKey.set(canonicalFactKey, normalizedFact);
     }
   }
 

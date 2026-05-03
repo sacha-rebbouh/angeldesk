@@ -6,6 +6,8 @@ const openRouterMocks = vi.hoisted(() => ({
   completeJSONWithFallback: vi.fn(),
   completeJSONStreaming: vi.fn(),
   stream: vi.fn(),
+  getAnalysisContext: vi.fn(),
+  runWithLLMContext: vi.fn(),
   setAgentContext: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
@@ -17,6 +19,8 @@ vi.mock("@/services/openrouter/router", () => ({
   completeJSONWithFallback: openRouterMocks.completeJSONWithFallback,
   completeJSONStreaming: openRouterMocks.completeJSONStreaming,
   stream: openRouterMocks.stream,
+  getAnalysisContext: openRouterMocks.getAnalysisContext,
+  runWithLLMContext: openRouterMocks.runWithLLMContext,
   setAgentContext: openRouterMocks.setAgentContext,
 }));
 
@@ -29,21 +33,47 @@ vi.mock("@/lib/logger", () => ({
 
 const { ThesisExtractorAgent } = await import("../thesis-extractor");
 
+type ThesisExtractorTestAccess = {
+  llmCompleteJSON: (...args: unknown[]) => Promise<unknown>;
+  llmCompleteJSONValidated: (...args: unknown[]) => Promise<unknown>;
+  execute: (context: unknown) => Promise<{
+    reformulated: string;
+    loadBearing: unknown[];
+    alerts: Array<{ title: string; linkedAssumptionId?: string }>;
+    verdict: string;
+    ycLens: { availability?: string };
+  }>;
+  buildCoreUserPrompt: (context: unknown, contextSummary: string) => string;
+  buildContextSummary: (context: unknown) => string;
+};
+
 describe("ThesisExtractorAgent degradation handling", () => {
   it("accepts a core thesis payload wrapped under a thesis key", async () => {
     const agent = new ThesisExtractorAgent();
-    const llmSpy = vi.spyOn(agent as any, "llmCompleteJSON") as any;
+    const testAgent = agent as unknown as ThesisExtractorTestAccess;
+    const llmSpy = vi.spyOn(testAgent, "llmCompleteJSON");
 
     llmSpy
       .mockResolvedValueOnce({
         data: {
           thesis: {
-            reformulated: "Bodhotell construit une infrastructure hôtelière pour chiens.",
-            problem: "Les propriétaires peinent à trouver une garde fiable et premium.",
-            solution: "Un réseau d'hôtels canins opérés avec standardisation forte.",
-            whyNow: "La premiumisation du pet care accélère maintenant.",
-            moat: null,
-            pathToExit: null,
+            reformulatedClaims: [
+              {
+                kind: "unknown",
+                text: "Bodhotell construit une infrastructure hôtelière pour chiens.",
+              },
+            ],
+            problemClaims: [
+              { kind: "unknown", text: "Les propriétaires peinent à trouver une garde fiable et premium." },
+            ],
+            solutionClaims: [
+              { kind: "unknown", text: "Un réseau d'hôtels canins opérés avec standardisation forte." },
+            ],
+            whyNowClaims: [
+              { kind: "unknown", text: "La premiumisation du pet care accélère maintenant." },
+            ],
+            moatClaims: [],
+            pathToExitClaims: [],
             loadBearing: [
               {
                 id: "lb_1",
@@ -107,7 +137,7 @@ describe("ThesisExtractorAgent degradation handling", () => {
         model: "google/gemini-2.5-pro",
       });
 
-    const result = await (agent as any).execute({
+    const result = await testAgent.execute({
       documents: [],
       canonicalDeal: {
         id: "deal_1",
@@ -123,17 +153,18 @@ describe("ThesisExtractorAgent degradation handling", () => {
 
   it("excludes degraded framework lenses from verdict consolidation and BA alerts", async () => {
     const agent = new ThesisExtractorAgent();
-    const validatedSpy = vi.spyOn(agent as any, "llmCompleteJSONValidated") as any;
+    const testAgent = agent as unknown as ThesisExtractorTestAccess;
+    const validatedSpy = vi.spyOn(testAgent, "llmCompleteJSONValidated");
 
     validatedSpy
       .mockResolvedValueOnce({
         data: {
-          reformulated: "Une thèse structurée",
-          problem: "Un problème important",
-          solution: "Une solution crédible",
-          whyNow: "Le marché s'ouvre maintenant",
-          moat: null,
-          pathToExit: null,
+          reformulatedClaims: [{ kind: "unknown", text: "Une thèse structurée." }],
+          problemClaims: [{ kind: "unknown", text: "Un problème important." }],
+          solutionClaims: [{ kind: "unknown", text: "Une solution crédible." }],
+          whyNowClaims: [{ kind: "unknown", text: "Le marché s'ouvre maintenant." }],
+          moatClaims: [],
+          pathToExitClaims: [],
           loadBearing: [],
           alerts: [],
         },
@@ -184,7 +215,7 @@ describe("ThesisExtractorAgent degradation handling", () => {
         resolution: "model_success",
       });
 
-    const result = await (agent as any).execute({
+    const result = await testAgent.execute({
       documents: [],
       canonicalDeal: {
         id: "deal_1",
@@ -199,17 +230,18 @@ describe("ThesisExtractorAgent degradation handling", () => {
 
   it("throws if all framework lenses are degraded", async () => {
     const agent = new ThesisExtractorAgent();
-    const validatedSpy = vi.spyOn(agent as any, "llmCompleteJSONValidated") as any;
+    const testAgent = agent as unknown as ThesisExtractorTestAccess;
+    const validatedSpy = vi.spyOn(testAgent, "llmCompleteJSONValidated");
 
     validatedSpy
       .mockResolvedValueOnce({
         data: {
-          reformulated: "Une thèse structurée",
-          problem: "Un problème important",
-          solution: "Une solution crédible",
-          whyNow: "Le marché s'ouvre maintenant",
-          moat: null,
-          pathToExit: null,
+          reformulatedClaims: [{ kind: "unknown", text: "Une thèse structurée." }],
+          problemClaims: [{ kind: "unknown", text: "Un problème important." }],
+          solutionClaims: [{ kind: "unknown", text: "Une solution crédible." }],
+          whyNowClaims: [{ kind: "unknown", text: "Le marché s'ouvre maintenant." }],
+          moatClaims: [],
+          pathToExitClaims: [],
           loadBearing: [],
           alerts: [],
         },
@@ -233,7 +265,7 @@ describe("ThesisExtractorAgent degradation handling", () => {
       });
 
     await expect(
-      (agent as any).execute({
+      testAgent.execute({
         documents: [],
         canonicalDeal: {
           id: "deal_1",
@@ -245,8 +277,9 @@ describe("ThesisExtractorAgent degradation handling", () => {
 
   it("states in the core prompt that thesis fields must stay at the root", () => {
     const agent = new ThesisExtractorAgent();
+    const testAgent = agent as unknown as ThesisExtractorTestAccess;
 
-    const prompt = (agent as any).buildCoreUserPrompt(
+    const prompt = testAgent.buildCoreUserPrompt(
       {
         documents: [],
         canonicalDeal: {
@@ -258,6 +291,99 @@ describe("ThesisExtractorAgent degradation handling", () => {
     );
 
     expect(prompt).toContain("PAS de cle enveloppante type \"thesis\"");
-    expect(prompt).toContain("\"reformulated\": \"...\"");
+    expect(prompt).toContain("\"reformulatedClaims\"");
+    expect(prompt).toContain("## THESIS FACT SCOPE");
+    expect(prompt).toContain("Tu n'as PAS le droit de calculer toi-meme une marge");
+  });
+
+  it("fails closed when the core structured claims reference an unavailable EBITDA margin metric", async () => {
+    const agent = new ThesisExtractorAgent();
+    const testAgent = agent as unknown as ThesisExtractorTestAccess;
+    const validatedSpy = vi.spyOn(testAgent, "llmCompleteJSONValidated");
+
+    validatedSpy.mockResolvedValueOnce({
+      data: {
+        reformulatedClaims: [
+          {
+            kind: "derived_metric",
+            metricKey: "ebitda_margin",
+            framing: "La societe vise une marge EBITDA de",
+          },
+        ],
+        problemClaims: [{ kind: "unknown", text: "Un problème important." }],
+        solutionClaims: [{ kind: "unknown", text: "Une solution crédible." }],
+        whyNowClaims: [{ kind: "unknown", text: "Le marché s'ouvre maintenant." }],
+        moatClaims: [],
+        pathToExitClaims: [],
+        loadBearing: [],
+        alerts: [],
+      },
+      cost: 1,
+      model: "anthropic/claude-sonnet-4.5",
+      resolution: "model_success",
+    });
+
+    await expect(
+      testAgent.execute({
+        documents: [],
+        canonicalDeal: {
+          id: "deal_1",
+          name: "Deal test",
+        },
+        factStore: [],
+      })
+    ).rejects.toThrow("Invalid structured thesis claims detected");
+  });
+
+  it("injects sector benchmarks and funding DB benchmarks into the thesis context summary", () => {
+    const agent = new ThesisExtractorAgent();
+    const testAgent = agent as unknown as ThesisExtractorTestAccess;
+
+    const summary = testAgent.buildContextSummary({
+      documents: [],
+      canonicalDeal: {
+        id: "deal_1",
+        name: "Deal test",
+        sector: "SaaS",
+        stage: "SEED",
+      },
+      fundingContext: {
+        valuationBenchmarks: {
+          p25: 8,
+          median: 12,
+          p75: 18,
+        },
+        benchmarks: {
+          arrMultipleMedian: 10,
+        },
+        sectorBenchmarks: {
+          paybackMonthsMedian: 14,
+        },
+      },
+      contextEngine: {
+        marketData: {
+          benchmarks: [
+            {
+              metricName: "ARR Growth",
+              p25: 40,
+              median: 85,
+              p75: 140,
+              unit: "%",
+              sector: "SaaS",
+              stage: "SEED",
+              source: "OPENVC",
+              lastUpdated: "2026-01-01",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(summary).toContain("### BENCHMARKS SECTORIELS ETABLIS");
+    expect(summary).toContain("arrGrowthYoY");
+    expect(summary).toContain("### VALUATION BENCHMARKS (Funding DB)");
+    expect(summary).toContain("\"median\": 12");
+    expect(summary).toContain("ARR Growth");
+    expect(summary).toContain("OPENVC");
   });
 });

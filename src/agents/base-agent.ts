@@ -3,6 +3,8 @@ import {
   completeJSON,
   completeJSONWithFallback,
   completeJSONStreaming,
+  getAnalysisContext,
+  runWithLLMContext,
   stream,
   setAgentContext,
   type TaskComplexity,
@@ -92,6 +94,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   private _llmCallTraces: LLMCallTrace[] = [];
   private _contextUsed: ContextUsed | null = null;
   private _contextHash = "";
+  private _contextualSystemPrompt = "";
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -143,6 +146,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     this._llmCallTraces = [];
     this._contextUsed = null;
     this._contextHash = "";
+    this._contextualSystemPrompt = "";
   }
 
   // Capture context used for trace
@@ -188,6 +192,9 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       contextEngine,
       extractedFields: extractedData?.fields,
       systemPrompt: createHash("sha256").update(this.buildSystemPrompt()).digest("hex").slice(0, 16),
+      contextualSystemPrompt: this._contextualSystemPrompt
+        ? createHash("sha256").update(this._contextualSystemPrompt).digest("hex").slice(0, 16)
+        : null,
       model: this.config.modelComplexity,
     });
     this._contextHash = createHash("sha256").update(contextString).digest("hex").slice(0, 32);
@@ -285,110 +292,119 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
   // Run the agent with error handling, timing, and cost tracking
   async run(context: AgentContext, options?: { enableTrace?: boolean }): Promise<TResult> {
-    const startTime = Date.now();
+    const analysisId = getAnalysisContext();
 
-    // Enable trace if requested
-    if (options?.enableTrace !== undefined) {
-      this._enableTrace = options.enableTrace;
-    }
+    return runWithLLMContext(
+      { agentName: this.config.name, analysisId },
+      async () => {
+        const startTime = Date.now();
 
-    // Reset cost tracking for this run
-    this.resetCostTracking();
+        // Enable trace if requested
+        if (options?.enableTrace !== undefined) {
+          this._enableTrace = options.enableTrace;
+        }
 
-    // Capture context for trace
-    this.captureContextUsed(context);
+        // Reset cost tracking for this run
+        this.resetCostTracking();
+        this._contextualSystemPrompt = this.buildContextualSystemPrompt(context);
 
-    // Set agent context for cost monitoring in router
-    setAgentContext(this.config.name);
+        // Capture context for trace
+        this.captureContextUsed(context);
 
-    try {
-      // Execute with global timeout
-      const data = await this.withTimeout(
-        this.execute(context),
-        this.config.timeoutMs,
-        `Agent ${this.config.name} timed out after ${this.config.timeoutMs}ms`
-      );
+        // Set agent context for cost monitoring in router
+        setAgentContext(this.config.name);
 
-      const executionTimeMs = Date.now() - startTime;
-      const contract = this.assessOutputContract(data);
+        try {
+          // Execute with global timeout
+          const data = await this.withTimeout(
+            this.execute(context),
+            this.config.timeoutMs,
+            `Agent ${this.config.name} timed out after ${this.config.timeoutMs}ms`
+          );
 
-      // Build trace if enabled
-      const trace = this.buildTrace();
-      if (trace) {
-        trace.totalDurationMs = executionTimeMs;
+          const executionTimeMs = Date.now() - startTime;
+          const contract = this.assessOutputContract(data);
+
+          // Build trace if enabled
+          const trace = this.buildTrace();
+          if (trace) {
+            trace.totalDurationMs = executionTimeMs;
+          }
+
+          // F80: Always build lightweight metrics
+          const traceMetrics: AgentTraceMetrics = {
+            id: this._traceId,
+            agentName: this.config.name,
+            totalDurationMs: executionTimeMs,
+            llmCallCount: this._llmCalls,
+            totalInputTokens: this._totalInputTokens,
+            totalOutputTokens: this._totalOutputTokens,
+            totalCost: this._totalCost,
+            contextHash: this._contextHash || 'no-hash',
+            promptVersion: this.computePromptVersionHash(),
+            startedAt: this._traceStartedAt,
+            completedAt: new Date().toISOString(),
+          };
+
+          return {
+            agentName: this.config.name,
+            success: contract.status !== "CONTRACT_BROKEN",
+            executionTimeMs,
+            cost: this._totalCost,
+            contractStatus: contract.status,
+            contractIssues: contract.issues,
+            ...(contract.status === "CONTRACT_BROKEN" && { error: `Agent output contract broken: ${contract.issues.join("; ")}` }),
+            data,
+            _traceMetrics: traceMetrics,
+            ...(trace && { _traceFull: trace }),
+          } as unknown as TResult;
+        } catch (error) {
+          const executionTimeMs = Date.now() - startTime;
+
+          // Specific handling for prompt injection
+          if (error instanceof PromptInjectionError) {
+            console.error(
+              `[${this.config.name}] PROMPT INJECTION BLOCKED: ${error.patterns.join(", ")}`
+            );
+          }
+
+          // Build trace even on failure
+          const trace = this.buildTrace();
+          if (trace) {
+            trace.totalDurationMs = executionTimeMs;
+          }
+
+          // F80: Always build lightweight metrics even on failure
+          const traceMetrics: AgentTraceMetrics = {
+            id: this._traceId,
+            agentName: this.config.name,
+            totalDurationMs: executionTimeMs,
+            llmCallCount: this._llmCalls,
+            totalInputTokens: this._totalInputTokens,
+            totalOutputTokens: this._totalOutputTokens,
+            totalCost: this._totalCost,
+            contextHash: this._contextHash || 'no-hash',
+            promptVersion: this.computePromptVersionHash(),
+            startedAt: this._traceStartedAt,
+            completedAt: new Date().toISOString(),
+          };
+
+          return {
+            agentName: this.config.name,
+            success: false,
+            executionTimeMs,
+            cost: this._totalCost,
+            error: error instanceof Error ? error.message : "Unknown error",
+            _traceMetrics: traceMetrics,
+            ...(trace && { _traceFull: trace }),
+          } as unknown as TResult;
+        } finally {
+          // Clear agent context within the scoped request context.
+          this._contextualSystemPrompt = "";
+          setAgentContext(null);
+        }
       }
-
-      // F80: Always build lightweight metrics
-      const traceMetrics: AgentTraceMetrics = {
-        id: this._traceId,
-        agentName: this.config.name,
-        totalDurationMs: executionTimeMs,
-        llmCallCount: this._llmCalls,
-        totalInputTokens: this._totalInputTokens,
-        totalOutputTokens: this._totalOutputTokens,
-        totalCost: this._totalCost,
-        contextHash: this._contextHash || 'no-hash',
-        promptVersion: this.computePromptVersionHash(),
-        startedAt: this._traceStartedAt,
-        completedAt: new Date().toISOString(),
-      };
-
-      return {
-        agentName: this.config.name,
-        success: contract.status !== "CONTRACT_BROKEN",
-        executionTimeMs,
-        cost: this._totalCost,
-        contractStatus: contract.status,
-        contractIssues: contract.issues,
-        ...(contract.status === "CONTRACT_BROKEN" && { error: `Agent output contract broken: ${contract.issues.join("; ")}` }),
-        data,
-        _traceMetrics: traceMetrics,
-        ...(trace && { _traceFull: trace }),
-      } as unknown as TResult;
-    } catch (error) {
-      const executionTimeMs = Date.now() - startTime;
-
-      // Specific handling for prompt injection
-      if (error instanceof PromptInjectionError) {
-        console.error(
-          `[${this.config.name}] PROMPT INJECTION BLOCKED: ${error.patterns.join(", ")}`
-        );
-      }
-
-      // Build trace even on failure
-      const trace = this.buildTrace();
-      if (trace) {
-        trace.totalDurationMs = executionTimeMs;
-      }
-
-      // F80: Always build lightweight metrics even on failure
-      const traceMetrics: AgentTraceMetrics = {
-        id: this._traceId,
-        agentName: this.config.name,
-        totalDurationMs: executionTimeMs,
-        llmCallCount: this._llmCalls,
-        totalInputTokens: this._totalInputTokens,
-        totalOutputTokens: this._totalOutputTokens,
-        totalCost: this._totalCost,
-        contextHash: this._contextHash || 'no-hash',
-        promptVersion: this.computePromptVersionHash(),
-        startedAt: this._traceStartedAt,
-        completedAt: new Date().toISOString(),
-      };
-
-      return {
-        agentName: this.config.name,
-        success: false,
-        executionTimeMs,
-        cost: this._totalCost,
-        error: error instanceof Error ? error.message : "Unknown error",
-        _traceMetrics: traceMetrics,
-        ...(trace && { _traceFull: trace }),
-      } as unknown as TResult;
-    } finally {
-      // Clear agent context
-      setAgentContext(null);
-    }
+    );
   }
 
   // ============================================================================
@@ -1755,9 +1771,68 @@ son deal sous le meilleur jour possible. Tu DOIS appliquer les regles suivantes:
     const stageCalibration = this._dealStage
       ? getStageCalibrationBlock(this._dealStage, this.config.name)
       : "";
+    const contextualPrompt = this._contextualSystemPrompt;
     const now = new Date();
     const dateContext = `\n\n## CONTEXTE TEMPOREL (CRITIQUE)\nDate actuelle : ${now.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.\nUtilise TOUJOURS cette date comme reference pour evaluer la fraicheur des donnees, les projections vs le realise, et les timelines. Ne JAMAIS deduire la date actuelle du contenu des documents analyses.\n`;
-    return base + dateContext + stageCalibration + this.getAntiAnchoringGuidance() + this.getConfidenceGuidance() + this.getDataReliabilityDirective() + this.getAnalyticalToneDirective() + this.getAbstentionPermission() + this.getCitationDemand() + this.getSelfAuditDirective() + this.getStructuredUncertaintyDirective();
+    return base
+      + contextualPrompt
+      + dateContext
+      + stageCalibration
+      + this.getAntiAnchoringGuidance()
+      + this.getConfidenceGuidance()
+      + this.getDataReliabilityDirective()
+      + this.getAnalyticalToneDirective()
+      + this.getAbstentionPermission()
+      + this.getCitationDemand()
+      + this.getSelfAuditDirective()
+      + this.getStructuredUncertaintyDirective();
+  }
+
+  protected buildContextualSystemPrompt(context: AgentContext): string {
+    const enrichedContext = context as EnrichedAgentContext;
+    const thesis = enrichedContext.thesis;
+    if (!thesis) return "";
+
+    const sanitize = (value: string | null | undefined, maxLength: number) =>
+      value ? sanitizeForLLM(value, { maxLength }) : "Non specifie";
+
+    const loadBearing = thesis.loadBearing.length > 0
+      ? thesis.loadBearing.slice(0, 5).map((assumption, index) => (
+        `${index + 1}. [${assumption.status}] ${sanitize(assumption.statement, 220)}\n` +
+        `   Impact: ${sanitize(assumption.impact, 220)}\n` +
+        `   Validation: ${sanitize(assumption.validationPath, 220)}`
+      )).join("\n")
+      : "Aucune hypothese porteuse explicite.";
+
+    const bypassInstruction = context.analysis?.thesisBypass
+      ? "Le BA a choisi de poursuivre MALGRE une these fragile. N'herite pas du verdict sans preuves nouvelles: traite cette these comme un prior conteste et challenge-la activement."
+      : "Utilise la these comme prior structurel du deal, mais valide-la ou contredis-la par les faits au lieu de la recopier.";
+
+    return `
+
+## THESE CANONIQUE DU DEAL (THESIS-FIRST)
+Contexte structurel prioritaire pour ce deal. Cette these n'est PAS une verite acquise.
+Ta mission est de tester si les faits de ton analyse renforcent ou fragilisent cette these.
+
+Verdict unifie: ${thesis.verdict} (confiance ${thesis.confidence}/100)
+Reformulation: ${sanitize(thesis.reformulated, 400)}
+Probleme: ${sanitize(thesis.problem, 280)}
+Solution: ${sanitize(thesis.solution, 280)}
+Why now: ${sanitize(thesis.whyNow, 280)}
+Moat: ${sanitize(thesis.moat, 240)}
+Path to exit: ${sanitize(thesis.pathToExit, 240)}
+Frameworks: YC=${thesis.ycVerdict} | Thiel=${thesis.thielVerdict} | AngelDesk=${thesis.angelDeskVerdict}
+Decision BA: ${context.analysis?.thesisBypass ? "continue (bypass these fragile actif)" : "alignement these standard"}
+Nombre d'alertes structurelles: ${thesis.alertsCount}
+
+Hypotheses porteuses (load-bearing assumptions):
+${loadBearing}
+
+Instruction critique:
+- Dis explicitement quelles hypotheses porteuses sont validees, fragilisees, ou restent non testables par ton analyse.
+- Si tes findings contredisent la these, priorise les faits et signale la contradiction.
+- ${bypassInstruction}
+`;
   }
 
   // Anti-Hallucination Directive — Abstention Permission (Prompt 2/5)

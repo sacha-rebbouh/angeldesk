@@ -1268,6 +1268,7 @@ vi.mock("@/services/openrouter/router", () => {
       model: "mock-model",
       usage: { inputTokens: 100, outputTokens: 200 },
     }),
+    getAnalysisContext: vi.fn().mockReturnValue(null),
     setAgentContext: vi.fn(),
     setAnalysisContext: vi.fn(),
     runWithLLMContext: vi.fn().mockImplementation((_ctx: unknown, fn: () => unknown) => fn()),
@@ -1373,11 +1374,20 @@ vi.mock("@/services/fact-store/fact-keys", () => ({
     "financial.arr": { type: "currency", category: "FINANCIAL", unit: "EUR", description: "Annual Recurring Revenue" },
     "financial.mrr": { type: "currency", category: "FINANCIAL", unit: "EUR", description: "Monthly Recurring Revenue" },
   },
+  canonicalizeFactKey: vi.fn((factKey: string) => ({
+    "competition.competitor_count": "competition.competitors_count",
+    "team.headcount": "team.size",
+  })[factKey] ?? factKey),
   getFactKeyDefinition: vi.fn((factKey: string) => ({
     "company.name": { type: "string", category: "OTHER", description: "Canonical company name" },
     "financial.arr": { type: "currency", category: "FINANCIAL", unit: "EUR", description: "Annual Recurring Revenue" },
     "financial.mrr": { type: "currency", category: "FINANCIAL", unit: "EUR", description: "Monthly Recurring Revenue" },
   })[factKey]),
+  getCategoryFromFactKey: vi.fn((factKey: string) => ({
+    "company.name": "OTHER",
+    "financial.arr": "FINANCIAL",
+    "financial.mrr": "FINANCIAL",
+  })[factKey] ?? "OTHER"),
   FACT_KEY_COUNT: 3,
 }));
 

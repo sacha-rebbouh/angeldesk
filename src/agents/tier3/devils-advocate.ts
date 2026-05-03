@@ -525,6 +525,9 @@ ${this.formatFactStoreData(context) ?? ""}
 5. **NARRATIVES ALTERNATIVES**: 1-2 narratives alternatives plausibles.
 
 6. **SCORE DE SCEPTICISME**: Score + verdict + 3-4 facteurs principaux.
+   - skepticismAssessment.score est OBLIGATOIRE
+   - skepticismAssessment.verdict doit etre coherent avec ce score
+   - Si le score manque, le JSON est considere incomplet
 
 7. **QUESTIONS PIEGES**: 3-5 questions critiques pour le fondateur.
 
@@ -1086,8 +1089,11 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
             data.findings?.skepticismAssessment?.verdict as (typeof validVerdicts)[number]
           )
             ? (data.findings.skepticismAssessment.verdict as (typeof validVerdicts)[number])
-            : "CAUTIOUS",
-          verdictRationale: data.findings?.skepticismAssessment?.verdictRationale ?? "",
+            : this.deriveSkepticismVerdict(hasScore ? Math.min(100, Math.max(0, rawScore)) : fallbackScore),
+          verdictRationale: data.findings?.skepticismAssessment?.verdictRationale
+            ?? (!hasScore
+              ? `Verdict derive defensivement a partir du score ${fallbackScore}/100 et des kill reasons identifies.`
+              : ""),
         };
       })(),
       concernsSummary: {
@@ -1197,6 +1203,16 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
       alertSignal,
       narrative,
     };
+  }
+
+  private deriveSkepticismVerdict(
+    score: number
+  ): "VERY_SKEPTICAL" | "SKEPTICAL" | "CAUTIOUS" | "NEUTRAL" | "CAUTIOUSLY_OPTIMISTIC" {
+    if (score >= 80) return "VERY_SKEPTICAL";
+    if (score >= 60) return "SKEPTICAL";
+    if (score >= 40) return "CAUTIOUS";
+    if (score >= 20) return "NEUTRAL";
+    return "CAUTIOUSLY_OPTIMISTIC";
   }
 }
 

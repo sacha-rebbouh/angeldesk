@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useSyncExternalStore } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Check, Loader2, XCircle } from "lucide-react";
 import { formatAgentName } from "@/lib/format-utils";
@@ -50,14 +50,14 @@ interface StepConfig {
 }
 
 function useNow(intervalMs: number): number {
-  return useSyncExternalStore(
-    (onStoreChange) => {
-      const interval = setInterval(onStoreChange, intervalMs);
-      return () => clearInterval(interval);
-    },
-    () => Date.now(),
-    () => Date.now(),
-  );
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(interval);
+  }, [intervalMs]);
+
+  return now;
 }
 
 export const AnalysisProgress = memo(function AnalysisProgress({

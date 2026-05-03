@@ -39,6 +39,9 @@ yarn-error.log*
 # local uploads (dev only)
 /public/uploads
 
+# local Prisma scratch databases
+/prisma/dev.db
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

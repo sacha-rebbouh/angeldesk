@@ -5,11 +5,11 @@ import path from "node:path";
 
 import { PopplerRenderer } from "../poppler-renderer";
 
-const E4N_PDF = "/Users/sacharebbouh/Downloads/e4n - Confidential Presentation_BD.pdf";
+const E4N_PDF = process.env.ARC_LIGHT_E2E_PDF_PATH ?? "";
 
-// End-to-end test: only runs locally when the e4n PDF is available AND either
+// End-to-end test: only runs locally when ARC_LIGHT_E2E_PDF_PATH points to a PDF AND either
 // POPPLER_BIN is set OR a system pdftoppm exists on PATH. Skipped in CI.
-const canRunE2e = existsSync(E4N_PDF);
+const canRunE2e = E4N_PDF.length > 0 && existsSync(E4N_PDF);
 
 describe("PopplerRenderer (binary resolution)", () => {
   const originalPoppler = process.env.POPPLER_BIN;

@@ -5,6 +5,8 @@
 
 // Types
 export * from './types';
+export * from './reliability';
+export * from './manual-entry';
 
 // Fact Keys Taxonomy
 export * from './fact-keys';
@@ -80,3 +82,14 @@ export type { PersistExtractedFactsResult } from './ingestion';
 // Calibration Analytics
 export { getCalibrationMetrics } from './calibration';
 export type { CalibrationMetrics } from './calibration';
+
+// Audit & quarantine
+export {
+  listSuspiciousCurrentFacts,
+  quarantineSuspiciousCurrentFacts,
+} from './audit';
+export type {
+  ListSuspiciousCurrentFactsResult,
+  QuarantineSuspiciousCurrentFactsResult,
+  SuspiciousCurrentFactCandidate,
+} from './audit';

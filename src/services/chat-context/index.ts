@@ -70,15 +70,8 @@ export async function buildChatContext(
   }
 
   // Fetch all required data in parallel
-  const [factEvents, redFlags, analysis, documents] = await Promise.all([
-    // Get all current facts (latest versions)
-    prisma.factEvent.findMany({
-      where: {
-        dealId,
-        eventType: "CREATED",
-      },
-      orderBy: { createdAt: "desc" },
-    }),
+  const [currentFacts, redFlags, analysis, documents] = await Promise.all([
+    getCurrentFactsFromView(dealId),
 
     // Get red flags
     prisma.redFlag.findMany({
@@ -119,8 +112,8 @@ export async function buildChatContext(
     }),
   ]);
 
-  // Build key facts from FactEvents
-  const keyFacts = buildKeyFacts(factEvents);
+  // Build key facts from sanitized current facts, not raw FactEvents
+  const keyFacts = buildKeyFacts(currentFacts);
 
   // Build agent summaries from analysis results
   const analysisResults = analysis ? await loadResults(analysis.id) : null;
@@ -168,9 +161,12 @@ export async function getChatContext(
   dealId: string,
   options?: { analysisId?: string | null }
 ): Promise<DealChatContextData | null> {
-  const context = await prisma.dealChatContext.findUnique({
-    where: { dealId },
-  });
+  const [context, currentFacts] = await Promise.all([
+    prisma.dealChatContext.findUnique({
+      where: { dealId },
+    }),
+    getCurrentFactsFromView(dealId),
+  ]);
 
   if (!context) return null;
   if ("analysisId" in (options ?? {}) && context.lastAnalysisId !== options?.analysisId) {
@@ -178,7 +174,8 @@ export async function getChatContext(
   }
 
   return {
-    keyFacts: context.keyFacts as unknown as KeyFact[],
+    // Always override persisted keyFacts with the sanitized current fact store.
+    keyFacts: buildKeyFacts(currentFacts),
     agentSummaries: context.agentSummaries as unknown as Record<string, AgentSummary>,
     redFlagsContext: context.redFlagsContext as unknown as RedFlagContext[],
     extractedData: context.extractedData as Record<string, unknown> | undefined,
@@ -254,31 +251,15 @@ export async function getFullChatContext(
 // HELPER FUNCTIONS
 // ============================================================================
 
-function buildKeyFacts(factEvents: Array<{
-  factKey: string;
-  value: Prisma.JsonValue;
-  displayValue: string;
-  sourceConfidence: number;
-  source: string;
-  category: string;
-}>): KeyFact[] {
-  // Deduplicate by factKey, keeping most recent
-  const factMap = new Map<string, KeyFact>();
-
-  for (const event of factEvents) {
-    if (!factMap.has(event.factKey)) {
-      factMap.set(event.factKey, {
-        factKey: event.factKey,
-        value: event.value,
-        displayValue: event.displayValue,
-        confidence: event.sourceConfidence,
-        source: event.source,
-        category: event.category,
-      });
-    }
-  }
-
-  return Array.from(factMap.values());
+function buildKeyFacts(facts: CurrentFact[]): KeyFact[] {
+  return facts.map((fact) => ({
+    factKey: fact.factKey,
+    value: fact.currentValue as Prisma.JsonValue,
+    displayValue: fact.currentDisplayValue,
+    confidence: fact.currentConfidence,
+    source: fact.currentSource,
+    category: fact.category,
+  }));
 }
 
 function buildAgentSummaries(

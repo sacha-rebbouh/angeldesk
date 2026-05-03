@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Tabs } from "@/components/ui/tabs";
@@ -16,20 +16,15 @@ export function DealDetailTabs({ initialTab, children }: DealDetailTabsProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState(
-    VALID_TABS.has(initialTab) ? initialTab : "analysis"
-  );
-
-  useEffect(() => {
-    const tab = searchParams.get("tab") ?? "analysis";
-    if (VALID_TABS.has(tab)) {
-      setActiveTab(tab);
-    }
-  }, [searchParams]);
+  const requestedTab = searchParams.get("tab");
+  const activeTab = requestedTab && VALID_TABS.has(requestedTab)
+    ? requestedTab
+    : VALID_TABS.has(initialTab)
+      ? initialTab
+      : "analysis";
 
   const handleTabChange = useCallback(
     (nextTab: string) => {
-      setActiveTab(nextTab);
       const params = new URLSearchParams(searchParams.toString());
       if (nextTab === "analysis") {
         params.delete("tab");

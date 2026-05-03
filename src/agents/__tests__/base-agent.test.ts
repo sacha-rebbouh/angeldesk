@@ -8,6 +8,8 @@ const routerMocks = vi.hoisted(() => ({
   completeJSONWithFallback: vi.fn(),
   completeJSONStreaming: vi.fn(),
   stream: vi.fn(),
+  getAnalysisContext: vi.fn(),
+  runWithLLMContext: vi.fn(),
   setAgentContext: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
@@ -19,6 +21,8 @@ vi.mock("@/services/openrouter/router", () => ({
   completeJSONWithFallback: routerMocks.completeJSONWithFallback,
   completeJSONStreaming: routerMocks.completeJSONStreaming,
   stream: routerMocks.stream,
+  getAnalysisContext: routerMocks.getAnalysisContext,
+  runWithLLMContext: routerMocks.runWithLLMContext,
   setAgentContext: routerMocks.setAgentContext,
 }));
 
@@ -56,6 +60,28 @@ class TestAgent extends BaseAgent<{ ok: boolean }> {
     options: Parameters<TestAgent["llmCompleteJSONValidated"]>[2] = {}
   ) {
     return this.llmCompleteJSONValidated("prompt", schema, options);
+  }
+}
+
+class LLMBackedTestAgent extends BaseAgent<{ ok: boolean }> {
+  constructor() {
+    super({
+      name: "llm-test-agent",
+      description: "LLM backed test agent",
+      modelComplexity: "medium",
+      maxRetries: 1,
+      timeoutMs: 1000,
+      dependencies: [],
+    });
+  }
+
+  protected buildSystemPrompt(): string {
+    return "You are an LLM-backed test agent.";
+  }
+
+  protected async execute(): Promise<{ ok: boolean }> {
+    await this.llmComplete("prompt");
+    return { ok: true };
   }
 }
 
@@ -259,5 +285,84 @@ describe("llmCompleteJSONValidated", () => {
     await agent.callValidated(schema);
 
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("run", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    routerMocks.getAnalysisContext.mockReturnValue("analysis-123");
+    routerMocks.runWithLLMContext.mockImplementation((_ctx: unknown, fn: () => unknown) => fn());
+    routerMocks.complete.mockResolvedValue({
+      content: "ok",
+      cost: 0.01,
+      model: "google/gemini-2.5-pro",
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+  });
+
+  it("wrappe l'execution dans un contexte LLM scope par agent", async () => {
+    const agent = new TestAgent();
+
+    const result = await agent.run({ documents: [] } as never);
+
+    expect(result.success).toBe(true);
+    expect(routerMocks.runWithLLMContext).toHaveBeenCalledWith(
+      { agentName: "test-agent", analysisId: "analysis-123" },
+      expect.any(Function)
+    );
+    expect(routerMocks.setAgentContext).toHaveBeenCalledWith("test-agent");
+    expect(routerMocks.setAgentContext).toHaveBeenLastCalledWith(null);
+  });
+
+  it("injecte la these canonique dans le system prompt des agents LLM downstream", async () => {
+    const agent = new LLMBackedTestAgent();
+
+    await agent.run({
+      dealId: "deal_1",
+      deal: {} as never,
+      canonicalDeal: {} as never,
+      analysis: {
+        id: "analysis-123",
+        thesisBypass: true,
+      },
+      documents: [],
+      thesis: {
+        id: "thesis_1",
+        reformulated: "Cette startup peut devenir le leader vertical du self-storage en Norvege.",
+        problem: "Les sites independants sont mal exploites.",
+        solution: "Plateforme operateur + pricing optimise.",
+        whyNow: "Consolidation acceleree du marche.",
+        moat: "Donnees proprietaires d'occupation et pricing.",
+        pathToExit: "Rachat par un consolidateur europeen.",
+        verdict: "vigilance",
+        confidence: 74,
+        loadBearing: [
+          {
+            id: "lb_1",
+            statement: "Le pricing algorithmique augmente l'occupation sans compresser la marge.",
+            status: "projected",
+            impact: "Sinon l'unite economique et la these de consolidation se degradent.",
+            validationPath: "Comparer sites pilotes vs cohortes historiques.",
+          },
+        ],
+        alertsCount: 2,
+        ycVerdict: "favorable",
+        thielVerdict: "contrasted",
+        angelDeskVerdict: "vigilance",
+      },
+    } as never);
+
+    expect(routerMocks.complete).toHaveBeenCalledTimes(1);
+    expect(routerMocks.complete.mock.calls[0]?.[1]).toMatchObject({
+      systemPrompt: expect.stringContaining("## THESE CANONIQUE DU DEAL (THESIS-FIRST)"),
+    });
+
+    const systemPrompt = String(routerMocks.complete.mock.calls[0]?.[1]?.systemPrompt ?? "");
+    expect(systemPrompt).toContain("Verdict unifie: vigilance (confiance 74/100)");
+    expect(systemPrompt).toContain("YC=favorable | Thiel=contrasted | AngelDesk=vigilance");
+    expect(systemPrompt).toContain("load-bearing assumptions");
+    expect(systemPrompt).toContain("bypass these fragile actif");
+    expect(systemPrompt).toContain("pricing algorithmique augmente l'occupation");
   });
 });

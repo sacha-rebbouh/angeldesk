@@ -847,7 +847,7 @@ export async function loadLatestCheckpoint(
     // Get latest checkpoint (even FAILED ones have valid completedAgents/results data)
     const checkpoint = await prisma.analysisCheckpoint.findFirst({
       where: { analysisId },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
 
     if (!checkpoint) {
@@ -1249,7 +1249,7 @@ export async function cleanupOldCheckpoints(
   try {
     const checkpoints = await prisma.analysisCheckpoint.findMany({
       where: { analysisId },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: { id: true },
     });
 

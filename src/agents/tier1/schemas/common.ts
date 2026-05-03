@@ -44,7 +44,10 @@ export const ScoreSchema = z.object({
 
 export const AlertSignalSchema = z.object({
   hasBlocker: z.boolean(),
-  blockerReason: z.string().optional(),
+  blockerReason: z.preprocess(
+    (value) => value ?? undefined,
+    z.string().optional()
+  ),
   recommendation: z.enum(["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"]),
   justification: z.string(),
 });

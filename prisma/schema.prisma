@@ -1967,7 +1967,7 @@ model FactEvent {
   reliability Json? // ReliabilityClassification JSON payload
 
   // Event
-  eventType         String // CREATED, SUPERSEDED, DISPUTED, RESOLVED, DELETED
+  eventType         String // CREATED, SUPERSEDED, DISPUTED, RESOLVED, DELETED, PENDING_REVIEW
   supersedesEventId String?
 
   createdAt DateTime @default(now())

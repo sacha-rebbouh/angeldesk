@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const STRUCTURED_REBUTTAL =
+  "Le moat est mal reformule: slide 14 montre que l'avantage defensif vient du brevet clinique, pas d'un effet reseau. Merci de corriger la section moat.";
+
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
   dealFindFirst: vi.fn(),
@@ -172,7 +175,7 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
       thesis: {
         id: "thesis_1",
         rebuttalCount: 1,
-        rebuttalText: "Un rebuttal suffisamment long pour etre valide.",
+        rebuttalText: STRUCTURED_REBUTTAL,
         decision: "contest",
       },
     });
@@ -212,7 +215,7 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     const response = await POST(
       new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
         method: "POST",
-        body: JSON.stringify({ rebuttalText: "Un rebuttal suffisamment long pour etre valide." }),
+        body: JSON.stringify({ rebuttalText: STRUCTURED_REBUTTAL }),
         headers: { "content-type": "application/json" },
       }),
       { params: Promise.resolve({ dealId: "deal_1" }) }
@@ -238,7 +241,7 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     const response = await POST(
       new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
         method: "POST",
-        body: JSON.stringify({ rebuttalText: "Un rebuttal suffisamment long pour etre valide." }),
+        body: JSON.stringify({ rebuttalText: STRUCTURED_REBUTTAL }),
         headers: { "content-type": "application/json" },
       }),
       { params: Promise.resolve({ dealId: "deal_1" }) }
@@ -267,7 +270,7 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     const response = await POST(
       new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
         method: "POST",
-        body: JSON.stringify({ rebuttalText: "Un rebuttal suffisamment long pour etre valide." }),
+        body: JSON.stringify({ rebuttalText: STRUCTURED_REBUTTAL }),
         headers: { "content-type": "application/json" },
       }),
       { params: Promise.resolve({ dealId: "deal_1" }) }
@@ -280,13 +283,37 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     expect(mocks.beginRebuttalAttempt).not.toHaveBeenCalled();
   });
 
+  it("rejects verdict-only rebuttals before reserving, charging, or calling the judge", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
+        method: "POST",
+        body: JSON.stringify({
+          rebuttalText: "Je conteste votre verdict vigilance, je ne suis pas d'accord et je veux continuer.",
+        }),
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({ dealId: "deal_1" }) }
+    );
+
+    const payload = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(payload).toMatchObject({
+      code: "REBUTTAL_NOT_SPECIFIC",
+    });
+    expect(String(payload.error)).toContain("verdict");
+    expect(mocks.beginRebuttalAttempt).not.toHaveBeenCalled();
+    expect(mocks.deductCreditAmount).not.toHaveBeenCalled();
+    expect(mocks.judgeRun).not.toHaveBeenCalled();
+  });
+
   it("revertit et rembourse si le dispatch du reextract echoue apres verdict valid", async () => {
     mocks.inngestSend.mockRejectedValue(new Error("queue down"));
 
     const response = await POST(
       new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
         method: "POST",
-        body: JSON.stringify({ rebuttalText: "Un rebuttal suffisamment long pour etre valide." }),
+        body: JSON.stringify({ rebuttalText: STRUCTURED_REBUTTAL }),
         headers: { "content-type": "application/json" },
       }),
       { params: Promise.resolve({ dealId: "deal_1" }) }
@@ -295,12 +322,12 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     expect(response.status).toBe(500);
     expect(mocks.finalizeRebuttalAttempt).toHaveBeenCalledWith({
       thesisId: "thesis_1",
-      rebuttalText: "Un rebuttal suffisamment long pour etre valide.",
+      rebuttalText: STRUCTURED_REBUTTAL,
       verdict: "valid",
     });
     expect(mocks.revertRebuttalAttempt).toHaveBeenCalledWith({
       thesisId: "thesis_1",
-      rebuttalText: "Un rebuttal suffisamment long pour etre valide.",
+      rebuttalText: STRUCTURED_REBUTTAL,
       expectedVerdict: "valid",
     });
     expect(mocks.refundCreditAmount).toHaveBeenCalledWith(
@@ -317,7 +344,7 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     const response = await POST(
       new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
         method: "POST",
-        body: JSON.stringify({ rebuttalText: "Un rebuttal suffisamment long pour etre valide." }),
+        body: JSON.stringify({ rebuttalText: STRUCTURED_REBUTTAL }),
         headers: { "content-type": "application/json" },
       }),
       { params: Promise.resolve({ dealId: "deal_1" }) }
@@ -341,6 +368,98 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     );
   });
 
+  it("downgrades a primary valid rebuttal when the independent confirmation rejects it", async () => {
+    mocks.judgeRun
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          verdict: "valid",
+          reasoning: "Le signal primaire voit une correction plausible.",
+          regenerate: true,
+          adjustedElements: { moat: "A revoir" },
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          verdict: "rejected",
+          reasoning: "La contre-evaluation ne voit pas de preuve assez precise.",
+          regenerate: false,
+        },
+      });
+
+    const response = await POST(
+      new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
+        method: "POST",
+        body: JSON.stringify({ rebuttalText: "Le moat n'est pas l'effet reseau mais le brevet cite slide 14." }),
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({ dealId: "deal_1" }) }
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.data).toMatchObject({
+      verdict: "rejected",
+      regenerate: false,
+      creditsCharged: 1,
+    });
+    expect(String(payload.data.reasoning)).toContain("contre-evaluation");
+    expect(mocks.judgeRun).toHaveBeenCalledTimes(2);
+    expect(mocks.finalizeRebuttalAttempt).toHaveBeenCalledWith({
+      thesisId: "thesis_1",
+      rebuttalText: "Le moat n'est pas l'effet reseau mais le brevet cite slide 14.",
+      verdict: "rejected",
+    });
+    expect(mocks.inngestSend).not.toHaveBeenCalled();
+  });
+
+  it("refunds and returns 503 when the confirmation judge is unavailable after a primary valid verdict", async () => {
+    mocks.judgeRun
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          verdict: "valid",
+          reasoning: "Le rebuttal est plausible.",
+          regenerate: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        success: false,
+        error: "confirmation unavailable",
+      });
+
+    const response = await POST(
+      new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
+        method: "POST",
+        body: JSON.stringify({ rebuttalText: "Le why now est faux: le regulation trigger est documente page 9." }),
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({ dealId: "deal_1" }) }
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(payload).toEqual({
+      error: "Verification croisee du rebuttal temporairement indisponible. Votre credit a ete rembourse, vous pouvez reessayer.",
+      retryable: true,
+      refundedCredits: 1,
+    });
+    expect(mocks.refundCreditAmount).toHaveBeenCalledWith(
+      "user_1",
+      "THESIS_REBUTTAL",
+      1,
+      expect.objectContaining({
+        idempotencyKey: expect.stringContaining("thesis:rebuttal-refund:thesis_1:"),
+      })
+    );
+    expect(mocks.cancelRebuttalAttempt).toHaveBeenCalledWith({
+      thesisId: "thesis_1",
+      rebuttalText: "Le why now est faux: le regulation trigger est documente page 9.",
+    });
+    expect(mocks.finalizeRebuttalAttempt).not.toHaveBeenCalled();
+  });
+
   it("returns 503 retryable and refunds when the judge returns success=false", async () => {
     mocks.judgeRun.mockResolvedValue({
       success: false,
@@ -350,7 +469,7 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     const response = await POST(
       new Request("http://localhost/api/deals/deal_1/thesis/rebuttal", {
         method: "POST",
-        body: JSON.stringify({ rebuttalText: "Un rebuttal suffisamment long pour etre valide." }),
+        body: JSON.stringify({ rebuttalText: STRUCTURED_REBUTTAL }),
         headers: { "content-type": "application/json" },
       }),
       { params: Promise.resolve({ dealId: "deal_1" }) }
@@ -375,7 +494,7 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
     );
     expect(mocks.cancelRebuttalAttempt).toHaveBeenCalledWith({
       thesisId: "thesis_1",
-      rebuttalText: "Un rebuttal suffisamment long pour etre valide.",
+      rebuttalText: STRUCTURED_REBUTTAL,
     });
   });
 });

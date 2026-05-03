@@ -127,6 +127,18 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
   const hiddenStrengthsCount = Math.max(0, data.keyStrengths.length - strengthsLimit);
   const visibleWeaknesses = useMemo(() => data.keyWeaknesses.slice(0, weaknessesLimit), [data.keyWeaknesses, weaknessesLimit]);
   const hiddenWeaknessesCount = Math.max(0, data.keyWeaknesses.length - weaknessesLimit);
+  const comparativeRankingMethod = data.comparativeRanking.method;
+  const comparativeRankingWeak =
+    data.comparativeRanking.insufficientData === true ||
+    comparativeRankingMethod === "INSUFFICIENT_DATA" ||
+    (data.comparativeRanking.similarDealsAnalyzed > 0 && data.comparativeRanking.similarDealsAnalyzed < 3);
+  const comparativeRankingUnavailable =
+    comparativeRankingMethod === "UNAVAILABLE" || data.comparativeRanking.similarDealsAnalyzed === 0;
+  const canTrustComparativeRanking = !comparativeRankingWeak && !comparativeRankingUnavailable;
+  const comparativeRankingNotice = comparativeRankingUnavailable
+    ? (data.comparativeRanking.calculationDetail ?? "Le ranking comparatif n'a pas pu etre calcule de maniere fiable.")
+    : data.comparativeRanking.calculationDetail ??
+      `Seulement ${data.comparativeRanking.similarDealsAnalyzed} deals comparables ont ete trouves. Le percentile affiche n'est pas statistiquement robuste.`;
 
   // DA data merged into Scorer
   const absoluteKillReasons = useMemo(() => (devilsData?.findings?.killReasons ?? []).filter(kr => kr.dealBreakerLevel === "ABSOLUTE"), [devilsData]);
@@ -214,15 +226,30 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
             title="Score détaillé par dimension"
             description={`${data.dimensionScores.length} dimensions analysées avec benchmarks`}
             icon={Target}
-            previewText={data.comparativeRanking.similarDealsAnalyzed > 0
+            previewText={canTrustComparativeRanking
               ? `Score global: ${data.overallScore}/100 - Top ${data.comparativeRanking.percentileSector}% du secteur`
               : `Score global: ${data.overallScore}/100`
             }
           />
         )}
 
-        {/* Comparative Ranking - Only for PRO, hidden if not enough comparables */}
-        {showFullScore && data.comparativeRanking.similarDealsAnalyzed >= 3 && (
+        {/* Comparative ranking caveat */}
+        {showFullScore && !canTrustComparativeRanking && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-amber-900">
+                  Benchmark comparatif non robuste
+                </p>
+                <p className="text-sm text-amber-800">{comparativeRankingNotice}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Comparative Ranking - Only for PRO when the benchmark is statistically usable */}
+        {showFullScore && canTrustComparativeRanking && (
           <div className="space-y-2">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="p-3 rounded-lg bg-muted text-center">

@@ -1330,7 +1330,7 @@ function ArtifactSummary({
                 onClick={() => window.open(previewImageUrl, "_blank", "noopener,noreferrer")}
               >
                 <ExternalLink className="mr-2 h-4 w-4" />
-                Ouvrir l'image
+                Ouvrir l&apos;image
               </Button>
               {pageUrl && (
                 <Button

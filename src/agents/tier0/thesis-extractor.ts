@@ -13,7 +13,6 @@
  */
 
 import { createHash } from "crypto";
-import { z } from "zod";
 import { BaseAgent } from "../base-agent";
 import type { AgentContext, EnrichedAgentContext } from "../types";
 import type {
@@ -30,6 +29,15 @@ import {
   THESIS_ANTI_HALLUCINATION_DIRECTIVES,
   isFrameworkLensEvaluated,
 } from "../thesis/types";
+import {
+  assertValidStructuredClaims,
+  normalizeLoadBearingAssumptions,
+  normalizeThesisAlerts,
+  repairStructuredClaims,
+  renderStructuredClaims,
+  ThesisCoreStructuredSchema,
+  type ThesisCoreStructured,
+} from "@/lib/thesis/core-claims";
 import {
   YcLensSchema,
   buildYcLensSystemPrompt,
@@ -50,61 +58,13 @@ import {
 } from "../thesis/frameworks/angel-desk";
 import { sanitizeForLLM } from "@/lib/sanitize";
 import { getThesisCallOptions } from "@/lib/thesis/call-options";
+import { buildThesisFactScope, formatThesisFactScope } from "@/lib/thesis/fact-scope";
+import { assertSupportedThesisNarrative } from "@/lib/thesis/narrative-guards";
+import { getBenchmarksForSectorStage } from "@/services/benchmarks/config";
 
 // ---------------------------------------------------------------------------
 // LLM response schemas (core thesis extraction)
 // ---------------------------------------------------------------------------
-const ThesisCoreSchema = z.preprocess(
-  (raw) => {
-    if (
-      raw &&
-      typeof raw === "object" &&
-      "thesis" in raw &&
-      !("reformulated" in raw)
-    ) {
-      return (raw as { thesis: unknown }).thesis;
-    }
-    return raw;
-  },
-  z.object({
-    reformulated: z.string().min(1),
-    problem: z.string().min(1),
-    solution: z.string().min(1),
-    whyNow: z.string().min(1),
-    moat: z.string().nullable(),
-    pathToExit: z.string().nullable(),
-    loadBearing: z.array(
-      z.object({
-        id: z.string().min(1),
-        statement: z.string().min(1),
-        status: z.enum(["verified", "declared", "projected", "speculative"]),
-        impact: z.string().min(1),
-        validationPath: z.string().min(1),
-      })
-    ),
-    alerts: z.array(
-      z.object({
-        severity: z.enum(["critical", "high", "medium", "low"]),
-        category: z.enum([
-          "why_now",
-          "problem_reality",
-          "solution_fit",
-          "moat",
-          "unit_economics",
-          "path_to_exit",
-          "team_dependency",
-          "market_size",
-          "assumption_fragile",
-        ]),
-        title: z.string().min(1),
-        detail: z.string().min(1),
-        linkedAssumptionId: z.string().nullish(),
-      })
-    ),
-  })
-);
-
-type ThesisCore = z.infer<typeof ThesisCoreSchema>;
 type FrameworkExecutionResult<T> = {
   data: T;
   availability: FrameworkLensAvailability;
@@ -152,12 +112,20 @@ Extraire la these d'investissement de la societe en 6 champs structurels + decom
 
 # 6 CHAMPS A EXTRAIRE
 
-1. **reformulated** — 3-5 phrases claires qui resument la these : "Angel Desk parie que X en visant Y via Z". Format synthetique, pas un copy-paste de pitch.
-2. **problem** — description structuree du probleme vise. A quel point est-ce un vrai probleme, pour qui, combien.
-3. **solution** — description de la solution apportee. Pas juste "une plateforme SaaS" mais l'angle specifique.
-4. **whyNow** — pourquoi cette these est pertinente MAINTENANT, pas il y a 5 ans, pas dans 5 ans. Cette section est critique : sans why-now solide, la these est speculative.
-5. **moat** — defensibilite durable. Si aucune claim credible, mettre \`null\`. Ne pas inventer.
-6. **pathToExit** — chemin d'exit envisage (acquereur strategique nomme, IPO path, secondary). Si indetermine, \`null\`.
+Pour chacun des 6 champs, tu retournes UNE LISTE DE CLAIMS STRUCTURES (pas du texte final libre).
+
+1. **reformulatedClaims** — claims qui resument la these : "Angel Desk parie que X en visant Y via Z".
+2. **problemClaims** — claims sur le probleme vise.
+3. **solutionClaims** — claims sur la solution apportee.
+4. **whyNowClaims** — claims sur le catalyseur temporel.
+5. **moatClaims** — claims sur la defensibilite durable.
+6. **pathToExitClaims** — claims sur le chemin d'exit.
+
+Chaque claim doit etre de l'un de ces 4 types:
+- **direct_fact**: reference un factKey du THESIS FACT SCOPE + une phrase d'amorce SANS chiffres
+- **derived_metric**: reference une metricKey pre-calculee du THESIS FACT SCOPE + une phrase d'amorce SANS chiffres
+- **judgment**: texte qualitatif SANS chiffre + supportingFactKeys obligatoires
+- **unknown**: texte qualitatif explicitant qu'une information manque, SANS chiffre
 
 # LOAD-BEARING ASSUMPTIONS
 
@@ -195,29 +163,66 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
   protected async execute(context: AgentContext): Promise<ThesisExtractorOutput> {
     // 1. Preparer le contexte synthetique (deck + fact-store + context-engine + deck-coherence)
     const contextSummary = this.buildContextSummary(context);
+    const factScope = buildThesisFactScope((context as EnrichedAgentContext).factStore ?? []);
     const sourceDocumentIds = (context.documents ?? []).map((d) => d.id);
     const sourceHash = this.hashSources(context);
 
     // 2. Extraction core de la these (1 call LLM complex)
-    const coreUserPrompt = this.buildCoreUserPrompt(context, contextSummary);
-    const coreResult = await this.llmCompleteJSONValidated<ThesisCore>(
+    const coreUserPrompt = this.buildCoreUserPrompt(context, contextSummary, factScope);
+    const coreResult = await this.llmCompleteJSONValidated<ThesisCoreStructured>(
       coreUserPrompt,
-      ThesisCoreSchema,
+      ThesisCoreStructuredSchema,
       {
         temperature: 0.2,
-        ...getThesisCallOptions<ThesisCore>("core"),
+        ...getThesisCallOptions<ThesisCoreStructured>("core"),
       }
     );
     const core = coreResult.data;
+    const repairedSections = repairStructuredClaims(
+      {
+        reformulated: core.reformulatedClaims,
+        problem: core.problemClaims,
+        solution: core.solutionClaims,
+        whyNow: core.whyNowClaims,
+        moat: core.moatClaims,
+        pathToExit: core.pathToExitClaims,
+      },
+      factScope
+    );
+    assertValidStructuredClaims(
+      repairedSections,
+      factScope
+    );
+    const reformulated = renderStructuredClaims(repairedSections.reformulated, factScope);
+    const problem = renderStructuredClaims(repairedSections.problem, factScope);
+    const solution = renderStructuredClaims(repairedSections.solution, factScope);
+    const whyNow = renderStructuredClaims(repairedSections.whyNow, factScope);
+    const moat = repairedSections.moat.length > 0
+      ? renderStructuredClaims(repairedSections.moat, factScope)
+      : null;
+    const pathToExit = repairedSections.pathToExit.length > 0
+      ? renderStructuredClaims(repairedSections.pathToExit, factScope)
+      : null;
+    assertSupportedThesisNarrative(
+      {
+        reformulated,
+        problem,
+        solution,
+        whyNow,
+        moat,
+        pathToExit,
+      },
+      (context as EnrichedAgentContext).factStore ?? []
+    );
 
     // 3. 3 frameworks en parallele (Promise.all pour reduire la latence)
     const frameworkInput = {
-      reformulated: core.reformulated,
-      problem: core.problem,
-      solution: core.solution,
-      whyNow: core.whyNow,
-      moat: core.moat,
-      pathToExit: core.pathToExit,
+      reformulated,
+      problem,
+      solution,
+      whyNow,
+      moat,
+      pathToExit,
       contextSummary,
     };
 
@@ -257,13 +262,7 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     // failures des frameworks reellement evalues. Une lens degradee est un incident
     // systeme, pas un signal metier a remonter au BA.
     const alerts: ThesisAlert[] = [
-      ...core.alerts.map((a) => ({
-        severity: a.severity,
-        category: a.category,
-        title: a.title,
-        detail: a.detail,
-        linkedAssumptionId: a.linkedAssumptionId ?? undefined,
-      })),
+      ...normalizeThesisAlerts(core.alerts),
     ];
 
     // Ajouter les failures de chaque framework comme alerts si pas deja presents
@@ -271,15 +270,15 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     this.appendFrameworkFailuresAsAlerts(alerts, thielLens, "thiel");
     this.appendFrameworkFailuresAsAlerts(alerts, angelDeskLens, "angel-desk");
 
-    const loadBearing: LoadBearingAssumption[] = core.loadBearing;
+    const loadBearing: LoadBearingAssumption[] = normalizeLoadBearingAssumptions(core.loadBearing);
 
     return {
-      reformulated: core.reformulated,
-      problem: core.problem,
-      solution: core.solution,
-      whyNow: core.whyNow,
-      moat: core.moat,
-      pathToExit: core.pathToExit,
+      reformulated,
+      problem,
+      solution,
+      whyNow,
+      moat,
+      pathToExit,
       verdict,
       confidence,
       loadBearing,
@@ -415,9 +414,25 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
       if (ce.newsSentiment?.overallSentiment) {
         ceLines.push(`News sentiment: ${ce.newsSentiment.overallSentiment}`);
       }
+      if (ce.marketData?.benchmarks?.length) {
+        const benchmarkLines = ce.marketData.benchmarks
+          .slice(0, 5)
+          .map((benchmark) =>
+            `- ${benchmark.metricName}: P25=${this.formatBenchmarkValue(benchmark.p25)} | ` +
+            `Median=${this.formatBenchmarkValue(benchmark.median)} | ` +
+            `P75=${this.formatBenchmarkValue(benchmark.p75)} ${benchmark.unit} ` +
+            `(${benchmark.sector}/${benchmark.stage}, source=${benchmark.source}, maj=${benchmark.lastUpdated})`
+          );
+        ceLines.push(`Market benchmarks:\n${benchmarkLines.join("\n")}`);
+      }
       if (ceLines.length > 0) {
         parts.push(`### CONTEXT ENGINE HIGHLIGHTS\n${ceLines.join("\n")}`);
       }
+    }
+
+    const benchmarkSummary = this.buildBenchmarkSummary(context);
+    if (benchmarkSummary) {
+      parts.push(benchmarkSummary);
     }
 
     // Deck coherence report (si present)
@@ -433,7 +448,90 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     return sanitizeForLLM(full, { maxLength: 40000, preserveNewlines: true });
   }
 
-  private buildCoreUserPrompt(context: AgentContext, contextSummary: string): string {
+  private buildBenchmarkSummary(context: AgentContext): string {
+    const enriched = context as EnrichedAgentContext;
+    const deal = context.canonicalDeal;
+    const parts: string[] = [];
+
+    const staticBenchmarks = getBenchmarksForSectorStage(deal?.sector, deal?.stage);
+    const staticLines: string[] = [];
+
+    for (const [metric, benchmark] of Object.entries(staticBenchmarks.financial ?? {}).slice(0, 6)) {
+      if (!benchmark || typeof benchmark !== "object") continue;
+      const record = benchmark as Record<string, unknown>;
+      staticLines.push(
+        `- ${metric}: P25=${this.formatBenchmarkValue(record.p25)} | ` +
+        `Median=${this.formatBenchmarkValue(record.median)} | ` +
+        `P75=${this.formatBenchmarkValue(record.p75)} ` +
+        `(source=${typeof record.source === "string" ? record.source : "N/A"})`
+      );
+    }
+
+    const exitBenchmark = staticBenchmarks.exit?.revenueMultiple;
+    if (exitBenchmark && typeof exitBenchmark === "object") {
+      staticLines.push(
+        `- exit.revenueMultiple: P25=${this.formatBenchmarkValue(exitBenchmark.p25)} | ` +
+        `Median=${this.formatBenchmarkValue(exitBenchmark.median)} | ` +
+        `P75=${this.formatBenchmarkValue(exitBenchmark.p75)} ` +
+        `(source=${typeof exitBenchmark.source === "string" ? exitBenchmark.source : "N/A"})`
+      );
+    }
+
+    if (staticLines.length > 0) {
+      parts.push(
+        `### BENCHMARKS SECTORIELS ETABLIS (${deal?.sector ?? "general"} / ${deal?.stage ?? "SEED"})\n` +
+        staticLines.join("\n")
+      );
+    }
+
+    const fundingDb = enriched.fundingContext ?? enriched.fundingDbContext;
+    if (fundingDb?.valuationBenchmarks) {
+      parts.push(
+        `### VALUATION BENCHMARKS (Funding DB)\n${sanitizeForLLM(
+          JSON.stringify(fundingDb.valuationBenchmarks, null, 2),
+          { maxLength: 1800, preserveNewlines: true }
+        )}`
+      );
+    }
+
+    if (fundingDb?.benchmarks) {
+      parts.push(
+        `### BENCHMARKS SYNTHETIQUES (Funding DB)\n${sanitizeForLLM(
+          JSON.stringify(fundingDb.benchmarks, null, 2),
+          { maxLength: 1800, preserveNewlines: true }
+        )}`
+      );
+    }
+
+    if (fundingDb?.sectorBenchmarks) {
+      parts.push(
+        `### BENCHMARKS SECTORIELS (Funding DB)\n${sanitizeForLLM(
+          JSON.stringify(fundingDb.sectorBenchmarks, null, 2),
+          { maxLength: 2200, preserveNewlines: true }
+        )}`
+      );
+    }
+
+    return parts.join("\n\n");
+  }
+
+  private formatBenchmarkValue(value: unknown): string {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+      return "N/A";
+    }
+
+    if (Math.abs(value) >= 1000) {
+      return value.toLocaleString("fr-FR");
+    }
+
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+
+  private buildCoreUserPrompt(
+    context: AgentContext,
+    contextSummary: string,
+    factScope = buildThesisFactScope((context as EnrichedAgentContext).factStore ?? [])
+  ): string {
     const deal = context.canonicalDeal;
     const dealBlock = `
 ## DEAL META
@@ -451,30 +549,73 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
 ${deal?.description ? `## DESCRIPTION COURTE\n${sanitizeForLLM(deal.description, { maxLength: 3000 })}\n` : ""}
 `;
 
+    const formattedFactScope = formatThesisFactScope(factScope);
+
     return `${dealBlock}
 
 ## SOURCES DISPONIBLES (deck + fact-store + context engine + deck-coherence)
 
 ${contextSummary}
 
+## THESIS FACT SCOPE (source canonique pour TOUTE affirmation numerique)
+
+Utilise UNIQUEMENT les facts et metriques pre-calculees ci-dessous pour toute affirmation chiffrée dans reformulated / problem / solution / whyNow / moat / pathToExit.
+- Si un chiffre ou une metrique n'apparait pas dans ce scope, ne le mentionne pas.
+- Tu n'as PAS le droit de calculer toi-meme une marge, un multiple, un runway, un burn/revenue, un LTV/CAC ou toute autre metrique derivee.
+- Si une information chiffrée manque ou n'est pas coherente, ecris "inconnu" ou n'en parle pas.
+- Les metriques pre-calculees ci-dessous sont les seules metriques derivees autorisees.
+
+${formattedFactScope}
+
 ---
 
-Applique ta mission: extrait la these en 6 champs (reformulated, problem, solution, whyNow, moat, pathToExit), identifie 3-5 load-bearing assumptions structurelles, et remonte les alertes (pas de limite arbitraire).
+Applique ta mission: extrait la these en 6 listes de claims structures (reformulatedClaims, problemClaims, solutionClaims, whyNowClaims, moatClaims, pathToExitClaims), identifie 3-5 load-bearing assumptions structurelles, et remonte les alertes (pas de limite arbitraire).
 
-OUTPUT ATTENDU: JSON strict SANS wrapping. Les champs reformulated, problem, solution, whyNow, moat, pathToExit, loadBearing et alerts doivent etre a la RACINE du JSON.
+INTERDICTIONS CRITIQUES:
+- N'invente aucun ratio financier.
+- N'invente aucune marge EBITDA, marge brute, marge nette, runway, burn rate, multiple de valorisation ou croissance si la metrique n'est pas explicitement presente dans THESIS FACT SCOPE.
+- N'utilise pas les nombres presents ailleurs dans le contexte pour contourner cette regle.
+- N'ecris AUCUN chiffre dans les claims de type judgment ou unknown.
+- N'ecris AUCUN chiffre dans les champs framing de direct_fact ou derived_metric. Le code injectera la valeur numerique lui-meme.
+
+OUTPUT ATTENDU: JSON strict SANS wrapping. Les champs reformulatedClaims, problemClaims, solutionClaims, whyNowClaims, moatClaims, pathToExitClaims, loadBearing et alerts doivent etre a la RACINE du JSON.
 PAS de cle enveloppante type "thesis", "data", "output" ou "result".
 
 Exemple attendu:
 {
-  "reformulated": "...",
-  "problem": "...",
-  "solution": "...",
-  "whyNow": "...",
-  "moat": null,
-  "pathToExit": null,
+  "reformulatedClaims": [
+    { "kind": "direct_fact", "factKey": "financial.amount_raising", "framing": "L'operation recherche un ticket de" },
+    { "kind": "judgment", "text": "La these repose sur la capacite a integrer des actifs existants sous une plateforme commune.", "supportingFactKeys": ["financial.amount_raising"] }
+  ],
+  "problemClaims": [
+    { "kind": "judgment", "text": "Le marche cible reste peu structure a echelle institutionnelle.", "supportingFactKeys": ["market.tam"] }
+  ],
+  "solutionClaims": [],
+  "whyNowClaims": [
+    { "kind": "unknown", "text": "Le why-now reste insuffisamment documente." }
+  ],
+  "moatClaims": [],
+  "pathToExitClaims": [
+    { "kind": "direct_fact", "factKey": "market.tam", "framing": "Le memo cible une valeur de sortie autour de" }
+  ],
   "loadBearing": [],
   "alerts": []
 }
+
+Exemples CRITIQUES:
+- VALID direct_fact:
+  { "kind": "direct_fact", "factKey": "financial.amount_raising", "framing": "L'operation recherche un ticket de" }
+- VALID derived_metric:
+  { "kind": "derived_metric", "metricKey": "ebitda_margin", "framing": "La societe opere avec une marge EBITDA de" }
+- VALID judgment:
+  { "kind": "judgment", "text": "La these repose sur une integration disciplinée des actifs existants.", "supportingFactKeys": ["financial.amount_raising", "product.stage"] }
+- VALID unknown:
+  { "kind": "unknown", "text": "Le why-now reste insuffisamment documente." }
+
+INVALIDES:
+- { "kind": "judgment", "text": "La societe vise 183M EUR de sortie", "supportingFactKeys": ["market.tam"] }
+- { "kind": "unknown", "text": "Le marche compte 6 acteurs" }
+- { "kind": "direct_fact", "factKey": "financial.amount_raising", "framing": "L'operation recherche 36M EUR" }
 
 Francais obligatoire. Aucun texte hors JSON.`;
   }

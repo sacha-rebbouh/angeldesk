@@ -21,7 +21,7 @@ import {
   pickCanonicalAnalysis,
 } from "@/services/deals/canonical-read-model";
 import { getCurrentFacts, getDisputedFacts, formatFactStoreForAgents } from "@/services/fact-store";
-import { completeJSON } from "@/services/openrouter/router";
+import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { loadResults } from "@/services/analysis-results/load-results";
 import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 
@@ -109,6 +109,13 @@ export class BoardOrchestrator {
    * Main entry point - runs the full board deliberation
    */
   async runBoard(options: BoardOrchestratorOptions): Promise<BoardVerdictResult> {
+    return runWithLLMContext(
+      { agentName: null, analysisId: null },
+      () => this._runBoardImpl(options)
+    );
+  }
+
+  private async _runBoardImpl(options: BoardOrchestratorOptions): Promise<BoardVerdictResult> {
     this.startTime = Date.now();
 
     // 1. Create or reuse session in DB

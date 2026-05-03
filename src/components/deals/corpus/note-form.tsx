@@ -152,7 +152,7 @@ export function NoteForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="note-date">Date de l'échange</Label>
+          <Label htmlFor="note-date">Date de l&apos;échange</Label>
           <Input
             id="note-date"
             type="datetime-local"

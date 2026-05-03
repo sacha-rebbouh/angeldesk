@@ -231,29 +231,12 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     ? await getCorpusSnapshotDocumentIds(selectedAnalysisDetails.corpusSnapshotId)
     : [];
 
-  const [scopedDocuments, scopedFactEvents] = await Promise.all([
-    prisma.document.findMany({
-      where: selectedAnalysisDetails?.corpusSnapshotId
-        ? { id: { in: scopedDocumentIds } }
-        : { dealId, isLatest: true },
-      select: { id: true, name: true, type: true },
-    }),
-    prisma.factEvent.findMany({
-      where: selectedAnalysisDetails?.corpusSnapshotId
-        ? {
-            dealId,
-            eventType: "CREATED",
-            sourceDocumentId: { in: scopedDocumentIds },
-          }
-        : {
-            dealId,
-            eventType: "CREATED",
-          },
-      select: { factKey: true, displayValue: true, sourceDocumentId: true },
-      take: 50,
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
+  const scopedDocuments = await prisma.document.findMany({
+    where: selectedAnalysisDetails?.corpusSnapshotId
+      ? { id: { in: scopedDocumentIds } }
+      : { dealId, isLatest: true },
+    select: { id: true, name: true, type: true },
+  });
 
   if (selectedAnalysisDetails?.corpusSnapshotId && scopedDocumentIds.length > 0) {
     const documentOrder = new Map(
@@ -444,13 +427,17 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
   }
 
   // --- Document summaries ---
-  // Group factEvents by document for keyClaims
+  // Group sanitized current facts by document for keyClaims.
   const factsByDoc = new Map<string, string[]>();
-  for (const fe of scopedFactEvents) {
-    if (fe.sourceDocumentId) {
-      const existing = factsByDoc.get(fe.sourceDocumentId) ?? [];
-      existing.push(fe.displayValue);
-      factsByDoc.set(fe.sourceDocumentId, existing);
+  for (const fact of currentFacts) {
+    if (
+      fact.currentSourceDocumentId &&
+      (!selectedAnalysisDetails?.corpusSnapshotId ||
+        scopedDocumentIds.includes(fact.currentSourceDocumentId))
+    ) {
+      const existing = factsByDoc.get(fact.currentSourceDocumentId) ?? [];
+      existing.push(fact.currentDisplayValue);
+      factsByDoc.set(fact.currentSourceDocumentId, existing);
     }
   }
 

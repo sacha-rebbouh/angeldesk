@@ -190,7 +190,7 @@ function FrameworkSection({ lens }: { lens: FrameworkLens }) {
             <div>
               <div className="flex items-center gap-1 text-xs font-medium text-green-700 mb-1">
                 <TrendingUp className="h-3 w-3" />
-                Points d'adherence
+                Points d&apos;adherence
               </div>
               <ul className="space-y-1">
                 {lens.strengths.map((s, i) => (

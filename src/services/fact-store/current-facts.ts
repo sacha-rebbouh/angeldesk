@@ -13,7 +13,8 @@ import type {
   FactEventRecord,
 } from './types';
 import { toFactEventRecord } from './persistence';
-import { getFactKeyDefinition } from './fact-keys';
+import { canonicalizeFactKey, getFactKeyDefinition } from './fact-keys';
+import { detectFactQualityIssues, hasAutoQuarantineIssue } from './quality';
 
 let currentFactsRefreshPromise: Promise<void> | null = null;
 
@@ -26,6 +27,36 @@ function isSourceDocumentCurrent(
   staleSourceDocumentIds: Set<string>
 ): boolean {
   return !sourceDocumentId || !staleSourceDocumentIds.has(sourceDocumentId);
+}
+
+function passesCurrentFactQualityGate(
+  factKey: string,
+  value: unknown,
+  displayValue: string,
+  unit?: string | null,
+  extractedText?: string | null,
+  validAt?: Date | null,
+  periodType?: string | null,
+  periodLabel?: string | null,
+  reliability?: Record<string, unknown> | null,
+  truthConfidence?: number | null,
+  source?: string | null,
+): boolean {
+  const issues = detectFactQualityIssues({
+    factKey,
+    value,
+    displayValue,
+    unit,
+    extractedText,
+    validAt,
+    periodType,
+    periodLabel,
+    reliability,
+    truthConfidence,
+    source,
+  });
+
+  return !hasAutoQuarantineIssue(issues);
 }
 
 async function loadStaleSourceDocumentIds(
@@ -113,25 +144,51 @@ export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFa
       return getCurrentFacts(dealId);
     }
 
-    return rows.map((row) => ({
-      dealId: row.dealId,
-      factKey: row.factKey,
-      category: row.category as FactCategory,
-      currentValue: row.value,
-      currentDisplayValue: row.displayValue,
-      currentSource: row.source as FactSource,
-      currentConfidence: row.sourceConfidence,
-      currentTruthConfidence: row.truthConfidence ?? undefined,
-      isDisputed: false, // View doesn't track disputes yet
-      eventHistory: [], // View doesn't include history
-      firstSeenAt: row.createdAt,
-      lastUpdatedAt: row.createdAt,
-      sourceMetadata: row.sourceMetadata ?? undefined,
-      validAt: row.validAt ?? undefined,
-      periodType: row.periodType as CurrentFact['periodType'],
-      periodLabel: row.periodLabel ?? undefined,
-      reliability: row.reliability as unknown as CurrentFact['reliability'],
-    }));
+    const facts = rows.map((row): CurrentFact | null => {
+      const factKey = canonicalizeFactKey(row.factKey);
+      const category = getFactKeyDefinition(factKey)?.category ?? (row.category as FactCategory);
+
+      if (!passesCurrentFactQualityGate(
+        factKey,
+        row.value,
+        row.displayValue,
+        row.unit,
+        row.extractedText,
+        row.validAt,
+        row.periodType,
+        row.periodLabel,
+        row.reliability,
+        row.truthConfidence,
+        row.source,
+      )) {
+        return null;
+      }
+
+      return {
+        dealId: row.dealId,
+        factKey,
+        category,
+        currentValue: row.value,
+        currentDisplayValue: row.displayValue,
+        currentUnit: row.unit ?? undefined,
+        currentExtractedText: row.extractedText ?? undefined,
+        currentSource: row.source as FactSource,
+        currentSourceDocumentId: row.sourceDocumentId ?? undefined,
+        currentConfidence: row.sourceConfidence,
+        currentTruthConfidence: row.truthConfidence ?? undefined,
+        isDisputed: false, // View doesn't track disputes yet
+        eventHistory: [], // View doesn't include history
+        firstSeenAt: row.createdAt,
+        lastUpdatedAt: row.createdAt,
+        sourceMetadata: row.sourceMetadata ?? undefined,
+        validAt: row.validAt ?? undefined,
+        periodType: row.periodType as CurrentFact['periodType'],
+        periodLabel: row.periodLabel ?? undefined,
+        reliability: row.reliability as unknown as CurrentFact['reliability'],
+      };
+    });
+
+    return facts.filter((fact): fact is CurrentFact => fact !== null);
   } catch {
     // Fallback to computed version if view doesn't exist
     console.warn(
@@ -205,9 +262,10 @@ export async function getCurrentFacts(dealId: string): Promise<CurrentFact[]> {
   // Group events by fact key
   const eventsByKey = new Map<string, FactEvent[]>();
   for (const event of events) {
-    const existing = eventsByKey.get(event.factKey) || [];
+    const factKey = canonicalizeFactKey(event.factKey);
+    const existing = eventsByKey.get(factKey) || [];
     existing.push(event);
-    eventsByKey.set(event.factKey, existing);
+    eventsByKey.set(factKey, existing);
   }
 
   // Build current facts
@@ -225,6 +283,22 @@ export async function getCurrentFacts(dealId: string): Promise<CurrentFact[]> {
 
     if (!currentEvent) {
       // All events for this key have been superseded or deleted
+      continue;
+    }
+
+    if (!passesCurrentFactQualityGate(
+      factKey,
+      currentEvent.value,
+      currentEvent.displayValue,
+      currentEvent.unit,
+      currentEvent.extractedText,
+      currentEvent.validAt,
+      currentEvent.periodType,
+      currentEvent.periodLabel,
+      currentEvent.reliability as Record<string, unknown> | null,
+      currentEvent.truthConfidence,
+      currentEvent.source,
+    )) {
       continue;
     }
 
@@ -254,10 +328,13 @@ export async function getCurrentFacts(dealId: string): Promise<CurrentFact[]> {
     currentFacts.push({
       dealId,
       factKey,
-      category: currentEvent.category as FactCategory,
+      category: getFactKeyDefinition(factKey)?.category ?? (currentEvent.category as FactCategory),
       currentValue: currentEvent.value,
       currentDisplayValue: currentEvent.displayValue,
+      currentUnit: currentEvent.unit ?? undefined,
+      currentExtractedText: currentEvent.extractedText ?? undefined,
       currentSource: currentEvent.source as FactSource,
+      currentSourceDocumentId: currentEvent.sourceDocumentId ?? undefined,
       currentConfidence: currentEvent.sourceConfidence,
       currentTruthConfidence: currentEvent.truthConfidence ?? undefined,
       isDisputed,

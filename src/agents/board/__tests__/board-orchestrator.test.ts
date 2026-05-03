@@ -48,6 +48,7 @@ vi.mock("@/services/corpus", () => ({
 
 vi.mock("@/services/openrouter/router", () => ({
   completeJSON: vi.fn(),
+  runWithLLMContext: vi.fn((_ctx, fn) => fn()),
 }));
 
 vi.mock("@/services/thesis/normalization", () => ({

@@ -19,23 +19,52 @@
 import { z } from "zod";
 import { THESIS_ANTI_HALLUCINATION_DIRECTIVES } from "../types";
 
-export const ThielLensSchema = z.object({
-  verdict: z.enum(["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]),
-  confidence: z.number().min(0).max(100),
-  question: z.string(),
+function unwrapLensEnvelope(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") {
+    return raw;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const meta = record.meta;
+  if (!meta || typeof meta !== "object") {
+    return raw;
+  }
+
+  const metaRecord = meta as Record<string, unknown>;
+  return {
+    ...record,
+    verdict: record.verdict ?? metaRecord.verdict,
+    confidence: record.confidence ?? metaRecord.confidence,
+    question: record.question ?? metaRecord.question,
+    failures: record.failures ?? metaRecord.failures,
+    strengths: record.strengths ?? metaRecord.strengths,
+    summary: record.summary ?? metaRecord.summary,
+  };
+}
+
+export const ThielLensSchema = z.preprocess(unwrapLensEnvelope, z.object({
+  verdict: z.preprocess(
+    (val) => (typeof val === "string" ? val.toLowerCase().trim() : val),
+    z.enum(["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"])
+  ).catch("contrasted"),
+  confidence: z.number().min(0).max(100).catch(50),
+  question: z.string().catch("Existe-t-il un chemin vers le monopoly ou une position contrarian defensible ?"),
   claims: z.array(
     z.object({
-      claim: z.string(),
-      derivedFrom: z.string(),
-      status: z.enum(["supported", "contradicted", "unverifiable", "partial"]),
+      claim: z.string().catch("Claim"),
+      derivedFrom: z.string().catch("Source non structuree"),
+      status: z.preprocess(
+        (val) => (typeof val === "string" ? val.toLowerCase().trim() : val),
+        z.enum(["supported", "contradicted", "unverifiable", "partial"])
+      ).catch("unverifiable"),
       evidence: z.string().nullish(),
       concern: z.string().nullish(),
     })
-  ),
-  failures: z.array(z.string()),
-  strengths: z.array(z.string()),
-  summary: z.string(),
-});
+  ).catch([]),
+  failures: z.array(z.string()).catch([]),
+  strengths: z.array(z.string()).catch([]),
+  summary: z.string().catch("Thiel lens summary unavailable"),
+}));
 
 export type ThielLensOutput = z.infer<typeof ThielLensSchema>;
 
