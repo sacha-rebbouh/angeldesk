@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, type ReactNode } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 
 import { Tabs } from "@/components/ui/tabs";
 
 const VALID_TABS = new Set(["analysis", "overview", "docs-team", "conditions", "live"]);
+
+function resolveTab(tab: string | null | undefined, fallback = "analysis"): string {
+  return tab && VALID_TABS.has(tab) ? tab : fallback;
+}
 
 interface DealDetailTabsProps {
   initialTab: string;
@@ -13,18 +17,24 @@ interface DealDetailTabsProps {
 }
 
 export function DealDetailTabs({ initialTab, children }: DealDetailTabsProps) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const requestedTab = searchParams.get("tab");
-  const activeTab = requestedTab && VALID_TABS.has(requestedTab)
-    ? requestedTab
-    : VALID_TABS.has(initialTab)
-      ? initialTab
-      : "analysis";
+  const [activeTab, setActiveTab] = useState(() =>
+    resolveTab(searchParams.get("tab"), resolveTab(initialTab))
+  );
+
+  useEffect(() => {
+    const nextTab = resolveTab(searchParams.get("tab"), resolveTab(initialTab));
+    const timeoutId = window.setTimeout(() => {
+      setActiveTab((currentTab) => currentTab === nextTab ? currentTab : nextTab);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [initialTab, searchParams]);
 
   const handleTabChange = useCallback(
     (nextTab: string) => {
+      if (!VALID_TABS.has(nextTab)) return;
+      setActiveTab(nextTab);
       const params = new URLSearchParams(searchParams.toString());
       if (nextTab === "analysis") {
         params.delete("tab");
@@ -32,9 +42,9 @@ export function DealDetailTabs({ initialTab, children }: DealDetailTabsProps) {
         params.set("tab", nextTab);
       }
       const query = params.toString();
-      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+      window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
     },
-    [pathname, router, searchParams]
+    [pathname, searchParams]
   );
 
   return (
