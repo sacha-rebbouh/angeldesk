@@ -376,6 +376,33 @@ export async function POST(request: NextRequest) {
     let pagesOCRd = 0;
     let ocrCost = 0;
     let extractionCreditEstimate: ExtractionCreditEstimate | null = null;
+    const reusedExtraction = file.type === "application/pdf" &&
+      duplicateCheck.isDuplicate &&
+      !duplicateCheck.sameDeal &&
+      duplicateCheck.existingDocument
+      ? await reuseCompletedExtractionFromDuplicate({
+          sourceDocumentId: duplicateCheck.existingDocument.id,
+          targetDocumentId: document.id,
+          targetDocumentVersion: document.version,
+          contentHash,
+        })
+      : null;
+
+    if (reusedExtraction) {
+      extractionQuality = reusedExtraction.extractionQuality;
+      extractionWarnings = reusedExtraction.extractionWarnings;
+      requiresOCR = reusedExtraction.requiresOCR;
+      ocrProcessed = reusedExtraction.ocrProcessed;
+      pagesOCRd = reusedExtraction.pagesOCRd;
+      ocrCost = reusedExtraction.ocrCost;
+      extractionCreditEstimate = reusedExtraction.creditEstimate;
+      await publishUploadProgress({
+        phase: "completed",
+        pageCount: reusedExtraction.pageCount,
+        pagesProcessed: reusedExtraction.pagesProcessed,
+        message: "Extraction reused from identical document",
+      });
+    }
 
     // Images (JPEG/PNG): OCR via Vision LLM to extract text content
     let imageOcrCredits = 0;
@@ -520,7 +547,7 @@ export async function POST(request: NextRequest) {
 
     let pdfPreChargedCredits = 0;
 
-    if (file.type === "application/pdf") {
+    if (file.type === "application/pdf" && !reusedExtraction) {
       const { estimatePdfExtractionCost, smartExtract } = await import("@/services/pdf");
       // P0.4: pre-check credits avant de lancer smartExtract (qui peut engager
       // du compute OpenRouter). Estimation conservatrice worst-case: 1 credit/page
@@ -1388,6 +1415,182 @@ async function cleanupUploadSource(cleanup: (() => Promise<void>) | null | undef
   } catch (cleanupError) {
     console.warn("[upload] Failed to clean temporary source upload:", cleanupError);
   }
+}
+
+async function reuseCompletedExtractionFromDuplicate(params: {
+  sourceDocumentId: string;
+  targetDocumentId: string;
+  targetDocumentVersion: number;
+  contentHash: string;
+}): Promise<{
+  extractionQuality: number | null;
+  extractionWarnings: ExtractionWarning[];
+  requiresOCR: boolean;
+  ocrProcessed: boolean;
+  pagesOCRd: number;
+  ocrCost: number;
+  creditEstimate: ExtractionCreditEstimate | null;
+  pageCount: number;
+  pagesProcessed: number;
+} | null> {
+  const sourceDocument = await prisma.document.findFirst({
+    where: {
+      id: params.sourceDocumentId,
+      contentHash: params.contentHash,
+      processingStatus: "COMPLETED",
+      extractedText: { not: null },
+    },
+    include: {
+      extractionRuns: {
+        where: { status: { not: "FAILED" } },
+        orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
+        take: 1,
+        include: { pages: { orderBy: { pageNumber: "asc" } } },
+      },
+    },
+  });
+
+  const sourceRun = sourceDocument?.extractionRuns[0];
+  if (!sourceDocument?.extractedText || !sourceRun) return null;
+  if (sourceRun.pageCount > 0 && sourceRun.pagesProcessed < sourceRun.pageCount) return null;
+
+  const clonedRun = await prisma.$transaction(async (tx) => {
+    const createdRun = await tx.documentExtractionRun.create({
+      data: {
+        documentId: params.targetDocumentId,
+        documentVersion: params.targetDocumentVersion,
+        status: sourceRun.status,
+        pageCount: sourceRun.pageCount,
+        pagesProcessed: sourceRun.pagesProcessed,
+        pagesSucceeded: sourceRun.pagesSucceeded,
+        pagesFailed: sourceRun.pagesFailed,
+        pagesSkipped: sourceRun.pagesSkipped,
+        coverageRatio: sourceRun.coverageRatio,
+        qualityScore: sourceRun.qualityScore,
+        readyForAnalysis: sourceRun.readyForAnalysis,
+        blockedReason: sourceRun.blockedReason,
+        extractionVersion: sourceRun.extractionVersion,
+        pipelineVersion: sourceRun.pipelineVersion,
+        contentHash: params.contentHash,
+        corpusTextHash: sourceRun.corpusTextHash,
+        summaryMetrics: mergeJsonObject(sourceRun.summaryMetrics, {
+          reusedExtraction: true,
+          reusedFromDocumentId: sourceDocument.id,
+          reusedFromExtractionRunId: sourceRun.id,
+        }),
+        warnings: cloneJsonForPrisma(sourceRun.warnings),
+        completedAt: sourceRun.completedAt ?? new Date(),
+        pages: {
+          create: sourceRun.pages.map((page) => ({
+            pageNumber: page.pageNumber,
+            status: page.status,
+            method: page.method,
+            charCount: page.charCount,
+            wordCount: page.wordCount,
+            qualityScore: page.qualityScore,
+            confidence: page.confidence,
+            hasTables: page.hasTables,
+            hasCharts: page.hasCharts,
+            hasFinancialKeywords: page.hasFinancialKeywords,
+            hasTeamKeywords: page.hasTeamKeywords,
+            hasMarketKeywords: page.hasMarketKeywords,
+            requiresOCR: page.requiresOCR,
+            ocrProcessed: page.ocrProcessed,
+            contentHash: page.contentHash,
+            artifactVersion: page.artifactVersion,
+            artifact: cloneJsonForPrisma(page.artifact),
+            pageImageHash: page.pageImageHash,
+            errorMessage: page.errorMessage,
+            textPreview: page.textPreview,
+          })),
+        },
+      },
+    });
+
+    await tx.document.update({
+      where: { id: params.targetDocumentId },
+      data: {
+        extractedText: sourceDocument.extractedText,
+        processingStatus: "COMPLETED",
+        extractionQuality: sourceDocument.extractionQuality,
+        extractionMetrics: buildReusedExtractionMetrics(sourceDocument.extractionMetrics, {
+          latestExtractionRunId: createdRun.id,
+          reusedExtraction: true,
+          reusedFromDocumentId: sourceDocument.id,
+          reusedFromExtractionRunId: sourceRun.id,
+        }),
+        extractionWarnings: cloneJsonForPrisma(sourceDocument.extractionWarnings),
+        requiresOCR: sourceDocument.requiresOCR,
+        ocrProcessed: sourceDocument.ocrProcessed,
+      },
+    });
+
+    return createdRun;
+  });
+
+  const metrics = asJsonRecord(sourceDocument.extractionMetrics);
+  return {
+    extractionQuality: sourceDocument.extractionQuality,
+    extractionWarnings: Array.isArray(sourceDocument.extractionWarnings)
+      ? sourceDocument.extractionWarnings as unknown as ExtractionWarning[]
+      : [],
+    requiresOCR: sourceDocument.requiresOCR,
+    ocrProcessed: sourceDocument.ocrProcessed,
+    pagesOCRd: getMetricNumber(metrics, "pagesOCRd"),
+    ocrCost: getMetricNumber(metrics, "ocrCost"),
+    creditEstimate: getCreditEstimate(metrics),
+    pageCount: clonedRun.pageCount,
+    pagesProcessed: clonedRun.pagesProcessed,
+  };
+}
+
+function cloneJsonForPrisma(
+  value: Prisma.JsonValue | null | undefined
+): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  if (value === null || value === undefined) return Prisma.DbNull;
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function asJsonRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function mergeJsonObject(
+  value: Prisma.JsonValue | null | undefined,
+  extra: Record<string, unknown>
+): Prisma.InputJsonObject {
+  return {
+    ...asJsonRecord(value),
+    ...extra,
+  } as Prisma.InputJsonObject;
+}
+
+function buildReusedExtractionMetrics(
+  value: Prisma.JsonValue | null | undefined,
+  extra: Record<string, unknown>
+): Prisma.InputJsonObject {
+  const metrics = asJsonRecord(value);
+  const sourceCreditsCharged = metrics.extractionCreditsCharged;
+  if (sourceCreditsCharged !== undefined) {
+    metrics.reusedSourceExtractionCreditsCharged = sourceCreditsCharged;
+  }
+  metrics.extractionCreditsCharged = 0;
+  return {
+    ...metrics,
+    ...extra,
+  } as Prisma.InputJsonObject;
+}
+
+function getMetricNumber(metrics: Record<string, unknown>, key: string): number {
+  const value = metrics[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function getCreditEstimate(metrics: Record<string, unknown>): ExtractionCreditEstimate | null {
+  const value = metrics.creditEstimate;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as ExtractionCreditEstimate;
 }
 
 async function readUploadInput(request: NextRequest): Promise<UploadInput> {

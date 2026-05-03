@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState, useMemo, memo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import { queryKeys } from "@/lib/query-keys";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -210,7 +209,6 @@ function getSecondaryLine(doc: Document, parentName?: string | null): string {
 
 export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: DocumentsTabProps) {
   const queryClient = useQueryClient();
-  const router = useRouter();
   const [localDocuments, setLocalDocuments] = useState<Document[]>(documents);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
@@ -366,8 +364,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
     queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
-    router.refresh();
-  }, [queryClient, dealId, router]);
+  }, [queryClient, dealId]);
 
   const openUploadDialog = useCallback(() => {
     setIsUploadOpen(true);
@@ -426,13 +423,12 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       );
       setRenameDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
-      router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors du renommage");
     } finally {
       setIsLoading(false);
     }
-  }, [renameDoc, newName, queryClient, dealId, router]);
+  }, [renameDoc, newName, queryClient, dealId]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteDoc) return;
@@ -459,13 +455,12 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
-      router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors de la suppression");
     } finally {
       setIsLoading(false);
     }
-  }, [deleteDoc, queryClient, dealId, router]);
+  }, [deleteDoc, queryClient, dealId]);
 
   return (
     <>
@@ -478,7 +473,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                 Corpus chronologique du deal : fichiers, emails et notes
               </CardDescription>
             </div>
-            <Button onClick={openUploadDialog}>
+            <Button type="button" onClick={openUploadDialog}>
               <Plus className="mr-2 h-4 w-4" />
               Ajouter au corpus
             </Button>
@@ -494,7 +489,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                   Ajoutez un fichier, un email ou une note pour commencer
                   l&apos;analyse.
                 </p>
-                <Button className="mt-4" onClick={openUploadDialog}>
+                <Button type="button" className="mt-4" onClick={openUploadDialog}>
                   <Plus className="mr-2 h-4 w-4" />
                   Ajouter au corpus
                 </Button>

@@ -120,7 +120,7 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
               {uploadedCount > 1 ? "s" : ""}
             </p>
           )}
-          <Button variant="outline" onClick={handleClose}>
+          <Button type="button" variant="outline" onClick={handleClose}>
             {hasUploaded ? "Terminé" : "Annuler"}
           </Button>
         </div>

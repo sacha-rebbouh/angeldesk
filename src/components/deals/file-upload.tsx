@@ -605,6 +605,7 @@ export const FileUpload = memo(function FileUpload({
                   {/* Remove button */}
                   {isPending && (
                     <Button
+                      type="button"
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6 shrink-0"
@@ -637,7 +638,7 @@ export const FileUpload = memo(function FileUpload({
 
       {/* Upload button */}
       {pendingCount > 0 && (
-        <Button onClick={handleUploadAll} disabled={isUploading} className="w-full">
+        <Button type="button" onClick={handleUploadAll} disabled={isUploading} className="w-full">
           {isUploading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

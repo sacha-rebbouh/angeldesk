@@ -245,7 +245,7 @@ export function EmailForm({
 
       <AttachmentInput value={attachments} onChange={setAttachments} disabled={isSubmitting} />
 
-      <Button onClick={submit} disabled={isSubmitting || !body.trim()} className="w-full">
+      <Button type="button" onClick={submit} disabled={isSubmitting || !body.trim()} className="w-full">
         {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
         Ajouter l&apos;email{attachments.length > 0 ? ` et ${attachments.length} fichier${attachments.length > 1 ? "s" : ""}` : ""} au corpus
       </Button>
