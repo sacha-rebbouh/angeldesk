@@ -244,11 +244,37 @@ type ExtractionPageReviewShape = Pick<
   qualityScore?: number | null;
   errorMessage?: string | null;
   semanticAssessment?: ExtractionSemanticAssessment;
+  ocrProcessed?: boolean;
 };
+
+const FATAL_PAGE_ERROR_PATTERN = /did not complete|returned no text|could not be extracted reliably/i;
 
 function isBlockingReviewPage(page: ExtractionPageReviewShape): boolean {
   if (page.status === "failed") return true;
   if (page.status !== "needs_review") return false;
+
+  const ocrApplied = page.ocrProcessed === true;
+  const errorText = (page.errorMessage ?? page.error ?? "").toLowerCase();
+  const hasFatalError = FATAL_PAGE_ERROR_PATTERN.test(errorText);
+
+  if (ocrApplied) {
+    // The new visual extraction pipeline already gave its best shot on this
+    // page (high-fidelity / supreme tier OCR + semantic verifier). Forcing
+    // the user through a manual review for every page that comes back as
+    // `needs_review` defeats the purpose of the pipeline — re-running won't
+    // make the extraction richer. Block only when the page is genuinely
+    // unusable: explicit fatal error from the OCR provider, or a semantic
+    // assessment that says the page is BOTH analytically critical AND
+    // insufficient at a high confidence threshold.
+    if (hasFatalError) return true;
+    if (page.semanticAssessment) {
+      return (
+        page.semanticAssessment.semanticSufficiency === "insufficient" &&
+        (page.semanticAssessment.analyticalValueScore ?? 100) >= 70
+      );
+    }
+    return false;
+  }
 
   if (page.semanticAssessment) {
     if (
@@ -267,12 +293,11 @@ function isBlockingReviewPage(page: ExtractionPageReviewShape): boolean {
     return false;
   }
 
-  const errorText = (page.errorMessage ?? page.error ?? "").toLowerCase();
   const qualityScore = page.qualityScore ?? 0;
   const isAnalyticallyCritical =
     page.hasFinancialKeywords || page.hasMarketKeywords || page.hasTables || page.hasCharts;
 
-  if (/did not complete|returned no text|could not be extracted reliably|very little text/i.test(errorText)) {
+  if (FATAL_PAGE_ERROR_PATTERN.test(errorText) || /very little text/i.test(errorText)) {
     return true;
   }
 
@@ -306,6 +331,7 @@ export function getBlockingPageNumbersFromStoredPages(
     hasTeamKeywords: boolean;
     errorMessage?: string | null;
     artifact?: unknown;
+    ocrProcessed?: boolean;
   }>
 ): number[] {
   return pages
@@ -329,6 +355,7 @@ export function getBlockingPageNumbersFromStoredPages(
         hasMarketKeywords: page.hasMarketKeywords,
         hasTeamKeywords: page.hasTeamKeywords,
         errorMessage: page.errorMessage,
+        ocrProcessed: page.ocrProcessed,
         semanticAssessment: extractSemanticAssessment(page.artifact),
       })
     )

@@ -34,6 +34,7 @@
 | 2026-03-12 | QA | 120+ console.log non gardés en production |
 | 2026-05-13 | ARCHITECTURE | Progress upload non partagé entre invocations Vercel (Redis missing) |
 | 2026-05-13 | AUTH | Clerk JWT cookie sync défaillant sur preview deployments |
+| 2026-05-13 | EXTRACTION | "Review requis" + "OCR recommandé" affichés après visual extraction réussie |
 
 ---
 
@@ -244,3 +245,11 @@
 - **Solution validée** : Wrapper `clerkFetch(url, init)` qui appelle `window.Clerk.session.getToken()` (renvoie un JWT frais depuis la session SDK) et attache `Authorization: Bearer <jwt>` à la requête. Vérifié dans `@clerk/backend/dist/internal.js:910` : le middleware tente d'abord le cookie, puis fallback sur Authorization header. Le Bearer frais bypasse le cookie périmé. Appliqué au polling progress en priorité (le plus visible). Generic : peut être étendu à d'autres endpoints au fur et à mesure.
 - **Ce qui N'A PAS fonctionné** : (1) Bump SDK 6.36.8 → 6.39.3 seul. (2) Allonger le TTL JWT côté Clerk Dashboard — l'option n'est pas exposée (60 s hardcodé chez Clerk, voir `agentic-mistakes.md` 2026-05-13 PROPOSITION SANS DOC).
 - **Agent/Auteur** : Diag live via Chrome DevTools MCP (session 2026-05-13)
+
+### 2026-05-13 — EXTRACTION — "Review requis" + "OCR recommandé" affichés après visual extraction réussie
+- **Fichier(s)** : `src/services/documents/extraction-runs.ts:isBlockingReviewPage`, `src/components/deals/extraction-quality-badge.tsx`, `src/app/api/documents/upload/route.ts:783`
+- **Erreur** : Sur un PDF où la nouvelle pipeline visuelle a appliqué high_fidelity/supreme OCR à 27 pages avec succès (`quality=100%`, `pagesOCRd=27`), l'UI affiche quand même un dialog "Review requis - Qualité d'extraction: 100%" avec un encart "OCR recommandé" et un bouton "Activer OCR" — alors que l'OCR a déjà été appliqué. Tout le but de la refonte pipeline était d'éviter ce blocage côté UX.
+- **Cause racine** : `isBlockingReviewPage` appliquait les MÊMES seuils de blocage aux pages OCR'd qu'aux pages non OCR'd (analyticalValueScore ≥ 35 pour insufficient, plus la branche "shouldBlockIfStructureMissing"). Or après visual extraction tier high_fidelity/supreme, la pipeline a déjà donné son meilleur résultat ; bloquer le BA pour re-déclencher une review manuelle ne rend pas l'extraction plus riche. La chaîne `blockingPages.length > 0 → requiresOCR=true → badge "Review requis" + dialog "OCR recommandé"` se déclenchait pour tout signal sémantique partiel post-OCR.
+- **Solution validée** : Ajout de `ocrProcessed?: boolean` à `ExtractionPageReviewShape`. Quand `ocrProcessed === true`, `isBlockingReviewPage` ne bloque plus que pour erreur fatale explicite OU `semanticSufficiency === "insufficient" && analyticalValueScore >= 70` (seuil rehaussé de 35 → 70). La branche `shouldBlockIfStructureMissing` est désactivée post-OCR (la pipeline visuelle ÉTAIT le moyen de capturer la structure ; si elle n'a pas tout récupéré, re-lancer n'aidera pas). Pages sans OCR conservent les seuils existants. `getBlockingPageNumbersFromStoredPages` étendu pour passer `ocrProcessed` depuis le DB (le champ existe déjà sur `DocumentExtractionPage`). Tests `extraction-runs` (5/5) et `golden-corpus` (3/3) restent verts.
+- **Ce qui N'A PAS fonctionné** : N/A. Le seul piège : les documents extraits AVANT ce fix conservent leur `extractionMetrics.blockingPages` figé dans le DB — le dialog s'affichera tant qu'ils n'ont pas été re-extraits. À gérer via un backfill ou un re-run manuel si besoin.
+- **Agent/Auteur** : Diag live via Chrome DevTools MCP, session 2026-05-13

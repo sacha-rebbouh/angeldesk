@@ -1,6 +1,31 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-13 — Pipeline visuelle : ne plus bloquer review après visual extraction réussie
+
+### Contexte
+Sur un PDF dont la nouvelle pipeline avait OCR'd 27 pages en high_fidelity + supreme tier avec succès (`quality=100%`), l'UI affichait toujours un dialog "Review requis - Qualité 100%" avec "OCR recommandé" et un bouton "Activer OCR" — alors que l'OCR était déjà fait. L'utilisateur a souligné que c'était précisément ce que la refonte de pipeline était censée éliminer.
+
+### Action
+`src/services/documents/extraction-runs.ts:isBlockingReviewPage` :
+- Nouveau champ `ocrProcessed?: boolean` sur `ExtractionPageReviewShape`.
+- Quand `ocrProcessed === true`, la page n'est plus blocking que pour :
+  - Erreur fatale explicite (`did not complete`, `returned no text`, `could not be extracted reliably`), OR
+  - `semanticSufficiency === "insufficient"` AND `analyticalValueScore >= 70` (seuil rehaussé de 35 → 70).
+- Branche `shouldBlockIfStructureMissing` désactivée post-OCR : la pipeline visuelle ÉTAIT le moyen de capturer la structure ; insister ne donne rien de plus.
+- Pages non OCR'd conservent les seuils existants.
+- `getBlockingPageNumbersFromStoredPages` étendu pour propager `ocrProcessed` depuis le DB (champ déjà persisté sur `DocumentExtractionPage`).
+
+Effet en cascade : pour les nouvelles extractions où la pipeline visuelle réussit, `blockingPages.length === 0` → `requiresOCR === false` (cf. `upload/route.ts:783`) → le badge passe en vert "Quality X%" et le dialog "Review requis" + "OCR recommandé" ne s'affiche plus.
+
+### Tests
+- `npx vitest run src/services/documents/__tests__/extraction-runs.test.ts` → 5/5 ✅
+- `npx vitest run src/services/pdf/__tests__/golden-corpus.test.ts` → 3/3 ✅
+
+### Limitation
+Les documents extraits AVANT ce fix gardent leur `extractionMetrics.blockingPages` figé dans le DB. Le dialog s'affichera sur eux tant qu'ils ne sont pas re-extraits (bouton "Réessayer l'extraction" ou backfill).
+
+---
 ## 2026-05-13 — Fix double bug upload : progress Redis-less + Clerk 404 cookie sync
 
 ### Contexte
