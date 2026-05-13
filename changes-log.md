@@ -1,6 +1,97 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-13 — Bump @clerk/nextjs 6.36.8 → 6.39.3 (fix preview JWT cookie sync)
+
+### Contexte
+Sur les preview Vercel (Clerk en `pk_test_…`), les requêtes API basculent en 404 après ~1 min d'inactivité, alors que l'UI reste loggée. Diag live via Chrome DevTools MCP : le SDK Clerk rafraîchit `__session_Gu_eEu8y` (cookie suffixé par instance) mais pas `__session` (sans suffixe), que lit le middleware. Le middleware reçoit donc un JWT expiré et renvoie la page HTML 404 (visible dans `x-clerk-auth-message: JWT is expired … session_refresh_session_token_ineligible`).
+
+### Action
+- `@clerk/nextjs` `^6.36.8` → `^6.39.3` (latest 6.x) via `npm install`. APIs utilisées (clerkMiddleware, auth, currentUser, ClerkProvider, useUser, SignIn/SignUp/UserButton, useClerk) stables sur la fenêtre — pas de breaking change attendu.
+
+### Action complémentaire (côté Clerk Dashboard, hors code)
+- Allonger "Session token lifetime" de 60 s à 5-10 min côté instance preview/dev pour réduire la fenêtre d'expo au bug, le temps de valider le fix SDK.
+
+### À valider
+- Re-déployer la preview puis refaire un upload long (>3 min) et vérifier qu'aucun 404 n'apparaît sur le polling progress ni sur `/api/deals/*/staleness`.
+
+---
+## 2026-05-11 — vault: Création Obsidian-AngelDesk-Brain (LLM Wiki Karpathy)
+
+Création du vault Obsidian de référence pour Angel Desk selon le pattern LLM Wiki Karpathy (déjà éprouvé sur Obsidian-Netgem-Brain). Le vault devient la référence ultime indexée et navigable pour toutes les connaissances projet : doctrine, agents, systèmes, projets, synthèses docs.
+
+### Localisation
+- `/Users/sacharebbouh/Documents/Obsidian/Obsidian-AngelDesk-Brain/`
+
+### Contenu (163 pages + raw snapshot)
+- **01_Companies** (6) : Angel Desk, Anthropic, OpenRouter, Neon, Clerk, Vercel.
+- **02_People** (1) : Sacha Rebbouh.
+- **03_Projects** (10) : Refonte 41 Agents, Arc-Light, Fact Store, Live Coaching, AI Board, Reflexion/Consensus, DB Exploitation, Audit Personas, Truncation, Corpus Upload Stabilization.
+- **04_Products** (15) : hubs Angel Desk + Tier 0/1/2/3 + Board + Chat + Orchestrator + Maintenance + Context Engine + Funding DB + Fact Store + Live Coaching + Reflexion + Consensus.
+- **05_Documents** (30) : synthèses des .md du repo (CLAUDE, reference.yaml, dbagents, errors, changes-log, ai-board, FACT-STORE-SPEC, LIVE-COACHING-SPEC, REFLEXION-CONSENSUS, DB-EXPLOITATION, AGENT-REFONTE, audit-personas, truncation, investor, exec-summary, product-overview, pitch-deck × 2, market-research × 2, workinprogress, arc-light, README, + 7 docs/engines).
+- **06_Concepts** (85) : doctrine (12), architecture/infra (10), métier (10), Tier 0 (3) + Tier 1 (13) + Tier 2 (22) + Tier 3 (8) + Board (3) + Maintenance (4) = 53 agents documentés.
+- **07_Sources** (5) : Anthropic API, OpenRouter, shadcn ui, Vercel Blob, Neon.
+- **_MOC** (7) : hubs humains de navigation.
+- **_Templates** (9), **CLAUDE.md** (schema vault), **README.md**, **index.md** (catalogue), **log.md** (journal append-only).
+- **raw/snapshots/2026-05-11/** : 31 fichiers copiés depuis angeldesk repo (immutable Karpathy).
+
+### Doctrine inscrite dans le vault
+- Anti-prescriptive : aucune page ne dit "Angel Desk recommande X" (cf. règle N°1 projet).
+- 5 directives anti-hallucination appliquées au contenu du vault (citation systématique, [UNCERTAIN]/[UNVERIFIED] si extrapolation).
+- Anti-doublon primordial avant toute écriture (cf. `_LLM-WIKI-PATTERN.md` Sacha).
+- Workflows : ingest / query / lint / snapshot codifiés dans `CLAUDE.md` du vault.
+
+### Vérification finale
+- 163 pages content, 0 lien cassé réel (8 placeholders pédagogiques dans templates/CLAUDE.md vault).
+- Index exhaustif machine-lisible (`index.md`) + 7 MOCs humains.
+- Seed log dans `log.md`.
+
+### À enrichir au prochain ingest dédié
+- reference.yaml (1782 lignes), investor.md (5014 lignes), REFLEXION-CONSENSUS-ENGINES.md (4216 lignes) : lecture intégrale et synthèse approfondie.
+- 10 experts Tier 2 marqués `agent_status: spec` (Biotech, EdTech, PropTech, Mobility, FoodTech, HRTech, LegalTech, Cybersecurity, SpaceTech, Creator).
+
+### MAJ 2026-05-12 (lectures intégrales COMPLÈTES — session unique)
+
+**Toutes les lectures restantes complétées en session.** Aucun "à enrichir" / "à approfondir" résiduel dans le vault.
+
+- FACT-STORE-SPEC (1262L restantes), investor.md (2914L restantes), REFLEXION-CONSENSUS-ENGINES (2596L restantes), AGENT-REFONTE (1052L restantes), audit-failles (362L restantes), LIVE-COACHING (544L restantes), dbagents (951L restantes) → **TOUTES lues intégralement (~9700L)**.
+- 22 Tier 2 experts source code confirmé tous IMPL. Pages mises à jour `spec` → `active`.
+- Prisma schema.prisma lu (2502L, 50+ modèles + enums).
+- 6 docs short pitch-deck/pitch-deck-slides/gemini-market-research/market-research-gemini/workinprogress/arc-light-renderer-spike : lus intégralement et enrichis.
+- 2 nouveaux concepts créés : [[Sector Standards Management]] + [[Calculs Arithmétiques en Code]].
+- 2 nouvelles entités créées : [[ChatGPT]] + [[Claude]] (mentionnés comme concurrents DIY).
+- **189 pages content au final** (vs 187 phase 16-23, vs 163 seed initial).
+- 0 lien cassé.
+- Audit-failles personas : status 102/102 ✅ COMPLÉTÉE (4 waves × ~180h effort).
+- Live Coaching : 7/7 phases ✅ complétées.
+
+### MAJ 2026-05-11 (ingest enrichissement — même session)
+**Phases 16-23 exécutées** : lecture intégrale reference.yaml + chunks substantiels investor.md / REFLEXION-CONSENSUS / AGENT-REFONTE / audit-failles / LIVE-COACHING / dbagents.
+
+**+24 pages ajoutées** :
+- 12 concepts : [[Sublimation]], [[L'IA Augmentée]], [[Analyse Vivante (V1-V2-V3)]], [[Data Reliability Classification]], [[Temporal Detection]], [[Pricing Model & Credits]], [[Persona Marie]], [[Anti-DIY Pitfalls]], [[Question Persistence]], [[ROI Simulator]], [[Challenge Partner]], [[Track Record Visible]].
+- 12 entités : 7 concurrents (Harmonic $1.45B, Hebbia $700M, AlphaSense $4B, PitchBook, CB Insights, Dealroom, Carta) + 5 stack additions (Inngest, Ably, Recall.ai, Deepgram, Fly.io).
+
+**8 pages massivement enrichies** :
+- Doc - reference.yaml (Bible Technique) : 34 sections couvertes (TAM/SAM/SOM, scoring methodology, Board AI 4 LLMs, Live Coaching pipeline 6 composants, engines V3.0, anti-hallucination 60+ fichiers, moat triple, pricing crédits 6 packs, persona Marie, unit economics, 7 objections, roadmap).
+- Doc - investor.md : 200+ lignes de synthèse, flag des divergences vs reference.yaml (positioning, count agents, pricing).
+- Doc - REFLEXION-CONSENSUS-ENGINES : V3.0 complet (types TypeScript, system prompts, source hierarchy 5 ranks).
+- Doc - AGENT-REFONTE-PROMPT : anti-patterns + standards + format sortie par agent + discrepancy count agents.
+- Doc - audit-failles-personas : TOP 10 failles convergentes + 25 CRITICAL + 9 verdicts personas.
+- Doc - dbagents.md : 4 agents détaillés + tests validés (Brave Search + DeepSeek option A) + Telegram bot + Schema Prisma + coûts $2.50-5/mois.
+- Consensus Engine + Reflexion Engine + Live Coaching System (pages hubs).
+
+**Vault final** : **187 pages content** (+15% vs seed initial 163), 0 lien cassé réel.
+
+**Découvertes critiques captées** :
+1. Positionnement actualisé reference.yaml 2026-03-10 : ancien claim BA-only obsolète.
+2. Drift count agents (44 vs 41 vs 40 vs 38 selon les docs).
+3. Mono-modèle Gemini 3 Flash hardcodé = CRITICAL (4 personas convergent — F02 dans audit).
+4. Scoring 100% LLM non déterministe = CRITICAL (F03).
+5. Pricing model : passage FREE/PRO 249€ → crédits 6 packs.
+6. Sublimation/L'IA Augmentée/Analyse Vivante = 3 moats marketing centraux (pas formalisés au seed).
+
+---
 ## 2026-04-22 — fix: Suppression middleware.ts deprecie (Next.js 16)
 
 Next.js 16 a deprecie la convention `middleware.ts` au profit de `proxy.ts`. Les deux fichiers coexistaient (contenu quasi-identique), ce qui bloquait le dev server au demarrage avec "Both middleware file and proxy file are detected".
