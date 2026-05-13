@@ -495,6 +495,27 @@ model DocumentExtractionOverride {
   @@index([overrideType])
 }
 
+/// Ephemeral progress snapshot for an in-flight document upload + extraction
+/// pipeline. Keyed by the client-generated progressId (UUID v4) so the
+/// browser can poll for status across multiple Vercel serverless invocations.
+/// Rows are auto-expired by expiresAt and cleaned up by `getDocumentExtractionProgress`.
+model DocumentExtractionProgress {
+  id             String   @id
+  userId         String
+  documentId     String?
+  documentName   String?
+  phase          String
+  pageCount      Int      @default(0)
+  pagesProcessed Int      @default(0)
+  percent        Int      @default(0)
+  message        String?  @db.Text
+  updatedAt      DateTime @updatedAt
+  expiresAt      DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 model AnalysisExtractionRun {
   id         String                @id @default(cuid())
   analysisId String

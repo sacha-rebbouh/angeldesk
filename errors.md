@@ -1,7 +1,39 @@
 # Errors Log — Angel Desk
 
-> Ce fichier est le registre centralisé de toutes les erreurs rencontrées, leurs causes racines et les solutions validées.
-> **Règle** : Chaque agent / développeur DOIT consulter ce fichier AVANT d'écrire du code.
+> Registre centralisé des erreurs **CODE** rencontrées sur Angel Desk : architecture, sécurité, crédits, positionnement, performance, etc.
+> Pour les erreurs **de raisonnement IA** (Claude/Codex/autres agents), voir `agentic-mistakes.md`.
+> **Règle (CLAUDE.md global)** : Au début de chaque session, lire l'**index** ci-dessous. Lire les entrées complètes uniquement quand pertinentes à la tâche en cours. Après chaque erreur corrigée, append une nouvelle entrée.
+
+---
+
+## Index (lecture rapide)
+
+| Date | Catégorie | Titre |
+|---|---|---|
+| 2026-03-12 | ARCHITECTURE | Fire-and-forget analyse sur Vercel serverless |
+| 2026-03-12 | CREDITS | Fail-open en production (crédits illimités si DB down) |
+| 2026-03-12 | CREDITS | Double refund non protégé (idempotence manquante) |
+| 2026-03-12 | CREDITS | Race condition TOCTOU (check séparé du deduct) |
+| 2026-03-12 | SÉCURITÉ | SSRF dans website-crawler (pas de blocage IP privées) |
+| 2026-03-12 | SÉCURITÉ | CRON_SECRET comparaison non timing-safe |
+| 2026-03-12 | POSITIONNEMENT | Termes prescriptifs dans l'UI visible (3 CRITICAL) |
+| 2026-03-12 | POSITIONNEMENT | 12 violations dans les prompts agents |
+| 2026-03-12 | POSITIONNEMENT | Type verdict désynchronisé du schema Zod |
+| 2026-03-12 | ANTI-HALLUCINATION | Directives manquantes dans les fallbacks legacy |
+| 2026-03-12 | ANTI-HALLUCINATION | Directives doublées dans Tier 3 + Chat |
+| 2026-03-12 | UX | Dashboard "Plan: Gratuit / 3 deals/mois" obsolète |
+| 2026-03-12 | UX | Page /analytics dans le sidebar → 404 |
+| 2026-03-12 | UX | Accents manquants dans toute l'UI Board + composants |
+| 2026-03-12 | UX | ScoreBadge labels désalignés avec ui-configs.ts |
+| 2026-03-12 | PERFORMANCE | Export PDF charge results depuis DB (30s+) |
+| 2026-03-12 | PERFORMANCE | Deal detail SSR charge extractedText inutilement |
+| 2026-03-12 | ARCHITECTURE | Race condition BaseAgent état mutable singleton |
+| 2026-03-12 | SCORING | Incohérence poids Board vs Scoring Tier 3 |
+| 2026-03-12 | RGPD | Vercel Blob access "public" pour les pitch decks |
+| 2026-03-12 | QA | Orchestrator index.ts 3748 lignes / tier1-results.tsx 3978 lignes |
+| 2026-03-12 | QA | 120+ console.log non gardés en production |
+| 2026-05-13 | ARCHITECTURE | Progress upload non partagé entre invocations Vercel (Redis missing) |
+| 2026-05-13 | AUTH | Clerk JWT cookie sync défaillant sur preview deployments |
 
 ---
 
@@ -196,3 +228,19 @@
 - **Solution validée** : Adopter un logger centralisé (pino, winston) avec niveaux, désactiver debug/info en prod.
 - **Ce qui N'A PAS fonctionné** : N/A
 - **Agent/Auteur** : Agent QA
+
+### 2026-05-13 — ARCHITECTURE — Progress upload non partagé entre invocations Vercel (Redis missing)
+- **Fichier(s)** : `src/services/documents/extraction-progress.ts`, `src/services/distributed-state/index.ts`, `prisma/schema.prisma`
+- **Erreur** : Le POST `/api/documents/upload` écrivait le progress via `setDocumentExtractionProgress` qui tombait sur `InMemoryStore` (fallback quand `UPSTASH_REDIS_REST_URL` non configuré). Chaque invocation serverless Vercel a sa propre Map → les GET `/api/documents/upload/progress/[id]` lisaient toujours `null`. UI figée à 35% (fallback local du composant) pendant toute l'extraction.
+- **Cause racine** : `getDistributedStore()` retombe silencieusement sur InMemoryStore quand Upstash n'est pas configuré. Sur Vercel serverless, chaque invocation = container isolé. Le warn `[DistributedState] No Upstash config found` n'apparaît pas dans les logs visibles côté preview.
+- **Solution validée** : Migration du storage vers Postgres via Prisma. Nouveau modèle `DocumentExtractionProgress` (id=progressId, userId, phase, pageCount, pagesProcessed, percent, message, expiresAt). Service réécrit avec `prisma.documentExtractionProgress.upsert/findUnique`. TTL 15 min géré côté lecture (best-effort cleanup). Ajout de `prisma migrate deploy` au script `build`.
+- **Ce qui N'A PAS fonctionné** : Bumper `@clerk/nextjs` pour fixer le 404 du polling était orthogonal et n'a rien réglé pour ce bug (le polling renvoyait 200 mais avec `data:null`).
+- **Agent/Auteur** : Diag live via Chrome DevTools MCP (session 2026-05-13)
+
+### 2026-05-13 — AUTH — Clerk JWT cookie sync défaillant sur preview deployments
+- **Fichier(s)** : `src/lib/clerk-fetch.ts` (nouveau), `src/components/deals/file-upload.tsx`, `package.json` (bump SDK)
+- **Erreur** : Sur preview Vercel avec dev keys Clerk (`pk_test_…`), après ~60 s de polling, le SDK browser rafraîchit `__session_<suffix>` mais pas `__session`. Le middleware Clerk lit `__session` (expiré), renvoie page HTML 404 avec `x-clerk-auth-message: JWT is expired … session_refresh_session_token_ineligible`. Toutes les requêtes API du tab basculent en 404 (polling progress + `/api/deals/*/staleness`, etc.). UI continue d'afficher loggé.
+- **Cause racine** : Bug dans `@clerk/clerk-js@5` (browser SDK, chargé depuis le CDN Clerk, indépendant du package npm). Le bump `@clerk/nextjs` 6.36.8 → 6.39.3 a légèrement amélioré la tolérance côté middleware mais n'a PAS résolu le bug — le browser SDK reste en `@5` et continue de désynchroniser les cookies. Pas de réglage TTL JWT dispo dans le dashboard Clerk (60 s hardcodé, voir `agentic-mistakes.md` 2026-05-13).
+- **Solution validée** : Wrapper `clerkFetch(url, init)` qui appelle `window.Clerk.session.getToken()` (renvoie un JWT frais depuis la session SDK) et attache `Authorization: Bearer <jwt>` à la requête. Vérifié dans `@clerk/backend/dist/internal.js:910` : le middleware tente d'abord le cookie, puis fallback sur Authorization header. Le Bearer frais bypasse le cookie périmé. Appliqué au polling progress en priorité (le plus visible). Generic : peut être étendu à d'autres endpoints au fur et à mesure.
+- **Ce qui N'A PAS fonctionné** : (1) Bump SDK 6.36.8 → 6.39.3 seul. (2) Allonger le TTL JWT côté Clerk Dashboard — l'option n'est pas exposée (60 s hardcodé chez Clerk, voir `agentic-mistakes.md` 2026-05-13 PROPOSITION SANS DOC).
+- **Agent/Auteur** : Diag live via Chrome DevTools MCP (session 2026-05-13)

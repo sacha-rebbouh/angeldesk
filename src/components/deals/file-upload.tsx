@@ -14,6 +14,7 @@ import {
   Presentation,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { clerkFetch } from "@/lib/clerk-fetch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -467,7 +468,7 @@ export const FileUpload = memo(function FileUpload({
     let attempts = 0;
     const poll = async (): Promise<void> => {
       try {
-        const response = await fetch(`/api/documents/upload/progress/${activeProgressId}`);
+        const response = await clerkFetch(`/api/documents/upload/progress/${activeProgressId}`);
         if (response.ok) {
           const payload = await response.json() as { data: UploadProgressSnapshot | null };
           if (!cancelled && payload.data) {

@@ -1,4 +1,4 @@
-import { getStore } from "@/services/distributed-state";
+import { prisma } from "@/lib/prisma";
 
 const PROGRESS_TTL_MS = 15 * 60 * 1000;
 
@@ -16,20 +16,55 @@ export interface DocumentExtractionProgressSnapshot {
 }
 
 export async function setDocumentExtractionProgress(snapshot: DocumentExtractionProgressSnapshot) {
-  await getStore().set(buildProgressKey(snapshot.id), snapshot, PROGRESS_TTL_MS);
+  const expiresAt = new Date(Date.now() + PROGRESS_TTL_MS);
+  await prisma.documentExtractionProgress.upsert({
+    where: { id: snapshot.id },
+    create: {
+      id: snapshot.id,
+      userId: snapshot.userId,
+      documentId: snapshot.documentId,
+      documentName: snapshot.documentName,
+      phase: snapshot.phase,
+      pageCount: snapshot.pageCount,
+      pagesProcessed: snapshot.pagesProcessed,
+      percent: snapshot.percent,
+      message: snapshot.message,
+      expiresAt,
+    },
+    update: {
+      userId: snapshot.userId,
+      documentId: snapshot.documentId,
+      documentName: snapshot.documentName,
+      phase: snapshot.phase,
+      pageCount: snapshot.pageCount,
+      pagesProcessed: snapshot.pagesProcessed,
+      percent: snapshot.percent,
+      message: snapshot.message,
+      expiresAt,
+    },
+  });
 }
 
-export async function getDocumentExtractionProgress(progressId: string) {
-  const value = await getStore().get<DocumentExtractionProgressSnapshot | string>(buildProgressKey(progressId));
-  if (!value) return null;
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value) as DocumentExtractionProgressSnapshot;
-    } catch {
-      return null;
-    }
+export async function getDocumentExtractionProgress(progressId: string): Promise<DocumentExtractionProgressSnapshot | null> {
+  const row = await prisma.documentExtractionProgress.findUnique({ where: { id: progressId } });
+  if (!row) return null;
+  if (row.expiresAt.getTime() < Date.now()) {
+    // Best-effort cleanup. Failure to delete is acceptable — the next session will retry.
+    await prisma.documentExtractionProgress.delete({ where: { id: progressId } }).catch(() => {});
+    return null;
   }
-  return value;
+  return {
+    id: row.id,
+    userId: row.userId,
+    documentId: row.documentId ?? undefined,
+    documentName: row.documentName ?? undefined,
+    phase: row.phase as DocumentExtractionProgressSnapshot["phase"],
+    pageCount: row.pageCount,
+    pagesProcessed: row.pagesProcessed,
+    percent: row.percent,
+    message: row.message ?? undefined,
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 export function buildProgressSnapshot(params: {
@@ -76,8 +111,4 @@ export function buildProgressSnapshot(params: {
     message: params.message,
     updatedAt: new Date().toISOString(),
   };
-}
-
-function buildProgressKey(progressId: string) {
-  return `document-extraction-progress:${progressId}`;
 }

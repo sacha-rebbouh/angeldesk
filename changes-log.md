@@ -1,6 +1,29 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-13 — Fix double bug upload : progress Redis-less + Clerk 404 cookie sync
+
+### Contexte
+Test live sur preview Vercel (Chrome DevTools MCP) après le bump 6.39.3. Deux bugs distincts identifiés et corrigés ensemble :
+1. **Progress data:null permanent** — l'UI restait figée à 35% car `setDocumentExtractionProgress` écrivait dans un `InMemoryStore` isolé par invocation Vercel (`UPSTASH_REDIS_*` non configuré). Les polls dans une autre invocation lisaient une Map vide → `{data:null}`.
+2. **Clerk 404 après JWT expiry** — le bump SDK 6.39.3 n'a PAS suffi. Le cookie `__session` reste expiré côté browser tandis que `__session_Gu_eEu8y` est rafraîchi. Le middleware Clerk lit le mauvais cookie.
+
+### Bug 1 — Migration du progress vers Postgres
+- Nouveau modèle Prisma `DocumentExtractionProgress` (id=progressId UUID, userId, documentId, phase, pageCount, pagesProcessed, percent, message, expiresAt). TTL 15 min géré dans `getDocumentExtractionProgress` (best-effort cleanup à la lecture).
+- Migration SQL `prisma/migrations/20260513115614_document_extraction_progress/`.
+- `src/services/documents/extraction-progress.ts` réécrit pour utiliser `prisma.documentExtractionProgress.upsert/findUnique` au lieu du `getStore()`.
+- `package.json` : `build` passe à `prisma migrate deploy && next build` pour que les migrations s'appliquent automatiquement sur Vercel (idempotent — n'applique que les pending).
+
+### Bug 2 — Wrapper `clerkFetch` avec Bearer token
+- Vérifié dans `node_modules/@clerk/backend/dist/internal.js:910` : `return this.sessionTokenInCookie || this.tokenInHeader;` → le middleware fait fallback sur Authorization header si cookie expiré.
+- Nouveau `src/lib/clerk-fetch.ts` : wrapper minimal qui appelle `Clerk.session.getToken()` côté browser et attache `Authorization: Bearer <jwt>` à la requête. Solution générique applicable à n'importe quel endpoint API.
+- `src/components/deals/file-upload.tsx` : `fetch(...)` du polling progress remplacé par `clerkFetch(...)`. Autres usages de `fetch` (staleness, etc.) à wrapper progressivement si nécessaire.
+
+### À valider après rebuild preview
+- L'UI affiche les vraies valeurs de progress (page count, %) au lieu de rester figée à 35%.
+- Aucun 404 sur `/api/documents/upload/progress/...` même après ≥2 cycles d'expiry JWT (>2 min).
+
+---
 ## 2026-05-13 — Bump @clerk/nextjs 6.36.8 → 6.39.3 (fix preview JWT cookie sync)
 
 ### Contexte
