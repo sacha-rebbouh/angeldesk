@@ -309,6 +309,7 @@ interface ExcelModelAuditPayload {
 }
 
 type ExtractionDecisionAction = "BYPASS_PAGE" | "EXCLUDE_PAGE";
+type AuditPageFilter = "review" | "all" | "warning" | "ok";
 
 type ExtractionDecisionParams = {
   pageNumber: number;
@@ -360,7 +361,9 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   document,
   onDocumentUpdated,
 }: ExtractionAuditDialogProps) {
+  const documentId = document?.id ?? null;
   const [query, setQuery] = useState("");
+  const [pageFilter, setPageFilter] = useState<AuditPageFilter>("review");
   const [selectedPage, setSelectedPage] = useState<number | null>(null);
   const [reprocessStartedAt, setReprocessStartedAt] = useState<number | null>(null);
   // Phase 4: /process now returns 202 (enqueued) instead of running the
@@ -373,14 +376,14 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const queryClient = useQueryClient();
   const auditQueryKey = useMemo(
-    () => ["document-extraction-audit", document?.id] as const,
-    [document?.id]
+    () => ["document-extraction-audit", documentId] as const,
+    [documentId]
   );
 
   const { data, isLoading, error } = useQuery({
     queryKey: auditQueryKey,
-    queryFn: () => fetchExtractionAudit(document?.id ?? ""),
-    enabled: open && Boolean(document?.id),
+    queryFn: () => fetchExtractionAudit(documentId ?? ""),
+    enabled: open && Boolean(documentId),
     // While a durable extraction is enqueued, poll until the run reaches a
     // terminal status. No interval otherwise (avoids needless traffic).
     refetchInterval: reprocessRunId ? 3000 : false,
@@ -395,13 +398,24 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     if (!normalizedQuery) return pages;
     return pages.filter((page) => page.extractedText.toLowerCase().includes(normalizedQuery));
   }, [normalizedQuery, pages]);
-
-  const pageToInspect = useMemo(() => {
-    if (selectedPage === null) return filteredPages[0] ?? pages[0] ?? null;
-    return pages.find((page) => page.pageNumber === selectedPage) ?? filteredPages[0] ?? null;
-  }, [filteredPages, pages, selectedPage]);
   const reviewPages = useMemo(() => pages.filter(pageRequiresDecision), [pages]);
-  const inspectionPages = useMemo(() => pages.filter(pageNeedsInspection), [pages]);
+  const pageListPages = useMemo(() => {
+    switch (pageFilter) {
+      case "review":
+        return filteredPages.filter(pageRequiresDecision);
+      case "warning":
+        return filteredPages.filter((page) => page.status === "READY_WITH_WARNINGS");
+      case "ok":
+        return filteredPages.filter((page) => page.status === "READY");
+      case "all":
+      default:
+        return filteredPages;
+    }
+  }, [filteredPages, pageFilter]);
+  const pageToInspect = useMemo(() => {
+    if (selectedPage === null) return pageListPages[0] ?? filteredPages[0] ?? pages[0] ?? null;
+    return pages.find((page) => page.pageNumber === selectedPage) ?? pageListPages[0] ?? filteredPages[0] ?? null;
+  }, [filteredPages, pageListPages, pages, selectedPage]);
   const reviewPageToInspect = useMemo(() => {
     if (reviewPages.length === 0) return null;
     return reviewPages.find((page) => page.pageNumber === selectedPage) ?? reviewPages[0];
@@ -417,9 +431,9 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   };
 
   const notifyDocumentUpdated = useCallback(async () => {
-    if (!document?.id) return;
-    await onDocumentUpdated?.(document.id);
-  }, [document?.id, onDocumentUpdated]);
+    if (!documentId) return;
+    await onDocumentUpdated?.(documentId);
+  }, [documentId, onDocumentUpdated]);
 
   const decisionMutation = useMutation({
     mutationFn: async (params: ExtractionDecisionParams) => {
@@ -515,7 +529,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       setReprocessRunId(enqueuedRunId);
       toast.success("Extraction renforcee lancee — traitement en cours");
       // Kick an immediate refetch so the audit view flips to PROCESSING.
-      await queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] });
+      await queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", documentId] });
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -536,19 +550,26 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     const terminalStatuses = ["READY", "READY_WITH_WARNINGS", "BLOCKED", "FAILED"];
     if (!terminalStatuses.includes(latestRun.status)) return;
 
-    // Terminal — settle the UI.
-    setReprocessRunId(null);
-    setReprocessStartedAt(null);
-    setElapsedSeconds(0);
-    if (latestRun.status === "FAILED") {
-      toast.error("Extraction renforcee echouee");
-    } else {
-      toast.success("Extraction renforcee terminee");
-    }
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
-      notifyDocumentUpdated(),
-    ]);
+    // Terminal — settle the UI after React finishes the current effect pass.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setReprocessRunId(null);
+      setReprocessStartedAt(null);
+      setElapsedSeconds(0);
+      if (latestRun.status === "FAILED") {
+        toast.error("Extraction renforcee echouee");
+      } else {
+        toast.success("Extraction renforcee terminee");
+      }
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
+        notifyDocumentUpdated(),
+      ]);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [reprocessRunId, audit?.latestRun, queryClient, notifyDocumentUpdated]);
 
   const pageRetryMutation = useMutation({
@@ -712,12 +733,12 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="!fixed !left-1/2 !top-1/2 !translate-x-[-50%] !translate-y-[-50%] relative flex flex-col gap-0 overflow-hidden p-0"
+        className="!fixed !left-1/2 !top-1/2 !max-w-none !translate-x-[-50%] !translate-y-[-50%] relative flex flex-col gap-0 overflow-hidden p-0"
         style={{
-          width: "min(1040px, calc(100vw - 48px))",
-          maxWidth: "min(1040px, calc(100vw - 48px))",
-          height: "min(760px, calc(100dvh - 48px))",
-          maxHeight: "calc(100dvh - 48px)",
+          width: "min(1480px, calc(100vw - 24px))",
+          maxWidth: "calc(100vw - 24px)",
+          height: "calc(100dvh - 24px)",
+          maxHeight: "calc(100dvh - 24px)",
         }}
       >
         <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12">
@@ -766,214 +787,198 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
           )}
 
           {audit && !isLoading && (
-            <div className="flex h-full min-h-0 flex-col gap-4">
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                <Metric label="Statut" value={audit.latestRun?.status ?? audit.document.processingStatus} />
-                <Metric label="Couverture" value={audit.latestRun ? `${audit.latestRun.pagesProcessed}/${audit.latestRun.pageCount}` : "Legacy"} />
-                <Metric label="Qualite" value={audit.document.extractionQuality === null ? "N/A" : `${audit.document.extractionQuality}%`} />
-                <Metric label="Corpus" value={`${audit.corpus.wordCount} mots`} />
-                <Metric
-                  label="Extraction"
-                  value={audit.latestRun?.creditEstimate
-                    ? `${audit.latestRun.creditEstimate.estimatedCredits} credits`
-                    : audit.latestRun?.corpusTextHash?.slice(0, 10) ?? "N/A"}
-                />
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="shrink-0 border-b bg-muted/20 px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <RunStatusBadge status={audit.latestRun?.status ?? audit.document.processingStatus} />
+                  <MetricPill label="Couverture" value={audit.latestRun ? `${audit.latestRun.pagesProcessed}/${audit.latestRun.pageCount}` : "Legacy"} />
+                  <MetricPill label="Qualite" value={audit.document.extractionQuality === null ? "N/A" : `${audit.document.extractionQuality}%`} />
+                  <MetricPill label="Corpus" value={`${audit.corpus.wordCount} mots`} />
+                  <MetricPill
+                    label="Extraction"
+                    value={audit.latestRun?.creditEstimate
+                      ? `${audit.latestRun.creditEstimate.estimatedCredits} credits`
+                      : audit.latestRun?.corpusTextHash?.slice(0, 10) ?? "N/A"}
+                  />
+                  {reviewPages.length > 0 && (
+                    <Badge className="bg-amber-100 text-amber-800">
+                      {reviewPages.length} a traiter
+                    </Badge>
+                  )}
+                </div>
+                {audit.latestRun?.blockedReason && (
+                  <p className="mt-2 text-sm text-red-700">{audit.latestRun.blockedReason}</p>
+                )}
               </div>
 
-              {audit.latestRun?.creditEstimate && (
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2 text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">Plan qualite</span>
-                  {Object.entries(audit.latestRun.creditEstimate.pagesByTier).map(([tier, count]) => (
-                    Number(count) > 0 ? (
-                      <Badge key={tier} variant="outline" className="bg-background">
-                        {formatTierLabel(tier)}: {count}
-                      </Badge>
-                    ) : null
-                  ))}
-                  <span>
-                    Estime: {audit.latestRun.creditEstimate.estimatedCredits} credit
-                    {audit.latestRun.creditEstimate.estimatedCredits > 1 ? "s" : ""} extraction
-                  </span>
-                </div>
-              )}
+              <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[280px_minmax(0,1fr)_minmax(360px,440px)]">
+                <aside className="flex min-h-0 flex-col border-b bg-background lg:border-b-0 lg:border-r">
+                  <div className="space-y-3 border-b p-3">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="Rechercher"
+                        className="pl-9"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      <PageFilterButton
+                        active={pageFilter === "review"}
+                        label={`A traiter ${reviewPages.length ? `(${reviewPages.length})` : ""}`}
+                        onClick={() => setPageFilter("review")}
+                      />
+                      <PageFilterButton
+                        active={pageFilter === "all"}
+                        label={`Toutes (${pages.length})`}
+                        onClick={() => setPageFilter("all")}
+                      />
+                      <PageFilterButton
+                        active={pageFilter === "warning"}
+                        label={`Warnings (${pages.filter((page) => page.status === "READY_WITH_WARNINGS").length})`}
+                        onClick={() => setPageFilter("warning")}
+                      />
+                      <PageFilterButton
+                        active={pageFilter === "ok"}
+                        label={`OK (${pages.filter((page) => page.status === "READY").length})`}
+                        onClick={() => setPageFilter("ok")}
+                      />
+                    </div>
+                  </div>
 
-              {audit.latestRun?.blockedReason && (
-                <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                  <p className="font-medium">{audit.latestRun.blockedReason}</p>
-                  <p>
-                    Couverture complete, mais certaines pages restent a faible extraction. Relance l&apos;extraction
-                    renforcee, inspecte la page, puis approuve-la uniquement si le texte est suffisant, ou
-                    exclue-la si elle n&apos;a pas de valeur analytique.
-                  </p>
-                </div>
-              )}
-
-              <Tabs defaultValue="pages" className="flex min-h-0 flex-1 flex-col">
-                <TabsList className="max-w-full overflow-x-auto">
-                  <TabsTrigger value="pages">Pages</TabsTrigger>
-                  <TabsTrigger value="corpus">Corpus complet</TabsTrigger>
-                  {excelModelAudit && <TabsTrigger value="model">Audit modele</TabsTrigger>}
-                  <TabsTrigger
-                    value="review"
-                    onClick={() => {
-                      if (reviewPages.length > 0) setSelectedPage(reviewPages[0].pageNumber);
-                    }}
-                  >
-                    A traiter{reviewPages.length > 0 ? ` (${reviewPages.length})` : ""}
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="pages" className="min-h-0 flex-1 overflow-y-auto">
-                  <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-                    <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          value={query}
-                          onChange={(event) => setQuery(event.target.value)}
-                          placeholder="Rechercher dans le texte extrait"
-                          className="pl-9"
-                        />
+                  <div className="min-h-[180px] flex-1 space-y-1 overflow-y-auto p-2">
+                    {pageListPages.length === 0 ? (
+                      <div className="rounded border border-dashed p-3 text-sm text-muted-foreground">
+                        Aucune page dans ce filtre.
                       </div>
+                    ) : pageListPages.map((page) => (
+                      <button
+                        key={page.id}
+                        onClick={() => setSelectedPage(page.pageNumber)}
+                        className={cn(
+                          "w-full rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/60",
+                          pageToInspect?.pageNumber === page.pageNumber && "border-primary bg-primary/5"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">Page {page.pageNumber}</span>
+                          {page.override ? (
+                            <Badge className="bg-green-100 text-green-700">
+                              <CheckCircle className="mr-1 h-3 w-3" />
+                              Decision
+                            </Badge>
+                          ) : (
+                            <PageStatusBadge status={page.status} />
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {page.extractionTier ? formatTierLabel(page.extractionTier) : page.method}
+                          {" · "}
+                          {page.wordCount} mots
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {page.hasFinancialKeywords && <MiniBadge label="finance" />}
+                          {page.hasMarketKeywords && <MiniBadge label="marche" />}
+                          {page.hasTeamKeywords && <MiniBadge label="team" />}
+                          {page.hasTables && <MiniBadge label="table" />}
+                          {page.hasCharts && <MiniBadge label="chart" />}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </aside>
 
-                      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                        {filteredPages.map((page) => (
-                          <button
-                            key={page.id}
-                            onClick={() => setSelectedPage(page.pageNumber)}
-                            className={cn(
-                              "w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/60",
-                              pageToInspect?.pageNumber === page.pageNumber && "border-primary bg-primary/5"
-                            )}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium">Page {page.pageNumber}</span>
-                              {page.override ? (
-                                <Badge className="bg-green-100 text-green-700">
-                                  <CheckCircle className="mr-1 h-3 w-3" />
-                                  Decision
-                                </Badge>
-                              ) : (
-                                <PageStatusBadge status={page.status} />
-                              )}
-                            </div>
-                            <div className="mt-2 text-xs text-muted-foreground">
-                              {page.extractionTier ? formatTierLabel(page.extractionTier) : page.method}
-                              {" - "}
-                              {page.wordCount} mots - {page.charCount} caracteres
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {page.hasFinancialKeywords && <MiniBadge label="finance" />}
-                              {page.hasMarketKeywords && <MiniBadge label="marche" />}
-                              {page.hasTeamKeywords && <MiniBadge label="team" />}
-                              {page.hasTables && <MiniBadge label="table" />}
-                              {page.hasCharts && <MiniBadge label="chart" />}
-                            </div>
-                          </button>
-                        ))}
+                <main className="min-h-0 overflow-y-auto border-b bg-muted/10 p-4 lg:border-b-0 lg:border-r">
+                  {pageToInspect ? (
+                    <div className="mx-auto flex min-h-full max-w-5xl flex-col gap-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-lg font-semibold">Page {pageToInspect.pageNumber}</p>
+                          <p className="text-sm text-muted-foreground">
+                            PDF source · {pageToInspect.extractionTier ? formatTierLabel(pageToInspect.extractionTier) : pageToInspect.method}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {pageToInspect.qualityScore !== null && (
+                            <Badge variant="outline">Score {pageToInspect.qualityScore}</Badge>
+                          )}
+                          <PageStatusBadge status={pageToInspect.status} />
+                        </div>
                       </div>
+                      <PageSourcePreview
+                        page={pageToInspect}
+                        documentId={audit.document.id}
+                        documentName={audit.document.name}
+                        isPdf={isPdfDocument}
+                        preloadImageUrls={getAdjacentPreviewImageUrls(
+                          audit.document.id,
+                          pages,
+                          pageToInspect.pageNumber
+                        )}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-full items-center justify-center rounded border border-dashed text-sm text-muted-foreground">
+                      Aucune page extraite
+                    </div>
+                  )}
+                </main>
+
+                <aside className="min-h-0 overflow-hidden bg-background">
+                  <Tabs defaultValue="extraction" className="flex h-full min-h-0 flex-col">
+                    <div className="border-b p-3">
+                      <TabsList className="grid w-full grid-cols-2">
+                        <TabsTrigger value="extraction">Extraction</TabsTrigger>
+                        <TabsTrigger value="corpus">Corpus</TabsTrigger>
+                      </TabsList>
+                      {excelModelAudit && (
+                        <TabsList className="mt-2 w-full">
+                          <TabsTrigger value="model" className="w-full">Modele Excel</TabsTrigger>
+                        </TabsList>
+                      )}
                     </div>
 
-                    <div className="flex min-h-0 flex-col gap-3">
+                    <TabsContent value="extraction" className="min-h-0 flex-1 overflow-y-auto p-4">
                       {pageToInspect ? (
-                        <>
-                          <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <p className="font-medium">Page {pageToInspect.pageNumber}</p>
-                              <p className="text-sm text-muted-foreground">
-                                Score {pageToInspect.qualityScore ?? "N/A"} - {pageToInspect.method}
-                                {pageToInspect.extractionTier ? ` - ${formatTierLabel(pageToInspect.extractionTier)}` : ""}
-                              </p>
-                            </div>
-                            {pageToInspect.override ? (
-                              <Badge className="bg-green-100 text-green-700">
-                                <CheckCircle className="mr-1 h-3 w-3" />
-                                Decision enregistree
-                              </Badge>
-                            ) : (
-                              <PageStatusBadge status={pageToInspect.status} />
-                            )}
-                          </div>
+                        <div className="flex min-h-full flex-col gap-3">
                           {pageToInspect.errorMessage && (
-                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                               {pageToInspect.errorMessage}
                             </div>
                           )}
-                          {pageToInspect.visualRiskScore !== null && pageToInspect.visualRiskScore >= 55 && (
-                            <div className="rounded-lg border bg-muted/40 p-3 text-sm">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium">Risque visuel {pageToInspect.visualRiskScore}/100</span>
-                                {pageToInspect.extractionTier && (
-                                  <Badge variant="outline">{formatTierLabel(pageToInspect.extractionTier)}</Badge>
-                                )}
-                                {pageToInspect.semanticAssessment?.pageClass && (
-                                  <Badge variant="outline">{formatPageClassLabel(pageToInspect.semanticAssessment.pageClass)}</Badge>
-                                )}
-                                {pageToInspect.semanticAssessment?.structureDependency && (
-                                  <Badge variant="outline">Structure {pageToInspect.semanticAssessment.structureDependency}</Badge>
-                                )}
-                                {pageToInspect.semanticAssessment?.semanticSufficiency && (
-                                  <Badge variant="outline">Fidelite {pageToInspect.semanticAssessment.semanticSufficiency}</Badge>
-                                )}
-                                {typeof pageToInspect.semanticAssessment?.analyticalValueScore === "number" && (
-                                  <Badge variant="outline">Valeur {pageToInspect.semanticAssessment.analyticalValueScore}/100</Badge>
-                                )}
-                                {typeof pageToInspect.semanticAssessment?.visualNoiseScore === "number" && (
-                                  <Badge variant="outline">Bruit {pageToInspect.semanticAssessment.visualNoiseScore}/100</Badge>
-                                )}
-                              </div>
-                              {pageToInspect.visualRiskReasons.length > 0 && (
-                                <p className="mt-1 text-muted-foreground">
-                                  {pageToInspect.visualRiskReasons.join(", ")}
-                                </p>
-                              )}
-                              {pageToInspect.semanticAssessment?.rationale && pageToInspect.semanticAssessment.rationale.length > 0 && (
-                                <p className="mt-1 text-muted-foreground">
-                                  {pageToInspect.semanticAssessment.rationale.join(", ")}
-                                </p>
-                              )}
+                          <PageRiskSummary page={pageToInspect} />
+                          <PageEvidenceSummary page={pageToInspect} />
+                          {!pageToInspect.blocksAnalysis && pageNeedsInspection(pageToInspect) && !pageToInspect.override && (
+                            <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                              <p className="font-medium">Inspection recommandee, non bloquante</p>
+                              <p className="mt-1">
+                                Le texte semble suffisant pour l&apos;analyse, mais cette page merite un controle humain.
+                              </p>
                             </div>
                           )}
-                          {pageNeedsInspection(pageToInspect) && (
-                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-sm font-medium text-amber-900">
-                                  Decision disponible
-                                </p>
-                                {reviewPages.length > 1 && (
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => goToReviewPage(-1)}
-                                      disabled={decisionMutation.isPending}
-                                      className="h-7 px-2"
-                                    >
-                                      <ChevronLeft className="h-4 w-4" />
-                                    </Button>
-                                    <span className="px-2 text-xs text-amber-800">
-                                      {reviewPageIndex >= 0 ? reviewPageIndex + 1 : 1}/{reviewPages.length}
-                                    </span>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => goToReviewPage(1)}
-                                      disabled={decisionMutation.isPending}
-                                      className="h-7 px-2"
-                                    >
-                                      <ChevronRight className="h-4 w-4" />
-                                    </Button>
-                                  </div>
-                                )}
-                              </div>
-                              <p className="mt-1 text-sm text-amber-800">
-                                Si le texte ci-dessous couvre correctement la page, approuve-la.
-                                Sinon, retente l&apos;extraction ou re-uploade un PDF plus lisible.
+                          {pageToInspect.override && (
+                            <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                              <p className="font-medium">
+                                {pageToInspect.override.overrideType === "EXCLUDE_PAGE"
+                                  ? "Page exclue de l'analyse"
+                                  : "Page approuvee pour l'analyse"}
                               </p>
-                              <div className="mt-3 flex flex-wrap gap-2">
+                              <p className="mt-1">Decision tracee.</p>
+                            </div>
+                          )}
+                          <div className="min-h-[260px] flex-1 rounded-md border">
+                            <Textarea
+                              readOnly
+                              value={pageToInspect.extractedText}
+                              className="h-full min-h-[260px] resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
+                            />
+                          </div>
+                          {pageNeedsInspection(pageToInspect) && (
+                            <div className="sticky bottom-0 -mx-4 -mb-4 border-t bg-background/95 p-4 backdrop-blur">
+                              <div className="grid gap-2">
                                 {canRetryAuditPage(pageToInspect) && (
                                   <Button
-                                    size="sm"
                                     variant="outline"
                                     onClick={() => startPageRetry(pageToInspect)}
                                     disabled={extractionActionPending}
@@ -985,242 +990,78 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                                   </Button>
                                 )}
                                 <Button
-                                  size="sm"
-                                  variant="outline"
                                   onClick={() => handleDecision(pageToInspect, "BYPASS_PAGE")}
                                   disabled={decisionMutation.isPending}
                                 >
                                   Approuver apres inspection
                                 </Button>
                                 <Button
-                                  size="sm"
                                   variant="outline"
                                   onClick={() => handleDecision(pageToInspect, "EXCLUDE_PAGE")}
                                   disabled={decisionMutation.isPending}
                                 >
                                   Exclure cette page
                                 </Button>
+                                {reviewPages.length > 1 && (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => goToReviewPage(-1)}
+                                      disabled={decisionMutation.isPending}
+                                    >
+                                      <ChevronLeft className="mr-1 h-4 w-4" />
+                                      Precedente
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => goToReviewPage(1)}
+                                      disabled={decisionMutation.isPending}
+                                    >
+                                      Suivante
+                                      <ChevronRight className="ml-1 h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                )}
+                                {reviewPages.length > 1 && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={startReviewPagesRetry}
+                                    disabled={extractionActionPending}
+                                  >
+                                    {batchRetryMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    Retenter toutes ({reviewPages.length * 2} credits max)
+                                  </Button>
+                                )}
                               </div>
                             </div>
                           )}
-                          {pageToInspect.artifact && (
-                            <ArtifactSummary
-                              page={pageToInspect}
-                              documentId={audit.document.id}
-                              documentName={audit.document.name}
-                              isPdf={isPdfDocument}
-                            />
-                          )}
-                          {!pageToInspect.blocksAnalysis && pageNeedsInspection(pageToInspect) && !pageToInspect.override && (
-                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                              <p className="font-medium">Inspection recommandee, non bloquante</p>
-                              <p className="mt-1">
-                                La page merite un spot-check humain, mais elle ne bloque pas l&apos;analyse car le texte extrait parait suffisant.
-                              </p>
-                            </div>
-                          )}
-                          {pageToInspect.override && (
-                            <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-                              <p className="font-medium">
-                                {pageToInspect.override.overrideType === "EXCLUDE_PAGE"
-                                  ? "Page exclue de l'analyse"
-                                  : "Page approuvee pour l'analyse"}
-                              </p>
-                              <p className="mt-1">
-                                Decision tracee. La page ne bloque plus le lancement de l&apos;analyse.
-                              </p>
-                            </div>
-                          )}
-                          <div className="min-h-[300px] flex-1 rounded-lg border">
-                            <Textarea
-                              readOnly
-                              value={pageToInspect.extractedText}
-                              className="h-full min-h-[300px] overflow-y-auto resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
-                            />
-                          </div>
-                        </>
+                        </div>
                       ) : (
-                        <div className="flex h-full items-center justify-center rounded-lg border text-sm text-muted-foreground">
-                          Aucune page extraite
+                        <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
+                          Selectionne une page.
                         </div>
                       )}
-                    </div>
-                  </div>
-                </TabsContent>
+                    </TabsContent>
 
-                <TabsContent value="corpus" className="min-h-0 flex-1 overflow-y-auto">
-                  <div className="h-full min-h-[420px] rounded-lg border">
-                    <Textarea
-                      readOnly
-                      value={audit.corpus.text}
-                      className="h-full min-h-[420px] overflow-y-auto resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
-                    />
-                  </div>
-                </TabsContent>
+                    <TabsContent value="corpus" className="min-h-0 flex-1 overflow-y-auto p-4">
+                      <Textarea
+                        readOnly
+                        value={audit.corpus.text}
+                        className="h-full min-h-[520px] resize-none font-mono text-sm shadow-none"
+                      />
+                    </TabsContent>
 
-                {excelModelAudit && (
-                  <TabsContent value="model" className="min-h-0 flex-1 overflow-y-auto pr-1">
-                    <ExcelModelAuditPanel audit={excelModelAudit} />
-                  </TabsContent>
-                )}
-
-                <TabsContent value="review" className="min-h-0 flex-1 overflow-y-auto">
-                  {reviewPages.length > 0 && reviewPageToInspect ? (
-                    <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-                      <div className="min-h-0 space-y-2 overflow-y-auto pr-1">
-                        {reviewPages.map((page) => (
-                          <button
-                            key={page.id}
-                            onClick={() => setSelectedPage(page.pageNumber)}
-                            className={cn(
-                              "w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/60",
-                              reviewPageToInspect.pageNumber === page.pageNumber && "border-primary bg-primary/5"
-                            )}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium">Page {page.pageNumber}</span>
-                              <PageStatusBadge status={page.status} />
-                            </div>
-                            <div className="mt-2 text-xs text-muted-foreground">
-                              {page.extractionTier ? formatTierLabel(page.extractionTier) : page.method}
-                              {" - "}
-                              {page.wordCount} mots - {page.charCount} caracteres
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {page.hasFinancialKeywords && <MiniBadge label="finance" />}
-                              {page.hasMarketKeywords && <MiniBadge label="marche" />}
-                              {page.hasTeamKeywords && <MiniBadge label="team" />}
-                              {page.hasTables && <MiniBadge label="table" />}
-                              {page.hasCharts && <MiniBadge label="chart" />}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <p className="font-medium">Page {reviewPageToInspect.pageNumber}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {reviewPageIndex + 1}/{reviewPages.length} a traiter - {reviewPageToInspect.extractionTier ? formatTierLabel(reviewPageToInspect.extractionTier) : reviewPageToInspect.method}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => goToReviewPage(-1)}
-                              disabled={decisionMutation.isPending || reviewPages.length < 2}
-                            >
-                              <ChevronLeft className="mr-1 h-4 w-4" />
-                              Precedente
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => goToReviewPage(1)}
-                              disabled={decisionMutation.isPending || reviewPages.length < 2}
-                            >
-                              Suivante
-                              <ChevronRight className="ml-1 h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <p className="text-sm font-medium text-amber-900">Decision requise</p>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={startReviewPagesRetry}
-                              disabled={extractionActionPending}
-                              className="bg-background"
-                            >
-                              {batchRetryMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                              Retenter toutes ({reviewPages.length * 2} credits max)
-                            </Button>
-                          </div>
-                          <p className="mt-1 text-sm text-amber-800">
-                            Approuve uniquement si l&apos;extraction couvre correctement la page.
-                            Sinon, exclue la page ou relance l&apos;extraction renforcee.
-                          </p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {canRetryAuditPage(reviewPageToInspect) && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => startPageRetry(reviewPageToInspect)}
-                                disabled={extractionActionPending}
-                              >
-                                {pageRetryMutation.isPending && retryingPageNumber === reviewPageToInspect.pageNumber && (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                )}
-                                Retenter cette page
-                              </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleDecision(reviewPageToInspect, "BYPASS_PAGE")}
-                              disabled={decisionMutation.isPending}
-                            >
-                              Approuver apres inspection
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleDecision(reviewPageToInspect, "EXCLUDE_PAGE")}
-                              disabled={decisionMutation.isPending}
-                            >
-                              Exclure cette page
-                            </Button>
-                          </div>
-                        </div>
-
-                        {reviewPageToInspect.visualRiskScore !== null && reviewPageToInspect.visualRiskScore >= 55 && (
-                          <div className="rounded-lg border bg-muted/40 p-3 text-sm">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-medium">Risque visuel {reviewPageToInspect.visualRiskScore}/100</span>
-                              {reviewPageToInspect.extractionTier && (
-                                <Badge variant="outline">{formatTierLabel(reviewPageToInspect.extractionTier)}</Badge>
-                              )}
-                            </div>
-                            {reviewPageToInspect.visualRiskReasons.length > 0 && (
-                              <p className="mt-1 text-muted-foreground">
-                                {reviewPageToInspect.visualRiskReasons.join(", ")}
-                              </p>
-                            )}
-                          </div>
-                        )}
-
-                        {reviewPageToInspect.artifact && (
-                          <ArtifactSummary
-                            page={reviewPageToInspect}
-                            documentId={audit.document.id}
-                            documentName={audit.document.name}
-                            isPdf={isPdfDocument}
-                          />
-                        )}
-
-                        <div className="min-h-[300px] flex-1 rounded-lg border">
-                          <Textarea
-                            readOnly
-                            value={reviewPageToInspect.extractedText}
-                            className="h-full min-h-[300px] overflow-y-auto resize-none border-0 font-mono text-sm shadow-none focus-visible:ring-0"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-                      {inspectionPages.length > 0
-                        ? "Aucune page ne bloque l'analyse. Les pages restantes peuvent etre inspectees depuis l'onglet Pages."
-                        : "Aucune page ne necessite de decision."}
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
+                    {excelModelAudit && (
+                      <TabsContent value="model" className="min-h-0 flex-1 overflow-y-auto p-4">
+                        <ExcelModelAuditPanel audit={excelModelAudit} />
+                      </TabsContent>
+                    )}
+                  </Tabs>
+                </aside>
+              </div>
             </div>
           )}
         </div>
@@ -1279,6 +1120,50 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium">{value}</span>
+    </span>
+  );
+}
+
+function RunStatusBadge({ status }: { status: string }) {
+  if (status === "READY" || status === "READY_WITH_WARNINGS" || status === "COMPLETED") {
+    return <Badge className="bg-green-100 text-green-700">{status}</Badge>;
+  }
+  if (status === "BLOCKED" || status === "NEEDS_REVIEW") {
+    return <Badge className="bg-amber-100 text-amber-800">{status}</Badge>;
+  }
+  if (status === "FAILED") {
+    return <Badge variant="destructive">{status}</Badge>;
+  }
+  return <Badge variant="outline">{status}</Badge>;
+}
+
+function PageFilterButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant={active ? "default" : "outline"}
+      size="sm"
+      onClick={onClick}
+      className="h-8 justify-start px-2 text-xs"
+    >
+      {label}
+    </Button>
+  );
+}
+
 function PageStatusBadge({ status }: { status: AuditPage["status"] }) {
   if (status === "READY") {
     return (
@@ -1315,22 +1200,174 @@ function MiniBadge({ label }: { label: string }) {
   );
 }
 
-function ArtifactSummary({
+function getPreviewImageUrl(
+  documentId: string,
+  page: Pick<AuditPage, "pageNumber" | "pageImageHash">
+) {
+  const version = page.pageImageHash ? `?v=${encodeURIComponent(page.pageImageHash)}` : "";
+  return `/api/documents/${documentId}/preview-pages/${page.pageNumber}${version}`;
+}
+
+function getAdjacentPreviewImageUrls(
+  documentId: string,
+  pages: AuditPage[],
+  pageNumber: number
+) {
+  const adjacentPages = new Set([pageNumber - 1, pageNumber + 1]);
+  return pages
+    .filter((page) => adjacentPages.has(page.pageNumber))
+    .map((page) => getPreviewImageUrl(documentId, page));
+}
+
+function PageSourcePreview({
   page,
   documentId,
   documentName,
   isPdf,
+  preloadImageUrls = [],
 }: {
   page: AuditPage;
   documentId: string;
   documentName: string;
   isPdf: boolean;
+  preloadImageUrls?: string[];
 }) {
+  const [loadedPreviewUrl, setLoadedPreviewUrl] = useState<string | null>(null);
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
+  const previewImageUrl = isPdf ? getPreviewImageUrl(documentId, page) : null;
+  const pageUrl = isPdf
+    ? `/api/documents/${documentId}/download?disposition=inline#page=${page.pageNumber}&toolbar=0&navpanes=0&zoom=page-fit`
+    : null;
+  const previewLoaded = previewImageUrl !== null && loadedPreviewUrl === previewImageUrl;
+  const previewFailed = previewImageUrl !== null && failedPreviewUrl === previewImageUrl;
+  const preloadImageUrlKey = preloadImageUrls.join("|");
+
+  useEffect(() => {
+    if (!preloadImageUrlKey || typeof window === "undefined") return;
+    const images = preloadImageUrlKey.split("|").map((url) => {
+      const image = new window.Image();
+      image.decoding = "async";
+      image.src = url;
+      return image;
+    });
+    return () => {
+      for (const image of images) {
+        image.onload = null;
+        image.onerror = null;
+      }
+    };
+  }, [preloadImageUrlKey]);
+
+  if (!previewImageUrl) {
+    return (
+      <div className="flex min-h-[320px] items-center justify-center rounded-md border border-dashed bg-background text-sm text-muted-foreground">
+        Preview source indisponible pour ce document.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border bg-background">
+      <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
+        <div>
+          <p className="text-sm font-medium">Page source</p>
+          <p className="text-xs text-muted-foreground">PDF original, page {page.pageNumber}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => window.open(previewImageUrl, "_blank", "noopener,noreferrer")}
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Ouvrir l&apos;image
+          </Button>
+          {pageUrl && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(pageUrl, "_blank", "noopener,noreferrer")}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Ouvrir la page
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="min-h-[360px] flex-1 overflow-auto bg-muted/20 p-3">
+        {!previewLoaded && !previewFailed && (
+          <div className="flex aspect-video min-h-[260px] items-center justify-center rounded border border-dashed bg-background text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Chargement page {page.pageNumber}...</span>
+            </div>
+          </div>
+        )}
+        {previewFailed && (
+          <div className="flex aspect-video min-h-[260px] items-center justify-center rounded border border-dashed bg-background text-sm text-destructive">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              <span>Preview page {page.pageNumber} indisponible</span>
+            </div>
+          </div>
+        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          key={previewImageUrl}
+          src={previewImageUrl}
+          alt={`${documentName} - page ${page.pageNumber}`}
+          onLoad={() => setLoadedPreviewUrl(previewImageUrl)}
+          onError={() => setFailedPreviewUrl(previewImageUrl)}
+          className={cn(
+            "mx-auto h-auto max-w-full rounded border bg-background shadow-sm",
+            !previewLoaded && "hidden"
+          )}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PageRiskSummary({ page }: { page: AuditPage }) {
+  if (page.visualRiskScore === null || page.visualRiskScore < 55) return null;
+
+  return (
+    <div className="rounded-md border bg-muted/30 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">Risque visuel {page.visualRiskScore}/100</span>
+        {page.extractionTier && (
+          <Badge variant="outline">{formatTierLabel(page.extractionTier)}</Badge>
+        )}
+        {page.semanticAssessment?.pageClass && (
+          <Badge variant="outline">{formatPageClassLabel(page.semanticAssessment.pageClass)}</Badge>
+        )}
+        {page.semanticAssessment?.structureDependency && (
+          <Badge variant="outline">Structure {page.semanticAssessment.structureDependency}</Badge>
+        )}
+        {page.semanticAssessment?.semanticSufficiency && (
+          <Badge variant="outline">Fidelite {page.semanticAssessment.semanticSufficiency}</Badge>
+        )}
+        {typeof page.semanticAssessment?.analyticalValueScore === "number" && (
+          <Badge variant="outline">Valeur {page.semanticAssessment.analyticalValueScore}/100</Badge>
+        )}
+      </div>
+      {page.visualRiskReasons.length > 0 && (
+        <p className="mt-1 text-muted-foreground">{page.visualRiskReasons.join(", ")}</p>
+      )}
+      {page.semanticAssessment?.rationale && page.semanticAssessment.rationale.length > 0 && (
+        <p className="mt-1 text-muted-foreground">{page.semanticAssessment.rationale.join(", ")}</p>
+      )}
+    </div>
+  );
+}
+
+function PageEvidenceSummary({ page }: { page: AuditPage }) {
   const artifact = page.artifact;
   const summary = page.evidenceSummary;
   const provider = page.provider;
   const verification = page.verification;
   if (!artifact) return null;
+
   const visualCount = summary?.visualBlocks ?? artifact.visualBlocks?.length ?? 0;
   const tableCount = summary?.tables ?? artifact.tables?.length ?? 0;
   const chartCount = summary?.charts ?? artifact.charts?.length ?? 0;
@@ -1341,17 +1378,8 @@ function ArtifactSummary({
     return null;
   }
 
-  const previewImageUrl = isPdf
-    ? `/api/documents/${documentId}/preview-pages/${page.pageNumber}${
-        page.pageImageHash ? `?v=${encodeURIComponent(page.pageImageHash)}` : ""
-      }`
-    : null;
-  const pageUrl = isPdf
-    ? `/api/documents/${documentId}/download?disposition=inline#page=${page.pageNumber}&toolbar=0&navpanes=0&zoom=page-fit`
-    : null;
-
   return (
-    <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+    <div className="rounded-md border p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">Preuves extraites</span>
         {(summary?.confidence ?? artifact.confidence) && (
@@ -1363,44 +1391,6 @@ function ArtifactSummary({
         {(summary?.needsHumanReview || artifact.needsHumanReview) && <Badge className="bg-amber-100 text-amber-700">Review</Badge>}
         {summary?.missingExpectedStructure && <Badge variant="destructive">Structure manquante</Badge>}
       </div>
-      {previewImageUrl && (
-        <div className="mt-3 overflow-hidden rounded-lg border bg-background">
-          <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-            <div>
-              <p className="text-sm font-medium">Page source</p>
-              <p className="text-xs text-muted-foreground">PDF original, page {page.pageNumber}</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => window.open(previewImageUrl, "_blank", "noopener,noreferrer")}
-              >
-                <ExternalLink className="mr-2 h-4 w-4" />
-                Ouvrir l&apos;image
-              </Button>
-              {pageUrl && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => window.open(pageUrl, "_blank", "noopener,noreferrer")}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Ouvrir la page
-                </Button>
-              )}
-            </div>
-          </div>
-          <div className="max-h-[520px] overflow-auto bg-muted/20 p-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={previewImageUrl}
-              alt={`${documentName} - page ${page.pageNumber}`}
-              className="mx-auto h-auto max-w-full rounded border bg-background shadow-sm"
-            />
-          </div>
-        </div>
-      )}
       {summary?.recommendedAction && summary.recommendedAction !== "NONE" && (
         <p className="mt-2 text-xs text-muted-foreground">
           Action recommandee: {formatRecommendedAction(summary.recommendedAction)}
