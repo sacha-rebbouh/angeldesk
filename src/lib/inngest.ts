@@ -26,10 +26,15 @@ import { logger } from '@/lib/logger'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
 import type { SourceStats } from '@/agents/maintenance/types'
 
+const inngestEnvironment =
+  process.env.INNGEST_ENV ??
+  (process.env.VERCEL_ENV === 'preview' ? process.env.VERCEL_GIT_COMMIT_REF : undefined)
+
 // Create the Inngest client
 export const inngest = new Inngest({
   id: 'angeldesk',
   name: 'Angel Desk',
+  env: inngestEnvironment,
 })
 
 function hashStringToBigInt(input: string): string {
