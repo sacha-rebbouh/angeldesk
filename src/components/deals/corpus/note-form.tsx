@@ -28,6 +28,7 @@ import {
   type DocumentType,
   type UploadedDocumentSummary,
 } from "@/components/deals/file-upload";
+import { clerkFetch } from "@/lib/clerk-fetch";
 
 type NoteType = "call" | "meeting" | "founder_answer" | "internal";
 
@@ -68,7 +69,7 @@ export function NoteForm({
 
     setIsSubmitting(true);
     try {
-      const response = await fetch("/api/documents/text", {
+      const response = await clerkFetch("/api/documents/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

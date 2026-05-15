@@ -1,5 +1,6 @@
 import type { AgentContext } from "./types";
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { safeDecrypt, safeDecryptJsonField } from "@/lib/encryption";
 
 type AgentDocument = NonNullable<AgentContext["documents"]>[number];
 type ExtractionPage = NonNullable<AgentDocument["extractionRuns"]>[number]["pages"][number];
@@ -172,12 +173,17 @@ function formatSourceDate(value?: Date | string | null): string | null {
 }
 
 function formatExtractionPageArtifact(page: ExtractionPage, documentType: string): string {
-  const artifact = isRecord(page.artifact) ? page.artifact : {};
+  // Phase 3: artifact and textPreview live encrypted in the DB. The safe*
+  // helpers are no-ops on legacy plaintext rows so the same call path works
+  // for both formats.
+  const decryptedArtifact = safeDecryptJsonField(page.artifact);
+  const artifact = isRecord(decryptedArtifact) ? decryptedArtifact : {};
+  const decryptedTextPreview = page.textPreview ? safeDecrypt(page.textPreview) : null;
   const lines: string[] = [
     `[Artifact page ${page.pageNumber} | ${documentType} | status=${page.status} | method=${page.method} | quality=${page.qualityScore ?? "n/a"}]`,
   ];
 
-  const text = typeof artifact.text === "string" ? artifact.text : page.textPreview ?? "";
+  const text = typeof artifact.text === "string" ? artifact.text : decryptedTextPreview ?? "";
   if (text.trim()) {
     lines.push("## Extracted text");
     lines.push(text.trim().slice(0, 4000));

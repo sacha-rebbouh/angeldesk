@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/api-error";
-import { safeDecrypt } from "@/lib/encryption";
+import { safeDecrypt, safeDecryptJsonField } from "@/lib/encryption";
 import { prisma } from "@/lib/prisma";
 import { calculateArtifactCompleteness, getBlockingPageNumbersFromStoredPages } from "@/services/documents/extraction-runs";
 import type { DocumentPageArtifact } from "@/services/pdf";
@@ -108,7 +108,12 @@ export async function GET(_request: NextRequest, context: RouteParams) {
                   (override) => override.pageNumber === page.pageNumber && override.approvedAt
                 );
                 const qualityPlan = pageQualityPlan.get(page.pageNumber);
-                const evidenceSummary = buildPageEvidenceSummary(page.artifact, page.status, page.hasTables, page.hasCharts);
+                // Phase 3: artifact and textPreview are stored encrypted.
+                // safeDecryptJsonField + safeDecrypt transparently handle
+                // legacy plaintext rows (returned as-is).
+                const decryptedArtifact = safeDecryptJsonField<DocumentPageArtifact | Record<string, unknown>>(page.artifact);
+                const decryptedTextPreview = page.textPreview ? safeDecrypt(page.textPreview) : null;
+                const evidenceSummary = buildPageEvidenceSummary(decryptedArtifact, page.status, page.hasTables, page.hasCharts);
                 return {
                   id: page.id,
                   pageNumber: page.pageNumber,
@@ -126,11 +131,11 @@ export async function GET(_request: NextRequest, context: RouteParams) {
                   requiresOCR: page.requiresOCR,
                   ocrProcessed: page.ocrProcessed,
                   errorMessage: page.errorMessage,
-                  textPreview: page.textPreview,
+                  textPreview: decryptedTextPreview,
                   artifactVersion: page.artifactVersion,
-                  artifact: page.artifact,
-                  provider: extractArtifactProvider(page.artifact),
-                  verification: extractArtifactVerification(page.artifact),
+                  artifact: decryptedArtifact,
+                  provider: extractArtifactProvider(decryptedArtifact),
+                  verification: extractArtifactVerification(decryptedArtifact),
                   evidenceSummary,
                   pageImageHash: page.pageImageHash,
                   blocksAnalysis: blockingPages.has(page.pageNumber),
@@ -141,7 +146,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
                   extractionTier: qualityPlan?.extractionTier ?? null,
                   visualRiskScore: qualityPlan?.visualRiskScore ?? null,
                   visualRiskReasons: qualityPlan?.visualRiskReasons ?? [],
-                  semanticAssessment: extractSemanticAssessment(page.artifact, qualityPlan),
+                  semanticAssessment: extractSemanticAssessment(decryptedArtifact, qualityPlan),
                   extractedText: textByPage.find((entry) => entry.pageNumber === page.pageNumber)?.text ?? "",
                   override: pageOverride
                     ? {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useMemo, memo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
+import { clerkFetch } from "@/lib/clerk-fetch";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { AlertTriangle, Eye, FileSearch, FileText, Mail, MoreHorizontal, Pencil, Plus, StickyNote, Trash2 } from "lucide-react";
@@ -57,8 +58,7 @@ interface Document {
   id: string;
   name: string;
   type: string;
-  storagePath?: string | null;
-  storageUrl: string | null;
+  hasStorage: boolean;
   mimeType: string | null;
   processingStatus: string;
   extractionQuality: number | null;
@@ -105,13 +105,13 @@ interface StalenessInfo {
 type DocumentFilter = "all" | "file" | "email" | "note" | "response";
 
 async function fetchStaleness(dealId: string): Promise<StalenessInfo> {
-  const response = await fetch(`/api/deals/${dealId}/staleness`);
+  const response = await clerkFetch(`/api/deals/${dealId}/staleness`);
   if (!response.ok) throw new Error("Failed to fetch staleness");
   return response.json();
 }
 
 async function fetchDocument(documentId: string): Promise<Document | null> {
-  const response = await fetch(`/api/documents/${documentId}`);
+  const response = await clerkFetch(`/api/documents/${documentId}`);
   if (!response.ok) return null;
   const payload = await response.json() as { data?: Document };
   return payload.data ?? null;
@@ -333,8 +333,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
         id: uploadedDocument.id,
         name: uploadedDocument.name,
         type: uploadedDocument.type,
-        storagePath: uploadedDocument.storagePath ?? null,
-        storageUrl: uploadedDocument.storageUrl ?? null,
+        hasStorage: uploadedDocument.hasStorage ?? true,
         mimeType: uploadedDocument.mimeType ?? null,
         processingStatus: uploadedDocument.processingStatus ?? "COMPLETED",
         extractionQuality: uploadedDocument.extractionQuality ?? null,
@@ -404,7 +403,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/documents/${renameDoc.id}`, {
+      const response = await clerkFetch(`/api/documents/${renameDoc.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newName.trim() }),
@@ -435,7 +434,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/documents/${deleteDoc.id}`, {
+      const response = await clerkFetch(`/api/documents/${deleteDoc.id}`, {
         method: "DELETE",
       });
 
@@ -668,7 +667,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => openPreview(doc)}
-                                        disabled={!doc.storageUrl}
+                                        disabled={!doc.hasStorage}
                                       >
                                         <Eye className="mr-1 h-4 w-4" />
                                         Voir

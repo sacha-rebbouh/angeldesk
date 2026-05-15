@@ -1,6 +1,985 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-15 — Upload/OCR Phase 5 fix-up #3 (scénario 6 step 3 déterministe via /download)
+
+### Contexte
+Ré-audit Codex du fix-up #2 — P2 résiduel : le step 3 utilisait `/retry` après `UPDATE storageUrl=NULL`, mais `canRetryPage()` peut court-circuiter avant `downloadFile()` (page déjà retried, status non éligible, etc.). Donc le smoke peut "passer" sans jamais exercer la branche storagePath. Codex a suggéré soit forcer une page NEEDS_REVIEW soit, plus simple, utiliser un endpoint qui télécharge toujours le blob.
+
+### Action
+- Scénario 6 step 3 réécrit pour utiliser **`GET /api/documents/[documentId]/download`** au lieu du retry. Cette route n'a pas de pré-condition extraction-state — elle fait `auth → ownership check → downloadFile(storageUrl ?? storagePath) → renvoie les bytes`. Donc `downloadFile()` est GARANTI atteint, et le smoke prouve réellement la branche storagePath-fallback.
+- Pass criteria : 200 + bytes après `UPDATE storageUrl=NULL`. Fail signal : 500 + `TypeError [ERR_INVALID_URL]` dans les logs serveur.
+- Le retry (steps 1 + 2) reste le smoke OCR happy-path séparé, sans pré-conditions sur `downloadFile`.
+
+### État
+- `npx tsc --noEmit` : clean.
+- 0 octet NUL dans tous les fichiers Phase 5 touchés.
+- Pas de nouveau code ni de tests dans ce fix-up (uniquement le runbook).
+
+### Fichiers
+`docs-private/e2e-release-gate.md` (scénario 6 step 3, pass criteria, summary table).
+
+---
+## 2026-05-15 — Upload/OCR Phase 5 fix-up #2 (storagePath Blob bug + runbook réponses API)
+
+### Contexte
+Ré-audit Codex du fix-up #1 :
+- **P1** : `downloadFile` en mode Vercel Blob passait `storagePath` (un pathname comme `deals/<id>/abc.pdf`) directement à `fetch()` → `Invalid URL` pour les rows `storageUrl=NULL`. Le scénario 6 du runbook ne forçait jamais cette branche → bug non détecté. Le pattern `storageUrl ?? storagePath` est pourtant utilisé partout (retry, process, ocr, pipeline, delete-cascade).
+- **P2a** : Le runbook lisait mal les réponses API — `/process` répond `{ data: { extractionRunId } }` mais le runbook annonçait `{ extractionRunId }` racine ; `/progress` répond `{ data: progress }` mais le `jq` lisait `phase/percent` à la racine.
+- **P2b** : Scénario 6 "refund-on-failure" pas déterministe — pas de moyen reproductible de forcer un échec OCR.
+
+### Action
+
+**P1 — bug storagePath en mode Blob corrigé (`src/services/storage/index.ts`)**
+- Dans la branche `isVercelBlobConfigured`, si l'input n'est pas `http(s)://`, résoudre le pathname en URL via `@vercel/blob.head(urlOrPathname)` (accepte les deux formes) puis `fetch(info.url)`. URLs absolues passent through. Le mode local reste inchangé.
+- Nouveau test `src/services/storage/__tests__/download-file-blob.test.ts` (4) : pathname → head + fetch ; URL → pas de head ; `http://` accepté aussi ; non-OK fetch throw. Stub `BLOB_READ_WRITE_TOKEN` au top-level AVANT l'import dynamique (un `beforeAll` aurait été trop tard, la constante module est figée).
+
+**P2a — runbook aligné sur les vraies réponses API (`docs-private/e2e-release-gate.md`)**
+- Scénario 2 progress poll : `jq '.data | {phase, percent, ...}'`.
+- Scénario 5 reprocess : capture `.data.extractionRunId`, pass criteria mis à jour `{ data: { extractionRunId, documentId, processingStatus } }`.
+
+**P2b — scénario 6 réécrit déterministe**
+- Step 1 : retry page 1 du fixture `image-only.pdf` (déterministe, page 1 existe toujours).
+- **Step 3 (nouveau)** : `psql UPDATE Document SET storageUrl=NULL`, puis retry à nouveau → en mode Blob ce step ECHOUERAIT sans le fix P1 (Invalid URL), il PASSE avec. Smoke réel de la branche storagePath-only. Mode local non affecté (note explicite).
+- **Refund-on-failure** : explicitement déclaré **unit-only** dans cette gate, avec pointer vers les unit tests qui prouvent l'invariant (`document-extraction-inngest.test.ts`, `extraction-pipeline.test.ts`, idempotency key du `/retry` route). Forcer une vraie failure OCR live demanderait un flag invasif ; honnête de l'admettre.
+
+### État
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : **140 fichiers · 1164/1166** (2 skipped) — vs 1160 avant = +4 (test storage). Aucune régression sur le full run cette fois (les flaky `financial-auditor` se sont comportés).
+- `scripts/e2e/generate-fixtures.ts`, `smoke-setup.ts`, `smoke-teardown.ts`, `advisory-lock-live.ts` : tous toujours OK (non touchés).
+
+### Fichiers
+`src/services/storage/index.ts`, `src/services/storage/__tests__/download-file-blob.test.ts` (nouveau), `docs-private/e2e-release-gate.md`.
+
+### Registres
+- `errors.md` : entrée STORAGE (`downloadFile` Blob pathname) + index.
+- Le runbook `🐞 Bugs found` liste désormais les 2 bugs trouvés par Phase 5 (advisory lock + downloadFile).
+
+---
+## 2026-05-15 — Upload/OCR Phase 5 fix-up (release gate reproductible + NULs stripped)
+
+### Contexte
+Audit Codex Phase 5 : P1 — le runbook 1/2/5/6 listait des fixtures "needed" sans les fournir/générer + plaçait des `<DEAL_ID>`/`<DOC_ID>`/`<PAGE_N>` sans setup/teardown ; un deal au hasard renvoie 404/403 car la route exige `deal.userId === currentUser.id` et `BYPASS_AUTH` se résout en `dev-user-001`. P2 — `errors.md` et `agentic-mistakes.md` contenaient encore de vrais octets NUL (0x00) écrits par mes Edits décrivant le bug NUL.
+
+### Action
+
+**P2 — octets NUL strippés des registres**
+- `perl -i -pe 's/\x00/\\0/g' errors.md agentic-mistakes.md`. Vérifié : 0 NUL restants ; `rg` ne traite plus les fichiers comme binaires.
+
+**P1 — release gate reproductible pour 1/2/5/6**
+- `scripts/e2e/generate-fixtures.ts` (nouveau) : génère `text-native.pdf` (texte sélectable via `pdf-lib`) et `image-only.pdf` (rasterisation PNG via `pdf-to-img` réintégrée dans un PDF sans couche texte → force l'OCR). Aucun binaire commité, regénérable à volonté. Utilise uniquement des deps déjà présentes.
+- `scripts/e2e/smoke-setup.ts` (nouveau) : upsert le dev user `dev-user-001` (mirror de `getOrCreateUser`), crée un Deal frais nommé `E2E-SMOKE-<runId>`, imprime `DEAL_ID=...` parseable par `eval`. Sans ça, l'upload renvoie 404/403.
+- `scripts/e2e/smoke-teardown.ts` (nouveau) : **deux gardes de sécurité** — refuse de delete si le deal n'est pas `dev-user-001` ET si son `name` ne commence pas par `E2E-SMOKE-`. Nettoie les blobs AVANT le cascade prisma (pour ne pas perdre les `storageUrl`), puis `prisma.deal.delete` cascade les Documents / ExtractionRuns / Pages via `onDelete: Cascade`.
+- `docs-private/e2e-release-gate.md` : runbook réécrit. Setup/teardown sections explicites. Chaque scénario 1/2/5/6 a des commandes curl utilisant `$DEAL_ID`, `$DOC_ID`, `$DOC_ID_OCR`, `$PROGRESS_ID`, `$PAGE_N` capturés depuis les sorties précédentes (`jq`, `uuidgen`). Scénario 2 passe un `progressId` explicite pour pouvoir poller `/api/documents/upload/progress/$PROGRESS_ID` sans la modal UI. Scénario 6 inclut une requête psql pour choisir une page basse-confidence à retry + une requête sur `CreditTransaction` pour vérifier le refund.
+- `.gitignore` : `/scripts/e2e/fixtures/` (artefacts regénérables, non commités).
+
+### État
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 137 fichiers verts + 2 fichiers flaky (`agent-pipeline` / `sequential-pipeline` — le `financial-auditor` smoke timeout à 5005ms sous charge parallèle, sans rapport avec ces changements). En isolation : 47/47 verts. Total : 1157/1162 (2 skipped), ou 1160/1162 en isolation des flakys connus.
+- `scripts/e2e/generate-fixtures.ts` exécuté → 2 PDF produits (1308 et 52839 octets).
+- `scripts/e2e/advisory-lock-live.ts` (Phase 5 #1) : toujours PASS (non touché ce round).
+- 0 octet NUL dans les registres (vérifié via `grep -aPc '\x00'`).
+
+### Fichiers
+`scripts/e2e/generate-fixtures.ts`, `scripts/e2e/smoke-setup.ts`, `scripts/e2e/smoke-teardown.ts` (nouveaux), `docs-private/e2e-release-gate.md`, `.gitignore`, `errors.md`, `agentic-mistakes.md` (NUL strip).
+
+---
+## 2026-05-14 — Upload/OCR Phase 5 (E2E release gate — validation, pas de refactor)
+
+### Contexte
+Gate de release : prouver que le flux réel upload/OCR fonctionne, sans refactor. 8 scénarios. Split validé avec l'utilisateur : scénario 8 auto-exécuté ici (lock live, sans écriture) ; scénarios 3/4/7 déjà couverts par la suite Phase 4.1–4.5 ; scénarios 1/2/5/6 livrés en runbook de smoke reproductible (nécessitent la stack complète + crédits OpenRouter).
+
+### 🐞 Bug trouvé et corrigé
+`acquireDocumentLineageLock` faisait `tx.$queryRaw` sur `SELECT pg_advisory_xact_lock(...)`. `pg_advisory_xact_lock` retourne `void` → `$queryRaw` throw `P2010 — Failed to deserialize column of type 'void'` en runtime. **L'advisory lock n'a jamais fonctionné** ; chaque upload de version / promotion aurait throw en prod. Masqué par les tests mockés. Fix : `$queryRaw` → `$executeRaw` (exécute le statement, prend le lock, ne désérialise rien). Probé live sur 3 formes possibles. Vérifié live : scénario 8 PASS.
+
+### Action
+
+**Fix du bug (`extraction-runs.ts`)**
+- `acquireDocumentLineageLock` : `tx.$queryRaw` → `tx.$executeRaw` + commentaire expliquant pourquoi (`void` non désérialisable).
+- 4 fichiers de tests mis à jour : mock `$queryRaw` → `$executeRaw` (`promote-document-version`, `complete-extraction-run-atomic`, `extraction-reuse`, `phase3-leak-findings`).
+
+**Scénario 8 — advisory lock live (`scripts/e2e/advisory-lock-live.ts`, nouveau)**
+- Script reproductible, aucune écriture de table : prouve que `acquireDocumentLineageLock` sérialise bien deux transactions concurrentes sur le même lineage, ne bloque pas des lineages différents, et fonctionne via l'URL pgbouncer pooled. Exécuté → **PASS** sur les 3 sous-tests.
+
+**Runbook de smoke (`docs-private/e2e-release-gate.md`, nouveau)**
+- Scénarios 1/2/5/6 : prérequis, commandes exactes (curl + psql read-only), critères pass/fail, signaux d'échec. À exécuter par l'utilisateur contre la stack locale.
+- Tableau récapitulatif pass/fail des 8 scénarios + carte scénario→test pour 3/4/7 + résultat live du scénario 8 + le bug trouvé.
+
+### État
+| # | Scénario | Statut |
+|---|---|---|
+| 3 | Nouvelle version échoue → ancien reste isLatest | ✅ PASS (suite Phase 4.x) |
+| 4 | Nouvelle version réussit → candidate promue | ✅ PASS (suite Phase 4.x) |
+| 7 | Timeout forcé → FAILED + refund + pas d'oscillation | ✅ PASS (suite Phase 4.x) |
+| 8 | Advisory lock live Postgres | ✅ PASS (script exécuté) |
+| 1,2,5,6 | Flux full-stack | ⏳ Runbook livré, à exécuter par l'utilisateur |
+
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 139 fichiers · **1160/1162** (2 skipped) — le fix du bug ne casse rien.
+
+### Fichiers
+`src/services/documents/extraction-runs.ts`, `scripts/e2e/advisory-lock-live.ts` (nouveau), `docs-private/e2e-release-gate.md` (nouveau), + 4 fichiers de tests (mock `$queryRaw`→`$executeRaw`).
+
+### Registres
+- `errors.md` : entrée DB ($queryRaw void).
+- `agentic-mistakes.md` : entrée TESTING (SQL brut couvert seulement par des mocks → 2 bugs runtime non détectés ; tout chemin SQL brut doit avoir un test live-DB).
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.5 (tests — Gate Audit 4 : invariants de durabilité)
+
+### Contexte
+Phase finale du plan Codex : prouver les 4 critères du Gate Audit 4 — absence d'état oscillant, retries idempotents, crash recovery, ancien document préservé si nouvelle version failed. L'essentiel a été couvert au fil des sous-phases (chacune auditée avec tests RED par Codex) ; Phase 4.5 = combler les gaps réels + cartographier la couverture. Pas de nouveau "golden" corpus : les invariants de durabilité sont comportementaux, pas des sorties figées (les goldens d'extraction Excel/docx/pptx existants restent hors scope durabilité).
+
+### Action — gaps comblés
+
+**Gap réel : version preservation on FAILURE (`complete-extraction-run-atomic.test.ts`)**
+- Nouveau test : une finalisation FAILED (corpus vide) ne déclenche JAMAIS la promotion — assert que rien du chemin de promotion ne tourne (pas d'advisory lock `$queryRaw`, pas de `findUnique` lineage, pas de `updateMany` démote). L'ancien document `isLatest` n'est jamais touché → ancien préservé.
+- Nouveau test : une finalisation COMPLETED fait le flip COMPLET via `completeDocumentExtractionRun` — démote l'ancien `isLatest` du lineage (`updateMany` scopé) ET promeut le candidat, dans la même transaction, démote-avant-promote. (Couvrait avant : promotion testée isolément dans `promote-document-version.test.ts` ; le flip via `completeDocumentExtractionRun` n'était pas asserté.)
+
+**Crash recovery explicite (`extraction-pipeline.test.ts`)**
+- Nouveau test labellisé : un retry sur un run encore PROCESSING (crash AVANT le commit atomique) → le pipeline ne court-circuite pas, re-run `smartExtract` + `completeDocumentExtractionRun`, finalise proprement. (Le chemin existait via le happy-path mais n'était pas labellisé "crash recovery".)
+
+### Carte de couverture — Gate Audit 4
+- **Absence d'état oscillant** : `progress-monotone-guards.test.ts` (16 — gardes DB monotones run + progress) ; `promote-document-version.test.ts` (monotone par version, advisory lock) ; `extraction-pipeline.test.ts` (drop des callbacks tardifs après abort).
+- **Retries idempotents** : `extraction-pipeline.test.ts` (retry sur run terminal SUCCESS = no-op ; sur FAILED = throw ; republie le progress terminal) ; `document-extraction-inngest.test.ts` (refund idempotent via `dispatchRefundKey`, réconciliation crédits) ; `process/route.test.ts` (event id déterministe keyé sur `extractionRunId`).
+- **Crash recovery** : `extraction-pipeline.test.ts` (retry sur PROCESSING re-run [nouveau] ; `completeDocumentExtractionRun` throw → run terminalisé, pas d'orphelin ; downloadFile/smartExtract throw → run+document terminalisés) ; `document-extraction-inngest.test.ts` (`compensate-failed-extraction` terminalise run+document défensivement).
+- **Ancien document préservé** : `complete-extraction-run-atomic.test.ts` (FAILED → pas de promotion [nouveau] ; COMPLETED → flip complet [nouveau]) ; `promote-document-version.test.ts` (gate COMPLETED, monotone) ; `upload/route.test.ts` (nouvelle version créée candidate `isLatest: false`, pas de démote eager).
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 139 fichiers · **1160/1162** (2 skipped) — vs 1157 = +3.
+
+### Fichiers
+`src/services/documents/__tests__/complete-extraction-run-atomic.test.ts`, `src/services/documents/__tests__/extraction-pipeline.test.ts`.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.4 fix-up #2 (callbacks tardifs — gardes monotones)
+
+### Contexte
+Audit Codex Phase 4.4 fix-up — P1 : le `smartExtract` perdant continue en arrière-plan après que la race timeout a gagné. S'il émet ensuite des callbacks `onProgress`, ils peuvent réécrire l'état APRÈS le FAILED : `markExtractionRunProgress` / `recordExtractionPageProgress` faisaient un `update` non gardé → run FAILED reflippé PROCESSING ; `setDocumentExtractionProgress` pouvait écraser une phase terminale `failed`/`completed` par `page_processed` → progress row non-terminal → modal poll à l'infini. Casse l'invariant Phase 4.1 "pas d'état oscillant".
+
+### Action — défense en profondeur sur 3 couches
+
+**Garde callback (`extraction-pipeline.ts`)**
+- `onProgress` du pipeline : `if (budgetController.signal.aborted) return` en tête. Première ligne de défense — une fois le budget déclenché, les callbacks du `smartExtract` perdant ne font rien.
+
+**Garde DB monotone — run (`extraction-runs.ts`)**
+- Constante `LIVE_RUN_STATUSES = ["PENDING", "PROCESSING"]` (tout le reste — READY, READY_WITH_WARNINGS, BLOCKED, FAILED — est TERMINAL). Réutilisée aussi par `terminalizeExtractionRunAsFailed`.
+- `markExtractionRunProgress` : `update` → `updateMany` scopé `status: { in: LIVE }`. Un callback tardif sur un run terminal = no-op 0-ligne. La transition légitime PROCESSING → FAILED passe toujours (PROCESSING est LIVE).
+- `recordExtractionPageProgress` : early-return si le run est terminal (read en tête, skip l'encryption + l'upsert) + `update` final → `updateMany` scopé LIVE (backstop atomique pour la fenêtre TOCTOU).
+
+**Garde DB monotone — progress upload (`extraction-progress.ts`)**
+- `setDocumentExtractionProgress` : phase terminale (`completed`/`failed`) → upsert (gagne toujours, idempotent). Phase non-terminale → `updateMany` scopé `phase: { notIn: ["completed","failed"] }` ; si 0 ligne → `create` (ligne absente) avec catch P2002 swallowed (writer concurrent terminal). Garde monotone race-free, pas de TOCTOU read-then-write.
+
+### Tests (+17)
+- `progress-monotone-guards.test.ts` (16, nouveau) : `markExtractionRunProgress` scopé LIVE + transition PROCESSING→FAILED non bloquée ; `recordExtractionPageProgress` no-op sur run terminal (FAILED/READY/READY_WITH_WARNINGS/BLOCKED/absent) ; `setDocumentExtractionProgress` phase terminale → upsert, phase non-terminale → updateMany scopé, create si absent, P2002 swallowed, autre erreur re-throw.
+- `extraction-pipeline.test.ts` (+1) : RED — budget gagne, puis callbacks tardifs `page_processed`/`native_extracted` du `smartExtract` perdant → la garde `onProgress` les drop, zéro nouvelle écriture de progress après abort.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 139 fichiers · **1157/1159** (2 skipped) — vs 1140 = +17.
+
+### Fichiers
+`src/services/documents/extraction-runs.ts`, `src/services/documents/extraction-progress.ts`, `src/services/documents/extraction-pipeline.ts`, `src/services/documents/__tests__/progress-monotone-guards.test.ts` (nouveau), `src/services/documents/__tests__/extraction-pipeline.test.ts`.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.4 fix-up (budget GLOBAL réel — race + abort)
+
+### Contexte
+Audit Codex Phase 4.4 — P1 : le budget 8 min n'était pas un *vrai* budget global. Le pipeline faisait `budgetController.abort()` puis `await smartExtract(...)` jusqu'à résolution. Les boucles OCR ne checkent le signal qu'entre batchs ; un appel non-coopératif (requête LLM en vol bornée à 90s ; surtout les providers structurés Google/Azure dont les `fetch` n'ont ni signal ni timeout) peut laisser `smartExtract` pendant au-delà de 8 min → le run ne passe pas FAILED à l'heure. P2 : le code `EXTRACTION_TIMEOUT` n'était pas persisté de façon stable (seul `error.message` finissait dans `blockedReason`, sans préfixe stable).
+
+### Action
+
+**P1 — race contre une deadline (`extraction-pipeline.ts`)**
+- Le budget combine désormais DEUX mécanismes, aucun suffisant seul :
+  1. `budgetController` threadé dans `smartExtract` → les boucles OCR coopératives s'arrêtent (winddown du travail de fond, pas de fuite de compute illimitée).
+  2. `budgetDeadline` (Promise qui `reject` à l'expiration du timer) **racé** contre `smartExtract` → le PIPELINE réagit à la deadline même si un sous-appel non-coopératif n'a pas rendu la main.
+- `extraction = await Promise.race([extractionPromise, budgetDeadline])`. Ce n'est PAS le vieux `Promise.race` décoratif : ici le signal EST threadé et aborte vraiment le coopératif ; la race garantit juste que le pipeline ne *bloque* pas sur le non-coopératif.
+- `extractionPromise.catch(() => undefined)` pour éviter une unhandled rejection si `smartExtract` rejette après que la race a déjà tranché.
+- Post-race : `if (budgetController.signal.aborted) throw budgetExceededError()` — couvre le cas où les boucles coopératives ont rendu un partiel pile au déclenchement (la race peut résoudre avec le partiel). Un corpus partiel strict-mode n'est jamais finalisé COMPLETED.
+
+**P2 — code stable persisté**
+- `budgetExceededError()` produit un message préfixé `EXTRACTION_TIMEOUT: ...`. Ce préfixe stable finit dans `blockedReason` via `terminalizeExtractionRunAsFailed(runId, error.message)` → greppable pour audit/UI/runbook.
+
+### Tests (+1, 3 au total dans le describe Phase 4.4)
+- Nouveau test P1 : `smartExtract` qui ne résout JAMAIS (`new Promise(() => {})`) → `runDocumentExtractionPipeline` rejette quand même `EXTRACTION_TIMEOUT` à `EXTRACTION_TIME_BUDGET_MS` (fake timers). Prouve le budget global.
+- Test renommé/clarifié : `smartExtract` qui rend un partiel coopératif au budget → rejet via le post-check `signal.aborted`.
+- Les deux assertent `terminalizeExtractionRunAsFailed` appelé avec un reason `/^EXTRACTION_TIMEOUT:/` (P2).
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 138 fichiers · **1140/1142** (2 skipped) — vs 1139 = +1.
+
+### Fichiers
+`src/services/documents/extraction-pipeline.ts`, `src/services/documents/__tests__/extraction-pipeline.test.ts`.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.4 (budget temps d'extraction réel — AbortController)
+
+### Contexte
+Plan Codex item 4 : "soft timeout → real budget". L'ancien upload route avait un soft-timeout *décoratif* (`Promise.race` contre un timer qui n'abortait rien — `smartExtract` continuait à tourner en arrière-plan). Supprimé en Phase 4.2. Résultat actuel : le pipeline durable n'a AUCUN budget temps — une extraction OCR pathologique (PDF scanné volumineux, `maxOCRPages: Infinity`) peut tourner jusqu'à ce que l'infra Inngest la tue (non gracieux, run laissé PROCESSING). Phase 4.4 ajoute un VRAI budget qui aborte effectivement le travail.
+
+### Décisions (validées avec l'utilisateur)
+- **Budget dépassé → hard fail + refund** : run+document FAILED avec `EXTRACTION_TIMEOUT`, refund via la machinery existante. Un corpus partiel strict-mode (pages manquantes = financials manquants) n'est pas fiable. Réutilise tout l'existant, pas de scope creep readiness-gate.
+- **Valeur : 8 minutes** (`EXTRACTION_TIME_BUDGET_MS`), soft budget interne documenté, doit déclencher avant toute limite infra Inngest. Tunable.
+
+### Action
+
+**Threading de l'AbortSignal dans la chaîne OCR (`ocr-service.ts`)**
+- `signal?: AbortSignal` ajouté à `smartExtract`, `extractTextWithOCR`, `selectiveOCR`, `processSelectedPdfPages`, `processAllPdfPages`, `runStructuredProviderPlan`, `runVisualOCRPlan`.
+- Les 2 boucles feuilles (`processSelectedPdfPages`, `processAllPdfPages`) checkent `signal?.aborted` en tête de chaque itération de batch → `break` → retournent les pages déjà traitées (partiel). `runStructuredProviderPlan` early-return si aborted (skip l'appel provider potentiellement lent).
+- Granularité : check entre batchs. L'OCR par requête est déjà borné à 90s (`OCR_REQUEST_TIMEOUT_MS`) → dépassement max après le déclenchement du budget ≈ 1 batch (~90s). Pas de threading dans `generateOCRCompletion` (v1).
+
+**Budget réel dans le pipeline (`extraction-pipeline.ts`)**
+- `EXTRACTION_TIME_BUDGET_MS = 8 * 60_000` exporté + documenté.
+- `runExtractionWork` arme un `AbortController` + `setTimeout(abort, budget)`, passe `signal` à `smartExtract`, `clearTimeout` via `.finally()`.
+- Après `smartExtract` : si `budgetController.signal.aborted` → `throw ExtractionPipelineError("EXTRACTION_TIMEOUT")`. Le catch externe du pipeline terminalise run+document FAILED, publie `failed`, re-throw → le catch Inngest refund. `EXTRACTION_TIMEOUT` ajouté à l'union de codes. Aucun changement Inngest (passe par la machinery FAILED existante).
+
+### Tests (+5)
+- `extraction-pipeline.test.ts` (+2) : budget non dépassé → `AbortSignal` frais non-aborté threadé, COMPLETED normal, timer nettoyé ; budget déclenché mid-extraction (fake timers) → `EXTRACTION_TIMEOUT` + run+document terminalisés FAILED + `completeDocumentExtractionRun` jamais appelé.
+- `ocr-service-abort-budget.test.ts` (3, nouveau) : `selectiveOCR` avec signal pré-aborté → stop AVANT tout rendering, 0 page ; sans signal → rendering effectué (preuve que le signal est le gate) ; abort après le 1er batch → 2e batch jamais scheduled.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 138 fichiers · **1139/1141** (2 skipped) — vs 1134 = +5. (Note : un 1er run a montré du flakiness parallèle non lié — circuit-breaker / financial-auditor ; 2e run full green, fichiers concernés verts en isolation.)
+
+### Fichiers
+`src/services/pdf/ocr-service.ts`, `src/services/documents/extraction-pipeline.ts`, `src/services/documents/__tests__/extraction-pipeline.test.ts`, `src/services/pdf/__tests__/ocr-service-abort-budget.test.ts` (nouveau).
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.3 fix-up #2 (clé d'advisory lock sans NUL)
+
+### Contexte
+Ré-audit Codex du fix-up #1 — P1 : `acquireDocumentLineageLock` construisait sa clé avec des octets NUL (0x00) comme séparateur, passés à `hashtext()` comme `text`. PostgreSQL refuse les NUL dans `text` → `$queryRaw` aurait throw au runtime avant de protéger la section critique, à chaque upload et chaque promotion. Non détecté : `$queryRaw` mocké, assertions sur le contenu de la clé seulement.
+
+### Action
+- `acquireDocumentLineageLock` : clé construite via `JSON.stringify(["doc-lineage", dealId, name, corpusParentDocumentId ?? ""])` — jamais de NUL brut, délimitation non ambiguë (échappement JSON).
+- Test renforcé (`promote-document-version.test.ts`) : `name` contenant un espace, `expect(key).not.toContain("\0")`, `expect(JSON.parse(key)).toEqual([...])`.
+- Test DB live réel (`SELECT pg_advisory_xact_lock(hashtext($key))`) → Phase 4.5.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 137 fichiers · **1134/1136** (2 skipped).
+
+### Fichiers
+`src/services/documents/extraction-runs.ts`, `src/services/documents/__tests__/promote-document-version.test.ts`.
+
+### Registres
+- `errors.md` : entrée DB (clé NUL) + annotation sur l'entrée CONCURRENCE.
+- `agentic-mistakes.md` : entrée VÉRIFICATION (Read tool a masqué les NUL, j'ai failli rejeter un finding Codex correct → toujours `od -c` pour les questions au niveau octet).
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.3 fix-up (sérialisation concurrence — advisory lock par lineage)
+
+### Contexte
+Audit Codex Phase 4.3 — P1 : la garantie "monotone / pas d'oscillation" tenait en séquentiel mais pas en concurrence. `promoteDocumentVersionTx` faisait un check `newerLatest` puis, plus tard, démotait/promouvait — sans isolation ni lock. Scénario : v2 et v3 candidates terminent quasi simultanément ; tx v2 lit "pas de newer latest" pendant que v3 est encore candidate, v3 promeut et commit, puis v2 reprend, démote v3 et promeut v2 → le latest repart en arrière. Note non-bloquante liée : `existingDoc.version + 1` hors transaction → deux uploads concurrents du même filename créent deux v2.
+
+### Action
+
+**Advisory lock transactionnel par lineage (`extraction-runs.ts`)**
+- `acquireDocumentLineageLock(tx, lineage)` : `SELECT pg_advisory_xact_lock(hashtext(key))` où `key` dérive de `(dealId, name, corpusParentDocumentId)`. Lock tenu jusqu'à la fin de la transaction. Collisions `hashtext` → au pire deux lineages non liés se sérialisent occasionnellement, jamais d'incorrection.
+- `promoteDocumentVersionTx` : prend le lock AVANT le check `newerLatest` et les writes. Le check-then-act est désormais une section critique sérialisée par lineage. Re-read de `processingStatus` DANS le lock (un reprocess concurrent peut avoir bougé le doc hors COMPLETED entre le read pré-lock et le lock). Re-trace du scénario Codex avec le lock : tx v2 prend le lock, tx v3 bloque ; v2 démote v1/promeut v2, commit, libère ; v3 prend le lock, `newerLatest` voit v2... ou ordre inverse : v3 promeut, v2 prend le lock, `newerLatest` trouve v3 (version > 2) → return, v2 reste candidate. Monotone dans les deux cas.
+- Un seul lock par transaction (un document = un lineage) → pas de risque de deadlock par ordre de lock.
+
+**Création de version sous lock (`upload/route.ts`)**
+- Requête `existingDoc` supprimée de son ancien emplacement. Assignation de version + `document.create` déplacés dans un `prisma.$transaction` qui prend d'abord `acquireDocumentLineageLock`.
+- `version = MAX(version) + 1` sur TOUT le lineage (plus seulement la row `isLatest: true`) → deux candidates in-flight obtiennent des numéros de version distincts.
+- `isLatest: priorVersionInLineage ? false : true`, `parentDocumentId` = la plus haute version du lineage. Transaction courte (lock + 1 findFirst + 1 create) — l'upload blob reste hors transaction.
+- `existingDoc` renommé `priorVersion` (sémantique : plus haute version du lineage, plus "la row isLatest").
+
+### Tests (+5)
+- `promote-document-version.test.ts` (+4) : lock pris AVANT le check `newerLatest` et les writes (ordre) ; clé de lock dérivée du tuple lineage ; pas de lock pour un doc non-COMPLETED (fast-exit) ; re-read sous lock → bail si un reprocess concurrent a bougé le doc hors COMPLETED.
+- `upload/route.test.ts` (+1) : version assignée + row créée dans un `$transaction` lock-protégé ; `acquireDocumentLineageLock` appelé avec le tuple lineage ; lineage read = `MAX(version)` (orderBy version desc) ; lock avant le read.
+- tx mocks étendus (`$queryRaw`, `$transaction`) dans `complete-extraction-run-atomic.test.ts`, `extraction-reuse.test.ts`, `phase3-leak-findings.test.ts`, `upload/route.test.ts`.
+
+### Note (non corrigé ici, suivi explicite)
+Index unique partiel "un seul `isLatest: true` par lineage" (filet DB) : suggéré "idéalement" par Codex. Non fait — nécessite une migration SQL brute (Prisma n'exprime pas un index partiel avec `COALESCE` pour gérer le NULL de `corpusParentDocumentId`) + un passage de nettoyage des données existantes potentiellement non conformes. Les locks ferment la race au niveau applicatif ; l'index reste un défense-en-profondeur à planifier séparément.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 137 fichiers · **1134/1136** (2 skipped) — vs 1129 = +5.
+
+### Fichiers
+`src/services/documents/extraction-runs.ts`, `src/app/api/documents/upload/route.ts`, `src/services/documents/__tests__/promote-document-version.test.ts`, `complete-extraction-run-atomic.test.ts`, `extraction-reuse.test.ts`, `phase3-leak-findings.test.ts`, `upload/__tests__/route.test.ts`.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.3 (version candidate / isLatest après COMPLETED)
+
+### Contexte
+Trou de durabilité versions : à l'upload d'une nouvelle version (même nom + deal), l'ancien document était démoté `isLatest: false` IMMÉDIATEMENT, puis le nouveau créé `isLatest: true`. Si l'extraction de la nouvelle version échouait ensuite, le deal pointait sur un document cassé sans fallback `isLatest`. Exigence Codex : nouvelle version = candidate, `isLatest` bascule seulement après extraction COMPLETED, ancien document préservé si la nouvelle version échoue, pas d'état oscillant.
+
+### Action
+
+**Helper de promotion (`extraction-runs.ts`)**
+- `promoteDocumentVersionTx(tx, documentId)` : promotion lineage-scopée, gated COMPLETED, monotone par version.
+  - Gate COMPLETED : un document PENDING/PROCESSING/FAILED ne promeut jamais → ancien préservé.
+  - Lineage = `(dealId, name, corpusParentDocumentId)` (le tuple exact que l'upload route utilise pour détecter "même document réuploadé").
+  - Monotone : si une version strictement plus récente détient déjà `isLatest`, le candidat (plus ancien) reste candidat → pas d'oscillation (une vieille version qui complète tard ne démote pas un winner plus récent).
+  - Démote tous les autres `isLatest` du lineage puis promeut le candidat → exactement un `isLatest: true` par lineage.
+- `promoteDocumentVersion({ documentId })` : wrapper standalone (`$transaction`) pour les call sites hors transaction.
+
+**Promotion atomique — path PDF durable + reuse**
+- `completeDocumentExtractionRun` : appelle `promoteDocumentVersionTx` dans la MÊME transaction que le statut terminal du run, quand `hasUsableCorpus` (le pont COMPLETED ⟺ succès). Aucun nouveau param ni changement Inngest/pipeline.
+- `extraction-reuse.ts` : `promoteDocumentVersionTx` dans la transaction de clonage existante (reuse finalise COMPLETED immédiatement, pas de fenêtre PROCESSING).
+
+**Upload route (`upload/route.ts`)**
+- Suppression du démote eager de l'ancienne version.
+- `prisma.document.create` : `isLatest: existingDoc ? false : true` — nouvelle version = candidate, document neuf = `isLatest: true` (rien à préserver).
+- Fin de route : `promoteDocumentVersion` pour les paths inline (image/Excel/Word/PowerPoint) une fois le statut final COMPLETED connu — gardé par `file.type !== "application/pdf"` (PDF durable promeut dans le pipeline, reuse dans sa propre transaction).
+
+### Tests (+12)
+- `promote-document-version.test.ts` (10, nouveau) : gate COMPLETED (PENDING/PROCESSING/FAILED → pas de promotion), document absent, démote lineage-scopé + promote, scoping par corpusParentDocumentId, monotone (version plus récente déjà isLatest → pas de promotion), document neuf = no-op inoffensif, wrapper `$transaction`.
+- `complete-extraction-run-atomic.test.ts` : tx mock étendu (findUnique/findFirst/updateMany) ; assertion order run → finalize → promote dans la même transaction.
+- `upload/__tests__/route.test.ts` (+2) : document neuf créé `isLatest: true` ; version réuploadée créée `isLatest: false` SANS démote eager de l'ancien.
+- `extraction-reuse.test.ts` + `phase3-leak-findings.test.ts` : tx mocks étendus pour la promotion.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 137 fichiers · **1129/1131** (2 skipped) — vs 1117 = +12.
+
+### Fichiers
+`src/services/documents/extraction-runs.ts`, `src/services/documents/extraction-reuse.ts`, `src/app/api/documents/upload/route.ts`, `src/services/documents/__tests__/promote-document-version.test.ts` (nouveau), `complete-extraction-run-atomic.test.ts`, `extraction-reuse.test.ts`, `phase3-leak-findings.test.ts`, `upload/__tests__/route.test.ts`.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.2 step 2 fix-up (contrat async client + progress terminal sur retry)
+
+### Contexte
+Audit Codex du step 2 : 2×P1 + 1×P2. Le serveur a bien migré en async mais le contrat client n'a pas suivi.
+- P1a : la modal upload ne pollait pas réellement le progress async (`handleUploadAll` tear-down immédiat).
+- P1b : `inngest.send` qui throw → route retournait quand même 201 → toast "succès" alors que l'OCR ne tournera jamais.
+- P2 : un retry sur run terminal ne republiait pas le progress terminal → progress row bloqué non-terminal.
+
+### Action
+
+**P1a — modal upload poll réellement l'extraction durable (`file-upload.tsx`)**
+- `FileToUpload.status` += `"extracting"`. `UploadApiResult` += `extraction?.pending`.
+- `uploadFile` retourne `{ ok, pending, progressId }` ; un PDF `pending` → statut `"extracting"`, `onUploadComplete` différé.
+- `handleUploadAll` : si un fichier est `pending`, garde `isUploading` + `activeProgressId` vivants, stocke les counts dans `deferredCountsRef`, ne tear-down PAS.
+- Nouveau `useEffect` terminal-watcher : `serverProgress.phase` ∈ {completed, failed} → settle le fichier (`success`/`error`), tear-down, `onAllComplete` avec les counts finaux. Le poller existant continue (isUploading reste true).
+- Rendu : `"extracting"` affiché comme un état en cours (spinner bleu).
+
+**P1b — échec d'enqueue → erreur, pas succès (`upload/route.ts`)**
+- La branche catch d'enqueue throw `UploadRequestError(503)` au lieu de continuer vers un 201. Le client le transforme en exception → fichier `error`, pas de success toast. Régression Phase 1 fermée.
+
+**P2 — pipeline republie le progress terminal sur retry (`extraction-pipeline.ts`)**
+- Branche d'idempotence : run terminal SUCCESS → `publishUploadProgress({ phase: "completed" })` avant `return summarizeExistingRun`. Run terminal FAILED → `publishUploadProgress({ phase: "failed" })` avant `throw`. Idempotent.
+
+### Tests (4 nouveaux)
+- `extraction-pipeline.test.ts` (4) : retry terminal READY/READY_WITH_WARNINGS/BLOCKED republie `completed` (it.each) ; retry terminal FAILED republie `failed` avant de throw.
+- `upload/__tests__/route.test.ts` : test ajusté — `inngest.send` throw → **503** (plus 201) + refund + terminalize.
+- Client `file-upload.tsx` : couvert par tsc + revue (même pattern que le terminal-watcher du audit dialog Phase 4.1 ; pas de RTL dans ce repo).
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 136 fichiers · **1117/1117** tests (vs 1113 = +4).
+
+### Registres
+- `errors.md` : index + 2 nouvelles entrées (UX + DURABILITÉ). Entrée step 2 annotée "Ce qui N'A PAS fonctionné".
+
+### Dette UX connue (non-bloquante, validée par Codex)
+- `file-upload.tsx` est mono-pending : en multi-upload avec plusieurs PDF async, seul le dernier `progressId` est suivi en direct par la modal. Compteurs/toasts peuvent être incomplets dans ce cas. La DB et la liste se rattrapent via le polling des documents PROCESSING. Single-PDF (cas courant) entièrement correct. À traiter comme dette UX réelle si le multi-upload devient fréquent.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.2 step 2 (migration du path PDF de l'upload vers le durable pipeline)
+
+### Contexte
+Step 1 (sweep truthiness) audité OK. Step 2 = le cœur de Phase 4.2 : sortir l'extraction PDF de la route HTTP `/api/documents/upload`. Le path PDF faisait `smartExtract` inline (~300 lignes) avec un soft-timeout `setTimeout` décoratif — sur Vercel un PDF long est tronqué sans cleanup.
+
+### Action
+
+**Pipeline `runDocumentExtractionPipeline` étendu**
+- Nouveau param `progressPublishing: { uploadProgressId, userId, documentName }` → publie `DocumentExtractionProgress` aux phases started / native_extracted / page_processed / completed / failed (best-effort, ne fait jamais échouer l'extraction). Le poller upload client voit la vraie progression backend.
+- Résultat enrichi de `actualCredits` (dérivé de `manifest.creditEstimate.estimatedCredits`).
+- `summarizeExistingRun` re-dérive `actualCredits` depuis le run persisté (idempotence retry).
+
+**Inngest function `documentExtractionFunction` étendue**
+- Event data : `reconcileCredits?`, `uploadProgressId?`, `documentName?`.
+- Forward `progressPublishing` au pipeline.
+- Step `reconcile-extraction-credits` (succès, si `reconcileCredits`) : `actualCredits` vs `chargedCredits` → delta charge (`extraction:delta:${runId}`) ou refund (`extraction:reconcile-refund:${runId}`). Idempotent. Le /process flow omet `reconcileCredits` (comportement inchangé).
+- Step `trigger-thesis-reextract` (succès, si `reason === "upload"`) : déplacé depuis l'upload route — le document n'atteint COMPLETED que dans la fonction Inngest désormais. Non-bloquant.
+
+**Upload route — path PDF migré**
+- Remplacement de ~300 lignes de `smartExtract` inline + soft-timeout décoratif par : `estimatePdfExtractionCost` → pre-charge worst-case → `document.update PROCESSING` → `startDocumentExtractionRun` → `inngest.send('document/extraction.run')`.
+- Catch pré-enqueue : refund + `terminalizeExtractionRunAsFailed` + document FAILED (jamais de run orphelin).
+- Réponse : `response.extraction = { ...vides, pending: true }` pour un PDF enqueued. Le client poll le progress endpoint.
+- Imports nettoyés : `markExtractionRunProgress`, `recordExtractionPageProgress`, `completeDocumentExtractionRun`, `getBlockingPageNumbersFromManifest`, `formatExtractionTierSummary` retirés (plus utilisés sur la surface upload).
+- Images / Excel / Word / PowerPoint restent inline (truthiness corrigée step 1) — migration durable ultérieure.
+
+### Tests (16 nouveaux)
+- `extraction-pipeline.test.ts` (4) : actualCredits du manifest, progress started→completed publié, progress failed sur throw, pas de progress si `progressPublishing` omis.
+- `document-extraction-inngest.test.ts` (8) : reconciliation refund (actual < charged), delta charge (actual > charged), no-op (actual == charged), pas de reconciliation si `reconcileCredits` absent, refund-fail loggé ; thesis re-extract déclenché si thesis existe, pas si absente, pas si `reason !== "upload"`.
+- `upload/__tests__/route.test.ts` (4) : event `document/extraction.run` shape + `reconcileCredits: true`, pre-charge AVANT `inngest.send` (ordering), 402 + pas d'enqueue si pre-charge échoue, refund + `terminalizeExtractionRunAsFailed` + document FAILED si `inngest.send` throw.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 136 fichiers · **1113/1113** tests (vs 1097 = +16).
+
+### Registres
+- `errors.md` : index + 1 nouvelle entrée ARCHITECTURE.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.2 step 1 (sweep truthiness — gate Codex)
+
+### Contexte
+Feu vert Phase 4.2 de Codex, avec gate explicite : les paths legacy upload/OCR qui décident COMPLETED/FAILED via la truthiness brute (`result.text ? ...`) doivent passer à `hasUsableExtractionCorpus()` OU être migrés derrière le durable pipeline. Step 1 = le sweep truthiness (surgical, le gate nommé). Step 2 (à suivre) = migration du path PDF de l'upload vers enqueue Inngest.
+
+### Action — `hasUsableExtractionCorpus` appliqué aux 6 sites inline legacy
+- `recordDocumentExtractionRun` (extraction-runs.ts) : `status = hasUsableCorpus ? mapRunStatus(manifest) : "FAILED"` + `readyForAnalysis` gated. Miroir de `completeDocumentExtractionRun`. Couvre les paths image + Office qui utilisent cette fonction.
+- Route OCR (`/api/documents/[documentId]/ocr`) : `processingStatus`/`extractedText` gated sur `hasUsableExtractionCorpus(result.text)`.
+- Upload route, 4 paths inline :
+  - PDF inline : `result.text ? "COMPLETED" : "FAILED"` → `pdfCorpusUsable`.
+  - Image : `processingStatus: "COMPLETED"` inconditionnel → `imageCorpusUsable`.
+  - Excel : `processingStatus: "COMPLETED"` inconditionnel → `excelCorpusUsable`.
+  - Word : idem → `wordCorpusUsable`.
+  - PowerPoint : idem → `pptCorpusUsable`.
+- Plus aucun site qui décide COMPLETED/FAILED sans passer par le helper partagé.
+
+### Tests (7 nouveaux)
+- `extraction-runs.test.ts` (5) : `hasUsableExtractionCorpus` direct — texte réel / vide / whitespace-only / null-undefined / single char.
+- `complete-extraction-run-atomic.test.ts` (2) : `recordDocumentExtractionRun` corpus vide → run FAILED même sur manifest `ready_with_warnings` ; corpus non-vide → statut manifest préservé.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 136 fichiers · **1097/1097** tests (vs 1090 = +7). Note : 3 échecs transitoires observés sur un run (smoke tests agent `financial-auditor` timeout 5005ms sous charge parallèle) — confirmés flaky : `agent-pipeline` passe 35/35 en isolation, re-run complet 1097/1097 vert.
+
+### Hors scope step 1 (→ Phase 4.2 step 2)
+- Migration du path PDF de l'upload route vers le durable pipeline (enqueue Inngest + reconciliation crédits + publication progress). Les paths image/Office restent inline pour l'instant (truthiness désormais correcte).
+
+### Registres
+- `errors.md` : index + 1 nouvelle entrée DURABILITÉ.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.1 fix-up #4 (helper partagé hasUsableExtractionCorpus)
+
+### Contexte
+Audit Codex : le fix-up #3 n'a corrigé QUE `completeDocumentExtractionRun`. Le caller pipeline gardait `const isSuccess = Boolean(extraction.text)`. Pour un corpus whitespace-only : `completeDocumentExtractionRun` force le run FAILED, mais le pipeline construit `documentFinalization` COMPLETED et retourne `status: "COMPLETED"` → divergence run FAILED / document COMPLETED / API COMPLETED + pas de refund.
+
+### Action
+- Nouveau helper exporté `hasUsableExtractionCorpus(text)` dans `extraction-runs.ts` — `typeof text === "string" && text.trim().length > 0`. Source unique de vérité.
+- `completeDocumentExtractionRun` : `hasUsableCorpus = hasUsableExtractionCorpus(params.text)`.
+- `runDocumentExtractionPipeline` : `isSuccess = hasUsableExtractionCorpus(extraction.text)` (remplace `Boolean(extraction.text)`).
+- Plus aucune définition dupliquée du "succès d'extraction".
+
+### Tests (1 nouveau)
+- `extraction-pipeline.test.ts` : `P1: treats a whitespace-only corpus as a FAILURE (no run/document/API divergence)` (RED→GREEN — `text: "   \n  \t "` + manifest `ready_with_warnings` + `pagesProcessed: 3` → pipeline throw `EXTRACTION_FAILED` + `documentFinalization.data.processingStatus === "FAILED"`).
+- Le mock du pipeline test inclut la VRAIE logique de `hasUsableExtractionCorpus` (pas de stub) pour exercer exactement la même définition.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 136 fichiers · **1090/1090** tests (vs 1089 = +1).
+
+### Registres
+- `errors.md` : index + 1 nouvelle entrée DURABILITÉ. Entrée fix-up #3 annotée "Ce qui N'A PAS fonctionné" (corrigeait qu'un des 2 call sites).
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.1 fix-up #3 (corpus vide → run forcé FAILED)
+
+### Contexte
+Audit Codex : le chemin `text === ""` pouvait encore produire un run terminal non-FAILED. `completeDocumentExtractionRun` mappait le statut du run uniquement depuis le manifest (`mapRunStatus`), sans tenir compte d'un corpus final vide. Le chemin OCR peut retourner `success: true` avec `pagesProcessed > 0` mais `composeOCRText` → `""` (toutes les pages OCR ont `text.length === 0`). Résultat : run `READY_WITH_WARNINGS`/`BLOCKED` + document FAILED → retry no-op sur le run terminal-success → incohérence permanente.
+
+### Action
+- `completeDocumentExtractionRun` : `const hasUsableCorpus = params.text.trim().length > 0;` → `status = hasUsableCorpus ? mapRunStatus(manifest) : "FAILED"`. `readyForAnalysis` également gated sur `hasUsableCorpus`.
+- Le statut du run ne peut plus contredire "pas de texte exploitable".
+
+### Tests (2 nouveaux dans complete-extraction-run-atomic.test.ts)
+- `P1: forces run status FAILED when the final corpus is empty, even if the manifest says ready_with_warnings` (RED→GREEN — manifest `ready_with_warnings` + `pagesProcessed: 3` + `text: "   \n  "` → run FAILED).
+- `keeps the manifest-derived status when the corpus is non-empty` (non-régression — corpus réel → READY_WITH_WARNINGS préservé).
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 136 fichiers · **1089/1089** tests (vs 1087 = +2).
+
+### Registres
+- `errors.md` : index + 1 nouvelle entrée DURABILITÉ.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.1 fix-up #2 (finalisation succès atomique run + document)
+
+### Contexte
+Audit Codex post-fix-up : le commit "succès" n'était pas atomique. `completeDocumentExtractionRun()` terminalisait le run, PUIS `prisma.document.update()` séparément. Crash entre les deux → run terminal-success + document non finalisé, et le retry `summarizeExistingRun` ne re-mute pas le document → run READY + document inexploitable.
+
+### Action
+
+**`completeDocumentExtractionRun` — param `documentFinalization`**
+- Nouveau param optionnel `documentFinalization: { documentId, data: Prisma.DocumentUpdateInput }`.
+- Quand fourni : `tx.document.update` s'exécute DANS le même `prisma.$transaction` que la terminalisation du run + création des pages. Atomique tout-ou-rien.
+- Callers legacy (upload/ocr routes, non migrés) omettent le param → comportement inchangé.
+
+**Pipeline `runDocumentExtractionPipeline` — section 4+5 fusionnée**
+- Construit `documentData` (COMPLETED+extractedText si `isSuccess`, sinon FAILED+errorWarning) et le passe en `documentFinalization` à `completeDocumentExtractionRun`.
+- Plus aucun `prisma.document.update` séparé. `latestExtractionRunId` utilise `extractionRunId` directement (connu avant la tx).
+- Si la transaction rollback → le run reste PROCESSING → le catch global terminalise → retry re-run propre. Jamais run=READY + document non finalisé.
+
+### Tests (4 nouveaux)
+- `extraction-pipeline.test.ts` : `P1 (atomicity): when completeDocumentExtractionRun throws, the run is terminalized FAILED and NO orphan run-READY-without-document is left` (RED→GREEN — simule le crash de la tx de finalisation). + 2 tests existants adaptés (assert `documentFinalization` au lieu de `prisma.document.update` séparé).
+- `complete-extraction-run-atomic.test.ts` (3 tests) : document update DANS la même tx (même client tx, ordering run→doc), legacy sans `documentFinalization` ne touche pas le document, throw dans la tx propagé au caller.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 136 fichiers · **1087/1087** tests (vs 1083 = +4 : 1 atomicity RED→GREEN + 3 complete-extraction-run-atomic).
+
+### Registres
+- `errors.md` : index + 1 nouvelle entrée DURABILITÉ.
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.1 fix-up (durabilité : terminaliser runs + compenser FAILED idempotemment)
+
+### Contexte
+Audit Codex post-Phase-4.1 a trouvé 4 trous de durabilité (3×P1 + 1×P2) :
+- P1.1 : la compensation/catch marquait `Document` FAILED mais pas le `DocumentExtractionRun` → run stuck PROCESSING.
+- P1.2 : un retry Inngest voyant un run FAILED retournait `status: "FAILED"` comme succès → pas de refund.
+- P1.3 : /process pre-enqueue catch laissait le run orphelin PROCESSING.
+- P2 : le client affichait "Extraction terminée" sur le 202 async.
+
+### Action
+
+**Nouveau helper `terminalizeExtractionRunAsFailed(runId, reason)` (extraction-runs.ts)**
+- `updateMany WHERE id AND status IN [PENDING, PROCESSING]` → `status: FAILED`.
+- Idempotent (no-op si déjà terminal), retourne le count des rows transitionnées. Safe à appeler depuis tous les catch.
+
+**P1.1 — Terminaliser le run dans tous les catch**
+- Pipeline : `runDocumentExtractionPipeline` wrappe le travail lourd dans `runExtractionWork` ; un try/catch global terminalise run + document avant re-throw. La garde MIME a migré dans `runExtractionWork` (un non-PDF enqueued terminalise quand même son run).
+- Inngest function : le step `compensate-failed-extraction` appelle aussi `terminalizeExtractionRunAsFailed` (défensif si le pipeline crash avant son propre catch).
+- /process route : catch pré-enqueue terminalise via `orphanRunId`.
+
+**P1.2 — Compenser les runs FAILED idempotemment**
+- Branche d'idempotence du pipeline : run terminal SUCCESS (READY/READY_WITH_WARNINGS/BLOCKED) → `summarizeExistingRun` retourne le résumé caché. Run terminal FAILED → **throw** `ExtractionPipelineError("...", "EXTRACTION_FAILED")` → le retry Inngest passe par le catch → refund idempotent via `dispatchRefundKey`.
+- `summarizeExistingRun` ne gère plus le cas FAILED (param `_runStatus` restreint aux 3 statuts SUCCESS).
+
+**P1.3 — /process pre-enqueue catch terminalise le run orphelin**
+- Tracker `orphanRunId` : set après `startDocumentExtractionRun`, remis à `null` après `inngest.send` succès. Le catch terminalise si non-null.
+
+**P2 — Client polling-aware (document-extraction-audit-dialog.tsx)**
+- `reprocessMutation.onSuccess` stocke `extractionRunId` dans `reprocessRunId`, toast "lancee — traitement en cours" (plus "terminee").
+- `useQuery` du audit : `refetchInterval: reprocessRunId ? 3000 : false`.
+- `useEffect` terminal-watcher : quand `latestRun.id === reprocessRunId` ET status terminal → clear, toast final (terminee/echouee), invalide readiness.
+- `extractionActionPending` inclut `reprocessRunId !== null` → barre de progression maintenue pendant tout le traitement durable.
+- `notifyDocumentUpdated` wrappé en `useCallback`.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 135 fichiers · **1083/1083** tests (vs 1080 Phase 4.1 = +3 : P1.2 FAILED-throw, +2 P1.1 terminalize ; idempotency it.each 4→3 cas + 1 test P1.2 dédié ; +1 test /process "no terminalize on success").
+
+### Registres
+- `errors.md` : index + 4 nouvelles entrées (3 DURABILITÉ + 1 UX).
+
+---
+## 2026-05-14 — Upload/OCR Phase 4.1 (durable pipeline — vertical slice /process route)
+
+### Contexte
+Feu vert Phase 4. Phase 4.1 = plus petit vertical slice auditable : Inngest function + service `runDocumentExtractionPipeline` + /process route bascule en enqueue + tests idempotency/crash recovery. Upload (PDF + images + Office docs) et /retry restent inline pour 4.2/4.3.
+
+### Action
+
+**Nouveau service `src/services/documents/extraction-pipeline.ts`**
+- `runDocumentExtractionPipeline({ documentId, extractionRunId })` : contient la logique d'extraction (download + smartExtract + completeRun + updateDocument).
+- Idempotent : si le run est en état terminal (READY/READY_WITH_WARNINGS/BLOCKED/FAILED), retourne le résumé caché sans re-exécuter.
+- Page-level upsert via `recordExtractionPageProgress(runId, pageNumber)` → mid-extraction retry safe.
+- Throw `ExtractionPipelineError(code)` avec codes : DOCUMENT_NOT_FOUND / RUN_NOT_FOUND / MIME_UNSUPPORTED / NO_STORAGE / DOWNLOAD_FAILED / EXTRACTION_FAILED.
+- PDF only (4.1). Images / Excel / PowerPoint / Word à venir.
+
+**Nouvelle Inngest function `documentExtractionFunction`**
+- Event : `document/extraction.run` avec data `{ documentId, extractionRunId, userId, dealId, reason, creditAction?, chargedCredits?, dispatchRefundKey? }`.
+- Retries : 1. Concurrency : 3 / `event.data.userId`.
+- `step.run('run-extraction-pipeline')` → appelle le service.
+- Sur throw : `step.run('compensate-failed-extraction')` → `refundCreditAmount(idempotencyKey=dispatchRefundKey)` + `prisma.document.updateMany({ where: { id, processingStatus: "PROCESSING" }, data: { processingStatus: "FAILED" }})`.
+- Si refund retourne `{ success: false }` → log via `logger.error` (user reste débité, surfaceé pour audit).
+- Registered dans `functions[]` array.
+
+**Route `/api/documents/[documentId]/process` réécrite (de 327 → 230 lignes)**
+- 1. Auth + validation + ownership + running analysis check.
+- 2. PDF + storage check (`storageUrl ?? storagePath`).
+- 3. Atomic PROCESSING claim (`updateMany where: { id, NOT PROCESSING }`).
+- 4. Deduct credits (avec idempotency key `extraction:reprocess:${docId}:${requestId}`).
+- 5. `startDocumentExtractionRun`.
+- 6. `inngest.send({ id: 'document-extraction:${runId}', name: 'document/extraction.run', data: {...} })`.
+- 7. Return 202 `{ data: { documentId, extractionRunId, processingStatus: "PROCESSING" }, creditsCharged }`.
+- Pre-enqueue catch : refund + revert PROCESSING claim.
+- `maxDuration` : 300 → 30 (HTTP work bounded).
+
+**Tests (24 nouveaux)**
+- `extraction-pipeline.test.ts` (12 tests) :
+  - Happy path : smartExtract → COMPLETED + shape attendue.
+  - requiresOCR flag quand manifest a hard blockers.
+  - Idempotency : re-run sur READY/READY_WITH_WARNINGS/BLOCKED/FAILED = no-op (no smartExtract, no document update).
+  - Error paths : DOCUMENT_NOT_FOUND, MIME_UNSUPPORTED, RUN_NOT_FOUND, NO_STORAGE, EXTRACTION_FAILED, DOWNLOAD_FAILED.
+- `/process/__tests__/route.test.ts` (8 tests) :
+  - 202 + enqueue with deterministic event id `document-extraction:${runId}`.
+  - Deduct BEFORE send (ordering assertion).
+  - 402 + revert PROCESSING quand credit deduction fails.
+  - 409 race-condition guard.
+  - Refund + revert PROCESSING quand `inngest.send` throw.
+  - 400 non-PDF, 403 unowned.
+- `document-extraction-inngest.test.ts` (4 tests) :
+  - Succès → result returned, no compensation.
+  - Pipeline throw → refund + mark FAILED + re-throw.
+  - Refund retournant `{ success: false }` → log error, document quand même FAILED.
+  - chargedCredits=0 → skip refund.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 135 fichiers · **1080/1080** tests (vs 1056 Phase 3 = +24 : 12 pipeline + 8 route + 4 Inngest).
+
+### Hors scope Phase 4.1 (à venir)
+- Phase 4.2 : Upload route bascule en enqueue (PDF first, puis images / Office).
+- Phase 4.3 : Version candidate / `isLatest` post-COMPLETED.
+- Phase 4.4 : Soft timeout / abort budget réel.
+- Phase 4.5 : Tests crash-recovery integration + golden runbook.
+
+---
+## 2026-05-13 — Upload/OCR Phase 3 textPreview fail-closed (audit Codex P2)
+
+### Contexte
+Mon fix Phase 3.5(d) prétendait fail-closed sur textPreview corrompu, mais utilisait `safeDecrypt` qui swallow l'erreur silencieusement. Le try/catch externe était code mort. Repro live Codex : preview base64 corrompu → `isEncrypted=true, safeDecryptReturnedOriginal=true, clonedDecryptsToOriginalCiphertext=true` (le ciphertext corrompu était propagé tel quel dans la nouvelle row).
+
+### Action
+
+**TDD : 1 test RED écrit AVANT fix**
+- "fail-closed: a corrupted encrypted-looking textPreview on the source must throw" — flip d'un byte dans l'auth tag, vérifie que le clonage throw au lieu de propager.
+
+**API encryption.ts — miroir strict pour les strings**
+- Nouveau `tryDecryptText(text): DecryptedTextResult` qui retourne `{ kind: "plaintext" | "decrypted" | "corrupted", value?, reason? }`. Pattern identique à `tryDecryptJsonField`.
+- `safeDecrypt` documentée explicitement comme "swallow errors" → réservée au display, jamais aux security gates.
+
+**Fix extraction-reuse**
+- `reEncryptTextPreviewForReuse` réécrit en switch sur `result.kind`. `corrupted` → throw `CorruptedSourceArtifactError`. Plus de `safeDecrypt` dans le chemin fail-closed.
+
+### Verrouillage par tests (encryption.test.ts)
+- 4 tests directs sur `tryDecryptText` : plaintext / decrypted / corrupted / "differs from safeDecrypt" — ce dernier prouve explicitement que les deux helpers divergent sur un input corrompu (exactement le piège que mon fix précédent contenait).
+- 4 tests directs sur `tryDecryptJsonField` : absent / plaintext / decrypted / corrupted.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 132 fichiers · **1056/1056** tests (vs 1047 = +9 nouveaux : 1 leak + 8 helper).
+
+### Registres
+- `errors.md` : 1 nouvelle entrée SÉCURITÉ.
+- `agentic-mistakes.md` : 1 nouvelle entrée API-DESIGN — "réutilisé safeDecrypt dans un fail-closed, try/catch code mort". Avec la note ironique que je venais d'écrire 5 minutes plus tôt une entrée sur "API qui collapse erreurs en sentinel = anti-pattern pour gates" et que j'ai immédiatement réintroduit le même anti-pattern.
+
+---
+## 2026-05-13 — Upload/OCR Phase 3 fail-closed sur envelope corrompue (audit Codex P1)
+
+### Contexte
+Audit Codex post-Phase-3.5 a trouvé un fail-open résiduel : `safeDecryptJsonField` retournait `null` pour 3 sémantiques distinctes (absent / legacy null / envelope corrompue), et `isPageArtifactToxic` interprétait ce null comme "pas d'artifact vérifiable" → return false sur une envelope chiffrée indéchiffrable. Repro live Codex : `{state:null, toxic:false}` avec `artifact = { _enc: "ad1", data: "not-valid-ciphertext", v: 1 }`. Même bug dans `extraction-reuse.reEncryptArtifactForReuse` qui transformait silencieusement les envelopes corrompues en `Prisma.DbNull`.
+
+### Action
+
+**TDD : 2 tests RED écrits AVANT fix**
+- "fail-closed: a corrupted envelope must be toxic, not silently 'no artifact'" — vérifie `isPageArtifactToxic({ _enc: "ad1", data: "garbage", v: 1 }) === true`.
+- "fail-closed: a corrupted envelope on the source must NOT be cloned as Prisma.DbNull" — vérifie que `reuseCompletedExtractionForContentHash` throw quand la source a une envelope indéchiffrable.
+
+**API encryption.ts — nouveau type discriminé**
+- `DecryptedJsonFieldResult<T>` : `{ kind: "absent" | "plaintext" | "decrypted" | "corrupted", value?, reason? }`.
+- `tryDecryptJsonField(value)` retourne ce résultat (callers security-sensitive).
+- `safeDecryptJsonField` réécrite comme wrapper qui collapse absent+corrupted en null (rétrocompat).
+
+**Fix toxic gate (extraction-readiness-policy.ts)**
+- `isPageArtifactToxic` : check explicite `if (isEncryptedJsonField(artifact))` → `tryDecryptJsonField(...)` → si `kind === "corrupted"`, return true (toxic) AVANT le check `state === null`.
+- Une envelope chiffrée structurellement valide qui ne décrypte pas est désormais bloquée par le gate UNVERIFIED_ARTIFACT.
+
+**Fix extraction-reuse**
+- `reEncryptArtifactForReuse` réécrit en switch sur `result.kind`. `corrupted` → throw `CorruptedSourceArtifactError`. La transaction Prisma rollback ; le caller fall back sur une vraie ré-extraction.
+- `reEncryptTextPreviewForReuse` : si la string ressemble à du chiffré (`isEncrypted`) mais ne décrypte pas, throw aussi.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 132 fichiers · **1047/1047** tests (vs 1045 = +2 nouveaux fail-closed tests).
+
+### Registres
+- `errors.md` : 1 nouvelle entrée SÉCURITÉ.
+- `agentic-mistakes.md` : 1 nouvelle entrée API-DESIGN — helper "ergonomique" qui collapse des erreurs en sentinel `null` est anti-pattern pour les security gates.
+
+---
+## 2026-05-13 — Upload/OCR Phase 3 fix-up (3 sites de lecture artifact ratés — audit Codex P1)
+
+### Contexte
+Audit Codex post-Phase 3 a identifié 3 chemins de lecture du champ `artifact` que mon mapping Phase 3.0 avait ratés. Chaque site est un fail-open silencieux du chiffrement Phase 3 :
+1. (P1) `extraction-readiness-policy.readPageVerificationState` ne déchiffrait pas → `isPageArtifactToxic(encrypted)` → toujours false → bypass UNVERIFIED_ARTIFACT.
+2. (P1) `evidence-ledger.asRecord` ne déchiffrait pas → 0 tables/charts/numericClaims pour tous les agents downstream.
+3. (P1) `extraction-reuse` clonait `artifact`/`textPreview` verbatim → une source legacy plaintext produisait une nouvelle row plaintext (re-fuite du corpus).
+
+Demandé en bonus : tests qui ÉCHOUENT aujourd'hui (TDD style) pour chaque bug avant le fix.
+
+### Action
+
+**Méthode : 3 tests RED écrits AVANT fix** (`phase3-leak-findings.test.ts`)
+- "flags a parse_failed artifact as toxic whether stored encrypted or plaintext" — vérifie que `isPageArtifactToxic` opère sur les deux formats.
+- "returns identical structured counts for encrypted vs plaintext artifacts" — vérifie que le ledger compte les mêmes claims peu importe le format.
+- "writes ENCRYPTED artifact + textPreview to the target row even when the source is legacy plaintext" — vérifie qu'un clone reuse ne propage pas le plaintext.
+- + 2 régression-guards : clean encrypted reste non-toxic / source déjà encrypted ne fuit pas.
+
+**Fix 3.5(a) — extraction-readiness-policy déchiffre transparently**
+- Import `safeDecryptJsonField` dans `extraction-readiness-policy.ts`.
+- `readPageVerificationState` et `readVerificationEvidence` font le décrypt en première ligne.
+- Tous les callers existants (`isPageArtifactToxic`, plus 3 sites externes) deviennent corrects sans changement de signature.
+- Le commentaire d'en-tête "Ne doit dependre d'AUCUN autre module interne" assoupli explicitement pour autoriser `@/lib/encryption` (leaf utility, zéro deps internes).
+
+**Fix 3.5(b) — evidence-ledger.asRecord déchiffre transparently**
+- Une seule fonction `asRecord` modifiée pour faire `safeDecryptJsonField(value)` AVANT le type check.
+- Les 2 sites de consommation (`buildEvidenceLedgerFromContext` + `countNumericClaims`) deviennent corrects sans changement.
+
+**Fix 3.5(c) — extraction-reuse re-encrypte au clonage**
+- Deux nouveaux helpers `reEncryptArtifactForReuse(stored)` + `reEncryptTextPreviewForReuse(stored)` dans `extraction-reuse.ts`.
+- Pipeline : `safeDecryptJsonField/safeDecrypt` (handle legacy + encrypted) → `encryptJsonField/encryptText` (fresh IV).
+- La target row est TOUJOURS chiffrée, peu importe le format de la source.
+
+### Audit transversal final
+- `grep -rnE "page\.artifact"` : 8 sites recensés, tous passent par `safeDecryptJsonField` ou un helper Phase 3.
+- `grep -rnE "page\.textPreview"` : 1 site (extraction-reuse), passe par `reEncryptTextPreviewForReuse`.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 132 fichiers · **1045/1045** tests (vs 1040 Phase 3 = +5 nouveaux : 3 RED→GREEN + 2 régression-guards).
+
+### Registres
+- `errors.md` : index + 3 nouvelles entrées détaillées (1 SÉCURITÉ + 2 RGPD).
+- `agentic-mistakes.md` : 1 nouvelle entrée RECHERCHE — mapping de surface trop étroit (grep sur pattern d'usage au lieu du nom de champ).
+
+---
+## 2026-05-13 — Upload/OCR Phase 3 (Privacy DB — chiffrement artifact + textPreview)
+
+### Contexte
+Feu vert Codex pour Phase 3 avec exigence non négociable : chiffrement + compat lecture legacy plaintext + tests non-régression sur `DocumentExtractionPage.artifact`, `textPreview` et claims structurés. Gate Codex : "refuse si du texte OCR brut reste lisible en DB hors `Document.extractedText`, sauf metadata non sensible justifiée".
+
+### Action
+
+**3.1 — Helpers chiffrement JSON (compat legacy)**
+- `src/lib/encryption.ts` : nouveau `encryptJsonField(value)` qui sérialise + chiffre en AES-256-GCM, retourne `{ _enc: "ad1", data, v: 1 }`.
+- `isEncryptedJsonField(value)` : strict envelope detection.
+- `safeDecryptJsonField<T>(value)` : (a) envelope → decrypt + JSON.parse, (b) plaintext object → return as-is (legacy compat), (c) null → null, (d) corrupted envelope → null + console.warn.
+- 7 tests dédiés couvrant round-trip, IV unique, null inputs, legacy plaintext verbatim, corrupted ciphertext, unicode/nested.
+
+**3.2 — Chiffrer toutes les écritures**
+- Wrapper centralisé `encryptExtractionPagePayload({ artifact, textPreview })` dans `extraction-runs.ts`.
+- Sites modifiés :
+  - `extraction-runs.ts:recordExtractionPageProgress` (upsert).
+  - `extraction-runs.ts:buildExtractionPageCreateInput` (batch create via recordDocumentExtractionRun + completeDocumentExtractionRun).
+  - `retry/route.ts` (success path via wrapper, failed path via `encryptText` direct).
+- `extraction-reuse.ts` non modifié : le clonage copie envelope/plaintext as-is, fonctionne uniformément à la lecture.
+
+**3.3 — Déchiffrer toutes les lectures avec compat legacy**
+- `extraction-audit/route.ts` : `safeDecryptJsonField(page.artifact)` + `safeDecrypt(page.textPreview)` avant sérialisation client. Toutes les introspections (`extractArtifactProvider`, `extractArtifactVerification`, `extractSemanticAssessment`, `buildPageEvidenceSummary`) opèrent sur le payload décrypté.
+- `extraction-runs.ts:getBlockingPageNumbersFromStoredPages` : `safeDecryptJsonField(page.artifact)` avant `extractSemanticAssessment`.
+- `retry/route.ts:canRetryPage` : `safeDecryptJsonField(page.artifact)` avant introspection des tables/charts/numericClaims.
+- `document-context-retriever.ts:formatExtractionPageArtifact` : décryption avant build du prompt LLM.
+- `ocr-service.ts:normalizeDocumentPageArtifact` : décryption avant validation du cache OCR par hash d'image.
+
+**3.4 — Tests non-régression (`phase3-encryption-compat.test.ts`)**
+- 12 tests qui prouvent les 3 invariants gate Codex :
+  - (a) `encryptExtractionPagePayload` ne laisse AUCUNE substring du corpus brut lisible dans la forme stockée (audit gate principal).
+  - (b) Round-trip exact via `safeDecryptJsonField` + `safeDecrypt`.
+  - (c) Legacy plaintext rows retournées verbatim (zero migration).
+  - (d) Décision blocking IDENTIQUE pour rows legacy vs encrypted (le risque le plus chiant : un audit dialog qui diverge selon la date d'extraction).
+  - (e) Tables / charts / numericClaims / visualBlocks survivent avec égalité stricte.
+  - (f) Phase 1 extraction-reuse reste correct (envelope copy → décryption).
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 131 fichiers · **1040/1040** tests (vs 1021 pré-Phase 3 = +19 nouveaux : 7 helper + 12 non-régression).
+
+### Migration / rollout
+- Aucune migration de schema requise. Le format envelope tient dans le champ Json existant.
+- Aucun backfill DB requis. La compat legacy est résolue à la lecture par `safeDecryptJsonField`.
+- L'env `DOCUMENT_ENCRYPTION_KEY` est déjà en place (utilisée par `Document.extractedText`).
+
+---
+## 2026-05-13 — Upload/OCR Phase 2 résiduel (storageUrl ?? storagePath dans OCR/reprocess)
+
+### Contexte
+Codex a feu vert pour Phase 3 mais demande de boucler un P2 résiduel : 3 routes OCR-adjacent bloquaient encore sur `document.storageUrl` seul alors que (1) le schema permet `storagePath` sans `storageUrl` (rows local-dev / legacy), (2) download/preview/delete savaient déjà fallback. Inconsistance connue à fermer maintenant.
+
+### Action
+- `process/route.ts:91`, `ocr/route.ts:63`, `retry/route.ts:79` : remplacés par `const storageTarget = document.storageUrl ?? document.storagePath;` + check `!storageTarget` + `downloadFile(storageTarget)`. Message d'erreur : "Document has no storage reference".
+- Test ajouté : `retry/__tests__/route.test.ts` "downloads using storagePath when storageUrl is null" — assertion que downloadFile est appelé avec le storagePath quand storageUrl est null.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 130 fichiers · **1021/1021** tests (vs 1020 fix-up = +1 nouveau test storagePath-only).
+
+---
+## 2026-05-13 — Upload/OCR Phase 2 fix-up (post-audit Codex P1/P2)
+
+### Contexte
+Codex a refusé le gate Phase 2 pour 4 problèmes :
+1. (P1) `validateTemporaryBlobUrl` ne bindait pas `blobUrl` à `blobPathname` → cleanup = primitive de delete arbitraire (caller authentifié choisit ce qu'on supprime).
+2. (P1) Cleanup armé avant ownership prouvée → première early-return supprime un blob potentiel d'un autre tenant.
+3. (P1) `/api/documents/upload/client` n'exigeait pas `pathname.startsWith(\`tmp/document-uploads/${dealId}/\`)` → token généré pour upload dans le namespace d'un autre deal.
+4. (P2) Temp pathname incluait le filename original (leak avant cleanup).
+5. (P2) Incohérence `storageUrl` seul vs `storageUrl ?? storagePath` (mask, delete document).
+Demandé en bonus : tests route upload immédiats (pas Phase 5).
+
+### Action
+
+**P1.1 — Binding strict blobUrl ↔ blobPathname**
+- `validateTemporaryBlobUrl` (route.ts) : après les checks domaine + préfixe, extraire `decodeURIComponent(new URL(blobUrl).pathname).replace(/^\/+/, "")` et exiger `=== blobPathname`. Sinon throw UploadRequestError 400. Garantie : tout blob qu'on delete dans un cleanup est bien celui que le caller a déclaré.
+
+**P1.2 — Cleanup armé seulement après ownership**
+- POST handler réordonné. Tous les early-returns pré-ownership utilisent `NextResponse.json` direct (pas de cleanup, le blob temp n'est pas prouvé comme étant à nous).
+- `cleanupSourceUpload` armé UNIQUEMENT après : (a) URL↔pathname binding, (b) `pathname.startsWith(\`tmp/document-uploads/${dealId}/\`)`, (c) `deal.findFirst({ id: dealId, userId })` succès.
+- `bailWithCleanup` créé après l'arming, utilisé pour toutes les checks post-ownership (parent doc, running analysis, MIME, size, signature, dedup).
+
+**P1.3 — Durcir upload/client**
+- `onBeforeGenerateToken` (client/route.ts) : nouveau check `pathname.startsWith(\`tmp/document-uploads/${parsedPayload.dealId}/\`)`. Sinon ClientUploadTokenError 400. Empêche un caller de générer un token pour le namespace d'un autre deal.
+
+**P2.1 — Temp pathname opaque**
+- `buildTemporaryBlobPathname(dealId: string)` (file-upload.tsx) : `tmp/document-uploads/${dealId}/${crypto.randomUUID()}.enc`. Le filename original n'apparaît plus dans le path Vercel Blob public-readable. Reste dans le body JSON (HTTPS-only).
+
+**P2.2 — Harmonisation storageUrl ?? storagePath**
+- `maskDocumentStorage` (deals/[dealId]/route.ts) : strip `storageUrl` ET `storagePath`, compute `hasStorage: Boolean(storageUrl ?? storagePath)`.
+- DELETE `/api/documents/:id` : target = `document.storageUrl ?? document.storagePath`.
+- Ajout `storagePath: true` au prisma select GET+PATCH deal pour que le mask voie les deux.
+
+**Tests route upload (5 nouveaux, dans `upload/__tests__/route.test.ts`)**
+1. blobUrl pathname mismatch blobPathname → 400, deleteFile NOT called, dealFindFirst NOT called.
+2. blobPathname dealId segment ≠ body dealId → 400, deleteFile NOT called, dealFindFirst NOT called.
+3. Unowned deal (deal.findFirst null) → 404, fetch NOT called, deleteFile NOT called.
+4. Owned deal + MIME invalid → 400, fetch NOT called (MIME check pre-fetchBuffer), deleteFile called once sur l'URL temp bound.
+5. Multipart + uploadFile success + document.create throws → 500, deleteFile called once sur l'URL finale (cleanup catch-block).
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 130 fichiers · **1020/1020** tests (vs 1015 Phase 2 = +5 nouveaux tests route upload).
+
+### Registres
+- `errors.md` : 5 nouvelles entrées (3 SÉCURITÉ + 1 RGPD + 1 QA), index complété.
+- `agentic-mistakes.md` : 2 nouvelles entrées (SÉCURITÉ-RAISONNEMENT : raté la primitive de delete arbitraire / TESTING : renvoyé tests sécurité à Phase 5 par confort).
+
+---
+## 2026-05-13 — Upload/OCR Phase 2 (Blob / Storage — audité par Codex)
+
+### Contexte
+Avec Phase 1 gate verte (clerkFetch sweep + refund honnête), passage à Phase 2 du plan Codex sur la surface Blob/Storage. Cinq sous-tâches :
+1. Valider deal ownership / running analysis / parent doc / dealId-vs-pathname AVANT de fetch/décrypt le Blob client.
+2. Nettoyer le temp blob sur tous les early-returns du handler upload.
+3. Tracker le blob final et le cleanup si Document.create / update échoue.
+4. DELETE deal doit cascade-delete les blobs documents (pas seulement les rows DB).
+5. Remplacer `deals/${dealId}/${filename}` par une clé opaque random + retirer `storageUrl` des réponses client.
+
+### Action
+
+**2.1 — Validation pre-fetch (deferred buffer)**
+- `UploadInput` type réécrit avec `source: "multipart" | "blob"` + `fetchBuffer: () => Promise<Buffer>` différé. Plus de fetch direct dans `readBlobUploadInput`.
+- POST handler : ordre `deal ownership → parent ownership → running analysis → MIME → size → fetchBuffer()`. Le blob distant n'est pull/décrypté QUE si toutes les checks cheap passent.
+- Nouvelle check `blobPathname.startsWith(\`tmp/document-uploads/${dealId}/\`)` : bloque la substitution cross-deal d'un blob temp.
+
+**2.2 — Cleanup temp blob (early-returns)**
+- Helper centralisé `bailWithCleanup(status, payload)` qui fait `await cleanupUploadSource; cleanupSourceUpload = null; return NextResponse.json(...)`.
+- 7+ early-returns réécrits via ce helper : `!file`, `!dealId`, dealId CUID invalid, blob pathname mismatch, deal not found, parent CUID invalid, parent not found, running analysis, MIME/size, signature, dedup. Avant : seuls MIME/size/signature/dedup faisaient le cleanup.
+
+**2.3 — Cleanup blob final si DB échoue**
+- Variable `cleanupFinalBlob: (() => Promise<void>) | null = null` au top du handler. Armée juste après `uploadFile()` (final blob créé). Désarmée juste après `prisma.document.create()` (le row commit garantit que le blob est référencé en DB).
+- Catch block enrichi : appelle `cleanupFinalBlob()` si encore armée, en plus du `cleanupSourceUpload`. Si le cleanup échoue, on log `console.warn` sans masquer l'erreur originale.
+
+**2.4 — DELETE deal cascade blobs**
+- `src/app/api/deals/[dealId]/route.ts` DELETE : avant `prisma.deal.delete`, `prisma.document.findMany({ where: { dealId }})` puis boucle tolérante aux échecs (try/catch par blob, agrégation dans `blobDeletionErrors[]`).
+- Réponse JSON inclut `blobDeletionFailures: number` pour visibilité.
+- `console.warn` détaille les blobs qui n'ont pas pu être supprimés (already-deleted, 410, network) — la DB cascade procède quand même.
+- 3 nouveaux tests dans `[dealId]/__tests__/route.test.ts` : success path (ordre blob avant DB), 1 blob failure / DB cascade quand même, 404 deal pas owné (aucune storage operation).
+
+**2.5 — Clé opaque blob + suppression storageUrl client**
+- Nouveau storage key : `deals/${dealId}/${randomUUID()}${safeExtension}` (au lieu de `deals/${dealId}/${sanitizedFilename}`). dealId prefix conservé pour ops legibility ; filename retiré du path (le `Document.name` DB le conserve pour l'UI).
+- Toutes les responses qui sérialisaient `storageUrl` :
+  - GET/PATCH `/api/deals/:dealId` : helper `maskDocumentStorage()` transforme `documents[i].storageUrl: string | null` → `documents[i].hasStorage: boolean`.
+  - GET/PATCH `/api/documents/:id` : strip `storageUrl` + `storagePath`, ajout `hasStorage`.
+  - POST `/api/documents/upload` : même stripping ; type `SafeDocumentResponse` (Omit + hasStorage).
+  - SSR `/(dashboard)/deals/[dealId]/page.tsx` : strip dans le map avant de passer aux client components.
+- Client : `UploadedDocumentSummary`, `Document` (documents-tab), `DocumentPreviewDialog` props : `storageUrl: string | null` → `hasStorage: boolean`. Gate `disabled={!doc.storageUrl}` → `disabled={!doc.hasStorage}`.
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 129 fichiers · **1015/1015** tests passés (vs 1012 avant Phase 2 = +3 tests DELETE cascade).
+
+### Hors scope Phase 2 (renvoyé aux phases suivantes)
+- Phase 3 : chiffrer/neutraliser `DocumentExtractionPage.artifact` + `textPreview` + autres champs OCR brut en DB.
+- Phase 4 : Inngest, idempotency, soft timeout, versioning.
+- Phase 5 : route tests complets upload (incl. assertions pre-fetch ordering), goldens, fixtures.
+
+---
+## 2026-05-13 — Upload/OCR Phase 1 fix-up (post-audit Codex)
+
+### Contexte
+Audit Codex sur Phase 1 a remonté deux P1 :
+1. Gate clerkFetch pas vraiment vert : `extraction-quality-badge.tsx:367` (POST `/api/documents/:id/ocr`) restait en `fetch` brut, ainsi que `text-preview-dialog.tsx`, `corpus/email-form.tsx` et `corpus/note-form.tsx` (`/api/documents/text`).
+2. La branche 422 du retry route annonçait `refundedCredits: 2` en dur sans vérifier le résultat de `refundCreditAmount` — si la provider de crédits retournait `{ success: false }` ou throwait, l'utilisateur restait débité mais l'API affirmait le contraire.
+
+### Action
+
+**Sweep clerkFetch complet (4 fichiers supplémentaires)**
+- `extraction-quality-badge.tsx` : `POST /api/documents/:id/ocr` → `clerkFetch`.
+- `text-preview-dialog.tsx` : `GET /api/documents/:id?includeText=1` → `clerkFetch`.
+- `corpus/email-form.tsx` + `corpus/note-form.tsx` : `POST /api/documents/text` → `clerkFetch`.
+- Sanity grep final `grep -rnE "fetch\(['\"\`]/api/(documents|deals/[^/]+/staleness)"` = vide.
+
+**Refund honnête (retry + process routes)**
+- `src/app/api/documents/[documentId]/extraction-pages/[pageNumber]/retry/route.ts` branche 422 :
+  - Capture du résultat de `refundCreditAmount` dans `let refundedCredits = 0; let refundFailed = false;`.
+  - `try / catch` autour de l'appel pour distinguer throw vs `{ success: false }`.
+  - `refundedCredits` set uniquement si `refund?.success === true`, sinon `refundFailed = true` + `console.error` détaillé.
+  - Réponse JSON inclut le **vrai** `refundedCredits` (0 ou 2) + `refundFailed` pour le client.
+- Catch block du même route : passage de `.catch(() => undefined)` à try/catch avec log explicite "user remains debited".
+- `src/app/api/documents/[documentId]/process/route.ts` symétrique sur la branche 500 et le catch.
+
+**Tests refund failure**
+- `retry/__tests__/route.test.ts` : 2 nouveaux tests :
+  - `refundCreditAmount.mockResolvedValue({ success: false })` → payload `refundedCredits: 0, refundFailed: true`, `console.error` appelé.
+  - `refundCreditAmount.mockRejectedValue(new Error("network unreachable"))` → idem.
+- Total retry route tests : 4/4 verts.
+
+**Registres**
+- `agentic-mistakes.md` : 2 nouvelles entrées (RECHERCHE — sweep grep trop étroit ; COMMUNICATION — refund annoncé sans vérif).
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run` : 129 fichiers · **1012/1012** tests passés (vs 1010 avant ce fix-up).
+
+---
+## 2026-05-13 — Upload/OCR Phase 1 (hotfix critique audité par Codex)
+
+### Contexte
+Codex a livré un plan en 5 phases après audit upload/OCR. Phase 1 = hotfix critique avant tout autre refactor. Quatre points : (1) fuite cross-tenant dans le cache d'extraction par contentHash, (2) Authorization Bearer manquant sur la surface upload/OCR (workaround Clerk SDK), (3) UX upload (failed déclenchait toast success + auto-close ; progress pouvait régresser 36% → 1%), (4) retry OCR (credits non refundés sur échec, requiresOCR jamais remis à false).
+
+### Action
+
+**1.1 Tenant isolation du cache d'extraction**
+- Extrait `reuseCompletedExtractionForContentHash` de `src/app/api/documents/upload/route.ts` (~190 lignes) vers `src/services/documents/extraction-reuse.ts` pour testabilité.
+- Ajout d'un paramètre `userId` et d'un filtre `deal: { userId }` sur le `findFirst` source.
+- Avant : même hash + COMPLETED + extractionRuns READY suffisaient à cloner les artifacts entre tenants (fuite OCR/text/pages). Après : reuse strictement intra-tenant.
+- Test : `src/services/documents/__tests__/extraction-reuse.test.ts` (3 tests, dont assertion explicite du filtre `deal: { userId }`).
+
+**1.2 clerkFetch sur la surface upload/OCR**
+- `file-upload.tsx` : `/api/documents/upload`, `/api/documents/upload/client` (token Blob), upload final blob → `clerkFetch`.
+- `documents-tab.tsx` : staleness, GET document, PATCH (rename), DELETE → `clerkFetch`.
+- `document-extraction-audit-dialog.tsx` : extraction-audit, extraction-decision, /process, /extraction-pages/:n/retry (single + batch) → `clerkFetch`.
+- `analysis-panel.tsx` : extraction-decision → `clerkFetch`.
+- `corpus/attachment-input.tsx` : `/api/documents/upload` → `clerkFetch`.
+- Bypasse le `__session` cookie périmé sur preview Vercel (cf. errors.md 2026-05-13 AUTH).
+- Test : `src/lib/__tests__/clerk-fetch.test.ts` (4 tests : Bearer attaché, respect des headers user, fallback session-less, server-side no-op).
+
+**1.3 UX upload**
+- `mergeMonotonicProgress(prev, next)` extrait comme fonction pure exportée. Empêche tout retour en arrière du percent affiché, sauf phases terminales `completed`/`failed` qui bypassent.
+- `applyServerProgress` (callback du composant) utilise ce merge à la place de `setServerProgress(payload)` direct. Le `setServerProgress(null)` reste pour les resets explicites entre fichiers.
+- `onAllComplete` signature changée : `() => void` → `(summary: { successCount, errorCount }) => void`. `handleUploadAll` agrège les retours de `uploadFile`.
+- `DocumentUploadDialog.handleAllComplete` : si `successCount === 0`, plus de toast "Documents uploadés avec succès" et plus d'auto-close. Si mix succès/échec, toast hybride. Si tout réussi, comportement préservé.
+- Test : `src/components/deals/__tests__/file-upload-progress.test.ts` (6 tests : pas de prev, monotonie, hausse autorisée, terminal completed/failed bypass).
+
+**1.4 Retry OCR**
+- `src/app/api/documents/[documentId]/extraction-pages/[pageNumber]/retry/route.ts` :
+  - Branche 422 (OCR retry returns no usable text) : avant retournait 422 sans rembourser les 2 crédits débités. Maintenant : `refundCreditAmount` avec `idempotencyKey: extraction:refund:supreme-page:${requestId}`, réponse inclut `refundedCredits`.
+  - Branche succès : avant `requiresOCR: true` posé inconditionnellement dans la transaction (signifiait "OCR a tourné" mais l'UI lit "OCR encore requis"). Maintenant : si `refreshRunExtractionStats(...).readyForAnalysis === true`, on update `Document.requiresOCR = false` après la transaction.
+- `src/app/api/documents/[documentId]/process/route.ts` : symétrique. Branche extraction text vide (500) refund les crédits debités via `EXTRACTION_HIGH_PAGE` avec idempotencyKey reproc-id. Réponse inclut `refundedCredits`.
+- Test : `src/app/api/documents/.../retry/__tests__/route.test.ts` (2 tests : selectiveOCR retournant texte vide → refund ; selectiveOCR retournant `success: false` → refund).
+
+### État tests
+- `npx tsc --noEmit` : clean.
+- `npx vitest run --config vitest.unit.config.ts` : 129 fichiers, 1010 tests passés, 0 régression.
+
+### Hors scope Phase 1 (renvoyé aux phases suivantes du plan Codex)
+- Phase 2 : Blob/Storage (ownership deal vs blobUrl, clé opaque random, cleanup blob temp/final, delete deal cascade).
+- Phase 3 : Privacy DB (chiffrer/neutraliser `DocumentExtractionPage.artifact` + `textPreview`).
+- Phase 4 : Durabilité jobs (Inngest, idempotency, soft timeout, versioning).
+- Phase 5 : Route tests, goldens, fixtures OCR capped/skipped.
+
+---
 ## 2026-05-13 — Pipeline visuelle : ne plus bloquer review après visual extraction réussie
 
 ### Contexte

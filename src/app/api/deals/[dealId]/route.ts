@@ -14,10 +14,32 @@ import {
   updateDealSchema,
 } from "@/services/deals/manual-fact-overrides";
 import { refreshCurrentFactsView } from "@/services/fact-store/current-facts";
+import { deleteFile } from "@/services/storage";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
 };
+
+// Project the document list so we never ship raw `storageUrl` to the client.
+// The legitimate consumers (preview, download, audit) all hit dedicated
+// API routes that read the URL server-side; the client only needs to know
+// whether a document is preview-able (i.e. has a backing blob).
+function maskDocumentStorage<T extends { storageUrl?: string | null; storagePath?: string | null }>(
+  documents: T[] | undefined
+): unknown[] {
+  if (!documents) return [];
+  return documents.map((doc) => {
+    // Strip BOTH storageUrl and storagePath. We keep the semantics aligned
+    // with the delete cascades (which use `storageUrl ?? storagePath`) so
+    // there is exactly one truth for "does this document have a backing
+    // blob?": either coordinate suffices.
+    const { storageUrl, storagePath, ...rest } = doc;
+    return {
+      ...rest,
+      hasStorage: Boolean(storageUrl ?? storagePath),
+    };
+  });
+}
 
 function normalizeDealDetail(deal: {
   id: string;
@@ -37,9 +59,11 @@ function normalizeDealDetail(deal: {
   marketScore: number | null;
   productScore: number | null;
   financialsScore: number | null;
+  documents?: Array<{ storageUrl?: string | null } & Record<string, unknown>>;
 }) {
   return loadCanonicalDealSignals([deal.id]).then((signals) => ({
     ...deal,
+    documents: maskDocumentStorage(deal.documents),
     ...resolveCanonicalDealFields(deal.id, signals, {
       companyName: deal.companyName,
       website: deal.website,
@@ -101,6 +125,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
             customType: true,
             comments: true,
             storageUrl: true,
+            storagePath: true,
             mimeType: true,
             sizeBytes: true,
             processingStatus: true,
@@ -264,11 +289,45 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
+    // Cascade-delete the underlying Blob storage for every Document on this
+    // deal BEFORE we drop the rows. Once `prisma.deal.delete` cascades the
+    // Document rows, we lose the storageUrl/storagePath that points to the
+    // physical blob and the file becomes orphaned in Vercel Blob storage
+    // (= paid-for storage with no DB pointer). We tolerate per-blob delete
+    // failures (already-deleted, transient network) so a single missing
+    // blob does not block the DB cleanup.
+    const documents = await prisma.document.findMany({
+      where: { dealId },
+      select: { id: true, storageUrl: true, storagePath: true },
+    });
+    const blobDeletionErrors: Array<{ documentId: string; error: string }> = [];
+    for (const document of documents) {
+      const target = document.storageUrl ?? document.storagePath;
+      if (!target) continue;
+      try {
+        await deleteFile(target);
+      } catch (blobError) {
+        blobDeletionErrors.push({
+          documentId: document.id,
+          error: blobError instanceof Error ? blobError.message : String(blobError),
+        });
+      }
+    }
+    if (blobDeletionErrors.length > 0) {
+      console.warn(
+        `[deal:delete] ${blobDeletionErrors.length} blob(s) failed to delete for deal ${dealId} — proceeding with DB cascade anyway`,
+        blobDeletionErrors
+      );
+    }
+
     await prisma.deal.delete({
       where: { id: dealId },
     });
 
-    return NextResponse.json({ message: "Deal deleted successfully" });
+    return NextResponse.json({
+      message: "Deal deleted successfully",
+      blobDeletionFailures: blobDeletionErrors.length,
+    });
   } catch (error) {
     return handleApiError(error, "delete deal");
   }

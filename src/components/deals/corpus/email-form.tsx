@@ -29,6 +29,7 @@ import {
   type DocumentType,
   type UploadedDocumentSummary,
 } from "@/components/deals/file-upload";
+import { clerkFetch } from "@/lib/clerk-fetch";
 
 function toDateTimeLocal(date: Date): string {
   const offsetMs = date.getTimezoneOffset() * 60_000;
@@ -86,7 +87,7 @@ export function EmailForm({
 
     setIsSubmitting(true);
     try {
-      const response = await fetch("/api/documents/text", {
+      const response = await clerkFetch("/api/documents/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

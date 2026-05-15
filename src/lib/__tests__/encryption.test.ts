@@ -3,11 +3,16 @@ import {
   decryptBuffer,
   decryptText,
   encryptBuffer,
+  encryptJsonField,
   encryptText,
   isEncrypted,
   isEncryptedBuffer,
+  isEncryptedJsonField,
   safeDecrypt,
   safeDecryptBuffer,
+  safeDecryptJsonField,
+  tryDecryptJsonField,
+  tryDecryptText,
 } from "../encryption";
 
 // Set a test encryption key (32 bytes = 64 hex chars)
@@ -118,5 +123,175 @@ describe("encryptBuffer / decryptBuffer", () => {
     encrypted[encrypted.length - 1] = encrypted[encrypted.length - 1] ^ 1;
 
     expect(() => decryptBuffer(encrypted)).toThrow();
+  });
+});
+
+describe("encryptJsonField / safeDecryptJsonField", () => {
+  it("round-trips a typical DocumentPageArtifact-shaped payload", () => {
+    const artifact = {
+      version: "v2",
+      pageNumber: 4,
+      text: "ARR €1.2M, MoM growth 18%",
+      tables: [{ title: "P&L", markdown: "| Revenue | 1.2M |", confidence: "high" }],
+      charts: [{ description: "Growth curve YoY", confidence: "medium" }],
+      numericClaims: [
+        { label: "ARR", value: "1.2M", unit: "€", sourceText: "ARR €1.2M", confidence: "high" },
+      ],
+      confidence: "high",
+      needsHumanReview: false,
+    };
+
+    const envelope = encryptJsonField(artifact);
+    expect(envelope).not.toBeNull();
+    expect(envelope).toMatchObject({ _enc: "ad1", v: 1 });
+    expect(typeof envelope!.data).toBe("string");
+    expect(envelope!.data).not.toContain("ARR");
+
+    const decrypted = safeDecryptJsonField(envelope);
+    expect(decrypted).toEqual(artifact);
+  });
+
+  it("produces different ciphertexts for the same payload (unique IV)", () => {
+    const payload = { tables: [{ markdown: "| a | b |" }] };
+    const a = encryptJsonField(payload);
+    const b = encryptJsonField(payload);
+    expect(a!.data).not.toBe(b!.data);
+    // But both decrypt back to the same payload.
+    expect(safeDecryptJsonField(a)).toEqual(safeDecryptJsonField(b));
+  });
+
+  it("returns null for null/undefined inputs", () => {
+    expect(encryptJsonField(null)).toBeNull();
+    expect(encryptJsonField(undefined)).toBeNull();
+    expect(safeDecryptJsonField(null)).toBeNull();
+    expect(safeDecryptJsonField(undefined)).toBeNull();
+  });
+
+  it("LEGACY: returns a plaintext JSON object as-is (no decryption attempted)", () => {
+    // Simulates a row written before Phase 3 — the artifact column holds a
+    // plain DocumentPageArtifact object, not an envelope. The reader must
+    // surface it verbatim so existing extractions keep working.
+    const legacy = {
+      version: "v1",
+      pageNumber: 7,
+      text: "legacy plaintext page",
+      tables: [{ markdown: "| a | b |", confidence: "low" }],
+      confidence: "low",
+      needsHumanReview: true,
+    };
+
+    expect(isEncryptedJsonField(legacy)).toBe(false);
+    expect(safeDecryptJsonField(legacy)).toBe(legacy);
+  });
+
+  it("LEGACY: returns an arbitrary plaintext object that has unrelated keys", () => {
+    const oddLegacy = { _enc: "something-else", data: 12, v: 2, foo: "bar" };
+    // The envelope check is strict: marker must equal "ad1" AND data must be
+    // a string AND v must be 1. Anything else is treated as legacy.
+    expect(isEncryptedJsonField(oddLegacy)).toBe(false);
+    expect(safeDecryptJsonField(oddLegacy)).toBe(oddLegacy);
+  });
+
+  it("falls back to null when an envelope contains corrupted ciphertext", () => {
+    const tampered = {
+      _enc: "ad1" as const,
+      data: "not-base64-and-not-decryptable",
+      v: 1 as const,
+    };
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(safeDecryptJsonField(tampered)).toBeNull();
+      expect(consoleWarn).toHaveBeenCalled();
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it("handles nested arrays / unicode inside the payload", () => {
+    const payload = {
+      charts: [{ description: "Évolution chiffres d'affaires 📈", values: [{ label: "Q1", value: "+12%" }] }],
+      numericClaims: [{ label: "Burn", value: "−45k€", unit: "€", sourceText: "Burn ≈ -45k€/mois", confidence: "medium" }],
+    };
+    const envelope = encryptJsonField(payload);
+    expect(safeDecryptJsonField(envelope)).toEqual(payload);
+  });
+});
+
+describe("tryDecryptText (strict variant for security gates)", () => {
+  it("returns kind=plaintext for a value that is not encrypted-looking", () => {
+    const result = tryDecryptText("Hello world");
+    expect(result).toEqual({ kind: "plaintext", value: "Hello world" });
+  });
+
+  it("returns kind=decrypted with the original text for a valid ciphertext", () => {
+    const original = "Confidential preview text";
+    const ciphertext = encryptText(original);
+    const result = tryDecryptText(ciphertext);
+    expect(result).toEqual({ kind: "decrypted", value: original });
+  });
+
+  it("returns kind=corrupted (NOT plaintext) for a ciphertext-looking input that fails decryption", () => {
+    const good = encryptText("payload");
+    const corrupted = Buffer.from(good, "base64");
+    corrupted[14] = corrupted[14] ^ 0xff;
+    const tampered = corrupted.toString("base64");
+
+    // Sanity: the heuristic still flags this as encrypted-looking.
+    expect(isEncrypted(tampered)).toBe(true);
+
+    const result = tryDecryptText(tampered);
+    expect(result.kind).toBe("corrupted");
+    if (result.kind === "corrupted") {
+      expect(typeof result.reason).toBe("string");
+      expect(result.reason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("differs from safeDecrypt: safeDecrypt silently returns the input on corruption", () => {
+    const good = encryptText("payload");
+    const corrupted = Buffer.from(good, "base64");
+    corrupted[14] = corrupted[14] ^ 0xff;
+    const tampered = corrupted.toString("base64");
+
+    // This is the exact failure mode the textPreview fail-closed fix
+    // addresses: safeDecrypt cannot be trusted by security gates because
+    // it lies about success on a tampered ciphertext.
+    expect(safeDecrypt(tampered)).toBe(tampered);
+
+    expect(tryDecryptText(tampered).kind).toBe("corrupted");
+  });
+});
+
+describe("tryDecryptJsonField (strict variant for security gates)", () => {
+  it("returns kind=absent for null/undefined", () => {
+    expect(tryDecryptJsonField(null).kind).toBe("absent");
+    expect(tryDecryptJsonField(undefined).kind).toBe("absent");
+  });
+
+  it("returns kind=plaintext for a legacy plain object", () => {
+    const legacy = { foo: "bar" };
+    const result = tryDecryptJsonField(legacy);
+    expect(result).toEqual({ kind: "plaintext", value: legacy });
+  });
+
+  it("returns kind=decrypted for a valid envelope", () => {
+    const payload = { tables: [], numericClaims: [] };
+    const envelope = encryptJsonField(payload);
+    const result = tryDecryptJsonField(envelope);
+    expect(result).toEqual({ kind: "decrypted", value: payload });
+  });
+
+  it("returns kind=corrupted with a reason for an undecryptable envelope", () => {
+    const tampered = { _enc: "ad1" as const, data: "not-valid-ciphertext", v: 1 as const };
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = tryDecryptJsonField(tampered);
+      expect(result.kind).toBe("corrupted");
+      if (result.kind === "corrupted") {
+        expect(typeof result.reason).toBe("string");
+      }
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 });

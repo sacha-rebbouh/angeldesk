@@ -15,34 +15,65 @@ export interface DocumentExtractionProgressSnapshot {
   updatedAt: string;
 }
 
+// `completed` / `failed` are TERMINAL upload-progress phases. Monotone rule
+// (Codex Phase 4.4 P1): a non-terminal phase must NEVER overwrite a terminal
+// one. A late `page_processed` / `native_extracted` callback from a
+// timed-out background `smartExtract` must not re-open a `failed` /
+// `completed` row — the upload modal poller would then spin forever.
+const TERMINAL_PROGRESS_PHASES: ReadonlyArray<DocumentExtractionProgressSnapshot["phase"]> = [
+  "completed",
+  "failed",
+];
+
 export async function setDocumentExtractionProgress(snapshot: DocumentExtractionProgressSnapshot) {
   const expiresAt = new Date(Date.now() + PROGRESS_TTL_MS);
-  await prisma.documentExtractionProgress.upsert({
-    where: { id: snapshot.id },
-    create: {
-      id: snapshot.id,
-      userId: snapshot.userId,
-      documentId: snapshot.documentId,
-      documentName: snapshot.documentName,
-      phase: snapshot.phase,
-      pageCount: snapshot.pageCount,
-      pagesProcessed: snapshot.pagesProcessed,
-      percent: snapshot.percent,
-      message: snapshot.message,
-      expiresAt,
-    },
-    update: {
-      userId: snapshot.userId,
-      documentId: snapshot.documentId,
-      documentName: snapshot.documentName,
-      phase: snapshot.phase,
-      pageCount: snapshot.pageCount,
-      pagesProcessed: snapshot.pagesProcessed,
-      percent: snapshot.percent,
-      message: snapshot.message,
-      expiresAt,
-    },
+  const fields = {
+    userId: snapshot.userId,
+    documentId: snapshot.documentId,
+    documentName: snapshot.documentName,
+    phase: snapshot.phase,
+    pageCount: snapshot.pageCount,
+    pagesProcessed: snapshot.pagesProcessed,
+    percent: snapshot.percent,
+    message: snapshot.message,
+    expiresAt,
+  };
+
+  // A terminal phase always wins — including re-writing an already-terminal
+  // row (idempotent republish on a durable-pipeline retry).
+  if (TERMINAL_PROGRESS_PHASES.includes(snapshot.phase)) {
+    await prisma.documentExtractionProgress.upsert({
+      where: { id: snapshot.id },
+      create: { id: snapshot.id, ...fields },
+      update: fields,
+    });
+    return;
+  }
+
+  // Non-terminal phase: atomically update ONLY a row that is not already
+  // terminal. `updateMany` scoped by `phase notIn [terminal]` makes the
+  // monotone guard race-free — no read-then-write TOCTOU window.
+  const updated = await prisma.documentExtractionProgress.updateMany({
+    where: { id: snapshot.id, phase: { notIn: [...TERMINAL_PROGRESS_PHASES] } },
+    data: fields,
   });
+  if (updated.count > 0) return;
+
+  // count === 0 → the row is either terminal (skip — monotone) or does not
+  // exist yet (create it). A unique-violation on create means another writer
+  // created the row first; that is fine — leave whatever is there.
+  await prisma.documentExtractionProgress
+    .create({ data: { id: snapshot.id, ...fields } })
+    .catch((error: unknown) => {
+      if (
+        error &&
+        typeof error === "object" &&
+        (error as { code?: string }).code === "P2002"
+      ) {
+        return; // row now exists (concurrent writer) — monotone, leave it
+      }
+      throw error;
+    });
 }
 
 export async function getDocumentExtractionProgress(progressId: string): Promise<DocumentExtractionProgressSnapshot | null> {

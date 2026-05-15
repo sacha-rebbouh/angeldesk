@@ -19,6 +19,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { queryKeys } from "@/lib/query-keys";
+import { clerkFetch } from "@/lib/clerk-fetch";
 import { useResolutions } from "@/hooks/use-resolutions";
 import {
   formatAgentName,
@@ -388,7 +389,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       action: "BYPASS_PAGE" | "EXCLUDE_PAGE";
       reason: string;
     }) => {
-      const response = await fetch(`/api/documents/${params.documentId}/extraction-decision`, {
+      const response = await clerkFetch(`/api/documents/${params.documentId}/extraction-decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params),

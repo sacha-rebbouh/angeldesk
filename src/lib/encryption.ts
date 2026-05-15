@@ -148,6 +148,11 @@ export function isEncrypted(text: string): boolean {
 /**
  * Safely decrypt: returns plaintext if encrypted, original text if not.
  * Used during migration period when some records may not be encrypted yet.
+ *
+ * NOTE: this helper swallows decryption errors and returns the input
+ * verbatim. Security-sensitive callers (gates, copy paths) MUST use
+ * `tryDecryptText` instead so a corrupted ciphertext-looking input does
+ * not silently round-trip as plaintext.
  */
 export function safeDecrypt(text: string): string {
   if (!isEncrypted(text)) return text;
@@ -156,5 +161,127 @@ export function safeDecrypt(text: string): string {
   } catch {
     // If decryption fails, assume it's plaintext
     return text;
+  }
+}
+
+/**
+ * Strict variant of `safeDecrypt`. Mirrors `tryDecryptJsonField`: surfaces
+ * the distinction between "this string was never encrypted" and "this
+ * string LOOKS encrypted but does not decrypt" (rotated key, tampering,
+ * truncation). The latter must be fail-closed in security gates and in
+ * the copy/reuse pipeline — never re-encrypted as if it were plaintext.
+ */
+export type DecryptedTextResult =
+  | { kind: "plaintext"; value: string }
+  | { kind: "decrypted"; value: string }
+  | { kind: "corrupted"; reason: string };
+
+export function tryDecryptText(text: string): DecryptedTextResult {
+  if (!isEncrypted(text)) {
+    return { kind: "plaintext", value: text };
+  }
+  try {
+    return { kind: "decrypted", value: decryptText(text) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { kind: "corrupted", reason };
+  }
+}
+
+// --- JSON field encryption (Prisma Json columns) ---
+//
+// Some DB columns store arbitrary JSON payloads that contain raw corpus
+// material (OCR text, table cells, numeric claims, chart descriptions). We
+// don't want to dump those columns to backups, ops dashboards, or any future
+// log sink. The envelope `{ _enc: "ad1", data, v: 1 }` is what we persist;
+// the original payload is JSON.stringify'd and run through encryptText().
+//
+// Legacy compat: prior to this rollout we stored plaintext JSON objects in
+// the same columns. safeDecryptJsonField transparently handles both formats
+// so existing rows keep working without a backfill migration.
+
+const JSON_ENVELOPE_MARKER = "ad1" as const;
+
+export type EncryptedJsonEnvelope = {
+  _enc: typeof JSON_ENVELOPE_MARKER;
+  data: string;
+  v: 1;
+};
+
+/**
+ * Wrap a JSON-serializable payload into the encrypted envelope ready for a
+ * Prisma Json column. Returns null when the input is null/undefined so we
+ * can write SQL NULL via Prisma.DbNull at the call site if needed.
+ */
+export function encryptJsonField(value: unknown): EncryptedJsonEnvelope | null {
+  if (value === null || value === undefined) return null;
+  const serialized = JSON.stringify(value);
+  return {
+    _enc: JSON_ENVELOPE_MARKER,
+    data: encryptText(serialized),
+    v: 1,
+  };
+}
+
+/**
+ * Type-narrow: does this stored JSON value look like our encrypted envelope?
+ * Anything else is treated as a legacy plaintext payload.
+ */
+export function isEncryptedJsonField(value: unknown): value is EncryptedJsonEnvelope {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>)._enc === JSON_ENVELOPE_MARKER &&
+    typeof (value as Record<string, unknown>).data === "string" &&
+    (value as Record<string, unknown>).v === 1
+  );
+}
+
+/**
+ * Decrypt a JSON column transparently:
+ *   - null/undefined → null
+ *   - encrypted envelope → decrypted + JSON.parsed (returns null if the
+ *     ciphertext is corrupted or the inner JSON does not parse — callers
+ *     should treat that as "no artifact" rather than crashing the route)
+ *   - anything else → returned as-is (legacy plaintext path).
+ *
+ * NOTE: this helper collapses three distinct states into `null` (absent,
+ * legacy-null, corrupted-envelope). Security-sensitive callers that need
+ * to fail-closed on corrupted envelopes should use `tryDecryptJsonField`
+ * which preserves the distinction.
+ */
+export function safeDecryptJsonField<T = unknown>(value: unknown): T | null {
+  const result = tryDecryptJsonField<T>(value);
+  if (result.kind === "absent") return null;
+  if (result.kind === "corrupted") return null;
+  return result.value;
+}
+
+/**
+ * Strict variant of `safeDecryptJsonField` that surfaces the distinction
+ * between "no artifact" and "envelope present but unreadable". Used by
+ * security gates (toxic-page gate) and copy paths (extraction-reuse) that
+ * MUST fail-closed on corruption rather than silently treating a tampered
+ * row as if no artifact existed.
+ */
+export type DecryptedJsonFieldResult<T> =
+  | { kind: "absent" }
+  | { kind: "plaintext"; value: T }
+  | { kind: "decrypted"; value: T }
+  | { kind: "corrupted"; reason: string };
+
+export function tryDecryptJsonField<T = unknown>(value: unknown): DecryptedJsonFieldResult<T> {
+  if (value === null || value === undefined) return { kind: "absent" };
+  if (!isEncryptedJsonField(value)) {
+    return { kind: "plaintext", value: value as T };
+  }
+  try {
+    const plaintext = decryptText(value.data);
+    return { kind: "decrypted", value: JSON.parse(plaintext) as T };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn("[encryption] tryDecryptJsonField failed:", reason);
+    return { kind: "corrupted", reason };
   }
 }

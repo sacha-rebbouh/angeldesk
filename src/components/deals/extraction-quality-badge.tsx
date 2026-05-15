@@ -23,6 +23,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { clerkFetch } from "@/lib/clerk-fetch";
 import { Button } from "@/components/ui/button";
 
 interface ExtractionWarning {
@@ -364,7 +365,7 @@ export const ExtractionWarningBanner = memo(function ExtractionWarningBanner({
   const handleOCR = async () => {
     setIsOCRLoading(true);
     try {
-      const res = await fetch(`/api/documents/${documentId}/ocr`, { method: "POST" });
+      const res = await clerkFetch(`/api/documents/${documentId}/ocr`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "OCR failed");

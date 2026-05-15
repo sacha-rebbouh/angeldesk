@@ -830,5 +830,215 @@ export const thesisReextractFunction = inngest.createFunction(
   }
 );
 
+/**
+ * DOCUMENT_EXTRACTION — Phase 4 durable pipeline.
+ *
+ * Consumer of `document/extraction.run`. The HTTP routes (upload / process
+ * / page-retry) claim the document (PROCESSING), persist an ExtractionRun
+ * row, deduct credits up-front, and send this event. The function then:
+ *   1. runs `runDocumentExtractionPipeline` inside a checkpointed step;
+ *   2. on persistent failure, marks the document FAILED and refunds the
+ *      credits via `refundCreditAmount` (idempotency key = the event's
+ *      `dispatchRefundKey`).
+ *
+ * Idempotency:
+ *   - Inngest dedupes events with the same `id` (we use a deterministic id
+ *     keyed by `extractionRunId`). Re-sending the same event from a route
+ *     retry is a no-op.
+ *   - `runDocumentExtractionPipeline` checks whether the run already
+ *     reached a terminal status and returns the cached summary without
+ *     re-mutating anything.
+ *   - Page-level writes use upsert(runId, pageNumber), so a mid-extraction
+ *     retry never duplicates rows.
+ *
+ * Retries: `retries: 1` (so one infrastructural retry on OOM / step
+ * timeout); business-level failures throw ExtractionPipelineError which is
+ * caught and compensated.
+ */
+export const documentExtractionFunction = inngest.createFunction(
+  {
+    id: 'document-extraction',
+    name: 'Document Extraction',
+    retries: 1,
+    // Concurrency cap per user — same envelope as deal analysis, to avoid
+    // saturating the Neon pool and OpenRouter quota when a single user
+    // bulk-uploads.
+    concurrency: [{ key: 'event.data.userId', limit: 3 }],
+  },
+  { event: 'document/extraction.run' },
+  async ({ event, step }) => {
+    const data = event.data as {
+      documentId: string;
+      extractionRunId: string;
+      userId: string;
+      dealId: string;
+      reason: "upload" | "reprocess" | "page-retry";
+      creditAction?: "EXTRACTION_HIGH_PAGE" | "EXTRACTION_SUPREME_PAGE" | "EXTRACTION_STANDARD_PAGE";
+      chargedCredits?: number;
+      dispatchRefundKey?: string;
+      // Phase 4.2: when true, reconcile the pre-charged credits against the
+      // actual manifest cost on SUCCESS (delta charge or refund). The
+      // /process flow omits this (it charges a fixed estimate). The upload
+      // PDF flow pre-charges a worst-case estimate and relies on this.
+      reconcileCredits?: boolean;
+      // Phase 4.2: forwarded to the pipeline so it can mirror its extraction
+      // phases into DocumentExtractionProgress for the upload client poller.
+      uploadProgressId?: string;
+      documentName?: string;
+    };
+
+    try {
+      const result = await step.run('run-extraction-pipeline', async () => {
+        const { runDocumentExtractionPipeline } = await import("@/services/documents/extraction-pipeline");
+        return await runDocumentExtractionPipeline({
+          documentId: data.documentId,
+          extractionRunId: data.extractionRunId,
+          progressPublishing:
+            data.uploadProgressId && data.documentName
+              ? {
+                  uploadProgressId: data.uploadProgressId,
+                  userId: data.userId,
+                  documentName: data.documentName,
+                }
+              : undefined,
+        });
+      });
+
+      // Phase 4.2 credit reconciliation (SUCCESS path). The upload PDF flow
+      // pre-charges a worst-case estimate; once the real cost is known we
+      // either refund the over-charge or charge the (rare) delta. Idempotent
+      // via deterministic idempotency keys derived from the run id.
+      if (data.reconcileCredits && data.creditAction && typeof data.chargedCredits === "number") {
+        await step.run('reconcile-extraction-credits', async () => {
+          const charged = data.chargedCredits ?? 0;
+          const actual = result.actualCredits;
+          if (actual === charged) return;
+          const { deductCreditAmount, refundCreditAmount } = await import("@/services/credits");
+          if (actual > charged) {
+            const delta = actual - charged;
+            const extra = await deductCreditAmount(data.userId, data.creditAction!, delta, {
+              dealId: data.dealId,
+              documentId: data.documentId,
+              documentExtractionRunId: data.extractionRunId,
+              idempotencyKey: `extraction:delta:${data.extractionRunId}`,
+              description: `Delta extraction (+${delta} credits) for document ${data.documentId}`,
+            });
+            if (!extra?.success) {
+              // Compute already consumed; accept the result but log the gap.
+              logger.warn(
+                { userId: data.userId, documentId: data.documentId, delta, error: extra?.error },
+                '[document-extraction] delta charge failed — extraction kept, user under-charged'
+              );
+            }
+          } else {
+            const refundAmount = charged - actual;
+            const refund = await refundCreditAmount(data.userId, data.creditAction!, refundAmount, {
+              dealId: data.dealId,
+              documentId: data.documentId,
+              documentExtractionRunId: data.extractionRunId,
+              idempotencyKey: `extraction:reconcile-refund:${data.extractionRunId}`,
+              description: `Refund extraction over-estimate (-${refundAmount} credits) for document ${data.documentId}`,
+            });
+            if (!refund?.success) {
+              logger.error(
+                { userId: data.userId, documentId: data.documentId, refundAmount, error: refund?.error },
+                '[document-extraction] reconciliation refund failed — user over-charged'
+              );
+            }
+          }
+        });
+      }
+
+      // Phase 4.2: thesis auto re-extract. The upload route used to trigger
+      // this synchronously after inline extraction; now that the PDF path
+      // is durable, the trigger moves here — it must fire when the document
+      // actually reaches COMPLETED, which only happens inside this function.
+      if (data.reason === "upload") {
+        await step.run('trigger-thesis-reextract', async () => {
+          try {
+            const { thesisService } = await import("@/services/thesis");
+            const existingThesis = await thesisService.getLatest(data.dealId);
+            if (existingThesis) {
+              await inngest.send({
+                name: "analysis/thesis.reextract",
+                data: {
+                  dealId: data.dealId,
+                  userId: data.userId,
+                  triggeredByDocumentId: data.documentId,
+                  previousThesisId: existingThesis.id,
+                },
+              });
+            }
+          } catch (thesisError) {
+            // Non-blocking: a failed thesis re-extract trigger must not fail
+            // the extraction itself.
+            logger.warn(
+              { dealId: data.dealId, documentId: data.documentId, thesisError },
+              '[document-extraction] thesis re-extract trigger failed'
+            );
+          }
+        });
+      }
+
+      return result;
+    } catch (error) {
+      // Persistent failure: refund the user (if anything was charged) and
+      // ensure the Document row is in a recoverable state. The pipeline
+      // itself already attempted to mark the document FAILED before
+      // throwing — we re-assert it here defensively in case the throw was
+      // earlier than the FAILED write.
+      await step.run('compensate-failed-extraction', async () => {
+        if (data.chargedCredits && data.chargedCredits > 0 && data.creditAction && data.dispatchRefundKey) {
+          try {
+            const { refundCreditAmount } = await import("@/services/credits");
+            const refund = await refundCreditAmount(
+              data.userId,
+              data.creditAction,
+              data.chargedCredits,
+              {
+                dealId: data.dealId,
+                documentId: data.documentId,
+                documentExtractionRunId: data.extractionRunId,
+                idempotencyKey: data.dispatchRefundKey,
+                description: `Refund failed durable extraction for ${data.documentId}`,
+              }
+            );
+            if (!refund?.success) {
+              logger.error(
+                { userId: data.userId, documentId: data.documentId, refundError: refund?.error },
+                '[document-extraction] refund returned non-success — user remains debited'
+              );
+            }
+          } catch (refundError) {
+            logger.error(
+              { userId: data.userId, documentId: data.documentId, refundError },
+              '[document-extraction] refund threw — user remains debited'
+            );
+          }
+        }
+
+        // Terminalize BOTH the run and the document. The pipeline's own
+        // try/catch already does this on the common paths, but if the
+        // pipeline crashed (OOM, infra kill) before its catch ran, the run
+        // would be left stuck PROCESSING. `terminalizeExtractionRunAsFailed`
+        // is idempotent (only flips PENDING/PROCESSING), so re-asserting
+        // here is safe.
+        const { terminalizeExtractionRunAsFailed } = await import("@/services/documents/extraction-runs");
+        await terminalizeExtractionRunAsFailed(
+          data.extractionRunId,
+          `Durable extraction failed for document ${data.documentId}`
+        ).catch(() => undefined);
+        await prisma.document
+          .updateMany({
+            where: { id: data.documentId, processingStatus: "PROCESSING" },
+            data: { processingStatus: "FAILED" },
+          })
+          .catch(() => undefined);
+      });
+      throw error;
+    }
+  }
+);
+
 // Export all functions for the serve handler
-export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction, thesisReextractFunction]
+export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction, thesisReextractFunction, documentExtractionFunction]

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   dealFindFirst: vi.fn(),
   dealUpdate: vi.fn(),
   dealDelete: vi.fn(),
+  documentFindMany: vi.fn(),
   transaction: vi.fn(),
   factEventFindFirst: vi.fn(),
   factEventUpdate: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   loadCanonicalDealSignals: vi.fn(),
   resolveCanonicalDealFields: vi.fn(),
   refreshCurrentFactsView: vi.fn(),
+  deleteFile: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -32,12 +34,19 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.dealUpdate,
       delete: mocks.dealDelete,
     },
+    document: {
+      findMany: mocks.documentFindMany,
+    },
     factEvent: {
       findFirst: mocks.factEventFindFirst,
       update: mocks.factEventUpdate,
       create: mocks.factEventCreate,
     },
   },
+}));
+
+vi.mock("@/services/storage", () => ({
+  deleteFile: mocks.deleteFile,
 }));
 
 vi.mock("@/lib/api-error", () => ({
@@ -53,7 +62,7 @@ vi.mock("@/services/fact-store/current-facts", () => ({
   refreshCurrentFactsView: mocks.refreshCurrentFactsView,
 }));
 
-const { GET, PATCH } = await import("../route");
+const { GET, PATCH, DELETE } = await import("../route");
 
 describe("/api/deals/[dealId]", () => {
   beforeEach(() => {
@@ -97,6 +106,9 @@ describe("/api/deals/[dealId]", () => {
       })
     );
     mocks.refreshCurrentFactsView.mockResolvedValue(undefined);
+    mocks.documentFindMany.mockResolvedValue([]);
+    mocks.dealDelete.mockResolvedValue({ id: "deal_1" });
+    mocks.deleteFile.mockResolvedValue(undefined);
   });
 
   it("returns canonicalized detail data on GET", async () => {
@@ -220,6 +232,78 @@ describe("/api/deals/[dealId]", () => {
       companyName: "Canonical Co",
       arr: 1_200_000,
       stage: "SERIES_A",
+    });
+  });
+
+  describe("DELETE /api/deals/:dealId — cascade blob deletion", () => {
+    it("deletes every Document's blob before dropping the deal row", async () => {
+      mocks.dealFindFirst.mockResolvedValue({
+        id: "deal_1",
+        userId: "user_1",
+      });
+      mocks.documentFindMany.mockResolvedValue([
+        { id: "doc_1", storageUrl: "https://blob.example/a", storagePath: "deals/deal_1/aaa.pdf" },
+        { id: "doc_2", storageUrl: null, storagePath: "deals/deal_1/bbb.pdf" },
+        { id: "doc_3", storageUrl: null, storagePath: null }, // nothing to delete
+      ]);
+
+      const response = await DELETE(new Request("http://localhost/api/deals/deal_1") as never, {
+        params: Promise.resolve({ dealId: "deal_1" }),
+      });
+
+      expect(response.status).toBe(200);
+      // Blobs deleted for doc_1 (via storageUrl) and doc_2 (via storagePath).
+      // doc_3 is skipped because it has no storage reference.
+      expect(mocks.deleteFile).toHaveBeenCalledTimes(2);
+      expect(mocks.deleteFile).toHaveBeenCalledWith("https://blob.example/a");
+      expect(mocks.deleteFile).toHaveBeenCalledWith("deals/deal_1/bbb.pdf");
+      // DB cascade happens AFTER the blob deletes (we lose the storage URL once
+      // the rows are gone).
+      const deleteFileOrder = mocks.deleteFile.mock.invocationCallOrder;
+      const dealDeleteOrder = mocks.dealDelete.mock.invocationCallOrder;
+      expect(Math.max(...deleteFileOrder)).toBeLessThan(dealDeleteOrder[0]);
+      expect(mocks.dealDelete).toHaveBeenCalledWith({ where: { id: "deal_1" } });
+    });
+
+    it("proceeds with DB delete and reports the failure count when one blob delete throws", async () => {
+      mocks.dealFindFirst.mockResolvedValue({ id: "deal_1", userId: "user_1" });
+      mocks.documentFindMany.mockResolvedValue([
+        { id: "doc_1", storageUrl: "https://blob.example/a", storagePath: null },
+        { id: "doc_2", storageUrl: "https://blob.example/b", storagePath: null },
+      ]);
+      mocks.deleteFile
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("blob 410 gone"));
+
+      const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const response = await DELETE(new Request("http://localhost/api/deals/deal_1") as never, {
+          params: Promise.resolve({ dealId: "deal_1" }),
+        });
+
+        const payload = await response.json();
+        expect(response.status).toBe(200);
+        expect(payload.blobDeletionFailures).toBe(1);
+        // The DB cascade must still run even if one blob delete fails — we
+        // never want a single missing blob to lock the user's DB row.
+        expect(mocks.dealDelete).toHaveBeenCalledTimes(1);
+        expect(consoleWarn).toHaveBeenCalled();
+      } finally {
+        consoleWarn.mockRestore();
+      }
+    });
+
+    it("returns 404 without touching storage when the deal is not owned by the caller", async () => {
+      mocks.dealFindFirst.mockResolvedValue(null);
+
+      const response = await DELETE(new Request("http://localhost/api/deals/deal_1") as never, {
+        params: Promise.resolve({ dealId: "deal_1" }),
+      });
+
+      expect(response.status).toBe(404);
+      expect(mocks.deleteFile).not.toHaveBeenCalled();
+      expect(mocks.documentFindMany).not.toHaveBeenCalled();
+      expect(mocks.dealDelete).not.toHaveBeenCalled();
     });
   });
 });

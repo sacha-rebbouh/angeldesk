@@ -77,7 +77,20 @@ export async function downloadFile(urlOrPath: string): Promise<Buffer> {
   let buffer: Buffer;
 
   if (isVercelBlobConfigured) {
-    const res = await fetch(urlOrPath);
+    // Phase 5 (Codex P1): a Document row can legitimately have `storageUrl`
+    // null and only `storagePath` set (legacy rows, the `?? storagePath`
+    // fallback in /retry, /process, /ocr, etc.). `storagePath` is a pathname
+    // like `deals/<dealId>/abc.pdf` — NOT a URL. Passing it to `fetch()`
+    // throws "Invalid URL". Resolve the pathname to its current blob URL
+    // via `@vercel/blob.head()` (which accepts both URL and pathname)
+    // before fetching. URLs pass through untouched.
+    let downloadUrl = urlOrPath;
+    if (!/^https?:\/\//i.test(urlOrPath)) {
+      const { head } = await import("@vercel/blob");
+      const info = await head(urlOrPath);
+      downloadUrl = info.url;
+    }
+    const res = await fetch(downloadUrl);
     if (!res.ok) throw new Error(`Failed to download from blob: ${res.status}`);
     buffer = Buffer.from(await res.arrayBuffer());
     return safeDecryptBuffer(buffer);

@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { encryptJsonField, encryptText, safeDecrypt, safeDecryptJsonField } from "@/lib/encryption";
 import type { DocumentPageArtifact, ExtractionManifest, ExtractionPageManifest, PageOCRResult } from "@/services/pdf";
 import { assessExtractionSemantics, type ExtractionSemanticAssessment } from "@/services/pdf/extraction-semantics";
 import {
@@ -9,6 +10,26 @@ import {
   isPageArtifactToxic,
   readPageVerificationState,
 } from "./extraction-readiness-policy";
+
+// Phase 3 (Privacy DB): the `artifact` JSON column and the `textPreview`
+// string column both carry raw corpus material (page text, table cells,
+// numeric claims). Wrap every write so the persisted form is encrypted, and
+// expose helpers so call sites that store these payloads cannot accidentally
+// bypass encryption.
+type EncryptedPagePayload = {
+  artifact: Prisma.InputJsonValue;
+  textPreview: string | null;
+};
+export function encryptExtractionPagePayload(params: {
+  artifact: unknown;
+  textPreview: string | null | undefined;
+}): EncryptedPagePayload {
+  const envelope = encryptJsonField(params.artifact);
+  return {
+    artifact: (envelope ?? Prisma.DbNull) as Prisma.InputJsonValue,
+    textPreview: params.textPreview ? encryptText(params.textPreview) : null,
+  };
+}
 
 export const STRICT_EXTRACTION_PIPELINE_VERSION = "strict-document-extraction-v1";
 
@@ -356,7 +377,9 @@ export function getBlockingPageNumbersFromStoredPages(
         hasTeamKeywords: page.hasTeamKeywords,
         errorMessage: page.errorMessage,
         ocrProcessed: page.ocrProcessed,
-        semanticAssessment: extractSemanticAssessment(page.artifact),
+        // Phase 3: artifact is stored encrypted; safeDecryptJsonField is a
+        // no-op on legacy plaintext rows and decrypts new envelope rows.
+        semanticAssessment: extractSemanticAssessment(safeDecryptJsonField(page.artifact)),
       })
     )
     .map((page) => page.pageNumber);
@@ -533,8 +556,14 @@ export async function recordDocumentExtractionRun(params: {
   extraSummaryMetrics?: Prisma.InputJsonObject;
 }) {
   const blockedReason = buildBlockedReason(params.manifest);
-  const status = mapRunStatus(params.manifest);
-  const readyForAnalysis = status === "READY" || status === "READY_WITH_WARNINGS";
+  // Same shared corpus-usability rule as `completeDocumentExtractionRun`: a
+  // manifest can say ready_with_warnings while the composed corpus is empty
+  // (image OCR that yielded nothing, etc.). Force FAILED so the run status
+  // never disagrees with "there is no usable text".
+  const hasUsableCorpus = hasUsableExtractionCorpus(params.text);
+  const status: RunStatus = hasUsableCorpus ? mapRunStatus(params.manifest) : "FAILED";
+  const readyForAnalysis =
+    hasUsableCorpus && (status === "READY" || status === "READY_WITH_WARNINGS");
 
   return prisma.documentExtractionRun.create({
     data: {
@@ -604,6 +633,41 @@ export async function startDocumentExtractionRun(params: {
   });
 }
 
+// A run is "live" (still mutable by progress writes) only in these states.
+// Every other status — READY, READY_WITH_WARNINGS, BLOCKED, FAILED — is
+// TERMINAL. Progress writes (`markExtractionRunProgress`,
+// `recordExtractionPageProgress`) must never re-open a terminal run: Codex
+// Phase 4.4 P1 — a late `onProgress` callback from a timed-out `smartExtract`
+// still running in the background could otherwise flip a FAILED run back to
+// PROCESSING, breaking the "no oscillating state" invariant.
+const LIVE_RUN_STATUSES = ["PENDING", "PROCESSING"] as const;
+
+/**
+ * Phase 4 durability: force a run into the terminal FAILED state.
+ *
+ * Idempotent — only flips a run that is still NON-terminal (PENDING /
+ * PROCESSING). A run that already reached a terminal status (including an
+ * earlier FAILED) is left untouched, so this is safe to call from every
+ * catch path (pipeline, Inngest compensation, pre-enqueue route catch)
+ * without risking an oscillating state. Returns the number of rows
+ * actually transitioned (0 = it was already terminal).
+ */
+export async function terminalizeExtractionRunAsFailed(
+  runId: string,
+  reason: string
+): Promise<number> {
+  const result = await prisma.documentExtractionRun.updateMany({
+    where: { id: runId, status: { in: [...LIVE_RUN_STATUSES] } },
+    data: {
+      status: "FAILED",
+      readyForAnalysis: false,
+      blockedReason: reason.slice(0, 500),
+      completedAt: new Date(),
+    },
+  });
+  return result.count;
+}
+
 export async function markExtractionRunProgress(params: {
   runId: string;
   pageCount?: number;
@@ -638,8 +702,14 @@ export async function markExtractionRunProgress(params: {
     }
   }
 
-  return prisma.documentExtractionRun.update({
-    where: { id: params.runId },
+  // Monotone guard: a progress write must never mutate a run that already
+  // reached a terminal status. `updateMany` scoped to LIVE statuses makes
+  // this atomic — a late callback from a timed-out background `smartExtract`
+  // is a 0-row no-op instead of flipping FAILED → PROCESSING. The legitimate
+  // PROCESSING → FAILED transition (phase: "failed") still passes because
+  // PROCESSING is a LIVE status.
+  return prisma.documentExtractionRun.updateMany({
+    where: { id: params.runId, status: { in: [...LIVE_RUN_STATUSES] } },
     data,
   });
 }
@@ -648,6 +718,19 @@ export async function recordExtractionPageProgress(params: {
   runId: string;
   page: PageOCRResult;
 }) {
+  // Monotone guard (fast path): if the run already reached a terminal status,
+  // skip the whole page write — a late callback from a timed-out background
+  // `smartExtract` must not append pages to / re-open a terminal run. The
+  // `updateMany` at the end is the atomic backstop for the TOCTOU window
+  // (run terminalized between this read and the final write).
+  const liveRun = await prisma.documentExtractionRun.findUnique({
+    where: { id: params.runId },
+    select: { status: true },
+  });
+  if (!liveRun || !(LIVE_RUN_STATUSES as readonly string[]).includes(liveRun.status)) {
+    return;
+  }
+
   const artifact = params.page.artifact ?? buildDocumentPageArtifact({
     pageNumber: params.page.pageNumber,
     text: params.page.text,
@@ -664,6 +747,11 @@ export async function recordExtractionPageProgress(params: {
       ? "NEEDS_REVIEW"
       : "READY_WITH_WARNINGS";
   const method: PageMethod = "OCR";
+
+  const encryptedPayload = encryptExtractionPagePayload({
+    artifact: JSON.parse(JSON.stringify(artifact)) as Prisma.InputJsonValue,
+    textPreview: params.page.text.slice(0, 300),
+  });
 
   await prisma.documentExtractionPage.upsert({
     where: {
@@ -690,10 +778,10 @@ export async function recordExtractionPageProgress(params: {
       ocrProcessed: true,
       contentHash: artifact.sourceHash ?? null,
       artifactVersion: artifact.version,
-      artifact: JSON.parse(JSON.stringify(artifact)) as Prisma.InputJsonValue,
+      artifact: encryptedPayload.artifact,
       pageImageHash: params.page.pageImageHash ?? null,
       errorMessage: params.page.text.trim().length === 0 ? "OCR returned no text for this page" : null,
-      textPreview: params.page.text.slice(0, 300),
+      textPreview: encryptedPayload.textPreview,
     },
     update: {
       status,
@@ -707,10 +795,10 @@ export async function recordExtractionPageProgress(params: {
       ocrProcessed: true,
       contentHash: artifact.sourceHash ?? null,
       artifactVersion: artifact.version,
-      artifact: JSON.parse(JSON.stringify(artifact)) as Prisma.InputJsonValue,
+      artifact: encryptedPayload.artifact,
       pageImageHash: params.page.pageImageHash ?? null,
       errorMessage: params.page.text.trim().length === 0 ? "OCR returned no text for this page" : null,
-      textPreview: params.page.text.slice(0, 300),
+      textPreview: encryptedPayload.textPreview,
     },
   });
 
@@ -718,8 +806,11 @@ export async function recordExtractionPageProgress(params: {
     where: { runId: params.runId },
   });
 
-  return prisma.documentExtractionRun.update({
-    where: { id: params.runId },
+  // Atomic monotone backstop: only advance a still-LIVE run. If the run was
+  // terminalized between the read at the top of this function and here, this
+  // is a 0-row no-op rather than flipping a terminal run back to PROCESSING.
+  return prisma.documentExtractionRun.updateMany({
+    where: { id: params.runId, status: { in: [...LIVE_RUN_STATUSES] } },
     data: {
       status: "PROCESSING",
       pagesProcessed: processedCount,
@@ -737,20 +828,202 @@ export async function recordExtractionPageProgress(params: {
   });
 }
 
+/**
+ * Single source of truth for "does this extraction produce a usable
+ * corpus?". The OCR path can return `success: true` with pagesProcessed > 0
+ * yet a whitespace-only composed corpus. Both `completeDocumentExtractionRun`
+ * (run status) and `runDocumentExtractionPipeline` (document status + API
+ * result) MUST agree on this — otherwise a whitespace corpus produces a
+ * run=FAILED / document=COMPLETED divergence and Inngest never refunds.
+ */
+export function hasUsableExtractionCorpus(text: string | null | undefined): boolean {
+  return typeof text === "string" && text.trim().length > 0;
+}
+
+// Phase 4.3 (durability — versions). A document "lineage" is the tuple
+// `(dealId, name, corpusParentDocumentId)` — the exact key the upload route
+// uses to detect "same document re-uploaded". All version mutations for one
+// lineage (creating a new candidate, promoting a candidate to `isLatest`)
+// MUST be serialized, otherwise a check-then-act race produces two
+// `isLatest: true` rows or a non-monotonic latest (Codex Phase 4.3 P1).
+export type DocumentLineage = {
+  dealId: string;
+  name: string;
+  corpusParentDocumentId: string | null;
+};
+
+/**
+ * Take a Postgres transaction-scoped advisory lock on a document lineage.
+ * Held until the surrounding transaction commits/rolls back, so concurrent
+ * lineage mutations run one-at-a-time instead of racing. `hashtext`
+ * collisions only make two unrelated lineages serialize occasionally — never
+ * a correctness problem. The caller MUST already be inside a transaction.
+ */
+export async function acquireDocumentLineageLock(
+  tx: Prisma.TransactionClient,
+  lineage: DocumentLineage
+): Promise<void> {
+  // The key is passed to PostgreSQL `hashtext()` as a `text` parameter.
+  // PostgreSQL rejects 0x00 bytes in `text` values, so the key must never
+  // contain a NUL. It must also delimit its parts unambiguously — a
+  // separator-joined string would collide if `name` contained the
+  // separator. `JSON.stringify` of a fixed-shape array satisfies both: it
+  // escapes its contents, never emits a raw NUL, and two distinct lineages
+  // can never serialize to the same string.
+  const key = JSON.stringify([
+    "doc-lineage",
+    lineage.dealId,
+    lineage.name,
+    lineage.corpusParentDocumentId ?? "",
+  ]);
+  // MUST be `$executeRaw`, not `$queryRaw`: `pg_advisory_xact_lock` returns
+  // `void`, and `$queryRaw` throws `P2010 — Failed to deserialize column of
+  // type 'void'` trying to materialize the result set. `$executeRaw` runs
+  // the statement (taking the lock as the side effect) and returns only a
+  // row count — no column deserialization. Caught by the Phase 5 live test;
+  // the mocked unit tests could not see it.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+}
+
+/**
+ * Phase 4.3 (durability — versions). A re-uploaded document is created as a
+ * CANDIDATE version (`isLatest: false`). It only becomes the lineage's
+ * `isLatest` once its extraction reaches a COMPLETED state. This closes the
+ * hole where the old (working) document was demoted eagerly at upload time —
+ * if the new version's extraction then failed, the deal was left pointing at
+ * a broken document with no `isLatest` fallback.
+ *
+ * The promotion is:
+ *   - **gated on COMPLETED** — a PENDING/PROCESSING/FAILED candidate never
+ *     promotes, so a failed new version leaves the old one untouched;
+ *   - **lineage-scoped** — a lineage is `(dealId, name, corpusParentDocumentId)`,
+ *     the exact tuple the upload route uses to detect "same document
+ *     re-uploaded";
+ *   - **monotonic by version** — if a strictly-newer version already holds
+ *     `isLatest`, this (older) candidate stays a completed candidate. This is
+ *     what prevents the "état oscillant" a late-completing older version
+ *     would otherwise cause (demoting a newer winner);
+ *   - **serialized** — the `newerLatest` check and the demote+promote write
+ *     run inside a per-lineage advisory lock, so the guarantees above hold
+ *     under concurrency (two candidates completing at once), not just for
+ *     sequential calls. Without the lock, transaction A could read "no newer
+ *     latest" while transaction B promotes a newer version, then A demotes
+ *     B's winner — exactly the regression Codex Phase 4.3 P1 flagged.
+ *
+ * Result: at most one `isLatest: true` per lineage, and it never moves
+ * backwards in version order — even under concurrent completion.
+ */
+export async function promoteDocumentVersionTx(
+  tx: Prisma.TransactionClient,
+  documentId: string
+): Promise<void> {
+  // The lineage tuple + version are IMMUTABLE after creation, so this
+  // pre-lock read is safe — we only need it to derive the lock key and to
+  // fast-exit non-COMPLETED documents before paying for the lock.
+  const doc = await tx.document.findUnique({
+    where: { id: documentId },
+    select: {
+      id: true,
+      dealId: true,
+      name: true,
+      corpusParentDocumentId: true,
+      version: true,
+      processingStatus: true,
+    },
+  });
+  // Only a successfully-extracted version may take the `isLatest` slot.
+  if (!doc || doc.processingStatus !== "COMPLETED") return;
+
+  const lineage: DocumentLineage = {
+    dealId: doc.dealId,
+    name: doc.name,
+    corpusParentDocumentId: doc.corpusParentDocumentId,
+  };
+
+  // Critical section start: serialize against concurrent promotions /
+  // creations in this lineage. Everything below is now atomic w.r.t. other
+  // lineage mutations.
+  await acquireDocumentLineageLock(tx, lineage);
+
+  // Re-read processingStatus INSIDE the lock — a concurrent reprocess could
+  // have moved this document off COMPLETED between the pre-lock read and
+  // here. (dealId/name/corpusParentDocumentId/version are immutable.)
+  const locked = await tx.document.findUnique({
+    where: { id: documentId },
+    select: { processingStatus: true },
+  });
+  if (!locked || locked.processingStatus !== "COMPLETED") return;
+
+  // A strictly-newer version already won the slot — this older version stays
+  // a completed candidate rather than demoting the newer winner. Read under
+  // the lock: any concurrent promotion has either committed (visible here)
+  // or is queued behind us.
+  const newerLatest = await tx.document.findFirst({
+    where: { ...lineage, isLatest: true, version: { gt: doc.version } },
+    select: { id: true },
+  });
+  if (newerLatest) return;
+
+  // Demote every other current `isLatest` in the lineage, then promote this
+  // one — exactly one `isLatest: true` per lineage at all times.
+  await tx.document.updateMany({
+    where: { ...lineage, isLatest: true, id: { not: doc.id } },
+    data: { isLatest: false, supersededAt: new Date() },
+  });
+  await tx.document.update({
+    where: { id: doc.id },
+    data: { isLatest: true, supersededAt: null },
+  });
+}
+
+/**
+ * Standalone wrapper around `promoteDocumentVersionTx` for call sites that
+ * finalize a document COMPLETED outside a transaction (the inline
+ * image/Excel/Word/PowerPoint upload paths). The durable PDF path promotes
+ * atomically inside `completeDocumentExtractionRun` instead.
+ */
+export async function promoteDocumentVersion(params: { documentId: string }): Promise<void> {
+  await prisma.$transaction((tx) => promoteDocumentVersionTx(tx, params.documentId));
+}
+
 export async function completeDocumentExtractionRun(params: {
   runId: string;
   text: string;
   qualityScore: number | null;
   manifest: ExtractionManifest;
   warnings?: unknown;
+  // Phase 4 durability: when provided, the parent Document is updated in the
+  // SAME transaction as the run's terminal status. This closes the atomicity
+  // hole where a crash between "run → terminal-success" and "document →
+  // COMPLETED" could leave a terminal-success run pointing at a Document
+  // that is still PROCESSING / has no extractedText. Either BOTH commit or
+  // NEITHER does — so on retry the run is still PROCESSING and the pipeline
+  // re-runs cleanly. Legacy callers (upload / ocr routes) omit this and keep
+  // their separate document update for now.
+  documentFinalization?: {
+    documentId: string;
+    data: Prisma.DocumentUpdateInput;
+  };
 }) {
   const blockedReason = buildBlockedReason(params.manifest);
-  const status = mapRunStatus(params.manifest);
-  const readyForAnalysis = status === "READY" || status === "READY_WITH_WARNINGS";
+  // Phase 4 durability: `mapRunStatus` derives the status from the manifest
+  // only. But the OCR path can return a manifest that says
+  // ready_with_warnings / needs_review with pagesProcessed > 0 while the
+  // composed corpus is actually empty (all OCR pages yielded text.length
+  // === 0). A terminal-success run pointing at an empty corpus is a
+  // durability trap: the document is finalized FAILED, but a retry would
+  // see the terminal-success run and no-op forever. Force FAILED whenever
+  // the final corpus is empty — the run status must never disagree with
+  // "there is no usable text". `hasUsableExtractionCorpus` is the shared
+  // definition the pipeline uses too (no run/document/API divergence).
+  const hasUsableCorpus = hasUsableExtractionCorpus(params.text);
+  const status: RunStatus = hasUsableCorpus ? mapRunStatus(params.manifest) : "FAILED";
+  const readyForAnalysis =
+    hasUsableCorpus && (status === "READY" || status === "READY_WITH_WARNINGS");
 
   return prisma.$transaction(async (tx) => {
     await tx.documentExtractionPage.deleteMany({ where: { runId: params.runId } });
-    return tx.documentExtractionRun.update({
+    const run = await tx.documentExtractionRun.update({
       where: { id: params.runId },
       data: {
         status,
@@ -777,6 +1050,25 @@ export async function completeDocumentExtractionRun(params: {
         overrides: true,
       },
     });
+
+    if (params.documentFinalization) {
+      await tx.document.update({
+        where: { id: params.documentFinalization.documentId },
+        data: params.documentFinalization.data,
+      });
+      // Phase 4.3: a new version becomes the lineage's `isLatest` ONLY once
+      // its extraction reaches COMPLETED — and it does so atomically with
+      // the run's terminal status. `hasUsableCorpus` is the COMPLETED ⟺
+      // success bridge (run forced FAILED + document FAILED when false), so
+      // a failed/empty extraction never promotes and the old version is
+      // preserved. `promoteDocumentVersionTx` is itself a no-op for a
+      // brand-new single-version document.
+      if (hasUsableCorpus) {
+        await promoteDocumentVersionTx(tx, params.documentFinalization.documentId);
+      }
+    }
+
+    return run;
   });
 }
 
@@ -1076,6 +1368,11 @@ function buildExtractionPageCreateInput(page: ExtractionPageManifest) {
     error: page.error,
   });
 
+  const encryptedPayload = encryptExtractionPagePayload({
+    artifact: JSON.parse(JSON.stringify(artifact)) as Prisma.InputJsonValue,
+    textPreview: buildPagePreview(page),
+  });
+
   return {
     pageNumber: page.pageNumber,
     status: mapPageStatus(page.status),
@@ -1092,10 +1389,10 @@ function buildExtractionPageCreateInput(page: ExtractionPageManifest) {
     ocrProcessed: page.ocrProcessed,
     contentHash: artifact.sourceHash ?? null,
     artifactVersion: artifact.version,
-    artifact: JSON.parse(JSON.stringify(artifact)) as Prisma.InputJsonValue,
+    artifact: encryptedPayload.artifact,
     pageImageHash: page.pageImageHash ?? null,
     errorMessage: page.error ?? null,
-    textPreview: buildPagePreview(page),
+    textPreview: encryptedPayload.textPreview,
   };
 }
 

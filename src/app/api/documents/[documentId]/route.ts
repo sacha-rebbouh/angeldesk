@@ -41,13 +41,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const includeText = request.nextUrl.searchParams.get("includeText") === "1";
-    const { deal, ...data } = document;
+    const { deal, storageUrl, storagePath, ...data } = document;
     if (includeText && data.extractedText) {
       data.extractedText = safeDecrypt(data.extractedText);
     } else {
       data.extractedText = null;
     }
-    return NextResponse.json({ data });
+    // Never leak the raw Blob URL or storage path to the client. Preview and
+    // download go through the dedicated server-side routes that resolve the
+    // URL themselves; surfacing it here would let a leaked deal-detail JSON
+    // double as a signed-URL dump.
+    return NextResponse.json({ data: { ...data, hasStorage: Boolean(storageUrl ?? storagePath) } });
   } catch (error) {
     return handleApiError(error, "fetch document");
   }
@@ -94,7 +98,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       data: { name: name.trim() },
     });
 
-    return NextResponse.json({ data: updated });
+    const { storageUrl, storagePath, ...safe } = updated;
+    return NextResponse.json({
+      data: { ...safe, hasStorage: Boolean(storageUrl ?? storagePath) },
+    });
   } catch (error) {
     return handleApiError(error, "rename document");
   }
@@ -129,10 +136,13 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    // Delete from storage
-    if (document.storageUrl) {
+    // Delete from storage. Some legacy rows only carry `storagePath` (no
+    // full URL — local dev / old uploads), so we fall back to it. Mirrors
+    // the cascade in DELETE /api/deals/[dealId].
+    const storageTarget = document.storageUrl ?? document.storagePath;
+    if (storageTarget) {
       try {
-        await deleteFile(document.storageUrl);
+        await deleteFile(storageTarget);
       } catch (storageError) {
         if (process.env.NODE_ENV === "development") {
           console.error("Error deleting from storage:", storageError);

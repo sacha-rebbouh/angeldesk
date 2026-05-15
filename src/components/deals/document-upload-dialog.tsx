@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileUpload, type UploadedDocumentSummary } from "./file-upload";
+import { FileUpload, type UploadAllSummary, type UploadedDocumentSummary } from "./file-upload";
 import { EmailForm } from "./corpus/email-form";
 import { NoteForm } from "./corpus/note-form";
 import { queryKeys } from "@/lib/query-keys";
@@ -53,9 +53,26 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
   }, [dealId, onUploadSuccess, queryClient]);
 
-  const handleAllComplete = useCallback(() => {
-    toast.success("Documents uploadés avec succès");
-    // Auto-close after short delay to show success state
+  const handleAllComplete = useCallback((summary: UploadAllSummary) => {
+    // If every upload failed, keep the dialog open and surface the error state
+    // — never claim success and never auto-close. The per-file error toast was
+    // already raised via handleError.
+    if (summary.successCount === 0) {
+      return;
+    }
+
+    if (summary.errorCount > 0) {
+      toast.success(
+        `${summary.successCount} document${summary.successCount > 1 ? "s" : ""} ajouté${
+          summary.successCount > 1 ? "s" : ""
+        }, ${summary.errorCount} en échec`
+      );
+    } else {
+      toast.success("Documents uploadés avec succès");
+    }
+
+    // Auto-close after short delay to show success state. Only fires when at
+    // least one upload succeeded.
     setTimeout(() => {
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
       setUploadedCount(0);

@@ -3,8 +3,32 @@ import { describe, expect, it } from "vitest";
 import {
   buildStructuredDocumentManifest,
   getBlockingPageNumbersFromManifest,
+  hasUsableExtractionCorpus,
   summarizeManifestForLegacyMetrics,
 } from "../extraction-runs";
+
+describe("hasUsableExtractionCorpus — shared corpus-usability rule", () => {
+  it("returns true for genuine extracted text", () => {
+    expect(hasUsableExtractionCorpus("Pithos — ARR €1.2M")).toBe(true);
+  });
+
+  it("returns false for an empty string", () => {
+    expect(hasUsableExtractionCorpus("")).toBe(false);
+  });
+
+  it("returns false for a whitespace-only corpus (the OCR composeOCRText edge case)", () => {
+    expect(hasUsableExtractionCorpus("   \n  \t ")).toBe(false);
+  });
+
+  it("returns false for null / undefined", () => {
+    expect(hasUsableExtractionCorpus(null)).toBe(false);
+    expect(hasUsableExtractionCorpus(undefined)).toBe(false);
+  });
+
+  it("returns true even for a single non-whitespace character", () => {
+    expect(hasUsableExtractionCorpus("x")).toBe(true);
+  });
+});
 
 describe("buildStructuredDocumentManifest", () => {
   it("builds a strict manifest with page-level status, blockers, and credit estimates", () => {

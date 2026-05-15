@@ -16,7 +16,7 @@ interface DocumentPreviewDialogProps {
   document: {
     id: string;
     name: string;
-    storageUrl: string | null;
+    hasStorage: boolean;
     mimeType: string | null;
     type: string;
   } | null;
@@ -68,7 +68,7 @@ export const DocumentPreviewDialog = memo(function DocumentPreviewDialog({
 
         {/* Content */}
         <div className="flex-1 min-h-0 bg-muted/30">
-          {isPdf && document.storageUrl && (
+          {isPdf && document.hasStorage && (
             <iframe
               src={`${inlineUrl}#toolbar=1&navpanes=0`}
               className="w-full h-full border-0"
@@ -76,7 +76,7 @@ export const DocumentPreviewDialog = memo(function DocumentPreviewDialog({
             />
           )}
 
-          {isImage && document.storageUrl && (
+          {isImage && document.hasStorage && (
             <div className="w-full h-full flex items-center justify-center p-4 overflow-auto">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img

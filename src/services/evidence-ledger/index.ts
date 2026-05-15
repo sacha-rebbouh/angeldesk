@@ -1,4 +1,5 @@
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { safeDecryptJsonField } from "@/lib/encryption";
 import type { EnrichedAgentContext } from "@/agents/types";
 
 type AgentDocument = NonNullable<EnrichedAgentContext["documents"]>[number];
@@ -270,5 +271,12 @@ function countArray(value: unknown): number {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  // Phase 3: artifact is stored encrypted as `{ _enc: "ad1", data, v: 1 }`.
+  // Without decryption, `.tables`/`.charts`/`.numericClaims` are all absent
+  // and the ledger silently drops every structured claim that should reach
+  // the agent prompt. safeDecryptJsonField is a no-op on legacy plaintext.
+  const decrypted = safeDecryptJsonField(value);
+  return typeof decrypted === "object" && decrypted !== null && !Array.isArray(decrypted)
+    ? (decrypted as Record<string, unknown>)
+    : null;
 }

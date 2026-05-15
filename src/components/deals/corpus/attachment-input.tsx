@@ -18,6 +18,7 @@ import {
   type UploadedDocumentSummary,
 } from "@/components/deals/file-upload";
 import { cn } from "@/lib/utils";
+import { clerkFetch } from "@/lib/clerk-fetch";
 
 export interface CorpusAttachmentDraft {
   id: string;
@@ -74,7 +75,7 @@ export async function uploadCorpusAttachment({
     formData.append("customType", attachment.customType.trim());
   }
 
-  const response = await fetch("/api/documents/upload", {
+  const response = await clerkFetch("/api/documents/upload", {
     method: "POST",
     body: formData,
   });

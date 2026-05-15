@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { clerkFetch } from "@/lib/clerk-fetch";
 import { cn } from "@/lib/utils";
 
 interface ExtractionAuditDialogProps {
@@ -345,7 +346,7 @@ function canRetryAuditPage(page: AuditPage) {
 }
 
 async function fetchExtractionAudit(documentId: string): Promise<ExtractionAuditResponse> {
-  const response = await fetch(`/api/documents/${documentId}/extraction-audit`);
+  const response = await clerkFetch(`/api/documents/${documentId}/extraction-audit`);
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Audit extraction indisponible" }));
     throw new Error(error.error ?? "Audit extraction indisponible");
@@ -362,6 +363,11 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   const [query, setQuery] = useState("");
   const [selectedPage, setSelectedPage] = useState<number | null>(null);
   const [reprocessStartedAt, setReprocessStartedAt] = useState<number | null>(null);
+  // Phase 4: /process now returns 202 (enqueued) instead of running the
+  // extraction inline. We hold the enqueued run id and poll the audit
+  // query until that run reaches a terminal status — only THEN do we
+  // surface "terminée".
+  const [reprocessRunId, setReprocessRunId] = useState<string | null>(null);
   const [retryingPageNumber, setRetryingPageNumber] = useState<number | null>(null);
   const [batchRetryProgress, setBatchRetryProgress] = useState<{ done: number; total: number } | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -375,6 +381,9 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     queryKey: auditQueryKey,
     queryFn: () => fetchExtractionAudit(document?.id ?? ""),
     enabled: open && Boolean(document?.id),
+    // While a durable extraction is enqueued, poll until the run reaches a
+    // terminal status. No interval otherwise (avoids needless traffic).
+    refetchInterval: reprocessRunId ? 3000 : false,
   });
 
   const audit = data?.data;
@@ -407,15 +416,15 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     toast.success("Corpus extrait copie");
   };
 
-  const notifyDocumentUpdated = async () => {
+  const notifyDocumentUpdated = useCallback(async () => {
     if (!document?.id) return;
     await onDocumentUpdated?.(document.id);
-  };
+  }, [document?.id, onDocumentUpdated]);
 
   const decisionMutation = useMutation({
     mutationFn: async (params: ExtractionDecisionParams) => {
       if (!document || !audit?.latestRun) throw new Error("Extraction run indisponible");
-      const response = await fetch(`/api/documents/${document.id}/extraction-decision`, {
+      const response = await clerkFetch(`/api/documents/${document.id}/extraction-decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -489,32 +498,63 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   const reprocessMutation = useMutation({
     mutationFn: async () => {
       if (!document) throw new Error("Document indisponible");
-      const response = await fetch(`/api/documents/${document.id}/process`, { method: "POST" });
+      const response = await clerkFetch(`/api/documents/${document.id}/process`, { method: "POST" });
       if (!response.ok) {
         const error = await response.json().catch(() => ({ error: "Relance extraction impossible" }));
         throw new Error(error.error ?? "Relance extraction impossible");
       }
-      return response.json();
+      return response.json() as Promise<{
+        data?: { extractionRunId?: string; processingStatus?: string };
+      }>;
     },
-    onSuccess: async () => {
-      toast.success("Extraction renforcee terminee");
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] }),
-        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
-      ]);
-      await notifyDocumentUpdated();
+    onSuccess: async (result) => {
+      // Phase 4: the route returns 202 — the extraction is ENQUEUED, not
+      // done. Track the run id and let the polling effect surface the
+      // terminal state. Do NOT claim "terminée" here.
+      const enqueuedRunId = result?.data?.extractionRunId ?? null;
+      setReprocessRunId(enqueuedRunId);
+      toast.success("Extraction renforcee lancee — traitement en cours");
+      // Kick an immediate refetch so the audit view flips to PROCESSING.
+      await queryClient.invalidateQueries({ queryKey: ["document-extraction-audit", document?.id] });
     },
-    onError: (error: Error) => toast.error(error.message),
-    onSettled: () => {
+    onError: (error: Error) => {
+      toast.error(error.message);
+      // The route failed pre-enqueue — no background work is running.
       setReprocessStartedAt(null);
       setElapsedSeconds(0);
+      setReprocessRunId(null);
     },
   });
+
+  // Phase 4: terminal-state watcher for an enqueued durable extraction.
+  // When the polled audit shows the enqueued run has reached a terminal
+  // status, surface the outcome and stop polling.
+  useEffect(() => {
+    if (!reprocessRunId) return;
+    const latestRun = audit?.latestRun;
+    if (!latestRun || latestRun.id !== reprocessRunId) return;
+    const terminalStatuses = ["READY", "READY_WITH_WARNINGS", "BLOCKED", "FAILED"];
+    if (!terminalStatuses.includes(latestRun.status)) return;
+
+    // Terminal — settle the UI.
+    setReprocessRunId(null);
+    setReprocessStartedAt(null);
+    setElapsedSeconds(0);
+    if (latestRun.status === "FAILED") {
+      toast.error("Extraction renforcee echouee");
+    } else {
+      toast.success("Extraction renforcee terminee");
+    }
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["deal-document-readiness"] }),
+      notifyDocumentUpdated(),
+    ]);
+  }, [reprocessRunId, audit?.latestRun, queryClient, notifyDocumentUpdated]);
 
   const pageRetryMutation = useMutation({
     mutationFn: async (params: PageRetryParams) => {
       if (!document) throw new Error("Document indisponible");
-      const response = await fetch(
+      const response = await clerkFetch(
         `/api/documents/${document.id}/extraction-pages/${params.pageNumber}/retry`,
         { method: "POST" }
       );
@@ -546,7 +586,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
       setBatchRetryProgress({ done: 0, total: pagesToRetry.length });
       for (const [index, page] of pagesToRetry.entries()) {
         setRetryingPageNumber(page.pageNumber);
-        const response = await fetch(
+        const response = await clerkFetch(
           `/api/documents/${document.id}/extraction-pages/${page.pageNumber}/retry`,
           { method: "POST" }
         );
@@ -575,7 +615,14 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
     },
   });
 
-  const extractionActionPending = reprocessMutation.isPending || pageRetryMutation.isPending || batchRetryMutation.isPending;
+  // `reprocessRunId !== null` keeps the "extraction in progress" UI alive
+  // for the whole duration of the durable (Inngest) extraction — not just
+  // the brief 202 HTTP round-trip.
+  const extractionActionPending =
+    reprocessMutation.isPending ||
+    pageRetryMutation.isPending ||
+    batchRetryMutation.isPending ||
+    reprocessRunId !== null;
 
   useEffect(() => {
     if (!extractionActionPending || !reprocessStartedAt) return;

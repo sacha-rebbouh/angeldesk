@@ -1,9 +1,19 @@
 /**
  * Politique de readiness extraction - source de verite des etats fiables / toxiques.
- * Ne doit dependre d'AUCUN autre module interne pour eviter les cycles.
+ * Ne doit dependre d'AUCUN autre module interne SAUF `@/lib/encryption` (leaf
+ * utility, zero internal deps, no cycle possible).
  * Importee a la fois par extraction-runs.ts (extension de evaluateDealDocumentReadiness)
  * et par readiness-gate.ts (helpers runtime pour les routes API).
+ *
+ * Phase 3 (Privacy DB): `artifact` is now stored encrypted as an envelope
+ * `{ _enc: "ad1", data, v: 1 }`. The readers in this module accept BOTH the
+ * envelope and legacy plaintext objects so callers never have to remember
+ * to decrypt before passing a stored row in. Without this, the toxic gate
+ * fail-open silently (state→null on the envelope, "parse_failed" never
+ * detected) and bypasses UNVERIFIED_ARTIFACT.
  */
+
+import { isEncryptedJsonField, safeDecryptJsonField, tryDecryptJsonField } from "@/lib/encryption";
 
 export const VERIFIED_EXTRACTION_STATES: ReadonlySet<string> = new Set([
   "provider_structured",
@@ -27,10 +37,11 @@ export function isExtractionStrictReadinessEnabled(): boolean {
  * (cas des pages purement natives ou pre-V3).
  */
 export function readPageVerificationState(artifact: unknown): string | null {
-  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+  const decrypted = safeDecryptJsonField(artifact);
+  if (!decrypted || typeof decrypted !== "object" || Array.isArray(decrypted)) {
     return null;
   }
-  const verification = (artifact as { verification?: unknown }).verification;
+  const verification = (decrypted as { verification?: unknown }).verification;
   if (!verification || typeof verification !== "object" || Array.isArray(verification)) {
     return null;
   }
@@ -39,10 +50,11 @@ export function readPageVerificationState(artifact: unknown): string | null {
 }
 
 function readVerificationEvidence(artifact: unknown): string[] {
-  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+  const decrypted = safeDecryptJsonField(artifact);
+  if (!decrypted || typeof decrypted !== "object" || Array.isArray(decrypted)) {
     return [];
   }
-  const verification = (artifact as { verification?: unknown }).verification;
+  const verification = (decrypted as { verification?: unknown }).verification;
   if (!verification || typeof verification !== "object" || Array.isArray(verification)) {
     return [];
   }
@@ -70,6 +82,19 @@ export function isPageArtifactToxic(
   artifact: unknown,
   pageStatus?: string | null
 ): boolean {
+  // Fail-closed on a corrupted Phase-3 envelope. If the row carries an
+  // envelope marker but the ciphertext does not decrypt (key rotation, DB
+  // tampering, truncation), we MUST NOT treat it as "no artifact" — that
+  // would let the toxic gate bypass UNVERIFIED_ARTIFACT for an unreadable
+  // page. Legacy plaintext rows and genuinely absent artifacts are
+  // unaffected by this branch.
+  if (isEncryptedJsonField(artifact)) {
+    const decryption = tryDecryptJsonField(artifact);
+    if (decryption.kind === "corrupted") {
+      return true;
+    }
+  }
+
   const state = readPageVerificationState(artifact);
   if (state === null) {
     return false;

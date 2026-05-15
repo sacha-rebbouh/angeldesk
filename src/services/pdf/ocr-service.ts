@@ -18,6 +18,7 @@ import { createHash } from "crypto";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { safeDecryptJsonField } from "@/lib/encryption";
 import { openrouter, MODELS } from "../openrouter/client";
 import { extractFirstJSON } from "../openrouter/router";
 import { getPagesNeedingOCR, analyzeExtractionQuality } from "./quality-analyzer";
@@ -692,6 +693,7 @@ async function processSelectedPdfPages(
     scale?: number;
     onProgress?: ExtractionProgressCallback;
     pageContexts?: Map<number, VisionPromptContext>;
+    signal?: AbortSignal;
   } = {}
 ): Promise<PageOCRResult[]> {
   const renderer = createRenderer();
@@ -703,6 +705,12 @@ async function processSelectedPdfPages(
   const pageResults: PageOCRResult[] = [];
 
   for (let index = 0; index < targetPageNumbers.length; index += BATCH_SIZE) {
+    // Phase 4.4: real extraction time budget. The pipeline arms an
+    // AbortController; once it fires we stop scheduling further OCR batches
+    // and return the pages that completed so far. The caller (pipeline)
+    // detects the abort and terminalizes the run FAILED — a partial
+    // strict-mode corpus is not a trustworthy result.
+    if (options.signal?.aborted) break;
     const pageNumberBatch = targetPageNumbers.slice(index, index + BATCH_SIZE);
     const rendered = await renderPagesForOCR(renderer, buffer, pageNumberBatch, scale);
     const processedBatch = await Promise.all(
@@ -724,7 +732,12 @@ async function processSelectedPdfPages(
 
 async function processAllPdfPages(
   buffer: Buffer,
-  options: { mode?: OCRMode; scale?: number; onProgress?: ExtractionProgressCallback } = {}
+  options: {
+    mode?: OCRMode;
+    scale?: number;
+    onProgress?: ExtractionProgressCallback;
+    signal?: AbortSignal;
+  } = {}
 ): Promise<PageOCRResult[]> {
   const renderer = createRenderer();
   const mode = options.mode ?? "standard";
@@ -739,6 +752,9 @@ async function processAllPdfPages(
 
   const pageResults: PageOCRResult[] = [];
   for (let index = 0; index < allPageNumbers.length; index += BATCH_SIZE) {
+    // Phase 4.4: stop scheduling further OCR batches once the extraction
+    // time budget fires. See `processSelectedPdfPages` for the rationale.
+    if (options.signal?.aborted) break;
     const pageNumberBatch = allPageNumbers.slice(index, index + BATCH_SIZE);
     const rendered = await renderPagesForOCR(renderer, buffer, pageNumberBatch, scale);
     const processedBatch = await Promise.all(
@@ -772,6 +788,7 @@ export async function selectiveOCR(
     scale?: number;
     onProgress?: ExtractionProgressCallback;
     pageContexts?: Map<number, VisionPromptContext>;
+    signal?: AbortSignal;
   } = {}
 ): Promise<OCRResult> {
   const startTime = Date.now();
@@ -801,6 +818,7 @@ export async function selectiveOCR(
       scale: options.scale,
       onProgress: options.onProgress,
       pageContexts: options.pageContexts,
+      signal: options.signal,
     });
     totalCost += pageResults.reduce((sum, r) => sum + r.cost, 0);
 
@@ -856,12 +874,15 @@ export async function retryPdfPageOCR(
  */
 export async function extractTextWithOCR(
   buffer: Buffer,
-  options: { maxPages?: number; onProgress?: ExtractionProgressCallback } = {}
+  options: { maxPages?: number; onProgress?: ExtractionProgressCallback; signal?: AbortSignal } = {}
 ): Promise<OCRResult> {
   try {
     if (options.maxPages !== undefined && !Number.isFinite(options.maxPages)) {
       const startTime = Date.now();
-      const pageResults = await processAllPdfPages(buffer, { onProgress: options.onProgress });
+      const pageResults = await processAllPdfPages(buffer, {
+        onProgress: options.onProgress,
+        signal: options.signal,
+      });
       const sortedResults = [...pageResults].sort((a, b) => a.pageNumber - b.pageNumber);
       const text = composeOCRText(undefined, sortedResults);
 
@@ -878,7 +899,11 @@ export async function extractTextWithOCR(
 
     const pageLimit = options.maxPages ?? MAX_PAGES_TO_OCR;
     const allPages = Array.from({ length: pageLimit }, (_, i) => i);
-    return selectiveOCR(buffer, allPages, undefined, { maxPages: pageLimit, onProgress: options.onProgress });
+    return selectiveOCR(buffer, allPages, undefined, {
+      maxPages: pageLimit,
+      onProgress: options.onProgress,
+      signal: options.signal,
+    });
   } catch (error) {
     return {
       success: false,
@@ -1550,8 +1575,13 @@ function normalizeArtifactVerification(value: unknown): ArtifactVerificationMeta
 }
 
 function normalizeDocumentPageArtifact(value: Prisma.JsonValue | null): DocumentPageArtifact | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  // Phase 3: artifact may arrive as an encrypted envelope. safeDecryptJsonField
+  // returns the plaintext object for legacy rows AND the decrypted payload
+  // for new rows. After this single call the rest of the normalizer can
+  // remain ignorant of storage encryption.
+  const decrypted = safeDecryptJsonField(value);
+  if (!decrypted || typeof decrypted !== "object" || Array.isArray(decrypted)) return null;
+  const record = decrypted as Record<string, unknown>;
   if (
     (record.version !== DOCUMENT_PAGE_ARTIFACT_V1 && record.version !== DOCUMENT_PAGE_ARTIFACT_V2) ||
     typeof record.pageNumber !== "number" ||
@@ -1662,7 +1692,8 @@ async function runStructuredProviderPlan(
   existingText: string | undefined,
   pageTexts: string[],
   visualPlan: RoutedVisualExtractionPlanPage[],
-  onProgress?: ExtractionProgressCallback
+  onProgress?: ExtractionProgressCallback,
+  signal?: AbortSignal
 ): Promise<{
   ocrResult: OCRResult;
   escalationPageIndices: number[];
@@ -1672,6 +1703,11 @@ async function runStructuredProviderPlan(
   if (selectedPageIndices.length === 0) {
     return null;
   }
+
+  // Phase 4.4: skip the (potentially slow) structured-provider call once the
+  // extraction time budget has fired. `smartExtract` then falls through to
+  // the OCR path, which is also abort-aware and returns fast.
+  if (signal?.aborted) return null;
 
   const startedAt = Date.now();
   const structuredOutput = await extractStructuredProviderOutput(buffer);
@@ -1795,7 +1831,8 @@ async function runVisualOCRPlan(
   existingText: string | undefined,
   visualPlan: RoutedVisualExtractionPlanPage[],
   onProgress?: ExtractionProgressCallback,
-  pageContexts?: Map<number, VisionPromptContext>
+  pageContexts?: Map<number, VisionPromptContext>,
+  signal?: AbortSignal
 ): Promise<OCRResult> {
   const uniquePages = [...new Set(pageIndices)];
   const supremePages = uniquePages.filter((pageIndex) => (
@@ -1821,6 +1858,7 @@ async function runVisualOCRPlan(
       scale: 2.5,
       onProgress,
       pageContexts,
+      signal,
     }));
   }
   if (supremePages.length > 0) {
@@ -1830,6 +1868,7 @@ async function runVisualOCRPlan(
       scale: 3,
       onProgress,
       pageContexts,
+      signal,
     }));
   }
 
@@ -1884,6 +1923,13 @@ export async function smartExtract(
     autoOCR?: boolean;
     strict?: boolean;
     onProgress?: ExtractionProgressCallback;
+    // Phase 4.4: real extraction time budget. When the caller (the durable
+    // pipeline) arms an AbortController and the budget fires, every OCR loop
+    // below stops scheduling further batches and returns its partial result.
+    // `smartExtract` itself never throws on abort — it returns whatever was
+    // produced; the caller inspects `signal.aborted` and decides (the
+    // pipeline terminalizes the run FAILED with EXTRACTION_TIMEOUT).
+    signal?: AbortSignal;
   } = {}
 ): Promise<{
   text: string;
@@ -1899,7 +1945,8 @@ export async function smartExtract(
     maxOCRPages = MAX_PAGES_TO_OCR,
     autoOCR = true,
     strict = false,
-    onProgress
+    onProgress,
+    signal
   } = options;
 
   await onProgress?.({ phase: "started", message: "Document extraction started" });
@@ -1929,6 +1976,7 @@ export async function smartExtract(
         const ocrResult = await extractTextWithOCR(buffer, {
           maxPages: strict ? Number.POSITIVE_INFINITY : maxOCRPages,
           onProgress,
+          signal,
         });
         const ocrQuality = ocrResult.success
           ? analyzeExtractionQuality(ocrResult.text, ocrResult.pagesProcessed || 1).metrics.qualityScore
@@ -2065,14 +2113,17 @@ export async function smartExtract(
           regularResult.text,
           regularResult.pageTexts ?? [],
           visualPlan,
-          onProgress
+          onProgress,
+          signal
         );
         const ocrResult = structured?.ocrResult ?? await runVisualOCRPlan(
           buffer,
           highFidelityPages,
           regularResult.text,
           visualPlan,
-          onProgress
+          onProgress,
+          undefined,
+          signal
         );
         const escalationPages = structured?.escalationPageIndices ?? [];
         const fallbackPages = [...new Set(escalationPages.filter((pageIndex) => visualPlan[pageIndex]?.tier === "supreme"))];
@@ -2085,7 +2136,8 @@ export async function smartExtract(
                 regularResult.text,
                 visualPlan,
                 onProgress,
-                structured?.pageContexts
+                structured?.pageContexts,
+                signal
               ),
               existingText: regularResult.text,
             })
@@ -2138,12 +2190,14 @@ export async function smartExtract(
     regularResult.text,
     regularResult.pageTexts ?? [],
     visualPlan,
-    onProgress
+    onProgress,
+    signal
   );
 
   let ocrResult = structuredFirstPass?.ocrResult ?? await selectiveOCR(buffer, pagesToOCR, regularResult.text, {
     maxPages: maxOCRPages,
     onProgress,
+    signal,
   });
 
   if (!ocrResult.success || ocrResult.pagesProcessed === 0) {
@@ -2211,7 +2265,8 @@ export async function smartExtract(
         undefined,
         visualPlan,
         onProgress,
-        structuredFirstPass?.pageContexts
+        structuredFirstPass?.pageContexts,
+        signal
       );
       ocrResult = mergeOCRResults({
         original: ocrResult,

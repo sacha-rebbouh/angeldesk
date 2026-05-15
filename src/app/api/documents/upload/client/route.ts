@@ -82,6 +82,20 @@ export async function POST(request: NextRequest) {
           throw new ClientUploadTokenError("Invalid deal ID format", 400);
         }
 
+        // Hard binding: the pathname requested for the token MUST be inside
+        // this deal's namespace. Without this, an authenticated caller can
+        // request a token for `tmp/document-uploads/<victim-deal>/...` while
+        // claiming `dealId = <attacker-deal>` in the payload — the deal
+        // ownership check passes (attacker-deal IS theirs) but the resulting
+        // token lets them write into the victim's namespace.
+        const expectedPrefix = `tmp/document-uploads/${parsedPayload.dealId}/`;
+        if (!pathname.startsWith(expectedPrefix)) {
+          throw new ClientUploadTokenError(
+            "Upload pathname does not match the target deal",
+            400
+          );
+        }
+
         if (!ALLOWED_MIME_TYPES.includes(parsedPayload.mimeType)) {
           throw new ClientUploadTokenError(
             "Invalid file type. Allowed: PDF, Word, Excel, PowerPoint, Images (PNG, JPG)",

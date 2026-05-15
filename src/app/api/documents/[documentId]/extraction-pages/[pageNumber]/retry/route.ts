@@ -5,7 +5,8 @@ import { z } from "zod";
 
 import { handleApiError } from "@/lib/api-error";
 import { requireAuth } from "@/lib/auth";
-import { encryptText, safeDecrypt } from "@/lib/encryption";
+import { encryptText, safeDecrypt, safeDecryptJsonField } from "@/lib/encryption";
+import { encryptExtractionPagePayload } from "@/services/documents/extraction-runs";
 import { prisma } from "@/lib/prisma";
 import {
   buildDocumentPageArtifact,
@@ -76,8 +77,11 @@ export async function POST(_request: Request, context: RouteParams) {
     if (document.mimeType !== "application/pdf") {
       return NextResponse.json({ error: "Only PDF documents can be retried page by page" }, { status: 400 });
     }
-    if (!document.storageUrl) {
-      return NextResponse.json({ error: "Document has no storage URL" }, { status: 400 });
+    // The schema allows `storagePath` without `storageUrl` (local dev /
+    // legacy rows). Mirror download/delete which accept either coordinate.
+    const storageTarget = document.storageUrl ?? document.storagePath;
+    if (!storageTarget) {
+      return NextResponse.json({ error: "Document has no storage reference" }, { status: 400 });
     }
 
     const latestRun = document.extractionRuns[0] ?? null;
@@ -151,7 +155,7 @@ export async function POST(_request: Request, context: RouteParams) {
     chargedCredits = 2;
 
     const existingCorpus = document.extractedText ? safeDecrypt(document.extractedText) : "";
-    const buffer = await downloadFile(document.storageUrl);
+    const buffer = await downloadFile(storageTarget);
     const retryResult = await selectiveOCR(buffer, [pageNumber - 1], undefined, {
       maxPages: 1,
       mode: "supreme",
@@ -160,6 +164,10 @@ export async function POST(_request: Request, context: RouteParams) {
     const retryPage = retryResult.pageResults.find((result) => result.pageNumber === pageNumber);
 
     if (!retryResult.success || !retryPage || retryPage.text.trim().length === 0) {
+      // Encrypt the textPreview just like the happy path so the column stays
+      // homogeneous (error messages may not be sensitive but they may quote
+      // the OCR response — easier to encrypt unconditionally than audit).
+      const failedTextPreview = retryResult.error ?? "Targeted supreme OCR returned no text";
       await prisma.documentExtractionPage.update({
         where: { runId_pageNumber: { runId: latestRun.id, pageNumber } },
         data: {
@@ -171,8 +179,8 @@ export async function POST(_request: Request, context: RouteParams) {
           confidence: "low",
           requiresOCR: true,
           ocrProcessed: false,
-          errorMessage: retryResult.error ?? "Targeted supreme OCR returned no text",
-          textPreview: retryResult.error ?? "Targeted supreme OCR returned no text",
+          errorMessage: failedTextPreview,
+          textPreview: encryptText(failedTextPreview),
         },
       });
       await refreshRunExtractionStats(latestRun.id, existingCorpus);
@@ -181,8 +189,61 @@ export async function POST(_request: Request, context: RouteParams) {
         data: { processingStatus: "COMPLETED" },
       });
 
+      // Refund the deducted credits: the user paid for a supreme OCR pass that
+      // returned nothing usable. Idempotency key ties the refund to this exact
+      // retry request so a re-invocation cannot double-refund. We only report
+      // refundedCredits if the credits service actually confirmed the refund —
+      // a `{ success: false }` return or a throw must surface as
+      // `refundedCredits: 0` + `refundFailed: true` so the client does not
+      // claim something to the user that did not happen.
+      let refundedCredits = 0;
+      let refundFailed = false;
+      if (refundContext && chargedCredits > 0) {
+        const refundAttempt = chargedCredits;
+        try {
+          const refund = await refundCreditAmount(
+            refundContext.userId,
+            "EXTRACTION_SUPREME_PAGE",
+            refundAttempt,
+            {
+              dealId: refundContext.dealId,
+              documentId: refundContext.documentId,
+              pageNumber: refundContext.pageNumber,
+              idempotencyKey: `extraction:refund:supreme-page:${refundContext.requestId}`,
+              description: `Refund: supreme OCR retry returned no usable text for ${refundContext.documentId} page ${refundContext.pageNumber}`,
+            }
+          );
+          if (refund?.success) {
+            refundedCredits = refundAttempt;
+            chargedCredits = 0;
+          } else {
+            refundFailed = true;
+            console.error("[retry] refund returned non-success", {
+              userId: refundContext.userId,
+              documentId: refundContext.documentId,
+              pageNumber: refundContext.pageNumber,
+              amount: refundAttempt,
+              error: refund?.error,
+            });
+          }
+        } catch (refundError) {
+          refundFailed = true;
+          console.error("[retry] refund threw", {
+            userId: refundContext.userId,
+            documentId: refundContext.documentId,
+            pageNumber: refundContext.pageNumber,
+            amount: refundAttempt,
+            error: refundError instanceof Error ? refundError.message : String(refundError),
+          });
+        }
+      }
+
       return NextResponse.json(
-        { error: retryResult.error ?? `Page ${pageNumber} retry did not extract usable text` },
+        {
+          error: retryResult.error ?? `Page ${pageNumber} retry did not extract usable text`,
+          refundedCredits,
+          refundFailed,
+        },
         { status: 422 }
       );
     }
@@ -250,6 +311,11 @@ export async function POST(_request: Request, context: RouteParams) {
       visualRiskReasons: ["targeted_page_retry", `${retryPage.mode ?? "supreme"}_ocr`],
     });
 
+    const encryptedRetryPayload = encryptExtractionPagePayload({
+      artifact: JSON.parse(JSON.stringify(pageArtifact)) as Prisma.InputJsonValue,
+      textPreview: buildPreview(retryPage.text),
+    });
+
     await prisma.$transaction([
       prisma.documentExtractionPage.update({
         where: { runId_pageNumber: { runId: latestRun.id, pageNumber } },
@@ -269,10 +335,10 @@ export async function POST(_request: Request, context: RouteParams) {
           ocrProcessed: true,
           contentHash: hashExtractedCorpus(retryPage.text),
           artifactVersion: pageArtifact.version,
-          artifact: JSON.parse(JSON.stringify(pageArtifact)) as Prisma.InputJsonValue,
+          artifact: encryptedRetryPayload.artifact,
           pageImageHash: retryPage.pageImageHash ?? null,
           errorMessage: status === "NEEDS_REVIEW" ? "Targeted supreme OCR completed but still needs review" : null,
-          textPreview: buildPreview(retryPage.text),
+          textPreview: encryptedRetryPayload.textPreview,
         },
       }),
       prisma.documentExtractionRun.update({
@@ -318,6 +384,18 @@ export async function POST(_request: Request, context: RouteParams) {
 
     const refreshedRun = await refreshRunExtractionStats(latestRun.id, updatedCorpus);
 
+    // If the retry resolved every blocking page, flip `requiresOCR` back to
+    // false so the UI no longer shows "OCR recommandé" / "Review requis" for a
+    // document that is now fully extracted. Historical bug: the transaction
+    // above unconditionally set `requiresOCR: true` (meaning "OCR was used"),
+    // which the UI mis-read as "OCR still required".
+    if (refreshedRun?.readyForAnalysis) {
+      await prisma.document.update({
+        where: { id: documentId },
+        data: { requiresOCR: false },
+      });
+    }
+
     return NextResponse.json({
       data: {
         pageNumber,
@@ -327,18 +405,43 @@ export async function POST(_request: Request, context: RouteParams) {
         qualityScore,
         runStatus: refreshedRun?.status ?? latestRun.status,
         readyForAnalysis: refreshedRun?.readyForAnalysis ?? latestRun.readyForAnalysis,
+        requiresOCR: refreshedRun?.readyForAnalysis ? false : true,
         creditsCharged: 2,
       },
     });
   } catch (error) {
     if (refundContext && chargedCredits > 0) {
-      await refundCreditAmount(refundContext.userId, "EXTRACTION_SUPREME_PAGE", chargedCredits, {
-        dealId: refundContext.dealId,
-        documentId: refundContext.documentId,
-        pageNumber: refundContext.pageNumber,
-        idempotencyKey: `extraction:refund:supreme-page:${refundContext.requestId}`,
-        description: `Refund failed supreme OCR retry for ${refundContext.documentId} page ${refundContext.pageNumber}`,
-      }).catch(() => undefined);
+      try {
+        const refund = await refundCreditAmount(
+          refundContext.userId,
+          "EXTRACTION_SUPREME_PAGE",
+          chargedCredits,
+          {
+            dealId: refundContext.dealId,
+            documentId: refundContext.documentId,
+            pageNumber: refundContext.pageNumber,
+            idempotencyKey: `extraction:refund:supreme-page:${refundContext.requestId}`,
+            description: `Refund failed supreme OCR retry for ${refundContext.documentId} page ${refundContext.pageNumber}`,
+          }
+        );
+        if (!refund?.success) {
+          console.error("[retry] catch-block refund returned non-success — user remains debited", {
+            userId: refundContext.userId,
+            documentId: refundContext.documentId,
+            pageNumber: refundContext.pageNumber,
+            amount: chargedCredits,
+            error: refund?.error,
+          });
+        }
+      } catch (refundError) {
+        console.error("[retry] catch-block refund threw — user remains debited", {
+          userId: refundContext.userId,
+          documentId: refundContext.documentId,
+          pageNumber: refundContext.pageNumber,
+          amount: chargedCredits,
+          error: refundError instanceof Error ? refundError.message : String(refundError),
+        });
+      }
     }
     if (claimedDocumentId && claimedOriginalStatus) {
       await prisma.document.updateMany({
@@ -405,7 +508,10 @@ function canRetryPage(
 ): boolean {
   if (page.status === "FAILED" || page.status === "NEEDS_REVIEW") return true;
 
-  const artifact = isPlainObject(page.artifact) ? page.artifact : {};
+  // Phase 3: artifact is stored encrypted. safeDecryptJsonField is a no-op
+  // on legacy plaintext rows.
+  const decryptedArtifact = safeDecryptJsonField(page.artifact);
+  const artifact = isPlainObject(decryptedArtifact) ? decryptedArtifact : {};
   const tables = Array.isArray(artifact.tables) ? artifact.tables.length : 0;
   const charts = Array.isArray(artifact.charts) ? artifact.charts.length : 0;
   const numericClaims = Array.isArray(artifact.numericClaims) ? artifact.numericClaims.length : 0;

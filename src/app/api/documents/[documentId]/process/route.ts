@@ -2,38 +2,45 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { Prisma, type ProcessingStatus } from "@prisma/client";
+import { type ProcessingStatus } from "@prisma/client";
 import { requireAuth } from "@/lib/auth";
-import { smartExtract, type ExtractionWarning } from "@/services/pdf";
-import { downloadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
-import { encryptText } from "@/lib/encryption";
 import {
-  completeDocumentExtractionRun,
-  getBlockingPageNumbersFromManifest,
-  markExtractionRunProgress,
-  recordExtractionPageProgress,
-  summarizeManifestForLegacyMetrics,
   startDocumentExtractionRun,
+  terminalizeExtractionRunAsFailed,
 } from "@/services/documents/extraction-runs";
 import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
+import { inngest } from "@/lib/inngest";
 
 // CUID validation schema
 const cuidSchema = z.string().cuid();
 
-export const maxDuration = 300;
+// Phase 4 (durable extraction): this route no longer runs smartExtract
+// inline. It claims PROCESSING, deducts credits, creates an extraction
+// run, and enqueues an Inngest event. The `document-extraction` function
+// owns the actual extraction work, retries, and refund-on-failure.
+//
+// We keep `maxDuration` modest because the HTTP work is now bounded —
+// only DB writes + one Inngest send. The decorative 300s of the old
+// inline path is gone.
+export const maxDuration = 30;
 
 interface RouteParams {
   params: Promise<{ documentId: string }>;
 }
 
 // POST /api/documents/[documentId]/process - Reprocess a document
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export async function POST(_request: NextRequest, { params }: RouteParams) {
   let claimedDocumentId: string | null = null;
   let claimedOriginalStatus: ProcessingStatus | null = null;
   let chargedCredits = 0;
   let refundContext: { userId: string; dealId: string; documentId: string; requestId: string } | null = null;
+  // Phase 4.1 fix-up (P1.3): if `startDocumentExtractionRun` succeeds but
+  // `inngest.send` then throws, the run row would be left orphaned in
+  // PROCESSING with no consumer. Track its id so the catch can terminalize
+  // it — otherwise readiness/polling/audit see a run stuck forever.
+  let orphanRunId: string | null = null;
   try {
     const user = await requireAuth();
     const { documentId } = await params;
@@ -80,7 +87,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Only process PDFs
+    // Only process PDFs (durable pipeline supports PDF for now; images and
+    // Office docs follow in Phase 4.2/4.3).
     if (document.mimeType !== "application/pdf") {
       return NextResponse.json(
         { error: "Only PDF documents can be processed" },
@@ -88,13 +96,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    if (!document.storageUrl) {
+    // The schema allows `storagePath` without `storageUrl` (local dev /
+    // legacy rows). Mirror download/delete which accept either coordinate.
+    const storageTarget = document.storageUrl ?? document.storagePath;
+    if (!storageTarget) {
       return NextResponse.json(
-        { error: "Document has no storage URL" },
+        { error: "Document has no storage reference" },
         { status: 400 }
       );
     }
 
+    // Atomic PROCESSING claim (race-condition guard for concurrent reprocess).
     const processingClaim = await prisma.document.updateMany({
       where: {
         id: documentId,
@@ -117,9 +129,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     claimedDocumentId = documentId;
     claimedOriginalStatus = document.processingStatus;
 
+    const reprocessRequestId = randomUUID();
     const estimatedCredits = extractEstimatedCredits(document.extractionRuns[0]?.summaryMetrics);
     if (estimatedCredits > 0) {
-      const reprocessRequestId = randomUUID();
       refundContext = {
         userId: user.id,
         dealId: document.dealId,
@@ -144,151 +156,96 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
       chargedCredits = estimatedCredits;
     }
+
     const progressRun = await startDocumentExtractionRun({
       documentId,
       documentVersion: document.version,
       contentHash: document.contentHash,
       extractionVersion: "strict-pdf-v1",
     });
+    orphanRunId = progressRun.id;
 
-    // Extract text from the stored PDF. downloadFile() transparently decrypts
-    // private document blobs before pdfjs reads the buffer.
-    const buffer = await downloadFile(document.storageUrl);
-    const extraction = await smartExtract(buffer, {
-      qualityThreshold: 40,
-      maxOCRPages: Number.POSITIVE_INFINITY,
-      autoOCR: true,
-      strict: true,
-      onProgress: async (event) => {
-        if (event.phase === "native_extracted") {
-          await markExtractionRunProgress({
-            runId: progressRun.id,
-            pageCount: event.pageCount,
-            pagesProcessed: 0,
-            phase: event.phase,
-            message: event.message,
-          });
-          return;
-        }
-        if (event.phase === "page_processed") {
-          await recordExtractionPageProgress({
-            runId: progressRun.id,
-            page: event.page,
-          });
-          return;
-        }
-        await markExtractionRunProgress({
-          runId: progressRun.id,
-          phase: event.phase,
-          message: event.message,
-          pageCount: "pageCount" in event ? event.pageCount : undefined,
-          pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
-        });
+    // Enqueue the durable extraction. The event id is keyed by the
+    // extractionRunId so Inngest dedupes a retry of THIS HTTP request to a
+    // single function run — no double-charge, no double-extraction.
+    await inngest.send({
+      id: `document-extraction:${progressRun.id}`,
+      name: "document/extraction.run",
+      data: {
+        documentId,
+        extractionRunId: progressRun.id,
+        userId: user.id,
+        dealId: document.dealId,
+        reason: "reprocess",
+        creditAction: "EXTRACTION_HIGH_PAGE",
+        chargedCredits,
+        dispatchRefundKey: `extraction:refund:reprocess:${reprocessRequestId}`,
       },
     });
-    const extractionWarnings: ExtractionWarning[] = extraction.manifest.hardBlockers.map((blocker) => ({
-      code: blocker.code,
-      severity: "critical",
-      message: blocker.message,
-      suggestion: blocker.pageNumber
-        ? `Review page ${blocker.pageNumber}, rerun OCR, upload a corrected file, or approve an explicit override.`
-        : "Rerun extraction, upload a corrected file, or approve an explicit override.",
-    }));
-    const extractionRun = await completeDocumentExtractionRun({
-      runId: progressRun.id,
-      text: extraction.text,
-      qualityScore: extraction.quality,
-      manifest: extraction.manifest,
-      warnings: extractionWarnings.length > 0 ? JSON.parse(JSON.stringify(extractionWarnings)) : [],
-    });
+    // The event landed — the Inngest function now owns the run's lifecycle
+    // (it will terminalize it on success or failure). It is no longer an
+    // orphan from this route's perspective.
+    orphanRunId = null;
 
-    if (extraction.text) {
-      const extractionQuality = extraction.quality;
-      const requiresOCR =
-        extraction.manifest.status === "failed" ||
-        getBlockingPageNumbersFromManifest(extraction.manifest).length > 0;
-
-      const updated = await prisma.document.update({
-        where: { id: documentId },
+    return NextResponse.json(
+      {
         data: {
-          extractedText: extraction.text ? encryptText(extraction.text) : null,
-          processingStatus: "COMPLETED",
-          extractionQuality,
-          extractionMetrics: {
-            quality: extractionQuality,
-            method: extraction.method,
-            pagesOCRd: extraction.pagesOCRd,
-            ocrCost: extraction.estimatedCost,
-            latestExtractionRunId: extractionRun.id,
-            ...summarizeManifestForLegacyMetrics(extraction.manifest),
-          },
-          extractionWarnings: extractionWarnings.length > 0 ? JSON.parse(JSON.stringify(extractionWarnings)) : Prisma.DbNull,
-          requiresOCR,
-          ocrProcessed: extraction.method === "ocr" || extraction.method === "hybrid",
+          documentId,
+          extractionRunId: progressRun.id,
+          processingStatus: "PROCESSING",
         },
-      });
-
-      return NextResponse.json({
-        data: updated,
-        extraction: {
-          pageCount: extraction.manifest.pageCount,
-          textLength: extraction.text.length,
-          quality: extractionQuality,
-          warnings: extractionWarnings,
-          requiresOCR,
-          isUsable: extractionRun.readyForAnalysis,
-          creditEstimate: extraction.manifest.creditEstimate,
-          creditsCharged: estimatedCredits,
-          manifest: extraction.manifest,
-        },
-      });
-    } else {
-      const errorWarning: ExtractionWarning = {
-        code: "EXTRACTION_FAILED",
-        severity: "critical",
-        message: extraction.manifest.hardBlockers[0]?.message ?? "Failed to extract text from PDF",
-        suggestion: "Try re-exporting the PDF from the original source."
-      };
-
-      await prisma.document.update({
-        where: { id: documentId },
-        data: {
-          processingStatus: "FAILED",
-          extractionQuality: extraction.quality,
-          extractionMetrics: {
-            quality: extraction.quality,
-            method: extraction.method,
-            pagesOCRd: extraction.pagesOCRd,
-            ocrCost: extraction.estimatedCost,
-            latestExtractionRunId: extractionRun.id,
-            ...summarizeManifestForLegacyMetrics(extraction.manifest),
-          },
-          extractionWarnings: JSON.parse(JSON.stringify([errorWarning])),
-        },
-      });
-
-      return NextResponse.json(
-        {
-          error: extraction.manifest.hardBlockers[0]?.message ?? "Failed to extract text from PDF",
-          warnings: [errorWarning]
-        },
-        { status: 500 }
-      );
-    }
+        creditsCharged: chargedCredits,
+        message: "Extraction enqueued. Poll the document status for completion.",
+      },
+      { status: 202 }
+    );
   } catch (error) {
+    // The error happened BEFORE the Inngest event landed (or while sending
+    // it). Refund and revert PROCESSING so the user is not stuck.
     if (refundContext && chargedCredits > 0) {
-      await refundCreditAmount(refundContext.userId, "EXTRACTION_HIGH_PAGE", chargedCredits, {
-        dealId: refundContext.dealId,
-        documentId: refundContext.documentId,
-        idempotencyKey: `extraction:refund:reprocess:${refundContext.requestId}`,
-        description: `Refund failed document re-extraction for ${refundContext.documentId}`,
-      }).catch(() => undefined);
+      try {
+        const refund = await refundCreditAmount(
+          refundContext.userId,
+          "EXTRACTION_HIGH_PAGE",
+          chargedCredits,
+          {
+            dealId: refundContext.dealId,
+            documentId: refundContext.documentId,
+            idempotencyKey: `extraction:refund:reprocess:${refundContext.requestId}`,
+            description: `Refund failed pre-enqueue reprocess for ${refundContext.documentId}`,
+          }
+        );
+        if (!refund?.success) {
+          console.error("[process] catch-block refund returned non-success — user remains debited", {
+            userId: refundContext.userId,
+            documentId: refundContext.documentId,
+            amount: chargedCredits,
+            error: refund?.error,
+          });
+        }
+      } catch (refundError) {
+        console.error("[process] catch-block refund threw — user remains debited", {
+          userId: refundContext.userId,
+          documentId: refundContext.documentId,
+          amount: chargedCredits,
+          error: refundError instanceof Error ? refundError.message : String(refundError),
+        });
+      }
     }
     if (claimedDocumentId && claimedOriginalStatus) {
       await prisma.document.updateMany({
         where: { id: claimedDocumentId, processingStatus: "PROCESSING" },
         data: { processingStatus: claimedOriginalStatus },
       }).catch(() => undefined);
+    }
+    // P1.3: terminalize the orphan run. `startDocumentExtractionRun`
+    // created it PROCESSING; if we never got the Inngest event out, no
+    // consumer will ever move it to a terminal state.
+    if (orphanRunId) {
+      await terminalizeExtractionRunAsFailed(
+        orphanRunId,
+        `Pre-enqueue failure in /process: ${error instanceof Error ? error.message : String(error)}`
+      ).catch(() => undefined);
     }
     return handleApiError(error, "process document");
   }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDecipheriv, createHash } from "crypto";
+import { createDecipheriv, createHash, randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
@@ -11,19 +11,21 @@ import { computeContentHash, checkDuplicateDocument } from "@/services/document-
 import { encryptText } from "@/lib/encryption";
 import { isValidDocumentSignature } from "@/lib/file-signatures";
 import {
+  acquireDocumentLineageLock,
   buildStructuredDocumentManifest,
-  completeDocumentExtractionRun,
-  getBlockingPageNumbersFromManifest,
-  markExtractionRunProgress,
-  recordExtractionPageProgress,
+  hasUsableExtractionCorpus,
+  promoteDocumentVersion,
   recordDocumentExtractionRun,
   summarizeManifestForLegacyMetrics,
   startDocumentExtractionRun,
+  terminalizeExtractionRunAsFailed,
 } from "@/services/documents/extraction-runs";
+import { inngest } from "@/lib/inngest";
 import {
   buildProgressSnapshot,
   setDocumentExtractionProgress,
 } from "@/services/documents/extraction-progress";
+import { reuseCompletedExtractionForContentHash } from "@/services/documents/extraction-reuse";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
 import type {
@@ -88,15 +90,25 @@ type UploadFileInput = {
   size: number;
 };
 
+// UploadInput represents *metadata* about the upload, plus a deferred
+// `fetchBuffer()` that materializes the actual file bytes. For the multipart
+// path the buffer is already in memory (Next has materialized the formData)
+// and `fetchBuffer()` just unwraps it. For the client-blob path the buffer
+// lives in a temporary Vercel Blob; `fetchBuffer()` pulls and decrypts it
+// on demand. Deferring this work lets the route validate cheap things —
+// deal ownership, parent doc ownership, running analysis, MIME type, size
+// — BEFORE pulling 50 MB of (potentially unauthorized) data.
 type UploadInput = {
+  source: "multipart" | "blob";
   file: UploadFileInput;
-  buffer: Buffer;
   dealId: string | null;
   documentType: DocumentType | null;
   customType: string | null;
   comments: string | null;
   uploadProgressId: string | null;
   corpusParentDocumentId: string | null;
+  blobPathname: string | null;
+  fetchBuffer: () => Promise<Buffer>;
   cleanupSourceUpload?: () => Promise<void>;
 };
 
@@ -110,6 +122,12 @@ class UploadRequestError extends Error {
 // POST /api/documents/upload - Upload a document
 export async function POST(request: NextRequest) {
   let cleanupSourceUpload: (() => Promise<void>) | null = null;
+  // Cleanup hook for the FINAL blob (the persistent one we upload AFTER the
+  // temp blob is validated). We arm this right after `uploadFile()` succeeds
+  // and disarm it once `prisma.document.create` has committed the row. If
+  // anything between those two points throws, the catch block deletes the
+  // orphan blob so we don't leak storage we can no longer reach via the DB.
+  let cleanupFinalBlob: (() => Promise<void>) | null = null;
 
   try {
     const user = await requireAuth();
@@ -124,16 +142,24 @@ export async function POST(request: NextRequest) {
     }
 
     const uploadInput = await readUploadInput(request);
-    cleanupSourceUpload = uploadInput.cleanupSourceUpload ?? null;
+    // IMPORTANT: do NOT arm `cleanupSourceUpload` yet. Until we have proven
+    //   (a) the temp blob URL is bound to the declared pathname (done in
+    //       readBlobUploadInput → validateTemporaryBlobUrl),
+    //   (b) the declared pathname is in this deal's namespace
+    //       (`tmp/document-uploads/${dealId}/`),
+    //   (c) the caller actually owns `dealId`,
+    // we cannot delete the temp blob without risking deleting another
+    // tenant's data. Arming the closure here would turn any pre-ownership
+    // early-return into a remote delete primitive.
     const {
       file,
-      buffer,
       dealId,
       documentType,
       customType,
       comments,
       uploadProgressId,
       corpusParentDocumentId,
+      blobPathname,
     } = uploadInput;
 
     if (!file) {
@@ -141,16 +167,28 @@ export async function POST(request: NextRequest) {
     }
 
     if (!dealId) {
-      return NextResponse.json(
-        { error: "Deal ID is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Deal ID is required" }, { status: 400 });
     }
 
     // Validate CUID format
     const cuidResult = cuidSchema.safeParse(dealId);
     if (!cuidResult.success) {
       return NextResponse.json({ error: "Invalid deal ID format" }, { status: 400 });
+    }
+
+    // Tenant isolation: for the client-blob path, the temporary Blob lives
+    // at `tmp/document-uploads/${dealId}/...`. We require the pathname's
+    // dealId segment to match the dealId in the request body so a caller
+    // cannot point at a temp blob from a different deal (or a malformed
+    // pathname) and have us happily decrypt — or, worse, delete — it.
+    if (uploadInput.source === "blob") {
+      const expectedPrefix = `tmp/document-uploads/${dealId}/`;
+      if (!blobPathname || !blobPathname.startsWith(expectedPrefix)) {
+        return NextResponse.json(
+          { error: "Blob pathname does not match the target deal" },
+          { status: 400 }
+        );
+      }
     }
 
     // Verify deal ownership
@@ -164,6 +202,22 @@ export async function POST(request: NextRequest) {
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
+
+    // ===== Cleanup armed only AFTER ownership is proven. =====
+    // From this point on:
+    //   - the caller owns `dealId` (deal.findFirst hit with userId filter)
+    //   - the temp blob pathname is inside `tmp/document-uploads/${dealId}/`
+    //   - the temp blob URL is bound to that pathname (URL↔pathname check
+    //     in validateTemporaryBlobUrl)
+    // → deleting that blob in a cleanup is safe: it cannot belong to
+    //   another tenant.
+    cleanupSourceUpload = uploadInput.cleanupSourceUpload ?? null;
+
+    const bailWithCleanup = async (status: number, payload: Record<string, unknown>) => {
+      await cleanupUploadSource(cleanupSourceUpload);
+      cleanupSourceUpload = null;
+      return NextResponse.json(payload, { status });
+    };
 
     let corpusParentDocument: {
       id: string;
@@ -182,7 +236,7 @@ export async function POST(request: NextRequest) {
     if (corpusParentDocumentId) {
       const parentIdResult = cuidSchema.safeParse(corpusParentDocumentId);
       if (!parentIdResult.success) {
-        return NextResponse.json({ error: "Invalid corpus parent document ID format" }, { status: 400 });
+        return bailWithCleanup(400, { error: "Invalid corpus parent document ID format" });
       }
 
       corpusParentDocument = await prisma.document.findFirst({
@@ -209,54 +263,42 @@ export async function POST(request: NextRequest) {
       });
 
       if (!corpusParentDocument) {
-        return NextResponse.json(
-          { error: "Parent email/note not found on this deal" },
-          { status: 404 }
-        );
+        return bailWithCleanup(404, { error: "Parent email/note not found on this deal" });
       }
     }
 
     const runningAnalysis = await getRunningAnalysisForDeal(dealId);
 
     if (runningAnalysis) {
-      return NextResponse.json(
-        {
-          error: isPendingThesisReview(runningAnalysis)
-            ? "Une revue de these est en attente. Finalisez-la avant d'uploader un nouveau document sur ce deal."
-            : "Une analyse est deja en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
-          pendingAnalysisId: runningAnalysis.id,
-          pendingThesisId: runningAnalysis.thesisId,
-        },
-        { status: 409 }
-      );
+      return bailWithCleanup(409, {
+        error: isPendingThesisReview(runningAnalysis)
+          ? "Une revue de these est en attente. Finalisez-la avant d'uploader un nouveau document sur ce deal."
+          : "Une analyse est deja en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
+        pendingAnalysisId: runningAnalysis.id,
+        pendingThesisId: runningAnalysis.thesisId,
+      });
     }
 
     if (!ALLOWED_MIME_TYPES.includes(file.type)) {
-      await cleanupUploadSource(cleanupSourceUpload);
-      cleanupSourceUpload = null;
-      return NextResponse.json(
-        { error: "Invalid file type. Allowed: PDF, Word, Excel, PowerPoint, Images (PNG, JPG)" },
-        { status: 400 }
-      );
+      return bailWithCleanup(400, {
+        error: "Invalid file type. Allowed: PDF, Word, Excel, PowerPoint, Images (PNG, JPG)",
+      });
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      await cleanupUploadSource(cleanupSourceUpload);
-      cleanupSourceUpload = null;
-      return NextResponse.json(
-        { error: "File too large. Maximum size is 50MB" },
-        { status: 413 }
-      );
+      return bailWithCleanup(413, { error: "File too large. Maximum size is 50MB" });
     }
+
+    // Now (and only now) materialize the actual file bytes. For the
+    // multipart path this just unwraps the buffer already in memory; for
+    // the client-blob path this fetches and decrypts the temp Blob.
+    const buffer = await uploadInput.fetchBuffer();
 
     const isValidSignature = await isValidDocumentSignature(buffer, file.type);
     if (!isValidSignature) {
-      await cleanupUploadSource(cleanupSourceUpload);
-      cleanupSourceUpload = null;
-      return NextResponse.json(
-        { error: "Invalid file signature. The uploaded file does not match its declared type." },
-        { status: 400 }
-      );
+      return bailWithCleanup(400, {
+        error: "Invalid file signature. The uploaded file does not match its declared type.",
+      });
     }
 
     // F63: Compute content hash for dedup + cache invalidation
@@ -265,86 +307,112 @@ export async function POST(request: NextRequest) {
     // F63: Check for duplicate content
     const duplicateCheck = await checkDuplicateDocument(contentHash, dealId, user.id);
     if (duplicateCheck.isDuplicate && duplicateCheck.sameDeal) {
-      await cleanupUploadSource(cleanupSourceUpload);
-      cleanupSourceUpload = null;
-      return NextResponse.json(
-        {
-          error: "Document identique deja uploade",
-          existingDocument: duplicateCheck.existingDocument,
-        },
-        { status: 409 }
-      );
-    }
-
-    // F62: Check if this is a new version of an existing document (same name, same deal)
-    const existingDoc = await prisma.document.findFirst({
-      where: {
-        dealId,
-        name: file.name,
-        isLatest: true,
-        corpusParentDocumentId: corpusParentDocument?.id ?? null,
-      },
-      select: { id: true, version: true },
-    });
-
-    // Sanitize filename: remove path traversal and special chars
-    const sanitizedName = file.name
-      .replace(/[/\\]/g, "_")
-      .replace(/\.\./g, "_")
-      .replace(/[^a-zA-Z0-9._-]/g, "_");
-
-    // Upload to storage (Vercel Blob in prod, local in dev)
-    const uploaded = await uploadFile(`deals/${dealId}/${sanitizedName}`, buffer, {
-      access: "private",
-    });
-    await cleanupUploadSource(cleanupSourceUpload);
-    cleanupSourceUpload = null;
-
-    // F62: If re-uploading same filename, mark old as superseded
-    if (existingDoc) {
-      await prisma.document.update({
-        where: { id: existingDoc.id },
-        data: { isLatest: false, supersededAt: new Date() },
+      return bailWithCleanup(409, {
+        error: "Document identique deja uploade",
+        existingDocument: duplicateCheck.existingDocument,
       });
     }
 
-    // Create document record with PENDING status
-    const document = await prisma.document.create({
-      data: {
-        dealId,
-        name: file.name,
-        type: documentType ?? "OTHER",
-        customType: customType ?? undefined,
-        comments: comments ?? undefined,
-        storagePath: uploaded.pathname,
-        storageUrl: uploaded.url,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        processingStatus: "PENDING",
-        contentHash,
-        sourceKind: "FILE",
-        corpusParentDocumentId: corpusParentDocument?.id ?? undefined,
-        sourceDate: corpusParentDocument?.sourceDate ?? undefined,
-        receivedAt: corpusParentDocument?.receivedAt ?? undefined,
-        sourceAuthor: corpusParentDocument?.sourceAuthor ?? undefined,
-        sourceSubject: corpusParentDocument?.sourceSubject ?? undefined,
-        sourceMetadata: corpusParentDocument
-          ? {
-              attachedToDocumentId: corpusParentDocument.id,
-              attachedToDocumentName: corpusParentDocument.name,
-              attachedToSourceKind: corpusParentDocument.sourceKind,
-            }
-          : undefined,
-        corpusRole: corpusParentDocument?.corpusRole ?? undefined,
-        linkedQuestionSource: corpusParentDocument?.linkedQuestionSource ?? undefined,
-        linkedQuestionText: corpusParentDocument?.linkedQuestionText ?? undefined,
-        linkedRedFlagId: corpusParentDocument?.linkedRedFlagId ?? undefined,
-        // F62: Version tracking
-        version: existingDoc ? existingDoc.version + 1 : 1,
-        parentDocumentId: existingDoc?.id ?? undefined,
-        isLatest: true,
-      },
+    // Opaque random storage key. We deliberately drop the user-supplied
+    // filename from the storage path: the legacy `deals/${dealId}/${name}`
+    // scheme leaked filenames into the (admin/CDN-visible) path and made
+    // sibling documents enumerable for anyone who learned a deal id. The
+    // original filename is preserved on `Document.name` (DB-only). We keep
+    // the dealId prefix for ops legibility (Vercel dashboard, log greps)
+    // and append a short extension hint so blob viewers and signed-URL
+    // consumers still get a content-type sniff right.
+    const extensionMatch = /(\.[A-Za-z0-9]{1,8})$/.exec(file.name);
+    const safeExtension = extensionMatch ? extensionMatch[1].toLowerCase() : "";
+    const storageKey = `deals/${dealId}/${randomUUID()}${safeExtension}`;
+
+    // Upload to storage (Vercel Blob in prod, local in dev)
+    const uploaded = await uploadFile(storageKey, buffer, {
+      access: "private",
     });
+    // Arm the final-blob cleanup BEFORE doing any further DB work. If the
+    // version bump update or the create() throws, the catch block will
+    // delete this blob so it doesn't sit in storage with no DB row pointing
+    // at it. We disarm right after the document row commits.
+    cleanupFinalBlob = async () => {
+      await deleteFile(uploaded.url);
+    };
+    await cleanupUploadSource(cleanupSourceUpload);
+    cleanupSourceUpload = null;
+
+    // F62 + Phase 4.3: version assignment + row creation run inside a
+    // per-lineage advisory lock. A "lineage" is `(dealId, name,
+    // corpusParentDocumentId)`. The lock serializes this against concurrent
+    // uploads of the same filename AND against concurrent promotions — so
+    // two simultaneous uploads can't both compute the same `version` or both
+    // land `isLatest: true` (Codex Phase 4.3 P1 / its concurrency note).
+    //
+    // - A re-uploaded document is created as a CANDIDATE (`isLatest: false`).
+    //   The prior version is NOT demoted here — it stays the lineage's
+    //   `isLatest` until the new version's extraction reaches COMPLETED, when
+    //   `promoteDocumentVersionTx` flips the slot. A failed new version
+    //   leaves the old (working) document intact.
+    // - A brand-new document (no prior version in the lineage) is created
+    //   `isLatest: true` — there is nothing to preserve.
+    // - `version` is `MAX(version) + 1` over the WHOLE lineage (not just the
+    //   current `isLatest` row), so two in-flight candidates get distinct
+    //   version numbers.
+    const documentLineage = {
+      dealId,
+      name: file.name,
+      corpusParentDocumentId: corpusParentDocument?.id ?? null,
+    };
+    const { document, priorVersion } = await prisma.$transaction(async (tx) => {
+      await acquireDocumentLineageLock(tx, documentLineage);
+      const priorVersionInLineage = await tx.document.findFirst({
+        where: documentLineage,
+        orderBy: { version: "desc" },
+        select: { id: true, version: true },
+      });
+      const created = await tx.document.create({
+        data: {
+          dealId,
+          name: file.name,
+          type: documentType ?? "OTHER",
+          customType: customType ?? undefined,
+          comments: comments ?? undefined,
+          storagePath: uploaded.pathname,
+          storageUrl: uploaded.url,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          processingStatus: "PENDING",
+          contentHash,
+          sourceKind: "FILE",
+          corpusParentDocumentId: corpusParentDocument?.id ?? undefined,
+          sourceDate: corpusParentDocument?.sourceDate ?? undefined,
+          receivedAt: corpusParentDocument?.receivedAt ?? undefined,
+          sourceAuthor: corpusParentDocument?.sourceAuthor ?? undefined,
+          sourceSubject: corpusParentDocument?.sourceSubject ?? undefined,
+          sourceMetadata: corpusParentDocument
+            ? {
+                attachedToDocumentId: corpusParentDocument.id,
+                attachedToDocumentName: corpusParentDocument.name,
+                attachedToSourceKind: corpusParentDocument.sourceKind,
+              }
+            : undefined,
+          corpusRole: corpusParentDocument?.corpusRole ?? undefined,
+          linkedQuestionSource: corpusParentDocument?.linkedQuestionSource ?? undefined,
+          linkedQuestionText: corpusParentDocument?.linkedQuestionText ?? undefined,
+          linkedRedFlagId: corpusParentDocument?.linkedRedFlagId ?? undefined,
+          // F62: Version tracking
+          version: priorVersionInLineage ? priorVersionInLineage.version + 1 : 1,
+          parentDocumentId: priorVersionInLineage?.id ?? undefined,
+          // Phase 4.3: new version = candidate (promoted after COMPLETED).
+          isLatest: priorVersionInLineage ? false : true,
+        },
+      });
+      return { document: created, priorVersion: priorVersionInLineage };
+    });
+    // Document row committed — the blob is now referenced by storagePath /
+    // storageUrl and any failure downstream is recoverable. Disarm the
+    // final-blob cleanup so the catch block does not delete a blob we now
+    // need (extraction will read it back via downloadFile).
+    cleanupFinalBlob = null;
+
     const publishUploadProgress = async (params: {
       phase: "queued" | "started" | "native_extracted" | "page_processed" | "completed" | "failed";
       pageCount?: number;
@@ -376,15 +444,12 @@ export async function POST(request: NextRequest) {
     let pagesOCRd = 0;
     let ocrCost = 0;
     let extractionCreditEstimate: ExtractionCreditEstimate | null = null;
-    const reusedExtraction = file.type === "application/pdf" &&
-      duplicateCheck.isDuplicate &&
-      !duplicateCheck.sameDeal &&
-      duplicateCheck.existingDocument
-      ? await reuseCompletedExtractionFromDuplicate({
-          sourceDocumentId: duplicateCheck.existingDocument.id,
+    const reusedExtraction = file.type === "application/pdf"
+      ? await reuseCompletedExtractionForContentHash({
           targetDocumentId: document.id,
           targetDocumentVersion: document.version,
           contentHash,
+          userId: user.id,
         })
       : null;
 
@@ -400,7 +465,7 @@ export async function POST(request: NextRequest) {
         phase: "completed",
         pageCount: reusedExtraction.pageCount,
         pagesProcessed: reusedExtraction.pagesProcessed,
-        message: "Extraction reused from identical document",
+        message: "Extraction reused from exact content cache",
       });
     }
 
@@ -479,11 +544,16 @@ export async function POST(request: NextRequest) {
           }],
         });
         // P0.4: credits deja preleves avant OCR. Pas de charge supplementaire ici.
+        // Shared corpus-usability rule — keeps the document status in sync
+        // with the run status from recordDocumentExtractionRun (FAILED on an
+        // empty/whitespace OCR result). The image blob itself stays
+        // available to visual agents regardless of processingStatus.
+        const imageCorpusUsable = hasUsableExtractionCorpus(ocrResult.text);
         await prisma.document.update({
           where: { id: document.id },
           data: {
-            extractedText: ocrResult.text ? encryptText(ocrResult.text) : null,
-            processingStatus: "COMPLETED",
+            extractedText: imageCorpusUsable ? encryptText(ocrResult.text) : null,
+            processingStatus: imageCorpusUsable ? "COMPLETED" : "FAILED",
             extractionQuality,
             extractionMetrics: {
               method: "image_ocr",
@@ -546,9 +616,14 @@ export async function POST(request: NextRequest) {
     }
 
     let pdfPreChargedCredits = 0;
+    // Phase 4.2: the PDF path no longer extracts inline — it enqueues a
+    // durable `document/extraction.run` Inngest job. `pdfExtractionEnqueued`
+    // tells the response builder to report PROCESSING (extraction pending)
+    // instead of an inline extraction result.
+    let pdfExtractionEnqueued = false;
 
     if (file.type === "application/pdf" && !reusedExtraction) {
-      const { estimatePdfExtractionCost, smartExtract } = await import("@/services/pdf");
+      const { estimatePdfExtractionCost } = await import("@/services/pdf");
       // P0.4: pre-check credits avant de lancer smartExtract (qui peut engager
       // du compute OpenRouter). Estimation conservatrice worst-case: 1 credit/page
       // high_fidelity. Apres extraction reelle, on rembourse la difference si le
@@ -591,268 +666,85 @@ export async function POST(request: NextRequest) {
         pdfPreChargedCredits = preCharge;
       }
 
+      // Phase 4.2: PDF extraction is now DURABLE — claim PROCESSING, persist
+      // the ExtractionRun, and HAND OFF to the `document-extraction` Inngest
+      // function. No inline smartExtract: the HTTP route stays bounded and a
+      // long OCR job can no longer be truncated by Vercel's maxDuration. The
+      // decorative soft-timeout guard is gone — Inngest owns the job's
+      // durability (retries, step checkpointing).
       await prisma.document.update({
         where: { id: document.id },
         data: { processingStatus: "PROCESSING" },
       });
 
+      const pdfExtractionRequestId = randomUUID();
+      const pdfProgressRun = await startDocumentExtractionRun({
+        documentId: document.id,
+        documentVersion: document.version,
+        contentHash,
+        extractionVersion: "strict-pdf-v1",
+      });
+
       try {
-        const progressRun = await startDocumentExtractionRun({
-          documentId: document.id,
-          documentVersion: document.version,
-          contentHash,
-          extractionVersion: "strict-pdf-v1",
-        });
-        let uploadPageCount = 0;
-        const processedUploadPages = new Set<number>();
-        const extractionTimeoutGuard = setTimeout(() => {
-          const pageCount = uploadPageCount || undefined;
-          const pagesProcessed = processedUploadPages.size || undefined;
-          void Promise.all([
-            prisma.document.updateMany({
-              where: { id: document.id, processingStatus: "PROCESSING" },
-              data: {
-                processingStatus: "FAILED",
-                extractionWarnings: [{
-                  code: "EXTRACTION_TIMEOUT",
-                  severity: "critical",
-                  message: "PDF extraction exceeded the server execution window",
-                  suggestion: "Relancez l'extraction ou utilisez un document plus court pendant la stabilisation du pipeline.",
-                }] as Prisma.InputJsonValue,
-              },
-            }),
-            markExtractionRunProgress({
-              runId: progressRun.id,
-              phase: "failed",
-              message: "PDF extraction exceeded the server execution window",
-              pageCount,
-              pagesProcessed,
-            }),
-            publishUploadProgress({
-              phase: "failed",
-              message: "PDF extraction exceeded the server execution window",
-              pageCount,
-              pagesProcessed,
-            }),
-          ]).catch((guardError) => {
-            console.warn("[upload] Failed to mark timed-out extraction:", guardError);
-          });
-        }, Number(process.env.DOCUMENT_EXTRACTION_SOFT_TIMEOUT_MS ?? 270_000));
-        let result: Awaited<ReturnType<typeof smartExtract>>;
-        try {
-          // Smart extraction: regular + auto OCR for low-quality pages
-          result = await smartExtract(buffer, {
-            qualityThreshold: 40,
-            maxOCRPages: Number.POSITIVE_INFINITY,
-            autoOCR: true,
-            strict: true,
-            onProgress: async (event) => {
-              if (event.phase === "native_extracted") {
-                uploadPageCount = event.pageCount;
-                await publishUploadProgress({
-                  phase: event.phase,
-                  pageCount: event.pageCount,
-                  pagesProcessed: 0,
-                  message: event.message,
-                });
-                await markExtractionRunProgress({
-                  runId: progressRun.id,
-                  pageCount: event.pageCount,
-                  pagesProcessed: 0,
-                  phase: event.phase,
-                  message: event.message,
-                });
-                return;
-              }
-              if (event.phase === "page_processed") {
-                processedUploadPages.add(event.page.pageNumber);
-                const pagesProcessed = processedUploadPages.size;
-                const pageCount = Math.max(uploadPageCount, event.page.pageNumber);
-                await recordExtractionPageProgress({
-                  runId: progressRun.id,
-                  page: event.page,
-                });
-                await publishUploadProgress({
-                  phase: event.phase,
-                  pageCount,
-                  pagesProcessed,
-                  message: event.message,
-                });
-                return;
-              }
-              await publishUploadProgress({
-                phase: event.phase,
-                message: event.message,
-                pageCount: "pageCount" in event ? event.pageCount : undefined,
-                pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
-              });
-              await markExtractionRunProgress({
-                runId: progressRun.id,
-                phase: event.phase,
-                message: event.message,
-                pageCount: "pageCount" in event ? event.pageCount : undefined,
-                pagesProcessed: "pagesProcessed" in event ? event.pagesProcessed : undefined,
-              });
-            },
-          });
-        } finally {
-          clearTimeout(extractionTimeoutGuard);
-        }
-
-        extractionQuality = result.quality;
-        pagesOCRd = result.pagesOCRd;
-        ocrCost = result.estimatedCost;
-        extractionCreditEstimate = result.manifest.creditEstimate;
-        ocrProcessed = result.method === 'ocr' || result.method === 'hybrid';
-
-        // Get warnings from OCR result if available
-        if (result.ocrResult?.pageResults) {
-          const lowConfidencePages = result.ocrResult.pageResults
-            .filter(p => p.confidence === 'low')
-            .map(p => p.pageNumber);
-
-          if (lowConfidencePages.length > 0) {
-            extractionWarnings.push({
-              code: 'LOW_OCR_CONFIDENCE',
-              severity: 'medium',
-              message: `OCR had low confidence on pages: ${lowConfidencePages.join(', ')}`,
-              suggestion: 'Some text may not be accurately extracted from these pages.'
-            });
-          }
-        }
-
-        // Add method info
-        if (result.method === 'hybrid') {
-          extractionWarnings.push({
-            code: 'OCR_APPLIED',
-            severity: 'low',
-            message: `Visual extraction applied to ${pagesOCRd} page(s) requiring enhanced review`,
-            suggestion: `Extraction plan: ${formatExtractionTierSummary(result.manifest.creditEstimate.pagesByTier)}. Estimated extraction credits: ${result.manifest.creditEstimate.estimatedCredits}. Provider cost: $${ocrCost.toFixed(4)}`
-          });
-        } else if (result.method === 'ocr') {
-          extractionWarnings.push({
-            code: 'FULL_OCR',
-            severity: 'medium',
-            message: 'Full OCR was required - PDF appears to be image-based',
-            suggestion: `Extraction plan: ${formatExtractionTierSummary(result.manifest.creditEstimate.pagesByTier)}. Estimated extraction credits: ${result.manifest.creditEstimate.estimatedCredits}. Provider cost: $${ocrCost.toFixed(4)}`
-          });
-        }
-
-        const extractionRun = await completeDocumentExtractionRun({
-          runId: progressRun.id,
-          text: result.text,
-          qualityScore: extractionQuality,
-          manifest: result.manifest,
-          warnings: extractionWarnings.length > 0
-            ? JSON.parse(JSON.stringify(extractionWarnings))
-            : [],
-        });
-
-        // P0.4: reconciliation pre-charge vs cout reel
-        const actualCredits = Math.max(0, Math.ceil(result.manifest.creditEstimate.estimatedCredits));
-        let finalChargedCredits = pdfPreChargedCredits;
-        if (actualCredits > pdfPreChargedCredits) {
-          const delta = actualCredits - pdfPreChargedCredits;
-          const extra = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", delta, {
-            dealId,
-            documentId: document.id,
-            documentExtractionRunId: extractionRun.id,
-            idempotencyKey: `extraction:delta:pdf:${extractionRun.id}`,
-            description: `Delta PDF extraction (+${delta} credits) for ${file.name}`,
-          });
-          if (extra.success) {
-            finalChargedCredits += delta;
-          } else {
-            // Si le user n'a plus le delta, on accepte quand meme le resultat d'extraction
-            // (compute deja consomme cote OpenRouter). A investigation en prod.
-            console.warn(
-              `[upload] PDF extraction delta de ${delta} non facture (solde insuffisant) pour document ${document.id}`
-            );
-          }
-        } else if (actualCredits < pdfPreChargedCredits) {
-          const refundAmount = pdfPreChargedCredits - actualCredits;
-          const refund = await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", refundAmount, {
-            dealId,
-            documentId: document.id,
-            documentExtractionRunId: extractionRun.id,
-            idempotencyKey: `extraction:refund:pdf:${extractionRun.id}`,
-            description: `Refund surestimation PDF (-${refundAmount} credits) for ${file.name}`,
-          });
-          if (refund.success) {
-            finalChargedCredits -= refundAmount;
-          }
-        }
-
-        // Keep OCR / review blocking only for genuinely unresolved critical pages.
-        requiresOCR =
-          result.manifest.status === "failed" ||
-          getBlockingPageNumbersFromManifest(result.manifest).length > 0;
-
-        await prisma.document.update({
-          where: { id: document.id },
+        // Event id keyed by the run id → Inngest dedupes a retry of THIS
+        // HTTP request to a single function run.
+        await inngest.send({
+          id: `document-extraction:${pdfProgressRun.id}`,
+          name: "document/extraction.run",
           data: {
-            extractedText: encryptText(result.text),
-            processingStatus: result.text ? "COMPLETED" : "FAILED",
-            extractionQuality,
-            extractionMetrics: {
-              quality: extractionQuality,
-              method: result.method,
-              pagesOCRd,
-              ocrCost,
-              latestExtractionRunId: extractionRun.id,
-              extractionCreditsCharged: finalChargedCredits,
-              ...summarizeManifestForLegacyMetrics(result.manifest),
-            },
-            extractionWarnings: extractionWarnings.length > 0
-              ? JSON.parse(JSON.stringify(extractionWarnings))
-              : Prisma.DbNull,
-            requiresOCR,
-            ocrProcessed,
+            documentId: document.id,
+            extractionRunId: pdfProgressRun.id,
+            userId: user.id,
+            dealId,
+            reason: "upload",
+            creditAction: "EXTRACTION_HIGH_PAGE",
+            chargedCredits: pdfPreChargedCredits,
+            dispatchRefundKey: `extraction:refund:pdf-fail:${pdfExtractionRequestId}`,
+            // Pre-charge is a worst-case estimate; the Inngest function
+            // reconciles it against the real manifest cost on success.
+            reconcileCredits: true,
+            // Forwarded so the pipeline mirrors progress for the upload
+            // client's poller.
+            uploadProgressId: uploadProgressId ?? undefined,
+            documentName: document.name,
           },
         });
-        await publishUploadProgress({
-          phase: "completed",
-          pageCount: result.manifest.pageCount,
-          pagesProcessed: result.manifest.pagesProcessed,
-          message: "Extraction completed",
-        });
-      } catch (extractionError) {
-        if (process.env.NODE_ENV === "development") {
-          console.error("PDF extraction error:", extractionError);
-        }
-
-        // P0.4: extraction crashee apres pre-check. Remboursement integral du pre-charge.
+        pdfExtractionEnqueued = true;
+      } catch (enqueueError) {
+        // The event never landed. Refund the pre-charge, terminalize the
+        // orphan run, mark the document FAILED — never leave a run stuck
+        // PROCESSING with no consumer.
         if (pdfPreChargedCredits > 0) {
           await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", pdfPreChargedCredits, {
             dealId,
             documentId: document.id,
-            idempotencyKey: `extraction:refund:pdf-fail:${document.id}`,
-            description: `Refund PDF extraction failed for ${file.name}`,
+            idempotencyKey: `extraction:refund:pdf-fail:${pdfExtractionRequestId}`,
+            description: `Refund PDF extraction enqueue failure for ${file.name}`,
           }).catch(() => undefined);
         }
-
-        await prisma.document.update({
-          where: { id: document.id },
-          data: {
-            processingStatus: "FAILED",
-            extractionWarnings: [{
-              code: "EXTRACTION_ERROR",
-              severity: "critical",
-              message: "PDF extraction failed",
-              suggestion: "The PDF may be corrupted or password-protected."
-            }] as Prisma.InputJsonValue,
-          },
-        });
+        await terminalizeExtractionRunAsFailed(
+          pdfProgressRun.id,
+          `Pre-enqueue failure in upload route: ${enqueueError instanceof Error ? enqueueError.message : String(enqueueError)}`
+        ).catch(() => undefined);
+        await prisma.document.updateMany({
+          where: { id: document.id, processingStatus: "PROCESSING" },
+          data: { processingStatus: "FAILED" },
+        }).catch(() => undefined);
         await publishUploadProgress({
           phase: "failed",
-          message: extractionError instanceof Error ? extractionError.message : "PDF extraction failed",
+          message: "Failed to enqueue PDF extraction",
         });
-        extractionWarnings = [{
-          code: "EXTRACTION_ERROR",
-          severity: "critical",
-          message: "PDF extraction failed",
-          suggestion: "The PDF may be corrupted or password-protected."
-        }];
+        // Codex P2: an enqueue failure means NO extraction will ever run —
+        // the document is FAILED. We must NOT fall through to a 201 success
+        // response (that regresses the Phase 1 rule "failed upload → no
+        // success toast"). Throw so the route returns a 5xx the client
+        // surfaces as an error. The document row stays (FAILED) so the user
+        // can retry processing it; the temp/final blobs were already
+        // settled before this branch.
+        throw new UploadRequestError(
+          "PDF extraction could not be enqueued. The document was saved but its extraction failed to start — retry processing it from the deal page.",
+          503
+        );
       }
     }
 
@@ -955,11 +847,14 @@ export async function POST(request: NextRequest) {
             })) as Prisma.InputJsonObject,
           });
 
+          // Shared corpus-usability rule — keeps the document status in sync
+          // with the run status from recordDocumentExtractionRun.
+          const excelCorpusUsable = hasUsableExtractionCorpus(textContent);
           await prisma.document.update({
             where: { id: document.id },
             data: {
-              extractedText: encryptText(textContent),
-              processingStatus: "COMPLETED",
+              extractedText: excelCorpusUsable ? encryptText(textContent) : null,
+              processingStatus: excelCorpusUsable ? "COMPLETED" : "FAILED",
               extractionQuality,
               extractionMetrics: {
                 sheetCount: result.metadata.sheetCount,
@@ -1093,11 +988,14 @@ export async function POST(request: NextRequest) {
             description: `Embedded media OCR for ${file.name}`,
           });
 
+          // Shared corpus-usability rule — keeps the document status in sync
+          // with the run status from recordDocumentExtractionRun.
+          const wordCorpusUsable = hasUsableExtractionCorpus(combinedText);
           await prisma.document.update({
             where: { id: document.id },
             data: {
-              extractedText: encryptText(combinedText),
-              processingStatus: "COMPLETED",
+              extractedText: wordCorpusUsable ? encryptText(combinedText) : null,
+              processingStatus: wordCorpusUsable ? "COMPLETED" : "FAILED",
               extractionQuality,
               extractionMetrics: {
                 charCount: combinedText.length,
@@ -1232,11 +1130,14 @@ export async function POST(request: NextRequest) {
             description: `Embedded media OCR for ${file.name}`,
           });
 
+          // Shared corpus-usability rule — keeps the document status in sync
+          // with the run status from recordDocumentExtractionRun.
+          const pptCorpusUsable = hasUsableExtractionCorpus(combinedText);
           await prisma.document.update({
             where: { id: document.id },
             data: {
-              extractedText: encryptText(combinedText),
-              processingStatus: "COMPLETED",
+              extractedText: pptCorpusUsable ? encryptText(combinedText) : null,
+              processingStatus: pptCorpusUsable ? "COMPLETED" : "FAILED",
               extractionQuality,
               extractionMetrics: {
                 slideCount: result.slideCount,
@@ -1300,11 +1201,15 @@ export async function POST(request: NextRequest) {
       where: { id: document.id },
     });
 
-    // Build response with extraction health info
+    // Build response with extraction health info. Note `data` type omits the
+    // raw blob coordinates (`storageUrl`, `storagePath`) and replaces them
+    // with `hasStorage: boolean` — see Phase 2.5.
+    type SafeDocumentResponse = Omit<NonNullable<typeof updatedDocument>, "storageUrl" | "storagePath"> & {
+      hasStorage: boolean;
+      corpusParentDocument?: { id: string; name: string } | null;
+    };
     const response: {
-      data: (NonNullable<typeof updatedDocument> & {
-        corpusParentDocument?: { id: string; name: string } | null;
-      }) | null;
+      data: SafeDocumentResponse | null;
       extraction?: {
         quality: number | null;
         warnings: ExtractionWarning[];
@@ -1314,6 +1219,10 @@ export async function POST(request: NextRequest) {
         pagesOCRd: number;
         ocrCost: number;
         creditEstimate: ExtractionCreditEstimate | null;
+        // Phase 4.2: true when the PDF extraction was enqueued (durable
+        // Inngest job) and is still running — the client polls the upload
+        // progress endpoint for the terminal result.
+        pending?: boolean;
       };
       // F62: version info
       versioning?: { version: number; replacedDocumentId?: string };
@@ -1321,20 +1230,25 @@ export async function POST(request: NextRequest) {
       duplicateWarning?: { existingDocument: NonNullable<typeof duplicateCheck.existingDocument> };
     } = {
       data: updatedDocument
-        ? {
-            ...updatedDocument,
-            corpusParentDocument: corpusParentDocument
-              ? { id: corpusParentDocument.id, name: corpusParentDocument.name }
-              : null,
-          }
+        ? (() => {
+            const { storageUrl: _storageUrl, storagePath: _storagePath, ...safeDocument } = updatedDocument;
+            const safe: SafeDocumentResponse = {
+              ...safeDocument,
+              hasStorage: Boolean(_storageUrl ?? _storagePath),
+              corpusParentDocument: corpusParentDocument
+                ? { id: corpusParentDocument.id, name: corpusParentDocument.name }
+                : null,
+            };
+            return safe;
+          })()
         : null,
     };
 
     // F62: Include versioning info
-    if (existingDoc) {
+    if (priorVersion) {
       response.versioning = {
-        version: existingDoc.version + 1,
-        replacedDocumentId: existingDoc.id,
+        version: document.version,
+        replacedDocumentId: priorVersion.id,
       };
     }
 
@@ -1345,19 +1259,55 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    // Include extraction info for PDFs
+    // Include extraction info for PDFs.
     if (file.type === "application/pdf") {
-      response.extraction = {
-        quality: extractionQuality,
-        warnings: extractionWarnings,
-        requiresOCR,
-        isUsable: (extractionQuality ?? 0) >= 40,
-        ocrApplied: ocrProcessed,
-        pagesOCRd,
-        ocrCost,
-        creditEstimate: extractionCreditEstimate,
-      };
+      if (pdfExtractionEnqueued) {
+        // Phase 4.2: extraction runs durably in the background. Report a
+        // `pending` shape — the client polls the upload progress endpoint
+        // for the terminal result.
+        response.extraction = {
+          quality: null,
+          warnings: [],
+          requiresOCR: false,
+          isUsable: false,
+          ocrApplied: false,
+          pagesOCRd: 0,
+          ocrCost: 0,
+          creditEstimate: null,
+          pending: true,
+        };
+      } else {
+        // Either a reused (cached) extraction, or the enqueue failed — in
+        // both cases the flags above already hold the real values.
+        response.extraction = {
+          quality: extractionQuality,
+          warnings: extractionWarnings,
+          requiresOCR,
+          isUsable: (extractionQuality ?? 0) >= 40,
+          ocrApplied: ocrProcessed,
+          pagesOCRd,
+          ocrCost,
+          creditEstimate: extractionCreditEstimate,
+        };
+      }
     }
+    // Phase 4.3: promote the candidate version for the INLINE extraction
+    // paths (image / Excel / Word / PowerPoint). These finalize the document
+    // COMPLETED synchronously in this request, outside any transaction, so
+    // the version flip happens here once the final status is known. The
+    // durable PDF path promotes atomically inside the Inngest pipeline; the
+    // reuse path promotes inside its own transaction — both are PDF, hence
+    // the `file.type !== "application/pdf"` guard. `promoteDocumentVersion`
+    // self-guards (COMPLETED-only, lineage-scoped, monotonic), so a FAILED
+    // inline extraction leaves the old version untouched.
+    if (
+      priorVersion &&
+      file.type !== "application/pdf" &&
+      updatedDocument?.processingStatus === "COMPLETED"
+    ) {
+      await promoteDocumentVersion({ documentId: document.id });
+    }
+
     if (updatedDocument?.processingStatus === "FAILED") {
       await publishUploadProgress({
         phase: "failed",
@@ -1401,6 +1351,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
     await cleanupUploadSource(cleanupSourceUpload);
+    if (cleanupFinalBlob) {
+      try {
+        await cleanupFinalBlob();
+      } catch (cleanupError) {
+        console.warn("[upload] Failed to clean orphan final blob after upload error:", cleanupError);
+      }
+    }
     if (error instanceof UploadRequestError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
@@ -1415,182 +1372,6 @@ async function cleanupUploadSource(cleanup: (() => Promise<void>) | null | undef
   } catch (cleanupError) {
     console.warn("[upload] Failed to clean temporary source upload:", cleanupError);
   }
-}
-
-async function reuseCompletedExtractionFromDuplicate(params: {
-  sourceDocumentId: string;
-  targetDocumentId: string;
-  targetDocumentVersion: number;
-  contentHash: string;
-}): Promise<{
-  extractionQuality: number | null;
-  extractionWarnings: ExtractionWarning[];
-  requiresOCR: boolean;
-  ocrProcessed: boolean;
-  pagesOCRd: number;
-  ocrCost: number;
-  creditEstimate: ExtractionCreditEstimate | null;
-  pageCount: number;
-  pagesProcessed: number;
-} | null> {
-  const sourceDocument = await prisma.document.findFirst({
-    where: {
-      id: params.sourceDocumentId,
-      contentHash: params.contentHash,
-      processingStatus: "COMPLETED",
-      extractedText: { not: null },
-    },
-    include: {
-      extractionRuns: {
-        where: { status: { not: "FAILED" } },
-        orderBy: [{ completedAt: "desc" }, { startedAt: "desc" }],
-        take: 1,
-        include: { pages: { orderBy: { pageNumber: "asc" } } },
-      },
-    },
-  });
-
-  const sourceRun = sourceDocument?.extractionRuns[0];
-  if (!sourceDocument?.extractedText || !sourceRun) return null;
-  if (sourceRun.pageCount > 0 && sourceRun.pagesProcessed < sourceRun.pageCount) return null;
-
-  const clonedRun = await prisma.$transaction(async (tx) => {
-    const createdRun = await tx.documentExtractionRun.create({
-      data: {
-        documentId: params.targetDocumentId,
-        documentVersion: params.targetDocumentVersion,
-        status: sourceRun.status,
-        pageCount: sourceRun.pageCount,
-        pagesProcessed: sourceRun.pagesProcessed,
-        pagesSucceeded: sourceRun.pagesSucceeded,
-        pagesFailed: sourceRun.pagesFailed,
-        pagesSkipped: sourceRun.pagesSkipped,
-        coverageRatio: sourceRun.coverageRatio,
-        qualityScore: sourceRun.qualityScore,
-        readyForAnalysis: sourceRun.readyForAnalysis,
-        blockedReason: sourceRun.blockedReason,
-        extractionVersion: sourceRun.extractionVersion,
-        pipelineVersion: sourceRun.pipelineVersion,
-        contentHash: params.contentHash,
-        corpusTextHash: sourceRun.corpusTextHash,
-        summaryMetrics: mergeJsonObject(sourceRun.summaryMetrics, {
-          reusedExtraction: true,
-          reusedFromDocumentId: sourceDocument.id,
-          reusedFromExtractionRunId: sourceRun.id,
-        }),
-        warnings: cloneJsonForPrisma(sourceRun.warnings),
-        completedAt: sourceRun.completedAt ?? new Date(),
-        pages: {
-          create: sourceRun.pages.map((page) => ({
-            pageNumber: page.pageNumber,
-            status: page.status,
-            method: page.method,
-            charCount: page.charCount,
-            wordCount: page.wordCount,
-            qualityScore: page.qualityScore,
-            confidence: page.confidence,
-            hasTables: page.hasTables,
-            hasCharts: page.hasCharts,
-            hasFinancialKeywords: page.hasFinancialKeywords,
-            hasTeamKeywords: page.hasTeamKeywords,
-            hasMarketKeywords: page.hasMarketKeywords,
-            requiresOCR: page.requiresOCR,
-            ocrProcessed: page.ocrProcessed,
-            contentHash: page.contentHash,
-            artifactVersion: page.artifactVersion,
-            artifact: cloneJsonForPrisma(page.artifact),
-            pageImageHash: page.pageImageHash,
-            errorMessage: page.errorMessage,
-            textPreview: page.textPreview,
-          })),
-        },
-      },
-    });
-
-    await tx.document.update({
-      where: { id: params.targetDocumentId },
-      data: {
-        extractedText: sourceDocument.extractedText,
-        processingStatus: "COMPLETED",
-        extractionQuality: sourceDocument.extractionQuality,
-        extractionMetrics: buildReusedExtractionMetrics(sourceDocument.extractionMetrics, {
-          latestExtractionRunId: createdRun.id,
-          reusedExtraction: true,
-          reusedFromDocumentId: sourceDocument.id,
-          reusedFromExtractionRunId: sourceRun.id,
-        }),
-        extractionWarnings: cloneJsonForPrisma(sourceDocument.extractionWarnings),
-        requiresOCR: sourceDocument.requiresOCR,
-        ocrProcessed: sourceDocument.ocrProcessed,
-      },
-    });
-
-    return createdRun;
-  });
-
-  const metrics = asJsonRecord(sourceDocument.extractionMetrics);
-  return {
-    extractionQuality: sourceDocument.extractionQuality,
-    extractionWarnings: Array.isArray(sourceDocument.extractionWarnings)
-      ? sourceDocument.extractionWarnings as unknown as ExtractionWarning[]
-      : [],
-    requiresOCR: sourceDocument.requiresOCR,
-    ocrProcessed: sourceDocument.ocrProcessed,
-    pagesOCRd: getMetricNumber(metrics, "pagesOCRd"),
-    ocrCost: getMetricNumber(metrics, "ocrCost"),
-    creditEstimate: getCreditEstimate(metrics),
-    pageCount: clonedRun.pageCount,
-    pagesProcessed: clonedRun.pagesProcessed,
-  };
-}
-
-function cloneJsonForPrisma(
-  value: Prisma.JsonValue | null | undefined
-): Prisma.InputJsonValue | typeof Prisma.DbNull {
-  if (value === null || value === undefined) return Prisma.DbNull;
-  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-}
-
-function asJsonRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
-}
-
-function mergeJsonObject(
-  value: Prisma.JsonValue | null | undefined,
-  extra: Record<string, unknown>
-): Prisma.InputJsonObject {
-  return {
-    ...asJsonRecord(value),
-    ...extra,
-  } as Prisma.InputJsonObject;
-}
-
-function buildReusedExtractionMetrics(
-  value: Prisma.JsonValue | null | undefined,
-  extra: Record<string, unknown>
-): Prisma.InputJsonObject {
-  const metrics = asJsonRecord(value);
-  const sourceCreditsCharged = metrics.extractionCreditsCharged;
-  if (sourceCreditsCharged !== undefined) {
-    metrics.reusedSourceExtractionCreditsCharged = sourceCreditsCharged;
-  }
-  metrics.extractionCreditsCharged = 0;
-  return {
-    ...metrics,
-    ...extra,
-  } as Prisma.InputJsonObject;
-}
-
-function getMetricNumber(metrics: Record<string, unknown>, key: string): number {
-  const value = metrics[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function getCreditEstimate(metrics: Record<string, unknown>): ExtractionCreditEstimate | null {
-  const value = metrics.creditEstimate;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as ExtractionCreditEstimate;
 }
 
 async function readUploadInput(request: NextRequest): Promise<UploadInput> {
@@ -1618,19 +1399,24 @@ async function readMultipartUploadInput(request: NextRequest): Promise<UploadInp
   }
 
   const arrayBuffer = await rawFile.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
   return {
+    source: "multipart",
     file: {
       name: rawFile.name,
       type: rawFile.type,
       size: rawFile.size,
     },
-    buffer: Buffer.from(arrayBuffer),
     dealId: readNullableFormString(formData, "dealId"),
     documentType: parseDocumentType(readNullableFormString(formData, "type")),
     customType: readNullableFormString(formData, "customType"),
     comments: readNullableFormString(formData, "comments"),
     uploadProgressId: readNullableFormString(formData, "progressId"),
     corpusParentDocumentId: readNullableFormString(formData, "corpusParentDocumentId"),
+    blobPathname: null,
+    // For the multipart path the buffer is already in memory — Next has
+    // materialized the formData. There is no temp blob to clean up.
+    fetchBuffer: async () => buffer,
   };
 }
 
@@ -1638,42 +1424,46 @@ async function readBlobUploadInput(request: NextRequest): Promise<UploadInput> {
   const body = blobUploadBodySchema.parse(await request.json());
   validateTemporaryBlobUrl(body.file.blobUrl, body.file.blobPathname ?? null);
 
-  const encryptedResponse = await fetch(body.file.blobUrl);
-  if (!encryptedResponse.ok) {
-    throw new UploadRequestError("Unable to read uploaded file from Blob storage", 502);
-  }
-
-  const encryptedContentLength = encryptedResponse.headers.get("content-length");
-  if (encryptedContentLength && Number(encryptedContentLength) > MAX_CLIENT_ENCRYPTED_FILE_BYTES) {
-    throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
-  }
-
-  const encryptedBuffer = Buffer.from(await encryptedResponse.arrayBuffer());
-  if (encryptedBuffer.length > MAX_CLIENT_ENCRYPTED_FILE_BYTES) {
-    throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
-  }
-
-  const buffer = decryptClientUploadBuffer(encryptedBuffer, {
-    keyHex: body.file.encryption.key,
-    ivHex: body.file.encryption.iv,
-  });
-  if (buffer.length !== body.file.size) {
-    throw new UploadRequestError("Uploaded file integrity check failed", 400);
-  }
-
   return {
+    source: "blob",
     file: {
       name: body.file.name,
       type: body.file.type,
       size: body.file.size,
     },
-    buffer,
     dealId: body.dealId,
     documentType: parseDocumentType(body.type ?? null),
     customType: body.customType ?? null,
     comments: body.comments ?? null,
     uploadProgressId: body.progressId ?? null,
     corpusParentDocumentId: body.corpusParentDocumentId ?? null,
+    blobPathname: body.file.blobPathname ?? null,
+    // Deferred fetch + decrypt. The route MUST run ownership / parent /
+    // analysis / MIME / size checks before calling this, so we never pull
+    // (and pay for the network round-trip on) a Blob that the caller is
+    // not authorized to read or that we'd reject for trivial reasons.
+    fetchBuffer: async () => {
+      const encryptedResponse = await fetch(body.file.blobUrl);
+      if (!encryptedResponse.ok) {
+        throw new UploadRequestError("Unable to read uploaded file from Blob storage", 502);
+      }
+      const encryptedContentLength = encryptedResponse.headers.get("content-length");
+      if (encryptedContentLength && Number(encryptedContentLength) > MAX_CLIENT_ENCRYPTED_FILE_BYTES) {
+        throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
+      }
+      const encryptedBuffer = Buffer.from(await encryptedResponse.arrayBuffer());
+      if (encryptedBuffer.length > MAX_CLIENT_ENCRYPTED_FILE_BYTES) {
+        throw new UploadRequestError("File too large. Maximum size is 50MB", 413);
+      }
+      const buffer = decryptClientUploadBuffer(encryptedBuffer, {
+        keyHex: body.file.encryption.key,
+        ivHex: body.file.encryption.iv,
+      });
+      if (buffer.length !== body.file.size) {
+        throw new UploadRequestError("Uploaded file integrity check failed", 400);
+      }
+      return buffer;
+    },
     cleanupSourceUpload: async () => {
       await deleteFile(body.file.blobUrl);
     },
@@ -1722,6 +1512,24 @@ function validateTemporaryBlobUrl(blobUrl: string, pathname: string | null) {
   if (!pathname || !pathname.startsWith("tmp/document-uploads/")) {
     throw new UploadRequestError("Invalid temporary Blob pathname", 400);
   }
+
+  // Strict binding: the URL's pathname segment MUST equal `pathname`. Without
+  // this check, a caller can submit `blobUrl` pointing at any blob in the
+  // Vercel store and a `pathname` that we *separately* validate (prefix +
+  // dealId-scope) — and any later early-return that calls cleanup would then
+  // `deleteFile(blobUrl)`, turning cleanup into a primitive that can delete
+  // arbitrary blobs (potentially another tenant's). By tying URL and
+  // pathname together we guarantee that any blob we ever delete in a
+  // cleanup is the one the caller said it owns.
+  let urlPath: string;
+  try {
+    urlPath = decodeURIComponent(parsed.pathname).replace(/^\/+/, "");
+  } catch {
+    throw new UploadRequestError("Invalid Blob upload URL", 400);
+  }
+  if (urlPath !== pathname) {
+    throw new UploadRequestError("Blob URL does not match the declared pathname", 400);
+  }
 }
 
 function readNullableFormString(formData: FormData, key: string): string | null {
@@ -1735,13 +1543,6 @@ function parseDocumentType(value: string | null): DocumentType | null {
     throw new UploadRequestError("Invalid document type", 400);
   }
   return value as DocumentType;
-}
-
-function formatExtractionTierSummary(pagesByTier: ExtractionCreditEstimate["pagesByTier"]): string {
-  return Object.entries(pagesByTier)
-    .filter(([, count]) => count > 0)
-    .map(([tier, count]) => `${tier}=${count}`)
-    .join(", ");
 }
 
 function buildSlideArtifacts(text: string, slideCount: number) {

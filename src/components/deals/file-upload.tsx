@@ -46,11 +46,14 @@ interface FileToUpload {
   file: File;
   documentType: DocumentType;
   customType: string;
-  status: "pending" | "uploading" | "success" | "error";
+  // "extracting" = the HTTP upload succeeded but a durable (Inngest) PDF
+  // extraction is still running; the modal keeps polling the progress
+  // endpoint until it reaches a terminal phase.
+  status: "pending" | "uploading" | "extracting" | "success" | "error";
   error?: string;
 }
 
-interface UploadProgressSnapshot {
+export interface UploadProgressSnapshot {
   phase: string;
   documentId?: string;
   documentName?: string;
@@ -64,8 +67,7 @@ export interface UploadedDocumentSummary {
   id: string;
   name: string;
   type: string;
-  storageUrl?: string | null;
-  storagePath?: string | null;
+  hasStorage?: boolean;
   mimeType?: string | null;
   processingStatus?: string;
   extractionQuality?: number | null;
@@ -86,12 +88,17 @@ export interface UploadedDocumentSummary {
   corpusParentDocument?: { id: string; name: string } | null;
 }
 
+export interface UploadAllSummary {
+  successCount: number;
+  errorCount: number;
+}
+
 interface FileUploadProps {
   dealId: string;
   onUploadQueued?: (document: UploadedDocumentSummary) => void;
   onUploadComplete?: (document: UploadedDocumentSummary) => void;
   onError?: (error: string) => void;
-  onAllComplete?: () => void;
+  onAllComplete?: (summary: UploadAllSummary) => void;
   disabled?: boolean;
 }
 
@@ -112,6 +119,12 @@ const SERVER_UPLOAD_LIMIT_BYTES = 4 * 1024 * 1024;
 
 type UploadApiResult = {
   data: UploadedDocumentSummary;
+  // Phase 4.2: present for PDFs. `pending: true` means the durable
+  // extraction was enqueued and is still running — the client must keep
+  // polling the upload progress endpoint until a terminal phase.
+  extraction?: {
+    pending?: boolean;
+  };
 };
 
 function getFileIcon(mimeType: string) {
@@ -187,17 +200,34 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function buildTemporaryBlobPathname(dealId: string, fileName: string): string {
-  const sanitizedName = fileName
-    .replace(/[/\\]/g, "_")
-    .replace(/\.\./g, "_")
-    .replace(/[^a-zA-Z0-9._-]/g, "_");
-  return `tmp/document-uploads/${dealId}/${crypto.randomUUID()}-${sanitizedName}.enc`;
+function buildTemporaryBlobPathname(dealId: string): string {
+  // Opaque random temp pathname. We intentionally drop the user-supplied
+  // filename here — Vercel Blob temp paths are public-readable until the
+  // server-side cleanup deletes them, and the legacy `${uuid}-${filename}.enc`
+  // scheme leaked the original filename. The final blob lives at an opaque
+  // path too (see route.ts: deals/${dealId}/${randomUUID()}${ext}).
+  return `tmp/document-uploads/${dealId}/${crypto.randomUUID()}.enc`;
 }
 
 function canFallbackToServerUpload(): boolean {
   if (typeof window === "undefined") return false;
   return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
+// Monotonic progress merge: once a percent has been displayed, never report a
+// lower value within the same upload session. Terminal phases ("completed",
+// "failed") bypass the guard so the UI can settle to its final state. Pure
+// function for unit testing.
+export function mergeMonotonicProgress(
+  prev: UploadProgressSnapshot | null,
+  next: UploadProgressSnapshot
+): UploadProgressSnapshot {
+  if (!prev) return next;
+  if (next.phase === "completed" || next.phase === "failed") return next;
+  if (next.percent < prev.percent) {
+    return { ...next, percent: prev.percent };
+  }
+  return next;
 }
 
 export const FileUpload = memo(function FileUpload({
@@ -216,6 +246,19 @@ export const FileUpload = memo(function FileUpload({
   const [activeProgressId, setActiveProgressId] = useState<string | null>(null);
   const [serverProgress, setServerProgress] = useState<UploadProgressSnapshot | null>(null);
   const announcedDocumentIdsRef = useRef<Set<string>>(new Set());
+  // Phase 4.2: a durable PDF extraction that is still running after the
+  // HTTP upload returned. The modal keeps `isUploading` true and keeps the
+  // poller alive until `serverProgress` reaches a terminal phase.
+  const [extractionPending, setExtractionPending] = useState<{
+    fileId: string;
+    progressId: string;
+  } | null>(null);
+  // Counts of the already-settled files, deferred so `onAllComplete` only
+  // fires once the pending extraction also reaches a terminal phase.
+  const deferredCountsRef = useRef<{ successCount: number; errorCount: number }>({
+    successCount: 0,
+    errorCount: 0,
+  });
 
   const onDrop = useCallback(
     (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
@@ -247,12 +290,16 @@ export const FileUpload = memo(function FileUpload({
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...updates } : f)));
   }, []);
 
+  const applyServerProgress = useCallback((next: UploadProgressSnapshot) => {
+    setServerProgress((prev) => mergeMonotonicProgress(prev, next));
+  }, []);
+
   const removeFile = useCallback((id: string) => {
     setFiles((prev) => prev.filter((f) => f.id !== id));
   }, []);
 
   const uploadFile = useCallback(
-    async (fileData: FileToUpload) => {
+    async (fileData: FileToUpload): Promise<{ ok: boolean; pending: boolean; progressId: string }> => {
       updateFile(fileData.id, { status: "uploading" });
       setActiveFileName(fileData.file.name);
       const progressId = crypto.randomUUID();
@@ -263,6 +310,15 @@ export const FileUpload = memo(function FileUpload({
         const result = fileData.file.size > SERVER_UPLOAD_LIMIT_BYTES
           ? await uploadViaClientBlob(fileData, progressId)
           : await uploadViaServerRoute(fileData, progressId);
+
+        // Phase 4.2: a PDF whose extraction was enqueued durably is NOT
+        // done yet — the file stays "extracting" and `onUploadComplete`
+        // is deferred until the progress poller sees a terminal phase.
+        if (result.extraction?.pending) {
+          updateFile(fileData.id, { status: "extracting" });
+          return { ok: true, pending: true, progressId };
+        }
+
         updateFile(fileData.id, { status: "success" });
         onUploadComplete?.({
           ...result.data,
@@ -270,12 +326,12 @@ export const FileUpload = memo(function FileUpload({
           name: result.data.name ?? fileData.file.name,
           type: result.data.type ?? fileData.documentType,
         });
-        return true;
+        return { ok: true, pending: false, progressId };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Upload failed";
         updateFile(fileData.id, { status: "error", error: errorMessage });
         onError?.(errorMessage);
-        return false;
+        return { ok: false, pending: false, progressId };
       }
 
       async function uploadViaServerRoute(
@@ -291,7 +347,7 @@ export const FileUpload = memo(function FileUpload({
           formData.append("customType", currentFile.customType);
         }
 
-        const response = await fetch("/api/documents/upload", {
+        const response = await clerkFetch("/api/documents/upload", {
           method: "POST",
           body: formData,
         });
@@ -302,7 +358,7 @@ export const FileUpload = memo(function FileUpload({
         currentFile: FileToUpload,
         currentProgressId: string
       ): Promise<UploadApiResult> {
-        setServerProgress({
+        applyServerProgress({
           phase: "started",
           pageCount: 0,
           pagesProcessed: 0,
@@ -310,7 +366,7 @@ export const FileUpload = memo(function FileUpload({
           message: "Chiffrement local du fichier avant transfert",
         });
         const encryptedUpload = await encryptFileForServer(currentFile.file);
-        const pathname = buildTemporaryBlobPathname(dealId, currentFile.file.name);
+        const pathname = buildTemporaryBlobPathname(dealId);
         const multipart = encryptedUpload.encryptedBlob.size >= 8 * 1024 * 1024;
         const clientPayload = JSON.stringify({
           dealId,
@@ -318,7 +374,7 @@ export const FileUpload = memo(function FileUpload({
           mimeType: currentFile.file.type,
           sizeBytes: currentFile.file.size,
         });
-        const tokenResponse = await fetch("/api/documents/upload/client", {
+        const tokenResponse = await clerkFetch("/api/documents/upload/client", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -334,7 +390,7 @@ export const FileUpload = memo(function FileUpload({
         if (!tokenResponse.ok) {
           const tokenErrorMessage = await getUploadErrorMessage(tokenResponse);
           if (canFallbackToServerUpload()) {
-            setServerProgress({
+            applyServerProgress({
               phase: "started",
               pageCount: 0,
               pagesProcessed: 0,
@@ -360,7 +416,7 @@ export const FileUpload = memo(function FileUpload({
             contentType: "application/octet-stream",
             multipart,
             onUploadProgress: ({ percentage }) => {
-              setServerProgress({
+              applyServerProgress({
                 phase: "started",
                 pageCount: 0,
                 pagesProcessed: 0,
@@ -371,7 +427,7 @@ export const FileUpload = memo(function FileUpload({
           }
         );
 
-        setServerProgress({
+        applyServerProgress({
           phase: "started",
           pageCount: 0,
           pagesProcessed: 0,
@@ -379,7 +435,7 @@ export const FileUpload = memo(function FileUpload({
           message: "Transfert terminé, lancement de l'extraction",
         });
 
-        const response = await fetch("/api/documents/upload", {
+        const response = await clerkFetch("/api/documents/upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -405,7 +461,7 @@ export const FileUpload = memo(function FileUpload({
         return parseUploadApiResponse(response);
       }
     },
-    [dealId, updateFile, onUploadComplete, onError]
+    [dealId, updateFile, onUploadComplete, onError, applyServerProgress]
   );
 
   const handleUploadAll = useCallback(async () => {
@@ -421,17 +477,83 @@ export const FileUpload = memo(function FileUpload({
     setIsUploading(true);
     setUploadStartedAt(Date.now());
     setElapsedSeconds(0);
+    let successCount = 0;
+    let errorCount = 0;
+    // The last file whose durable extraction is still running. We keep the
+    // poller alive on its progressId until it reaches a terminal phase.
+    let lastPendingExtraction: { fileId: string; progressId: string } | null = null;
     for (const fileData of pendingFiles) {
-      await uploadFile(fileData);
+      const { ok, pending, progressId } = await uploadFile(fileData);
+      if (pending) {
+        // Don't count it yet — the terminal-phase effect resolves it.
+        lastPendingExtraction = { fileId: fileData.id, progressId };
+      } else if (ok) {
+        successCount += 1;
+      } else {
+        errorCount += 1;
+      }
     }
+
+    if (lastPendingExtraction) {
+      // Phase 4.2: a durable PDF extraction is still running. Keep
+      // `isUploading` true and the poller alive (it polls
+      // `lastPendingExtraction.progressId`). The terminal-phase effect
+      // settles the file, tears down, and fires `onAllComplete`.
+      deferredCountsRef.current = { successCount, errorCount };
+      setActiveProgressId(lastPendingExtraction.progressId);
+      setExtractionPending(lastPendingExtraction);
+      return;
+    }
+
     setIsUploading(false);
     setUploadStartedAt(null);
     setActiveFileName(null);
     setActiveProgressId(null);
     setServerProgress(null);
     setElapsedSeconds(0);
-    onAllComplete?.();
+    onAllComplete?.({ successCount, errorCount });
   }, [files, uploadFile, onError, onAllComplete]);
+
+  // Phase 4.2: terminal-phase watcher for a durable PDF extraction. The
+  // poller below updates `serverProgress`; once it reaches a terminal phase
+  // we settle the "extracting" file, tear down, and fire `onAllComplete`
+  // with the FINAL counts (including this file's outcome). Without this,
+  // the modal would either poll forever or — worse — auto-close on a
+  // success toast while the OCR is still running.
+  useEffect(() => {
+    if (!extractionPending) return;
+    const phase = serverProgress?.phase;
+    if (phase !== "completed" && phase !== "failed") return;
+
+    const pendingFile = files.find((f) => f.id === extractionPending.fileId);
+    const { successCount, errorCount } = deferredCountsRef.current;
+
+    if (phase === "completed") {
+      updateFile(extractionPending.fileId, { status: "success" });
+      if (pendingFile) {
+        onUploadComplete?.({
+          id: serverProgress?.documentId ?? pendingFile.id,
+          name: serverProgress?.documentName ?? pendingFile.file.name,
+          type: pendingFile.documentType,
+          processingStatus: "COMPLETED",
+        });
+      }
+      onAllComplete?.({ successCount: successCount + 1, errorCount });
+    } else {
+      const message = serverProgress?.message ?? "Document extraction failed";
+      updateFile(extractionPending.fileId, { status: "error", error: message });
+      onError?.(message);
+      onAllComplete?.({ successCount, errorCount: errorCount + 1 });
+    }
+
+    setExtractionPending(null);
+    setIsUploading(false);
+    setUploadStartedAt(null);
+    setActiveFileName(null);
+    setActiveProgressId(null);
+    setServerProgress(null);
+    setElapsedSeconds(0);
+  }, [extractionPending, serverProgress, files, updateFile, onUploadComplete, onError, onAllComplete]);
 
   const pendingCount = files.filter((f) => f.status === "pending").length;
   const uploadingFile = files.find((file) => file.status === "uploading") ?? null;
@@ -472,7 +594,7 @@ export const FileUpload = memo(function FileUpload({
         if (response.ok) {
           const payload = await response.json() as { data: UploadProgressSnapshot | null };
           if (!cancelled && payload.data) {
-            setServerProgress(payload.data);
+            applyServerProgress(payload.data);
             if (
               payload.data.documentId &&
               !announcedDocumentIdsRef.current.has(payload.data.documentId)
@@ -514,7 +636,7 @@ export const FileUpload = memo(function FileUpload({
       cancelled = true;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [activeFileName, activeProgressId, isUploading, onUploadQueued, uploadingDocumentType, uploadingFile?.file.name, uploadingMimeType]);
+  }, [activeFileName, activeProgressId, applyServerProgress, isUploading, onUploadQueued, uploadingDocumentType, uploadingFile?.file.name, uploadingMimeType]);
 
   return (
     <div className="relative space-y-3">
@@ -553,11 +675,12 @@ export const FileUpload = memo(function FileUpload({
                     "flex items-center gap-2 rounded-md border px-3 py-2",
                     fileData.status === "success" && "border-green-300 bg-green-50",
                     fileData.status === "error" && "border-red-300 bg-red-50",
-                    fileData.status === "uploading" && "border-blue-300 bg-blue-50"
+                    (fileData.status === "uploading" || fileData.status === "extracting") &&
+                      "border-blue-300 bg-blue-50"
                   )}
                 >
                   {/* Status icon */}
-                  {fileData.status === "uploading" ? (
+                  {fileData.status === "uploading" || fileData.status === "extracting" ? (
                     <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-600" />
                   ) : fileData.status === "success" ? (
                     <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />

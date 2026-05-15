@@ -361,10 +361,17 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
         <TabsContent value="docs-team" className="space-y-6">
           <DocumentsTab
             dealId={deal.id}
-            documents={deal.documents.map((doc) => ({
-              ...doc,
-              extractionWarnings: doc.extractionWarnings as { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null,
-            }))}
+            documents={deal.documents.map((doc) => {
+              // SSR Prisma read carries storageUrl/storagePath; strip them
+              // before reaching the client component (Phase 2.5: no raw blob
+              // coordinates in client props).
+              const { storageUrl, storagePath, ...rest } = doc;
+              return {
+                ...rest,
+                hasStorage: Boolean(storageUrl ?? storagePath),
+                extractionWarnings: doc.extractionWarnings as { code: string; severity: "critical" | "high" | "medium" | "low"; message: string; suggestion: string }[] | null,
+              };
+            })}
           />
           <TeamManagement
             dealId={deal.id}

@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { clerkFetch } from "@/lib/clerk-fetch";
 
 interface TextPreviewDocument {
   id: string;
@@ -43,7 +44,7 @@ export function TextPreviewDialog({
         setError(null);
         setText(null);
 
-        const response = await fetch(`/api/documents/${document.id}?includeText=1`);
+        const response = await clerkFetch(`/api/documents/${document.id}?includeText=1`);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error ?? "Impossible de charger le texte");
         return payload.data?.extractedText ?? "";

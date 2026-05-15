@@ -9,6 +9,7 @@ import { handleApiError } from "@/lib/api-error";
 import { encryptText } from "@/lib/encryption";
 import {
   completeDocumentExtractionRun,
+  hasUsableExtractionCorpus,
   markExtractionRunProgress,
   recordExtractionPageProgress,
   summarizeManifestForLegacyMetrics,
@@ -60,8 +61,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Only PDF documents support OCR" }, { status: 400 });
     }
 
-    if (!document.storageUrl) {
-      return NextResponse.json({ error: "Document has no storage URL" }, { status: 400 });
+    // The schema allows `storagePath` without `storageUrl` (local dev /
+    // legacy rows). Mirror download/delete which accept either coordinate.
+    const storageTarget = document.storageUrl ?? document.storagePath;
+    if (!storageTarget) {
+      return NextResponse.json({ error: "Document has no storage reference" }, { status: 400 });
     }
 
     const processingClaim = await prisma.document.updateMany({
@@ -100,7 +104,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     };
 
     // Download the PDF buffer from storage
-    const buffer = await downloadFile(document.storageUrl);
+    const buffer = await downloadFile(storageTarget);
 
     // Force OCR with low threshold to process all pages
     const result = await smartExtract(buffer, {
@@ -194,11 +198,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       warnings: extractionWarnings,
     });
 
+    // Shared corpus-usability rule — must agree with the run status set by
+    // completeDocumentExtractionRun above. A whitespace-only OCR result is
+    // NOT a success: document FAILED, no extractedText.
+    const ocrProducedUsableCorpus = hasUsableExtractionCorpus(result.text);
     const updated = await prisma.document.update({
       where: { id: documentId },
       data: {
-        extractedText: result.text ? encryptText(result.text) : null,
-        processingStatus: result.text ? "COMPLETED" : "FAILED",
+        extractedText: ocrProducedUsableCorpus ? encryptText(result.text) : null,
+        processingStatus: ocrProducedUsableCorpus ? "COMPLETED" : "FAILED",
         extractionQuality: result.quality,
         extractionMetrics: {
           quality: result.quality,
