@@ -3,7 +3,7 @@ export const DOCUMENT_PAGE_ARTIFACT_V2 = "document-page-artifact-v2" as const;
 export const OPENROUTER_VLM_PROVIDER_KIND = "openrouter-vlm" as const;
 export const OPENROUTER_VLM_PROVIDER_VERSION = "openrouter-v1" as const;
 export const STANDARD_OCR_PROMPT_VERSION = "ocr-standard-v2" as const;
-export const STRUCTURED_OCR_PROMPT_VERSION = "ocr-structured-v2" as const;
+export const STRUCTURED_OCR_PROMPT_VERSION = "ocr-structured-v3" as const;
 export const STRUCTURED_OCR_SCHEMA_VERSION = "ocr-structured-schema-v1" as const;
 
 export type DocumentPageArtifactVersion =

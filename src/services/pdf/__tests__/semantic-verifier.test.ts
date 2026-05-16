@@ -56,7 +56,7 @@ describe("verifyPageArtifact", () => {
           modelId: "openai/gpt-5.4",
           mode: "high_fidelity",
           providerVersion: "openrouter-v1",
-          promptVersion: "ocr-structured-v2",
+          promptVersion: "ocr-structured-v3",
           schemaVersion: "ocr-structured-schema-v1",
           transport: "json_schema",
         },

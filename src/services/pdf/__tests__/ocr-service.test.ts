@@ -34,6 +34,7 @@ const {
   shouldLowConfidencePageRequireReview,
   isLowInformationWarningOnlyPage,
   isCachedOCRModeReusable,
+  chooseBetterPageOCRResult,
   processImageArtifactOCR,
   smartExtract,
 } = await import("../ocr-service");
@@ -163,6 +164,129 @@ describe("isCachedOCRModeReusable", () => {
   });
 });
 
+describe("chooseBetterPageOCRResult", () => {
+  function pageResult(overrides: Partial<Awaited<ReturnType<typeof processImageArtifactOCR>>> = {}) {
+    const text = overrides.text ?? "Revenue bridge\n2025A 12.4m\n2026F 18.1m";
+    return {
+      pageNumber: 1,
+      text,
+      confidence: overrides.confidence ?? "medium",
+      hasCharts: overrides.hasCharts ?? false,
+      hasImages: overrides.hasImages ?? false,
+      processingTimeMs: 10,
+      cost: overrides.cost ?? 0.01,
+      mode: overrides.mode ?? "high_fidelity",
+      cacheHit: false,
+      artifact: overrides.artifact ?? {
+        version: "document-page-artifact-v1",
+        pageNumber: 1,
+        text,
+        visualBlocks: [],
+        tables: [],
+        charts: [],
+        unreadableRegions: [],
+        numericClaims: [],
+        confidence: overrides.confidence ?? "medium",
+        needsHumanReview: false,
+        ocrMode: overrides.mode ?? "high_fidelity",
+      },
+    } as Awaited<ReturnType<typeof processImageArtifactOCR>>;
+  }
+
+  it("keeps a richer structured-layout baseline when a VLM retry undercovers it", () => {
+    const baselineText = [
+      "Customer Overview - Cont’d",
+      "Strong Managed Services Net Revenue Retention",
+      "108% 103% 104% 103% 99% 96% 127% NRR",
+      "Recent Logo wins $1.5m ARR and $4.0m recurring sales",
+      "Pipeline Opportunities $7.6m Backlog Weighted Pipeline Go-get Buffer FY25B",
+    ].join("\n");
+    const retryText = [
+      "Customer Overview - Cont’d",
+      "Genesis combines strong retention and recent logo wins",
+      "$1.5m ARR and $4.0m total recurring sales",
+    ].join("\n");
+    const baseline = pageResult({
+      text: baselineText,
+      artifact: {
+        ...pageResult().artifact!,
+        text: baselineText,
+        numericClaims: [
+          { label: "NRR", value: "127%", sourceText: "127% NRR", confidence: "medium" },
+          { label: "Backlog", value: "$7.6m", sourceText: "$7.6m Backlog", confidence: "medium" },
+        ],
+        provider: {
+          kind: "google-document-ai",
+          mode: "supreme",
+          providerVersion: "structured-layout-v1",
+          transport: "provider_structured",
+        },
+      },
+    });
+    const retry = pageResult({
+      text: retryText,
+      confidence: "medium",
+      artifact: {
+        ...pageResult().artifact!,
+        text: retryText,
+        provider: {
+          kind: "openrouter-vlm",
+          modelId: "openai/gpt-4o",
+          mode: "supreme",
+          providerVersion: "openrouter-v1",
+          promptVersion: "ocr-structured-v3",
+          schemaVersion: "ocr-structured-schema-v1",
+          transport: "json_schema",
+        },
+      },
+    });
+
+    expect(chooseBetterPageOCRResult(baseline, retry)).toBe(baseline);
+  });
+
+  it("accepts a VLM retry when it preserves baseline coverage and adds evidence", () => {
+    const baselineText = "Revenue bridge\n2025A 12.4m\n2026F 18.1m";
+    const retryText = `${baselineText}\nChart shows acceleration from 2025A to 2026F`;
+    const baseline = pageResult({
+      text: baselineText,
+      artifact: {
+        ...pageResult().artifact!,
+        text: baselineText,
+        provider: {
+          kind: "google-document-ai",
+          mode: "high_fidelity",
+          providerVersion: "structured-layout-v1",
+          transport: "provider_structured",
+        },
+      },
+    });
+    const retry = pageResult({
+      text: retryText,
+      confidence: "high",
+      artifact: {
+        ...pageResult().artifact!,
+        text: retryText,
+        charts: [{ title: "Revenue bridge", description: "Revenue acceleration chart", confidence: "high" }],
+        numericClaims: [
+          { label: "2025A revenue", value: "12.4m", sourceText: "2025A 12.4m", confidence: "high" },
+          { label: "2026F revenue", value: "18.1m", sourceText: "2026F 18.1m", confidence: "high" },
+        ],
+        provider: {
+          kind: "openrouter-vlm",
+          modelId: "openai/gpt-4o",
+          mode: "high_fidelity",
+          providerVersion: "openrouter-v1",
+          promptVersion: "ocr-structured-v3",
+          schemaVersion: "ocr-structured-schema-v1",
+          transport: "json_schema",
+        },
+      },
+    });
+
+    expect(chooseBetterPageOCRResult(baseline, retry)).toBe(retry);
+  });
+});
+
 describe("processImageArtifactOCR cache reuse", () => {
   it("reuses a cached stronger OCR artifact instead of calling the provider again", async () => {
     findManyMock.mockResolvedValue([
@@ -186,7 +310,7 @@ describe("processImageArtifactOCR cache reuse", () => {
             modelId: "openai/gpt-4o",
             mode: "supreme",
             providerVersion: "openrouter-v1",
-            promptVersion: "ocr-structured-v2",
+            promptVersion: "ocr-structured-v3",
             schemaVersion: "ocr-structured-schema-v1",
             transport: "json_schema",
           },

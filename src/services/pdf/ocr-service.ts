@@ -500,7 +500,7 @@ function buildStructuredOCRPrompt(
   }
 
   const contextBlock = contextSections.length > 0
-    ? `\n\nExisting extraction evidence from native/layout engines is provided below. Treat it as grounded evidence to preserve and improve, not as disposable draft OCR.\n- Keep already-grounded labels and values unless the image clearly contradicts them.\n- Use the image to complete missing chart semantics, missing headers, legends, axes, and unreadable regions.\n- Do not drop structured evidence that is already present.\n\n${contextSections.join("\n\n")}`
+    ? `\n\nExisting extraction evidence from native/layout engines is provided below. Treat it as grounded evidence to preserve and improve, not as disposable draft OCR.\n- Keep already-grounded labels and values unless the image clearly contradicts them.\n- Use the image to complete missing chart semantics, missing headers, legends, axes, and unreadable regions.\n- Do not drop structured evidence that is already present.\n- Your pageText must include every grounded visible label, value, period, legend, and footnote from the existing evidence.\n- If the image is hard to read, return the existing structured text verbatim and add only the missing details you can verify.\n- Do not replace a detailed baseline with a shorter summary.\n\n${contextSections.join("\n\n")}`
     : "";
 
   return `You are performing ${level} OCR for a single investment-document PDF page.
@@ -1622,6 +1622,96 @@ function hashText(text: string): string {
   return Math.abs(hash).toString(16);
 }
 
+function isStructuredLayoutProvider(kind: ArtifactProviderMetadata["kind"] | undefined): boolean {
+  return kind === "google-document-ai" || kind === "azure-document-intelligence";
+}
+
+function extractComparableTokens(text: string): Set<string> {
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const tokens = normalized.match(/[a-z0-9]+(?:[.,][0-9]+)?%?|[€$]/g) ?? [];
+  return new Set(tokens.filter((token) => token.length > 1 || token === "€" || token === "$"));
+}
+
+function calculateTokenCoverage(sourceText: string, candidateText: string): number {
+  const source = extractComparableTokens(sourceText);
+  if (source.size === 0) return 1;
+  const candidate = extractComparableTokens(candidateText);
+  let overlap = 0;
+  for (const token of source) {
+    if (candidate.has(token)) overlap += 1;
+  }
+  return overlap / source.size;
+}
+
+function getPageInformationScore(result: PageOCRResult): number {
+  const artifact = result.artifact;
+  const tokenCount = extractComparableTokens(result.text).size;
+  const structuredEvidence =
+    (artifact?.tables.length ?? 0) * 8 +
+    (artifact?.charts.length ?? 0) * 8 +
+    (artifact?.numericClaims.length ?? 0) * 2 +
+    (artifact?.visualBlocks.length ?? 0);
+  const confidenceBonus = result.confidence === "high" ? 12 : result.confidence === "medium" ? 4 : -18;
+  const unreadablePenalty = (artifact?.unreadableRegions ?? []).reduce(
+    (sum, region) => sum + (region.severity === "high" ? 18 : region.severity === "medium" ? 8 : 3),
+    0
+  );
+  const reviewPenalty = artifact?.needsHumanReview ? 8 : 0;
+  return tokenCount + structuredEvidence + confidenceBonus - unreadablePenalty - reviewPenalty;
+}
+
+export function chooseBetterPageOCRResult(existing: PageOCRResult | undefined, candidate: PageOCRResult): PageOCRResult {
+  if (!existing) return candidate;
+
+  const existingProviderKind = existing.artifact?.provider?.kind;
+  const candidateProviderKind = candidate.artifact?.provider?.kind;
+  const existingIsStructuredLayout = isStructuredLayoutProvider(existingProviderKind);
+  const candidateIsVlm = candidateProviderKind === OPENROUTER_VLM_PROVIDER_KIND;
+  const existingTokenCount = extractComparableTokens(existing.text).size;
+  const candidateTokenCount = extractComparableTokens(candidate.text).size;
+  const candidateCoversExisting = calculateTokenCoverage(existing.text, candidate.text);
+
+  // A VLM retry is allowed to improve structure, but it must not replace a
+  // richer deterministic layout/OCR baseline with a shorter summary. This is
+  // the class of miss found on dense logo/chart pages: the retry is valid JSON
+  // and medium confidence, yet it silently drops half the visible labels.
+  if (
+    existingIsStructuredLayout &&
+    candidateIsVlm &&
+    existingTokenCount >= 30 &&
+    candidateTokenCount < existingTokenCount * 0.75 &&
+    candidateCoversExisting < 0.85
+  ) {
+    return existing;
+  }
+
+  const existingScore = getPageInformationScore(existing);
+  const candidateScore = getPageInformationScore(candidate);
+  if (candidateScore > existingScore + 8) {
+    return candidate;
+  }
+
+  if (
+    candidate.confidence !== "low" &&
+    existing.confidence === "low" &&
+    candidateCoversExisting >= 0.7
+  ) {
+    return candidate;
+  }
+
+  if (
+    candidate.text.length >= existing.text.length &&
+    candidate.confidence !== "low"
+  ) {
+    return candidate;
+  }
+
+  return existing;
+}
+
 function mergeOCRResults(params: {
   original: OCRResult;
   retry: OCRResult;
@@ -1634,9 +1724,7 @@ function mergeOCRResults(params: {
 
   for (const retryResult of params.retry.pageResults) {
     const existing = resultsByPage.get(retryResult.pageNumber);
-    if (!existing || retryResult.text.length >= existing.text.length || retryResult.confidence !== "low") {
-      resultsByPage.set(retryResult.pageNumber, retryResult);
-    }
+    resultsByPage.set(retryResult.pageNumber, chooseBetterPageOCRResult(existing, retryResult));
   }
 
   const pageResults = [...resultsByPage.values()].sort((a, b) => a.pageNumber - b.pageNumber);
@@ -2126,7 +2214,7 @@ export async function smartExtract(
           signal
         );
         const escalationPages = structured?.escalationPageIndices ?? [];
-        const fallbackPages = [...new Set(escalationPages.filter((pageIndex) => visualPlan[pageIndex]?.tier === "supreme"))];
+        const fallbackPages = [...new Set(escalationPages)];
         const finalOcrResult = fallbackPages.length > 0
           ? mergeOCRResults({
               original: ocrResult,
