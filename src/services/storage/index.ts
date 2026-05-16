@@ -8,7 +8,23 @@ export interface UploadResult {
   pathname: string;
 }
 
-const isVercelBlobConfigured = !!process.env.BLOB_READ_WRITE_TOKEN;
+function hasVercelBlobToken(): boolean {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
+function isVercelRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
+}
+
+function shouldUseVercelBlob(): boolean {
+  if (hasVercelBlobToken()) return true;
+  if (isVercelRuntime()) {
+    throw new Error(
+      "BLOB_READ_WRITE_TOKEN is required for storage on Vercel; refusing local filesystem fallback"
+    );
+  }
+  return false;
+}
 
 /**
  * Sanitize path to prevent path traversal attacks
@@ -44,7 +60,7 @@ export async function uploadFile(
   const buffer = await toBuffer(file);
   const content = options?.access === "private" ? encryptBuffer(buffer) : buffer;
 
-  if (isVercelBlobConfigured) {
+  if (shouldUseVercelBlob()) {
     return uploadToVercelBlob(path, content);
   }
   return uploadToLocal(path, content);
@@ -54,7 +70,7 @@ export async function uploadFile(
  * Delete a file from storage
  */
 export async function deleteFile(urlOrPath: string): Promise<void> {
-  if (isVercelBlobConfigured) {
+  if (shouldUseVercelBlob()) {
     await del(urlOrPath);
   } else {
     const baseDir = join(process.cwd(), "public", "uploads");
@@ -76,7 +92,7 @@ export async function deleteFile(urlOrPath: string): Promise<void> {
 export async function downloadFile(urlOrPath: string): Promise<Buffer> {
   let buffer: Buffer;
 
-  if (isVercelBlobConfigured) {
+  if (shouldUseVercelBlob()) {
     // Phase 5 (Codex P1): a Document row can legitimately have `storageUrl`
     // null and only `storagePath` set (legacy rows, the `?? storagePath`
     // fallback in /retry, /process, /ocr, etc.). `storagePath` is a pathname
@@ -114,7 +130,7 @@ export async function downloadFile(urlOrPath: string): Promise<Buffer> {
  * Get the public URL for a file
  */
 export function getPublicUrl(pathname: string): string {
-  if (isVercelBlobConfigured) {
+  if (shouldUseVercelBlob()) {
     return pathname; // Vercel Blob returns full URL
   }
   // Local: return relative URL
@@ -175,6 +191,10 @@ async function toBuffer(file: File | Buffer): Promise<Buffer> {
 
 // Export config check for debugging
 export const storageConfig = {
-  provider: isVercelBlobConfigured ? "vercel-blob" : "local",
-  isConfigured: isVercelBlobConfigured,
+  get provider() {
+    return hasVercelBlobToken() ? "vercel-blob" : "local";
+  },
+  get isConfigured() {
+    return hasVercelBlobToken();
+  },
 };

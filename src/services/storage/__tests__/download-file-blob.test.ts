@@ -6,36 +6,50 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 // pathname to its current blob URL via `@vercel/blob.head()` first.
 
 const mocks = vi.hoisted(() => ({
+  put: vi.fn(),
+  del: vi.fn(),
   head: vi.fn(),
   fetch: vi.fn(),
 }));
 
 vi.mock("@vercel/blob", () => ({
-  put: vi.fn(),
-  del: vi.fn(),
+  put: mocks.put,
+  del: mocks.del,
   head: mocks.head,
 }));
 
-// The module reads `BLOB_READ_WRITE_TOKEN` at LOAD time to pick the Blob
-// branch — set it BEFORE the dynamic import (a `beforeAll` would run AFTER
-// the top-level `await import`, so the constant would already be `false`).
 const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
+const previousVercel = process.env.VERCEL;
+const previousVercelEnv = process.env.VERCEL_ENV;
 process.env.BLOB_READ_WRITE_TOKEN = "blob-token-for-tests";
 vi.stubGlobal("fetch", mocks.fetch);
 
 afterAll(() => {
   if (previousToken === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
   else process.env.BLOB_READ_WRITE_TOKEN = previousToken;
+  if (previousVercel === undefined) delete process.env.VERCEL;
+  else process.env.VERCEL = previousVercel;
+  if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+  else process.env.VERCEL_ENV = previousVercelEnv;
   vi.unstubAllGlobals();
 });
 
-const { downloadFile } = await import("../index");
+const { downloadFile, uploadFile, storageConfig } = await import("../index");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  process.env.BLOB_READ_WRITE_TOKEN = "blob-token-for-tests";
+  if (previousVercel === undefined) delete process.env.VERCEL;
+  else process.env.VERCEL = previousVercel;
+  if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+  else process.env.VERCEL_ENV = previousVercelEnv;
   mocks.fetch.mockResolvedValue(
     new Response(new Uint8Array([0xab, 0xcd, 0xef]), { status: 200 })
   );
+  mocks.put.mockResolvedValue({
+    url: "https://blob.vercel-storage.com/deals/dx/uploaded.pdf",
+    pathname: "deals/dx/uploaded.pdf",
+  });
 });
 
 describe("downloadFile — Blob mode storagePath fallback", () => {
@@ -78,5 +92,33 @@ describe("downloadFile — Blob mode storagePath fallback", () => {
     await expect(downloadFile("deals/dx/missing.pdf")).rejects.toThrow(
       /Failed to download from blob: 404/
     );
+  });
+
+  it("chooses Blob storage at call time when the token is present after module import", async () => {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect(storageConfig.isConfigured).toBe(false);
+
+    process.env.BLOB_READ_WRITE_TOKEN = "blob-token-for-tests";
+    const result = await uploadFile("deals/dx/uploaded.pdf", Buffer.from("pdf"));
+
+    expect(mocks.put).toHaveBeenCalledWith(
+      "deals/dx/uploaded.pdf",
+      expect.any(Buffer),
+      { access: "public" }
+    );
+    expect(result).toEqual({
+      url: "https://blob.vercel-storage.com/deals/dx/uploaded.pdf",
+      pathname: "deals/dx/uploaded.pdf",
+    });
+  });
+
+  it("refuses local filesystem fallback on Vercel when the Blob token is missing", async () => {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    process.env.VERCEL = "1";
+
+    await expect(
+      uploadFile("deals/dx/local-leak.pdf", Buffer.from("pdf"))
+    ).rejects.toThrow(/BLOB_READ_WRITE_TOKEN is required/);
+    expect(mocks.put).not.toHaveBeenCalled();
   });
 });
