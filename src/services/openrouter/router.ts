@@ -787,11 +787,9 @@ export async function completeJSON<T>(
       usage: result.usage,
     };
   } catch (parseError) {
-    // If parsing fails, throw with more context
-    const preview = jsonString.substring(0, 500);
     throw new Error(
       `Failed to parse LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}. ` +
-      `Response preview: ${preview}...`
+      `Response length: ${jsonString.length} characters.`
     );
   }
 }

@@ -1740,7 +1740,10 @@ function mergeOCRResults(params: {
   };
 }
 
-async function extractStructuredProviderOutput(buffer: Buffer): Promise<StructuredPdfExtractionOutput | null> {
+async function extractStructuredProviderOutput(
+  buffer: Buffer,
+  pageNumbers?: number[]
+): Promise<StructuredPdfExtractionOutput | null> {
   const providerStack = createDefaultPdfProviderStack();
   const providers = [providerStack.structuredPrimary, providerStack.structuredFallback].filter(
     (provider): provider is NonNullable<typeof provider> => Boolean(provider)
@@ -1756,6 +1759,7 @@ async function extractStructuredProviderOutput(buffer: Buffer): Promise<Structur
       const output = await provider.extractFromBuffer({
         buffer,
         mimeType: "application/pdf",
+        pageNumbers,
       });
       if (output.success && output.pages.length > 0) {
         return output;
@@ -1798,7 +1802,8 @@ async function runStructuredProviderPlan(
   if (signal?.aborted) return null;
 
   const startedAt = Date.now();
-  const structuredOutput = await extractStructuredProviderOutput(buffer);
+  const selectedPageNumbers = selectedPageIndices.map((pageIndex) => pageIndex + 1);
+  const structuredOutput = await extractStructuredProviderOutput(buffer, selectedPageNumbers);
   if (!structuredOutput) {
     return null;
   }

@@ -99,6 +99,7 @@ export interface StructuredPdfExtractionRequest {
   buffer: Buffer;
   mimeType?: string;
   sourceName?: string;
+  pageNumbers?: number[];
 }
 
 export interface StructuredPdfPageResult {

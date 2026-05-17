@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   documentFindFirst: vi.fn(),
@@ -14,9 +14,15 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.stubEnv("DOCUMENT_ENCRYPTION_KEY", "d".repeat(64));
+
 const { reuseCompletedExtractionForContentHash } = await import("../extraction-reuse");
 
 describe("reuseCompletedExtractionForContentHash — tenant isolation", () => {
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

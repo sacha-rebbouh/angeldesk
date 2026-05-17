@@ -366,29 +366,31 @@ describe("smartExtract structured provider routing", () => {
       }),
     });
 
+    const structuredExtractFromBuffer = vi.fn().mockResolvedValue({
+      provider: { id: "google-document-ai", label: "Google Document AI", kind: "structured_layout" },
+      success: true,
+      pageCount: 1,
+      pages: [
+        {
+          pageNumber: 1,
+          text: "Revenue bridge\n2025A 12.4m\n2026F 18.1m",
+          confidence: "high",
+          visualBlocks: [{ type: "table", description: "Extracted table", confidence: "high" }],
+          tables: [{ markdown: "| Metric | Value |\n| Revenue | 12.4m |", rows: [["Metric", "Value"], ["Revenue", "12.4m"]], confidence: "high" }],
+          charts: [],
+          unreadableRegions: [],
+          numericClaims: [{ label: "Revenue", value: "12.4m", sourceText: "Revenue 12.4m", confidence: "high" }],
+        },
+      ],
+      raw: {},
+    });
+
     createDefaultPdfProviderStackMock.mockReturnValue({
       native: undefined,
       pageOcr: undefined,
       structuredPrimary: {
         descriptor: { id: "google-document-ai", label: "Google Document AI", kind: "structured_layout" },
-        extractFromBuffer: vi.fn().mockResolvedValue({
-          provider: { id: "google-document-ai", label: "Google Document AI", kind: "structured_layout" },
-          success: true,
-          pageCount: 1,
-          pages: [
-            {
-              pageNumber: 1,
-              text: "Revenue bridge\n2025A 12.4m\n2026F 18.1m",
-              confidence: "high",
-              visualBlocks: [{ type: "table", description: "Extracted table", confidence: "high" }],
-              tables: [{ markdown: "| Metric | Value |\n| Revenue | 12.4m |", rows: [["Metric", "Value"], ["Revenue", "12.4m"]], confidence: "high" }],
-              charts: [],
-              unreadableRegions: [],
-              numericClaims: [{ label: "Revenue", value: "12.4m", sourceText: "Revenue 12.4m", confidence: "high" }],
-            },
-          ],
-          raw: {},
-        }),
+        extractFromBuffer: structuredExtractFromBuffer,
       },
       structuredFallback: undefined,
     });
@@ -404,5 +406,8 @@ describe("smartExtract structured provider routing", () => {
     expect(result.estimatedCost).toBeGreaterThan(0);
     expect(result.ocrResult?.pageResults[0]?.artifact?.provider?.kind).toBe("google-document-ai");
     expect(result.manifest.pages[0]?.artifact?.verification?.state).toBe("provider_structured");
+    expect(structuredExtractFromBuffer).toHaveBeenCalledWith(expect.objectContaining({
+      pageNumbers: [1],
+    }));
   });
 });

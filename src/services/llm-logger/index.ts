@@ -75,6 +75,8 @@ function buildProtectedMetadata(entry: LLMCallLogEntry): Record<string, unknown>
     userPromptLength: entry.userPrompt.length,
     responseHash: hashText(entry.response),
     responseLength: entry.response.length,
+    errorMessageHash: hashText(entry.errorMessage),
+    errorMessageLength: entry.errorMessage?.length ?? 0,
   };
 
   if (!entry.metadata) {
@@ -119,7 +121,7 @@ export async function logLLMCall(entry: LLMCallLogEntry): Promise<string | null>
         durationMs: entry.durationMs,
         firstTokenMs: entry.firstTokenMs,
         isError: entry.isError ?? false,
-        errorMessage: entry.errorMessage,
+        errorMessage: protectText(entry.errorMessage, "error") ?? undefined,
         errorType: entry.errorType,
         metadata: protectedMetadata
           ? (JSON.parse(JSON.stringify(protectedMetadata)) as Prisma.InputJsonValue)

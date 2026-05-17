@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/api-error";
-import { safeDecrypt, safeDecryptJsonField } from "@/lib/encryption";
+import { safeDecrypt, safeDecryptJsonField, tryDecryptJsonField } from "@/lib/encryption";
 import { prisma } from "@/lib/prisma";
 import { calculateArtifactCompleteness, getBlockingPageNumbersFromStoredPages } from "@/services/documents/extraction-runs";
 import type { DocumentPageArtifact } from "@/services/pdf";
@@ -221,6 +221,23 @@ function extractExcelModelAudit(extractionMetrics: unknown) {
     return null;
   }
   const record = extractionMetrics as Record<string, unknown>;
+  const encryptedAudit = tryDecryptJsonField<Record<string, unknown>>(record.excelModelAudit);
+  if (
+    (encryptedAudit.kind === "decrypted" || encryptedAudit.kind === "plaintext") &&
+    encryptedAudit.value &&
+    typeof encryptedAudit.value === "object" &&
+    !Array.isArray(encryptedAudit.value)
+  ) {
+    return {
+      workbookAudit: encryptedAudit.value.workbookAudit ?? null,
+      modelIntelligence: encryptedAudit.value.modelIntelligence ?? null,
+      financialAudit: encryptedAudit.value.financialAudit ?? null,
+      analystReport: encryptedAudit.value.analystReport ?? null,
+    };
+  }
+  if (encryptedAudit.kind === "corrupted") {
+    return null;
+  }
   return {
     workbookAudit: record.workbookAudit ?? null,
     modelIntelligence: record.modelIntelligence ?? null,

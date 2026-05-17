@@ -443,6 +443,25 @@ function chunkPageNumbers(pageCount: number, chunkSize = GOOGLE_SYNC_PAGE_LIMIT)
   return chunks;
 }
 
+function normalizeRequestedPageNumbers(pageNumbers: number[] | undefined, pageCount: number): number[] {
+  if (!pageNumbers || pageNumbers.length === 0) return [];
+  return [...new Set(pageNumbers)]
+    .filter((pageNumber) =>
+      Number.isInteger(pageNumber) &&
+      pageNumber >= 1 &&
+      pageNumber <= pageCount
+    )
+    .sort((left, right) => left - right);
+}
+
+function chunkSelectedPageNumbers(pageNumbers: number[], chunkSize = GOOGLE_SYNC_PAGE_LIMIT): number[][] {
+  const chunks: number[][] = [];
+  for (let index = 0; index < pageNumbers.length; index += chunkSize) {
+    chunks.push(pageNumbers.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
 function chunkPageNumbersFromList(pageNumbers: number[]): number[][] {
   const midpoint = Math.ceil(pageNumbers.length / 2);
   return [pageNumbers.slice(0, midpoint), pageNumbers.slice(midpoint)].filter((chunk) => chunk.length > 0);
@@ -597,6 +616,12 @@ export class GoogleDocumentAiStructuredExtractionProvider implements StructuredP
     }
 
     const pageCount = await getPdfPageCount(request.buffer);
+    const requestedPageNumbers = normalizeRequestedPageNumbers(request.pageNumbers, pageCount);
+    const hasExplicitPageSelection = Boolean(request.pageNumbers && request.pageNumbers.length > 0);
+    if (hasExplicitPageSelection && requestedPageNumbers.length === 0) {
+      return mergeGoogleStructuredOutputs([]);
+    }
+
     if (pageCount === 0 || pageCount <= GOOGLE_SYNC_PAGE_LIMIT) {
       return processGoogleDocumentAiChunk({
         fetchImpl,
@@ -605,10 +630,13 @@ export class GoogleDocumentAiStructuredExtractionProvider implements StructuredP
         accessToken,
         buffer: request.buffer,
         mimeType,
+        pageNumbers: requestedPageNumbers.length > 0 ? requestedPageNumbers : undefined,
       });
     }
 
-    const pageChunks = chunkPageNumbers(pageCount, GOOGLE_SYNC_PAGE_LIMIT);
+    const pageChunks = requestedPageNumbers.length > 0
+      ? chunkSelectedPageNumbers(requestedPageNumbers, GOOGLE_SYNC_PAGE_LIMIT)
+      : chunkPageNumbers(pageCount, GOOGLE_SYNC_PAGE_LIMIT);
     const outputs: StructuredPdfExtractionOutput[] = [];
     for (const pageNumbers of pageChunks) {
       outputs.push(...await processGoogleDocumentAiChunkWithFallback({

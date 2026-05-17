@@ -40,6 +40,8 @@ describe("llm logger privacy mode", () => {
       systemPrompt: "SYSTEM SECRET",
       userPrompt: "USER SECRET",
       response: "MODEL SECRET",
+      isError: true,
+      errorMessage: "PARSE ERROR WITH MODEL SECRET",
       inputTokens: 10,
       outputTokens: 5,
       cost: 0.12,
@@ -53,9 +55,11 @@ describe("llm logger privacy mode", () => {
     expect(payload.systemPrompt).toMatch(/^\[REDACTED:system;/);
     expect(payload.userPrompt).toMatch(/^\[REDACTED:user;/);
     expect(payload.response).toMatch(/^\[REDACTED:response;/);
+    expect(payload.errorMessage).toMatch(/^\[REDACTED:error;/);
     expect(payload.systemPrompt).not.toContain("SYSTEM SECRET");
     expect(payload.userPrompt).not.toContain("USER SECRET");
     expect(payload.response).not.toContain("MODEL SECRET");
+    expect(payload.errorMessage).not.toContain("MODEL SECRET");
     expect(payload.metadata).toMatchObject({
       attempt: 0,
       llmTrace: {
@@ -63,6 +67,7 @@ describe("llm logger privacy mode", () => {
         systemPromptLength: 13,
         userPromptLength: 11,
         responseLength: 12,
+        errorMessageLength: 29,
       },
     });
   });

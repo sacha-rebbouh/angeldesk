@@ -186,8 +186,13 @@ export class AzureDocumentIntelligenceStructuredExtractionProvider implements St
     }
 
     const fetchImpl = this.options.fetchImpl ?? fetch;
+    const query = new URLSearchParams({ "api-version": apiVersion });
+    const selectedPages = normalizeAzurePageSelection(request.pageNumbers);
+    if (selectedPages) {
+      query.set("pages", selectedPages);
+    }
     const submitResponse = await fetchImpl(
-      `${endpoint}/documentintelligence/documentModels/${modelId}:analyze?api-version=${apiVersion}`,
+      `${endpoint}/documentintelligence/documentModels/${modelId}:analyze?${query.toString()}`,
       {
         method: "POST",
         headers: {
@@ -235,4 +240,12 @@ export function createAzureDocumentIntelligenceStructuredExtractionProvider(
   options?: ConstructorParameters<typeof AzureDocumentIntelligenceStructuredExtractionProvider>[0]
 ): StructuredPdfExtractionProvider {
   return new AzureDocumentIntelligenceStructuredExtractionProvider(options);
+}
+
+function normalizeAzurePageSelection(pageNumbers: number[] | undefined): string | null {
+  if (!pageNumbers || pageNumbers.length === 0) return null;
+  const selected = [...new Set(pageNumbers)]
+    .filter((pageNumber) => Number.isInteger(pageNumber) && pageNumber >= 1)
+    .sort((left, right) => left - right);
+  return selected.length > 0 ? selected.join(",") : null;
 }

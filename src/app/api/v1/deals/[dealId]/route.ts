@@ -24,6 +24,7 @@ import {
   updateDealSchema,
 } from "@/services/deals/manual-fact-overrides";
 import { refreshCurrentFactsView } from "@/services/fact-store/current-facts";
+import { deleteFile } from "@/services/storage";
 
 const cuidSchema = z.string().cuid();
 
@@ -219,10 +220,37 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return apiError("NOT_FOUND", "Deal not found", 404);
     }
 
+    const documents = await prisma.document.findMany({
+      where: { dealId },
+      select: { id: true, storageUrl: true, storagePath: true },
+    });
+    const blobDeletionErrors: Array<{ documentId: string; error: string }> = [];
+    for (const document of documents) {
+      const target = document.storageUrl ?? document.storagePath;
+      if (!target) continue;
+      try {
+        await deleteFile(target);
+      } catch (blobError) {
+        blobDeletionErrors.push({
+          documentId: document.id,
+          error: blobError instanceof Error ? blobError.message : String(blobError),
+        });
+      }
+    }
+    if (blobDeletionErrors.length > 0) {
+      console.warn(
+        `[api:v1:deal:delete] ${blobDeletionErrors.length} blob(s) failed to delete for deal ${dealId}; continuing with DB cascade`,
+        blobDeletionErrors
+      );
+    }
+
     await prisma.deal.delete({ where: { id: dealId } });
 
     timer.success(200);
-    return apiSuccess({ deleted: true });
+    return apiSuccess({
+      deleted: true,
+      blobDeletionFailures: blobDeletionErrors.length,
+    });
   } catch (error) {
     timer.error(500, error instanceof Error ? error.message : "Unknown");
     return handleApiError(error, "delete deal (v1)");

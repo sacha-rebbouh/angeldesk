@@ -8,7 +8,7 @@ import { DocumentType, Prisma } from "@prisma/client";
 import { deleteFile, uploadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
 import { computeContentHash, checkDuplicateDocument } from "@/services/document-hash";
-import { encryptText } from "@/lib/encryption";
+import { encryptJsonField, encryptText } from "@/lib/encryption";
 import { isValidDocumentSignature } from "@/lib/file-signatures";
 import {
   acquireDocumentLineageLock,
@@ -829,6 +829,19 @@ export async function POST(request: NextRequest) {
             });
           }
 
+          const excelModelAuditPayload = buildExcelModelAuditPayload({
+            workbookAudit: result.workbookAudit,
+            modelIntelligence,
+            financialAudit,
+            analystReport,
+          });
+          const excelAuditSummaryMetrics = buildExcelAuditSummaryMetrics({
+            workbookAudit: result.workbookAudit,
+            modelIntelligence,
+            financialAudit,
+            analystReport,
+          });
+
           const extractionRun = await recordDocumentExtractionRun({
             documentId: document.id,
             documentVersion: document.version,
@@ -839,12 +852,7 @@ export async function POST(request: NextRequest) {
             warnings: extractionWarnings.length > 0
               ? JSON.parse(JSON.stringify(extractionWarnings))
               : [],
-            extraSummaryMetrics: JSON.parse(JSON.stringify({
-              workbookAudit: result.workbookAudit,
-              modelIntelligence,
-              financialAudit,
-              analystReport,
-            })) as Prisma.InputJsonObject,
+            extraSummaryMetrics: excelAuditSummaryMetrics,
           });
 
           // Shared corpus-usability rule — keeps the document status in sync
@@ -863,10 +871,8 @@ export async function POST(request: NextRequest) {
                 hasFormulas: result.metadata.hasFormulas,
                 formulaCount: result.metadata.formulaCount,
                 hiddenSheetCount: result.metadata.hiddenSheetCount,
-                workbookAudit: JSON.parse(JSON.stringify(result.workbookAudit)),
-                modelIntelligence: JSON.parse(JSON.stringify(modelIntelligence)),
-                financialAudit: JSON.parse(JSON.stringify(financialAudit)),
-                analystReport: analystReport ? JSON.parse(JSON.stringify(analystReport)) : null,
+                ...excelAuditSummaryMetrics,
+                excelModelAudit: excelModelAuditPayload,
                 extractorVersion: 2,
                 promptTextChars: textContent.length,
                 truncated: textContent.length >= 120_000,
@@ -1712,6 +1718,106 @@ function buildEmbeddedMediaFallbackArtifact(params: {
 
 function hashBuffer(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
+}
+
+function buildExcelModelAuditPayload(params: {
+  workbookAudit: unknown;
+  modelIntelligence: unknown;
+  financialAudit: unknown;
+  analystReport: unknown;
+}): Prisma.InputJsonValue {
+  const envelope = encryptJsonField({
+    workbookAudit: params.workbookAudit,
+    modelIntelligence: params.modelIntelligence,
+    financialAudit: params.financialAudit,
+    analystReport: params.analystReport,
+  });
+  return envelope as unknown as Prisma.InputJsonValue;
+}
+
+function buildExcelAuditSummaryMetrics(params: {
+  workbookAudit: unknown;
+  modelIntelligence: unknown;
+  financialAudit: unknown;
+  analystReport: unknown;
+}): Prisma.InputJsonObject {
+  const workbookAudit = asUnknownRecord(params.workbookAudit);
+  const modelIntelligence = asUnknownRecord(params.modelIntelligence);
+  const financialAudit = asUnknownRecord(params.financialAudit);
+  const analystReport = asUnknownRecord(params.analystReport);
+  const hardcodes = asUnknownRecord(modelIntelligence?.hardcodes);
+  const lineage = asUnknownRecord(modelIntelligence?.lineage);
+  const outputs = asUnknownRecord(modelIntelligence?.outputs);
+  const drivers = asUnknownRecord(modelIntelligence?.drivers);
+  const report = asUnknownRecord(analystReport?.report);
+
+  return {
+    workbookAuditSummary: {
+      hiddenSheetCount: countUnknownArray(workbookAudit?.hiddenSheets),
+      assumptionSheetCount: countUnknownArray(workbookAudit?.assumptionSheets),
+      outputSheetCount: countUnknownArray(workbookAudit?.outputSheets),
+      calcSheetCount: countUnknownArray(workbookAudit?.calcSheets),
+      criticalSheetCount: countUnknownArray(workbookAudit?.criticalSheets),
+      formulaHeavySheetCount: countUnknownArray(workbookAudit?.formulaHeavySheets),
+      warningFlagCount: countUnknownArray(workbookAudit?.warningFlags),
+    },
+    modelIntelligenceSummary: {
+      driverCount: safeNumber(drivers?.count),
+      outputCount: safeNumber(outputs?.count),
+      hardcodeCount: safeNumber(hardcodes?.count),
+      highSeverityHardcodeCount: safeNumber(hardcodes?.highSeverityCount),
+      hiddenStructureCount: countUnknownArray(modelIntelligence?.hiddenStructures),
+      disconnectedCalcCount: countUnknownArray(modelIntelligence?.disconnectedCalcs),
+      criticalDependencyCount: countUnknownArray(modelIntelligence?.criticalDependencies),
+      warningCount: countUnknownArray(modelIntelligence?.warnings),
+      lineageNodeCount: safeNumber(lineage?.nodes),
+      lineageEdgeCount: safeNumber(lineage?.edges),
+      crossSheetEdgeCount: safeNumber(lineage?.crossSheetEdges),
+      namedRangeCount: safeNumber(lineage?.namedRangeCount),
+      threeDimensionalRefCount: safeNumber(lineage?.threeDimensionalRefCount),
+    },
+    financialAuditSummary: {
+      overallRisk: safeRisk(financialAudit?.overallRisk),
+      consistencyFlagCount: countUnknownArray(financialAudit?.consistencyFlags),
+      reconciliationFlagCount: countUnknownArray(financialAudit?.reconciliationFlags),
+      plausibilityFlagCount: countUnknownArray(financialAudit?.plausibilityFlags),
+      heroicAssumptionFlagCount: countUnknownArray(financialAudit?.heroicAssumptionFlags),
+      dependencyFlagCount: countUnknownArray(financialAudit?.dependencyFlags),
+      greenFlagCount: countUnknownArray(financialAudit?.greenFlags),
+      keyMetricCount: countUnknownArray(financialAudit?.keyMetrics),
+      sensitivityCount: countUnknownArray(financialAudit?.topSensitivities),
+      warningCount: countUnknownArray(financialAudit?.warnings),
+    },
+    analystReportSummary: {
+      available: Boolean(report),
+      confidence: safeConfidence(report?.confidence),
+      cost: safeNumber(analystReport?.cost),
+      model: typeof analystReport?.model === "string" ? analystReport.model : null,
+    },
+  };
+}
+
+function asUnknownRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function countUnknownArray(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function safeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function safeRisk(value: unknown): "low" | "medium" | "high" | "critical" | null {
+  return value === "low" || value === "medium" || value === "high" || value === "critical"
+    ? value
+    : null;
+}
+
+function safeConfidence(value: unknown): "low" | "medium" | "high" | null {
+  return value === "low" || value === "medium" || value === "high" ? value : null;
 }
 
 function buildExcelSheetArtifact(sheet: SheetData, pageNumber: number): DocumentPageArtifact {

@@ -153,6 +153,63 @@ describe("GoogleDocumentAiStructuredExtractionProvider", () => {
     expect(result.pages.map((page) => page.pageNumber)).toEqual([1, 15, 16, 30, 31, 45, 46, 57]);
   });
 
+  it("honors explicit page selection instead of processing every page in a long PDF", async () => {
+    getPdfPageCountMock.mockResolvedValue(57);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          document: {
+            text: "Selected pages only",
+            pages: [
+              {
+                pageNumber: 2,
+                confidence: 0.91,
+                layout: { textAnchor: { textSegments: [{ startIndex: "0", endIndex: "19" }] } },
+              },
+              {
+                pageNumber: 22,
+                confidence: 0.88,
+                layout: { textAnchor: { textSegments: [{ startIndex: "0", endIndex: "19" }] } },
+              },
+              {
+                pageNumber: 57,
+                confidence: 0.87,
+                layout: { textAnchor: { textSegments: [{ startIndex: "0", endIndex: "19" }] } },
+              },
+            ],
+          },
+        }),
+      });
+
+    const provider = createGoogleDocumentAiStructuredExtractionProvider({
+      processorName: "projects/test/locations/europe-west2/processors/456",
+      accessToken: "bearer-token",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const result = await provider.extractFromBuffer({
+      buffer: Buffer.from("pdf"),
+      mimeType: "application/pdf",
+      pageNumbers: [57, 2, 22, 2],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body))).toMatchObject({
+      imagelessMode: true,
+      processOptions: {
+        individualPageSelector: {
+          pages: [2, 22, 57],
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+    expect(result.pageCount).toBe(3);
+    expect(result.pages.map((page) => page.pageNumber)).toEqual([2, 22, 57]);
+  });
+
   it("recursively splits a chunk when Google times out on a larger page range", async () => {
     getPdfPageCountMock.mockResolvedValue(20);
 

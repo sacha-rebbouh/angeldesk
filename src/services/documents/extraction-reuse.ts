@@ -58,6 +58,7 @@ export async function reuseCompletedExtractionForContentHash(params: {
   const sourceRun = sourceDocument?.extractionRuns[0];
   if (!sourceDocument?.extractedText || !sourceRun) return null;
   if (sourceRun.pageCount > 0 && sourceRun.pagesProcessed < sourceRun.pageCount) return null;
+  const sourceExtractedText = sourceDocument.extractedText;
 
   const clonedRun = await prisma.$transaction(async (tx) => {
     const createdRun = await tx.documentExtractionRun.create({
@@ -122,7 +123,7 @@ export async function reuseCompletedExtractionForContentHash(params: {
     await tx.document.update({
       where: { id: params.targetDocumentId },
       data: {
-        extractedText: sourceDocument.extractedText,
+        extractedText: reEncryptExtractedTextForReuse(sourceExtractedText),
         processingStatus: "COMPLETED",
         extractionQuality: sourceDocument.extractionQuality,
         extractionMetrics: buildReusedExtractionMetrics(sourceDocument.extractionMetrics, {
@@ -262,6 +263,19 @@ function reEncryptTextPreviewForReuse(stored: string | null): string | null {
     case "corrupted":
       throw new CorruptedSourceArtifactError(
         `extraction-reuse: source page textPreview has an undecryptable envelope (${result.reason}). Refusing to clone.`
+      );
+    case "plaintext":
+    case "decrypted":
+      return encryptText(result.value);
+  }
+}
+
+function reEncryptExtractedTextForReuse(stored: string): string {
+  const result = tryDecryptText(stored);
+  switch (result.kind) {
+    case "corrupted":
+      throw new CorruptedSourceArtifactError(
+        `extraction-reuse: source document extractedText has an undecryptable envelope (${result.reason}). Refusing to clone.`
       );
     case "plaintext":
     case "decrypted":

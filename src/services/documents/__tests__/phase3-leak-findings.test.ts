@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { encryptJsonField, encryptText } from "@/lib/encryption";
+import { encryptJsonField, encryptText, safeDecrypt } from "@/lib/encryption";
 
 // Phase 3.5 — Codex post-Phase-3 audit identified three code paths that
 // silently bypass encryption. Each `it()` below was written BEFORE the fix
@@ -248,7 +248,7 @@ describe("Phase 3.5(c) — extraction-reuse must re-encrypt artifacts when cloni
 
     documentFindFirst.mockResolvedValue({
       id: "doc_source",
-      extractedText: "encrypted-corpus-blob",
+      extractedText: "legacy extracted corpus must NOT survive cloning",
       extractionQuality: 80,
       extractionMetrics: { pagesOCRd: 1, ocrCost: 0.03 },
       extractionWarnings: [],
@@ -333,6 +333,13 @@ describe("Phase 3.5(c) — extraction-reuse must re-encrypt artifacts when cloni
     expect(targetPage.textPreview).not.toBe(legacyTextPreview);
     expect(typeof targetPage.textPreview).toBe("string");
     expect(targetPage.textPreview).not.toContain("legacy plaintext preview");
+
+    const documentUpdateCall = tx.document.update.mock.calls[0]?.[0];
+    const targetExtractedText = documentUpdateCall?.data?.extractedText;
+    expect(typeof targetExtractedText).toBe("string");
+    expect(targetExtractedText).not.toBe("legacy extracted corpus must NOT survive cloning");
+    expect(targetExtractedText).not.toContain("legacy extracted corpus");
+    expect(safeDecrypt(targetExtractedText as string)).toBe("legacy extracted corpus must NOT survive cloning");
 
     vi.doUnmock("@/lib/prisma");
   });
@@ -724,6 +731,122 @@ describe("Phase 3.5(c) — extraction-reuse must re-encrypt artifacts when cloni
       // The transaction must not have written a stripped row with a still-
       // corrupted ciphertext.
       expect(tx.documentExtractionRun.create).not.toHaveBeenCalled();
+    } finally {
+      consoleWarn.mockRestore();
+      vi.doUnmock("@/lib/prisma");
+    }
+  });
+
+  it("fail-closed: a corrupted encrypted-looking extractedText on the source must throw", async () => {
+    const documentFindFirst = vi.fn();
+    const transaction = vi.fn();
+    const tx = {
+      documentExtractionRun: {
+        create: vi.fn().mockResolvedValue({ id: "run_clone", pageCount: 1, pagesProcessed: 1 }),
+      },
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      document: {
+        update: vi.fn().mockResolvedValue(undefined),
+        findUnique: vi.fn().mockResolvedValue({
+          id: "doc_target",
+          dealId: "deal_target",
+          name: "file.pdf",
+          corpusParentDocumentId: null,
+          version: 1,
+          processingStatus: "COMPLETED",
+        }),
+        findFirst: vi.fn().mockResolvedValue(null),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    transaction.mockImplementation(async (fn: (innerTx: typeof tx) => unknown) => fn(tx));
+
+    vi.doMock("@/lib/prisma", () => ({
+      prisma: {
+        document: { findFirst: documentFindFirst },
+        $transaction: transaction,
+      },
+    }));
+
+    const goodCiphertext = encryptText("source-secret-corpus");
+    const corruptedBuffer = Buffer.from(goodCiphertext, "base64");
+    corruptedBuffer[13] = corruptedBuffer[13] ^ 0x55;
+    const corruptedExtractedText = corruptedBuffer.toString("base64");
+
+    const { isEncrypted, decryptText } = await import("@/lib/encryption");
+    expect(isEncrypted(corruptedExtractedText)).toBe(true);
+    expect(() => decryptText(corruptedExtractedText)).toThrow();
+
+    documentFindFirst.mockResolvedValue({
+      id: "doc_source",
+      extractedText: corruptedExtractedText,
+      extractionQuality: 80,
+      extractionMetrics: {},
+      extractionWarnings: [],
+      requiresOCR: false,
+      ocrProcessed: true,
+      extractionRuns: [
+        {
+          id: "run_source",
+          status: "READY",
+          pageCount: 1,
+          pagesProcessed: 1,
+          pagesSucceeded: 1,
+          pagesFailed: 0,
+          pagesSkipped: 0,
+          coverageRatio: 1,
+          qualityScore: 80,
+          readyForAnalysis: true,
+          blockedReason: null,
+          extractionVersion: 1,
+          pipelineVersion: "v1",
+          corpusTextHash: null,
+          summaryMetrics: {},
+          warnings: null,
+          completedAt: new Date(),
+          startedAt: new Date(),
+          pages: [
+            {
+              pageNumber: 1,
+              status: "READY",
+              method: "OCR",
+              charCount: 50,
+              wordCount: 8,
+              qualityScore: 80,
+              confidence: "high",
+              hasTables: false,
+              hasCharts: false,
+              hasFinancialKeywords: false,
+              hasTeamKeywords: false,
+              hasMarketKeywords: false,
+              requiresOCR: false,
+              ocrProcessed: true,
+              contentHash: "x",
+              artifactVersion: "v1",
+              artifact: encryptJsonField({ pageNumber: 1, text: "ok" }),
+              pageImageHash: null,
+              errorMessage: null,
+              textPreview: null,
+            },
+          ],
+        },
+      ],
+    });
+
+    vi.resetModules();
+    const { reuseCompletedExtractionForContentHash } = await import("../extraction-reuse");
+
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(
+        reuseCompletedExtractionForContentHash({
+          targetDocumentId: "doc_target",
+          targetDocumentVersion: 1,
+          contentHash: "hash_shared",
+          userId: "user_current",
+        })
+      ).rejects.toThrow();
+      expect(tx.document.update).not.toHaveBeenCalled();
     } finally {
       consoleWarn.mockRestore();
       vi.doUnmock("@/lib/prisma");
