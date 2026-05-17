@@ -778,33 +778,31 @@ export const FileUpload = memo(function FileUpload({
       )}
 
       {isUploading && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-background/85 p-4 backdrop-blur-sm">
-          <div className="w-full rounded-lg border bg-background p-4 shadow-lg">
-            <div className="flex items-start gap-3">
-              <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin" />
-              <div className="min-w-0 flex-1">
-                <p className="font-medium">Extraction documentaire en cours</p>
-                <p className="mt-1 truncate text-sm text-muted-foreground">
-                  {activeFileName ?? uploadingFile?.file.name ?? "Document"} - OCR et analyse visuelle des pages.
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {serverProgress?.pageCount
-                    ? `${serverProgress.pagesProcessed}/${serverProgress.pageCount} pages traitees`
-                    : "Preparation de l'extraction"}{" "}
-                  - Temps ecoule: {formatElapsed(elapsedSeconds)}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{serverProgress ? "Progression backend" : "Progression estimee"}</span>
-                <span>{estimatedUploadProgress}%</span>
-              </div>
-              <Progress value={estimatedUploadProgress} className="h-2" />
-              <p className="text-xs text-muted-foreground">
-                {serverProgress?.message ?? "Les pages complexes peuvent prendre plus longtemps: graphiques, tableaux, OCR haute fidelite."}
+        <div className="rounded-lg border bg-background p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin" />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">Extraction documentaire en cours</p>
+              <p className="mt-1 truncate text-sm text-muted-foreground">
+                {activeFileName ?? uploadingFile?.file.name ?? "Document"} - OCR et analyse visuelle des pages.
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {serverProgress?.pageCount
+                  ? `${serverProgress.pagesProcessed}/${serverProgress.pageCount} pages traitees`
+                  : "Preparation de l'extraction"}{" "}
+                - Temps ecoule: {formatElapsed(elapsedSeconds)}
               </p>
             </div>
+          </div>
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>{serverProgress ? "Progression backend" : "Progression estimee"}</span>
+              <span>{estimatedUploadProgress}%</span>
+            </div>
+            <Progress value={estimatedUploadProgress} className="h-2" />
+            <p className="text-xs text-muted-foreground">
+              {serverProgress?.message ?? "Les pages complexes peuvent prendre plus longtemps: graphiques, tableaux, OCR haute fidelite."}
+            </p>
           </div>
         </div>
       )}
