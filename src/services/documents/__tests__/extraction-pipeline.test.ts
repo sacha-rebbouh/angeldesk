@@ -119,10 +119,14 @@ describe("runDocumentExtractionPipeline — happy path", () => {
   beforeEach(() => {
     mocks.documentFindUnique.mockResolvedValue({
       id: "doc_1",
+      name: "Deck.pdf",
       mimeType: "application/pdf",
       storageUrl: "https://blob/x",
       storagePath: "deals/x.pdf",
       processingStatus: "PROCESSING",
+      sourceKind: "FILE",
+      sourceDate: null,
+      corpusParentDocumentId: null,
     });
     mocks.runFindUnique.mockResolvedValue({
       id: "run_1",
@@ -193,6 +197,63 @@ describe("runDocumentExtractionPipeline — happy path", () => {
     expect(result.ocrApplied).toBe(true);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.code).toBe("OCR_LOW_CONFIDENCE");
+  });
+
+  it("persists inferred email provenance when an uploaded PDF is a printed email thread", async () => {
+    mocks.documentFindUnique.mockResolvedValue({
+      id: "doc_1",
+      name: "Mail.pdf",
+      mimeType: "application/pdf",
+      storageUrl: "https://blob/x",
+      storagePath: "deals/x.pdf",
+      processingStatus: "PROCESSING",
+      sourceKind: "FILE",
+      sourceDate: null,
+      corpusParentDocumentId: null,
+    });
+    mocks.smartExtract.mockResolvedValue(
+      buildExtractionResult({
+        text: [
+          "De : Eryck Rebbouh <erebbouh@hotmail.com>",
+          "Envoyé : mercredi 22 avril 2026 01:03",
+          "Objet : Tr : Re : Avekapeti",
+          "De : Fati Mrani <fati.mrani@avekapeti.co>",
+          "Envoyé : lundi 6 avril 2026 16:10",
+          "Objet : Re : Avekapeti",
+          "Bonjour Eryck, suite à notre échange...",
+        ].join("\n"),
+      })
+    );
+
+    await runDocumentExtractionPipeline({
+      documentId: "doc_1",
+      extractionRunId: "run_1",
+    });
+
+    expect(mocks.completeDocumentExtractionRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentFinalization: {
+          documentId: "doc_1",
+          data: expect.objectContaining({
+            processingStatus: "COMPLETED",
+            sourceKind: "EMAIL",
+            sourceDate: new Date("2026-04-22T01:03:00.000Z"),
+            sourceAuthor: "Eryck Rebbouh <erebbouh@hotmail.com>",
+            sourceSubject: "Tr : Re : Avekapeti",
+            sourceMetadata: expect.objectContaining({
+              inferredFrom: "uploaded_file_text",
+              threadMessageCount: 2,
+              threadMessages: expect.arrayContaining([
+                expect.objectContaining({
+                  from: "Fati Mrani <fati.mrani@avekapeti.co>",
+                  sentAt: "2026-04-06T16:10:00.000Z",
+                }),
+              ]),
+            }),
+          }),
+        },
+      })
+    );
   });
 
   it("P1: treats a whitespace-only corpus as a FAILURE (no run/document/API divergence)", async () => {

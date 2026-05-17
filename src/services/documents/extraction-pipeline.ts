@@ -17,6 +17,7 @@ import {
   buildProgressSnapshot,
   setDocumentExtractionProgress,
 } from "@/services/documents/extraction-progress";
+import { inferEmailSourceFromExtractedText } from "@/services/documents/email-source-inference";
 
 // Phase 4 — durable extraction pipeline. The HTTP routes claim the document
 // (transition PENDING/COMPLETED/FAILED → PROCESSING), persist a fresh
@@ -148,10 +149,14 @@ export async function runDocumentExtractionPipeline(params: {
     where: { id: documentId },
     select: {
       id: true,
+      name: true,
       mimeType: true,
       storageUrl: true,
       storagePath: true,
       processingStatus: true,
+      sourceKind: true,
+      sourceDate: true,
+      corpusParentDocumentId: true,
     },
   });
   if (!document) {
@@ -229,7 +234,15 @@ export async function runDocumentExtractionPipeline(params: {
 async function runExtractionWork(params: {
   documentId: string;
   extractionRunId: string;
-  document: { mimeType: string | null; storageUrl: string | null; storagePath: string | null };
+  document: {
+    name: string;
+    mimeType: string | null;
+    storageUrl: string | null;
+    storagePath: string | null;
+    sourceKind: "FILE" | "EMAIL" | "NOTE";
+    sourceDate: Date | null;
+    corpusParentDocumentId: string | null;
+  };
   publishUploadProgress: (snapshot: {
     phase: "queued" | "started" | "native_extracted" | "page_processed" | "completed" | "failed";
     pageCount?: number;
@@ -417,6 +430,15 @@ async function runExtractionWork(params: {
     latestExtractionRunId: extractionRunId,
     ...summarizeManifestForLegacyMetrics(extraction.manifest),
   };
+  const inferredEmailSource = isSuccess
+    ? inferEmailSourceFromExtractedText({
+        text: extraction.text,
+        fileName: document.name,
+        currentSourceKind: document.sourceKind,
+        existingSourceDate: document.sourceDate,
+        corpusParentDocumentId: document.corpusParentDocumentId,
+      })
+    : null;
 
   const documentData: Prisma.DocumentUpdateInput = isSuccess
     ? {
@@ -430,6 +452,16 @@ async function runExtractionWork(params: {
             : Prisma.DbNull,
         requiresOCR,
         ocrProcessed: ocrApplied,
+        ...(inferredEmailSource
+          ? {
+              sourceKind: inferredEmailSource.sourceKind,
+              sourceDate: inferredEmailSource.sourceDate,
+              receivedAt: inferredEmailSource.receivedAt,
+              sourceAuthor: inferredEmailSource.sourceAuthor,
+              sourceSubject: inferredEmailSource.sourceSubject,
+              sourceMetadata: inferredEmailSource.sourceMetadata as Prisma.InputJsonValue,
+            }
+          : {}),
       }
     : {
         processingStatus: "FAILED",

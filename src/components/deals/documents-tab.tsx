@@ -548,7 +548,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                             const corpusRole = getCorpusRole(doc);
                             const SourceIcon = getSourceIcon(sourceKind);
                             const extractionSummary = getExtractionMetricSummary(doc.extractionMetrics);
-                            const isTextCorpus = sourceKind !== "FILE";
+                            const isTextCorpus = sourceKind !== "FILE" && !doc.hasStorage;
                             const parentName = doc.corpusParentDocument?.name
                               ?? (doc.corpusParentDocumentId ? documentNameById.get(doc.corpusParentDocumentId) : null)
                               ?? null;

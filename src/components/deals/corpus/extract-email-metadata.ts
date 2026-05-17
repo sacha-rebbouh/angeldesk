@@ -161,10 +161,6 @@ export function parseEmailDate(raw: string): Date | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  // Direct parse covers RFC 2822, ISO, and most en-US locale strings.
-  const direct = new Date(trimmed);
-  if (!Number.isNaN(direct.getTime())) return direct;
-
   // French locale e.g. "lun. 24 avr. 2026 09:42" / "le 24 avril 2026 à 9 h 42"
   // The à/À chars are NOT word chars in JS regex, so \b doesn't isolate them.
   // We strip them globally before matching so the day/year/time pattern can stitch.
@@ -190,6 +186,19 @@ export function parseEmailDate(raw: string): Date | null {
       const date = new Date(Date.UTC(year, month, day, hour, minute, second));
       if (!Number.isNaN(date.getTime())) return date;
     }
+  }
+
+  // Direct parse covers RFC 2822, ISO, and most en-US locale strings. Keep it
+  // after the French parser: V8 can partially parse some French-looking dates
+  // as local time, which shifts stored corpus dates depending on server TZ.
+  const directCandidates = [
+    trimmed,
+    // Gmail print/export often emits "Wed, Apr 22, 2026 at 2:05 AM".
+    trimmed.replace(/\bat\b/i, " "),
+  ];
+  for (const candidate of directCandidates) {
+    const direct = new Date(candidate);
+    if (!Number.isNaN(direct.getTime())) return direct;
   }
 
   return null;
