@@ -64,6 +64,7 @@ Bonjour Eryck,
 Le ven. 13 mars 2026 à 17:42, Fati Mrani <fati.b.mrani@gmail.com> a écrit :
 Re-bonjour Eryck,
 Suite à notre échange comme convenu ci-joint notre BP.
+Deck_Avekapeti VF.pdf
 `;
 
     const inferred = inferEmailSourceFromExtractedText({
@@ -85,6 +86,9 @@ Suite à notre échange comme convenu ci-joint notre BP.
         subject: "Re: Suite à notre échange",
       },
     ]);
+    expect(inferred?.sourceMetadata.threadMessages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ from: "ck_Avekapeti VF.pdf" })])
+    );
   });
 
   it("does not classify a normal document with a lone date as an email", () => {

@@ -148,7 +148,7 @@ function extractThreadMessages(text: string): InferredEmailThreadMessage[] {
 function readHeader(line: string | undefined, labels: string[]): string | null {
   if (!line) return null;
   const escaped = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-  const match = line.match(new RegExp(`^(?:${escaped})\\s*:?\\s*(.+)$`, "i"));
+  const match = line.match(new RegExp(`^(?:${escaped})\\s*(?::\\s*|\\s+)(.+)$`, "i"));
   return match?.[1]?.trim() || null;
 }
 
