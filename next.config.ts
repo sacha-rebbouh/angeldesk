@@ -33,7 +33,7 @@ const nextConfig: NextConfig = {
           "style-src 'self' 'unsafe-inline'",
           "img-src 'self' data: https: blob:",
           "font-src 'self' data:",
-          "connect-src 'self' https://*.clerk.dev https://*.clerk.com https://*.clerk.accounts.dev https://*.sentry.io https://openrouter.ai https://api.openrouter.ai wss://*.clerk.dev wss://*.ably.io https://*.ably.io https://api.inngest.com https://inn.gs",
+          "connect-src 'self' https://*.clerk.dev https://*.clerk.com https://*.clerk.accounts.dev https://*.sentry.io https://openrouter.ai https://api.openrouter.ai https://vercel.com https://*.vercel-storage.com https://*.blob.vercel-storage.com wss://*.clerk.dev wss://*.ably.io https://*.ably.io https://api.inngest.com https://inn.gs",
           "frame-src 'self' https://*.clerk.dev https://*.clerk.com https://challenges.cloudflare.com",
           "frame-ancestors 'none'",
           "object-src 'none'",
