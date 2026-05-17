@@ -277,6 +277,63 @@ describe("assessExtractionSemantics", () => {
     expect(result.semanticSufficiency).toBe("partial");
   });
 
+  it("treats trusted provider OCR with dense numeric text as sufficient even when chart objects are unavailable", () => {
+    const text = [
+      "Customer Overview - Cont'd",
+      "Strong Managed Services Net Revenue Retention",
+      "Recent Logo wins",
+      "9 recent new logos win in managed services, representing ~$1.5m of ARR",
+      "in managed services and $4.0m of total recurring sales",
+      "140% 130% 120% 108% 110% 102% 103% 104% 103% 99% 103% 100% 96%",
+      "127% NRR (LTM Dec-25)",
+      "One-off churn of an early MS customer",
+      "Feb-24 Apr-24 Jun-24 Aug-24 Oct-24 Dec-24 Feb-25 Apr-25 Jun-25 Aug-25 Oct-25",
+      "Strong Managed Services Logo Win Momentum",
+      "Qualified pipeline continues to support durable growth across divisions",
+      "The chart shows a mostly stable retention profile above 100% after the one-off churn period.",
+      "Logo wins include credit union, healthcare, banking, systems integration, and regional enterprise customers.",
+      "Management commentary highlights repeatable new-logo wins, strong pipeline conversion, and durable expansion across managed services.",
+      "The page contains decision-useful labels, values, periods, customer logos, and explanatory commentary for the financial trend.",
+      "Additional visible values include 60%, 70%, 80%, 87%, 90%, 96%, 99%, 100%, 102%, 103%, 104%, 108%, 110%, 120%, 127%, 130%, and 140%.",
+    ].join("\n");
+
+    const result = assessExtractionSemantics({
+      pageNumber: 1,
+      text,
+      charCount: text.length,
+      wordCount: text.split(/\s+/).filter(Boolean).length,
+      hasTables: false,
+      hasCharts: true,
+      hasFinancialKeywords: true,
+      hasTeamKeywords: false,
+      hasMarketKeywords: false,
+      artifact: {
+        provider: {
+          kind: "google-document-ai",
+          mode: "high_fidelity",
+          providerVersion: "structured-layout-v1",
+          transport: "provider_structured",
+        },
+        tables: [],
+        charts: [],
+        visualBlocks: [],
+        unreadableRegions: [],
+        numericClaims: Array.from({ length: 16 }, (_, index) => ({
+          label: `metric ${index + 1}`,
+          value: `${100 + index}%`,
+          confidence: "medium",
+        })),
+      } as never,
+    });
+
+    expect(result.pageClass).toBe("chart_kpi");
+    expect(result.structureDependency).toBe("high");
+    expect(result.shouldBlockIfStructureMissing).toBe(true);
+    expect(result.labelValueIntegrity).toBe("strong");
+    expect(result.semanticSufficiency).toBe("sufficient");
+    expect(result.rationale).toContain("trusted structured provider captured dense numeric evidence in text");
+  });
+
   it("classifies playbook slides as process diagrams when explanatory text preserves the logic", () => {
     const result = assessExtractionSemantics({
       pageNumber: 5,

@@ -136,6 +136,13 @@ export function assessExtractionSemantics(input: SemanticInput): ExtractionSeman
     Boolean(chart.values && chart.values.length > 0)
   )) ?? false;
   const hasStructuredArtifact = hasStructuredTableArtifact || hasStructuredChartArtifact;
+  const hasTrustedStructuredProviderNumericTextEvidence = Boolean(
+    artifact?.provider?.transport === "provider_structured" &&
+      numericClaims >= 12 &&
+      input.charCount >= 700 &&
+      !garbled &&
+      !unreadableHigh
+  );
 
   const classReasons: string[] = [];
   let pageClass: PageClass = "narrative";
@@ -368,6 +375,7 @@ export function assessExtractionSemantics(input: SemanticInput): ExtractionSeman
   const labelValueIntegrity: LabelValueIntegrity = (() => {
     if (garbled) return "weak";
     if (
+      hasTrustedStructuredProviderNumericTextEvidence ||
       hasStructuredArtifact ||
       labelValuePairs >= 5 ||
       (numberMatches.length >= 10 && (yearMatches.length >= 2 || monthMatches.length >= 3))
@@ -384,6 +392,9 @@ export function assessExtractionSemantics(input: SemanticInput): ExtractionSeman
   const rationale: string[] = [];
 
   if (hasStructuredArtifact) rationale.push("structured artifact reconstructed");
+  if (hasTrustedStructuredProviderNumericTextEvidence) {
+    rationale.push("trusted structured provider captured dense numeric evidence in text");
+  }
   if (numericClaims >= 4) rationale.push("multiple numeric claims captured");
   if (labelValuePairs >= 3) rationale.push("label/value relations detected in text");
   if (yearMatches.length >= 2 || monthMatches.length >= 3) rationale.push("period labels preserved");
