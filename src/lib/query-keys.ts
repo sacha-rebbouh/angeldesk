@@ -55,6 +55,12 @@ export const queryKeys = {
     byDeal: (dealId: string) => [...queryKeys.staleness.all, dealId] as const,
   },
 
+  // Evidence Health (Phase 8)
+  evidenceHealth: {
+    all: ["evidenceHealth"] as const,
+    byDeal: (dealId: string) => [...queryKeys.evidenceHealth.all, dealId] as const,
+  },
+
   // Usage queries (for analyze usage limits)
   usage: {
     all: ["usage"] as const,

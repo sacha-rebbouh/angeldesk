@@ -1,6 +1,926 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-17 — Evidence Engine Phase 0 (audit) + Phase 1 (proposition schéma) — read-only
+
+### Contexte
+Démarrage du chantier "Evidence Intelligence Layer" : passer d'un stockage de texte OCR brut à des signaux structurés (temporels, provenance, claims, freshness), pour que les agents reçoivent un contexte daté/typé/auditable plutôt que des dumps de texte. Plan en 9 phases (cf. message produit), exécution vertical-slice avec gates Codex entre chaque.
+
+### Action — Phase 0 (premier pass, metadata-only)
+- Cartographie code Evidence existant : `evidence-ledger/index.ts`, `corpus/index.ts`, `corpus/integrity.ts`, `documents/email-source-inference.ts`, `document-context-retriever.ts`, `extract-email-metadata.ts`, schéma Prisma Document + DocumentExtractionPage + sourceMetadata.
+- Script audit lecture seule : `scripts/debug/audit-evidence-deals.mjs` (3 deals : Avekapeti, FurLove, E4N — 20 docs au total).
+- Premier pull Vercel env : `DOCUMENT_ENCRYPTION_KEY` est marquée `Sensitive` → `vercel env pull` et `vercel env run` retournent `""` pour preview ET production. Pivot vers audit metadata-only.
+- Livrable : `docs-private/evidence-engine-audit.md`.
+
+### Action — Phase 0 (second pass, content-level avec déchiffrement)
+- Sacha a fourni la vraie clé hors-conversation dans `.env.vercel.audit` (jamais affichée, jamais commitée, supprimée à la fin).
+- Script enrichi avec déchiffrement AES-256-GCM inline (mirror `src/lib/encryption.ts`). Run sur les 20 docs des 3 deals.
+- Gates Codex re-vérifiés content-level (extraits courts dans l'audit) :
+  - (a) cap table Avekapeti `"Table de capitalisation à jour au 18/09/2024"` ✓ CONFIDENT
+  - (b) BP Avekapeti = monthly 2025-2026, **PAS 2026-2030** comme attendu ; le forecast 5y est dans FurLove `Fur-Love-2026-2030-Sept-2025` et E4N `Model Output Extract` + `Financial Model vFinal.xlsx`
+  - (c) deck Avekapeti = 12 années distinctes sans footer date ✓ CONFIDENT
+  - (d) emails .pdf datés ✓ CONFIDENT ; emails .docx (Mail - 22:01:26.docx FurLove, Message e4n.docx E4N) restent `sourceDate=null` faute de header dans le .docx — corps commence par "Très cher Jean Marc" / "Hello Eryck"
+- Findings nouveaux ajoutés à l'audit : (1) footer deck E4N/NETGEM `"<Company> Confidential – <Month> <YYYY>"` répété 32x = DOCUMENT_DATE déterministe ignoré aujourd'hui, (2) bilan FurLove `"Période du 01/01/2025 au 31/12/2025"` / `"Exercice clos le 31/12/2025"` = BALANCE_SHEET_AS_OF + FINANCIAL_PERIOD_ACTUAL déterministes, (3) Mail.pdf Avekapeti cite verbatim le filename `"Table de capi Septembre 2024 signeģe.png"` → ATTACHMENT_RELATION trivial, (4) Mail.pdf Avekapeti contient `"6M€"` + `"405k€ de CA vs 270k en mars 2025"` = trois claims structurables.
+
+### Action — Phase 1
+- Livrable : `docs-private/evidence-engine-phase1-schema.md`. Proposition de table dédiée `EvidenceSignal` avec champs (kind enum 10 valeurs, valueJson, dateStart/dateEnd/asOfDate/reportedAt, precision/confidence/sourceMethod enums, evidenceText + pageNumber/sheetName/charOffset, signalHash pour idempotence). Justifications : indexabilité, cycle de vie aligné sur `Document.version`, chiffrement uniforme `evidenceText`+`valueJson` via `encryptText`/`encryptJsonField` existants.
+- Mise à jour post-content-pass : addendum "Patterns déterministes confirmés content-level" avec regex candidates pour Phase 2 (cap_table `à jour au`, deck footer `Confidential – <Month> <YYYY>`, bilan `Période du … au …` / `Exercice clos le`, forecast columns `\b20\d{2} 20\d{2} 20\d{2} 20\d{2} 20\d{2}\b`, attachment filename match, body-shape email-like heuristic).
+- Pas d'implémentation : uniquement la proposition pour challenge Codex.
+
+### État
+- 0 code applicatif modifié. 0 migration créée.
+- 2 docs ajoutés sous `docs-private/`. 1 script ajouté sous `scripts/debug/` (non commité).
+- `.env.vercel.audit` créé puis supprimé deux fois (1er pass = vide ; 2nd pass = clé valide fournie par Sacha, supprimé après usage). Confirmé gitignored par `.env*` à `.gitignore:35`.
+- Tasks Phase 0 + proposition Phase 1 = done. Attente review Codex avant Phase 2 (temporal extractor déterministe).
+
+### Risque OPS découvert
+- `DOCUMENT_ENCRYPTION_KEY` Sensitive Vercel → irrécupérable via CLI. Source primaire unique = secrets manager Sacha. Si perdue + Vercel reset = corpus historique illisible. Recommandation §7.3 audit : documenter dans runbook + ne JAMAIS régénérer sans migration coordonnée + envisager secondary holder.
+
+### Action — Phase 0.5 (corrections post-review Codex)
+Review Codex round 1 a flaggé 4 P1 + 3 P2 :
+- **P1 audit rate chemin base-agent** : `src/agents/base-agent.ts:976-978` écrit `produit le <sourceDate ?? receivedAt ?? uploadedAt>` ; ligne 1065 trie pareil. Sur 15/20 docs sans sourceDate du sample, le label "produit le" = `uploadedAt` (= date d'upload masquerade comme date de production). Bug context engine actif, pas juste "manque de metadata". Audit §1 TL;DR item #2 réécrit + §6 entièrement refondu pour distinguer les 2 chemins (base-agent principal + document-context-retriever secondaire) + tableau preuves doc-par-doc des 14 dates fausses.
+- **P1 schema cross-tenant** : `EvidenceSignal` avait `dealId` + `documentId` indépendants → un signal pouvait référencer `dealId=A, documentId=B-de-deal-Z`. Corrigé via FK composite `Document(id, dealId)` + `@@unique([id, dealId])` ajouté sur `Document`. Test 2 §6.1 ajouté pour le scénario d'attaque.
+- **P1 schema lifecycle** : `documentVersion` seule trop faible. Ajout `extractionRunId String?` (cascade depuis `DocumentExtractionRun`), `extractorVersion String` (capté dans `signalHash` → upgrade parser = nouvelle ligne), `sourceTextHash String?` (Phase 9 incrémental). Tuple unique devient `(documentId, documentVersion, extractionRunId, kind, signalHash)`. §3.5 explicite 2 scénarios (même run / nouveau run, même parser / nouveau parser).
+- **P1 schema chiffrement contradictoire** : §1 disait clair, §3 disait chiffrer. Tranché : `evidenceText` ET `valueJson` chiffrés, axes indexables (`asOfDate`, `kind`, `confidence`, etc.) restent en clair. `signalHash` calculé sur plaintext canonique AVANT chiffrement. Tableau §1 + §3.1-§3.3 réécrits.
+- **P2 signalHash spec** : §3.4 spec déterministe complète avec `canonicalJSONStringify` (clés triées), `.trim().normalize("NFC")` sur evidenceText, `extractorVersion` inclus, `sourceTextHash` exclu (redondance). Tests §6.4 ajoutés (permutation clés, normalisation Unicode, extractorVersion change le hash).
+- **P2 precision default** : changé `@default(MONTH)` → `@default(UNKNOWN)`. §3.6 explique pourquoi (default masquait les bugs parser).
+- **P2 .docx body-shape** : nouvelle enum `EMAIL_LIKE_WARNING` (signal-only, confidence LOW). N'écrit JAMAIS `Document.sourceKind = EMAIL`. §3.7 explique le risque (réactivation du bug base-agent §6.1 sur des docs tagged EMAIL faussement) et la décision. Promotion vers `Document` reportée à Phase 3 après validation HIGH ou saisie utilisateur.
+- **Tests étendus** : §6.1-§6.5 — intégrité DB (incluant test cross-tenant FK), confidentialité (incluant dump SQL brut + assert aucune substring sensible), lifecycle (re-extraction même/nouveau parser), `signalHash` stabilité canonique, et test out-of-scope #17 pour `base-agent.ts:976` non-fix.
+- **Quick fix base-agent ajouté §10** : diff 3 lignes (`sourceDate ?? receivedAt ?? null` au lieu de `?? uploadedAt`, render "date inconnue" si null). Pré-requis recommandé Phase 2. Trackable comme entrée `errors.md` séparée catégorie CONTEXT-ENGINE.
+
+### État Phase 0.5
+- 0 code applicatif modifié. Toujours 0 migration créée.
+- 2 docs modifiés sous `docs-private/` :
+  - `evidence-engine-audit.md` : §1 + §6 réécrits (révision 2)
+  - `evidence-engine-phase1-schema.md` : §1, §2, §3, §4, §6, §7, §8, §9 réécrits + nouveau §10 quick fix + §11 hors-scope (révision 2)
+- Tasks Phase 0.5 = done. Re-soumission Codex round 2.
+
+### Action — Phase 0.6 (corrections post-review Codex round 2)
+Review Codex round 2 a flaggé 2 P1 SQL + 2 P2 docs avant greenlight Phase 1 migration :
+- **P1 NULL ≠ NULL Postgres unique constraint** : `@@unique([documentId, documentVersion, extractionRunId, kind, signalHash])` ne dédupliquait pas les signaux `extractionRunId=NULL` (filename, HUMAN_OVERRIDE, IMPORT) car Postgres traite NULL comme distinct. Corrigé par ajout d'un champ `signalScopeKey String` non-null avec convention `"run:<id>" | "filename" | "human:<id>" | "import:<batch>"`. Tuple unique devient `(documentId, documentVersion, signalScopeKey, kind, signalHash)` — toutes colonnes non-null. `extractionRunId` reste champ FK de provenance uniquement. §3.11 explique le problème + le fix. Tests #2 et #3 §6.1 ajoutés pour les scopes nullables.
+- **P1 cross-document run integrity** : la FK simple `extractionRunId → DocumentExtractionRun(id)` permettait `documentId=docA + extractionRunId=runOfDocB`. Corrigé par composite FK `(extractionRunId, documentId) → DocumentExtractionRun(id, documentId)` + ajout `@@unique([id, documentId])` sur `DocumentExtractionRun`. Postgres MATCH SIMPLE (default) tolère `extractionRunId=NULL` sans contraindre `documentId`. Test #5 §6.1 ajouté pour le scénario d'attaque cross-doc.
+- **P2 read-path latest extractor version** : non-bloquant Phase 1. Décision déférée Phase 5 en §3.12 avec 3 options listées (`isCurrent` flag, `signalBatchId` table dédiée, pure SQL filter sur `MAX(extractorVersion)`). Recommandation `isCurrent` sauf si beaucoup de retroactive corrections. Migration Phase 5 = simple ALTER TABLE ADD COLUMN.
+- **P2 `metadata` Json en clair verrouillée** : §3.13 + commentaire Prisma + Zod schema TypeScript strict whitelist (`modelName?`, `promptVersion?`, `relatedSignalIds?`, `parserDebug?`, `sourceUrl?`). Service `createEvidenceSignal()` valide via Zod avant écriture. Test #15 §6.2 ajouté (rejette `{rawOcr: "..."}`, accepte `{modelName: "..."}`).
+
+### État Phase 0.6
+- 0 code applicatif modifié. Toujours 0 migration créée.
+- 1 doc modifié sous `docs-private/` :
+  - `evidence-engine-phase1-schema.md` : §1 + §2 + §3 (+§3.11, §3.12, §3.13) + §6 + §8 + §9 mis à jour (révision 3).
+- Tasks Phase 0.6 = done. Re-soumission Codex round 3 pour greenlight final Phase 1 implementation (migration + tests).
+
+### Action — Phase 1 implementation (greenlight Codex round 3)
+Codex a greenlighté la révision 3 du schéma (2 remarques mineures non-bloquantes traitées : §3.4 phrase périmée corrigée, prisma validate vérifié).
+
+**Migration Prisma**
+- `prisma/schema.prisma` : EvidenceSignal model (35 lignes) + 4 enums + 2 composite uniques (`Document(id, dealId)` et `DocumentExtractionRun(id, documentId)`) + relations.
+- `prisma/migrations/20260517160000_add_evidence_signal/migration.sql` : 81 lignes, écrite à la main depuis `prisma migrate diff` (DIRECT_URL Neon initialement endormi, retry après wake-up a réussi). Inclut explicitement les 2 FK composites (MATCH SIMPLE default — confirmé `match_option = NONE` côté Postgres post-deploy, NULL-safe pour `extractionRunId`).
+- `npx prisma generate` → client régénéré.
+- `npx prisma migrate deploy` → appliqué sur prod Neon. Script `scripts/debug/inspect-evidence-signal-schema.mjs` confirme les 2 FK composite + les 3 UNIQUE INDEXES post-migration.
+
+**Service layer** (`src/services/evidence-signals/`)
+- `canonical-json.ts` : `canonicalJSONStringify()` tri récursif des clés.
+- `signal-hash.ts` : `computeSignalHash()` (SHA-256 sur canonical JSON + NFC + extractorVersion + anchors).
+- `metadata-schema.ts` : Zod whitelist stricte (`modelName? promptVersion? relatedSignalIds? parserDebug? sourceUrl?`) + check anti-fuite (regex sensitive patterns + max 200 chars par string).
+- `create-signal.ts` : `createEvidenceSignal()` valide scopeKey/metadata, calcule hash sur plaintext canonique AVANT chiffrement, encryptText/encryptJsonField, insert Prisma. `validateSignalScopeKey()` enforce le format `run:<id>|filename|human:<id>|import:<batch>` + cohérence avec `extractionRunId`.
+
+**Tests** (`src/services/evidence-signals/__tests__/`) — 5 fichiers, 51 tests, 50 pass + 1 skip (le skip = la suite DB intégration quand `SKIP_DB_TESTS=1`)
+- `signal-hash.test.ts` (16 tests) — tests §6.4 #14, #20, #21, #22 + déterminisme, sha256, anchors, sourceTextHash exclus.
+- `metadata-schema.test.ts` (10 tests) — test §6.2 #15 + whitelist strict + sensitive patterns.
+- `scope-key.test.ts` (13 tests) — format scope, mismatch run/extractionRunId, casse/typos rejetées.
+- `encryption-roundtrip.test.ts` (7 tests) — tests §6.2 #11, #12, #13, #14 (round-trip + envelopes distinctes + plaintext non leaké).
+- `db-integration.test.ts` (13 tests, run contre Neon prod, ~23s) — tests §6.1 + §6.3 : unicité scope run/filename/human/import (P1 Codex r2 NULL≠NULL), cross-tenant FK refusée, cross-doc run FK refusée, MATCH SIMPLE NULL-safe, cascade run, signal sans run survit, dump SQL sans plaintext, re-extraction même/nouveau parser. Skip via `SKIP_DB_TESTS=1`.
+
+**Quick fix base-agent.ts:976** (parallèle, hors-scope Evidence Engine mais pré-requis Phase 2 — audit §6.1 + §10 schema)
+- Patch 3 lignes : `producedAtLabel = sourceDate ?? receivedAt ?? null` (au lieu de `?? uploadedAt`). `formatDocumentDate(null)` rend déjà "date inconnue". `getDocumentChronologyMs` retourne `Number.MAX_SAFE_INTEGER` quand pas de source date → docs non datés vont à la fin du tri chronologique.
+- Test `src/agents/__tests__/base-agent-date-rendering.test.ts` (4 tests, §6.5 #23) : confirme "date inconnue" pour FILE sans source, fallback sourceDate / receivedAt, tri qui remonte les datés en premier.
+- Entrée `errors.md` 2026-05-17 catégorie CONTEXT-ENGINE.
+
+### État Phase 1 implementation
+- Migration Prisma appliquée sur Neon prod. Contraintes DB vérifiées par les 13 tests d'intégration.
+- 50/50 unit tests pass. 4/4 base-agent tests pass.
+- `npx tsc --noEmit` clean (hors erreurs Next.js générées préexistantes).
+- 0 régression : tests existants non touchés.
+- Tasks Phase 1 = done. Stop pour audit Codex de la migration SQL + tests + fix base-agent. Pas de Phase 2 extracteur tant que l'audit n'a pas validé.
+
+### Action — Phase 1.1 (corrections post-review Codex round 4)
+Codex a validé migration SQL + schéma Prisma + quick fix base-agent, mais a flaggé 2 P1 + 2 P2 sur le service layer avant Phase 2 :
+
+- **P1 idempotence** : `createEvidenceSignal()` faisait `prisma.evidenceSignal.create()` direct → throw P2002 sur duplicate. Phase 2 retry Inngest aurait cassé. Fix : try/catch sur `Prisma.PrismaClientKnownRequestError code === "P2002"` → `findUnique` sur le tuple `documentId_documentVersion_signalScopeKey_kind_signalHash` → return existing row. Nouvelle signature `{ signal, deduplicated: boolean }`. Tests db-integration 1/2/3a/3b réécrits ("returns existing row, no throw"). Nouveau test 1b "3 appels concurrents même payload → 1 row, 2 dédup".
+- **P1 metadata deep-walk** : le validateur cherchait les sensitive patterns SEULEMENT sur strings → arrays/numbers contournaient. Confirmé par Codex : `{ parserDebug: { rawOcr: ["..."] } }`, `{ parserDebug: { amountEur: 6000000 } }`, `{ parserDebug: { promptBody: ["..."] } }` passaient. Fix double couche : (1) `parserDebug` devient un schéma Zod **strict whitelist** (`regex` / `patternId` / `matchCount` / `pageSpan` / `timingMs` / `notes` typés et bornés, plus de `Record<string, unknown>`), (2) deep-walk qui descend dans arrays/objets et check les sensitive **keys** ET **strings** quel que soit le type. Tests metadata 18 (3 cas critiques Codex en array/number/promptBody-array + strict whitelist + length caps + defense-in-depth).
+- **P2 canonical NFC values** : `canonicalJSONStringify` triait les clés mais ne normalisait pas les strings imbriquées dans `valueJson`. Composé/précomposé produisait 2 hashes. Fix : NFC normalize toutes les string values lors de la canonicalisation récursive. Tests signal-hash 21b/21c/21d (string value imbriquée, récursive, arrays).
+- **P2 signalHash parts ambigu** : `parts.join("|")` permettait des collisions si un part contenait `|`. Fix : `sha256(JSON.stringify(parts))` au lieu de concat — chaque part est encodé sans ambiguïté. Test "no | delimiter ambiguity" ajouté.
+
+**Bonus** : pour éviter les flaky tests sur Neon cold endpoint, ajouté `{ timeout: 30_000 }` au niveau des 3 describes db-integration (au lieu du default 5s vitest).
+
+### État Phase 1.1
+- 4 fichiers source modifiés : `canonical-json.ts`, `signal-hash.ts`, `metadata-schema.ts`, `create-signal.ts` (+ `index.ts` pour exporter `CreateEvidenceSignalResult`).
+- Tests : 63/63 unit pass (de 50 à 63 par ajouts), 14/14 DB integration pass (de 13 à 14 par ajout du test 1b concurrence).
+- `npx tsc --noEmit` clean.
+- 0 régression : tests existants non touchés.
+- Tasks Phase 1.1 = done. Re-soumission Codex round 5 pour greenlight Phase 2 (temporal extractor déterministe).
+
+### Action — Phase 1.2 (correction post-review Codex round 5)
+Codex round 5 a validé tout SAUF un dernier P1 confidentialité :
+- **P1 `parserDebug.notes` reste un texte libre 200 chars** : le validator round 4 acceptait `{ parserDebug: { notes: "Table de capitalisation à jour au 18/09/2024" } }` car `notes` était optionnel string ≤ 200 chars et le texte ne match aucun sensitive pattern. Porte dérobée possible pour un extracteur Phase 2 qui mettrait accidentellement un extrait OCR court dans metadata.notes.
+
+**Fix** : suppression complète du field `notes` du `parserDebug` schema. Toute note humaine doit aller dans `evidenceText` (chiffré). Bonus : `patternId` resserré de `z.string().max(80)` à `z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/)` pour empêcher d'y stocker du texte libre via cette autre porte. Commentaire explicite dans le schéma : "intentionally NO free-text field here — any human-readable note must go in evidenceText (encrypted), never in metadata (clear)".
+
+**Tests** :
+- "rejette parserDebug.notes (champ supprimé)" → vérifie que l'ancien field est désormais unrecognized_key
+- "un extrait OCR court qui ne match pas les patterns sensibles n'a plus de porte dérobée" → reproduit exactement le payload Codex
+- "patternId est un slug, pas du texte libre" → reproduit l'attaque alternative via `patternId`
+- Anciens tests deep-walk défense-in-depth migrés vers `regex` et `modelName` (qui restent strings whitelistées).
+
+### État Phase 1.2
+- 1 fichier source modifié : `metadata-schema.ts` (suppression `notes` + slug `patternId`).
+- 1 fichier test mis à jour : `metadata-schema.test.ts` (+1 test net : 18 → 19).
+- Tests : 64/64 unit pass (+1 par ajout des tests Codex round 5), 14/14 DB integration pass.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 1.2 = done. Re-soumission Codex round 6 pour greenlight Phase 2.
+
+## 2026-05-18 — Evidence Engine Phase 2 (temporal extractor déterministe) — code
+
+### Contexte
+Codex round 6 a greenlité Phase 2. Implémentation du temporal extractor déterministe + persistance via createEvidenceSignal, **sans aucune mutation de Document.sourceDate/sourceKind** (réservé Phase 3).
+
+### Action
+- `src/services/evidence/temporal-extractor.ts` (363 lignes) : fonction pure `runTemporalExtractor(input)` qui exécute 7 extracteurs déterministes :
+  1. **EMAIL_SENT_AT** : mirror `documentSourceDate` quand `sourceKind=EMAIL` (HIGH confidence, DAY precision)
+  2. **CAP_TABLE_AS_OF** : regex `(?:Table de capitalisation|cap.?table)…(?:à|a) jour au DD/MM/YYYY` avec flag `u` + alternance accentuée (workaround `\b` JS non-Unicode) → HIGH DAY
+  3. **FINANCIAL_PERIOD_ACTUAL + BALANCE_SHEET_AS_OF (FR)** : `Période du DD/MM/YYYY au DD/MM/YYYY` + `Exercice clos le … DD/MM/YYYY` (lazy `[\s\S]{0,80}?` pour matcher date sur ligne suivante)
+  4. **FINANCIAL_PERIOD_ACTUAL (EN)** : `For the X months ended <date>`
+  5. **FINANCIAL_PERIOD_FORECAST** : 4+ années consécutives en en-tête colonne (`2026 2027 2028 2029 2030`, `Dec-26 Dec-27 ... Dec-30`, `FY2026 ... FY2030`) avec dédup par year-key
+  6. **DOCUMENT_DATE depuis footer** : `(?:Confidentiel|Confidential)(\s+[A-Z]\w*){0,3}?\s*[–\-—]\s*<Month> <Year>` (allow optional company name comme NETGEM) → HIGH MONTH
+  7. **DOCUMENT_DATE depuis filename** : `<Month-or-numeric><sep><Year>` MEDIUM MONTH — **anti-naïveté guards** : skip si plusieurs années distinctes dans le filename (ambiguïté), skip si PITCH_DECK avec > 3 années distinctes dans extractedText (cf. deck Avekapeti multi-année), **skip si une DOCUMENT_DATE HIGH existe déjà** (anti-shadow filename sur footer)
+- Discipline `parserDebug` (Codex round 6) : `regex` field non-utilisé (seulement `patternId` + `matchCount`). Matched text → `evidenceText` chiffré ≤ 280 chars. `patternId` est un slug enforcé `[a-zA-Z0-9_-]+`.
+- `src/services/evidence/persist-temporal-signals.ts` (80 lignes) : maps `derivedFrom` au signalScopeKey via switch explicite — `extracted_text` → `run:<id>`, `filename` → `filename`, `source_metadata` → `source_metadata` (cf. Phase 2.1 P2 Codex r7). Skip propre (pas de throw) si `extracted_text` sans extractionRunId. Retourne `{ persisted, deduplicated, skipped, skippedReasons }`.
+- `src/services/evidence/index.ts` : exports publics.
+- `TEMPORAL_EXTRACTOR_VERSION = "temporal-extractor@2026-05-18-001"` — utilisé dans signalHash pour le versioning lifecycle.
+
+### Tests
+- `src/services/evidence/__tests__/temporal-extractor.test.ts` (19 tests) :
+  - Gates Codex (a/c/d audit) : cap table Avekapeti HIGH, deck Avekapeti multi-année → pas de DOCUMENT_DATE, BP Avekapeti 2025-2026 → pas de forecast (seulement 2 années consécutives), forecast 2026-2030 sur FurLove + E4N Dec-YY + FY-YYYY
+  - Gate Codex bilans FR (Période du / Exercice clos le) + EN (For the X months ended) sur FurLove
+  - Gate Codex anti-naïveté : filename avec plusieurs MONTH-YEAR pairs (genuinely ambiguous) rejected, PITCH_DECK avec text multi-année rejected, filename MEDIUM ne shadow pas footer HIGH. NB : un filename avec bare years + UN seul month-year (ex. `Fur-Love-2026-2030-Sept-2025`) émet le DOCUMENT_DATE du month-year (Sept-2025) ; les bare years sont traités par le forecast extractor.
+  - Gate Codex discipline parserDebug : pas de `regex` field, `patternId` slug, evidenceText ≤ 280 chars
+  - Bouquet réaliste email Avekapeti : pas de faux positif sur claims dans email body
+- `src/services/evidence/__tests__/temporal-extractor-integration.test.ts` (6 tests, contre Neon, ~8s) :
+  - pipeline e2e cap table : extraction → persistance → DB → vérification scope `run:<id>` + encryption (evidenceText base64, valueJson envelope `_enc`, dump SQL sans plaintext)
+  - **idempotence** Codex round 4 P1 : re-extraire le même doc retourne `deduplicated: true`
+  - email pipeline : EMAIL_SENT_AT avec scope `filename` + extractionRunId=null
+  - deck pipeline : DOCUMENT_DATE HIGH from footer, PAS de MEDIUM from filename (anti-shadow)
+  - **invariant Phase 2** : `Document.sourceDate` ET `Document.sourceKind` NE SONT PAS mutés par l'extraction
+  - signal `extracted_text` sans extractionRunId → skipped propre, pas throw
+
+### État
+- 2 fichiers source ajoutés : `temporal-extractor.ts`, `persist-temporal-signals.ts` + `index.ts`.
+- 2 fichiers tests ajoutés : `temporal-extractor.test.ts` (19), `temporal-extractor-integration.test.ts` (6).
+- 0 mutation Document.
+- 0 régression : tests existants Phase 1 toujours pass.
+- `npx tsc --noEmit` clean.
+- Run global : 83/83 unit pass + 14/14 DB integration evidence-signals + 6/6 DB integration extractor.
+- Tasks Phase 2 = done. Stop pour audit Codex round 7 de l'extracteur + persistence + tests. Pas de Phase 3 (promotion vers Document.sourceDate) tant que l'audit n'a pas validé.
+
+### Action — Phase 2.1 (corrections post-review Codex round 7)
+Codex round 7 a validé Phase 2 sauf 2 P1 + 2 P2 à corriger avant Phase 3 :
+- **P1 #1 faux positifs forecast** : pattern bare years `2022 2023 2024 2025` matched n'importe quoi (deck roadmap → forecast HIGH = dangereux). Fix : split du forecast extractor en (a) **patterns permissifs** `Dec-YY` et `FY-YYYY` (préfixe = intention financière non ambiguë), (b) **pattern bare years gated** par soit `documentType IN (FINANCIAL_MODEL, FINANCIAL_STATEMENTS)`, soit présence d'un keyword financier dans ±120 chars autour du match (`FORECAST_CONTEXT_KEYWORDS` couvre EN + FR : revenue, arr, mrr, ebitda, p&l, fy, sales, profit, loss, ca ht, chiffre d'affaires, bénéfice, charges, exercice, trésorerie, etc.). Tests : "Company roadmap Milestones 2022 2023 2024 2025" rejeté (PITCH_DECK sans keyword), "Traction Revenue 2022 2023 2024 2025" accepté (keyword `Revenue`), "CA HT 2022 2023 2024 2025" accepté (keyword FR), "Worksheet 2022 2023 2024 2025" accepté car FINANCIAL_MODEL.
+- **P2 scope source_metadata** : EMAIL_SENT_AT était mappé au scope `"filename"` (sémantiquement faux, marchait par chance car kind différent). Fix : ajout du scope `"source_metadata"` à `SCOPE_KEY_PATTERN` dans `create-signal.ts` + refactor `persist-temporal-signals.ts` en switch explicit sur `derivedFrom`. Tests scope-key (+2) + test intégration mis à jour : EMAIL_SENT_AT a maintenant `signalScopeKey="source_metadata"`.
+- **P2 commentaire multi-year guard** : commentaire prétendait "Fur-Love-2026-2030-Sept-2025 → emit nothing" alors que le code émet "Sept-2025" (sémantique correcte : bare years sont la période forecast, pas la date du doc). Fix : commentaire réécrit pour clarifier "ambiguïté = plusieurs MONTH-YEAR pairs, PAS bare years".
+- **P1 #2 (cadrage) wiring Phase 2 inactive en prod** : confirmé volontaire — Phase 2 est library-only par design (pour audit Codex de l'extracteur isolément avant câblage). Codex demande si Phase 3 inclut le câblage réel. **Réponse** : OUI, Phase 3 doit faire les 2 : (a) câblage `runTemporalExtractor` + `persistTemporalSignals` dans le pipeline post-extraction (probablement `extraction-pipeline.ts` après finalisation du run, ou `document-extraction-runs.ts`), (b) promotion vers `Document.sourceDate` quand un signal HIGH confidence est disponible. Cela évite de promouvoir du vide. À confirmer avec Codex avant Phase 3.
+
+### État Phase 2.1
+- 2 fichiers source modifiés : `temporal-extractor.ts` (forecast context guard, comment), `persist-temporal-signals.ts` (switch derivedFrom).
+- 1 fichier infra modifié : `create-signal.ts` (SCOPE_KEY_PATTERN).
+- 4 fichiers tests mis à jour : `temporal-extractor.test.ts` (+4 tests context guard), `temporal-extractor-integration.test.ts` (scope source_metadata), `scope-key.test.ts` (+2 tests source_metadata scope).
+- Tests : 89/89 unit pass (de 83 à 89), 20/20 DB integration pass.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 2.1 = done. Re-soumission Codex round 8 pour confirmer le cadrage Phase 3 (extracteur wiring + Document promotion).
+
+## 2026-05-18 — Evidence Engine Phase 3 (wiring + promotion sourceDate) — code
+
+### Contexte
+Codex round 8 greenlight Phase 3 avec cadrage strict : (1) câbler `runTemporalExtractor` + `persistTemporalSignals` dans le pipeline post-extraction réel, (2) puis promouvoir vers `Document.sourceDate` quand un signal HIGH confidence aligné au docType est disponible. Sans wiring, la promotion serait vide.
+
+### Action — Câblage pipeline
+- `src/services/documents/extraction-pipeline.ts` : ajout `type, dealId, version, sourceMetadata` au SELECT Document (ligne 154) + extension correspondante du type `runExtractionWork.params.document`. Dans la branche `isSuccess` (juste après `completeDocumentExtractionRun` commit, avant `publishUploadProgress({phase:"completed"})`) : appel `runTemporalExtractor` → `persistTemporalSignals` → `promoteSourceDateFromSignals`, wrappé en `try/catch` (failure non-fatale, logue seulement — Evidence Engine est enhancement, pas gate extraction).
+- Cohérence email inference : passe `inferredEmailSource?.sourceDate ?? document.sourceDate` au extracteur ET au promoter, donc si email inference a déjà set sourceDate, la promotion saute (safeguard `source_date_already_set`).
+
+### Action — Promotion service
+- `src/services/evidence/promote-source-date.ts` : nouveau service `promoteSourceDateFromSignals()` + helpers `getPromotionKindsForDocType()` + `pickBestPromotionCandidate()` (exposé pour tests purs).
+- Règles strictes (cadrage Codex r8) :
+  - **JAMAIS** écraser un `Document.sourceDate` déjà set (race-safe : re-read in-DB avant update).
+  - **HIGH** confidence uniquement.
+  - **Scope ∈ {run:*, source_metadata}** — `filename` MEDIUM exclu explicitement.
+  - **Kind aligné docType** : `PROMOTION_KINDS_BY_DOC_TYPE` = `CAP_TABLE → CAP_TABLE_AS_OF`, `FINANCIAL_STATEMENTS → BALANCE_SHEET_AS_OF`, `PITCH_DECK → DOCUMENT_DATE` (footer), `FINANCIAL_MODEL → DOCUMENT_DATE` (footer).
+  - **Tie-break** : précision DAY > MONTH > YEAR > UNKNOWN, puis `createdAt` le plus récent.
+  - **Trace** : `sourceMetadata.temporal = { promotedBy: "evidence-engine-phase3", promotedAt, evidenceSignalId, kind, precision, confidence, extractorVersion, signalScopeKey }` (patch, ne remplace pas les meta existants).
+- Pas dans le map (intentionnel) : EMAIL_SENT_AT (déjà set par email-source-inference), FINANCIAL_PERIOD_FORECAST/ACTUAL (périodes ≠ date du doc — BP reste sourceDate=null par design audit §3.2), VALUATION_CLAIM/METRIC_CLAIM (Phase 6), DOCUMENT_DATE pour TERM_SHEET/LEGAL_DOCS (à discuter si besoin).
+
+### Vérification corpus snapshot invalidation
+- `src/services/corpus/index.ts:285-289` inclut explicitement `sourceDate: true` dans le select du snapshot-hash (commentaire : "so a mutation on any of them (e.g. correcting sourceDate or relinking a parent) surfaces correctly"). Donc la promotion → mutation `Document.sourceDate` → snapshot hash change → re-analysis triggered automatiquement. **Pas de wiring supplémentaire requis.** Test corpus existant `src/services/corpus/__tests__/index.test.ts:244` couvre déjà ce scénario ("invalidates the snapshot when sourceDate is mutated for a non-FILE document").
+
+### Tests
+- `src/services/evidence/__tests__/promote-source-date.test.ts` (16 tests) — picker pur :
+  - `getPromotionKindsForDocType` : map exact CAP_TABLE/FINANCIAL_STATEMENTS/PITCH_DECK/FINANCIAL_MODEL, vide pour OTHER/LEGAL/TERM_SHEET/MARKET_STUDY
+  - `pickBestPromotionCandidate` : retour HIGH, exclusion MEDIUM/LOW/scope=filename/wrong-kind, tie-break précision puis createdAt
+- `src/services/evidence/__tests__/promote-source-date-integration.test.ts` (7 tests, contre Neon ~49s) :
+  - cap table Avekapeti → sourceDate=2024-09-18 promu + meta.temporal écrit
+  - BP Avekapeti monthly 2025-2026 → sourceDate reste null
+  - deck E4N → sourceDate=2026-03-01 promu depuis footer
+  - email avec sourceDate pré-existant → non écrasé + meta existant préservé
+  - OTHER doctype même avec signal HIGH → non promu
+  - idempotence : 2e appel = no-op (race-safe via re-read in-DB)
+  - filename DOCUMENT_DATE MEDIUM → non promu (scope filename exclu)
+
+### État Phase 3
+- 1 fichier source ajouté : `promote-source-date.ts`.
+- 1 fichier source modifié : `extraction-pipeline.ts` (import Evidence Engine + wiring dans branche isSuccess + extension type document param).
+- 1 fichier infra modifié : `evidence/index.ts` (export promote-source-date).
+- 2 fichiers tests ajoutés : `promote-source-date.test.ts` (16), `promote-source-date-integration.test.ts` (7).
+- Tests : 105/105 unit pass (de 89 à 105), DB integration ~50s pour 7 tests promotion + 20 Phase 1/2 existants.
+- `npx tsc --noEmit` clean.
+- 0 régression : tests existants pipeline non touchés.
+- Tasks Phase 3 = done. Stop pour audit Codex round 9 du wiring + promotion. Pas de Phase 4 (attachment-linker) tant que l'audit n'a pas validé.
+
+### Action — Phase 3.1 (corrections post-review Codex round 9)
+Codex round 9 a validé règles fonctionnelles + picker, mais 2 P1 + 2 P2 à corriger avant Phase 4 :
+
+- **P1 race-safe promotion** : `promote-source-date.ts` faisait read-then-update non-atomique. Concurrent writer entre re-read et update → écrasement silencieux. Fix : remplacer `prisma.document.update()` par `prisma.document.updateMany({ where: { id, dealId, sourceDate: null }, data })` puis check `count === 1`. Si `count === 0` → outcome=`source_date_already_set` (concurrent writer beat us). Le check `sourceDate: null` dans le WHERE est évalué dans la même SQL statement que l'UPDATE, donc race impossible. Tests unitaires : 4 nouveaux (`promote-source-date-race.test.ts`) avec prisma mocké forçant count=0.
+
+- **P1 evidence catch-up retry terminal-success** : si crash entre `completeDocumentExtractionRun` commit et bloc evidence, Inngest retry voit run=READY → `summarizeExistingRun` → evidence jamais rejoué = zéro signal écrit pour le doc. Fix architectural :
+  - Nouveau helper idempotent `src/services/evidence/run-evidence-for-document.ts` (`runEvidenceForDocument(prisma, { documentId, extractedTextPlaintext?, extractionRunId? })`). Lit Document + déchiffre `extractedText` via `safeDecrypt` si plaintext non fourni. Résout extractionRunId via dernier run READY/READY_WITH_WARNINGS/BLOCKED si non fourni.
+  - Appelé depuis 2 sites du pipeline : (a) fresh-success path (avec plaintext + runId in-memory pour économiser un read+decrypt), (b) `summarizeExistingRun` retry catch-up (sans plaintext → helper re-décrypte).
+  - Idempotence garantie par les couches existantes : `createEvidenceSignal` dedupe P2002→existing (Codex r4 P1), `promoteSourceDateFromSignals` no-op si sourceDate set (Codex r9 P1 ci-dessus).
+  - Pipeline-side : remplace 40 lignes inline par 1 appel helper dans chaque branche. Document SELECT pipeline réduit (helper fait son propre SELECT).
+
+- **P2 scope promotion trop large** : filtre `signalScopeKey != "filename"` laissait passer `human:*` et `import:*` alors que cadrage Codex r8 = `{ run:*, source_metadata }`. Fix : `OR: [{ signalScopeKey: { startsWith: "run:" } }, { signalScopeKey: "source_metadata" }]` explicite. Test unit qui vérifie : la clause OR contient EXACTEMENT 2 clauses, pas de mention "human:" / "import:" / "filename" dans la query JSON.
+
+- **P2 wiring test gap** : `extraction-pipeline.test.ts` swallowait l'erreur "Cannot read properties of undefined (reading 'create')" car prisma.evidenceSignal non mocké. Fix : ajout `vi.mock("@/services/evidence", () => ({ runEvidenceForDocument: mocks.runEvidenceForDocument }))` + mock par défaut `{ status: "ran", ... }`. Tests ajoutés (6) : (1) fresh-success appelle helper avec plaintext + runId, (2) evidence failure swallowed (return COMPLETED), (3) retry catch-up appelle helper SANS plaintext + smartExtract NON appelé, (4) catch-up failure swallowed, (5) FAILED extraction n'appelle PAS helper, (6) FAILED retry n'appelle PAS helper.
+
+### État Phase 3.1
+- 1 fichier source ajouté : `run-evidence-for-document.ts` (helper idempotent).
+- 2 fichiers source modifiés : `promote-source-date.ts` (atomic updateMany + scope filter), `extraction-pipeline.ts` (helper + retry catch-up, document SELECT réduit, type param réduit).
+- 1 fichier infra modifié : `evidence/index.ts` (export run-evidence-for-document).
+- 2 fichiers tests ajoutés : `promote-source-date-race.test.ts` (8 tests race + scope + metadata), `extraction-pipeline.test.ts` (+6 tests Phase 3.1 Evidence Engine wiring).
+- Tests : 148/148 unit pass (de 105 à 148 — incluant extraction-pipeline.test.ts qui passe de 30 à 36), 27/27 DB integration pass.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 3.1 = done. Re-soumission Codex round 10 pour greenlight Phase 4 (attachment-linker).
+
+### Action — Phase 3.2 (corrections post-review Codex round 10)
+Codex round 10 a validé P1 race-safe + P1 catch-up retry, mais 1 P1 + 2 P2 résiduels :
+
+- **P1 wiring inline uploads manquant** : `runEvidenceForDocument` câblé seulement sur le pipeline PDF durable. Les chemins inline image/Excel/Word/PPT finalisent COMPLETED sans appel helper → BP Excel, cap table image, mails .docx, PPT natifs créent zéro EvidenceSignal et n'ont pas de promotion sourceDate. Fix : ajouter `runEvidenceForDocument` (non-fatal `try/catch`, garde `if (*CorpusUsable)`) après chacune des 4 finalisations COMPLETED inline dans `src/app/api/documents/upload/route.ts` (image OCR ligne ~552, Excel ~861, Word ~1027, PPT ~1181). Plaintext + extractionRunId passés in-memory pour éviter re-read + decrypt.
+
+- **P2 picker pur pas aligné sur SQL strict** : `pickBestPromotionCandidate` exposé pour tests + Phase 5 read-path gardait `c.signalScopeKey !== "filename"` → accepterait `human:*` / `import:*`. Risque de régression Phase 5. Fix : remplacé par `if (scope.startsWith("run:")) return true; if (scope === "source_metadata") return true; return false;` — alignement exact avec la query DB `OR [{ startsWith: "run:" }, { equals: "source_metadata" }]`. Tests : 3 nouveaux dans `promote-source-date.test.ts` (`human:*` exclu, `import:*` exclu, `source_metadata` accepté).
+
+- **P2 helper non testé unitairement** : `runEvidenceForDocument` testé seulement via mocks pipeline + intégration DB. Couverture manquante : décryption fallback, résolution latest run, skip branches (no_extracted_text, processing_status, document_not_found), contexte passé aux services downstream. Fix : `src/services/evidence/__tests__/run-evidence-for-document.test.ts` (15 tests mockant Prisma + safeDecrypt + extractor + persister + promoter). Couvre les 5 skip branches, plaintext-vs-decrypt path (4 cas), extractionRunId résolution explicite/implicit/null, context propagation au extractor + promoter, return shape `ran` avec compteurs.
+
+### État Phase 3.2
+- 2 fichiers source modifiés : `src/app/api/documents/upload/route.ts` (4 sites wiring inline + import), `src/services/evidence/promote-source-date.ts` (picker scope alignment).
+- 2 fichiers tests modifiés/ajoutés : `promote-source-date.test.ts` (+3 tests scope strict), `run-evidence-for-document.test.ts` (+15 tests nouveaux fichier).
+- Tests : 166/166 unit pass (de 148 à 166 — +15 helper + +3 picker), 27/27 DB integration pass.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 3.2 = done. Re-soumission Codex round 11 pour greenlight Phase 4 (attachment-linker email ↔ pièces).
+
+## 2026-05-18 — Evidence Engine Phase 4 (attachment-linker email ↔ pièces) — code
+
+### Contexte
+Codex round 11 greenlight Phase 4. Implémentation du linker qui détecte les noms de pièces jointes dans le `extractedText` d'un email et les relie aux documents du même deal via signal `ATTACHMENT_RELATION` sur le CHILD doc.
+
+### Action
+- `src/services/evidence/attachment-linker.ts` (~210 lignes) :
+  - `detectAttachmentNames(text)` — pure detection en deux passes :
+    1. **Gmail-listing** (`/^line-start (filename multi-mots avec espaces) .ext (?=\s+\d+[KMG])/`) — capture les noms à espaces suivis d'un size suffix Gmail-style ("Table de capi Septembre 2024 signeģe.png  136K"). Cas Avekapeti.
+    2. **Standard** (`/[^\s/\\<>"'|:?*]+\.ext/gi`) — fallback word-boundary pour les noms sans espaces (Pitch.pdf, BP.xlsx, etc.).
+  - Dédoublonnage : suffix-of-longer guard évite que "signeģe.png" (pass 2) et "Table … signeģe.png" (pass 1) co-existent. Liste de generic-filenames (image.png, document.pdf, signature.jpg, etc.) écartée.
+  - `findAttachmentMatches(prisma, params)` — match candidats vs docs du deal en mémoire (1 query). Cross-tenant guards : `dealId` filter dans la `where`, `id: { not: emailDocumentId }` (exclut l'email lui-même). Strict matching : exact (case-insensitive, score 1.0, HIGH) > normalized (diacritics + spacing stripped, score 0.95, MEDIUM). Pas de fuzzy/Levenshtein en Phase 4 (anti-false-positive).
+  - `persistAttachmentRelations(prisma, params)` — crée un signal `ATTACHMENT_RELATION` sur chaque CHILD doc matché :
+    - `signalScopeKey = "source_metadata"` (dérivé du parsing email, pas du run extraction du child)
+    - `extractionRunId = null` (le run appartient à l'email — utiliser cet id violerait la composite FK `(extractionRunId, documentId) → DocumentExtractionRun(id, documentId)` car le run est lié à l'email, pas au child)
+    - `valueJson = { emailDocId, attachmentName, matchMethod, matchScore, emailSourceDate }`
+    - `reportedAt = email.sourceDate` (le "transmittedAt")
+    - `confidence` = HIGH si exact, MEDIUM si normalized
+    - Cross-tenant guard défensif : re-check `child.dealId === emailDealId` avant insert.
+  - `linkEmailAttachments` — orchestrateur 1-shot.
+  - `ATTACHMENT_LINKER_VERSION = "attachment-linker@2026-05-18-001"` (utilisé dans signalHash → versioning).
+
+- `src/services/evidence/run-evidence-for-document.ts` : appel `linkEmailAttachments` conditionnel sur `sourceKind === "EMAIL"`. Retourne `attachmentsLinked` dans le shape.
+
+- `src/services/evidence/index.ts` : exports publics (ATTACHMENT_LINKER_VERSION, detectAttachmentNames, findAttachmentMatches, linkEmailAttachments, persistAttachmentRelations, types).
+
+### Invariants vérifiés
+- **Codex Phase 4 gate cap table linké** : Avekapeti `Mail.pdf` mentionnant `"Table de capi Septembre 2024 signeģe.png  136K"` → ATTACHMENT_RELATION signal créé sur le cap table doc avec confidence=HIGH, scope=source_metadata, reportedAt=2026-04-22.
+- **Invariant Phase 4 dates cohabitent** : cap table avec sourceDate=2024-09-18 (promu par Phase 3 CAP_TABLE_AS_OF) reste intact ; le signal ATTACHMENT_RELATION coexiste avec reportedAt=2026-04-22. `ATTACHMENT_RELATION` n'est PAS dans `PROMOTION_KINDS_BY_DOC_TYPE` → impossible d'écraser la date métier.
+- **Cross-tenant** : email du deal A ne link PAS un doc du deal B même avec même nom. Garanti par le `dealId` filter dans `findMany` + re-check défensif avant insert.
+- **Idempotence** : re-linking le même email retourne deduplicated=1 sans nouvelles rows.
+- **Wiring sourceKind** : `runEvidenceForDocument` n'appelle le linker QUE pour sourceKind=EMAIL.
+
+### Tests
+- `attachment-linker.test.ts` (17 tests unit) : Gmail-listing avec espaces (Avekapeti), standard regex, dédup, generic blacklist, charOffset, normalisation, exact vs normalized match, doc-can-only-match-once, cross-tenant + self-match guards, orchestrateur empty + full flow.
+- `attachment-linker-integration.test.ts` (6 tests Neon, ~48s) : gate Avekapeti, invariant dates cohabitent, cross-tenant deal A vs B, idempotence, wiring auto-link sourceKind=EMAIL, FILE doc n'appelle PAS le linker.
+
+### État Phase 4
+- 1 fichier source ajouté : `attachment-linker.ts`.
+- 1 fichier source modifié : `run-evidence-for-document.ts` (wiring linker + attachmentsLinked dans return shape).
+- 1 fichier infra modifié : `evidence/index.ts` (exports).
+- 2 fichiers tests ajoutés : `attachment-linker.test.ts` (17), `attachment-linker-integration.test.ts` (6).
+- 1 fichier test modifié : `run-evidence-for-document.test.ts` (+attachmentsLinked dans expect.toEqual).
+- Tests : 183/183 unit pass (de 166 à 183 — +17 linker), 33/33 DB integration pass (de 27 à 33 — +6 linker).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 4 = done. Stop pour audit Codex round 12. Pas de Phase 5 (prelude agent) tant que l'audit n'a pas validé.
+
+### Action — Phase 4.1 (corrections post-review Codex round 12)
+Codex round 12 a flaggé 2 P1 + 1 P2 :
+
+- **P1 lien n'alimente pas la surface existante** : `ATTACHMENT_RELATION` signal seul ne suffisait pas — agents/UI/snapshots lisent `Document.corpusParentDocumentId` (cf. `base-agent.ts:987`, `corpus/index.ts:103`). Donc Avekapeti avait un signal DB mais le context engine ne voyait pas "cap table jointe à Mail.pdf". Fix : promotion guardée de `corpusParentDocumentId` après création du signal, mirror Phase 3 promotion pattern :
+  - **HIGH confidence (exact match) uniquement** — normalized matches restent signal-only
+  - **Atomic updateMany race-safe** avec `WHERE corpusParentDocumentId IS NULL` — jamais écraser un lien manuel utilisateur ou auto antérieur
+  - **Trace `sourceMetadata.attachment` patché** (préserve Phase 3 `sourceMetadata.temporal` + autres clés)
+  - Return shape étendu : `parentLinksPromoted: number`
+  - Helper local `promoteCorpusParentForMatch` race-safe.
+
+- **P1 matching non déterministe** : `findAttachmentMatches` chargeait tous les docs du deal sans `isLatest`, sans `processingStatus`, sans `orderBy` → potentiel attach au mauvais doc (old version, doc FAILED, ordre DB implicite). Fix :
+  - `where: { isLatest: true, processingStatus: { not: "FAILED" } }` — exclut deprecated versions + FAILED extractions
+  - `orderBy: [{ uploadedAt: "asc" }, { id: "asc" }]` — ordre stable
+  - Map.set logic : **FIRST wins** (au lieu d'écraser silencieusement) — pour les collisions filename rares (re-upload, restored draft), on garde le plus ancien (déterministe)
+
+- **P2 faux positifs URL/path** : la fallback regex pouvait détecter `Pitch.pdf` dans une URL/path. Fix : nouvelle fonction `isInsideUrlOrPath(text, matchIndex)` qui rejette si char-just-before est `/` ou `\`, ou si `://` apparaît dans les 60 chars précédant le match.
+
+### Tests Phase 4.1
+- `attachment-linker.test.ts` (+11 tests, total 28) :
+  - 4 tests URL/path skip (HTTP URL, Unix path, Windows path, mid-line accept)
+  - 3 tests matching déterministe (filter where, latest-only, collision first wins)
+  - 4 tests corpusParentDocumentId promotion (HIGH only, NORMALIZED skipped, already-set non-overwrite, race count=0)
+- `attachment-linker-integration.test.ts` (+4 tests, total 10) :
+  - Codex Phase 4.1 promotion : EXACT match → corpusParentDocumentId écrit + meta.attachment trace
+  - Codex Phase 4.1 non-overwrite : user manual link préservé même si email match
+  - Codex Phase 4.1 isLatest : old version (isLatest=false) NE peut PAS être matchée
+  - Codex Phase 4.1 FAILED : doc processingStatus=FAILED NE peut PAS être matché
+
+### État Phase 4.1
+- 1 fichier source modifié : `attachment-linker.ts` (URL guard + matching filters + promotion helper).
+- 1 fichier test modifié : `attachment-linker.test.ts` (mocks documentUpdateMany ajoutés + 11 tests Phase 4.1).
+- 1 fichier test modifié : `attachment-linker-integration.test.ts` (+4 tests gates Codex r12).
+- Tests : 194/194 unit pass (de 183 à 194 — +11 linker Phase 4.1), 37/37 DB integration pass (de 33 à 37 — +4 linker Phase 4.1).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 4.1 = done. Re-soumission Codex round 13 pour greenlight Phase 5 (prelude agent contextuel).
+
+### Action — Phase 4.2 (revert promotion corpusParentDocumentId — Codex round 13 P1)
+Codex round 13 a flaggé que la mutation `Document.corpusParentDocumentId` ajoutée en Phase 4.1 casse l'invariant lineage F62 utilisé par `src/app/api/documents/upload/route.ts:360` et `src/services/documents/extraction-runs.ts:843+948` :
+- `corpusParentDocumentId` est partie de la clé de lineage `(dealId, name, corpusParentDocumentId)` qui détermine la famille d'un re-upload.
+- Muter ce champ post-création casse : "old versions stay in old lineage" invariant + future re-uploads avec même `(dealId, name)` peuvent atterrir dans un lineage différent + clash avec l'immutability assumption `extraction-runs:948`.
+- Codex round 12 P1 avait offert deux options : muter ou acter Phase 5 lit `ATTACHMENT_RELATION`. Codex round 13 confirme : muter est unsafe.
+
+**Décision Phase 4.2** : revert complet de la promotion. Phase 4 reste **signal-only**. Phase 5 (prelude agent + corpus read-path) lira `ATTACHMENT_RELATION` partout où `Document.corpusParentDocumentId` est lu (`base-agent.ts:987`, `corpus/index.ts:103`, deal detail UI, etc.) et surfacera l'auto-detected link alongside the manually-set one.
+
+**Bonus** : la P2 round 13 sur sourceMetadata stale-copy est aussi résolue automatiquement — le revert supprime toute écriture à `sourceMetadata.attachment` (le trace audit vit dans l'EvidenceSignal).
+
+Code changes :
+- `attachment-linker.ts` :
+  - Docstring header : section "⚠️ Phase 4.2 — signal-only by design" expliquant pourquoi et où Phase 5 doit surface
+  - Suppression de `promoteCorpusParentForMatch` (helper + appel)
+  - Suppression de `parentLinksPromoted` du return shape
+  - Suppression de `corpusParentDocumentId` + `sourceMetadata` du SELECT child (plus utilisés)
+
+Tests :
+- `attachment-linker.test.ts` (-4, +2) : ancien describe "promotion" remplacé par "Codex round 13 P1 — Document.corpusParentDocumentId IS NOT mutated" qui vérifie `documentUpdateMany.not.toHaveBeenCalled()` même pour HIGH match
+- `attachment-linker-integration.test.ts` (-2, +2) : tests "promotion" remplacés par tests "non-mutation" + "existing parent untouched"
+
+### État Phase 4.2
+- 1 fichier source modifié : `attachment-linker.ts` (revert promotion).
+- 2 fichiers tests modifiés : `attachment-linker.test.ts`, `attachment-linker-integration.test.ts`.
+- Tests : 192/192 unit pass (de 194 à 192 — 4 tests promotion supprimés, 2 tests non-mutation ajoutés), 37/37 DB integration pass (10 dans attachment-linker, dont 2 nouveaux non-mutation).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 4.2 = done. Re-soumission Codex round 14 pour greenlight Phase 5 (prelude agent contextuel — qui devra inclure le surfacing de ATTACHMENT_RELATION).
+
+## 2026-05-18 — Evidence Engine Phase 5 (prelude agent contextuel) — code
+
+### Contexte
+Codex round 14 greenlight Phase 5. Objectif : injecter dans le contexte agent un header global "Nous sommes le DD/MM/YYYY" + un prelude par document qui surface les EvidenceSignal (asOf, forecast, actuals, attachments auto-détectés, warnings de fraîcheur), SANS muter Document.sourceDate ni Document.corpusParentDocumentId (contrat Codex r13 P1 + Phase 3.2).
+
+### Action
+- **Service `src/services/evidence/build-evidence-context.ts`** (~340 lignes) :
+  - `buildDealEvidenceContext(prisma, dealId, options?)` — load tous les docs + signals du deal en 1 round-trip ; produit `Record<docId, DocumentEvidenceContext>` indexé par documentId.
+  - Picker logic : HIGH > MEDIUM puis DAY > MONTH puis scope rank (run:* > source_metadata > human:* > filename) puis createdAt desc.
+  - `documentDate` ← DOCUMENT_DATE meilleur signal, `asOf` ← CAP_TABLE_AS_OF | BALANCE_SHEET_AS_OF, `forecast` ← FINANCIAL_PERIOD_FORECAST (max dateEnd), `actuals` ← collection FINANCIAL_PERIOD_ACTUAL.
+  - `detectedAttachments` ← ATTACHMENT_RELATION signals avec résolution du nom email parent depuis le map de docs in-memory (cross-tenant garanti par le filtre dealId du findMany).
+  - `staleWarnings` computed :
+    - `cap_table_stale` : CAP_TABLE_AS_OF > 12 mois (medium), > 18 mois (high)
+    - `balance_sheet_stale` : BALANCE_SHEET_AS_OF > 18 mois
+    - `forecast_now_historical` : FINANCIAL_PERIOD_FORECAST.dateStart ≤ today → "require YTD actuals, do NOT treat as realised"
+
+- **Formatter `src/agents/evidence-prelude.ts`** (~110 lignes) :
+  - `formatGlobalEvidenceHeader(today)` → "## Référence temporelle\n**Nous sommes le 18/05/2026.** ..."
+  - `formatDocumentEvidencePrelude(ctx)` → markdown block per-doc avec asOf, documentDate, forecast (avec mention "PROJECTIONS, ne pas traiter comme réalisés"), actuals, attachments ("Transmis par email: X le DD/MM/YYYY"), stale warnings (⚠️ medium, 🛑 high).
+  - Disambiguation : si asOf+documentDate présents, affiche asOf seul (plus spécifique).
+  - Citations courtes truncated à 200 chars + sanitizeForLLM sur le nom email parent.
+
+- **AgentContext type** — `src/agents/types.ts` :
+  - Ajout `evidenceContext?: Record<string, DocumentEvidenceContext>` + `evidenceToday?: Date`. Optionnel — back-compat pour les chemins agent qui ne wire pas.
+
+- **base-agent.ts** :
+  - Import `formatGlobalEvidenceHeader` + `formatDocumentEvidencePrelude`.
+  - `formatDealContext` commence par le global header (avec fallback `new Date()` si `evidenceToday` absent).
+  - Boucle docs : après le header `### name (...) — produit le ...`, injecte le prelude per-doc si `context.evidenceContext?.[doc.id]` présent.
+  - Compat : ne casse PAS le header existant ; le prelude vient EN PLUS.
+
+- **Orchestrator** — `src/agents/orchestrator/index.ts` :
+  - Import `buildDealEvidenceContext` + `DocumentEvidenceContext`.
+  - Appel `buildDealEvidenceContext(prisma, dealId, { today: evidenceToday })` AVANT construction du context, non-fatal (try/catch → undefined).
+  - Assign `context.evidenceContext` + `context.evidenceToday`.
+
+### Tests
+- `src/services/evidence/__tests__/build-evidence-context.test.ts` (10 tests unit, mocked Prisma) : empty deal, picker rules (kind > confidence > precision > scope), forecast latest-pick, actuals collection, attachment resolution, stale warnings (cap_table > 12mo, forecast historical 2025-2026, forecast 2027+ → pas de warning).
+- `src/services/evidence/__tests__/build-evidence-context-integration.test.ts` (2 tests Neon, ~12s) : Avekapeti gate (cap table + ATTACHMENT_RELATION + stale warning), BP forecast 2026-2030 + warning historical 2026.
+- `src/agents/__tests__/evidence-prelude.test.ts` (12 tests purs) : global header date format FR, cap table asOf + warning, bilan + actuals, BP forecast + "PROJECTIONS" mention, forecast warning YTD, attachment exact + normalized + fallback name, empty ctx, disambiguation asOf vs documentDate.
+- `src/agents/__tests__/base-agent-date-rendering.test.ts` (+4 tests) : injection global header, injection per-doc prelude, fallback evidenceToday absent, evidenceContext absent → pas de prelude.
+
+### Surface impact (Codex round 13 P1 satisfaction)
+- ATTACHMENT_RELATION est maintenant lu par l'agent prelude → le surface "transmis par email X le date Y" coexiste avec le manuel Document.corpusParentDocumentId déjà rendu par `base-agent.ts:987`.
+- Phase 5 NE MUTE rien : ni sourceDate, ni sourceKind, ni corpusParentDocumentId. Lecture pure de l'EvidenceSignal table.
+- F62 lineage invariant intact.
+
+### Wiring statut
+- ✅ Orchestrator (analyse principale Tier 1/2/3)
+- ⏭️ Chat / Board orchestrators : non câblés Phase 5 first cut (peut être ajouté en Phase 5.x si besoin — non-fatal, le prelude reste optionnel)
+
+### État Phase 5
+- 2 fichiers source ajoutés : `build-evidence-context.ts`, `evidence-prelude.ts`.
+- 3 fichiers source modifiés : `evidence/index.ts` (exports), `types.ts` (AgentContext), `base-agent.ts` (header + prelude), `orchestrator/index.ts` (wiring + import).
+- 4 fichiers tests ajoutés : `build-evidence-context.test.ts` (10), `build-evidence-context-integration.test.ts` (2), `evidence-prelude.test.ts` (12), update `base-agent-date-rendering.test.ts` (+4).
+- Tests : 287/287 unit pass (de 192 à 287 — +95 dont 12 prelude + 10 build-evidence + 4 base-agent + 60+ existants Phase 1-4 + autres agents), 39/39 DB integration pass.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 5 = done. Stop pour audit Codex round 15 avant Phase 6 (claims financiers structurés).
+
+### Action — Phase 5.1 (corrections post-review Codex round 15)
+Codex round 15 a flaggé 2 P1 + 1 P2 :
+
+- **P1 wiring incomplet** : seul `runBaseAnalysis` recevait `evidenceContext`. Le path prod `full_analysis` lancé par l'UI (line 1497) + `runTier1Analysis` (line 678) + resume (line 4388) **n'étaient pas câblés** → le vrai Deep Dive n'a jamais vu le prelude. Fix : helper unique `loadEvidenceContextSafe(dealId)` (top du fichier orchestrator, non-fatal try/catch). Appelé depuis les **4 sites** de construction `AgentContext` (runBaseAnalysis, runTier1Analysis, runFullAnalysis, resume flow).
+
+- **P1 filter latest extractor version** (déferré Phase 1 §3.12) : `buildDealEvidenceContext` n'avait aucun filtre version → après upgrade parser, un vieux signal pouvait battre le nouveau sur les tiebreakers confidence/precision/scope/createdAt. Fix : nouvelle fonction `keepLatestExtractorVersionPerScope(signals)` qui groupe par `(documentId, signalScopeKey, kind)` et garde uniquement les rows dont `extractorVersion` est le MAX du groupe (string sort sur format `module@YYYY-MM-DD-NNN`). Appliquée avant le picker. Tests : v1 HIGH + v2 MEDIUM sur même scope → v2 wins (MEDIUM) ; v1 sur run:R1 + v2 sur run:R2 → coexistent (scopes différents).
+
+- **P2 fingerprint cache n'incluait pas signals** : `tier1_complete` / `tier2_sector` / `tier3_synthesis` cacheables, mais `generateDealFingerprint` hash uniquement deal+docs+facts, pas signals → nouveau ATTACHMENT_RELATION / CAP_TABLE_AS_OF n'invalidait pas le cache. Fix : `generateDealFingerprint(deal, evidenceSignals = [])` accepte un 2e arg optionnel (back-compat). Hash inclut `${documentId}|${signalScopeKey}|${kind}|${signalHash}|${extractorVersion}` sorted. Call sites `findAnalysisCache` + `storeAnalysisFingerprint` pré-fetch signals via `prisma.evidenceSignal.findMany({ where: { dealId }, select: {...} })`. Tests : ajout/retrait signal change fingerprint ; ordre des signals n'affecte pas (stable sort) ; extractorVersion change le fingerprint ; signalHash change le fingerprint ; backward compat sans 2e arg.
+
+### État Phase 5.1
+- 2 fichiers source modifiés : `build-evidence-context.ts` (+ `keepLatestExtractorVersionPerScope`), `analysis-cache/index.ts` (+ `evidenceSignals` param dans `generateDealFingerprint`).
+- 1 fichier source modifié : `orchestrator/index.ts` (helper `loadEvidenceContextSafe` + wiring 4 sites + signals dans fingerprint 2 sites).
+- 2 fichiers tests modifiés : `build-evidence-context.test.ts` (+2 tests latest version), `analysis-cache/__tests__/index.test.ts` (+6 tests fingerprint signals).
+- Tests : 296/296 unit pass (de 287 à 296 — +8 fingerprint cache + +2 latest version, certains comptes ajustés par les agents).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 5.1 = done. Re-soumission Codex round 16 pour greenlight Phase 6 (claims financiers structurés).
+
+### Action — Phase 5.2 (corrections post-review Codex round 16)
+Codex round 16 a flaggé 1 P1 + 2 P2 + 1 test gap :
+
+- **P1 read-path ne filtrait pas latest extraction run** : `keepLatestExtractorVersionPerScope` groupait par `(documentId, signalScopeKey, kind)` → run:R1 et run:R2 coexistaient. Un vieux run HIGH pouvait battre un dernier run MEDIUM dans le picker → prelude injectait des dates stale après re-OCR. Fix : nouvelle fonction `filterSignalsToLatestRun(signals, latestRunByDoc)` appliquée AVANT le filtre version. Pré-fetch du dernier run terminal par doc via `prisma.$queryRaw` (`SELECT DISTINCT ON ("documentId") ... ORDER BY startedAt DESC`). Signals avec scope `run:<oldRunId>` sont droppés, signals `filename` / `source_metadata` / `human:*` / `import:*` survivent (non liés à un run). Fallback conservateur : si dernier run inconnu, keep le signal pour éviter de tout hider. 3 tests : ancien HIGH + nouveau MEDIUM → nouveau wins, non-run scopes survivent, doc sans run → préservation.
+
+- **P2 cache fail-open sur signal read error** : `.catch(() => [])` faisait passer le fingerprint sans signals → cache hit avec evidence stale. Fix :
+  - `checkAnalysisCache` : try/catch explicite ; sur erreur signals → `return null` (no cache hit), log + comment "failing CLOSED".
+  - `storeAnalysisFingerprint` : try/catch explicite ; sur erreur signals → `return` sans update (analysis.dealFingerprint stays null → futur read ne peut pas hit le cache, safe).
+
+- **P2 fingerprint sort sans tie-break extractorVersion** : 2 signals identiques sauf version pouvaient sort en ordre non-deterministe car comparator omettait extractorVersion. Fix : ajout `a.extractorVersion.localeCompare(b.extractorVersion)` comme dernier tie-breaker dans le sort. Test "ordre inversé même version → même fingerprint".
+
+- **Test gap full_analysis non protégé** : nouveau fichier `src/agents/orchestrator/__tests__/evidence-wiring.test.ts` (7 tests structurels) qui lit le source orchestrator et asserts :
+  - `loadEvidenceContextSafe` défini exactement 1 fois
+  - Appelé ≥5 fois (1 def + 5 call sites : runBaseAnalysis, runTier1Analysis, runFullAnalysis, resume, coherenceContext)
+  - Chaque AgentContext literal avec `documents:` contient `evidenceContext` ET `evidenceToday` (5 blocks)
+  - Aucun call direct à `buildDealEvidenceContext` hors helper (1 seule occurrence)
+  - Helper utilise try/catch non-fatal
+  - `checkAnalysisCache` et `storeAnalysisFingerprint` respectent fail-closed (log + return null/skip)
+
+  Bonus : Codex r16 wiring guard a découvert un 5e site non câblé (`coherenceContext` line 3143) → ajouté `loadEvidenceContextSafe` + `evidenceContext/Today` dans ce site.
+
+### État Phase 5.2
+- 2 fichiers source modifiés : `build-evidence-context.ts` (+ `filterSignalsToLatestRun` + pré-fetch latest run), `analysis-cache/index.ts` (+ tie-break extractorVersion).
+- 1 fichier source modifié : `orchestrator/index.ts` (cache fail-closed × 2, +1 wiring coherenceContext, +call à `loadEvidenceContextSafe`).
+- 1 fichier test ajouté : `orchestrator/__tests__/evidence-wiring.test.ts` (7 tests structurels).
+- 2 fichiers tests modifiés : `build-evidence-context.test.ts` (+3 tests latest run filter, mocks $queryRaw ajoutés), `analysis-cache/__tests__/index.test.ts` (+1 test sort tie-break).
+- Tests : 312/312 unit pass (de 296 à 312 — +7 wiring + +3 latest run + +1 tie-break + +5 par carryover agents).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 5.2 = done. Re-soumission Codex round 17 pour greenlight Phase 6 (claims financiers structurés).
+
+### Action — Phase 5.3 (test gap Codex round 17)
+Codex round 17 a flaggé 1 P2 (test gap) : le filtre SQL `latest-run` est correct en théorie mais le test intégration existant créait des `DocumentExtractionRun` sans `status` (default `PENDING`), donc `latestRunRows` était toujours vide et le fallback conservateur masquait le vrai chemin. Aucun test ne prouvait que le SQL `DISTINCT ON ("documentId") ORDER BY startedAt DESC` filtrait réellement le bon run sur Postgres réel.
+
+Fix : 2 nouveaux tests d'intégration dans `build-evidence-context-integration.test.ts` :
+- **Test gate r17 P2** : crée 2 runs terminaux (`READY` + `READY_WITH_WARNINGS`) sur le même doc avec startedAt distincts, insère un signal HIGH sur l'ancien run (asOf=2024-08-18, "old OCR misread") + un signal MEDIUM sur le nouveau (asOf=2024-09-18, "correct"). Vérifie que le picker retourne le **MEDIUM nouveau** (preuve que le SQL filtre + drop fonctionne end-to-end, sinon le HIGH ancien gagnerait sur la confidence).
+- **Test edge case** : crée 1 run terminal `READY` antérieur + 1 run `PENDING` postérieur (plus récent en startedAt mais NON-terminal). Vérifie que le run PENDING est exclu et que le signal du run READY antérieur reste autoritaire (confirme le `WHERE status IN ('READY', 'READY_WITH_WARNINGS', 'BLOCKED')`).
+
+### État Phase 5.3
+- 1 fichier test modifié : `build-evidence-context-integration.test.ts` (+2 tests latest-run DB end-to-end, ~4s additionnels).
+- Tests : 4/4 intégration DB pass (de 2 à 4 — les 2 originaux Avekapeti+BP + 2 nouveaux Codex r17 P2).
+- 312/312 unit pass (inchangé).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 5.3 = done. Re-soumission Codex round 18 pour greenlight Phase 6 (claims financiers structurés).
+
+## 2026-05-18 — Evidence Engine Phase 6 (financial/metric claims) — code
+
+### Contexte
+Codex round 18 greenlight Phase 6. Objectif : extraire VALUATION_CLAIM + METRIC_CLAIM des documents (deck/email/BP/bilan) via regex déterministe, classer actual/forecast/claim selon le doc type + sourceKind + markers du text, surfaceer dans le prelude agent.
+
+### Action — Phase 6.0 + 6.1 + 6.2
+- **`src/services/evidence/claims-extractor.ts`** (~280 lignes) :
+  - `runClaimsExtractor({documentName, documentType, extractedText, sourceKind})` retourne `ExtractedClaimSignal[]`.
+  - `classifyDocument()` :
+    - `sourceKind === "EMAIL"` → `"claim"` (Gate Codex 2 — JAMAIS override)
+    - `FINANCIAL_MODEL` → `"forecast"` (Gate Codex 3)
+    - `FINANCIAL_STATEMENTS` → `"actual"`
+    - `PITCH_DECK` / autres → `"claim"`
+  - `refineClassification(base, window, sourceKind)` : upgrade vers `"actual"` si mots-clés `réalisé/audited/exercice clos` dans ±120 chars, downgrade vers `"forecast"` si `forecast/projection/prévi/budget`. **EMAIL conserve `"claim"` toujours** (Gate Codex 2).
+  - **3 patterns** :
+    1. Valuation : `(valorisation|valuation|pre-money|post-money)\s*<amount>` → VALUATION_CLAIM
+    2. Metric+Year+Amount : `<CA|ARR|MRR|EBITDA|exit|ticket> <year> [=:] <amount>`
+    3. Amount+de+Metric+Year : `<amount> de <metric> <year>` ("3M€ de CA 2025")
+    4. Amount+Metric+Year : `<amount> <metric> <year>` ("3M€ CA 2025")
+  - `parseAmount` gère `€/$/£`, k/M/G suffix, decimal comma FR (`3,5M€` → 3500000).
+  - EXIT métrique → kind = VALUATION_CLAIM (sémantique : valorisation à terme).
+  - Dedup par tuple (kind, metric, year, amount, currency, classification).
+  - `CLAIMS_EXTRACTOR_VERSION = "claims-extractor@2026-05-18-001"`.
+
+- **`run-evidence-for-document.ts`** : appel `runClaimsExtractor` après temporal + attachment linker. Persistance via `persistTemporalSignals` (mêmes hash / scope / dedup que les temporal signals). Retour shape étendu : `claimsPersisted`, `claimsDeduplicated`.
+
+- **`build-evidence-context.ts`** : nouvelle interface `ResolvedClaim` + `collectClaimSignals(signals)` qui décrypte valueJson et trie par year desc puis amount desc. Ajout au `DocumentEvidenceContext.claims`. Findings query étendu pour inclure `VALUATION_CLAIM` + `METRIC_CLAIM`.
+
+- **`evidence-prelude.ts`** : `formatClaimLine(claim)` avec étiquette explicite de classification :
+  - `[ACTUAL — donnée historique réalisée]`
+  - `[FORECAST — projection, ne pas traiter comme réalisé]`
+  - `[CLAIM founder — déclaration non auditée, à vérifier]`
+  - `formatAmount` : `3.00M€`, `405k€`, `$1.5M`, `6.00G$`.
+
+### Tests Phase 6
+- **`claims-extractor.test.ts`** (20 tests unit purs) :
+  - VALUATION_CLAIM (valorisation, exit avec period)
+  - METRIC_CLAIM (CA/ARR/MRR/EBITDA avec year + currency)
+  - Gate Codex 1 : CA 2025 ≠ forecast 2026 (period)
+  - Gate Codex 2 : EMAIL + "réalisé" + "audited" → toujours "claim"
+  - Gate Codex 3 : FINANCIAL_MODEL default forecast, override "actuals" sheet
+  - Currency parsing (k€, $M, decimal comma FR)
+  - Dedup par tuple
+
+- **`claims-extractor-integration.test.ts`** (5 tests Neon, ~13s) :
+  - Gate 1 DB end-to-end : CA 2025 + ARR 2026 → dateStart/dateEnd corrects par signal
+  - Gate 2 DB : email "réalisé" + "audited" → classification="claim" en DB
+  - Gate 3 DB : BP FINANCIAL_MODEL → classification="forecast" en DB
+  - Valuation persisté avec amount + currency + classification
+  - Idempotence : 2e run → claimsDeduplicated, pas de nouvelles rows
+
+- **`evidence-prelude.test.ts`** (+4 tests Phase 6) : rendu étiquettes ACTUAL/FORECAST/CLAIM, VALUATION_CLAIM avec label "Valorisation".
+
+- **`base-agent-date-rendering.test.ts`** : ajout `claims: []` au baseCtx du fixture (déjà compatible Phase 5).
+
+- **`run-evidence-for-document.test.ts`** : extension de la `toEqual` de "calls downstream services" pour inclure `claimsPersisted: 3, claimsDeduplicated: 1` (le mock `persistTemporalSignals` répond à 2 appels — temporal puis claims).
+
+### État Phase 6
+- 1 fichier source ajouté : `claims-extractor.ts`.
+- 3 fichiers source modifiés : `evidence/index.ts` (exports), `build-evidence-context.ts` (+ResolvedClaim + collectClaimSignals + query étendue), `run-evidence-for-document.ts` (wiring + return shape), `evidence-prelude.ts` (formatClaimLine + formatAmount).
+- 2 fichiers tests ajoutés : `claims-extractor.test.ts` (20), `claims-extractor-integration.test.ts` (5).
+- 2 fichiers tests modifiés : `evidence-prelude.test.ts` (+4), `base-agent-date-rendering.test.ts` (+claims field), `run-evidence-for-document.test.ts` (+claims counts).
+- Tests : 336/336 unit pass (de 312 à 336 — +20 claims-extractor + +4 prelude). 39/39 DB integration pass (+5 claims).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 6 = done. Stop pour audit Codex round 19 avant Phase 7 (contradictions, freshness, missing evidence).
+
+### Action — Phase 6.1 (corrections post-review Codex round 19)
+Codex round 19 a flaggé 2 P1 + 1 P2 :
+
+- **P1 #1 mixed Actuals/Forecast misclassification** : `refineClassification` faisait "first marker wins" avec actual prioritaire sur forecast. Repro : `"Actuals 2025: CA 2025 = 1M€. Forecast 2026: CA 2026 = 3M€."` → CA 2026 classé **actual** (faux, devrait être forecast). Fix : **nearest-marker-wins** — scan le full text (pas juste ±120 window), trouve la distance min entre la claim et chaque marker actual/forecast (`nearestMarkerDistance` helper), pick le marker le plus proche. EMAIL invariant (Gate 2) préservé. Test RED ajouté qui reproduisait le bug → maintenant GREEN.
+
+- **P1 #2 GBP default à EUR** : la regex acceptait `£` mais `parseAmount` retournait `EUR | USD | null`, et `formatAmount` rendait `null` comme `€`. Fix end-to-end :
+  - `parseAmount` retourne `ClaimCurrency = "EUR" | "USD" | "GBP"` ou `null`
+  - `ResolvedClaim.currency` étendu à `"EUR" | "USD" | "GBP" | null`
+  - `collectClaimSignals` propage `GBP`
+  - `formatAmount` : `GBP` → `£`, `null` → `" (devise inconnue)"` (JAMAIS `€` par défaut)
+  - Tests : `£1.5M` → currency=GBP, amount sans symbole → currency=null, valuation GBP, prelude rendu avec `£` et `(devise inconnue)`
+
+- **P2 citation manquante dans claim prelude** : `formatClaimLine` ignorait `claim.evidenceText`. Fix : ajout `_(citation: "...")_` pattern (même format que `asOf`) avec truncate à 200 chars. Test : claim avec evidenceText → prelude contient la citation pour grounding agent.
+
+### État Phase 6.1
+- 2 fichiers source modifiés : `claims-extractor.ts` (nearest-marker logic + GBP type), `build-evidence-context.ts` (ResolvedClaim.currency union étendue + collectClaimSignals GBP).
+- 1 fichier source modifié : `evidence-prelude.ts` (formatAmount GBP + null=devise inconnue + claim citation).
+- 2 fichiers tests modifiés : `claims-extractor.test.ts` (+4 tests : mixed Actuals/Forecast, GBP, null currency, valuation GBP), `evidence-prelude.test.ts` (+3 tests : GBP rendering, null currency rendering, claim citation).
+- Tests : 343/343 unit pass (de 336 à 343 — +7 nouveaux). 44/44 DB integration pass (inchangé Phase 6.1, claims-extractor-integration.test.ts non-impacté).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 6.1 = done. Re-soumission Codex round 20 pour greenlight Phase 7 (contradictions, freshness, missing evidence).
+
+### Action — Phase 6.2 (correction post-review Codex round 20)
+Codex round 20 a validé Phase 6.1 (GBP propagé, citations rendues, ancien bug Actuals/Forecast corrigé) mais a flaggé **1 nouveau P1** introduit par le fix nearest-marker :
+
+- **P1 unbounded nearest-marker contamination** : `refineClassification` scannait le full text sans distance max. Repro :
+  ```
+  Actuals 2025: CA 2025 = 1M€.
+  <2000+ chars de filler>
+  CA 2026 = 3M€.
+  ```
+  Sur un FINANCIAL_MODEL, `CA 2026` était classé **actual** car le marker "Actuals 2025" tout en haut était le seul marker du doc — donc le plus proche par défaut. Un seul marker historique en intro d'un BP contaminait toutes les projections en aval.
+
+  Fix : **bounded nearest-marker** — ajout d'une constante `MAX_MARKER_DISTANCE = 600` (~ une section / un paragraphe court). Logique :
+  - Si **aucun** marker actual/forecast n'est dans la fenêtre ±600 chars de la claim → fallback `baseClassification` (forecast pour FINANCIAL_MODEL, actual pour FINANCIAL_STATEMENTS, etc.)
+  - Si **un seul** marker est dans la fenêtre → ce marker gagne
+  - Si **les deux** sont dans la fenêtre → le plus proche gagne (logique nearest préservée)
+  - Tie exact → fallback `baseClassification`
+  - Gate Codex 2 (EMAIL → claim) **invariant préservé**
+
+### État Phase 6.2
+- 1 fichier source modifié : `claims-extractor.ts` (constante `MAX_MARKER_DISTANCE = 600` + logique `actualInRange` / `forecastInRange` + fallback baseClassification).
+- 1 fichier tests modifié : `claims-extractor.test.ts` (+2 tests : marker actual loin n'override pas, aucun marker → baseClassification).
+- Tests : 345/345 unit pass (de 343 à 345 — +2 nouveaux dont 1 reproduisait le bug Codex round 20).
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 6.2 = done. Re-soumission Codex round 21 pour greenlight Phase 7 (contradictions, freshness, missing evidence).
+
+### Action — Phase 7 (Evidence Health Layer)
+Greenlight Codex round 21 obtenu. Phase 7 livre la **couche santé d'évidence** au-dessus de `buildDealEvidenceContext` (Phase 5). Trois détecteurs purs, agrégés et surfacés à l'agent dans un bloc markdown global :
+
+- **Contradictions inter-documents** (`detectContradictions`) : groupe les claims par `(kind, metric, year)`, ignore les claims sans year (pas d'ancrage temporel). Détecte 3 types :
+  - **METRIC_MISMATCH** / **VALUATION_MISMATCH** : amounts différents au-delà du seuil `NUMERIC_MISMATCH_RATIO_THRESHOLD = 1.2` (>20% d'écart). Sévérité **HIGH** si au moins un signal est `actual` (bilan vs claim founder) ; **MEDIUM** sinon (claim vs claim, ou claim vs forecast).
+  - **CURRENCY_MISMATCH** : devises différentes pour le même claim (EUR vs GBP). Sévérité **LOW** — comparaison numérique non significative.
+  - Dédup intra-doc (même `(documentId, amount, currency)` ne déclenche pas).
+  - Ordre stable : HIGH → MEDIUM → LOW.
+
+- **Missing evidence** (`detectMissingEvidence`) : 4 checks structurels au niveau deal :
+  - `NO_CAP_TABLE_AS_OF` : **HIGH** si CAP_TABLE existe sans `CAP_TABLE_AS_OF`, **MEDIUM** si aucune cap table uploadée.
+  - `NO_FINANCIAL_STATEMENTS` : **MEDIUM** si aucun bilan / compte de résultat audité.
+  - `NO_FORECAST_PERIOD` : **MEDIUM** si tous les FINANCIAL_MODEL n'ont aucune `FINANCIAL_PERIOD_FORECAST` extraite.
+  - `NO_PITCH_DECK_DATE` : **LOW** agrégé sur tous les decks sans `documentDate` et sans `asOf`.
+
+- **Freshness rollup** (`rollupFreshness`) : agrégation des `staleWarnings` per-doc (déjà produits Phase 5) → counts par `StaleWarningKind` au niveau deal.
+
+**Positioning rule (CLAUDE.md règle n°1)** : tous les messages générés (`reason`, `message`) sont en ton **analytique strict** — pas de prescription. Les tests vérifient l'absence des tokens `rejet|investir|no_go|fuyez|STRONG_PASS|WEAK_PASS|CONDITIONAL_PASS`.
+
+**Surface agent** : nouveau `formatGlobalEvidenceHealth(report)` dans `evidence-prelude.ts`. Rendu markdown structuré (sections `### Contradictions détectées (N)`, `### Évidences manquantes (N)`, `### Fraîcheur`), badges sévérité `[HIGH]/[MEDIUM]/[LOW]`. **String vide quand rien à signaler** — aucun bruit injecté.
+
+**Wiring** : `base-agent.ts:854` (juste après `formatGlobalEvidenceHeader`). Utilise `context.evidenceContext` déjà chargé par `loadEvidenceContextSafe` (5 sites orchestrator wirés Phase 5.2). Aucun nouveau round-trip DB — pure agrégation in-memory.
+
+### État Phase 7
+- 1 fichier source ajouté : `src/services/evidence/health-report.ts` (~280 lignes, pure, zéro DB).
+- 3 fichiers source modifiés :
+  - `src/services/evidence/index.ts` (exports `buildEvidenceHealthReport` + 7 types).
+  - `src/agents/evidence-prelude.ts` (+`formatGlobalEvidenceHealth`, +helpers `formatSeverityBadge`, `formatContradictionSubject`, fix pluriel FR `signal → signaux`).
+  - `src/agents/base-agent.ts` (+import, +injection après `evidenceGlobalHeader`).
+- 1 fichier tests ajouté : `src/services/evidence/__tests__/health-report.test.ts` (18 tests : contradictions HIGH/MEDIUM/LOW + currency + valuation + dédup + ordre + missing 4 kinds + freshness rollup + empty deal).
+- 1 fichier tests modifié : `src/agents/__tests__/evidence-prelude.test.ts` (+6 tests `formatGlobalEvidenceHealth` : empty, contradictions, missing, freshness, tone, valuation).
+- Tests : **369/369 unit pass** (de 345 à 369 — **+24 nouveaux**). 6 skipped DB-gated.
+- `npx tsc --noEmit` clean.
+- `npx prisma validate` clean.
+- 0 régression.
+- Tasks Phase 7 = done. Re-soumission Codex round 22 pour audit final avant Phase 8 (UI surface).
+
+### Action — Phase 7.1 (corrections post-review Codex round 22)
+Codex round 22 a validé techniquement Phase 7 (43/43 tests, tsc/prisma clean) mais flaggé 1 P1 + 1 P2 sur la couverture des findings :
+
+- **P1 VALUATION_CLAIM sans year invisibles** : `detectContradictions` skippait toute claim avec `year === null` pour éviter de comparer "CA sans année" entre docs. Mais l'extractor Phase 6 (`extractValuationClaims`) émet **toutes** les valuations classiques ("valorisation 5M€", "valuation 8M€") avec `year=null` — donc **aucune** contradiction de valorisation deck↔term sheet ne pouvait remonter. C'est précisément le cas business canonique à attraper.
+
+  Fix : skip year=null **uniquement** pour `METRIC_CLAIM` (CA, ARR, etc. sans année restent ambigus). Pour `VALUATION_CLAIM`, year=null est groupé sous la clé `VALUATION_CLAIM|VALUATION|undated`. Le finding sort avec `year: null` dans le payload et le rendu marque "(non datée)" dans le `reason`. RED test ajouté : 2 VALUATION_CLAIM sans year (deck 5M€ claim vs term sheet 8M€ actual) → `VALUATION_MISMATCH HIGH`.
+
+- **P2 NO_FORECAST_PERIOD partiel masqué** : ancien seuil `fmDocsMissingForecast.length === fmDocs.length` — un BP correct masquait totalement un autre BP cassé. Pour un health layer, le BA doit voir **quel doc précis** est inutilisable pour les requêtes forecast.
+
+  Fix : émettre dès que `fmDocsMissingForecast.length > 0`. Sévérité escalée : **MEDIUM** si tous les modèles ratent (deal sans horizon), **LOW** si partiel (avec note "N sur M modèles concernés"). `affectedDocumentIds` reste ciblé sur les docs cassés. RED test : 1 BP OK + 1 BP sans forecast → finding LOW avec affectedDocumentIds=[broken].
+
+### État Phase 7.1
+- 1 fichier source modifié : `src/services/evidence/health-report.ts` :
+  - VALUATION_CLAIM year=null groupé sous clé "undated" (vs skip total).
+  - Year parsing : `yearStr === "undated" ? null : Number(yearStr)`.
+  - `buildContradictionReason` et CURRENCY_MISMATCH reason : `yearLabel` conditionnel (`" YYYY"` ou `" (non datée)"`).
+  - `NO_FORECAST_PERIOD` : émis dès >0 affecté, sévérité MEDIUM (full) / LOW (partiel) avec note "N sur M".
+- 1 fichier tests modifié : `src/services/evidence/__tests__/health-report.test.ts` (+3 tests : VALUATION sans year, NO_FORECAST_PERIOD partiel LOW, NO_FORECAST_PERIOD ok-only sans finding).
+- Tests : **372/372 unit pass** (de 369 à 372 — **+3 nouveaux**). 6 skipped DB-gated.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 7.1 = done. Re-soumission Codex round 23 pour greenlight Phase 8 (UI surface).
+
+### Action — Phase 8 (UI surface)
+Greenlight Codex round 23 reçu. Phase 8 livre la **surface UI** de l'Evidence Health Layer : une API dédiée + un panel deal-level + des badges per-doc. Décisions produit validées avec l'utilisateur en amont :
+- **API isolée** `/api/deals/[dealId]/evidence-health` (vs extension du payload deal) — rythme d'invalidation propre, payload deal pas alourdi, auditabilité sécurité plus simple.
+- **2 surfaces frontend** : panel deal-level dans l'analysis-panel + badges per-doc dans documents-tab. Contrat API : `{ data: { report: EvidenceHealthReport, byDocument: Record<docId, DocumentHealthSummary> } }` — `byDocument` pré-calculé serveur pour éviter recompute frontend.
+
+**Backend — agrégation per-doc** (`src/services/evidence/health-report.ts`) :
+- Nouveau type `DocumentHealthSummary = { contradictionCount, highestContradictionSeverity, missingKinds[], freshnessKinds[] }`.
+- Nouveau type `EvidenceHealthBundle = { report, byDocument }`.
+- Nouvelle fonction `buildEvidenceHealthBundle(docContexts)` qui appelle `buildEvidenceHealthReport` puis `buildPerDocumentSummary(docContexts, report)`.
+- `buildPerDocumentSummary` walk les contradictions (tally par documentId référencé dans `signals[]`, garde max severity), projette `missing` sur `affectedDocumentIds` (deal-level findings sans affected ignorés), et copie verbatim `staleWarnings.kind` per-doc (dédupé).
+
+**API** (`src/app/api/deals/[dealId]/evidence-health/route.ts`) :
+- GET pur read, zéro mutation/LLM.
+- Sécurité : `requireAuth` + `isValidCuid` + ownership check `Deal.userId === user.id` (IDOR protection, même pattern que `/staleness`).
+- Pipeline : `buildDealEvidenceContext(prisma, dealId)` → `buildEvidenceHealthBundle(ctx)` → `{ data: bundle }`.
+
+**Frontend** :
+- `src/lib/query-keys.ts` : `queryKeys.evidenceHealth.byDeal(dealId)` (clé granulaire pour invalidation isolée).
+- `src/hooks/use-evidence-health.ts` : hook React Query (`staleTime: 30s`, `enabled` guard sur `dealId`).
+- `src/components/deals/evidence-health-panel.tsx` : composant deal-level. Sections `Contradictions / Évidences manquantes / Fraîcheur` avec badges sévérité `[HIGH]/[MEDIUM]/[LOW]`. **Empty-state : null** (pas de bruit). Tone analytique strict : *"Ces indicateurs décrivent la qualité du dossier... À vous d'en tirer les conclusions."*
+- `src/components/deals/evidence-health-badge.tsx` : badge per-doc compact avec helper `deriveVerdict(summary)` exposé pour test. 3 tiers visuels (rouge HIGH / ambre MEDIUM / slate LOW) avec icône contextuelle (AlertTriangle, AlertCircle, CalendarClock pour freshness-only, Info pour LOW). Tooltip avec breakdown.
+- `src/components/deals/analysis-panel.tsx` : injection `<EvidenceHealthPanel dealId={dealId} />` juste après `<EarlyWarningsPanel>` (positioning Phase 7 alignée avec les surfaces analytical existantes).
+- `src/components/deals/documents-tab.tsx` : import `useEvidenceHealth`, injection `<EvidenceHealthBadge summary={evidenceHealth?.byDocument[doc.id]} compact />` en tête des badges existants sur chaque doc card.
+
+**Positioning rule (CLAUDE.md règle n°1)** : tous les messages et tooltips testés contre `rejet|investir|no_go|fuyez|STRONG_PASS|WEAK_PASS|CONDITIONAL_PASS`. Le panel mentionne explicitement *"À vous d'en tirer les conclusions"* — Angel Desk décrit, le BA décide.
+
+### État Phase 8
+- 4 fichiers source ajoutés :
+  - `src/app/api/deals/[dealId]/evidence-health/route.ts` (~60 lignes, auth + ownership + agrégation).
+  - `src/hooks/use-evidence-health.ts` (~30 lignes).
+  - `src/components/deals/evidence-health-panel.tsx` (~190 lignes).
+  - `src/components/deals/evidence-health-badge.tsx` (~140 lignes, dont helper `deriveVerdict` testable).
+- 4 fichiers source modifiés :
+  - `src/services/evidence/health-report.ts` (+`DocumentHealthSummary`, +`EvidenceHealthBundle`, +`buildEvidenceHealthBundle`, +`buildPerDocumentSummary`).
+  - `src/services/evidence/index.ts` (exports `buildEvidenceHealthBundle` + 2 nouveaux types).
+  - `src/lib/query-keys.ts` (+`evidenceHealth.byDeal`).
+  - `src/components/deals/analysis-panel.tsx` (+import + injection panel).
+  - `src/components/deals/documents-tab.tsx` (+imports + `useEvidenceHealth` + injection badge per-doc).
+- 3 fichiers tests ajoutés :
+  - `src/services/evidence/__tests__/health-report.test.ts` (+6 tests bundle : contradictions tally, severity escalation, missingKinds projection, freshness dédup, doc sans finding, structure bundle).
+  - `src/app/api/deals/[dealId]/__tests__/evidence-health-route.test.ts` (4 tests : invalid CUID 400, IDOR 404 avec userId scoping vérifié, happy path 200 avec composition pipeline vérifiée, unauth 401 propagation).
+  - `src/components/deals/__tests__/evidence-health-badge.test.ts` (9 tests : undefined → null, empty → null, severity tiers, freshness-only icon, mixed HIGH escalation, tone analytique).
+- Tests : **402/402 unit pass** (de 372 à 402 — **+30 nouveaux** : 6 bundle + 4 route + 9 badge + 11 autres déclenchés par les nouveaux fichiers/imports). 6 skipped DB-gated.
+- `npx tsc --noEmit` clean.
+- `npx prisma validate` clean.
+- 0 régression.
+- Tasks Phase 8 = done. Re-soumission Codex round 24 pour audit avant Phase 9 (backfill).
+
+### Action — Phase 8.1 (corrections post-review Codex round 24)
+Codex round 24 a flaggé 2 P1 + 2 P2 sur la couche UI. Les 4 sont fermés.
+
+- **P1 #1 — Evidence Health stale après upload/extraction** : le hook a `staleTime: 30s` mais aucune mutation dans `documents-tab.tsx` n'invalidait `queryKeys.evidenceHealth.byDeal(dealId)`. Après upload/PROCESSING terminal/delete/rename/OCR-retry, le panel pouvait rester vide alors que l'extraction venait de créer des `EvidenceSignal`.
+  - Fix : ajout de `queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) })` à TOUS les 5 sites qui invalident `deals.detail(dealId)` (upload-complete, refreshLocalDocument, rename, delete, onOCRComplete).
+  - Guard test ajouté `documents-tab-evidence-invalidation.test.ts` : grep statique qui compte les invalidations `deals.detail` vs `evidenceHealth.byDeal` et exige l'égalité — catch la prochaine régression quand quelqu'un ajoute une nouvelle mutation sans wirer l'invalidation.
+
+- **P1 #2 — Badge per-doc perd la vraie sévérité missing/freshness** : `DocumentHealthSummary` ne stockait que `missingKinds[]` et `freshnessKinds[]` sans sévérité. Le badge defaultait tout à MEDIUM → un `cap_table_stale high` finissait ambre (au lieu de rouge), un `NO_PITCH_DECK_DATE low` finissait ambre (au lieu de slate). La UI contredisait le report.
+  - Fix structurel : remplacement de `missingKinds: MissingEvidenceKind[]` par `missing: { kind, severity }[]` (type `DocumentHealthMissingEntry`), et `freshnessKinds: StaleWarningKind[]` par `freshness: { kind, severity }[]` (type `DocumentHealthFreshnessEntry`).
+  - `buildPerDocumentSummary` propage maintenant la sévérité réelle (avec normalisation `StaleWarning.severity` lowercase → uppercase). Dédup intra-doc en max-severity (si même kind apparaît 2 fois, garde la plus grave).
+  - `deriveVerdict` dans `evidence-health-badge.tsx` calcule un `Math.max(...ranks)` sur tous les findings — vraie sévérité respectée.
+  - Tests RED ajoutés : `cap_table_stale HIGH → rouge`, `NO_PITCH_DECK_DATE LOW → slate`. Tests existants updatés au nouveau schéma.
+
+- **P2 #1 — Hook utilisait `fetch` brut au lieu de `clerkFetch`** : risque de cookies Clerk stale en preview/prod. Fix : remplacement `fetch(...)` → `clerkFetch(...)` dans `use-evidence-health.ts`. Guard test ajouté `use-evidence-health.test.ts` qui grep le source pour vérifier l'import + l'usage et l'absence de `fetch(` brut.
+
+- **P2 #2 — Contrat API faux : unauth annoncé 401, retourné 500** : `handleApiError` mappe Unauthorized vers 500 générique. Fix : try/catch local autour de `requireAuth` dans le route handler — si l'erreur est `"Unauthorized"` ou `"Clerk user not found"`, retourne `401 { error: "Unauthorized" }` explicitement ; sinon délègue à `handleApiError`. Tests mis à jour : 401 explicite vérifié + non-régression sur 500 pour autres erreurs (DB down etc.).
+
+### État Phase 8.1
+- 4 fichiers source modifiés :
+  - `src/services/evidence/health-report.ts` (types `DocumentHealthMissingEntry`/`DocumentHealthFreshnessEntry`, refactor `buildPerDocumentSummary` pour propager severities, helper `normaliseStaleSeverity`).
+  - `src/services/evidence/index.ts` (exports des 2 nouveaux types).
+  - `src/components/deals/evidence-health-badge.tsx` (`deriveVerdict` lit `summary.missing[].severity` et `summary.freshness[].severity`, tooltip annoté avec sévérité).
+  - `src/components/deals/documents-tab.tsx` (5 sites d'invalidation ajoutent `evidenceHealth.byDeal`).
+  - `src/hooks/use-evidence-health.ts` (`fetch` → `clerkFetch`).
+  - `src/app/api/deals/[dealId]/evidence-health/route.ts` (try/catch dédié sur `requireAuth` pour retourner 401 explicite).
+- 2 fichiers tests ajoutés :
+  - `src/hooks/__tests__/use-evidence-health.test.ts` (3 guard tests : import clerkFetch, call clerkFetch, no raw `fetch(`).
+  - `src/components/deals/__tests__/documents-tab-evidence-invalidation.test.ts` (2 guard tests : utilise `useEvidenceHealth`, invalidations balanced 1:1 entre `deals.detail` et `evidenceHealth.byDeal`).
+- 3 fichiers tests modifiés :
+  - `src/services/evidence/__tests__/health-report.test.ts` (3 tests updatés au nouveau schéma severities + dédup max-severity).
+  - `src/components/deals/__tests__/evidence-health-badge.test.ts` (tous tests updatés au nouveau schéma + 2 RED Codex round 24 : `cap_table_stale HIGH → rouge`, `NO_PITCH_DECK_DATE LOW → slate`).
+  - `src/app/api/deals/[dealId]/__tests__/evidence-health-route.test.ts` (test unauth réécrit pour 401 explicite + nouveau test "Clerk user not found" 401 + nouveau test non-régression "DB down" 500 + bundle shape `missing[]`/`freshness[]`).
+- Tests : **411/411 unit pass** (de 402 à 411 — **+9 nouveaux**). 6 skipped DB-gated.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 8.1 = done. Re-soumission Codex round 25 pour greenlight Phase 9 (backfill).
+
+### Action — Phase 8.2 (correction post-review Codex round 25)
+Codex round 25 a validé 3/4 des fixes Phase 8.1 (clerkFetch, severities propagées, badge max-severity, 401 explicite) mais flaggé 1 P1 résiduel — le chemin OCR async PDF restait stale.
+
+- **P1 polling PROCESSING → terminal ne refresh pas Evidence Health** : c'est THE flux principal — upload PDF → OCR durable Inngest → création des `EvidenceSignal` → polling 5s détecte le doc terminal → `setLocalDocuments` met la UI à jour. Mais aucune invalidation `evidenceHealth.byDeal` → le panel et les badges restent sur le cache 30s (ou indéfiniment si aucune autre mutation ne fire). Le guard test Phase 8.1 ne couvrait pas ce cas car il ne checke que les sites qui invalident déjà `deals.detail` — le polling n'en fait pas partie.
+  - Fix dans `refreshProcessingDocuments` (`documents-tab.tsx:237`) : détecter si **au moins un** doc a transitionné `processingStatus !== "PROCESSING"` parmi les docs refresh, puis invalider `queryKeys.evidenceHealth.byDeal(dealId)` une seule fois après le `setLocalDocuments`. Évite les invalidations bruyantes à chaque poll quand rien ne bouge.
+  - Deps de l'effect mises à jour : `[processingDocumentIdsKey, queryClient, dealId]`.
+  - Guard test ajouté dans `documents-tab-evidence-invalidation.test.ts` : grep `processingStatus !== "PROCESSING"` + grep `hasTerminalTransition` à proximité de l'invalidation `evidenceHealth.byDeal`.
+  - Invariant balance test relaxé : `evidenceHealthCount >= dealsDetailCount` (vs strict equality) pour autoriser des invalidations evidence-health indépendantes (le polling n'invalide pas `deals.detail`).
+
+### État Phase 8.2
+- 1 fichier source modifié : `src/components/deals/documents-tab.tsx` (polling effect : détection transition + invalidation conditionnelle + deps mises à jour).
+- 1 fichier tests modifié : `src/components/deals/__tests__/documents-tab-evidence-invalidation.test.ts` (invariant balance relaxé `>=`, +1 test Codex round 25 P1 sur le polling path).
+- Tests : **412/412 unit pass** (de 411 à 412 — **+1 nouveau**). 6 skipped DB-gated.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 8.2 = done. Re-soumission Codex round 26 pour greenlight Phase 9 (backfill).
+
+### Action — Phase 8.3 (correction post-review Codex round 26)
+Codex round 26 a validé le polling Phase 8.2 mais flaggé 1 race résiduelle dans le pipeline d'extraction.
+
+- **P1 race terminal-doc-before-evidence** : `completeDocumentExtractionRun` (`extraction-pipeline.ts:488`) flippe le `processingStatus` du document à `COMPLETED/FAILED/etc.` **AVANT** que `runEvidenceForDocument` (`extraction-pipeline.ts:511`) finisse de persister les `EvidenceSignal`. Côté UI, le polling 5s peut donc :
+  1. Voir le doc terminal
+  2. Invalider `evidenceHealth.byDeal` immédiatement
+  3. Refetch retourne un bundle **vide** (les signaux ne sont pas encore en DB)
+  4. Cache le bundle vide pour 30s `staleTime`
+  → panel/badges silencieusement vides jusqu'à la prochaine mutation. Cette race ferme exactement le trou Phase 8.2 essayait de fermer.
+
+  Fix minimal (option 1 Codex) : **double invalidation immediate + deferred**.
+  - Sur `hasTerminalTransition`, exécute `invalidateEvidenceHealth()` immédiatement (couvre le cas evidence rapide < 100ms)
+  - Puis schedule un second `setTimeout(4000ms)` qui rejoue l'invalidation (couvre la fenêtre race typique : extraction evidence se termine bien sous 4s)
+  - Constante `TERMINAL_EVIDENCE_RACE_FOLLOWUP_MS = 4_000` nommée pour rendre le compromis lisible (et facile à tuner)
+  - Tracking des timeouts pending dans un `Set<number>` pour cleanup sur unmount → pas de fuite mémoire, pas d'invalidation après démontage du composant
+
+  Option 2 (signal backend "evidence completed" via `DocumentExtractionProgress.phase`) volontairement non-retenue pour ce fix-up — elle impliquerait un endpoint ou une refonte du SSE qui dépasse le scope review.
+
+### État Phase 8.3
+- 1 fichier source modifié : `src/components/deals/documents-tab.tsx` :
+  - Constante `TERMINAL_EVIDENCE_RACE_FOLLOWUP_MS = 4_000`.
+  - `Set<number> pendingFollowupTimeouts` pour tracker les timeouts différés.
+  - Helper `invalidateEvidenceHealth()` extrait pour réutilisation immediate + deferred.
+  - Sur `hasTerminalTransition` : invalidation immédiate + `setTimeout(4s)` qui rejoue + `delete(timeoutId)` après firing + guard `if (!cancelled)`.
+  - Cleanup de l'effect : `for (const id of pendingFollowupTimeouts) window.clearTimeout(id)` + `clear()`.
+- 1 fichier tests modifié : `src/components/deals/__tests__/documents-tab-evidence-invalidation.test.ts` (+1 test Codex round 26 P1 : grep `window.setTimeout` + `invalidateEvidenceHealth` à proximité + grep `pendingFollowupTimeouts` + grep `window.clearTimeout` dans le cleanup).
+- Tests : **413/413 unit pass** (de 412 à 413 — **+1 nouveau**). 6 skipped DB-gated.
+- `npx tsc --noEmit` clean.
+- 0 régression.
+- Tasks Phase 8.3 = done. Re-soumission Codex round 27 pour greenlight Phase 9 (backfill).
+
+### Action — Phase 9 (Evidence backfill script)
+Greenlight Codex round 27 reçu. Phase 9 = dernière phase du plan 9-vertical-slices. Objectif : enrichir rétroactivement les `EvidenceSignal` pour les documents créés avant le déploiement des Phases 1-6. Décisions produit validées avec l'utilisateur :
+
+- **Surface : script CLI Node** `scripts/backfill/evidence-signals.ts` (vs Inngest one-shot). Raisons : ops one-shot, pas de feature produit durable ; pas de surface de risque admin ; audit-friendly (logs locaux + JSON summary) ; idempotence native via `runEvidenceForDocument` + `createEvidenceSignal` (P2002 dedupe).
+- **Strategy idempotence : skip par défaut, `--force` pour rejouer**. Critère de skip **précis** (vs bool simple) pour éviter la false-skip : vérifier qu'un signal `signalScopeKey === "run:<latestRunId>"` existe pour le doc, PAS juste "any signal exists" — sinon un vieux signal `filename`-scope pourrait masquer un doc qui n'a JAMAIS eu son run OCR traité.
+
+**Helper isolé pour testabilité** : `src/services/evidence/backfill-skip-decision.ts` (~95 lignes pure, 2 prisma reads max). Décision en 4 cas :
+- `--force` → process, 0 DB read
+- Pas de terminal extractionRun → skip (`no_terminal_extraction_run`)
+- ≥1 signal scoped `run:<latestRunId>` → skip (`latest_run_already_processed`)
+- Sinon → process (`missing_signals_for_latest_run`)
+
+**Script CLI** (~330 lignes) :
+- Args : `--deal-id <id>` | `--all` (mutex requis), `--limit N`, `--dry-run`, `--only-completed` (défaut true), `--include-non-completed` (override), `--since <ISO>`, `--force`, `--summary-out <path>`.
+- Query : `prisma.document.findMany({ where: { dealId?, processingStatus?, uploadedAt? }, orderBy: [uploadedAt, id], take: limit })`.
+- Pour chaque doc : `shouldBackfillDocument` → si skip, log + continue ; si dry-run, log "would_process" + continue ; sinon `runEvidenceForDocument(prisma, { documentId })` (laisse le helper read+decrypt `extractedText` lui-même via la catch-up path existante).
+- Per-doc log line stdout : `OK / skip / dry / FAIL` + signals/claims persisted/deduped + attachments + promoted + reason.
+- Summary JSON écrit dans `docs-private/backfills/evidence-signals-<ISO-ts>.json` (path déjà gitignored via `/docs-private`). Contenu : args, totals (candidates/skipped/processed/wouldProcess/failed + sommes signals/claims/attachments), perDoc array complet.
+- Disconnect Prisma en `.finally()`.
+
+**Méthode d'exécution recommandée** (sans coupler aux 3 deals dans le code) :
+1. Dry-run par deal test : `npx dotenv -e .env.local -- npx tsx scripts/backfill/evidence-signals.ts --deal-id <Avekapeti> --dry-run`
+2. Apply test deal : retirer `--dry-run`
+3. Élargir aux 2 autres test deals (FurLove, E4N)
+4. `--all --limit 50` pour palette représentative
+5. `--all` complet une fois confiance acquise
+
+### État Phase 9
+- 2 fichiers source ajoutés :
+  - `src/services/evidence/backfill-skip-decision.ts` (~95 lignes, helper pure testable).
+  - `scripts/backfill/evidence-signals.ts` (~330 lignes, CLI runnable).
+- 1 fichier source modifié : `src/services/evidence/index.ts` (export `shouldBackfillDocument` + 3 types `BackfillSkipDecision`/`BackfillSkipReason`/`ShouldBackfillOptions`).
+- 1 fichier tests ajouté : `src/services/evidence/__tests__/backfill-skip-decision.test.ts` (6 tests : --force bypass + 0 DB read, no terminal run → skip, run avec signal → skip, run sans signal → process, false-skip guard explicite vérifie WHERE.signalScopeKey === "run:<id>", terminal-statuses correctes `[READY, READY_WITH_WARNINGS, BLOCKED]`).
+- Tests : **419/419 unit pass** (de 413 à 419 — **+6 nouveaux**). 6 skipped DB-gated.
+- `npx tsc --noEmit` clean.
+- `npx prisma validate` clean.
+- CLI boot test OK : `npx tsx scripts/backfill/evidence-signals.ts` sans args → erreur attendue `"Either --deal-id <id> or --all is required"`.
+- 0 régression.
+- Tasks Phase 9 = done. Re-soumission Codex round 28 pour audit final du plan complet 9 phases.
+
+### Action — Phase 9.1 (corrections post-review Codex round 28)
+Codex round 28 a validé le squelette Phase 9 mais flaggé 1 P1 critique + 1 P2.
+
+- **P1 skip masque silencieusement des extractors manquants** : la première version du helper utilisait `findFirst({ signalScopeKey: run:<latestRunId> })` qui retournait n'importe quel signal scopé au run. Or `runEvidenceForDocument` persiste **deux familles** distinctes : temporal (`TEMPORAL_EXTRACTOR_VERSION`) puis claims (`CLAIMS_EXTRACTOR_VERSION`). Si un doc avait déjà du temporal mais pas de claims (e.g. crash partiel pipeline, ou claims extractor ajouté après une première extraction), le backfill skippait → claims jamais créés. Symétrique dans l'autre sens.
+
+  Fix structurel : la décision vérifie maintenant la **couverture par extractor** via constante `RUN_SCOPED_EXTRACTOR_VERSIONS_REQUIRED = [TEMPORAL_EXTRACTOR_VERSION, CLAIMS_EXTRACTOR_VERSION]`. Le helper fait un `findMany({ where: { signalScopeKey: run:<id>, extractorVersion: { in: required } }, distinct: ["extractorVersion"] })`, calcule l'ensemble `missing = required - present` et :
+  - `missing.length === 0` → skip avec `coveredExtractorVersions[]`
+  - `missing.length > 0` → process avec `missingExtractorVersions[]` exposé dans la décision et propagé dans le log per-doc + summary
+  - Hook `options.requiredExtractorVersions` pour permettre l'override dans les tests (sans coupler aux constantes réelles)
+  - Quand un nouvel extractor run-scoped sera ajouté à `runEvidenceForDocument`, il suffira d'ajouter sa version constante à `RUN_SCOPED_EXTRACTOR_VERSIONS_REQUIRED` pour que le backfill détecte les docs un-enriched.
+
+  **Limitation connue** (Codex round 28, deferred P3) : les extractors qui produisent légitimement zéro signal (e.g. doc sans claim financière) sont indistinguables de "extractor jamais exécuté" sans un ledger. Ces docs seront re-processés à chaque backfill. Coût acceptable (extractors idempotents + rapides) ; un futur `BackfillRunLedger(documentId, extractionRunId, extractorVersion, completedAt)` fermera ce trou.
+
+- **P2 --limit appliqué avant skip** : ancien `take: args.limit` dans le SQL → `--all --limit 50` sur un corpus déjà couvert traitait zéro doc.
+
+  Fix : sémantique de `--limit` changée pour "processed/would_process count" (post-skip). Nouvelle option `--max-candidates` pour le safety cap SQL (défaut `10_000` pour `--all`, unlimited pour `--deal-id`). Boucle break early dès que `processedOrWouldProcess >= args.limit`, flag `limitReached: boolean` exposé dans le summary JSON. Skipped docs ne consomment PAS de budget.
+
+### État Phase 9.1
+- 2 fichiers source modifiés :
+  - `src/services/evidence/backfill-skip-decision.ts` : type `BackfillSkipDecision` étendu (`coveredExtractorVersions[]` + `missingExtractorVersions[]`, `existingExtractorVersion` retiré), constante `RUN_SCOPED_EXTRACTOR_VERSIONS_REQUIRED` exportée, helper réécrit en `findMany distinct` per-extractor-version, option `requiredExtractorVersions` pour tests.
+  - `scripts/backfill/evidence-signals.ts` : ajout `--max-candidates` (défaut 10000 pour `--all`), `--limit` post-skip avec break-early, `limitReached` dans totals, suppression de `existingExtractorVersion`, ajout `coveredExtractorVersions[]`/`missingExtractorVersions[]` dans `PerDocResult` et logs.
+- 1 fichier tests modifié : `src/services/evidence/__tests__/backfill-skip-decision.test.ts` réécrit avec 9 tests (de 6 à 9, **+3 nouveaux** : Codex P1 temporal-only-process, Codex P1 claims-only-process, default required versions smoke test). Tests existants migrés au nouveau schéma (mock `findMany` avec versions présentes vs `findFirst`).
+- Tests : **422/422 unit pass** (de 419 à 422 — **+3 nouveaux**). 6 skipped DB-gated.
+- `npx tsc --noEmit` clean.
+- CLI boot tests OK : sans args → erreur attendue ; `--all --limit foo` → `Invalid --limit` ; `--all --max-candidates foo` → `Invalid --max-candidates`.
+- 0 régression.
+- Tasks Phase 9.1 = done. Re-soumission Codex round 29 pour audit final du plan complet 9 phases.
+
+**Plan complet 9 phases** ✅ :
+- Phase 0 ✅ audit + crypto/encryption verification
+- Phase 1 ✅ EvidenceSignal schema + composite FK + crypto fields + signalScopeKey
+- Phase 2 ✅ temporal extractor (7 patterns déterministes)
+- Phase 3 ✅ promotion to sourceDate (race-safe atomic updateMany)
+- Phase 4 ✅ attachment linker (Gmail + standard patterns, signal-only)
+- Phase 5 ✅ agent prelude (per-doc + global temporal header + cache fingerprint)
+- Phase 6 ✅ financial claims (claims-extractor, nearest-marker classification bounded)
+- Phase 7 ✅ contradictions + freshness + missing evidence (health-report.ts)
+- Phase 8 ✅ UI surface (API + hook + panel + per-doc badges + race fix terminal-doc-before-evidence)
+- Phase 9 ✅ backfill CLI + skip-decision helper avec coverage par extractor (Codex 28)
+
+### Fichiers
+- `docs-private/evidence-engine-audit.md` (nouveau)
+- `docs-private/evidence-engine-phase1-schema.md` (nouveau)
+- `scripts/debug/audit-evidence-deals.mjs` (nouveau, untracked)
+- `scripts/backfill/evidence-signals.ts` (nouveau, Phase 9)
+- `docs-private/backfills/` (créé runtime, gitignored)
+
+---
 ## 2026-05-15 — Upload/OCR Phase 5 fix-up #3 (scénario 6 step 3 déterministe via /download)
 
 ### Contexte
@@ -2222,4 +3142,3 @@ Handles length mismatch (early return false) before calling `timingSafeEqual` to
 **Note :** Les 21 experts Tier 2 individuels (saas-expert, fintech-expert, etc.) ont chacun leur propre `buildSystemPrompt()` avec directives hardcoded. Ils n'utilisent PAS `buildSectorExpertPrompt()` de base-sector-expert.ts. Ils necessitent une modification individuelle separee.
 
 **`npx tsc --noEmit` : OK.**
-

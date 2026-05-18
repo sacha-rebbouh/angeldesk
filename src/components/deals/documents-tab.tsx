@@ -53,6 +53,8 @@ import {
   ExtractionQualityBadge,
   ExtractionWarningBanner,
 } from "./extraction-quality-badge";
+import { EvidenceHealthBadge } from "./evidence-health-badge";
+import { useEvidenceHealth } from "@/hooks/use-evidence-health";
 
 interface Document {
   id: string;
@@ -239,6 +241,19 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     if (processingIds.length === 0) return;
 
     let cancelled = false;
+    // Codex round 26 P1 — `completeDocumentExtractionRun` flips the document
+    // to a terminal status BEFORE `runEvidenceForDocument` finishes persisting
+    // the EvidenceSignal rows (extraction-pipeline.ts:488 vs :511). A naive
+    // single invalidation on terminal-transition can refetch and cache an
+    // empty bundle for the full staleTime. We close the race with an
+    // immediate invalidation PLUS a deferred one ~4s later (typical evidence
+    // extraction completes well under that). Pending timeouts are cleared on
+    // unmount to avoid leaks.
+    const TERMINAL_EVIDENCE_RACE_FOLLOWUP_MS = 4_000;
+    const pendingFollowupTimeouts = new Set<number>();
+    const invalidateEvidenceHealth = () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
+    };
     const refreshProcessingDocuments = async () => {
       const refreshedDocuments = await Promise.all(processingIds.map(fetchDocument));
       if (cancelled) return;
@@ -248,6 +263,14 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
           .map((document) => [document.id, document])
       );
       if (refreshedById.size === 0) return;
+      // Codex round 25 P1 — detect at least one PROCESSING → terminal transition.
+      // This is THE main OCR async path: PDF upload → Inngest creates EvidenceSignal
+      // → polling sees the doc move out of PROCESSING. Without an explicit
+      // invalidation here, evidenceHealth stays on its stale cache (30s staleTime)
+      // and the panel/badges silently miss the freshly-created signals.
+      const hasTerminalTransition = Array.from(refreshedById.values()).some(
+        (document) => document.processingStatus !== "PROCESSING"
+      );
       setLocalDocuments((currentDocuments) =>
         currentDocuments.map((document) => {
           const refreshed = refreshedById.get(document.id);
@@ -256,6 +279,17 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
             : document;
         })
       );
+      if (hasTerminalTransition) {
+        // 1. Immediate invalidation — covers the case where evidence ran fast.
+        invalidateEvidenceHealth();
+        // 2. Deferred invalidation — covers the race window between
+        //    `completeDocumentExtractionRun` and `runEvidenceForDocument`.
+        const timeoutId = window.setTimeout(() => {
+          pendingFollowupTimeouts.delete(timeoutId);
+          if (!cancelled) invalidateEvidenceHealth();
+        }, TERMINAL_EVIDENCE_RACE_FOLLOWUP_MS);
+        pendingFollowupTimeouts.add(timeoutId);
+      }
     };
 
     const intervalId = window.setInterval(refreshProcessingDocuments, 5_000);
@@ -263,8 +297,10 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
+      for (const timeoutId of pendingFollowupTimeouts) window.clearTimeout(timeoutId);
+      pendingFollowupTimeouts.clear();
     };
-  }, [processingDocumentIdsKey]);
+  }, [processingDocumentIdsKey, queryClient, dealId]);
 
   // Fetch staleness info to know which documents were analyzed
   const { data: stalenessData } = useQuery({
@@ -272,6 +308,9 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     queryFn: () => fetchStaleness(dealId),
     staleTime: 30_000,
   });
+
+  // Phase 8 — evidence health for per-doc badges.
+  const { data: evidenceHealth } = useEvidenceHealth(dealId);
 
   // Set of document IDs that have been analyzed
   const analyzedDocIds = useMemo(() => {
@@ -362,6 +401,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     }
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
     queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
   }, [queryClient, dealId]);
 
@@ -390,6 +430,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       current?.id === documentId ? normalized : current
     ));
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
     queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
   }, [dealId, queryClient]);
 
@@ -422,6 +463,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       );
       setRenameDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors du renommage");
     } finally {
@@ -453,6 +495,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       setDeleteDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors de la suppression");
@@ -510,6 +553,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                       onOCRComplete={() => {
                         toast.success("OCR terminé");
                         queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+                        queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
                         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
                       }}
                     />
@@ -596,6 +640,11 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                                 </div>
 
                                 <div className="flex shrink-0 flex-wrap items-center gap-1">
+                                  {/* Phase 8 — Evidence health badge (contradictions, missing, freshness) */}
+                                  <EvidenceHealthBadge
+                                    summary={evidenceHealth?.byDocument[doc.id]}
+                                    compact
+                                  />
                                   {hasAnalysis && doc.processingStatus === "COMPLETED" && !analyzedDocIds.has(doc.id) && (
                                     <Badge
                                       variant="outline"

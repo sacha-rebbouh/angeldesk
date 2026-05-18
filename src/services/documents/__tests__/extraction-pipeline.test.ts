@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   terminalizeExtractionRunAsFailed: vi.fn(),
   setDocumentExtractionProgress: vi.fn(),
   buildProgressSnapshot: vi.fn((arg: unknown) => arg),
+  runEvidenceForDocument: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -54,6 +55,9 @@ vi.mock("@/services/documents/extraction-progress", () => ({
   setDocumentExtractionProgress: mocks.setDocumentExtractionProgress,
   buildProgressSnapshot: mocks.buildProgressSnapshot,
 }));
+vi.mock("@/services/evidence", () => ({
+  runEvidenceForDocument: mocks.runEvidenceForDocument,
+}));
 
 const TEST_KEY = "d".repeat(64);
 
@@ -71,6 +75,15 @@ beforeEach(() => {
   // catch chains `.catch(...)` on it).
   mocks.documentUpdateMany.mockResolvedValue({ count: 1 });
   mocks.terminalizeExtractionRunAsFailed.mockResolvedValue(1);
+  // Evidence Engine (Phase 3.1) — default: succeed silently so wiring tests
+  // can assert on call args without unrelated noise. Specific tests override
+  // this to assert wiring behavior end-to-end.
+  mocks.runEvidenceForDocument.mockResolvedValue({
+    status: "ran",
+    signalsPersisted: 0,
+    signalsDeduplicated: 0,
+    promoted: false,
+  });
 });
 
 const { runDocumentExtractionPipeline, ExtractionPipelineError, EXTRACTION_TIME_BUDGET_MS } =
@@ -966,5 +979,160 @@ describe("runDocumentExtractionPipeline — Phase 4.4 extraction time budget", (
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// =========================================================================
+// Phase 3.1 — Evidence Engine wiring (Codex round 9 P1 + P2)
+// =========================================================================
+describe("runDocumentExtractionPipeline — Phase 3.1 Evidence Engine wiring", () => {
+  beforeEach(() => {
+    mocks.documentFindUnique.mockResolvedValue({
+      id: "doc_phase3",
+      name: "Deck.pdf",
+      mimeType: "application/pdf",
+      storageUrl: "https://blob/x",
+      storagePath: "deals/x.pdf",
+      processingStatus: "PROCESSING",
+      sourceKind: "FILE",
+      sourceDate: null,
+      corpusParentDocumentId: null,
+    });
+    mocks.runFindUnique.mockResolvedValue({
+      id: "run_phase3",
+      documentId: "doc_phase3",
+      status: "STARTED",
+    });
+    mocks.downloadFile.mockResolvedValue(Buffer.from("pdf-bytes"));
+    mocks.smartExtract.mockResolvedValue(buildExtractionResult());
+    mocks.completeDocumentExtractionRun.mockResolvedValue({
+      id: "run_phase3",
+      readyForAnalysis: true,
+      status: "READY",
+    });
+  });
+
+  it("fresh isSuccess path calls runEvidenceForDocument with extractionRunId + plaintext", async () => {
+    await runDocumentExtractionPipeline({
+      documentId: "doc_phase3",
+      extractionRunId: "run_phase3",
+    });
+    expect(mocks.runEvidenceForDocument).toHaveBeenCalledTimes(1);
+    expect(mocks.runEvidenceForDocument).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        documentId: "doc_phase3",
+        extractionRunId: "run_phase3",
+        extractedTextPlaintext: "extracted PDF text",
+      })
+    );
+  });
+
+  it("Codex round 9 P2 — evidence failure is swallowed (non-fatal) and does NOT throw / does NOT prevent the completed result", async () => {
+    mocks.runEvidenceForDocument.mockRejectedValueOnce(new Error("simulated evidence failure"));
+    const result = await runDocumentExtractionPipeline({
+      documentId: "doc_phase3",
+      extractionRunId: "run_phase3",
+    });
+    // The pipeline still completes the upload.
+    expect(result.status).toBe("COMPLETED");
+    expect(result.extractionRunId).toBe("run_phase3");
+  });
+
+  it("Codex round 9 P1 — terminal-success retry catch-up calls runEvidenceForDocument WITHOUT plaintext", async () => {
+    // Pre-condition: the run is already READY (crashed prior attempt after
+    // extraction commit). The pipeline re-enters via summarizeExistingRun.
+    mocks.runFindUnique.mockResolvedValue({
+      id: "run_phase3",
+      documentId: "doc_phase3",
+      status: "READY",
+    });
+    // summarizeExistingRun reads doc + run.
+    mocks.documentFindUnique.mockResolvedValue({
+      extractionQuality: 88,
+      requiresOCR: false,
+      ocrProcessed: false,
+      extractionWarnings: null,
+      extractedText: "ENCRYPTED_BLOB",
+      processingStatus: "COMPLETED",
+    });
+    // Second findUnique call is for the run summary
+    mocks.runFindUnique.mockResolvedValueOnce({
+      id: "run_phase3",
+      documentId: "doc_phase3",
+      status: "READY",
+    });
+
+    await runDocumentExtractionPipeline({
+      documentId: "doc_phase3",
+      extractionRunId: "run_phase3",
+    });
+
+    expect(mocks.runEvidenceForDocument).toHaveBeenCalledTimes(1);
+    expect(mocks.runEvidenceForDocument).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        documentId: "doc_phase3",
+        extractionRunId: "run_phase3",
+      })
+    );
+    // Crucially, the retry path does NOT pass extractedTextPlaintext —
+    // the helper re-decrypts Document.extractedText internally.
+    const call = mocks.runEvidenceForDocument.mock.calls[0][1] as { extractedTextPlaintext?: unknown };
+    expect(call.extractedTextPlaintext).toBeUndefined();
+    // smartExtract was NOT re-run on this retry (idempotency of run lookup).
+    expect(mocks.smartExtract).not.toHaveBeenCalled();
+  });
+
+  it("terminal-success retry: evidence failure is swallowed (non-fatal) on catch-up too", async () => {
+    mocks.runFindUnique.mockResolvedValue({
+      id: "run_phase3",
+      documentId: "doc_phase3",
+      status: "READY_WITH_WARNINGS",
+    });
+    mocks.documentFindUnique.mockResolvedValue({
+      extractionQuality: 70,
+      requiresOCR: false,
+      ocrProcessed: false,
+      extractionWarnings: null,
+      extractedText: "ENCRYPTED_BLOB",
+      processingStatus: "COMPLETED",
+    });
+    mocks.runEvidenceForDocument.mockRejectedValueOnce(new Error("simulated catch-up failure"));
+    const result = await runDocumentExtractionPipeline({
+      documentId: "doc_phase3",
+      extractionRunId: "run_phase3",
+    });
+    expect(result.status).toBe("COMPLETED");
+  });
+
+  it("FAILED extraction does NOT call runEvidenceForDocument", async () => {
+    mocks.smartExtract.mockResolvedValue(
+      buildExtractionResult({
+        text: "   ", // whitespace = failure
+        manifest: {
+          ...buildExtractionResult().manifest,
+          status: "ready_with_warnings",
+          pagesProcessed: 3,
+          pagesSucceeded: 3,
+        },
+      })
+    );
+    await expect(
+      runDocumentExtractionPipeline({ documentId: "doc_phase3", extractionRunId: "run_phase3" })
+    ).rejects.toMatchObject({ code: "EXTRACTION_FAILED" });
+    expect(mocks.runEvidenceForDocument).not.toHaveBeenCalled();
+  });
+
+  it("FAILED retry (run.status=FAILED) does NOT call runEvidenceForDocument", async () => {
+    mocks.runFindUnique.mockResolvedValue({
+      id: "run_phase3",
+      documentId: "doc_phase3",
+      status: "FAILED",
+    });
+    await expect(
+      runDocumentExtractionPipeline({ documentId: "doc_phase3", extractionRunId: "run_phase3" })
+    ).rejects.toMatchObject({ code: "EXTRACTION_FAILED" });
+    expect(mocks.runEvidenceForDocument).not.toHaveBeenCalled();
   });
 });

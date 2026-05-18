@@ -18,6 +18,7 @@ import {
   setDocumentExtractionProgress,
 } from "@/services/documents/extraction-progress";
 import { inferEmailSourceFromExtractedText } from "@/services/documents/email-source-inference";
+import { runEvidenceForDocument } from "@/services/evidence";
 
 // Phase 4 — durable extraction pipeline. The HTTP routes claim the document
 // (transition PENDING/COMPLETED/FAILED → PROCESSING), persist a fresh
@@ -194,6 +195,20 @@ export async function runDocumentExtractionPipeline(params: {
   // upload modal would poll forever. Republishing here is idempotent.
   if (run.status === "READY" || run.status === "READY_WITH_WARNINGS" || run.status === "BLOCKED") {
     const summary = await summarizeExistingRun(documentId, extractionRunId, run.status);
+    // Phase 3.1 (Codex round 9 P1) — terminal-success retry catch-up.
+    // If a prior attempt crashed between completeDocumentExtractionRun and
+    // the evidence block, no EvidenceSignal was written. The helper is
+    // idempotent (createEvidenceSignal dedupes via P2002 → return existing,
+    // promotion is no-op once sourceDate is set) so re-running on every
+    // retry is safe and fixes the gap.
+    try {
+      await runEvidenceForDocument(prisma, { documentId, extractionRunId });
+    } catch (evidenceError) {
+      console.error(
+        "[extraction-pipeline] phase 3 evidence catch-up failed (non-fatal):",
+        evidenceError
+      );
+    }
     await publishUploadProgress({
       phase: "completed",
       pageCount: summary.pageCount,
@@ -487,6 +502,22 @@ async function runExtractionWork(params: {
   );
 
   if (isSuccess) {
+    // -- 6. Phase 3 (Evidence Engine): extract temporal signals + promote sourceDate.
+    //    Runs AFTER completeDocumentExtractionRun commits successfully. The
+    //    helper is idempotent (Codex round 9 P1) — same helper is invoked from
+    //    the terminal-success retry path in case of crash between steps.
+    //    Try/catch because Evidence Engine is an enhancement, not an extraction
+    //    gate — failure here MUST NOT fail the upload.
+    try {
+      await runEvidenceForDocument(prisma, {
+        documentId,
+        extractedTextPlaintext: extraction.text,
+        extractionRunId,
+      });
+    } catch (evidenceError) {
+      console.error("[extraction-pipeline] phase 3 evidence engine failed (non-fatal):", evidenceError);
+    }
+
     await publishUploadProgress({
       phase: "completed",
       pageCount: extraction.manifest.pageCount,

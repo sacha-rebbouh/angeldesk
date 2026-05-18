@@ -19,6 +19,12 @@ import { z } from "zod";
 import { formatGeographyCoverageForPrompt } from "@/services/context-engine/geography-coverage";
 import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
 import { getStageCalibrationBlock } from "@/agents/stage-calibration";
+import {
+  formatGlobalEvidenceHeader,
+  formatGlobalEvidenceHealth,
+  formatDocumentEvidencePrelude,
+} from "@/agents/evidence-prelude";
+import { buildEvidenceHealthReport } from "@/services/evidence";
 import { formatRetrievedDocumentWindows } from "./document-context-retriever";
 import { formatEvidenceLedgerForPrompt } from "@/services/evidence-ledger";
 import { buildExcelPromptSummaryFromMetrics } from "@/services/excel/prompt-summary";
@@ -846,7 +852,23 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         : "No description provided",
     };
 
-    let text = `## Deal Information
+    // Phase 5 (Evidence Engine) — global temporal reference header. Always
+    // first, so every downstream section can be evaluated against "today".
+    // Falls back to new Date() if the orchestrator didn't inject one.
+    const evidenceToday = context.evidenceToday ?? new Date();
+    const evidenceGlobalHeader = formatGlobalEvidenceHeader(evidenceToday);
+
+    // Phase 7 (Evidence Engine) — deal-level evidence-health block built
+    // synchronously from the per-doc context map already loaded by the
+    // orchestrator. Pure aggregator, no DB calls. Empty string when there
+    // is nothing to flag (no noise injected).
+    const evidenceHealthBlock = context.evidenceContext
+      ? formatGlobalEvidenceHealth(buildEvidenceHealthReport(context.evidenceContext))
+      : "";
+
+    let text = `${evidenceGlobalHeader}${evidenceHealthBlock ? `\n\n${evidenceHealthBlock}` : ""}
+
+## Deal Information
 - Name: ${sanitizedDeal.name}
 - Company: ${sanitizedDeal.companyName}
 - Sector: ${sanitizedDeal.sector}
@@ -973,9 +995,22 @@ ${sanitizedDeal.description}
         const sanitizedDocName = sanitizeName(doc.name);
         const sanitizedDocType = sanitizeName(doc.type);
         const sourceKindLabel = this.getDocumentSourceKindLabel(doc.sourceKind);
-        const producedAtLabel = this.formatDocumentDate(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
+        // produit le = true content date only. uploadedAt is technical metadata, not a production date.
+        // See errors.md 2026-05-17 — CONTEXT-ENGINE — base-agent labeled FILE without sourceDate as "produit le <uploadedAt>".
+        const producedAtLabel = this.formatDocumentDate(doc.sourceDate ?? doc.receivedAt ?? null);
         const importedAtLabel = this.formatDocumentDate(doc.uploadedAt);
         text += `\n### ${sanitizedDocName} (${sourceKindLabel}, ${sanitizedDocType}) — produit le ${producedAtLabel}, importé le ${importedAtLabel}\n`;
+
+        // Phase 5 (Evidence Engine) — inject per-document evidence prelude
+        // right after the title line. Surfaces asOf dates, forecast/actuals
+        // periods, auto-detected attachments (ATTACHMENT_RELATION signals),
+        // and stale warnings without mutating Document.sourceDate /
+        // Document.corpusParentDocumentId (Codex round 13 P1 contract).
+        const evidenceForDoc = context.evidenceContext?.[doc.id];
+        if (evidenceForDoc) {
+          const prelude = formatDocumentEvidencePrelude(evidenceForDoc);
+          if (prelude) text += `${prelude}\n`;
+        }
         if (doc.corpusRole === "DILIGENCE_RESPONSE") {
           text += `[Réponse de diligence]\n`;
         }
@@ -1062,7 +1097,11 @@ ${sanitizedDeal.description}
     receivedAt?: Date | string | null;
     uploadedAt?: Date | string | null;
   }): number {
-    return this.getDocumentDateMs(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
+    // Sort by true content date when known. Documents without source date go to the end
+    // of the chronological list — they are "undated" relative to content, not "produced today".
+    // See errors.md 2026-05-17 — CONTEXT-ENGINE — base-agent labeled FILE without sourceDate as "produit le <uploadedAt>".
+    const sourceMs = this.getDocumentDateMs(doc.sourceDate ?? doc.receivedAt ?? null);
+    return sourceMs > 0 ? sourceMs : Number.MAX_SAFE_INTEGER;
   }
 
   private getDocumentDateMs(value?: Date | string | null): number {

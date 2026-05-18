@@ -26,6 +26,7 @@ import {
   setDocumentExtractionProgress,
 } from "@/services/documents/extraction-progress";
 import { reuseCompletedExtractionForContentHash } from "@/services/documents/extraction-reuse";
+import { runEvidenceForDocument } from "@/services/evidence";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
 import type {
@@ -574,6 +575,20 @@ export async function POST(request: NextRequest) {
             ocrProcessed: true,
           },
         });
+        // Phase 3.2 (Codex round 10 P1): wire Evidence Engine on the inline
+        // image-OCR path. Same idempotent helper as the durable PDF pipeline.
+        // Non-fatal: never block the upload on Evidence Engine failure.
+        if (imageCorpusUsable) {
+          try {
+            await runEvidenceForDocument(prisma, {
+              documentId: document.id,
+              extractedTextPlaintext: ocrResult.text,
+              extractionRunId: extractionRun.id,
+            });
+          } catch (evidenceError) {
+            console.error("[upload/inline:image] phase 3 evidence non-fatal:", evidenceError);
+          }
+        }
 
         extractionWarnings = [{
           code: "IMAGE_OCR",
@@ -884,6 +899,18 @@ export async function POST(request: NextRequest) {
                 : Prisma.DbNull,
             },
           });
+          // Phase 3.2 (Codex round 10 P1): wire Evidence Engine on the inline Excel path.
+          if (excelCorpusUsable) {
+            try {
+              await runEvidenceForDocument(prisma, {
+                documentId: document.id,
+                extractedTextPlaintext: textContent,
+                extractionRunId: extractionRun.id,
+              });
+            } catch (evidenceError) {
+              console.error("[upload/inline:excel] phase 3 evidence non-fatal:", evidenceError);
+            }
+          }
 
           if (process.env.NODE_ENV === "development") {
             console.log(`[Excel] Extracted ${result.metadata.totalCells} cells from ${result.metadata.sheetCount} sheets`);
@@ -1023,6 +1050,18 @@ export async function POST(request: NextRequest) {
                 : Prisma.DbNull,
             },
           });
+          // Phase 3.2 (Codex round 10 P1): wire Evidence Engine on the inline Word path.
+          if (wordCorpusUsable) {
+            try {
+              await runEvidenceForDocument(prisma, {
+                documentId: document.id,
+                extractedTextPlaintext: combinedText,
+                extractionRunId: extractionRun.id,
+              });
+            } catch (evidenceError) {
+              console.error("[upload/inline:word] phase 3 evidence non-fatal:", evidenceError);
+            }
+          }
 
           if (process.env.NODE_ENV === "development") {
             console.log(`[Word] Extracted ${result.text.length} chars`);
@@ -1165,6 +1204,18 @@ export async function POST(request: NextRequest) {
                 : Prisma.DbNull,
             },
           });
+          // Phase 3.2 (Codex round 10 P1): wire Evidence Engine on the inline PPT path.
+          if (pptCorpusUsable) {
+            try {
+              await runEvidenceForDocument(prisma, {
+                documentId: document.id,
+                extractedTextPlaintext: combinedText,
+                extractionRunId: extractionRun.id,
+              });
+            } catch (evidenceError) {
+              console.error("[upload/inline:ppt] phase 3 evidence non-fatal:", evidenceError);
+            }
+          }
 
           if (process.env.NODE_ENV === "development") {
             console.log(`[PPTX] Extracted ${result.text.length} chars from ${result.slideCount} slides`);

@@ -98,7 +98,23 @@ function getCurrentFactNumber(
  * - Document content (extracted text)
  * - Founder info
  */
-export function generateDealFingerprint(deal: DealWithRelations): string {
+/**
+ * Phase 5.1 (Codex round 15 P2) — fingerprint inputs for EvidenceSignal so a
+ * new attachment / temporal signal invalidates the analysis cache. Caller is
+ * responsible for fetching from the DB.
+ */
+export interface EvidenceSignalFingerprintInput {
+  documentId: string;
+  signalScopeKey: string;
+  kind: string;
+  signalHash: string;
+  extractorVersion: string;
+}
+
+export function generateDealFingerprint(
+  deal: DealWithRelations,
+  evidenceSignals: EvidenceSignalFingerprintInput[] = []
+): string {
   const factMap = buildCurrentFactMap(deal.currentFacts);
 
   const data = {
@@ -157,6 +173,30 @@ export function generateDealFingerprint(deal: DealWithRelations): string {
         name: f.name,
         role: f.role,
       })),
+
+    // Phase 5.1 (Codex round 15 P2) — EvidenceSignals (sorted for stable
+    // hashing). Any new/changed signal invalidates the cache, so a fresh
+    // ATTACHMENT_RELATION or CAP_TABLE_AS_OF re-triggers analysis instead
+    // of replaying a stale result.
+    //
+    // Phase 5.2 (Codex round 16 P2) — extractorVersion is part of the hashed
+    // string, so it MUST also be the final tie-breaker in the sort. Without
+    // it, two signals identical except extractorVersion could swap order
+    // between runs and produce different fingerprints for the same content.
+    evidenceSignals: evidenceSignals
+      .slice()
+      .sort((a, b) => {
+        const docCmp = a.documentId.localeCompare(b.documentId);
+        if (docCmp !== 0) return docCmp;
+        const scopeCmp = a.signalScopeKey.localeCompare(b.signalScopeKey);
+        if (scopeCmp !== 0) return scopeCmp;
+        const kindCmp = a.kind.localeCompare(b.kind);
+        if (kindCmp !== 0) return kindCmp;
+        const hashCmp = a.signalHash.localeCompare(b.signalHash);
+        if (hashCmp !== 0) return hashCmp;
+        return a.extractorVersion.localeCompare(b.extractorVersion);
+      })
+      .map((s) => `${s.documentId}|${s.signalScopeKey}|${s.kind}|${s.signalHash}|${s.extractorVersion}`),
 
     // Timestamp of last deal update
     updatedAt: deal.updatedAt.toISOString(),

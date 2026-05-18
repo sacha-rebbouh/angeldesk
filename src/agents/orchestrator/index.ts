@@ -126,6 +126,26 @@ import {
   aggregateWarnings,
 } from "./early-warnings";
 import type { EarlyWarning, OnEarlyWarning } from "./types";
+import { buildDealEvidenceContext, type DocumentEvidenceContext } from "@/services/evidence";
+
+/**
+ * Phase 5.1 (Codex round 15 P1) — single entry point for evidence-context
+ * loading shared by runBaseAnalysis, runFullAnalysis, runTier1Analysis, resume.
+ * Non-fatal: any failure returns undefined so agents still get the legacy
+ * context without the temporal prelude.
+ */
+async function loadEvidenceContextSafe(
+  dealId: string
+): Promise<{ evidenceContext?: Record<string, DocumentEvidenceContext>; evidenceToday: Date }> {
+  const evidenceToday = new Date();
+  try {
+    const evidenceContext = await buildDealEvidenceContext(prisma, dealId, { today: evidenceToday });
+    return { evidenceContext, evidenceToday };
+  } catch (evidenceError) {
+    console.error("[orchestrator] loadEvidenceContextSafe failed (non-fatal):", evidenceError);
+    return { evidenceContext: undefined, evidenceToday };
+  }
+}
 
 // Re-export types
 export type { AnalysisOptions, AnalysisResult, AnalysisType, EarlyWarning, UserPlan };
@@ -423,7 +443,25 @@ export class AgentOrchestrator {
       if (!dealForFingerprint) return null;
 
       // Generate current fingerprint
-      const fingerprint = generateDealFingerprint(dealForFingerprint);
+      // Phase 5.1 (Codex round 15 P2) — include EvidenceSignals in the
+      // fingerprint so new ATTACHMENT_RELATION / CAP_TABLE_AS_OF / etc.
+      // invalidate the analysis cache.
+      //
+      // Phase 5.2 (Codex round 16 P2) — fail-CLOSED: if the signal lookup
+      // fails (DB hiccup, partial outage), we MUST NOT serve a cached
+      // analysis whose fingerprint was computed without signals — that would
+      // silently surface stale evidence. Return null → run a fresh analysis.
+      let evidenceSignalsForFingerprint;
+      try {
+        evidenceSignalsForFingerprint = await prisma.evidenceSignal.findMany({
+          where: { dealId },
+          select: { documentId: true, signalScopeKey: true, kind: true, signalHash: true, extractorVersion: true },
+        });
+      } catch (signalsError) {
+        console.error("[Orchestrator] Cache: evidence signals load failed — failing CLOSED, no cache hit:", signalsError);
+        return null;
+      }
+      const fingerprint = generateDealFingerprint(dealForFingerprint, evidenceSignalsForFingerprint);
 
       // Lookup cached analysis
       const mode = type; // mode in DB matches type
@@ -462,10 +500,27 @@ export class AgentOrchestrator {
       const dealForFingerprint = await getDealForFingerprint(dealId);
       if (!dealForFingerprint) return;
 
-      const fingerprint = generateDealFingerprint(dealForFingerprint);
+      // Phase 5.1 (Codex round 15 P2) — include EvidenceSignals in the
+      // fingerprint so new ATTACHMENT_RELATION / CAP_TABLE_AS_OF / etc.
+      // invalidate the analysis cache.
+      //
+      // Phase 5.2 (Codex round 16 P2) — if signals load fails, do NOT store a
+      // partial fingerprint (a future cache hit would compare against the
+      // wrong baseline). Skip the fingerprint update; the analysis row stays
+      // without a dealFingerprint, which means subsequent reads can't hit
+      // the cache for it (safe).
+      let evidenceSignalsForFingerprint;
+      try {
+        evidenceSignalsForFingerprint = await prisma.evidenceSignal.findMany({
+          where: { dealId },
+          select: { documentId: true, signalScopeKey: true, kind: true, signalHash: true, extractorVersion: true },
+        });
+      } catch (signalsError) {
+        console.error("[Orchestrator] Store fingerprint: evidence signals load failed — skipping fingerprint (safe):", signalsError);
+        return;
+      }
+      const fingerprint = generateDealFingerprint(dealForFingerprint, evidenceSignalsForFingerprint);
 
-      // Import prisma for direct update
-      const { prisma } = await import("@/lib/prisma");
       await prisma.analysis.update({
         where: { id: analysisId },
         data: {
@@ -526,6 +581,8 @@ export class AgentOrchestrator {
     const canonicalDeal = buildCanonicalRuntimeDeal(deal, {
       factStore: initialFactStore,
     });
+    const { evidenceContext, evidenceToday } = await loadEvidenceContextSafe(dealId);
+
     const context: AgentContext = {
       dealId,
       deal: canonicalDeal,
@@ -536,6 +593,8 @@ export class AgentOrchestrator {
         corpusSnapshotId: corpusSnapshot?.id ?? null,
       },
       documents: scopedDocuments,
+      evidenceContext,
+      evidenceToday,
       previousResults: {},
     };
 
@@ -659,6 +718,7 @@ export class AgentOrchestrator {
     const canonicalDeal = buildCanonicalRuntimeDeal(deal, {
       factStore: initialFactStore,
     });
+    const { evidenceContext, evidenceToday } = await loadEvidenceContextSafe(dealId);
     const baseContext: AgentContext = {
       dealId,
       deal: canonicalDeal,
@@ -669,6 +729,8 @@ export class AgentOrchestrator {
         corpusSnapshotId: corpusSnapshot?.id ?? null,
       },
       documents: scopedDocuments,
+      evidenceContext,
+      evidenceToday,
       previousResults: {},
     };
 
@@ -1478,6 +1540,9 @@ export class AgentOrchestrator {
     try {
       await stateMachine.start();
 
+      // Phase 5.1 (Codex round 15 P1) — wire evidence into full_analysis path.
+      const { evidenceContext: fullEvidenceContext, evidenceToday: fullEvidenceToday } =
+        await loadEvidenceContextSafe(dealId);
       const baseContext: AgentContext = {
         dealId,
         deal: initialCanonicalDeal,
@@ -1490,6 +1555,8 @@ export class AgentOrchestrator {
           corpusSnapshotId: corpusSnapshot?.id ?? null,
         },
         documents: scopedDocuments,
+        evidenceContext: fullEvidenceContext,
+        evidenceToday: fullEvidenceToday,
         previousResults: {},
       };
 
@@ -3072,6 +3139,12 @@ export class AgentOrchestrator {
     try {
       const currentFactsForContext = await getCurrentFacts(deal.id).catch(() => []);
 
+      // Phase 5.2 (Codex round 16 wiring guard) — coherence checker also gets
+      // the evidence context so its prompt has the same temporal reference
+      // as the rest of the analysis chain.
+      const { evidenceContext: coherenceEvidenceContext, evidenceToday: coherenceEvidenceToday } =
+        await loadEvidenceContextSafe(deal.id);
+
       // Build context for coherence checker
       const coherenceContext: AgentContext = {
         dealId: deal.id,
@@ -3104,6 +3177,8 @@ export class AgentOrchestrator {
             : {},
         }),
         documents: deal.documents,
+        evidenceContext: coherenceEvidenceContext,
+        evidenceToday: coherenceEvidenceToday,
         previousResults: extractedData ? {
           "document-extractor": {
             agentName: "document-extractor",
@@ -4369,6 +4444,9 @@ export class AgentOrchestrator {
         console.error("[Orchestrator:Resume] Failed to restore fact store:", error);
       }
 
+      // Phase 5.1 (Codex round 15 P1) — wire evidence into resume path too.
+      const { evidenceContext: resumeEvidenceContext, evidenceToday: resumeEvidenceToday } =
+        await loadEvidenceContextSafe(deal.id);
       const baseContext: AgentContext = {
         dealId: deal.id,
         deal: buildCanonicalRuntimeDeal(deal, {
@@ -4387,6 +4465,8 @@ export class AgentOrchestrator {
           corpusSnapshotId: analysisDbMeta?.corpusSnapshotId ?? analysis.corpusSnapshotId ?? null,
         },
         documents: deal.documents,
+        evidenceContext: resumeEvidenceContext,
+        evidenceToday: resumeEvidenceToday,
         previousResults: sanitizedPreviousResults,
       };
 

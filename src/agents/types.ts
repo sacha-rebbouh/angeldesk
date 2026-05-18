@@ -74,6 +74,15 @@ export interface AgentContext {
       }>;
     }>;
   }[];
+  /**
+   * Phase 5 (Evidence Engine) — per-document evidence aggregation indexed by
+   * Document.id. Populated by the orchestrator before agents run; consumed by
+   * base-agent.formatDealContext to render the temporal prelude. Optional so
+   * agent paths that don't yet wire it stay backwards-compatible.
+   */
+  evidenceContext?: Record<string, import("@/services/evidence").DocumentEvidenceContext>;
+  /** Phase 5 — reference "today" passed alongside evidenceContext. */
+  evidenceToday?: Date;
   previousResults?: Record<string, AgentResult>;
 }
 

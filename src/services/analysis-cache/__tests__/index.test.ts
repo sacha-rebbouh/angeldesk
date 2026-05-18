@@ -68,6 +68,80 @@ function buildDeal(
   } as Parameters<typeof generateDealFingerprint>[0];
 }
 
+describe("Codex round 15 P2 — EvidenceSignals invalidate fingerprint", () => {
+  it("ajouter un signal change le fingerprint", () => {
+    const noSignals = generateDealFingerprint(buildDeal());
+    const withSignal = generateDealFingerprint(buildDeal(), [
+      {
+        documentId: "doc_1",
+        signalScopeKey: "run:c1abc12345678",
+        kind: "CAP_TABLE_AS_OF",
+        signalHash: "deadbeef",
+        extractorVersion: "temporal-extractor@2026-05-18-001",
+      },
+    ]);
+    expect(noSignals).not.toBe(withSignal);
+  });
+
+  it("retire un signal change le fingerprint", () => {
+    const withTwoSignals = generateDealFingerprint(buildDeal(), [
+      { documentId: "doc_1", signalScopeKey: "filename", kind: "DOCUMENT_DATE", signalHash: "h1", extractorVersion: "v1" },
+      { documentId: "doc_2", signalScopeKey: "source_metadata", kind: "ATTACHMENT_RELATION", signalHash: "h2", extractorVersion: "v1" },
+    ]);
+    const withOneSignal = generateDealFingerprint(buildDeal(), [
+      { documentId: "doc_1", signalScopeKey: "filename", kind: "DOCUMENT_DATE", signalHash: "h1", extractorVersion: "v1" },
+    ]);
+    expect(withTwoSignals).not.toBe(withOneSignal);
+  });
+
+  it("ordre des signals n'affecte pas le fingerprint (sort stable)", () => {
+    const orderA = generateDealFingerprint(buildDeal(), [
+      { documentId: "doc_a", signalScopeKey: "filename", kind: "DOCUMENT_DATE", signalHash: "h1", extractorVersion: "v1" },
+      { documentId: "doc_b", signalScopeKey: "source_metadata", kind: "ATTACHMENT_RELATION", signalHash: "h2", extractorVersion: "v1" },
+    ]);
+    const orderB = generateDealFingerprint(buildDeal(), [
+      { documentId: "doc_b", signalScopeKey: "source_metadata", kind: "ATTACHMENT_RELATION", signalHash: "h2", extractorVersion: "v1" },
+      { documentId: "doc_a", signalScopeKey: "filename", kind: "DOCUMENT_DATE", signalHash: "h1", extractorVersion: "v1" },
+    ]);
+    expect(orderA).toBe(orderB);
+  });
+
+  it("changement de extractorVersion (parser upgrade) change le fingerprint", () => {
+    const baseSignal = { documentId: "doc_1", signalScopeKey: "filename", kind: "DOCUMENT_DATE", signalHash: "h1" };
+    const v1 = generateDealFingerprint(buildDeal(), [{ ...baseSignal, extractorVersion: "v1" }]);
+    const v2 = generateDealFingerprint(buildDeal(), [{ ...baseSignal, extractorVersion: "v2" }]);
+    expect(v1).not.toBe(v2);
+  });
+
+  it("changement de signalHash change le fingerprint (nouveau payload)", () => {
+    const base = { documentId: "doc_1", signalScopeKey: "filename", kind: "DOCUMENT_DATE", extractorVersion: "v1" };
+    const h1 = generateDealFingerprint(buildDeal(), [{ ...base, signalHash: "hash1" }]);
+    const h2 = generateDealFingerprint(buildDeal(), [{ ...base, signalHash: "hash2" }]);
+    expect(h1).not.toBe(h2);
+  });
+
+  it("aucun signal (legacy) → backward compat avec fingerprint pré-Phase 5.1", () => {
+    // The function should accept omitted second argument and produce a stable
+    // fingerprint identical to passing [].
+    const noArg = generateDealFingerprint(buildDeal());
+    const emptyArr = generateDealFingerprint(buildDeal(), []);
+    expect(noArg).toBe(emptyArr);
+  });
+
+  it("Codex round 16 P2 — 2 signaux identiques sauf extractorVersion, ordre inversé → même fingerprint", () => {
+    const base = { documentId: "doc_1", signalScopeKey: "filename", kind: "DOCUMENT_DATE", signalHash: "h1" };
+    const orderA = generateDealFingerprint(buildDeal(), [
+      { ...base, extractorVersion: "v1" },
+      { ...base, extractorVersion: "v2" },
+    ]);
+    const orderB = generateDealFingerprint(buildDeal(), [
+      { ...base, extractorVersion: "v2" },
+      { ...base, extractorVersion: "v1" },
+    ]);
+    expect(orderA).toBe(orderB);
+  });
+});
+
 describe("generateDealFingerprint", () => {
   it("prefers canonical current facts over stale persisted deal fields", () => {
     const staleFingerprint = generateDealFingerprint(buildDeal());
