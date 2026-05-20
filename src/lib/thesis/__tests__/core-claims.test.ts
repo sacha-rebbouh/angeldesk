@@ -5,6 +5,7 @@ import {
   repairStructuredClaims,
   renderStructuredClaims,
   ThesisCoreStructuredSchema,
+  normalizeLoadBearingAssumptions,
   type ThesisCoreClaim,
 } from "../core-claims";
 import { buildThesisFactScope } from "../fact-scope";
@@ -51,6 +52,50 @@ describe("ThesisCoreStructuredSchema", () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  it("accepts recoverable model omissions before the repair layer runs", () => {
+    const parsed = ThesisCoreStructuredSchema.safeParse({
+      reformulatedClaims: [{ kind: "unknown", text: "Thèse indisponible." }],
+      problemClaims: [
+        {
+          kind: "judgment",
+          text: "Le problème est réel mais encore insuffisamment étayé.",
+          supportingFactKeys: [],
+        },
+      ],
+      solutionClaims: [
+        {
+          kind: "judgment",
+          text: "La solution semble adaptée au segment visé.",
+        },
+      ],
+      whyNowClaims: [{ kind: "unknown", text: "Le timing reste à vérifier." }],
+      moatClaims: [],
+      pathToExitClaims: [],
+      loadBearing: [
+        {
+          statement: "La croissance commerciale peut rester efficace.",
+          status: "declared",
+          impact: "Le modèle perd son levier principal.",
+          validationPath: "Demander les cohortes commerciales.",
+        },
+      ],
+      alerts: [],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+
+    expect(parsed.data.problemClaims[0]).toMatchObject({
+      kind: "judgment",
+      supportingFactKeys: [],
+    });
+    expect(parsed.data.solutionClaims[0]).toMatchObject({
+      kind: "judgment",
+      supportingFactKeys: [],
+    });
+    expect(normalizeLoadBearingAssumptions(parsed.data.loadBearing)[0]?.id).toBe("lb-1");
   });
 });
 
@@ -117,6 +162,23 @@ describe("structured core thesis claims", () => {
     ).toThrow("direct_fact framing must not contain numeric assertions");
   });
 
+  it("does not treat B2B, B2C, or B2B2C as numeric assertions", () => {
+    expect(() =>
+      assertValidStructuredClaims(
+        {
+          reformulated: [
+            {
+              kind: "judgment",
+              text: "La société combine une distribution B2B et des usages B2B2C / B2BtoC.",
+              supportingFactKeys: [],
+            },
+          ],
+        },
+        buildThesisFactScope([])
+      )
+    ).not.toThrow();
+  });
+
   it("repairs numeric judgment and unknown claims into valid structured claims", () => {
     const scope = buildThesisFactScope([
       makeFact({
@@ -169,6 +231,174 @@ describe("structured core thesis claims", () => {
     expect(repaired.moat[0]).toMatchObject({
       kind: "direct_fact",
       factKey: "team.size",
+    });
+    expect(() => assertValidStructuredClaims(repaired, scope)).not.toThrow();
+  });
+
+  it("removes residual numeric markers from unknown claims during repair", () => {
+    const repaired = repairStructuredClaims(
+      {
+        reformulated: [],
+        problem: [
+          {
+            kind: "unknown",
+            text: "ROI x16, croissance 98%, ticket €500k et expansion 2026 restent à vérifier.",
+          },
+        ],
+        solution: [],
+        whyNow: [],
+        moat: [],
+        pathToExit: [],
+      },
+      buildThesisFactScope([])
+    );
+
+    expect(repaired.problem[0]).toMatchObject({
+      kind: "unknown",
+      text: "ROI, croissance, ticket et expansion restent à vérifier.",
+    });
+    expect(() => assertValidStructuredClaims(repaired, buildThesisFactScope([]))).not.toThrow();
+  });
+
+  it("falls back when direct_fact framing remains numeric after stripping", () => {
+    const scope = buildThesisFactScope([
+      makeFact({
+        factKey: "market.geography_primary",
+        category: "MARKET",
+        currentValue: "France",
+        currentDisplayValue: "France",
+      }),
+    ]);
+
+    const repaired = repairStructuredClaims(
+      {
+        reformulated: [
+          {
+            kind: "direct_fact",
+            factKey: "market.geography_primary",
+            framing: "3.0 x",
+          },
+        ],
+        problem: [],
+        solution: [],
+        whyNow: [],
+        moat: [],
+        pathToExit: [],
+      },
+      scope
+    );
+
+    expect(repaired.reformulated[0]).toMatchObject({
+      kind: "direct_fact",
+      factKey: "market.geography_primary",
+      framing: "Selon les faits validés:",
+    });
+    expect(() => assertValidStructuredClaims(repaired, scope)).not.toThrow();
+  });
+
+  it("downgrades direct_fact references missing from the scoped facts to unknown", () => {
+    const scope = buildThesisFactScope([
+      makeFact({
+        factKey: "market.geography_primary",
+        category: "MARKET",
+        currentValue: "France",
+        currentDisplayValue: "France",
+      }),
+    ]);
+
+    const repaired = repairStructuredClaims(
+      {
+        reformulated: [
+          {
+            kind: "direct_fact",
+            factKey: "financial.amount_raising",
+            framing: "L'operation recherche 500k EUR.",
+          },
+        ],
+        problem: [],
+        solution: [],
+        whyNow: [],
+        moat: [],
+        pathToExit: [],
+      },
+      scope
+    );
+
+    expect(repaired.reformulated[0]).toEqual({
+      kind: "unknown",
+      text: "L'operation recherche.",
+    });
+    expect(() => assertValidStructuredClaims(repaired, scope)).not.toThrow();
+  });
+
+  it("downgrades unavailable derived_metric claims to unknown before validation", () => {
+    const scope = buildThesisFactScope([
+      makeFact({
+        factKey: "financial.revenue",
+        category: "FINANCIAL",
+        currentValue: 1_000_000,
+        currentDisplayValue: "1M EUR",
+        currentUnit: "EUR",
+      }),
+    ]);
+
+    const repaired = repairStructuredClaims(
+      {
+        reformulated: [
+          {
+            kind: "derived_metric",
+            metricKey: "ebitda_margin",
+            framing: "La societe affiche 12% de marge EBITDA.",
+          },
+        ],
+        problem: [],
+        solution: [],
+        whyNow: [],
+        moat: [],
+        pathToExit: [],
+      },
+      scope
+    );
+
+    expect(repaired.reformulated[0]).toEqual({
+      kind: "unknown",
+      text: "Information insuffisamment documentée.",
+    });
+    expect(() => assertValidStructuredClaims(repaired, scope)).not.toThrow();
+  });
+
+  it("strips numeric assertions from direct facts inferred from judgment claims", () => {
+    const scope = buildThesisFactScope([
+      makeFact({
+        factKey: "company.name",
+        category: "OTHER",
+        currentValue: "Avekapeti",
+        currentDisplayValue: "Avekapeti",
+      }),
+    ]);
+
+    const repaired = repairStructuredClaims(
+      {
+        reformulated: [
+          {
+            kind: "judgment",
+            text: "Avekapeti vise un leadership avec 3 marchés prioritaires.",
+            supportingFactKeys: ["company.name"],
+          },
+        ],
+        problem: [],
+        solution: [],
+        whyNow: [],
+        moat: [],
+        pathToExit: [],
+      },
+      scope
+    );
+
+    expect(repaired.reformulated[0]).toMatchObject({
+      kind: "direct_fact",
+      factKey: "company.name",
+      framing: "vise un leadership avec marchés prioritaires.",
     });
     expect(() => assertValidStructuredClaims(repaired, scope)).not.toThrow();
   });

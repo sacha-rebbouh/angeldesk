@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 
-import { requireAuth } from "@/lib/auth";
+import { authenticateOrUnauthorized } from "@/lib/auth-helpers";
 import { handleApiError } from "@/lib/api-error";
 import { prisma } from "@/lib/prisma";
 import { isValidCuid } from "@/lib/sanitize";
@@ -20,8 +20,12 @@ const decisionSchema = z.object({
 });
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  // B11.3.1 (Codex P2) — explicit 401 contract.
+  const auth = await authenticateOrUnauthorized();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
+
   try {
-    const user = await requireAuth();
     const { documentId } = await context.params;
 
     if (!isValidCuid(documentId)) {

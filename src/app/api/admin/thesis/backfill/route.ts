@@ -17,7 +17,7 @@ import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
-import { inngest } from "@/lib/inngest";
+import { inngest } from "@/lib/inngest-client";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import { getRunningAnalysisForDeal, isFullAnalysisInProgress } from "@/services/analysis/guards";
 

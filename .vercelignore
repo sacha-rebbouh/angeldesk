@@ -1,0 +1,12 @@
+.next
+node_modules
+docs-private
+public/uploads
+# B14 — generalise to all debug subdirs (was scoped to b12-1-screenshots, missed b14-e2e fixtures + future debug runs).
+scripts/debug
+*.log
+.env.local
+.env.*.local
+changes-log.md
+errors.md
+agentic-mistakes.md

@@ -117,3 +117,218 @@ Deck_Avekapeti VF.pdf
     })).toBeNull();
   });
 });
+
+// ============================================================
+// Codex B6.2.1 P1 — manual.sourceKind override blocks inference
+// regardless of the manual VALUE (FILE included).
+// ============================================================
+describe("inferEmailSourceFromExtractedText — Codex B6.2.1 P1 manual.sourceKind bail", () => {
+  // Text that WOULD trigger inference if no gates blocked it. Re-used
+  // across the tests so the only variable is the metadata gate.
+  const emailLikeText = [
+    "De: CFO <cfo@example.com>",
+    "Envoyé : lundi 6 avril 2026 16:10",
+    "Objet : Update",
+    "",
+    "Voici les derniers chiffres,",
+    "",
+    "--",
+    "De: Founder <founder@startup.io>",
+    "Envoyé : dimanche 5 avril 2026 18:00",
+    "Objet : Re: Update",
+  ].join("\n");
+
+  it("RED — manual.sourceKind=FILE override blocks inference even when currentSourceKind=FILE matches (the exact Codex P1 scenario)", () => {
+    // The scenario: user corrected a false-positive email back to FILE
+    // via B6.2 → row now has currentSourceKind=FILE +
+    // sourceMetadata.manual.sourceKind = { newValue: "FILE", ... }.
+    // Without the manual gate, the inference would happily re-classify
+    // the doc as EMAIL on the next reprocess (currentSourceKind ===
+    // "FILE" satisfies the legacy gate). With the manual gate, it bails.
+    const inferred = inferEmailSourceFromExtractedText({
+      text: emailLikeText,
+      fileName: "thread-with-headers.pdf",
+      currentSourceKind: "FILE",
+      sourceMetadata: {
+        manual: {
+          sourceKind: {
+            setBy: "user_owner",
+            setAt: "2026-04-10T10:00:00.000Z",
+            previousValue: "EMAIL",
+            newValue: "FILE",
+          },
+        },
+      },
+    });
+    expect(inferred).toBeNull();
+  });
+
+  it("RED — manual.sourceKind=EMAIL override also blocks inference (PRESENCE of the override gates, not the value)", () => {
+    // Symmetric: if the user manually set EMAIL, we still bail
+    // because the inference's job is to AUTO-detect; the manual
+    // override is the authoritative state.
+    const inferred = inferEmailSourceFromExtractedText({
+      text: emailLikeText,
+      fileName: "thread-with-headers.pdf",
+      currentSourceKind: "FILE",
+      sourceMetadata: {
+        manual: {
+          sourceKind: {
+            setBy: "user_owner",
+            setAt: "2026-04-10T10:00:00.000Z",
+            previousValue: "FILE",
+            newValue: "EMAIL",
+          },
+        },
+      },
+    });
+    expect(inferred).toBeNull();
+  });
+
+  it("Codex B6.3 — manual.sourceDate ALSO blocks the inference (any email-related manual override bails — the inference rewrites all email fields together)", () => {
+    // CONTRACT CHANGE B6.3: B6.2.1 had this test asserting "each
+    // manual override is independent" — manual.sourceDate did NOT
+    // block sourceKind inference. B6.3 tightens the contract: the
+    // inference returns a payload that overwrites ALL email fields
+    // atomically (sourceKind + sourceDate + receivedAt +
+    // sourceAuthor + sourceSubject + sourceMetadata). So a partial
+    // manual override would either silently get overwritten or end
+    // up in a mixed state. Bail entirely is the only safe contract.
+    const inferred = inferEmailSourceFromExtractedText({
+      text: emailLikeText,
+      fileName: "thread-with-headers.pdf",
+      currentSourceKind: "FILE",
+      sourceMetadata: {
+        manual: {
+          sourceDate: {
+            setBy: "user_owner",
+            setAt: "2026-03-14T10:00:00.000Z",
+            previousValue: null,
+            newValue: "2026-04-06T00:00:00.000Z",
+          },
+        },
+      },
+      // existingSourceDate intentionally omitted — we want to test
+      // ONLY the sourceMetadata-level gate, not the existingSourceDate
+      // bail.
+    });
+    expect(inferred).toBeNull();
+  });
+
+  it("Codex B6.3 — manual.receivedAt blocks the inference (email metadata override)", () => {
+    const inferred = inferEmailSourceFromExtractedText({
+      text: emailLikeText,
+      fileName: "thread-with-headers.pdf",
+      currentSourceKind: "FILE",
+      sourceMetadata: {
+        manual: {
+          receivedAt: {
+            setBy: "user_owner",
+            setAt: "2026-03-14T10:00:00.000Z",
+            previousValue: null,
+            newValue: "2026-04-15T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    expect(inferred).toBeNull();
+  });
+
+  it("Codex B6.3 — manual.sourceAuthor blocks the inference", () => {
+    const inferred = inferEmailSourceFromExtractedText({
+      text: emailLikeText,
+      fileName: "thread-with-headers.pdf",
+      currentSourceKind: "FILE",
+      sourceMetadata: {
+        manual: {
+          sourceAuthor: {
+            setBy: "user_owner",
+            setAt: "2026-03-14T10:00:00.000Z",
+            previousValue: null,
+            newValue: "Real Author <real@startup.io>",
+          },
+        },
+      },
+    });
+    expect(inferred).toBeNull();
+  });
+
+  it("Codex B6.3 — manual.sourceSubject blocks the inference", () => {
+    const inferred = inferEmailSourceFromExtractedText({
+      text: emailLikeText,
+      fileName: "thread-with-headers.pdf",
+      currentSourceKind: "FILE",
+      sourceMetadata: {
+        manual: {
+          sourceSubject: {
+            setBy: "user_owner",
+            setAt: "2026-03-14T10:00:00.000Z",
+            previousValue: null,
+            newValue: "Corrected subject",
+          },
+        },
+      },
+    });
+    expect(inferred).toBeNull();
+  });
+
+  it("Codex B6.3 — UNRELATED manual key (e.g. manual.documentType from B6.2) does NOT block the inference (only email-related keys gate)", () => {
+    // Defensive: a doc with only a `manual.documentType` block (e.g.
+    // user re-classified the type but not anything email-related)
+    // should still allow the inference to run if the content
+    // legitimately looks like an email.
+    const inferred = inferEmailSourceFromExtractedText({
+      text: emailLikeText,
+      fileName: "thread-with-headers.pdf",
+      currentSourceKind: "FILE",
+      sourceMetadata: {
+        manual: {
+          documentType: {
+            setBy: "user_owner",
+            setAt: "2026-03-14T10:00:00.000Z",
+            previousValue: "OTHER",
+            newValue: "PITCH_DECK",
+          },
+        },
+      },
+    });
+    expect(inferred).not.toBeNull();
+  });
+
+  it("no sourceMetadata passed (legacy callers) → pre-B6.2.1 behaviour preserved", () => {
+    const inferred = inferEmailSourceFromExtractedText({
+      text: emailLikeText,
+      fileName: "thread-with-headers.pdf",
+      currentSourceKind: "FILE",
+      // sourceMetadata omitted.
+    });
+    expect(inferred).not.toBeNull();
+  });
+
+  it("sourceMetadata is null / scalar / array → treated as 'no manual context' (defensive)", () => {
+    expect(
+      inferEmailSourceFromExtractedText({
+        text: emailLikeText,
+        fileName: "thread-with-headers.pdf",
+        currentSourceKind: "FILE",
+        sourceMetadata: null,
+      })
+    ).not.toBeNull();
+    expect(
+      inferEmailSourceFromExtractedText({
+        text: emailLikeText,
+        fileName: "thread-with-headers.pdf",
+        currentSourceKind: "FILE",
+        sourceMetadata: "string-value",
+      })
+    ).not.toBeNull();
+    expect(
+      inferEmailSourceFromExtractedText({
+        text: emailLikeText,
+        fileName: "thread-with-headers.pdf",
+        currentSourceKind: "FILE",
+        sourceMetadata: ["array-value"],
+      })
+    ).not.toBeNull();
+  });
+});

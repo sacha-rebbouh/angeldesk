@@ -77,6 +77,7 @@
 | 2026-05-14 | DURABILITÉ | Callbacks onProgress tardifs (smartExtract perdant) réouvraient un run/progress terminal après timeout |
 | 2026-05-14 | DB | acquireDocumentLineageLock utilisait $queryRaw sur pg_advisory_xact_lock (void) → P2010 runtime, le lock ne fonctionnait jamais |
 | 2026-05-15 | STORAGE | downloadFile en mode Blob passait storagePath (pathname) directement à fetch → Invalid URL pour les rows storageUrl=NULL |
+| 2026-05-17 | CONTEXT-ENGINE | base-agent labelait FILE sans sourceDate comme "produit le \<uploadedAt\>" (fallback faux sur la date d'upload) |
 
 ---
 
@@ -682,3 +683,17 @@
 - **Solution validée** : Dans la branche Blob de `downloadFile`, si `urlOrPath` n'est pas une URL `http(s)://`, résoudre via `@vercel/blob.head(pathname)` (`head` accepte URL OU pathname et retourne `{ url, ... }`), puis `fetch(info.url)`. Les URLs passent through. `getDownloadUrl` ne convenait pas (signature URL-only). Tests : `src/services/storage/__tests__/download-file-blob.test.ts` (4 — pathname → head + fetch ; URL → pas de head ; http:// aussi ; non-OK fetch throw). Le runbook scénario 6 ajoute un step déterministe `UPDATE Document SET storageUrl=NULL` puis retry → smoke réel.
 - **Ce qui N'A PAS fonctionné** : N/A — bug trouvé via ré-audit Codex Phase 5 (le 1er round du runbook ne testait pas cette branche).
 - **Agent/Auteur** : Audit Codex Phase 5 fix-up — P1 (2026-05-15), implémentation Claude.
+
+### 2026-05-17 — CONTEXT-ENGINE — base-agent labelait FILE sans sourceDate comme "produit le <uploadedAt>"
+- **Fichier(s)** : `src/agents/base-agent.ts:976-978` (rendu header doc), `src/agents/base-agent.ts:1060-1065` (tri chronologique)
+- **Erreur** : `const producedAtLabel = this.formatDocumentDate(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);` puis `text += "### ${name} (${kind}, ${type}) — produit le ${producedAtLabel}, importé le ${importedAtLabel}";`. Pour les FILE sans `sourceDate` (cap tables, decks, BPs, financials), `producedAtLabel` valait `uploadedAt` (la date d'upload du fichier). Conséquence : un cap table de septembre 2024 uploadé en mai 2026 était présenté à TOUS les agents Tier 1/2/3 comme "produit le 17/05/2026". Audit Evidence Engine sur 3 deals (Avekapeti, FurLove, E4N) : **15/20 documents recevaient un label "produit le" faux** (= date d'upload masquerade comme date de production). Le tri chronologique (`getDocumentChronologyMs:1065`) utilisait le même fallback, donc l'ordre "ancien → récent" affiché à l'agent était également faux. Le commentaire ligne 959 instruit même l'agent à faire confiance à cet ordre falsifié : "En cas de divergence entre un document récent et le deck initial, le document récent fait foi".
+- **Cause racine** : Confusion entre **date de production du contenu** (sémantique métier) et **date d'upload du fichier** (métadonnée technique). Le `??` fallback chain a été écrit pour "toujours avoir une date à afficher", sans modéliser que `uploadedAt` n'a pas la même nature que `sourceDate`/`receivedAt`. Catched par l'audit Codex de Phase 0.5 Evidence Engine — non détecté avant car l'audit document-context-retriever (qui renvoie `null` pour FILE) m'avait fait conclure à tort "pas de prelude pour FILE".
+- **Solution validée** :
+  ```diff
+  - const producedAtLabel = this.formatDocumentDate(doc.sourceDate ?? doc.receivedAt ?? doc.uploadedAt);
+  + // produit le = true content date only. uploadedAt is technical metadata, not a production date.
+  + const producedAtLabel = this.formatDocumentDate(doc.sourceDate ?? doc.receivedAt ?? null);
+  ```
+  `formatDocumentDate(null)` retourne déjà `"date inconnue"`. Pour le tri chronologique, retourner `Number.MAX_SAFE_INTEGER` quand pas de source date → les docs non datés vont à la **fin** (les docs datés sont plus exploitables). Tests : `src/agents/__tests__/base-agent-date-rendering.test.ts` (4 tests — couvre §6.5 #23 du schema Phase 1).
+- **Ce qui N'A PAS fonctionné** : N/A — fix direct et chirurgical.
+- **Agent/Auteur** : Découvert pendant Phase 0.5 Evidence Engine audit (Codex), fix Phase 1 parallèle Claude.

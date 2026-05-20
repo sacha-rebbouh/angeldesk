@@ -19,7 +19,7 @@ import { isValidCuid, checkRateLimitDistributed } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { thesisService } from "@/services/thesis";
 import { refundCreditAmount } from "@/services/credits";
-import { inngest } from "@/lib/inngest";
+import { inngest } from "@/lib/inngest-client";
 import { logger } from "@/lib/logger";
 
 type RouteContext = {

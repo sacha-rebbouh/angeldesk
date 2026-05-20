@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireAuth } from "@/lib/auth";
+import { authenticateOrUnauthorized } from "@/lib/auth-helpers";
 import { handleApiError } from "@/lib/api-error";
 import { prisma } from "@/lib/prisma";
 import { downloadFile } from "@/services/storage";
@@ -16,8 +16,12 @@ type RouteParams = {
 };
 
 export async function GET(_request: NextRequest, context: RouteParams) {
+  // B11.3.1 (Codex P2) — explicit 401 contract.
+  const auth = await authenticateOrUnauthorized();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
+
   try {
-    const user = await requireAuth();
     const { documentId, pageNumber } = await context.params;
 
     const idCheck = cuidSchema.safeParse(documentId);
@@ -61,7 +65,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
     // ARC-LIGHT Phase 2: route the preview through the same PdfRenderer that
     // feeds the OCR pipeline. This guarantees the audit dialog shows exactly
     // what the OCR stack saw, not a different (broken) rasterization.
-    const renderer = createRenderer();
+    const renderer = await createRenderer();
     const rendered = await renderer.renderPage(pdfBuffer, pageCheck.data, { dpi: 144 });
 
     return new NextResponse(new Uint8Array(rendered.pngBuffer), {

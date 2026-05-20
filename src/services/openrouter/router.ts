@@ -309,6 +309,7 @@ export async function complete(
     systemPrompt,
     maxRetries = RATE_LIMIT_CONFIG.maxRetries,
     responseFormat,
+    timeoutMs = 120_000,
   } = options;
   if (process.env.NODE_ENV === 'development') {
     console.log(`[complete] maxTokens=${maxTokens}`);
@@ -357,6 +358,7 @@ export async function complete(
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= effectiveMaxRetries; attempt++) {
+    let timeoutId: NodeJS.Timeout | undefined;
     try {
       // Wait for rate limit slot
       await rateLimiter.waitForSlot();
@@ -404,16 +406,26 @@ export async function complete(
         // If adaptation === null or {}, keep original messages
       }
 
-      // Execute through circuit breaker
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      // Execute through circuit breaker. The timeout must abort the provider
+      // request itself, not only the caller waiting on it; otherwise a parent
+      // agent can fail while the LLM call continues burning real provider cost.
       const response = await circuitBreaker.execute(() =>
-        openrouter.chat.completions.create({
-          model: model.id,
-          messages: effectiveMessages,
-          max_tokens: effectiveMaxTokens,
-          temperature: effectiveTemperature,
-          ...(responseFormat ? { response_format: responseFormat } : {}),
-        })
+        openrouter.chat.completions.create(
+          {
+            model: model.id,
+            messages: effectiveMessages,
+            max_tokens: effectiveMaxTokens,
+            temperature: effectiveTemperature,
+            ...(responseFormat ? { response_format: responseFormat } : {}),
+          },
+          { signal: controller.signal }
+        )
       );
+      clearTimeout(timeoutId);
+      timeoutId = undefined;
 
       // Sync circuit breaker state to distributed store (fire-and-forget)
       syncCircuitBreakerState(circuitBreaker.getStats(), selectedModelKey).catch(() => {});
@@ -473,6 +485,9 @@ export async function complete(
         cost: totalCost,
       };
     } catch (error) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       // Don't retry circuit breaker errors
       if (error instanceof CircuitOpenError) {
         throw error;

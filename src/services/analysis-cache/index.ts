@@ -23,7 +23,29 @@ const ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Types
 type DealWithRelations = Deal & {
-  documents: (Pick<Document, "id" | "extractedText" | "processingStatus" | "uploadedAt"> & {
+  documents: (Pick<
+    Document,
+    | "id"
+    | "extractedText"
+    | "processingStatus"
+    | "uploadedAt"
+    // B6.1 fix-up (Codex P1) — every Document field that affects agent
+    // context MUST be in the fingerprint. Otherwise a user-correction
+    // (B6.1 manual sourceDate; B6.2 type/sourceKind; B6.3 email
+    // metadata) re-triggers analysis but lands a stale cache built with
+    // the OLD value. Anchored on the orchestrator's select shape
+    // (src/agents/orchestrator/persistence.ts:681-700) so the two
+    // surfaces never drift.
+    | "name"
+    | "type"
+    | "sourceKind"
+    | "corpusRole"
+    | "sourceDate"
+    | "receivedAt"
+    | "sourceAuthor"
+    | "sourceSubject"
+    | "corpusParentDocumentId"
+  > & {
     extractionRuns?: Array<{
       id: string;
       documentVersion: number;
@@ -98,7 +120,23 @@ function getCurrentFactNumber(
  * - Document content (extracted text)
  * - Founder info
  */
-export function generateDealFingerprint(deal: DealWithRelations): string {
+/**
+ * Phase 5.1 (Codex round 15 P2) — fingerprint inputs for EvidenceSignal so a
+ * new attachment / temporal signal invalidates the analysis cache. Caller is
+ * responsible for fetching from the DB.
+ */
+export interface EvidenceSignalFingerprintInput {
+  documentId: string;
+  signalScopeKey: string;
+  kind: string;
+  signalHash: string;
+  extractorVersion: string;
+}
+
+export function generateDealFingerprint(
+  deal: DealWithRelations,
+  evidenceSignals: EvidenceSignalFingerprintInput[] = []
+): string {
   const factMap = buildCurrentFactMap(deal.currentFacts);
 
   const data = {
@@ -132,6 +170,22 @@ export function generateDealFingerprint(deal: DealWithRelations): string {
       .map((d) => ({
         id: d.id,
         uploadedAt: d.uploadedAt.toISOString(),
+        // B6.1 fix-up (Codex P1) — agent-visible metadata that affects
+        // chronology / attribution / corpus role. Each field surfaces
+        // in the orchestrator's context payload AND in agent-facing
+        // system prompts (via base-agent.ts:998-1000 timeline +
+        // persistence.ts:681 select). Any user override (B6.1
+        // sourceDate, B6.2 type/sourceKind, B6.3 email metadata) MUST
+        // invalidate the analysis cache — anchored here.
+        name: d.name,
+        type: d.type,
+        sourceKind: d.sourceKind,
+        corpusRole: d.corpusRole,
+        sourceDate: d.sourceDate ? d.sourceDate.toISOString() : null,
+        receivedAt: d.receivedAt ? d.receivedAt.toISOString() : null,
+        sourceAuthor: d.sourceAuthor,
+        sourceSubject: d.sourceSubject,
+        corpusParentDocumentId: d.corpusParentDocumentId,
         latestExtractionRun: d.extractionRuns?.[0]
           ? {
               id: d.extractionRuns[0].id,
@@ -157,6 +211,30 @@ export function generateDealFingerprint(deal: DealWithRelations): string {
         name: f.name,
         role: f.role,
       })),
+
+    // Phase 5.1 (Codex round 15 P2) — EvidenceSignals (sorted for stable
+    // hashing). Any new/changed signal invalidates the cache, so a fresh
+    // ATTACHMENT_RELATION or CAP_TABLE_AS_OF re-triggers analysis instead
+    // of replaying a stale result.
+    //
+    // Phase 5.2 (Codex round 16 P2) — extractorVersion is part of the hashed
+    // string, so it MUST also be the final tie-breaker in the sort. Without
+    // it, two signals identical except extractorVersion could swap order
+    // between runs and produce different fingerprints for the same content.
+    evidenceSignals: evidenceSignals
+      .slice()
+      .sort((a, b) => {
+        const docCmp = a.documentId.localeCompare(b.documentId);
+        if (docCmp !== 0) return docCmp;
+        const scopeCmp = a.signalScopeKey.localeCompare(b.signalScopeKey);
+        if (scopeCmp !== 0) return scopeCmp;
+        const kindCmp = a.kind.localeCompare(b.kind);
+        if (kindCmp !== 0) return kindCmp;
+        const hashCmp = a.signalHash.localeCompare(b.signalHash);
+        if (hashCmp !== 0) return hashCmp;
+        return a.extractorVersion.localeCompare(b.extractorVersion);
+      })
+      .map((s) => `${s.documentId}|${s.signalScopeKey}|${s.kind}|${s.signalHash}|${s.extractorVersion}`),
 
     // Timestamp of last deal update
     updatedAt: deal.updatedAt.toISOString(),
@@ -261,6 +339,22 @@ export async function getDealForFingerprint(
             extractedText: true,
             processingStatus: true,
             uploadedAt: true,
+            // B6.1 fix-up (Codex P1) — Document metadata that drives
+            // agent context. Selected here so the fingerprint can hash
+            // them (see DealWithRelations + generateDealFingerprint).
+            // The B6.x manual editor surfaces (sourceDate / type /
+            // sourceKind / email metadata) all flow through these
+            // fields, so the cache invalidation is automatic once a
+            // user override is persisted.
+            name: true,
+            type: true,
+            sourceKind: true,
+            corpusRole: true,
+            sourceDate: true,
+            receivedAt: true,
+            sourceAuthor: true,
+            sourceSubject: true,
+            corpusParentDocumentId: true,
             extractionRuns: {
               orderBy: { completedAt: "desc" },
               take: 1,

@@ -1,6 +1,7 @@
 "use client";
 
-import { FileText, Loader2, Paperclip, X } from "lucide-react";
+import { useRef } from "react";
+import { FileText, FolderOpen, Loader2, Paperclip, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -105,6 +106,16 @@ export function AttachmentInput({
   onChange: (next: CorpusAttachmentDraft[]) => void;
   disabled?: boolean;
 }) {
+  // B12.5 P2 #8 — the native <input type="file"> button label
+  // ("Aucun fichier choisi" + browser-set "Choisir des fichiers" /
+  // "Sélectionner des fichiers" varies per browser/OS) truncated to
+  // "Au...oisi" on 390x844, ugly and uninformative. We hide the
+  // native input and trigger it via ref from a styled Button, so the
+  // label is fully under our control and stays legible on every
+  // viewport. Keyboard accessibility is preserved: the Button is
+  // a real <button>, focusable + clickable with space/enter.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const updateAttachment = (id: string, updates: Partial<CorpusAttachmentDraft>) => {
     onChange(value.map((attachment) => (
       attachment.id === id ? { ...attachment, ...updates } : attachment
@@ -127,12 +138,38 @@ export function AttachmentInput({
             Ajoutez un modèle financier, deck ou document reçu avec cet email/cette note.
           </p>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={disabled}
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="Sélectionner des fichiers joints"
+          className="shrink-0 gap-2"
+        >
+          <FolderOpen className="h-4 w-4" />
+          Sélectionner
+        </Button>
         <Input
+          ref={fileInputRef}
           type="file"
           multiple
           accept={ACCEPTED_ATTACHMENT_TYPES}
           disabled={disabled}
-          className="max-w-56"
+          // B12.5.1 (Codex P2 fix-up) — the native input is
+          // PROGRAMMATIC ONLY. The visible <Button> above is the
+          // accessible control (carries aria-label + label text +
+          // keyboard focus). Without `tabIndex={-1}` + `aria-hidden`,
+          // a keyboard user tabbing from the Button would land on an
+          // invisible `sr-only` control with no focus indicator and
+          // no proper label association — confusing and unreachable
+          // by sight. Removing it from the tab order + hiding from
+          // the accessibility tree keeps the Button as the single
+          // accessible affordance while preserving the programmatic
+          // file-picker invocation via `fileInputRef.current?.click()`.
+          tabIndex={-1}
+          aria-hidden="true"
+          className="sr-only"
           onChange={(event) => {
             const files = Array.from(event.target.files ?? []);
             if (files.length > 0) {

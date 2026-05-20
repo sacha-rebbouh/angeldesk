@@ -26,24 +26,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Fetch document with deal ownership info
+    // B11.2 (Codex P2) — composite ownership find returning 404
+    // uniformly. Anti-enumeration: a stranger probing doc ids on the
+    // download surface gets the same 404 whether the row belongs to
+    // another tenant or never existed.
     const document = await prisma.document.findFirst({
-      where: { id: documentId },
-      include: { deal: { select: { userId: true } } },
+      where: { id: documentId, deal: { userId: user.id } },
     });
 
     if (!document) {
       return NextResponse.json(
         { error: "Document not found" },
         { status: 404 }
-      );
-    }
-
-    // Verify the user owns the deal this document belongs to
-    if (document.deal.userId !== user.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 403 }
       );
     }
 

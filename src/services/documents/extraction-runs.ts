@@ -643,6 +643,22 @@ export async function startDocumentExtractionRun(params: {
 const LIVE_RUN_STATUSES = ["PENDING", "PROCESSING"] as const;
 
 /**
+ * B3.3.3 P1 — thrown by `completeDocumentExtractionRun` when the run has
+ * already been terminalized out-of-band (e.g. by `/process` stale-retry
+ * superseding the run). Callers can either treat this as a no-op
+ * (extraction-pipeline.ts retry catch-up) or surface a guarded warning.
+ * The Document MUST NOT be mutated in this case — the new run owns it.
+ */
+export class RunAlreadyTerminalError extends Error {
+  readonly runId: string;
+  constructor(runId: string) {
+    super(`Extraction run ${runId} is already terminal; refusing to finalize.`);
+    this.name = "RunAlreadyTerminalError";
+    this.runId = runId;
+  }
+}
+
+/**
  * Phase 4 durability: force a run into the terminal FAILED state.
  *
  * Idempotent — only flips a run that is still NON-terminal (PENDING /
@@ -1022,9 +1038,20 @@ export async function completeDocumentExtractionRun(params: {
     hasUsableCorpus && (status === "READY" || status === "READY_WITH_WARNINGS");
 
   return prisma.$transaction(async (tx) => {
+    // B3.3.3 P1 — monotonic finalization. Without this guard, a late-
+    // arriving worker for a run that `/process` stale-retry has already
+    // terminalized would flip the row back to READY/COMPLETED and (worse)
+    // mutate the Document — overwriting the new run's work. The
+    // updateMany WHERE status IN LIVE atomically rejects post-terminal
+    // completions; count===0 means another path settled the run first
+    // and we abort the WHOLE tx (no page writes, no document mutation,
+    // no version promotion).
     await tx.documentExtractionPage.deleteMany({ where: { runId: params.runId } });
-    const run = await tx.documentExtractionRun.update({
-      where: { id: params.runId },
+    const updateResult = await tx.documentExtractionRun.updateMany({
+      where: {
+        id: params.runId,
+        status: { in: [...LIVE_RUN_STATUSES] },
+      },
       data: {
         status,
         pageCount: params.manifest.pageCount,
@@ -1041,15 +1068,47 @@ export async function completeDocumentExtractionRun(params: {
         summaryMetrics: summarizeManifestForLegacyMetrics(params.manifest),
         warnings: params.warnings === undefined ? Prisma.DbNull : (params.warnings as Prisma.InputJsonValue),
         completedAt: new Date(params.manifest.completedAt),
-        pages: {
-          create: params.manifest.pages.map(buildExtractionPageCreateInput),
-        },
       },
+    });
+
+    if (updateResult.count === 0) {
+      // Run already terminal — fail-closed. The throw rolls back the tx
+      // (so the deleteMany above is reverted too) and the caller decides
+      // whether to swallow this as a no-op or surface it.
+      throw new RunAlreadyTerminalError(params.runId);
+    }
+
+    // Pages are created separately now that we've moved off the nested
+    // write on `update`. createMany is faster than N inserts and keeps
+    // the page payload encryption identical to the previous nested form.
+    if (params.manifest.pages.length > 0) {
+      await tx.documentExtractionPage.createMany({
+        data: params.manifest.pages.map((page) => ({
+          ...buildExtractionPageCreateInput(page),
+          runId: params.runId,
+        })),
+      });
+    }
+
+    // Re-fetch the run for the return shape (include pages + overrides).
+    // updateMany above returned count===1 so the row exists; findUnique
+    // can't legitimately return null here. The non-null assertion below
+    // documents the invariant — Prisma would only return null if the row
+    // was deleted between updateMany and findUnique within the same tx,
+    // which is structurally impossible.
+    const run = await tx.documentExtractionRun.findUnique({
+      where: { id: params.runId },
       include: {
         pages: true,
         overrides: true,
       },
     });
+    if (!run) {
+      // Should be unreachable; throw a clear error if it ever happens.
+      throw new Error(
+        `completeDocumentExtractionRun: row ${params.runId} disappeared mid-tx`
+      );
+    }
 
     if (params.documentFinalization) {
       await tx.document.update({

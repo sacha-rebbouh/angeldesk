@@ -1,9 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -42,14 +40,34 @@ function toIso(value: string): string {
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
 }
 
+/**
+ * B12.2.b — submit state surfaced to the parent dialog (mirror of
+ * EmailForm). The submit button itself has moved from the bottom of
+ * the scroll container into the dialog's sticky footer.
+ */
+export interface NoteFormState {
+  canSubmit: boolean;
+  isSubmitting: boolean;
+  attachmentCount: number;
+}
+
+export const UPLOAD_NOTE_FORM_ID = "upload-note-form";
+
 export function NoteForm({
   dealId,
   onCreated,
   onError,
+  onStateChange,
 }: {
   dealId: string;
   onCreated: (document: UploadedDocumentSummary) => void;
   onError: (message: string) => void;
+  /**
+   * B12.2.b — emitted on every relevant state change so the parent
+   * dialog can render the sticky-footer submit button with the right
+   * disabled state + label. Optional for back-compat.
+   */
+  onStateChange?: (state: NoteFormState) => void;
 }) {
   const [title, setTitle] = useState("");
   const [occurredAt, setOccurredAt] = useState(toDateTimeLocal(new Date()));
@@ -60,6 +78,16 @@ export function NoteForm({
   const [linkedQuestion, setLinkedQuestion] = useState<LinkedQuestionInput | null>(null);
   const [attachments, setAttachments] = useState<CorpusAttachmentDraft[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // B12.2.b — surface submit-readiness to the parent dialog.
+  // canSubmit mirrors the legacy `disabled={isSubmitting || !body.trim()}`.
+  useEffect(() => {
+    onStateChange?.({
+      canSubmit: !isSubmitting && body.trim().length > 0,
+      isSubmitting,
+      attachmentCount: attachments.length,
+    });
+  }, [attachments.length, body, isSubmitting, onStateChange]);
 
   const submit = useCallback(async () => {
     if (!body.trim()) {
@@ -140,8 +168,25 @@ export function NoteForm({
     }
   }, [attachments, body, dealId, linkedQuestion, noteType, occurredAt, onCreated, onError, participants, title, type]);
 
+  // B12.2.b — the submit button lives in the dialog's sticky footer
+  // now. preventDefault stops the browser's default page reload;
+  // submit() drives the async POST identically to the pre-B12.2.b
+  // onClick path.
+  const handleFormSubmit = useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      void submit();
+    },
+    [submit]
+  );
+
   return (
-    <div className="space-y-4">
+    <form
+      id={UPLOAD_NOTE_FORM_ID}
+      onSubmit={handleFormSubmit}
+      className="space-y-4"
+      aria-label="Ajouter une note au corpus"
+    >
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="note-title">Titre</Label>
@@ -216,11 +261,6 @@ export function NoteForm({
       <QuestionPicker dealId={dealId} value={linkedQuestion} onChange={setLinkedQuestion} />
 
       <AttachmentInput value={attachments} onChange={setAttachments} disabled={isSubmitting} />
-
-      <Button type="button" onClick={submit} disabled={isSubmitting || !body.trim()} className="w-full">
-        {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-        Ajouter la note{attachments.length > 0 ? ` et ${attachments.length} fichier${attachments.length > 1 ? "s" : ""}` : ""} au corpus
-      </Button>
-    </div>
+    </form>
   );
 }

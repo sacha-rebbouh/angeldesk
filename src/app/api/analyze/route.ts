@@ -8,11 +8,17 @@ import {
   getUsageStatus,
   type AnalysisTier,
 } from "@/services/deal-limits";
-import { refundCredits, getActionForAnalysisType, CREDIT_COSTS } from "@/services/credits";
+import {
+  deductCreditAmount,
+  refundCreditAmount,
+  refundCredits,
+  getActionForAnalysisType,
+  CREDIT_COSTS,
+} from "@/services/credits";
 import { CUID_PATTERN } from "@/lib/sanitize";
 import { evaluateDealDocumentReadiness } from "@/services/documents/extraction-runs";
 import { claimFailedAnalysisResume, reserveFullAnalysisDispatch } from "@/services/analysis/guards";
-import { inngest } from "@/lib/inngest";
+import { inngest } from "@/lib/inngest-client";
 import { logger } from "@/lib/logger";
 
 // Vercel: Allow long-running analysis. Requires Pro plan (300s max).
@@ -191,6 +197,7 @@ export async function POST(request: NextRequest) {
       const resumeChargeKey = `resume:${user.id}:${resumeCandidate.id}:${resumeAttemptId}`;
       const resumeAction = getActionForAnalysisType(type);
       let resumeWasRedebited = false;
+      let resumeRedebitedAmount = 0;
 
       const resumeClaimed = await claimFailedAnalysisResume(resumeCandidate.id, dealId);
       if (!resumeClaimed) {
@@ -205,13 +212,19 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // P1 — Si l'analyse precedente a deja ete remboursee, elle a couvert
-      // l'ancien paiement. On re-facture la reprise (le user avait reçu son refund
-      // et decide de re-tenter). Sinon (pas de refund), l'analyse precedente est
-      // encore consideree comme "en cours" cote credits, pas de nouvelle facturation.
+      // Si l'analyse precedente a deja ete remboursee, elle a couvert l'ancien
+      // paiement. On re-facture uniquement le montant effectivement rembourse.
+      // Exemple thesis-first: Deep Dive facture 5cr, echec apres thesis rembourse
+      // 3cr; la reprise doit redemander 3cr, pas 5cr, sinon le ledger passe a
+      // -7cr pour une analyse qui doit rester plafonnee a -5cr.
       if (resumeCandidate.refundedAt) {
-        const resumeDeduction = await recordDealAnalysis(user.id, requestedTier, dealId, type, {
+        const fullCost = CREDIT_COSTS[resumeAction] ?? 0;
+        const refundAmount = resumeCandidate.refundAmount ?? fullCost;
+        const amountToRedebit = Math.max(0, Math.min(refundAmount, fullCost));
+        const resumeDeduction = await deductCreditAmount(user.id, resumeAction, amountToRedebit, {
+          dealId,
           idempotencyKey: resumeChargeKey,
+          description: `Reprise ${type} apres remboursement (${amountToRedebit} credits)`,
         });
         if (!resumeDeduction.success) {
           await prisma.analysis.update({
@@ -233,6 +246,7 @@ export async function POST(request: NextRequest) {
           );
         }
         resumeWasRedebited = true;
+        resumeRedebitedAmount = amountToRedebit;
         await prisma.analysis.update({
           where: { id: resumeCandidate.id },
           data: {
@@ -252,13 +266,15 @@ export async function POST(request: NextRequest) {
             dealId,
             userId: user.id,
             resumeRefundKey,
+            resumeRefundAmount: resumeRedebitedAmount,
           },
         });
       } catch (sendErr) {
-        if (resumeWasRedebited) {
-          await refundCredits(user.id, resumeAction, dealId, {
-            analysisId: resumeCandidate.id,
+        if (resumeWasRedebited && resumeRedebitedAmount > 0) {
+          await refundCreditAmount(user.id, resumeAction, resumeRedebitedAmount, {
+            dealId,
             idempotencyKey: resumeRefundKey,
+            description: `Remboursement reprise ${type} non planifiee`,
           });
         }
 
@@ -271,7 +287,7 @@ export async function POST(request: NextRequest) {
             ...(resumeWasRedebited
               ? {
                   refundedAt: new Date(),
-                  refundAmount: CREDIT_COSTS[resumeAction] ?? null,
+                  refundAmount: resumeRedebitedAmount,
                 }
               : {}),
           },

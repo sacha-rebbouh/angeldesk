@@ -6,7 +6,7 @@ import { queryKeys } from "@/lib/query-keys";
 import { clerkFetch } from "@/lib/clerk-fetch";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, Eye, FileSearch, FileText, Mail, MoreHorizontal, Pencil, Plus, StickyNote, Trash2 } from "lucide-react";
+import { AlertTriangle, Eye, FileSearch, FileText, Mail, MoreHorizontal, Pencil, Plus, RotateCw, StickyNote, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Card,
@@ -53,6 +53,11 @@ import {
   ExtractionQualityBadge,
   ExtractionWarningBanner,
 } from "./extraction-quality-badge";
+import { EvidenceHealthBadge } from "./evidence-health-badge";
+import { useEvidenceHealth } from "@/hooks/use-evidence-health";
+import { derivePollingDocumentIds, isTerminalDocumentStatus } from "@/lib/document-polling";
+import { formatStalenessAge, isDocumentStale } from "@/lib/document-staleness";
+import { cn } from "@/lib/utils";
 
 interface Document {
   id: string;
@@ -224,12 +229,14 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     setLocalDocuments(documents);
   }, [documents]);
 
+  // B3.1 — both PROCESSING and PENDING are polled. PENDING = Inngest hasn't
+  // picked up yet; without polling it would silently sit until another
+  // mutation refetches the deal payload. derivePollingDocumentIds enforces
+  // the rule in a pure, unit-tested helper.
   const processingDocumentIdsKey = useMemo(() => (
-    localDocuments
-      .filter((document) => document.processingStatus === "PROCESSING")
-      .map((document) => document.id)
-      .sort()
-      .join("|")
+    derivePollingDocumentIds(
+      localDocuments.map((doc) => ({ id: doc.id, processingStatus: doc.processingStatus }))
+    ).join("|")
   ), [localDocuments]);
 
   useEffect(() => {
@@ -239,6 +246,19 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     if (processingIds.length === 0) return;
 
     let cancelled = false;
+    // Codex round 26 P1 — `completeDocumentExtractionRun` flips the document
+    // to a terminal status BEFORE `runEvidenceForDocument` finishes persisting
+    // the EvidenceSignal rows (extraction-pipeline.ts:488 vs :511). A naive
+    // single invalidation on terminal-transition can refetch and cache an
+    // empty bundle for the full staleTime. We close the race with an
+    // immediate invalidation PLUS a deferred one ~4s later (typical evidence
+    // extraction completes well under that). Pending timeouts are cleared on
+    // unmount to avoid leaks.
+    const TERMINAL_EVIDENCE_RACE_FOLLOWUP_MS = 4_000;
+    const pendingFollowupTimeouts = new Set<number>();
+    const invalidateEvidenceHealth = () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
+    };
     const refreshProcessingDocuments = async () => {
       const refreshedDocuments = await Promise.all(processingIds.map(fetchDocument));
       if (cancelled) return;
@@ -248,6 +268,17 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
           .map((document) => [document.id, document])
       );
       if (refreshedById.size === 0) return;
+      // Codex round 25 P1 + B3.1.1 P2 — detect at least one non-terminal →
+      // terminal transition (PENDING / PROCESSING → COMPLETED / FAILED).
+      // The previous predicate `!== "PROCESSING"` matched PENDING too, so
+      // a doc that stayed PENDING across ticks fired a fake "transition"
+      // every 5s, triggering immediate + deferred evidence-health
+      // invalidation for no reason. The helper enforces the actual rule:
+      // a status that satisfies isTerminalDocumentStatus IS the transition,
+      // since we only ever poll non-terminal docs (PENDING + PROCESSING).
+      const hasTerminalTransition = Array.from(refreshedById.values()).some(
+        (document) => isTerminalDocumentStatus(document.processingStatus)
+      );
       setLocalDocuments((currentDocuments) =>
         currentDocuments.map((document) => {
           const refreshed = refreshedById.get(document.id);
@@ -256,6 +287,17 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
             : document;
         })
       );
+      if (hasTerminalTransition) {
+        // 1. Immediate invalidation — covers the case where evidence ran fast.
+        invalidateEvidenceHealth();
+        // 2. Deferred invalidation — covers the race window between
+        //    `completeDocumentExtractionRun` and `runEvidenceForDocument`.
+        const timeoutId = window.setTimeout(() => {
+          pendingFollowupTimeouts.delete(timeoutId);
+          if (!cancelled) invalidateEvidenceHealth();
+        }, TERMINAL_EVIDENCE_RACE_FOLLOWUP_MS);
+        pendingFollowupTimeouts.add(timeoutId);
+      }
     };
 
     const intervalId = window.setInterval(refreshProcessingDocuments, 5_000);
@@ -263,8 +305,10 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
+      for (const timeoutId of pendingFollowupTimeouts) window.clearTimeout(timeoutId);
+      pendingFollowupTimeouts.clear();
     };
-  }, [processingDocumentIdsKey]);
+  }, [processingDocumentIdsKey, queryClient, dealId]);
 
   // Fetch staleness info to know which documents were analyzed
   const { data: stalenessData } = useQuery({
@@ -272,6 +316,9 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     queryFn: () => fetchStaleness(dealId),
     staleTime: 30_000,
   });
+
+  // Phase 8 — evidence health for per-doc badges.
+  const { data: evidenceHealth } = useEvidenceHealth(dealId);
 
   // Set of document IDs that have been analyzed
   const analyzedDocIds = useMemo(() => {
@@ -362,6 +409,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     }
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
     queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
   }, [queryClient, dealId]);
 
@@ -390,6 +438,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       current?.id === documentId ? normalized : current
     ));
     queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
     queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
   }, [dealId, queryClient]);
 
@@ -397,6 +446,121 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
     setRenameDoc(doc);
     setNewName(doc.name);
   }, []);
+
+  // B3.1.1 P1 — concurrent-retry guard. A double-click on the FAILED
+  // retry button could otherwise race: request A flips the server to
+  // PROCESSING, request B gets 409 "already processing", and request B's
+  // catch clause reverts the local row to FAILED — UI lies while the
+  // extraction actually runs. The set blocks the second invocation
+  // synchronously, and the disabled state on the button (subscribed to the
+  // set) prevents the second click visually.
+  const [retryingDocumentIds, setRetryingDocumentIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+
+  /**
+   * B3.1 — retry extraction for a FAILED document. Calls the existing
+   * `POST /api/documents/[id]/process` route (Phase 4 durable extraction:
+   * the route claims PROCESSING, deducts credits, creates a new
+   * extraction run, enqueues an Inngest event). Optimistically transitions
+   * the local row to PROCESSING so the badge updates immediately and the
+   * polling effect picks it up. Failures revert and surface a toast.
+   *
+   * B3.1.1 — concurrency-safe: per-doc guard + 409 "already processing"
+   * is treated as success (the server confirms the doc IS processing,
+   * which is exactly the state we optimistically transitioned to).
+   */
+  const handleRetryExtraction = useCallback(
+    async (documentId: string) => {
+      // P1 — synchronous guard. Even if React hasn't re-rendered the button
+      // disabled state yet, a second invocation bails out cleanly.
+      if (retryingDocumentIds.has(documentId)) return;
+      const previous = localDocuments.find((d) => d.id === documentId);
+      if (!previous) return;
+      const previousStatus = previous.processingStatus;
+
+      setRetryingDocumentIds((prev) => {
+        const next = new Set(prev);
+        next.add(documentId);
+        return next;
+      });
+      // Optimistic local transition. The polling effect (PROCESSING + PENDING)
+      // will pick this row up on its next tick and observe the real transition
+      // when the server settles.
+      setLocalDocuments((current) =>
+        current.map((doc) =>
+          doc.id === documentId ? { ...doc, processingStatus: "PROCESSING" } : doc
+        )
+      );
+
+      const invalidateAfterRetry = () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
+        queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
+      };
+
+      try {
+        const response = await clerkFetch(`/api/documents/${documentId}/process`, {
+          method: "POST",
+        });
+        if (response.ok) {
+          toast.success("Extraction relancée");
+          invalidateAfterRetry();
+          return;
+        }
+        // B3.3.2 P1 — DISTINGUISH 409 reasons. Previous code treated ALL
+        // 409s as success, but /process now returns 409 for at least
+        // three distinct cases:
+        //   - reason=already_processing → race lost to a concurrent retry;
+        //     our optimistic PROCESSING is still correct → refetch.
+        //   - reason=not_stale → user clicked too soon; revert + toast.
+        //   - reason=analysis_running → deal-level gate; revert + toast.
+        //   - reason=wrong_status (e.g. COMPLETED) → revert + toast.
+        //   - reason=stale_retry_race (B3.3.3) → another worker won the race
+        //     after we terminalized the stale run; revert + toast (NOT success,
+        //     because we may have just killed the run that was working).
+        // Treating all as success silently swallowed real errors.
+        if (response.status === 409) {
+          const body = (await response.json().catch(() => ({}))) as {
+            error?: string;
+            reason?: string;
+          };
+          if (body.reason === "already_processing") {
+            invalidateAfterRetry();
+            return;
+          }
+          // Revert optimistic state and surface the server's message.
+          setLocalDocuments((current) =>
+            current.map((doc) =>
+              doc.id === documentId ? { ...doc, processingStatus: previousStatus } : doc
+            )
+          );
+          toast.error(body.error ?? "Le serveur refuse cette relance pour le moment.");
+          return;
+        }
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Reprocess HTTP ${response.status}`);
+      } catch (error) {
+        // Revert the optimistic state — leave the user looking at the same
+        // FAILED row they clicked retry on, with a clear toast.
+        setLocalDocuments((current) =>
+          current.map((doc) =>
+            doc.id === documentId ? { ...doc, processingStatus: previousStatus } : doc
+          )
+        );
+        const msg = error instanceof Error ? error.message : "Échec du redémarrage de l'extraction";
+        toast.error(msg);
+      } finally {
+        setRetryingDocumentIds((prev) => {
+          if (!prev.has(documentId)) return prev;
+          const next = new Set(prev);
+          next.delete(documentId);
+          return next;
+        });
+      }
+    },
+    [dealId, localDocuments, queryClient, retryingDocumentIds]
+  );
 
   const handleRename = useCallback(async () => {
     if (!renameDoc || !newName.trim()) return;
@@ -422,6 +586,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       );
       setRenameDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors du renommage");
     } finally {
@@ -453,6 +618,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       setDeleteDoc(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.staleness.byDeal(dealId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erreur lors de la suppression");
@@ -510,6 +676,7 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                       onOCRComplete={() => {
                         toast.success("OCR terminé");
                         queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
+                        queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
                         queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
                       }}
                     />
@@ -596,6 +763,11 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                                 </div>
 
                                 <div className="flex shrink-0 flex-wrap items-center gap-1">
+                                  {/* Phase 8 — Evidence health badge (contradictions, missing, freshness) */}
+                                  <EvidenceHealthBadge
+                                    summary={evidenceHealth?.byDocument[doc.id]}
+                                    compact
+                                  />
                                   {hasAnalysis && doc.processingStatus === "COMPLETED" && !analyzedDocIds.has(doc.id) && (
                                     <Badge
                                       variant="outline"
@@ -641,17 +813,82 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
                                           : undefined
                                       }
                                     >
+                                      {/* B3.1 — labels alignés avec le modal upload pour cohérence cross-surface. */}
                                       {doc.processingStatus === "COMPLETED"
                                         ? "Extrait"
                                         : doc.processingStatus === "PROCESSING"
-                                        ? "Traitement..."
+                                        ? "Extraction en cours"
                                         : doc.processingStatus === "PENDING"
-                                        ? "En attente"
+                                        ? "En attente d'extraction"
                                         : doc.processingStatus === "FAILED"
-                                        ? "Échec"
+                                        ? "Extraction échouée"
                                         : doc.processingStatus}
                                     </Badge>
                                   )}
+                                  {/* B3.3 — stale PROCESSING/PENDING surface.
+                                      Show a "Bloqué depuis Xmin" badge so the
+                                      user knows the run is stuck, then surface
+                                      the same retry button as FAILED. The
+                                      server's POST /api/documents/[id]/process
+                                      validates ownership, so non-owner can't
+                                      retry even if they construct the URL. */}
+                                  {(() => {
+                                    const staleness = isDocumentStale({
+                                      processingStatus: doc.processingStatus,
+                                      uploadedAt: doc.uploadedAt,
+                                    });
+                                    if (!staleness.stale) return null;
+                                    return (
+                                      <Badge
+                                        variant="outline"
+                                        className="gap-1 border-amber-400 bg-amber-50 text-amber-800"
+                                        title="L'extraction prend plus longtemps que prévu."
+                                      >
+                                        <AlertTriangle className="h-3 w-3" />
+                                        Bloqué depuis {formatStalenessAge(staleness.ageMs ?? 0)}
+                                      </Badge>
+                                    );
+                                  })()}
+                                  {/* B3.1 — retry on FAILED. POST /api/documents/[id]/process
+                                      claims PROCESSING + deducts credits + enqueues a new
+                                      extraction run.
+                                      B3.1.1 — disabled while a previous retry is still in
+                                      flight (prevents the double-click revert-to-FAILED race).
+                                      B3.3.1 (Codex P1 fixes):
+                                        - PDF only — `/process` returns 400 for non-PDF, so
+                                          the button would be a guaranteed no-op.
+                                        - PROCESSING never retried — the server returns 409
+                                          which the client treats as success (B3.1.1 logic
+                                          for double-click races). Without a real repair
+                                          endpoint, a "retry" on PROCESSING is a silent no-op.
+                                          The "Bloqué depuis" badge still surfaces visibility.
+                                        - PENDING needs stale (server validates too). */}
+                                  {doc.mimeType === "application/pdf" &&
+                                    (doc.processingStatus === "FAILED" ||
+                                      (doc.processingStatus === "PENDING" &&
+                                        isDocumentStale({
+                                          processingStatus: doc.processingStatus,
+                                          uploadedAt: doc.uploadedAt,
+                                        }).stale)) && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                          void handleRetryExtraction(doc.id);
+                                        }}
+                                        disabled={retryingDocumentIds.has(doc.id)}
+                                        title="Relancer l'extraction"
+                                        aria-label={`Relancer l'extraction de ${doc.name}`}
+                                      >
+                                        <RotateCw
+                                          className={cn(
+                                            "mr-1 h-4 w-4",
+                                            retryingDocumentIds.has(doc.id) && "animate-spin"
+                                          )}
+                                        />
+                                        Réessayer
+                                      </Button>
+                                    )}
                                   {isTextCorpus ? (
                                     <Button
                                       variant="ghost"
@@ -748,7 +985,31 @@ export const DocumentsTab = memo(function DocumentsTab({ dealId, documents }: Do
       <DocumentExtractionAuditDialog
         open={!!auditDoc}
         onOpenChange={(open) => !open && setAuditDoc(null)}
-        document={auditDoc}
+        // B6.1 — pass dealId + sourceDate through so the audit dialog
+        // can wire the Metadata Editor (CalendarDays button → opens
+        // DocumentMetadataDialog). Older callers of
+        // DocumentExtractionAuditDialog without these fields keep
+        // working — the button gates on dealId being present.
+        document={
+          auditDoc
+            ? {
+                id: auditDoc.id,
+                name: auditDoc.name,
+                dealId,
+                sourceDate: auditDoc.sourceDate ?? null,
+                // B6.2 — forward type + sourceKind so the metadata
+                // dialog can pre-fill its dropdowns with the current
+                // values (vs always defaulting to the placeholder).
+                type: auditDoc.type ?? null,
+                sourceKind: auditDoc.sourceKind ?? null,
+                // B6.3 — forward email metadata for pre-fill in the
+                // metadata editor's email section.
+                receivedAt: auditDoc.receivedAt ?? null,
+                sourceAuthor: auditDoc.sourceAuthor ?? null,
+                sourceSubject: auditDoc.sourceSubject ?? null,
+              }
+            : null
+        }
         onDocumentUpdated={refreshLocalDocument}
       />
 

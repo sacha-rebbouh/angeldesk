@@ -29,7 +29,35 @@ export function inferEmailSourceFromExtractedText(params: {
   currentSourceKind?: SourceKind | null;
   existingSourceDate?: Date | string | null;
   corpusParentDocumentId?: string | null;
+  /**
+   * B6.2.1 fix-up (Codex P1) — the Document.sourceMetadata blob as
+   * it currently lives in the DB. If the user has explicitly set
+   * `manual.sourceKind` via the metadata editor (B6.2), the inference
+   * MUST bail regardless of the manual VALUE — even if the manual
+   * override is `FILE` (the previous gate only checked
+   * `currentSourceKind !== "FILE"`, so a user correcting a false-
+   * positive email back to FILE would still see the inference
+   * re-write `sourceKind: EMAIL` on the next reprocess).
+   *
+   * Optional for backward compat: callers that don't have the
+   * sourceMetadata in scope (legacy tests, partial fixtures) get the
+   * pre-B6.2.1 behaviour. The pipeline call site reads + passes it.
+   */
+  sourceMetadata?: unknown;
 }): InferredEmailSource | null {
+  // B6.2.1 → B6.3 — ANY email-related manual override blocks the
+  // inference. The inference returns a payload that overwrites ALL
+  // email fields together (sourceKind, sourceDate, receivedAt,
+  // sourceAuthor, sourceSubject, sourceMetadata). If the user has
+  // explicitly corrected ANY of them, re-firing the inference would
+  // either silently overwrite the manual value or — worse —
+  // partially overwrite and leave the doc in a mixed state. Bail
+  // entirely is the only safe contract.
+  //
+  // The check fires BEFORE the currentSourceKind check so a
+  // manual=FILE override is respected even though FILE would
+  // otherwise be the "auto-inferable" state.
+  if (hasManualEmailMetadataOverride(params.sourceMetadata)) return null;
   if (params.currentSourceKind && params.currentSourceKind !== "FILE") return null;
   if (params.existingSourceDate) return null;
   if (params.corpusParentDocumentId) return null;
@@ -168,4 +196,43 @@ function extractGmailInlineMessages(text: string, seen: Set<string>): InferredEm
   }
 
   return messages;
+}
+
+/**
+ * B6.3 — detect ANY manual override on email-related metadata inside
+ * `Document.sourceMetadata`. Replaces / generalises B6.2.1's
+ * `hasManualSourceKindOverride` because the inference overwrites
+ * ALL email fields atomically, so a partial override (e.g. only
+ * `manual.receivedAt`) still needs to block the inference.
+ *
+ * Fields that gate the inference (PRESENCE of the audit-trail block
+ * under `manual.*`, not its value):
+ *   - sourceKind (B6.2)
+ *   - sourceDate (B6.1)
+ *   - receivedAt (B6.3)
+ *   - sourceAuthor (B6.3)
+ *   - sourceSubject (B6.3)
+ *
+ * Defensive against non-object shapes (null / array / scalar) — any
+ * of those means "no manual context" and the check returns false.
+ */
+const EMAIL_RELATED_MANUAL_KEYS = [
+  "sourceKind",
+  "sourceDate",
+  "receivedAt",
+  "sourceAuthor",
+  "sourceSubject",
+] as const;
+
+function hasManualEmailMetadataOverride(value: unknown): boolean {
+  if (!isPlainObjectMetadata(value)) return false;
+  const manual = value.manual;
+  if (!isPlainObjectMetadata(manual)) return false;
+  return EMAIL_RELATED_MANUAL_KEYS.some((key) =>
+    Object.prototype.hasOwnProperty.call(manual, key)
+  );
+}
+
+function isPlainObjectMetadata(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

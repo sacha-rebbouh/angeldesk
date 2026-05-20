@@ -204,7 +204,7 @@ export class DeckForensicsAgent extends BaseAgent<DeckForensicsDataV2, DeckForen
       description: "Analyse forensique approfondie du pitch deck - Standard Big4/VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 150000, // 2.5 min pour analyse approfondie
+      timeoutMs: 280000, // Leaves headroom under the 300s Inngest/Vercel ceiling.
       dependencies: ["document-extractor"],
     });
   }
@@ -555,7 +555,15 @@ FORMAT DE REPONSE JSON
 
 RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum artificiel.`;
 
-    const { data } = await this.llmCompleteJSON<LLMDeckForensicsResponse>(prompt);
+    const { data } = await this.llmCompleteJSON<LLMDeckForensicsResponse>(prompt, {
+      // Production B16 showed a valid Gemini Pro response arriving around 180s
+      // while the old 150s agent timeout had already marked the required agent
+      // failed. Use a realistic provider budget, and avoid same-model retries on
+      // this expensive prompt; a true timeout should fail cleanly, not burn a
+      // second full prompt.
+      timeoutMs: 260000,
+      maxRetries: 0,
+    });
 
     // Validate and normalize response
     const result = this.normalizeResponse(data);

@@ -29,6 +29,21 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_DPI = 200;
 const BUNDLED_BIN_REL = "vendor/poppler/al2023-x64/bin/pdftoppm";
 const BUNDLED_LIB_REL = "vendor/poppler/al2023-x64/lib";
+const DEFAULT_BUNDLED_BIN = path.join(
+  process.cwd(),
+  "vendor",
+  "poppler",
+  "al2023-x64",
+  "bin",
+  "pdftoppm"
+);
+const DEFAULT_BUNDLED_LIB = path.join(
+  process.cwd(),
+  "vendor",
+  "poppler",
+  "al2023-x64",
+  "lib"
+);
 const EXEC_TIMEOUT_MS = 60_000;
 
 interface ResolvedBinary {
@@ -64,24 +79,22 @@ function isBundleCompatibleWithCurrentPlatform(): boolean {
   return process.platform === "linux" && process.arch === "x64";
 }
 
-async function resolvePdftoppm(cwd: string): Promise<ResolvedBinary> {
+async function resolvePdftoppm(paths: { bundledBin: string; bundledLib: string }): Promise<ResolvedBinary> {
   const envBin = process.env.POPPLER_BIN?.trim();
   if (envBin && (await isExecutable(envBin))) {
     return { binPath: envBin, libDir: null, source: "env" };
   }
 
   if (isBundleCompatibleWithCurrentPlatform()) {
-    const bundledBin = path.join(cwd, BUNDLED_BIN_REL);
-    const bundledLib = path.join(cwd, BUNDLED_LIB_REL);
-    if (await isExecutable(bundledBin)) {
+    if (await isExecutable(paths.bundledBin)) {
       let libDir: string | null = null;
       try {
-        const libStat = await stat(bundledLib);
-        if (libStat.isDirectory()) libDir = bundledLib;
+        const libStat = await stat(paths.bundledLib);
+        if (libStat.isDirectory()) libDir = paths.bundledLib;
       } catch {
         libDir = null;
       }
-      return { binPath: bundledBin, libDir, source: "bundle" };
+      return { binPath: paths.bundledBin, libDir, source: "bundle" };
     }
   }
 
@@ -99,10 +112,17 @@ async function resolvePdftoppm(cwd: string): Promise<ResolvedBinary> {
 export class PopplerRenderer implements PdfRenderer {
   public readonly id = "poppler" as const;
 
-  private readonly cwd: string;
+  private readonly bundledBin: string;
+  private readonly bundledLib: string;
 
   constructor(options: { cwd?: string } = {}) {
-    this.cwd = options.cwd ?? process.cwd();
+    if (options.cwd) {
+      this.bundledBin = path.join(/*turbopackIgnore: true*/ options.cwd, BUNDLED_BIN_REL);
+      this.bundledLib = path.join(/*turbopackIgnore: true*/ options.cwd, BUNDLED_LIB_REL);
+    } else {
+      this.bundledBin = DEFAULT_BUNDLED_BIN;
+      this.bundledLib = DEFAULT_BUNDLED_LIB;
+    }
   }
 
   async renderPage(
@@ -114,7 +134,10 @@ export class PopplerRenderer implements PdfRenderer {
       throw new Error(`[PopplerRenderer] invalid pageNumber: ${pageNumber}`);
     }
     const dpi = options.dpi ?? DEFAULT_DPI;
-    const resolved = await resolvePdftoppm(this.cwd);
+    const resolved = await resolvePdftoppm({
+      bundledBin: this.bundledBin,
+      bundledLib: this.bundledLib,
+    });
 
     const workDir = await mkdtemp(path.join(tmpdir(), "arc-light-poppler-"));
     const pdfPath = path.join(workDir, "input.pdf");

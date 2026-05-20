@@ -37,7 +37,7 @@ vi.mock("@/services/credits", () => ({
   refundCreditAmount: vi.fn(),
 }));
 
-vi.mock("@/lib/inngest", () => ({
+vi.mock("@/lib/inngest-client", () => ({
   inngest: {
     send: mocks.inngestSend,
   },

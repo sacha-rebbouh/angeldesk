@@ -74,6 +74,10 @@ const nextConfig: NextConfig = {
     "/api/documents/[documentId]/preview-pages/[pageNumber]": [
       "./vendor/poppler/al2023-x64/**",
     ],
+    // B15.1 — Inter TTFs referenced by pdf-theme.ts via runtime path.join
+    // (untraceable by @vercel/nft static analysis). Force-include so the
+    // export-pdf serverless function can read them from /var/task/public/fonts.
+    "/api/deals/[dealId]/export-pdf": ["./public/fonts/**"],
   },
   experimental: {
     proxyClientMaxBodySize: "50mb",

@@ -35,12 +35,28 @@ export const ChatWrapper = memo(function ChatWrapper({
   const handleOpen = useCallback(() => setIsOpen(true), []);
   const handleClose = useCallback(() => setIsOpen(false), []);
 
+  // B12.4 P1 #7 — the FAB (`fixed right-4 bottom-4 h-12`) overlaps the
+  // bottom of the deal page content on mobile / narrow viewports. The
+  // Evidence Health audit showed this on 390x844 where a "Renseigner
+  // la date — <doc>" action button sat partially under the FAB,
+  // reducing the tap target by ~30%. The fix adds bottom padding to
+  // the content wrapper on viewports where the FAB is visible (sub-md
+  // = the FAB's effective overlap zone), and zero padding on md+ where
+  // the FAB sits next to the right edge but content has enough horizontal
+  // space that overlap is rare. The FAB stays fixed; only the content
+  // shrinks to leave room.
+  //
+  // Padding accounts for: bottom-4 (16px) + h-12 (48px) + tap target
+  // breathing room (~16px) = ~80px → `pb-20` (5rem).
+  const mobileFabPadding = !isOpen ? "pb-20 md:pb-0" : "";
+
   // Split view: when chat is open, content shrinks on large screens (F86)
   if (children) {
     return (
       <div className="flex gap-0">
         <div className={cn(
           "flex-1 min-w-0 transition-all duration-300",
+          mobileFabPadding,
           isOpen && "lg:pr-[42%]"
         )}>
           {children}

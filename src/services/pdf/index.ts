@@ -28,7 +28,6 @@ export {
   selectiveOCR,
   smartExtract,
   estimateOCRCost,
-  processImageOCR,
   detectPageSignals,
   type OCRResult,
   type PageOCRResult,
@@ -39,6 +38,8 @@ export {
   type ExtractionTier,
   type OCRMode
 } from "./ocr-service";
+
+export { processImageOCR, type ImageOCRFormat } from "./image-ocr";
 
 export {
   DOCUMENT_PAGE_ARTIFACT_V1,

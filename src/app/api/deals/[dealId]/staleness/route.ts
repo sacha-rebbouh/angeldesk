@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getLatestAnalysisStaleness, getUnanalyzedDocuments } from "@/services/analysis-versioning";
-import { requireAuth } from "@/lib/auth";
+import { authenticateOrUnauthorized } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
@@ -16,8 +16,12 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ dealId: string }> }
 ) {
+  // B11.3.1 (Codex P2) — explicit 401 contract.
+  const auth = await authenticateOrUnauthorized();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
+
   try {
-    const user = await requireAuth();
     const { dealId } = await params;
 
     // Validate dealId format (CUID)

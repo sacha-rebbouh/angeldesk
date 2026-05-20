@@ -9,16 +9,26 @@ import {
   NarrativeSchema,
 } from "./common";
 
+const OptionalNumberFromNullable = z.preprocess(
+  (value) => value === null ? undefined : value,
+  z.number().optional()
+);
+
+const OptionalPercentileFromNullable = z.preprocess(
+  (value) => value === null ? undefined : value,
+  z.number().min(0).max(100).optional()
+);
+
 const MetricSchema = z.object({
   metric: z.string(),
   status: z.enum(["available", "missing", "suspicious"]),
-  reportedValue: z.number().optional(),
-  calculatedValue: z.number().optional(),
+  reportedValue: OptionalNumberFromNullable,
+  calculatedValue: OptionalNumberFromNullable,
   calculation: z.string().optional(),
-  benchmarkP25: z.number().optional(),
-  benchmarkMedian: z.number().optional(),
-  benchmarkP75: z.number().optional(),
-  percentile: z.number().min(0).max(100).optional(),
+  benchmarkP25: OptionalNumberFromNullable,
+  benchmarkMedian: OptionalNumberFromNullable,
+  benchmarkP75: OptionalNumberFromNullable,
+  percentile: OptionalPercentileFromNullable,
   assessment: z.string(),
   source: z.string(),
   dataReliability: DataReliabilityEnum.optional(),

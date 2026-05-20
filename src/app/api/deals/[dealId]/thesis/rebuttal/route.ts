@@ -16,7 +16,7 @@ import { handleApiError } from "@/lib/api-error";
 import { thesisService } from "@/services/thesis";
 import { thesisRebuttalJudgeAgent } from "@/agents/thesis/rebuttal-judge";
 import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
-import { inngest } from "@/lib/inngest";
+import { inngest } from "@/lib/inngest-client";
 import { logger } from "@/lib/logger";
 import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
 import { getCurrentFactString } from "@/services/deals/canonical-read-model";

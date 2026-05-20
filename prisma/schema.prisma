@@ -27,6 +27,7 @@ model User {
   webhooks                    Webhook[]
   liveSessions                LiveSession[]
   documentExtractionOverrides DocumentExtractionOverride[]
+  evidenceSignalResolutions   EvidenceSignalResolution[] // Phase B9 — who marked which signal resolved/ignored
 
   // Credit system
   creditBalance      UserCreditBalance?
@@ -177,18 +178,19 @@ model Deal {
   // Conditions analysis cache (full AI output)
   conditionsAnalysis Json? // Cache résultat complet conditions-analyst
 
-  documents         Document[]
-  founders          Founder[]
-  redFlags          RedFlag[]
-  analyses          Analysis[]
-  factEvents        FactEvent[]
-  dealTerms         DealTerms?
-  dealStructure     DealStructure?
-  dealTermsVersions DealTermsVersion[]
-  alertResolutions  AlertResolution[]
-  liveSessions      LiveSession[]
-  corpusSnapshots   CorpusSnapshot[]
-  theses            Thesis[] // Thesis-first — toutes les versions de these extraites pour ce deal
+  documents                 Document[]
+  founders                  Founder[]
+  redFlags                  RedFlag[]
+  analyses                  Analysis[]
+  factEvents                FactEvent[]
+  dealTerms                 DealTerms?
+  dealStructure             DealStructure?
+  dealTermsVersions         DealTermsVersion[]
+  alertResolutions          AlertResolution[]
+  liveSessions              LiveSession[]
+  corpusSnapshots           CorpusSnapshot[]
+  theses                    Thesis[] // Thesis-first — toutes les versions de these extraites pour ce deal
+  evidenceSignalResolutions EvidenceSignalResolution[] // Phase B9 — user-level resolved/ignored overlay on EvidenceHealth signals
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -325,8 +327,13 @@ model Document {
   analyses              AnalysisDocument[]
   corpusSnapshotMembers CorpusSnapshotMember[]
 
+  // Evidence signals (temporal/provenance/claim) — see EvidenceSignal model.
+  evidenceSignals EvidenceSignal[] @relation("DocumentEvidenceSignals")
+
   uploadedAt DateTime @default(now())
 
+  // Composite unique required by EvidenceSignal cross-tenant FK (documentId, dealId).
+  @@unique([id, dealId], name: "document_id_dealId")
   @@index([dealId])
   @@index([processingStatus])
   @@index([contentHash])
@@ -437,6 +444,11 @@ model DocumentExtractionRun {
   analysisLinks AnalysisExtractionRun[]
   corpusSnapshotMembers CorpusSnapshotMember[]
 
+  // Evidence signals produced by this extraction run.
+  evidenceSignals EvidenceSignal[] @relation("DocumentExtractionRunEvidenceSignals")
+
+  // Composite unique required by EvidenceSignal cross-document run FK (extractionRunId, documentId).
+  @@unique([id, documentId], name: "extraction_run_id_documentId")
   @@index([documentId])
   @@index([status])
   @@index([readyForAnalysis])
@@ -2520,4 +2532,182 @@ model SessionSummary {
   condensedIntel Json? // CondensedTranscriptIntel — structured, token-efficient extract
 
   createdAt DateTime @default(now())
+}
+
+// ============================================================
+// EVIDENCE SIGNAL — structured temporal/provenance/claim facts
+// extracted from documents. Distinct from FactStore (cross-doc
+// facts) and EvidenceLedger (per-page numericClaims).
+// See docs-private/evidence-engine-audit.md +
+//     docs-private/evidence-engine-phase1-schema.md (révision 3).
+//
+// Integrity invariants:
+//   1. Cross-tenant: composite FK (documentId, dealId) → Document(id, dealId)
+//      blocks signals where document.dealId mismatches the supplied dealId.
+//   2. Cross-document run: composite FK (extractionRunId, documentId) →
+//      DocumentExtractionRun(id, documentId) blocks signals pointing to a
+//      run that belongs to a different document. NULL-safe (MATCH SIMPLE).
+//   3. Idempotence: unique tuple (documentId, documentVersion,
+//      signalScopeKey, kind, signalHash). All NON-NULL. NULL ≠ NULL bypass
+//      cannot duplicate filename/human/import signals.
+//   4. signalHash computed on PLAINTEXT canonical form BEFORE encryption.
+//   5. evidenceText AND valueJson are encrypted at rest.
+// ============================================================
+model EvidenceSignal {
+  id String @id @default(cuid())
+
+  // ---------- Cross-tenant integrity (invariant #1) ----------
+  documentId String
+  dealId     String
+  document   Document @relation("DocumentEvidenceSignals", fields: [documentId, dealId], references: [id, dealId], onDelete: Cascade)
+
+  // ---------- Lifecycle: document version ----------
+  documentVersion Int
+
+  // ---------- Producer scope key (invariant #3, NON-NULL) ----------
+  // Canonical values: "run:<extractionRunId>" | "filename" | "human:<overrideId>" | "import:<batchId>"
+  signalScopeKey String
+
+  // ---------- Provenance: cross-document run integrity (invariant #2) ----------
+  extractionRunId String?
+  extractionRun   DocumentExtractionRun? @relation("DocumentExtractionRunEvidenceSignals", fields: [extractionRunId, documentId], references: [id, documentId], onDelete: Cascade)
+
+  // ---------- Lifecycle: extractor + source content ----------
+  extractorVersion String
+  sourceTextHash   String?
+
+  // ---------- Classification ----------
+  kind EvidenceSignalKind
+
+  // ---------- Payload (ENCRYPTED, invariant #5) ----------
+  // Stored as encryptJsonField() envelope; reads via safeDecryptJsonField().
+  valueJson Json
+
+  // ---------- Temporal axes (CLEAR — indexable) ----------
+  dateStart  DateTime?
+  dateEnd    DateTime?
+  asOfDate   DateTime?
+  reportedAt DateTime?
+
+  // ---------- Quality (CLEAR — indexable) ----------
+  precision  EvidenceSignalPrecision  @default(UNKNOWN)
+  confidence EvidenceSignalConfidence
+
+  // ---------- Source method (CLEAR) ----------
+  sourceMethod EvidenceSignalMethod
+
+  // ---------- Evidence anchor ----------
+  evidenceText String? @db.Text // encryptText() envelope; plaintext quote ≤ 280 chars
+  pageNumber   Int?
+  sheetName    String?
+  charOffset   Int?
+
+  // ---------- Idempotence (invariant #3, #4) ----------
+  signalHash String
+
+  // ---------- Extension (CLEAR — locked-down rule) ----------
+  // NEVER OCR excerpts. NEVER full prompts. NEVER raw financial claims.
+  // Validated by Zod schema in service layer (createEvidenceSignal()).
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  // ---------- Indexes ----------
+  // Unique tuple — ALL FIELDS NON-NULL → NULL ≠ NULL bypass impossible.
+  @@unique([documentId, documentVersion, signalScopeKey, kind, signalHash])
+  @@index([dealId, kind])
+  @@index([dealId, asOfDate])
+  @@index([documentId, kind])
+  @@index([extractionRunId, documentId])
+  @@index([kind, confidence])
+  @@index([signalScopeKey])
+}
+
+enum EvidenceSignalKind {
+  DOCUMENT_DATE
+  EMAIL_SENT_AT
+  CAP_TABLE_AS_OF
+  BALANCE_SHEET_AS_OF
+  FINANCIAL_PERIOD_ACTUAL
+  FINANCIAL_PERIOD_FORECAST
+  ATTACHMENT_RELATION
+  EMAIL_LIKE_WARNING
+  STALE_DOCUMENT_WARNING
+  VALUATION_CLAIM
+  METRIC_CLAIM
+}
+
+enum EvidenceSignalPrecision {
+  YEAR
+  MONTH
+  DAY
+  RANGE
+  UNKNOWN
+}
+
+enum EvidenceSignalConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum EvidenceSignalMethod {
+  DETERMINISTIC
+  LLM
+  HUMAN_OVERRIDE
+  IMPORT
+}
+
+// ============================================================================
+// Phase B9 — Evidence Signal Resolution (Corpus Control panel)
+// ============================================================================
+//
+// User-level action on Evidence Health signals: RESOLVED (the BA confirms
+// the underlying issue was handled — e.g. they uploaded the missing cap
+// table) or IGNORED (the BA assumes the signal, e.g. a known
+// non-actionable contradiction). We NEVER delete the underlying
+// EvidenceSignal rows — they remain the audit-of-record. The resolution
+// row is the user's overlay.
+//
+// Identity strategy (signalKey):
+//   The key is a deterministic string built from the IDENTITY-defining
+//   fields of the panel finding (kind + subject + year for
+//   contradictions, kind + documentId? for missing/freshness). It is
+//   INSENSITIVE to display wording (reason/severity/message) — the
+//   Codex point of attention: a small change in wording should NOT
+//   re-create the warning. See services/evidence/signal-identity.ts.
+//
+// Cardinality:
+//   One row per (dealId, signalKey) — `@@unique([dealId, signalKey])`.
+//   Action toggle = UPDATE in place (preserves trace of the latest
+//   user decision); un-resolution = DELETE the row.
+model EvidenceSignalResolution {
+  id        String                         @id @default(cuid())
+  dealId    String
+  // Stable identity key — see services/evidence/signal-identity.ts.
+  // Cap intentionally high to accommodate future signal kinds without
+  // a migration. Validated server-side via Zod (signal-identity.ts).
+  signalKey String                         @db.VarChar(512)
+  action    EvidenceSignalResolutionAction
+  // Optional free-text reason the BA may supply. We CAP server-side
+  // (Zod, 1000 chars) so the column never holds an unbounded blob.
+  reason    String?                        @db.Text
+  userId    String
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One resolution per signal per deal — the action toggle updates in
+  // place rather than appending. Anti-spam + obvious lookup index.
+  @@unique([dealId, signalKey])
+  @@index([dealId])
+  @@index([userId])
+}
+
+enum EvidenceSignalResolutionAction {
+  RESOLVED
+  IGNORED
 }

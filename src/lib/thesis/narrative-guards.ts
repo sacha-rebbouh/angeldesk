@@ -20,7 +20,10 @@ const DIRECT_METRIC_RULES = [
   },
   {
     factKey: "traction.customers_count",
-    patterns: [/\bclients?\b/i],
+    patterns: [
+      /\b(?:nombre|nb|base)\s+de\s+clients?\b/i,
+      /\bclients?\s+(?:actifs?|payants?|signes?|signés?|servis?)\b/i,
+    ],
   },
   {
     factKey: "traction.users_count",
@@ -73,6 +76,8 @@ const DERIVED_METRIC_RULES = [
   },
 ];
 
+const NON_NUMERIC_BUSINESS_MODEL_PATTERN = /\bB2B(?:2C|toC)?\b|\bB2C\b/gi;
+
 export interface ThesisNarrativeGuardIssue {
   field: string;
   sentence: string;
@@ -87,7 +92,9 @@ function splitIntoSentences(text: string): string[] {
 }
 
 function containsNumericAssertion(sentence: string): boolean {
-  return /\d|[%€$£]|\b(?:m|bn|million|millions|milliard|milliards|x)\b/i.test(sentence);
+  return /\d|[%€$£]|\b(?:eur|usd|nok|gbp|bn|million|millions|milliard|milliards|x)\b/i.test(
+    sentence.replace(NON_NUMERIC_BUSINESS_MODEL_PATTERN, "")
+  );
 }
 
 function extractFirstPercentage(sentence: string): number | null {

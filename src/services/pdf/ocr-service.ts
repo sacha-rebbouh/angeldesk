@@ -696,7 +696,7 @@ async function processSelectedPdfPages(
     signal?: AbortSignal;
   } = {}
 ): Promise<PageOCRResult[]> {
-  const renderer = createRenderer();
+  const renderer = await createRenderer();
   const targetPageNumbers = [...new Set(pagesToProcess.map((idx) => idx + 1))].sort(
     (a, b) => a - b
   );
@@ -739,7 +739,7 @@ async function processAllPdfPages(
     signal?: AbortSignal;
   } = {}
 ): Promise<PageOCRResult[]> {
-  const renderer = createRenderer();
+  const renderer = await createRenderer();
   const mode = options.mode ?? "standard";
   const scale = options.scale ?? 1.5;
 

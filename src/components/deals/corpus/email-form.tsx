@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,14 +50,44 @@ function deriveSubject(body: string): string {
     ?.slice(0, 120) ?? "Email ajouté au corpus";
 }
 
+/**
+ * B12.2.b — submit state surfaced to the parent dialog.
+ *
+ * The submit button itself has moved from the bottom of the scroll
+ * container into the dialog's sticky footer (so it stays visible on
+ * 1366x768 / 390x844 / 900x600 without scrolling — P0 #1). The
+ * footer button uses HTML form-association (`form="upload-email-form"`)
+ * to trigger this form's submit; this hook lets the dialog reflect
+ * disabled / loading / label-suffix state.
+ */
+export interface EmailFormState {
+  /** false while body is empty OR submission is in flight. */
+  canSubmit: boolean;
+  /** Spinner / disabled state on the footer button. */
+  isSubmitting: boolean;
+  /** Drives the "+ N fichier(s)" suffix on the footer button label. */
+  attachmentCount: number;
+}
+
+export const UPLOAD_EMAIL_FORM_ID = "upload-email-form";
+
 export function EmailForm({
   dealId,
   onCreated,
   onError,
+  onStateChange,
 }: {
   dealId: string;
   onCreated: (document: UploadedDocumentSummary) => void;
   onError: (message: string) => void;
+  /**
+   * B12.2.b — emitted on every relevant state change so the parent
+   * dialog can render the sticky-footer submit button with the right
+   * disabled state + label. Optional for callers that still embed the
+   * form without the sticky-footer pattern (none currently, kept for
+   * back-compat).
+   */
+  onStateChange?: (state: EmailFormState) => void;
 }) {
   const [body, setBody] = useState("");
   const [subject, setSubject] = useState("");
@@ -69,6 +99,17 @@ export function EmailForm({
   const [linkedQuestion, setLinkedQuestion] = useState<LinkedQuestionInput | null>(null);
   const [attachments, setAttachments] = useState<CorpusAttachmentDraft[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // B12.2.b — surface submit-readiness so the parent dialog can drive
+  // its sticky-footer button. canSubmit mirrors the legacy
+  // `disabled={isSubmitting || !body.trim()}` exactly.
+  useEffect(() => {
+    onStateChange?.({
+      canSubmit: !isSubmitting && body.trim().length > 0,
+      isSubmitting,
+      attachmentCount: attachments.length,
+    });
+  }, [attachments.length, body, isSubmitting, onStateChange]);
 
   const applyExtraction = useCallback((raw: string) => {
     const extracted = extractEmailMetadata(raw);
@@ -161,8 +202,26 @@ export function EmailForm({
     }
   }, [attachments, body, dealId, from, linkedQuestion, onCreated, onError, receivedAt, sentAt, subject, to, type]);
 
+  // B12.2.b — the submit button lives in the dialog's sticky footer
+  // now (form-association via id). The form needs a proper onSubmit
+  // handler so the footer button (type="submit" form="upload-email-form")
+  // can trigger it. preventDefault stops the browser's default page
+  // reload — submit() drives the async POST.
+  const handleFormSubmit = useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      void submit();
+    },
+    [submit]
+  );
+
   return (
-    <div className="space-y-4">
+    <form
+      id={UPLOAD_EMAIL_FORM_ID}
+      onSubmit={handleFormSubmit}
+      className="space-y-4"
+      aria-label="Ajouter un email au corpus"
+    >
       <div className="space-y-2">
         <Label htmlFor="email-body">Email</Label>
         <Textarea
@@ -245,11 +304,6 @@ export function EmailForm({
       <QuestionPicker dealId={dealId} value={linkedQuestion} onChange={setLinkedQuestion} />
 
       <AttachmentInput value={attachments} onChange={setAttachments} disabled={isSubmitting} />
-
-      <Button type="button" onClick={submit} disabled={isSubmitting || !body.trim()} className="w-full">
-        {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-        Ajouter l&apos;email{attachments.length > 0 ? ` et ${attachments.length} fichier${attachments.length > 1 ? "s" : ""}` : ""} au corpus
-      </Button>
-    </div>
+    </form>
   );
 }

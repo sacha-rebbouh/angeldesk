@@ -13,7 +13,27 @@ interface RouteParams {
   params: Promise<{ documentId: string }>;
 }
 
-// GET /api/documents/[documentId] - Fetch one document status
+/**
+ * GET /api/documents/[documentId] — fetch one document.
+ *
+ * Optional `?includeText=1` decrypts and returns `extractedText`
+ * (the raw OCR plaintext). This is a LEGITIMATE owner-only
+ * plaintext surface — used by:
+ *   - src/components/deals/document-preview-dialog.tsx (fallback
+ *     when the file is not previewable inline);
+ *   - src/components/deals/text-preview-dialog.tsx (text-only
+ *     corpus pieces — emails, notes).
+ * The same IDOR guard as every other read path protects it: the
+ * document must belong to a deal owned by the caller. Without that
+ * guard, an authenticated user could decrypt another tenant's OCR
+ * by guessing document ids.
+ *
+ * B11.2 (Codex P2) — the IDOR guard is now a single composite
+ * `findFirst` (`id + deal.userId`) returning **404 uniformly**
+ * whether the doc doesn't exist OR is owned by someone else.
+ * Anti-enumeration: a stranger can't distinguish "id valid but not
+ * mine" (403) from "id never existed" (404) anymore.
+ */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const user = await requireAuth();
@@ -25,9 +45,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const document = await prisma.document.findFirst({
-      where: { id: documentId },
+      where: { id: documentId, deal: { userId: user.id } },
       include: {
-        deal: { select: { userId: true } },
         corpusParentDocument: { select: { id: true, name: true } },
       },
     });
@@ -36,12 +55,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
 
-    if (document.deal.userId !== user.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-    }
-
     const includeText = request.nextUrl.searchParams.get("includeText") === "1";
-    const { deal, storageUrl, storagePath, ...data } = document;
+    const { storageUrl, storagePath, ...data } = document;
     if (includeText && data.extractedText) {
       data.extractedText = safeDecrypt(data.extractedText);
     } else {
@@ -76,21 +91,19 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
 
-    // Verify ownership through deal
+    // B11.2 (Codex P2) — IDOR uniformised to 404. Composite find
+    // (id + deal.userId) returns null whether the doc doesn't exist
+    // OR is owned by someone else. Anti-enumeration on the rename
+    // surface — a stranger can't probe doc ids by reading 403 vs 404.
     const document = await prisma.document.findFirst({
-      where: { id: documentId },
+      where: { id: documentId, deal: { userId: user.id } },
       include: {
-        deal: { select: { userId: true } },
         corpusParentDocument: { select: { id: true, name: true } },
       },
     });
 
     if (!document) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
-    }
-
-    if (document.deal.userId !== user.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
     const updated = await prisma.document.update({
@@ -119,21 +132,19 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Invalid document ID format" }, { status: 400 });
     }
 
-    // Verify ownership through deal
+    // B11.2 (Codex P2) — IDOR uniformised to 404 (composite find).
+    // Anti-enumeration on DELETE: a stranger probing doc ids gets
+    // the same 404 whether the row exists in another tenant or
+    // never existed.
     const document = await prisma.document.findFirst({
-      where: { id: documentId },
+      where: { id: documentId, deal: { userId: user.id } },
       include: {
-        deal: { select: { userId: true } },
         corpusParentDocument: { select: { id: true, name: true } },
       },
     });
 
     if (!document) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
-    }
-
-    if (document.deal.userId !== user.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
     // Delete from storage. Some legacy rows only carry `storagePath` (no

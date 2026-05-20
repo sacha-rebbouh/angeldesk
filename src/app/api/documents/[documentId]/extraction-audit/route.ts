@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireAuth } from "@/lib/auth";
+import { authenticateOrUnauthorized } from "@/lib/auth-helpers";
 import { handleApiError } from "@/lib/api-error";
 import { safeDecrypt, safeDecryptJsonField, tryDecryptJsonField } from "@/lib/encryption";
 import { prisma } from "@/lib/prisma";
@@ -15,8 +15,13 @@ type RouteParams = {
 };
 
 export async function GET(_request: NextRequest, context: RouteParams) {
+  // B11.3.1 (Codex P2) — explicit 401 contract for auth failures.
+  // Previously `requireAuth` throw fell through to handleApiError → 500.
+  const auth = await authenticateOrUnauthorized();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
+
   try {
-    const user = await requireAuth();
     const { documentId } = await context.params;
 
     const idCheck = cuidSchema.safeParse(documentId);

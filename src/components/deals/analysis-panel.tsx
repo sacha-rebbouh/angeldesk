@@ -36,6 +36,7 @@ import {
   Tier3ResultsSkeleton,
 } from "./loading-skeletons";
 import { EarlyWarningsPanel } from "./early-warnings-panel";
+import { EvidenceHealthPanel } from "./evidence-health-panel";
 import type { EarlyWarning } from "@/types";
 import { ThesisHeroCard } from "./thesis/thesis-hero-card";
 import { ThesisReviewModal } from "./thesis/thesis-review-modal";
@@ -1275,6 +1276,9 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
           </CardContent>
         </Card>
       )}
+
+      {/* Corpus control is pre-analysis: surface it before the paid AI action. */}
+      <EvidenceHealthPanel dealId={dealId} />
 
       {/* Launch Analysis Card - sticky at top */}
       {!isAnalyzing && (

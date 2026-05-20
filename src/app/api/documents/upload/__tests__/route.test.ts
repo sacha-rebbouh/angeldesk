@@ -77,6 +77,9 @@ vi.mock("@/services/analysis/guards", () => ({
   isPendingThesisReview: mocks.isPendingThesisReview,
 }));
 vi.mock("@/services/credits", () => ({
+  // B10.1 — route reads the flag; default OFF (extraction not billed
+  // at upload, including image OCR pre-check and PDF pre-charge).
+  CHARGE_DOCUMENT_EXTRACTION_CREDITS: false,
   deductCreditAmount: mocks.deductCreditAmount,
   refundCreditAmount: mocks.refundCreditAmount,
 }));
@@ -101,7 +104,7 @@ vi.mock("@/services/documents/extraction-reuse", () => ({
 vi.mock("@/services/pdf", () => ({
   estimatePdfExtractionCost: mocks.estimatePdfExtractionCost,
 }));
-vi.mock("@/lib/inngest", () => ({
+vi.mock("@/lib/inngest-client", () => ({
   inngest: { send: mocks.inngestSend },
 }));
 
@@ -227,7 +230,7 @@ describe("POST /api/documents/upload — Phase 4.2 durable PDF hand-off", () => 
     mocks.dealFindFirst.mockResolvedValue({ id: dealId, userId });
   });
 
-  it("enqueues a durable document/extraction.run event for a PDF and does NOT extract inline", async () => {
+  it("enqueues a durable document/extraction.run event for a PDF and does NOT extract inline (B10.1: chargedCredits=0)", async () => {
     const response = await POST(buildPdfMultipartRequest() as never);
 
     expect(response.status).toBe(201);
@@ -245,7 +248,10 @@ describe("POST /api/documents/upload — Phase 4.2 durable PDF hand-off", () => 
         dealId,
         reason: "upload",
         creditAction: "EXTRACTION_HIGH_PAGE",
-        chargedCredits: 4,
+        // B10.1 — pre-charge is skipped, payload carries 0. The
+        // worker's reconcile-extraction-credits step is gated on
+        // CHARGE_DOCUMENT_EXTRACTION_CREDITS and short-circuits.
+        chargedCredits: 0,
         reconcileCredits: true,
         dispatchRefundKey: expect.stringMatching(/^extraction:refund:pdf-fail:/),
       }),
@@ -256,30 +262,16 @@ describe("POST /api/documents/upload — Phase 4.2 durable PDF hand-off", () => 
     expect(payload.extraction).toMatchObject({ pending: true });
   });
 
-  it("pre-charges the worst-case estimate BEFORE enqueueing", async () => {
+  it("B10.1 — does NOT pre-charge credits at upload while the flag is false (ledger conservation)", async () => {
     await POST(buildPdfMultipartRequest() as never);
 
-    expect(mocks.deductCreditAmount).toHaveBeenCalledWith(
-      userId,
-      "EXTRACTION_HIGH_PAGE",
-      4,
-      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^extraction:pre:pdf:/) })
-    );
-    const deductOrder = mocks.deductCreditAmount.mock.invocationCallOrder[0];
-    const sendOrder = mocks.inngestSend.mock.invocationCallOrder[0];
-    expect(deductOrder).toBeLessThan(sendOrder);
+    // Spec gate: extraction is free, the user's balance is never
+    // touched at upload. Anchors both the pre-check AND any other
+    // EXTRACTION_HIGH_PAGE deduct site in this route file.
+    expect(mocks.deductCreditAmount).not.toHaveBeenCalled();
   });
 
-  it("returns 402 and never enqueues when the PDF pre-charge fails", async () => {
-    mocks.deductCreditAmount.mockResolvedValue({ success: false, error: "Insufficient credits" });
-
-    const response = await POST(buildPdfMultipartRequest() as never);
-    expect(response.status).toBe(402);
-    expect(mocks.inngestSend).not.toHaveBeenCalled();
-    expect(mocks.startDocumentExtractionRun).not.toHaveBeenCalled();
-  });
-
-  it("returns 5xx (NOT a success 201) + refunds + terminalizes the orphan run when inngest.send throws", async () => {
+  it("B10.1 — when inngest.send throws: NO refund (no pre-charge), but PROCESSING reverts + orphan run terminalizes", async () => {
     mocks.inngestSend.mockRejectedValue(new Error("Inngest unreachable"));
 
     const response = await POST(buildPdfMultipartRequest() as never);
@@ -288,12 +280,9 @@ describe("POST /api/documents/upload — Phase 4.2 durable PDF hand-off", () => 
     // Phase 1 rule "failed upload → no success toast"). It throws an
     // UploadRequestError(503) the client surfaces as an error.
     expect(response.status).toBe(503);
-    expect(mocks.refundCreditAmount).toHaveBeenCalledWith(
-      userId,
-      "EXTRACTION_HIGH_PAGE",
-      4,
-      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^extraction:refund:pdf-fail:/) })
-    );
+    // B10.1 — refund is gated on pdfPreChargedCredits > 0. No
+    // pre-charge ⇒ no refund. Anchors "no ghost credit creation".
+    expect(mocks.refundCreditAmount).not.toHaveBeenCalled();
     expect(mocks.terminalizeExtractionRunAsFailed).toHaveBeenCalledWith(
       "run_pdf_1",
       expect.stringContaining("Inngest unreachable")

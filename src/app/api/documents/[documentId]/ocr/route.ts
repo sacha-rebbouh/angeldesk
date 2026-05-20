@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import type { ProcessingStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/auth";
+import { authenticateOrUnauthorized } from "@/lib/auth-helpers";
 import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { downloadFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
@@ -16,7 +16,7 @@ import {
   startDocumentExtractionRun,
 } from "@/services/documents/extraction-runs";
 import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
-import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
+import { CHARGE_DOCUMENT_EXTRACTION_CREDITS, deductCreditAmount, refundCreditAmount } from "@/services/credits";
 
 export const maxDuration = 300;
 
@@ -26,25 +26,27 @@ interface RouteParams {
 
 // POST /api/documents/[documentId]/ocr - Force OCR on a PDF document
 export async function POST(request: NextRequest, { params }: RouteParams) {
+  // B11.3.1 (Codex P2) — explicit 401 contract.
+  const auth = await authenticateOrUnauthorized();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
+
   let claimedDocumentId: string | null = null;
   let claimedOriginalStatus: ProcessingStatus | null = null;
   let refundContext: { userId: string; dealId: string; documentId: string; requestId: string } | null = null;
   let chargedCredits = 0;
   try {
-    const user = await requireAuth();
     const { documentId } = await params;
 
-    const document = await prisma.document.findUnique({
-      where: { id: documentId },
-      include: { deal: { select: { userId: true } } },
+    // B11.2 (Codex P2) — composite ownership find returning 404
+    // uniformly. Replaces the old findUnique → 403 split (404 vs 403
+    // disclosure on doc id enumeration).
+    const document = await prisma.document.findFirst({
+      where: { id: documentId, deal: { userId: user.id } },
     });
 
     if (!document) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
-    }
-
-    if (document.deal.userId !== user.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
     const runningAnalysis = await getRunningAnalysisForDeal(document.dealId);
     if (runningAnalysis) {
@@ -115,7 +117,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       onProgress: async (event) => {
         if (event.phase === "native_extracted") {
           const estimatedCredits = Math.max(0, event.pageCount);
-          if (estimatedCredits > 0 && chargedCredits === 0) {
+          // B10.1 — extraction is not billed separately while
+          // `CHARGE_DOCUMENT_EXTRACTION_CREDITS` is false. We skip
+          // the deduct AND leave `chargedCredits` at 0 so the catch
+          // block's refund-on-failure path is a guaranteed no-op
+          // (refund is gated on `chargedCredits > 0`).
+          if (CHARGE_DOCUMENT_EXTRACTION_CREDITS && estimatedCredits > 0 && chargedCredits === 0) {
             const deduction = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", estimatedCredits, {
               dealId: document.dealId,
               documentId,

@@ -42,3 +42,6 @@ export {
   FULL_DEAL_PACKAGE_CREDITS,
   getActionForAnalysisType,
 } from './types';
+
+// Phase B10.1 — billing feature flags.
+export { CHARGE_DOCUMENT_EXTRACTION_CREDITS } from './feature-flags';
