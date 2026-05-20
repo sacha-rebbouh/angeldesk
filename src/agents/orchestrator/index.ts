@@ -1833,7 +1833,7 @@ export class AgentOrchestrator {
         // Emit event Inngest (non-bloquant) pour signaler au worker qu'il peut transitioner
         // vers step.waitForEvent. En dev/tests sans Inngest, c'est un no-op propre.
         try {
-          const { inngest: inngestClient } = await import("@/lib/inngest");
+          const { inngest: inngestClient } = await import("@/lib/inngest-client");
           await inngestClient.send({
             name: "analysis/thesis.review-required",
             data: {
@@ -2769,11 +2769,6 @@ export class AgentOrchestrator {
         `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
       );
 
-      // EARLY ABORT: Only Phase A (deck-forensics) is truly critical — it validates the deck
-      // and provides foundational analysis that all other agents depend on.
-      // Phase B (financial-auditor) failure is logged but does NOT abort: the remaining
-      // 11 agents (team, market, competitive, tech, legal, etc.) don't depend on it directly.
-      // question-master will run in degraded mode without financial red flags.
       if (phase.name.includes("Phase A") && phaseFailCount > 0) {
         const failedNames = phaseResults
           .filter(r => !r.result.success)
@@ -3265,8 +3260,12 @@ export class AgentOrchestrator {
     enableTrace: boolean,
     corpusSnapshot?: CorpusSnapshotMaterialization | null,
   ): Promise<ThesisExtractorOutput | null> {
+    const startTime = Date.now();
+    let thesisResultForDiagnostics: AgentResult | null = null;
+
     try {
       const thesisResult = await thesisExtractorAgent.run(enrichedContext, { enableTrace });
+      thesisResultForDiagnostics = thesisResult;
       allResults["thesis-extractor"] = thesisResult;
 
       if (!thesisResult.success || !("data" in thesisResult)) {
@@ -3323,6 +3322,20 @@ export class AgentOrchestrator {
       );
       return thesisOutput;
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      allResults["thesis-extractor"] = thesisResultForDiagnostics
+        ? {
+            ...thesisResultForDiagnostics,
+            success: false,
+            error: `Post-processing failed: ${message}`,
+          }
+        : {
+            agentName: "thesis-extractor",
+            success: false,
+            executionTimeMs: Date.now() - startTime,
+            cost: 0,
+            error: message,
+          };
       console.error(`[Orchestrator:ThesisExtraction] Crashed (non-fatal):`, err);
       return null;
     }
@@ -4519,8 +4532,9 @@ export class AgentOrchestrator {
 
       // Resume based on current state
       if (currentState === "ANALYZING" || currentState === "GATHERING") {
-        // Need to run remaining AND previously failed Tier 1 agents
-        // Previously failed agents are retried (they may succeed with fresh LLM calls)
+        // Need to run remaining AND previously failed Tier 1 agents.
+        // Previously failed agents are retried after the underlying cause has
+        // been fixed; required Tier 1 output must not be silently skipped.
         const pendingTier1 = TIER1_AGENT_NAMES.filter(
           (name) => !completedSet.has(name)
         );

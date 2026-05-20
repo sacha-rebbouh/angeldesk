@@ -123,4 +123,52 @@ describe("thesis narrative guards", () => {
     expect(issues).toHaveLength(1);
     expect(issues[0]?.reason).toContain("does not match validated metric 25.0%");
   });
+
+  it("does not treat B2B, B2C, or B2B2C labels as unsupported numeric claims", () => {
+    expect(
+      findUnsupportedThesisNarrativeClaims(
+        {
+          reformulated: "La société adresse un marché B2B avec des cas B2B2C et B2BtoC.",
+          solution: "Le produit peut aussi être vendu en B2C.",
+        },
+        buildThesisFactScope([])
+      )
+    ).toEqual([]);
+  });
+
+  it("does not treat CAC or LTV wording as a missing customers_count claim", () => {
+    expect(
+      findUnsupportedThesisNarrativeClaims(
+        {
+          solution:
+            "Le coût d'acquisition client déclaré est de 122 EUR. La valeur vie client estimée atteint 4 808 EUR.",
+        },
+        buildThesisFactScope([])
+      )
+    ).toEqual([]);
+  });
+
+  it("does not treat French words starting with m as numeric million markers", () => {
+    expect(
+      findUnsupportedThesisNarrativeClaims(
+        {
+          solution:
+            "Le ratio LTV/CAC déclaré suggère une économie unitaire favorable, mais la méthodologie de calcul reste à détailler.",
+        },
+        buildThesisFactScope([])
+      )
+    ).toEqual([]);
+  });
+
+  it("still flags explicit customer-count narratives when customers_count is absent", () => {
+    const issues = findUnsupportedThesisNarrativeClaims(
+      {
+        solution: "La société revendique une base de clients de 420 comptes.",
+      },
+      buildThesisFactScope([])
+    );
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.reason).toContain("traction.customers_count");
+  });
 });

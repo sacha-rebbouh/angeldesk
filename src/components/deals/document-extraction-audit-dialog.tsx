@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -8,28 +8,39 @@ import {
   ChevronRight,
   CheckCircle,
   Clipboard,
+  Download,
   ExternalLink,
   FileSearch,
   Loader2,
+  Pencil,
   Search,
+  X,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+// B10.2 — direct import (no barrel) so a client component can read the
+// flag without pulling in server-only credit-service modules.
+import { CHARGE_DOCUMENT_EXTRACTION_CREDITS } from "@/services/credits/feature-flags";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { clerkFetch } from "@/lib/clerk-fetch";
 import { cn } from "@/lib/utils";
+import { queryKeys } from "@/lib/query-keys";
+import { DocumentMetadataDialog } from "./document-metadata-dialog";
+import { DocumentAttachmentsPanel } from "./document-attachments-panel";
 
 interface ExtractionAuditDialogProps {
   open: boolean;
@@ -37,6 +48,22 @@ interface ExtractionAuditDialogProps {
   document: {
     id: string;
     name: string;
+    // B6.1 — dealId + sourceDate widened on the prop so the metadata
+    // editor can pre-fill the current date and target the right deal
+    // for invalidation. Optional to keep callers without the full
+    // Document shape backward-compatible (the metadata editor button
+    // gates on dealId being present).
+    dealId?: string;
+    sourceDate?: string | Date | null;
+    // B6.2 — type + sourceKind so the metadata editor pre-fills the
+    // two new selects with the document's current values. Same
+    // optional-for-backward-compat policy.
+    type?: string | null;
+    sourceKind?: string | null;
+    // B6.3 — email metadata for pre-fill in the metadata editor.
+    receivedAt?: string | Date | null;
+    sourceAuthor?: string | null;
+    sourceSubject?: string | null;
   } | null;
   onDocumentUpdated?: (documentId: string) => void | Promise<void>;
 }
@@ -365,6 +392,10 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   const [query, setQuery] = useState("");
   const [pageFilter, setPageFilter] = useState<AuditPageFilter>("review");
   const [selectedPage, setSelectedPage] = useState<number | null>(null);
+  // B6.1 — open/close state for the metadata editor dialog (sourceDate
+  // override). Kept local to the audit dialog because the metadata
+  // dialog is contextually scoped to "the doc currently audited".
+  const [metadataDialogOpen, setMetadataDialogOpen] = useState(false);
   const [reprocessStartedAt, setReprocessStartedAt] = useState<number | null>(null);
   // Phase 4: /process now returns 202 (enqueued) instead of running the
   // extraction inline. We hold the enqueued run id and poll the audit
@@ -391,7 +422,17 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
 
   const audit = data?.data;
   const excelModelAudit = audit?.document.excelModelAudit ?? null;
-  const isPdfDocument = audit?.document.mimeType === "application/pdf";
+  // B5.3 round 2 — route the middle preview surface by document category
+  // (not by "has pageToInspect or not"). The earlier B5.3 fix only
+  // handled the no-pages branch; but uploaded images DO create one
+  // extraction page, so they were still going through PageSourcePreview
+  // with isPdf=false and hitting the generic !previewImageUrl fallback.
+  // Same for Office files with extracted sheets/slides. The category
+  // computed here drives the JSX branch below: only "pdf" gets the
+  // per-page rasterisation flow; everything else (image, office, other)
+  // routes through EmptyDocumentPreview which already knows how to
+  // render images inline + Office-specific fallbacks.
+  const documentCategory = categorizeDocumentMime(audit?.document.mimeType ?? null);
   const pages = useMemo(() => audit?.latestRun?.pages ?? [], [audit?.latestRun?.pages]);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredPages = useMemo(() => {
@@ -731,8 +772,19 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
   if (!document) return null;
 
   return (
+    // B6.1 — fragment so the audit Dialog and the metadata Dialog are
+    // peers, not parent/child. They share `open` controls only via the
+    // metadata button + their independent state.
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* B5.2 — disable shadcn's absolute X (top-4 right-4). It used to
+          sit ABOVE the action cluster (the `pr-12` on the header was a
+          collision-avoidance trick, not actual alignment). With our own
+          DialogClose inside the action cluster, all header actions live
+          on the same horizontal line and wrap together on narrow
+          viewports — no overlap is structurally possible. */}
       <DialogContent
+        showCloseButton={false}
         className="!fixed !left-1/2 !top-1/2 !max-w-none !translate-x-[-50%] !translate-y-[-50%] relative flex flex-col gap-0 overflow-hidden p-0"
         style={{
           width: "min(1480px, calc(100vw - 24px))",
@@ -741,34 +793,125 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
           maxHeight: "calc(100dvh - 24px)",
         }}
       >
-        <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <DialogTitle className="flex min-w-0 items-center gap-2 text-base">
+        {/* B5.2 — header. flex-wrap so the action cluster wraps to a new
+            line on narrow widths instead of compressing the title or
+            clipping the close button. `pr-12` is REMOVED — the close
+            button is now part of the action cluster, no reservation
+            needed. `min-w-0` on the title flex item lets the truncate
+            actually engage when the cluster is wide. */}
+        <DialogHeader className="shrink-0 border-b px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <DialogTitle className="flex min-w-0 flex-1 items-center gap-2 text-base">
               <FileSearch className="h-5 w-5 shrink-0" />
-              <span className="truncate">Audit extraction - {document.name}</span>
+              <span className="truncate" title={document.name}>
+                Audit extraction — {document.name}
+              </span>
             </DialogTitle>
-            {audit?.corpus.text && (
-              <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {audit?.corpus.text && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={startReprocess}
+                    disabled={extractionActionPending}
+                  >
+                    {reprocessMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileSearch className="mr-2 h-4 w-4" />
+                    )}
+                    Relancer extraction
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={copyCorpus}>
+                    <Clipboard className="mr-2 h-4 w-4" />
+                    Copier le corpus
+                  </Button>
+                </>
+              )}
+              {/* B6.1 — "Modifier la date" action. Available for any doc
+                  the dialog can open (so the user can correct a missing
+                  sourceDate on a deck without an audit having run yet).
+                  Opens DocumentMetadataDialog which PATCHes
+                  /api/documents/[id]/metadata + invalidates evidence
+                  health on success — gates in promote-source-date.ts +
+                  email-source-inference.ts ensure the manual date stays
+                  protected from future extractor / backfill writes. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setMetadataDialogOpen(true)}
+                aria-label="Modifier les métadonnées du document"
+                title="Modifier les métadonnées (date, type, nature)"
+              >
+                {/* B12.3 P1 #4 — icon swap. The previous CalendarDays
+                    icon was semantically wrong: it suggested "date"
+                    while the button edits date + type + sourceKind.
+                    On mobile (sub-md, where the text label collapses
+                    to icon-only) the calendar icon misled users into
+                    expecting a date picker. Pencil is the standard
+                    "edit" affordance and matches what the button
+                    actually does. */}
+                <Pencil className="mr-2 h-4 w-4" />
+                {/* B6.2.1 — label widened to match what the modal
+                    actually edits (date + type + sourceKind). The old
+                    "Modifier la date" was a B6.1-era leftover that
+                    under-sold the action's scope. */}
+                <span className="hidden md:inline">Modifier les métadonnées</span>
+              </Button>
+              {/* B5.2 — modal-level "open in new tab" + "download" of the
+                  ORIGINAL document (vs the page preview image, which has
+                  its own actions inside PageSourcePreview). Both routes
+                  already exist (`?disposition=inline` vs default
+                  attachment) — we only surface them in the UI here. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  window.open(
+                    `/api/documents/${document.id}/download?disposition=inline`,
+                    "_blank",
+                    "noopener,noreferrer"
+                  )
+                }
+                aria-label="Ouvrir le document dans un nouvel onglet"
+                title="Ouvrir dans un nouvel onglet"
+              >
+                <ExternalLink className="mr-2 h-4 w-4" />
+                <span className="hidden md:inline">Nouvel onglet</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  window.open(
+                    `/api/documents/${document.id}/download`,
+                    "_blank",
+                    "noopener,noreferrer"
+                  )
+                }
+                aria-label="Télécharger le document original"
+                title="Télécharger le document"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                <span className="hidden md:inline">Télécharger</span>
+              </Button>
+              {/* B5.2 — replace shadcn's absolute X. DialogClose handles
+                  the actual close lifecycle (focus restore, animations);
+                  asChild + our custom Button gives consistent visual
+                  weight with the surrounding outline buttons. */}
+              <DialogClose asChild>
                 <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={startReprocess}
-                  disabled={extractionActionPending}
-                  className="w-fit"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Fermer l'audit extraction"
+                  title="Fermer"
+                  className="h-8 w-8"
                 >
-                  {reprocessMutation.isPending ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileSearch className="mr-2 h-4 w-4" />
-                  )}
-                  Relancer extraction renforcee
+                  <X className="h-4 w-4" />
                 </Button>
-                <Button variant="outline" size="sm" onClick={copyCorpus} className="w-fit">
-                  <Clipboard className="mr-2 h-4 w-4" />
-                  Copier le corpus
-                </Button>
-              </div>
-            )}
+              </DialogClose>
+            </div>
           </div>
         </DialogHeader>
 
@@ -794,11 +937,28 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                   <MetricPill label="Couverture" value={audit.latestRun ? `${audit.latestRun.pagesProcessed}/${audit.latestRun.pageCount}` : "Legacy"} />
                   <MetricPill label="Qualite" value={audit.document.extractionQuality === null ? "N/A" : `${audit.document.extractionQuality}%`} />
                   <MetricPill label="Corpus" value={`${audit.corpus.wordCount} mots`} />
+                  {/* B10.2 — extraction is not billed to the user while
+                      CHARGE_DOCUMENT_EXTRACTION_CREDITS is false. Don't
+                      surface the estimated credit cost as if the user
+                      were charged for it. B10.2.1 — make the no-cost
+                      state explicit: always show "Incluse" when the
+                      flag is off (instead of leaking the corpus hash
+                      as the headline value). The hash, when it exists,
+                      moves to the tooltip for the engineering signal.
+                      When the flag flips on, the credit value
+                      reappears as the headline automatically. */}
                   <MetricPill
                     label="Extraction"
-                    value={audit.latestRun?.creditEstimate
-                      ? `${audit.latestRun.creditEstimate.estimatedCredits} credits`
-                      : audit.latestRun?.corpusTextHash?.slice(0, 10) ?? "N/A"}
+                    value={
+                      CHARGE_DOCUMENT_EXTRACTION_CREDITS && audit.latestRun?.creditEstimate
+                        ? `${audit.latestRun.creditEstimate.estimatedCredits} credits`
+                        : "Incluse"
+                    }
+                    title={
+                      !CHARGE_DOCUMENT_EXTRACTION_CREDITS && audit.latestRun?.corpusTextHash
+                        ? `Corpus hash: ${audit.latestRun.corpusTextHash.slice(0, 10)}`
+                        : undefined
+                    }
                   />
                   {reviewPages.length > 0 && (
                     <Badge className="bg-amber-100 text-amber-800">
@@ -811,8 +971,18 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                 )}
               </div>
 
-              <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[280px_minmax(0,1fr)_minmax(360px,440px)]">
-                <aside className="flex min-h-0 flex-col border-b bg-background lg:border-b-0 lg:border-r">
+              {/* B12.3 P1 #5 — at sub-lg the 3-col grid collapses to a
+                  vertical stack (aside 1 = pages list, main = preview,
+                  aside 2 = tabs). Pre-fix the outer was `overflow-hidden`
+                  which clipped any content past the dialog's height —
+                  on 900x600 / 390x844 the main's empty-state CTAs were
+                  hidden under the tabs aside. Switching to `overflow-y-auto`
+                  at sub-lg lets the user scroll the whole stack to reach
+                  the CTAs. `lg:overflow-hidden` restores the original
+                  clipping at lg+, where the 3-col layout fits side-by-side
+                  and each column has its own internal scroll. */}
+              <div className="grid min-h-0 flex-1 overflow-y-auto lg:overflow-hidden lg:grid-cols-[280px_minmax(0,1fr)_minmax(360px,440px)]">
+                <aside className="flex flex-col border-b bg-background lg:min-h-0 lg:border-b-0 lg:border-r">
                   <div className="space-y-3 border-b p-3">
                     <div className="relative">
                       <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -847,7 +1017,10 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                     </div>
                   </div>
 
-                  <div className="min-h-[180px] flex-1 space-y-1 overflow-y-auto p-2">
+                  {/* B12.3 P1 #5 — same lg-only scroll pattern as
+                      main: at sub-lg let the page list grow inline
+                      and rely on the outer grid's scroll. */}
+                  <div className="min-h-[180px] flex-1 space-y-1 p-2 lg:overflow-y-auto">
                     {pageListPages.length === 0 ? (
                       <div className="rounded border border-dashed p-3 text-sm text-muted-foreground">
                         Aucune page dans ce filtre.
@@ -889,8 +1062,27 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                   </div>
                 </aside>
 
-                <main className="min-h-0 overflow-y-auto border-b bg-muted/10 p-4 lg:border-b-0 lg:border-r">
-                  {pageToInspect ? (
+                {/* B12.3 P1 #5 — main has its own internal scroll at
+                    lg+ (where it sits in a 3-col grid with a constrained
+                    height). At sub-lg the outer grid container scrolls,
+                    so main should grow to its natural content height
+                    instead of clipping its CTAs at ~141px (which hid
+                    the empty-state "Ouvrir / Télécharger" buttons on
+                    900x600). `lg:overflow-y-auto` keeps the lg
+                    behaviour and lets sub-lg use the outer scroll. */}
+                <main className="border-b bg-muted/10 p-4 lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+                  {/* B5.3 round 2 — category-first routing. Only PDFs
+                      with an extracted page get the per-page rasterised
+                      preview (PageSourcePreview). Images, Office files,
+                      and "other" mimes — even when they have one or more
+                      extracted pages — route through EmptyDocumentPreview,
+                      which renders the image inline (image branch) or
+                      the category-specific fallback CTAs (office / other).
+                      This closes the B5.3 P1 hole where an uploaded
+                      image with one extraction page would still hit the
+                      generic "Preview source indisponible" because
+                      pageToInspect was set but isPdf was false. */}
+                  {documentCategory === "pdf" && pageToInspect ? (
                     <div className="mx-auto flex min-h-full max-w-5xl flex-col gap-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
@@ -910,7 +1102,6 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                         page={pageToInspect}
                         documentId={audit.document.id}
                         documentName={audit.document.name}
-                        isPdf={isPdfDocument}
                         preloadImageUrls={getAdjacentPreviewImageUrls(
                           audit.document.id,
                           pages,
@@ -919,18 +1110,34 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                       />
                     </div>
                   ) : (
-                    <div className="flex h-full items-center justify-center rounded border border-dashed text-sm text-muted-foreground">
-                      Aucune page extraite
-                    </div>
+                    // Non-PDF docs OR PDF-with-no-pages. EmptyDocumentPreview
+                    // owns the routing internally: image branch (inline
+                    // render via /download?disposition=inline), Office
+                    // / PDF-no-pages / other branches (category-aware
+                    // download CTAs).
+                    <EmptyDocumentPreview
+                      documentId={audit.document.id}
+                      documentName={audit.document.name}
+                      mimeType={audit.document.mimeType ?? null}
+                    />
                   )}
                 </main>
 
-                <aside className="min-h-0 overflow-hidden bg-background">
+                {/* B12.3 P1 #5 — same lg-only overflow pattern for the
+                    right aside (Extraction/Corpus/Liens tabs). At
+                    sub-lg the inner tab content grows inline. */}
+                <aside className="bg-background lg:min-h-0 lg:overflow-hidden">
                   <Tabs defaultValue="extraction" className="flex h-full min-h-0 flex-col">
                     <div className="border-b p-3">
-                      <TabsList className="grid w-full grid-cols-2">
+                      {/* B7.1 — third tab "Liens" surfaces detected
+                          ATTACHMENT_RELATION signals (read-only).
+                          Grid extended to 3 cols. Excel modal audit
+                          stays a separate sub-trigger to avoid
+                          cluttering the primary 3-col row. */}
+                      <TabsList className="grid w-full grid-cols-3">
                         <TabsTrigger value="extraction">Extraction</TabsTrigger>
                         <TabsTrigger value="corpus">Corpus</TabsTrigger>
+                        <TabsTrigger value="links">Liens</TabsTrigger>
                       </TabsList>
                       {excelModelAudit && (
                         <TabsList className="mt-2 w-full">
@@ -939,7 +1146,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                       )}
                     </div>
 
-                    <TabsContent value="extraction" className="min-h-0 flex-1 overflow-y-auto p-4">
+                    <TabsContent value="extraction" className="min-h-0 flex-1 p-4 lg:overflow-y-auto">
                       {pageToInspect ? (
                         <div className="flex min-h-full flex-col gap-3">
                           {pageToInspect.errorMessage && (
@@ -1032,7 +1239,16 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                                     disabled={extractionActionPending}
                                   >
                                     {batchRetryMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    Retenter toutes ({reviewPages.length * 2} credits max)
+                                    {/* B10.2 — the "(N credits max)" tag was the only
+                                        visible billing cue on this batch CTA. While
+                                        extraction is non-billable
+                                        (CHARGE_DOCUMENT_EXTRACTION_CREDITS=false),
+                                        show the workload size in pages instead. The
+                                        cost branch is preserved for the eventual
+                                        flag flip. */}
+                                    {CHARGE_DOCUMENT_EXTRACTION_CREDITS
+                                      ? `Retenter toutes (${reviewPages.length * 2} credits max)`
+                                      : `Retenter toutes (${reviewPages.length} pages)`}
                                   </Button>
                                 )}
                               </div>
@@ -1046,7 +1262,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                       )}
                     </TabsContent>
 
-                    <TabsContent value="corpus" className="min-h-0 flex-1 overflow-y-auto p-4">
+                    <TabsContent value="corpus" className="min-h-0 flex-1 p-4 lg:overflow-y-auto">
                       <Textarea
                         readOnly
                         value={audit.corpus.text}
@@ -1054,8 +1270,22 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                       />
                     </TabsContent>
 
+                    {/* B7.1 — "Liens" tab surfaces detected
+                        ATTACHMENT_RELATION signals. Read-only —
+                        no link/unlink actions (B7.2). Fetch is
+                        gated on the audit dialog being open AND
+                        the audit query having resolved (audit.document
+                        non-null) so we don't fire requests before
+                        the doc context is ready. */}
+                    <TabsContent value="links" className="min-h-0 flex-1 p-4 lg:overflow-y-auto">
+                      <DocumentAttachmentsPanel
+                        documentId={audit.document.id}
+                        enabled={open}
+                      />
+                    </TabsContent>
+
                     {excelModelAudit && (
-                      <TabsContent value="model" className="min-h-0 flex-1 overflow-y-auto p-4">
+                      <TabsContent value="model" className="min-h-0 flex-1 p-4 lg:overflow-y-auto">
                         <ExcelModelAuditPanel audit={excelModelAudit} />
                       </TabsContent>
                     )}
@@ -1081,7 +1311,7 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {batchRetryMutation.isPending && batchRetryProgress
-                      ? `Page ${batchRetryProgress.done}/${batchRetryProgress.total}. Chaque page est retraitee en OCR supreme avec debit idempotent.`
+                      ? `Page ${batchRetryProgress.done}/${batchRetryProgress.total}. Chaque page est retraitee en OCR supreme (traitement idempotent).`
                       : pageRetryMutation.isPending
                       ? "OCR supreme cible sur une seule page. Le reste du document n'est pas retraite."
                       : "Analyse visuelle, OCR haute fidelite et reconstruction des pages complexes."}
@@ -1108,6 +1338,58 @@ export const DocumentExtractionAuditDialog = memo(function DocumentExtractionAud
         )}
       </DialogContent>
     </Dialog>
+    {/* B6.1 — Metadata Editor as a SIBLING of the audit Dialog, not a
+        descendant. Radix Dialog instances are independent state machines;
+        nesting would tie the metadata dialog's open state to the audit
+        dialog's portal tree and break the modal-over-modal stacking.
+        We pass `document.dealId` from the parent prop (widened in
+        ExtractionAuditDialogProps for B6.1) because audit.document.id
+        is the document id, not the deal id. The button itself is gated
+        on dealId being present so the dialog never opens without
+        enough context to PATCH the right deal. */}
+    <DocumentMetadataDialog
+      open={metadataDialogOpen}
+      onOpenChange={setMetadataDialogOpen}
+      document={
+        document && document.dealId
+          ? {
+              id: document.id,
+              dealId: document.dealId,
+              name: document.name,
+              sourceDate: document.sourceDate ?? null,
+              // B6.2 — forward current type + sourceKind so the
+              // dropdowns pre-fill correctly. The DocumentMetadataDialog
+              // accepts them as DocumentType / DocumentSourceKind via
+              // Prisma's nominal enums; we cast through the prop's
+              // looser `string | null` so a doc with a CALL_TRANSCRIPT
+              // (not in the upload UI's narrower list) still displays
+              // correctly.
+              type: (document.type ?? null) as never,
+              sourceKind: (document.sourceKind ?? null) as never,
+              // B6.3 — forward email metadata for pre-fill.
+              receivedAt: document.receivedAt ?? null,
+              sourceAuthor: document.sourceAuthor ?? null,
+              sourceSubject: document.sourceSubject ?? null,
+            }
+          : null
+      }
+      onMetadataUpdated={(updatedId) => {
+        if (onDocumentUpdated) void onDocumentUpdated(updatedId);
+        // Force the audit query to refetch so the dialog reflects the
+        // new sourceDate / type / sourceKind immediately (cheap —
+        // single doc).
+        void queryClient.invalidateQueries({ queryKey: auditQueryKey });
+        // B7.1 fix-up (Codex P2) — defense in depth: also invalidate
+        // the attachments panel here. The metadata dialog already
+        // does it on success, but if a future surface invokes
+        // onMetadataUpdated via another path (e.g. a documents-tab
+        // inline edit), the attachments tab must refresh too.
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.documentAttachments.byDocument(updatedId),
+        });
+      }}
+    />
+    </>
   );
 });
 
@@ -1120,9 +1402,12 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MetricPill({ label, value }: { label: string; value: string }) {
+function MetricPill({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs">
+    <span
+      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs"
+      title={title}
+    >
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium">{value}</span>
     </span>
@@ -1219,37 +1504,68 @@ function getAdjacentPreviewImageUrls(
     .map((page) => getPreviewImageUrl(documentId, page));
 }
 
+/**
+ * B5.3 round 2 — PageSourcePreview is now PDF-only. The category-routing
+ * at the parent (`documentCategory === "pdf" && pageToInspect`) is the
+ * single gate that decides whether to call this component, so the old
+ * `isPdf` prop became dead code (always true at call sites). Dropping it
+ * here makes the contract explicit: a non-PDF caller is a programming
+ * error, not a fallback path. Image / Office / other categories route
+ * through EmptyDocumentPreview directly.
+ */
 function PageSourcePreview({
   page,
   documentId,
   documentName,
-  isPdf,
   preloadImageUrls = [],
 }: {
   page: AuditPage;
   documentId: string;
   documentName: string;
-  isPdf: boolean;
   preloadImageUrls?: string[];
 }) {
-  const [loadedPreviewUrl, setLoadedPreviewUrl] = useState<string | null>(null);
-  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
-  const previewImageUrl = isPdf ? getPreviewImageUrl(documentId, page) : null;
-  const pageUrl = isPdf
-    ? `/api/documents/${documentId}/download?disposition=inline#page=${page.pageNumber}&toolbar=0&navpanes=0&zoom=page-fit`
-    : null;
-  const previewLoaded = previewImageUrl !== null && loadedPreviewUrl === previewImageUrl;
-  const previewFailed = previewImageUrl !== null && failedPreviewUrl === previewImageUrl;
+  // B5.1 — per-dialog cache of preview URLs we've successfully loaded
+  // (Set keyed by `previewImageUrl`, which is content-hashed via `?v=`
+  // so a retry busts the cache automatically). Going back to a page the
+  // user already viewed shows the image instantly with NO loader —
+  // previously the loader flashed on every page revisit because state
+  // tracked a single "last loaded" URL and dropped earlier entries.
+  // This kills the "wait, is it OCRing this page again?" impression.
+  const [loadedUrls, setLoadedUrls] = useState<Set<string>>(() => new Set());
+  const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
+  // B5.1 — preload deduplication. Without this, every parent re-render
+  // that recomputes the adjacent URLs (different array identity) would
+  // re-create <Image> objects for URLs already in browser cache. The
+  // ref records *attempted* preloads — once a URL is in here, we never
+  // re-fire the warmer. Browser HTTP cache + this Set make navigation
+  // monotonic: a URL is preloaded once, then served from cache.
+  const preloadedUrlsRef = useRef<Set<string>>(new Set());
+
+  // B5.3 round 2 — PDF-only path. Parent guarantees `documentCategory ===
+  // "pdf"` before invoking this component, so the URL is always defined.
+  const previewImageUrl = getPreviewImageUrl(documentId, page);
+  const pageUrl = `/api/documents/${documentId}/download?disposition=inline#page=${page.pageNumber}&toolbar=0&navpanes=0&zoom=page-fit`;
+  const previewLoaded = loadedUrls.has(previewImageUrl);
+  const previewFailed = failedUrls.has(previewImageUrl);
+  // B5.1 — `preloadImageUrls` is recomputed every parent render (new
+  // array identity). Memoise the dedup key + sorted list so the effect
+  // below fires only when the SET of URLs actually changes.
   const preloadImageUrlKey = preloadImageUrls.join("|");
 
   useEffect(() => {
     if (!preloadImageUrlKey || typeof window === "undefined") return;
-    const images = preloadImageUrlKey.split("|").map((url) => {
+    const previouslyPreloaded = preloadedUrlsRef.current;
+    const images: HTMLImageElement[] = [];
+    for (const url of preloadImageUrlKey.split("|")) {
+      // Skip URLs we've already warmed (or that the user just loaded —
+      // those are already in the browser cache too).
+      if (previouslyPreloaded.has(url)) continue;
+      previouslyPreloaded.add(url);
       const image = new window.Image();
       image.decoding = "async";
       image.src = url;
-      return image;
-    });
+      images.push(image);
+    }
     return () => {
       for (const image of images) {
         image.onload = null;
@@ -1258,48 +1574,117 @@ function PageSourcePreview({
     };
   }, [preloadImageUrlKey]);
 
-  if (!previewImageUrl) {
-    return (
-      <div className="flex min-h-[320px] items-center justify-center rounded-md border border-dashed bg-background text-sm text-muted-foreground">
-        Preview source indisponible pour ce document.
-      </div>
-    );
-  }
+  // B5.1 — handlers must be referentially stable so a re-render mid-load
+  // doesn't reset the onLoad/onError wiring on the <img> element.
+  //
+  // B5.1 fix-up (Codex P2) — MUTUAL EXCLUSION between loadedUrls and
+  // failedUrls. Without this guard, a real-world recovery sequence
+  // (image fails → user retries / browser auto-retries / network heals
+  // → same URL succeeds) would leave the URL in BOTH Sets, so
+  // `previewLoaded` and `previewFailed` would both be true and the UI
+  // would render the "Preview indisponible" banner AND the loaded
+  // image at the same time. Each handler adds to its own Set AND
+  // removes from the other Set so the two states are always disjoint.
+  const handleLoad = useCallback((url: string) => {
+    setLoadedUrls((prev) => {
+      if (prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.add(url);
+      return next;
+    });
+    setFailedUrls((prev) => {
+      if (!prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.delete(url);
+      return next;
+    });
+  }, []);
+  const handleError = useCallback((url: string) => {
+    setFailedUrls((prev) => {
+      if (prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.add(url);
+      return next;
+    });
+    setLoadedUrls((prev) => {
+      if (!prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.delete(url);
+      return next;
+    });
+  }, []);
+
+  // B5.3 round 2 — the legacy `!previewImageUrl` fallback branch is
+  // removed. PageSourcePreview is now PDF-only by contract (see the
+  // category gate in the parent). A non-PDF or no-page caller would be
+  // a programming error; the parent routes those cases through
+  // EmptyDocumentPreview which handles images inline + Office/other via
+  // category-specific download CTAs. Keeping a defense-in-depth
+  // fallback here would just mask future regressions where the parent
+  // gate slips.
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border bg-background">
-      <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-        <div>
+      {/* B5.2 — page-preview header. Title block + action cluster with
+          consistent button sizing, flex-wrap on narrow widths so the
+          cluster moves to a new row rather than overflowing or
+          clipping. The download-image action (B5.2 new) lets the user
+          grab the actual preview PNG, distinct from "open in tab"
+          (which the browser may render inline). */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
+        <div className="min-w-0">
           <p className="text-sm font-medium">Page source</p>
-          <p className="text-xs text-muted-foreground">PDF original, page {page.pageNumber}</p>
+          <p className="truncate text-xs text-muted-foreground" title={`PDF original, page ${page.pageNumber}`}>
+            PDF original, page {page.pageNumber}
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             size="sm"
             variant="outline"
             onClick={() => window.open(previewImageUrl, "_blank", "noopener,noreferrer")}
+            aria-label={`Ouvrir l'image de la page ${page.pageNumber} dans un nouvel onglet`}
+            title="Ouvrir l'image dans un nouvel onglet"
           >
             <ExternalLink className="mr-2 h-4 w-4" />
             Ouvrir l&apos;image
           </Button>
-          {pageUrl && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => window.open(pageUrl, "_blank", "noopener,noreferrer")}
-            >
-              <ExternalLink className="mr-2 h-4 w-4" />
-              Ouvrir la page
-            </Button>
-          )}
+          {/* B5.3 round 2 — `pageUrl` was conditionally rendered when
+              isPdf=true; now PageSourcePreview is PDF-only by contract,
+              so the conditional was dead and is dropped. */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => window.open(pageUrl, "_blank", "noopener,noreferrer")}
+            aria-label={`Ouvrir la page ${page.pageNumber} du PDF dans un nouvel onglet`}
+            title="Ouvrir la page dans le PDF d'origine"
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Ouvrir la page
+          </Button>
         </div>
       </div>
       <div className="min-h-[360px] flex-1 overflow-auto bg-muted/20 p-3">
+        {/* B5.1 — Skeleton (not a centred spinner) while a NEW page is
+            fetching. A skeleton with the right portrait-ish aspect feels
+            like "image rendering" rather than "system processing", and
+            it matches the page's expected footprint so the layout doesn't
+            jump when the image arrives. The "Chargement page N" caption
+            stays under the skeleton so the user knows which page is in
+            flight. Crucially, this block is only rendered when the URL
+            isn't in the loadedUrls Set — re-visiting a cached page
+            renders the <img> immediately. */}
         {!previewLoaded && !previewFailed && (
-          <div className="flex aspect-video min-h-[260px] items-center justify-center rounded border border-dashed bg-background text-sm text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Chargement page {page.pageNumber}...</span>
+          <div
+            className="mx-auto flex w-full max-w-2xl flex-col items-center gap-2"
+            role="status"
+            aria-live="polite"
+            aria-label={`Chargement de la page ${page.pageNumber}`}
+          >
+            <Skeleton className="aspect-[1/1.3] w-full" />
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Chargement page {page.pageNumber}…</span>
             </div>
           </div>
         )}
@@ -1311,18 +1696,250 @@ function PageSourcePreview({
             </div>
           </div>
         )}
+        {/* B5.1 — `key={previewImageUrl}` forces a fresh <img> when the
+            URL changes. With our loadedUrls Set, a re-visited URL hits
+            `previewLoaded === true` BEFORE the new img element fires its
+            onLoad (it's the same cached file from the browser's POV) so
+            the user sees no flash. For first-time visits the img stays
+            hidden until onLoad fires. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           key={previewImageUrl}
           src={previewImageUrl}
           alt={`${documentName} - page ${page.pageNumber}`}
-          onLoad={() => setLoadedPreviewUrl(previewImageUrl)}
-          onError={() => setFailedPreviewUrl(previewImageUrl)}
+          onLoad={() => handleLoad(previewImageUrl)}
+          onError={() => handleError(previewImageUrl)}
           className={cn(
             "mx-auto h-auto max-w-full rounded border bg-background shadow-sm",
             !previewLoaded && "hidden"
           )}
         />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * B5.3 — categorise a document by mime so the audit dialog can route to
+ * the right preview surface AND show a category-specific message in the
+ * fallback. Kept small + exported only as internal because the categories
+ * are tight to this dialog's UX (Office vs Image vs PDF vs other) — a
+ * future preview-everywhere surface would derive its own.
+ */
+type DocumentPreviewCategory = "pdf" | "image" | "office" | "other";
+
+function categorizeDocumentMime(mimeType: string | null): DocumentPreviewCategory {
+  if (!mimeType) return "other";
+  if (mimeType === "application/pdf") return "pdf";
+  if (mimeType.startsWith("image/")) return "image";
+  // Office family: Excel (xls/xlsx), PowerPoint (ppt/pptx), Word (doc/docx).
+  // The browser cannot inline-render these, so the fallback always tells
+  // the user to download. We keep them in one bucket so the message stays
+  // consistent across the three formats.
+  if (
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimeType === "application/vnd.ms-excel" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    mimeType === "application/vnd.ms-powerpoint" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    mimeType === "application/msword"
+  ) {
+    return "office";
+  }
+  return "other";
+}
+
+/**
+ * B5.3 — preview surface for documents that have NO `pages` (failed
+ * extraction, image uploaded directly, Office files where the audit
+ * dialog wasn't supposed to land but did via the deal-page action).
+ *
+ * For images we render the file directly via the `?disposition=inline`
+ * download route — the browser handles PNG/JPEG natively, no
+ * server-side rasterisation needed. Skeleton + cache machinery mirrors
+ * PageSourcePreview (single URL, so the Set degenerates to two booleans
+ * but we keep the same shape for consistency + future-proofing).
+ *
+ * For PDF (this branch fires when extraction yielded 0 pages — failed
+ * extraction or in-flight reprocess), Office, and "other" mimes, we
+ * render an actionable CTA panel: open in new tab + download. The
+ * primary CTA is "Télécharger" (variant=default) since that's the
+ * always-works path; the inline open is secondary.
+ *
+ * The B5.2 contract (download = `/download` no params, inline =
+ * `/download?disposition=inline`) is preserved end-to-end.
+ */
+function EmptyDocumentPreview({
+  documentId,
+  documentName,
+  mimeType,
+}: {
+  documentId: string;
+  documentName: string;
+  mimeType: string | null;
+}) {
+  const category = categorizeDocumentMime(mimeType);
+  const downloadUrl = `/api/documents/${documentId}/download`;
+  const inlineUrl = `/api/documents/${documentId}/download?disposition=inline`;
+
+  // Single-URL image preview — same shape as PageSourcePreview so future
+  // changes to the loading state stay symmetric. Set hooks at top level
+  // (rules of hooks); they're only consumed in the image branch below.
+  const [loadedUrls, setLoadedUrls] = useState<Set<string>>(() => new Set());
+  const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
+  const previewLoaded = loadedUrls.has(inlineUrl);
+  const previewFailed = failedUrls.has(inlineUrl);
+  // Mutual-exclusion handlers (same contract as B5.1 P2 fix).
+  const handleLoad = useCallback((url: string) => {
+    setLoadedUrls((prev) => {
+      if (prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.add(url);
+      return next;
+    });
+    setFailedUrls((prev) => {
+      if (!prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.delete(url);
+      return next;
+    });
+  }, []);
+  const handleError = useCallback((url: string) => {
+    setFailedUrls((prev) => {
+      if (prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.add(url);
+      return next;
+    });
+    setLoadedUrls((prev) => {
+      if (!prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.delete(url);
+      return next;
+    });
+  }, []);
+
+  if (category === "image") {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border bg-background">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Image source</p>
+            <p className="truncate text-xs text-muted-foreground" title={documentName}>
+              {documentName}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(inlineUrl, "_blank", "noopener,noreferrer")}
+              aria-label={`Ouvrir ${documentName} dans un nouvel onglet`}
+              title="Ouvrir l'image dans un nouvel onglet"
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Ouvrir l&apos;image
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(downloadUrl, "_blank", "noopener,noreferrer")}
+              aria-label={`Télécharger ${documentName}`}
+              title="Télécharger l'image"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Télécharger
+            </Button>
+          </div>
+        </div>
+        <div className="min-h-[360px] flex-1 overflow-auto bg-muted/20 p-3">
+          {!previewLoaded && !previewFailed && (
+            <div
+              className="mx-auto flex w-full max-w-2xl flex-col items-center gap-2"
+              role="status"
+              aria-live="polite"
+              aria-label={`Chargement de l'image ${documentName}`}
+            >
+              <Skeleton className="aspect-[1/1.3] w-full" />
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>Chargement de l&apos;image…</span>
+              </div>
+            </div>
+          )}
+          {previewFailed && (
+            <div className="flex aspect-video min-h-[260px] items-center justify-center rounded border border-dashed bg-background text-sm text-destructive">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                <span>Image source indisponible</span>
+              </div>
+            </div>
+          )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            key={inlineUrl}
+            src={inlineUrl}
+            alt={documentName}
+            onLoad={() => handleLoad(inlineUrl)}
+            onError={() => handleError(inlineUrl)}
+            className={cn(
+              "mx-auto h-auto max-w-full rounded border bg-background shadow-sm",
+              !previewLoaded && "hidden"
+            )}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Non-image fallbacks — download CTA panel with a category-specific
+  // explanation. Office files cannot be inline-rendered by the browser
+  // so we keep the "open in new tab" secondary (still useful for a quick
+  // look in the browser's default handler) and the download primary.
+  const heading = (() => {
+    switch (category) {
+      case "pdf":
+        return "Aucune page extraite pour ce PDF";
+      case "office":
+        return "Format Office non prévisualisable";
+      default:
+        return "Preview source indisponible";
+    }
+  })();
+  const detail = (() => {
+    switch (category) {
+      case "pdf":
+        return "L'extraction n'a produit aucune page exploitable. Téléchargez le PDF original ou relancez l'extraction depuis le header.";
+      case "office":
+        return "Excel, PowerPoint et Word ne peuvent pas être rendus inline. Téléchargez le fichier pour l'ouvrir dans l'application bureautique.";
+      default:
+        return "Téléchargez le document original ou ouvrez-le dans un nouvel onglet pour le consulter.";
+    }
+  })();
+
+  return (
+    <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 rounded-md border border-dashed bg-background p-4 text-center text-sm text-muted-foreground">
+      <p className="font-medium text-foreground">{heading}</p>
+      <p className="text-xs">{detail}</p>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => window.open(inlineUrl, "_blank", "noopener,noreferrer")}
+          aria-label={`Ouvrir ${documentName} dans un nouvel onglet`}
+        >
+          <ExternalLink className="mr-2 h-4 w-4" />
+          Nouvel onglet
+        </Button>
+        <Button
+          size="sm"
+          variant="default"
+          onClick={() => window.open(downloadUrl, "_blank", "noopener,noreferrer")}
+          aria-label={`Télécharger ${documentName}`}
+        >
+          <Download className="mr-2 h-4 w-4" />
+          Télécharger
+        </Button>
       </div>
     </div>
   );

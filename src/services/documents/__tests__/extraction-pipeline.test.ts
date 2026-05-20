@@ -39,8 +39,21 @@ vi.mock("@/services/pdf", () => ({
 vi.mock("@/services/storage", () => ({
   downloadFile: mocks.downloadFile,
 }));
+// B3.3.3 — `extraction-pipeline.ts` now imports `RunAlreadyTerminalError`
+// (real class) to detect the monotone-bailout case. The mock factory must
+// re-export the real class so `error instanceof RunAlreadyTerminalError`
+// works inside the pipeline's catch branch under test.
+class RunAlreadyTerminalError extends Error {
+  readonly runId: string;
+  constructor(runId: string) {
+    super(`Extraction run ${runId} is already terminal; refusing to finalize.`);
+    this.name = "RunAlreadyTerminalError";
+    this.runId = runId;
+  }
+}
 vi.mock("@/services/documents/extraction-runs", () => ({
   completeDocumentExtractionRun: mocks.completeDocumentExtractionRun,
+  RunAlreadyTerminalError,
   getBlockingPageNumbersFromManifest: mocks.getBlockingPageNumbersFromManifest,
   markExtractionRunProgress: mocks.markExtractionRunProgress,
   recordExtractionPageProgress: mocks.recordExtractionPageProgress,
@@ -267,6 +280,76 @@ describe("runDocumentExtractionPipeline — happy path", () => {
         },
       })
     );
+  });
+
+  it("Codex B6.2.1 P1 — manual.sourceKind=FILE override blocks email inference on reprocess (no sourceKind clobber, no email metadata injected)", async () => {
+    // Scenario: user corrected a false-positive email back to FILE via
+    // B6.2 → row has currentSourceKind=FILE +
+    // sourceMetadata.manual.sourceKind = { newValue: "FILE", ... }.
+    // The next reprocess MUST NOT re-classify the doc as EMAIL even
+    // though the text would otherwise satisfy the inference. This is
+    // the exact P1 scenario Codex flagged.
+    mocks.documentFindUnique.mockResolvedValue({
+      id: "doc_1",
+      name: "Mail.pdf",
+      mimeType: "application/pdf",
+      storageUrl: "https://blob/x",
+      storagePath: "deals/x.pdf",
+      processingStatus: "PROCESSING",
+      sourceKind: "FILE",
+      sourceDate: null,
+      // Pre-existing B6.2 manual override — the gate is the PRESENCE
+      // of manual.sourceKind, not its value.
+      sourceMetadata: {
+        manual: {
+          sourceKind: {
+            setBy: "user_owner",
+            setAt: "2026-04-10T10:00:00.000Z",
+            previousValue: "EMAIL",
+            newValue: "FILE",
+          },
+        },
+      },
+      corpusParentDocumentId: null,
+    });
+    mocks.smartExtract.mockResolvedValue(
+      buildExtractionResult({
+        text: [
+          "De : Eryck Rebbouh <erebbouh@hotmail.com>",
+          "Envoyé : mercredi 22 avril 2026 01:03",
+          "Objet : Tr : Re : Avekapeti",
+          "De : Fati Mrani <fati.mrani@avekapeti.co>",
+          "Envoyé : lundi 6 avril 2026 16:10",
+          "Objet : Re : Avekapeti",
+        ].join("\n"),
+      })
+    );
+
+    await runDocumentExtractionPipeline({
+      documentId: "doc_1",
+      extractionRunId: "run_1",
+    });
+
+    // The finalization payload must NOT include any email-source
+    // fields (sourceKind, sourceDate from inference, sourceAuthor,
+    // sourceSubject, sourceMetadata.inferredFrom) — the inference
+    // returned null, so the email-source spread is skipped entirely.
+    const finalizationCall = mocks.completeDocumentExtractionRun.mock.calls[0]?.[0];
+    const data = finalizationCall?.documentFinalization?.data ?? {};
+    expect(data).not.toHaveProperty("sourceKind");
+    expect(data).not.toHaveProperty("sourceAuthor");
+    expect(data).not.toHaveProperty("sourceSubject");
+    // Critical: sourceMetadata is NOT overwritten with the inferred
+    // email metadata. The user's `manual.sourceKind` block survives
+    // intact via the absence of the email-spread.
+    if (Object.prototype.hasOwnProperty.call(data, "sourceMetadata")) {
+      // If the data ever includes sourceMetadata, it MUST NOT have
+      // `inferredFrom: "uploaded_file_text"` (the inference's tag).
+      const meta = (data as { sourceMetadata?: unknown }).sourceMetadata;
+      if (meta && typeof meta === "object") {
+        expect((meta as Record<string, unknown>).inferredFrom).toBeUndefined();
+      }
+    }
   });
 
   it("P1: treats a whitespace-only corpus as a FAILURE (no run/document/API divergence)", async () => {
@@ -718,6 +801,54 @@ describe("runDocumentExtractionPipeline — failure paths", () => {
     );
     // No standalone prisma.document.update — the only document write path
     // is now inside the atomic transaction (which rolled back).
+    expect(mocks.documentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("Codex B3.3.3 P1 — when completeDocumentExtractionRun throws RunAlreadyTerminalError (run was terminalized by /process stale-retry), the pipeline NO-OPs: no terminalize, no document FAILED flip, no re-throw", async () => {
+    // Critical late-completion scenario: an old Inngest worker fires for
+    // a run that `/api/documents/:id/process` already terminalized as
+    // FAILED during a stale-retry. The new monotone guard in
+    // `completeDocumentExtractionRun` throws `RunAlreadyTerminalError`.
+    // The pipeline MUST swallow this — terminalizing again or flipping
+    // the document FAILED would clobber the NEW run that is now doing
+    // the work.
+    mocks.documentFindUnique.mockResolvedValue({
+      id: "doc_1",
+      mimeType: "application/pdf",
+      storageUrl: "https://blob/x",
+      storagePath: null,
+      processingStatus: "PROCESSING",
+    });
+    // Realistic race: when the worker started, the run was PROCESSING.
+    // By the time `completeDocumentExtractionRun` runs, `/process` has
+    // terminalized it. The monotone guard surfaces only at finalize.
+    mocks.runFindUnique.mockResolvedValue({
+      id: "run_old_terminalized",
+      documentId: "doc_1",
+      status: "PROCESSING",
+    });
+    mocks.downloadFile.mockResolvedValue(Buffer.from("pdf"));
+    mocks.smartExtract.mockResolvedValue(buildExtractionResult());
+    mocks.completeDocumentExtractionRun.mockRejectedValue(
+      new RunAlreadyTerminalError("run_old_terminalized")
+    );
+
+    // Critical: NO throw. The pipeline returns a dedicated SUPERSEDED
+    // sentinel (NOT "FAILED" — that would falsely fire credit reconciliation
+    // and thesis re-extract in the Inngest function). The caller gates
+    // success side effects on `status === "COMPLETED"`.
+    const result = await runDocumentExtractionPipeline({
+      documentId: "doc_1",
+      extractionRunId: "run_old_terminalized",
+    });
+    expect(result.status).toBe("SUPERSEDED");
+
+    // Critical: NO terminalize. The /process route already did it; doing
+    // it again would emit a duplicate audit row + race the NEW run.
+    expect(mocks.terminalizeExtractionRunAsFailed).not.toHaveBeenCalled();
+    // Critical: NO document mutation. The /process route's NEW run owns
+    // the document state now; we must not touch it.
+    expect(mocks.documentUpdateMany).not.toHaveBeenCalled();
     expect(mocks.documentUpdate).not.toHaveBeenCalled();
   });
 

@@ -23,7 +23,29 @@ const ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Types
 type DealWithRelations = Deal & {
-  documents: (Pick<Document, "id" | "extractedText" | "processingStatus" | "uploadedAt"> & {
+  documents: (Pick<
+    Document,
+    | "id"
+    | "extractedText"
+    | "processingStatus"
+    | "uploadedAt"
+    // B6.1 fix-up (Codex P1) — every Document field that affects agent
+    // context MUST be in the fingerprint. Otherwise a user-correction
+    // (B6.1 manual sourceDate; B6.2 type/sourceKind; B6.3 email
+    // metadata) re-triggers analysis but lands a stale cache built with
+    // the OLD value. Anchored on the orchestrator's select shape
+    // (src/agents/orchestrator/persistence.ts:681-700) so the two
+    // surfaces never drift.
+    | "name"
+    | "type"
+    | "sourceKind"
+    | "corpusRole"
+    | "sourceDate"
+    | "receivedAt"
+    | "sourceAuthor"
+    | "sourceSubject"
+    | "corpusParentDocumentId"
+  > & {
     extractionRuns?: Array<{
       id: string;
       documentVersion: number;
@@ -148,6 +170,22 @@ export function generateDealFingerprint(
       .map((d) => ({
         id: d.id,
         uploadedAt: d.uploadedAt.toISOString(),
+        // B6.1 fix-up (Codex P1) — agent-visible metadata that affects
+        // chronology / attribution / corpus role. Each field surfaces
+        // in the orchestrator's context payload AND in agent-facing
+        // system prompts (via base-agent.ts:998-1000 timeline +
+        // persistence.ts:681 select). Any user override (B6.1
+        // sourceDate, B6.2 type/sourceKind, B6.3 email metadata) MUST
+        // invalidate the analysis cache — anchored here.
+        name: d.name,
+        type: d.type,
+        sourceKind: d.sourceKind,
+        corpusRole: d.corpusRole,
+        sourceDate: d.sourceDate ? d.sourceDate.toISOString() : null,
+        receivedAt: d.receivedAt ? d.receivedAt.toISOString() : null,
+        sourceAuthor: d.sourceAuthor,
+        sourceSubject: d.sourceSubject,
+        corpusParentDocumentId: d.corpusParentDocumentId,
         latestExtractionRun: d.extractionRuns?.[0]
           ? {
               id: d.extractionRuns[0].id,
@@ -301,6 +339,22 @@ export async function getDealForFingerprint(
             extractedText: true,
             processingStatus: true,
             uploadedAt: true,
+            // B6.1 fix-up (Codex P1) — Document metadata that drives
+            // agent context. Selected here so the fingerprint can hash
+            // them (see DealWithRelations + generateDealFingerprint).
+            // The B6.x manual editor surfaces (sourceDate / type /
+            // sourceKind / email metadata) all flow through these
+            // fields, so the cache invalidation is automatic once a
+            // user override is persisted.
+            name: true,
+            type: true,
+            sourceKind: true,
+            corpusRole: true,
+            sourceDate: true,
+            receivedAt: true,
+            sourceAuthor: true,
+            sourceSubject: true,
+            corpusParentDocumentId: true,
             extractionRuns: {
               orderBy: { completedAt: "desc" },
               take: 1,

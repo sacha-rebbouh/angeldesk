@@ -5,7 +5,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
-import { inngest } from '@/lib/inngest'
+import { inngest } from '@/lib/inngest-client'
 import type { TelegramCommandContext, TelegramCommand } from '@/agents/maintenance/types'
 import {
   formatStatusMessage,

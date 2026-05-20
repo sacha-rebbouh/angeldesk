@@ -41,7 +41,10 @@ type ThesisExtractorTestAccess = {
     loadBearing: unknown[];
     alerts: Array<{ title: string; linkedAssumptionId?: string }>;
     verdict: string;
+    confidence: number;
     ycLens: { availability?: string };
+    thielLens: { availability?: string };
+    angelDeskLens: { availability?: string };
   }>;
   buildCoreUserPrompt: (context: unknown, contextSummary: string) => string;
   buildContextSummary: (context: unknown) => string;
@@ -228,7 +231,7 @@ describe("ThesisExtractorAgent degradation handling", () => {
     expect(result.alerts.some((alert: { title: string }) => alert.title.includes("[yc]"))).toBe(false);
   });
 
-  it("throws if all framework lenses are degraded", async () => {
+  it("persists a defensive core-only thesis if all framework lenses are degraded", async () => {
     const agent = new ThesisExtractorAgent();
     const testAgent = agent as unknown as ThesisExtractorTestAccess;
     const validatedSpy = vi.spyOn(testAgent, "llmCompleteJSONValidated");
@@ -264,15 +267,25 @@ describe("ThesisExtractorAgent degradation handling", () => {
         resolution: "terminal_fallback",
       });
 
-    await expect(
-      testAgent.execute({
-        documents: [],
-        canonicalDeal: {
-          id: "deal_1",
-          name: "Deal test",
-        },
+    const result = await testAgent.execute({
+      documents: [],
+      canonicalDeal: {
+        id: "deal_1",
+        name: "Deal test",
+      },
+    });
+
+    expect(result.verdict).toBe("vigilance");
+    expect(result.confidence).toBe(35);
+    expect(result.ycLens.availability).toBe("degraded_chain_exhausted");
+    expect(result.thielLens.availability).toBe("degraded_chain_exhausted");
+    expect(result.angelDeskLens.availability).toBe("degraded_chain_exhausted");
+    expect(result.alerts).toContainEqual(
+      expect.objectContaining({
+        title: "Frameworks indisponibles",
+        category: "assumption_fragile",
       })
-    ).rejects.toThrow("All thesis frameworks degraded");
+    );
   });
 
   it("states in the core prompt that thesis fields must stay at the root", () => {
@@ -296,7 +309,7 @@ describe("ThesisExtractorAgent degradation handling", () => {
     expect(prompt).toContain("Tu n'as PAS le droit de calculer toi-meme une marge");
   });
 
-  it("fails closed when the core structured claims reference an unavailable EBITDA margin metric", async () => {
+  it("downgrades unavailable EBITDA margin metrics before framework evaluation", async () => {
     const agent = new ThesisExtractorAgent();
     const testAgent = agent as unknown as ThesisExtractorTestAccess;
     const validatedSpy = vi.spyOn(testAgent, "llmCompleteJSONValidated");
@@ -323,16 +336,17 @@ describe("ThesisExtractorAgent degradation handling", () => {
       resolution: "model_success",
     });
 
-    await expect(
-      testAgent.execute({
-        documents: [],
-        canonicalDeal: {
-          id: "deal_1",
-          name: "Deal test",
-        },
-        factStore: [],
-      })
-    ).rejects.toThrow("Invalid structured thesis claims detected");
+    const result = await testAgent.execute({
+      documents: [],
+      canonicalDeal: {
+        id: "deal_1",
+        name: "Deal test",
+      },
+      factStore: [],
+    });
+
+    expect(result.verdict).toBe("vigilance");
+    expect(result.confidence).toBe(35);
   });
 
   it("injects sector benchmarks and funding DB benchmarks into the thesis context summary", () => {

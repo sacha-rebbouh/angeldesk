@@ -23,7 +23,7 @@ const ThesisAlertCategorySchema = z.enum([
 ]);
 
 export const LoadBearingAssumptionSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).optional(),
   statement: z.string().min(1),
   status: LoadBearingStatusSchema,
   impact: z.string().min(1),
@@ -52,7 +52,7 @@ export const ThesisCoreClaimSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("judgment"),
     text: z.string().min(1),
-    supportingFactKeys: z.array(z.string().min(1)).min(1),
+    supportingFactKeys: z.array(z.string().min(1)).default([]),
   }),
   z.object({
     kind: z.literal("unknown"),
@@ -103,10 +103,11 @@ export interface RepairedStructuredSections {
   pathToExit: ThesisCoreClaim[];
 }
 
-const NUMERIC_PATTERN = /\d|[%€$£]|\b(?:m|bn|million|millions|milliard|milliards|x)\b/i;
+const NUMERIC_PATTERN = /\d|[%€$£]|\b(?:eur|usd|nok|gbp|bn|million|millions|milliard|milliards|x)\b/i;
+const NON_NUMERIC_BUSINESS_MODEL_PATTERN = /\bB2B(?:2C|toC)?\b|\bB2C\b/gi;
 
 function containsNumericAssertion(text: string): boolean {
-  return NUMERIC_PATTERN.test(text);
+  return NUMERIC_PATTERN.test(text.replace(NON_NUMERIC_BUSINESS_MODEL_PATTERN, ""));
 }
 
 function normalizeSentence(text: string): string {
@@ -140,11 +141,28 @@ function stripKnownMetricDisplays(text: string, scope: ThesisFactScope): string 
 
 function stripNumericAssertions(text: string, scope: ThesisFactScope): string {
   let repaired = stripKnownMetricDisplays(text, scope);
-  repaired = repaired.replace(/[-+]?\d+(?:[.,]\d+)?\s*(?:%|€|EUR|USD|NOK|GBP|x|m|bn|million|millions|milliard|milliards)?/gi, "");
+  repaired = repaired.replace(
+    /[-+]?\d+(?:[.,]\d+)?(?:\s*(?:[%€$£]|\b(?:EUR|USD|NOK|GBP|x|k|m|bn|million|millions|milliard|milliards)\b))?/gi,
+    ""
+  );
   repaired = repaired.replace(/\bFY\d{2,4}\b/gi, "");
   repaired = repaired.replace(/\bQ[1-4]\s*\d{2,4}\b/gi, "");
   repaired = repaired.replace(/\b20\d{2}\b/g, "");
+  repaired = repaired.replace(/[%€$£]/g, "");
+  repaired = repaired.replace(/\b(?:eur|usd|nok|gbp|k|bn|million|millions|milliard|milliards|x)\b/gi, "");
   return normalizeWhitespace(repaired);
+}
+
+function stripOrFallbackNumericText(
+  text: string,
+  scope: ThesisFactScope,
+  fallback: string
+): string {
+  const stripped = stripNumericAssertions(text, scope);
+  if (!stripped || containsNumericAssertion(stripped)) {
+    return fallback;
+  }
+  return stripped;
 }
 
 function inferDerivedMetricFromText(text: string, scope: ThesisFactScope): ThesisCoreClaim | null {
@@ -153,11 +171,15 @@ function inferDerivedMetricFromText(text: string, scope: ThesisFactScope): Thesi
     (lower.includes("marge ebitda") || lower.includes("ebitda margin")) &&
     scope.derivedMetricsByKey.has("ebitda_margin")
   ) {
-    const framing = stripNumericAssertions(text, scope);
+    const framing = stripOrFallbackNumericText(
+      text,
+      scope,
+      "La société vise une marge EBITDA de"
+    );
     return {
       kind: "derived_metric",
       metricKey: "ebitda_margin",
-      framing: framing || "La société vise une marge EBITDA de",
+      framing,
     };
   }
 
@@ -177,7 +199,8 @@ function inferDirectFactFromText(
     if (!text.includes(fact.displayValue)) {
       continue;
     }
-    const framing = normalizeWhitespace(text.replaceAll(fact.displayValue, "")) || `${fact.label}:`;
+    const rawFraming = normalizeWhitespace(text.replaceAll(fact.displayValue, "")) || `${fact.label}:`;
+    const framing = stripOrFallbackNumericText(rawFraming, scope, `${fact.label}:`);
     return {
       kind: "direct_fact",
       factKey,
@@ -189,16 +212,34 @@ function inferDirectFactFromText(
 
 function repairClaim(claim: ThesisCoreClaim, scope: ThesisFactScope): ThesisCoreClaim {
   if (claim.kind === "direct_fact") {
+    if (!scope.factsByKey.has(claim.factKey)) {
+      return {
+        kind: "unknown",
+        text: stripOrFallbackNumericText(
+          claim.framing,
+          scope,
+          "Information insuffisamment documentée."
+        ),
+      };
+    }
+
     return {
       ...claim,
-      framing: stripNumericAssertions(claim.framing, scope) || claim.framing.replace(/\d+/g, "").trim() || "Selon les faits validés:",
+      framing: stripOrFallbackNumericText(claim.framing, scope, "Selon les faits validés:"),
     };
   }
 
   if (claim.kind === "derived_metric") {
+    if (!scope.derivedMetricsByKey.has(claim.metricKey)) {
+      return {
+        kind: "unknown",
+        text: "Information insuffisamment documentée.",
+      };
+    }
+
     return {
       ...claim,
-      framing: stripNumericAssertions(claim.framing, scope) || "La société vise une métrique de",
+      framing: stripOrFallbackNumericText(claim.framing, scope, "La société vise une métrique de"),
     };
   }
 
@@ -215,12 +256,20 @@ function repairClaim(claim: ThesisCoreClaim, scope: ThesisFactScope): ThesisCore
     if (supportingFactKeys.length === 0) {
       return {
         kind: "unknown",
-        text: stripNumericAssertions(claim.text, scope) || "Information insuffisamment documentée.",
+        text: stripOrFallbackNumericText(
+          claim.text,
+          scope,
+          "Information insuffisamment documentée."
+        ),
       };
     }
     return {
       ...claim,
-      text: stripNumericAssertions(claim.text, scope) || "L'information reste qualitative et doit être validée.",
+      text: stripOrFallbackNumericText(
+        claim.text,
+        scope,
+        "L'information reste qualitative et doit être validée."
+      ),
       supportingFactKeys,
     };
   }
@@ -232,7 +281,7 @@ function repairClaim(claim: ThesisCoreClaim, scope: ThesisFactScope): ThesisCore
 
   return {
     kind: "unknown",
-    text: stripNumericAssertions(claim.text, scope) || "Information insuffisamment documentée.",
+    text: stripOrFallbackNumericText(claim.text, scope, "Information insuffisamment documentée."),
   };
 }
 
@@ -391,8 +440,8 @@ export function renderStructuredClaims(
 export function normalizeLoadBearingAssumptions(
   assumptions: Array<z.infer<typeof LoadBearingAssumptionSchema>>
 ): LoadBearingAssumption[] {
-  return assumptions.map((assumption) => ({
-    id: assumption.id,
+  return assumptions.map((assumption, index) => ({
+    id: assumption.id?.trim() || `lb-${index + 1}`,
     statement: assumption.statement,
     status: assumption.status,
     impact: assumption.impact,

@@ -74,3 +74,24 @@ export {
   type MissingEvidenceFinding,
   type MissingEvidenceKind,
 } from "./health-report";
+export {
+  buildCorpusChecklistMarkdown,
+  buildCorpusChecklistPlainText,
+  type BuildCorpusChecklistOptions,
+} from "./corpus-checklist";
+export {
+  signalKeyForContradiction,
+  signalKeyForMissing,
+  signalKeyForFreshness,
+  parseSignalKey,
+  isValidSignalKey,
+  type ParsedSignalKey,
+} from "./signal-identity";
+export {
+  partitionBundleByResolutions,
+  enumerateBundleSignalKeys,
+  type EvidenceResolutionRow,
+  type EvidenceSignalResolutionAction,
+  type PartitionedBundle,
+  type ResolvedSignalEntry,
+} from "./resolution-filter";

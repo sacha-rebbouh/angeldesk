@@ -5,7 +5,6 @@
  */
 
 import { createHash } from 'crypto'
-import { Inngest } from 'inngest'
 import { runCleaner } from '@/agents/maintenance/db-cleaner'
 import {
   LEGACY_SOURCES,
@@ -25,17 +24,9 @@ import { prisma } from '@/lib/prisma'
 import { logger } from '@/lib/logger'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
 import type { SourceStats } from '@/agents/maintenance/types'
+import { inngest } from '@/lib/inngest-client'
 
-const inngestEnvironment =
-  process.env.INNGEST_ENV ??
-  (process.env.VERCEL_ENV === 'preview' ? process.env.VERCEL_GIT_COMMIT_REF : undefined)
-
-// Create the Inngest client
-export const inngest = new Inngest({
-  id: 'angeldesk',
-  name: 'Angel Desk',
-  env: inngestEnvironment,
-})
+export { inngest }
 
 function hashStringToBigInt(input: string): string {
   const digest = createHash("sha256").update(input).digest();
@@ -514,20 +505,30 @@ async function compensateFailedAnalysis(params: {
   dealId: string;
   type: string;
   refundIdempotencyKey?: string;
+  refundAmount?: number;
 }) {
-  const { refundCredits, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
+  const { refundCredits, refundCreditAmount, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
   const action = getActionForAnalysisType(params.type);
   try {
-    await refundCredits(params.userId, action, params.dealId, {
-      analysisId: params.analysisId,
-      ...(params.refundIdempotencyKey
-        ? { idempotencyKey: params.refundIdempotencyKey }
-        : {}),
-    });
+    const refundAmount = params.refundAmount;
+    if (typeof refundAmount === "number" && refundAmount > 0) {
+      await refundCreditAmount(params.userId, action, refundAmount, {
+        dealId: params.dealId,
+        idempotencyKey: params.refundIdempotencyKey,
+        description: `Remboursement analyse echouee (${refundAmount} credits)`,
+      });
+    } else {
+      await refundCredits(params.userId, action, params.dealId, {
+        analysisId: params.analysisId,
+        ...(params.refundIdempotencyKey
+          ? { idempotencyKey: params.refundIdempotencyKey }
+          : {}),
+      });
+    }
     if (params.analysisId) {
       await prisma.analysis.update({
         where: { id: params.analysisId },
-        data: { refundedAt: new Date(), refundAmount: CREDIT_COSTS[action] ?? null },
+        data: { refundedAt: new Date(), refundAmount: refundAmount ?? CREDIT_COSTS[action] ?? null },
       }).catch((err: unknown) => logger.warn({ err, analysisId: params.analysisId }, 'Could not mark refundedAt'));
     }
   } catch (err) {
@@ -567,11 +568,12 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
   { event: 'analysis/deal.resume' },
   async ({ event, step }) => {
     const { orchestrator } = await import("@/agents");
-    const { analysisId, dealId, userId, resumeRefundKey } = event.data as {
+    const { analysisId, dealId, userId, resumeRefundKey, resumeRefundAmount } = event.data as {
       analysisId: string;
       dealId: string;
       userId: string;
       resumeRefundKey?: string | null;
+      resumeRefundAmount?: number | null;
     };
 
     const compensateResumeFailure = async (stepId: string) => {
@@ -586,6 +588,7 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
           dealId,
           type: analysis?.type ?? "full_analysis",
           refundIdempotencyKey: resumeRefundKey ?? undefined,
+          refundAmount: typeof resumeRefundAmount === "number" ? resumeRefundAmount : undefined,
         });
       });
     };
@@ -913,11 +916,34 @@ export const documentExtractionFunction = inngest.createFunction(
       // pre-charges a worst-case estimate; once the real cost is known we
       // either refund the over-charge or charge the (rare) delta. Idempotent
       // via deterministic idempotency keys derived from the run id.
-      if (data.reconcileCredits && data.creditAction && typeof data.chargedCredits === "number") {
+      //
+      // B3.3.3 fix-up #2 — gate on `result.status === "COMPLETED"`. The
+      // pipeline can now return `SUPERSEDED` (run terminalized by /process
+      // stale-retry while this worker was in flight) — reconciling against
+      // a sentinel with `actualCredits=0` would compute a bogus refund/charge
+      // delta. SUPERSEDED is handled below (explicit refund of chargedCredits
+      // since the run was killed before producing the document). FAILED is
+      // handled by the global catch block (which throws and triggers
+      // `compensate-failed-extraction`) — but a pipeline-level FAILED return
+      // (no throw) would also wrongly reconcile. Tighten the gate.
+      if (
+        result.status === "COMPLETED" &&
+        data.reconcileCredits &&
+        data.creditAction &&
+        typeof data.chargedCredits === "number"
+      ) {
         await step.run('reconcile-extraction-credits', async () => {
           const charged = data.chargedCredits ?? 0;
           const actual = result.actualCredits;
           if (actual === charged) return;
+          // B10.1 — extraction is not billed separately while
+          // `CHARGE_DOCUMENT_EXTRACTION_CREDITS` is false. Routes
+          // skip their pre-charge entirely (charged = 0); a worker
+          // top-up here would create a ghost charge with no
+          // user-visible pre-charge to anchor it. Hard skip the
+          // reconcile branch so the ledger stays at 0.
+          const { CHARGE_DOCUMENT_EXTRACTION_CREDITS } = await import("@/services/credits");
+          if (!CHARGE_DOCUMENT_EXTRACTION_CREDITS) return;
           const { deductCreditAmount, refundCreditAmount } = await import("@/services/credits");
           if (actual > charged) {
             const delta = actual - charged;
@@ -958,7 +984,15 @@ export const documentExtractionFunction = inngest.createFunction(
       // this synchronously after inline extraction; now that the PDF path
       // is durable, the trigger moves here — it must fire when the document
       // actually reaches COMPLETED, which only happens inside this function.
-      if (data.reason === "upload") {
+      //
+      // B3.3.3 fix-up #2 — gate on `result.status === "COMPLETED"`. A
+      // SUPERSEDED return means the run was killed by /process stale-retry
+      // mid-flight; the NEW run will trigger its own thesis re-extract when
+      // it completes. Without this gate, a late-completing superseded run
+      // would fire a phantom thesis re-extract (duplicate work + wrong
+      // `triggeredByDocumentId` provenance since no document reached COMPLETED
+      // via this run).
+      if (result.status === "COMPLETED" && data.reason === "upload") {
         await step.run('trigger-thesis-reextract', async () => {
           try {
             const { thesisService } = await import("@/services/thesis");
@@ -985,6 +1019,68 @@ export const documentExtractionFunction = inngest.createFunction(
         });
       }
 
+      // B3.3.3 fix-up #2 — SUPERSEDED branch. The run was terminalized by
+      // /process stale-retry while this worker was in flight. The user paid
+      // for the upload-time pre-charge (chargedCredits), but the run never
+      // produced a document. /process deducted SEPARATE credits for the new
+      // run, so leaving chargedCredits on the user's tab would double-bill
+      // them. Refund explicitly (idempotent via dispatchRefundKey).
+      //
+      // Note: we deliberately do NOT throw and do NOT terminalize/flip the
+      // document FAILED here — the run is already terminal, and the document
+      // belongs to the new run now. Touching it would clobber the new run's
+      // state (the precise bug this fix-up closes).
+      if (result.status === "SUPERSEDED") {
+        await step.run('compensate-superseded-extraction', async () => {
+          if (
+            data.chargedCredits &&
+            data.chargedCredits > 0 &&
+            data.creditAction &&
+            data.dispatchRefundKey
+          ) {
+            // B10.1 — strict contract: while
+            // CHARGE_DOCUMENT_EXTRACTION_CREDITS is false,
+            // refundCreditAmount(..., "EXTRACTION_*", ...) is NEVER
+            // called. A non-zero `data.chargedCredits` on an in-flight
+            // event from before the flag flip would otherwise produce
+            // a phantom refund (ghost credit) that breaks ledger
+            // conservation. Skip the refund — the matching deduct was
+            // either real (and we accept the legacy charge stays
+            // until manual reconcile) or was never taken (and there's
+            // nothing to refund). When the flag flips back on, the
+            // gate naturally lifts.
+            const { CHARGE_DOCUMENT_EXTRACTION_CREDITS } = await import("@/services/credits");
+            if (!CHARGE_DOCUMENT_EXTRACTION_CREDITS) return;
+            try {
+              const { refundCreditAmount } = await import("@/services/credits");
+              const refund = await refundCreditAmount(
+                data.userId,
+                data.creditAction,
+                data.chargedCredits,
+                {
+                  dealId: data.dealId,
+                  documentId: data.documentId,
+                  documentExtractionRunId: data.extractionRunId,
+                  idempotencyKey: data.dispatchRefundKey,
+                  description: `Refund superseded extraction for ${data.documentId} (run replaced by stale-retry)`,
+                }
+              );
+              if (!refund?.success) {
+                logger.error(
+                  { userId: data.userId, documentId: data.documentId, refundError: refund?.error },
+                  '[document-extraction] superseded refund returned non-success — user remains debited'
+                );
+              }
+            } catch (refundError) {
+              logger.error(
+                { userId: data.userId, documentId: data.documentId, refundError },
+                '[document-extraction] superseded refund threw — user remains debited'
+              );
+            }
+          }
+        });
+      }
+
       return result;
     } catch (error) {
       // Persistent failure: refund the user (if anything was charged) and
@@ -993,7 +1089,19 @@ export const documentExtractionFunction = inngest.createFunction(
       // throwing — we re-assert it here defensively in case the throw was
       // earlier than the FAILED write.
       await step.run('compensate-failed-extraction', async () => {
-        if (data.chargedCredits && data.chargedCredits > 0 && data.creditAction && data.dispatchRefundKey) {
+        // B10.1 — strict contract: refund gated on the same flag as
+        // the SUPERSEDED branch. See compensate-superseded-extraction
+        // for the full rationale (ledger conservation while
+        // CHARGE_DOCUMENT_EXTRACTION_CREDITS is false). The
+        // terminalize + document FAILED side effects (below) must
+        // still run unconditionally — they are state recovery, not
+        // money movement — so the guard is a wrapping if (not an
+        // early return that would skip the recovery path).
+        const { CHARGE_DOCUMENT_EXTRACTION_CREDITS } = await import("@/services/credits");
+        if (
+          CHARGE_DOCUMENT_EXTRACTION_CREDITS &&
+          data.chargedCredits && data.chargedCredits > 0 && data.creditAction && data.dispatchRefundKey
+        ) {
           try {
             const { refundCreditAmount } = await import("@/services/credits");
             const refund = await refundCreditAmount(

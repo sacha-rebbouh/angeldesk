@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-function sanitizeErrorText(value: unknown): string {
+export function sanitizeErrorText(value: unknown): string {
   return String(value ?? "")
     .replace(/postgres(?:ql)?:\/\/[^@\s]+@/gi, "postgresql://[redacted]@")
     .replace(/(BLOB_READ_WRITE_TOKEN|token|password|secret)=([^&\s]+)/gi, "$1=[redacted]")

@@ -41,12 +41,17 @@ describe("documents-tab — evidence-health invalidation wiring (Codex round 24 
     expect(evidenceHealthCount).toBeGreaterThanOrEqual(dealsDetailCount);
   });
 
-  it("Codex round 25 P1 — the PROCESSING polling path invalidates evidenceHealth on terminal transition", () => {
+  it("Codex round 25 P1 + B3.1.1 P2 — polling path invalidates evidenceHealth on real terminal transition", () => {
     // The OCR async path (PDF upload → Inngest → EvidenceSignal created →
     // polling sees doc terminal) is THE main flow. Without invalidation in
     // refreshProcessingDocuments, the panel/badges stay stale for up to 30s
     // (or forever if no other mutation fires).
-    expect(source).toMatch(/processingStatus\s*!==\s*["']PROCESSING["']/);
+    //
+    // B3.1.1 P2 — the predicate uses `isTerminalDocumentStatus` from the
+    // pure helper, not the old `!== "PROCESSING"` which wrongly matched
+    // PENDING and fired a fake transition on every tick.
+    expect(source).toMatch(/isTerminalDocumentStatus\(document\.processingStatus\)/);
+    expect(source).not.toMatch(/processingStatus\s*!==\s*["']PROCESSING["']/);
     // The invalidation must be guarded by a terminal-transition detection,
     // not unconditional on every poll (avoid noisy refetches).
     expect(source).toMatch(/hasTerminalTransition[\s\S]{0,400}invalidateEvidenceHealth\(\)/);

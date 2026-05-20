@@ -70,7 +70,7 @@ vi.mock("@/services/credits", () => ({
   getActionForAnalysisType: mocks.getActionForAnalysisType,
 }));
 
-vi.mock("@/lib/inngest", () => ({
+vi.mock("@/lib/inngest-client", () => ({
   inngest: {
     send: mocks.inngestSend,
   },

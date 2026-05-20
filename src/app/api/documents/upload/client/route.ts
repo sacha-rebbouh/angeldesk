@@ -3,7 +3,7 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/auth";
+import { authenticateOrUnauthorized } from "@/lib/auth-helpers";
 import { handleApiError } from "@/lib/api-error";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
@@ -41,15 +41,23 @@ class ClientUploadTokenError extends Error {
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
-      return NextResponse.json(
-        { error: "Blob client uploads are not configured" },
-        { status: 501 }
-      );
-    }
+  // B11.3.1 (Codex P2) — explicit 401 contract. The 501 env gate
+  // stays FIRST so an unconfigured environment surfaces clearly
+  // before we even check auth (consistent with the existing
+  // contract — an unconfigured server is a server-side bug, not
+  // an auth issue).
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return NextResponse.json(
+      { error: "Blob client uploads are not configured" },
+      { status: 501 }
+    );
+  }
 
-    const user = await requireAuth();
+  const auth = await authenticateOrUnauthorized();
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
+
+  try {
     const rateLimit = await checkRateLimitDistributed(`upload-token:${user.id}`, {
       maxRequests: 30,
       windowMs: 60000,

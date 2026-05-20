@@ -15,7 +15,7 @@ import {
   refreshRunExtractionStats,
 } from "@/services/documents/extraction-runs";
 import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
-import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
+import { CHARGE_DOCUMENT_EXTRACTION_CREDITS, deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import { detectPageSignals, selectiveOCR } from "@/services/pdf";
 import { assessExtractionSemantics } from "@/services/pdf/extraction-semantics";
 import { downloadFile } from "@/services/storage";
@@ -134,25 +134,32 @@ export async function POST(_request: Request, context: RouteParams) {
       requestId: retryRequestId,
     };
 
-    const creditDeduction = await deductCreditAmount(user.id, "EXTRACTION_SUPREME_PAGE", 2, {
-      dealId: document.dealId,
-      documentId,
-      documentExtractionRunId: latestRun.id,
-      pageNumber,
-      idempotencyKey: `extraction:supreme-page:${latestRun.id}:${pageNumber}:${retryRequestId}`,
-      description: `Supreme OCR retry for ${document.name}, page ${pageNumber}`,
-    });
-    if (!creditDeduction.success) {
-      await prisma.document.updateMany({
-        where: { id: documentId, processingStatus: "PROCESSING" },
-        data: { processingStatus: document.processingStatus },
-      }).catch(() => undefined);
-      return NextResponse.json(
-        { error: creditDeduction.error ?? "Credits insuffisants pour relancer cette page", requiredCredits: 2 },
-          { status: 402 }
-      );
+    // B10.1 — extraction is not billed separately while
+    // `CHARGE_DOCUMENT_EXTRACTION_CREDITS` is false. We skip the
+    // 2-credit per-page supreme retry deduct. `chargedCredits` stays
+    // 0 so the two refund paths below (failure-422 and catch-block)
+    // are guaranteed no-ops (both gated on `chargedCredits > 0`).
+    if (CHARGE_DOCUMENT_EXTRACTION_CREDITS) {
+      const creditDeduction = await deductCreditAmount(user.id, "EXTRACTION_SUPREME_PAGE", 2, {
+        dealId: document.dealId,
+        documentId,
+        documentExtractionRunId: latestRun.id,
+        pageNumber,
+        idempotencyKey: `extraction:supreme-page:${latestRun.id}:${pageNumber}:${retryRequestId}`,
+        description: `Supreme OCR retry for ${document.name}, page ${pageNumber}`,
+      });
+      if (!creditDeduction.success) {
+        await prisma.document.updateMany({
+          where: { id: documentId, processingStatus: "PROCESSING" },
+          data: { processingStatus: document.processingStatus },
+        }).catch(() => undefined);
+        return NextResponse.json(
+          { error: creditDeduction.error ?? "Credits insuffisants pour relancer cette page", requiredCredits: 2 },
+            { status: 402 }
+        );
+      }
+      chargedCredits = 2;
     }
-    chargedCredits = 2;
 
     const existingCorpus = document.extractedText ? safeDecrypt(document.extractedText) : "";
     const buffer = await downloadFile(storageTarget);
@@ -365,8 +372,12 @@ export async function POST(_request: Request, context: RouteParams) {
               charCount,
               wordCount,
               cost: retryResult.totalCost,
-              creditsCharged: 2,
-              creditAction: "EXTRACTION_SUPREME_PAGE",
+              // B10.1 — persist the actual charge (0 while
+              // CHARGE_DOCUMENT_EXTRACTION_CREDITS is false). The
+              // creditAction is omitted when no charge took place so
+              // downstream UI/audits don't see a phantom credit op.
+              creditsCharged: chargedCredits,
+              ...(chargedCredits > 0 ? { creditAction: "EXTRACTION_SUPREME_PAGE" } : {}),
               retriedAt: new Date().toISOString(),
             },
           }),
@@ -406,7 +417,9 @@ export async function POST(_request: Request, context: RouteParams) {
         runStatus: refreshedRun?.status ?? latestRun.status,
         readyForAnalysis: refreshedRun?.readyForAnalysis ?? latestRun.readyForAnalysis,
         requiresOCR: refreshedRun?.readyForAnalysis ? false : true,
-        creditsCharged: 2,
+        // B10.1 — surface the real charge, not a hardcoded constant.
+        // 0 while CHARGE_DOCUMENT_EXTRACTION_CREDITS is false.
+        creditsCharged: chargedCredits,
       },
     });
   } catch (error) {

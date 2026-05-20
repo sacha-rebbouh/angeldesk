@@ -117,6 +117,15 @@ export interface DocumentHealthSummary {
   missing: DocumentHealthMissingEntry[];
   /** StaleWarning entries raised on this doc, with the warning's real severity. */
   freshness: DocumentHealthFreshnessEntry[];
+  /**
+   * Phase B8.1 — document identity surfaced for action mapping. The
+   * EvidenceHealthPanel needs name + type to route signals to the
+   * correct UI (metadata dialog pre-fill, drill-down). Carrying the
+   * fields on the bundle avoids a second round-trip per signal.
+   * Optional for backward-compat with consumers built before B8.1.
+   */
+  documentName?: string;
+  documentType?: DocumentType;
 }
 
 export interface EvidenceHealthBundle {
@@ -179,13 +188,17 @@ function buildPerDocumentSummary(
 ): Record<string, DocumentHealthSummary> {
   const out: Record<string, DocumentHealthSummary> = {};
 
-  // Initialize one bucket per known document.
-  for (const docId of Object.keys(docContexts)) {
+  // Initialize one bucket per known document. B8.1 — carry name + type so
+  // the EvidenceHealthPanel can build per-signal actions (open metadata
+  // dialog, drill-down to doc) without a second round-trip per signal.
+  for (const [docId, ctx] of Object.entries(docContexts)) {
     out[docId] = {
       contradictionCount: 0,
       highestContradictionSeverity: null,
       missing: [],
       freshness: [],
+      documentName: ctx.documentName,
+      documentType: ctx.documentType,
     };
   }
 

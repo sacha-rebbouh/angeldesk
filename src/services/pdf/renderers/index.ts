@@ -10,13 +10,11 @@
  * gibberish-rendering pages to downstream OCR.
  */
 
-import { createPdfToImgRenderer, PdfToImgRenderer } from "./pdf-to-img-renderer";
-import { createPopplerRenderer, PopplerRenderer } from "./poppler-renderer";
 import type { PdfRenderer, PdfRendererId } from "./types";
 
 export type { PdfRenderer, PdfRendererId, RenderOptions, RenderedPage } from "./types";
-export { PopplerRenderer, createPopplerRenderer } from "./poppler-renderer";
-export { PdfToImgRenderer, createPdfToImgRenderer } from "./pdf-to-img-renderer";
+export type { PopplerRenderer } from "./poppler-renderer";
+export type { PdfToImgRenderer } from "./pdf-to-img-renderer";
 
 const VALID_IDS: readonly PdfRendererId[] = ["poppler", "pdfjs-legacy"] as const;
 
@@ -30,24 +28,23 @@ export function readExtractionRendererId(): PdfRendererId {
   );
 }
 
-export function createRenderer(): PdfRenderer {
+export async function createRenderer(): Promise<PdfRenderer> {
   const id = readExtractionRendererId();
-  switch (id) {
-    case "poppler":
-      return createPopplerRenderer();
-    case "pdfjs-legacy":
-      return createPdfToImgRenderer();
-  }
+  return createRendererById(id);
 }
 
 /**
  * Convenience: explicit selection, bypasses env var. Used in tests.
  */
-export function createRendererById(id: PdfRendererId): PdfRenderer {
+export async function createRendererById(id: PdfRendererId): Promise<PdfRenderer> {
   switch (id) {
-    case "poppler":
+    case "poppler": {
+      const { createPopplerRenderer } = await import("./poppler-renderer");
       return createPopplerRenderer();
-    case "pdfjs-legacy":
+    }
+    case "pdfjs-legacy": {
+      const { createPdfToImgRenderer } = await import("./pdf-to-img-renderer");
       return createPdfToImgRenderer();
+    }
   }
 }

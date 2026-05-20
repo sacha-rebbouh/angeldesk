@@ -21,7 +21,8 @@ describe("getThesisCallOptions", () => {
 
     const options = getThesisCallOptions<{ moat: string | null; pathToExit: string | null }>("core");
 
-    expect(options.fallbackChain).toEqual(["CLAUDE_SONNET_45", "GEMINI_PRO", "HAIKU"]);
+    expect(options.fallbackChain).toEqual(["CLAUDE_SONNET_45", "HAIKU"]);
+    expect(options.timeoutMs).toBe(110_000);
     expect(options.fallbackDefaults).toEqual({ moat: null, pathToExit: null });
     expect(options.terminalFallbackData).toBeUndefined();
   });
@@ -33,7 +34,12 @@ describe("getThesisCallOptions", () => {
     const thiel = getThesisCallOptions("thiel-lens");
     const angelDesk = getThesisCallOptions("angel-desk-lens");
 
-    expect(yc.fallbackChain).toEqual(["GEMINI_PRO", "CLAUDE_SONNET_45", "HAIKU"]);
+    expect(yc.fallbackChain).toEqual(["GEMINI_PRO"]);
+    expect(thiel.fallbackChain).toEqual(["GEMINI_PRO"]);
+    expect(angelDesk.fallbackChain).toEqual(["GEMINI_PRO"]);
+    expect(yc.timeoutMs).toBe(75_000);
+    expect(thiel.timeoutMs).toBe(75_000);
+    expect(angelDesk.timeoutMs).toBe(75_000);
     expect(YcLensSchema.safeParse(yc.fallbackDefaults).success).toBe(true);
     expect(YcLensSchema.safeParse(yc.terminalFallbackData).success).toBe(true);
     expect(ThielLensSchema.safeParse(thiel.fallbackDefaults).success).toBe(true);

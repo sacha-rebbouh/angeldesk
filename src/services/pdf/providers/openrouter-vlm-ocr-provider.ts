@@ -37,7 +37,7 @@ export class OpenRouterVlmPageOcrProvider implements VlmPageOcrProvider {
   readonly descriptor = OPENROUTER_VLM_PAGE_OCR_PROVIDER_DESCRIPTOR;
 
   async extractText(request: VlmPageOcrRequest): Promise<VlmPageTextOcrOutput> {
-    const { processImageOCR } = await import("@/services/pdf/ocr-service");
+    const { processImageOCR } = await import("@/services/pdf/image-ocr");
     const raw = await processImageOCR(request.imageBuffer, request.format);
     return {
       provider: OPENROUTER_VLM_PAGE_OCR_PROVIDER_DESCRIPTOR,

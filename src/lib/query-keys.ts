@@ -61,6 +61,28 @@ export const queryKeys = {
     byDeal: (dealId: string) => [...queryKeys.evidenceHealth.all, dealId] as const,
   },
 
+  // B7.1 — detected ATTACHMENT_RELATION signals for a document.
+  // Centralised so the metadata editor + audit dialog invalidate
+  // via the same key (B7.1 fix-up: a B6.x metadata edit that
+  // changes sourceKind/sourceDate/type triggers the Evidence
+  // recompute which re-emits / wipes ATTACHMENT_RELATION signals;
+  // the panel MUST re-fetch immediately, not after staleTime).
+  documentAttachments: {
+    all: ["documentAttachments"] as const,
+    byDocument: (documentId: string) =>
+      [...queryKeys.documentAttachments.all, documentId] as const,
+  },
+
+  // B7.3 — email thread date candidates (from
+  // sourceMetadata.threadMessages). Per-document; invalidated by
+  // the metadata editor after a successful sourceDate / sourceKind
+  // patch (which can change which candidate is "primary").
+  documentEmailCandidates: {
+    all: ["documentEmailCandidates"] as const,
+    byDocument: (documentId: string) =>
+      [...queryKeys.documentEmailCandidates.all, documentId] as const,
+  },
+
   // Usage queries (for analyze usage limits)
   usage: {
     all: ["usage"] as const,
@@ -125,6 +147,8 @@ export const queryKeys = {
     users: () => [...queryKeys.admin.all, "users"] as const,
     usersList: (params?: { limit?: number; offset?: number }) =>
       [...queryKeys.admin.users(), "list", params] as const,
+    analysisDebug: (analysisId: string) =>
+      [...queryKeys.admin.all, "analysisDebug", analysisId] as const,
   },
 
   // Alert resolutions

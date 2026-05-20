@@ -20,14 +20,14 @@ import {
   startDocumentExtractionRun,
   terminalizeExtractionRunAsFailed,
 } from "@/services/documents/extraction-runs";
-import { inngest } from "@/lib/inngest";
+import { inngest } from "@/lib/inngest-client";
 import {
   buildProgressSnapshot,
   setDocumentExtractionProgress,
 } from "@/services/documents/extraction-progress";
 import { reuseCompletedExtractionForContentHash } from "@/services/documents/extraction-reuse";
 import { runEvidenceForDocument } from "@/services/evidence";
-import { deductCreditAmount, refundCreditAmount } from "@/services/credits";
+import { CHARGE_DOCUMENT_EXTRACTION_CREDITS, deductCreditAmount, refundCreditAmount } from "@/services/credits";
 import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
 import type {
   DocumentPageArtifact,
@@ -473,37 +473,44 @@ export async function POST(request: NextRequest) {
     // Images (JPEG/PNG): OCR via Vision LLM to extract text content
     let imageOcrCredits = 0;
     if (file.type === "image/jpeg" || file.type === "image/png") {
-      // P0.4 + P1: pre-check credits AVANT d'appeler le Vision LLM. Tarification
-      // granulaire par taille: 1 credit si < 500KB (image simple, screenshot
-      // standard), 2 credits au-dela (image lourde, qualite high-fidelity).
-      imageOcrCredits = file.size < 500 * 1024 ? 1 : 2;
-      const imagePreCheck = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", imageOcrCredits, {
-        dealId,
-        documentId: document.id,
-        idempotencyKey: `extraction:pre:image:${document.id}`,
-        description: `Pre-check image OCR (${imageOcrCredits}cr, ${Math.round(file.size / 1024)}KB) for ${file.name}`,
-      });
-      if (!imagePreCheck.success) {
-        await prisma.document.update({
-          where: { id: document.id },
-          data: {
-            processingStatus: "FAILED",
-            extractionWarnings: [{
-              code: "INSUFFICIENT_CREDITS",
-              severity: "critical",
-              message: `Credits insuffisants pour l'OCR image (${imageOcrCredits} requis)`,
-              suggestion: "Acheter un pack de credits puis re-uploader.",
-            }] as Prisma.InputJsonValue,
-          },
+      // B10.1 — image OCR no longer deducts credits at upload while
+      // `CHARGE_DOCUMENT_EXTRACTION_CREDITS` is false. The pre-check
+      // is skipped entirely; the matching refund path below (line ~606)
+      // is gated on `imageOcrCredits > 0` so it's a no-op too.
+      // Tarification kept in comments for the future flip:
+      // 1 credit si < 500KB, 2 credits au-dela.
+      imageOcrCredits = CHARGE_DOCUMENT_EXTRACTION_CREDITS
+        ? file.size < 500 * 1024 ? 1 : 2
+        : 0;
+      if (CHARGE_DOCUMENT_EXTRACTION_CREDITS) {
+        const imagePreCheck = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", imageOcrCredits, {
+          dealId,
+          documentId: document.id,
+          idempotencyKey: `extraction:pre:image:${document.id}`,
+          description: `Pre-check image OCR (${imageOcrCredits}cr, ${Math.round(file.size / 1024)}KB) for ${file.name}`,
         });
-        return NextResponse.json(
-          {
-            error: "Credits insuffisants pour l'OCR image",
-            required: imageOcrCredits,
-            breakdown: { image: imageOcrCredits, sizeKb: Math.round(file.size / 1024) },
-          },
-          { status: 402 }
-        );
+        if (!imagePreCheck.success) {
+          await prisma.document.update({
+            where: { id: document.id },
+            data: {
+              processingStatus: "FAILED",
+              extractionWarnings: [{
+                code: "INSUFFICIENT_CREDITS",
+                severity: "critical",
+                message: `Credits insuffisants pour l'OCR image (${imageOcrCredits} requis)`,
+                suggestion: "Acheter un pack de credits puis re-uploader.",
+              }] as Prisma.InputJsonValue,
+            },
+          });
+          return NextResponse.json(
+            {
+              error: "Credits insuffisants pour l'OCR image",
+              required: imageOcrCredits,
+              breakdown: { image: imageOcrCredits, sizeKb: Math.round(file.size / 1024) },
+            },
+            { status: 402 }
+          );
+        }
       }
 
       await prisma.document.update({
@@ -512,7 +519,7 @@ export async function POST(request: NextRequest) {
       });
 
       try {
-        const { processImageOCR } = await import("@/services/pdf/ocr-service");
+        const { processImageOCR } = await import("@/services/pdf/image-ocr");
         const ocrResult = await processImageOCR(buffer, file.type === "image/jpeg" ? "jpeg" : "png");
 
         extractionQuality = ocrResult.text.length > 100 ? 75 : ocrResult.text.length > 30 ? 50 : 20;
@@ -603,12 +610,19 @@ export async function POST(request: NextRequest) {
         // P0.4: OCR a echoue apres pre-check. Remboursement integral du montant
         // effectivement deduit (compute partiel peut avoir ete consomme mais on
         // favorise l'UX).
-        await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", imageOcrCredits, {
-          dealId,
-          documentId: document.id,
-          idempotencyKey: `extraction:refund:image-fail:${document.id}`,
-          description: `Refund image OCR failed for ${file.name}`,
-        }).catch(() => undefined);
+        //
+        // B10.1 — gated on `imageOcrCredits > 0` so the refund is a
+        // hard no-op when the flag is off (no ghost credit creation
+        // possible — if the deduct above was skipped, the refund
+        // here must skip too).
+        if (imageOcrCredits > 0) {
+          await refundCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", imageOcrCredits, {
+            dealId,
+            documentId: document.id,
+            idempotencyKey: `extraction:refund:image-fail:${document.id}`,
+            description: `Refund image OCR failed for ${file.name}`,
+          }).catch(() => undefined);
+        }
         await prisma.document.update({
           where: { id: document.id },
           data: {
@@ -638,14 +652,20 @@ export async function POST(request: NextRequest) {
     let pdfExtractionEnqueued = false;
 
     if (file.type === "application/pdf" && !reusedExtraction) {
-      const { estimatePdfExtractionCost } = await import("@/services/pdf");
+      const { estimatePdfExtractionCost } = await import("@/services/pdf/extractor");
       // P0.4: pre-check credits avant de lancer smartExtract (qui peut engager
       // du compute OpenRouter). Estimation conservatrice worst-case: 1 credit/page
       // high_fidelity. Apres extraction reelle, on rembourse la difference si le
       // plan effectif est plus economique.
       const pdfEstimate = await estimatePdfExtractionCost(buffer);
       const preCharge = Math.max(0, pdfEstimate.estimatedCredits);
-      if (preCharge > 0) {
+      // B10.1 — PDF extraction no longer pre-charges credits while
+      // `CHARGE_DOCUMENT_EXTRACTION_CREDITS` is false. `pdfPreChargedCredits`
+      // stays 0; the Inngest event below carries 0 so the worker's
+      // reconciliation top-up is a no-op (see lib/inngest.ts). The
+      // refund branch on enqueue-failure (lines below) is already
+      // gated on `pdfPreChargedCredits > 0` — also a no-op.
+      if (CHARGE_DOCUMENT_EXTRACTION_CREDITS && preCharge > 0) {
         const deduction = await deductCreditAmount(user.id, "EXTRACTION_HIGH_PAGE", preCharge, {
           dealId,
           documentId: document.id,
@@ -1387,7 +1407,7 @@ export async function POST(request: NextRequest) {
         const { thesisService } = await import("@/services/thesis");
         const existingThesis = await thesisService.getLatest(dealId);
         if (existingThesis) {
-          const { inngest } = await import("@/lib/inngest");
+          const { inngest } = await import("@/lib/inngest-client");
           await inngest.send({
             name: "analysis/thesis.reextract",
             data: {
@@ -1645,7 +1665,7 @@ async function extractOfficeEmbeddedMediaArtifacts(
     return { text: "", artifacts: [], warnings: [], credits: 0, usd: 0, ocrCount: 0 };
   }
 
-  const { processImageArtifactOCR } = await import("@/services/pdf/ocr-service");
+  const { processImageOCR } = await import("@/services/pdf/image-ocr");
   const artifacts: Array<{ label: string; text: string; artifact: DocumentPageArtifact }> = [];
   const warnings: string[] = [];
   let usd = 0;
@@ -1657,15 +1677,13 @@ async function extractOfficeEmbeddedMediaArtifacts(
   for (const [index, item] of mediaToOCR.entries()) {
     const label = `${sourceType} embedded image ${index + 1}: ${item.name}`;
     try {
-      const result = await processImageArtifactOCR(
+      const result = await processImageOCR(
         item.buffer,
-        item.contentType === "image/jpeg" ? "jpeg" : "png",
-        index + 1,
-        "high_fidelity"
+        item.contentType === "image/jpeg" ? "jpeg" : "png"
       );
       usd += result.cost;
       ocrCount += 1;
-      const artifact = result.artifact ?? buildEmbeddedMediaFallbackArtifact({
+      const artifact = buildEmbeddedMediaFallbackArtifact({
         pageNumber: index + 1,
         label,
         text: result.text,
@@ -2107,6 +2125,13 @@ async function chargeExtractionCredits(params: {
   credits: number;
   description: string;
 }) {
+  // B10.1 — short-circuit when extraction is not billed separately.
+  // Callers receive `creditsCharged: 0` which mirrors the existing
+  // "credits === 0" early-return contract — no behaviour change for
+  // downstream code that already handles the 0 case (it's the normal
+  // path for a doc that needed no OCR).
+  if (!CHARGE_DOCUMENT_EXTRACTION_CREDITS) return { creditsCharged: 0 };
+
   const credits = Math.max(0, Math.ceil(params.credits));
   if (credits === 0) return { creditsCharged: 0 };
 

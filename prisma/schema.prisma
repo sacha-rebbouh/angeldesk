@@ -27,6 +27,7 @@ model User {
   webhooks                    Webhook[]
   liveSessions                LiveSession[]
   documentExtractionOverrides DocumentExtractionOverride[]
+  evidenceSignalResolutions   EvidenceSignalResolution[] // Phase B9 — who marked which signal resolved/ignored
 
   // Credit system
   creditBalance      UserCreditBalance?
@@ -177,18 +178,19 @@ model Deal {
   // Conditions analysis cache (full AI output)
   conditionsAnalysis Json? // Cache résultat complet conditions-analyst
 
-  documents         Document[]
-  founders          Founder[]
-  redFlags          RedFlag[]
-  analyses          Analysis[]
-  factEvents        FactEvent[]
-  dealTerms         DealTerms?
-  dealStructure     DealStructure?
-  dealTermsVersions DealTermsVersion[]
-  alertResolutions  AlertResolution[]
-  liveSessions      LiveSession[]
-  corpusSnapshots   CorpusSnapshot[]
-  theses            Thesis[] // Thesis-first — toutes les versions de these extraites pour ce deal
+  documents                 Document[]
+  founders                  Founder[]
+  redFlags                  RedFlag[]
+  analyses                  Analysis[]
+  factEvents                FactEvent[]
+  dealTerms                 DealTerms?
+  dealStructure             DealStructure?
+  dealTermsVersions         DealTermsVersion[]
+  alertResolutions          AlertResolution[]
+  liveSessions              LiveSession[]
+  corpusSnapshots           CorpusSnapshot[]
+  theses                    Thesis[] // Thesis-first — toutes les versions de these extraites pour ce deal
+  evidenceSignalResolutions EvidenceSignalResolution[] // Phase B9 — user-level resolved/ignored overlay on EvidenceHealth signals
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2654,4 +2656,58 @@ enum EvidenceSignalMethod {
   LLM
   HUMAN_OVERRIDE
   IMPORT
+}
+
+// ============================================================================
+// Phase B9 — Evidence Signal Resolution (Corpus Control panel)
+// ============================================================================
+//
+// User-level action on Evidence Health signals: RESOLVED (the BA confirms
+// the underlying issue was handled — e.g. they uploaded the missing cap
+// table) or IGNORED (the BA assumes the signal, e.g. a known
+// non-actionable contradiction). We NEVER delete the underlying
+// EvidenceSignal rows — they remain the audit-of-record. The resolution
+// row is the user's overlay.
+//
+// Identity strategy (signalKey):
+//   The key is a deterministic string built from the IDENTITY-defining
+//   fields of the panel finding (kind + subject + year for
+//   contradictions, kind + documentId? for missing/freshness). It is
+//   INSENSITIVE to display wording (reason/severity/message) — the
+//   Codex point of attention: a small change in wording should NOT
+//   re-create the warning. See services/evidence/signal-identity.ts.
+//
+// Cardinality:
+//   One row per (dealId, signalKey) — `@@unique([dealId, signalKey])`.
+//   Action toggle = UPDATE in place (preserves trace of the latest
+//   user decision); un-resolution = DELETE the row.
+model EvidenceSignalResolution {
+  id        String                         @id @default(cuid())
+  dealId    String
+  // Stable identity key — see services/evidence/signal-identity.ts.
+  // Cap intentionally high to accommodate future signal kinds without
+  // a migration. Validated server-side via Zod (signal-identity.ts).
+  signalKey String                         @db.VarChar(512)
+  action    EvidenceSignalResolutionAction
+  // Optional free-text reason the BA may supply. We CAP server-side
+  // (Zod, 1000 chars) so the column never holds an unbounded blob.
+  reason    String?                        @db.Text
+  userId    String
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One resolution per signal per deal — the action toggle updates in
+  // place rather than appending. Anti-spam + obvious lookup index.
+  @@unique([dealId, signalKey])
+  @@index([dealId])
+  @@index([userId])
+}
+
+enum EvidenceSignalResolutionAction {
+  RESOLVED
+  IGNORED
 }

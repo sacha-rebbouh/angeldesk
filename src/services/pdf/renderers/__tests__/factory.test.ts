@@ -4,9 +4,9 @@ import {
   createRenderer,
   createRendererById,
   readExtractionRendererId,
-  PopplerRenderer,
-  PdfToImgRenderer,
 } from "../index";
+import { PdfToImgRenderer } from "../pdf-to-img-renderer";
+import { PopplerRenderer } from "../poppler-renderer";
 
 describe("renderer factory", () => {
   const original = process.env.EXTRACTION_RENDERER;
@@ -54,35 +54,35 @@ describe("renderer factory", () => {
   });
 
   describe("createRenderer", () => {
-    it("yields a PopplerRenderer by default", () => {
-      const renderer = createRenderer();
+    it("yields a PopplerRenderer by default", async () => {
+      const renderer = await createRenderer();
       expect(renderer).toBeInstanceOf(PopplerRenderer);
       expect(renderer.id).toBe("poppler");
     });
 
-    it("yields a PdfToImgRenderer when pdfjs-legacy selected", () => {
+    it("yields a PdfToImgRenderer when pdfjs-legacy selected", async () => {
       process.env.EXTRACTION_RENDERER = "pdfjs-legacy";
-      const renderer = createRenderer();
+      const renderer = await createRenderer();
       expect(renderer).toBeInstanceOf(PdfToImgRenderer);
       expect(renderer.id).toBe("pdfjs-legacy");
     });
 
-    it("throws on invalid env rather than falling back silently", () => {
+    it("throws on invalid env rather than falling back silently", async () => {
       process.env.EXTRACTION_RENDERER = "mupdf";
-      expect(() => createRenderer()).toThrow(/Invalid EXTRACTION_RENDERER/);
+      await expect(createRenderer()).rejects.toThrow(/Invalid EXTRACTION_RENDERER/);
     });
   });
 
   describe("createRendererById", () => {
-    it("explicitly selects poppler regardless of env", () => {
+    it("explicitly selects poppler regardless of env", async () => {
       process.env.EXTRACTION_RENDERER = "pdfjs-legacy";
-      const renderer = createRendererById("poppler");
+      const renderer = await createRendererById("poppler");
       expect(renderer.id).toBe("poppler");
     });
 
-    it("explicitly selects pdfjs-legacy regardless of env", () => {
+    it("explicitly selects pdfjs-legacy regardless of env", async () => {
       process.env.EXTRACTION_RENDERER = "poppler";
-      const renderer = createRendererById("pdfjs-legacy");
+      const renderer = await createRendererById("pdfjs-legacy");
       expect(renderer.id).toBe("pdfjs-legacy");
     });
   });

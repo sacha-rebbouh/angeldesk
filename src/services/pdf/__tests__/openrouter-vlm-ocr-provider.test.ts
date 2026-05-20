@@ -3,8 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const processImageOCRMock = vi.fn();
 const processImageArtifactOCRMock = vi.fn();
 
-vi.mock("../ocr-service", () => ({
+vi.mock("../image-ocr", () => ({
   processImageOCR: processImageOCRMock,
+}));
+
+vi.mock("../ocr-service", () => ({
   processImageArtifactOCR: processImageArtifactOCRMock,
 }));
 

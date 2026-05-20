@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
-import { inngest } from '@/lib/inngest'
+import { inngest } from '@/lib/inngest-client'
 import { handleApiError } from "@/lib/api-error";
 
 /**

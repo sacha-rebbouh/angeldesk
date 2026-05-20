@@ -55,6 +55,43 @@ describe("Tier 1 Zod Schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  it("FinancialAuditResponseSchema normalizes null optional metric benchmarks", () => {
+    const data = {
+      meta: baseMeta,
+      score: baseScore,
+      findings: {
+        metrics: [
+          {
+            metric: "ARR",
+            status: "available",
+            reportedValue: null,
+            calculatedValue: null,
+            benchmarkP25: null,
+            benchmarkMedian: null,
+            benchmarkP75: null,
+            percentile: null,
+            assessment: "Benchmark indisponible",
+            source: "Modele financier",
+          },
+        ],
+      },
+      redFlags: [],
+      questions: [],
+      alertSignal: baseAlertSignal,
+      narrative: baseNarrative,
+    };
+
+    const result = FinancialAuditResponseSchema.safeParse(data);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.findings.metrics[0].benchmarkP25).toBeUndefined();
+      expect(result.data.findings.metrics[0].benchmarkMedian).toBeUndefined();
+      expect(result.data.findings.metrics[0].benchmarkP75).toBeUndefined();
+      expect(result.data.findings.metrics[0].percentile).toBeUndefined();
+    }
+  });
+
   it("FinancialAuditResponseSchema accepte blockerReason=null", () => {
     const data = {
       meta: baseMeta,

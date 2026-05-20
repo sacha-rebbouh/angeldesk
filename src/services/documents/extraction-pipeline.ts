@@ -6,6 +6,7 @@ import { smartExtract, type ExtractionWarning } from "@/services/pdf";
 import { downloadFile } from "@/services/storage";
 import {
   completeDocumentExtractionRun,
+  RunAlreadyTerminalError,
   getBlockingPageNumbersFromManifest,
   hasUsableExtractionCorpus,
   markExtractionRunProgress,
@@ -44,7 +45,14 @@ import { runEvidenceForDocument } from "@/services/evidence";
 // extraction stays inline in the upload route until later sub-phases.
 
 export type ExtractionPipelineResult = {
-  status: "COMPLETED" | "FAILED";
+  // B3.3.3 fix-up #2 — `SUPERSEDED` is the dedicated status the pipeline
+  // returns when `completeDocumentExtractionRun` throws
+  // `RunAlreadyTerminalError` (the run was killed by /process stale-retry
+  // while this worker was in flight). It is NOT a success — the Inngest
+  // function MUST gate `trigger-thesis-reextract` and credit reconciliation
+  // on `status === "COMPLETED"` so a late completer cannot fire side
+  // effects that belong to the NEW run.
+  status: "COMPLETED" | "FAILED" | "SUPERSEDED";
   textLength: number;
   pageCount: number;
   quality: number | null;
@@ -146,6 +154,11 @@ export async function runDocumentExtractionPipeline(params: {
   };
 
   // -- 1. Load the document + run --------------------------------------------
+  // B6.2.1 (Codex P1) — `sourceMetadata` added to the SELECT so the
+  // email-source-inference gate can detect a B6.2 `manual.sourceKind`
+  // override and bail. Without this, a user correcting a false-positive
+  // email back to FILE would see the inference re-write `sourceKind:
+  // EMAIL` on the next reprocess.
   const document = await prisma.document.findUnique({
     where: { id: documentId },
     select: {
@@ -157,6 +170,7 @@ export async function runDocumentExtractionPipeline(params: {
       processingStatus: true,
       sourceKind: true,
       sourceDate: true,
+      sourceMetadata: true,
       corpusParentDocumentId: true,
     },
   });
@@ -256,6 +270,12 @@ async function runExtractionWork(params: {
     storagePath: string | null;
     sourceKind: "FILE" | "EMAIL" | "NOTE";
     sourceDate: Date | null;
+    // B6.2.1 (Codex P1) — sourceMetadata threaded through so the
+    // email-source-inference gate inside runExtractionWork can detect
+    // a manual.sourceKind override and bail. Typed as unknown because
+    // the helper consumes it as opaque JSON (the actual shape lives
+    // in source-metadata.ts).
+    sourceMetadata: unknown;
     corpusParentDocumentId: string | null;
   };
   publishUploadProgress: (snapshot: {
@@ -452,6 +472,12 @@ async function runExtractionWork(params: {
         currentSourceKind: document.sourceKind,
         existingSourceDate: document.sourceDate,
         corpusParentDocumentId: document.corpusParentDocumentId,
+        // B6.2.1 (Codex P1) — forward sourceMetadata so the inference
+        // can bail on a B6.2 `manual.sourceKind` override regardless of
+        // the manual VALUE (FILE included). Without this forward, the
+        // inference would only see `currentSourceKind === "FILE"` and
+        // happily re-classify the doc as EMAIL on every reprocess.
+        sourceMetadata: document.sourceMetadata,
       })
     : null;
 
@@ -485,14 +511,45 @@ async function runExtractionWork(params: {
         extractionWarnings: JSON.parse(JSON.stringify([errorWarning])) as Prisma.InputJsonValue,
       };
 
-  await completeDocumentExtractionRun({
-    runId: extractionRunId,
-    text: extraction.text,
-    qualityScore: extraction.quality,
-    manifest: extraction.manifest,
-    warnings: extractionWarnings.length > 0 ? JSON.parse(JSON.stringify(extractionWarnings)) : [],
-    documentFinalization: { documentId, data: documentData },
-  });
+  try {
+    await completeDocumentExtractionRun({
+      runId: extractionRunId,
+      text: extraction.text,
+      qualityScore: extraction.quality,
+      manifest: extraction.manifest,
+      warnings: extractionWarnings.length > 0 ? JSON.parse(JSON.stringify(extractionWarnings)) : [],
+      documentFinalization: { documentId, data: documentData },
+    });
+  } catch (error) {
+    // B3.3.3 P1 — the run was terminalized out-of-band (most likely by
+    // `/api/documents/:id/process` stale-retry superseding it). Treat as
+    // a clean no-op: the new run owns the document now, and surfacing
+    // this as an Inngest failure would just trigger pointless retries.
+    // We return a dedicated sentinel `SUPERSEDED` status (NOT `FAILED`,
+    // which is a real terminal failure with its own semantics, and NOT
+    // `COMPLETED`, which would falsely trigger thesis re-extract +
+    // credit reconciliation as if this run had produced the document).
+    // The Inngest function gates side effects on
+    // `status === "COMPLETED"` so SUPERSEDED is a pure no-op there.
+    if (error instanceof RunAlreadyTerminalError) {
+      console.warn(
+        "[extraction-pipeline] late finalize rejected (run already terminal) — no-op",
+        { runId: extractionRunId, documentId }
+      );
+      return {
+        status: "SUPERSEDED",
+        textLength: extraction.text?.length ?? 0,
+        pageCount: extraction.manifest.pageCount,
+        quality: extraction.quality,
+        warnings: extractionWarnings,
+        requiresOCR: false,
+        ocrApplied: false,
+        extractionRunId,
+        actualCredits: 0,
+      };
+    }
+    throw error;
+  }
 
   // Actual extraction cost derived from the manifest's credit estimate —
   // the Inngest function reconciles this against the pre-charge.

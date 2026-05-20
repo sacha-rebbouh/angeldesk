@@ -33,6 +33,35 @@ function hashStringToBigInt(input: string): string {
   return digest.readBigInt64BE(0).toString();
 }
 
+export function monotoneCompletedAgents(
+  current: number | null | undefined,
+  next: number
+): number {
+  const currentValue = typeof current === "number" && Number.isFinite(current) ? current : 0;
+  const nextValue = Number.isFinite(next) ? next : 0;
+  return Math.max(currentValue, nextValue);
+}
+
+function monotoneCost(current: unknown, next: number): number {
+  const currentValue = Number(current ?? 0);
+  const nextValue = Number.isFinite(next) ? next : 0;
+  return Math.max(Number.isFinite(currentValue) ? currentValue : 0, nextValue);
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function mergeAnalysisResults(
+  existing: unknown,
+  incoming: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...(isJsonObject(existing) ? existing : {}),
+    ...incoming,
+  };
+}
+
 /**
  * Create a new analysis record
  * @param documentIds - IDs of documents being analyzed (for versioning/staleness detection)
@@ -127,9 +156,19 @@ export async function updateAnalysisProgress(
   completedAgents: number,
   totalCost: number
 ) {
-  return prisma.analysis.update({
-    where: { id: analysisId },
-    data: { completedAgents, totalCost },
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.analysis.findUnique({
+      where: { id: analysisId },
+      select: { completedAgents: true, totalCost: true },
+    });
+
+    return tx.analysis.update({
+      where: { id: analysisId },
+      data: {
+        completedAgents: monotoneCompletedAgents(current?.completedAgents, completedAgents),
+        totalCost: monotoneCost(current?.totalCost, totalCost),
+      },
+    });
   });
 }
 
@@ -151,18 +190,25 @@ export async function completeAnalysis(params: {
   const successfulCount = Object.values(params.results).filter((r) => r.success).length;
   const serializedResults = JSON.parse(JSON.stringify(params.results));
 
-  const analysis = await prisma.analysis.update({
-    where: { id: params.analysisId },
-    data: {
-      status: params.statusOverride ?? "COMPLETED",
-      completedAt: new Date(),
-      completedAgents: successfulCount,
-      totalCost: params.totalCost,
-      totalTimeMs: params.totalTimeMs,
-      summary: params.summary,
-      results: serializedResults,
-      mode: params.mode,
-    },
+  const analysis = await prisma.$transaction(async (tx) => {
+    const current = await tx.analysis.findUnique({
+      where: { id: params.analysisId },
+      select: { completedAgents: true, totalCost: true },
+    });
+
+    return tx.analysis.update({
+      where: { id: params.analysisId },
+      data: {
+        status: params.statusOverride ?? "COMPLETED",
+        completedAt: new Date(),
+        completedAgents: monotoneCompletedAgents(current?.completedAgents, successfulCount),
+        totalCost: monotoneCost(current?.totalCost, params.totalCost),
+        totalTimeMs: params.totalTimeMs,
+        summary: params.summary,
+        results: serializedResults,
+        mode: params.mode,
+      },
+    });
   });
 
   // PERF: Upload results to Blob storage for fast retrieval.
@@ -805,20 +851,27 @@ export async function saveCheckpoint(
       },
     });
 
-    // Also update the analysis record with partial results for visibility
-    // BUT: never overwrite if analysis is already COMPLETED (the final completeAnalysis
-    // save has more accurate results — checkpoint data may be stale/incomplete)
+    // Also update the analysis record with partial results for visibility.
+    // Checkpoints can lag behind direct progress writes and may omit synthetic
+    // Tier 0 agents, so never let them lower progress/cost or overwrite a
+    // terminal result with a stale subset.
     const currentAnalysis = await prisma.analysis.findUnique({
       where: { id: analysisId },
-      select: { status: true },
+      select: { status: true, completedAgents: true, totalCost: true, results: true },
     });
-    if (currentAnalysis?.status !== "COMPLETED") {
+    if (currentAnalysis?.status === "RUNNING") {
       await prisma.analysis.update({
         where: { id: analysisId },
         data: {
-          completedAgents: checkpoint.completedAgents.length,
-          totalCost: checkpoint.totalCost,
-          results: checkpoint.results as Prisma.InputJsonValue,
+          completedAgents: monotoneCompletedAgents(
+            currentAnalysis.completedAgents,
+            checkpoint.completedAgents.length
+          ),
+          totalCost: monotoneCost(currentAnalysis.totalCost, checkpoint.totalCost),
+          results: mergeAnalysisResults(
+            currentAnalysis.results,
+            checkpoint.results
+          ) as Prisma.InputJsonValue,
         },
       });
     }

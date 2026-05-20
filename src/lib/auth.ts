@@ -117,6 +117,7 @@ export async function requireAuth() {
   return user;
 }
 
+
 // Admin/Owner role types from Clerk publicMetadata
 export type UserRole = "admin" | "user";
 

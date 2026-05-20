@@ -435,6 +435,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         maxTokens: options.maxTokens,
         model: options.model,
         maxRetries: options.maxRetries,
+        timeoutMs,
       }),
       timeoutMs,
       `LLM call timed out after ${timeoutMs}ms`
@@ -487,6 +488,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         maxTokens: options.maxTokens,
         model: options.model,
         maxRetries: options.maxRetries,
+        timeoutMs,
       }),
       timeoutMs,
       `LLM JSON call timed out after ${timeoutMs}ms`
@@ -682,6 +684,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         systemPrompt,
         temperature,
         maxTokens: options.maxTokens,
+        timeoutMs,
       }),
       timeoutMs, // Agents using fallback should set longer timeout (6 min)
       `LLM JSON call timed out after ${timeoutMs}ms`

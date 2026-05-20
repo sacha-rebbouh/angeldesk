@@ -20,12 +20,22 @@ export type ThesisRole =
   | "judge";
 
 const UPGRADED_CHAINS: Record<ThesisRole, ModelKey[]> = {
-  core: ["CLAUDE_SONNET_45", "GEMINI_PRO", "HAIKU"],
-  "yc-lens": ["GEMINI_PRO", "CLAUDE_SONNET_45", "HAIKU"],
-  "thiel-lens": ["GEMINI_PRO", "CLAUDE_SONNET_45", "HAIKU"],
-  "angel-desk-lens": ["GEMINI_PRO", "CLAUDE_SONNET_45", "HAIKU"],
+  core: ["CLAUDE_SONNET_45", "HAIKU"],
+  // Framework lenses run after document extraction + core thesis extraction
+  // inside a 300s Vercel function. Keep them single-attempt: terminal fallback
+  // is better than spending a second model timeout and losing the whole run.
+  "yc-lens": ["GEMINI_PRO"],
+  "thiel-lens": ["GEMINI_PRO"],
+  "angel-desk-lens": ["GEMINI_PRO"],
   reconciler: ["GEMINI_PRO", "CLAUDE_SONNET_45", "HAIKU"],
   judge: ["GEMINI_PRO", "GEMINI_3_FLASH", "HAIKU"],
+};
+
+const ROLE_TIMEOUTS_MS: Partial<Record<ThesisRole, number>> = {
+  core: 110_000,
+  "yc-lens": 75_000,
+  "thiel-lens": 75_000,
+  "angel-desk-lens": 75_000,
 };
 
 function getFrameworkDefaults(role: "yc-lens" | "thiel-lens" | "angel-desk-lens"):
@@ -162,6 +172,7 @@ export function getThesisCallOptions<T>(
   const baseOptions: Partial<ValidatedLLMCallOptions<T>> = {};
   if (defaults) baseOptions.fallbackDefaults = defaults;
   if (terminalFallback !== undefined) baseOptions.terminalFallbackData = terminalFallback;
+  if (ROLE_TIMEOUTS_MS[role]) baseOptions.timeoutMs = ROLE_TIMEOUTS_MS[role];
 
   if (isLegacy) {
     return baseOptions;

@@ -182,7 +182,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Trigger thesis-first Deep Dive via the same worker contract as /api/analyze
     try {
-      const { inngest } = await import("@/lib/inngest");
+      const { inngest } = await import("@/lib/inngest-client");
       await inngest.send({
         id: dispatchEventId,
         name: "analysis/deal.analyze",

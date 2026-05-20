@@ -96,7 +96,7 @@ export class ThesisExtractorAgent extends BaseAgent<ThesisExtractorOutput> {
       description: "Extraction et validation structurelle de la these d'investissement (Tier 0.5)",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 300000, // 5 min — absorbe une chain core Claude + Gemini + Haiku avant abort
+      timeoutMs: 280000, // Fail cleanly before Vercel's 300s route ceiling.
       dependencies: ["fact-extractor", "deck-coherence-checker"],
     });
   }
@@ -246,17 +246,18 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     const angelDeskLens: FrameworkLens = this.toFrameworkLens("angel-desk", ad.data, ad.availability);
 
     const evaluatedLenses = [ycLens, thielLens, angelDeskLens].filter(isFrameworkLensEvaluated);
-    if (evaluatedLenses.length === 0) {
-      throw new Error(
-        "All thesis frameworks degraded; refusing to persist a thesis without any evaluated framework lens"
-      );
-    }
 
-    // 4. Verdict consolide sur les seules lenses réellement évaluées.
-    const verdict: ThesisVerdict = worstVerdict(evaluatedLenses.map((lens) => lens.verdict));
-    const confidence = Math.round(
-      evaluatedLenses.reduce((sum, lens) => sum + lens.confidence, 0) / evaluatedLenses.length
-    );
+    // 4. Verdict consolide sur les seules lenses reellement evaluees. Si les
+    // 3 frameworks degradent dans le budget Vercel, on persiste une these
+    // core-only defensive plutot que d'annuler toute l'analyse.
+    const verdict: ThesisVerdict = evaluatedLenses.length > 0
+      ? worstVerdict(evaluatedLenses.map((lens) => lens.verdict))
+      : "vigilance";
+    const confidence = evaluatedLenses.length > 0
+      ? Math.round(
+          evaluatedLenses.reduce((sum, lens) => sum + lens.confidence, 0) / evaluatedLenses.length
+        )
+      : 35;
 
     // 5. Alerts consolidees — on prend celles extraites par le core PLUS celles derivees des
     // failures des frameworks reellement evalues. Une lens degradee est un incident
@@ -264,6 +265,17 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     const alerts: ThesisAlert[] = [
       ...normalizeThesisAlerts(core.alerts),
     ];
+
+    if (evaluatedLenses.length === 0) {
+      alerts.push({
+        severity: "medium",
+        category: "assumption_fragile",
+        title: "Frameworks indisponibles",
+        detail:
+          "Les lunettes YC, Thiel et Angel Desk n'ont pas pu etre evaluees dans le budget temps. " +
+          "La these est conservee en mode degrade a partir de l'extraction core.",
+      });
+    }
 
     // Ajouter les failures de chaque framework comme alerts si pas deja presents
     this.appendFrameworkFailuresAsAlerts(alerts, ycLens, "yc");
