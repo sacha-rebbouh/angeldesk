@@ -2,7 +2,7 @@
  * B17.1 — Tests for GET /api/admin/analyses/:analysisId/debug.
  *
  * Coverage:
- *  - auth gate (401-equivalent via handleApiError, invalid cuid 400, not found 404)
+ *  - auth gate (401 unauth, 403 non-admin, invalid cuid 400, not found 404)
  *  - happy path shape + no sensitive field leakage
  *  - 7 anomaly types triggered by crafted fixtures
  */
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   analysisFindUnique: vi.fn(),
   checkpointFindFirst: vi.fn(),
   llmFindMany: vi.fn(),
+  llmFindFirst: vi.fn(),
   llmCount: vi.fn(),
   llmGroupBy: vi.fn(),
   llmGroupByForErrors: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     lLMCallLog: {
       findMany: mocks.llmFindMany,
+      findFirst: mocks.llmFindFirst,
       count: mocks.llmCount,
       groupBy: vi.fn((args: { where?: { isError?: boolean } }) => {
         // Route calls groupBy twice: once for all agents, once for errors only.
@@ -86,7 +88,7 @@ describe("GET /api/admin/analyses/:analysisId/debug", () => {
     mocks.handleApiError.mockImplementation((error: unknown) =>
       new Response(
         JSON.stringify({ error: error instanceof Error ? error.message : "unexpected" }),
-        { status: error instanceof Error && error.message === "Admin access required" ? 401 : 500, headers: { "content-type": "application/json" } }
+        { status: 500, headers: { "content-type": "application/json" } }
       )
     );
     mocks.sanitizeErrorText.mockImplementation((v: unknown) => String(v ?? ""));
@@ -114,17 +116,38 @@ describe("GET /api/admin/analyses/:analysisId/debug", () => {
     });
     mocks.checkpointFindFirst.mockResolvedValue(null);
     mocks.llmFindMany.mockResolvedValue([]);
+    mocks.llmFindFirst.mockResolvedValue(null);
     mocks.llmCount.mockResolvedValue(0);
     mocks.llmGroupBy.mockResolvedValue([]);
     mocks.llmGroupByForErrors.mockResolvedValue([]);
   });
 
-  it("returns 401-equivalent when requireAdmin throws", async () => {
+  it("returns 401 when requireAdmin throws Unauthorized", async () => {
+    mocks.requireAdmin.mockRejectedValue(new Error("Unauthorized"));
+
+    const resp = await GET(makeRequest(), asParams(VALID_ID));
+    expect(mocks.handleApiError).not.toHaveBeenCalled();
+    expect(resp.status).toBe(401);
+    const body = (await jsonBody(resp)) as { error: string };
+    expect(body.error).toBe("Unauthorized");
+  });
+
+  it("returns 403 when requireAdmin rejects a non-admin user", async () => {
     mocks.requireAdmin.mockRejectedValue(new Error("Admin access required"));
 
     const resp = await GET(makeRequest(), asParams(VALID_ID));
+    expect(mocks.handleApiError).not.toHaveBeenCalled();
+    expect(resp.status).toBe(403);
+    const body = (await jsonBody(resp)) as { error: string };
+    expect(body.error).toBe("Forbidden");
+  });
+
+  it("keeps unexpected auth errors on the generic error path", async () => {
+    mocks.requireAdmin.mockRejectedValue(new Error("Prisma connection failed"));
+
+    const resp = await GET(makeRequest(), asParams(VALID_ID));
     expect(mocks.handleApiError).toHaveBeenCalledOnce();
-    expect(resp.status).toBe(401);
+    expect(resp.status).toBe(500);
   });
 
   it("returns 400 when analysisId is not a valid CUID", async () => {
@@ -277,22 +300,23 @@ describe("GET /api/admin/analyses/:analysisId/debug", () => {
   });
 
   it("flags slow_llm_call and high_input_tokens anomalies", async () => {
-    mocks.llmFindMany.mockResolvedValue([
-      {
-        id: "c1",
-        agentName: "financial-auditor",
-        model: "gemini-2.5-pro",
-        isError: false,
-        errorType: null,
-        errorMessage: null,
-        durationMs: 200_000, // > 180_000
-        cost: 0.05,
-        inputTokens: 70_000, // > 60_000
-        outputTokens: 1000,
-        finishReason: "stop",
-        createdAt: new Date(),
-      },
-    ]);
+    mocks.llmFindFirst.mockImplementation((args: { orderBy?: Record<string, string> }) => {
+      if (args.orderBy?.durationMs === "desc") {
+        return Promise.resolve({
+          agentName: "financial-auditor",
+          model: "gemini-2.5-pro",
+          durationMs: 200_000, // > 180_000
+        });
+      }
+      if (args.orderBy?.inputTokens === "desc") {
+        return Promise.resolve({
+          agentName: "financial-auditor",
+          model: "gemini-2.5-pro",
+          inputTokens: 70_000, // > 60_000
+        });
+      }
+      return Promise.resolve(null);
+    });
 
     const resp = await GET(makeRequest(), asParams(VALID_ID));
     const body = (await jsonBody(resp)) as { data: { anomalies: Array<{ type: string }> } };
@@ -302,21 +326,15 @@ describe("GET /api/admin/analyses/:analysisId/debug", () => {
   });
 
   it("flags completed_with_errors anomaly when COMPLETED but has errored calls", async () => {
-    mocks.llmFindMany.mockResolvedValue([
+    mocks.llmGroupBy.mockResolvedValue([
       {
-        id: "c1",
         agentName: "financial-auditor",
-        model: "gemini-2.5-pro",
-        isError: true,
-        errorType: "timeout",
-        errorMessage: "boom",
-        durationMs: 60000,
-        cost: 0.05,
-        inputTokens: 30000,
-        outputTokens: 0,
-        finishReason: null,
-        createdAt: new Date(),
+        _count: { _all: 1 },
+        _sum: { cost: 0.05, durationMs: 60000, inputTokens: 30000, outputTokens: 0 },
       },
+    ]);
+    mocks.llmGroupByForErrors.mockResolvedValue([
+      { agentName: "financial-auditor", _count: { _all: 1 } },
     ]);
 
     const resp = await GET(makeRequest(), asParams(VALID_ID));
@@ -337,6 +355,41 @@ describe("GET /api/admin/analyses/:analysisId/debug", () => {
     const resp = await GET(makeRequest(), asParams(VALID_ID));
     const body = (await jsonBody(resp)) as { data: { anomalies: Array<{ type: string }> } };
     expect(body.data.anomalies.map((a) => a.type)).toContain("checkpoint_divergence");
+  });
+
+  it("sanitizes checkpoint failedAgents instead of returning raw checkpoint JSON", async () => {
+    mocks.sanitizeErrorText.mockImplementation((v: unknown) =>
+      String(v ?? "").replace(/secret-token/g, "[redacted-token]")
+    );
+    mocks.checkpointFindFirst.mockResolvedValue({
+      id: "chk_1",
+      state: "RUNNING",
+      completedAgents: [],
+      pendingAgents: [],
+      failedAgents: [
+        {
+          agent: "financial-auditor",
+          error: "timeout with secret-token",
+          retries: 2,
+          rawPrompt: "SHOULD_NOT_LEAK",
+        },
+      ],
+      createdAt: new Date("2026-05-01T10:00:30Z"),
+    });
+
+    const resp = await GET(makeRequest(), asParams(VALID_ID));
+    const body = (await jsonBody(resp)) as {
+      data: { checkpoint: { failedAgents: Array<Record<string, unknown>> } };
+    };
+
+    expect(body.data.checkpoint.failedAgents).toEqual([
+      {
+        agent: "financial-auditor",
+        error: "timeout with [redacted-token]",
+        retries: 2,
+      },
+    ]);
+    expect(JSON.stringify(body)).not.toContain("SHOULD_NOT_LEAK");
   });
 
   it("respects ?limit query parameter (max 500)", async () => {

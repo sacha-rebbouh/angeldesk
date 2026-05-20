@@ -61,12 +61,45 @@ function decToNumOrNull(d: unknown): number | null {
   return decToNum(d);
 }
 
+function sanitizeCheckpointFailedAgents(value: unknown): unknown {
+  if (!Array.isArray(value)) return value == null ? null : "[unrecognized failedAgents shape]";
+
+  return value.map((item) => {
+    if (item == null || typeof item !== "object") {
+      return { agent: "unknown", error: sanitizeErrorText(item), retries: null };
+    }
+    const record = item as Record<string, unknown>;
+    return {
+      agent: sanitizeErrorText(record.agent ?? record.agentName ?? "unknown"),
+      error: sanitizeErrorText(record.error ?? ""),
+      retries: typeof record.retries === "number" ? record.retries : null,
+    };
+  });
+}
+
+async function requireAdminForDebug(): Promise<NextResponse | null> {
+  try {
+    await requireAdmin();
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message === "Unauthorized" || message === "Clerk user not found") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (message === "Admin access required") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    throw error;
+  }
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ analysisId: string }> }
 ) {
   try {
-    await requireAdmin();
+    const adminFailure = await requireAdminForDebug();
+    if (adminFailure) return adminFailure;
     const { analysisId } = await params;
 
     if (!isValidCuid(analysisId)) {
@@ -77,7 +110,15 @@ export async function GET(
       limit: request.nextUrl.searchParams.get("limit") ?? undefined,
     });
 
-    const [analysis, checkpoint, llmCalls, llmCallsTotal, agentAggregates] = await Promise.all([
+    const [
+      analysis,
+      checkpoint,
+      llmCalls,
+      llmCallsTotal,
+      agentAggregates,
+      slowestCall,
+      highestInputCall,
+    ] = await Promise.all([
       prisma.analysis.findUnique({
         where: { id: analysisId },
         select: {
@@ -144,6 +185,16 @@ export async function GET(
           inputTokens: true,
           outputTokens: true,
         },
+      }),
+      prisma.lLMCallLog.findFirst({
+        where: { analysisId },
+        orderBy: { durationMs: "desc" },
+        select: { agentName: true, model: true, durationMs: true },
+      }),
+      prisma.lLMCallLog.findFirst({
+        where: { analysisId },
+        orderBy: { inputTokens: "desc" },
+        select: { agentName: true, model: true, inputTokens: true },
       }),
     ]);
 
@@ -241,18 +292,19 @@ export async function GET(
       });
     }
 
-    const slowestCallMs = llmCalls.reduce((max, c) => (c.durationMs > max ? c.durationMs : max), 0);
+    const slowestCallMs = slowestCall?.durationMs ?? 0;
     if (slowestCallMs > SLOW_CALL_MS) {
-      const slowCall = llmCalls.find((c) => c.durationMs === slowestCallMs);
       anomalies.push({
         type: "slow_llm_call",
         severity: "warn",
-        message: `Slowest LLM call ${slowestCallMs}ms > ${SLOW_CALL_MS}ms (agent=${slowCall?.agentName}, model=${slowCall?.model})`,
-        data: { durationMs: slowestCallMs, agentName: slowCall?.agentName, model: slowCall?.model },
+        message: `Slowest LLM call ${slowestCallMs}ms > ${SLOW_CALL_MS}ms (agent=${slowestCall?.agentName}, model=${slowestCall?.model})`,
+        data: { durationMs: slowestCallMs, agentName: slowestCall?.agentName, model: slowestCall?.model },
       });
     }
 
-    const highTokenCall = llmCalls.find((c) => c.inputTokens > HIGH_INPUT_TOKENS);
+    const highTokenCall = highestInputCall && highestInputCall.inputTokens > HIGH_INPUT_TOKENS
+      ? highestInputCall
+      : null;
     if (highTokenCall) {
       anomalies.push({
         type: "high_input_tokens",
@@ -266,12 +318,11 @@ export async function GET(
       });
     }
 
-    const hasErrorCalls = llmCalls.some((c) => c.isError);
-    if (analysis.status === "COMPLETED" && hasErrorCalls) {
+    if (analysis.status === "COMPLETED" && erroredAgents.length > 0) {
       anomalies.push({
         type: "completed_with_errors",
         severity: "high",
-        message: "Analysis status=COMPLETED but LLM call errors present in this window",
+        message: "Analysis status=COMPLETED but LLM call errors are present",
       });
     }
 
@@ -331,7 +382,7 @@ export async function GET(
               state: checkpoint.state,
               completedAgents: checkpoint.completedAgents,
               pendingAgents: checkpoint.pendingAgents,
-              failedAgents: checkpoint.failedAgents,
+              failedAgents: sanitizeCheckpointFailedAgents(checkpoint.failedAgents),
               createdAt: checkpoint.createdAt.toISOString(),
             }
           : null,

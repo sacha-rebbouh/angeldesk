@@ -43,6 +43,12 @@ Incident prod **Avekapeti** (`analysisId=cmpeadzt70003ld04znm85k3v`) : analyse t
 - `npx vitest run "src/components/admin" "src/app/api/admin/analyses"` : **30/30 PASS** (12 API + 18 UI).
 - `npx vitest run` full : **2547 passed / 2 skipped / 0 failed** (227 fichiers).
 
+### Audit Codex fix-up
+- **P1 auth API corrigé** : `requireAdmin()` ne passe plus par `handleApiError` pour les refus attendus. `Unauthorized` / `Clerk user not found` → 401 `{error:"Unauthorized"}` ; `Admin access required` → 403 `{error:"Forbidden"}` ; les erreurs infra restent sur le chemin 500.
+- **Anomalies globales** : `slow_llm_call`, `high_input_tokens` et `completed_with_errors` ne dépendent plus seulement de la fenêtre `?limit`; elles se calculent sur toute l'analyse.
+- **Checkpoint failedAgents sanitizé** : la console ne renvoie plus le JSON brut de checkpoint pour les agents échoués ; elle whitelist `{agent,error,retries}` et sanitize `error`.
+- Vérifications post-fix : tests B17.1 ciblés **33/33 PASS**, `npx tsc --noEmit` clean.
+
 ### Non-scope (B17.1 strict)
 - Pas de fix financial-auditor / unknown tagging / Reflexion / gate thèse / hard caps. Aucune relance d'analyse. Aucun déploiement prod.
 
