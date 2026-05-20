@@ -1,6 +1,244 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 5 Problème aligné
+
+### Contexte
+Niveau 2 cascade : alignement de la section 5 (Problème) sur la doctrine du pivot. La section originale était massivement centrée BA solo au feeling (Marie au centre) avec des éléments oraculaires et de remplacement humain. Recadrage complet sur les équipes d'investissement légères + ajout de champs structurés (who_it_affects, core_problem, not_the_problem, evidence_failure_modes). 28 corrections sur 3 itérations (v1 → v2 → v3) avec Sacha + ChatGPT 5.5.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 5 (lignes 522-543 anciennes → ~58 lignes nouvelles)** — réécriture intégrale :
+
+- **Structure étendue** : ancienne (`headline` / `pain_points` / `what_happens_without_angeldesk`, 3 champs) → nouvelle (`headline` / `who_it_affects` / `core_problem` / `not_the_problem` / `pain_points` / `evidence_failure_modes` / `what_happens_without_angeldesk`, 7 champs).
+- **`headline`** : *"Les investisseurs prennent des décisions à plusieurs millions avec des outils à zéro"* → *"Les investisseurs privés doivent décider avec rigueur sur des dossiers complexes, dans un environnement documentaire fragmenté."*
+- **`who_it_affects` (nouveau)** : 6 segments core listés explicitement, noms verbatim du § 4 (BA très actifs / chefs de syndicat solos, Angel clubs / syndicats structurés (5-10 membres), Micro-fonds VC (pre-seed / seed), Family offices directs, Petits fonds thématiques / direct investing (non-VC), Équipes M&A légères).
+- **`core_problem` (nouveau)** : thèse centrale anti-récit oraculaire — *"Le problème n'est pas un manque d'intelligence des investisseurs ; c'est la fragmentation documentaire, le volume de dossiers, et la difficulté à maintenir une trace analytique partagée et une qualité d'analyse stable sous contrainte de temps."*
+- **`not_the_problem` (nouveau)** : 3 négations explicites (*"Les investisseurs ne manquent pas d'intelligence"* / *"Le problème n'est pas qu'une IA doit décider à leur place"* / *"Le problème n'est pas seulement le coût d'une due diligence manuelle"*).
+- **`pain_points`** : ancien (8 items centrés BA solo + posture remplacement) → nouveau (8 items recadrés lean teams).
+  - **Supprimés** : *"70% des BAs au feeling"* (cite non sourcée + Marie au centre), *"DD manuelle 2j 1,000€"* (centrage BA solo), *"Un analyste reçoit la data et la traite. Il ne réagit pas..."* (posture remplacement), *"Aucun outil ne couvre le cycle complet"* (marketing claim), *"Après l'analyse, il n'y a rien"* (marketing).
+  - **Ajoutés / reformulés** : *"Volume de dossiers vs capacité d'analyse"*, *"Documents fragmentés sans couche analytique transverse"*, *"Outils institutionnels coûteux ou fragmentés"*, *"Environnement analytique rarement unifié"*, *"Usage isolé d'IA générique : provenance, contradictions inter-documents, mémoire pipeline, traçabilité et reproductibilité restent à reconstruire manuellement"*, *"Beaucoup d'outils existants restent centrés sur la donnée, la recherche ou l'extraction"*, *"Peu ou pas de mise en évidence en temps réel des écarts pendant l'appel fondateur"*, *"Après l'appel : mémo défendable + questions ouvertes + points de négociation reposent sur notes dispersées et travail manuel"*.
+- **`evidence_failure_modes` (nouveau)** : 5 modes de défaillance evidence-first (date document absente/mal interprétée, déclarations fondateurs contradictoires entre documents, hypothèses financières non reliées à une source, questions ouvertes perdues entre versions, mémo final difficile à auditer).
+- **`what_happens_without_angeldesk`** : ancien scénario BA solo Marie (deck + googling + ChatGPT + biais + red flags ratés) → nouveau scénario lean team générique (chef de syndicat, micro-fonds VC, FO direct, petit fonds thématique, équipe M&A légère).
+  - *"deck lu en diagonale"* → *"deck lu sous contrainte de temps"* (suppression du jugement).
+  - *"Aucune trace structurée"* → *"Pas de trace standardisée"* (absolu adouci).
+  - *"sans provenance imposée ni reproductibilité"* → *"avec une provenance, une mémoire et une reproductibilité qui restent à organiser par l'équipe"* (absolu adouci).
+- **Adoucissements absolutismes** (4 endroits) : *"chaque équipe"* → *"les équipes souvent"* ; *"aucune mise en évidence"* → *"peu ou pas de mise en évidence"* ; *"les contradictions passent inaperçues"* → *"les contradictions peuvent passer inaperçues"* ; *"Pas d'environnement analytique unifié"* → *"Environnement analytique rarement unifié"*.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — mis à jour : *"notamment 6, 9, 10, 20, 26, 27, 28"* (§ 5 retiré de la liste). *"Les sections 3, 4 et 5 sont alignées"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md` § 10 (cascade)** — ligne § 5 passée de ⏳ à ✅.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- 7 champs `problem` confirmés : `core_problem`, `evidence_failure_modes`, `headline`, `not_the_problem`, `pain_points`, `what_happens_without_angeldesk`, `who_it_affects`.
+- `who_it_affects` : 6 items (matchent verbatim les segments core du § 4).
+- `not_the_problem` : 3 items.
+- `pain_points` : 8 items.
+- `evidence_failure_modes` : 5 items.
+
+### Avertissement
+`reference.yaml` n'est toujours PAS entièrement aligné. Les sections 6 (Product Summary), 9 (Board AI détaillé), 10 (Live Coaching détaillé), 20 (Moat), 26 (Positioning rules), 27 (Persona), 28 (GTM) contiennent encore des vestiges. La cascade continue.
+
+### État du bloc reference.yaml §§ 3-5
+Le bloc reference.yaml §§ 3-5 est désormais cohérent et aligné. Prêt à être commité avec le fichier doctrine canonique versionné `docs-doctrine/angeldesk-strategic-pivot.md`. Commit suggéré : `doctrine: reference §3-5 aligned + canonical doctrine in docs-doctrine`.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 6 (Product Summary) — actuellement plein de vestiges (*"Plateforme d'intelligence d'investissement par IA multi-agents"*, *"Board AI — 4 LLMs en débat (sublimation, pas juxtaposition)"*, *"Live Coaching — audio + vision + contexte DD pendant les calls"*, *"facturé 50K€ si fait par cabinet"*, *"breadth surhumaine"*, etc.). Section dense en reframes à appliquer.
+
+---
+## 2026-05-21 — Migration doctrine canonique vers docs-doctrine/ (tracké git)
+
+### Contexte
+Sacha a flagué que `docs-private/` est dans `.gitignore` (ligne 54 : `/docs-private`), donc l'affirmation *"source doctrinale versionnée"* dans le précédent commit était fausse : `git ls-files` ne voyait pas le fichier. Migration nécessaire pour que Codex et toute personne ayant accès au repo puissent réellement auditer la doctrine canonique.
+
+### Compromis retenu
+- `docs-private/` **reste gitignored** — il peut contenir des informations sensibles (research brut Gemini, TAM/SAM/SOM granulaires, discussions stratégiques en cours, audits personas avec données internes).
+- **Nouveau dossier `docs-doctrine/` tracké git** — réservé à la doctrine canonique : phrase publique, doctrine à 2 strates, ICP, persona, scoring, interdits, hiérarchie de messaging, reframes, glossaire, cascade.
+- **Pas de données sensibles dans `docs-doctrine/`** — pas de chiffres confidentiels, pas de research brut, pas de noms réels, pas de tactiques GTM granulaires.
+
+### Modifications
+- **Création `docs-doctrine/`** (nouveau dossier, non gitignored).
+- **Migration du fichier** : `docs-private/angeldesk-strategic-pivot.md` → `docs-doctrine/angeldesk-strategic-pivot.md` (move via Write + rm de l'ancien). Le contenu est purement doctrinal.
+- **Micro-corrections appliquées pendant la migration** :
+  - Cascade table § 10 : *"APRÈS fermeture B16"* / *"APRÈS B16"* (3 lignes Page d'accueil / Pricing / Blog post) → *"APRÈS fermeture du gate de release actif"*. B16 reste cité comme état courant en § 8 (Règle de séparation), pas dans la table de doctrine durable.
+  - Avertissement d'en-tête : *"Sections 4, 6, 9, 10, 20, 26, 27, 28 pas encore alignées"* → *"Sections 5, 6, 9, 10, 20, 26, 27, 28 pas encore alignées"* (§ 4 est désormais fait).
+  - Mention de la doctrine appliquée dans reference.yaml étendue à § 3 ET § 4.
+  - Table § 10 cascade : ligne ce-fichier mise à jour vers le nouveau chemin `docs-doctrine/`.
+  - Table § 11 (Fichiers à conserver synchronisés) : ajout d'une colonne *"Tracké git"* avec ✅/❌ explicite par fichier.
+  - § 8 Règle de séparation : *"docs-private/"* → *"docs-doctrine/, docs-private/reference.yaml"* dans la liste des surfaces doctrine autorisées.
+- **Propagation des références** :
+  - `CLAUDE.md` Documents de référence — chemin mis à jour vers `docs-doctrine/`, mention *"tracké git ; docs-private/ est gitignored"*.
+  - `docs-private/reference.yaml` § 3 commentaire d'en-tête — référence vers `docs-doctrine/angeldesk-strategic-pivot.md` (doctrine canonique versionnée).
+  - `docs-private/reference.yaml` § 4 commentaire d'en-tête — référence idem.
+  - Mémoire Claude (`~/.claude/projects/.../memory/angeldesk_strategic_pivot.md`) — pointeur mis à jour vers `docs-doctrine/`, mention explicite que `docs-private/` est gitignored donc ne pouvait pas servir de source versionnée.
+  - `MEMORY.md` index Claude — entrée mise à jour avec nouveau chemin + mention *"tracké git"*.
+
+### Vérification
+- `git check-ignore docs-doctrine/angeldesk-strategic-pivot.md` → **NOT IGNORED** (trackable).
+- `git status --short` montre `?? docs-doctrine/` (untracked, en attente de `git add`).
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → toujours **PARSE OK** après les Edits sur les commentaires.
+
+### Action à faire par Sacha
+`git add docs-doctrine/ CLAUDE.md changes-log.md` puis commit. À ce moment-là seulement la doctrine canonique sera réellement versionnée et visible à Codex via le repo.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 5 (Problème) — déjà flagué dans la cascade.
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 4 Marché Cible aligné + cascade § 5 ajoutée
+
+### Contexte
+Niveau 2 cascade : alignement de la section 4 (Marché Cible) sur la doctrine du pivot. Restructuration majeure : suppression du ciblage BA solo dominant, hiérarchie `core` / `funnel_entry` / `expansion_later`, ajout de `strategic_market_view` comme champ structuré, source_status sur les snapshots de recherche secondaire. 31 corrections appliquées sur 3 itérations (v1 → v2 → v3) avant écriture, en trio Sacha + Claude + ChatGPT 5.5.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 4 (lignes 306-440 anciennes → ~210 lignes nouvelles)** — réécriture intégrale :
+- Suppression du titre "(ÉLARGI)" — vestige du précédent pivot.
+- `market.research_status` ajouté en champ structuré (top niveau) — *"Snapshot de recherche secondaire — mars 2026, à revalider contre sources primaires avant usage public."*
+- Commentaire ba_solos dans TAM bottom-up reformulé : *"Marché BA non segmenté : contient à la fois BA très actifs (core) et BA occasionnels (funnel)."*
+- `sam.non_ba_solos_total: "~295M€"` ajouté + `sam.note` explicite sur l'hétérogénéité du segment BA.
+- `som.year{1,2,3}.focus` réécrit (suppression *"segment BAs"* / *"pénétration institutionnelle"*) ; acquisition fields utilisent *(porte d'entrée + très actifs)* au lieu de *(funnel + ...)*.
+- `target_statement` mis à jour avec la phrase publique verrouillée (vs ancien *"Le meilleur partenaire AI-powered pour TOUS les investisseurs"*).
+- Nouveau champ structuré `strategic_market_view` (rule + `core_revenue_pool` en LISTE + `funnel_volume_pool` en LISTE + ba_solos_note).
+- `segments` restructurés : ancien `primary` (BA + clubs) / `expansion` (4 mélangés) → nouveau `core` (6 segments lean teams : BA très actifs, angel clubs/syndicats, micro-fonds VC pre-seed/seed, family offices directs, petits fonds thématiques/direct investing, équipes M&A légères) / `funnel_entry` (BA expérimentés occasionnels via pack Starter — Marie) / `expansion_later` (PE/M&A avec infrastructure DD existante, fonds VC séries A+ avec infrastructure existante).
+- Micro-fonds VC vs Petits fonds : distinction explicite (pre-seed/seed VC vs thématiques/direct investing non-VC).
+- BA très actifs : *"LPs éventuels"* → *"co-investisseurs ou membres du syndicat"* (les LPs concernent les fonds).
+- `dd_manuelle_equiv` (anglais hybride) → `equivalent_dd_manuelle` partout.
+- `rationale_funnel` (affirmatif) → `hypothese_gtm` (hypothétique).
+- Vocabulaire français unifié : *"syndicates"* → *"syndicats"*, *"vitesse de screening"* → *"vitesse de tri"* / *"vitesse de préqualification"*, *"need for speed"* supprimé, *"AUM"* → *"actifs sous gestion"*, *"cross-documents"* → *"inter-documents"*, *"capitalisation moyenne"* (au lieu de mid-cap), *"Fonds VC séries A+ avec infrastructure existante"*.
+- `existing_solutions` : `does/doesnt` → `covers/does_not_cover` partout ; Hebbia split en `does_not_cover` (capacités) + `fit_gap` (pricing) ; Harmonic *"Prédateur du sourcing"* → *"Positionné sur le sourcing pré-transactionnel. Angel Desk intervient après réception des documents privés, dans l'analyse du dossier."* ; AlphaSense *"Titan du secteur"* → *"Acteur institutionnel majeur"* ; ChatGPT/Claude DIY covers reformulé en *"Analyse ponctuelle et conversationnelle selon les prompts et documents fournis"* ; does_not_cover précisé (gouvernance d'équipe, traçabilité, reproductibilité, mémoire pipeline, contradictions inter-documents systématiques) ; *"confidentialité"* supprimé (trop absolu — offres enterprise existent) ; *"scoring multi-dimensionnel"* / *"scoring 2 axes en chantier"* → *"scoring analytique sourcé"* partout (le chantier scoring 2 axes vit ailleurs, ne pas brouiller en concurrentiel) ; `source_status: "Recherche secondaire — à revalider avant usage public."` ajouté sur Harmonic, Hebbia, AlphaSense, Family Offices.
+- *"data rooms"* — première occurrence en *"documents privés / data rooms"* (Harmonic), suivantes en *"data rooms"* seul.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — mis à jour : *"notamment 5, 6, 9, 10, 20, 26, 27, 28"* (§ 4 retiré, § 5 ajouté). Référence au fichier doctrine canonique (chemin alors `docs-private/`, depuis migré vers `docs-doctrine/` — cf. entrée *Migration doctrine canonique* plus haut).
+
+**Fichier doctrine canonique § 10 (cascade)** — § 4 passé en ✅, § 5 (Problème) ajouté explicitement en ⏳ (était le grand oubli de la cascade précédente). NB : fichier alors situé à `docs-private/angeldesk-strategic-pivot.md`, depuis migré vers `docs-doctrine/angeldesk-strategic-pivot.md`.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- 8 champs `market` confirmés : `existing_solutions`, `research_status`, `sam`, `segments`, `som`, `strategic_market_view`, `tam`, `target_statement`.
+- `core_revenue_pool` est bien une liste YAML (6 items) ; `funnel_volume_pool` est bien une liste (1 item).
+- `segments.core` : 6 items ; `segments.funnel_entry` : 1 item ; `segments.expansion_later` : 2 items.
+- `existing_solutions` : 8 entries (PitchBook, CB Insights, Dealroom, Carta, Harmonic.ai, Hebbia, AlphaSense, ChatGPT/Claude DIY).
+- `sam.non_ba_solos_total: ~295M€` présent.
+
+### Avertissement
+`reference.yaml` n'est toujours PAS entièrement aligné. Les sections 5 (Problème), 6, 9 (Board AI détaillé), 10 (Live Coaching détaillé), 20 (Moat), 26 (Positioning rules), 27 (Persona), 28 (GTM) contiennent encore des vestiges. La cascade continue.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 5 (Problème) — actuellement *"70% des BAs investissent au feeling"*, *"Le BA voit un deck, fait 30 minutes de googling"*, etc. À aligner sur l'ICP investisseurs privés / équipes d'investissement légères.
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 3 Vision & Positionnement aligné + phrase publique propagée
+
+### Contexte
+Suite du pivot doctrinal entamé le 2026-05-20 (cf. entrées précédentes "Pivot doctrinal — Angel Desk devient 'copilote analytique pour investisseurs privés'" et "Durcissement doctrinal CLAUDE.md"). Niveau 2 de la cascade : début de l'alignement de `reference.yaml`, à commencer par la section 3 (Vision & Positionnement) qui porte tout le reste. 17 corrections de langue et de fond intégrées sur 4 itérations (Claude + ChatGPT 5.5 en trio avec Sacha).
+
+### Modifications
+
+**`docs-private/reference.yaml` § 3 (lignes 132-220 anciennes → ~140 lignes nouvelles)** — réécriture intégrale :
+- Nouveau `positioning_claim` (phrase publique verrouillée v3) — *"Angel Desk est le copilote analytique des investisseurs privés qui doivent décider avec rigueur, sans infrastructure d'analyse lourde. Il transforme documents, déclarations des fondateurs et échanges en signaux sourcés, contradictions visibles, zones d'incertitude et questions prioritaires. La décision reste à l'investisseur."*
+- Nouveaux champs : `category`, `internal_segmentation` (FR canonique) + `internal_segmentation_en` (variant interne/GTM), `strategic_definition` (interne, jamais public), `doctrine` (2 strates : étoile guide positive + garde-fou opérationnel + coexistence), `messaging_hierarchy` (4 niveaux), `doctrine_vs_public_language` (avec `availability_language_rule` permanent + `internal_to_public_glossary` enrichi).
+- Champs renommés/reframés : `core_concept` → `strategic_definition` ; `golden_rule` absorbé dans `doctrine.strata_2_guardrail` ; `replaces` → `augments` (registre augmentation, pas remplacement) ; `board_ai_vision` (sortie de "sublimation" / "intelligence collective émergente" / "wow_factor", entrée de "transparence cognitive" + "modèles indépendants aux profils complémentaires" + interdictions explicites en `public_messaging_rule`) ; `individual_vs_collective` (sortie de "wisdom of crowds" / "PILIER CENTRAL", convergences ≠ vérité, zones à examiner en priorité) ; `unique_capabilities` (recadré — "Preuves inter-documents", "Lentilles sectorielles dédiées sans forcer une grille d'analyse généraliste", "Trace analytique partagée", "Reproductibilité explicable par de nouvelles preuves").
+- Champ supprimé : `must_have` (était sur la liste des interdits : *"L'IA poussée à l'extrême pour prendre la meilleure décision"*).
+- Vocabulaire français unifié partout : *déclarations des fondateurs* (vs *claims*), *appels* (vs *calls*), *documents financiers* (vs *financials*), *hiérarchie d'interface* (vs *UI hierarchy*), *schéma d'hallucination* (vs *pattern*), *cadrage* (vs *framing*), *fait remonter* / *mis en évidence* (vs *surface*/*surfacer*), *fonctionnalité* (vs *feature*), *associé* (vs *partner*), *mémo* (vs *memo*), *dossier* (vs *deal* parfois), *coaching en direct* (vs *live coaching* en description).
+- B16 retiré de la doctrine (statut opérationnel, pas position doctrinale) — `availability_language_rule` reste permanent.
+- YAML : strings longues converties en `>` (folded) ou `|` (literal) ; aucune chaîne quoted cassée sur 2 lignes.
+
+**`CLAUDE.md` projet ligne 4** — phrase publique alignée : *"incertitudes qualifiées et questions prioritaires. La décision reste celle de l'investisseur"* → *"zones d'incertitude et questions prioritaires. La décision reste à l'investisseur"*.
+
+**Mémoire Claude** (`/Users/sacharebbouh/.claude/projects/-Users-sacharebbouh-Desktop-angeldesk/memory/angeldesk_strategic_pivot.md`) — phrase publique alignée idem. NB : c'est la mémoire persistante propre à Claude (mécanisme `~/.claude/projects/<encoded-cwd>/memory/`), spécifique aux sessions Claude. Elle vit hors du `project tree` Angel Desk et hors de `~/.codex/memories`. Vérifiable via `cat` sur le path explicite ci-dessus. Pour exposer la doctrine à Codex/ChatGPT, dupliquer dans `docs-private/` à un prochain commit (décision ouverte).
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → PARSE OK
+- 15 sous-champs `vision` confirmés : `augments`, `board_ai_vision`, `category`, `doctrine`, `doctrine_vs_public_language`, `honesty_rule`, `individual_vs_collective`, `internal_segmentation`, `internal_segmentation_en`, `messaging_hierarchy`, `paradigm_shift`, `positioning_claim`, `strategic_definition`, `unique_capabilities`, `what_it_is`.
+
+### Avertissement explicite
+`reference.yaml` n'est PAS entièrement aligné. Les sections suivantes contiennent encore des vestiges de l'ancienne doctrine :
+- § 4 (Marché Cible) — réfère à l'ancien ciblage BA 95%
+- § 6 (Product Summary)
+- § 9 (Board AI détaillé) — risque de "sublimation" résiduelle
+- § 10 (Live Coaching détaillé)
+- § 20 (Moat)
+- § 26 (Positioning rules) — `golden_rule` BA-centré probable
+- § 27 (Persona Marie) — à remplacer par Pauline + Marie funnel
+- § 28 (GTM)
+
+La cascade documentaire continue. `reference.yaml` ne sera considéré aligné qu'après purge de ces sections.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 4 (Marché Cible) — à aligner sur l'ICP "investisseurs privés / équipes d'investissement légères" et purger l'ancien ciblage BA solo dominant.
+
+---
+## 2026-05-21 — Doctrine canonique exposée dans le project tree (Claude → Codex → Sacha)
+
+### Contexte
+La doctrine du pivot stratégique vivait jusqu'ici dans la mémoire propre à Claude (`~/.claude/projects/-Users-sacharebbouh-Desktop-angeldesk/memory/angeldesk_strategic_pivot.md`) — hors project tree, invisible à Codex/ChatGPT, non versionnée avec le repo. Sacha a explicitement demandé qu'elle soit accessible à toute la session de travail à trois (Sacha + Claude + Codex/ChatGPT). Migration : la mémoire Claude devient un simple pointeur, le project tree devient la source de vérité.
+
+### Modifications
+- **Nouveau fichier `docs-private/angeldesk-strategic-pivot.md`** (source de vérité versionnée) — contient la doctrine complète : pivot et raisons, piliers ancrés (ICP / doctrine 2 strates / identité produit), phrase publique verrouillée, scoring à 2 axes, hiérarchie de messaging, règle de séparation langage doctrine/public, glossaire interne→public, reframes de features, évacués définitifs, cascade d'exécution (4 niveaux), méthode d'exécution, modalités de travail trio, fichiers à conserver synchronisés.
+- **Mémoire Claude `angeldesk_strategic_pivot.md`** réécrite — devient un pointeur explicite vers `docs-private/angeldesk-strategic-pivot.md`. Conserve un rappel ultra-condensé pour décision rapide en session (phrase publique, doctrine 2 strates, persona, scoring 2 axes), mais n'a plus autorité indépendante.
+- **`CLAUDE.md` projet — section "Documents de référence"** mise à jour : ajout du nouveau fichier en tête comme "doctrine canonique partagée (Claude + Codex + Sacha)" à lire en début de session.
+- **`MEMORY.md` (index mémoire Claude)** — entrée Strategic Pivot mise à jour pour pointer vers le project tree.
+
+### Effet
+- Codex/ChatGPT peuvent désormais lire la doctrine complète via `cat docs-private/angeldesk-strategic-pivot.md` ou `rg` dans le project tree.
+- Une seule source de vérité versionnée ; les autres fichiers (mémoire, CLAUDE.md, reference.yaml § 3) y réfèrent.
+- Audit et vérification possibles par toute personne ayant accès au repo.
+
+### Suite
+Reprise immédiate de la cascade : `docs-private/reference.yaml` § 4 (Marché Cible) — à aligner sur l'ICP investisseurs privés / équipes d'investissement légères.
+
+---
+## 2026-05-20 — Durcissement doctrinal CLAUDE.md après relecture critique
+
+### Contexte
+Mini-pass appliqué après validation du pivot : `CLAUDE.md` est la source de contexte automatique, donc les formulations trop absolues ou les incohérences de statut devaient être corrigées avant de propager la doctrine dans `reference.yaml`.
+
+### Modifications
+- **Français public/interne clarifié** : `lean investment teams` devient "équipes d'investissement légères" avec mention interne seulement ; `syndicate leads`, `investment manager`, `partners`, `funnel`, `hero UI`, `Cross-check evidence` et autres franglais ont été remplacés par des formulations françaises plus propres.
+- **Pauline / Marie durcies** : Pauline ne "signe" plus mécaniquement le chèque ; elle porte le besoin, pilote l'essai et défend l'achat. Marie reste une persona d'acquisition, mais le BA novice n'est plus formulé comme "exclu" ou "pas assez mature" : il n'est pas le centre de conception et nécessite une vue simplifiée.
+- **Principe 3 anti-faux-positifs ajusté** : suppression de `Funding DB + Context Engine` comme dépendance obligatoire ; remplacement par "cross-référence documentaire ou externe pertinente lorsque disponible".
+- **Scoring déterministe non absolutiste** : suppression de "Reproductibilité absolue (même deal = même score)" ; nouveau standard : les variations entre versions doivent être explicables par de nouvelles preuves, pas par un jugement opaque.
+- **Evidence-first corrigé** : les dates ne sont plus supposées toujours présentes ; chaque affirmation doit être rattachée à sa date disponible ou à l'absence de date explicitée.
+- **Scoring 2 axes présenté comme cible produit** : la section ne prétend plus que le modèle est déjà remplacé partout ; elle documente le chantier à venir.
+- **Gate release généralisé** : `release register B16` devient "gate de release actif" avec B16 comme état courant, pour éviter de figer une règle temporaire dans la doctrine permanente.
+- **Anti-hallucination JSON** : ajout de la règle selon laquelle l'incertitude doit être portée dans les champs du schéma sans casser le format JSON attendu.
+- **Architecture agents corrigée** : sortie de "REFONTE DES 41 AGENTS" vers "ARCHITECTURE ANALYTIQUE — 4 COUCHES" ; Tier 2 marqué comme 22 experts implémentés ; Tier 3 corrigé à 6 standalone / 7 full analysis avec `conditions-analyst` et `thesis-reconciler`.
+- **Standards de qualité alignés** : suppression de "Output actionnable pour un BA" au profit d'une sortie exploitable par un investisseur qui garde la décision finale.
+
+---
+## 2026-05-20 — Pivot doctrinal — Angel Desk devient "copilote analytique pour investisseurs privés" (CLAUDE.md projet)
+
+### Contexte
+Pivot stratégique majeur validé après discussion approfondie (Claude + ChatGPT 5.5, en trio avec Sacha). Sortie de l'ancien positionnement *"DD VC en 1h pour Business Angels (95% de la cible)"* vers *"copilote analytique des investisseurs privés qui doivent décider avec rigueur, sans infrastructure d'analyse lourde"*. Mémoires persistantes ajoutées : `angeldesk_strategic_pivot.md` et `angeldesk_working_mode.md`.
+
+### Modifications (CLAUDE.md projet, lignes 3-94)
+- **Description** réécrite — nouveau positioning claim copilote analytique + définition stratégique *"environnement analytique fiable autour d'IA imparfaites"* (remplace conceptuellement *"sublimation"*).
+- **Cible (ICP)** remplace *"Cible principale BA 95%"* — lean investment teams (BA expert, syndicates, micro-VC, family office direct, petits fonds, M&A léger). Persona principale **Pauline** (investment manager micro-fonds / syndicate lead). Persona Marie déclassée explicitement en *"porte d'entrée funnel"*.
+- **Value proposition** réécrite — "robustesse du processus", plus *"DD VC en 1h"*.
+- **Principes de développement** étendus à 5 — principe 3 reformulé *"Discipline anti-faux-positifs"* (vs ancien *"Zero faux positifs"* oraculaire), nouveau principe 5 *"Evidence-first"*.
+- **POSITIONNEMENT PRODUIT** refondu — passage de Règle N°1 mono-strate à **doctrine à 2 strates** (étoile guide positive *"augmente, ne remplace pas"* + garde-fou opérationnel *"ne décide jamais"*).
+- **Table des interdits** étendue de 8 à 13 lignes — ajout *"DD VC en 1h"*, *"Sublimation"*, *"Aucun analyste expert 22 secteurs"*, *"Evidence Engine en public"*, *"Le meilleur parfaite"*.
+- Nouvelle section **Scoring à 2 axes** — Orientation du signal × Solidité des preuves (jamais *"Confiance"* pour éviter l'anti-pattern auto-évaluation LLM). Implique chantier ui-configs + ScoreBadge + pdf-helpers + schema synthesis-deal-scorer.
+- Nouvelle section **Hiérarchie de messaging** à 4 niveaux (copilote → raisonnement sous incertitude → effets evidence-first → 44 agents en preuve technique sous le capot).
+- Nouvelle section **Règle de séparation langage doctrine/public** — interdiction du langage *"prêt/lancé/release-complete/disponible/live"* dans surfaces publiques tant que release register B16 pas fermé.
+- Nouvelle section **Reframes de features** — Board AI, Live Coaching, 22 experts, 44 agents, Scoring (5 reframes structurels).
+- **Évacués définitivement** : *"DD VC en 1h"*, *"sublimation"*, *"Aucun analyste en 22 secteurs"*, *"Evidence Engine"* en jargon public, persona Marie au centre.
+
+### Sections inchangées dans ce pass
+- Anti-hallucination 5 directives (lignes 96-118)
+- Stack technique / Commandes utiles / Documents de référence
+- Refonte 41 agents (3 tiers)
+- Exploitation Funding DB
+
+### Cascade restant à exécuter
+1. `docs-private/reference.yaml` — sections 3, 4, 6, 9, 10, 20, 26, 27, 28
+2. `docs-private/product-overview.md` + `exec-summary.md` + `pitch-deck.md` + slides
+3. Chantier scoring à 2 axes (schema, ui-configs, ScoreBadge, pdf, prompts)
+4. Surfaces publiques (landing, pricing, blog) — APRÈS fermeture release register B16
+
+---
 ## 2026-05-20 — Phase B17.1 — Admin Analysis Console read-only
 
 ### Contexte
