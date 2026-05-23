@@ -1,6 +1,1252 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-23 — Pivot doctrinal (clôture — §33) — KPI Governance refondue en matrice + cascade TERMINÉE pour le périmètre repéré
+
+### Contexte
+**Dernier bloc de la cascade aval.** §33 KPI refondue en GOUVERNANCE MÉTRIQUES (matrice complète avec owner / data_source / cadence / segment / statut / public_claim_status par métrique). §33 v0 contenait des KPIs en format liste plate sans gouvernance + claims doctrinalement contraires : *"Score accuracy (corrélation score → outcome réel du deal)"* (CONTRAIRE §20 future_moats_to_build + banned_framings), *"Red flag precision (taux de faux positifs)"* (anglicisme + claim précision non auditée), *"Temps moyen d'analyse"* (banni §26 banned_phrasings_table), *"Boards AI / Sessions Live Coaching"* (noms internes en accroche), *"MRR / NRR / Churn"* (non calculables tant que Stripe customer lifecycle absent), *"Marge brute réelle vs estimée"* (contraire §21 + §29). Restructuration en 13 blocs top-level + 5 catégories × 23 métriques structurées + enum public_claim_status formel. 13 corrections sur 2 itérations (v1 → v2).
+
+### Modifications
+
+**`docs-private/reference.yaml` § 33 (lignes 5857-5885 anciennes → ~620 lignes nouvelles)** — réécriture intégrale en MATRICE GOUVERNANCE KPI (13 blocs top-level) :
+- `positioning_rule` : §33 consolide gouvernance, N'ABSORBE PAS §28 ; les deux coexistent.
+- `not_for_public_copy: true` + `governance_status: draft_until_metric_owners_assigned`.
+- **Nouveau** `public_claim_status_enum` : 4 valeurs définies formellement (banned_until_threshold_met / internal_only / banned_in_public_copy / explicit_allow_after_audit).
+- `public_claim_threshold` : 5 conditions cumulatives + cross-ref §28 + §20.
+- 3 relationships : `relationship_to_section_28` (§33 consolide, §28 inherit 8 métriques) + `relationship_to_section_31` (snapshot vs série temporelle) + `relationship_to_section_34` (mesure d'atteinte items committés).
+- `kpi_governance` : 7 principes (definition / owner / data_source / cadence / segment / status / public_claim_status) + 6 statuts (proposed / proposed_until_code_evidence / instrumentation_to_verify / blocked_until_audit / candidate_not_calculable_as_saas / legacy_wording_retired).
+- `metrics_registry` : 5 catégories × 23 métriques structurées :
+  - **acquisition (4)** : signups_per_month (proposed_until_code_evidence), free_to_paid_conversion (blocked §21), cac (proposed), acquisition_source (proposed).
+  - **engagement (6)** : analyses_per_user_per_month (proposed_until_code_evidence), debat_multi_modele_sessions (Boards AI restricted §26), live_coaching_sessions (restricted §26 in_app_legacy, PAS banni partout), chat_messages, retention_M1_M3_M6_M12 (proposed), **credit_utilization_components** (split en 5 sous-composants : achetés / gratuits / expirés / remboursés / consommés ; blocked §21).
+  - **revenue (5)** : MRR/NRR/churn marqués **candidate_not_calculable_as_saas** (rationale : pas de Stripe customer lifecycle, pas de subscription SaaS dans modèle crédits hybride actuel) ; ARPU + revenue_per_segment blocked §21.
+  - **quality (4)** : **score_outcome_correlation_future_metric** (legacy_wording_retired *"Score accuracy"*, future_metric_status: blocked_until_outcomes_instrumented, prerequisites §20 future_moats_to_build) ; **signaux_alerte_quality_to_audit** (legacy_wording_retired *"Red flag precision"*, anglicisme → *signaux d'alerte*) ; **runtime_duration_internal_to_audit** (renommé depuis *"Temps moyen d'analyse"*, purpose ops/perf interne PAS promesse rapidité, public_claim_status: internal_only) ; NPS (proposed, non instrumenté).
+  - **cost (4)** : cout_llm_par_analyse + cout_llm_par_utilisateur (TOUS deux **blocked_until_audit §32 llm_logging_policy + direct_callers_bypassing_router + §29 invoices + §21 FX EUR/USD**) ; infrastructure_cost_ratio (blocked §29 + §21 + §32) ; marge_brute_reelle_vs_estimee (blocked §21 + §29).
+- `data_quality_and_ownership` : 6 exigences transversales (owner avant instrumentation = gate gouvernance, etc.).
+- `banned_kpi_claims` : 12 phrases bannies (score accuracy 87%, red flag precision 95%, MRR sans Stripe, marges en public, noms internes Board AI/Consensus/Reflexion en marketing — **Live Coaching distingué comme restricted_by_§26**, pas au même niveau).
+- `doctrine_references` avec upstream_sources + cross_section_updates_required.
+
+**Segmentation systématique** : tous KPIs où pertinent ont segment *"par canal × segment cible §4 lorsque connu"* (cf. §4 segments).
+
+**Vestiges originaux §33 supprimés (vérifiés par Python check)** : `acquisition` / `engagement` / `revenue` / `quality` / `cost` en LISTES plates de strings sans gouvernance — toutes devenues dict structurés sous `metrics_registry`.
+
+**`docs-private/reference.yaml` cleanup cascade complet** :
+- §3 commentaire d'en-tête : §33 ajoutée + **cascade doctrinale TERMINÉE pour le périmètre repéré** + formulation prudente *"PAS tout le fichier est parfait"*.
+- §26 cross_section_updates_required.sections : §33 retiré ; *"Cascade doctrinale TERMINÉE pour le périmètre repéré"*.
+- §27 doctrine_references.downstream_surfaces : §33 retiré ; *"Cascade doctrinale TERMINÉE pour le périmètre repéré"*.
+- §28 kpi_section_alignment_status : passé en aligné ; status reformulé en *"§33 KPI — aligné (cf. §33 v2)"* ; rule clarifiée que §28 et §33 coexistent.
+- §28 doctrine_references.downstream_surfaces : §33 retiré ; mention *"§30+§31, §34 puis §33 ; cascade doctrinale TERMINÉE pour le périmètre repéré"*.
+- §31 relationship_to_section_33 : mis à jour (§33 aligné ; §31 snapshot vs §33 série temporelle).
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : §33 ajoutée ; **cascade doctrinale TERMINÉE pour le périmètre repéré** + formulation prudente.
+- Cascade table : ligne § 33 KPI (matrice gouvernance métriques) ✅ ajoutée.
+- § 11 sync : § 33 ajouté.
+
+### Précautions importantes
+- **Cascade doctrinale TERMINÉE pour le périmètre repéré** — PAS *"tout le fichier est parfait"*. Toute section non listée dans le périmètre n'a PAS été auditée dans le cadre de la cascade 2026-05-20 et peut contenir des vestiges.
+- **§33 NE GARANTIT pas** une gouvernance KPI opérationnelle. `governance_status: draft_until_metric_owners_assigned` au niveau section. Aucune métrique ne peut passer en `instrumentation_to_verify` sans owner assigné (gate gouvernance).
+- **MRR / NRR / Churn** marqués `candidate_not_calculable_as_saas` — non calculables comme SaaS subscription tant que modèle billing non décidé (cf. §21 billing_integration_status, pas de Stripe customer lifecycle).
+- **Métriques quality (score / red flag precision)** : conditionnelles à l'instrumentation des outcomes par dossier (cf. §20 future_moats_to_build prerequisites). Réintroduction conditionnelle uniquement après satisfaction des prérequis.
+- **Coûts LLM** : tous blocked tant que §32 llm_logging_policy + direct_callers_bypassing_router + §29 factures + §21 FX EUR/USD ne sont pas réconciliés.
+- **Live Coaching** distingué comme `restricted_by_§26` (in_app_legacy_feature_names.decision_required), PAS banni au même niveau que Board AI / Consensus Engine / Reflexion Engine.
+- **public_claim_status_enum** formellement défini (4 valeurs) : toute métrique a un public_claim_status explicite, JAMAIS implicite.
+
+### Vérification (validations post-write)
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- §33 anciens top-level keys (acquisition / engagement / revenue / quality / cost) en LISTES plates : ABSENTS (devenus dict sous metrics_registry).
+- §33 nouveaux 13 blocs PRÉSENTS : 13/13.
+- `governance_status: draft_until_metric_owners_assigned` ✅.
+- `not_for_public_copy: True` ✅.
+- `public_claim_status_enum.values` : 4 valeurs (banned_in_public_copy / banned_until_threshold_met / explicit_allow_after_audit / internal_only) ✅.
+- `metrics_registry` : 5 catégories × 23 métriques au total (acquisition=4, engagement=6, revenue=5, quality=4, cost=4).
+- Statuts répartis : 6 proposed_until_code_evidence + 8 blocked_until_audit + 4 proposed + 3 candidate_not_calculable_as_saas + 2 blocked_until_outcomes_instrumented = 23.
+- Cleanup cascade : §26 + §27 + §28 (kpi_section_alignment_status aligné) + §31 (relationship_to_section_33 aligné) + §32 + §34 mis à jour.
+- ANSI count = 0.
+
+### Cascade aval — état final
+**Cascade doctrinale TERMINÉE pour le périmètre repéré.**
+
+Sections alignées (14 doctrinales + Niveau 1) :
+- Niveau 1 : CLAUDE.md + docs-doctrine + reference.yaml §§ 3-11 transversal
+- Niveau 2 : reference.yaml §§ 19, 20, 21, 22, 26, 27, 28, 29, 30, 31, 32, 33, 34
+
+**Formulation finale doctrinale** : *"cascade TERMINÉE pour le périmètre repéré"*, PAS *"tout le fichier est parfait"* ni *"toute la doctrine est verrouillée"*. Toute section non listée n'a PAS été auditée dans le cadre du pivot 2026-05-20 et peut contenir des vestiges doctrinaux à reprendre dans une future passe.
+
+### Prochaine étape
+Cascade doctrinale aval close. Prochaines étapes possibles :
+1. **Passe code pricing dédiée** : refonte des surfaces UI flaggées dans §21 + §22 (pricing-content.tsx, page.tsx landing, settings, sidebar, credit-purchase-modal).
+2. **Owner assignment §33** : passer `governance_status` de `draft_until_metric_owners_assigned` à statut suivant en assignant owners.
+3. **Audit code §32** : exécuter les 15 items `code_audit_required` (Neon region, OpenRouter direct callers config, TTL, RLS, Stripe customer, etc.).
+4. **Documents publics** (pitch deck, exec summary, business plan) : à reprendre selon §34 blocked_until_audit.
+5. **Sections doctrinales hors périmètre cascade** : audit ponctuel d'éventuelles autres sections contaminées.
+
+---
+## 2026-05-23 — Pivot doctrinal (aval — §34) — Roadmap refondue en matrice d'hypothèses + cleanup cascade
+
+### Contexte
+§34 Roadmap refondue en MATRICE D'HYPOTHÈSES (pas engagements produit). §34 contenait la pire concentration de claims doctrinalement dangereux du fichier : *"Audit trail compliance (IR-PME, EIS)"* (CONTRAIRE §20 not_a_legal_claim + §32), *"Reflexion Engine (auto-critique Big4 itérative)"* (Big4 banni §7), *"Stratégie de négociation automatisée (leverage, points, dealbreakers, tradeoffs)"* (dealbreaker banni §26 + automatisée banni), *"Chat switch vers Haiku (réduction coûts 10x)"* (claim chiffré multiplicatif banni §28), *"Lancement beta / waitlist"* (vocabulaire disponibilité commerciale banni §26), *"44 agents avec orchestration complète"* / *"22 experts sectoriels"* / *"40+ connecteurs"* (nombres bruts + claims complétude bannis §26), *"Board AI"* / *"Live Coaching v2"* / *"Consensus Engine"* / *"Reflexion Engine"* (noms internes en marketing public bannis §26), models hardcodés (Claude/GPT-4o/Gemini/Grok) dans la doctrine. Restructuration en 9 blocs top-level avec 5 statuts séparés (existing_to_verify / planned_hypothesis / blocked_until_audit / deferred / banned_or_retired) + items structurés (public_label / internal_or_legacy_name / status / evidence_required / retired_wording / cross_reference). 9 corrections sur 2 itérations (v1 → v2) avec garde-fous explicites.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 34 Roadmap (lignes 5892-5929 anciennes → ~470 lignes nouvelles)** — réécriture intégrale en MATRICE D'HYPOTHÈSES (9 blocs top-level) :
+- `positioning_rule` + `not_a_commitment: true` + `not_for_public_copy: true` au niveau section.
+- `roadmap_items_to_audit.all_items_require_code_or_doctrine_evidence_before_public_use: true` (garde-fou contre l'effet *"catalogue validé"*).
+- 5 statuts séparés :
+  - **`existing_to_verify` (20 items)** — items observables côté code, chacun avec `public_label` + `internal_or_legacy_name` (si pertinent) + `status: runtime_to_verify | doctrinal_claim_only | unknown_until_code_audit | partially_implemented` + `evidence_required` + `cross_reference` + `retired_wording` (mémoire des claims bannis). Live Coaching marqué `public_marketing_status: restricted_by_§26 (in_app_legacy_feature_names.decision_required)`, pas banni.
+  - **`planned_hypothesis` (4 items)** — idées futures non engagées. Funding Database reformulée *"enrichissement progressif, cible interne non publiable tant que scope + méthodologie + statut ne sont pas documentés"* (pas *"cible 5,000+ deals"*). DB agents *"automatisée"* retiré du wording.
+  - **`blocked_until_audit` (4 items)** — chaque item avec `blocked_until_audit: ["§X", "§Y"]` incluant **§33 pour métriques/activation/traction** (correction user). Pricing page → §21+§22+§29+§33. Pilote beta → §21+§22+§26+§28+§32+§33. GTM hypothèses → §22+§26+§28+§33. Documents startup → §20+§21+§22+§26+§28+§29+§31+§32+§33.
+  - **`deferred` (3 items)** — *"Chat switch vers Haiku (réduction coûts 10x)"* → *"Exploration de modèles plus économiques selon les besoins, mesure coût/qualité à documenter avant tout switch"*. Cibles institutionnelles deferred sans Big4.
+  - **`banned_or_retired` (6 items)** — chaque item avec `banned_item` + `why_banned` + `replacement`. IR-PME/EIS, Big4, Stratégie de négociation automatisée, Réduction coûts 10x, Lancement brut, **claims compliance-ready / compliance-grade / compliance export / regulatory-ready** (correction user 3).
+- `banned_roadmap_claims` (16 items) : liste explicite des phrases interdites incluant les variantes compliance-ready.
+- `not_committed_until_validated` : 3 règles strictes pour passage d'un item §34 à engagement.
+- `relationship_to_section_31` : §31 état observable / §34 hypothèses ; §34 ne rétro-justifie pas §31.
+- `relationship_to_section_33` : §34 hypothèses / §33 gouvernance KPI à refondre ; items §34 touchant métriques portent §33 dans blocked_until_audit.
+- `doctrine_references` avec upstream_sources + cross_section_updates_required.
+
+**Vestiges originaux §34 supprimés (vérifiés par Python check)** :
+- `completed` (top-level liste de 20 items bruts) — devenu `existing_to_verify` structuré.
+- `in_progress` (top-level liste de 3 items) — redistribué dans `blocked_until_audit` + `deferred`.
+- `planned` (top-level liste de 8 items) — redistribué dans `planned_hypothesis` + `blocked_until_audit` + `deferred` + `banned_or_retired`.
+
+**`docs-private/reference.yaml` cleanup cascade complet** :
+- §3 commentaire d'en-tête : §34 ajoutée aux sections alignées ; aval réduit à §33 uniquement.
+- §26 cross_section_updates_required.sections : §34 retiré ; aval = § 33.
+- §27 doctrine_references.downstream_surfaces : §34 retiré ; aval = § 33.
+- §28 doctrine_references.downstream_surfaces + cross_section_updates_applied : §34 retiré ; mention *"§30+§31 puis §34 nettoyés ; aval restant : § 33 uniquement"*.
+- §31 relationship_to_section_34 mis à jour : §34 désormais alignée (la mention *"§34 N'EST PAS assainie par §31"* du tour précédent est devenue obsolète après refonte §34).
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : §34 ajoutée ; aval réduit à § 33.
+- Cascade table : ligne § 34 Roadmap (matrice d'hypothèses) ✅ ajoutée ; ligne aval réduite à § 33 KPI uniquement.
+- § 11 sync : § 34 ajoutée.
+
+### Précautions importantes
+- **§34 NE GARANTIT pas** un produit livré ni une roadmap committée. C'est une matrice d'hypothèses avec `not_a_commitment: true` au niveau section.
+- **Tous les claims compliance / réglementaires** (IR-PME, EIS, audit trail officiel, compliance-ready, compliance-grade, compliance export, regulatory-ready) sont bannis sans avis juridique externe (cf. §32 + §20 not_a_legal_claim).
+- **Live Coaching** est nom in-app legacy autorisé sous §26 in_app_legacy_feature_names.decision_required ; PAS banni partout (correction user).
+- **Red flags** : pas banni en tant que concept, c'est l'anglicisme + l'usage en accroche publique non contextualisée qui est à éviter (préférer *signaux d'alerte* en wording public).
+- **Models providers** (Claude, GPT-4o, Gemini, Grok) retirés de la doctrine — la liste réelle est versionnée séparément, pas dans la roadmap.
+- **Items pricing / API / webhooks / sécurité / export / conformité / billing / métriques** portent `blocked_until_audit` explicite vers §21+§22+§29+§32+§33.
+
+### Vérification (validations post-write)
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- §34 anciens top-level keys ABSENTS : `completed`, `in_progress`, `planned` — tous True.
+- §34 nouveaux 9 blocs PRÉSENTS : 9/9.
+- `not_a_commitment: True`, `not_for_public_copy: True`, `all_items_require_code_or_doctrine_evidence_before_public_use: True`.
+- 5 statuts présents avec counts : existing_to_verify=20, planned_hypothesis=4, blocked_until_audit=4, deferred=3, banned_or_retired=6.
+- Cleanup cascade : §26 et §27 aval ne contiennent PAS §34.
+- ANSI count = 0.
+- Grep ciblé claims actifs vestiges (Big4, dealbreaker, IR-PME, EIS, audit trail officiel, compliance-ready) hors `banned_*` / `retired_wording` / changes-log historique : aucun claim actif vestige (les seules occurrences résiduelles sont dans les listes de bannis ou les rationales expliquant que ces termes sont bannis).
+
+### Sections aval restantes (1)
+- **§33 KPI** : gouvernance KPI complète à refondre. §28 measurement_plan + §31 product_claims_to_audit + §34 blocked_until_audit ont posé les garde-fous temporaires ; §33 doit définir la gouvernance complète (cibles, owners, périodicité, déclencheurs d'alerte).
+
+### Prochaine étape cascade aval
+**§33 KPI** — dernier bloc de la cascade aval. Refonte attendue : gouvernance KPI complète à reposer en alignement avec §28 measurement_plan + §31 product_claims_to_audit + §34 blocked_until_audit.
+
+---
+## 2026-05-23 — Pivot doctrinal (aval — couple §30+§31) — Objections + Traction refondues en matrices d'audit + cleanup cascade
+
+### Contexte
+Couple §30 Objections & Réponses + §31 Traction & Métriques refondu en bloc cohérent (§30 défend §31 — objections sur l'état traction). §30 contenait la pire concentration de vestiges du fichier : ROI obscène (*"Un BA qui évite un mauvais deal à 25K€ a rentabilisé 4 ans d'abonnement"*), DD oraculaire (*"DD de qualité institutionnelle"*), caricature concurrentielle (*"Excel/Figma DNA"*), claims absolus (*"Honnêteté absolue"*, *"On ne ment jamais"*), nombres bruts en accroche (44 prompts, 60+ fichiers, 22 experts, 5000+ deals, <8 secondes), noms internes en marketing public (Board AI), *"la flemme de le faire"* comme moat, *"scores de confiance"* axe banni. §31 contenait *"MVP fonctionnel complet"*, *"orchestration complète"*, *"Stratégie de négociation automatisée"* + nombres bruts. Refonte intégrale en MATRICES D'AUDIT — §30 = talking points internes à finaliser avant usage public, §31 = snapshot traction + product status à un instant t. 18 corrections sur 3 itérations (v1 → v2 → v3) avec audit code (deal-limits, feature-access, billing flow).
+
+### Modifications
+
+**`docs-private/reference.yaml` § 30 Objections & Réponses (lignes 5051-5071 anciennes → ~240 lignes nouvelles)** — réécriture intégrale en MATRICE DE TALKING POINTS INTERNES :
+- `positioning_rule` + `not_for_public_copy: true` au niveau section.
+- `objections_audit.items` : 7 objections (pas 8) avec structure étendue par item :
+  - `legacy_question` (signal de marché conservé)
+  - `public_question_reframe` (formulation doctrine-alignée, e.g. *"Quelle valeur économique défendable pour un investisseur privé, sans claim ROI non audité ?"* pour l'objection BA pricing)
+  - `v0_answer_banned` + `banned_claims_in_v0` (mémoire phrases bannies)
+  - `doctrine_aligned_answer_draft` + `draft_status: "brouillon"` + `not_for_public_copy: true`
+  - Pour l'objection IA : `canonical_answer_source: "§20 ai_error_response.public_answer"` + `doctrine_aligned_answer_summary` + `summary_not_canonical: true` (pas de recopie verbatim, pointage vers source)
+  - Solo founder : *"facilitent l'audit par un repreneur / partenaire"* (pas *"permettent"* — pas de claim continuité opérationnelle)
+- `banned_in_objection_answers` : 11 phrases bannies explicites (ROI obscène, DD qualité institutionnelle, Honnêteté absolue, Excel/Figma, comme une équipe de 5, nombres bruts en accroche, Board AI/Live Coaching en marketing, *"la flemme"*, *"scores de confiance"*).
+- `cross_section_alignment.no_direct_runtime_change: true` + `runtime_claims_inherited_to_verify` (5 items dont *"Routage multi-provider via OpenRouter, sous réserve des appels directs hors router listés en §32"* et *"Sourcing exigé sur les affirmations factuelles critiques + recoupement documentaire quand disponible"*).
+
+**Vestiges originaux §30 supprimés (vérifiés par Python check)** : `objections` était une LISTE de 7 Q/A bruts ; devenu un DICT structuré. Toutes les `answer` brutes purgées des chemins actifs (présentes uniquement dans `v0_answer_banned` pour mémoire).
+
+**`docs-private/reference.yaml` § 31 Traction & Métriques (lignes 5077-5095 anciennes → ~160 lignes nouvelles)** — réécriture intégrale en MATRICE D'AUDIT :
+- `positioning_rule` + `not_for_public_copy: true` au niveau section.
+- `current_traction_to_verify` : `users_to_verify` / `revenue_eur_to_verify` / `waitlist_to_verify` chacun avec `value: 0` + `source` + `owner` + `last_verified_at` (les zéros restent des claims à vérifier vs DB).
+- `product_claims_to_audit` séparé en 4 statuts + claims bannis :
+  - `runtime_surfaces_to_verify` (2 items : Chat IA, Export PDF)
+  - `partially_implemented` (4 items : Live Coaching v2 contexte pré-call variable, API v1 — gate Expert+ lifetime, add-on payant 49€/mois NON implémenté ; Repères de négociation sourcés ; Système de crédits — runtime ACTIF + checkout Stripe absent + flow mailto: + billing non automatisé)
+  - `doctrinal_claim_only` (6 items : Architecture 4 couches/44 agents convention §7 à auditer ; Consensus Engine ; Reflexion Engine ; 5 directives 60+ fichiers À RECOMPTER ; Board AI ; 21 spécialisées + general-expert fallback)
+  - `unknown_until_code_audit` (3 items : connecteurs Context Engine *40+* à compter ; waitlist runtime ; repreneur / continuité)
+  - `banned_completeness_claims` (3 items : MVP fonctionnel complet, orchestration complète, négociation automatisée)
+- `relationship_to_section_33` : §31 ≠ §33 (§31 snapshot, §33 gouvernance KPI à refondre).
+- `relationship_to_section_34` : **§31 N'ASSAINIT PAS §34** (§34 reste contaminée — Big4, dealbreakers, IR-PME/EIS résiduels).
+- `banned_in_public_copy` : 6 items (nombres bruts en accroche, noms internes en marketing, *automatisée*, *complet*, *22 experts non qualifié*, *API commercialement disponible*).
+
+**Vestiges originaux §31 supprimés (vérifiés par Python check)** : `stage: pre_launch` / `users: 0` / `revenue: 0` / `waitlist: 0` flat → `current_traction_to_verify` structuré. `product_status` block | (literal scalar) avec *"MVP fonctionnel complet"* / *"Board AI"* / *"Live Coaching v2"* / *"Stratégie de négociation automatisée"* / *"22 experts sectoriels"* / *"40+ connecteurs"* purgé.
+
+**`docs-private/reference.yaml` cleanup cascade complet** :
+- §3 commentaire d'en-tête : §§ 30, 31 ajoutés aux sections alignées ; aval réduit à §§ 33, 34 (avec note explicite *"§ 34 N'EST PAS assainie par §31"*).
+- §26 cross_section_updates_required.sections : §§ 30, 31 retirés.
+- §27 doctrine_references.downstream_surfaces : §§ 30, 31 retirés.
+- §28 doctrine_references.downstream_surfaces + cross_section_updates_applied : §§ 30, 31 retirés ; mention *"§30+§31 nettoyés après §32, §21+§22+§29"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : §§ 30, 31 ajoutés ; aval réduit à §§ 33, 34 avec note explicite *"§ 34 N'EST PAS assainie par §31"*.
+- Cascade table : 2 lignes ✅ ajoutées (§30 matrice talking points + §31 matrice d'audit).
+- § 11 sync : §§ 30, 31 ajoutés.
+
+### Précautions importantes
+- **§30 + §31 NE GARANTISSENT pas** un script de vente prêt à l'emploi. §30 = matrice de talking points internes ; §31 = snapshot traction. Tous deux `not_for_public_copy: true` au niveau section.
+- **§31 N'ASSAINIT PAS §34 Roadmap**. §34 reste section aval contaminée (Big4, dealbreakers, IR-PME/EIS résiduels) malgré la refonte de §31. La cohérence apparente entre §31 product_claims et §34 roadmap est trompeuse — §34 doit être refondu séparément.
+- **§30 ne contient PAS de scripts publics finalisés**. Chaque `doctrine_aligned_answer_draft` est marqué `draft_status: "brouillon"` + `not_for_public_copy: true`. La réponse canonique sur les erreurs IA pointe §20 ai_error_response.public_answer (pas de recopie verbatim).
+- **API v1 N'EST PAS commercialement disponible** : runtime gate totalPurchased ≥ 125 (Expert+ lifetime). Add-on payant 49€/mois Standard lifetime NON implémenté.
+- **Système de crédits** : runtime actif mais checkout Stripe absent ; flow d'achat = mailto: ; billing commercial non automatisé (cf. §21 billing_integration_status).
+
+### Vérification (validations post-write)
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- `type(objections) == dict`, `len(objections.objections_audit.items) == 7`, `objections.not_for_public_copy == True` ✅.
+- §30 anciens : `objections` n'est plus une LISTE plate de 7 Q/A bruts ; structure dict avec positioning_rule + objections_audit + banned_in_objection_answers + cross_section_alignment + doctrine_references ✅.
+- §31 nouveaux 9 blocs PRÉSENTS (positioning_rule, not_for_public_copy, current_traction_to_verify, product_claims_to_audit, relationship_to_section_33, relationship_to_section_34, banned_in_public_copy, cross_section_alignment, doctrine_references) — tous True.
+- §31 `product_claims_to_audit` : 4 statuts présents (runtime_surfaces_to_verify=2 items, partially_implemented=4, doctrinal_claim_only=6, unknown_until_code_audit=3) + banned_completeness_claims=3.
+- Cleanup cascade : §§ 30, 31 absents des listes aval actives (faux positifs Python : §31 mentionné uniquement dans la note *"§34 N'EST PAS assainie par §31"*, pas dans la liste aval — grep ciblé `"Sections aval à reprendre : .*§ 30|§ 31"` retourne 0 résultat).
+- ANSI count = 0.
+
+### Sections aval restantes (2)
+- **§33 KPI** : gouvernance KPI complète à refondre (§28 measurement_plan n'EST PAS censé remplacer, §31 n'EST PAS censé remplacer).
+- **§34 Roadmap** : Big4, dealbreakers, IR-PME/EIS résiduels — N'EST PAS assainie par §31 product_claims_to_audit. À refondre séparément.
+
+### Prochaine étape cascade aval
+**§33 KPI** (selon priorité du couple §28 measurement_plan + §31 product_claims_to_audit — pour clore la gouvernance métriques) **OU §34 Roadmap** (vestige composé avec claims Big4/IR-PME/EIS contraires à §20 not_a_legal_claim + §7 reframes).
+
+---
+## 2026-05-23 — Pivot doctrinal (aval — couple pricing §21+§22+§29) — refonte en matrices d'audit + cleanup cascade
+
+### Contexte
+Couple pricing refondu en bloc cohérent : §21 Pricing & Business Model + §22 Add-ons + §29 Unit Economics. §28 avait posé `pricing_section_alignment_status` flaggant ces 3 sections comme à refondre ensemble. Refonte intégrale en MATRICES D'AUDIT (le couple §21+§22+§29 N'EST PAS un document de copy commerciale ; il transforme les claims pricing en matrices d'audit runtime/Stripe/feature access/refund et INTERDIT les claims publics non prouvés). 26 corrections sur 3 itérations (v1 → v2 → v3) avec audit code approfondi (CREDIT_COSTS, CREDIT_PACKS, FREE_TIER runtime, feature-access.ts, billing flow mailto:, admin analytics).
+
+### Modifications
+
+**`docs-private/reference.yaml` § 21 Pricing (lignes 3166-3221 anciennes → ~470 lignes nouvelles)** — réécriture intégrale en MATRICE D'AUDIT (25 blocs top-level) :
+- `positioning_rule` : §21 = matrice d'audit, PAS document de copy. Landing/pricing UI à reprendre en passe code pricing dédiée (PAS dans cette opération doctrine).
+- `alignment_with_section_4_segments` : §4 = source autoritaire des bandes pricing publiques.
+- **Nouveau** `runtime_pricing_source_of_truth` : src/services/credits/types.ts:22 = source code autoritaire pour CREDIT_COSTS, CREDIT_PACKS, FREE_TIER, CREDIT_RULES, FEATURE_ACCESS, FULL_DEAL_PACKAGE_CREDITS. Institutional est UI hardcoded, PAS CREDIT_PACKS runtime.
+- **Nouveau** `billing_integration_status` : champs Stripe partiels (stripePriceId, stripeRefillPriceId, stripePaymentId), AUCUN stripeCustomerId, AUCUN customer lifecycle Stripe. Modale d'achat → mailto: (src/components/credits/credit-purchase-modal.tsx:101). Pas de checkout Stripe actif.
+- **Nouveau** `credit_pack_dual_source_to_audit` : CREDIT_PACKS TS (types.ts:48) vs Prisma CreditPack DB (analytics admin:77) — risque drift.
+- **Nouveau** `price_unit_policy_to_audit` : AMBIGUÏTÉ CRITIQUE — Prisma `priceEur Int // 49, 99... (in cents: 4900... or EUR int)`. Risque erreurs facteur 100.
+- **Nouveau** `admin_revenue_estimate_to_audit` : admin/analytics/page.tsx:77 dépend de price_unit_policy. Banni public tant que non résolu.
+- `credit_based_hybrid_model` : *"BA voit"* → *"l'investisseur voit"* (cohérent §27 Pauline core, pas Marie).
+- `credits_per_action` corrigé runtime : Quick Scan deprecated mais utilisé, Deep Dive 5, AI Board 10, Live Coaching 8, Re-analysis 3, THESIS_REBUTTAL 1 (confirmé types.ts:28), THESIS_REEXTRACT 1, **EXTRACTION_STANDARD_PAGE 0/true**, **EXTRACTION_HIGH_PAGE 1/false** (CHARGE_DOCUMENT_EXTRACTION_CREDITS=false), **EXTRACTION_SUPREME_PAGE 2/false**.
+- **Nouveau** `extraction_credit_policy` : CHARGE_DOCUMENT_EXTRACTION_CREDITS=false (feature-flags.ts:60), extraction haute/supreme NON facturée runtime aujourd'hui malgré CREDIT_COSTS configurés.
+- **Nouveau** `feature_access_policy` : totalPurchased LIFETIME (feature-access.ts:9 et :27), PAS abonnement courant. Contredit *"available_from: Pro/Expert"* §22 v0.
+- `packs` split runtime_packs (Starter→Fund) vs ui_hardcoded_tier_not_in_runtime_packs (Institutional).
+- `pricing_rules.auto_refill_discount` : constante présente mais activation runtime non prouvée.
+- `pricing_rules.credit_expiry` : 6 mois, legal_audit_required (conformité consommateurs).
+- `free_tier_status` requalifié **runtime ACTIF** (usage-gate.ts:251, FREE_TIER.initialCredits=5), pas historique. Copy publique bannie tant que pricing/gate non validés.
+- **Nouveau** `refund_and_credit_adjustment_policy_to_audit` : claim *"remboursement automatique"* banni public tant que matrice d'exceptions non documentée.
+- **Nouveau** `legacy_usage_surfaces_to_audit` : deal-limits/index.ts:51 mappe tier ≤ 1 → QUICK_SCAN (deprecated dans types).
+- **Nouveau** `legacy_subscription_fields_to_audit` : subscriptionStatus, monthlyLimit, remainingDeals, FREE_TIER_LIMITS, PRO_TIER_BENEFITS (deal-limits:24). Pricing runtime = hybride crédits + compat legacy, PAS abonnement propre.
+- **Nouveau** `tax_vat_currency_policy_to_audit` : HT/TTC, TVA, B2B/B2C, FX EUR/USD non cadrés. Règle FX datée requise pour §29.
+- `margins_to_audit` : marges historiques à auditer runtime ; expired_credits_revenue legal_audit_required.
+- **Nouveau** `existing_pricing_surfaces_to_audit` : pricing-content.tsx:72 expose 1 Deep Dive offert, 20 agents/41 expertises, Exports compliance/audit trail, remboursement automatique — refonte UI en passe code pricing dédiée.
+- **Nouveau** `public_landing_pricing_drift_to_audit` : page.tsx:113 expose *"5 analyses gratuites"* / *"Commencer gratuitement"* — refonte en passe code pricing dédiée.
+- **Nouveau** `settings_and_sidebar_credit_surfaces_to_audit` : settings/page.tsx:25 + credit-badge.tsx:30 — surfaces in-app à aligner en passe code dédiée.
+- `banned_pricing_claims` : 9 phrases bannies (5-10x moins cher, fait PLUS, Deep Dive offert, conversion limpide, freeloaders, BA voit, exports compliance, etc.).
+
+**`docs-private/reference.yaml` § 22 Add-ons (lignes 3227-3251 anciennes → ~80 lignes nouvelles)** — refondu en bloc cohérent avec §21 (7 blocs top-level) :
+- `positioning_rule` : §22 solidaire de §21 (couple).
+- `feature_access_via_lifetime_purchase` : terminologie *"available_from: Pro/Expert"* requalifiée en seuils lifetime ; API gate runtime = totalPurchased ≥ 125 (Expert+) confirmé feature-access.ts:9.
+- `banned_institutional_only_claims` : Exports compliance/audit trail BANNI §32 (CONTRAIRE §20 not_a_legal_claim) ; white-label/multi-utilisateurs/SLA à requalifier.
+- `paid_addons_to_audit` : Sièges, **Accès API** (claim *49€/mois Standard lifetime* RETIRE — non implémenté runtime, runtime actuel = Expert+ lifetime gratuit), Data Room Watch, Benchmark Premium, **Priority Processing** (claim *<3 min au lieu de 5-8 min* BANNI §26 — à reformuler *priorité de file d'attente* sans claim chiffré).
+- `banned_addon_claims` : *<3 min / 5-8 min* / *exports compliance* / *SLA non auditable* / *add-on API 49€* (non implémenté).
+
+**`docs-private/reference.yaml` § 29 Unit Economics (lignes 4522-4565 anciennes → ~140 lignes nouvelles)** — refondu en MATRICE D'AUDIT (8 blocs top-level) :
+- `positioning_rule` : §29 = hypothèses internes, PAS copy publique.
+- `cost_per_llm_call_to_audit` : tarifs LLM avec snapshot_required_per_provider (les tarifs changent ; obligation de citer la date).
+- `cost_per_analysis_to_audit` : estimations historiques à auditer vs runtime (cf. §32 llm_logging_policy).
+- `infrastructure_monthly_to_audit` : factures réelles vs estimations.
+- `break_even_model` : modèle simplifié interne, `not_for_public_copy: true`.
+- `banned_in_public_copy` : *Marges 70-85%*, *break-even rapide*, *10 clients Pro couvrent l'infra*, tarifs LLM sans snapshot daté.
+- `cross_section_alignment` : couple §21 + §22 + §29 + §32 llm_logging_policy (audit consommation tokens) + FX EUR/USD §21.
+
+**`docs-private/reference.yaml` cleanup cascade complet** :
+- §3 header : §§ 21, 22, 29 ajoutés aux sections alignées ; aval réduit à §§ 30, 31, 33, 34.
+- §26 cross_section_updates_required.sections : §§ 21, 22, 29 retirés (aval = §§ 30, 31, 33, 34).
+- §27 doctrine_references.downstream_surfaces : §§ 21, 22, 29 retirés (aval = §§ 30, 31, 33, 34).
+- §28 pricing_section_alignment_status : passé en aligné (couple §21 + §22 + §29). §§ 21, 22, 29 retirés de §28 downstream_surfaces (aval = §§ 30, 31, 33, 34).
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : §§ 21, 22, 29 ajoutés aux sections alignées ; aval réduit à §§ 30, 31, 33, 34.
+- Cascade table : 3 lignes ✅ ajoutées (§21 Pricing matrice d'audit + §22 Add-ons matrice d'audit + §29 Unit Economics matrice d'audit).
+- § 11 sync : §§ 21, 22, 29 ajoutés.
+
+### Précautions importantes
+- **§21 + §22 + §29 NE GARANTISSENT pas** la conformité pricing. Le couple transforme la doctrine en matrices d'audit runtime/Stripe/feature access/refund/unit economics et INTERDIT les claims publics non prouvés.
+- **Page pricing (pricing-content.tsx), landing public (page.tsx), settings, sidebar credit badge** : EXPOSENT encore des claims bannis. Ces surfaces sont flaggées dans `existing_pricing_surfaces_to_audit`, `public_landing_pricing_drift_to_audit`, `settings_and_sidebar_credit_surfaces_to_audit` — **à reprendre en passe code pricing dédiée** (PAS dans cette écriture doctrine).
+- **price_unit_policy_to_audit** : ambiguïté EUR vs centimes dans Prisma CreditPack.priceEur. Tant que non résolu, admin/analytics revenue peut être faux par facteur 100. **Banni de toute communication interne ou publique** tant que résolu.
+- **Stripe checkout N'EST PAS actif** : flow réel = mailto: vers contact commercial. Aucun claim *"achat immédiat"* / *"checkout instantané"* en public.
+- **Add-on API 49€/mois Standard lifetime** : NON implémenté runtime ; runtime actuel = totalPurchased ≥ 125 (Expert+). Banni public tant que décision produit non prise.
+
+### Vérification (validations post-write)
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- §21 anciens top-level keys ABSENTS (Python check) : `model`, `rationale`, `value_comparison` — tous True.
+- §21 nouveaux 25 blocs PRÉSENTS : 25/25.
+- §21 EXTRACTION values confirmées runtime : STANDARD 0/true, HIGH 1/false, SUPREME 2/false.
+- §22 anciens top-level keys ABSENTS : `included_by_tier`, `paid` — tous True.
+- §22 nouveaux 7 blocs PRÉSENTS : 7/7.
+- §29 anciens top-level keys ABSENTS : `cost_per_llm_call`, `infrastructure_monthly`, `break_even`, `cost_per_analysis` (flat top-level) — tous True.
+- §29 nouveaux 8 blocs PRÉSENTS : 8/8.
+- Cleanup cascade : §26 / §27 aval ne contient PAS §§ 21, 22, 29.
+- §28 `pricing_section_alignment_status` mentionne *"alignés"*.
+- ANSI count = 0 sur reference.yaml.
+- Typo *"aliignement"* absent.
+
+### Avertissement
+Le couple §21 + §22 + §29 v3 est une matrice d'audit, pas une garantie. Les surfaces UI exposent encore des claims bannis (pricing page, landing, settings, sidebar) qui doivent être audités/refondus en passe code pricing dédiée AVANT toute mise en production des règles publiques. Le backlog d'audit immédiat porte sur : Stripe customer lifecycle, price_unit_policy (EUR vs cents), credit_pack_dual_source (TS ↔ DB), refund policy matrix, tax/VAT/FX, et l'alignement UI in-app.
+
+### Sections aval restantes (4)
+- §30 (à auditer)
+- §31 (vestige *"4 ans d'abonnement rentabilisés"* ligne 4153)
+- §33 KPI (gouvernance complète à refondre, §28 measurement_plan n'EST PAS censé remplacer)
+- §34 Roadmap (Big4, dealbreakers, IR-PME/EIS résiduels)
+
+### Prochaine étape cascade aval
+§33 KPI ou §31 (vestige composé pré-pivot le plus visible). §30 et §34 peuvent suivre selon priorité.
+
+---
+## 2026-05-21 — Pivot doctrinal (aval — §32) — reference.yaml § 32 Legal & Compliance transformé en matrice d'audit + cleanup cascade complet
+
+### Contexte
+Première section aval refondue après la fin de la cascade immédiate. §32 était la section la plus dangereuse de l'aval — directement contraire à §20 `auditability_positioning.not_a_legal_claim` via 3 claims juridiques actifs (*"Audit trail compatible avec les obligations IR-PME"*, *"Compatible Enterprise Investment Scheme (UK)"*, *"Angel Desk comme système d'audit trail officiel des décisions"*), plus claims runtime non audités (*"Row-level security via userId"*, *"Pas de training sur les données utilisateur"*, *"hébergé en Europe"*) présentés comme acquis. **§32 v3 NE GARANTIT pas la conformité ni la privacy** : il transforme la section en MATRICE D'AUDIT pour les claims runtime / infrastructure / data flow / juridiques, et INTERDIT les claims non prouvés. Restructuration en 14 blocs top-level + cleanup cascade complet (§3 header + §26 + §27 + §28 legal_section_alignment_status + docs-doctrine top note + cascade table + § 11 sync). 19 corrections sur 3 itérations (v1 → v2 → v3).
+
+### Modifications
+
+**`docs-private/reference.yaml` § 32 (lignes 4618-4635 anciennes → ~430 lignes nouvelles)** — réécriture intégrale en MATRICE D'AUDIT (14 blocs top-level) :
+- `positioning_rule` : §32 = matrice d'audit, PAS document de conformité, NE GARANTIT pas privacy.
+- `privacy_and_data_handling` : 4 entités (data_storage / data_processing / data_retention / right_to_deletion) chacune avec `current_claim_to_audit` + `target_claim_to_verify` + `audit_required` + refs code (DELETE deal:266 + DELETE user:7) + cascade étendue (logs LLM, appels directs hors router, caches dérivés, logs applicatifs, exports RGPD, webhooks).
+- `llm_data_policies` : 3 niveaux (openrouter_layer + downstream_providers + user_data_in_prompts) + `direct_callers_bypassing_router` (9 fichiers + scripts) + 3 doc refs OpenRouter + `banned_until_config_proven` (claims *"pas de training"* bannis tant que `data_collection: deny` / `zdr: true` non prouvés).
+- `confidentiality_controls` : `isolation_model` avec **`banned_terminology: "Row-level security via userId"`** (filtrage applicatif ≠ RLS DB Postgres) + api_keys avec ref `prisma/schema.prisma:2137` + auth_layer.
+- `llm_logging_policy` : redacted_by_default (4 champs) + metadata_retained + refs `src/services/llm-logger/index.ts:52` et `:97` + `LLM_LOG_RAW_TEXT` désactivé en prod obligatoire.
+- **Nouveau** `application_logs_to_audit` (drift webhook live ligne 692 — `console.log(utterance.text.slice(0, 100))`).
+- **Nouveau** `storage_and_encryption_scope_to_audit` (7 scopes distincts : Vercel blobs, db_columns, extractedText, ocrText, evidence_signals, llm_logs, local_storage_upload_recovery) + claim *"AES-256-GCM en base"* banni sans matrice.
+- **Nouveau** `data_portability_surface_to_audit` (GET /api/user/export exclut blobs / extractedText / ocrText / fichiers / clés full) + claim *"export complet des données"* INTERDIT.
+- **Nouveau** `existing_user_facing_legal_surfaces_to_audit` (page `src/app/(dashboard)/legal/confidentialite/page.tsx` avec 7 claims : DPO/RCS, Neon Francfort, OpenRouter DPA/SCCs, AES-256-GCM, MFA, cookies, délais RGPD).
+- **Nouveau** `linkedin_consent_surface_to_audit` (`src/components/shared/linkedin-consent-dialog.tsx:43` — Art. 6.1.f + *"supprimables à tout moment"* à auditer légalement ET techniquement).
+- **Nouveau** `external_api_and_webhooks_to_audit` (PBKDF2 + révocation + lastUsedAt + rate limits + HMAC + URL validation + suppression utilisateur).
+- `regulatory_alignment_claims_policy.banned_regulatory_claims` : IR-PME / EIS / audit trail officiel / *"outil de référence pour la conformité"* explicitement bannis ; `public_value_alternative` = reformulation §20 (sources, contradictions, zones d'incertitude, fraîcheur — SANS prétendre à conformité spécifique).
+- `code_audit_required` : 15 items précis à auditer côté code/infra.
+- `doctrine_references` : upstream_sources + downstream_surfaces + **11 banned_in_this_section** (claims explicitement interdits pour éviter régression future) + `cross_section_updates_applied`.
+
+**Vestiges originaux §32 supprimés (vérifiés absents par Python check)** :
+- `rgpd` (top-level) : contenait *"PostgreSQL (Neon) hébergé en Europe"*, *"Implémenté (suppression deal + analyses + documents)"* présentés comme acquis.
+- `llm_data_policies.openrouter: "Pas de training sur les données utilisateur"*  + note absolue (claims abolus retirés ; le bloc `llm_data_policies` v3 a une structure totalement différente).
+- `confidentialite` (top-level) : contenait *"Row-level security via userId sur toutes les requêtes"* (faux — c'est du filtrage applicatif, pas une RLS DB).
+- `compliance` (top-level) : 3 claims juridiques directement contraires à §20 not_a_legal_claim (IR-PME, EIS, audit trail officiel).
+
+**`docs-private/reference.yaml` cleanup cascade complet** (4 endroits) :
+- §3 commentaire d'en-tête : §32 ajouté aux sections alignées ; retiré de la liste aval (*"sections aval à reprendre : §§ 21, 29, 30, 31, 33, 34"*).
+- §26 `cross_section_updates_required.sections` : §32 retiré de la liste aval.
+- §27 `doctrine_references.downstream_surfaces` : §32 retiré de la liste aval.
+- §28 `legal_section_alignment_status` : passé en aligné (*"§32 Legal & Compliance — aligné (cf. §32 v3). La doctrine §32 interdit les claims juridiques non prouvés et transforme §32 en matrice d'audit."*). §28 `doctrine_references.downstream_surfaces` : §32 retiré.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : *"§§ 3-11 + § 19 + § 20 + § 26 + § 27 + § 28"* → *"§§ 3-11 + § 19 + § 20 + § 26 + § 27 + § 28 + § 32"* ; aval réduit à *"§§ 21, 29, 30, 31, 33, 34"*.
+- Cascade table : ligne § 32 Legal & Compliance (matrice d'audit) ✅ ajoutée ; sections aval réduites.
+- § 11 table fichiers synchronisés : §32 ajouté.
+
+### Précautions importantes
+- **§32 NE GARANTIT pas** la conformité ni la privacy. §32 décrit ce qu'il faut auditer et interdit les claims non prouvés.
+- L'écriture §32 v3 N'AUTORISE PAS automatiquement les claims de la page `confidentialite/page.tsx` ou du dialog `linkedin-consent-dialog.tsx`. Ces surfaces user-facing restent à auditer juridiquement avant toute reprise publique.
+- Les 9 appels OpenRouter directs hors router (listés dans `llm_data_policies.openrouter_layer.direct_callers_bypassing_router`) doivent passer un audit `data_collection: deny` / `zdr: true` AVANT toute affirmation publique sur la non-conservation par les providers.
+- Tous les claims structurés en `current_claim_to_audit` / `target_claim_to_verify` sont des HYPOTHÈSES à confirmer côté code/infra, PAS des acquis runtime.
+
+### Vérification (validations post-write)
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- §32 anciens top-level keys ABSENTS (Python check) : `rgpd`, `compliance`, `confidentialite` — tous True (absents).
+- §32 nouveaux 14 blocs PRÉSENTS : 14/14 — tous True (positioning_rule, privacy_and_data_handling, llm_data_policies, confidentiality_controls, llm_logging_policy, application_logs_to_audit, storage_and_encryption_scope_to_audit, data_portability_surface_to_audit, existing_user_facing_legal_surfaces_to_audit, linkedin_consent_surface_to_audit, external_api_and_webhooks_to_audit, regulatory_alignment_claims_policy, code_audit_required, doctrine_references).
+- Cleanup cascade : §26 aval ne contient PAS §32 ; §27 aval ne contient PAS §32 ; §28 `legal_section_alignment_status` mentionne *"aligné"* ; §28 downstream ne contient PAS §32.
+- Grep ciblé claims actifs vestiges (dans bloc legal: actif, hors listes de bannis) : aucun claim actif *"compatible IR-PME"*, *"Compatible Enterprise Investment Scheme"*, *"Row-level security via userId"*, *"Pas de training sur les données utilisateur"*. Les seules occurrences résiduelles sont dans les listes `banned_*` et `banned_in_this_section` — légitimes (documentation des phrases bannies pour éviter régression future).
+- ANSI count : 0 / 0 / 0 sur les 3 fichiers Niveau 1.
+
+### Avertissement
+§32 v3 est une matrice d'audit, pas une garantie. Les surfaces user-facing existantes (`legal/confidentialite/page.tsx`, `linkedin-consent-dialog.tsx`, exports RGPD) contiennent des claims qui doivent encore être audités juridiquement ET techniquement AVANT toute reprise publique de §32. Les 15 items de `code_audit_required` constituent le backlog d'audit immédiat à mener.
+
+### Sections aval restantes (6)
+- §21 Pricing (free_tier, *"Deep Dive offert"*, comparaisons *"5-10x"*, *"fait PLUS"*)
+- §29 Unit Economics détaillé
+- §30 (à auditer)
+- §31 (vestige *"4 ans d'abonnement rentabilisés"* ligne 4153)
+- §33 KPI (gouvernance complète à refondre)
+- §34 Roadmap (Big4, dealbreakers, IR-PME/EIS résiduels)
+
+### Prochaine étape cascade aval
+Selon suggestion utilisateur : §21 + §29 ensemble (couple cohérent pricing + unit economics) → §33 KPI → §30, §31, §34 (vestiges marketing/roadmap dispersés).
+
+---
+## 2026-05-21 — Pivot doctrinal (fin cascade immédiate) — reference.yaml § 28 GTM refondu + cleanup §26/§27 + harmonisation "live" sur 3 surfaces + §32 ajouté à la cascade aval
+
+### Contexte
+Niveau 2 cascade — DERNIER bloc de la cascade immédiate. Refonte intégrale de la section 28 (Go-To-Market) en doctrine GTM hypothèses + 7 alignment_status (vs §21 pricing, §29 unit economics, §32 legal, §33 KPI) + measurement_plan instrumenté + 17 banned_in_gtm. Section originale (~40 lignes, 4043-4079) contenait : *"effet de réseau (1 BA convaincu → tout le club)"*, *"le BA convaincu est le meilleur vendeur"*, *"outil recommandé aux investisseurs"*, *"concentration de la cible"* BA solo, *"1 Deep Dive offert par membre"*, *"BAs actifs"* sans qualification, *"1 mois gratuit"* sans alignement pricing, sales_cycle hypothèses présentées comme runtime garanti, *"BPI / programmes publics"* comme segment expansion_later (incorrect — c'est un canal), M&A advisory mal classé (équipes M&A légères devraient être core §4, pas expansion_later). Restructuration en 13 blocs top-level + 50+ corrections sur 5 itérations (v1 → v2 → v3 → v4 → v4 final final).
+
+### Modifications
+
+**`docs-private/reference.yaml` § 28 (lignes 4043-4079 anciennes → ~430 lignes nouvelles)** — réécriture intégrale en 13 blocs top-level :
+- `positioning_rule` (incl. *"pricing marketing externe"* dans la liste des surfaces marketing soumises)
+- `segment_alignment` (core_revenue_pool aligné strictement §4 sans double Pauline + funnel_entry + expansion_later)
+- `acquisition_strategy.phase1_funnel_and_core` (6 channels : angel_clubs_and_syndicates avec target_segment strict §4 et `audience_role` interlocuteur/opérateur principal, linkedin_thought_leadership, accelerator_partnerships avec target *"réseaux investisseurs associés"* + no_partnership_claim, lean_investment_team_communities, referral_program avec no_offer_commitment, **ma_light_teams**) avec `strategy_hypothesis: "Hypothèse d'acquisition organique + contenu méthodologique"` + `internal_pattern_note` (product-led growth interne uniquement) + `post_gate_gtm_note`
+- `acquisition_strategy.phase2_expansion` (3 channels : vc_pe_funds_series_a_plus, **pe_ma_with_existing_dd_infra** split correct, **public_programs** déplacé depuis expansion_later avec no_partnership_claim) avec `strategy_hypothesis: "Prospection ciblée + partenariats institutionnels à explorer"`
+- `planning_assumptions` (4 hypothèses avec `not_for_public_copy: true` + `source_status: "hypothèse interne, aucune cohorte suffisante"` + `cycle_start_definition` première opportunité qualifiée)
+- `pricing_reference` (renvoi §4 + §27)
+- `pricing_section_alignment_status` (§21 pricing + §29 unit economics non alignés)
+- `kpi_section_alignment_status` (§33 non aligné, scope distinction §28 = validation hypothèses GTM vs §33 = gouvernance KPI complète à refondre, non remplacé)
+- `legal_section_alignment_status` (§32 IR-PME/EIS/audit officiel directement contraire à §20 not_a_legal_claim)
+- `organization_naming_rule` (condition dual *"accord signé ET autorisation explicite de communication"*)
+- `gtm_claims_policy.banned_in_gtm` (**17 phrases bannies** : ROI obscène, disponibilité commerciale contextualisée *"live now"*/*"produit lancé"*/etc., superlatifs, BA solo centre, effet de réseau garanti, claims temps non sourcés, "font le travail", meilleur vendeur, négociation prescriptive, sublimation/wisdom of crowds, nombres bruts 44/22/60+, 20 agents/41 expertises pricing, 5000+ deals sans qualif, offre d'essai/free tier, comparaisons multiplicatives 5-10x, claims légaux IR-PME/EIS, outil recommandé/référencé)
+- `measurement_plan` (**8 métriques** avec définition complète : activation, **qualified_opportunity_rate**, conversion_per_channel, sales_cycle_observed avec population/measure/aggregates médiane/p75/p90, cac_per_segment, recurring_usage avec denominator utilisateurs payants actifs, retention, **funnel_progression** Marie → core_revenue_pool sans wording *"tier"*) + `public_claim_threshold` (N à définir par segment ET par métrique, pas de seuil standard prédéfini) + `status: "Plan à instrumenter — aucune cohorte observée à date"`
+- `cross_section_alignment` (6 surfaces à auditer)
+- `doctrine_references` (upstream_sources + downstream_surfaces + cross_section_updates_required)
+
+**Vestiges originaux §28 supprimés (vérifiés absents par Python check)** :
+- `phase1_launch` (top-level, contenait "Product-led growth + content marketing" + 5 channels avec *"effet de réseau"*, *"meilleur vendeur"*, *"outil recommandé"*, *"BAs actifs"*, *"1 mois gratuit"*)
+- `phase2_expansion` (top-level, contenait 3 channels mal classés)
+- `sales_cycle` (top-level, contenait hypothèses présentées comme runtime sans not_for_public_copy)
+
+**`docs-private/reference.yaml` § 26 cleanup** :
+- `cross_section_updates_required` (§27 + §28 + sections aval) → split en `cross_section_updates_applied` (§27 + §28 alignés) + `cross_section_updates_required` (liste aval complète §§ 21, 29, 30, 31, 32, 33, 34).
+
+**`docs-private/reference.yaml` § 27 cleanup** :
+- `doctrine_references.downstream_surfaces` : *"§ 28 GTM (cf. cross_section_updates_required §26 — vestiges GTM BA solo à requalifier)"* → *"§ 28 GTM — aligné (cf. §28). Sections aval à reprendre : §§ 21, 29, 30, 31, 32, 33, 34."*
+
+**`docs-private/reference.yaml` § 3 cascade** :
+- Commentaire d'en-tête : *"3 à 11, § 19, § 20, § 26 et § 27 sont alignées ; cascade immédiate : § 28"* → *"3 à 11, § 19, § 20, § 26, § 27 et § 28 sont alignées ; cascade immédiate : (terminée) ; sections aval : §§ 21, 29, 30, 31, 32, 33, 34"*.
+- `doctrine_vs_public_language.availability_language_rule` : *"prêt, lancé, live, release-complete, disponible, available now"* → *"prêt, produit lancé, service lancé, lancement public, live now, release-complete, disponible dès maintenant, available now, prêt à utiliser"* + note explicite : *"Le mot 'live' brut n'est PAS banni en soi — Live Coaching, live sessions, statuts applicatifs runtime restent légitimes."*
+
+**`CLAUDE.md` upstream "live"** :
+- Table interdits §8 (ligne 106 — Docs publics) : *"prêt, lancé, release-complete, disponible, live, available now"* → *"prêt, produit lancé, service lancé, lancement public, live now, release-complete, disponible dès maintenant, available now, prêt à utiliser"* + note Live Coaching / live sessions / statuts applicatifs légitimes.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- § 8 table interdits (Public ligne 117) : même correction symétrique.
+- Top note : *"§§ 3-11 + § 19 + § 20 + § 26 + § 27"* → *"§§ 3-11 + § 19 + § 20 + § 26 + § 27 + § 28"* ; *"cascade immédiate restante : § 28"* → *"cascade immédiate : terminée"* ; sections aval étendues *"§§ 21, 29, 30, 31, 32, 33, 34"*.
+- Table cascade : ligne §28 ✅ ajoutée ; sections aval étendues §§ 21, 29, 32, 33.
+- § 11 table fichiers synchronisés : *"§§ 3-11 + § 19 + § 20 + § 26 + § 27"* → *"§§ 3-11 + § 19 + § 20 + § 26 + § 27 + § 28"*.
+
+### Vérification (validations post-write)
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- §28 anciens top-level keys ABSENTS (Python check) : `phase1_launch`, `phase2_expansion`, `sales_cycle` — tous True (absents).
+- §28 nouveaux 13 blocs PRÉSENTS : 13/13 — tous True.
+- `acquisition_strategy.phase2_expansion` nested confirmé (le nouveau phase2_expansion existe sous acquisition_strategy, distinct de l'ancien top-level absent).
+- `measurement_plan.metrics` : 8 métriques (activation, **qualified_opportunity_rate**, conversion_per_channel, sales_cycle_observed, cac_per_segment, recurring_usage, retention, funnel_progression).
+- §28 `positioning_rule` contient *"pricing marketing externe"* ✅.
+- `angel_clubs_and_syndicates.target_segment` aligné strictement §4 (*"BA très actifs / chefs de syndicat solos ; Angel clubs / syndicats structurés"*) ✅.
+- `funnel_progression.definition` contient *"usage / compte rattaché au core_revenue_pool"* (sans wording *"tier"*) ✅.
+- §26 cleanup : `cross_section_updates_applied` présent avec 2 sections (§27 + §28) ; `cross_section_updates_required` réduit à 1 ligne contenant les 7 sections aval §§ 21, 29, 30, 31, 32, 33, 34.
+- §27 cleanup : `downstream_surfaces` mentionne *"§ 28 GTM — aligné"*, ne contient plus *"vestiges GTM BA solo à requalifier"*.
+- ANSI count : 0 / 0 / 0 sur les 3 fichiers Niveau 1.
+- *"live"* brut audit ciblé sur 3 listes upstream (CLAUDE.md ligne 106, docs-doctrine ligne 117, reference.yaml §3 ligne 292-297) : retiré de la liste de disponibilité commerciale ; remplacé par *"live now"*, *"produit lancé"*, *"service lancé"*, *"lancement public"*, *"prêt à utiliser"* ; note Live Coaching / live sessions / statuts applicatifs légitimes ajoutée systématiquement.
+
+### Avertissement
+Cascade immédiate TERMINÉE. Sections aval restantes flaggées : §§ 21 (pricing), 29 (unit economics), 30, 31 (vestige *"4 ans d'abonnement"* ligne 4153), 32 (legal IR-PME/EIS contraire à §20), 33 (KPI), 34 (roadmap). §28 pose explicitement les alignment_status pour §21, §29, §32, §33 — §28 measurement_plan n'EST PAS censé remplacer §33 ; §28 GTM ne reprend AUCUN élément pricing/legal des sections aval.
+
+### Prochaine étape cascade
+Passage aux sections aval. Ordre suggéré (à valider) : §32 Legal & Compliance (directement contraire à §20, urgence doctrinale) → §21 Pricing + §29 Unit Economics (couple cohérent à refondre ensemble) → §33 KPI (gouvernance complète à reposer) → §30, §31, §34 (vestiges marketing/roadmap dispersés).
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 27 Personas (Pauline + Marie) refondu + 2 drifts upstream corrigés
+
+### Contexte
+Niveau 2 cascade : refonte intégrale de la section 27 (Persona principale) en doctrine personas duale (stratégique + acquisition) en cohérence stricte avec §3 ICP + §4 segments. Section originale (~30 lignes, 3886-3917) centrée sur Marie BA novice 2h/semaine — exactement la persona exclue du centre stratégique par doctrine ; contenait *"investit au feeling"*, *"DD qu'un analyste VC ferait en 2 jours"*, *"ROI 4 ans d'abonnement rentabilisés"*, *"50+ deals comparables"* non qualifié, *"Négocie avec les arguments chiffrés d'Angel Desk"* prescriptif, *"5-8 minutes"* sans source, *"AI Board"* / *"coaching cards"* / *"Deep Dive"* sans alignement §26 in_app_legacy_feature_names. Restructuration en 5 blocs top-level + 2 drifts Niveau 1 corrigés en synchronie (docs-doctrine:42 *"décideur d'achat"* + reference.yaml §6 *"scoring par formule TypeScript déterministe"* + *"affirmations factuelles"* sans *"critiques"*).
+
+### Modifications
+
+**`docs-private/reference.yaml` § 27 (lignes 3886-3917 anciennes → ~150 lignes nouvelles)** — réécriture intégrale en 5 blocs top-level :
+- `positioning_rule` : centre stratégique = Pauline, pas Marie ; rappel de l'erreur pré-pivot.
+- `primary_strategic_persona` (Pauline) — responsable d'investissement micro-fonds / chef de syndicat structuré, 34 ans, 100-200 dossiers/an, ticket selon contexte (200K€-2M€ micro-fonds VC ou 100-300K€ syndicat structuré) ; `professional_context` *"pilote l'essai et défend l'achat auprès de l'associé responsable ou de l'équipe dirigeante"* (pas *"décideur d'achat"* trop fort) ; 6 pain_points dont *"outils institutionnels coûteux, orientés data/sourcing ou market intelligence, ne couvrent pas seuls le workflow analytique visé"* (pas *"Pas d'accès soutenable"*) ; 6 use_cases ; journey 10 étapes avec descriptions publiques + noms in-app entre parenthèses (Deep Dive / AI Board / Live Coaching) ; `value_for_pauline.effects` (6 effets en *"Vise à"* / *"aide à limiter"* — pas claims garantis ; *"lorsque le contexte pré-call est disponible"* sur Live Coaching ; *"continuité mémoire UX à maturer"* sur living_dossier) ; `pricing_band` à 3 bandes selon §4 (chef de syndicat solo 200-500€ / angel club structuré 500-1,500€ / micro-fonds VC 2,000-5,000€/mois) ; `no_roi_claim_rule` explicite.
+- `funnel_entry_persona` (Marie) — BA expérimenté/expert, pack Starter, acquisition bottom-up ; `not_strategic_center` explicite ; `hypothesis_for_funnel_role` flagge le rôle de funnel comme hypothèse GTM, pas porteur de la thèse revenus.
+- `cross_section_alignment` — `upstream_sources` (§3, §4, §5, §20, §26) + `banned_in_this_section` (6 phrases verbatim listées pour éviter régression future).
+- `doctrine_references` — `upstream_sources` + `downstream_surfaces` + `cross_section_updates_applied`.
+
+**Journey step 4 corrigé** : score agrégé subordonné tant que chantier 2 axes pas terminé ; profil de signal + dimensions + solidité des preuves + contradictions détectées + zones d'incertitude prioritaires (cf. § 8 target_scoring_model + § 26 banned_phrasings_table).
+
+**Journey step 8 corrigé** : *"vérification des preuves en temps réel (label in-app actuel : Live Coaching), lorsque le contexte pré-call est disponible (cf. § 10 runtime_context_paths)"* — pas vérification universelle promise.
+
+**Journey step 9 corrigé** : *"rapport post-call + reanalysis lorsque disponible / déclenchée (cf. § 10 + § 20 living_dossier.status)"* — pas *"ré-analyse ciblée des agents impactés"* présenté comme runtime garanti.
+
+**Journey step 10 corrigé** : *"Préparation / assemblage d'un mémo défendable"* — pas *"Production du mémo défendable"* qui était trop fort.
+
+**Vestiges originaux §27 supprimés (vérifiés absents par Python check)** : `name: Marie` top-level, `age: 45`, `background: "Ex-marketer scale-up"`, `profile: "Business Angel active, investit 2-3 fois par an"`, `time_available: "2-3h/semaine"`, `deals_seen: "10+ decks/mois"`, `pain_points` top-level (déplacés sous chaque persona avec corrections), `willingness_to_pay`, `moment_of_value` (contenait *"DD VC en 2 jours"* + *"50+ deals comparables"* + *"arguments chiffrés"*), `journey` top-level avec *"4 ans d'abonnement rentabilisés"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md` upstream drift Niveau 1 corrigé (ligne 42)** : *"**Pauline porte le besoin** (décideur d'achat, pas junior subissant l'outil)"* → *"**Pauline porte le besoin** : elle pilote l'essai et défend l'achat auprès de l'associé responsable ou de l'équipe dirigeante. Ce n'est pas un junior analyst qui subit l'outil."* Cohérence avec CLAUDE.md:18 et §27.
+
+**`docs-private/reference.yaml` §6 upstream drifts corrigés** (`product_discipline`) :
+- *"provenance exigée pour les affirmations factuelles"* → *"provenance exigée pour les affirmations factuelles critiques"* (alignement §5 + §8 + §20 + §26 + §28).
+- *"scoring par formule TypeScript déterministe (pas par jugement LLM)"* → *"agrégation de score déterministe sur les sous-scores et signaux disponibles (certains sous-scores peuvent provenir de sorties LLM ; reproductibilité bout-en-bout à tester, cf. § 8 + § 20)"* (alignement CLAUDE.md:29 + §8 target_scoring_model + §20 deterministic_scoring).
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — *"3 à 11, § 19, § 20 et § 26 sont alignées"* → *"3 à 11, § 19, § 20, § 26 et § 27 sont alignées"* ; *"cascade immédiate : §§ 27, 28"* → *"cascade immédiate : § 28"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : *"§§ 3-11 + § 19 + § 20 + § 26"* → *"§§ 3-11 + § 19 + § 20 + § 26 + § 27"* ; *"cascade immédiate : §§ 27, 28"* → *"§ 28"*.
+- Table cascade : ligne § 27 ✅ ajoutée.
+- § 11 table fichiers synchronisés : *"§§ 3-11 + § 19 + § 20 + § 26"* → *"§§ 3-11 + § 19 + § 20 + § 26 + § 27"*.
+
+### Vérification (validations post-write)
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- `persona` : 5 clés top-level confirmées (positioning_rule + primary_strategic_persona + funnel_entry_persona + cross_section_alignment + doctrine_references).
+- Vestiges originaux ABSENTS (Python check) : `name`, `age`, `background`, `profile`, `time_available`, `deals_seen`, `pain_points`, `willingness_to_pay`, `moment_of_value`, `journey` top-level — tous False.
+- Nouveaux blocs PRÉSENTS : 5/5 — tous True.
+- Pauline présente (`primary_strategic_persona.name = "Pauline"`, age 34, 6 pain_points, 10 journey steps, 6 value_for_pauline.effects, 3 pricing bands).
+- Marie présente dans `funnel_entry_persona` avec `not_strategic_center` explicite *"PAS comme centre stratégique"*.
+- `value_for_pauline.effects` contient *"Vise à augmenter"* + *"Vise à réduire"* + *"aide à limiter"* + *"lorsque le contexte pré-call est disponible"* (vérifié par grep case-insensitive ; le check Python case-sensitive sur 'vise à' minuscule était un faux négatif).
+- Drift §6 `scoring par formule TypeScript déterministe` purgé : 0 occurrences.
+- Drift Niveau 1 *"décideur d'achat"* purgé de CLAUDE.md + docs-doctrine : 0 occurrences.
+- ANSI count : 0 / 0 / 0 sur les 3 fichiers Niveau 1.
+- Vestiges *"investit au feeling"* / *"DD qu'un analyste VC"* / *"4 ans d'abonnement"* / *"50+ deals comparables"* — uniquement dans §27 `banned_in_this_section` (documentation des phrases bannies pour éviter régression future) et dans §31 ligne 4153 (déjà flaggée comme section aval cf. cascade docs-doctrine).
+
+### Avertissement
+§ 28 (GTM) reste dans la cascade immédiate. §§ 30, 31, 34 restent sections aval flaggées — § 31 ligne 4153 contient encore *"Un BA qui évite un mauvais deal à 25K€ a rentabilisé 4 ans d'abonnement..."* (vestige composé pré-pivot), à traiter avec §31.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 28 (Go-To-Market) — dernier bloc de la cascade immédiate. Selon §27 cross_section_updates_required et §26 cross_section_updates_required : vestiges GTM BA solo, claims de disponibilité commerciale (cf. §26 availability_language_rule), arguments économiques type *"ROI obscène"* à requalifier ou sourcer ailleurs (cf. §20 claims_policy), persona acquisition centrée Marie sans bien distinguer funnel vs cœur stratégique.
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 26 Positionnement Produit (Règles publiques) refondu + cascade transversale Niveau 1
+
+### Contexte
+Niveau 2 cascade : refonte intégrale de la section 26 (Positionnement Produit — Règles complètes) en doctrine de surface publique opérationnelle. Section originale (~35 lignes, lignes 3382-3416) avec : golden_rule "BA seul décideur", 8 interdits seulement (vs interdits §5 complets), phrase landing toxique "Vos analystes IA font le travail, vous décidez", score_labels + alert_signal_labels legacy non flaggés, absence de structure 4-axes (catégorie publique / promesse publique / preuves techniques / termes interdits), absence de hiérarchie de messaging, absence de doctrine_references. Restructuration en 21 blocs top-level + passe transversale Niveau 1 (CLAUDE.md + docs-doctrine + reference.yaml §3/§6) pour cohérence inter-fichiers. 60+ corrections sur 5 itérations (v1 → v2 → v3 → v4 → v5) avec audits code réels (`src/lib/ui-configs.ts`, `src/lib/pdf/pdf-sections/*`, `src/components/deals/*`).
+
+### Modifications
+
+**`docs-private/reference.yaml` § 26 (lignes 3382-3416 anciennes → ~430 lignes nouvelles)** — réécriture intégrale en 21 blocs top-level :
+- `doctrine_strata` (positive + guardrail avec *"éléments sourcés (affirmations factuelles critiques rattachées à leur source, leur date disponible ou l'absence de date explicitée, leur fiabilité)"*)
+- `golden_test` (périmètre restreint aux phrases restituées à l'utilisateur, pas aux prompts internes)
+- `canonical_public_phrase` (§3 verbatim + `interpretation_notes` pour *"contradictions visibles"* = détectées et matérialisées, pas exhaustivité)
+- `public_category` + `public_promise` (variante courte, *"qualifier les preuves disponibles"* / *"exposer les contradictions détectées"*)
+- `internal_technical_proofs` (44 agents / composants selon convention §7, pas *"spécialisés"*)
+- `internal_terms_banned_in_public` split en 3 niveaux : `public_marketing_surfaces` (ban strict noms internes) + `in_app_legacy_feature_names` (Board AI / Live Coaching / Deep Dive — dette documentée, decision_required) + `banned_only_as_hero_or_accroche` (44 agents / 22 lentilles)
+- `quantified_claims_policy` (60+ fichiers, 5,000+ deals, 44 agents, 22 lentilles, 20 agents/41 expertises pricing claim — tous audités)
+- `availability_language_rule` (avec `release_tracker_reference` snapshot B16 hors règle canonique)
+- `banned_phrasings_table` (20 entrées : 8 originales + 12 ajoutées de §5/§20, chacune avec `replace_public` + `internal_note` séparés)
+- `public_message_hierarchy` (4 niveaux canoniques, ordre 3 = *"affirmations factuelles critiques sourcées, contradictions détectées..."*)
+- `applies_to_surfaces` (prompts agents = uniquement champs restitués à l'utilisateur)
+- `legacy_score_labels` + `legacy_alert_signal_labels` (code_references explicites + readiness_debt READY_TO_INVEST / DO_NOT_PROCEED)
+- `target_orientation_keys` split en 3 : `ui_runtime_keys_current` (very_favorable / favorable / contrasted / vigilance / alert_dominant), `doctrinal_target_keys` (favorable / contrasted / alert / not_exploitable), `legacy_values_to_migrate` (no_signal_or_insufficient_data)
+- `other_ui_configs_to_audit` : `centralized_configs` (BURN_EFFICIENCY_LABELS, MOAT_LABELS, PMF_LABELS, DIVERSIFICATION_LABELS, CONCENTRATION_LABELS, LEVEL_LABELS, THESIS_VERDICT_CONFIG, READINESS_LABELS, helper getEnumLabel()) + `local_configs` (RECOMMENDATION_BADGE_CONFIG, PRIORITY_BADGE_CONFIG, OWNER_BADGE_CONFIG, MEMO_RECOMMENDATION_CONFIG in tier3-results.tsx, deck-coherence-report.tsx)
+- `confidence_user_facing_surfaces_to_audit` (11 surfaces réelles : early-warnings-panel.tsx:81, document-metadata-dialog.tsx:243, document-extraction-audit-dialog, document-attachments-panel, react-trace-viewer.tsx:63, term-sheet-suggestions.tsx:66, vote-board.tsx:260, timeline-view.tsx:285, chat-view.tsx, thesis-*, live-*)
+- `pdf_hardcoded_labels_to_audit` (8 sections : early-warnings, red-flags:50, tier2-expert:129, tier3-synthesis:119, executive-summary:317, questions:239, negotiation:100, score-breakdown)
+- `tests_and_guards_to_update` (test_scope_rule : snapshots ciblés pas grep naïf ; 5 catégories de banned strings avec word boundaries pour PASS/GO/REJETER ; not_banned listé pour statuts applicatifs)
+- `cross_section_updates_required` (§27 ROI obscène + DD VC en 1h, §28 GTM disponibilité)
+- `doctrine_references` split `upstream_sources` + `downstream_surfaces` + `consistent_with` + `doctrine_separation_rule` + `cross_section_updates_applied`
+
+**Vestiges originaux §26 supprimés (vérifiés absents)** :
+- `golden_rule: "Le BA est le seul décideur"`
+- `test` (texte vestige)
+- `interdit` (liste de 8 items partielle)
+- `applies_to` (incluait phrase landing toxique *"Vos analystes IA font le travail"*)
+- `score_labels` (liste non flaggée legacy)
+- `alert_signal_labels` (mapping non flaggé legacy)
+
+**`docs-private/reference.yaml` upstream §3/§6** (5 edits) :
+- §3 `board_ai_vision.role` : suppression *"Transparence cognitive — "* en tête.
+- §3 `board_ai_vision.public_messaging_rule` : *"transparence cognitive"* déplacé de vocabulaire autorisé vers liste de bannis.
+- §3 `messaging_hierarchy.order[3]` : *"Preuves sourcées, contradictions visibles"* → *"Affirmations factuelles critiques sourcées, contradictions détectées"*.
+- §3 `internal_to_public_glossary."Evidence Engine"` : *"preuves sourcées ... contradictions visibles"* → *"affirmations factuelles critiques sourcées ... contradictions détectées"*.
+- §6 `public_messaging_rule` + `document_evidence_layer.description` : *"preuves sourcées, contradictions visibles"* → *"affirmations factuelles critiques sourcées, contradictions détectées"*.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — *"sections 3 à 11, § 19 et § 20 sont alignées"* → *"sections 3 à 11, § 19, § 20 et § 26 sont alignées"* ; *"cascade immédiate : §§ 26, 27, 28"* → *"cascade immédiate : §§ 27, 28"*.
+
+**`CLAUDE.md` upstream** (6 edits) :
+- Ligne 30 (Evidence-first principe) : *"Contradictions exposées"* → *"Contradictions détectées exposées"*.
+- Ligne 65 (table interdits — Sublimation) : *"Débat multi-modèle / transparence cognitive / désaccords exposés"* → *"Débat multi-modèle / désaccords exposés"*.
+- Ligne 67 (table interdits — Evidence Engine) : *"contradictions exposées"* → *"contradictions détectées"*.
+- Ligne 88 (golden test) : périmètre restreint à *"chaque phrase RESTITUÉE À L'UTILISATEUR ou utilisée en communication"*.
+- Ligne 96 (hiérarchie messaging) : *"sources / contradictions / incertitudes / fraîcheur"* → *"affirmations factuelles critiques sourcées, contradictions détectées, zones d'incertitude, fraîcheur"*.
+- Ligne 115 (reframes 44 agents) : *"44 agents spécialisés sous le capot"* → *"44 agents / composants selon convention § 7 (3 + 13 + 22 + 6 ; thesis-reconciler conditionnel hors total)"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md` upstream** (6 edits) :
+- Ligne 83 (golden test) : périmètre restreint comme CLAUDE.md.
+- Ligne 93 (hiérarchie messaging order 3) : *"Preuves sourcées, contradictions visibles"* → *"Affirmations factuelles critiques sourcées, contradictions détectées"*.
+- Ligne 132 (glossaire Evidence Engine) : *"preuves sourcées ... contradictions visibles"* → *"affirmations factuelles critiques sourcées ... contradictions détectées"*.
+- Top note : *"§§ 3-11 + § 19 + § 20"* → *"§§ 3-11 + § 19 + § 20 + § 26"* ; *"cascade immédiate : §§ 26, 27, 28"* → *"§§ 27, 28"*.
+- Table cascade § 10 : ligne § 26 ✅ ajoutée ; ligne *"§§ 26, 27, 28"* → *"§§ 27, 28"*.
+- § 11 table fichiers synchronisés : *"§§ 3-11 + § 19 + § 20"* → *"§§ 3-11 + § 19 + § 20 + § 26"*.
+
+**Phantom edit identifié et retiré** : initialement supposé *"§ 46 docs-doctrine = des faits"* — vérification du fichier réel montre la ligne 46 = persona Marie, pas *"des faits"*. Item retiré du récap.
+
+### Vérification (validations post-write)
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- `positioning_rules` : 21 clés top-level confirmées.
+- Vestiges originaux ABSENTS (Python check) : `golden_rule`, `test`, `interdit` (liste), `applies_to` (liste), `score_labels`, `alert_signal_labels` — tous False.
+- Nouveaux blocs PRÉSENTS (Python check) : 21/21 — tous True.
+- `canonical_public_phrase.verbatim` commence par *"Angel Desk est le copilote analytique des investisseurs priv..."* ✅.
+- ANSI escape count = 0 dans reference.yaml, CLAUDE.md, docs-doctrine.
+- `rg "transparence cognitive"` : 1 occurrence restante (legitimate — liste de bannis dans board_ai_vision.public_messaging_rule).
+- `rg "contradictions exposées"` : 0 résultats — bien purgé partout.
+
+### Avertissement
+Sections § 27 (Persona) et § 28 (GTM) restent dans la cascade immédiate. §§ 30, 31, 34 restent sections aval flaggées. La passe code (UI/PDF — confidence surfaces, hardcoded labels, in_app_legacy_feature_names) n'est PAS encore exécutée : §26 documente la dette ; la migration code reste à mener.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 27 (Persona principale) — selon ordre cascade immédiate. Vestiges probables (cf. §26 cross_section_updates_required.sections) : persona Marie / BA occasionnel à recentrer Pauline, mentions ROI obscène / DD VC en 1h / 2 jours d'analyste / claims oraculaires.
+
+---
+## 2026-05-21 — Pivot doctrinal (passe transversale 2) — CLAUDE.md anti-hallucination + 22 lentilles + scoring §6
+
+### Contexte
+Complément à la passe transversale CLAUDE.md précédente : 5 corrections supplémentaires identifiées en relecture rapprochée — section anti-hallucination CLAUDE.md encore en sur-promesse vs §19 (*"s'applique à TOUS les prompts"*, *"Chaque system prompt DOIT inclure les 5 directives"*, *"Prompt 1 directement dans chaque buildSystemPrompt"*), reframe *"22 experts sectoriels"* trop absolu dans CLAUDE.md et docs-doctrine (*"sans dépendre d'un généraliste qui devine"*), `reference.yaml` §6 sector_layer et scoring déterministe encore trop forts. Mise à jour pour cohérence Niveau 1.
+
+### Modifications
+
+**`CLAUDE.md`** :
+- **Ligne 28** (principe Discipline anti-faux-positifs) : *"Chaque signal d'alerte passe : sources citées, seuil de fiabilité interne > 80%, cross-référence..."* → *"Les signaux d'alerte doivent viser : source citée, fiabilité/provenance explicite, et cross-référence documentaire ou externe pertinente lorsque disponible."* (suppression seuil 80% non recroisé avec §8/§19 + "chaque signal" trop absolu)
+- **Ligne 66** (table des interdits — remplacement *"Aucun analyste expert en 22 secteurs"*) : *"Chaque dossier avec la lentille sectorielle dédiée — sans dépendre d'un généraliste qui devine"* → *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)"*
+- **Ligne 114** (Reframes de features — 22 experts sectoriels) : même correction.
+- **Section ANTI-HALLUCINATION (lignes 144-168) — réécriture complète** :
+  - Titre : *"5 DIRECTIVES OBLIGATOIRES (s'applique à TOUS les prompts)"* → *"5 DIRECTIVES (STANDARD CIBLE)"*.
+  - Intro reformulée : standard cible + couverture documentée/auditée en §19 + gaps connus listés (thesis-extractor, thesis-reconciler, rebuttal-judge, utterance-router, auto-dismiss, maintenance DB) + l'exigence *"chaque agent sans exception"* NON-runtime.
+  - Ajout d'un paragraphe sur les limites : *"Ces directives DEMANDENT au LLM de changer son comportement ; elles ne garantissent NI la vérité, NI la détection systématique, NI l'application réelle (cf. § 19 doctrinal_limits)."*
+  - **Section Implémentation entièrement réécrite** : passage de 2 patterns (BaseAgent/non-BaseAgent) à 3 patterns alignés sur §19 — Pattern BaseAgent helpers (via `buildFullSystemPrompt()` appelé depuis `llmComplete*`/`llmStream`, pas par simple extension de BaseAgent) + Pattern helper partagé `src/agents/orchestration/prompts/anti-hallucination.ts` + Pattern inline per prompt (system ou fallback user prompt). Ajout note : *"Directive 1 N'EST PAS centralisée dans BaseAgent — à auditer agent par agent."*
+
+**`docs-doctrine/angeldesk-strategic-pivot.md` (Niveau 1 canonique)** :
+- **Ligne 106** (Reframes — 22 experts sectoriels) : *"Chaque dossier avec la lentille sectorielle dédiée — sans forcer une grille généraliste"* → *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)"*
+
+**`docs-private/reference.yaml`** :
+- **§ 6 `sector_layer.items` (ligne 672)** : *"22 lentilles sectorielles (bibliothèques sectorielles) activées contextuellement, chacune avec benchmarks datés et schémas spécifiques"* → *"22 lentilles sectorielles activées contextuellement, dont 21 spécialisées (chacune avec benchmarks datés et schémas spécifiques) et 1 fallback (general-expert) activé pour les secteurs non couverts"*
+- **§ 6 `synthesis_layer.items` (ligne 680)** : *"Scoring déterministe — formule TypeScript sur signaux tracés (pas jugement LLM)"* → *"Agrégation de score déterministe par formule TypeScript sur les sous-scores et signaux disponibles ; certains sous-scores peuvent provenir de sorties LLM, reproductibilité bout-en-bout à tester (cf. § 8 + § 20)"*
+
+### Vérification
+- `grep "généraliste qui devine\|> 80%\|TOUS les prompts\|DOIT inclure les 5 directives\|directement dans chaque buildSystemPrompt" CLAUDE.md` → 0 résultats.
+- `grep "grille généraliste\|généraliste qui devine" docs-doctrine/angeldesk-strategic-pivot.md` → 0 résultats.
+- `grep "formule TypeScript sur signaux tracés\|chacune avec benchmarks datés et schémas spécifiques" docs-private/reference.yaml` → 0 résultats hors texte corrigé.
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml')); print('PARSE OK')"` → **PARSE OK**.
+- Section CLAUDE.md anti-hallucination réécrite verbatim : *"5 DIRECTIVES (STANDARD CIBLE)"* + 3 patterns d'injection + gaps connus listés + directive 1 non centralisée.
+
+### Niveau 1 doctrine canonique — état final
+| Fichier | État |
+|---|---|
+| `CLAUDE.md` | ✅ aligné (incl. anti-hallucination réécrite vs §19, sector lens nuancé, scoring nuancé, factuelles critiques, anti-faux-positifs sans seuil 80%) |
+| `docs-doctrine/angeldesk-strategic-pivot.md` | ✅ aligné (incl. sector lens nuancé) |
+| `docs-private/reference.yaml` §§ 3-11 + § 19 + § 20 | ✅ aligné et auto-consistent (sector_layer + scoring §6 harmonisés Niveau 1) |
+
+### Avertissement
+Cette passe ne touche que la cohérence transversale Niveau 1 + références sectorielles/scoring de §6. Sections aval (§§ 30, 31, 34) restent contaminées et explicitement flaggées dans la cascade.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 26 (Positioning rules) — ordre cascade immédiat, méthode code-first.
+
+---
+## 2026-05-21 — Pivot doctrinal (passe transversale CLAUDE.md) — affirmations factuelles critiques + scoring nuance
+
+### Contexte
+Complément à la passe transversale précédente : `CLAUDE.md` (Niveau 1 doctrine canonique, tracké git) n'avait pas reçu l'harmonisation *"chaque affirmation"* → *"affirmations factuelles critiques"* ni la nuance scoring devenue obligatoire après §8 + §20. À corriger pour ne pas dire *"Niveau 1 canonique parfaitement cohérent"* avec une fausse promesse interne.
+
+### Modifications
+
+**`CLAUDE.md`** :
+- **Ligne 29** (principe scoring) : *"Le score est calculé par formule TypeScript sur des signaux tracés. Les variations entre versions doivent être explicables par de nouvelles preuves, pas par un jugement opaque."* → *"Agrégation de score déterministe par formule TypeScript sur les sous-scores et signaux disponibles. Certains sous-scores peuvent provenir de sorties LLM ; la reproductibilité bout-en-bout reste à tester. Les variations entre versions doivent être explicables par de nouvelles preuves ou un changement de méthodologie tracé, pas par un jugement opaque (cf. § 8 target_scoring_model + § 20 deterministic_scoring)."*
+- **Ligne 30** (Evidence-first principe) : *"Chaque affirmation rattachée à sa source..."* → *"Les affirmations factuelles critiques sont rattachées à leur source..."*
+- **Ligne 67** (remplacement public *"Evidence Engine"* dans table interdits) : *"Chaque affirmation rattachée..."* → *"Les affirmations factuelles critiques rattachées..."*
+- **Ligne 271** (Standards de qualité bullet) : *"Chaque affirmation sourcée"* → *"Affirmations factuelles critiques sourcées"*.
+
+### Vérification
+- `grep "Chaque affirmation\|chaque affirmation" CLAUDE.md` → 0 résultats.
+- `grep "factuelles critiques" CLAUDE.md` → 3 occurrences attendues (lignes 30, 67, 271).
+- Ligne 29 contient désormais *"Agrégation de score déterministe... sous-scores peuvent provenir de sorties LLM ; reproductibilité bout-en-bout reste à tester"*.
+
+### Avertissement
+Cette passe n'a touché que le wording transversal des principes Niveau 1. Les exemples plus détaillés (table des interdits, glossaire, section ICP, persona) restent inchangés — ils sont déjà alignés sur le pivot. Niveau 1 (CLAUDE.md + docs-doctrine/ + reference.yaml §§ 3-11 + 19 + 20) désormais doctrinalement cohérent sur ce point.
+
+### Prochaine étape
+Pas de prochain pas spécifique de cette passe. Cascade § 26 reste la prochaine étape.
+
+---
+## 2026-05-21 — Pivot doctrinal (passe transversale) — stale refs §20 + §6 60+ fichiers + chaque affirmation + §34 + récap aval
+
+### Contexte
+Passe transversale de cohérence après écriture de §19. Suppression des mentions périmées "section à réaligner" / "pas encore aligné" devenues fausses post-§19. Harmonisation "chaque affirmation" → "affirmations factuelles critiques" (cf. dette transversale notée pendant §20). Correction des claims `60+ fichiers` / `5,000+ deals` rencontrés hors §19 (§6, §34). Élargissement explicite de la cascade restante aux sections aval (§§ 30, 31, 34) au lieu de prétendre "il reste juste 26, 27, 28".
+
+### Modifications
+
+**`docs-private/reference.yaml` — stale refs purgées (3 endroits §20)** :
+- `§20.current_control_surfaces.prompt_discipline.status` : suppression *"— section à réaligner doctrinalement"* après *"cf. § 19"*.
+- `§20.current_control_surfaces.confrontation_mechanisms.status` : *"§ 11 (Engines — pas encore aligné doctrinalement)"* → *"§ 11 (Engines, aligné)"* + suppression de la mise en garde *"Ne pas reprendre le wording public actuel de § 11 tant que cette section n'est pas alignée."*
+- `§20.claims_policy` claim *"5 directives × 60+ fichiers"* : suppression *"(cf. § 19, section à réaligner)"* → *"(cf. § 19)"*.
+
+**`docs-private/reference.yaml` — claim `60+ fichiers` requalifié hors §19** :
+- `§6.current_capabilities.analysis_layer.items` : *"5 directives anti-hallucination déployées dans les prompts agents concernés (couverture étendue, 60+ fichiers)"* → *"... (couverture à auditer, cf. § 19 coverage_audit)"*.
+- `§34.roadmap.completed` : *"5 directives anti-hallucination dans 60+ fichiers"* → *"5 directives anti-hallucination déployées dans les prompts agents concernés (couverture à auditer, cf. § 19)"*.
+
+**`docs-private/reference.yaml` — harmonisation "chaque affirmation" → "affirmations factuelles critiques"** :
+- `§3.what_it_is` (ligne 161) : *"signaux sourcés (chaque affirmation rattachée à sa source...)"* → *"signaux sourcés (affirmations factuelles critiques rattachées à leur source...)"*.
+- `§5.what_happens_without_angeldesk` (ligne 578) : *"Pas de trace standardisée liant chaque affirmation à sa source, sa date, sa fiabilité"* → *"... liant les affirmations factuelles critiques à leur source, leur date, leur fiabilité"*.
+
+**`docs-private/reference.yaml` — `§34.roadmap.planned` requalifié** :
+- *"Enrichissement DB → 5,000+ deals avec descriptions, use cases, investisseurs"* → *"Enrichissement Funding Database vers la cible 5,000+ deals (cf. § 4 + § 8 — en construction)"*.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — récap restant clarifié :
+- *"notamment 26, 27, 28"* → liste explicite *"cascade immédiate : §§ 26, 27, 28 ; sections aval à reprendre ensuite : notamment §§ 30, 31, 34"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : ajout de la distinction cascade immédiate (§§ 26, 27, 28) vs sections aval (§§ 30, 31, 34).
+- Table cascade § 10 : ligne ajoutée *"§§ 30, 31, 34 (sections aval à reprendre)"* en ⏳, séparée du groupe immédiat §§ 26, 27, 28.
+
+### Sections aval flaggées explicitement (non encore corrigées)
+- **§31 (ligne ~3562)** — answer FAQ avec : *"44 prompts experts de 200+ lignes chacun, 5 directives anti-hallucination dans 60+ fichiers, 22 experts sectoriels, ... DB de 5,000+ deals enrichis. C'est faisable, mais c'est 2 ans de travail et il faut la flemme de le faire."* Vestige composé : 60+ fichiers comme fait, 5,000+ deals comme acquis, "la flemme" comme moat (cf. §20 banned_framings).
+- **§31 (ligne ~3581)** — *"5 directives anti-hallucination (60+ fichiers)"* dans liste de moats.
+- **§30** — à auditer (pas encore lu en détail).
+- **§34** — au-delà des 2 lignes corrigées ci-dessus, encore : *"Reflexion Engine (auto-critique Big4 itérative)"* (Big4 banni), *"Système de scoring déterministe multi-dimensionnel"* (à requalifier vs § 8 chantier 2 axes), *"Stratégie de négociation automatisée (... dealbreakers ...)"* (dealbreakers banni §5), *"Audit trail compliance (IR-PME, EIS)"* (IR-PME/EIS sans base juridique banni §20). À reprendre lorsque §34 sera dans la cascade aval.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- `grep "section à réaligner\|pas encore aligné doctrinalement"` → 0 résultats.
+- `grep "chaque affirmation"` → 0 résultats.
+- `grep "couverture étendue, 60+ fichiers"` → 0 résultats (la chaîne corrigée *"couverture à auditer, cf. § 19"* apparaît à 3 endroits attendus).
+- Les `60+ fichiers` restants sont tous dans §19 (audit), §20 (claims policy / non_moats), ou §31 (flaggé sections aval).
+
+### Avertissement
+Cette passe est une harmonisation transversale légère, pas une refonte de section. Les sections §§ 30, 31, 34 restent contaminées et explicitement listées dans la cascade aval. Le commit *"doctrine: align canonical pivot through reference §§ 3-11 + 19 + 20"* peut maintenant être préparé sans risque de claims périmés dans les sections actuellement alignées.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 26 (Positioning rules) — ordre cascade immédiat. Méthode code-first comme pour §§ 10, 11, 19.
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 19 Anti-Hallucination aligné + dernière dépendance §20 levée
+
+### Contexte
+Niveau 2 cascade : refonte intégrale de la section 19 (Anti-Hallucination — 5 directives détaillées) en synchronie avec la dépendance restante de § 20 references_status. Dernière section "dépendances de §20" alignée — §§ 3-11 + §19 + §20 désormais tous cohérents, et `§20.references_status.sections_to_realign_before_public_reuse` est vide. Section originale (~25 lignes, lignes 2445-2466) avec : caricature de cause unique des hallucinations, claim coverage non sourcé ("60+ fichiers, tous les agents sans exception"), mention "Negotiation" non vérifiée, pas de limits doctrinales, pas de distinction confidence self-audit vs runtime structuré, pas de prompt debt cohabitation. Audit code reproductible mené sur src/ pour produire les vrais chiffres et identifier les gaps. 17 corrections appliquées sur 2 itérations (v1 prévisualisé + audit code → v2 écrit) avec Sacha + ChatGPT 5.5.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 19 (lignes 2445-2466 anciennes → ~290 lignes nouvelles)** — réécriture intégrale + audit code reproductible :
+
+- **Vestige caricature retiré** : *"les modèles hallucinent parce qu'on ne leur dit jamais le coût de se tromper"* (cause unique) → reformulation reconnaissant que les hallucinations ont d'autres causes (couverture training set, ambiguïté, biais de complaisance, contexte tronqué) non adressées par ces seules directives.
+
+- **5 directives conservées** avec note "texte NORMALISÉ" — précise que la version runtime exacte peut inclure des en-têtes Markdown et des labels **CONFIDENT:** / **PROBABLE:** / **SPECULATIVE:**. Renvoi au code (base-agent.ts, anti-hallucination.ts, agents standalone) pour la chaîne exacte.
+
+- **`injection_patterns` (3 patterns identifiés, pas 2)** :
+  - **Pattern 1 BaseAgent helpers** : directives 2-5 via `buildFullSystemPrompt()` appelé depuis `llmComplete`, `llmCompleteJSON`, `llmCompleteJSONValidated`, `llmCompleteJSONWithFallback`, `llmStream`. Nuance importante : l'extension de BaseAgent n'est PAS suffisante — c'est l'utilisation des helpers qui déclenche l'injection.
+  - **Pattern 2 helper partagé** (nouveau, non documenté dans YAML originel) : `src/agents/orchestration/prompts/anti-hallucination.ts` — utilisé notamment par board-orchestrator et fact-extractor.
+  - **Pattern 3 inline per prompt** : directives écrites verbatim dans le prompt textuel — système prompt OU fallback user prompt selon le chemin. Beaucoup d'agents (notamment Tier 2 lentilles sectorielles non-BaseAgent) suivent ce pattern.
+  - Directive 1 reformulée : N'EST PAS centralisée dans BaseAgent. À auditer agent par agent ; "Prompt 1 directement dans chaque buildSystemPrompt()" annoncé dans CLAUDE.md mais des exemples production l'omettent (cf. gaps_known).
+
+- **`coverage_audit` reproductible** — commandes grep exactes documentées :
+  - `grep -rl 'Anti-Hallucination Directive' src --include='*.ts' | wc -l` → 60 fichiers
+  - `grep -rl 'mistakes are penalised' src --include='*.ts' | wc -l` → 59 fichiers (directive 1)
+  - `grep -rl 'perform a self-audit' src --include='*.ts' | wc -l` → 35 fichiers (directive 4)
+  - `grep -rl 'CONFIDENT:' src --include='*.ts' | wc -l` → 35 fichiers (directive 5)
+  - Le chiffre 77 du diff prévisualisé v1 n'était pas reproductible — corrigé.
+  - **Claim "60+ fichiers"** : proche de la mesure mais non validé publiquement. À ne pas reprendre comme chiffre absolu en surface publique.
+  - **Couverture inégale expliquée** : directives 4/5 à ~35 contre directive 1 à ~59 parce que les agents BaseAgent reçoivent les directives via héritage `buildFullSystemPrompt()` — le grep ne capture pas le texte hérité.
+
+- **`gaps_known` — 7 fichiers identifiés sans directive 1** :
+  - `src/agents/tier0/thesis-extractor.ts` (agent d'analyse)
+  - `src/agents/tier3/thesis-reconciler.ts` (agent d'analyse)
+  - `src/agents/thesis/rebuttal-judge.ts` (agent d'analyse)
+  - `src/lib/live/utterance-router.ts` (prompt court classification — cf. § 10)
+  - `src/lib/live/auto-dismiss.ts` (prompt court dismiss vérification)
+  - `src/agents/maintenance/db-completer/llm-extract.ts` (maintenance DB hors scope analyse)
+  - `src/agents/maintenance/db-sourcer/llm-parser.ts` (maintenance DB hors scope analyse)
+  - **Implication** : claim *"tous les agents sans exception"* faux. Reformulation : "périmètre agents d'analyse Tier 0/1/2/3, Board, Reflexion, Consensus, certaines surfaces Live Coaching".
+
+- **`doctrinal_limits` (8 items)** — verbe "produit" remplacé par "demande au LLM de produire" partout :
+  - Directives changent comportement statistique mais ne garantissent NI vérité NI détection systématique NI application réelle par le LLM.
+  - Citation Demand ne valide PAS la source citée (hallucination de citation possible).
+  - Self-Audit produit confidence auto-évalué, pas mesure objective.
+  - Structured Uncertainty produit catégorisation auto-attribuée, non parsée uniformément downstream.
+  - [UNCERTAIN] et [UNVERIFIED] dépendent de l'auto-détection du LLM.
+  - Pas de couverture sur hallucinations de sources, biais de framing, angles morts.
+
+- **`confidence_self_audit_clarification.critical_distinction` (CORRECTION MAJEURE v1→v2)** :
+  - Le confidence HIGH/MEDIUM/LOW de la directive 4 N'EST PAS le champ utilisé par les seuils Reflexion tier1/tier2 (§ 11). Reflexion utilise `ScoredFinding.confidence.score` (numérique 0-100, propre à chaque agent) — pas le self-audit de la directive 4.
+  - Les multiples champs `confidence` cohabitent mais ne sont PAS interchangeables : ScoredFinding (Reflexion), ContradictionClaim (Consensus), DebaterResponse/ArbitratorResponse Zod-validés (Consensus LLM), events Board AI (member_analysis_completed/member_voted), classification numérique utterance-router (Live Coaching), self-audit HIGH/MEDIUM/LOW (directive 4).
+  - Le self-audit produit un texte LLM, PAS un signal runtime fiable.
+
+- **`prompt_debt_cohabitation`** : 5 catégories de surfaces où directives cohabitent avec dette prompt :
+  - Orchestration : reflexion.ts + consensus-engine.ts (Big4, BA, comité, winner, baGuidance)
+  - Board : board-member.ts (comité 4 modèles, recommendations, verdict définitif)
+  - Live Coaching : 5 fichiers (coaching-engine, visual-processor, post-call-generator, post-call-reanalyzer, transcript-condenser)
+  - **Tier 2 lentilles sectorielles** (mis en évidence — beaucoup N'ÉTENDENT PAS BaseAgent) : Big4, Partner VC, BA, angel investor à auditer fichier par fichier
+  - Tier 1/3 BaseAgent : directives 2-5 héritées + dette doctrinale variable
+
+- **`implementation_debt` (10 items)** : coverage à recompter, couverture inégale, directive 1 non centralisée, utterance-router/auto-dismiss à évaluer, *"Negotiation"* à retirer ou sourcer, maintenance DB hors scope ou à inclure, directives 4/5 jamais axe public, [UNCERTAIN]/[UNVERIFIED] à auditer UI, confusion confidence self-audit vs runtime à clarifier, cohabitation prompts.
+
+- **`doctrine_references.cross_section_updates_applied`** : §20.references_status.sections_to_realign_before_public_reuse retire §19 ; §20.implementation_debt.surfaces retire ligne §19.
+
+**`docs-private/reference.yaml` § 20 — cross-section updates** :
+- `references_status` reformulé : *"Les deux sections (§ 11 et § 19) sont désormais alignées. Aucune dépendance non alignée restante pour § 20."*
+- `sections_to_realign_before_public_reuse: []` (vide).
+- `implementation_debt.surfaces` : ligne § 19 retirée.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — *"notamment 26, 27, 28"* (§ 19 retiré). *"Les sections 3 à 11, § 19 et § 20 sont alignées"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : *"§§ 3-11 + § 19 + § 20"* + *"Sections 26, 27, 28 pas encore alignées"*.
+- Table cascade § 10 : ligne § 19 passée en ✅.
+- § 11 table fichiers synchronisés : *"§§ 3-11 + § 20"* → *"§§ 3-11 + § 19 + § 20"*.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- `anti_hallucination` : 10 clés top-level (confidence_self_audit_clarification, context, coverage_audit, directives, doctrinal_limits, doctrine_references, implementation_debt, injection_patterns, positioning_rule, prompt_debt_cohabitation).
+- `directives.items` : 5.
+- `injection_patterns` : 3 patterns (pattern_1_base_agent_helpers, pattern_2_shared_helper, pattern_3_inline_per_prompt).
+- `coverage_audit.code_audit_results` : 4 métriques avec chiffres reproductibles.
+- `coverage_audit.gaps_known.files` : 7 fichiers identifiés.
+- `doctrinal_limits` : 8 items.
+- `prompt_debt_cohabitation.surfaces` : 5 catégories.
+- `§20.references_status.sections_to_realign` : 0 (vide — toutes les dépendances levées).
+- `§20.implementation_debt` ne contient PAS de ligne §19.
+- `critical_distinction` contient bien *"ScoredFinding"* et *"PAS le self-audit"* (correction majeure v1→v2 sur la confusion confidence).
+
+### Avertissement
+Sections 26 (Positioning rules), 27 (Persona), 28 (GTM) restent à aligner — il n'y a plus de dépendance non alignée pour § 20. La cascade peut continuer sur ces 3 sections, ou enchaîner sur les surfaces "Niveau 2 ensuite" (product-overview, exec-summary, pitch-deck) si cohérent doctrinalement.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 26 (Positioning rules) — vestiges probables : règles de positionnement marketing antérieures au pivot, claims oraculaires sur la catégorie produit, vocabulaire BA solo au feeling, mentions "DD VC en 1h", positioning_statement oraculaires. À aligner avec doctrine § 7 (hiérarchie messaging) + § 20 (competitive_positioning_rules).
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 11 Engines aligné + dépendance §20 levée
+
+### Contexte
+Niveau 2 cascade : refonte intégrale de la section 11 (Engines — Consensus Engine + Reflexion Engine) en synchronie avec la dépendance explicite déclarée dans § 20 references_status. Section originale (~56 lignes, lignes 1914-1969) avec vocabulaire oraculaire ("Arbitre du comité d'investissement", "Reviewer senior Big4", "Résout les contradictions avec des FAITS"), sur-promesses runtime ("actions par sévérité différenciées" alors que le code n'a qu'une branche minor), drifts code (severity casing, detection types fantômes existence/interpretation, source hierarchy = pondération runtime supposée alors que c'est instruction LLM, "consensus" suggéré comme unanimité alors que c'est concession LLM-émise au round 3, "quality score calculé" alors que LLM-émis validé Zod). Restructuration en 6 blocs top-level (positioning_rule + consensus_engine + reflexion_engine + prompt_surfaces_to_audit + implementation_debt + doctrine_references) + commentaires d'en-tête. 30+ corrections sur 4 itérations (v1 → v2 → v3 → v4) avec audits code croisés sur src/agents/orchestration/.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 11 (lignes 1914-1969 anciennes → ~370 lignes nouvelles)** — réécriture intégrale :
+
+- **Vestiges oraculaires purgés** :
+  - `consensus_engine.role` : *"Arbitre du comité d'investissement. Résout les contradictions entre agents avec des FAITS."* → *"Mécanisme d'arbitrage des contradictions détectées entre agents. Flux normal : débat structuré multi-rounds → arbitrage final si pas de consensus. Plusieurs optimisations (cache, branche minor, skip-to-arbitration) peuvent court-circuiter ce flux. Produit une résolution structurée — pas une vérité tranchée."*
+  - `reflexion_engine.role` : *"Reviewer senior Big4. Détecte les faiblesses avant que le BA les voie."* → *"Critique structurée des sorties d'agents avant restitution. Récupère un qualityScore LLM-émis validé par schéma Zod (pas un calcul TS déterministe). Mécanisme d'amélioration itérative ; pas garantie d'absence d'erreur."*
+
+- **Drifts code corrigés** :
+  - `severity_levels` : YAML originel UPPERCASE (CRITICAL/MAJOR/MODERATE/MINOR) → lowercase code-aligned ("critical"/"major"/"moderate"/"minor"). YAML originel listait actions différenciées par sévérité ; le code n'a qu'une branche `minor → autoResolveMinor()`. v4 corrige : `flow_per_severity.minor` séparé du `non_minor` (flux unifié critical/major/moderate).
+  - `detection_types` : YAML originel listait 4 types dont `existence` et `interpretation` — non détectés par le code. v4 : `detected` (numeric + assessment via `areConflicting()`) vs `not_currently_detected` (existence, interpretation).
+  - `detection_rule` : précisions exactes de `calculateConflictSeverity()` — conflict_detection (valueDiff > 0.3 numérique OU opposition assessment) ; severity_thresholds (critical avg>75 && vd>0.5, major avg>60 && vd>0.4, moderate avg>40 OR vd>0.3, minor sinon) ; assessment_constraint (valueDiff=0 → critical/major inatteignables sur assessment).
+  - `source_hierarchy` → `prompt_source_hierarchy` : précisé comme instruction LLM dans les prompts, pas pondération runtime déterministe.
+  - `resolution_types` : `ContradictionResolution.resolvedBy` (pas `resolutionType`, vrai nom de champ code). `accepted` séparé : "via acceptContradiction(contradictionId, reason), pas par debate()".
+  - `optimizations` : 4 items précis (au lieu de mentions vagues) — `resolution_cache` (Map bornée FIFO, pas LRU ; cache_key = topic + sorted(agentName:claim)), `minor_auto_resolve`, `skip_to_arbitration_quick_resolution` (confidenceDiff > 35 ET maxConfidence > 80), `skip_to_arbitration_fallback` (pas optimisation autonome ; fallback du précédent).
+  - `status_lifecycle` (ajout) : detected → debating → resolved → accepted (manquait dans YAML originel).
+  - `confidence` range : 0-100 (z.number().min(0).max(100)) pour sorties LLM ; ContradictionClaim.confidence hérite de ScoredFinding (typé 0-100, pas Zod-validé côté consensus).
+  - `consensus_semantics` (ajout) — point bloquant le plus important : *"consensus" dans le code NE SIGNIFIE PAS unanimité réelle. hasConsensus() = finalPosition === true. finalPosition n'est produit qu'au round 3 (chemin enhanced : concession inférée si confidenceChange < -15 ; fallback legacy : true si LLM renvoie finalPosition === "concede"). Les checks hasConsensus() après round 1 et round 2 existent dans le code mais sont en pratique inertes (round 1/2 ne définissent pas finalPosition).* Implication : `resolvedBy: consensus` ≠ preuve de vérité ni d'unanimité.
+  - Reflexion `tier3Enabled` drift documenté : config field présent (default false) mais `needsReflexion()` hardcode `if (tier === 3) return false;` — config field non effectif même si activé.
+  - Reflexion `criticalRedFlagAlwaysReflect` corrigé : default false (commentaire code `// was true — forced reflexion on every critical red flag, too expensive`). Si activé, condition = assessment contenant 'critical' OU 'suspicious && value === 0', PAS "source non vérifiable" (YAML originel faux).
+  - Reflexion `quality_score` : rubrique LLM-émise validée par Zod, PAS calcul TS déterministe (YAML originel pouvait laisser croire à un calcul TS).
+  - Reflexion `quality_score.bonus` : *"cross-référence ajoutée"* → *"cross-référence présente et pertinente"* (verbatim prompt).
+  - Reflexion tier thresholds : YAML originel 70%/60% ; code défaut 60%/50% (commentaires `// was 70` et `// was 60`).
+  - Reflexion `ready_for_handoff.rule` : "non résoluble / non corrigeable" (pas "non résolue").
+
+- **Nouveau `prompt_surfaces_to_audit`** (8 surfaces, 2 catégories) :
+  - **Reflexion** : 'Senior Reviewer Big4', 'Business Angel decision de 50-200K€', champs schémas `impactOnBA` / `readyForBA` / `baNotice` à renommer.
+  - **Consensus** : 'President du Comite d'Investissement', 'Business Angel va investir 50-200K€', 'Tranche rapidement' ; terminologie `winner` à 4 sites (QuickResolutionSchema, ArbitratorResponseSchema.verdict.winner, ContradictionResolution.winner interface code, fallback arbitration prompt) ; champ `baGuidance` à renommer `handoffGuidance`.
+
+- **Nouveau `implementation_debt`** (13 items) : severity casing, detection types, actions par sévérité, source hierarchy, tier 3 guard hardcodé, criticalRedFlagAlwaysReflect, renommages variables/schémas (`readyForBA`, `impactOnBA`, `baNotice`, `winner`, `baGuidance`), cache key (topic + sorted(agentName:claim) pas équivalence profonde), consensus_semantics (hasConsensus inertes round 1/2), champ confidence.
+
+- **`doctrine_references.cross_section_updates_applied`** : §20.references_status.sections_to_realign_before_public_reuse — §11 retiré ; §20.implementation_debt.surfaces — ligne §11 retirée.
+
+**`docs-private/reference.yaml` § 20 — cross-section updates** :
+- `references_status` reformulé : *"§ 11 désormais aligné — cf. cascade"*. Liste `sections_to_realign_before_public_reuse` réduite à `§ 19` uniquement.
+- `implementation_debt.surfaces` : ligne § 11 retirée. § 19 reste.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — *"notamment 19, 26, 27, 28"* + *"Les sections 3 à 11 et § 20 sont alignées"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : *"§§ 3-11 + § 20"* + *"Sections 19, 26, 27, 28 pas encore alignées"*.
+- Table cascade § 10 : ligne § 11 Engines passée en ✅ + ligne § 19 ⏳ ajoutée explicitement (séparée du groupe restant §§ 26, 27, 28).
+- § 11 table fichiers synchronisés : *"§§ 3-10 + § 20"* → *"§§ 3-11 + § 20"*.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- `engines` : 6 clés top-level (positioning_rule, consensus_engine, reflexion_engine, prompt_surfaces_to_audit, implementation_debt, doctrine_references).
+- `consensus_engine` : 14 sous-clés incluant nouveau `consensus_semantics`.
+- `optimizations.items` : 4 (resolution_cache, minor_auto_resolve, skip_to_arbitration_quick_resolution, skip_to_arbitration_fallback).
+- `resolution_cache.cache_key` contient *"topic"* + *"agentName:claim"*.
+- `confidence_note` contient *"0-100"*.
+- `reflexion_engine.role` contient *"LLM-émis"*.
+- `quality_score.bonus` contient *"présente et pertinente"*.
+- `§20.references_status.sections_to_realign_before_public_reuse` : count=1, contient §19 mais PAS §11.
+- `§20.implementation_debt` : ne contient PAS de surface §11, contient §19.
+
+### Avertissement
+Sections 19 (5 directives anti-hallucination détail), 26 (Positioning rules), 27 (Persona), 28 (GTM) restent à aligner. § 19 reste explicitement listé dans § 20 references_status comme dépendance non levée — à ne pas reprendre en wording public tant que sa cascade n'est pas faite. La dette code documentée dans `implementation_debt` de § 11 est explicite : 13 items à reprendre côté code/schémas/prompts avant tout usage public du wording Engines (severity casing, renommages BA, winner, baGuidance, consensus_semantics inerte rounds 1/2, etc.).
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 19 (5 directives anti-hallucination — détail) — dépendance directe de § 20 et § 11 (cohérence anti-hallucination cf. prompt_discipline du § 20 + critique_guidance / confidence directives du § 11). Reframe à appliquer : préciser le périmètre exact des 5 directives (couverture, scope, limites), distinguer self-audit confidence interne vs axe produit (cf. § 8 rule), aligner avec le coverage_claim_to_audit "60+ fichiers" du § 20.
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 20 Moat & Différenciation refondue + audit claims chiffrés
+
+### Contexte
+Niveau 2 cascade : refonte intégrale de la section 20 (Moat & Différenciation) sur la doctrine du pivot. Section originale (~242 lignes, lignes 2165-2403) la plus chargée doctrinalement de tout `reference.yaml` : `primary_moat` ("L'IA augmentée — intelligence fiable"), `sublimation_moat` complet (SUBLIMATION, wow_factor "étoiles dans les yeux", "PILIER CENTRAL du messaging", "wisdom of crowds prouvé", 4 modèles Claude/GPT-4o/Gemini/Grok hard-codés), `reinforcement_moats` avec chiffres inventés (87% précision, 0.82 corrélation, 5000 fiables / 50000 imbattables, "infalsifiable"), `competitive_comparison` caricaturale ("BA + ChatGPT = zéro", "Non seulement ça ne sera pas aussi profond, mais en plus ça va être faux"), `strategic_insights.auditability` claim juridique sans base ("requirement réglementaire IR-PME / EIS", "système d'audit officiel"), `superhuman_breadth` ("Capacité surhumaine"), `economic_argument` ("ROI obscène", "15-60x moins cher", "80% du travail"). Restructuration en 11 blocs top-level avec séparation stricte état livré / différenciateurs / hypothèses futures / non-moats / claims chiffrés / dette implémentation. 30+ corrections sur 3 itérations (v1 → v2 → v3) avec Sacha + ChatGPT 5.5 + audits doctrinaux croisés.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 20 (lignes 2163-2403 anciennes → ~430 lignes nouvelles)** — réécriture intégrale :
+
+- **Vestiges magiques/oraculaires purgés intégralement** :
+  - `primary_moat` ("L'IA augmentée — optimisation des capacités de l'IA", "intelligence fiable", "la flemme est le vrai garde-fou concurrentiel") → supprimé. Refonte en `current_defensibility_state.primary_differentiator` + 6 `current_control_surfaces` (prompt_discipline, evidence_first_layer, deterministic_scoring, layered_orchestration, confrontation_mechanisms, realtime_evidence_check).
+  - `sublimation_moat` complet (SUBLIMATION, wow_factor, "étoiles dans les yeux", "PILIER CENTRAL", "wisdom of crowds prouvé", "C'est prouvé", "Driving collectif", "intelligence qualitativement différente") → **supprimé intégralement**. Remplacé par `current_control_surfaces.confrontation_mechanisms` (Board AI = nom interne, croisé avec § 9 + Consensus/Reflexion = § 11 non aligné + Devil's Advocate = § 7).
+  - `reinforcement_moats` (4 moats : full_cycle "seul à couvrir", living_analysis "switching cost naturel après 50 deals", track_record "trust capital infalsifiable" + chiffres 87% / 0.82, data_network_effect "À 5,000 fiables. À 50,000, imbattables") → supprimé. Refonte en `future_moats_to_build` (4 hypothèses : funding_database_volume, track_record_outcomes, cross_deal_intelligence, living_dossier) avec `status`, `prerequisites`, `banned_claims`.
+  - `competitive_comparison` caricaturale (tableau "BA+ChatGPT/Dev/Angel Desk" + punchline "ça va être faux") → supprimé. Refonte en `competitive_positioning_rules` avec `sober_comparisons` (5 concurrents, descriptions sobres) + `banned_framings` (5 framings explicitement bannis).
+  - `anti_diy_10_pitfalls` (10 critiques de DIY avec hyperbole) → supprimé. Remplacé par `non_moats_and_risks` (9 items requalifiés sobrement).
+  - `strategic_insights.auditability` ("requirement réglementaire IR-PME/EIS", "système d'audit officiel") → supprimé. Refonte en `auditability_positioning` avec `not_a_legal_claim` explicite : aucune mention IR-PME/EIS sans base juridique.
+  - `strategic_insights.cross_deal_intelligence` ("argument de rétention monstrueux") → déplacé en `future_moats_to_build.cross_deal_intelligence` avec `banned_claims` ("switching cost naturel" banni).
+  - `strategic_insights.economic_argument` ("ROI obscène", "15-60x moins cher", "80% du travail") → supprimé. Listé en `non_moats_and_risks.items` + `claims_policy.audit` (à sourcer en § 21 si défendu, pas dans la doctrine moat).
+  - `strategic_insights.ai_error_response` ("On n'élimine pas l'erreur — on la rend visible et traçable" présenté comme moat) → refonte en `ai_error_response` séparé. "rend l'erreur visible" → "vise à rendre les incertitudes, désaccords et absences de source visibles". Ajout `not_a_claim` : "ne garantit pas que toute erreur sera détectée".
+  - `strategic_insights.superhuman_breadth` ("Capacité surhumaine", "Aucun analyste humain") → supprimé. Refonte sectorielle en `durable_differentiators.sector_lenses` (21 lentilles spécialisées + general-expert fallback, pas "22 secteurs spécialisés stricts" ni "surhumain").
+
+- **Nouvelle structure (11 blocs top-level)** :
+  - `positioning_rule` — doctrine d'ouverture (3 catégories : current_defensibility_state / durable_differentiators / future_moats_to_build).
+  - `references_status` — dépendances explicites vers § 11 (Engines) et § 19 (anti-hallucination détail) non encore alignés ; interdit de reprendre leur wording public tant qu'ils ne sont pas dans la cascade.
+  - `current_defensibility_state` — état livré avec `primary_differentiator` (3 catégories : déterministes, tracées et partiellement encadrées, sorties LLM probabilistes) + 6 `current_control_surfaces` chacune avec `what`, `status`, `limitation`.
+  - `durable_differentiators` — 3 différenciateurs avec `replication_friction` explicite (orchestration_discipline, sector_lenses, layered_evidence_pipeline).
+  - `future_moats_to_build` — 4 hypothèses avec `prerequisites` et `banned_claims` (funding_database_volume, track_record_outcomes, cross_deal_intelligence, living_dossier). Note clarifiée : "Aucun n'est un moat démontré aujourd'hui ; certains reposent sur des briques partiellement livrées."
+  - `non_moats_and_risks` — 9 claims requalifiés.
+  - `competitive_positioning_rules` — 6 axes positionnement, `not_competitive_with` (Harmonic/Crunchbase/Carta), `sober_comparisons` (PitchBook/Crunchbase recentrés "data/sourcing institutionnel" — pas caricatural), 5 `banned_framings`.
+  - `claims_policy` — 8 claims chiffrés audités (44 agents, 22 lentilles avec 21+1 fallback, 5 directives × 60+ fichiers, 5000/50000 Funding DB, 87%/0.82 track record, 15-60x moins cher, DD VC en 1h).
+  - `implementation_debt` — 7 surfaces docs à reprendre (incluant § 11, § 19, product-overview, exec-summary, pitch-deck, pages publiques, prompts couche 3).
+  - `ai_error_response` — recadré, ne se présente plus comme moat.
+  - `auditability_positioning` — `not_a_legal_claim` explicite.
+
+- **6 corrections finales appliquées (v3 vs v2)** :
+  - `future_moats_to_build.note` : contradiction "Aucun n'est livré" vs `living_dossier` "partiellement livré" → "Aucun n'est un moat démontré aujourd'hui ; certains reposent sur des briques partiellement livrées."
+  - `primary_differentiator` : "classification fiabilité déterministe" → "certaines étapes déterministes ; d'autres tracées et partiellement encadrées (LLM + validations programmatiques)".
+  - `public_positioning_axes` : "Sourcing et provenance exigés sur les affirmations factuelles" → "Discipline de sourcing et provenance sur les affirmations factuelles critiques".
+  - `diy_chatgpt_claude` : "Pas de gouvernance..." → "Nativement, pas de gouvernance d'équipe, traçabilité structurée, reproductibilité, mémoire pipeline ou contradictions inter-documents systématiques."
+  - `orchestration_discipline.thesis` : "provenance exigée pour les affirmations factuelles" → "affirmations factuelles critiques".
+  - `layered_evidence_pipeline.thesis` : "contradictions remontées automatiquement" → "certaines contradictions détectées et remontées selon les surfaces disponibles".
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — mis à jour : *"notamment 26, 27, 28"* (§ 20 retiré). *"Les sections 3 à 10 et § 20 sont alignées"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : *"§§ 3-10 + § 20"* + *"Sections 26, 27, 28 pas encore alignées"*.
+- Table cascade § 10 : § 20 Moat & Différenciation passé en ✅ (séparé du groupe restant §§ 26, 27, 28).
+- § 11 table fichiers synchronisés : *"§§ 3-10"* → *"§§ 3-10 + § 20"*.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- `moat` : 11 clés top-level confirmées (ai_error_response, auditability_positioning, claims_policy, competitive_positioning_rules, current_defensibility_state, durable_differentiators, future_moats_to_build, implementation_debt, non_moats_and_risks, positioning_rule, references_status).
+- Vestiges originaux **absents** : `primary_moat`, `sublimation_moat`, `reinforcement_moats`, `competitive_comparison`, `anti_diy_10_pitfalls`, `strategic_insights` — tous vérifiés via Python check (False = absent).
+- 6 corrections finales **confirmées** dans le contenu :
+  - `primary_differentiator` contient *"partiellement encadrées"* ✅
+  - `future_moats_to_build.note` contient *"démontré aujourd"* ✅
+  - `diy_chatgpt_claude` contient *"Nativement, pas de"* ✅
+  - `public_positioning_axes` contient *"affirmations factuelles critiques"* ✅
+  - `orchestration_discipline.thesis` contient *"factuelles critiques"* ✅
+  - `layered_evidence_pipeline.thesis` contient *"certaines contradictions"* ✅
+- **Note méthodologique** : `docs-private/reference.yaml` étant gitignored, `git diff` ne montre PAS le remplacement. Vérification structurelle via `python3 -c "import yaml; ..."` ci-dessus = preuve du remplacement effectif.
+
+### Avertissement
+`reference.yaml` n'est toujours PAS entièrement aligné. Les sections 11 (Engines — Consensus + Reflexion détaillés), 19 (5 directives anti-hallucination détaillées), 26 (Positioning rules), 27 (Persona), 28 (GTM) contiennent encore des vestiges. § 11 et § 19 sont des dépendances directes de § 20 (cf. references_status) — à réaligner avant tout usage public du wording moat.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 26 (Positioning rules) — vestiges probables : règles de positionnement marketing antérieures au pivot, claims oraculaires sur la catégorie produit, vocabulaire BA solo au feeling, mentions "DD VC en 1h", positioning_statement oraculaires. À aligner avec doctrine § 7 (hiérarchie messaging) + § 20 (competitive_positioning_rules).
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 10 Live Coaching aligné + audit drift code/spec/test documenté
+
+### Contexte
+Niveau 2 cascade : alignement de la section 10 (Produit détaillé — Live Coaching) sur la doctrine du pivot + vérification systématique de l'alignement avec le code réel (`src/lib/live/`, `src/app/api/live-sessions/`, `src/app/api/coaching/`, `src/app/api/webhooks/recall/`, UI components). Section originale courte (~40 lignes) mais imbibée de désynchronisations YAML/code/spec : modèle unique 'Claude Haiku 4.5' alors que le runtime utilise HAIKU + SONNET + AgentOrchestrator selon le composant ; latency_budget '8s/5s' alors que la spec vise <3s/<3.5s P95 ; pipeline 6 composants alors que le runtime en a 12. Restructuration majeure en 22 champs top-level documentant pipeline réel, drift latence/modèles/composants, chemins context (audio/visual/coaching context/post-call/reanalysis), drift langue, drift modèle config, dette confidence partout. 50+ corrections sur 5 itérations (v1 → v2 → v3 → v4 → v5) avec Sacha + ChatGPT 5.5 + audits code croisés.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 10 (lignes 1463-1505 anciennes → ~440 lignes nouvelles)** — réécriture intégrale + audit code croisé :
+
+- **Concept public reframé** : *"Coaching IA temps réel pendant les calls fondateurs"* → *"Vérification des preuves en temps réel pendant l'appel fondateur — fait remonter écarts entre le dossier, les déclarations et les benchmarks disponibles, contradictions et informations nouvelles à intégrer."*
+- **Modèle unique purgé** : *"Claude Haiku 4.5"* → `model_runtime_status` avec 3 catégories de composants : HAIKU (utterance-router, auto-dismiss, coaching-engine, visual-processor), SONNET (post-call-generator, transcript-condenser, post-call-reanalyzer delta), AgentOrchestrator (post-call-reanalyzer targeted/full modes — modèles des agents concernés).
+- **Latence drift documenté** : `latency_status` distingue 4 valeurs sans en imposer une unique — code hard timeout 8s, code inline target ~1-2s, spec P50 <3s / P95 <3.5s, monitoring alerte >5s, estimation Recall.ai+Deepgram ~1-3s.
+
+- **`runtime_pipeline` (12 composants)** — restructuré pour refléter le code réel :
+  - **recall-client** (cadrage strict) : crée/gère bot, récupère transcript complet, vérifie signature Svix, détecte plateforme. Events reçus par routes webhook, PAS par ce client. Config Deepgram dans start/route.ts.
+  - **speaker-detector** (ajouté) : fuzzy matching noms/participants ; suggestRoles ; détection BA gérée ailleurs.
+  - **utterance-router** : 10 catégories réelles (financial_claim, competitive_claim, team_info, market_claim, tech_claim, strategy_reveal, negotiation_point, question_response, small_talk, filler — PAS de classe 'contradiction'). Confidence numérique de classification (pas directive anti-hallucination).
+  - **auto-dismiss** (ajouté) : Haiku vérifie si utterance ba OU investor a adressé une carte active.
+  - **sanitize** (ajouté) : sanitizeTranscriptText — protection anti-injection seulement.
+  - **context-compiler** (ajouté) : compileDealContextCached + compileContextForColdMode. Source principale de la dette scoring.
+  - **coaching-engine** : prompt avec directives anti-hallucination >90% confident + self-audit.
+  - **visual-processor** : single-stage HAIKU vision (spec décrit pipeline multi-étapes Haiku/Sonnet — drift). Contradictions high-severity → cartes proactives.
+  - **ably-server** : messagerie temps réel Ably (serveur publish REST, client Ably Realtime).
+  - **post-call-generator** : schéma legacy keyPoints/actionItems/confidenceDelta/contradictions/newInformation/remainingQuestions. Non-blocking via after() ; chemins multiples : stop session + retry-report + webhooks fin de session.
+  - **post-call-reanalyzer** : 3 modes — delta (SONNET via generateDeltaReport), targeted/full (AgentOrchestrator avec modèles agents). Deux scheduling distincts : blocking via /api/coaching/reanalyze ; fire-and-forget post-rapport.
+  - **transcript-condenser** : extraction structurée (faits, contradictions, éléments nouveaux et observations structurées). SONNET.
+
+- **Nouveau `runtime_context_paths`** : 5 chemins distincts documentés — audio webhook (full context si dealId, cold si pas de deal, PAS de soft-gate corpus), visual-frame (soft-gate), /api/coaching/context (soft-gate avec corpusSkipped), post-call (soft-gate transcript-only), /api/coaching/reanalyze (hard-gate refus si corpus non prêt). Asymétrie auparavant gommée.
+
+- **Nouveau `triggering_rules`** : règles d'aiguillage par speaker_role × classification. filler/small_talk ignorés ; ba/investor → auto-dismiss ; founder, co-founder, lawyer, advisor, other (non mappés) → coaching. La formulation antérieure *"fondateur → coaching"* était trop étroite.
+
+- **`card_schema`** : 4 card_types (question / contradiction / negotiation / new_info) + 3 priorities (high/medium/low) + 10 utterance_categories. Source canonique précisée : types.ts pour CoachingCardType ; utterance-router.ts pour ClassificationResult.confidence (PAS dans types.ts).
+
+- **Nouveau `visual_proactive_cards`** : trigger high-severity, route visual-frame, card_type 'contradiction' priority 'high'.
+
+- **Nouveau `language_config_drift`** : UI propose fr/en, DB stocke LiveSession.language (default 'fr-en'), bot Deepgram hardcode language: 'multi'. LiveSession.language pas propagé.
+
+- **Nouveau `model_config_drift`** : /api/live-sessions/[id] PATCH accepte llmModel (claude-sonnet-4-5, etc.) ; runtime utilise symboliques HAIKU/SONNET par composant non consommés depuis ce champ.
+
+- **`context_scoring_debt`** : overallScore + signalProfile + scores dimensions mono-axe (global/team/market/product/financials) injectés dans DealContext live. `timing_absent_drift` : DealContext.scores n'a PAS de 'timing' alors que scoring synthesis §8 inclut Timing à 15%.
+
+- **`confidence_surfaces_to_audit` (9 surfaces)** — séparation claire :
+  - **classification_confidence_numeric** : utterance-router (confidence numérique de classification).
+  - **anti_hallucination_directive_surfaces** : coaching-engine + visual-processor + transcript-condenser + post-call-generator + post-call-reanalyzer (directives >90% confident + self-audit).
+  - **type_definitions** : types.ts pour confidenceDelta + keyFacts.confidence ; ClassificationResult.confidence dans utterance-router.ts.
+  - **ui_surfaces** : post-call-report.tsx + post-call-reanalysis.tsx.
+
+- **`ui_copy_surfaces_to_audit` (13 composants)** — vocabulaire à reprendre : Business Angel, BA, call, claim, cards, topics, Actions à suivre, Évolution de la confiance. Surfaces explicites avec attribution correcte (coaching-card.tsx porte 'Négo/Nouveau' ; coaching-feed.tsx porte 'Coaching/cartes de coaching/Fil de coaching').
+
+- **`prompt_surfaces_to_audit` (6 prompts)** — utterance-router (champ confidence, pas directives anti-hallucination) ; coaching-engine + visual-processor + post-call-generator + post-call-reanalyzer + transcript-condenser (directives confidence + dette doctrinale).
+
+- **`tests_surfaces_to_update` (5 fichiers tests)** — incluant **type drift** : post-call-reanalyzer.test.ts fige confidenceChange.before/after en strings ('medium'/'high') alors que DeltaReport type ces champs en number.
+
+- **`spec_code_drift` (10 drifts)** — visual processor (pipeline LLM multi-étapes spec vs single-stage code), latence (5 valeurs contradictoires), modèles (HAIKU/SONNET/AgentOrchestrator vs 'Claude Haiku 4.5' unique), composants (12 vs 6 spec), routing coaching (founder/co-founder/lawyer/advisor/other vs 'fondateur' seul), DealContext.scores Timing absent, language config, model config, contexte par chemin, test type drift confidenceChange.
+
+- **`security_sanitization_status`** (anti-injection / anti-réinjection sécurité) **distinct de** **`narrative_sanitization_status`** (langage prescriptif PAS sanitisé doctrinalement). sanitizeTranscriptText + sanitizeLLMOutput protègent contre injection prompt et réinjection LLM, pas contre GO/NO-GO/PASS/etc.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — mis à jour : *"notamment 20, 26, 27, 28"* (§ 10 retiré). *"Les sections 3 à 10 sont alignées"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : *"§§ 3-10"* + *"Sections 20, 26, 27, 28 pas encore alignées"*.
+- Table cascade § 10 : § 10 Live Coaching passé en ✅ (séparé du groupe restant §§ 20, 26, 27, 28).
+- § 11 table fichiers synchronisés : *"§§ 3-9"* → *"§§ 3-10"*.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- `live_coaching` : 22 champs top-level.
+- `runtime_pipeline.components` : 12 composants.
+- `runtime_context_paths.paths` : 5 chemins distincts.
+- `integration_surfaces.api_routes` : 13 routes (incl. /api/coaching/* + /api/webhooks/recall).
+- `model_runtime_status` : 6 sous-clés (haiku_components / sonnet_components / agent_orchestrator_components / config_source / note / public_messaging).
+- 3 corrections finales confirmées : post-call-reanalyzer.model_runtime mentionne AgentOrchestrator ✓ ; post-call-reanalyzer.scheduling mentionne fire-and-forget ✓ ; post-call-generator.scheduling mentionne retry-report ✓.
+
+### Avertissement
+`reference.yaml` n'est toujours PAS entièrement aligné. Les sections 20 (Moat), 26 (Positioning rules), 27 (Persona), 28 (GTM) contiennent encore des vestiges. La cascade continue.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 20 (Moat) — vestiges probables à examiner : claims absolus de défensibilité, *"sublimation"*, mentions hard-codées de modèles, claims oraculaires sur la profondeur de l'analyse. Reframe à appliquer cohérent avec doctrine § 7 + § 9 board AI + § 10 live coaching.
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 9 Board AI aligné + audit dette runtime documenté
+
+### Contexte
+Niveau 2 cascade : alignement de la section 9 (Produit détaillé — Board AI) sur la doctrine du pivot + vérification systématique de l'alignement avec le code réel (`src/agents/board/`, `src/components/deals/board/`). Section originale courte (~34 lignes) mais doctrinalement la plus chargée du fichier : `concept: "SUBLIMATION de l'IA"`, `wow_factor: true`, `messaging: "LA feature qui fait la différence dans le pitch... sublimation en action... IAs qui se battent entre elles pour trouver la vérité..."` — tout le registre oraculaire-magique banni par la doctrine. Restructuration majeure en 14 blocs top-level documentant pipeline réel, dette code, dette UI, dette prompts, sanitization partielle. 30+ corrections sur 4 itérations (v1 → v2 → v3) avec Sacha + ChatGPT 5.5 + vérifications code croisées.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 9 (lignes 1232-1268 anciennes → ~245 lignes nouvelles)** — réécriture intégrale + audit dette runtime :
+
+- **Vestiges magiques purgés** : `concept: "SUBLIMATION de l'IA"`, `wow_factor: true` + *"étoiles dans les yeux"*, `messaging: "LA feature qui fait la différence... sublimation en action... IAs qui se battent... pour trouver la vérité... pas d'opinion complaisante possible"* — supprimés intégralement. Remplacés par `internal_name`, `public_description`, `positioning_rule` (capacité sous le capot), `limits` (4 limites doctrinales : désaccords ≠ vérité, convergence ≠ justesse, minorités préservées, verdict majoritaire = résultat agrégé pas oracle).
+
+- **Modèles hard-codés déplacés** : `models: [Claude, GPT-4o, Gemini, Grok]` → `runtime_config_reference.config_sources` (BOARD_MEMBERS_TEST/PROD + getBoardMembers() + BOARD_CONFIG env var + BoardOrchestratorOptions + DEFAULT_MAX_ROUNDS/TIMEOUT_MS). Composition non exposée. BOARD_CONFIG corrigé : env var de sélection test/prod (pas paramètres globaux).
+
+- **Désynchronisations YAML/code corrigées** :
+  - Verdicts `GO/NO_GO/NEED_MORE_INFO` → alignés sur code : `BoardVerdictType = VERY_FAVORABLE | FAVORABLE | CONTRASTED | VIGILANCE | ALERT_DOMINANT | NEED_MORE_INFO` avec mapping vers § 8 `legacy_orientation_value_mapping`.
+  - `phase1/2/3` → réordonnés selon code réel : `thesis_debate` (round 0 si thèse disponible) → `independent_analysis` → `multi_round_debate` → `final_votes` (runFinalVotes + getMajorityVerdict + calculateConsensusLevel) → `verdict_compilation`.
+  - `weights: {team: "40%", ...}` (mono-axe legacy) → **supprimé** (artefact qui ne reflète pas le pipeline Board).
+  - `consensus_levels` : `code_value` (UNANIMOUS/STRONG/SPLIT/MINORITY uppercase) + `label_fr` séparés. Descriptions *"pour le cas nominal à 4 membres"* avec note MIN_MEMBERS_REQUIRED = 2.
+
+- **Dette d'implémentation documentée explicitement** :
+  - `consensus_levels.implementation_note` : SPLIT n'est marqué que si `maxCount === 2 && totalMembers === 4` ; avec 2 membres en désaccord (1 vs 1), tombe en MINORITY.
+  - `stopping_reasons.session_only_reason.manual_stop.implementation_note` : `stopBoard()` peut retourner résultat partiel typé BoardVerdictResult avec `stoppingReason: "stagnation" as const` — typage imparfait à corriger.
+  - `narrative_sanitization` reformulé comme garde-fou PARTIEL : couvre uniquement le verdict compilé final (consensusPoints, frictionPoints, questionsForFounder, votes.justification). `coverage_gaps` listés : Live SSE events / analyses initiales persistées / réponses de débat persistées / round thesis debate / justifications historiques. `coverage_test_surfaces` → `key-points-section.tsx`.
+
+- **Nouveau `confidence_field_status`** : confidence émis via `member_analysis_completed` et `member_voted` (pas via `verdict_reached`). Pointe vers § 8 rule "Confiance ≠ axe produit".
+
+- **Nouveau `board_user_facing_surfaces_to_audit`** (9 surfaces, paths vérifiés via find) :
+  - `src/components/deals/board/vote-board.tsx` — *"Confiance"* par membre.
+  - `src/components/deals/board/views/{chat,timeline,arena,columns}-view.tsx` — vues à auditer.
+  - `src/components/deals/board/thesis-debate-view.tsx` — *"Solidité moyenne perçue … /100"*.
+  - `src/components/deals/board/ai-board-panel.tsx` — *"jusqu'à atteindre un verdict commun"* (faux ; code peut s'arrêter sur majority_stable/max_rounds/stagnation).
+  - `src/components/deals/board/board-teaser.tsx` — triple dette : *"avis éclairé"* + *"4 des meilleurs LLMs du marché"* + *"recommandations actionnables"*.
+  - `src/components/deals/board/board-progress.tsx` — importe `BOARD_MEMBERS_PROD` directement, contredit `getBoardMembers()` runtime.
+
+- **Nouveau `board_prompt_surfaces_to_audit`** (6 surfaces) :
+  - `src/agents/board/board-member.ts` — *"comité de 4 modèles IA"* + champ recommendations + directive *"à vous de décider"* + phrasing *"verdict définitif"*.
+  - `src/agents/board/context-compressor.ts` — injection *"Verdict consolidé / Confiance indicative / verdict / score / confidence"* dans le contexte modèles.
+  - `src/agents/board/types.ts` — `ThesisDebateResponse.recommendations` + commentaire *"recommandations au BA"*.
+
+- **Toutes les références code en file + symbole** (pas par numéros de ligne — qui dérivent). Principe "doctrine, pas snapshot de commit".
+
+- **Micro-correction style finale** : `multi_round_debate.description` — *"convaincus par les preuves"* → *"lorsque les éléments soumis modifient leur analyse"* (moins anthropomorphique, registre analytique).
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — mis à jour : *"notamment 10, 20, 26, 27, 28"* (§ 9 retiré). *"Les sections 3, 4, 5, 6, 7, 8 et 9 sont alignées"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note : *"§§ 3-9"* + *"Sections 10, 20, 26, 27, 28 pas encore alignées"*.
+- Table cascade § 10 : § 9 Board AI passé en ✅ (séparé du groupe restant).
+- § 11 table fichiers synchronisés : *"§§ 3-8"* → *"§§ 3-9"*.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- `board_ai` : 14 clés top-level confirmées.
+- `pipeline.phases` : 5 phases dans l'ordre runtime ; `verdict_values` : 6 valeurs BoardVerdictType ; `consensus_levels` : 4 niveaux + implementation_note SPLIT ; `stopping_reasons.verdict_complete_reasons` : 4 raisons ; `runtime_config_reference.config_sources` : 5 sources ; `narrative_sanitization.coverage_gaps` : 5 surfaces non couvertes ; `board_user_facing_surfaces_to_audit` : 9 surfaces ; `board_prompt_surfaces_to_audit` : 6 surfaces.
+- Micro-correction confirmée : *"lorsque les éléments soumis modifient leur analyse"* présent dans `multi_round_debate.description`.
+
+### Avertissement
+`reference.yaml` n'est toujours PAS entièrement aligné. Les sections 10 (Live Coaching détaillé), 20 (Moat), 26 (Positioning rules), 27 (Persona), 28 (GTM) contiennent encore des vestiges. La cascade continue.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 10 (Live Coaching détaillé) — section dense, pipeline (coaching-engine, visual-processor, context-compiler, post-call-generator), card_types, priorities. Vestige résiduel déjà flagué (*"nouvelles infos du call"* ligne 1030 — pas remplacé pendant §6 car hors scope). Reframe à appliquer : *"Vérification des preuves en temps réel pendant l'appel fondateur"* (cf. doctrine § 7 Reframes + § 6 capabilities.workflow_layer).
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 8 Scoring détaillé aligné + chantier 2 axes documenté
+
+### Contexte
+Niveau 2 cascade : alignement de la section 8 (Produit détaillé — Scoring) sur la doctrine du pivot. Section originale brève (~43 lignes) mais doctrinalement bloquante : `grade_mapping` mono-axe contredisait directement la cible 2 axes orientation × solidité des preuves définie en §6. Restructuration majeure en 9 blocs documentant explicitement : état actuel livré, modèle cible, mapping de migration, intrants de solidité, politique enums legacy, surfaces code à toucher, surfaces confidence à auditer, migration des couleurs, chantier à shipper avec tests. 27 corrections sur 4 itérations (v1 → v2 → v3 → v4) avec Sacha + ChatGPT 5.5.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 8 (lignes 988-1030 anciennes → ~210 lignes nouvelles)** — restructuration complète :
+
+- **`current_scoring_state`** (état livré) — methodology, dimensions (avec code_name + label_fr), scale, legacy_grade_mapping (avec public_usage explicite), legacy_score_range_profiles + current_orientation_label_configs (split du signal_profiles original).
+- **`target_scoring_model`** (cible doctrinale) — modèle 2 axes (orientation × solidité) avec `internal_value` ASCII + `display_label` français séparés ; rationale explicite : *"L'axe 2 s'appelle 'Solidité des preuves' et PAS 'Confiance'"* ; mention que `confidence` peut exister comme champ technique interne mais jamais comme axe produit.
+- **`legacy_orientation_value_mapping`** (nouveau) — pont explicite very_favorable / favorable / contrasted / vigilance / alert_dominant / no_signal_or_insufficient_data → favorable / contrasted / alert / not_exploitable, avec note de migration.
+- **`solidity_inputs`** (composants objectifs) — data_reliability_classification (6 niveaux), temporal_detection (reformulé : *"pénalisés si métriques projetées présentées comme réalisées, insuffisamment sourcées, ou utilisées sans réserve explicite"*), other_components (provenance / fraîcheur / contradiction / couverture documentaire).
+- **`legacy_enums_policy`** (nouveau) — règle explicite : enums internes (PROCEED, STOP, READY_TO_INVEST, DO_NOT_PROCEED, STRONG_PASS, PASS) ET champs libres comme `recommendation.action` autorisés en interne comme dette de migration ; jamais en surface publique.
+- **`current_code_surfaces`** (nouveau) — surfaces code MINIMALES CONNUES (note explicite "non exhaustive") regroupées en 6 catégories : scoring_logic (5), ui_components (5), label_helpers (3), pdf_surfaces (2), api_surfaces, persisted_analyses. Inclut format-utils.ts:136, adjusted-score-badge.tsx, alert-resolution/adjusted-score.ts, score-display.tsx, pdf-components.tsx (ScoreCircle/ScoreBar), pdf-sections/score-breakdown.tsx, canonical-read-model.ts.
+- **`user_facing_confidence_surfaces_to_audit`** (nouveau) — 5 surfaces où "Confiance" / % confidence est exposé : tier3-results, pdf score-breakdown, thesis hero/review/revision, early warnings, Board views.
+- **`color_mapping_migration`** (nouveau) — état actuel (vert/bleu/jaune/orange/rouge via getScoreColor/getScoreBadgeColor) ; cible (couleur portant orientation, solidité avec traitement visuel séparé).
+- **`implementation_status`** — 12 items_to_ship (incluant adapters legacy enum, audit recommendation.action, migration analyses persistées, refonte couleur) + `tests_to_ship.principle` explicite (tests sur surfaces rendues / snapshots UI/PDF / outputs helpers publics, PAS scan naïf fichiers source ; getScoreLabel() legacy subordonné après migration) + 5 tests (déterminisme, labels publics, backward compatibility, non-régression recLabel/proofLabel, requalification confidence) + expected_outcome avec labels stabilisés.
+
+**Vestiges purgés et reformulations** :
+- *"breakdown"* → *"ventilation"* (×2).
+- *"caveat"* → *"réserve explicite"*.
+- *"red flag si financier"* → *"pénalisant si présenté comme réalisé ou insuffisamment sourcé"* (PROJECTED).
+- *"ne pas baser l'analyse dessus"* → *"ne pas fonder une conclusion dessus sans réserve explicite"* (UNVERIFIABLE).
+- *"L'IA calcule"* → *"L'outil calcule"*.
+- *"track record, gaps"* → *"parcours, manques"*.
+- *"tech stack"* → *"stack technique"*.
+- *"Market timing"* → *"Timing marché"*.
+- *"calculateAgentScore"* seul → *"formules TypeScript déterministes côté agents et services de scoring (dont calculateAgentScore selon les cas)"*.
+- *"findings agents"* → *"résultats agents"*.
+- *"evidence-first"* (dans description) → *"signaux de preuves sourcées"*.
+- *"Les scores sont pénalisés si les métriques clés sont projetées"* → *"Les scores ou la solidité des preuves sont pénalisés si des métriques clés projetées sont présentées comme réalisées, insuffisamment sourcées, ou utilisées sans réserve explicite"*.
+- *"getScoreLabel()"* dans les tests → remplacé par *"helpers publics de labels orientation/solidité"* + note explicite que getScoreLabel() legacy ne reste pas source canonique.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — mis à jour : *"notamment 9, 10, 20, 26, 27, 28"* (§ 8 retiré). *"Les sections 3, 4, 5, 6, 7 et 8 sont alignées"*. Suppression du sous-bloc "Vestige connu à traiter avant §9" devenu obsolète.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note mise à jour : *"§§ 3-8"* + *"Sections 9, 10, 20, 26, 27, 28 pas encore alignées"*.
+- Table cascade § 10 : § 8 passé en ✅.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- `scoring` : 9 clés top-level (color_mapping_migration, current_code_surfaces, current_scoring_state, implementation_status, legacy_enums_policy, legacy_orientation_value_mapping, solidity_inputs, target_scoring_model, user_facing_confidence_surfaces_to_audit).
+- `target_scoring_model.axes` : 4 values × 2 axes (orientation : favorable/contrasted/alert/not_exploitable ; solidité : solid/partial/contradictory/insufficient).
+- `legacy_orientation_value_mapping.mapping` : 6 entrées (very_favorable, favorable, contrasted, vigilance, alert_dominant, no_signal_or_insufficient_data).
+- `current_code_surfaces` : 6 sous-catégories (api_surfaces, label_helpers, pdf_surfaces, persisted_analyses, scoring_logic, ui_components) + note.
+- `implementation_status` : 12 items_to_ship + 5 tests + principe explicite.
+
+### Avertissement
+`reference.yaml` n'est toujours PAS entièrement aligné. Les sections 9 (Board AI détaillé), 10 (Live Coaching détaillé), 20 (Moat), 26 (Positioning rules), 27 (Persona), 28 (GTM) contiennent encore des vestiges. La cascade continue.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 9 (Board AI détaillé) — vestiges principaux à purger : *"SUBLIMATION de l'IA"*, `wow_factor: true`, *"étoiles dans les yeux"*, *"intelligence collective émergente"*, hard-codage des modèles Claude/GPT-4o/Gemini/Grok dans la doctrine, *"phase1_analysis / phase2_debate / phase3_vote"* avec poids fixes. Reframe vers transparence cognitive + indépendance des modèles + désaccords exposés.
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 7 Agents détaillés aligné
+
+### Contexte
+Niveau 2 cascade : alignement de la section 7 (Produit détaillé — Agents) sur la doctrine du pivot. Section dense (~180 lignes), registre technique des 44 agents. Vestiges principaux purgés : remplacement humain ("standard Big4", "Score final d'investissement", "Mémo d'investissement professionnel"), franglais décoratif ("claims", "ground truth", "cross-ref", "Killer Questions", "Negotiation Ammunition", outputs mémo en anglais), et absolus injustifiés ("TOUS les résultats", "exhaustif", "complète"). Restructuration majeure tier0/tier1/tier3 pour aligner sur le code et clarifier la convention de comptage. 33 corrections sur 4 itérations (v1 → v2 → v3 → v4) avec Sacha + ChatGPT 5.5.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 7 (lignes 725-910 anciennes → ~210 lignes nouvelles)** — réécriture intégrale + restructuration :
+
+- **`tier0` restructuré** — séparation architecture comptée vs runtime :
+  - `counting_note` explicite : *"Le total 44 correspond à une convention d'architecture produit historique (3 + 13 + 22 + 6). Le runtime full_analysis exécute aussi des composants de pré-analyse hors convention 44."*
+  - `counted_architecture_agents` (3, comptés dans total 44) : document-extractor, red-flag-detector, deal-scorer (alignés avec CLAUDE.md src/agents/base/).
+  - `runtime_preanalysis_components` (3 hors total 44) : fact-extractor, deck-coherence-checker, thesis-extractor (avec `layer: "0.5"` et `full_analysis_only: true`).
+- **`tier1` restructuré** — `execution_phases` + `agents` :
+  - `execution_phases` : phase_a (deck-forensics) → phase_b (financial-auditor) → phase_c (team-investigator, competitive-intel, market-intelligence) → phase_d (8 restants).
+  - `agents` listés dans l'ordre d'exécution (deck-forensics en premier).
+  - Reformulations rôles : *"Audit financier exhaustif (standard Big4)"* → *"Analyse financière structurée"* ; *"Vérification des claims du deck vs réalité"* → *"Recoupement des affirmations du deck"* ; *"Investigation background équipe fondatrice"* → *"Analyse du parcours de l'équipe fondatrice"* ; *"Validation marché et timing"* → *"Analyse du marché et du timing"* ; *"Cartographie concurrentielle complète"* → *"Cartographie concurrentielle"* ; *"Due diligence stack technique"* → *"Revue de l'architecture technique"* ; *"Stratégie go-to-market"* → *"Analyse de la stratégie commerciale"* ; *"Intelligence client"* → *"Analyse client"* ; *"Audit cap table"* → *"Analyse de la table de capitalisation / cap table"* (bilingue).
+  - Reformulations outputs : *"claims"* → *"affirmations"* / *"déclarations des fondateurs"* ; *"Ground truth"* → *"Base factuelle documentée"* ; *"hidden competitors"* → *"concurrents non mentionnés dans le dossier"* ; *"Big Tech"* → *"grands acteurs technologiques"* ; *"preferred"* → *"actions de préférence"* ; tous les `db_usage` traduits + ajout *"lorsque disponibles"*.
+  - `financial-auditor.scoring_criteria` : *"Metrics Health vs Benchmarks"* → *"Metrics Health"* (aligné code).
+- **`tier2` aligné code** :
+  - `description` : *"Chaque expert"* → *"Chaque lentille sectorielle"* + *"standards"* → *"repères"*.
+  - `analysis_sections` : passé de 10 strings en anglais à 11 entrées `{schema_key, label_fr}` alignées avec `SectorExpertOutputSchema` (sectorFit, metricsAnalysis, sectorRedFlags, sectorOpportunities, competitorBenchmark, sectorDynamics, unitEconomics, mustAskQuestions, negotiationAmmo, executiveSummary, dbCrossReference — *"Executive Summary + DB Cross-Reference"* séparé en deux).
+  - `experts` réordonné selon TIER2_EXPERT_NAMES (saas, legaltech, hrtech, marketplace, fintech, healthtech, biotech, ai, deeptech, climate, hardware, spacetech, gaming, consumer, proptech, edtech, foodtech, mobility, cybersecurity, creator, blockchain, general).
+  - `experts.focus` : franglais décoratif traduit (liquidity, buyer/seller balance, compute costs, timelines, clinical trials, tailwinds, virality, supply chain, protocol risk, engagement metrics, Real estate cycles, fleet management, Threat landscape, compliance requirements, Launch costs, Fallback). Métriques métier conservées (NRR, CAC, LTV, GMV, TVL, BOM, CPI, ARPDAU, TRL, ARR, take rate, magic number, rule of 40, burn rate, Moat, IP, B2B/B2C, Token economics).
+  - `general-expert.focus` : *"100% recherche web"* → *"recherche externe structurée"* (absolu adouci).
+- **`tier3` restructuré** — séparation `standalone_agents` / `full_analysis_extra` :
+  - `execution_order` documenté : batch parallèle (conditions, contradiction, scenario, devils) → thesis-reconciler en full_analysis → synthesis → memo.
+  - `standalone_agents` (6, comptés dans total 44) : conditions-analyst, contradiction-detector, scenario-modeler, devils-advocate, synthesis-deal-scorer, memo-generator.
+  - `full_analysis_extra` (hors total 44, `counting_scope` explicite) : thesis-reconciler avec `full_analysis_only: true`.
+  - Reformulations rôles : *"Score final d'investissement"* → *"Synthèse et scoring du dossier"* ; *"Mémo d'investissement professionnel"* → *"Génération d'un mémo d'investissement structuré et sourcé"* ; *"Challenge de la thèse haussière"* → *"Mise à l'épreuve de la thèse positive du dossier"*.
+  - Reformulations inputs : *"TOUS les résultats Tier 1/2"* → *"Résultats des agents couches 1 et 2"* ; *"Tier 1"* → *"couche 1"* ; `synthesis-deal-scorer.inputs` enrichi (résultats couche 3 déjà exécutés + thesis-reconciler en full_analysis + Funding DB lorsque disponible) ; `memo-generator.inputs` détaillé (résultats disponibles des couches 0 à 3, incluant synthèse, contradictions, scénarios, conditions et mise à l'épreuve) ; `thesis-reconciler.inputs` précisé (thèse initiale + couches 1 et 2 + premiers résultats de couche 3 déjà exécutés).
+  - Reformulations outputs : *"breakdown transparent"* → *"ventilation transparente"* ; *"percentile vs similaires"* → *"percentile vs comparables lorsque disponibles"* ; *"bull/bear thesis"* → *"thèses positive et négative"* ; *"stress-testées"* → *"mises à l'épreuve"* ; *"incentives fondateur questionnées"* → *"incitations et motivations fondateurs à clarifier"* ; *"outcomes (exit value, multiples, timeframes)"* → *"résultats chiffrés (valeur de sortie, multiples, horizons)"* ; *"base/bull/bear"* → *"central/favorable/défavorable"* ; *"Risques cachés"* → *"Risques moins visibles"* ; *"comparaison aux standards"* → *"comparaison aux repères de marché"* ; *"points d'investissement"* → *"points clés du dossier"* ; *"prochaines étapes, questions pour le fondateur"* → *"points à traiter, questions ouvertes pour les fondateurs"*.
+  - `synthesis-deal-scorer.outputs` préfixé *"Sortie actuelle :"* + `chantier_note` mentionnant le passage 2 axes.
+  - `synthesis-deal-scorer.scoring` : *"par stage (Team, Market, Product, Financials, Timing)"* → *"par stade d'investissement (Équipe, Marché, Produit, Financier, Timing)"*.
+  - `memo-generator.outputs` : 13 items mémo traduits (synthèse exécutive, présentation de l'entreprise, points clés du dossier, risques clés, etc.).
+  - `memo-generator.quality_note` : *"Facturable 50K€ si fait par cabinet conseil"* → *"Qualité visée : mémo défendable devant associés, LPs ou co-investisseurs"* (claim chiffré marketing remplacé par défendabilité).
+- **Petits agents purgés** : *"Fact store"* → *"Référentiel de faits"* ; *"term sheets"* → *"documents de conditions / term sheets"* (bilingue).
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — mis à jour : *"notamment 8, 9, 10, 20, 26, 27, 28"* (§ 7 retiré de la liste). *"Les sections 3, 4, 5, 6 et 7 sont alignées"*. Note vestige connu réduite à § 8 (grade_mapping mono-axe).
+
+**`docs-doctrine/angeldesk-strategic-pivot.md`** :
+- Top note mise à jour : *"§§ 3-7"* (au lieu de *"§ 3 + § 4"* obsolète) ; *"Sections 8, 9, 10, 20, 26, 27, 28 pas encore alignées"*.
+- Table cascade § 10 : § 7 passé en ✅.
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- `agents_detail` : 4 clés tier0/tier1/tier2/tier3.
+- `tier0` : 3 clés (counted_architecture_agents:3, counting_note, runtime_preanalysis_components:3).
+- `tier1` : execution_phases (4 phases) + agents (13). Premier agent : deck-forensics (Phase A) — ordre runtime respecté.
+- `tier2` : 11 analysis_sections (avec schema_key + label_fr), 22 experts (ordre TIER2_EXPERT_NAMES, saas-expert premier).
+- `tier3` : execution_order + standalone_agents (6) + full_analysis_extra (1, thesis-reconciler avec full_analysis_only=true).
+
+### Avertissement
+`reference.yaml` n'est toujours PAS entièrement aligné. Les sections 8 (Scoring détaillé — grade_mapping mono-axe), 9 (Board AI détaillé), 10 (Live Coaching détaillé), 20 (Moat), 26 (Positioning rules), 27 (Persona), 28 (GTM) contiennent encore des vestiges. La cascade continue.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 8 (Scoring détaillé) — `grade_mapping` mono-axe (*"Excellent / Solide / À approfondir / Points d'attention / Zone d'alerte"*) à marquer *"état actuel legacy"* + référence au chantier scoring 2 axes orientation × solidité des preuves.
+
+---
+## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 6 Produit (Vue d'ensemble) aligné
+
+### Contexte
+Niveau 2 cascade : alignement de la section 6 (Produit — Vue d'ensemble) sur la doctrine du pivot. Restructuration majeure : sortie du catalogue de features hero, passage à un environnement analytique structuré par couches, séparation stricte `current_capabilities` (livré) vs `in_progress` (chantier) — verrou principal contre les "promesses trop larges". 32 corrections appliquées sur 3 itérations (v1 → v2 → v3) avec Sacha + ChatGPT 5.5.
+
+### Modifications
+
+**`docs-private/reference.yaml` § 6 (lignes 546-599 anciennes → ~125 lignes nouvelles)** — réécriture intégrale :
+
+- **Structure étendue** : ancienne (`summary` / `secret_sauce_public_messaging` / `tier_ambitions` / `key_features` flat 21 items / `agents_summary` incohérent, 5 champs) → nouvelle (`summary` / `public_messaging_rule` / `product_discipline` / `quality_standards` / `current_capabilities` groupé par 6 couches / `in_progress` / `agents_summary` cohérent, 7 champs).
+- **`summary`** : *"Plateforme d'intelligence d'investissement par IA multi-agents avec coaching temps réel et délibération multi-modèle"* → *"Angel Desk est le copilote analytique des investisseurs privés. Il organise l'extraction documentaire, l'analyse transverse, l'expertise sectorielle et la synthèse sourcée, avec des modules de débat multi-modèle et de vérification temps réel selon le workflow. La décision finale reste à l'investisseur."*
+- **`public_messaging_rule` (nouveau)** : interdit la mise en avant des agents / débat multi-modèle / lentilles sectorielles comme promesse principale ; rappelle la promesse principale (copilote analytique + preuves sourcées + contradictions visibles + zones d'incertitude).
+- **`secret_sauce_public_messaging` supprimé** → remplacé par **`product_discipline`** (registre mystique banni). Discipline cumulative honnête : provenance exigée pour les affirmations factuelles, classification de fiabilité, 5 directives anti-hallucination déployées dans les prompts agents, recoupement documentaire structuré lorsque les données le permettent, scoring déterministe, mémoire pipeline. *"La valeur ne vient pas d'un modèle unique qui aurait raison ; elle vient de cette discipline cumulative."*
+- **`tier_ambitions` → `quality_standards`** : renommé (*"ambitions"* trop marketing). Vocabulaire `tier{0..3}` → `layer{0..3}` (aligné architecture en 4 couches).
+  - tier0 *"Masterpiece de data collection"* → layer0 *"Extraction et qualification systématiques..."*.
+  - tier1 *"Excellent niveau — analyse de qualité Big4/VC senior partner"* → layer1 *"Analyse rigoureuse sur les axes transverses..."* (suppression promesse remplacement Big4/VC).
+  - tier2 *"Expert absolu — connaissance sectorielle surhumaine"* → layer2 *"Lentilles sectorielles dédiées (22 bibliothèques)..."* (*"surhumaine"* + *"absolu"* bannis).
+  - tier3 *"Perfection absolue — synthèse, scoring et mémo de niveau investment committee"* → layer3 *"Synthèse structurée, mise en regard des contradictions, scénarios documentés, mémo défendable. La décision finale reste à l'investisseur."* (*"perfection absolue"* + remplacement IC bannis).
+  - `current_status` distingue explicitement *"briques livrées"* vs *"en amélioration continue"*.
+- **`key_features` (flat list 21 items) → `current_capabilities` (groupé par 6 couches)** : verrou structurel principal. Couches : `document_evidence_layer` (4 items, nom interne Evidence Engine), `analysis_layer` (3 items), `sector_layer` (1 item), `synthesis_layer` (7 items, dont débat multi-modèle nom interne Board AI), `workflow_layer` (5 items, dont vérification temps réel nom interne Live Coaching), `export_api_layer` (2 items).
+- **Vestiges purgés dans les capabilities** :
+  - *"sublimation, pas juxtaposition"* (Board AI) → *"divergences persistantes = signaux à examiner"*.
+  - *"Live Coaching — audio + vision + contexte DD pendant les calls"* → *"Vérification des preuves en temps réel pendant l'appel fondateur"* (reframe doctrine).
+  - *"22 experts sectoriels (breadth surhumaine)"* → *"22 lentilles sectorielles (bibliothèques sectorielles)"*.
+  - *"Reflexion Engine (auto-critique Big4 itérative)"* → *"Auto-critique itérative sur les sorties concernées"* (suppression Big4 + qualif *"certaines sorties"*).
+  - *"Cross-reference deck vs DB (détection omissions fondateur)"* → *"Recoupement des affirmations du dossier avec la base de dossiers comparables lorsque des comparables existent"* (suppression *"omissions fondateur"* accusateur ; fusion doublon DB ; qualif disponibilité comparables).
+  - *"Export PDF professionnel (facturé 50K€ si fait par cabinet)"* → *"Export PDF structuré et sourcé du dossier d'analyse — code path livré ; disponibilité publique soumise au gate de release actif."* (claim chiffré marketing retiré).
+  - *"Scoring déterministe multi-dimensionnel (formule, pas LLM)"* → *"Scoring déterministe — formule TypeScript sur signaux tracés (pas jugement LLM)"* + chantier 2 axes dans `in_progress`.
+  - *"Résolution des contradictions"* → *"Mise en regard des contradictions"* (moins absolu).
+  - *"Extraction systématique de chaque élément documentaire"* → *"Extraction structurée des éléments documentaires disponibles"*.
+  - *"13 axes d'analyse"* → *"13 analyses transverses couvrant notamment"* (la liste de 8 axes était inférieure à 13).
+- **`in_progress` (nouveau)** : 4 items chantier explicites — scoring 2 axes, refonte hiérarchie d'interface, cohérence qualitative inter-couches (purge prompts couche 3), enrichissement Funding Database vers 5,000+.
+- **`agents_summary`** : ancien total incohérent (44 mais 3+13+22+6+3=47) → nouveau total cohérent (44 = 3+13+22+6). Ajout `framing` (architecture de support sous le capot), `counting_note` (Board AI + chat = surfaces d'orchestration), `total_convention` (full_analysis active aussi thesis-reconciler). Layer3 = *"6 autonomes / 7 en full_analysis"*. Rôles reformulés (suppression *"Big4"*, *"experts"*, etc.).
+- **Vocabulaire franglais purgé** : *"patterns"* → *"schémas"* ; *"outputs"* → *"sorties"* ; *"GTM"* → *"stratégie commerciale"* ; *"hero"* → *"accroche publique"* ; *"calls"* → *"appels"* ; *"internal: X"* → *"nom interne : X"* ; *"tracking résolution"* → *"suivi de la résolution"*.
+- **Adoucissements absolutismes** : *"provenance imposée sur chaque affirmation"* → *"provenance exigée pour les affirmations factuelles"* ; *"cross-référence systématique"* → *"recoupement documentaire structuré lorsque les données le permettent"* ; *"chaque prompt agent"* → *"les prompts agents"*.
+
+**`docs-private/reference.yaml` § 3 commentaire d'en-tête** — mis à jour : *"notamment 9, 10, 20, 26, 27, 28"* (§ 6 retiré de la liste). *"Les sections 3, 4, 5 et 6 sont alignées"*.
+
+**`docs-doctrine/angeldesk-strategic-pivot.md` § 10 (cascade)** — ligne § 6 ajoutée en ✅, séparée du groupe restant (§§ 9, 10, 20, 26, 27, 28 toujours ⏳).
+
+### Vérification
+- `python3 -c "import yaml; yaml.safe_load(open('docs-private/reference.yaml'))"` → **PARSE OK**.
+- 7 champs `product` confirmés : `agents_summary`, `current_capabilities`, `in_progress`, `product_discipline`, `public_messaging_rule`, `quality_standards`, `summary`.
+- `current_capabilities` : 6 couches (analysis_layer, document_evidence_layer, export_api_layer, sector_layer, synthesis_layer, workflow_layer).
+- `in_progress` : 4 items.
+- `quality_standards` : 5 champs (4 couches + current_status).
+- `agents_summary` : total=44 (cohérent), `total_convention` présent, layer3 = *"6 autonomes / 7 en full_analysis"*.
+
+### Avertissement
+`reference.yaml` n'est toujours PAS entièrement aligné. Les sections 9 (Board AI détaillé), 10 (Live Coaching détaillé), 20 (Moat), 26 (Positioning rules), 27 (Persona), 28 (GTM) contiennent encore des vestiges. La cascade continue.
+
+### Prochaine étape cascade
+`docs-private/reference.yaml` § 9 (Board AI détaillé) — section *"phase1_analysis / phase2_debate / phase3_vote"* + *"models: Claude/GPT-4o/Gemini/Grok"* + *"sublimation"* + *"wow_factor"* + *"étoiles dans les yeux"* + *"intelligence collective émergente"* à purger / reframer en transparence cognitive.
+
+---
 ## 2026-05-21 — Pivot doctrinal (suite) — reference.yaml § 5 Problème aligné
 
 ### Contexte

@@ -25,9 +25,9 @@ Définition stratégique de référence : *"Angel Desk est un environnement anal
 ## Principes de développement
 1. **Valeur dès le premier dossier** — L'utilisateur voit de la valeur dès le premier dossier.
 2. **Le contexte prime** — Pas d'analyse sans contexte (Funding DB cible 5K+ deals, benchmarks sectoriels datés, couche evidence-first interne).
-3. **Discipline anti-faux-positifs** — Chaque signal d'alerte passe : sources citées, seuil de fiabilité interne > 80%, cross-référence documentaire ou externe pertinente lorsque disponible. Discipline du **processus de détection**, pas garantie de résultat.
-4. **Scoring déterministe** — Le score est calculé par formule TypeScript sur des signaux tracés. Les variations entre versions doivent être explicables par de nouvelles preuves, pas par un jugement opaque.
-5. **Evidence-first** — Chaque affirmation rattachée à sa source, sa date disponible ou l'absence de date explicitée, sa fiabilité. Contradictions exposées. Zones d'incertitude. Fraîcheur tracée.
+3. **Discipline anti-faux-positifs** — Les signaux d'alerte doivent viser : source citée, fiabilité/provenance explicite, et cross-référence documentaire ou externe pertinente lorsque disponible. Discipline du **processus de détection**, pas garantie de résultat.
+4. **Scoring déterministe** — Agrégation de score déterministe par formule TypeScript sur les sous-scores et signaux disponibles. Certains sous-scores peuvent provenir de sorties LLM ; la reproductibilité bout-en-bout reste à tester. Les variations entre versions doivent être explicables par de nouvelles preuves ou un changement de méthodologie tracé, pas par un jugement opaque (cf. § 8 target_scoring_model + § 20 deterministic_scoring).
+5. **Evidence-first** — Les affirmations factuelles critiques sont rattachées à leur source, leur date disponible ou l'absence de date explicitée, leur fiabilité. Contradictions détectées exposées. Zones d'incertitude. Fraîcheur tracée.
 
 ---
 
@@ -43,7 +43,7 @@ Cette doctrine inspire les prompts agents, la hiérarchie d'interface et le mess
 
 > **Angel Desk ANALYSE et GUIDE. Angel Desk ne DÉCIDE JAMAIS.**
 >
-> L'investisseur est le seul décideur. L'outil rapporte des signaux, des faits, des comparaisons, des contradictions. Il ne dit jamais quoi faire.
+> L'investisseur est le seul décideur. L'outil rapporte des signaux, des éléments sourcés (affirmations factuelles critiques rattachées à leur source, leur date disponible ou l'absence de date explicitée, leur fiabilité), des comparaisons et des contradictions détectées. Il ne dit jamais quoi faire.
 
 Cette règle est **vérifiable mécaniquement** : sanitizers de labels, linters de prompts, assertions UI. Elle empêche les régressions vers le langage prescriptif.
 
@@ -62,9 +62,9 @@ Cette règle est **vérifiable mécaniquement** : sanitizers de labels, linters 
 | "Recommandation : PASS" | On recommande une action | "Signal : Signaux d'alerte dominants" |
 | Tout impératif adressé à l'investisseur ("Rejetez", "N'investissez pas", "Fuyez") | On commande | Constater les faits, laisser l'investisseur conclure |
 | **"La DD d'un fonds VC en 1h"** | Promesse oraculaire mesurable et trouvable fausse au premier deal sérieux | "L'environnement analytique des décisions d'investissement" |
-| **"Sublimation"** en public | Trop magique, registre IA-mystique | "Débat multi-modèle / transparence cognitive / désaccords exposés" |
-| **"Aucun analyste n'est expert en 22 secteurs"** | Sonne remplacement humain | "Chaque dossier avec la lentille sectorielle dédiée — sans dépendre d'un généraliste qui devine" |
-| **"Evidence Engine"** en public | Jargon interne | "Chaque affirmation rattachée à sa source, sa date disponible ou l'absence de date explicitée, sa fiabilité ; contradictions exposées ; zones d'incertitude ; fraîcheur tracée" |
+| **"Sublimation"** en public | Trop magique, registre IA-mystique | "Débat multi-modèle / désaccords exposés" |
+| **"Aucun analyste n'est expert en 22 secteurs"** | Sonne remplacement humain | "Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)" |
+| **"Evidence Engine"** en public | Jargon interne | "Les affirmations factuelles critiques rattachées à leur source, leur date disponible ou l'absence de date explicitée, leur fiabilité ; contradictions détectées ; zones d'incertitude ; fraîcheur tracée" |
 | **"Le meilleur partenaire d'aide à la décision parfaite"** | "Le meilleur" + "parfaite" = oraculaire | "Le copilote analytique des investisseurs privés" |
 
 ### Scoring à 2 axes — orientation × solidité des preuves
@@ -85,7 +85,7 @@ Cas distincts qui ne sont plus conflués :
 
 ### Règle d'or — test rapide
 
-Chaque phrase générée par l'outil (UI, PDF, chat, prompts agents, com publique) doit pouvoir se terminer par *"…à vous de décider"* sans que ce soit absurde. Si une phrase ne passe pas ce test, elle est trop directive.
+Chaque phrase RESTITUÉE À L'UTILISATEUR ou utilisée en communication (UI, PDF, chat, com publique) doit pouvoir se terminer par *"…à vous de décider"* sans que ce soit absurde. Le test ne s'applique pas aux prompts internes pris isolément (vocabulaire technique runtime non destiné à l'utilisateur). Si une phrase ne passe pas ce test, elle est trop directive.
 
 ### Hiérarchie de messaging (à appliquer sur TOUTE surface publique)
 
@@ -93,7 +93,7 @@ Ordre canonique strict :
 
 1. **Copilote analytique** (la catégorie)
 2. **Raisonnement sous incertitude** (la doctrine)
-3. **Effets evidence-first** (sources / contradictions / incertitudes / fraîcheur — décrits comme effets, jamais comme noms de système)
+3. **Effets evidence-first** (affirmations factuelles critiques sourcées, contradictions détectées, zones d'incertitude, fraîcheur — décrits comme effets, jamais comme noms de système)
 4. **44 agents en architecture de support** (preuve technique sous le capot, jamais en accroche)
 
 L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitch deck slide 1 ne mentionne pas le nombre.
@@ -103,7 +103,7 @@ L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne
 | Surface | Langage autorisé |
 |---|---|
 | **Docs doctrine** (`CLAUDE.md`, `reference.yaml`, docs-private internes, prompts agents) | Peuvent affirmer que la couche evidence-first **existe** et **est livrée**. Vocabulaire technique OK. |
-| **Docs publics** (page d'accueil, pricing, pitch deck, blog, communication, emails sortants) | AUCUN langage de type *"prêt"*, *"lancé"*, *"release-complete"*, *"disponible"*, *"live"*, *"available now"* tant que le gate de release actif n'est pas fermé (à date : B16, export PDF authentifié prod + 1h monitoring sans erreur). Le message reste sur l'**identité produit** et le **récit**, sans claim de disponibilité commerciale. |
+| **Docs publics** (page d'accueil, pricing, pitch deck, blog, communication, emails sortants) | AUCUN langage de type *"prêt"*, *"produit lancé"*, *"service lancé"*, *"lancement public"*, *"live now"*, *"release-complete"*, *"disponible dès maintenant"*, *"available now"*, *"prêt à utiliser"* tant que le gate de release actif n'est pas fermé (à date : B16, export PDF authentifié prod + 1h monitoring sans erreur). Le mot *"live"* brut n'est PAS banni en soi (*"Live Coaching"*, *"live sessions"*, statuts applicatifs runtime restent légitimes — c'est l'usage marketing public de disponibilité commerciale qui est banni). Le message reste sur l'**identité produit** et le **récit**, sans claim de disponibilité commerciale. |
 
 ### Reframes de features (à appliquer dans tous les docs et prompts)
 
@@ -111,8 +111,8 @@ L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne
 |---------|-----------------------|----------------|
 | **Board AI** | *"Sublimation — délibération qui trouve la vérité"* | *"4 modèles indépendants qui exposent leurs désaccords, leurs angles morts, leurs hypothèses faibles. Le désaccord persistant est une feature, pas un bug."* |
 | **Live Coaching** | *"IA temps réel — quoi répondre au fondateur"* | *"Vérification des preuves en temps réel pendant le call — fait remonter contradictions deck/fondateur, benchmarks dépassés, infos nouvelles, questions à poser maintenant."* |
-| **22 experts sectoriels** | *"Aucun analyste n'est expert en 22 secteurs"* | *"Chaque dossier analysé avec la lentille sectorielle dédiée — sans dépendre d'un généraliste qui devine."* |
-| **44 agents** | Accroche principale | *"Architecture en 4 couches — extraction, analyse horizontale (13 lentilles), expertise sectorielle (22 bibliothèques), synthèse et challenge (6 mécanismes). 44 agents spécialisés sous le capot."* |
+| **22 experts sectoriels** | *"Aucun analyste n'est expert en 22 secteurs"* | *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)."* |
+| **44 agents** | Accroche principale | *"Architecture en 4 couches — extraction, analyse horizontale (13 lentilles), expertise sectorielle (22 bibliothèques), synthèse et challenge (6 mécanismes). 44 agents / composants selon convention § 7 (3 + 13 + 22 + 6 ; thesis-reconciler conditionnel hors total), sous le capot."* |
 | **Scoring** | Score global 0-100 en écran principal | Score subordonné. Dimensions + solidité des preuves + sources + contradictions + questions montrés en premier. |
 
 ### Où ça s'applique concrètement
@@ -141,11 +141,13 @@ L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne
 - Surfaces publiques (landing, pricing, blog) — à reprendre APRÈS fermeture du gate de release actif
 - Purge finale des vestiges oraculaires dans les prompts Tier 3 (synthesis-deal-scorer, memo-generator, devils-advocate)
 
-## ANTI-HALLUCINATION — 5 DIRECTIVES OBLIGATOIRES (s'applique à TOUS les prompts)
+## ANTI-HALLUCINATION — 5 DIRECTIVES (STANDARD CIBLE)
 
-Chaque system prompt d'agent (Tier 0, 1, 2, 3, Chat, Board, Orchestration) DOIT inclure les 5 directives anti-hallucination. C'est un standard non-négociable. Si un nouvel agent est créé ou un prompt modifié, les 5 directives doivent être présentes.
+Standard cible : tout prompt agent d'analyse (Tier 0, 1, 2, 3, Chat, Board, Orchestration, certaines surfaces Live Coaching) devrait inclure les 5 directives anti-hallucination. La couverture actuelle est documentée et auditée dans `docs-private/reference.yaml` § 19 (coverage_audit, gaps_known) — la couverture n'est PAS universelle. Gaps connus : thesis-extractor, thesis-reconciler, rebuttal-judge, utterance-router, auto-dismiss, flux maintenance DB. Ajouter les directives à un nouvel agent reste recommandé, mais l'exigence absolue *"chaque agent sans exception"* n'est PAS le runtime actuel.
 
 Quand un schéma JSON est requis, l'incertitude doit être portée dans les champs du schéma, sans casser le format attendu.
+
+Ces directives DEMANDENT au LLM de changer son comportement (plus de prudence, plus de structuration, auto-évaluation explicite). Elles ne garantissent NI la vérité, NI la détection systématique des erreurs, NI l'application réelle par le LLM (cf. § 19 doctrinal_limits).
 
 ### 1. Confidence Threshold
 > Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
@@ -162,10 +164,11 @@ Quand un schéma JSON est requis, l'incertitude doit être portée dans les cham
 ### 5. Structured Uncertainty
 > Structure your response in three clearly labelled sections: **CONFIDENT:** Claims where you have strong evidence and high certainty (>90%) **PROBABLE:** Claims where you believe this is likely correct but acknowledge uncertainty (50-90%) **SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%). Every claim must be placed in one of these three categories. Do not present speculative claims as confident ones.
 
-### Implémentation
-- **Agents BaseAgent** (Tier 0, 1, 3, Chat) : prompts 2-5 via méthodes dans `base-agent.ts` (`getAbstentionPermission()`, `getCitationDemand()`, `getSelfAuditDirective()`, `getStructuredUncertaintyDirective()`). Prompt 1 directement dans chaque `buildSystemPrompt()`.
-- **Agents Tier 2** : les 5 directives directement dans chaque fichier expert + dans `base-sector-expert.ts`.
-- **Board, Consensus Engine, Reflexion** : les 5 directives directement dans chaque prompt (debater, arbitrator, critic, improver).
+### Implémentation (3 patterns d'injection — cf. § 19 injection_patterns)
+- **Pattern 1 — BaseAgent helpers** (Tier 0/1/3 majoritairement, Chat) : directives 2-5 injectées via `buildFullSystemPrompt()` appelé depuis `llmComplete` / `llmCompleteJSON` / `llmCompleteJSONValidated` / `llmCompleteJSONWithFallback` / `llmStream` de `base-agent.ts`. Méthodes : `getAbstentionPermission()`, `getCitationDemand()`, `getSelfAuditDirective()`, `getStructuredUncertaintyDirective()`. Nuance : étendre BaseAgent N'EST PAS suffisant — c'est l'utilisation des helpers d'appel LLM qui déclenche l'injection.
+- **Pattern 2 — helper partagé** : `src/agents/orchestration/prompts/anti-hallucination.ts` (utilisé notamment par board-orchestrator et fact-extractor).
+- **Pattern 3 — inline per prompt** : directives écrites verbatim dans le prompt (system prompt OU fallback user prompt selon le chemin). Concerne agents standalone, lentilles sectorielles Tier 2 non-BaseAgent (incl. `base-sector-expert.ts`), Board members, Consensus debater/arbitrator, Reflexion critic/improver, Live Coaching engine / visual-processor / post-call-* / transcript-condenser.
+- **Directive 1 (Confidence Threshold) N'EST PAS centralisée** dans BaseAgent — à auditer agent par agent. Gaps connus listés dans § 19 gaps_known.
 
 ---
 
@@ -268,7 +271,7 @@ src/agents/tier3/
 ```
 
 ### Standards de qualité
-- Chaque affirmation sourcée
+- Affirmations factuelles critiques sourcées
 - Signaux d'alerte : sévérité + preuve + impact + question
 - Cross-reference documentaire ou externe pertinente lorsque disponible
 - Calculs montrés, pas juste les résultats

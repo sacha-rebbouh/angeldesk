@@ -2,8 +2,9 @@
 
 > Source de vérité versionnée et partagée (Claude + Codex + Sacha).
 > **Pivot 2026-05-20** · Dernière mise à jour 2026-05-21.
-> Appliquée dans `CLAUDE.md` projet et `docs-private/reference.yaml` § 3 + § 4.
-> Sections 5, 6, 9, 10, 20, 26, 27, 28 de `reference.yaml` pas encore alignées (cascade en cours).
+> Appliquée dans `CLAUDE.md` projet et `docs-private/reference.yaml` §§ 3-11 + § 19 + § 20 + § 21 + § 22 + § 26 + § 27 + § 28 + § 29 + § 30 + § 31 + § 32 + § 33 + § 34.
+> Cascade doctrinale TERMINÉE pour le périmètre repéré.
+> Formulation prudente : *"terminée pour le périmètre repéré"*, PAS *"tout le fichier est parfait"*. Toute section non listée ci-dessus n'a PAS été auditée dans le cadre de la cascade 2026-05-20 et peut contenir des vestiges doctrinaux.
 
 ---
 
@@ -37,7 +38,7 @@ La positive guide, la négative protège. Les deux coexistent.
 - Petits fonds (moins de 50 M€ d'actifs sous gestion)
 - Équipes M&A légères
 
-**Persona principale — Pauline** : 34 ans, responsable d'investissement micro-fonds ou chef de syndicat structuré. 100-200 deals/an. Mémos défendables sans armée d'analystes. Justifie devant associés, co-investisseurs, LPs. **Pauline porte le besoin** (décideur d'achat, pas junior subissant l'outil).
+**Persona principale — Pauline** : 34 ans, responsable d'investissement micro-fonds ou chef de syndicat structuré. 100-200 deals/an. Mémos défendables sans armée d'analystes. Justifie devant associés, co-investisseurs, LPs. **Pauline porte le besoin** : elle pilote l'essai et défend l'achat auprès de l'associé responsable ou de l'équipe dirigeante. Ce n'est pas un junior analyst qui subit l'outil.
 
 **Porte d'entrée acquisition — Marie (secondaire)** : BA expérimenté/expert via pack Starter. **PAS le centre stratégique.** Le BA novice 2h/semaine est exclu du centre de conception (risque de transformation oracle).
 
@@ -78,7 +79,7 @@ Cas distincts :
 | Score global mono-axe trônant en haut de l'UI | Remplacé par modèle 2 axes |
 | *"Confiance"* comme nom d'axe scoring | Recrée l'auto-évaluation LLM |
 
-**Test règle d'or** : chaque phrase générée (UI, PDF, chat, prompts, com) doit pouvoir se terminer par *"…à vous de décider"* sans absurdité. Sinon : trop directive.
+**Test règle d'or** : chaque phrase RESTITUÉE À L'UTILISATEUR ou utilisée en communication (UI, PDF, chat, com publique) doit pouvoir se terminer par *"…à vous de décider"* sans absurdité. Ne s'applique pas aux prompts internes pris isolément. Sinon : trop directive.
 
 ---
 
@@ -88,7 +89,7 @@ Ordre canonique strict :
 
 1. **Copilote analytique** (catégorie)
 2. **Raisonnement sous incertitude** (doctrine)
-3. **Preuves sourcées, contradictions visibles, zones d'incertitude, fraîcheur et fiabilité documentaire** (effets)
+3. **Affirmations factuelles critiques sourcées, contradictions détectées, zones d'incertitude, fraîcheur et fiabilité documentaire** (effets)
 4. **Architecture de support** (preuve technique sous le capot)
 
 La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitch deck slide 1 ne mentionne pas le nombre.
@@ -101,7 +102,7 @@ La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitc
 |---|---|---|
 | **Board AI** | *"Sublimation — trouve la vérité"* | *"Modèles indépendants aux profils complémentaires confrontent leurs lectures. Divergences = signaux à examiner, pas des défauts."* |
 | **Live Coaching** | *"IA temps réel — quoi répondre"* | *"Vérification des preuves en temps réel pendant l'appel — fait remonter contradictions présentation/déclarations, benchmarks dépassés, infos nouvelles."* |
-| **22 experts sectoriels** | *"Aucun analyste expert en 22 secteurs"* | *"Chaque dossier avec la lentille sectorielle dédiée — sans forcer une grille généraliste."* |
+| **22 experts sectoriels** | *"Aucun analyste expert en 22 secteurs"* | *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)."* |
 | **44 agents** | Accroche principale | *"Architecture en 4 couches — 44 agents sous le capot."* |
 | **Scoring** | Score global en hero UI | Score subordonné. Dimensions + solidité des preuves + sources + contradictions + questions en premier. |
 
@@ -112,7 +113,7 @@ La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitc
 | Surface | Langage autorisé |
 |---|---|
 | **Doctrine** (`CLAUDE.md`, `docs-doctrine/`, `docs-private/reference.yaml`, prompts agents) | Vocabulaire technique. Affirmation que la couche evidence-first existe / est livrée. |
-| **Public** (page d'accueil, pricing, pitch deck, blog, com, emails sortants) | Aucun langage de disponibilité commerciale (*"prêt"*, *"lancé"*, *"live"*, *"release-complete"*, *"disponible"*, *"available now"*) tant que le gate de release actif n'est pas fermé. |
+| **Public** (page d'accueil, pricing, pitch deck, blog, com, emails sortants) | Aucun langage de disponibilité commerciale (*"prêt"*, *"produit lancé"*, *"service lancé"*, *"lancement public"*, *"live now"*, *"release-complete"*, *"disponible dès maintenant"*, *"available now"*, *"prêt à utiliser"*) tant que le gate de release actif n'est pas fermé. Le mot *"live"* brut n'est PAS banni en soi (*"Live Coaching"*, *"live sessions"*, statuts applicatifs runtime restent légitimes — c'est l'usage marketing public de disponibilité commerciale qui est banni). |
 
 **Gate de release actif (état courant)** : B16 — export PDF authentifié prod + 1h monitoring sans erreur.
 
@@ -127,7 +128,7 @@ La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitc
 | *Board AI* | débat multi-modèle |
 | *evidence-first* | preuves sourcées, traçabilité, fiabilité documentaire |
 | *substrat cognitif partagé* | trace analytique partagée |
-| *Evidence Engine* | preuves sourcées, dates disponibles ou absences de date explicitées, fiabilité documentaire, contradictions visibles |
+| *Evidence Engine* | affirmations factuelles critiques sourcées, dates disponibles ou absences de date explicitées, fiabilité documentaire, contradictions détectées |
 | *IA imparfaites* | (jamais en public — utiliser *"raisonnement sous incertitude"*) |
 | *sublimation* | (bannie — utiliser *"débat multi-modèle"*) |
 | *wisdom of crowds* | (bannie — décrire l'effet observable) |
@@ -144,7 +145,25 @@ La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitc
 | 1 | `docs-doctrine/angeldesk-strategic-pivot.md` (ce fichier) | ✅ |
 | 2 | `docs-private/reference.yaml` § 4 Marché Cible | ✅ |
 | 2 | `docs-private/reference.yaml` § 5 Problème | ✅ |
-| 2 | `docs-private/reference.yaml` §§ 6, 9, 10, 20, 26, 27, 28 | ⏳ |
+| 2 | `docs-private/reference.yaml` § 6 Produit — Vue d'ensemble | ✅ |
+| 2 | `docs-private/reference.yaml` § 7 Agents détaillés | ✅ |
+| 2 | `docs-private/reference.yaml` § 8 Scoring détaillé | ✅ |
+| 2 | `docs-private/reference.yaml` § 9 Board AI | ✅ |
+| 2 | `docs-private/reference.yaml` § 10 Live Coaching | ✅ |
+| 2 | `docs-private/reference.yaml` § 11 Engines (Consensus + Reflexion) | ✅ |
+| 2 | `docs-private/reference.yaml` § 19 (5 directives anti-hallucination détail) | ✅ |
+| 2 | `docs-private/reference.yaml` § 20 Moat & Différenciation | ✅ |
+| 2 | `docs-private/reference.yaml` § 26 Positionnement Produit (Règles publiques) | ✅ |
+| 2 | `docs-private/reference.yaml` § 27 Personas (Pauline + Marie) | ✅ |
+| 2 | `docs-private/reference.yaml` § 28 GTM (hypothèses + measurement_plan) | ✅ |
+| 2 | `docs-private/reference.yaml` § 32 Legal & Compliance (matrice d'audit) | ✅ |
+| 2 | `docs-private/reference.yaml` § 21 Pricing (matrice d'audit) | ✅ |
+| 2 | `docs-private/reference.yaml` § 22 Add-ons (matrice d'audit) | ✅ |
+| 2 | `docs-private/reference.yaml` § 29 Unit Economics (matrice d'audit) | ✅ |
+| 2 | `docs-private/reference.yaml` § 30 Objections & Réponses (matrice talking points) | ✅ |
+| 2 | `docs-private/reference.yaml` § 31 Traction & Métriques (matrice d'audit) | ✅ |
+| 2 | `docs-private/reference.yaml` § 34 Roadmap (matrice d'hypothèses) | ✅ |
+| 2 | `docs-private/reference.yaml` § 33 KPI (matrice gouvernance métriques) | ✅ |
 | 2 | `docs-private/product-overview.md` | ⏳ |
 | 2 | `docs-private/exec-summary.md` | ⏳ |
 | 2 | `docs-private/pitch-deck.md` + `pitch-deck-slides.md` | ⏳ |
@@ -166,6 +185,6 @@ La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitc
 |---|---|---|
 | `docs-doctrine/angeldesk-strategic-pivot.md` (ce fichier) | Source de vérité versionnée et partagée | ✅ |
 | `CLAUDE.md` projet | Doctrine condensée + instructions actives pour session Claude | ✅ |
-| `docs-private/reference.yaml` § 3 et § 4 | Doctrine en YAML structuré | ❌ (docs-private/ gitignored) |
+| `docs-private/reference.yaml` §§ 3-11 + § 19 + § 20 + § 21 + § 22 + § 26 + § 27 + § 28 + § 29 + § 30 + § 31 + § 32 + § 33 + § 34 | Doctrine en YAML structuré | ❌ (docs-private/ gitignored) |
 | `~/.claude/projects/.../memory/angeldesk_strategic_pivot.md` | Pointeur Claude (rappel, pas autorité) | ❌ (hors repo) |
 | `changes-log.md` | Trace des modifications doctrinales | ✅ |
