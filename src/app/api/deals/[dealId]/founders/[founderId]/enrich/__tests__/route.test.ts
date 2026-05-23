@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -111,6 +115,15 @@ describe("POST /api/deals/[dealId]/founders/[founderId]/enrich", () => {
         headers: { "content-type": "application/json" },
       })
     );
+  });
+
+  it("source guard: enrich/route.ts ne contient pas la mention juridique 'RGPD Art. 6.1.f'", () => {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const routeContent = readFileSync(
+      path.resolve(__dirname, "../route.ts"),
+      "utf-8",
+    );
+    expect(routeContent).not.toContain("RGPD Art. 6.1.f");
   });
 
   it("uses the canonical sector fact for founder enrichment", async () => {

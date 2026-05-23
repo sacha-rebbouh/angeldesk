@@ -44,8 +44,7 @@ export const LinkedInConsentDialog = memo(function LinkedInConsentDialog({
             LinkedIn (expériences, formation, compétences) via une API tierce.
           </p>
           <p className="text-muted-foreground">
-            Base légale : Intérêt légitime pour l&apos;analyse de due diligence (Art. 6.1.f RGPD).
-            Les données sont supprimables à tout moment depuis le dashboard.
+            Les données utilisées peuvent être supprimées depuis le dashboard.
           </p>
         </div>
         <DialogFooter>

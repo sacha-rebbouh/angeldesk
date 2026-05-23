@@ -3,14 +3,13 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import {
   BarChart3,
-  CheckCircle,
-  Clock,
   Shield,
   ArrowRight,
   Sparkles,
   TrendingUp,
   Users,
   Brain,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +38,7 @@ export default async function Home() {
             </Button>
             <Button size="sm" className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 shadow-sm" asChild>
               <Link href="/register">
-                Commencer gratuitement
+                Se créer un compte
                 <ArrowRight className="ml-1.5 h-4 w-4" />
               </Link>
             </Button>
@@ -59,33 +58,21 @@ export default async function Home() {
             <div className="animate-fade-in">
               <Badge variant="secondary" className="px-4 py-1.5 text-sm font-medium shadow-sm">
                 <Sparkles className="mr-1.5 h-3.5 w-3.5 text-amber-500" />
-                Votre équipe d&apos;analystes IA
+                Copilote analytique
               </Badge>
             </div>
 
             {/* Main Heading */}
             <div className="space-y-6 animate-slide-up">
               <h1 className="text-4xl font-bold tracking-tighter sm:text-5xl md:text-6xl lg:text-7xl text-balance">
-                L&apos;analyse qu&apos;un fonds VC
+                Le copilote analytique
                 <br />
-                ferait en <span className="relative">
-                  <span className="gradient-text-primary">2 jours</span>
-                  <svg className="absolute -bottom-2 left-0 w-full" height="8" viewBox="0 0 100 8" preserveAspectRatio="none">
-                    <path d="M0 7 Q 25 0, 50 7 T 100 7" stroke="url(#gradient)" strokeWidth="3" fill="none" strokeLinecap="round" />
-                    <defs>
-                      <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stopColor="oklch(0.72 0.18 55)" />
-                        <stop offset="100%" stopColor="oklch(0.62 0.20 40)" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                </span>.
-                <br />
-                <span className="text-muted-foreground/80">En 1 heure.</span>
+                des <span className="gradient-text-primary">investisseurs privés</span>.
               </h1>
               <p className="mx-auto max-w-[680px] text-lg text-muted-foreground md:text-xl leading-relaxed">
-                50+ deals comparables, red flags détectés automatiquement, questions à poser au fondateur.
-                <span className="font-medium text-foreground"> Vous décidez, vos analystes IA font le travail.</span>
+                Qualifier les preuves disponibles, exposer les contradictions détectées,
+                structurer les signaux, matérialiser les zones d&apos;incertitude.
+                <span className="font-medium text-foreground"> La décision reste à l&apos;investisseur.</span>
               </p>
             </div>
 
@@ -94,28 +81,12 @@ export default async function Home() {
               <Button size="lg" className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 shadow-md hover:shadow-lg transition-all text-base px-8" asChild>
                 <Link href="/register">
                   <Brain className="mr-2 h-5 w-5" />
-                  Analyser mon premier deal
+                  Accéder à la plateforme
                 </Link>
               </Button>
               <Button variant="outline" size="lg" className="text-base px-8 shadow-sm" asChild>
                 <Link href="#features">Découvrir la plateforme</Link>
               </Button>
-            </div>
-
-            {/* Trust Indicators */}
-            <div className="flex flex-wrap items-center justify-center gap-6 pt-8 text-sm text-muted-foreground animate-fade-in delay-300">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-4 w-4 text-emerald-500" />
-                <span>Aucune carte requise</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-4 w-4 text-emerald-500" />
-                <span>5 analyses gratuites</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-4 w-4 text-emerald-500" />
-                <span>Résultats en 2 minutes</span>
-              </div>
             </div>
           </div>
         </section>
@@ -128,7 +99,7 @@ export default async function Home() {
                 Ce qui vous attend
               </h2>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Une due diligence complète, comme si vous aviez une équipe d&apos;analystes à votre disposition.
+                Un environnement analytique pour décider sous incertitude.
               </p>
             </div>
 
@@ -136,11 +107,12 @@ export default async function Home() {
               {/* Feature 1 */}
               <div className="group relative rounded-2xl border bg-card p-8 shadow-sm transition-all hover:shadow-md hover:border-ring/30">
                 <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-amber-100 to-orange-100 transition-transform group-hover:scale-110">
-                  <Clock className="h-7 w-7 text-amber-600" />
+                  <Layers className="h-7 w-7 text-amber-600" />
                 </div>
-                <h3 className="text-xl font-semibold mb-3">1 heure chrono</h3>
+                <h3 className="text-xl font-semibold mb-3">Analyse structurée du dossier</h3>
                 <p className="text-muted-foreground leading-relaxed">
-                  Uploadez votre deck et recevez une analyse complète. Pas de formulaires interminables, pas d&apos;attente.
+                  Uploadez le deck et les documents disponibles. Les éléments sont extraits,
+                  recoupés et structurés en signaux exploitables.
                 </p>
               </div>
 
@@ -149,9 +121,10 @@ export default async function Home() {
                 <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 transition-transform group-hover:scale-110">
                   <TrendingUp className="h-7 w-7 text-blue-600" />
                 </div>
-                <h3 className="text-xl font-semibold mb-3">50+ comparables</h3>
+                <h3 className="text-xl font-semibold mb-3">Mise en perspective des éléments disponibles</h3>
                 <p className="text-muted-foreground leading-relaxed">
-                  La valorisation est-elle correcte ? Comparez avec notre base de 50K+ deals pour le savoir instantanément.
+                  Les déclarations du deck sont confrontées aux données comparables disponibles,
+                  avec source, date et fiabilité explicites.
                 </p>
               </div>
 
@@ -160,9 +133,10 @@ export default async function Home() {
                 <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-100 to-green-100 transition-transform group-hover:scale-110">
                   <Shield className="h-7 w-7 text-emerald-600" />
                 </div>
-                <h3 className="text-xl font-semibold mb-3">Zéro faux positifs</h3>
+                <h3 className="text-xl font-semibold mb-3">Signaux d&apos;alerte sourcés</h3>
                 <p className="text-muted-foreground leading-relaxed">
-                  Chaque red flag a un score de confiance supérieur à 80%. Que du signal, pas de bruit.
+                  Chaque signal d&apos;alerte est rattaché à sa source, sa date disponible
+                  ou l&apos;absence de date explicitée, et sa fiabilité.
                 </p>
               </div>
             </div>
@@ -177,7 +151,7 @@ export default async function Home() {
                 Comment ça marche
               </h2>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Trois étapes simples pour transformer votre façon d&apos;investir.
+                Trois étapes pour structurer une décision sous incertitude.
               </p>
             </div>
 
@@ -199,9 +173,9 @@ export default async function Home() {
                   <div className="mb-6 inline-flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 to-orange-600 text-white font-bold text-lg shadow-md">
                     2
                   </div>
-                  <h3 className="text-lg font-semibold mb-2">L&apos;IA analyse</h3>
+                  <h3 className="text-lg font-semibold mb-2">L&apos;analyse</h3>
                   <p className="text-muted-foreground text-sm">
-                    13 agents spécialisés passent le deal au crible en parallèle.
+                    Le dossier est passé au crible en parallèle.
                   </p>
                 </div>
 
@@ -212,36 +186,9 @@ export default async function Home() {
                   </div>
                   <h3 className="text-lg font-semibold mb-2">Décidez</h3>
                   <p className="text-muted-foreground text-sm">
-                    Recevez votre briefing : signaux clés, comparables, red flags et questions à poser au fondateur.
+                    Recevez votre briefing : signaux clés, comparables, signaux d&apos;alerte et questions prioritaires.
                   </p>
                 </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Social Proof */}
-        <section className="border-t bg-muted/30">
-          <div className="container py-16">
-            <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-6 text-center">
-              <div>
-                <div className="text-3xl font-bold gradient-text-primary">50K+</div>
-                <div className="text-sm text-muted-foreground">Deals dans notre base</div>
-              </div>
-              <div className="h-12 w-px bg-border hidden sm:block" />
-              <div>
-                <div className="text-3xl font-bold gradient-text-primary">27</div>
-                <div className="text-sm text-muted-foreground">Agents IA spécialisés</div>
-              </div>
-              <div className="h-12 w-px bg-border hidden sm:block" />
-              <div>
-                <div className="text-3xl font-bold gradient-text-primary">2 min</div>
-                <div className="text-sm text-muted-foreground">Temps d&apos;analyse moyen</div>
-              </div>
-              <div className="h-12 w-px bg-border hidden sm:block" />
-              <div>
-                <div className="text-3xl font-bold gradient-text-primary">80%+</div>
-                <div className="text-sm text-muted-foreground">Confidence minimum</div>
               </div>
             </div>
           </div>
@@ -258,15 +205,14 @@ export default async function Home() {
               <div className="relative">
                 <Users className="mx-auto h-12 w-12 mb-6 opacity-90" />
                 <h2 className="text-3xl font-bold tracking-tight sm:text-4xl mb-4 text-balance">
-                  Votre prochain deal, analysé en 1 heure
+                  Analyser un dossier
                 </h2>
                 <p className="text-white/90 mb-8 max-w-xl mx-auto text-lg">
-                  Rejoignez les Business Angels qui prennent des décisions éclairées.
-                  Essayez gratuitement, sans engagement.
+                  Pour les investisseurs privés et équipes d&apos;investissement légères.
                 </p>
                 <Button size="lg" variant="secondary" className="text-amber-600 font-semibold shadow-md hover:shadow-lg transition-all text-base px-8" asChild>
                   <Link href="/register">
-                    Créer un compte gratuit
+                    Se créer un compte
                     <ArrowRight className="ml-2 h-5 w-5" />
                   </Link>
                 </Button>

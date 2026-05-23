@@ -69,7 +69,7 @@ export const CreditPurchaseModal = memo(function CreditPurchaseModal({
             ) : (
               <>
                 <Coins className="size-5 text-amber-500" />
-                Acheter des crédits
+                Demander des crédits
               </>
             )}
           </DialogTitle>

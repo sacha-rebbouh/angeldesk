@@ -1,36 +1,21 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Gift, Mail } from "lucide-react";
+import { Mail } from "lucide-react";
 
 interface PricingCtaButtonProps {
-  variant: "card" | "banner";
+  variant: "card";
   packName?: string;
   highlighted?: boolean;
-  label?: string;
 }
 
-export function PricingCtaButton({ variant, packName, highlighted, label }: PricingCtaButtonProps) {
+export function PricingCtaButton({ packName, highlighted }: PricingCtaButtonProps) {
   const handleClick = () => {
     const subject = packName
       ? encodeURIComponent(`Achat pack ${packName} — Angel Desk`)
       : encodeURIComponent('Accès Angel Desk');
     window.location.href = `mailto:contact@angeldesk.io?subject=${subject}`;
   };
-
-  if (variant === "banner") {
-    return (
-      <Button
-        size="lg"
-        variant="secondary"
-        className="bg-white/90 text-emerald-700 hover:bg-white"
-        onClick={handleClick}
-      >
-        <Gift className="mr-2 h-5 w-5" />
-        {label ?? "Commencer gratuitement"}
-      </Button>
-    );
-  }
 
   return (
     <Button
