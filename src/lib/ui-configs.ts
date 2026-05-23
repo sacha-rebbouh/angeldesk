@@ -105,6 +105,21 @@ export function getScoreBarColor(score: number): string {
 }
 
 // =============================================================================
+// Orientation du signal — 5 valeurs canoniques (axe 1 du modèle 2 axes)
+// =============================================================================
+
+/** Valeurs canoniques de l'orientation du signal. */
+export const ORIENTATION_VALUES = [
+  "very_favorable",
+  "favorable",
+  "contrasted",
+  "vigilance",
+  "alert_dominant",
+] as const;
+
+export type Orientation = (typeof ORIENTATION_VALUES)[number];
+
+// =============================================================================
 // Recommendation Config — centralized for verdict-panel & tier3-results
 // =============================================================================
 
@@ -189,6 +204,116 @@ export const READINESS_LABELS: Record<string, string> = {
   SIGNIFICANT_CONCERNS: "Points d'attention majeurs",
   DO_NOT_PROCEED: "Alertes critiques",
 };
+
+// =============================================================================
+// Evidence Solidity — axe 2 du modèle 2 axes (solidité des preuves)
+// =============================================================================
+//
+// Distinct de `thesisSolidityScore` du Board (numérique 0-100). Ici on parle de
+// la solidité des preuves agrégées pour qualifier un signal (sources, fraîcheur,
+// cross-référence, contradiction documentaire).
+//
+// Règle critique : il n'y a PAS de valeur canonique "unknown".
+//   - 5 valeurs qualifiées : strong | moderate | low | contradictory | insufficient
+//   - absence = null | undefined (côté contrat)
+//   - fallback affichable "Solidité à qualifier" uniquement si la surface le demande
+//     explicitement (cf. getEvidenceSolidityLabel + flag showUnqualified du composant)
+
+/** Valeurs canoniques de la solidité des preuves. */
+export const EVIDENCE_SOLIDITY_VALUES = [
+  "strong",
+  "moderate",
+  "low",
+  "contradictory",
+  "insufficient",
+] as const;
+
+export type EvidenceSolidity = (typeof EVIDENCE_SOLIDITY_VALUES)[number];
+
+export const EVIDENCE_SOLIDITY_CONFIG: Record<EvidenceSolidity, {
+  label: string;
+  shortLabel: string;
+  color: string;
+  bg: string;
+  description: string;
+}> = {
+  strong: {
+    label: "Preuves solides",
+    shortLabel: "Solides",
+    color: "text-emerald-800",
+    bg: "bg-emerald-50 border-emerald-300",
+    description: "Sources documentaires multiples avec cross-référence.",
+  },
+  moderate: {
+    label: "Preuves partielles",
+    shortLabel: "Partielles",
+    color: "text-blue-800",
+    bg: "bg-blue-50 border-blue-300",
+    description: "Sources présentes mais lacunes ou incertitudes.",
+  },
+  low: {
+    label: "Preuves faibles",
+    shortLabel: "Faibles",
+    color: "text-amber-800",
+    bg: "bg-amber-50 border-amber-300",
+    description: "Peu de sources, fraîcheur ou fiabilité limitée.",
+  },
+  contradictory: {
+    label: "Preuves contradictoires",
+    shortLabel: "Contradictoires",
+    color: "text-orange-800",
+    bg: "bg-orange-50 border-orange-300",
+    description: "Sources en désaccord direct. Investigation requise.",
+  },
+  insufficient: {
+    label: "Données insuffisantes",
+    shortLabel: "Insuffisantes",
+    color: "text-slate-800",
+    bg: "bg-slate-50 border-slate-300",
+    description: "Trop peu d'éléments pour qualifier les preuves.",
+  },
+};
+
+/**
+ * Fallback label volontairement NON exporté. La seule façon de l'obtenir est
+ * d'appeler `getEvidenceSolidityLabel(value, { showUnqualified: true })`. Cela
+ * empêche une surface en aval d'importer le label brut et de l'afficher sans
+ * passer par le flag opt-in.
+ */
+const EVIDENCE_SOLIDITY_UNQUALIFIED_LABEL = "Solidité à qualifier";
+
+const EVIDENCE_SOLIDITY_KEY_SET: ReadonlySet<string> = new Set(EVIDENCE_SOLIDITY_VALUES);
+
+/**
+ * Retourne la config solidité pour une valeur qualifiée, ou `null` si la
+ * valeur est absente / non reconnue. Pas de fallback ici — c'est à l'appelant
+ * de décider d'afficher ou non un état non qualifié.
+ */
+export function getEvidenceSolidityConfig(
+  value: EvidenceSolidity | string | null | undefined,
+): (typeof EVIDENCE_SOLIDITY_CONFIG)[EvidenceSolidity] | null {
+  if (value == null) return null;
+  if (!EVIDENCE_SOLIDITY_KEY_SET.has(value)) return null;
+  return EVIDENCE_SOLIDITY_CONFIG[value as EvidenceSolidity];
+}
+
+/**
+ * Retourne le label long FR pour une valeur de solidité, ou `null` si la
+ * valeur est absente / non reconnue.
+ *
+ * Le label fallback ("Solidité à qualifier") n'est PAS exporté en tant que
+ * constante. La seule façon de l'obtenir est de passer explicitement
+ * `{ showUnqualified: true }` ici. Cela évite qu'une surface importe le label
+ * brut et l'affiche sans passer par le flag opt-in.
+ */
+export function getEvidenceSolidityLabel(
+  value: EvidenceSolidity | string | null | undefined,
+  options?: { showUnqualified?: boolean },
+): string | null {
+  const cfg = getEvidenceSolidityConfig(value);
+  if (cfg) return cfg.label;
+  return options?.showUnqualified === true ? EVIDENCE_SOLIDITY_UNQUALIFIED_LABEL : null;
+}
 
 // =============================================================================
 // Enum FR Labels — centralized translations for agent output enums
