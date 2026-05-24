@@ -141,7 +141,10 @@ describe("Tier 3 Zod Schemas", () => {
     }
   });
 
-  it("DevilsAdvocateResponseSchema validates valid data", () => {
+  it("DevilsAdvocateResponseSchema validates valid data (Phase A A3 — structuralRisks + riskPosture + signalContribution, D1)", () => {
+    // Phase A slice A3 : contrat natif `structuralRisks` (StructuralRisk A1)
+    // + `riskPosture` + `signalContribution`. Aucun `killReasons` ni
+    // `overallAssessment` accepté en émission (D1 verrouillé, DA-spécifique).
     const data = {
       meta: baseMeta,
       challenges: [
@@ -160,13 +163,100 @@ describe("Tier 3 Zod Schemas", () => {
       blindSpots: [
         { area: "Regulatory", risk: "GDPR compliance unclear", whyMissed: "No legal docs provided" },
       ],
-      overallAssessment: {
-        verdict: "Significant concerns",
-        topConcerns: ["Burn rate", "No moat"],
-        recommendation: "Proceed with caution",
-      },
+      structuralRisks: [
+        {
+          riskId: "sr-1",
+          description: "Cap table fragmenté — risque de blocages de gouvernance",
+          category: "structural",
+          severity: "HIGH",
+          evidence: "12 cap table entries, no lead investor with > 10%",
+          source: "cap-table-auditor",
+          impact: "Décisions bloquées en cas de Series A",
+          question: "Quel mécanisme de gouvernance avez-vous prévu ?",
+        },
+      ],
+      riskPosture: "elevated",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
     };
     expect(DevilsAdvocateResponseSchema.safeParse(data).success).toBe(true);
+  });
+
+  it("DevilsAdvocateResponseSchema REJETTE `killReasons` legacy (Phase A A3, D1)", () => {
+    // Régression D1 : aucun alias `killReasons` n'est admis par le contrat
+    // natif. Si une fixture brute LLM dégradée doit être testée, elle l'est
+    // au niveau input du parser tolérant côté agent, pas dans ce schema.
+    const data = {
+      meta: baseMeta,
+      challenges: [],
+      blindSpots: [],
+      killReasons: [
+        { id: "kr-1", reason: "x", category: "team", evidence: "x", sourceAgent: "x",
+          dealBreakerLevel: "ABSOLUTE", resolutionPossible: false, impactIfIgnored: "x",
+          questionToFounder: "x", redFlagAnswer: "x" },
+      ],
+      riskPosture: "elevated",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
+    };
+    expect(DevilsAdvocateResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("DevilsAdvocateResponseSchema REJETTE `overallAssessment` legacy (Phase A A3, D1)", () => {
+    // Régression D1 : le champ `overallAssessment` (verdict/recommendation
+    // libres) est retiré du contrat natif.
+    const data = {
+      meta: baseMeta,
+      challenges: [],
+      blindSpots: [],
+      structuralRisks: [],
+      riskPosture: "light",
+      signalContribution: { orientation: "favorable", evidenceSolidity: null },
+      overallAssessment: { verdict: "x", topConcerns: [], recommendation: "PROCEED" },
+    };
+    // overallAssessment additionnel est ignoré par défaut (Zod `.passthrough`
+    // n'est pas activé ici), donc la validation devrait quand même réussir
+    // sauf que les champs additionnels ne sont pas testables sans .strict().
+    // Le test garantit que le SCHEMA ne déclare pas `overallAssessment` :
+    // si un futur changement le ré-introduit, ce test devra être supprimé,
+    // ce qui force la revue D1.
+    const parsed = DevilsAdvocateResponseSchema.safeParse(data);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      // Le champ ne doit PAS être présent dans la sortie typée — c'est le
+      // témoin que le schema l'a effectivement rejeté/ignoré.
+      expect((parsed.data as Record<string, unknown>).overallAssessment).toBeUndefined();
+    }
+  });
+
+  it("DevilsAdvocateResponseSchema REJETTE structuralRisks avec severity legacy `ABSOLUTE`/`CONDITIONAL`/`CONCERN` (Phase A A3)", () => {
+    // Régression A1 : `StructuralRiskSchema.severity` impose CRITICAL|HIGH|MEDIUM.
+    for (const legacySev of ["ABSOLUTE", "CONDITIONAL", "CONCERN"]) {
+      const data = {
+        meta: baseMeta,
+        challenges: [],
+        blindSpots: [],
+        structuralRisks: [
+          { riskId: "sr-1", description: "x", category: "team", severity: legacySev },
+        ],
+        riskPosture: "elevated",
+        signalContribution: { orientation: "contrasted", evidenceSolidity: null },
+      };
+      expect(DevilsAdvocateResponseSchema.safeParse(data).success).toBe(false);
+    }
+  });
+
+  it("DevilsAdvocateResponseSchema REJETTE riskPosture invalide (Phase A A3)", () => {
+    // Régression A3 : riskPosture restreint à light|elevated|critical|structural.
+    for (const badPosture of ["PROCEED", "STOP", "high", "low"]) {
+      const data = {
+        meta: baseMeta,
+        challenges: [],
+        blindSpots: [],
+        structuralRisks: [],
+        riskPosture: badPosture,
+        signalContribution: { orientation: "contrasted", evidenceSolidity: null },
+      };
+      expect(DevilsAdvocateResponseSchema.safeParse(data).success).toBe(false);
+    }
   });
 
   it("ScenarioModelerResponseSchema validates valid data", () => {

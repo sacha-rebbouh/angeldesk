@@ -812,14 +812,19 @@ Recommendation: ${(d.investmentRecommendation as { action?: string })?.action ??
     }
 
     // Devil's Advocate
+    // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
+    // Memo lit le nouveau champ ; la migration interne complète de Memo
+    // (signalProfile, criticalRisks) reste à A4.
     const devils = results["devils-advocate"];
     if (devils?.success && "data" in devils) {
       const d = devils.data as Record<string, unknown>;
       const concerns = (d.topConcerns as string[]) ?? [];
+      const findingsD = (d.findings as Record<string, unknown> | undefined) ?? undefined;
+      const structuralRisksDA = (findingsD?.structuralRisks as unknown[]) ?? [];
       insights.push(`### DEVIL'S ADVOCATE
 Scepticisme: ${d.overallSkepticism ?? "N/A"}/100
 Top Concerns: ${concerns.slice(0, 3).join("; ") || "N/A"}
-Kill Reasons: ${(d.killReasons as unknown[])?.length ?? 0} identifiées`);
+Risques structurels critiques: ${structuralRisksDA.length} identifies`);
     }
 
     // Contradiction Detector
@@ -860,14 +865,17 @@ Probabilité Bear: ${(d.scenarios as Array<{ name?: string; probability?: number
 
       const data = result.data as Record<string, unknown>;
 
-      // Extraire les red flags de différentes structures possibles
+      // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy
+      // dans la liste des sources de red flags. Memo lit le nouveau champ.
+      // Migration interne complète de Memo reste à A4.
+      const findingsScope = (data.findings as Record<string, unknown> | undefined) ?? undefined;
       const flagArrays = [
         data.redFlags,
         data.flags,
         data.concerns,
         data.risks,
         data.sectorSpecificRisks,
-        data.killReasons,
+        findingsScope?.structuralRisks,
       ];
 
       for (const flags of flagArrays) {
@@ -882,7 +890,7 @@ Probabilité Bear: ${(d.scenarios as Array<{ name?: string; probability?: number
             id: `RF-${idCounter++}`,
             category: (flag.category as string) ?? this.inferCategory(agentName),
             severity,
-            title: (flag.title as string) ?? (flag.flag as string) ?? (flag.risk as string) ?? (flag.reason as string) ?? "",
+            title: (flag.title as string) ?? (flag.flag as string) ?? (flag.risk as string) ?? (flag.description as string) ?? "",
             description: (flag.description as string) ?? (flag.details as string) ?? "",
             source: agentName,
             location: flag.location as string,

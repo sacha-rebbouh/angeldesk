@@ -82,9 +82,9 @@ export const SuiviDDAlertCard = memo(function SuiviDDAlertCard({
                   ? [...new Set(alert.mergedFrom)].map(alertTypeLabel).join(" + ")
                   : alertTypeLabel(alert.alertType)}
               </Badge>
-              {alert.dealBreakerLevel && (
+              {alert.structuralRiskSeverity && (
                 <Badge variant="outline" className="text-[10px] shrink-0 text-red-700 border-red-200">
-                  {alert.dealBreakerLevel === "CRITICAL" ? "Risque critique" : alert.dealBreakerLevel === "HIGH" ? "Risque conditionnel" : "Point d'attention"}
+                  {alert.structuralRiskSeverity === "CRITICAL" ? "Risque critique" : alert.structuralRiskSeverity === "HIGH" ? "Risque important" : "Point d'attention"}
                 </Badge>
               )}
               <span className={cn("font-medium text-sm", isResolved && "line-through text-muted-foreground")}>

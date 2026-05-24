@@ -91,7 +91,10 @@ function makeDevilsAdvocateResult(scepticism: number): AgentResult {
       findings: {
         counterArguments: [],
         worstCaseScenario: {},
-        killReasons: [],
+        // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
+        structuralRisks: [],
+        riskPosture: "light",
+        signalContribution: { orientation: "favorable", evidenceSolidity: null },
         blindSpots: [],
         alternativeNarratives: [],
         skepticismAssessment: {

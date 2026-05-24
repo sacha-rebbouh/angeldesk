@@ -90,6 +90,15 @@ export interface AgentContext {
 import type { CurrentFact } from "@/services/fact-store/types";
 // Import Deck Coherence types for Tier 0 coherence check
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
+// Phase A — Contrats partagés natifs (A1 commit 4c0dff5)
+// Importés ici (top-of-file) pour usage inline dans les interfaces Tier 3
+// modifiées en A3 (DevilsAdvocateFindings notamment). Les ré-exports en bas
+// de fichier exposent ces mêmes types aux consumers via
+// `import { StructuralRisk } from '@/agents/types'`.
+import type {
+  StructuralRisk as Tier3StructuralRisk,
+  Tier3SignalContribution as Tier3SignalContributionType,
+} from "./tier3/schemas/common";
 
 // Enriched context with Context Engine data for Tier 1 agents
 export interface EnrichedAgentContext extends AgentContext {
@@ -3532,29 +3541,17 @@ export interface WorstCaseScenario {
   earlyWarningSigns: string[]; // Signes avant-coureurs a surveiller
 }
 
-/** Raison de ne pas investir (kill reason) */
-export interface KillReason {
-  id: string;
-  reason: string;
-  category: "team" | "market" | "product" | "financials" | "competition" | "timing" | "structural";
-  evidence: string; // Preuve concrete
-  sourceAgent: string; // Quel agent a detecte ca
-  dealBreakerLevel: "ABSOLUTE" | "CONDITIONAL" | "CONCERN";
-  // ABSOLUTE = Ne jamais investir peu importe les reponses
-  // CONDITIONAL = Dealbreaker SI la reponse du fondateur est mauvaise
-  // CONCERN = Preoccupation serieuse mais pas bloquante
-
-  condition?: string; // Si CONDITIONAL, quelle condition
-  resolutionPossible: boolean;
-  resolutionPath?: string;
-
-  // Impact financier
-  impactIfIgnored: string;
-
-  // Question associee
-  questionToFounder: string;
-  redFlagAnswer: string; // Reponse qui confirme le dealbreaker
-}
+// Phase A slice A3 — `KillReason` interface retirée (D1 verrouillé,
+// DA-spécifique).
+//
+// Remplacée par `StructuralRisk` (`src/agents/tier3/schemas/common.ts`,
+// ré-exporté depuis `src/agents/types.ts` et `src/agents/type-modules/tier3.ts`)
+// + `DevilsAdvocateFindings.structuralRisks` (cf. `type-modules/tier3.ts`).
+//
+// Le mapping legacy `dealBreakerLevel: ABSOLUTE|CONDITIONAL|CONCERN`
+// → `severity: CRITICAL|HIGH|MEDIUM` (StructuralRiskSchema A1) est porté
+// par le parser tolérant de `devils-advocate.ts` `normalizeResponse`
+// (lecture LLM dégradé uniquement, jamais en émission).
 
 /** Blind spot identifie */
 export interface BlindSpot {
@@ -3586,7 +3583,13 @@ export interface AlternativeNarrative {
   testToValidate: string; // Comment verifier quelle narrative est vraie
 }
 
-/** Findings specifiques Devil's Advocate (Section 5.4 + extensions) */
+// Phase A slice A3 — Posture de risque structurel (qualifie l'intensité du
+// risque détecté par le contradicteur, pas une action prescriptive).
+// Cohérent avec `DevilsAdvocateRiskPostureSchema`
+// (`src/agents/tier3/schemas/devils-advocate-schema.ts`).
+export type DevilsAdvocateRiskPosture = "light" | "elevated" | "critical" | "structural";
+
+/** Findings specifiques Devil's Advocate (Section 5.4 + extensions Phase A) */
 export interface DevilsAdvocateFindings {
   // Contre-arguments structures (minimum 5)
   counterArguments: CounterArgument[];
@@ -3594,8 +3597,20 @@ export interface DevilsAdvocateFindings {
   // Scenario catastrophe detaille
   worstCaseScenario: WorstCaseScenario;
 
-  // Kill reasons (minimum 3)
-  killReasons: KillReason[];
+  // Phase A slice A3 — `structuralRisks` (StructuralRisk[]) remplace
+  // l'ancien `killReasons` legacy (D1 verrouillé, DA-spécifique).
+  // `severity: CRITICAL|HIGH|MEDIUM` (A1 StructuralRiskSchema).
+  structuralRisks: Tier3StructuralRisk[];
+
+  // Phase A slice A3 — `riskPosture` qualifie l'intensité du risque
+  // structurel détecté, pas une action. Dérivée déterministe depuis
+  // structuralRisks.severity counts côté `transformResponse`.
+  riskPosture: DevilsAdvocateRiskPosture;
+
+  // Phase A slice A3 — `signalContribution` porte l'orientation (axe 1)
+  // dérivée déterministe + `evidenceSolidity` (axe 2) qui reste nullable
+  // en A3 (D2 verrouillé, A6 service Solidité qualifiera ultérieurement).
+  signalContribution: Tier3SignalContributionType;
 
   // Blind spots identifies (minimum 3)
   blindSpots: BlindSpot[];

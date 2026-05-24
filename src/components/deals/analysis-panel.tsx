@@ -1099,15 +1099,15 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
         if (flag.severity === "CRITICAL") criticalOpen++;
       }
     }
-    // DA kill reasons
+    // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
     const daResult = displayedResult.results["devils-advocate"];
     if (daResult?.success && daResult.data) {
-      const daData = daResult.data as { findings?: { killReasons?: Array<{ reason: string; dealBreakerLevel: string }> } };
-      for (const kr of daData.findings?.killReasons ?? []) {
-        const key = devilsAdvocateAlertKey("killReason", kr.reason);
+      const daData = daResult.data as { findings?: { structuralRisks?: Array<{ description: string; severity: string }> } };
+      for (const sr of daData.findings?.structuralRisks ?? []) {
+        const key = devilsAdvocateAlertKey("structuralRisk", sr.description);
         if (!resolutionMap[key]) {
           openCount++;
-          if (kr.dealBreakerLevel === "CRITICAL") criticalOpen++;
+          if (sr.severity === "CRITICAL") criticalOpen++;
         }
       }
     }

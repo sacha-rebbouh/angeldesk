@@ -141,8 +141,11 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
       `Seulement ${data.comparativeRanking.similarDealsAnalyzed} deals comparables ont ete trouves. Le percentile affiche n'est pas statistiquement robuste.`;
 
   // DA data merged into Scorer
-  const absoluteKillReasons = useMemo(() => (devilsData?.findings?.killReasons ?? []).filter(kr => kr.dealBreakerLevel === "ABSOLUTE"), [devilsData]);
-  const conditionalKillReasons = useMemo(() => (devilsData?.findings?.killReasons ?? []).filter(kr => kr.dealBreakerLevel === "CONDITIONAL"), [devilsData]);
+  // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
+  // Mapping affichage : `severity: CRITICAL` (ex-ABSOLUTE) et
+  // `severity: HIGH` (ex-CONDITIONAL).
+  const criticalStructuralRisks = useMemo(() => (devilsData?.findings?.structuralRisks ?? []).filter(sr => sr.severity === "CRITICAL"), [devilsData]);
+  const highStructuralRisks = useMemo(() => (devilsData?.findings?.structuralRisks ?? []).filter(sr => sr.severity === "HIGH"), [devilsData]);
   const allConcerns = useMemo(() => [
     ...(devilsData?.findings?.concernsSummary?.absolute ?? []).map(c => ({ text: c, level: "absolute" as const })),
     ...(devilsData?.findings?.concernsSummary?.conditional ?? []).map(c => ({ text: c, level: "conditional" as const })),
@@ -362,22 +365,22 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           </div>
         )}
 
-        {/* DA Absolute Kill Reasons — merged from Devil's Advocate */}
-        {absoluteKillReasons.length > 0 && (
+        {/* DA Critical Structural Risks — merged from Devil's Advocate */}
+        {criticalStructuralRisks.length > 0 && (
           <div className="pt-3 border-t">
             <div className="p-4 rounded-lg bg-gradient-to-r from-red-500 to-rose-600 text-white">
               <p className="font-bold mb-3 flex items-center gap-2">
                 <XCircle className="h-5 w-5" />
-                Risques critiques ({absoluteKillReasons.length})
+                Risques critiques ({criticalStructuralRisks.length})
               </p>
               <ul className="space-y-3">
-                {absoluteKillReasons.map((kr) => {
-                  const key = devilsAdvocateAlertKey("killReason", kr.reason);
+                {criticalStructuralRisks.map((sr) => {
+                  const key = devilsAdvocateAlertKey("structuralRisk", sr.description);
                   const resolution = resolutionMap?.[key];
                   return (
                     <li key={key} className={cn("p-3 rounded backdrop-blur", resolution ? "bg-white/5 opacity-60" : "bg-white/10")}>
                       <div className="flex items-start justify-between gap-2">
-                        <span className={cn("font-medium", resolution && "line-through")}>{kr.reason}</span>
+                        <span className={cn("font-medium", resolution && "line-through")}>{sr.description}</span>
                         {resolution ? (
                           <ResolutionBadge
                             status={resolution.status as "RESOLVED" | "ACCEPTED"}
@@ -390,16 +393,16 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
                             variant="outline"
                             size="sm"
                             className="h-6 px-2 text-xs gap-1 border-red-300 text-red-100 hover:bg-red-800 hover:text-white shrink-0"
-                            onClick={() => setDaDialogState({ alertKey: key, title: kr.reason, severity: "CRITICAL", description: kr.evidence })}
+                            onClick={() => setDaDialogState({ alertKey: key, title: sr.description, severity: "CRITICAL", description: sr.evidence })}
                           >
                             <CheckCircle className="h-3 w-3" />
                             Traiter
                           </Button>
                         ) : null}
                       </div>
-                      {!resolution && kr.evidence && (
+                      {!resolution && sr.evidence && (
                         <p className="text-sm mt-1 text-red-100">
-                          <span className="font-medium">Evidence:</span> {kr.evidence}
+                          <span className="font-medium">Evidence:</span> {sr.evidence}
                         </p>
                       )}
                     </li>
@@ -410,21 +413,21 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           </div>
         )}
 
-        {/* DA Conditional Kill Reasons — merged from Devil's Advocate */}
-        {conditionalKillReasons.length > 0 && (
+        {/* DA High Structural Risks — merged from Devil's Advocate */}
+        {highStructuralRisks.length > 0 && (
           <div className="pt-3 border-t">
             <div className="p-4 rounded-lg bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200">
               <p className="text-sm font-bold text-amber-800 mb-3 flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5" /> Risques conditionnels ({conditionalKillReasons.length})
+                <AlertTriangle className="h-5 w-5" /> Risques importants ({highStructuralRisks.length})
               </p>
               <ul className="space-y-3">
-                {conditionalKillReasons.slice(0, 5).map((kr) => {
-                  const key = devilsAdvocateAlertKey("killReason", kr.reason);
+                {highStructuralRisks.slice(0, 5).map((sr) => {
+                  const key = devilsAdvocateAlertKey("structuralRisk", sr.description);
                   const resolution = resolutionMap?.[key];
                   return (
                     <li key={key} className={cn("p-3 bg-white/70 rounded border border-amber-100", resolution && "opacity-60")}>
                       <div className="flex items-start justify-between gap-2">
-                        <span className={cn("font-medium text-amber-900", resolution && "line-through")}>{kr.reason}</span>
+                        <span className={cn("font-medium text-amber-900", resolution && "line-through")}>{sr.description}</span>
                         {resolution ? (
                           <ResolutionBadge
                             status={resolution.status as "RESOLVED" | "ACCEPTED"}
@@ -437,17 +440,17 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
                             variant="outline"
                             size="sm"
                             className="h-6 px-2 text-xs gap-1 shrink-0"
-                            onClick={() => setDaDialogState({ alertKey: key, title: kr.reason, severity: "HIGH", description: kr.condition })}
+                            onClick={() => setDaDialogState({ alertKey: key, title: sr.description, severity: "HIGH", description: sr.impact ?? sr.evidence })}
                           >
                             <CheckCircle className="h-3 w-3" />
                             Traiter
                           </Button>
                         ) : null}
                       </div>
-                      {!resolution && kr.condition && (
+                      {!resolution && sr.impact && (
                         <div className="mt-2 p-2 bg-amber-100/50 rounded text-xs">
-                          <span className="font-medium text-amber-800">Condition:</span>{" "}
-                          <span className="text-amber-700">{kr.condition}</span>
+                          <span className="font-medium text-amber-800">Impact :</span>{" "}
+                          <span className="text-amber-700">{sr.impact}</span>
                         </div>
                       )}
                     </li>
@@ -533,9 +536,10 @@ const NoGoReasonsCard = memo(function NoGoReasonsCard({
   devilsData: DevilsAdvocateData | null;
   contradictionData: ContradictionDetectorData | null;
 }) {
-  const killReasons = devilsData?.findings?.killReasons ?? [];
-  const absoluteKills = killReasons.filter(kr => kr.dealBreakerLevel === "ABSOLUTE");
-  const conditionalKills = killReasons.filter(kr => kr.dealBreakerLevel === "CONDITIONAL");
+  // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
+  const structuralRisks = devilsData?.findings?.structuralRisks ?? [];
+  const criticalStructuralRisksLocal = structuralRisks.filter(sr => sr.severity === "CRITICAL");
+  const highStructuralRisksLocal = structuralRisks.filter(sr => sr.severity === "HIGH");
   const criticalRisks = scorerData?.criticalRisks ?? [];
   const topConcerns = [
     ...(devilsData?.findings?.concernsSummary?.absolute ?? []),
@@ -544,7 +548,7 @@ const NoGoReasonsCard = memo(function NoGoReasonsCard({
   const criticalContradictions = (contradictionData?.findings?.contradictions ?? [])
     .filter((c: DetectedContradiction) => c.severity === "CRITICAL" || c.severity === "HIGH");
 
-  const hasContent = absoluteKills.length > 0 || conditionalKills.length > 0 ||
+  const hasContent = criticalStructuralRisksLocal.length > 0 || highStructuralRisksLocal.length > 0 ||
     criticalRisks.length > 0 || topConcerns.length > 0 || criticalContradictions.length > 0;
 
   if (!hasContent) return null;
@@ -559,34 +563,34 @@ const NoGoReasonsCard = memo(function NoGoReasonsCard({
         <CardDescription>Risques majeurs identifiés sur ce deal</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 pt-4">
-        {/* Absolute Kill Reasons */}
-        {absoluteKills.length > 0 && (
+        {/* Critical Structural Risks */}
+        {criticalStructuralRisksLocal.length > 0 && (
           <div className="space-y-2">
             <p className="text-sm font-semibold text-red-700 flex items-center gap-1.5">
-              <XCircle className="h-4 w-4" /> Risques critiques ({absoluteKills.length})
+              <XCircle className="h-4 w-4" /> Risques critiques ({criticalStructuralRisksLocal.length})
             </p>
             <div className="space-y-2">
-              {absoluteKills.map((kr, i) => (
+              {criticalStructuralRisksLocal.map((sr, i) => (
                 <div key={i} className="p-3 rounded-lg bg-red-50 border border-red-200">
-                  <p className="text-sm font-medium text-red-900">{kr.reason}</p>
-                  {kr.evidence && <p className="text-xs text-red-700 mt-1">{kr.evidence}</p>}
+                  <p className="text-sm font-medium text-red-900">{sr.description}</p>
+                  {sr.evidence && <p className="text-xs text-red-700 mt-1">{sr.evidence}</p>}
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Conditional Kill Reasons */}
-        {conditionalKills.length > 0 && (
+        {/* High Structural Risks */}
+        {highStructuralRisksLocal.length > 0 && (
           <div className="space-y-2">
             <p className="text-sm font-semibold text-orange-700 flex items-center gap-1.5">
-              <AlertTriangle className="h-4 w-4" /> Risques majeurs ({conditionalKills.length})
+              <AlertTriangle className="h-4 w-4" /> Risques importants ({highStructuralRisksLocal.length})
             </p>
             <div className="space-y-2">
-              {conditionalKills.map((kr, i) => (
+              {highStructuralRisksLocal.map((sr, i) => (
                 <div key={i} className="p-3 rounded-lg bg-orange-50 border border-orange-200">
-                  <p className="text-sm font-medium text-orange-900">{kr.reason}</p>
-                  {kr.evidence && <p className="text-xs text-orange-700 mt-1">{kr.evidence}</p>}
+                  <p className="text-sm font-medium text-orange-900">{sr.description}</p>
+                  {sr.evidence && <p className="text-xs text-orange-700 mt-1">{sr.evidence}</p>}
                 </div>
               ))}
             </div>
@@ -594,7 +598,7 @@ const NoGoReasonsCard = memo(function NoGoReasonsCard({
         )}
 
         {/* Critical Risks from Scorer */}
-        {criticalRisks.length > 0 && absoluteKills.length === 0 && conditionalKills.length === 0 && (
+        {criticalRisks.length > 0 && criticalStructuralRisksLocal.length === 0 && highStructuralRisksLocal.length === 0 && (
           <div className="space-y-2">
             <p className="text-sm font-semibold text-red-700 flex items-center gap-1.5">
               <AlertTriangle className="h-4 w-4" /> Risques critiques ({criticalRisks.length})
@@ -628,7 +632,7 @@ const NoGoReasonsCard = memo(function NoGoReasonsCard({
         )}
 
         {/* Top Concerns */}
-        {topConcerns.length > 0 && absoluteKills.length === 0 && (
+        {topConcerns.length > 0 && criticalStructuralRisksLocal.length === 0 && (
           <div className="space-y-2">
             <p className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
               <Eye className="h-4 w-4" /> Points de vigilance
@@ -1073,7 +1077,9 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
       ? devilsData.findings.skepticismAssessment.score
       : undefined;
     const daIsFallback = devilsData?.findings?.skepticismAssessment?.isFallback ?? false;
-    const killReasons = devilsData?.findings?.killReasons?.filter(kr => kr.dealBreakerLevel === "ABSOLUTE")?.length ?? 0;
+    // Phase A slice A3 — `structuralRisks` (D1) ; severity CRITICAL remplace
+    // l'ancien filtre `dealBreakerLevel === "ABSOLUTE"`.
+    const criticalStructuralRisksCount = devilsData?.findings?.structuralRisks?.filter(sr => sr.severity === "CRITICAL")?.length ?? 0;
     const contradictions = contradictionData?.findings?.contradictions?.filter(c => c.severity === "CRITICAL" || c.severity === "HIGH")?.length ?? 0;
 
     return {
@@ -1081,7 +1087,7 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
       skepticismSource: daSkepticism != null
         ? (daIsFallback ? "da-derived" as const : "da" as const)
         : "none" as const,
-      killReasons,
+      criticalStructuralRisks: criticalStructuralRisksCount,
       contradictions,
     };
   }, [devilsData, contradictionData]);
@@ -1175,9 +1181,9 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
             <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
               <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Alertes</div>
               <div className="flex items-center gap-2">
-                {headerMetrics.killReasons > 0 && (
+                {headerMetrics.criticalStructuralRisks > 0 && (
                   <span className="flex items-center gap-1 bg-red-500/20 text-red-400 px-2 py-1 rounded text-sm font-bold">
-                    <XCircle className="h-4 w-4" /> {headerMetrics.killReasons}
+                    <XCircle className="h-4 w-4" /> {headerMetrics.criticalStructuralRisks}
                   </span>
                 )}
                 {headerMetrics.contradictions > 0 && (
@@ -1185,14 +1191,14 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
                     <Zap className="h-4 w-4" /> {headerMetrics.contradictions}
                   </span>
                 )}
-                {headerMetrics.killReasons === 0 && headerMetrics.contradictions === 0 && (
+                {headerMetrics.criticalStructuralRisks === 0 && headerMetrics.contradictions === 0 && (
                   <span className="flex items-center gap-1 bg-green-500/20 text-green-400 px-2 py-1 rounded text-sm font-bold">
                     <CheckCircle className="h-4 w-4" /> OK
                   </span>
                 )}
               </div>
               <div className="text-xs text-slate-400 mt-1">
-                {headerMetrics.killReasons > 0 ? "Risques critiques" : headerMetrics.contradictions > 0 ? "Contradictions" : "Pas de blocage"}
+                {headerMetrics.criticalStructuralRisks > 0 ? "Risques critiques" : headerMetrics.contradictions > 0 ? "Contradictions" : "Pas de blocage"}
               </div>
             </div>
 

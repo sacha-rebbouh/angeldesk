@@ -1,5 +1,5 @@
 import type { AgentResult, AgentMeta, AgentScore, AgentRedFlag, AgentQuestion, AgentAlertSignal, AgentNarrative, DbCrossReference } from './common';
-import type { Tier3Orientation, Tier3SignalContribution } from "../tier3/schemas/common";
+import type { Tier3Orientation, Tier3SignalContribution, StructuralRisk } from "../tier3/schemas/common";
 
 // ============================================================================
 // CONTRADICTION DETECTOR AGENT (TIER 3)
@@ -52,13 +52,31 @@ export interface SynthesisDealScorerResult extends AgentResult { agentName: "syn
 export interface CounterArgument { id: string; thesis: string; thesisSource: string; counterArgument: string; evidence: string; comparableFailure: { company: string; sector: string; fundingRaised?: number; similarity: string; outcome: string; lessonsLearned: string; source: string; verified?: boolean; verificationUrl?: string }; probability: "HIGH" | "MEDIUM" | "LOW"; probabilityRationale: string; mitigationPossible: boolean; mitigation?: string }
 export interface WorstCaseScenario { name: string; description: string; triggers: { trigger: string; probability: "HIGH" | "MEDIUM" | "LOW"; timeframe: string }[]; cascadeEffects: string[]; probability: number; probabilityRationale: string; lossAmount: { totalLoss: boolean; estimatedLoss: string; calculation?: string }; comparableCatastrophes: { company: string; whatHappened: string; investorLosses: string; source: string; verified?: boolean; verificationUrl?: string }[]; earlyWarningSigns: string[] }
 
-/** Raison de ne pas investir (kill reason) */
-export interface KillReason { id: string; reason: string; category: "team" | "market" | "product" | "financials" | "competition" | "timing" | "structural"; evidence: string; sourceAgent: string; dealBreakerLevel: "ABSOLUTE" | "CONDITIONAL" | "CONCERN"; condition?: string; resolutionPossible: boolean; resolutionPath?: string; impactIfIgnored: string; questionToFounder: string; redFlagAnswer: string }
-
 export interface BlindSpot { id: string; area: string; description: string; whyMissed: string; whatCouldGoWrong: string; historicalPrecedent?: { company: string; whatHappened: string; source: string; verified?: boolean; verificationUrl?: string }; recommendedAction: string; urgency: "IMMEDIATE" | "BEFORE_DECISION" | "DURING_DD" }
 export interface AlternativeNarrative { id: string; currentNarrative: string; alternativeNarrative: string; plausibility: number; plausibilityRationale: string; evidenceSupporting: string[]; implications: string; testToValidate: string }
 
-export interface DevilsAdvocateFindings { counterArguments: CounterArgument[]; worstCaseScenario: WorstCaseScenario; killReasons: KillReason[]; blindSpots: BlindSpot[]; alternativeNarratives: AlternativeNarrative[]; additionalMarketRisks: { risk: string; trigger: string; timeline: string; severity: "EXISTENTIAL" | "SERIOUS" | "MANAGEABLE"; notCoveredBecause: string }[]; hiddenCompetitiveThreats: { threat: string; source: string; whyHidden: string; likelihood: number; defensibility: string; evidenceSource: string }[]; executionChallenges: { challenge: string; currentAssessment: string; realDifficulty: "EXTREME" | "VERY_HARD" | "HARD" | "MODERATE"; whyUnderestimated: string; prerequisite: string; failureMode: string; comparableFailure?: string }[]; skepticismAssessment: { score: number; isFallback?: boolean; scoreBreakdown: { factor: string; contribution: number; rationale: string }[]; verdict: "VERY_SKEPTICAL" | "SKEPTICAL" | "CAUTIOUS" | "NEUTRAL" | "CAUTIOUSLY_OPTIMISTIC"; verdictRationale: string }; concernsSummary: { absolute: string[]; conditional: string[]; serious: string[]; minor: string[] }; positiveClaimsChallenged: { claim: string; sourceAgent: string; challenge: string; verdict: "STANDS" | "WEAKENED" | "INVALIDATED"; verdictRationale: string }[] }
+// Phase A slice A3 — Posture de risque structurel (qualifie l'intensité,
+// pas une action). Cohérent avec `DevilsAdvocateRiskPostureSchema`
+// (`src/agents/tier3/schemas/devils-advocate-schema.ts`).
+export type DevilsAdvocateRiskPosture = "light" | "elevated" | "critical" | "structural";
+
+// Phase A slice A3 — `DevilsAdvocateFindings` aligné contrat natif (D1) :
+// - `structuralRisks: StructuralRisk[]` remplace l'ancien `killReasons` (legacy).
+// - `riskPosture` qualifie l'intensité du risque structurel détecté.
+// - `signalContribution` porte l'orientation (axe 1) dérivée déterministe
+//   depuis riskPosture + counts severity, et `evidenceSolidity` (axe 2)
+//   qui reste nullable en A3 (D2).
+// - Le champ legacy `KillReason` est retiré ; ses occurrences runtime étaient
+//   toutes DA-spécifiques (cf. arbitrage A3 Codex).
+//
+// Exception cross-agent documentée :
+// - `alertSignal: AgentAlertSignal` reste émis (compat
+//   `BaseAgent.getRequiredOutputContractFields()` + lecteurs Tier 1/3 partagés)
+//   mais la valeur est désormais dérivée déterministe depuis `riskPosture`
+//   côté `transformResponse`. La migration du contrat global
+//   `AgentAlertSignal` (PROCEED/STOP → signalIntensity) appartient à un
+//   slice cross-agent dédié (signalIntensity / A7b / A4-bis / A9), hors A3.
+export interface DevilsAdvocateFindings { counterArguments: CounterArgument[]; worstCaseScenario: WorstCaseScenario; structuralRisks: StructuralRisk[]; riskPosture: DevilsAdvocateRiskPosture; signalContribution: Tier3SignalContribution; blindSpots: BlindSpot[]; alternativeNarratives: AlternativeNarrative[]; additionalMarketRisks: { risk: string; trigger: string; timeline: string; severity: "EXISTENTIAL" | "SERIOUS" | "MANAGEABLE"; notCoveredBecause: string }[]; hiddenCompetitiveThreats: { threat: string; source: string; whyHidden: string; likelihood: number; defensibility: string; evidenceSource: string }[]; executionChallenges: { challenge: string; currentAssessment: string; realDifficulty: "EXTREME" | "VERY_HARD" | "HARD" | "MODERATE"; whyUnderestimated: string; prerequisite: string; failureMode: string; comparableFailure?: string }[]; skepticismAssessment: { score: number; isFallback?: boolean; scoreBreakdown: { factor: string; contribution: number; rationale: string }[]; verdict: "VERY_SKEPTICAL" | "SKEPTICAL" | "CAUTIOUS" | "NEUTRAL" | "CAUTIOUSLY_OPTIMISTIC"; verdictRationale: string }; concernsSummary: { absolute: string[]; conditional: string[]; serious: string[]; minor: string[] }; positiveClaimsChallenged: { claim: string; sourceAgent: string; challenge: string; verdict: "STANDS" | "WEAKENED" | "INVALIDATED"; verdictRationale: string }[] }
 export interface DevilsAdvocateData { meta: AgentMeta; score: AgentScore; findings: DevilsAdvocateFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
 export interface DevilsAdvocateResult extends AgentResult { agentName: "devils-advocate"; data: DevilsAdvocateData }
 

@@ -17,7 +17,12 @@ export interface UnifiedAlert {
   duplicateCount?: number;
 
   // DA specific
-  dealBreakerLevel?: "CRITICAL" | "HIGH" | "CONCERN";
+  // Phase A slice A3 — `structuralRiskSeverity` remplace `dealBreakerLevel`
+  // (D1 verrouillé, DA-spécifique). Valeurs cohérentes avec
+  // StructuralRiskSchema (A1) : CRITICAL | HIGH | MEDIUM. Quand DA est
+  // le source, cette valeur miroir `severity` racine ; quand l'alerte est
+  // mergée avec un RED_FLAG, ce champ qualifie la contribution DA.
+  structuralRiskSeverity?: "CRITICAL" | "HIGH" | "MEDIUM";
   resolutionPath?: string;
   // Conditions specific
   suggestedArgument?: string;

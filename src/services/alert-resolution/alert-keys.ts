@@ -27,9 +27,17 @@ export function redFlagAlertKey(title: string, category?: string): string {
 }
 
 // ── Devil's Advocate keys ──
+//
+// Phase A slice A3 — Discriminant `"killReason"` retiré (D1 verrouillé,
+// DA-spécifique). Remplacé par `"structuralRisk"` cohérent avec le contrat
+// natif `DevilsAdvocateFindings.structuralRisks`. Conséquence trade-off
+// documentée : les résolutions persistées sous l'ancienne clé
+// `DEVILS_ADVOCATE::killReason::...` deviennent orphelines (la résolution
+// reste en DB mais ne match plus aucune alerte calculée à partir du nouveau
+// runtime). C'est conforme à l'arbitrage A3 Codex (pas d'alias émis).
 
 export type DASubType =
-  | "killReason"
+  | "structuralRisk"
   | "concern"
   | "counterArgument"
   | "blindSpot"

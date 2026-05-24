@@ -950,17 +950,22 @@ function buildAgentMockResponse(prompt: string, systemPrompt?: string): unknown 
         ],
         earlyWarningSigns: ["Monthly churn > 4%", "NRR < 100%", "Pipeline coverage < 2x"],
       },
-      killReasons: [
+      // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
+      // severity CRITICAL|HIGH|MEDIUM (StructuralRiskSchema A1).
+      structuralRisks: [
         {
-          id: "kr-1", reason: "No verified financial data", category: "Financial transparency",
-          evidence: "All financials are declared only", sourceAgent: "financial-auditor",
-          dealBreakerLevel: "HIGH", condition: "Unless bank statements provided",
-          resolutionPossible: true, resolutionPath: "Request Qonto/bank statements",
-          impactIfIgnored: "Could be investing based on fabricated numbers",
-          questionToFounder: "Share your banking dashboard access",
-          redFlagAnswer: "Refuses to share bank data",
+          riskId: "sr-1",
+          description: "No verified financial data",
+          category: "financials",
+          severity: "HIGH",
+          evidence: "All financials are declared only",
+          source: "financial-auditor",
+          impact: "Could be investing based on fabricated numbers",
+          question: "Share your banking dashboard access",
         },
       ],
+      riskPosture: "elevated",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
       blindSpots: [
         {
           id: "bs-1", area: "Customer concentration",
