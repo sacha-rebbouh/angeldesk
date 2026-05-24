@@ -61,3 +61,37 @@ export interface DevilsAdvocateResult extends AgentResult { agentName: "devils-a
 // Memo Generator Agent
 export interface MemoGeneratorData { executiveSummary: { oneLiner: string; recommendation: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant"; keyPoints: string[] }; companyOverview: { description: string; problem: string; solution: string; businessModel: string; traction: string }; investmentHighlights: { highlight: string; evidence: string }[]; keyRisks: { risk: string; mitigation: string; residualRisk: "low" | "medium" | "high" }[]; financialSummary: { currentMetrics: Record<string, string | number>; projections: string; valuationAssessment: string }; teamAssessment: string; marketOpportunity: string; competitiveLandscape: string; dealTerms: { valuation: string; roundSize: string; keyTerms: string[]; negotiationPoints: string[] }; dueDiligenceFindings: { completed: string[]; outstanding: string[]; redFlags: string[] }; investmentThesis: string; exitStrategy: string; nextSteps: string[]; appendix: { financialModel?: string; comparableDeals?: string[]; referencesChecked?: string[] } }
 export interface MemoGeneratorResult extends AgentResult { agentName: "memo-generator"; data: MemoGeneratorData }
+
+// ============================================================================
+// Phase A — Contrats partagés natifs (slice A1, additif strict)
+// ============================================================================
+// Ré-exports depuis `src/agents/tier3/schemas/common.ts` pour exposer les
+// nouveaux types Phase A via le module Tier 3.
+//
+// D1 verrouillé : aucun type legacy retiré.
+// D2 verrouillé : EvidenceSolidity Phase A limité à 2 valeurs + null.
+// ============================================================================
+
+export {
+  Tier3OrientationSchema,
+  Tier3EvidenceSolidityEmittedSchema,
+  Tier3SignalContributionSchema,
+  StructuralRiskSchema,
+  CriticalRiskRefSchema,
+  ConditionRefSchema,
+  SourceRefSchema,
+  OpenQuestionRefSchema,
+  ContradictionRefSchema,
+} from "../tier3/schemas/common";
+
+export type {
+  Tier3Orientation,
+  Tier3EvidenceSolidityEmitted,
+  Tier3SignalContribution,
+  StructuralRisk,
+  CriticalRiskRef,
+  ConditionRef,
+  SourceRef,
+  OpenQuestionRef,
+  ContradictionRef,
+} from "../tier3/schemas/common";

@@ -3956,3 +3956,39 @@ export interface AgentResultWithTrace extends AgentResult {
   /** Full trace with prompts/responses (opt-in, can be large) */
   _traceFull?: StandardTrace;
 }
+
+// ============================================================================
+// Phase A — Contrats partagés natifs (slice A1, additif strict)
+// ============================================================================
+// Ré-exports depuis `src/agents/tier3/schemas/common.ts` pour exposer les
+// nouveaux types Phase A aux consumers via le module central
+// `@/agents/types`.
+//
+// D1 verrouillé : aucun type legacy retiré, aucun champ renommé.
+// D2 verrouillé : EvidenceSolidity Phase A limité à `contradictory` /
+//   `insufficient` / `null` (pas de strong/moderate/low).
+// ============================================================================
+
+export {
+  Tier3OrientationSchema,
+  Tier3EvidenceSolidityEmittedSchema,
+  Tier3SignalContributionSchema,
+  StructuralRiskSchema,
+  CriticalRiskRefSchema,
+  ConditionRefSchema,
+  SourceRefSchema,
+  OpenQuestionRefSchema,
+  ContradictionRefSchema,
+} from "./tier3/schemas/common";
+
+export type {
+  Tier3Orientation,
+  Tier3EvidenceSolidityEmitted,
+  Tier3SignalContribution,
+  StructuralRisk,
+  CriticalRiskRef,
+  ConditionRef,
+  SourceRef,
+  OpenQuestionRef,
+  ContradictionRef,
+} from "./tier3/schemas/common";
