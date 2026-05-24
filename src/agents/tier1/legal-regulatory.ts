@@ -400,8 +400,7 @@ Si le Context Engine fournit des données sur le secteur (deals similaires, pré
 - Comparer la structure juridique vs les standards du secteur/stage
 - Vérifier si des deals similaires ont rencontré des blocages réglementaires
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<LegalRegulatoryData> {

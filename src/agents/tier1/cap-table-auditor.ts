@@ -482,8 +482,7 @@ Si le Context Engine fournit des benchmarks de dilution et de valorisation, les 
 - Benchmarker la valorisation vs les multiples du secteur/stage
 - Évaluer les terms vs les standards de marché
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<CapTableAuditDataV2> {

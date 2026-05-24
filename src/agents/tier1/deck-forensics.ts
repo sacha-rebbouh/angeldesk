@@ -317,8 +317,7 @@ OBLIGATOIRE:
 - Etre SPECIFIQUE, pas generique
 - Reporter TOUS les findings (pas de minimum/maximum artificiel)
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DeckForensicsDataV2> {

@@ -622,8 +622,7 @@ Si le Context Engine fournit des données sur les fondateurs (ventures précéde
 - Comparer l'expérience déclarée vs les données vérifiables
 Chaque claim du fondateur sur son passé doit être confronté aux données disponibles.
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TeamInvestigatorData> {

@@ -390,8 +390,7 @@ Tu DOIS produire un JSON structuré avec:
 | Concentration | 20% | Top1<10% | Top1<20% | Top1<30% | Top1<40% | Top1>40% |
 | Expansion | 15% | L&E fort + virality | L&E démontré | Upsell possible | Limité | Aucun potentiel |
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   // ============================================================================

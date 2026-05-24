@@ -190,8 +190,7 @@ Si le Context Engine fournit des données sur les stacks techniques du secteur, 
 - Évaluer la maturité technique vs les deals comparables au même stage
 - Identifier les risques techniques spécifiques à ce type de produit
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechStackDDData> {

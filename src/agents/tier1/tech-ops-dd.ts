@@ -184,8 +184,7 @@ Si le Context Engine fournit des données sur les équipes techniques du secteur
 - Évaluer les pratiques de sécurité vs les standards du secteur
 - Benchmarker les coûts infra vs deals similaires
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechOpsDDData> {
