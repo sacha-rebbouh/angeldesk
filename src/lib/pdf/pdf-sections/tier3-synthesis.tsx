@@ -550,10 +550,14 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
     riskAdjustedAssessment?: string;
   } | undefined;
 
-  const mostLikely = findings?.mostLikelyScenario as string | undefined;
-  const mostLikelyRationale = findings?.mostLikelyRationale as
-    | string
-    | undefined;
+  // Phase A slice A4 — `dominantScenario` natif Phase A. D1 verrouillé :
+  // aucun alias legacy `mostLikelyScenario` ni `mostLikelyRationale` n'est
+  // lu (round 2 Codex : retrait du bridge legacy côté PDF). Si l'analyse
+  // persistée est antérieure à A4 et ne contient pas `dominantScenario`,
+  // la valeur reste `undefined` et le bloc PDF affiche un fallback neutre.
+  const findingsRaw = findings as Record<string, unknown> | undefined;
+  const mostLikely = findingsRaw?.dominantScenario as string | undefined;
+  const mostLikelyRationale = findingsRaw?.dominantScenarioRationale as string | undefined;
 
   const scenariosList = (findings?.scenarios ?? []) as Array<{
     name?: string;

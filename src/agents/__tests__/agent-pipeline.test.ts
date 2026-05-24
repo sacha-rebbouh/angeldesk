@@ -876,8 +876,10 @@ vi.mock("@/services/openrouter/router", () => {
           expectedIRRCalculation: "Weighted IRR across scenarios",
           riskAdjustedAssessment: "Moderate risk-adjusted return",
         },
-        mostLikelyScenario: "BASE",
-        mostLikelyRationale: "Current metrics support moderate growth trajectory",
+        // Phase A slice A4 — Fixture migrée vers `dominantScenario` + `signalContribution`.
+        dominantScenario: "BASE",
+        dominantScenarioRationale: "Most likely trajectory per DB comparables",
+        signalContribution: { orientation: "contrasted", evidenceSolidity: null },
         score: {
           value: 55,
           grade: "C",

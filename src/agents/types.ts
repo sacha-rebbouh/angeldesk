@@ -90,14 +90,15 @@ export interface AgentContext {
 import type { CurrentFact } from "@/services/fact-store/types";
 // Import Deck Coherence types for Tier 0 coherence check
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
-// Phase A — Contrats partagés natifs (A1 commit 4c0dff5)
+// Phase A — Contrats partagés natifs (A1 commit 4c0dff5, étendus en A3/A4)
 // Importés ici (top-of-file) pour usage inline dans les interfaces Tier 3
-// modifiées en A3 (DevilsAdvocateFindings notamment). Les ré-exports en bas
-// de fichier exposent ces mêmes types aux consumers via
-// `import { StructuralRisk } from '@/agents/types'`.
+// modifiées en A3 (DevilsAdvocateFindings) et A4 (MemoGeneratorData,
+// ScenarioModelerFindings). Les ré-exports en bas de fichier exposent ces
+// mêmes types aux consumers via `import { StructuralRisk } from '@/agents/types'`.
 import type {
   StructuralRisk as Tier3StructuralRisk,
   Tier3SignalContribution as Tier3SignalContributionType,
+  CriticalRiskRef as Tier3CriticalRiskRef,
 } from "./tier3/schemas/common";
 
 // Enriched context with Context Engine data for Tier 1 agents
@@ -3398,9 +3399,19 @@ export interface ScenarioModelerFindings {
     riskAdjustedAssessment: string;
   };
 
-  // Recommandation scénario le plus probable
-  mostLikelyScenario: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC";
-  mostLikelyRationale: string;
+  // Phase A slice A4 — `dominantScenario` (renommage de l'ancien
+  // `mostLikelyScenario`) qualifie le scénario avec la probabilité la plus
+  // élevée parmi BASE/BULL/BEAR/CATASTROPHIC. Pas une recommandation
+  // d'action — c'est une qualification trajectoire.
+  dominantScenario: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC";
+  dominantScenarioRationale: string;
+
+  // Phase A slice A4 — `signalContribution` natif. Orientation dérivée
+  // déterministe par le runtime depuis les probabilités scenarios
+  // (LLM ne pilote PAS — leçon round 2 A3 sur riskPosture).
+  // evidenceSolidity reste null en A4 (D2 verrouillé, A6 service Solidité
+  // qualifiera ultérieurement).
+  signalContribution: Tier3SignalContributionType;
 }
 
 /** Scenario Modeler Data v2.0 - Structure standardisée */
@@ -3712,12 +3723,24 @@ export interface DevilsAdvocateResult extends AgentResult {
 }
 
 // Memo Generator Agent
+// Phase A slice A4 — Ajout `signalProfile` (Tier3SignalContribution natif —
+// orientation cohérente avec `executiveSummary.recommendation`, evidenceSolidity
+// nullable en A4) + `criticalRisks` (CriticalRiskRef A1 structuré, severity
+// CRITICAL/HIGH/MEDIUM, source, riskId). Conservation du champ existant
+// `keyRisks` (sémantique mitigation/residual propre, pas un alias legacy).
 export interface MemoGeneratorData {
   executiveSummary: {
     oneLiner: string;
     recommendation: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     keyPoints: string[];
   };
+  // Phase A slice A4 — `signalProfile` porte l'orientation native + rationale
+  // + evidenceSolidity (null en A4, qualifié par A6).
+  signalProfile: Tier3SignalContributionType;
+  // Phase A slice A4 — `criticalRisks` structuré (CriticalRiskRef A1).
+  // Distinct de `keyRisks` (sémantique mitigation/residual conservée).
+  // Aucun alias `killReasons` n'est admis (D1 verrouillé).
+  criticalRisks: Tier3CriticalRiskRef[];
   companyOverview: {
     description: string;
     problem: string;

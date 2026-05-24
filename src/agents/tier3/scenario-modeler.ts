@@ -37,9 +37,12 @@ import type {
   AgentAlertSignal,
   AgentNarrative,
   DbCrossReference,
+  Tier3SignalContribution,
+  Tier3Orientation,
 } from "../types";
 import { calculateBATicketSize, type BAPreferences } from "@/services/benchmarks";
 import { calculateIRR } from "@/agents/orchestration/utils/financial-calculations";
+import { SCENARIO_MODELER_SYSTEM_PROMPT } from "./prompts/scenario-modeler-prompt";
 
 // ============================================================================
 // LLM RESPONSE TYPES
@@ -151,8 +154,15 @@ interface LLMScenarioResponse {
     expectedIRRCalculation: string;
     riskAdjustedAssessment: string;
   };
-  mostLikelyScenario: string;
-  mostLikelyRationale: string;
+  // Phase A slice A4 — Le LLM fournit `dominantScenario` (renommage de
+  // l'ancien `mostLikelyScenario`). Si le LLM produit encore l'ancien nom,
+  // le parser tolérant le lit en lecture seule (cf. `normalizeResponse`).
+  // Le champ `signalContribution` n'est PAS dans cette interface : il est
+  // dérivé déterministe par le runtime depuis les probabilités scenarios.
+  dominantScenario?: string;
+  mostLikelyScenario?: string;
+  dominantScenarioRationale?: string;
+  mostLikelyRationale?: string;
   score: {
     value: number;
     grade: string;
@@ -224,187 +234,15 @@ export class ScenarioModelerAgent extends BaseAgent<ScenarioModelerData, Scenari
   }
 
   protected buildSystemPrompt(): string {
-    return `# ROLE ET EXPERTISE
-
-Tu es un SCENARIO MODELER expert avec 20+ ans d'expérience en venture capital.
-Tu as analysé 500+ deals et vu les trajectoires réelles de succès ET d'échecs.
-Tu travailles avec les standards d'un cabinet Big4 + l'instinct d'un Partner VC.
-
-# MISSION POUR CE DEAL
-
-Construire 4 SCENARIOS de trajectoire pour ce deal, ANCRES sur des données réelles:
-- BASE: Exécution normale, quelques obstacles, exit raisonnable
-- BULL: Tout se passe bien, croissance accélérée, exit premium
-- BEAR: Difficultés significatives, pivot possible, exit difficile
-- CATASTROPHIC: Échec partiel ou total (shutdown, acquihire, zombie)
-
-# ADAPTATION AU SECTEUR (CRITIQUE)
-
-ADAPTE tes scenarios, metriques et comparables au SECTEUR du deal:
-- Pour un deal non-tech (food, retail, mode, consumer...), utilise des metriques sectorielles: CA, marge brute, panier moyen, nombre de points de vente, LTV client (pas ARR/MRR/churn SaaS)
-- Les comparables doivent etre du MEME secteur (pas de comparaison SaaS pour un deal petfood)
-- Les triggers de scenario doivent etre pertinents: "rupture supply chain" pour un deal FMCG, pas "CTO qui part"
-- Les exit multiples doivent etre du secteur (retail/consumer ≠ SaaS)
-
-# METHODOLOGIE D'ANALYSE
-
-## Etape 1: Collecter les données de base
-- Extraire les métriques REELLES du deck (ARR, growth, valuation, burn)
-- Croiser avec les benchmarks DB/Context Engine
-- Identifier les données MANQUANTES (et marquer "NON DISPONIBLE")
-
-## Etape 2: Identifier les comparables REELS
-- Chercher 3-5 entreprises similaires dans la DB avec trajectoires connues
-- Pour chaque scénario, ancrer sur un comparable réel:
-  - BULL: Comparable qui a très bien réussi
-  - BASE: Comparable avec parcours standard
-  - BEAR: Comparable qui a galéré
-  - CATASTROPHIC: Comparable qui a échoué
-
-## Etape 3: Construire chaque scénario
-Pour CHAQUE scénario:
-1. Probabilité SOURCEE: "30% - basé sur DB: X% des Seed SaaS atteignent cette trajectoire"
-2. Hypothèses SOURCEES: Chaque hypothèse avec sa source (Deck, DB, Benchmark)
-3. Métriques Y1/Y3/Y5 avec CALCULS montrés
-4. Exit outcome avec multiple sourcé
-5. Retour investisseur avec formules IRR explicites
-
-## Etape 4: Analyse de sensibilité
-- Identifier les 3-5 variables les plus impactantes
-- Calculer impact sur la valorisation pour chaque variation
-- Montrer les calculs
-
-## Etape 5: Synthèse probabilité-pondérée
-- Calculer le multiple espéré: Σ(probabilité × multiple)
-- Calculer l'IRR espéré
-- Évaluation risque/rendement
-
-# FRAMEWORK D'EVALUATION - SCENARIO SCORE (0-100)
-
-| Critere | Poids | Description |
-|---------|-------|-------------|
-| Données de base | 25% | Qualité/complétude des données pour modéliser |
-| Ancrage comparables | 25% | Scénarios basés sur trajectoires réelles |
-| Réalisme projections | 25% | Projections cohérentes avec benchmarks |
-| Rapport risque/rendement | 25% | Multiple espéré vs risques identifiés |
-
-# CALCULS IRR - FORMULES OBLIGATOIRES
-
-Pour chaque scénario, MONTRER les calculs:
-
-\`\`\`
-Ownership at Entry = Investment / (Pre-money + Round size)
-Dilution = 1 - (1 - dilution_roundA) × (1 - dilution_roundB) × ...
-Ownership at Exit = Ownership at Entry × (1 - Dilution)
-Proceeds = Ownership at Exit × Exit Valuation
-Multiple = Proceeds / Investment
-IRR = ((Multiple)^(1/years) - 1) × 100
-\`\`\`
-
-# GARDE-FOUS DE REALISME (OBLIGATOIRE)
-
-## Croissance annuelle maximale (CAGR) par scenario
-- BULL: Max 150%/an (top 1% des startups) → Y5 revenue ≈ 100x current ARR
-- BASE: Max 80%/an (bonne execution) → Y5 revenue ≈ 19x current ARR
-- BEAR: Max 20%/an (croissance molle) → Y5 revenue ≈ 2.5x current ARR
-- CATASTROPHIC: 0% ou negatif → stagnation ou decline
-
-## Exit multiples maximaux (sur ARR Y5)
-- BULL: Max 10x ARR (exceptionnel, P95+)
-- BASE: Max 7x ARR (median SaaS mature)
-- BEAR: Max 3x ARR (distress, fire sale)
-- CATASTROPHIC: 0-1x ARR (acquihire ou shutdown)
-
-## Exemples pour un deal a 48K€ ARR:
-- BULL max exit valo: 48K × 100 × 10 = ~48M (JAMAIS 100M+)
-- BASE max exit valo: 48K × 19 × 7 = ~6.4M (JAMAIS 15M+)
-- BEAR max exit valo: 48K × 2.5 × 3 = ~360K
-- CATASTROPHIC: 0 (shutdown) ou valeur equipe (acquihire ~500K-1M)
-
-## Regle de coherence OBLIGATOIRE
-- TOUJOURS calculer le CAGR implicite de tes projections Y5 et verifier qu'il est < aux caps ci-dessus
-- Si ARR actuel < 200K€: etre EXTRA CONSERVATEUR sur les exit valos
-- NE JAMAIS projeter une exit valo BASE > 300x le current ARR
-- NE JAMAIS projeter une exit valo BULL > 1000x le current ARR
-- Un deal early-stage avec < 100K ARR ne peut PAS raisonnablement atteindre > 50M exit valo (meme BULL)
-
-# RED FLAGS A DETECTER
-
-1. Projections deck irréalistes vs comparables DB - CRITICAL
-2. Scénario BASE déjà au-dessus de P75 des comparables - HIGH
-3. Aucun comparable BEAR/CATASTROPHIC trouvé - MEDIUM (suspect)
-4. Dilution sous-estimée vs standard du marché - HIGH
-5. Multiple de sortie au-dessus de P90 - HIGH
-
-# TRIGGERS CONTEXTUELS OBLIGATOIRES (F74)
-
-Pour CHAQUE scenario, identifie les TRIGGERS SPECIFIQUES dans le champ "triggers":
-- Quels red flags Tier 1 se materialisent dans ce scenario?
-- Quel evenement externe pourrait declencher ce scenario? (concurrent leve 50M, regulation change)
-- Quel evenement interne pourrait declencher ce scenario? (depart d'un fondateur/dirigeant cle, pivot force)
-
-Chaque trigger: { trigger, source, impactOnScenario, probability, mitigations[] }
-
-Exemples:
-- BEAR trigger: "Un cofondateur cle quitte" (source: "team-investigator: no vesting", impact: "BASE → BEAR", probability: "MEDIUM", mitigations: ["Mettre du vesting", "Recruter un profil senior complementaire"])
-- BULL trigger: "Contrat enterprise signe" (source: "customer-intel: pipeline enterprise", impact: "BASE → BULL", probability: "LOW")
-
-IMPORTANT: Adapte les roles et termes au SECTEUR du deal. Ne pas utiliser "CTO", "VP Engineering", "tech team" etc. pour un deal non-tech (food, retail, mode, services...). Utilise les roles pertinents du secteur (ex: Directeur Commercial, Responsable Produit, Chef de Production...).
-
-# FORMAT DE SORTIE
-
-JSON structuré avec:
-- meta, score, findings, dbCrossReference
-- redFlags, questions, alertSignal, narrative
-
-# REGLES ABSOLUES
-
-1. NE JAMAIS INVENTER de données - "Non disponible" si absent
-2. TOUJOURS citer la source (Deck Slide X, DB median, financial-auditor, etc.)
-3. TOUJOURS montrer les calculs (pas juste les résultats)
-4. TOUJOURS ancrer sur des comparables REELS
-5. Chaque scénario DOIT avoir basedOnComparable (sauf si vraiment aucun trouvé)
-6. Le BA doit pouvoir vérifier chaque hypothèse
-
-# EXEMPLE DE BON OUTPUT
-
-Scénario BASE (40% probabilité):
-- Source proba: "DB: 42% des Seed SaaS Europe atteignent Series A dans les 24 mois"
-- Hypothèse croissance Y1: 100% (Source: DB median Seed SaaS)
-- Hypothèse multiple exit: 5x ARR (Source: DB median SaaS exits 2023-2024)
-- Comparable: "DataWidget (Seed 2021 → Series A 2022 → Acquired 2024 @ 8x ARR)"
-- Calcul IRR: "50K invest → 0.8% ownership → 0.32% after dilution → 32K proceeds @ 10M exit → 0.64x → IRR = -8.5%/an sur 5 ans"
-
-# EXEMPLE DE MAUVAIS OUTPUT (a éviter)
-
-"Le scénario optimiste prévoit une croissance de 200% et un exit à 100M€"
-→ Aucune source, aucun comparable, aucun calcul montré = INACCEPTABLE
-
-# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
-
-**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
-
-1. **LIMITES STRICTES sur les arrays**:
-   - scenarios: 4 items EXACTEMENT (BASE, BULL, BEAR, CATASTROPHIC)
-   - assumptions par scenario: MAX 4 items
-   - metrics par scenario: MAX 3 items (Y1, Y3, Y5)
-   - keyRisks/keyDrivers: MAX 3 items chacun
-   - sensitivityAnalysis: MAX 4 variables
-   - basedOnComparables: MAX 3 items
-   - redFlags: MAX 5 items
-   - questions: MAX 5 items
-
-2. **BREVITE dans les textes**:
-   - revenueSource/valuationSource: 1 phrase MAX avec calcul
-   - rationale: 1-2 phrases MAX
-   - description: 2-3 phrases MAX
-   - irrCalculation: formule + resultat, pas d'explication
-
-3. **Structure > Contenu**: Mieux vaut 4 scenarios complets que des scenarios tronques
-
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
-`;
+    // Phase A slice A4 — System prompt extrait dans un fichier compagnon
+    // (`./prompts/scenario-modeler-prompt.ts`). Les invariants doctrinaux
+    // (absence de directive historique de seuil d'auto-confiance, absence
+    // de lexique prescriptif legacy de "raison-de-tuer-le-deal" /
+    // "destructeur-de-deal", `dominantScenario` natif renommage de
+    // l'ancien `mostLikelyScenario`, `signalContribution` dérivé déterministe
+    // côté runtime — pas demandé au LLM) sont verrouillés mécaniquement par
+    // les source-guards de `__tests__/scenario-modeler-prompt.guard.test.ts`.
+    return SCENARIO_MODELER_SYSTEM_PROMPT;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<ScenarioModelerData> {
@@ -512,8 +350,8 @@ Réponds en JSON avec la structure suivante:
   "basedOnComparables": [...],
   "breakEvenAnalysis": {...},
   "probabilityWeightedOutcome": {...},
-  "mostLikelyScenario": "BASE",
-  "mostLikelyRationale": "...",
+  "dominantScenario": "BASE",
+  "dominantScenarioRationale": "...",
   "dbCrossReference": {...}
 }
 \`\`\`
@@ -1049,10 +887,21 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
         expectedIRRCalculation: data.probabilityWeightedOutcome?.expectedIRRCalculation ?? "Non calculé",
         riskAdjustedAssessment: data.probabilityWeightedOutcome?.riskAdjustedAssessment ?? "",
       },
-      mostLikelyScenario: validScenarioNames.includes(data.mostLikelyScenario as typeof validScenarioNames[number])
-        ? (data.mostLikelyScenario as typeof validScenarioNames[number])
-        : "BASE",
-      mostLikelyRationale: data.mostLikelyRationale ?? "",
+      // Phase A slice A4 — `dominantScenario` (renommage de l'ancien
+      // `mostLikelyScenario`). Lecture priorité 1 : champ natif Phase A
+      // (`data.dominantScenario`). Lecture priorité 2 (parser tolérant,
+      // lecture seule) : ancien champ `data.mostLikelyScenario` si le LLM
+      // continue à le produire. Le champ n'est PAS ré-émis natif (D1).
+      dominantScenario: this.resolveDominantScenarioName(data, validScenarioNames),
+      dominantScenarioRationale: data.dominantScenarioRationale?.trim()
+        || data.mostLikelyRationale?.trim()
+        || "",
+      // Phase A slice A4 — `signalContribution` déterministe (runtime-derived).
+      // Le LLM ne pilote PAS l'orientation (leçon round 2 A3 sur riskPosture) :
+      // la valeur est dérivée mécaniquement depuis les probabilités scenarios.
+      // evidenceSolidity reste null en A4 (D2 verrouillé — A6 service Solidité
+      // qualifiera ultérieurement).
+      signalContribution: this.deriveSignalContributionFromScenarios(scenarios),
     };
 
     return {
@@ -1064,6 +913,88 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
       questions,
       alertSignal,
       narrative,
+    };
+  }
+
+  /**
+   * Phase A slice A4 — Résolution déterministe de `dominantScenario`.
+   *
+   * Priorité 1 : `data.dominantScenario` (contrat natif Phase A).
+   * Priorité 2 : `data.mostLikelyScenario` (parser tolérant lecture seule —
+   * LLM dégradé, lecture interne uniquement, jamais émis sous l'ancien nom).
+   * Fallback : "BASE".
+   */
+  private resolveDominantScenarioName(
+    data: LLMScenarioResponse,
+    validScenarioNames: readonly ("BASE" | "BULL" | "BEAR" | "CATASTROPHIC")[],
+  ): "BASE" | "BULL" | "BEAR" | "CATASTROPHIC" {
+    const candidate = data.dominantScenario ?? data.mostLikelyScenario;
+    if (
+      candidate &&
+      validScenarioNames.includes(
+        candidate as (typeof validScenarioNames)[number],
+      )
+    ) {
+      return candidate as (typeof validScenarioNames)[number];
+    }
+    return "BASE";
+  }
+
+  /**
+   * Phase A slice A4 — Dérive `signalContribution` déterministe.
+   *
+   * Anti-régression round 2 A3 : le LLM ne peut PAS piloter l'orientation
+   * du signal (cas equivalent au `riskPosture` LLM-driven banni en A3).
+   * Ici la dérivation est purement runtime, depuis les probabilités
+   * scenarios. Aucune valeur LLM n'entre dans le calcul.
+   *
+   * Règle :
+   *   P_pos = prob(BULL) + prob(BASE)
+   *   P_neg = prob(BEAR) + prob(CATASTROPHIC)
+   *   P_cat = prob(CATASTROPHIC)
+   *
+   *   P_cat >= 25                  → alert_dominant
+   *   P_neg >= 50                  → vigilance
+   *   P_pos >= 65 && BULL > BASE   → favorable
+   *   P_pos >= 50                  → contrasted (légère prédominance positive)
+   *   sinon                        → contrasted (défaut central)
+   *
+   * Scenario Modeler n'émet jamais `very_favorable` (le LLM contradicteur
+   * n'a pas vocation à porter une orientation maximaliste positive ; même
+   * biais structurel que DA).
+   *
+   * D2 verrouillé : `evidenceSolidity` reste null en A4 (A6 qualifiera).
+   */
+  private deriveSignalContributionFromScenarios(
+    scenarios: ScenarioV2[],
+  ): Tier3SignalContribution {
+    const probOf = (name: ScenarioV2["name"]): number => {
+      const s = scenarios.find((sc) => sc.name === name);
+      return s?.probability?.value ?? 0;
+    };
+    const pBull = probOf("BULL");
+    const pBase = probOf("BASE");
+    const pBear = probOf("BEAR");
+    const pCat = probOf("CATASTROPHIC");
+    const pPos = pBull + pBase;
+    const pNeg = pBear + pCat;
+
+    let orientation: Tier3Orientation;
+    if (pCat >= 25) {
+      orientation = "alert_dominant";
+    } else if (pNeg >= 50) {
+      orientation = "vigilance";
+    } else if (pPos >= 65 && pBull > pBase) {
+      orientation = "favorable";
+    } else if (pPos >= 50) {
+      orientation = "contrasted";
+    } else {
+      orientation = "contrasted";
+    }
+
+    return {
+      orientation,
+      evidenceSolidity: null,
     };
   }
 

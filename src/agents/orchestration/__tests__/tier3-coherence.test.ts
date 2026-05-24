@@ -67,8 +67,10 @@ function makeScenarioModelerResult(scenarios: ScenarioV2[]): AgentResult {
         basedOnComparables: [],
         breakEvenAnalysis: { monthsToBreakeven: 24, breakEvenCalculation: "test", requiredGrowthRate: 50, growthRateSource: "test", burnUntilBreakeven: 500000, burnCalculation: "test", achievability: "CHALLENGING", achievabilityRationale: "test" },
         probabilityWeightedOutcome: { expectedMultiple: 5, expectedMultipleCalculation: "test", expectedIRR: 30, expectedIRRCalculation: "test", riskAdjustedAssessment: "test" },
-        mostLikelyScenario: "BASE" as const,
-        mostLikelyRationale: "test",
+        // Phase A slice A4 — Fixture migrée vers `dominantScenario` + `signalContribution`.
+        dominantScenario: "BASE" as const,
+        dominantScenarioRationale: "test",
+        signalContribution: { orientation: "contrasted", evidenceSolidity: null } as const,
       },
       dbCrossReference: { claims: [], uncheckedClaims: [] },
       redFlags: [],

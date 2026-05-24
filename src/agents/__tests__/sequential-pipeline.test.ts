@@ -889,8 +889,10 @@ function buildAgentMockResponse(prompt: string, systemPrompt?: string): unknown 
         expectedIRR: 18, expectedIRRCalculation: "Weighted average IRR",
         riskAdjustedAssessment: "Acceptable risk-reward for Seed stage",
       },
-      mostLikelyScenario: "BASE",
-      mostLikelyRationale: "Current trajectory supports moderate growth scenario",
+      // Phase A slice A4 — Fixture migrée vers `dominantScenario` + `signalContribution`.
+      dominantScenario: "BASE",
+      dominantScenarioRationale: "Standard SaaS trajectory based on DB comparables",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
       score: {
         value: 60,
         grade: "B",

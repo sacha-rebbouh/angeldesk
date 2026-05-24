@@ -259,7 +259,11 @@ describe("Tier 3 Zod Schemas", () => {
     }
   });
 
-  it("ScenarioModelerResponseSchema validates valid data", () => {
+  it("ScenarioModelerResponseSchema validates valid data (Phase A A4 — dominantScenario + signalContribution, D1)", () => {
+    // Phase A slice A4 : contrat natif `dominantScenario` (renommé de
+    // `mostLikelyScenario`) + `dominantScenarioRationale` + `signalContribution`.
+    // Le recommendation.{bestScenario,worstScenario,verdict} legacy n'est plus
+    // contractuel.
     const data = {
       meta: baseMeta,
       scenarios: [
@@ -277,17 +281,79 @@ describe("Tier 3 Zod Schemas", () => {
           keyRisks: ["Competition increases"],
         },
       ],
-      recommendation: {
+      dominantScenario: "BASE",
+      dominantScenarioRationale: "BASE 50% is the most likely trajectory per DB comparables",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
+    };
+    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(true);
+  });
+
+  it("ScenarioModelerResponseSchema REJETTE `recommendation.verdict` legacy même AVEC payload natif valide (Phase A A4 round 2, .strict())", () => {
+    // Round 2 Codex : par défaut z.object strippe les unknown keys. .strict()
+    // sur le top-level rejette toute clé supplémentaire. Test : payload natif
+    // valide (dominantScenario + dominantScenarioRationale + signalContribution)
+    // + champ legacy `recommendation` en plus → doit échouer.
+    const data = {
+      meta: baseMeta,
+      scenarios: [],
+      dominantScenario: "BASE",
+      dominantScenarioRationale: "Standard trajectory",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
+      recommendation: { // legacy
         bestScenario: "s1",
         worstScenario: "s3",
         expectedValue: "3.5x",
         verdict: "Risk-adjusted return is acceptable",
       },
     };
-    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(true);
+    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(false);
   });
 
-  it("MemoGeneratorResponseSchema validates valid data", () => {
+  it("ScenarioModelerResponseSchema REJETTE `mostLikelyScenario`/`mostLikelyRationale` legacy même AVEC payload natif valide (Phase A A4 round 2, .strict())", () => {
+    // Round 2 Codex : payload natif valide + champ legacy `mostLikelyScenario`
+    // + `mostLikelyRationale` en plus → doit échouer (strict rejette les clés
+    // additionnelles).
+    const data = {
+      meta: baseMeta,
+      scenarios: [],
+      dominantScenario: "BASE",
+      dominantScenarioRationale: "x",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
+      mostLikelyScenario: "BASE", // legacy
+      mostLikelyRationale: "test", // legacy
+    };
+    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("ScenarioModelerResponseSchema REJETTE type `BLACK_SWAN` legacy (Phase A A4 — alignement CATASTROPHIC)", () => {
+    // Drift schema/runtime corrigé en A4 : type aligné CATASTROPHIC.
+    const data = {
+      meta: baseMeta,
+      scenarios: [
+        {
+          id: "s1",
+          name: "Catastrophic case",
+          type: "BLACK_SWAN", // legacy enum
+          probability: 5,
+          description: "x",
+          assumptions: [],
+          timeline: "5y",
+          financialProjection: {},
+          investorReturn: {},
+          triggers: [],
+          keyRisks: [],
+        },
+      ],
+      dominantScenario: "BASE",
+      dominantScenarioRationale: "x",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
+    };
+    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("MemoGeneratorResponseSchema validates valid data (Phase A A4 — signalProfile + criticalRisks, D1)", () => {
+    // Phase A slice A4 : contrat natif `memo.signalProfile` + `memo.criticalRisks`.
+    // L'ancien `memo.verdict.{recommendation, score, conditions}` est retiré.
     const data = {
       meta: baseMeta,
       memo: {
@@ -300,14 +366,41 @@ describe("Tier 3 Zod Schemas", () => {
             keyPoints: ["CEO has 10y experience", "CTO is missing"],
           },
         ],
-        verdict: {
-          recommendation: "CONDITIONAL_PASS",
-          score: 68,
-          conditions: ["Hire CTO", "Verify ARR"],
-        },
+        signalProfile: { orientation: "contrasted", evidenceSolidity: null },
+        criticalRisks: [
+          {
+            riskId: "cr-1",
+            severity: "HIGH",
+            description: "Cap table fragmenté (12 entries, no lead investor)",
+            evidence: "cap-table-auditor: fragmented",
+            source: "cap-table-auditor",
+          },
+        ],
       },
     };
     expect(MemoGeneratorResponseSchema.safeParse(data).success).toBe(true);
+  });
+
+  it("MemoGeneratorResponseSchema REJETTE `memo.verdict` legacy même AVEC payload natif valide (Phase A A4 round 2, .strict())", () => {
+    // Round 2 Codex : payload natif valide (signalProfile + criticalRisks) +
+    // champ legacy `memo.verdict` en plus → doit échouer (strict rejette les
+    // clés additionnelles dans le bloc memo).
+    const data = {
+      meta: baseMeta,
+      memo: {
+        title: "Test",
+        executiveSummary: "Test",
+        sections: [],
+        signalProfile: { orientation: "contrasted", evidenceSolidity: null },
+        criticalRisks: [],
+        verdict: { // legacy
+          recommendation: "CONDITIONAL_PASS",
+          score: 68,
+          conditions: ["Hire CTO"],
+        },
+      },
+    };
+    expect(MemoGeneratorResponseSchema.safeParse(data).success).toBe(false);
   });
 
   it("ScenarioModelerResponseSchema rejects invalid probability", () => {
@@ -328,19 +421,45 @@ describe("Tier 3 Zod Schemas", () => {
           keyRisks: [],
         },
       ],
-      recommendation: { bestScenario: "s1", worstScenario: "s1", expectedValue: "0", verdict: "test" },
+      dominantScenario: "BASE",
+      dominantScenarioRationale: "x",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
     };
     expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(false);
   });
 
-  it("MemoGeneratorResponseSchema rejects score > 100", () => {
+  it("MemoGeneratorResponseSchema REJETTE criticalRisks avec severity legacy `ABSOLUTE` (Phase A A4)", () => {
+    // Régression : CriticalRiskRef A1 impose severity CRITICAL|HIGH|MEDIUM.
     const data = {
       meta: baseMeta,
       memo: {
         title: "Test",
         executiveSummary: "Test",
         sections: [],
-        verdict: { recommendation: "PASS", score: 120, conditions: [] },
+        signalProfile: { orientation: "contrasted", evidenceSolidity: null },
+        criticalRisks: [
+          { riskId: "cr-1", severity: "ABSOLUTE", description: "x" }, // legacy DA
+        ],
+      },
+    };
+    expect(MemoGeneratorResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  // Bloc legacy supprimé (schema MemoGenerator n'a plus de champ
+  // memo.verdict.score). Le test "score > 100" portait sur ce champ retiré
+  // en A4 — couvert désormais par le rejet du champ `verdict` lui-même via
+  // .strict() (round 2 Codex).
+  it("MemoGeneratorResponseSchema legacy memo.verdict.score N'EST PLUS au contrat (Phase A A4 round 2, .strict())", () => {
+    // Round 2 : payload natif valide + memo.verdict legacy → doit échouer.
+    const data = {
+      meta: baseMeta,
+      memo: {
+        title: "Test",
+        executiveSummary: "Test",
+        sections: [],
+        signalProfile: { orientation: "contrasted", evidenceSolidity: null },
+        criticalRisks: [],
+        verdict: { recommendation: "PASS", score: 120, conditions: [] }, // legacy
       },
     };
     expect(MemoGeneratorResponseSchema.safeParse(data).success).toBe(false);
