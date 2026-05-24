@@ -18,7 +18,11 @@ import {
 } from "../pdf-components";
 import { s, sup, formatValue, fmtPct, fmtWeight } from "../pdf-helpers";
 import { AGENT_DISPLAY_NAMES } from "@/lib/format-utils";
-import { ALERT_SIGNAL_LABELS } from "@/lib/ui-configs";
+import {
+  ALERT_SIGNAL_LABELS,
+  resolveTier1SignalIntensity,
+  TIER1_SIGNAL_INTENSITY_LABELS,
+} from "@/lib/ui-configs";
 import type { AgentResult } from "../generate-analysis-pdf";
 
 export function Tier1AgentsSection({
@@ -85,6 +89,7 @@ function AgentBlock({
     justification?: string;
     hasBlocker?: boolean;
   } | undefined;
+  const signalIntensity = data.signalIntensity as string | null | undefined;
 
   const dbRef = data.dbCrossReference as {
     claims?: Array<{
@@ -182,13 +187,19 @@ function AgentBlock({
         <AgentFindings agentName={agentName} findings={findings} />
       )}
 
-      {/* Alert signal */}
-      {alert && (
-        <LabelValue
-          label="Signal"
-          value={`${ALERT_SIGNAL_LABELS[alert.recommendation ?? ""] ?? alert.recommendation?.replace(/_/g, " ") ?? "N/A"}${alert.hasBlocker ? " (BLOQUANT)" : ""}`}
-        />
-      )}
+      {/* Alert signal — Phase A A7b-3 : signalIntensity natif, fallback read-only `alert.recommendation` legacy pour analyses persistées pré-A7b-2. */}
+      {alert && (() => {
+        const intensity = resolveTier1SignalIntensity(signalIntensity, alert.recommendation);
+        const label = intensity
+          ? TIER1_SIGNAL_INTENSITY_LABELS[intensity]
+          : ALERT_SIGNAL_LABELS[alert.recommendation ?? ""] ?? alert.recommendation?.replace(/_/g, " ") ?? "À QUALIFIER";
+        return (
+          <LabelValue
+            label="Signal"
+            value={`${label}${alert.hasBlocker ? " (BLOQUANT)" : ""}`}
+          />
+        );
+      })()}
       {alert?.justification && <BodyText>{alert.justification}</BodyText>}
 
       {/* DB cross-reference */}

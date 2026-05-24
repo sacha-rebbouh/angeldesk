@@ -61,7 +61,21 @@ import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-tease
 import { DataCompletenessGuide } from "@/components/shared/data-completeness-guide";
 import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
 import { Lightbulb } from "lucide-react";
-import { ALERT_SIGNAL_LABELS, READINESS_LABELS, BURN_EFFICIENCY_LABELS, MOAT_LABELS, PMF_LABELS, CONCENTRATION_LABELS, DIVERSIFICATION_LABELS, LEVEL_LABELS, getEnumLabel } from "@/lib/ui-configs";
+import {
+  ALERT_SIGNAL_LABELS,
+  READINESS_LABELS,
+  BURN_EFFICIENCY_LABELS,
+  MOAT_LABELS,
+  PMF_LABELS,
+  CONCENTRATION_LABELS,
+  DIVERSIFICATION_LABELS,
+  LEVEL_LABELS,
+  getEnumLabel,
+  resolveTier1SignalIntensity,
+  TIER1_SIGNAL_INTENSITY_LABELS,
+  TIER1_SIGNAL_INTENSITY_BLOCK_CLASS,
+  TIER1_SIGNAL_INTENSITY_BADGE_CLASS,
+} from "@/lib/ui-configs";
 
 interface ReActMetadata {
   reasoningTrace: ReasoningTrace;
@@ -225,6 +239,56 @@ function formatAmount(value: number | string | undefined | null): string {
   return `${n.toFixed(0)}€`;
 }
 
+/**
+ * Phase A slice A7b-3 — Affichage unifié du signal d'alerte Tier 1.
+ *
+ * L'UI lit en priorité `signalIntensity` natif (post-A7b-2 — émis par les
+ * 13 agents Tier 1 via le helper `deriveTier1SignalIntensity`). En l'absence
+ * de `signalIntensity` (analyses persistées avant A7b-2), un fallback
+ * read-only sur `alertSignal.recommendation` mappe les valeurs legacy
+ * `PROCEED|...|STOP` vers l'intensité correspondante.
+ *
+ * Le fallback est strictement read-only : aucune écriture ni dérivation
+ * runtime ne passe par ce chemin (cf. doc `resolveTier1SignalIntensity`
+ * dans `ui-configs.ts`).
+ */
+const Tier1AlertSignalDisplay = memo(function Tier1AlertSignalDisplay({
+  alertSignal,
+  signalIntensity,
+}: {
+  alertSignal:
+    | {
+        recommendation?: string | null;
+        justification?: string | null;
+        hasBlocker?: boolean | null;
+      }
+    | null
+    | undefined;
+  signalIntensity: string | null | undefined;
+}) {
+  if (!alertSignal) return null;
+  const intensity = resolveTier1SignalIntensity(signalIntensity, alertSignal.recommendation);
+  // Si ni signalIntensity natif ni recommendation legacy n'est exploitable,
+  // on ne masque pas l'info — on rend la justification dans un bloc neutre.
+  const blockClass = intensity ? TIER1_SIGNAL_INTENSITY_BLOCK_CLASS[intensity] : "bg-muted/30 border-border";
+  const badgeClass = intensity ? TIER1_SIGNAL_INTENSITY_BADGE_CLASS[intensity] : "bg-muted text-muted-foreground";
+  const label = intensity
+    ? TIER1_SIGNAL_INTENSITY_LABELS[intensity]
+    : ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? "À QUALIFIER";
+  return (
+    <div className={cn("p-3 rounded-lg border", blockClass)}>
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className={cn("text-xs", badgeClass)}>
+          {label}
+        </Badge>
+        {alertSignal.justification && (
+          <span className="text-sm">{alertSignal.justification}</span>
+        )}
+      </div>
+    </div>
+  );
+});
+
 // Financial Auditor Card - Rich display
 const FinancialAuditCard = memo(function FinancialAuditCard({
   data,
@@ -266,29 +330,11 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
       </CardHeader>
 
       <CardContent className="space-y-5">
-        {/* Alert Signal */}
-        {data.alertSignal && (
-          <div className={cn(
-            "p-3 rounded-lg border",
-            data.alertSignal.recommendation === "STOP" ? "bg-red-50 border-red-200" :
-            data.alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-50 border-orange-200" :
-            data.alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-50 border-yellow-200" :
-            "bg-green-50 border-green-200"
-          )}>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn(
-                "text-xs",
-                data.alertSignal.recommendation === "STOP" ? "bg-red-100 text-red-800" :
-                data.alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-100 text-orange-800" :
-                data.alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
-                "bg-green-100 text-green-800"
-              )}>
-                {ALERT_SIGNAL_LABELS[data.alertSignal.recommendation ?? ""] ?? data.alertSignal.recommendation}
-              </Badge>
-              <span className="text-sm">{data.alertSignal.justification}</span>
-            </div>
-          </div>
-        )}
+        {/* Alert Signal — Phase A A7b-3 : signalIntensity natif, fallback read-only recommendation legacy */}
+        <Tier1AlertSignalDisplay
+          alertSignal={data.alertSignal}
+          signalIntensity={data.signalIntensity}
+        />
 
         {/* Key Metrics Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1596,6 +1642,7 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
   const redFlags = isV2 ? data.redFlags : null;
   const narrative = isV2 ? data.narrative : null;
   const alertSignal = isV2 ? data.alertSignal : null;
+  const signalIntensity = isV2 ? data.signalIntensity : null;
   const questions = isV2 ? data.questions : null;
 
   // Ownership breakdown - v2.0 structure
@@ -1647,29 +1694,8 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
           <p className="text-sm text-muted-foreground">{narrative.summary}</p>
         )}
 
-        {/* Alert Signal */}
-        {alertSignal && (
-          <div className={cn(
-            "p-3 rounded-lg border",
-            alertSignal.recommendation === "STOP" ? "bg-red-50 border-red-200" :
-            alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-50 border-orange-200" :
-            alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-50 border-yellow-200" :
-            "bg-green-50 border-green-200"
-          )}>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn(
-                "text-xs",
-                alertSignal.recommendation === "STOP" ? "bg-red-100 text-red-800" :
-                alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-100 text-orange-800" :
-                alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
-                "bg-green-100 text-green-800"
-              )}>
-                {ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? alertSignal.recommendation}
-              </Badge>
-              <span className="text-sm">{alertSignal.justification}</span>
-            </div>
-          </div>
-        )}
+        {/* Alert Signal — Phase A A7b-3 : signalIntensity natif, fallback read-only recommendation legacy */}
+        <Tier1AlertSignalDisplay alertSignal={alertSignal} signalIntensity={signalIntensity} />
 
         {/* Data Availability Warning (v2.0) */}
         {dataAvailability && !dataAvailability.capTableProvided && (
@@ -2013,6 +2039,7 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
   const redFlags = data.redFlags ?? [];
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
+  const signalIntensity = data.signalIntensity;
   const questions = data.questions ?? [];
 
   // Channels
@@ -2058,29 +2085,8 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
           <p className="text-sm text-muted-foreground">{narrative.summary}</p>
         )}
 
-        {/* Alert Signal */}
-        {alertSignal && (
-          <div className={cn(
-            "p-3 rounded-lg border",
-            alertSignal.recommendation === "STOP" ? "bg-red-50 border-red-200" :
-            alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-50 border-orange-200" :
-            alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-50 border-yellow-200" :
-            "bg-green-50 border-green-200"
-          )}>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn(
-                "text-xs",
-                alertSignal.recommendation === "STOP" ? "bg-red-100 text-red-800" :
-                alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-100 text-orange-800" :
-                alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
-                "bg-green-100 text-green-800"
-              )}>
-                {ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? alertSignal.recommendation}
-              </Badge>
-              <span className="text-sm">{alertSignal.justification}</span>
-            </div>
-          </div>
-        )}
+        {/* Alert Signal — Phase A A7b-3 : signalIntensity natif, fallback read-only recommendation legacy */}
+        <Tier1AlertSignalDisplay alertSignal={alertSignal} signalIntensity={signalIntensity} />
 
         {/* Sales Motion */}
         {salesMotion && (
@@ -2409,6 +2415,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
   const redFlags = data.redFlags ?? [];
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
+  const signalIntensity = data.signalIntensity;
   const questions = data.questions ?? [];
 
   // Specific findings
@@ -2449,29 +2456,8 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
           <p className="text-sm text-muted-foreground">{narrative.summary}</p>
         )}
 
-        {/* Alert Signal */}
-        {alertSignal && (
-          <div className={cn(
-            "p-3 rounded-lg border",
-            alertSignal.recommendation === "STOP" ? "bg-red-50 border-red-200" :
-            alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-50 border-orange-200" :
-            alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-50 border-yellow-200" :
-            "bg-green-50 border-green-200"
-          )}>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn(
-                "text-xs",
-                alertSignal.recommendation === "STOP" ? "bg-red-100 text-red-800" :
-                alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-100 text-orange-800" :
-                alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
-                "bg-green-100 text-green-800"
-              )}>
-                {ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? alertSignal.recommendation}
-              </Badge>
-              <span className="text-sm">{alertSignal.justification}</span>
-            </div>
-          </div>
-        )}
+        {/* Alert Signal — Phase A A7b-3 : signalIntensity natif, fallback read-only recommendation legacy */}
+        <Tier1AlertSignalDisplay alertSignal={alertSignal} signalIntensity={signalIntensity} />
 
         {/* PMF Analysis */}
         {pmf && (
@@ -3038,6 +3024,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
   const scoreValue = data.score?.value;
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
+  const signalIntensity = data.signalIntensity;
 
   // Specific findings
   const founderQuestions = findings?.founderQuestions ?? EMPTY_FOUNDER_QUESTIONS;
@@ -3102,29 +3089,8 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
           <p className="text-sm text-muted-foreground">{narrative.summary}</p>
         )}
 
-        {/* Alert Signal */}
-        {alertSignal && (
-          <div className={cn(
-            "p-3 rounded-lg border",
-            alertSignal.recommendation === "STOP" ? "bg-red-50 border-red-200" :
-            alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-50 border-orange-200" :
-            alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-50 border-yellow-200" :
-            "bg-green-50 border-green-200"
-          )}>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={cn(
-                "text-xs",
-                alertSignal.recommendation === "STOP" ? "bg-red-100 text-red-800" :
-                alertSignal.recommendation === "INVESTIGATE_FURTHER" ? "bg-orange-100 text-orange-800" :
-                alertSignal.recommendation === "PROCEED_WITH_CAUTION" ? "bg-yellow-100 text-yellow-800" :
-                "bg-green-100 text-green-800"
-              )}>
-                {ALERT_SIGNAL_LABELS[alertSignal.recommendation ?? ""] ?? alertSignal.recommendation}
-              </Badge>
-              <span className="text-sm">{alertSignal.justification}</span>
-            </div>
-          </div>
-        )}
+        {/* Alert Signal — Phase A A7b-3 : signalIntensity natif, fallback read-only recommendation legacy */}
+        <Tier1AlertSignalDisplay alertSignal={alertSignal} signalIntensity={signalIntensity} />
 
         {/* Tier 1 Summary */}
         {tier1Summary && (

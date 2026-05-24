@@ -197,6 +197,85 @@ export const ALERT_SIGNAL_LABELS: Record<string, string> = {
   PROCEED: "CONFORME",
 };
 
+// Tier 1 Signal Intensity — Phase A slice A7b-3.
+// 4 valeurs natives émises par les agents Tier 1 (helper A7b-1
+// `deriveTier1SignalIntensity`) : low / elevated / high / critical.
+// L'UI Tier 1 lit `data.signalIntensity` natif ; `alertSignal.recommendation`
+// reste consommé uniquement en fallback read-only pour les analyses
+// persistées avant A7b-2.
+export type Tier1SignalIntensityValue = "low" | "elevated" | "high" | "critical";
+
+export const TIER1_SIGNAL_INTENSITY_LABELS: Record<Tier1SignalIntensityValue, string> = {
+  critical: "ANOMALIE MAJEURE",
+  high: "INVESTIGATION REQUISE",
+  elevated: "POINTS D'ATTENTION",
+  low: "CONFORME",
+};
+
+// Tailwind classes par intensité — alignées sur le système existant
+// (rouge / orange / jaune / vert) déjà utilisé par les blocs alertSignal
+// inline. Centraliser ici évite la duplication des 5 sites dans
+// tier1-results.tsx.
+export const TIER1_SIGNAL_INTENSITY_BLOCK_CLASS: Record<Tier1SignalIntensityValue, string> = {
+  critical: "bg-red-50 border-red-200",
+  high: "bg-orange-50 border-orange-200",
+  elevated: "bg-yellow-50 border-yellow-200",
+  low: "bg-green-50 border-green-200",
+};
+
+export const TIER1_SIGNAL_INTENSITY_BADGE_CLASS: Record<Tier1SignalIntensityValue, string> = {
+  critical: "bg-red-100 text-red-800",
+  high: "bg-orange-100 text-orange-800",
+  elevated: "bg-yellow-100 text-yellow-800",
+  low: "bg-green-100 text-green-800",
+};
+
+// Mapping legacy → intensity, utilisé uniquement en fallback read-only
+// (analyses persistées pré-A7b-2 où le runtime n'émettait pas encore
+// `signalIntensity` natif). À NE PAS utiliser dans un chemin LLM ou un
+// builder runtime — la dérivation runtime canonique passe par le helper
+// `deriveTier1SignalIntensity` (A7b-1).
+export const TIER1_LEGACY_RECOMMENDATION_TO_INTENSITY: Record<string, Tier1SignalIntensityValue> = {
+  STOP: "critical",
+  INVESTIGATE_FURTHER: "high",
+  PROCEED_WITH_CAUTION: "elevated",
+  PROCEED: "low",
+};
+
+/**
+ * Résout une intensité Tier 1 à partir des champs sources.
+ *
+ * Priorité :
+ *   1. `signalIntensity` natif (post-A7b-2) — chemin canonique.
+ *   2. `legacyRecommendation` (analyses persistées pré-A7b-2) — fallback
+ *      read-only documenté. Mappe `PROCEED|...|STOP` vers l'intensité
+ *      correspondante.
+ *   3. `null` si aucune des deux n'est exploitable.
+ *
+ * IMPORTANT : ce helper est strictement read-only. Aucune écriture, aucune
+ * dérivation runtime ne doit passer par lui — il sert uniquement à
+ * permettre aux consumers UI/PDF d'afficher de manière homogène les
+ * analyses anciennes et nouvelles. Toute logique métier doit utiliser
+ * `deriveTier1SignalIntensity` du helper A7b-1.
+ */
+export function resolveTier1SignalIntensity(
+  signalIntensity: string | null | undefined,
+  legacyRecommendation: string | null | undefined,
+): Tier1SignalIntensityValue | null {
+  if (
+    signalIntensity === "low" ||
+    signalIntensity === "elevated" ||
+    signalIntensity === "high" ||
+    signalIntensity === "critical"
+  ) {
+    return signalIntensity;
+  }
+  if (typeof legacyRecommendation === "string" && legacyRecommendation in TIER1_LEGACY_RECOMMENDATION_TO_INTENSITY) {
+    return TIER1_LEGACY_RECOMMENDATION_TO_INTENSITY[legacyRecommendation];
+  }
+  return null;
+}
+
 // Readiness Labels — analytical framing
 export const READINESS_LABELS: Record<string, string> = {
   READY_TO_INVEST: "Données suffisantes",
