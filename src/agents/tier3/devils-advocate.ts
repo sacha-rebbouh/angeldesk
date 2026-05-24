@@ -32,6 +32,7 @@
 import { BaseAgent } from "../base-agent";
 import { factCheckDevilsAdvocate } from "@/services/fact-checking";
 import { DEVILS_ADVOCATE_SYSTEM_PROMPT } from "./prompts/devils-advocate-prompt";
+import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 import type {
   EnrichedAgentContext,
   DevilsAdvocateResult,
@@ -433,6 +434,16 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
     const { data } = await this.llmCompleteJSON<LLMDevilsAdvocateResponse>(prompt);
 
     const result = this.normalizeResponse(data, deal.name);
+
+    // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
+    // déterministe (D2 verrouillé : contradictory / insufficient / null,
+    // jamais dérivé de score / confidence). Lecture seule du contexte
+    // agent (evidenceLedger + previousResults contradiction-detector).
+    const solidity = buildEvidenceSolidityForContext(context);
+    if (solidity.value !== null && solidity.rationale) {
+      result.findings.signalContribution.evidenceSolidity = solidity.value;
+      result.findings.signalContribution.evidenceSolidityRationale = solidity.rationale;
+    }
 
     // Fact-check sources via web search
     // This verifies that comparable failures and historical precedents are real

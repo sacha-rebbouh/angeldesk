@@ -52,6 +52,7 @@ import { RedFlagDedup, inferRedFlagTopic } from "@/services/red-flag-dedup";
 import type { RedFlagSeverity } from "@/services/red-flag-dedup";
 import { getWeightsForDeal, formatWeightsForPrompt } from "@/scoring/stage-weights";
 import { SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT } from "./prompts/synthesis-deal-scorer-prompt";
+import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 
 // =============================================================================
 // OUTPUT TYPES - Synthesis Deal Scorer v2.0
@@ -1454,12 +1455,35 @@ Aucune incohérence majeure détectée entre les agents.`;
       //   aucun mapping depuis score/confidence).
       // - score : score final agrégé (secondaire, dimensionnel).
       // - criticalRisks : refs constructibles depuis les flags CRITICAL.
-      signalContribution: {
-        orientation: finalVerdict,
-        evidenceSolidity: null,
-        score: finalOverallScore,
-      },
+      // Phase A slice A6 — evidenceSolidity dérivé déterministe depuis le
+      // service Evidence Solidity (jamais fabriqué depuis score/confidence).
+      signalContribution: this.buildSignalContribution(finalVerdict, finalOverallScore, context),
     };
+  }
+
+  /**
+   * Phase A slice A6 — Construction de signalContribution avec qualification
+   * evidenceSolidity via le service déterministe.
+   *
+   * D2 verrouillé : `value` ∈ {`contradictory`, `insufficient`, null}.
+   * Le service ne lit JAMAIS score / overallScore / confidence
+   * (cf. source-guard `no-confidence-input.guard.test.ts`).
+   */
+  private buildSignalContribution(
+    orientation: Tier3Orientation,
+    score: number,
+    context: EnrichedAgentContext,
+  ): Tier3SignalContribution {
+    const solidity = buildEvidenceSolidityForContext(context);
+    const base: Tier3SignalContribution = {
+      orientation,
+      evidenceSolidity: solidity.value,
+      score,
+    };
+    if (solidity.value !== null && solidity.rationale) {
+      base.evidenceSolidityRationale = solidity.rationale;
+    }
+    return base;
   }
 }
 

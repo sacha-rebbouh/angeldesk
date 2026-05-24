@@ -43,6 +43,7 @@ import type {
 import { calculateBATicketSize, type BAPreferences } from "@/services/benchmarks";
 import { calculateIRR } from "@/agents/orchestration/utils/financial-calculations";
 import { SCENARIO_MODELER_SYSTEM_PROMPT } from "./prompts/scenario-modeler-prompt";
+import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 
 // ============================================================================
 // LLM RESPONSE TYPES
@@ -901,7 +902,7 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
       // la valeur est dérivée mécaniquement depuis les probabilités scenarios.
       // evidenceSolidity reste null en A4 (D2 verrouillé — A6 service Solidité
       // qualifiera ultérieurement).
-      signalContribution: this.deriveSignalContributionFromScenarios(scenarios),
+      signalContribution: this.buildSignalContribution(scenarios, context),
     };
 
     return {
@@ -996,6 +997,25 @@ UTILISER CES PARAMETRES pour les calculs de retour dans chaque scénario.`;
       orientation,
       evidenceSolidity: null,
     };
+  }
+
+  /**
+   * Phase A slice A6 — Construit signalContribution avec qualification
+   * evidenceSolidity via le service déterministe. Combine la dérivation
+   * d'orientation existante (depuis probabilités) avec l'appel au service
+   * Evidence Solidity (D2 verrouillé).
+   */
+  private buildSignalContribution(
+    scenarios: ScenarioV2[],
+    context: EnrichedAgentContext,
+  ): Tier3SignalContribution {
+    const base = this.deriveSignalContributionFromScenarios(scenarios);
+    const solidity = buildEvidenceSolidityForContext(context);
+    if (solidity.value !== null && solidity.rationale) {
+      base.evidenceSolidity = solidity.value;
+      base.evidenceSolidityRationale = solidity.rationale;
+    }
+    return base;
   }
 
   /**

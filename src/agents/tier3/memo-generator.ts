@@ -35,6 +35,7 @@ import type {
 } from "../types";
 import { calculateBATicketSize, type BAPreferences } from "@/services/benchmarks";
 import { MEMO_GENERATOR_SYSTEM_PROMPT } from "./prompts/memo-generator-prompt";
+import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 
 // ============================================================================
 // TYPES INTERNES
@@ -457,7 +458,18 @@ Réponds en JSON avec cette structure exacte:
     const { data } = await this.llmCompleteJSON<LLMMemoResponse>(prompt);
 
     // Validation et normalisation
-    return this.normalizeResponse(data, deal, consolidatedRedFlags, consolidatedQuestions);
+    const result = this.normalizeResponse(data, deal, consolidatedRedFlags, consolidatedQuestions);
+
+    // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
+    // déterministe (D2 verrouillé : contradictory / insufficient / null,
+    // jamais dérivé de score / confidence).
+    const solidity = buildEvidenceSolidityForContext(context);
+    if (solidity.value !== null && solidity.rationale) {
+      result.signalProfile.evidenceSolidity = solidity.value;
+      result.signalProfile.evidenceSolidityRationale = solidity.rationale;
+    }
+
+    return result;
   }
 
   // ============================================================================
@@ -1027,13 +1039,15 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
 
     // Phase A slice A4 — `signalProfile` natif (Tier3SignalContribution).
     // Orientation = executiveSummary.recommendation (source de vérité doctrinale
-    // déjà alignée). evidenceSolidity reste null en A4 (D2 verrouillé —
-    // A6 service Solidité qualifiera). Le rationale provient du LLM si fourni.
-    const signalRationale = data.signalProfile?.rationale?.trim();
+    // déjà alignée).
+    // Phase A slice A6 round 2 — `evidenceSolidity` + `evidenceSolidityRationale`
+    // sont qualifiés UNIQUEMENT par le service Evidence Solidity côté `execute`
+    // (déterministe, D2 verrouillé). L'ancien mapping LLM `signalProfile.rationale`
+    // → `evidenceSolidityRationale` est retiré : ce champ doit refléter la
+    // solidité des preuves, pas une rationale LLM libre.
     const signalProfile: Tier3SignalContribution = {
       orientation: recommendation,
       evidenceSolidity: null,
-      ...(signalRationale ? { evidenceSolidityRationale: signalRationale } : {}),
     };
 
     return {

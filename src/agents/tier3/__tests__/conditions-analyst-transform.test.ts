@@ -178,4 +178,64 @@ describe("buildOutput CA — invariants A4-bis (D1 + D2)", () => {
       expect(result.findings.signalContribution.evidenceSolidity).toBeNull();
     });
   });
+
+  describe("Phase A A6 round 2 — fallback buildNoConditionsResult branché service Evidence Solidity", () => {
+    type BuildNoConditionsFn = (context: EnrichedAgentContext) => ConditionsAnalystData;
+    const buildNoConditionsResult = (conditionsAnalyst as unknown as { buildNoConditionsResult: BuildNoConditionsFn })
+      .buildNoConditionsResult.bind(conditionsAnalyst);
+
+    it("Contexte minimal sans ledger/contradictions → evidenceSolidity null", () => {
+      const result = buildNoConditionsResult(makeMockContext());
+      expect(result.findings.signalContribution.evidenceSolidity).toBeNull();
+      expect(result.findings.signalContribution.orientation).toBe("vigilance");
+    });
+
+    it("Contexte avec 3 contradictions CRITICAL → evidenceSolidity = contradictory (fallback aussi branché A6)", () => {
+      const context = {
+        ...makeMockContext(),
+        previousResults: {
+          "contradiction-detector": {
+            agentName: "contradiction-detector",
+            success: true,
+            executionTimeMs: 100,
+            cost: 0.01,
+            data: {
+              findings: {
+                contradictions: [
+                  { id: "c1", severity: "CRITICAL" },
+                  { id: "c2", severity: "CRITICAL" },
+                  { id: "c3", severity: "CRITICAL" },
+                ],
+              },
+            },
+          },
+        },
+      } as unknown as EnrichedAgentContext;
+      const result = buildNoConditionsResult(context);
+      expect(result.findings.signalContribution.evidenceSolidity).toBe("contradictory");
+      expect(result.findings.signalContribution.evidenceSolidityRationale).toBeTruthy();
+    });
+
+    it("Contexte avec ledger insufficient (factCount=0) → evidenceSolidity = insufficient", () => {
+      const context = {
+        ...makeMockContext(),
+        evidenceLedger: {
+          generatedAt: new Date().toISOString(),
+          coverage: {
+            factCount: 0,
+            documentArtifactCount: 0,
+            visualArtifactCount: 0,
+            numericClaimCount: 0,
+            extractionWarningCount: 0,
+            externalSourceIssueCount: 0,
+            lowReliabilityFactCount: 0,
+          },
+          items: [],
+          warnings: [],
+        },
+      } as unknown as EnrichedAgentContext;
+      const result = buildNoConditionsResult(context);
+      expect(result.findings.signalContribution.evidenceSolidity).toBe("insufficient");
+    });
+  });
 });

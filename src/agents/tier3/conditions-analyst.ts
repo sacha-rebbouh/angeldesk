@@ -20,6 +20,7 @@
 
 import { BaseAgent } from "../base-agent";
 import { CONDITIONS_ANALYST_SYSTEM_PROMPT } from "./prompts/conditions-analyst-prompt";
+import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 import type {
   EnrichedAgentContext,
   ConditionsAnalystData,
@@ -585,7 +586,6 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
   // ============================================================================
 
   private buildNoConditionsResult(context: EnrichedAgentContext): ConditionsAnalystData {
-    void context;
     const meta: AgentMeta = {
       agentName: "conditions-analyst",
       analysisDate: new Date().toISOString(),
@@ -616,9 +616,13 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       negotiationAdvice: [],
       // Phase A slice A4-bis — Pas de conditions disponibles : signal high
       // (investigation nécessaire) avec orientation vigilance pour signaler
-      // l'incertitude factuelle au consumer. evidenceSolidity = null (D2).
+      // l'incertitude factuelle au consumer.
+      // Phase A slice A6 round 2 — Brancher le service Evidence Solidity
+      // aussi sur ce chemin fallback. Si le contexte fournit des
+      // contradictions critiques exploitables (ou ledger insufficient
+      // documenté), on qualifie evidenceSolidity. Sinon, reste null.
       signalIntensity: "high",
-      signalContribution: { orientation: "vigilance", evidenceSolidity: null },
+      signalContribution: this.buildFallbackSignalContribution(context),
     };
 
     const questions: AgentQuestion[] = [
@@ -789,6 +793,16 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
     findings.signalIntensity = this.deriveSignalIntensityFromConditions(criticalRedFlags, highRedFlags, scoreValue);
     findings.signalContribution = this.deriveSignalContributionFromIntensity(findings.signalIntensity, scoreValue);
 
+    // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
+    // déterministe (D2 verrouillé : contradictory / insufficient / null,
+    // jamais dérivé de score / confidence). CA n'a pas d'override : il lit
+    // les contradictions cross-agent depuis previousResults.
+    const solidity = buildEvidenceSolidityForContext(context);
+    if (solidity.value !== null && solidity.rationale) {
+      findings.signalContribution.evidenceSolidity = solidity.value;
+      findings.signalContribution.evidenceSolidityRationale = solidity.rationale;
+    }
+
     // Phase A slice A4-bis — `alertSignal.recommendation` dérivé déterministe
     // depuis signalIntensity. Le LLM ne pilote plus. Mapping :
     //   low → PROCEED, elevated → PROCEED_WITH_CAUTION,
@@ -815,6 +829,22 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
   // ============================================================================
   // VALIDATORS
   // ============================================================================
+
+  /**
+   * Phase A slice A6 round 2 — Construit le signalContribution du chemin
+   * fallback `buildNoConditionsResult`. Orientation fixée à `vigilance`
+   * (signal d'incertitude factuelle). evidenceSolidity qualifié via le
+   * service Evidence Solidity si signaux exploitables, sinon null.
+   */
+  private buildFallbackSignalContribution(context: EnrichedAgentContext): Tier3SignalContribution {
+    const base: Tier3SignalContribution = { orientation: "vigilance", evidenceSolidity: null };
+    const solidity = buildEvidenceSolidityForContext(context);
+    if (solidity.value !== null && solidity.rationale) {
+      base.evidenceSolidity = solidity.value;
+      base.evidenceSolidityRationale = solidity.rationale;
+    }
+    return base;
+  }
 
   /**
    * Phase A slice A4-bis — Dérivation déterministe de `signalIntensity`

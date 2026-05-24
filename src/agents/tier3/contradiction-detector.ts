@@ -30,6 +30,7 @@
 
 import { BaseAgent } from "../base-agent";
 import { CONTRADICTION_DETECTOR_SYSTEM_PROMPT } from "./prompts/contradiction-detector-prompt";
+import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 import type {
   EnrichedAgentContext,
   ContradictionDetectorResult,
@@ -638,6 +639,19 @@ Produis un JSON avec cette structure:
     const signalIntensity = this.deriveSignalIntensityFromContradictions(criticalContradictions, highContradictions);
     // Orientation déterministe depuis signalIntensity + score consistance.
     const signalContribution = this.deriveSignalContributionFromIntensity(signalIntensity, consistencyAnalysis.overallScore);
+
+    // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
+    // déterministe. CD est l'auteur des contradictions consommées par le
+    // service : pour éviter une lecture circulaire de
+    // `previousResults["contradiction-detector"]` (absent dans son propre
+    // run), on fournit ses propres counts via `selfContradictionsOverride`.
+    const solidity = buildEvidenceSolidityForContext(context, {
+      selfContradictionsOverride: { critical: criticalContradictions, high: highContradictions },
+    });
+    if (solidity.value !== null && solidity.rationale) {
+      signalContribution.evidenceSolidity = solidity.value;
+      signalContribution.evidenceSolidityRationale = solidity.rationale;
+    }
 
     // Build findings
     const findings: ContradictionDetectorFindings = {

@@ -194,12 +194,19 @@ describe("buildOutput CD — invariants A4-bis (D1 + D2)", () => {
       expect(result.findings.signalContribution.evidenceSolidity).toBeNull();
     });
 
-    it("Contradictions critiques → evidenceSolidity reste null (jamais fabriqué depuis severity)", () => {
+    it("Phase A A6 — 2+ contradictions critiques → evidenceSolidity = contradictory (service Evidence Solidity qualifie depuis severity counts, jamais depuis score)", () => {
+      // Note : ce test a changé de comportement entre A4-bis et A6.
+      // En A4-bis, evidenceSolidity restait null (service Solidity pas branché).
+      // En A6, le branchement déterministe qualifie `contradictory` via
+      // selfContradictionsOverride sur les counts CRITICAL/HIGH de CD lui-même.
+      // L'anti-fabrication D2 reste verrouillée : le service ne lit jamais
+      // score / confidence (cf. source-guard A6).
       const data = makeLLMResponse({
         contradictions: [makeContradiction("CRITICAL"), makeContradiction("CRITICAL")],
       });
       const result = buildOutput(data, makeMockContext());
-      expect(result.findings.signalContribution.evidenceSolidity).toBeNull();
+      expect(result.findings.signalContribution.evidenceSolidity).toBe("contradictory");
+      expect(result.findings.signalContribution.evidenceSolidityRationale).toBeTruthy();
     });
   });
 });
