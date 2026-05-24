@@ -14,6 +14,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, MARKET_INTELLIGENCE_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
@@ -592,8 +593,7 @@ Standard: Big4 + Partner VC. Chaque affirmation doit etre sourcee ou marquee com
   "alertSignal": {
     "hasBlocker": boolean,
     "blockerReason": "string" ou null,
-    "recommendation": "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP",
-    "justification": "string"
+    "justification": "string (constat factuel, pas instruction d'investissement)"
   },
   "narrative": {
     "oneLiner": "string (resume en 1 phrase)",
@@ -943,14 +943,24 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
         }))
       : [];
 
-    // Validate alert signal
-    const validRecommendation = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"];
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: scoreValue,
+    });
+
+    // Validate alert signal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? false,
       blockerReason: data.alertSignal?.blockerReason ?? undefined,
-      recommendation: validRecommendation.includes(data.alertSignal?.recommendation ?? "")
-        ? data.alertSignal.recommendation as "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP"
-        : "PROCEED_WITH_CAUTION",
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "Evaluation incomplete.",
     };
 
@@ -970,6 +980,7 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }

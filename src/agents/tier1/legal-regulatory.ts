@@ -18,6 +18,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, LEGAL_REGULATORY_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
@@ -333,7 +334,7 @@ Produis un JSON structuré avec:
 - dbCrossReference: claims[] vérifiés vs DB, uncheckedClaims[]
 - redFlags[]: avec severity, location, evidence, impact, question, redFlagIfBadAnswer
 - questions[]: priority, category, question, context, whatToLookFor
-- alertSignal: hasBlocker, recommendation, justification
+- alertSignal: hasBlocker, blockerReason, justification (constat factuel, pas instruction)
 - narrative: oneLiner, summary, keyInsights[], forNegotiation[]
 
 # REGLES ABSOLUES
@@ -652,7 +653,6 @@ Chaque affirmation doit être sourcée ou marquée comme non vérifiable.
   "alertSignal": {
     "hasBlocker": boolean,
     "blockerReason": "string (si hasBlocker = true)",
-    "recommendation": "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP",
     "justification": "string"
   },
   "narrative": {
@@ -892,21 +892,24 @@ RAPPELS CRITIQUES:
         }))
       : [];
 
-    // Normalize alertSignal
-    const validRecommendations = [
-      "PROCEED",
-      "PROCEED_WITH_CAUTION",
-      "INVESTIGATE_FURTHER",
-      "STOP",
-    ] as const;
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: score.value,
+    });
+
+    // Normalize alertSignal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? false,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: validRecommendations.includes(
-        data.alertSignal?.recommendation as (typeof validRecommendations)[number]
-      )
-        ? (data.alertSignal.recommendation as (typeof validRecommendations)[number])
-        : "PROCEED_WITH_CAUTION",
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "",
     };
 
@@ -928,6 +931,7 @@ RAPPELS CRITIQUES:
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }

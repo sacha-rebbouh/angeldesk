@@ -12,6 +12,7 @@ import type {
   FinancialAuditFindings,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { benchmarkService } from "@/scoring";
 import { getBenchmarkFull } from "@/services/benchmarks";
 import { checkBenchmarkFreshness, formatFreshnessWarning } from "@/services/benchmarks/freshness-checker";
@@ -248,7 +249,7 @@ Pour chaque metrique dans "metrics", ajouter le champ "dataReliability":
 - Score global avec breakdown par critère
 - Red flags avec les 5 composants obligatoires
 - Questions prioritaires pour le fondateur
-- Signal d'alerte (PROCEED, CAUTION, INVESTIGATE, STOP)
+- Signal d'alerte factuel (hasBlocker, blockerReason, justification — intensité dérivée déterministe en aval)
 
 # FRAMEWORK D'EVALUATION
 
@@ -647,7 +648,6 @@ MONTRE tes calculs.
   "alertSignal": {
     "hasBlocker": true|false,
     "blockerReason": "Si hasBlocker, pourquoi",
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
     "justification": "Pourquoi cette recommandation"
   },
   "narrative": {
@@ -970,17 +970,24 @@ MONTRE tes calculs.
         }))
       : [];
 
-    // Normalize alert signal
-    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: cappedScore,
+    });
 
+    // Normalize alert signal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? hasCriticalBlocker,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: validRecommendations.includes(data.alertSignal?.recommendation as typeof validRecommendations[number])
-        ? data.alertSignal.recommendation
-        : hasCriticalBlocker
-          ? "INVESTIGATE_FURTHER"
-          : "PROCEED_WITH_CAUTION",
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "",
     };
 
@@ -1000,6 +1007,7 @@ MONTRE tes calculs.
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }

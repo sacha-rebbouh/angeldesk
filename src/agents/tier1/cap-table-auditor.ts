@@ -9,6 +9,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { getBenchmark } from "@/services/benchmarks";
 import { simulateWaterfall, type WaterfallInput } from "@/services/waterfall-simulator";
 import { calculateAgentScore, CAP_TABLE_AUDITOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
@@ -250,6 +251,8 @@ export interface CapTableAuditDataV2 {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  // Phase A slice A7b-2 — signalIntensity natif dérivé déterministe.
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -427,7 +430,7 @@ Produis un JSON avec la structure v2.0 complete incluant:
 - findings (ownership, dilution, terms, ESOP, investisseurs)
 - redFlags (avec les 5 composants obligatoires)
 - questions (pour le fondateur)
-- alertSignal (hasBlocker, recommendation)
+- alertSignal (hasBlocker, blockerReason, justification — constat factuel, pas instruction)
 - narrative (oneLiner, summary, keyInsights, forNegotiation)
 
 # REGLES ABSOLUES
@@ -631,7 +634,6 @@ Chaque affirmation doit etre sourcee ou marquee comme non verifiable.
   "alertSignal": {
     "hasBlocker": boolean,
     "blockerReason": "string si hasBlocker=true",
-    "recommendation": "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP",
     "justification": "string"
   },
   "narrative": {
@@ -754,7 +756,6 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
     // Normalize and validate response
     const validGrades = ["A", "B", "C", "D", "F"] as const;
     const validDataCompleteness = ["complete", "partial", "minimal"] as const;
-    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
     const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
     const validPriorities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
 
@@ -855,6 +856,18 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       console.error("[cap-table-auditor] Deterministic scoring failed, using LLM score:", err);
     }
 
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const rawRedFlags = Array.isArray(data.redFlags) ? data.redFlags : [];
+    const criticalCount = rawRedFlags.filter((rf) => rf.severity === "CRITICAL").length;
+    const highCount = rawRedFlags.filter((rf) => rf.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: coherentScore,
+    });
+
     return {
       meta: {
         agentName: "cap-table-auditor",
@@ -937,11 +950,10 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       alertSignal: {
         hasBlocker: data.alertSignal?.hasBlocker ?? false,
         blockerReason: data.alertSignal?.blockerReason,
-        recommendation: validRecommendations.includes(data.alertSignal?.recommendation as typeof validRecommendations[number])
-          ? data.alertSignal.recommendation as typeof validRecommendations[number]
-          : "INVESTIGATE_FURTHER",
+        recommendation: signalIntensityToRecommendation(signalIntensity),
         justification: data.alertSignal?.justification ?? "Analyse incomplete, investigation supplementaire requise",
       },
+      signalIntensity,
       narrative: {
         oneLiner: data.narrative?.oneLiner ?? "Analyse cap table incomplete - donnees manquantes",
         summary: (data.narrative?.summary ?? "L'analyse de la cap table n'a pas pu etre completee faute de donnees suffisantes.")

@@ -100,6 +100,10 @@ import type {
   Tier3SignalContribution as Tier3SignalContributionType,
   CriticalRiskRef as Tier3CriticalRiskRef,
 } from "./tier3/schemas/common";
+// Phase A slice A7b-2 — `Tier1SignalIntensity` natif. Alias `Tier3SignalIntensity`
+// (même enum low/elevated/high/critical). Dérivé déterministe par le runtime
+// via `tier1/utils/derive-alert-signal.ts` (helper A7b-1).
+import type { Tier1SignalIntensity } from "./tier1/utils/derive-alert-signal";
 
 // Enriched context with Context Engine data for Tier 1 agents
 export interface EnrichedAgentContext extends AgentContext {
@@ -702,6 +706,7 @@ export interface DeckForensicsData {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -785,6 +790,9 @@ export interface FinancialAuditData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
@@ -911,6 +919,9 @@ export interface MarketIntelData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
@@ -1098,6 +1109,9 @@ export interface CompetitiveIntelData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
@@ -1368,6 +1382,9 @@ export interface TeamInvestigatorData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -1625,6 +1642,9 @@ export interface TechnicalDDData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -1678,6 +1698,7 @@ export interface TechStackDDData {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -1753,6 +1774,7 @@ export interface TechOpsDDData {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -1935,6 +1957,9 @@ export interface LegalRegulatoryData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
@@ -2228,6 +2253,9 @@ export interface GTMAnalystData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -2501,6 +2529,9 @@ export interface CustomerIntelData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -2737,6 +2768,9 @@ export interface ExitStrategistData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -2966,6 +3000,9 @@ export interface QuestionMasterData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
