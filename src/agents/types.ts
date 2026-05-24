@@ -3132,7 +3132,25 @@ export interface ContradictionDetectorFindings {
     consensusLevel: "STRONG" | "MODERATE" | "WEAK" | "CONFLICTING";
     recommendation: string;
   }[];
+
+  // Phase A slice A4-bis — `signalIntensity` qualifie l'intensité du signal
+  // de contradiction (dérivé déterministe par le runtime depuis severity
+  // counts). Pas une recommandation d'action.
+  signalIntensity: Tier3SignalIntensity;
+
+  // Phase A slice A4-bis — `signalContribution` natif. Orientation dérivée
+  // déterministe depuis signalIntensity. evidenceSolidity null en A4-bis
+  // (D2 verrouillé, A6 qualifiera).
+  signalContribution: Tier3SignalContributionType;
 }
+
+// Phase A slice A4-bis — Énum partagé qualifiant l'intensité d'un signal
+// d'alerte côté agents Tier 3 (contradictions, conditions). Le runtime
+// dérive cette valeur déterministe ; le LLM ne la pilote pas. Utilisé pour
+// remplacer la sémantique action `recommendation: PROCEED/STOP` legacy en
+// SOURCE de vérité native, tout en conservant le contrat global
+// `AgentAlertSignal` intact (dette cross-agent hors A4-bis).
+export type Tier3SignalIntensity = "low" | "elevated" | "high" | "critical";
 
 // ============================================================================
 // CONDITIONS ANALYST AGENT - AI-powered deal terms analysis
@@ -3193,6 +3211,18 @@ export interface ConditionsAnalystFindings {
     blendedEffectiveValuation: number | null;
     triggerRiskLevel: "LOW" | "MEDIUM" | "HIGH";
   };
+
+  // Phase A slice A4-bis — `signalIntensity` qualifie l'intensité du signal
+  // d'alerte conditions (dérivé déterministe par le runtime depuis la
+  // sévérité des red flags + le score conditions). Pas une recommandation
+  // d'action prescriptive — c'est une qualification du signal.
+  signalIntensity: Tier3SignalIntensity;
+
+  // Phase A slice A4-bis — `signalContribution` natif (orientation +
+  // evidenceSolidity null en A4-bis — D2 verrouillé, A6 service Solidité
+  // qualifiera ultérieurement). Dérivé déterministe par le runtime depuis
+  // signalIntensity + score.
+  signalContribution: Tier3SignalContributionType;
 }
 
 export interface ConditionsAnalystData {

@@ -29,6 +29,7 @@
  */
 
 import { BaseAgent } from "../base-agent";
+import { CONTRADICTION_DETECTOR_SYSTEM_PROMPT } from "./prompts/contradiction-detector-prompt";
 import type {
   EnrichedAgentContext,
   ContradictionDetectorResult,
@@ -46,6 +47,9 @@ import type {
   AgentAlertSignal,
   AgentNarrative,
   DbCrossReference,
+  Tier3SignalIntensity,
+  Tier3SignalContribution,
+  Tier3Orientation,
 } from "../types";
 
 // ============================================================================
@@ -109,12 +113,11 @@ interface LLMContradictionResponse {
     context: string;
     whatToLookFor: string;
   }[];
-  alertSignal: {
-    hasBlocker: boolean;
-    blockerReason?: string;
-    recommendation: string;
-    justification: string;
-  };
+  // Phase A slice A4-bis round 2 — `alertSignal` n'est PLUS dans le contrat
+  // LLM demandé : le runtime dérive intégralement hasBlocker / recommendation
+  // / justification depuis signalIntensity + severity counts. Si le LLM
+  // produit quand même ce champ (run dégradé ou cache), il est ignoré (le
+  // shape est volontairement retiré de l'interface ici).
   narrative: {
     oneLiner: string;
     summary: string;
@@ -144,214 +147,14 @@ export class ContradictionDetectorAgent extends BaseAgent<ContradictionDetectorD
   // ============================================================================
 
   protected buildSystemPrompt(): string {
-    return `# ROLE ET EXPERTISE
-
-Tu es un CONTRADICTION DETECTOR expert, combinant:
-- **Forensics documentaire** (15+ ans): Detection de fraudes, inconsistances, manipulations
-- **Audit Big4 senior** (20+ ans): Verification croisee systematique, standards IFRS/GAAP
-- **Partner VC skeptique** (500+ deals analyses): Pattern matching des red flags classiques
-
-Tu travailles pour un Business Angel qui a besoin d'informations fiables et cohérentes pour prendre ses propres décisions d'investissement.
-
-# MISSION
-
-Analyser TOUS les outputs des agents Tier 1 et Tier 2, les cross-referencer avec:
-1. Le deck original (via extractedData)
-2. La Funding Database (concurrents, benchmarks)
-3. Le Context Engine (market data, competitive landscape)
-
-Pour detecter CHAQUE contradiction, CHAQUE incoherence, CHAQUE claim non verifie.
-
-# METHODOLOGIE EN 5 ETAPES
-
-## Etape 1: CARTOGRAPHIER les Sources (5 min)
-- Lister tous les agents ayant produit un output
-- Extraire les claims cles de chaque agent
-- Identifier les metriques communes (ARR, churn, team size, etc.)
-
-## Etape 2: DETECTER les Contradictions Internes (10 min)
-- Comparer les chiffres entre agents (ARR selon financial-auditor vs deck-forensics)
-- Identifier les assessments opposes (team-investigator dit "forte" vs competitive-intel dit "gaps")
-- Reperer les timelines incoherentes
-
-## Etape 3: CROSS-REFERENCER avec la DB (15 min) - CRITIQUE
-- Comparer CHAQUE concurrent mentionne dans le deck avec la Funding DB
-- Identifier les concurrents CACHES (dans DB mais pas dans deck) = RED FLAG AUTOMATIQUE
-- Verifier les claims de valorisation vs benchmarks DB
-- Verifier les claims de marche vs tendances DB
-
-## Etape 4: AGREGER les Claims vs Donnees (10 min)
-- Compter les claims verifies / contredits / non verifiables
-- Calculer le score de consistance global
-- Identifier les patterns de red flags convergents
-
-## Etape 5: SYNTHETISER avec Impact BA (10 min)
-- Prioriser les contradictions par impact sur decision
-- Generer questions pour le fondateur
-- Formuler recommandation claire
-
-# FRAMEWORK D'EVALUATION - Score de Consistance
-
-| Dimension | Poids | Score 0-25 | Score 25-50 | Score 50-75 | Score 75-100 |
-|-----------|-------|------------|-------------|-------------|--------------|
-| Consistance interne deck | 20% | 3+ contradictions majeures | 2 contradictions majeures | 1 contradiction majeure | Deck coherent |
-| Deck vs Funding DB | 25% | Concurrents caches + claims faux | Concurrents caches OU claims faux | Ecarts mineurs | Alignement total |
-| Agents Tier 1 entre eux | 25% | Agents en desaccord majeur | Desaccords sur metriques cles | Nuances d'interpretation | Consensus |
-| Tier 1 vs Tier 2 | 15% | Expert contredit analyses | Ecarts significatifs | Complement sans conflit | Alignement |
-| Claims vs Calculs | 15% | Chiffres impossibles | Projections irrealistes | Optimisme excessif | Chiffres verifiables |
-
-# TYPES DE CONTRADICTIONS A DETECTER
-
-1. **INTERNAL** - Contradiction dans le deck lui-meme
-   - Slide 5: "ARR 500K€" vs Slide 12: "Revenue 800K€"
-   - Executive Summary: "10 clients" vs Traction: "15 clients payants"
-   - Severite: Souvent HIGH a CRITICAL
-
-2. **DECK_VS_DB** - Le deck contredit la Funding DB
-   - Deck: "Pas de concurrent direct" vs DB: 5 concurrents avec 50M€+ de funding
-   - Deck: "Valorisation fair a 8M€" vs DB: Median secteur = 4M€
-   - Severite: Toujours HIGH a CRITICAL (signe de malhonnetete ou ignorance)
-
-3. **CLAIM_VS_DATA** - Un claim contredit par les calculs
-   - Deck: "Croissance 200% YoY" vs Calcul: ARR Y-1 = 100K, Y = 180K = 80%
-   - Deck: "LTV/CAC > 3" vs Calcul: LTV = 2000€, CAC = 1500€ = 1.3x
-   - Severite: MEDIUM a CRITICAL selon l'ecart
-
-4. **TIER1_VS_TIER1** - Deux agents Tier 1 se contredisent
-   - financial-auditor: "Unit economics sains" vs gtm-analyst: "CAC non rentable"
-   - team-investigator: "CEO experimente" vs deck-forensics: "Claims CV non verifies"
-   - Severite: Depend du sujet
-
-5. **TIER1_VS_TIER2** - Agent Tier 1 vs Expert sectoriel
-   - market-intelligence: "Marche en croissance" vs saas-expert: "Consolidation en cours"
-   - Severite: MEDIUM (expert a souvent raison)
-
-6. **DECK_VS_CONTEXT_ENGINE** - Deck vs donnees Context Engine
-   - Deck: "Leader du marche" vs Context Engine: Concurrent avec 10x plus de funding
-   - Severite: HIGH a CRITICAL
-
-# RED FLAGS AUTOMATIQUES A GENERER
-
-Generer AUTOMATIQUEMENT un red flag si:
-
-| Condition | Severite | Red Flag |
-|-----------|----------|----------|
-| Concurrent(s) dans DB mais pas dans deck | CRITICAL | "Concurrents caches - fondateur malhonnete ou ignorant" |
-| 2+ contradictions CRITICAL | CRITICAL | "Analyse incoherente - donnees non fiables" |
-| Chiffre financier avec >50% d'ecart entre sources | HIGH | "Metriques financieres contradictoires" |
-| Claim de marche contredit par DB | HIGH | "Claims marche non verifies" |
-| 3+ agents avec assessments opposes sur meme sujet | HIGH | "Pas de consensus sur [sujet]" |
-| Score de consistance < 50 | HIGH | "Analyse insuffisamment fiable pour decision" |
-
-# FORMAT DE SORTIE
-
-Produis un JSON structure avec:
-- contradictions: Liste detaillee de chaque contradiction
-- dataGaps: Donnees manquantes critiques
-- consistencyAnalysis: Score decompose par dimension
-- redFlagConvergence: Ou les agents convergent/divergent
-- redFlags: Au format standard (severity CRITICAL/HIGH/MEDIUM)
-- questions: Pour le fondateur
-- alertSignal: Recommendation (PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP)
-- narrative: Resume actionnable
-
-# REGLES ABSOLUES
-
-1. **JAMAIS inventer de contradiction** - Chaque affirmation doit citer sa source exacte
-2. **TOUJOURS comparer deck vs DB** pour les concurrents - c'est le test de credibilite #1
-3. **QUANTIFIER chaque ecart** - "Ecart de 47%" pas "ecart significatif"
-4. **CITER les sources** - "Slide 5 vs financial-auditor output" pas "le deck dit X"
-5. **PRIORISER par impact BA** - Contradiction sur team > contradiction sur date
-6. **GENERER des questions** - Chaque contradiction = 1 question pour le fondateur
-
-# EXEMPLES
-
-## Exemple BON output:
-
-{
-  "contradictions": [
-    {
-      "id": "CONT-001",
-      "type": "DECK_VS_DB",
-      "severity": "CRITICAL",
-      "topic": "Concurrents",
-      "statement1": { "text": "Pas de concurrent direct sur le marche francais", "location": "Slide 7 - Competitive Landscape", "source": "deck" },
-      "statement2": { "text": "3 concurrents directs identifies: CompA (12M€ leves), CompB (8M€), CompC (5M€)", "location": "Funding Database", "source": "funding-db" },
-      "analysis": "Le fondateur affirme l'absence de concurrence alors que la DB identifie 3 acteurs directs totalisant 25M€ de funding. Soit il ignore son marche, soit il ment deliberement.",
-      "implication": "Si le fondateur ignore CompA qui a leve 12M€, il sous-estime la competition. Si il le cache, c'est un red flag majeur sur l'honnetete.",
-      "confidenceLevel": 95,
-      "resolution": { "likely": "statement2", "reasoning": "Funding DB = donnees factuelles, deck = claims fondateur", "needsVerification": false },
-      "question": "Vous mentionnez n'avoir pas de concurrent direct. Pouvez-vous m'expliquer comment vous positionnez-vous par rapport a CompA, CompB et CompC qui operent sur le meme segment?",
-      "redFlagIfBadAnswer": "Si le fondateur nie l'existence de ces concurrents ou minimise leur importance, c'est un deal-breaker. Il ne connait pas son marche."
-    }
-  ]
-}
-
-## Exemple MAUVAIS output (a eviter):
-
-{
-  "contradictions": [
-    {
-      "id": "CONT-001",
-      "type": "INTERNAL",
-      "severity": "moderate",
-      "topic": "General",
-      "statement1": { "text": "Le deck mentionne une croissance", "location": "quelque part", "source": "deck" },
-      "statement2": { "text": "Les agents ont des avis differents", "location": "analyses", "source": "agents" },
-      "analysis": "Il semble y avoir quelques incoherences.",
-      "implication": "A verifier.",
-      "confidenceLevel": 50,
-      "question": "Pouvez-vous clarifier?"
-    }
-  ]
-}
-
-POURQUOI C'EST NUL:
-- "moderate" au lieu de "MEDIUM"
-- Aucune citation exacte
-- "quelque part" = pas de localisation
-- "Il semble" = incertitude
-- "A verifier" = pas actionnable
-- Question trop vague
-
-# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
-
-**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
-
-1. **LIMITES STRICTES sur les arrays**:
-   - contradictions: MAX 6 items (les plus critiques)
-   - dataGaps: MAX 4 items
-   - consistencyAnalysis.breakdown: 5 dimensions exactement
-   - redFlagConvergence: MAX 4 topics
-   - redFlags: MAX 5 items
-   - questions: MAX 5 items
-
-2. **BREVITE dans les textes**:
-   - analysis: 1-2 phrases MAX
-   - implication: 1 phrase MAX
-   - description: 2 phrases MAX
-   - issues dans breakdown: MAX 2 items par dimension
-   - keyInsights: MAX 4 items
-
-3. **Structure > Contenu**: Mieux vaut 5 contradictions completes que 10 tronquees
-
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
-
-## TONALITE — REGLE ABSOLUE
-Tu CONSTATES des contradictions. Tu ne DECIDES jamais.
-
-**INTERDIT dans TOUS les champs texte :**
-- "Ne pas investir" / "Fuir" / "Passer ce deal" / "Rejeter"
-- "Il est recommandé de..." suivi d'une action d'investissement
-- Tout impératif adressé à l'investisseur
-
-**CORRECT :**
-- "Ces incohérences affectent la fiabilité des données sur X dimensions"
-- "Clarification nécessaire avant toute décision"
-- "Les données contradictoires limitent la visibilité sur..."
-
-`;
+    // Phase A slice A4-bis — System prompt extrait dans un fichier compagnon
+    // (`./prompts/contradiction-detector-prompt.ts`). Les invariants
+    // doctrinaux (absence de directive historique de seuil d'auto-confiance,
+    // absence de lexique prescriptif legacy, contrat natif signalIntensity +
+    // signalContribution dérivé runtime — pas LLM-driven) sont verrouillés
+    // mécaniquement par les source-guards de
+    // `__tests__/contradiction-detector-prompt.guard.test.ts`.
+    return CONTRADICTION_DETECTOR_SYSTEM_PROMPT;
   }
 
   // ============================================================================
@@ -517,10 +320,15 @@ Tu CONSTATES des contradictions. Tu ne DECIDES jamais.
       }
     }
 
-    // Extract alert signal
+    // Phase A slice A4-bis round 2 — Ne plus exposer la valeur prescriptive
+    // legacy `recommendation: PROCEED|STOP` des agents précédents dans le
+    // prompt utilisateur. Cela évite que CD voie du langage d'action
+    // (PROCEED/STOP) côté input et soit tenté de produire la même chose en
+    // sortie. On conserve uniquement le statut de blocage factuel
+    // (Blocker: OUI/NON) sans wording prescriptif.
     if (obj.alertSignal && typeof obj.alertSignal === "object") {
-      const alert = obj.alertSignal as { recommendation?: string; hasBlocker?: boolean };
-      lines.push(`\n**Recommendation:** ${alert.recommendation ?? "N/A"} | Blocker: ${alert.hasBlocker ? "OUI" : "NON"}`);
+      const alert = obj.alertSignal as { hasBlocker?: boolean };
+      lines.push(`\n**Blocker:** ${alert.hasBlocker ? "OUI" : "NON"}`);
     }
 
     return lines.join("\n");
@@ -662,7 +470,7 @@ ${formattedInputs}
    - DECK_VS_CONTEXT_ENGINE: Deck vs Context Engine
 
 3. **PRIORISER PAR IMPACT:**
-   - CRITICAL: Deal-breaker potentiel (team, financials majeurs, fraude)
+   - CRITICAL: Signal d'alerte structurel (team, financials majeurs, fraude)
    - HIGH: Necessite clarification avant decision
    - MEDIUM: A noter mais pas bloquant
 
@@ -750,12 +558,8 @@ Produis un JSON avec cette structure:
       "whatToLookFor": "Ce qui revelerait un probleme"
     }
   ],
-  "alertSignal": {
-    "hasBlocker": true/false,
-    "blockerReason": "Si hasBlocker=true",
-    "recommendation": "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP",
-    "justification": "Justification de la recommandation"
-  },
+  // alertSignal n'est PAS demandé au LLM : il est DÉRIVÉ DÉTERMINISTE par le
+  // runtime depuis les severity counts des contradictions, après ton output.
   "narrative": {
     "oneLiner": "Resume en 1 phrase",
     "summary": "Resume en 3-4 phrases",
@@ -826,6 +630,15 @@ Produis un JSON avec cette structure:
       interpretation: "Analyse de consistance non disponible",
     };
 
+    // Phase A slice A4-bis — signalIntensity dérivé déterministe depuis
+    // severity counts des contradictions. Anti-régression round 2 A3 :
+    // le LLM ne pilote pas (toute valeur LLM est ignorée).
+    const criticalContradictions = contradictions.filter(c => c.severity === "CRITICAL").length;
+    const highContradictions = contradictions.filter(c => c.severity === "HIGH").length;
+    const signalIntensity = this.deriveSignalIntensityFromContradictions(criticalContradictions, highContradictions);
+    // Orientation déterministe depuis signalIntensity + score consistance.
+    const signalContribution = this.deriveSignalContributionFromIntensity(signalIntensity, consistencyAnalysis.overallScore);
+
     // Build findings
     const findings: ContradictionDetectorFindings = {
       contradictions,
@@ -841,6 +654,8 @@ Produis un JSON avec cette structure:
         consensusLevel: this.validateConsensusLevel(r.consensusLevel),
         recommendation: r.recommendation ?? "",
       })),
+      signalIntensity,
+      signalContribution,
     };
 
     // Build score
@@ -890,12 +705,26 @@ Produis un JSON avec cette structure:
       whatToLookFor: q.whatToLookFor ?? "",
     }));
 
-    // Build alert signal
+    // Phase A slice A4-bis — `alertSignal` dérivé déterministe depuis
+    // `signalIntensity`. Le LLM ne pilote plus `recommendation`. Le contrat
+    // global `AgentAlertSignal` reste intact (debt cross-agent hors A4-bis).
+    // Mapping signalIntensity → recommendation legacy :
+    //   low → PROCEED, elevated → PROCEED_WITH_CAUTION,
+    //   high → INVESTIGATE_FURTHER, critical → STOP.
+    // `validateRecommendation` (parser tolérant local) reste disponible pour
+    // toute lecture future input legacy LLM dégradé, mais n'est plus appelée
+    // en émission (la dérivation override toute valeur LLM).
     const alertSignal: AgentAlertSignal = {
-      hasBlocker: data.alertSignal?.hasBlocker ?? false,
-      blockerReason: data.alertSignal?.blockerReason,
-      recommendation: this.validateRecommendation(data.alertSignal?.recommendation),
-      justification: data.alertSignal?.justification ?? "",
+      hasBlocker: signalIntensity === "critical" || criticalContradictions >= 2,
+      blockerReason: (signalIntensity === "critical" || criticalContradictions >= 2)
+        ? `Contradictions critiques détectées (${criticalContradictions} CRITICAL / ${highContradictions} HIGH)`
+        : undefined,
+      recommendation: this.signalIntensityToRecommendation(signalIntensity),
+      // Phase A slice A4-bis round 2 — justification déterministe uniquement :
+      // toute valeur LLM `data.alertSignal?.justification` est IGNORÉE pour
+      // éviter qu'un texte prescriptif legacy ("I recommend STOP") ressorte
+      // en sortie native.
+      justification: `Intensité du signal: ${signalIntensity} (${criticalContradictions} contradictions CRITICAL, ${highContradictions} HIGH).`,
     };
 
     // Build narrative
@@ -965,12 +794,93 @@ Produis un JSON avec cette structure:
     return "CONFLICTING";
   }
 
+  // Phase A slice A4-bis — Parser tolérant lecture seule. Conservé pour
+  // accepter une lecture LLM dégradé éventuelle, mais N'EST PLUS APPELÉ
+  // en émission (la dérivation déterministe `signalIntensityToRecommendation`
+  // override toute valeur LLM côté `alertSignal`).
   private validateRecommendation(rec: string | undefined): "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP" {
     const upper = (rec ?? "").toUpperCase().replace(/ /g, "_");
     if (upper === "PROCEED") return "PROCEED";
     if (upper === "PROCEED_WITH_CAUTION") return "PROCEED_WITH_CAUTION";
     if (upper === "STOP") return "STOP";
     return "INVESTIGATE_FURTHER";
+  }
+
+  /**
+   * Phase A slice A4-bis — Dérivation déterministe de `signalIntensity`
+   * depuis les severity counts des contradictions.
+   *
+   * Anti-régression round 2 A3 : le LLM ne pilote pas cette valeur
+   * (équivalent du `riskPosture` LLM-driven banni en A3 sur DA).
+   *
+   *   2+ contradictions CRITICAL  → critical
+   *   1 contradiction CRITICAL    → high
+   *   2+ contradictions HIGH      → elevated
+   *   sinon                       → low
+   */
+  private deriveSignalIntensityFromContradictions(
+    criticalCount: number,
+    highCount: number,
+  ): Tier3SignalIntensity {
+    if (criticalCount >= 2) return "critical";
+    if (criticalCount >= 1) return "high";
+    if (highCount >= 2) return "elevated";
+    return "low";
+  }
+
+  /**
+   * Phase A slice A4-bis — Dérivation déterministe de `signalContribution`
+   * depuis `signalIntensity` + score consistance.
+   *
+   * Le contradiction-detector est par nature un agent de vérification ; il
+   * n'émet pas `very_favorable` (biais structurel — il ne peut pas
+   * "déclarer" un deal très favorable, il constate l'absence de
+   * contradictions). Mapping :
+   *
+   *   critical                → alert_dominant
+   *   high                    → vigilance
+   *   elevated                → contrasted
+   *   low + score >= 80       → favorable
+   *   low + score < 80        → contrasted
+   *
+   * D2 verrouillé : evidenceSolidity reste null en A4-bis (A6 qualifiera).
+   */
+  private deriveSignalContributionFromIntensity(
+    intensity: Tier3SignalIntensity,
+    consistencyScore: number,
+  ): Tier3SignalContribution {
+    let orientation: Tier3Orientation;
+    if (intensity === "critical") {
+      orientation = "alert_dominant";
+    } else if (intensity === "high") {
+      orientation = "vigilance";
+    } else if (intensity === "elevated") {
+      orientation = "contrasted";
+    } else if (consistencyScore >= 80) {
+      orientation = "favorable";
+    } else {
+      orientation = "contrasted";
+    }
+    return {
+      orientation,
+      evidenceSolidity: null,
+    };
+  }
+
+  /**
+   * Phase A slice A4-bis — Mapping `signalIntensity` → `recommendation` legacy
+   * pour conservation du contrat global `AgentAlertSignal` (debt cross-agent
+   * hors scope A4-bis).
+   */
+  private signalIntensityToRecommendation(
+    intensity: Tier3SignalIntensity,
+  ): "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP" {
+    switch (intensity) {
+      case "low": return "PROCEED";
+      case "elevated": return "PROCEED_WITH_CAUTION";
+      case "high": return "INVESTIGATE_FURTHER";
+      case "critical": return "STOP";
+    }
   }
 
   private getGrade(score: number): "A" | "B" | "C" | "D" | "F" {
@@ -1182,7 +1092,7 @@ Produis un JSON avec cette structure:
         evidence: `Concurrents DB: ${dbComparison.competitorComparison.competitorsInDb.join(", ")}. Concurrents deck: ${dbComparison.competitorComparison.competitorsInDeck.length > 0 ? dbComparison.competitorComparison.competitorsInDeck.join(", ") : "AUCUN"}`,
         impact: "Le fondateur ignore son marche ou cache deliberement la competition. Dans les deux cas, c'est un signal negatif majeur sur la credibilite.",
         question: "Pouvez-vous m'expliquer comment vous vous positionnez par rapport a [concurrents caches]?",
-        redFlagIfBadAnswer: "Si le fondateur nie l'existence de ces concurrents ou les minimise, c'est un deal-breaker.",
+        redFlagIfBadAnswer: "Si le fondateur nie l'existence de ces concurrents ou les minimise, c'est un signal critique sur la crédibilité.",
       });
     }
 

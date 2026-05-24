@@ -1,6 +1,27 @@
 import { z } from "zod";
-import { Tier3MetaSchema, Tier3ScoreSchema } from "./common";
+import {
+  Tier3MetaSchema,
+  Tier3ScoreSchema,
+  Tier3SignalContributionSchema,
+} from "./common";
 
+/**
+ * Phase A slice A4-bis — Schéma Conditions Analyst aligné contrat natif.
+ *
+ * D1 verrouillé :
+ * - `signalIntensity` natif (low | elevated | high | critical) remplace la
+ *   sémantique prescriptive `recommendation: PROCEED/STOP`. Dérivé
+ *   déterministe par le runtime depuis severity red flags + score.
+ * - `signalContribution` natif (Tier3SignalContribution A1).
+ *
+ * D2 verrouillé : `signalContribution.evidenceSolidity` reste nullable en
+ * A4-bis (A6 qualifiera).
+ *
+ * Exception cross-agent documentée : `AgentAlertSignal` reste intact, sa
+ * valeur est dérivée déterministe.
+ *
+ * `.strict()` appliqué.
+ */
 export const ConditionsAnalystResponseSchema = z.object({
   meta: Tier3MetaSchema,
   score: Tier3ScoreSchema,
@@ -14,14 +35,14 @@ export const ConditionsAnalystResponseSchema = z.object({
       verdict: z.enum(["UNDERVALUED", "FAIR", "AGGRESSIVE", "VERY_AGGRESSIVE"]),
       rationale: z.string(),
       benchmarkUsed: z.string(),
-    }),
+    }).strict(),
 
     instrument: z.object({
       type: z.string().nullable(),
       assessment: z.enum(["STANDARD", "FAVORABLE", "UNFAVORABLE", "TOXIC"]),
       rationale: z.string(),
       stageAppropriate: z.boolean(),
-    }),
+    }).strict(),
 
     protections: z.object({
       overallAssessment: z.enum(["STRONG", "ADEQUATE", "WEAK", "NONE"]),
@@ -29,28 +50,28 @@ export const ConditionsAnalystResponseSchema = z.object({
         item: z.string(),
         present: z.boolean(),
         assessment: z.string(),
-      })),
+      }).strict()),
       missingCritical: z.array(z.string()),
-    }),
+    }).strict(),
 
     governance: z.object({
       vestingAssessment: z.string(),
       esopAssessment: z.string(),
       overallAssessment: z.enum(["STRONG", "ADEQUATE", "WEAK", "CONCERNING"]),
-    }),
+    }).strict(),
 
     crossReferenceInsights: z.array(z.object({
       insight: z.string(),
       sourceAgent: z.string(),
       impact: z.enum(["positive", "negative", "neutral"]),
-    })),
+    }).strict()),
 
     negotiationAdvice: z.array(z.object({
       point: z.string(),
       priority: z.enum(["CRITICAL", "HIGH", "MEDIUM"]),
       suggestedArgument: z.string(),
       leverageSource: z.string(),
-    })),
+    }).strict()),
 
     structuredAssessment: z.object({
       overallStructureVerdict: z.string(),
@@ -59,11 +80,15 @@ export const ConditionsAnalystResponseSchema = z.object({
         assessment: z.string(),
         risks: z.array(z.string()),
         score: z.number().min(0).max(100),
-      })),
+      }).strict()),
       blendedEffectiveValuation: z.number().nullable(),
       triggerRiskLevel: z.enum(["LOW", "MEDIUM", "HIGH"]),
-    }).optional(),
-  }),
+    }).strict().optional(),
+
+    // Phase A slice A4-bis — Contrat natif Phase A (D1).
+    signalIntensity: z.enum(["low", "elevated", "high", "critical"]),
+    signalContribution: Tier3SignalContributionSchema,
+  }).strict(),
 
   redFlags: z.array(z.object({
     id: z.string(),
@@ -74,7 +99,7 @@ export const ConditionsAnalystResponseSchema = z.object({
     evidence: z.string(),
     impact: z.string(),
     question: z.string(),
-  })),
+  }).strict()),
 
   questions: z.array(z.object({
     id: z.string(),
@@ -82,14 +107,14 @@ export const ConditionsAnalystResponseSchema = z.object({
     priority: z.enum(["CRITICAL", "HIGH", "MEDIUM"]),
     context: z.string(),
     whatToLookFor: z.string(),
-  })),
+  }).strict()),
 
   narrative: z.object({
     oneLiner: z.string(),
     summary: z.string(),
     keyInsights: z.array(z.string()),
     forNegotiation: z.array(z.string()),
-  }),
-});
+  }).strict(),
+}).strict();
 
 export type ConditionsAnalystResponse = z.infer<typeof ConditionsAnalystResponseSchema>;

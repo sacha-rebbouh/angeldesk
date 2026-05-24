@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ContradictionDetectorResponseSchema } from "../contradiction-detector-schema";
+import { ConditionsAnalystResponseSchema } from "../conditions-analyst-schema";
 import { SynthesisDealScorerResponseSchema } from "../synthesis-deal-scorer-schema";
 import { DevilsAdvocateResponseSchema } from "../devils-advocate-schema";
 import { ScenarioModelerResponseSchema } from "../scenario-modeler-schema";
@@ -12,7 +13,9 @@ const baseMeta = {
 };
 
 describe("Tier 3 Zod Schemas", () => {
-  it("ContradictionDetectorResponseSchema validates valid data", () => {
+  it("ContradictionDetectorResponseSchema validates valid data (Phase A A4-bis — signalIntensity + signalContribution, D1)", () => {
+    // Phase A slice A4-bis : contrat natif `signalIntensity` + `signalContribution`.
+    // alertSignal.recommendation legacy non contractuel ici (dérivé runtime).
     const data = {
       meta: baseMeta,
       contradictions: [
@@ -37,8 +40,176 @@ describe("Tier 3 Zod Schemas", () => {
         topRisks: ["ARR mismatch"],
         verdict: "Moderate contradictions found",
       },
+      signalIntensity: "elevated",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
     };
     expect(ContradictionDetectorResponseSchema.safeParse(data).success).toBe(true);
+  });
+
+  it("ContradictionDetectorResponseSchema REJETTE alertSignal legacy AVEC payload natif valide (Phase A A4-bis, .strict())", () => {
+    // Round 2 lesson : .strict() rejette tout champ supplémentaire (legacy
+    // ou non). alertSignal n'est plus contractuel ici — dérivé runtime.
+    const data = {
+      meta: baseMeta,
+      contradictions: [],
+      summary: { totalContradictions: 0, criticalCount: 0, topRisks: [], verdict: "x" },
+      signalIntensity: "low",
+      signalContribution: { orientation: "favorable", evidenceSolidity: null },
+      alertSignal: { hasBlocker: false, recommendation: "PROCEED", justification: "x" }, // legacy
+    };
+    expect(ContradictionDetectorResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("ConditionsAnalystResponseSchema validates valid data (Phase A A4-bis — signalIntensity + signalContribution, D1)", () => {
+    // Round 2 Codex : test schema CA manquant ajouté.
+    const data = {
+      meta: baseMeta,
+      score: { value: 70, breakdown: [] },
+      findings: {
+        termsSource: "form",
+        valuation: { assessedValue: 5_000_000, percentileVsDB: 50, verdict: "FAIR", rationale: "x", benchmarkUsed: "x" },
+        instrument: { type: "BSA-AIR", assessment: "STANDARD", rationale: "x", stageAppropriate: true },
+        protections: { overallAssessment: "ADEQUATE", keyProtections: [], missingCritical: [] },
+        governance: { vestingAssessment: "x", esopAssessment: "x", overallAssessment: "ADEQUATE" },
+        crossReferenceInsights: [],
+        negotiationAdvice: [],
+        signalIntensity: "low",
+        signalContribution: { orientation: "favorable", evidenceSolidity: null },
+      },
+      redFlags: [],
+      questions: [],
+      narrative: { oneLiner: "x", summary: "x", keyInsights: [], forNegotiation: [] },
+    };
+    expect(ConditionsAnalystResponseSchema.safeParse(data).success).toBe(true);
+  });
+
+  it("ConditionsAnalystResponseSchema REJETTE alertSignal legacy AVEC payload natif valide (Phase A A4-bis, .strict())", () => {
+    // Round 2 Codex : alertSignal n'est PLUS dans le contrat schema CA.
+    // Avec .strict() top-level, l'injecter en plus du payload natif valide
+    // doit échouer.
+    const data = {
+      meta: baseMeta,
+      score: { value: 70, breakdown: [] },
+      findings: {
+        termsSource: "form",
+        valuation: { assessedValue: 5_000_000, percentileVsDB: 50, verdict: "FAIR", rationale: "x", benchmarkUsed: "x" },
+        instrument: { type: "BSA-AIR", assessment: "STANDARD", rationale: "x", stageAppropriate: true },
+        protections: { overallAssessment: "ADEQUATE", keyProtections: [], missingCritical: [] },
+        governance: { vestingAssessment: "x", esopAssessment: "x", overallAssessment: "ADEQUATE" },
+        crossReferenceInsights: [],
+        negotiationAdvice: [],
+        signalIntensity: "low",
+        signalContribution: { orientation: "favorable", evidenceSolidity: null },
+      },
+      redFlags: [],
+      questions: [],
+      narrative: { oneLiner: "x", summary: "x", keyInsights: [], forNegotiation: [] },
+      alertSignal: { hasBlocker: false, recommendation: "PROCEED", justification: "x" }, // legacy
+    };
+    expect(ConditionsAnalystResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("ConditionsAnalystResponseSchema REJETTE signalIntensity invalide (Phase A A4-bis)", () => {
+    for (const invalid of ["INVESTIGATE_FURTHER", "PROCEED", "STOP", "high_priority", null]) {
+      const data = {
+        meta: baseMeta,
+        score: { value: 70, breakdown: [] },
+        findings: {
+          termsSource: "form",
+          valuation: { assessedValue: 5_000_000, percentileVsDB: 50, verdict: "FAIR", rationale: "x", benchmarkUsed: "x" },
+          instrument: { type: "BSA-AIR", assessment: "STANDARD", rationale: "x", stageAppropriate: true },
+          protections: { overallAssessment: "ADEQUATE", keyProtections: [], missingCritical: [] },
+          governance: { vestingAssessment: "x", esopAssessment: "x", overallAssessment: "ADEQUATE" },
+          crossReferenceInsights: [],
+          negotiationAdvice: [],
+          signalIntensity: invalid,
+          signalContribution: { orientation: "favorable", evidenceSolidity: null },
+        },
+        redFlags: [],
+        questions: [],
+        narrative: { oneLiner: "x", summary: "x", keyInsights: [], forNegotiation: [] },
+      };
+      expect(ConditionsAnalystResponseSchema.safeParse(data).success).toBe(false);
+    }
+  });
+
+  it("ConditionsAnalystResponseSchema REJETTE signalContribution invalide (orientation hors enum)", () => {
+    const data = {
+      meta: baseMeta,
+      score: { value: 70, breakdown: [] },
+      findings: {
+        termsSource: "form",
+        valuation: { assessedValue: 5_000_000, percentileVsDB: 50, verdict: "FAIR", rationale: "x", benchmarkUsed: "x" },
+        instrument: { type: "BSA-AIR", assessment: "STANDARD", rationale: "x", stageAppropriate: true },
+        protections: { overallAssessment: "ADEQUATE", keyProtections: [], missingCritical: [] },
+        governance: { vestingAssessment: "x", esopAssessment: "x", overallAssessment: "ADEQUATE" },
+        crossReferenceInsights: [],
+        negotiationAdvice: [],
+        signalIntensity: "low",
+        signalContribution: { orientation: "STRONG_PASS", evidenceSolidity: null }, // legacy enum
+      },
+      redFlags: [],
+      questions: [],
+      narrative: { oneLiner: "x", summary: "x", keyInsights: [], forNegotiation: [] },
+    };
+    expect(ConditionsAnalystResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("ConditionsAnalystResponseSchema REJETTE signalContribution manquant (champ requis)", () => {
+    const data = {
+      meta: baseMeta,
+      score: { value: 70, breakdown: [] },
+      findings: {
+        termsSource: "form",
+        valuation: { assessedValue: 5_000_000, percentileVsDB: 50, verdict: "FAIR", rationale: "x", benchmarkUsed: "x" },
+        instrument: { type: "BSA-AIR", assessment: "STANDARD", rationale: "x", stageAppropriate: true },
+        protections: { overallAssessment: "ADEQUATE", keyProtections: [], missingCritical: [] },
+        governance: { vestingAssessment: "x", esopAssessment: "x", overallAssessment: "ADEQUATE" },
+        crossReferenceInsights: [],
+        negotiationAdvice: [],
+        signalIntensity: "low",
+        // signalContribution missing
+      },
+      redFlags: [],
+      questions: [],
+      narrative: { oneLiner: "x", summary: "x", keyInsights: [], forNegotiation: [] },
+    };
+    expect(ConditionsAnalystResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("ConditionsAnalystResponseSchema REJETTE signalIntensity manquant (champ requis)", () => {
+    const data = {
+      meta: baseMeta,
+      score: { value: 70, breakdown: [] },
+      findings: {
+        termsSource: "form",
+        valuation: { assessedValue: 5_000_000, percentileVsDB: 50, verdict: "FAIR", rationale: "x", benchmarkUsed: "x" },
+        instrument: { type: "BSA-AIR", assessment: "STANDARD", rationale: "x", stageAppropriate: true },
+        protections: { overallAssessment: "ADEQUATE", keyProtections: [], missingCritical: [] },
+        governance: { vestingAssessment: "x", esopAssessment: "x", overallAssessment: "ADEQUATE" },
+        crossReferenceInsights: [],
+        negotiationAdvice: [],
+        // signalIntensity missing
+        signalContribution: { orientation: "favorable", evidenceSolidity: null },
+      },
+      redFlags: [],
+      questions: [],
+      narrative: { oneLiner: "x", summary: "x", keyInsights: [], forNegotiation: [] },
+    };
+    expect(ConditionsAnalystResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("ContradictionDetectorResponseSchema REJETTE signalIntensity invalide (Phase A A4-bis)", () => {
+    for (const invalid of ["INVESTIGATE_FURTHER", "PROCEED", "STOP", "high_priority", null]) {
+      const data = {
+        meta: baseMeta,
+        contradictions: [],
+        summary: { totalContradictions: 0, criticalCount: 0, topRisks: [], verdict: "x" },
+        signalIntensity: invalid,
+        signalContribution: { orientation: "contrasted", evidenceSolidity: null },
+      };
+      expect(ContradictionDetectorResponseSchema.safeParse(data).success).toBe(false);
+    }
   });
 
   it("SynthesisDealScorerResponseSchema validates valid data (Phase A v12 — orientation native, D1)", () => {

@@ -19,6 +19,7 @@
  */
 
 import { BaseAgent } from "../base-agent";
+import { CONDITIONS_ANALYST_SYSTEM_PROMPT } from "./prompts/conditions-analyst-prompt";
 import type {
   EnrichedAgentContext,
   ConditionsAnalystData,
@@ -30,6 +31,9 @@ import type {
   AgentQuestion,
   AgentAlertSignal,
   AgentNarrative,
+  Tier3SignalIntensity,
+  Tier3SignalContribution,
+  Tier3Orientation,
 } from "../types";
 
 // ============================================================================
@@ -180,142 +184,13 @@ export class ConditionsAnalystAgent extends BaseAgent<ConditionsAnalystData, Con
   // ============================================================================
 
   protected buildSystemPrompt(): string {
-    return `# ROLE ET EXPERTISE
-
-Tu es un CONDITIONS ANALYST expert, combinant:
-- **Avocat M&A / Private Equity** (15+ ans): Structuration de deals, term sheets, pactes d'associes
-- **Partner VC / Business Angel** (500+ deals): Pattern matching des conditions standard vs toxiques
-- **Expert valorisation** (Big4): Methodologies de benchmark, multiples sectoriels
-
-Tu travailles pour un Business Angel qui investit SON PROPRE ARGENT. Ton role est de l'aider a comprendre si les conditions du deal sont JUSTES, et lui donner des ARGUMENTS CONCRETS pour negocier.
-
-# MISSION
-
-Analyser les conditions d'investissement du deal en les cross-referencant avec:
-1. Les outputs des agents Tier 1 (financials, team, market, etc.)
-2. Les benchmarks du marche (Funding DB ou benchmarks statiques)
-3. Les documents du deal (term sheet, deck)
-4. Le contexte specifique (stage, secteur, geographie)
-
-# FRAMEWORK DE SCORING (4 categories, 0-100 chacune)
-
-## 1. VALORISATION (poids ~35%)
-Compare la valorisation pre-money aux benchmarks du stage/secteur.
-
-| Percentile vs benchmark | Score | Interpretation pour le BA |
-|------------------------|-------|---------------------------|
-| < P25 (tres bon marche) | 85-100 | FAVORABLE: le BA achete a bon prix, fort upside potentiel |
-| P25-P50 (bon prix) | 65-85 | POSITIF: conditions de marche attractives |
-| P50-P75 (fair market) | 45-65 | NEUTRE: prix de marche, ni bon ni mauvais |
-| P75-P90 (cher) | 25-45 | DEFAVORABLE: le BA surpaye, upside limite |
-| > P90 (excessif) | 0-25 | TOXIQUE: valorisation injustifiee, risque de perte |
-
-REGLE CRITIQUE DE TONALITE:
-- Score ELEVE (85-100) = BONNE NOUVELLE pour le BA. Le rationale et la narrative DOIVENT etre formules POSITIVEMENT.
-  Exemple correct: "Valorisation attractive (P10): le BA entre a un prix tres favorable, avec un potentiel de revalorisation important."
-  Exemple INTERDIT: "Montant derisoire", "Valorisation anormalement basse", "Sous-evaluation inquietante" — ces formulations ALARMENT le BA alors que c'est favorable pour lui.
-- Score FAIBLE (0-45) = MAUVAISE NOUVELLE. Formuler comme un risque/cout excessif.
-- La perspective est TOUJOURS celle du BA-investisseur: sous-evalue = bon pour lui, surevalue = mauvais pour lui.
-
-IMPORTANT: Moduler avec le contexte des agents:
-- Traction exceptionnelle (financial-auditor) → valorisation elevee justifiee (+10-15 pts)
-- Red flags critiques → valorisation elevee injustifiee (-10-15 pts)
-- Marche en forte croissance (market-intelligence) → premium accepte
-- Equipe senior avec track record (team-investigator) → premium accepte
-
-## 2. INSTRUMENT (poids ~20%)
-Evaluer le type d'instrument par rapport au standard du stage.
-
-| En France | Pre-Seed/Seed | Series A+ |
-|-----------|---------------|-----------|
-| Standard | BSA-AIR (avec cap) | Actions de preference |
-| Favorable BA | BSA-AIR cap+discount / Actions pref | Actions pref avec protections renforcees |
-| Defavorable | Actions ordinaires, pret | BSA-AIR (extension deguisee?) |
-| Toxique | Pret sans conversion, instrument exotique | Actions ordinaires sans protection |
-
-Score: 80-100 = favorable, 50-80 = standard, 25-50 = defavorable, 0-25 = toxique
-
-## 3. PROTECTIONS INVESTISSEUR (poids ~25%)
-Evaluer les droits de l'investisseur.
-
-| Protection | Standard | Bon pour BA | Risque |
-|------------|----------|-------------|--------|
-| Liquidation pref | 1x non-participating | 1x + participating capped | >1x, full ratchet |
-| Anti-dilution | Weighted average broad | Broad-based | Full ratchet |
-| Pro-rata | CRUCIAL en early stage | Oui | Non → dilution forcee |
-| Info rights | Minimum vital | Oui + board observer | Non → absence de visibilite |
-| Tag-along | Protection sortie | Oui | Non → BA bloque |
-
-Score:
-- 80-100: Toutes protections standard + extras
-- 60-80: La plupart des protections presentes
-- 40-60: Protections basiques seulement
-- 20-40: Protections manquantes critiques
-- 0-20: Aucune protection
-
-## 4. GOUVERNANCE (poids ~20%)
-Evaluer l'alignement fondateurs/investisseurs.
-
-| Element | Bon | Acceptable | Risque |
-|---------|-----|------------|--------|
-| Vesting fondateurs | 4 ans / 1 an cliff | 3 ans+ | Pas de vesting |
-| ESOP | 10-15% | 8-10% | <8% ou absent |
-| Tag-along | Oui | - | Non |
-| Ratchet | Non | - | Oui (toxique) |
-| Pay-to-play | Non | - | Oui (force le BA) |
-
-Score:
-- 80-100: Alignement parfait, best practices
-- 60-80: Gouvernance correcte
-- 40-60: Points de vigilance
-- 0-40: Clauses toxiques ou manque total d'alignement
-
-# CROSS-REFERENCE AVEC AGENTS TIER 1 (si disponibles)
-
-Quand les outputs Tier 1 sont disponibles, TOUJOURS les utiliser pour contextualiser:
-
-- **financial-auditor**: La valorisation est-elle justifiee par les metriques? ARR, burn, runway
-- **cap-table-auditor**: La dilution est-elle coherente avec la cap table? Le BA sera-t-il dilue?
-- **team-investigator**: L'equipe justifie-t-elle un premium de valorisation?
-- **competitive-intel**: Les concurrents levant a des valorisations similaires?
-- **market-intelligence**: Le marche justifie-t-il les conditions?
-- **deck-forensics**: Les conditions annoncees dans le deck sont-elles coherentes?
-- **exit-strategist**: Le retour potentiel justifie-t-il les conditions?
-
-# CONSEILS DE NEGOCIATION
-
-Pour chaque conseil:
-- Citer un LEVIER concret (donnees d'un agent, benchmark DB, clause specifique)
-- Proposer un ARGUMENT de negociation formulable au fondateur
-- Donner la PRIORITE (CRITICAL si bloquant, HIGH si important, MEDIUM si nice-to-have)
-- VERIFIER que le conseil BENEFICIE economiquement au BA: il doit reduire le cout d'acquisition, augmenter les protections, ou ameliorer les droits. Ne JAMAIS proposer un conseil qui augmente le cout pour le BA (ex: convertir un instrument bon marche en instrument plus cher)
-
-# SOURCES DE CONDITIONS - RESOLUTION
-
-Tu recois les conditions de 3 sources possibles (priorite decroissante):
-1. **Formulaire BA** (source: "form") - Le BA a rempli manuellement les conditions
-2. **Term sheet** (source: "term_sheet") - Document term sheet uploade
-3. **Deck** (source: "deck") - Conditions mentionnees dans le pitch deck
-
-REGLE ABSOLUE: Si aucune source ne contient de conditions, retourne source="none" et NE SCORE PAS. Genere uniquement des questions pour obtenir les conditions.
-
-# FORMAT DE SORTIE - JSON
-
-CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):
-- breakdown: 4 items exactement
-- crossReferenceInsights: MAX 5 items
-- negotiationAdvice: MAX 5 items
-- keyProtections: MAX 6 items
-- missingCritical: MAX 4 items
-- redFlags: MAX 5 items
-- questions: MAX 5 items
-- keyInsights: MAX 4 items
-- forNegotiation: MAX 4 items
-- Textes: 1-2 phrases MAX par champ
-
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
-`;
+    // Phase A slice A4-bis — System prompt extrait dans un fichier compagnon
+    // (`./prompts/conditions-analyst-prompt.ts`). Les invariants doctrinaux
+    // (absence de directive historique de seuil d'auto-confiance, absence
+    // de lexique prescriptif legacy, alertSignal.recommendation dérivé
+    // déterministe runtime depuis signalIntensity) sont verrouillés par les
+    // source-guards de `__tests__/conditions-analyst-prompt.guard.test.ts`.
+    return CONDITIONS_ANALYST_SYSTEM_PROMPT;
   }
 
   // ============================================================================
@@ -739,6 +614,11 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       governance: { vestingAssessment: "Non renseigne", esopAssessment: "Non renseigne", overallAssessment: "CONCERNING" },
       crossReferenceInsights: [],
       negotiationAdvice: [],
+      // Phase A slice A4-bis — Pas de conditions disponibles : signal high
+      // (investigation nécessaire) avec orientation vigilance pour signaler
+      // l'incertitude factuelle au consumer. evidenceSolidity = null (D2).
+      signalIntensity: "high",
+      signalContribution: { orientation: "vigilance", evidenceSolidity: null },
     };
 
     const questions: AgentQuestion[] = [
@@ -764,6 +644,9 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       findings,
       redFlags: [],
       questions,
+      // Phase A slice A4-bis — `recommendation` dérivé déterministe depuis
+      // findings.signalIntensity (= "high" sans données). Mapping : high →
+      // INVESTIGATE_FURTHER (compat AgentAlertSignal infra, debt cross-agent).
       alertSignal: {
         hasBlocker: false,
         recommendation: "INVESTIGATE_FURTHER",
@@ -852,6 +735,10 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
         suggestedArgument: a.suggestedArgument ?? "",
         leverageSource: a.leverageSource ?? "",
       })),
+      // Phase A slice A4-bis — Placeholders ; recalculés ci-dessous après
+      // computation des red flags critiques + score (dérivation déterministe).
+      signalIntensity: "low",
+      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
     };
 
     // Structured assessment (multi-tranche mode)
@@ -893,14 +780,25 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       whatToLookFor: q.whatToLookFor ?? "",
     }));
 
-    // Alert signal
+    // Phase A slice A4-bis — Dérivation déterministe signalIntensity +
+    // signalContribution depuis severity red flags + score conditions.
+    // Anti-régression round 2 A3 : le LLM ne pilote pas (toute valeur LLM
+    // est ignorée).
+    const criticalRedFlags = redFlags.filter(rf => rf.severity === "CRITICAL").length;
+    const highRedFlags = redFlags.filter(rf => rf.severity === "HIGH").length;
+    findings.signalIntensity = this.deriveSignalIntensityFromConditions(criticalRedFlags, highRedFlags, scoreValue);
+    findings.signalContribution = this.deriveSignalContributionFromIntensity(findings.signalIntensity, scoreValue);
+
+    // Phase A slice A4-bis — `alertSignal.recommendation` dérivé déterministe
+    // depuis signalIntensity. Le LLM ne pilote plus. Mapping :
+    //   low → PROCEED, elevated → PROCEED_WITH_CAUTION,
+    //   high → INVESTIGATE_FURTHER, critical → STOP.
+    // Le contrat global `AgentAlertSignal` reste intact (debt cross-agent).
     const alertSignal: AgentAlertSignal = {
-      hasBlocker: redFlags.some(rf => rf.severity === "CRITICAL"),
+      hasBlocker: findings.signalIntensity === "critical" || criticalRedFlags >= 1,
       blockerReason: redFlags.find(rf => rf.severity === "CRITICAL")?.title,
-      recommendation: redFlags.some(rf => rf.severity === "CRITICAL")
-        ? "INVESTIGATE_FURTHER"
-        : scoreValue >= 60 ? "PROCEED" : "PROCEED_WITH_CAUTION",
-      justification: data.narrative?.summary ?? "",
+      recommendation: this.signalIntensityToRecommendation(findings.signalIntensity),
+      justification: data.narrative?.summary ?? `Intensité du signal: ${findings.signalIntensity} (${criticalRedFlags} red flags CRITICAL, ${highRedFlags} HIGH, score ${scoreValue}/100).`,
     };
 
     // Narrative
@@ -917,6 +815,87 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
   // ============================================================================
   // VALIDATORS
   // ============================================================================
+
+  /**
+   * Phase A slice A4-bis — Dérivation déterministe de `signalIntensity`
+   * depuis severity red flags conditions + score conditions.
+   *
+   * Anti-régression round 2 A3 : le LLM ne pilote pas.
+   *
+   *   1+ red flag CRITICAL                 → critical
+   *   2+ red flags HIGH || score < 40      → high
+   *   1 red flag HIGH || score < 60        → elevated
+   *   sinon                                → low
+   */
+  private deriveSignalIntensityFromConditions(
+    criticalRedFlags: number,
+    highRedFlags: number,
+    scoreValue: number,
+  ): Tier3SignalIntensity {
+    if (criticalRedFlags >= 1) return "critical";
+    if (highRedFlags >= 2 || scoreValue < 40) return "high";
+    if (highRedFlags >= 1 || scoreValue < 60) return "elevated";
+    return "low";
+  }
+
+  /**
+   * Phase A slice A4-bis — Dérivation déterministe de `signalContribution`
+   * depuis `signalIntensity` + score conditions.
+   *
+   * Conditions Analyst peut émettre `favorable` (et même `very_favorable`)
+   * quand les conditions sont objectivement bonnes (score haut, pas de red
+   * flag) — contrairement à CD/DA qui sont structurellement défensifs.
+   *
+   *   critical                           → alert_dominant
+   *   high                               → vigilance
+   *   elevated                           → contrasted
+   *   low + score >= 85                  → very_favorable
+   *   low + score >= 70                  → favorable
+   *   low + score >= 55                  → contrasted
+   *   low + score < 55                   → vigilance (rare en branche low)
+   *
+   * D2 verrouillé : evidenceSolidity reste null en A4-bis (A6 qualifiera).
+   */
+  private deriveSignalContributionFromIntensity(
+    intensity: Tier3SignalIntensity,
+    scoreValue: number,
+  ): Tier3SignalContribution {
+    let orientation: Tier3Orientation;
+    if (intensity === "critical") {
+      orientation = "alert_dominant";
+    } else if (intensity === "high") {
+      orientation = "vigilance";
+    } else if (intensity === "elevated") {
+      orientation = "contrasted";
+    } else if (scoreValue >= 85) {
+      orientation = "very_favorable";
+    } else if (scoreValue >= 70) {
+      orientation = "favorable";
+    } else if (scoreValue >= 55) {
+      orientation = "contrasted";
+    } else {
+      orientation = "vigilance";
+    }
+    return {
+      orientation,
+      evidenceSolidity: null,
+    };
+  }
+
+  /**
+   * Phase A slice A4-bis — Mapping signalIntensity → recommendation legacy
+   * (conservation contrat global AgentAlertSignal, debt cross-agent).
+   */
+  private signalIntensityToRecommendation(
+    intensity: Tier3SignalIntensity,
+  ): "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP" {
+    switch (intensity) {
+      case "low": return "PROCEED";
+      case "elevated": return "PROCEED_WITH_CAUTION";
+      case "high": return "INVESTIGATE_FURTHER";
+      case "critical": return "STOP";
+    }
+  }
 
   private getGrade(score: number): "A" | "B" | "C" | "D" | "F" {
     if (score >= 85) return "A";
