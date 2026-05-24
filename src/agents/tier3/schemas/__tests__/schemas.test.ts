@@ -41,11 +41,18 @@ describe("Tier 3 Zod Schemas", () => {
     expect(ContradictionDetectorResponseSchema.safeParse(data).success).toBe(true);
   });
 
-  it("SynthesisDealScorerResponseSchema validates valid data", () => {
+  it("SynthesisDealScorerResponseSchema validates valid data (Phase A v12 — orientation native, D1)", () => {
+    // Phase A slice A2 : champ top-level `orientation` typé orientation native
+    // (Tier3OrientationSchema). Sous-champ `recommendation.action` aussi typé
+    // orientation native (corrigé round 3). D1 verrouillé : aucun champ legacy
+    // `STRONG_PASS/PASS/...` n'est accepté par le schema contractuel. Si une
+    // fixture brute LLM dégradée doit être testée, elle l'est au niveau input
+    // du `transformResponse` côté agent (parser tolérant de lecture LLM
+    // dégradée), pas dans ce schema test-only.
     const data = {
       meta: baseMeta,
       overallScore: 68,
-      verdict: "CONDITIONAL_PASS",
+      orientation: "contrasted",
       dimensionScores: [
         {
           dimension: "Team",
@@ -63,12 +70,75 @@ describe("Tier 3 Zod Schemas", () => {
         keyOpportunities: ["Large market"],
       },
       recommendation: {
-        action: "Invest with conditions",
+        action: "contrasted",
         conditions: ["Verify ARR with bank statements"],
         nextSteps: ["Schedule founder call"],
       },
     };
     expect(SynthesisDealScorerResponseSchema.safeParse(data).success).toBe(true);
+  });
+
+  it("SynthesisDealScorerResponseSchema REJETTE l'ancien champ `verdict` (Phase A renommé `orientation`, D1)", () => {
+    // Régression D1 : le schema test-only utilise désormais `orientation` (pas
+    // `verdict`). Une fixture contenant encore `verdict` est rejetée (champ
+    // `orientation` manquant).
+    const data = {
+      meta: baseMeta,
+      overallScore: 68,
+      verdict: "contrasted", // ancien nom, plus accepté
+      dimensionScores: [],
+      investmentThesis: { summary: "x", strengths: [], weaknesses: [], keyRisks: [], keyOpportunities: [] },
+      recommendation: { action: "x", conditions: [], nextSteps: [] },
+    };
+    expect(SynthesisDealScorerResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("SynthesisDealScorerResponseSchema REJETTE l'ancien enum legacy `STRONG_PASS`/`FAIL` (D1 — pas de bridge)", () => {
+    // Régression D1 : le schema test-only ne doit plus accepter les anciennes
+    // valeurs prescriptives. Aucun `legacyVerdict` bridge dans le contrat.
+    for (const legacyValue of ["STRONG_PASS", "PASS", "CONDITIONAL_PASS", "WEAK_PASS", "FAIL"]) {
+      const data = {
+        meta: baseMeta,
+        overallScore: 50,
+        orientation: legacyValue,
+        dimensionScores: [],
+        investmentThesis: { summary: "x", strengths: [], weaknesses: [], keyRisks: [], keyOpportunities: [] },
+        recommendation: { action: "favorable", conditions: [], nextSteps: [] },
+      };
+      expect(SynthesisDealScorerResponseSchema.safeParse(data).success).toBe(false);
+    }
+  });
+
+  it("SynthesisDealScorerResponseSchema REJETTE `recommendation.action` libre (D1 round 3 — orientation native)", () => {
+    // Régression round 3 : `recommendation.action` typé Tier3OrientationSchema
+    // (avant : z.string() libre, drift A2 initial).
+    const data = {
+      meta: baseMeta,
+      overallScore: 50,
+      orientation: "contrasted",
+      dimensionScores: [],
+      investmentThesis: { summary: "x", strengths: [], weaknesses: [], keyRisks: [], keyOpportunities: [] },
+      recommendation: {
+        action: "x", // string libre — doit être rejetée
+        conditions: [],
+        nextSteps: [],
+      },
+    };
+    expect(SynthesisDealScorerResponseSchema.safeParse(data).success).toBe(false);
+  });
+
+  it("SynthesisDealScorerResponseSchema REJETTE `recommendation.action` legacy `STRONG_PASS`/`FAIL` (D1)", () => {
+    for (const legacyValue of ["STRONG_PASS", "PASS", "Invest with conditions", "GO", "NO-GO"]) {
+      const data = {
+        meta: baseMeta,
+        overallScore: 50,
+        orientation: "contrasted",
+        dimensionScores: [],
+        investmentThesis: { summary: "x", strengths: [], weaknesses: [], keyRisks: [], keyOpportunities: [] },
+        recommendation: { action: legacyValue, conditions: [], nextSteps: [] },
+      };
+      expect(SynthesisDealScorerResponseSchema.safeParse(data).success).toBe(false);
+    }
   });
 
   it("DevilsAdvocateResponseSchema validates valid data", () => {

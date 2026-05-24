@@ -1,4 +1,5 @@
 import type { AgentResult, AgentMeta, AgentScore, AgentRedFlag, AgentQuestion, AgentAlertSignal, AgentNarrative, DbCrossReference } from './common';
+import type { Tier3Orientation, Tier3SignalContribution } from "../tier3/schemas/common";
 
 // ============================================================================
 // CONTRADICTION DETECTOR AGENT (TIER 3)
@@ -38,7 +39,10 @@ export interface ScenarioModelerData { meta: AgentMeta; score: AgentScore; findi
 export interface ScenarioModelerResult extends AgentResult { agentName: "scenario-modeler"; data: ScenarioModelerData }
 
 // Synthesis Deal Scorer Agent
-export interface SynthesisDealScorerData { overallScore: number; verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant"; confidence: number; dimensionScores: { dimension: string; score: number; weight: number; weightedScore: number; sourceAgents: string[]; keyFactors: string[] }[]; scoreBreakdown: { strengthsContribution: number; weaknessesDeduction: number; riskAdjustment: number; opportunityBonus: number }; comparativeRanking: { percentileOverall: number; percentileSector: number; percentileStage: number; similarDealsAnalyzed: number; method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE"; insufficientData?: boolean; calculationDetail?: string }; investmentRecommendation: { action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant"; rationale: string; conditions?: string[]; suggestedTerms?: string }; keyStrengths: string[]; keyWeaknesses: string[]; criticalRisks: string[] }
+// Phase A slice A2 — `verdict` et `investmentRecommendation.action` typés
+// `Tier3Orientation` (alignement nominal — équivalent structurel à l'union
+// string littérale historique). Ajout de `signalContribution: Tier3SignalContribution`.
+export interface SynthesisDealScorerData { overallScore: number; verdict: Tier3Orientation; confidence: number; dimensionScores: { dimension: string; score: number; weight: number; weightedScore: number; sourceAgents: string[]; keyFactors: string[] }[]; scoreBreakdown: { strengthsContribution: number; weaknessesDeduction: number; riskAdjustment: number; opportunityBonus: number }; comparativeRanking: { percentileOverall: number; percentileSector: number; percentileStage: number; similarDealsAnalyzed: number; method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE"; insufficientData?: boolean; calculationDetail?: string }; investmentRecommendation: { action: Tier3Orientation; rationale: string; conditions?: string[]; suggestedTerms?: string }; keyStrengths: string[]; keyWeaknesses: string[]; criticalRisks: string[]; signalContribution: Tier3SignalContribution }
 export interface SynthesisDealScorerResult extends AgentResult { agentName: "synthesis-deal-scorer"; data: SynthesisDealScorerData }
 
 // ============================================================================
