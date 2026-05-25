@@ -5,6 +5,7 @@
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
+import { costMonitor } from "@/services/cost-monitor";
 import { loadResults } from "@/services/analysis-results/load-results";
 import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
@@ -112,6 +113,7 @@ export function identifyImpactedAgents(report: PostCallReport): string[] {
 
 type SessionReanalysisScope = {
   sessionDocumentId: string | null;
+  sessionUserId: string;
   baselineAnalysis: {
     id: string;
     summary: string | null;
@@ -148,6 +150,7 @@ async function resolveSessionReanalysisScope(
     select: {
       id: true,
       dealId: true,
+      userId: true,
       documentId: true,
       startedAt: true,
       createdAt: true,
@@ -187,6 +190,7 @@ async function resolveSessionReanalysisScope(
 
   return {
     sessionDocumentId: session.documentId ?? null,
+    sessionUserId: session.userId,
     baselineAnalysis: baselineAnalysis
       ? {
           ...baselineAnalysis,
@@ -363,6 +367,21 @@ Génère un DeltaReport JSON. Pour impactedAgents, liste les noms d'agents dont 
   // ciblée incomplète.
   assertCompletionNotTruncated(deltaResult.data, {
     caller: "post-call-delta",
+  });
+
+  // Phase C C3b — Live cost wiring. `scope.sessionUserId` is the
+  // LiveSession.userId resolved upstream; `dealId` is non-null here by
+  // contract (`generateDeltaReport` requires it). Fire-and-forget.
+  void costMonitor.recordLiveCall({
+    sessionId,
+    userId: scope.sessionUserId,
+    dealId,
+    agent: "post-call-delta",
+    operation: "live_post_call_delta",
+    cost: deltaResult.cost ?? 0,
+    model: deltaResult.model,
+    inputTokens: deltaResult.usage?.inputTokens,
+    outputTokens: deltaResult.usage?.outputTokens,
   });
 
   return deltaResult.data;

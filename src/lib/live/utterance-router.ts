@@ -6,9 +6,10 @@
 // for ambiguous cases.
 // ============================================================================
 
-import type { SpeakerRole, UtteranceClassification } from "./types";
+import type { LiveCostContext, SpeakerRole, UtteranceClassification } from "./types";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
+import { costMonitor } from "@/services/cost-monitor";
 import { sanitizeTranscriptText } from "@/lib/live/sanitize";
 
 // ============================================================================
@@ -81,7 +82,8 @@ function wordCount(text: string): number {
  */
 export async function classifyUtterance(
   text: string,
-  speakerRole: SpeakerRole
+  speakerRole: SpeakerRole,
+  liveCostContext?: LiveCostContext
 ): Promise<ClassificationResult> {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -117,7 +119,7 @@ export async function classifyUtterance(
   }
 
   // ── Step 4: LLM classification (Haiku) for ambiguous utterances ──
-  return classifyWithLLM(trimmed, speakerRole);
+  return classifyWithLLM(trimmed, speakerRole, liveCostContext);
 }
 
 // ============================================================================
@@ -148,7 +150,8 @@ Rules:
 
 async function classifyWithLLM(
   text: string,
-  speakerRole: SpeakerRole
+  speakerRole: SpeakerRole,
+  liveCostContext?: LiveCostContext
 ): Promise<ClassificationResult> {
   try {
     const result = await runWithLLMContext(
@@ -169,6 +172,21 @@ async function classifyWithLLM(
     // remonte au `catch` ligne ~196 qui retourne le fallback
     // `strategy_reveal` (fail-open existant — meilleur sur-trigger qu'omission).
     assertCompletionNotTruncated(result.data, { caller: "utterance-router" });
+
+    // Phase C C3b — Live cost wiring. Fire-and-forget après succès LLM.
+    if (liveCostContext) {
+      void costMonitor.recordLiveCall({
+        sessionId: liveCostContext.sessionId,
+        userId: liveCostContext.userId,
+        dealId: liveCostContext.dealId,
+        agent: "utterance-router",
+        operation: "live_utterance_classification",
+        cost: result.cost ?? 0,
+        model: result.model,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+      });
+    }
 
     const { classification, confidence } = result.data;
 

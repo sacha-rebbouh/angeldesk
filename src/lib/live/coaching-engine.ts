@@ -11,6 +11,7 @@
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
+import { costMonitor } from "@/services/cost-monitor";
 import { serializeContext } from "@/lib/live/context-compiler";
 import { getVisualContextWithFallback } from "@/lib/live/visual-processor";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
@@ -237,6 +238,22 @@ export async function generateCoachingSuggestion(
     // `NO_RESPONSE` — dégradation propre via fallback existant, jamais
     // de coaching card construite à partir d'un JSON partiel.
     assertCompletionNotTruncated(raceResult.data, { caller: "coaching-engine" });
+
+    // Phase C C3b — Live cost wiring. Fire-and-forget : la méthode
+    // `recordLiveCall` ne throw jamais (catch interne + logger.warn).
+    if (input.liveCostContext) {
+      void costMonitor.recordLiveCall({
+        sessionId: input.liveCostContext.sessionId,
+        userId: input.liveCostContext.userId,
+        dealId: input.liveCostContext.dealId,
+        agent: "coaching-engine",
+        operation: "live_coaching",
+        cost: raceResult.cost ?? 0,
+        model: raceResult.model,
+        inputTokens: raceResult.usage?.inputTokens,
+        outputTokens: raceResult.usage?.outputTokens,
+      });
+    }
 
     const response = raceResult.data;
 

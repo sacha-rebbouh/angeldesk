@@ -9,8 +9,10 @@
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
+import { costMonitor } from "@/services/cost-monitor";
 import { publishCardAddressed } from "@/lib/live/ably-server";
 import { sanitizeTranscriptText } from "@/lib/live/sanitize";
+import type { LiveCostContext } from "@/lib/live/types";
 
 // ============================================================================
 // TYPES
@@ -66,7 +68,8 @@ Si aucune carte n'a été adressée, retourne : { "addressedCardIds": [] }`;
  */
 export async function checkAutoDismiss(
   baUtterance: string,
-  activeCards: CoachingCard[]
+  activeCards: CoachingCard[],
+  liveCostContext?: LiveCostContext
 ): Promise<string[]> {
   // Early exit: no cards to check
   if (activeCards.length === 0) {
@@ -113,6 +116,21 @@ Quelles cartes ont été substantiellement adressées par ce que le BA vient de 
     // existant (jamais d'auto-dismiss sur erreur), pas de consommation
     // de JSON partiel.
     assertCompletionNotTruncated(result.data, { caller: "auto-dismiss" });
+
+    // Phase C C3b — Live cost wiring. Fire-and-forget après succès LLM.
+    if (liveCostContext) {
+      void costMonitor.recordLiveCall({
+        sessionId: liveCostContext.sessionId,
+        userId: liveCostContext.userId,
+        dealId: liveCostContext.dealId,
+        agent: "auto-dismiss",
+        operation: "live_auto_dismiss",
+        cost: result.cost ?? 0,
+        model: result.model,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+      });
+    }
 
     const { addressedCardIds } = result.data;
 

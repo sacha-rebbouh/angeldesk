@@ -10,10 +10,12 @@
 
 import { prisma } from "@/lib/prisma";
 import { completeVisionJSON } from "@/services/openrouter/router";
+import { costMonitor } from "@/services/cost-monitor";
 import { serializeContext } from "@/lib/live/context-compiler";
-import { logCoachingLatency, logCoachingError, trackCoachingCost } from "@/lib/live/monitoring";
+import { logCoachingLatency, logCoachingError } from "@/lib/live/monitoring";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
 import type {
+  LiveCostContext,
   VisualAnalysis,
   VisualContext,
   VisualContentType,
@@ -257,7 +259,8 @@ async function analyzeFrame(
   imageBase64: string,
   timestamp: number,
   dealContext: DealContext,
-  state: VisualState
+  state: VisualState,
+  liveCostContext?: LiveCostContext
 ): Promise<ProcessVisualFrameResult> {
   const pipelineStart = Date.now();
 
@@ -281,7 +284,19 @@ async function analyzeFrame(
       }
     );
 
-    trackCoachingCost(sessionId, "visual-pipeline", cost);
+    // Phase C C3b — Live cost wiring. `completeVisionJSON` does not return
+    // usage/model, so we pass model "HAIKU" and omit tokens.
+    if (liveCostContext) {
+      void costMonitor.recordLiveCall({
+        sessionId: liveCostContext.sessionId,
+        userId: liveCostContext.userId,
+        dealId: liveCostContext.dealId,
+        agent: "visual-pipeline",
+        operation: "live_visual_pipeline",
+        cost: cost ?? 0,
+        model: "HAIKU",
+      });
+    }
 
     if (!data.isNewContent) {
       logCoachingLatency(sessionId, "visual_pipeline_total", pipelineStart);
@@ -344,7 +359,8 @@ export async function processVisualFrame(
   sessionId: string,
   imageBase64: string,
   timestamp: number,
-  dealContext: DealContext
+  dealContext: DealContext,
+  liveCostContext?: LiveCostContext
 ): Promise<ProcessVisualFrameResult> {
   const state = getOrCreateState(sessionId);
 
@@ -354,7 +370,14 @@ export async function processVisualFrame(
 
   state.processing = true;
   try {
-    return await analyzeFrame(sessionId, imageBase64, timestamp, dealContext, state);
+    return await analyzeFrame(
+      sessionId,
+      imageBase64,
+      timestamp,
+      dealContext,
+      state,
+      liveCostContext
+    );
   } catch (error) {
     logCoachingError(sessionId, "visual_processor", error);
     return { analyzed: false, analysis: null, cost: 0 };

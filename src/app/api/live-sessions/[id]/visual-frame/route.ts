@@ -7,7 +7,11 @@ import { evaluateDealCorpusReadinessSoft } from "@/services/documents/readiness-
 import { publishCoachingCard, publishVisualAnalysis } from "@/lib/live/ably-server";
 import { isValidCuid } from "@/lib/sanitize";
 import { logCoachingError } from "@/lib/live/monitoring";
-import type { AblyCoachingCardEvent, AblyVisualAnalysisEvent } from "@/lib/live/types";
+import type {
+  AblyCoachingCardEvent,
+  AblyVisualAnalysisEvent,
+  LiveCostContext,
+} from "@/lib/live/types";
 
 // PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -95,7 +99,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // before the Svix webhook transitions the status from "bot_joining" to "live")
     const session = await prisma.liveSession.findFirst({
       where: { id, status: { in: ["live", "bot_joining"] } },
-      select: { id: true, dealId: true },
+      select: { id: true, dealId: true, userId: true },
     });
 
     if (!session) {
@@ -103,6 +107,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const imageBase64 = buffer.toString("base64");
+
+    // Phase C C3b — Live cost context for visual-pipeline persistence.
+    const liveCostContext: LiveCostContext = {
+      sessionId: id,
+      userId: session.userId,
+      dealId: session.dealId ?? null,
+    };
 
     // Process inline (NOT in after() — LLM calls fail silently inside after() in dev mode)
     // The relay is fire-and-forget so response latency doesn't matter
@@ -130,7 +141,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         dealContext = compileContextForColdMode();
       }
 
-      const result = await processVisualFrame(id, imageBase64, timestamp, dealContext);
+      const result = await processVisualFrame(id, imageBase64, timestamp, dealContext, liveCostContext);
 
       if (!result.analyzed || !result.analysis) {
         console.log(`[visual-frame][${id}] Frame skipped (not new content), cost: ${result.cost}`);

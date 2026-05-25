@@ -5,7 +5,42 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { logger } from "@/lib/logger";
+import { Prisma } from "@prisma/client";
 import type { CostAlertType, CostAlertSeverity } from "@prisma/client";
+
+// ============================================================================
+// LIVE COACHING — RECORD-LIVE-CALL params (Phase C3b)
+// ============================================================================
+
+/**
+ * Parameters for `recordLiveCall` — a dedicated entry point for Live coaching
+ * cost tracking that bypasses the orchestrator singleton (`currentAnalysis`).
+ *
+ * Designed for the Live pipeline (coaching-engine, utterance-router,
+ * auto-dismiss, visual-processor, transcript-condenser, post-call-generator,
+ * post-call-reanalyzer): each LLM call records its cost independently,
+ * without depending on `startAnalysis()`.
+ *
+ * Contract:
+ *  - `dealId === null` → no `CostEvent` is created (schema requires non-null)
+ *    but `LiveSession.totalCost` is still incremented.
+ *  - `cost <= 0` → no-op (no DB write).
+ *  - Errors are caught internally and logged; the method never throws.
+ */
+export interface RecordLiveCallParams {
+  sessionId: string;
+  userId: string;
+  dealId: string | null;
+  agent: string;
+  operation: string;
+  cost: number;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  durationMs?: number;
+  metadata?: Record<string, unknown>;
+}
 
 // ============================================================================
 // TYPES
@@ -239,6 +274,108 @@ class CostMonitor {
     }).catch((err) => {
       console.error("[CostMonitor] Failed to persist cost event:", err);
     });
+  }
+
+  /**
+   * Record a Live coaching LLM call (Phase C3b).
+   *
+   * Dedicated entry point that does NOT touch `currentAnalysis` and does NOT
+   * call `recordCall`. Safe to invoke concurrently with the orchestrator
+   * pipeline. Never throws — observability must never break a Live flow.
+   *
+   * Behaviour:
+   *  - `cost <= 0` → silent no-op (no DB write).
+   *  - Always increments `LiveSession.totalCost` (atomic Prisma `increment`).
+   *  - If `dealId` is non-null, creates a `CostEvent` (`analysisId: null`,
+   *    `boardSessionId: null`).
+   *  - If `dealId` is null, logs a structured warning
+   *    (`reason: "missing_dealId_skipped_CostEvent"`) and skips `CostEvent`.
+   */
+  async recordLiveCall(params: RecordLiveCallParams): Promise<void> {
+    try {
+      if (!Number.isFinite(params.cost) || params.cost <= 0) {
+        return;
+      }
+
+      // 1) Always attempt to increment LiveSession.totalCost.
+      //    Decimal `increment` is atomic at the DB level.
+      try {
+        await prisma.liveSession.update({
+          where: { id: params.sessionId },
+          data: { totalCost: { increment: params.cost } },
+        });
+      } catch (err) {
+        logger.warn(
+          {
+            component: "live-coaching-cost",
+            sessionId: params.sessionId,
+            agent: params.agent,
+            operation: params.operation,
+            err,
+          },
+          "Failed to increment LiveSession.totalCost"
+        );
+      }
+
+      // 2) CostEvent.dealId is non-null in the schema — skip when absent.
+      if (!params.dealId) {
+        logger.warn(
+          {
+            component: "live-coaching-cost",
+            sessionId: params.sessionId,
+            agent: params.agent,
+            operation: params.operation,
+            cost: params.cost,
+            reason: "missing_dealId_skipped_CostEvent",
+          },
+          "Skipped CostEvent persistence because the Live session has no dealId"
+        );
+        return;
+      }
+
+      try {
+        await prisma.costEvent.create({
+          data: {
+            userId: params.userId,
+            dealId: params.dealId,
+            analysisId: null,
+            boardSessionId: null,
+            model: params.model ?? "unknown",
+            agent: params.agent,
+            operation: params.operation,
+            inputTokens: params.inputTokens ?? 0,
+            outputTokens: params.outputTokens ?? 0,
+            cost: params.cost,
+            durationMs: params.durationMs ?? null,
+            metadata: params.metadata
+              ? (JSON.parse(JSON.stringify(params.metadata)) as Prisma.InputJsonValue)
+              : undefined,
+          },
+        });
+      } catch (err) {
+        logger.warn(
+          {
+            component: "live-coaching-cost",
+            sessionId: params.sessionId,
+            agent: params.agent,
+            operation: params.operation,
+            err,
+          },
+          "Failed to persist Live CostEvent"
+        );
+      }
+    } catch (err) {
+      // Defensive catch-all — recordLiveCall must never bubble.
+      logger.error(
+        {
+          component: "live-coaching-cost",
+          sessionId: params.sessionId,
+          agent: params.agent,
+          err,
+        },
+        "recordLiveCall failed unexpectedly"
+      );
+    }
   }
 
   /**

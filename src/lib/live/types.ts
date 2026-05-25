@@ -167,6 +167,22 @@ export interface DealContext {
   }>;
 }
 
+// --- Live cost tracking (Phase C3b) ---
+
+/**
+ * Minimal context propagated from a Live route to a Live LLM call so the
+ * downstream cost recorder (`costMonitor.recordLiveCall`) can attribute
+ * the spend to the right session/user/deal without any extra DB lookup.
+ *
+ * `dealId` is nullable because cold-call Live sessions may have no deal
+ * attached yet.
+ */
+export interface LiveCostContext {
+  sessionId: string;
+  userId: string;
+  dealId: string | null;
+}
+
 // --- Coaching Engine I/O ---
 
 export interface CoachingInput {
@@ -189,6 +205,7 @@ export interface CoachingInput {
   addressedTopics: string[];
   visualContext?: VisualContext;
   sessionId?: string;
+  liveCostContext?: LiveCostContext;
 }
 
 export interface CoachingResponse {

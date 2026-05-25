@@ -21,6 +21,7 @@ import type {
   SpeakerRole,
   UtteranceClassification,
   CoachingInput,
+  LiveCostContext,
   AblyCoachingCardEvent,
 } from "@/lib/live/types";
 
@@ -129,6 +130,14 @@ async function processUtterance(
     words: utterance.text.split(/\s+/).length,
   });
 
+  // Phase C C3b — Live cost context. Built once per utterance and forwarded
+  // to every LLM caller (classifyUtterance, checkAutoDismiss, coaching engine).
+  const liveCostContext: LiveCostContext = {
+    sessionId: id,
+    userId: session.userId,
+    dealId: session.dealId ?? null,
+  };
+
   // Store the buffered utterance as a single chunk
   let chunkId: string | undefined;
   try {
@@ -152,7 +161,7 @@ async function processUtterance(
   // 1. Classify the full utterance
   let classification: UtteranceClassification = "strategy_reveal";
   try {
-    const result = await classifyUtterance(utterance.text, uttSpeakerRole);
+    const result = await classifyUtterance(utterance.text, uttSpeakerRole, liveCostContext);
     classification = result.classification;
     await prisma.transcriptChunk.update({
       where: { id: chunkId },
@@ -177,7 +186,7 @@ async function processUtterance(
         select: { id: true, type: true, content: true, suggestedQuestion: true },
       });
       if (activeCards.length > 0) {
-        const addressedIds = await checkAutoDismiss(utterance.text, activeCards);
+        const addressedIds = await checkAutoDismiss(utterance.text, activeCards, liveCostContext);
         if (addressedIds.length > 0) {
           await markCardsAsAddressed(id, addressedIds);
         }
@@ -212,6 +221,7 @@ async function processUtterance(
       const coachingInput: CoachingInput = {
         dealContext,
         sessionId: id,
+        liveCostContext,
         recentTranscript: transcriptBuffer.map((tc) => ({
           speaker: tc.speaker,
           role: tc.speakerRole,

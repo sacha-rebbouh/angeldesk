@@ -12,6 +12,7 @@
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
+import { costMonitor } from "@/services/cost-monitor";
 import { compileDealContext, serializeContext } from "@/lib/live/context-compiler";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
 import type { CondensedTranscriptIntel, PostCallReport } from "@/lib/live/types";
@@ -163,6 +164,20 @@ Schéma attendu :
   // post-call qui logge et skip — pas de re-analyse sur input incomplet.
   assertCompletionNotTruncated(condenserResult.data, {
     caller: "transcript-condenser",
+  });
+
+  // Phase C C3b — Live cost wiring. `session` was loaded above with all
+  // scalar fields (userId + dealId nullable). Fire-and-forget.
+  void costMonitor.recordLiveCall({
+    sessionId,
+    userId: session.userId,
+    dealId: session.dealId,
+    agent: "transcript-condenser",
+    operation: "live_transcript_condense",
+    cost: condenserResult.cost ?? 0,
+    model: condenserResult.model,
+    inputTokens: condenserResult.usage?.inputTokens,
+    outputTokens: condenserResult.usage?.outputTokens,
   });
 
   const { data } = condenserResult;

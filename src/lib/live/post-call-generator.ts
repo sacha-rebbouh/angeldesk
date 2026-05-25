@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { compileDealContext, serializeContext } from "@/lib/live/context-compiler";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
+import { costMonitor } from "@/services/cost-monitor";
 import { publishSessionStatus } from "@/lib/live/ably-server";
 import { recordSessionDuration } from "@/services/live-session-limits";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
@@ -218,6 +219,21 @@ ${screenCaptures.length > 0 ? "Intègre les findings visuels (données extraites
   // sur input incomplet → cascade de mauvais signaux downstream.
   assertCompletionNotTruncated(reportResult.data, {
     caller: "post-call-report",
+  });
+
+  // Phase C C3b — Live cost wiring. `session` is the LiveSession loaded
+  // above (with `include: { deal }`) — scalar fields userId + dealId are
+  // present. Fire-and-forget.
+  void costMonitor.recordLiveCall({
+    sessionId,
+    userId: session.userId,
+    dealId: session.dealId,
+    agent: "post-call-report",
+    operation: "live_post_call_report",
+    cost: reportResult.cost ?? 0,
+    model: reportResult.model,
+    inputTokens: reportResult.usage?.inputTokens,
+    outputTokens: reportResult.usage?.outputTokens,
   });
 
   const { data: rawReport } = reportResult;
