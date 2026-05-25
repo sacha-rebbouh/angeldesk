@@ -201,11 +201,11 @@ export const ProTeaserBanner = memo(function ProTeaserBanner() {
 
         <ul className="space-y-2 mb-4">
           {[
-            "Score détaillé multi-dimensionnel",
+            "Score détaillé multidimensionnel",
             "Toutes les contradictions détectées",
-            "3 scénarios modélisés (Bull/Base/Bear)",
-            "Analyse Expert Sectoriel",
-            "Memo d'investissement PDF",
+            "3 scénarios modélisés (bull/base/bear)",
+            "Analyse sectorielle experte",
+            "Mémo d'investissement PDF",
             "Questions critiques complètes",
           ].map((feature, i) => (
             <li key={i} className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
@@ -224,7 +224,7 @@ export const ProTeaserBanner = memo(function ProTeaserBanner() {
             Voir les packs de crédits
           </Button>
           <p className="text-sm text-amber-600 dark:text-amber-400">
-            1 mauvaise décision évitée = 25K € sauvés
+            1 mauvaise décision évitée = 25 k€ sauvés
           </p>
         </div>
       </div>

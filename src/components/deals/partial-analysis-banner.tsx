@@ -41,7 +41,7 @@ const MISSING_AGENTS_FOR_FREE: MissingAgent[] = [
   {
     name: "Expert sectoriel",
     icon: <Shield className="h-4 w-4 text-cyan-500" />,
-    impact: "Analyse spécialisée avec les KPIs et standards du secteur. Détecte les risques spécifiques.",
+    impact: "Analyse spécialisée avec les indicateurs clés et standards du secteur. Détecte les risques spécifiques.",
   },
   {
     name: "Mémo d'investissement",
@@ -78,8 +78,8 @@ export const PartialAnalysisBanner = memo(function PartialAnalysisBanner({
               </Badge>
             </div>
             <p className="text-sm text-amber-800 mb-3">
-              Les agents ci-dessous sont essentiels pour une decision d&apos;investissement eclairee.
-              Sans eux, des risques critiques peuvent passer inapercus.
+              Les agents ci-dessous sont essentiels pour une décision d&apos;investissement éclairée.
+              Sans eux, des risques critiques peuvent passer inaperçus.
             </p>
 
             <div className="space-y-2 mb-4">
@@ -104,10 +104,10 @@ export const PartialAnalysisBanner = memo(function PartialAnalysisBanner({
                 onClick={() => router.push("/pricing")}
               >
                 <Crown className="mr-2 h-4 w-4" />
-                Debloquer l&apos;analyse complete
+                Débloquer l&apos;analyse complète
               </Button>
               <p className="text-xs text-amber-600">
-                Votre score actuel pourrait changer significativement avec l&apos;analyse complete.
+                Votre score actuel pourrait changer significativement avec l&apos;analyse complète.
               </p>
             </div>
           </div>

@@ -217,7 +217,10 @@ export async function completeAnalysis(params: {
   try {
     const { uploadFile } = await import("@/services/storage");
     const jsonBuffer = Buffer.from(JSON.stringify(serializedResults));
-    await uploadFile(`analysis-results/${params.analysisId}.json`, jsonBuffer, { access: "private" });
+    await uploadFile(`analysis-results/${params.analysisId}.json`, jsonBuffer, {
+      access: "private",
+      allowOverwrite: true,
+    });
     logger.debug({
       analysisId: params.analysisId,
       sizeKb: Math.round(jsonBuffer.length / 1024),

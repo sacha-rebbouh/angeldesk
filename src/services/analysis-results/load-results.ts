@@ -15,6 +15,74 @@ export interface LoadResultsOptions {
   backfillCache?: boolean;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getResultStats(results: unknown): {
+  keyCount: number;
+  successfulCount: number;
+} | null {
+  if (!results || typeof results !== "object" || Array.isArray(results)) {
+    return null;
+  }
+
+  const values = Object.values(results);
+  return {
+    keyCount: values.length,
+    successfulCount: values.filter((value) =>
+      isRecord(value) && value.success === true
+    ).length,
+  };
+}
+
+async function isStaleCachedResult(
+  analysisId: string,
+  results: unknown,
+  blobPath: string
+): Promise<boolean> {
+  const cachedStats = getResultStats(results);
+  if (cachedStats === null) {
+    logger.warn(
+      { analysisId, blobPath, reason: "cache_invalid_shape" },
+      "Cached analysis results have invalid shape; falling back to DB"
+    );
+    return true;
+  }
+
+  try {
+    const meta = await prisma.analysis.findUnique({
+      where: { id: analysisId },
+      select: { status: true, completedAgents: true },
+    });
+
+    if (
+      meta?.status === "COMPLETED" &&
+      meta.completedAgents > cachedStats.successfulCount
+    ) {
+      logger.warn(
+        {
+          analysisId,
+          blobPath,
+          reason: "cache_incomplete",
+          cachedKeyCount: cachedStats.keyCount,
+          cachedSuccessfulCount: cachedStats.successfulCount,
+          completedAgents: meta.completedAgents,
+        },
+        "Cached analysis results are incomplete; falling back to DB"
+      );
+      return true;
+    }
+  } catch (error) {
+    logger.warn(
+      { err: error, analysisId, blobPath, reason: "cache_validation_failed" },
+      "Failed to validate cached analysis results; using cache"
+    );
+  }
+
+  return false;
+}
+
 /**
  * Load analysis results from Blob cache first, falling back to DB.
  * Automatically backfills the cache on DB fallback for future requests.
@@ -35,7 +103,10 @@ export async function loadResults(
         // Local dev: read via storage helper so encrypted cache files are decrypted.
         const buffer = await downloadFile(blobPath);
         try {
-          return JSON.parse(buffer.toString("utf-8"));
+          const cachedResults = JSON.parse(buffer.toString("utf-8"));
+          if (!(await isStaleCachedResult(analysisId, cachedResults, blobPath))) {
+            return cachedResults;
+          }
         } catch (error) {
           logger.warn(
             { err: error, analysisId, blobPath, reason: "blob_json_parse_failed", storageMode: "local" },
@@ -49,7 +120,10 @@ export async function loadResults(
         if (blobs.length > 0) {
           const buffer = await downloadFile(blobs[0].url);
           try {
-            return JSON.parse(buffer.toString("utf-8"));
+            const cachedResults = JSON.parse(buffer.toString("utf-8"));
+            if (!(await isStaleCachedResult(analysisId, cachedResults, blobPath))) {
+              return cachedResults;
+            }
           } catch (error) {
             logger.warn(
               { err: error, analysisId, blobPath, reason: "blob_json_parse_failed", storageMode: "vercel_blob" },
@@ -92,7 +166,10 @@ export async function loadResults(
     try {
       const { uploadFile } = await import("@/services/storage");
       const jsonBuffer = Buffer.from(JSON.stringify(row.results));
-      await uploadFile(blobPath, jsonBuffer, { access: "private" });
+      await uploadFile(blobPath, jsonBuffer, {
+        access: "private",
+        allowOverwrite: true,
+      });
       logger.info({ analysisId, blobPath }, "Backfilled analysis results cache");
     } catch (error) {
       logger.warn(

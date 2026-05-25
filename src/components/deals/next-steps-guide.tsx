@@ -85,7 +85,7 @@ export const NextStepsGuide = memo(function NextStepsGuide({
     if (isFree && !hasTier3) {
       actions.push({
         id: "run-full-analysis",
-        label: "Lancer l'analyse complète (PRO)",
+        label: "Lancer l'analyse complète",
         description: "Obtenez le Devil's Advocate, les scénarios financiers, le détecteur de contradictions et le mémo d'investissement.",
         icon: <Crown className="h-5 w-5 text-amber-500" />,
         priority: "medium",
@@ -141,7 +141,7 @@ export const NextStepsGuide = memo(function NextStepsGuide({
                   {step.proOnly && (
                     <Badge variant="secondary" className="bg-gradient-to-r from-amber-100 to-orange-100 text-amber-800 text-xs">
                       <Crown className="mr-0.5 h-3 w-3" />
-                      PRO
+                      Pro
                     </Badge>
                   )}
                 </div>

@@ -112,6 +112,19 @@ describe("downloadFile — Blob mode storagePath fallback", () => {
     });
   });
 
+  it("passes allowOverwrite to Blob only when requested", async () => {
+    await uploadFile("analysis-results/a1.json", Buffer.from("{}"), {
+      access: "public",
+      allowOverwrite: true,
+    });
+
+    expect(mocks.put).toHaveBeenCalledWith(
+      "analysis-results/a1.json",
+      expect.any(Buffer),
+      { access: "public", allowOverwrite: true }
+    );
+  });
+
   it("refuses local filesystem fallback on Vercel when the Blob token is missing", async () => {
     delete process.env.BLOB_READ_WRITE_TOKEN;
     process.env.VERCEL = "1";

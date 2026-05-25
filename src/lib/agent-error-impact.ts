@@ -104,6 +104,17 @@ export function getAgentErrorImpact(agentName: string) {
   };
 }
 
+export function formatAgentErrorSeverity(
+  severity: (typeof AGENT_ERROR_IMPACT)[string]["severity"]
+): string {
+  return {
+    CRITICAL: "Critique",
+    HIGH: "Élevée",
+    MEDIUM: "Moyenne",
+    LOW: "Faible",
+  }[severity];
+}
+
 export function formatDetailedError(agentName: string, error: string): {
   shortMessage: string;
   detailedMessage: string;

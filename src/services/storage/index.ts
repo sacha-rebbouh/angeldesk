@@ -55,13 +55,15 @@ function sanitizePath(basePath: string, userPath: string): string {
 export async function uploadFile(
   path: string,
   file: File | Buffer,
-  options?: { access?: "public" | "private" }
+  options?: { access?: "public" | "private"; allowOverwrite?: boolean }
 ): Promise<UploadResult> {
   const buffer = await toBuffer(file);
   const content = options?.access === "private" ? encryptBuffer(buffer) : buffer;
 
   if (shouldUseVercelBlob()) {
-    return uploadToVercelBlob(path, content);
+    return uploadToVercelBlob(path, content, {
+      allowOverwrite: options?.allowOverwrite,
+    });
   }
   return uploadToLocal(path, content);
 }
@@ -140,13 +142,17 @@ export function getPublicUrl(pathname: string): string {
 // --- Vercel Blob ---
 async function uploadToVercelBlob(
   path: string,
-  file: Buffer
+  file: Buffer,
+  options?: { allowOverwrite?: boolean }
 ): Promise<UploadResult> {
   // Vercel Blob only supports public blobs. Private uploads are encrypted by
   // uploadFile() before reaching this function and must be served through an
   // authenticated API route that calls downloadFile().
   const blob = await put(path, file, {
     access: "public",
+    ...(options?.allowOverwrite === undefined
+      ? {}
+      : { allowOverwrite: options.allowOverwrite }),
   });
   return {
     url: blob.url,

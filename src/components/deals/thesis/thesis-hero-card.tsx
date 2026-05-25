@@ -67,6 +67,12 @@ const SEVERITY_BADGE: Record<AlertItem["severity"], { label: string; className: 
   low: { label: "Faible", className: "bg-slate-400 text-white" },
 };
 
+const AXIS_LABELS: Record<string, string> = {
+  thesis_quality: "Qualité de la thèse",
+  investor_profile_fit: "Fit investisseur",
+  deal_accessibility: "Accessibilité du deal",
+};
+
 export function getAxisDisplayState(axis: ThesisAxisEvaluation) {
   if (isThesisAxisUnavailable(axis)) {
     return {
@@ -99,7 +105,7 @@ export function ThesisHeroCard(props: ThesisHeroCardProps) {
               Thèse d&apos;investissement
             </CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              Ce que la société promet — analysée par AI contre 3 frameworks (YC, Thiel, Angel Desk).
+              Ce que la société promet — analysée par IA contre 3 frameworks (YC, Thiel, Angel Desk).
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -126,10 +132,10 @@ export function ThesisHeroCard(props: ThesisHeroCardProps) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ThesisField label="Problème" value={props.problem} />
           <ThesisField label="Solution" value={props.solution} />
-          <ThesisField label="Why-now" value={props.whyNow} />
-          <ThesisField label="Moat" value={props.moat} fallback="Non déclaré" />
+          <ThesisField label="Pourquoi maintenant" value={props.whyNow} />
+          <ThesisField label="Défensibilité" value={props.moat} fallback="Non déclaré" />
           <div className="md:col-span-2">
-            <ThesisField label="Path to exit" value={props.pathToExit} fallback="Non déclaré" />
+            <ThesisField label="Scénario de sortie" value={props.pathToExit} fallback="Non déclaré" />
           </div>
         </div>
 
@@ -145,7 +151,7 @@ export function ThesisHeroCard(props: ThesisHeroCardProps) {
               return (
                 <div key={axis.key} className="rounded-lg border bg-white/60 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{axis.label}</p>
+                    <p className="text-xs font-semibold text-slate-500">{AXIS_LABELS[axis.key] ?? axis.label}</p>
                     <Badge variant="outline" className={axisDisplay.className}>
                       {axisDisplay.label}
                     </Badge>
@@ -253,7 +259,7 @@ export function ThesisHeroCard(props: ThesisHeroCardProps) {
 function ThesisField({ label, value, fallback = "Non renseigné" }: { label: string; value: string | null; fallback?: string }) {
   return (
     <div>
-      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">{label}</p>
+      <p className="text-xs font-medium text-slate-500 mb-1">{label}</p>
       <p className="text-sm text-slate-900">{value && value.trim().length > 0 ? value : <span className="italic text-muted-foreground">{fallback}</span>}</p>
     </div>
   );

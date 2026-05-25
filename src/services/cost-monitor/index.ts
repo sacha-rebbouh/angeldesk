@@ -544,6 +544,7 @@ class CostMonitor {
         const jsonBuffer = Buffer.from(JSON.stringify(mergedResults));
         await uploadFile(`analysis-results/${report.analysisId}.json`, jsonBuffer, {
           access: "private",
+          allowOverwrite: true,
         });
       } catch (cacheError) {
         console.warn("[CostMonitor] Failed to refresh analysis results cache:", cacheError);

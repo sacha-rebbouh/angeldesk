@@ -54,7 +54,7 @@ import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
 import { NextStepsGuide } from "./next-steps-guide";
 import { PartialAnalysisBanner } from "./partial-analysis-banner";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
-import { formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
+import { formatAgentErrorSeverity, formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
 import { consolidateAcrossAnalyses } from "@/lib/question-consolidator";
 import { consolidateRedFlagsFromResults } from "@/services/red-flag-dedup/consolidate";
 import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
@@ -547,7 +547,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
       if (decision === "stop") {
-        toast.info("Analyse arretee. Rapport these-only disponible.");
+        toast.info("Analyse arrêtée. Rapport de thèse disponible.");
       } else if (decision === "continue") {
         toast.success("Analyse reprise.");
       } else {
@@ -582,7 +582,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       // Safety timeout: stop polling after 30 minutes
       if (pollingStartRef.current > 0 && Date.now() - pollingStartRef.current > POLLING_TIMEOUT_MS) {
         setIsPolling(false);
-        toast.info("L'analyse prend plus de temps que prevu. Elle continue en arriere-plan — la page se mettra a jour automatiquement.");
+        toast.info("L'analyse prend plus de temps que prévu. Elle continue en arrière-plan — la page se mettra à jour automatiquement.");
         return;
       }
 
@@ -773,10 +773,10 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       queryClient.invalidateQueries({ queryKey: queryKeys.usage.analyze() });
       if (response.data.status === "RESUMING") {
         isResumingRef.current = true;
-        toast.success(`Reprise de l'analyse (${response.data.completedAgents ?? 0}/${response.data.totalAgents ?? 0} étapes deja terminees)`);
+        toast.success(`Reprise de l'analyse (${response.data.completedAgents ?? 0}/${response.data.totalAgents ?? 0} étapes déjà terminées)`);
       } else {
         isResumingRef.current = false;
-        toast.success("Analyse lancee en arriere-plan");
+        toast.success("Analyse lancée en arrière-plan");
       }
     },
     onError: (error: Error & { upgradeRequired?: boolean }) => {
@@ -796,7 +796,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   // Handle analysis button click - check credit balance
   const handleAnalyzeClick = useCallback(() => {
     if (documentReadiness && !documentReadiness.ready) {
-      toast.error("Extraction documentaire incomplete. Traitez les pages bloquees avant de lancer l'analyse.");
+      toast.error("Extraction documentaire incomplète. Traitez les pages bloquées avant de lancer l'analyse.");
       return;
     }
     if (quota) {
@@ -1229,12 +1229,12 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
           <CardHeader className="pb-3">
             <CardTitle className={`flex items-center gap-2 text-base ${!documentReadiness.ready ? "text-red-900" : "text-amber-900"}`}>
               <ShieldAlert className="h-5 w-5" />
-              Controle extraction documentaire
+              Contrôle extraction documentaire
             </CardTitle>
             <CardDescription className={!documentReadiness.ready ? "text-red-800" : "text-amber-800"}>
               {documentReadiness.ready
-                ? "Analyse autorisee avec des decisions utilisateur tracees."
-                : `${documentReadiness.readyDocumentCount}/${documentReadiness.documentCount} document(s) pret(s). L'analyse est bloquee tant que les pages critiques ne sont pas traitees.`}
+                ? "Analyse autorisée avec des décisions utilisateur tracées."
+                : `${documentReadiness.readyDocumentCount}/${documentReadiness.documentCount} document(s) prêt(s). L'analyse est bloquée tant que les pages critiques ne sont pas traitées.`}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -1242,7 +1242,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
               <div key={`${issue.documentId}-${issue.pageNumber ?? issue.code}`} className="rounded-lg border border-red-200 bg-white p-3">
                 <p className="font-medium text-red-900">{issue.message}</p>
                 <p className="mt-1 text-sm text-red-700">
-                  Relancez OCR, uploadez une version corrigee, ou prenez une decision explicite si le risque est acceptable.
+                  Relancez OCR, uploadez une version corrigée, ou prenez une décision explicite si le risque est acceptable.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {issue.canBypass && (
@@ -1252,7 +1252,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                       onClick={() => handleExtractionDecision(issue, "BYPASS_PAGE")}
                       disabled={extractionDecisionMutation.isPending}
                     >
-                      Approuver apres inspection
+                      Approuver après inspection
                     </Button>
                   )}
                   {issue.canBypass && (
@@ -1318,7 +1318,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   {!canRunAnalysis ? (
                     <>
                       <AlertCircle className="mr-2 h-4 w-4" />
-                      {documentReadiness && !documentReadiness.ready ? "Extraction incomplete" : "Limite atteinte"}
+                      {documentReadiness && !documentReadiness.ready ? "Extraction incomplète" : "Limite atteinte"}
                     </>
                   ) : (
                     <>
@@ -1421,7 +1421,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     {staleness.message}
                   </p>
                   <p className="text-sm text-amber-700">
-                    De nouveaux documents ont ete ajoutes depuis la derniere analyse. Relancez une analyse pour les inclure.
+                    De nouveaux documents ont été ajoutés depuis la dernière analyse. Relancez une analyse pour les inclure.
                   </p>
                 </div>
               </div>
@@ -1539,9 +1539,9 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     </DropdownMenu>
                   )}
                   {displayedResult.success ? (
-                    <Badge variant="default" className="bg-green-500">Reussi</Badge>
+                    <Badge variant="default" className="bg-green-500">Réussi</Badge>
                   ) : (
-                    <Badge variant="destructive">Echoue</Badge>
+                    <Badge variant="destructive">Échoué</Badge>
                   )}
                   <span className="text-sm text-muted-foreground">
                     {(displayedResult.totalTimeMs / 1000).toFixed(1)}s
@@ -1643,7 +1643,9 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                                 const impact = getAgentErrorImpact(name);
                                 return (
                                   <li key={name} className="text-xs text-muted-foreground">
-                                    <Badge variant="outline" className="text-[10px] mr-1">{impact.severity}</Badge>
+                                    <Badge variant="outline" className="text-[10px] mr-1">
+                                      {formatAgentErrorSeverity(impact.severity)}
+                                    </Badge>
                                     <strong>{formatAgentName(name)}</strong> : {impact.missingAnalysis}
                                   </li>
                                 );
@@ -1701,11 +1703,11 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     <button
                       onClick={toggleAgentDetails}
                       aria-expanded={showAgentDetails}
-                      aria-label="Afficher les details des agents"
+                      aria-label="Afficher les détails des agents"
                       className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
                     >
                       <span className="font-medium text-sm">
-                        Details des agents ({Object.keys(displayedResult.results).length})
+                        Détails des agents ({Object.keys(displayedResult.results).length})
                       </span>
                       {showAgentDetails ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </button>
@@ -1871,7 +1873,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 )}
 
                 {/* Credit upsell banner for users who haven't purchased yet */}
-                {quota && (quota.totalPurchased ?? 0) === 0 && displayedResult.success && (
+                {quota && (quota.totalPurchased ?? 0) === 0 && displayedResult.success && !isTier3Analysis && (
                   <ProTeaserBanner />
                 )}
               </TabsContent>
