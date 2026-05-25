@@ -131,6 +131,28 @@ export function recLabel(rec: string): string {
   return "INVESTIGATION COMPLÉMENTAIRE";
 }
 
+/**
+ * Solidité des preuves — label PDF uppercase.
+ *
+ * Asymétrie volontaire par rapport à `recLabel()` : l'orientation est toujours
+ * présente dans les données de scoring, mais la solidité peut être absente.
+ * Retourne `null` quand la valeur n'est pas qualifiée — la surface PDF doit
+ * décider explicitement d'afficher le fallback `"SOLIDITÉ À QUALIFIER"` via
+ * `{ showUnqualified: true }`. Évite qu'une section PDF imprime une
+ * pseudo-mesure quand le backend ne fournit rien.
+ */
+export function proofLabel(
+  value: string | null | undefined,
+  options?: { showUnqualified?: boolean },
+): string | null {
+  if (value === "strong") return "PREUVES SOLIDES";
+  if (value === "moderate") return "PREUVES PARTIELLES";
+  if (value === "low") return "PREUVES FAIBLES";
+  if (value === "contradictory") return "PREUVES CONTRADICTOIRES";
+  if (value === "insufficient") return "DONNÉES INSUFFISANTES";
+  return options?.showUnqualified === true ? "SOLIDITÉ À QUALIFIER" : null;
+}
+
 /** Priority order for sorting */
 export function priorityOrder(p: string): number {
   const map: Record<string, number> = {

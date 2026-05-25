@@ -18,6 +18,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { getBenchmark } from "@/services/benchmarks";
 import { calculateAgentScore, CUSTOMER_INTEL_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
@@ -378,7 +379,7 @@ Tu DOIS produire un JSON structuré avec:
 4. **dbCrossReference**: Claims vérifiés vs Funding DB si disponible
 5. **redFlags**: Minimum 3 si problèmes, chacun avec evidence + question + impact
 6. **questions**: Minimum 5 questions prioritaires pour le fondateur
-7. **alertSignal**: Signal analytique (PROCEED/PROCEED_WITH_CAUTION/INVESTIGATE_FURTHER/STOP) avec justification
+7. **alertSignal**: Signal analytique factuel — hasBlocker, blockerReason, justification (constat, pas instruction d'investissement ; intensité dérivée déterministe en aval)
 8. **narrative**: Résumé actionnable pour le BA
 
 ## BARÈME DE SCORING
@@ -390,8 +391,7 @@ Tu DOIS produire un JSON structuré avec:
 | Concentration | 20% | Top1<10% | Top1<20% | Top1<30% | Top1<40% | Top1>40% |
 | Expansion | 15% | L&E fort + virality | L&E démontré | Upsell possible | Limité | Aucun potentiel |
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   // ============================================================================
@@ -743,7 +743,6 @@ Réponds UNIQUEMENT en JSON avec cette structure exacte:
   "alertSignal": {
     "hasBlocker": true/false,
     "blockerReason": "Raison si blocker",
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
     "justification": "Pourquoi cette recommandation"
   },
 
@@ -855,7 +854,6 @@ IMPORTANT:
   private transformResponse(data: LLMCustomerIntelResponse): CustomerIntelData {
     const validGrades = ["A", "B", "C", "D", "F"] as const;
     const validDataCompleteness = ["complete", "partial", "minimal"] as const;
-    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
 
     // Meta
     const confidenceIsFallback = data.meta?.confidenceLevel == null;
@@ -948,13 +946,24 @@ IMPORTANT:
         }))
       : [];
 
-    // Alert Signal
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: score.value,
+    });
+
+    // Alert Signal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? false,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: validRecommendations.includes(data.alertSignal?.recommendation as typeof validRecommendations[number])
-        ? data.alertSignal.recommendation as "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP"
-        : "PROCEED_WITH_CAUTION",
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "Analyse automatique",
     };
 
@@ -974,6 +983,7 @@ IMPORTANT:
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }

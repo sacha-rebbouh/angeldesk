@@ -1,5 +1,5 @@
 /**
- * DEVIL'S ADVOCATE AGENT - REFONTE v2.0
+ * DEVIL'S ADVOCATE AGENT - REFONTE v2.0 + Phase A slice A3
  *
  * Mission: Challenge systematique de la these d'investissement avec comparables echecs reels
  * Persona: Partner VC ultra-sceptique (20+ ans, vu 500+ echecs) + Analyste Big4 rigoureux
@@ -11,22 +11,34 @@
  * - Context Engine (deals similaires, concurrents, news)
  * - Funding DB (comparables echecs)
  *
- * Outputs:
+ * Outputs (Phase A A3) :
  * - Counter-arguments structures avec comparables echecs reels
  * - Worst case scenario detaille avec triggers et probabilites
- * - Kill reasons avec niveaux de severite (CRITICAL, HIGH, CONCERN)
+ * - `structuralRisks: StructuralRisk[]` (severity CRITICAL|HIGH|MEDIUM) —
+ *   D1 verrouillé : remplace l'ancien `killReasons` legacy, sans alias émis.
+ * - `riskPosture: light|elevated|critical|structural` — intensité, pas action.
+ * - `signalContribution: Tier3SignalContribution` — orientation dérivée
+ *   déterministe ; evidenceSolidity reste nullable (A6 ultérieur).
  * - Blind spots identifies
  * - Score de scepticisme justifie
  * - Questions pour le fondateur (pieges constructifs)
+ * - `alertSignal: AgentAlertSignal` conservé (compat infra `BaseAgent`).
+ *   Sa valeur est dérivée déterministe depuis `riskPosture` côté
+ *   `normalizeResponse` — le LLM ne pilote plus librement PROCEED/STOP.
+ *   La migration du contrat global `AgentAlertSignal` (cross-agent) reste
+ *   un debt explicitement hors scope A3.
  */
 
 import { BaseAgent } from "../base-agent";
 import { factCheckDevilsAdvocate } from "@/services/fact-checking";
+import { DEVILS_ADVOCATE_SYSTEM_PROMPT } from "./prompts/devils-advocate-prompt";
+import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 import type {
   EnrichedAgentContext,
   DevilsAdvocateResult,
   DevilsAdvocateData,
   DevilsAdvocateFindings,
+  DevilsAdvocateRiskPosture,
   AgentMeta,
   AgentScore,
   AgentRedFlag,
@@ -36,11 +48,34 @@ import type {
   DbCrossReference,
   CounterArgument,
   WorstCaseScenario,
-  KillReason,
   BlindSpot,
   AlternativeNarrative,
+  StructuralRisk,
+  Tier3SignalContribution,
+  Tier3Orientation,
 } from "../types";
 
+/**
+ * Phase A slice A3 — Forme attendue de la sortie LLM Devil's Advocate.
+ *
+ * D1 verrouillé : le contrat natif émis par l'agent expose
+ * `findings.structuralRisks[]` (severity CRITICAL|HIGH|MEDIUM) +
+ * `findings.riskPosture` + `findings.signalContribution`. Aucun
+ * `findings.killReasons` n'est émis natif.
+ *
+ * Parser tolérant LLM dégradé (lecture interne, sans alias émis) :
+ * - Si le LLM continue à produire `killReasons[]` (champ legacy ignoré du
+ *   nouveau prompt mais possible sur cache ou run anciens), `normalizeResponse`
+ *   les mappe vers `structuralRisks[]`. Cette branche est lecture seule —
+ *   la sortie reste D1 stricte.
+ * - `severityLevel: CRITICAL|HIGH|CONCERN` (legacy) → `severity:
+ *   CRITICAL|HIGH|MEDIUM` (A1) via mapping déterministe.
+ *
+ * `alertSignal.recommendation: PROCEED|...|STOP` : reste accepté en entrée
+ * (compat infra) mais sa valeur est désormais OVERRIDÉE en sortie par
+ * `normalizeResponse` à partir de `riskPosture`. Le LLM ne pilote plus
+ * cette décision.
+ */
 interface LLMDevilsAdvocateResponse {
   meta: {
     dataCompleteness: "complete" | "partial" | "minimal";
@@ -106,7 +141,22 @@ interface LLMDevilsAdvocateResponse {
       }[];
       earlyWarningSigns: string[];
     };
-    killReasons: {
+    // Phase A A3 — Contrat natif principal demandé au LLM.
+    structuralRisks?: {
+      riskId?: string;
+      description: string;
+      category: string;
+      evidence?: string;
+      source?: string;
+      severity: "CRITICAL" | "HIGH" | "MEDIUM";
+      impact?: string;
+      question?: string;
+    }[];
+    riskPosture?: "light" | "elevated" | "critical" | "structural";
+    // Phase A A3 — Parser tolérant lecture seule : si un run legacy ou un
+    // LLM dégradé produit encore le format `killReasons[]`, `normalizeResponse`
+    // le mappe vers `structuralRisks[]` ; jamais émis natif.
+    killReasons?: {
       id: string;
       reason: string;
       category: string;
@@ -258,228 +308,14 @@ export class DevilsAdvocateAgent extends BaseAgent<DevilsAdvocateData, DevilsAdv
   }
 
   protected buildSystemPrompt(): string {
-    return `# ROLE ET EXPERTISE
-
-Tu es le DEVIL'S ADVOCATE le plus redoute de la place. Ta double expertise:
-
-PARTNER VC ULTRA-SCEPTIQUE (25+ ans)
-- Tu as vu 500+ deals, investi dans 50, et 35 ont echoue
-- Tu connais TOUS les modes d'echec: marche, equipe, timing, execution, competition
-- Tu as perdu de l'argent personnellement et tu ne referas pas les memes erreurs
-- Tu detectes les patterns de failure avant tout le monde
-
-ANALYSTE BIG4 RIGOUREUX
-- Chaque affirmation doit avoir une preuve
-- Les calculs sont montres, pas juste les resultats
-- Les comparables sont reels et sources
-- Aucune place pour l'approximation
-
-# MISSION POUR CE DEAL
-
-Tu PROTEGES l'investisseur en l'INFORMANT des risques — tu ne decides JAMAIS a sa place.
-Ta mission est de challenger CHAQUE hypothese optimiste.
-Tu n'es PAS la pour tuer le deal, mais pour t'assurer que l'investisseur:
-1. Comprend TOUS les risques avant de decider
-2. A des COMPARABLES d'echecs similaires pour calibrer son jugement
-3. Sait QUELLES QUESTIONS poser au fondateur
-4. Connait les RISQUES CRITIQUES identifies
-
-# TONALITE — REGLE ABSOLUE
-
-Tu challenges et tu informes. Tu ne decides JAMAIS.
-
-**INTERDIT dans TOUS les champs texte (narrative, killReasons, blindSpots, questions) :**
-- "Ne pas investir" / "Fuir" / "Passer ce deal" / "Rejeter"
-- "Ce deal est une arnaque" / "Perte garantie"
-- Tout imperatif adresse a l'investisseur
-
-**OBLIGATOIRE :**
-- Constater : "Ce risque presente un pattern similaire a X qui a echoue"
-- Questionner : "Si le fondateur ne peut pas justifier X, cela invaliderait Y"
-- Chaque killReason DOIT avoir un champ "condition" (path de resolution)
-- Le worst case scenario doit etre realiste, pas apocalyptique gratuitement
-- Le ton est celui d'un analyste rigoureux, pas d'un prophete de malheur
-
-# ADAPTATION AU SECTEUR (CRITIQUE POUR LA CREDIBILITE)
-
-ADAPTE tes contre-arguments, kill reasons et comparables au SECTEUR du deal :
-- Ne PAS utiliser "absence de CTO", "dette technique", "pas de VP Engineering" comme kill reasons pour un deal non-tech (food, retail, mode, consumer...)
-- Utilise des comparables echecs du MEME secteur (ex: pour un deal petfood, cite des echecs de marques petfood/DNVB, pas de SaaS)
-- Les roles cles a challenger dependent du secteur (ex: supply chain pour retail, R&D pour biotech, commercial pour B2B)
-- Les metriques pertinentes dependent du secteur (pas ARR/MRR si ce n'est pas du SaaS)
-
-# METHODOLOGIE D'ANALYSE
-
-## Etape 1: Extraction des theses positives
-- Identifier CHAQUE affirmation positive des agents Tier 1 et Tier 2
-- Lister les scores eleves et leurs justifications
-- Reperer les "points forts" mentionnes
-
-## Etape 2: Challenge systematique
-Pour CHAQUE these positive:
-- Formuler le contre-argument le plus fort possible
-- Trouver un COMPARABLE ECHEC reel (entreprise similaire qui a echoue)
-- Evaluer la probabilite du scenario negatif
-- Proposer une mitigation si possible
-
-## Etape 3: Construction du worst case scenario
-- Identifier les triggers de catastrophe
-- Modeliser les effets en cascade
-- Estimer les pertes potentielles
-- Trouver des catastrophes comparables reelles
-
-## Etape 4: Identification des kill reasons
-- Classer les risques critiques: CRITICAL (risque structurel), HIGH (risque conditionnel), CONCERN (point d'attention)
-- Sourcer chaque kill reason avec l'agent qui l'a detecte
-- Definir la question qui valide/invalide le risque
-- TOUJOURS fournir la condition d'attenuation (champ "condition"): dans quelles circonstances ce risque serait acceptable ou attenuable
-
-## Etape 5: Detection des blind spots
-- Qu'est-ce que les agents n'ont PAS regarde?
-- Qu'est-ce qui pourrait mal tourner que personne n'a mentionne?
-- Quels precedents historiques sont ignores?
-
-## Etape 6: Narratives alternatives
-- Le fondateur raconte une histoire - quelle autre histoire les memes faits racontent-ils?
-- Quelle est la probabilite de chaque narrative?
-- Comment verifier laquelle est vraie?
-
-# FRAMEWORK D'EVALUATION - SCORE DE SCEPTICISME
-
-Le score de scepticisme (0-100) mesure a quel point tu es inquiet pour ce deal.
-
-| Niveau | Score | Signification |
-|--------|-------|---------------|
-| CAUTIOUSLY_OPTIMISTIC | 0-20 | Tres peu de concerns, deal quasi parfait (RARE) |
-| NEUTRAL | 20-40 | Concerns mineures, deal standard |
-| CAUTIOUS | 40-60 | Concerns significatifs, prudence requise |
-| SKEPTICAL | 60-80 | Concerns majeurs, investigation approfondie necessaire |
-| VERY_SKEPTICAL | 80-100 | Deal tres risque, nombreux red flags |
-
-Facteurs qui AUGMENTENT le score:
-- Chaque kill reason CRITICAL: +15 points
-- Chaque kill reason HIGH: +8 points
-- Projections irrealistes: +10 points
-- Equipe non verifiable: +12 points
-- Marche en contraction: +10 points
-- Concurrents caches: +8 points
-- Valorisation > P80: +10 points
-
-# RED FLAGS SPECIFIQUES A DETECTER
-
-1. **THESE TROP BELLE** - Tout semble parfait, aucun risque mentionne
-2. **PROJECTIONS HOCKEY STICK** - Croissance irrealiste sans justification
-3. **CONCURRENCE MINIMISEE** - "Pas de concurrent direct" alors qu'il y en a
-4. **TRACK RECORD EMBELLI** - Experience exageree ou non verifiable
-5. **TIMING NARRATIF** - "Le marche explose" alors qu'il se contracte
-6. **METRICS CHERRY-PICKED** - Seules les metriques flatteuses sont montrees
-7. **BURN RATE CACHE** - Pas de visibilite sur la consommation de cash
-8. **EXIT FANTASY** - Scenarios de sortie irrealistes
-9. **TECHNO BUZZWORD** - "IA", "Blockchain" sans substance
-10. **CUSTOMER CONCENTRATION** - Dependance a 1-2 clients
-
-# FORMAT DE SORTIE
-
-Produis un JSON avec la structure exacte demandee. CHAQUE element doit etre:
-- SOURCE: Cite l'agent ou la donnee source
-- QUANTIFIE: Chiffres, pourcentages, montants
-- ACTIONNABLE: Le BA peut agir immediatement
-
-Note pour narrative.forNegotiation: points factuels pour la negociation (constats, pas d'ordres — "La valo est au P92 du secteur" pas "Refusez cette valo")
-
-# REGLES ABSOLUES
-
-1. JAMAIS inventer de donnees - "Non disponible" si absent
-2. TOUJOURS citer la source (Agent X, Slide Y, Context Engine Z)
-3. CHAQUE contre-argument doit avoir un COMPARABLE ECHEC reel
-4. QUANTIFIER chaque fois que possible (%, montants, probabilites)
-5. CHAQUE kill reason = niveau + evidence + question + red flag si mauvaise reponse
-6. Le worst case scenario doit etre REALISTE (pas apocalyptique gratuitement)
-7. Les narratives alternatives doivent etre PLAUSIBLES (pas conspirationnistes)
-8. JAMAIS de langage prescriptif — le DA informe des risques, il ne dit pas quoi faire
-   - ❌ "Il faut fuir ce deal"
-   - ✅ "Les signaux d'alerte sur cette dimension sont particulierement eleves"
-
-# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
-
-**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
-
-1. **LIMITES STRICTES sur les arrays**:
-   - counterArguments: MAX 4 items (les plus importants)
-   - killReasons: MAX 4 items (priorisés CRITICAL > HIGH > CONCERN)
-   - blindSpots: MAX 3 items
-   - alternativeNarratives: MAX 2 items
-   - additionalMarketRisks: MAX 3 items
-   - hiddenCompetitiveThreats: MAX 2 items
-   - executionChallenges: MAX 3 items
-   - redFlags: MAX 5 items (les plus critiques)
-   - questions: MAX 5 items (priorisés CRITICAL > HIGH)
-   - triggers, cascadeEffects, earlyWarningSigns: MAX 3 items chacun
-   - comparableCatastrophes: MAX 2 items
-
-2. **BREVITE dans les textes**:
-   - justification/rationale: 1-2 phrases MAX
-   - description: 2-3 phrases MAX
-   - evidence: 1 phrase avec source
-   - oneLiner: 15 mots MAX
-   - summary: 3-4 phrases MAX
-   - keyInsights: 3-4 items MAX, 10 mots chacun
-
-3. **Pas de redondance**:
-   - Ne pas répéter la même info dans différents champs
-   - Si un risque est dans killReasons, pas besoin de le dupliquer ailleurs
-
-4. **Structure > Contenu**: Mieux vaut 3 counter-arguments complets que 8 tronqués
-
-# EXEMPLES
-
-## BON output - Counter-argument:
-{
-  "thesis": "L'equipe a un track record exceptionnel - le CEO a scale sa precedente startup de 0 a 50M€ ARR",
-  "thesisSource": "team-investigator",
-  "counterArgument": "Le contexte etait radicalement different: marche pre-COVID en hypercroissance, levee de 100M€, equipe de 200 personnes. Ici c'est un marche mature avec 2M€ et 8 personnes.",
-  "evidence": "Precedente startup: Fintech 2018-2021 (pre-rate hike), TAM x3 pendant COVID. Cette startup: EdTech 2024, marche -47% YoY (source: Context Engine).",
-  "comparableFailure": {
-    "company": "Classcraft",
-    "sector": "EdTech",
-    "fundingRaised": 27000000,
-    "similarity": "Meme segment (gamification education), fondateur avec track record, timing post-COVID",
-    "outcome": "Fermeture en 2023 apres avoir leve 27M$. Impossible de scaler dans un marche en contraction.",
-    "lessonsLearned": "Le track record ne compense pas un mauvais timing marche",
-    "source": "TechCrunch, CB Insights"
-  },
-  "probability": "MEDIUM",
-  "probabilityRationale": "40% de chance que le meme pattern se reproduise: marche froid + burn eleve",
-  "mitigationPossible": true,
-  "mitigation": "Reduire le burn de 50%, focus profitabilite avant croissance"
-}
-
-## MAUVAIS output - Counter-argument (A EVITER):
-{
-  "thesis": "Bonne equipe",
-  "counterArgument": "L'equipe pourrait echouer",
-  "probability": "MEDIUM"
-}
-→ Pas de source, pas de comparable, pas de quantification, inutile.
-
-## BON output - Kill reason:
-{
-  "reason": "CTO introuvable sur LinkedIn - background non verifiable",
-  "category": "team",
-  "evidence": "team-investigator: 'LinkedIn CTO: AUCUN RESULTAT. Claim deck: Ex-Google Senior Engineer - AUCUNE preuve trouvee.'",
-  "sourceAgent": "team-investigator",
-  "severityLevel": "HIGH",
-  "condition": "Si le fondateur ne peut pas fournir de preuve d'emploi Google dans les 48h",
-  "resolutionPossible": true,
-  "resolutionPath": "Demander badge Google, contrat de travail, ou reference d'un ex-collegue Google",
-  "impactIfIgnored": "Risque de fraude sur le CV technique. Si le CTO n'a pas l'experience revendiquee, la roadmap technique est a risque.",
-  "questionToFounder": "Pouvez-vous fournir une preuve de l'emploi de votre CTO chez Google? Badge, contrat, ou contact d'un ancien manager?",
-  "redFlagAnswer": "Reponse evasive, delai, ou refus de fournir des preuves"
-}
-
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
-`;
+    // Phase A slice A3 — System prompt extrait dans un fichier compagnon
+    // (`./prompts/devils-advocate-prompt.ts`). L'agent importe la constante
+    // statique ; les invariants doctrinaux (absence de directive
+    // historique de seuil d'auto-confiance, absence de lexique prescriptif
+    // legacy de "raison-de-tuer-le-deal"/"destructeur-de-deal", contrat
+    // natif structuralRisks + riskPosture) sont verrouillés mécaniquement
+    // par les source-guards de `__tests__/devils-advocate-prompt.guard.test.ts`.
+    return DEVILS_ADVOCATE_SYSTEM_PROMPT;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DevilsAdvocateData> {
@@ -518,7 +354,7 @@ ${this.formatFactStoreData(context) ?? ""}
 
 2. **WORST CASE SCENARIO**: LE scenario catastrophe le plus probable. Specifique a CE deal. 2-3 triggers max, 2 comparables max.
 
-3. **KILL REASONS**: 2-4 risques critiques identifies, classes par niveau (CRITICAL > HIGH > CONCERN). Pour chaque risque, inclure la condition d'attenuation.
+3. **STRUCTURAL RISKS**: 2-4 risques structurels critiques identifies, classes par severity (CRITICAL > HIGH > MEDIUM). Pour chaque risque, inclure si possible une question d'investigation et un impact estime.
 
 4. **BLIND SPOTS**: 2-3 angles morts critiques que les agents n'ont pas couvert.
 
@@ -531,6 +367,8 @@ ${this.formatFactStoreData(context) ?? ""}
 
 7. **QUESTIONS PIEGES**: 3-5 questions critiques pour le fondateur.
 
+8. **RISK POSTURE**: qualifie l'intensite globale des risques structurels detectes (light | elevated | critical | structural). Ce n'est PAS une action — l'investisseur reste decideur.
+
 ## OUTPUT ATTENDU
 
 Produis une analyse Devil's Advocate COMPLETE au format JSON specifie.
@@ -538,7 +376,7 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
 
 **REGLES DE CONCISION CRITIQUES (le JSON sera INVALIDE si tronque):**
 - counterArguments: MAX 4 items
-- killReasons: MAX 4 items
+- structuralRisks: MAX 4 items
 - blindSpots: MAX 3 items
 - alternativeNarratives: MAX 2 items
 - redFlags: MAX 5 items
@@ -554,7 +392,7 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
     "grade": "A" | "B" | "C" | "D" | "F",
     "breakdown": [
       {"criterion": "Skepticism Level", "weight": 30, "score": 0-100, "justification": "..."},
-      {"criterion": "Kill Reasons Severity", "weight": 25, "score": 0-100, "justification": "..."},
+      {"criterion": "Structural Risks Severity", "weight": 25, "score": 0-100, "justification": "..."},
       {"criterion": "Worst Case Probability", "weight": 20, "score": 0-100, "justification": "..."},
       {"criterion": "Blind Spots Count", "weight": 15, "score": 0-100, "justification": "..."},
       {"criterion": "Alternative Narrative Plausibility", "weight": 10, "score": 0-100, "justification": "..."}
@@ -565,14 +403,16 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
     "confidenceLevel": 0-100,
     "limitations": ["Ce qui n'a pas pu etre analyse"]
   },
-  "alertSignal": {"hasBlocker": false, "recommendation": "PROCEED_WITH_CAUTION", "justification": "..."},
   "narrative": {"oneLiner": "...", "summary": "...", "keyInsights": ["..."], "forNegotiation": ["..."]},
-  "redFlags": [{"id": "RF-DA-1", "category": "kill-reason", "severity": "CRITICAL", "title": "...", "description": "...", "location": "...", "evidence": "...", "impact": "...", "question": "...", "redFlagIfBadAnswer": "..."}],
+  "redFlags": [{"id": "RF-DA-1", "category": "structural-risk", "severity": "CRITICAL", "title": "...", "description": "...", "location": "...", "evidence": "...", "impact": "...", "question": "...", "redFlagIfBadAnswer": "..."}],
   "questions": [{"priority": "CRITICAL", "category": "devil", "question": "...", "context": "...", "whatToLookFor": "..."}],
   "findings": {
     "counterArguments": [...],
     "worstCaseScenario": {...},
-    "killReasons": [...],
+    "structuralRisks": [
+      {"riskId": "sr-1", "description": "...", "category": "team|market|product|financials|competition|timing|structural|other", "evidence": "...", "source": "...", "severity": "CRITICAL|HIGH|MEDIUM", "impact": "...", "question": "..."}
+    ],
+    "riskPosture": "light|elevated|critical|structural",
     "blindSpots": [...],
     "alternativeNarratives": [...],
     "additionalMarketRisks": [...],
@@ -587,11 +427,23 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
     "uncheckedClaims": [...]
   }
 }
-\`\`\``;
+\`\`\`
+
+NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (hasBlocker / recommendation / justification) du contrat infra agents est dérivé DETERMINISTE par le runtime depuis \`riskPosture\` apres ton output. Tu n'as PAS a piloter cette decision toi-meme — tu fournis l'analyse structurelle, la decision d'investissement reste a l'investisseur.`;
 
     const { data } = await this.llmCompleteJSON<LLMDevilsAdvocateResponse>(prompt);
 
     const result = this.normalizeResponse(data, deal.name);
+
+    // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
+    // déterministe (D2 verrouillé : contradictory / insufficient / null,
+    // jamais dérivé de score / confidence). Lecture seule du contexte
+    // agent (evidenceLedger + previousResults contradiction-detector).
+    const solidity = buildEvidenceSolidityForContext(context);
+    if (solidity.value !== null && solidity.rationale) {
+      result.findings.signalContribution.evidenceSolidity = solidity.value;
+      result.findings.signalContribution.evidenceSolidityRationale = solidity.rationale;
+    }
 
     // Fact-check sources via web search
     // This verifies that comparable failures and historical precedents are real
@@ -827,15 +679,28 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
     const validGrades = ["A", "B", "C", "D", "F"] as const;
     const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
     const validPriorities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
-    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
     const validVerdicts = ["VERY_SKEPTICAL", "SKEPTICAL", "CAUTIOUS", "NEUTRAL", "CAUTIOUSLY_OPTIMISTIC"] as const;
-    type KillReasonLevel = "ABSOLUTE" | "CONDITIONAL" | "CONCERN";
     const validProbabilities = ["HIGH", "MEDIUM", "LOW"] as const;
     const validDifficulties = ["EXTREME", "VERY_HARD", "HARD", "MODERATE"] as const;
     const validUrgencies = ["IMMEDIATE", "BEFORE_DECISION", "DURING_DD"] as const;
     const validClaimVerdicts = ["STANDS", "WEAKENED", "INVALIDATED"] as const;
     const validDbVerdicts = ["VERIFIED", "CONTRADICTED", "PARTIAL", "NOT_VERIFIABLE"] as const;
     const validMarketSeverities = ["EXISTENTIAL", "SERIOUS", "MANAGEABLE"] as const;
+    const validStructuralCategories = [
+      "team", "market", "product", "financials", "competition", "timing", "structural", "other",
+    ] as const;
+
+    // Phase A A3 — Mapping legacy `killReasons[].severityLevel`
+    // (CRITICAL|HIGH|CONCERN) vers `StructuralRisk.severity` (CRITICAL|HIGH|MEDIUM)
+    // utilisé en lecture seule par le parser tolérant ci-dessous (D1 :
+    // jamais en émission). CONCERN → MEDIUM (mapping conservateur, le moins
+    // alarmiste).
+    const legacySeverityLevelToStructuralSeverity: Record<string, "CRITICAL" | "HIGH" | "MEDIUM"> = {
+      CRITICAL: "CRITICAL",
+      HIGH: "HIGH",
+      CONCERN: "MEDIUM",
+      MEDIUM: "MEDIUM",
+    };
 
     // Normalize meta
     const confidenceIsFallback = data.meta?.confidenceLevel == null;
@@ -853,23 +718,113 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };
 
-    // Normalize score — derive from kill reasons/findings if LLM didn't return it
+    // Phase A A3 — Parser tolérant LLM dégradé (lecture seule).
+    // Lit `data.findings.structuralRisks` en priorité (contrat natif demandé
+    // au LLM par le prompt compagnon A3). Si absent ou vide, retombe sur
+    // `data.findings.killReasons` legacy et le mappe vers StructuralRisk[]
+    // (jamais émis natif — D1 verrouillé).
+    const rawStructural = Array.isArray(data.findings?.structuralRisks)
+      ? data.findings.structuralRisks
+      : null;
+    const legacyKillReasons = Array.isArray(data.findings?.killReasons)
+      ? data.findings.killReasons
+      : null;
+
+    let normalizedStructuralSource: { description: string; category: string; severity: string; evidence?: string; source?: string; impact?: string; question?: string; riskId?: string }[];
+    if (rawStructural && rawStructural.length > 0) {
+      normalizedStructuralSource = rawStructural.map((sr) => ({
+        riskId: sr.riskId,
+        description: sr.description ?? "",
+        category: sr.category ?? "structural",
+        severity: sr.severity ?? "MEDIUM",
+        evidence: sr.evidence,
+        source: sr.source,
+        impact: sr.impact,
+        question: sr.question,
+      }));
+    } else if (legacyKillReasons && legacyKillReasons.length > 0) {
+      console.warn(
+        `[devils-advocate] LLM produced legacy killReasons[] — mapping to structuralRisks (parser tolérant, D1 lecture seule)`,
+      );
+      normalizedStructuralSource = legacyKillReasons.map((kr) => ({
+        riskId: kr.id,
+        description: kr.reason ?? "",
+        category: kr.category ?? "structural",
+        severity: legacySeverityLevelToStructuralSeverity[kr.severityLevel ?? "CONCERN"] ?? "MEDIUM",
+        evidence: kr.evidence,
+        source: kr.sourceAgent,
+        impact: kr.impactIfIgnored,
+        question: kr.questionToFounder,
+      }));
+    } else {
+      normalizedStructuralSource = [];
+    }
+
+    const structuralRisks: StructuralRisk[] = normalizedStructuralSource
+      .filter((sr) => sr.description.trim())
+      .map((sr, idx) => {
+        const severity = validSeverities.includes(sr.severity as (typeof validSeverities)[number])
+          ? (sr.severity as "CRITICAL" | "HIGH" | "MEDIUM")
+          : "MEDIUM";
+        const category = validStructuralCategories.includes(
+          sr.category as (typeof validStructuralCategories)[number],
+        )
+          ? (sr.category as StructuralRisk["category"])
+          : "other";
+        const risk: StructuralRisk = {
+          riskId: sr.riskId?.trim() ? sr.riskId : `sr-${idx + 1}`,
+          severity,
+          category,
+          description: sr.description,
+        };
+        if (sr.evidence) risk.evidence = sr.evidence;
+        if (sr.impact) risk.impact = sr.impact;
+        if (sr.source) risk.source = sr.source;
+        if (sr.question) risk.question = sr.question;
+        return risk;
+      });
+
+    // Counts pour dérivations déterministes (riskPosture, signalContribution,
+    // alertSignal, score fallback, skepticism fallback).
+    const criticalCount = structuralRisks.filter((r) => r.severity === "CRITICAL").length;
+    const highCount = structuralRisks.filter((r) => r.severity === "HIGH").length;
+    const mediumCount = structuralRisks.filter((r) => r.severity === "MEDIUM").length;
+
+    // Phase A A3 — `riskPosture` strictement déterministe (runtime-derived).
+    // Round 2 Codex : la valeur LLM `data.findings?.riskPosture` n'est PAS
+    // utilisée comme source de vérité — elle pourrait être incohérente avec
+    // les severity counts (ex : LLM annonce "light" alors qu'il a produit
+    // 3 risques CRITICAL). Le runtime ignore cette valeur et dérive
+    // mécaniquement la posture depuis les counts. Le LLM ne peut pas
+    // downgrader ni escalader la posture.
+    //
+    // `signalContribution.orientation` et `alertSignal.recommendation`
+    // dérivent ensuite de ce `riskPosture` déterministe (et des counts),
+    // garantissant la cohérence intra-output.
+    let riskPosture: DevilsAdvocateRiskPosture;
+    if (criticalCount >= 3) {
+      riskPosture = "structural";
+    } else if (criticalCount >= 2) {
+      riskPosture = "critical";
+    } else if (criticalCount >= 1 || highCount >= 2) {
+      riskPosture = "elevated";
+    } else {
+      riskPosture = "light";
+    }
+
+    // Normalize score — derive from structural risks severity counts if LLM didn't return it
     const rawScoreValue = data.score?.value;
     const scoreIsFallback = rawScoreValue === undefined || rawScoreValue === null;
     let derivedScore = 0;
     if (scoreIsFallback) {
-      // Derive score from kill reasons severity and count
-      const killReasons = Array.isArray(data.findings?.killReasons) ? data.findings.killReasons : [];
-      const rawLevels: string[] = killReasons.map(k => k.severityLevel ?? "CONCERN");
-      const criticalKills = rawLevels.filter(l => l === "CRITICAL").length;
-      const highKills = rawLevels.filter(l => l === "HIGH").length;
-      const concerns = rawLevels.filter(l => l === "CONCERN").length;
-      // More kill reasons = lower score (more skepticism = lower deal quality from DA perspective)
-      // DA score represents deal resilience: high = deal withstands scrutiny, low = many concerns
+      // Phase A A3 — Derive score from structural risks severity and count
+      // (équivalent sémantique de l'ancienne dérivation killReasons : plus de
+      // risques structurels critiques détectés = score "deal resilience" plus
+      // bas du point de vue contradicteur).
       derivedScore = Math.max(10, Math.min(80,
-        70 - (criticalKills * 20) - (highKills * 10) - (concerns * 5)
+        70 - (criticalCount * 20) - (highCount * 10) - (mediumCount * 5)
       ));
-      console.warn(`[devils-advocate] LLM did not return score value — derived ${derivedScore} from ${killReasons.length} kill reasons`);
+      console.warn(`[devils-advocate] LLM did not return score value — derived ${derivedScore} from ${structuralRisks.length} structural risks`);
     }
     const score: AgentScore = {
       value: scoreIsFallback ? derivedScore : Math.min(100, Math.max(0, rawScoreValue)),
@@ -951,34 +906,10 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
         : [],
     };
 
-    // Normalize kill reasons — map severityLevel to ABSOLUTE/CONDITIONAL/CONCERN
-    const severityToKillReasonLevel: Record<string, KillReasonLevel> = {
-      "ABSOLUTE": "ABSOLUTE",
-      "CONDITIONAL": "CONDITIONAL",
-      "CONCERN": "CONCERN",
-      // Legacy compat — map old LLM values to new type values
-      "CRITICAL": "ABSOLUTE",
-      "HIGH": "CONDITIONAL",
-    };
-    const killReasons: KillReason[] = Array.isArray(data.findings?.killReasons)
-      ? data.findings.killReasons.map((kr, idx) => {
-          const rawLevel = kr.severityLevel ?? "CONCERN";
-          return {
-            id: kr.id ?? `kr-${idx + 1}`,
-            reason: kr.reason ?? "",
-            category: (kr.category ?? "other") as KillReason["category"],
-            evidence: kr.evidence ?? "",
-            sourceAgent: kr.sourceAgent ?? "unknown",
-            dealBreakerLevel: severityToKillReasonLevel[rawLevel as string] ?? "CONCERN",
-            condition: kr.condition,
-            resolutionPossible: kr.resolutionPossible ?? false,
-            resolutionPath: kr.resolutionPath,
-            impactIfIgnored: kr.impactIfIgnored ?? "",
-            questionToFounder: kr.questionToFounder ?? "",
-            redFlagAnswer: kr.redFlagAnswer ?? "",
-          };
-        })
-      : [];
+    // Phase A A3 — Les anciens `killReasons[]` ont été convertis plus haut
+    // (parser tolérant lecture seule). La sortie native expose
+    // `structuralRisks` (severity CRITICAL|HIGH|MEDIUM), `riskPosture`, et
+    // `signalContribution` — aucun alias legacy n'est ré-injecté.
 
     // Normalize blind spots - filter out empty entries
     const blindSpots: BlindSpot[] = Array.isArray(data.findings?.blindSpots)
@@ -1018,11 +949,38 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
         }))
       : [];
 
+    // Phase A A3 — `signalContribution.orientation` déterministe depuis
+    // riskPosture + counts. DA est par nature critique — n'émet jamais
+    // `very_favorable`. Mapping conservateur :
+    //   structural → alert_dominant (≥3 CRITICAL)
+    //   critical   → alert_dominant (≥2 CRITICAL) ou vigilance (1 CRITICAL)
+    //   elevated   → contrasted ou vigilance selon counts
+    //   light      → favorable (aucun risque structurel détecté)
+    let signalOrientation: Tier3Orientation;
+    if (riskPosture === "structural" || criticalCount >= 2) {
+      signalOrientation = "alert_dominant";
+    } else if (criticalCount >= 1) {
+      signalOrientation = "vigilance";
+    } else if (riskPosture === "elevated") {
+      signalOrientation = "contrasted";
+    } else {
+      signalOrientation = "favorable";
+    }
+
+    // D2 verrouillé : evidenceSolidity reste null en A3 (qualifié ultérieurement
+    // par le service Solidité A6, jamais fabriqué depuis score/confidence ici).
+    const signalContribution: Tier3SignalContribution = {
+      orientation: signalOrientation,
+      evidenceSolidity: null,
+    };
+
     // Build findings
     const findings: DevilsAdvocateFindings = {
       counterArguments,
       worstCaseScenario,
-      killReasons,
+      structuralRisks,
+      riskPosture,
+      signalContribution,
       blindSpots,
       alternativeNarratives,
       additionalMarketRisks: Array.isArray(data.findings?.additionalMarketRisks)
@@ -1062,17 +1020,18 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
       skepticismAssessment: (() => {
         const rawScore = data.findings?.skepticismAssessment?.score;
         const hasScore = rawScore != null;
-        // If LLM didn't return a score, derive from kill reasons + concerns
+        // Phase A A3 — Si le LLM n'a pas fourni de score, dérivation depuis
+        // structural risks counts (severity natif CRITICAL/HIGH).
         const fallbackScore = !hasScore
           ? Math.min(100, Math.max(20,
-              (killReasons.filter(kr => kr.dealBreakerLevel === "ABSOLUTE").length * 25) +
-              (killReasons.filter(kr => kr.dealBreakerLevel === "CONDITIONAL").length * 15) +
+              (criticalCount * 25) +
+              (highCount * 15) +
               (counterArguments.filter(ca => ca.probability === "HIGH").length * 10) +
-              20 // base skepticism (DA is inherently skeptical)
+              20 // base skepticism (contradicteur structurellement vigilant)
             ))
           : 0; // unused
         if (!hasScore) {
-          console.warn(`[devils-advocate] LLM did not return skepticismAssessment.score — derived ${fallbackScore} from kill reasons/concerns`);
+          console.warn(`[devils-advocate] LLM did not return skepticismAssessment.score — derived ${fallbackScore} from structural risks counts`);
         }
         return {
           score: hasScore
@@ -1092,7 +1051,7 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
             : this.deriveSkepticismVerdict(hasScore ? Math.min(100, Math.max(0, rawScore)) : fallbackScore),
           verdictRationale: data.findings?.skepticismAssessment?.verdictRationale
             ?? (!hasScore
-              ? `Verdict derive defensivement a partir du score ${fallbackScore}/100 et des kill reasons identifies.`
+              ? `Verdict derive defensivement a partir du score ${fallbackScore}/100 et des risques structurels identifies.`
               : ""),
         };
       })(),
@@ -1173,16 +1132,26 @@ Standard: Partner VC ultra-sceptique + Analyste Big4 rigoureux.
         }))
       : [];
 
-    // Normalize alert signal
+    // Phase A A3 — `alertSignal` dérivé déterministe depuis `riskPosture`.
+    // Le LLM ne pilote plus librement PROCEED/STOP. Le contrat global
+    // `AgentAlertSignal` reste tel quel (debt cross-agent hors scope A3 :
+    // migration vers `signalIntensity` en A7b / A4-bis / A9). La valeur de
+    // `justification` est reprise du LLM si fournie, sinon générée depuis
+    // riskPosture pour conserver une explication lisible côté pipeline.
+    const riskPostureToRecommendation: Record<DevilsAdvocateRiskPosture, "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP"> = {
+      light: "PROCEED",
+      elevated: "PROCEED_WITH_CAUTION",
+      critical: "INVESTIGATE_FURTHER",
+      structural: "STOP",
+    };
     const alertSignal: AgentAlertSignal = {
-      hasBlocker: data.alertSignal?.hasBlocker ?? false,
-      blockerReason: data.alertSignal?.blockerReason,
-      recommendation: validRecommendations.includes(
-        data.alertSignal?.recommendation as (typeof validRecommendations)[number]
-      )
-        ? (data.alertSignal.recommendation as (typeof validRecommendations)[number])
-        : "PROCEED_WITH_CAUTION",
-      justification: data.alertSignal?.justification ?? "",
+      hasBlocker: riskPosture === "structural" || criticalCount >= 2,
+      blockerReason: (riskPosture === "structural" || criticalCount >= 2)
+        ? `Risques structurels critiques detectes (${criticalCount} CRITICAL / ${highCount} HIGH)`
+        : undefined,
+      recommendation: riskPostureToRecommendation[riskPosture],
+      justification: data.alertSignal?.justification?.trim()
+        || `Posture derivee: ${riskPosture} (${criticalCount} risques structurels CRITICAL, ${highCount} HIGH, ${mediumCount} MEDIUM).`,
     };
 
     // Normalize narrative

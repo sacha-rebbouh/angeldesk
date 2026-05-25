@@ -14,7 +14,7 @@ import { getCurrentFactString } from "@/services/deals/canonical-read-model";
 // CUID validation
 const cuidSchema = z.string().cuid();
 
-// Request body validation — consent is REQUIRED (RGPD Art. 6.1.f)
+// Request body validation — explicit consent is REQUIRED
 const enrichRequestSchema = z.object({
   consentLinkedIn: z.literal(true),
 });
@@ -97,7 +97,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const consentResult = enrichRequestSchema.safeParse(body);
     if (!consentResult.success) {
       return NextResponse.json(
-        { error: "Le consentement explicite pour le scraping LinkedIn est requis (RGPD Art. 6.1.f). Envoyez { consentLinkedIn: true } dans le body." },
+        { error: "Le consentement explicite est requis pour cette action. Envoyez { consentLinkedIn: true } dans le body." },
         { status: 403 }
       );
     }

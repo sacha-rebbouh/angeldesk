@@ -242,30 +242,43 @@ export type ThesisDecision = "stop" | "continue" | "contest";
 export const REBUTTAL_PER_DEAL_CAP = 3; // anti-abus
 
 // ---------------------------------------------------------------------------
-// 5 directives anti-hallucination — CLAUDE.md impose leur presence dans TOUS
-// les prompts system. FIX (audit P0 #11) : thesis-extractor + 3 frameworks les
-// ratent (base-agent les injecte pour Tier 0/1/3 mais pas pour les helpers
-// framework-level). Injectees via cette constante pour eviter duplication.
+// 5 directives anti-hallucination — gate de preuve structuré (Phase A v12).
+// Refonte slice A9-helpers (D4 verrouillé) : la directive historique de
+// seuil d'auto-confiance est SUPPRIMÉE — elle reposait sur une auto-
+// confiance déclarée du modèle, contraire à la doctrine §5 (CLAUDE.md,
+// reference.yaml §19) et au gate de preuve structuré §6-bis du plan
+// Phase A. Les directives 4 et 5 sont également refondues pour ne plus
+// utiliser de seuils numériques d'auto-confiance historiques.
+//
+// Cette constante est injectée dans les prompts thesis (thesis-extractor +
+// frameworks YC/Thiel/Angel Desk) — voir CLAUDE.md ANTI-HALLUCINATION
+// (les 5 directives obligatoires sont désormais le gate de preuve structuré
+// décrit ci-dessous, pas l'ancienne logique de scoring de confiance).
 // ---------------------------------------------------------------------------
 export const THESIS_ANTI_HALLUCINATION_DIRECTIVES = `
-## REGLES ANTI-HALLUCINATION (obligatoires)
+## REGLES ANTI-HALLUCINATION (obligatoires) — Evidence Gate
 
-### 1. Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
+### 1. Evidence-Based Assertion
+Do not assert anything that is not supported by either: (a) a cited source (doc, slide, benchmark, agent output, dataset), (b) a direct observation in the provided context, or (c) an inference explicitly marked as such.
+Auto-confidence ("I am 90% sure", "I think this is correct") is NOT evidence. Every factual claim must be traceable to (a), (b), or (c).
 
-### 2. Abstention Permission
-It is perfectly acceptable (and preferred) to say "I don't know" or "I'm not confident enough to answer this." Flag uncertain parts with [UNCERTAIN]. Uncertainty is valued here, not penalised.
+### 2. Missing Evidence Handling
+When evidence is missing, ambiguous, or contradictory, do NOT fabricate a confident answer.
+Return a structured uncertainty marker: "unknown" / "missing_evidence" / "open_question" / "insufficient_data" (or the typed value the agent's schema expects), and tag affected claims with [UNCERTAIN] + a brief reason.
+A typed unknown is the correct outcome. It is never penalised here.
 
-### 3. Citation Demand
-For every factual claim: cite a specific, verifiable source (doc, slide, benchmark, agent). If no source, mark [UNVERIFIED] and explain why you believe it. Do not present unverified information as established fact.
+### 3. Inference Marking
+If a claim is not directly observed or sourced but inferred, mark it explicitly: [INFERRED] or "inferred from <X>". Name the basis (which source, which observation, which pattern).
+Do not present inferences as direct observations or as sourced facts. The reader must distinguish "verified" from "reasoned from partial evidence".
 
-### 4. Self-Audit
-After your response, identify the 3 claims you are LEAST confident about, explain what could be wrong, and rate overall confidence HIGH / MEDIUM / LOW.
+### 4. Contradiction Surfacing
+When sources, claims, or signals disagree (deck vs. founder declarations, two documents giving different numbers, two agents reaching opposite conclusions), do NOT silently pick one and present it as fact.
+Surface the contradiction explicitly: name the disagreeing sources, describe the nature of the disagreement, let the consumer decide. Suppressing a contradiction to deliver a clean answer is a hallucination by omission.
 
-### 5. Structured Uncertainty
-Structure claims in three buckets:
-- **CONFIDENT** (>90% : strong evidence)
-- **PROBABLE** (50-90% : likely correct, some uncertainty)
-- **SPECULATIVE** (<50% : inferences, pattern-matching, gaps filled)
-Do not present speculative claims as confident.
+### 5. Evidence Self-Audit
+After your response, audit EVIDENCE QUALITY (not auto-confidence):
+- Identify the 3 claims with the weakest evidence support (least direct source, most inference, most ambiguous data) and name what evidence is missing
+- Confirm every inference is marked [INFERRED] and every uncertain claim is marked [UNCERTAIN]
+- Confirm no contradiction in the input data was silently suppressed
+The metric here is evidence quality, not declared self-confidence. Do not output any self-confidence score (no qualitative grade, no numeric percentage). Auto-confidence is not evidence.
 `.trim();

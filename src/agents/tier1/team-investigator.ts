@@ -12,6 +12,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, TEAM_INVESTIGATOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
@@ -622,8 +623,7 @@ Si le Context Engine fournit des données sur les fondateurs (ventures précéde
 - Comparer l'expérience déclarée vs les données vérifiables
 Chaque claim du fondateur sur son passé doit être confronté aux données disponibles.
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TeamInvestigatorData> {
@@ -1028,7 +1028,6 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
   "alertSignal": {
     "hasBlocker": true|false,
     "blockerReason": "Si hasBlocker, pourquoi",
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
     "justification": "Pourquoi cette recommandation"
   },
   "narrative": {
@@ -1364,17 +1363,24 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
         }))
       : [];
 
-    // Normalize alert signal
-    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: cappedScore,
+    });
 
+    // Normalize alert signal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? hasCriticalBlocker,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: validRecommendations.includes(data.alertSignal?.recommendation as typeof validRecommendations[number])
-        ? data.alertSignal.recommendation
-        : hasCriticalBlocker
-          ? "INVESTIGATE_FURTHER"
-          : "PROCEED_WITH_CAUTION",
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "",
     };
 
@@ -1394,6 +1400,7 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }

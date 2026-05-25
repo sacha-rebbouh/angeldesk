@@ -15,6 +15,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, COMPETITIVE_INTEL_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
@@ -315,9 +316,6 @@ Exemples:
 
 # OUTPUT
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
-
 Réponds UNIQUEMENT en JSON valide, pas de texte avant ou après.`;
   }
 
@@ -486,7 +484,7 @@ Réponds en JSON avec EXACTEMENT cette structure.
 {
   "score": {"value": 0-100, "grade": "A|B|C|D|F", "breakdown": [{"criterion": "Position vs concurrents", "weight": 40, "score": 0-100, "justification": "..."}, {"criterion": "Solidité du moat", "weight": 30, "score": 0-100, "justification": "..."}, {"criterion": "Barrières à l'entrée", "weight": 15, "score": 0-100, "justification": "..."}, {"criterion": "Honnêteté deck", "weight": 15, "score": 0-100, "justification": "..."}]},
   "meta": {"dataCompleteness": "complete|partial|minimal", "confidenceLevel": 0-100, "limitations": ["..."]},
-  "alertSignal": {"hasBlocker": false, "blockerReason": null, "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP", "justification": "..."},
+  "alertSignal": {"hasBlocker": false, "blockerReason": null, "justification": "constat factuel, pas instruction d'investissement"},
   "narrative": {"oneLiner": "...", "summary": "...", "keyInsights": ["..."], "forNegotiation": ["..."]},
   "redFlags": [{"category": "competition|moat|positioning|transparency", "severity": "CRITICAL|HIGH|MEDIUM", "title": "...", "description": "...", "location": "Slide X", "evidence": "...", "contextEngineData": null, "impact": "...", "question": "...", "redFlagIfBadAnswer": "..."}],
   "questions": [{"priority": "CRITICAL|HIGH|MEDIUM", "category": "competition|moat|positioning|strategy", "question": "...", "context": "...", "whatToLookFor": "..."}],
@@ -793,11 +791,24 @@ RAPPELS:
       uncheckedClaims: data.dbCrossReference?.uncheckedClaims ?? [],
     };
 
-    // Build alert signal
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: score.value,
+    });
+
+    // Build alert signal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? false,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: this.validateRecommendation(data.alertSignal?.recommendation),
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "",
     };
 
@@ -817,6 +828,7 @@ RAPPELS:
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }
@@ -895,10 +907,6 @@ RAPPELS:
     return valid.includes(value ?? "") ? value as DbCrossReference["claims"][0]["dbVerdict"] : "NOT_VERIFIABLE";
   }
 
-  private validateRecommendation(value: string | undefined): AgentAlertSignal["recommendation"] {
-    const valid = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"];
-    return valid.includes(value ?? "") ? value as AgentAlertSignal["recommendation"] : "INVESTIGATE_FURTHER";
-  }
 }
 
 export const competitiveIntel = new CompetitiveIntelAgent();

@@ -1901,30 +1901,42 @@ Do not present unverified information as established fact.
 `;
   }
 
-  // Anti-Hallucination Directive — Self-Audit (Prompt 4/5)
+  // Anti-Hallucination Directive — Evidence-Based Self-Audit (Prompt 4/5)
+  // Phase A slice A9-reste round 2 — Refonte selon le gate de preuve
+  // structuré (D4 verrouillé). L'ancienne version demandait au LLM de
+  // s'auto-évaluer sur une échelle catégorielle d'auto-confidence non
+  // sourcée, contraire à la doctrine. La nouvelle version ancre l'audit
+  // sur la SOLIDITÉ DES PREUVES disponibles, pas sur une auto-évaluation
+  // de confiance.
   protected getSelfAuditDirective(): string {
     return `
 
-## Anti-Hallucination Directive — Self-Audit
-After completing your response, perform a self-audit:
-1. Identify the 3 claims in your response that you are LEAST confident about
-2. For each one, explain what could be wrong and what the alternative might be
-3. Rate your overall response confidence: HIGH / MEDIUM / LOW
-Be ruthlessly honest. I will not penalise you for uncertainty.
+## Anti-Hallucination Directive — Evidence-Based Self-Audit
+After completing your response, perform an evidence-based self-audit:
+1. Identify the 3 claims in your response that have the WEAKEST evidence backing
+2. For each one, list the source (if any) and explain what alternative interpretation the available evidence could support
+3. Flag any claim that relies on inference rather than direct evidence with [INFERRED]
+Be ruthlessly honest. Uncertainty grounded in evidence gaps is valued, not penalised.
 `;
   }
 
-  // Anti-Hallucination Directive — Structured Uncertainty (Prompt 5/5)
+  // Anti-Hallucination Directive — Evidence Solidity Classification (Prompt 5/5)
+  // Phase A slice A9-reste round 2 — Refonte selon le gate de preuve
+  // structuré (D4 verrouillé). L'ancienne version catégorisait les claims
+  // par seuils numériques d'auto-confidence — auto-évaluation non sourcée.
+  // La nouvelle version catégorise par SOLIDITÉ DES PREUVES
+  // (sourced / inferred / unsourced), cohérent avec le pipeline
+  // evidence-first Phase A.
   protected getStructuredUncertaintyDirective(): string {
     return `
 
-## Anti-Hallucination Directive — Structured Uncertainty
-Structure your response in three clearly labelled sections:
-**CONFIDENT:** Claims where you have strong evidence and high certainty (>90%)
-**PROBABLE:** Claims where you believe this is likely correct but acknowledge uncertainty (50-90%)
-**SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%)
+## Anti-Hallucination Directive — Evidence Solidity Classification
+Structure your response in three clearly labelled sections based on EVIDENCE SOLIDITY (not auto-evaluated confidence):
+**SOURCED:** Claims directly backed by a citable source (document, dataset, verified fact)
+**INFERRED:** Claims derived by reasoning from sourced evidence — mark the reasoning step
+**UNSOURCED:** Claims drawn from general knowledge or pattern-matching without specific source backing
 Every claim must be placed in one of these three categories.
-Do not present speculative claims as confident ones.
+Do not present unsourced or inferred claims as if they were sourced.
 `;
   }
 

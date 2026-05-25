@@ -11,7 +11,6 @@ import {
   RefreshCw,
   MessageSquare,
   FileText,
-  Gift,
   ArrowRight,
   Sparkles,
   Building2,
@@ -56,47 +55,6 @@ export function PricingContent({ balance }: PricingContentProps) {
             <span className="font-semibold">{balance.balance} crédits disponibles</span>
           </div>
         )}
-      </div>
-
-      {/* Free tier banner */}
-      {!balance.freeCreditsGranted && balance.balance === 0 && (
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 p-8 text-white text-center">
-          <div className="relative z-10">
-            <div className="inline-flex items-center gap-2 mb-3">
-              <Gift className="h-5 w-5" />
-              <span className="text-sm font-medium uppercase tracking-wider opacity-90">
-                Offert
-              </span>
-            </div>
-            <h2 className="text-2xl font-bold mb-2">
-              1 Deep Dive offert sur votre premier deal
-            </h2>
-            <p className="text-white/80 max-w-lg mx-auto mb-4">
-              5 crédits gratuits. Pas de carte bancaire.
-              Voyez ce que 20 agents d&apos;analyse, enrichis par 41 expertises disponibles, produisent sur votre deal réel.
-            </p>
-            <PricingCtaButton variant="banner" label="Commencer gratuitement" />
-          </div>
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.1),transparent_70%)]" />
-        </div>
-      )}
-
-      {/* Transition banner : Quick Scan retire au profit de Deep Dive these-first */}
-      <div className="rounded-md border border-blue-300 bg-blue-50 p-4 flex items-start gap-3">
-        <div className="rounded-full bg-blue-100 p-2 shrink-0">
-          <Sparkles className="h-4 w-4 text-blue-700" />
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-blue-900">
-            Quick Scan remplacé par Deep Dive thesis-first
-          </p>
-          <p className="text-xs text-blue-800 mt-1 leading-relaxed">
-            Depuis le 17 avril 2026, le Quick Scan a ete retire. Le Deep Dive (5 credits)
-            inclut desormais l&apos;analyse de these (Tier 0.5, 3 frameworks YC/Thiel/Angel Desk)
-            <strong> sans surcout</strong>. Vous pouvez arreter l&apos;analyse apres le verdict
-            these (remboursement partiel de 3 credits) si les signaux sont insuffisants.
-          </p>
-        </div>
       </div>
 
       {/* Credit costs per action */}
@@ -243,19 +201,15 @@ export function PricingContent({ balance }: PricingContentProps) {
               </li>
               <li className="flex items-center gap-2">
                 <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                Exports compliance / audit trail
-              </li>
-              <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                 Rapports white-label
               </li>
               <li className="flex items-center gap-2">
                 <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                Support dédié + SLA
+                Support dédié
               </li>
             </ul>
             <Button variant="outline" className="w-full group" asChild>
-              <a href="mailto:contact@angeldesk.ai">
+              <a href="mailto:contact@angeldesk.io">
                 Nous contacter
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
               </a>
@@ -281,7 +235,7 @@ export function PricingContent({ balance }: PricingContentProps) {
         <div className="p-4 rounded-xl bg-muted/50">
           <div className="font-semibold mb-1">Remboursement</div>
           <div className="text-muted-foreground">
-            Crédits remboursés automatiquement si une action échoue
+            Crédits remboursés selon les CGU en cas d&apos;échec d&apos;action
           </div>
         </div>
       </div>

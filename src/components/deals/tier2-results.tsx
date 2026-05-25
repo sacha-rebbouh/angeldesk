@@ -49,6 +49,7 @@ import {
   type SectorExpertType,
   type SubscriptionPlan,
 } from "@/lib/analysis-constants";
+import { TIER2_SECTOR_FIT_LABELS } from "@/lib/ui-configs";
 import { ProTeaserSection } from "@/components/shared/pro-teaser";
 
 // =============================================================================
@@ -87,12 +88,17 @@ const TIMING_COLORS: Record<string, string> = {
   late: "bg-orange-100 text-orange-800",
 };
 
+// Phase A slice A8b — `label` est importé depuis `TIER2_SECTOR_FIT_LABELS`
+// (source de vérité doctrinaire dans `src/lib/ui-configs.ts`). Les classes
+// Tailwind + icônes restent locales au consumer UI pour permettre
+// l'évolution du design system sans toucher au contrat de labels partagé
+// avec le PDF (`src/lib/pdf/pdf-sections/tier2-expert.tsx`).
 const SECTOR_FIT_CONFIG = {
-  STRONG_FIT: { color: "bg-green-500", textColor: "text-green-700", label: "Forte adéquation sectorielle", icon: Award },
-  GOOD_FIT: { color: "bg-blue-500", textColor: "text-blue-700", label: "Bonne adéquation", icon: CheckCircle },
-  MODERATE_FIT: { color: "bg-yellow-500", textColor: "text-yellow-700", label: "Adéquation partielle", icon: Minus },
-  POOR_FIT: { color: "bg-orange-500", textColor: "text-orange-700", label: "Écarts significatifs", icon: AlertTriangle },
-  NOT_RECOMMENDED: { color: "bg-red-500", textColor: "text-red-700", label: "Hors profil sectoriel", icon: XCircle },
+  STRONG_FIT: { color: "bg-green-500", textColor: "text-green-700", label: TIER2_SECTOR_FIT_LABELS.STRONG_FIT, icon: Award },
+  GOOD_FIT: { color: "bg-blue-500", textColor: "text-blue-700", label: TIER2_SECTOR_FIT_LABELS.GOOD_FIT, icon: CheckCircle },
+  MODERATE_FIT: { color: "bg-yellow-500", textColor: "text-yellow-700", label: TIER2_SECTOR_FIT_LABELS.MODERATE_FIT, icon: Minus },
+  POOR_FIT: { color: "bg-orange-500", textColor: "text-orange-700", label: TIER2_SECTOR_FIT_LABELS.POOR_FIT, icon: AlertTriangle },
+  NOT_RECOMMENDED: { color: "bg-red-500", textColor: "text-red-700", label: TIER2_SECTOR_FIT_LABELS.NOT_RECOMMENDED, icon: XCircle },
 };
 
 const VALUATION_VERDICT_CONFIG = {

@@ -105,6 +105,21 @@ export function getScoreBarColor(score: number): string {
 }
 
 // =============================================================================
+// Orientation du signal — 5 valeurs canoniques (axe 1 du modèle 2 axes)
+// =============================================================================
+
+/** Valeurs canoniques de l'orientation du signal. */
+export const ORIENTATION_VALUES = [
+  "very_favorable",
+  "favorable",
+  "contrasted",
+  "vigilance",
+  "alert_dominant",
+] as const;
+
+export type Orientation = (typeof ORIENTATION_VALUES)[number];
+
+// =============================================================================
 // Recommendation Config — centralized for verdict-panel & tier3-results
 // =============================================================================
 
@@ -182,6 +197,85 @@ export const ALERT_SIGNAL_LABELS: Record<string, string> = {
   PROCEED: "CONFORME",
 };
 
+// Tier 1 Signal Intensity — Phase A slice A7b-3.
+// 4 valeurs natives émises par les agents Tier 1 (helper A7b-1
+// `deriveTier1SignalIntensity`) : low / elevated / high / critical.
+// L'UI Tier 1 lit `data.signalIntensity` natif ; `alertSignal.recommendation`
+// reste consommé uniquement en fallback read-only pour les analyses
+// persistées avant A7b-2.
+export type Tier1SignalIntensityValue = "low" | "elevated" | "high" | "critical";
+
+export const TIER1_SIGNAL_INTENSITY_LABELS: Record<Tier1SignalIntensityValue, string> = {
+  critical: "ANOMALIE MAJEURE",
+  high: "INVESTIGATION REQUISE",
+  elevated: "POINTS D'ATTENTION",
+  low: "CONFORME",
+};
+
+// Tailwind classes par intensité — alignées sur le système existant
+// (rouge / orange / jaune / vert) déjà utilisé par les blocs alertSignal
+// inline. Centraliser ici évite la duplication des 5 sites dans
+// tier1-results.tsx.
+export const TIER1_SIGNAL_INTENSITY_BLOCK_CLASS: Record<Tier1SignalIntensityValue, string> = {
+  critical: "bg-red-50 border-red-200",
+  high: "bg-orange-50 border-orange-200",
+  elevated: "bg-yellow-50 border-yellow-200",
+  low: "bg-green-50 border-green-200",
+};
+
+export const TIER1_SIGNAL_INTENSITY_BADGE_CLASS: Record<Tier1SignalIntensityValue, string> = {
+  critical: "bg-red-100 text-red-800",
+  high: "bg-orange-100 text-orange-800",
+  elevated: "bg-yellow-100 text-yellow-800",
+  low: "bg-green-100 text-green-800",
+};
+
+// Mapping legacy → intensity, utilisé uniquement en fallback read-only
+// (analyses persistées pré-A7b-2 où le runtime n'émettait pas encore
+// `signalIntensity` natif). À NE PAS utiliser dans un chemin LLM ou un
+// builder runtime — la dérivation runtime canonique passe par le helper
+// `deriveTier1SignalIntensity` (A7b-1).
+export const TIER1_LEGACY_RECOMMENDATION_TO_INTENSITY: Record<string, Tier1SignalIntensityValue> = {
+  STOP: "critical",
+  INVESTIGATE_FURTHER: "high",
+  PROCEED_WITH_CAUTION: "elevated",
+  PROCEED: "low",
+};
+
+/**
+ * Résout une intensité Tier 1 à partir des champs sources.
+ *
+ * Priorité :
+ *   1. `signalIntensity` natif (post-A7b-2) — chemin canonique.
+ *   2. `legacyRecommendation` (analyses persistées pré-A7b-2) — fallback
+ *      read-only documenté. Mappe `PROCEED|...|STOP` vers l'intensité
+ *      correspondante.
+ *   3. `null` si aucune des deux n'est exploitable.
+ *
+ * IMPORTANT : ce helper est strictement read-only. Aucune écriture, aucune
+ * dérivation runtime ne doit passer par lui — il sert uniquement à
+ * permettre aux consumers UI/PDF d'afficher de manière homogène les
+ * analyses anciennes et nouvelles. Toute logique métier doit utiliser
+ * `deriveTier1SignalIntensity` du helper A7b-1.
+ */
+export function resolveTier1SignalIntensity(
+  signalIntensity: string | null | undefined,
+  legacyRecommendation: string | null | undefined,
+): Tier1SignalIntensityValue | null {
+  if (
+    signalIntensity === "low" ||
+    signalIntensity === "elevated" ||
+    signalIntensity === "high" ||
+    signalIntensity === "critical"
+  ) {
+    return signalIntensity;
+  }
+  if (typeof legacyRecommendation === "string" && legacyRecommendation in TIER1_LEGACY_RECOMMENDATION_TO_INTENSITY) {
+    return TIER1_LEGACY_RECOMMENDATION_TO_INTENSITY[legacyRecommendation];
+  }
+  return null;
+}
+
 // Readiness Labels — analytical framing
 export const READINESS_LABELS: Record<string, string> = {
   READY_TO_INVEST: "Données suffisantes",
@@ -189,6 +283,170 @@ export const READINESS_LABELS: Record<string, string> = {
   SIGNIFICANT_CONCERNS: "Points d'attention majeurs",
   DO_NOT_PROCEED: "Alertes critiques",
 };
+
+// =============================================================================
+// Tier 2 — Sector fit labels (Phase A slice A8b)
+// =============================================================================
+//
+// Source de vérité pour les libellés user-facing du verdict sectoriel
+// canonique exposé par `ExtendedSectorData.verdict.recommendation`
+// (5 valeurs : STRONG_FIT | GOOD_FIT | MODERATE_FIT | POOR_FIT |
+// NOT_RECOMMENDED).
+//
+// Consumers :
+//   - UI : `src/components/deals/tier2-results.tsx` (`SECTOR_FIT_CONFIG`
+//     emprunte ces libellés ; les classes Tailwind + icônes restent
+//     locales au consumer pour permettre l'évolution du design system).
+//   - PDF : `src/lib/pdf/pdf-sections/tier2-expert.tsx` (`<ExtendedVerdict>`
+//     remplace le rendu brut `verdict.recommendation.replace(/_/g, " ")`
+//     par un lookup ici).
+//
+// Wording doctrinaire (cf. § doctrine 2 strates) : tous les libellés sont
+// formulés en termes d'adéquation sectorielle (fit), pas en termes
+// d'instruction d'investissement. `NOT_RECOMMENDED` est verbalisé "Hors
+// profil sectoriel" et non "Ne pas investir" (l'enum interne canonique
+// n'est PAS renommé en Phase A — décision Codex A8 audit point 1).
+
+export type Tier2SectorFitValue =
+  | "STRONG_FIT"
+  | "GOOD_FIT"
+  | "MODERATE_FIT"
+  | "POOR_FIT"
+  | "NOT_RECOMMENDED";
+
+export const TIER2_SECTOR_FIT_LABELS: Record<Tier2SectorFitValue, string> = {
+  STRONG_FIT: "Forte adéquation sectorielle",
+  GOOD_FIT: "Bonne adéquation sectorielle",
+  MODERATE_FIT: "Adéquation sectorielle modérée",
+  POOR_FIT: "Adéquation sectorielle faible",
+  NOT_RECOMMENDED: "Hors profil sectoriel",
+};
+
+/**
+ * Résout un libellé Tier 2 doctrinaire à partir d'une valeur sectorielle
+ * canonique. Retourne `null` si la valeur n'est pas dans l'enum (cas
+ * dégradé — le consumer décide d'afficher un fallback ou rien).
+ *
+ * Lecture seule — aucune dérivation runtime ne doit transiter par ce
+ * helper.
+ */
+export function getTier2SectorFitLabel(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  if (value in TIER2_SECTOR_FIT_LABELS) {
+    return TIER2_SECTOR_FIT_LABELS[value as Tier2SectorFitValue];
+  }
+  return null;
+}
+
+// =============================================================================
+// Evidence Solidity — axe 2 du modèle 2 axes (solidité des preuves)
+// =============================================================================
+//
+// Distinct de `thesisSolidityScore` du Board (numérique 0-100). Ici on parle de
+// la solidité des preuves agrégées pour qualifier un signal (sources, fraîcheur,
+// cross-référence, contradiction documentaire).
+//
+// Règle critique : il n'y a PAS de valeur canonique "unknown".
+//   - 5 valeurs qualifiées : strong | moderate | low | contradictory | insufficient
+//   - absence = null | undefined (côté contrat)
+//   - fallback affichable "Solidité à qualifier" uniquement si la surface le demande
+//     explicitement (cf. getEvidenceSolidityLabel + flag showUnqualified du composant)
+
+/** Valeurs canoniques de la solidité des preuves. */
+export const EVIDENCE_SOLIDITY_VALUES = [
+  "strong",
+  "moderate",
+  "low",
+  "contradictory",
+  "insufficient",
+] as const;
+
+export type EvidenceSolidity = (typeof EVIDENCE_SOLIDITY_VALUES)[number];
+
+export const EVIDENCE_SOLIDITY_CONFIG: Record<EvidenceSolidity, {
+  label: string;
+  shortLabel: string;
+  color: string;
+  bg: string;
+  description: string;
+}> = {
+  strong: {
+    label: "Preuves solides",
+    shortLabel: "Solides",
+    color: "text-emerald-800",
+    bg: "bg-emerald-50 border-emerald-300",
+    description: "Sources documentaires multiples avec cross-référence.",
+  },
+  moderate: {
+    label: "Preuves partielles",
+    shortLabel: "Partielles",
+    color: "text-blue-800",
+    bg: "bg-blue-50 border-blue-300",
+    description: "Sources présentes mais lacunes ou incertitudes.",
+  },
+  low: {
+    label: "Preuves faibles",
+    shortLabel: "Faibles",
+    color: "text-amber-800",
+    bg: "bg-amber-50 border-amber-300",
+    description: "Peu de sources, fraîcheur ou fiabilité limitée.",
+  },
+  contradictory: {
+    label: "Preuves contradictoires",
+    shortLabel: "Contradictoires",
+    color: "text-orange-800",
+    bg: "bg-orange-50 border-orange-300",
+    description: "Sources en désaccord direct. Investigation requise.",
+  },
+  insufficient: {
+    label: "Données insuffisantes",
+    shortLabel: "Insuffisantes",
+    color: "text-slate-800",
+    bg: "bg-slate-50 border-slate-300",
+    description: "Trop peu d'éléments pour qualifier les preuves.",
+  },
+};
+
+/**
+ * Fallback label volontairement NON exporté. La seule façon de l'obtenir est
+ * d'appeler `getEvidenceSolidityLabel(value, { showUnqualified: true })`. Cela
+ * empêche une surface en aval d'importer le label brut et de l'afficher sans
+ * passer par le flag opt-in.
+ */
+const EVIDENCE_SOLIDITY_UNQUALIFIED_LABEL = "Solidité à qualifier";
+
+const EVIDENCE_SOLIDITY_KEY_SET: ReadonlySet<string> = new Set(EVIDENCE_SOLIDITY_VALUES);
+
+/**
+ * Retourne la config solidité pour une valeur qualifiée, ou `null` si la
+ * valeur est absente / non reconnue. Pas de fallback ici — c'est à l'appelant
+ * de décider d'afficher ou non un état non qualifié.
+ */
+export function getEvidenceSolidityConfig(
+  value: EvidenceSolidity | string | null | undefined,
+): (typeof EVIDENCE_SOLIDITY_CONFIG)[EvidenceSolidity] | null {
+  if (value == null) return null;
+  if (!EVIDENCE_SOLIDITY_KEY_SET.has(value)) return null;
+  return EVIDENCE_SOLIDITY_CONFIG[value as EvidenceSolidity];
+}
+
+/**
+ * Retourne le label long FR pour une valeur de solidité, ou `null` si la
+ * valeur est absente / non reconnue.
+ *
+ * Le label fallback ("Solidité à qualifier") n'est PAS exporté en tant que
+ * constante. La seule façon de l'obtenir est de passer explicitement
+ * `{ showUnqualified: true }` ici. Cela évite qu'une surface importe le label
+ * brut et l'affiche sans passer par le flag opt-in.
+ */
+export function getEvidenceSolidityLabel(
+  value: EvidenceSolidity | string | null | undefined,
+  options?: { showUnqualified?: boolean },
+): string | null {
+  const cfg = getEvidenceSolidityConfig(value);
+  if (cfg) return cfg.label;
+  return options?.showUnqualified === true ? EVIDENCE_SOLIDITY_UNQUALIFIED_LABEL : null;
+}
 
 // =============================================================================
 // Enum FR Labels — centralized translations for agent output enums

@@ -15,6 +15,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, GTM_ANALYST_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
@@ -416,7 +417,7 @@ Tu DOIS retourner un JSON avec EXACTEMENT cette structure:
 - dbCrossReference: claims[] avec vérification, uncheckedClaims[]
 - redFlags: array avec tous les champs requis (minimum 3 si problèmes)
 - questions: array (minimum 5)
-- alertSignal: hasBlocker, recommendation, justification
+- alertSignal: hasBlocker, blockerReason, justification (constat factuel, pas instruction)
 - narrative: oneLiner, summary, keyInsights[], forNegotiation[]
 
 ## 9. RÈGLES ABSOLUES
@@ -444,8 +445,7 @@ Si le Context Engine fournit des données de marché (CAC benchmarks, deals simi
 - Comparer la stratégie GTM vs les approches des concurrents financés
 - Vérifier les claims de traction (users, revenue) vs les données disponibles
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<GTMAnalystData> {
@@ -740,11 +740,24 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
         }))
       : [];
 
-    // Normaliser alert signal
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: score.value,
+    });
+
+    // Normaliser alert signal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? false,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: this.normalizeRecommendation(data.alertSignal?.recommendation),
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "Analysis completed",
     };
 
@@ -764,6 +777,7 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }
@@ -812,11 +826,6 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
   private normalizePriority(value?: string): "CRITICAL" | "HIGH" | "MEDIUM" {
     if (value === "CRITICAL" || value === "HIGH" || value === "MEDIUM") return value;
     return "MEDIUM";
-  }
-
-  private normalizeRecommendation(value?: string): "PROCEED" | "PROCEED_WITH_CAUTION" | "INVESTIGATE_FURTHER" | "STOP" {
-    if (value === "PROCEED" || value === "PROCEED_WITH_CAUTION" || value === "INVESTIGATE_FURTHER" || value === "STOP") return value;
-    return "INVESTIGATE_FURTHER";
   }
 
   private normalizeChannels(channels: LLMGTMAnalystResponse["findings"]["channels"]): GTMChannelAnalysis[] {

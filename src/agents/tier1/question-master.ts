@@ -19,6 +19,7 @@ import type {
   AgentFindingsSummary,
   AgentResult,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, QUESTION_MASTER_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
@@ -485,8 +486,7 @@ Regles:
   }
 }
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<QuestionMasterData> {
@@ -746,7 +746,6 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
   "alertSignal": {
     "hasBlocker": false,
     "blockerReason": "",
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
     "justification": "Pourquoi cette recommandation"
   },
   "narrative": {
@@ -961,11 +960,18 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
           }
         }
 
-        // Extract alert signal if available
+        // Extract alert signal if available — Phase A A7b-2 : on consomme
+        // `signalIntensity` (native, déterministe) au lieu de
+        // `alertSignal.recommendation` (legacy, dérivé). Cela évite de
+        // réinjecter une énumération prescriptive dans le prompt de
+        // synthèse Question Master.
         if (data.alertSignal && typeof data.alertSignal === "object") {
-          const alert = data.alertSignal as { recommendation?: string; hasBlocker?: boolean };
-          if (alert.recommendation) {
-            agentSummary += `Recommendation: ${alert.recommendation}${alert.hasBlocker ? " (BLOCKER)" : ""}\n`;
+          const alert = data.alertSignal as { hasBlocker?: boolean };
+          const signalIntensity = (data as { signalIntensity?: string }).signalIntensity;
+          if (signalIntensity) {
+            agentSummary += `Signal intensity: ${signalIntensity}${alert.hasBlocker ? " (BLOCKER)" : ""}\n`;
+          } else if (alert.hasBlocker) {
+            agentSummary += `Signal: BLOCKER\n`;
           }
         }
 
@@ -1099,18 +1105,25 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
         }))
       : [];
 
-    // Normalize alert signal
-    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"] as const;
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
     const hasCriticalBlocker = redFlags.some(rf => rf.severity === "CRITICAL");
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: scoreValue,
+    });
 
+    // Normalize alert signal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? hasCriticalBlocker,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: validRecommendations.includes(data.alertSignal?.recommendation as typeof validRecommendations[number])
-        ? data.alertSignal.recommendation
-        : hasCriticalBlocker
-          ? "INVESTIGATE_FURTHER"
-          : "PROCEED_WITH_CAUTION",
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "",
     };
 
@@ -1130,6 +1143,7 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }

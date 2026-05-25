@@ -48,7 +48,14 @@ export const AlertSignalSchema = z.object({
     (value) => value ?? undefined,
     z.string().optional()
   ),
-  recommendation: z.enum(["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"]),
+  // Phase A slice A7b-2 — `recommendation` rendu optionnel en input LLM.
+  // Le prompt Tier 1 ne demande plus ce champ : il est dérivé déterministe
+  // runtime via `signalIntensityToRecommendation(signalIntensity)`. Le
+  // contrat global `AgentAlertSignal` (output cross-agent) conserve
+  // `recommendation` requis — c'est le runtime qui le remplit. La valeur
+  // legacy reste acceptée si le LLM la renvoie (parser tolérant lecture
+  // seule), mais elle est ignorée par le pipeline.
+  recommendation: z.enum(["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"]).optional(),
   justification: z.string(),
 });
 

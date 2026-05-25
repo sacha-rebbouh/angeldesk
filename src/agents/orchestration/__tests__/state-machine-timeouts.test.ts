@@ -282,6 +282,7 @@ describe("AnalysisStateMachine — conditional checkpoints", () => {
           recommendation: "PROCEED_WITH_CAUTION",
           justification: "Checkpoint test mock.",
         },
+        signalIntensity: "low",
         narrative: {
           oneLiner: "Minimal mock deck result.",
           summary: "Used only to verify checkpoint persistence logic.",

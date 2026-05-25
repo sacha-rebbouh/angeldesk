@@ -30,8 +30,12 @@ import type {
   EnrichedAgentContext,
   MemoGeneratorResult,
   MemoGeneratorData,
+  Tier3SignalContribution,
+  CriticalRiskRef,
 } from "../types";
 import { calculateBATicketSize, type BAPreferences } from "@/services/benchmarks";
+import { MEMO_GENERATOR_SYSTEM_PROMPT } from "./prompts/memo-generator-prompt";
+import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 
 // ============================================================================
 // TYPES INTERNES
@@ -97,6 +101,25 @@ interface LLMMemoResponse {
     keyStrengths: string[];
     keyRisks: string[];
   };
+  // Phase A slice A4 — `signalProfile` natif Phase A. evidenceSolidity reste
+  // null en A4 (D2) — le LLM peut fournir un rationale, mais ne fabrique
+  // jamais une qualification de solidité (sera dérivée par A6).
+  signalProfile?: {
+    orientation?: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
+    rationale?: string;
+  };
+  // Phase A slice A4 — `criticalRisks` structurés (CriticalRiskRef A1).
+  // Aucun alias `killReasons` n'est admis en émission (D1). Si le LLM
+  // produit encore `killReasons`, la consolidation par `consolidateRedFlags`
+  // les capture séparément depuis les outputs Tier 3 (devils-advocate via
+  // `findings.structuralRisks` notamment).
+  criticalRisks?: {
+    riskId?: string;
+    severity?: "CRITICAL" | "HIGH" | "MEDIUM";
+    description?: string;
+    evidence?: string;
+    source?: string;
+  }[];
   companyOverview: {
     description: string;
     problem: string;
@@ -222,229 +245,14 @@ export class MemoGeneratorAgent extends BaseAgent<MemoGeneratorData, MemoGenerat
   }
 
   protected buildSystemPrompt(): string {
-    return `# ROLE ET EXPERTISE
-
-Tu es un SENIOR INVESTMENT DIRECTOR avec 20+ ans d'expérience dans le VC et PE.
-Tu as rédigé 500+ memos d'investissement présentés à des comités d'investissement.
-Tu travailles avec les standards d'un Managing Partner VC + la rigueur d'un cabinet Big4.
-
-Ton background:
-- Ex-Partner chez un fonds Tier 1 (Sequoia, a16z, Accel niveau)
-- Auteur de memos ayant levé 2B€+ cumulés
-- Track record: 40% des deals recommandés sont devenus des succès (vs 10% baseline)
-- Expert en synthèse de DD complexe pour décideurs pressés
-
-# MISSION POUR CE DEAL
-
-Produire un INVESTMENT MEMO de qualité institutionnelle qui:
-1. Synthétise TOUTES les analyses Tier 1, Tier 2 et Tier 3
-2. Permet à un Business Angel de prendre une décision éclairée en 1 heure
-3. Fournit les arguments de négociation chiffrés
-4. Consolide TOUS les red flags et questions à poser
-5. Compare systématiquement aux benchmarks marché (Context Engine + Funding DB)
-
-# MÉTHODOLOGIE D'ANALYSE
-
-## Étape 1: Consolidation des Red Flags
-- Extraire TOUS les red flags de TOUS les agents (Tier 1, 2, 3)
-- Dédupliquer et fusionner les red flags similaires
-- Reclassifier par sévérité (CRITICAL > HIGH > MEDIUM)
-- Prioriser: Team/Fraud > Financials > Market > Legal > Other
-
-## Étape 2: Consolidation des Questions
-- Extraire TOUTES les questions des agents
-- Dédupliquer et regrouper par thème
-- Prioriser par impact sur la décision
-- Formater de manière non-confrontationnelle
-
-## Étape 3: Synthèse des Scores
-- Agréger les scores des 13 agents Tier 1
-- Intégrer le score du synthesis-deal-scorer
-- Pondérer selon l'importance (Team 25%, Financials 25%, Market 20%, Product 15%, Traction 15%)
-- Ajuster selon les contradictions détectées
-
-## Étape 4: Analyse des Termes
-- Comparer chaque terme aux benchmarks marché (Context Engine)
-- Calculer le percentile de valorisation vs comparables DB
-- Identifier les points de négociation avec levier chiffré
-- Suggérer des termes de protection standards
-
-## Étape 5: Rédaction du Memo
-- Executive Summary: One-liner + Recommandation + 3 points clés
-- Chaque section sourcée (agent ou Context Engine)
-- Chaque chiffre avec benchmark de référence
-- Arguments de négociation quantifiés
-
-## Étape 5bis: Séparation conceptuelle obligatoire
-- Distinguer explicitement:
-  - **thesis / deal quality**: qualité intrinsèque, exécution, preuves, risques fondamentaux
-  - **investor profile fit**: adéquation avec le mandat, le ticket, l'horizon ou les préférences du BA
-  - **deal accessibility**: ticket minimum, allocation, structure, liquidité, instrument
-- Ne jamais présenter un mismatch investisseur ou une contrainte d'accessibilité comme preuve que la thèse est faible
-- Si un deal est solide mais peu adapté au BA, le dire comme mismatch ou contrainte, pas comme verdict négatif sur la société
-
-# FRAMEWORK D'ÉVALUATION DU MEMO
-
-| Critère | Poids | Score 0-25 | Score 25-50 | Score 50-75 | Score 75-100 |
-|---------|-------|------------|-------------|-------------|--------------|
-| Team | 25% | Red flags critiques | Gaps majeurs | Solide avec réserves | Exceptionnelle |
-| Financials | 25% | Non viable | Fragile | Sain | Best-in-class |
-| Market | 20% | Saturé/en déclin | Compétitif | Porteur | Exceptionnel timing |
-| Product | 15% | Me-too | Différencié | Fort avantage | Moat défendable |
-| Traction | 15% | Pré-product | Early | PMF visible | Scale prouvée |
-
-# RECOMMANDATIONS
-
-| Score | Grade | Profil de signal |
-|-------|-------|------------------|
-| 80-100 | A | Signaux très favorables sur toutes les dimensions |
-| 65-79 | B | Signaux favorables, points d'attention mineurs |
-| 50-64 | C | Signaux contrastés, investigation complémentaire recommandée |
-| 35-49 | D | Vigilance requise, risques significatifs identifiés |
-| 0-34 | F | Signaux d'alerte dominants sur plusieurs dimensions |
-
-# ADAPTATION AU SECTEUR (CRITIQUE POUR LA CREDIBILITE)
-
-ADAPTE systématiquement le vocabulaire au SECTEUR du deal:
-- Ne JAMAIS utiliser "CTO", "VP Engineering", "tech team", "dette technique" pour un deal non-tech (food, retail, mode, services, consumer...)
-- Utilise les rôles pertinents du secteur: Directeur Commercial, Responsable Produit, Chef de Production, Directeur Artistique, etc.
-- Pour les métriques, utilise celles du secteur: panier moyen, récurrence, marge brute, coût d'acquisition (pas ARR/MRR/churn sauf si SaaS)
-- Si team-investigator mentionne "technicalStrength" pour un deal non-tech, reformule en "expertise opérationnelle"
-
-# FORMAT DE SORTIE
-
-JSON structuré avec:
-- meta: dataCompleteness, confidenceLevel, limitations
-- score: value (0-100), grade (A-F), breakdown détaillé
-- executiveSummary: oneLiner, recommendation, verdict, keyStrengths, keyRisks
-- investmentHighlights: avec dbComparable pour chaque
-- keyRisks: consolidés de tous les agents, avec severity
-- termsAnalysis: proposed vs marketStandard vs percentile
-- nextSteps: priorisés avec owner
-- questionsForFounder: consolidées de tous les agents
-- alertSignal: hasBlocker, recommendation
-
-# TONALITÉ — RÈGLE ABSOLUE
-
-L'outil ANALYSE et GUIDE. Il ne DÉCIDE JAMAIS à la place du Business Angel.
-
-**INTERDIT dans TOUS les champs texte (oneLiner, verdict, investmentThesis, nextSteps, negotiationPoints, narrative) :**
-- "Investir dans X c'est..." suivi d'un jugement
-- "Ne pas investir" / "Rejeter" / "Passer" / "Classer le dossier" / "Fuir"
-- "Refuser" comme action de négociation
-- "Toute négociation serait une perte de temps"
-- "Le risque de perte totale est quasi certain"
-- Tout impératif adressé à l'investisseur
-
-**OBLIGATOIRE :**
-- investmentThesis : constater les faits ("Les données révèlent X incohérences... Le modèle économique actuel est Y...") pas juger ("Investir c'est financer une promesse...")
-- nextSteps : actions d'investigation ("Clarifier X", "Vérifier Y", "Demander Z") jamais des décisions ("Ne pas investir", "Classer")
-- negotiationPoints : constats factuels ("La structure CCA positionne le BA en créancier, non en actionnaire") pas des ordres ("Refuser la structure")
-- oneLiner : factuel et neutre ("SaaS B2B vertical RH, NRR 130%, valorisation P78 du secteur") pas alarmiste
-- Si tu mentionnes le profil BA, explicite s'il s'agit de **fit investisseur** ou de **deal accessibility**. Ne dégrade pas la thèse pour cette seule raison.
-- Chaque phrase doit pouvoir se terminer par "...à vous de décider" sans être absurde
-
-**Exemples :**
-- INTERDIT "Investir dans Formuleo c'est financer une promesse sur la base de données non fiables"
-- CORRECT "Les données financières présentent des incohérences majeures (3 chiffres MRR différents). Le modèle économique actuel est une agence de service, non un SaaS scalable."
-- INTERDIT "[IMMEDIATE] [INVESTOR] Ne pas investir et classer le dossier."
-- CORRECT "[IMMEDIATE] [INVESTOR] Demander au fondateur de clarifier les incohérences MRR/ARR avec des preuves documentées."
-- INTERDIT "Refuser la structure en compte courant qui vous positionne comme un créancier"
-- CORRECT "La structure en CCA positionne l'investisseur comme créancier et non comme actionnaire. Évaluer si cela correspond à votre stratégie."
-
-# RÈGLES ABSOLUES
-
-1. JAMAIS inventer de données - "Non disponible" si absent
-2. TOUJOURS citer la source (Agent X, Context Engine, Slide Y)
-3. TOUJOURS inclure des benchmarks de comparaison quand disponibles
-4. CHAQUE red flag doit venir d'un agent source identifié
-5. CHAQUE highlight doit avoir une preuve ET un comparable DB si possible
-6. Le BA doit pouvoir présenter ce memo à un co-investisseur
-7. Le profil de signal doit être clair (le BA décide, l'outil rapporte)
-8. Les questions doivent être formulées de manière professionnelle
-
-# GESTION DES DONNÉES MANQUANTES
-
-- Si Tier 1 incomplet: Lister dans limitations, plafonner confiance à 60%
-- Si Tier 2 manquant: Mentionner l'absence d'analyse sectorielle
-- Si Context Engine vide: Mentionner l'absence de benchmarks externes
-- Si contradictions majeures: Baisser le score de confiance de 10-20%
-
-# REGLES DE CONCISION CRITIQUES (pour eviter troncature JSON)
-
-**PRIORITE ABSOLUE: Le JSON doit etre COMPLET et VALIDE.**
-
-1. **LIMITES STRICTES sur les arrays**:
-   - investmentHighlights: MAX 4 items
-   - keyRisks: MAX 5 items
-   - termsAnalysis: MAX 4 items
-   - competitors: MAX 4 items
-   - nextSteps: MAX 5 items
-   - questionsForFounder: MAX 6 items
-   - keyStrengths/keyRisks: MAX 3 items chacun
-   - breakdown (score): 5 items exactement
-
-2. **BREVITE dans les textes**:
-   - oneLiner: 20 mots MAX
-   - verdict: 2 phrases MAX
-   - justification: 1-2 phrases MAX
-   - each highlight/risk: 1 phrase
-   - keyInsights: MAX 4 items, 10 mots chacun
-
-3. **Structure > Contenu**: Mieux vaut un memo complet et concis qu'un memo tronque
-
-# EXEMPLE DE BON OUTPUT
-
-\`\`\`json
-{
-  "executiveSummary": {
-    "oneLiner": "SaaS B2B vertical RH avec NRR 130% et équipe ex-Workday, valorisé 20% au-dessus du marché",
-    "recommendation": "favorable",
-    "verdict": "Deal solide avec upside significatif. Négocier la valorisation de 15-20% pour aligner avec les comparables.",
-    "keyStrengths": [
-      "NRR 130% (P85 du secteur SaaS - Source: financial-auditor)",
-      "CEO ex-VP Workday avec exit 200M€ (vérifié - Source: team-investigator)",
-      "3 concurrents DB avec funding moyen 5x inférieur (Source: competitive-intel)"
-    ],
-    "keyRisks": [
-      "Valorisation P78 vs marché (8M€ vs médiane 5.2M€ - Source: financial-auditor)",
-      "Background cofondateur non vérifié (Source: team-investigator)",
-      "Dépendance client top 3 = 45% revenu (Source: customer-intel)"
-    ]
-  }
-}
-\`\`\`
-
-# EXEMPLE DE MAUVAIS OUTPUT (À ÉVITER)
-
-\`\`\`json
-{
-  "executiveSummary": {
-    "oneLiner": "Startup prometteuse dans un secteur en croissance",
-    "recommendation": "contrasted",
-    "verdict": "Le deal présente des opportunités intéressantes mais aussi des risques à évaluer.",
-    "keyStrengths": ["Bonne équipe", "Marché porteur", "Produit intéressant"],
-    "keyRisks": ["Quelques risques", "Concurrence présente", "Points à clarifier"]
-  }
-}
-\`\`\`
-→ INTERDIT: Trop vague, pas de chiffres, pas de sources, pas actionnable.
-
-# EXEMPLE DE MAUVAIS OUTPUT PRESCRIPTIF (À ÉVITER)
-
-\`\`\`json
-{
-  "executiveSummary": {
-    "oneLiner": "Ne pas investir — données non fiables et modèle non viable",
-    "verdict": "Deal à fuir. Risque de perte totale."
-  }
-}
-\`\`\`
-→ INTERDIT: Prescriptif, dit au BA quoi faire. L'outil rapporte les signaux, le BA décide.
-
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
-`;
+    // Phase A slice A4 — System prompt extrait dans un fichier compagnon
+    // (`./prompts/memo-generator-prompt.ts`). Les invariants doctrinaux
+    // (absence de directive historique de seuil d'auto-confiance, absence
+    // de lexique prescriptif legacy de "raison-de-tuer-le-deal" /
+    // "destructeur-de-deal", contrat natif signalProfile + criticalRisks)
+    // sont verrouillés mécaniquement par les source-guards de
+    // `__tests__/memo-generator-prompt.guard.test.ts`.
+    return MEMO_GENERATOR_SYSTEM_PROMPT;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<MemoGeneratorData> {
@@ -628,7 +436,14 @@ Réponds en JSON avec cette structure exacte:
     "blockerReason": "Raison si blocker",
     "recommendation": "very_favorable|favorable|contrasted|vigilance|alert_dominant",
     "justification": "Justification de la recommandation"
-  }
+  },
+  "signalProfile": {
+    "orientation": "very_favorable|favorable|contrasted|vigilance|alert_dominant",
+    "rationale": "Justification courte (1-2 phrases) du profil de signal"
+  },
+  "criticalRisks": [
+    {"riskId": "cr-1", "severity": "CRITICAL|HIGH|MEDIUM", "description": "Risque structurel court", "evidence": "Source/preuve", "source": "agent-source"}
+  ]
 }
 \`\`\`
 
@@ -643,7 +458,18 @@ Réponds en JSON avec cette structure exacte:
     const { data } = await this.llmCompleteJSON<LLMMemoResponse>(prompt);
 
     // Validation et normalisation
-    return this.normalizeResponse(data, deal, consolidatedRedFlags, consolidatedQuestions);
+    const result = this.normalizeResponse(data, deal, consolidatedRedFlags, consolidatedQuestions);
+
+    // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
+    // déterministe (D2 verrouillé : contradictory / insufficient / null,
+    // jamais dérivé de score / confidence).
+    const solidity = buildEvidenceSolidityForContext(context);
+    if (solidity.value !== null && solidity.rationale) {
+      result.signalProfile.evidenceSolidity = solidity.value;
+      result.signalProfile.evidenceSolidityRationale = solidity.rationale;
+    }
+
+    return result;
   }
 
   // ============================================================================
@@ -812,14 +638,19 @@ Recommendation: ${(d.investmentRecommendation as { action?: string })?.action ??
     }
 
     // Devil's Advocate
+    // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
+    // Memo lit le nouveau champ ; la migration interne complète de Memo
+    // (signalProfile, criticalRisks) reste à A4.
     const devils = results["devils-advocate"];
     if (devils?.success && "data" in devils) {
       const d = devils.data as Record<string, unknown>;
       const concerns = (d.topConcerns as string[]) ?? [];
+      const findingsD = (d.findings as Record<string, unknown> | undefined) ?? undefined;
+      const structuralRisksDA = (findingsD?.structuralRisks as unknown[]) ?? [];
       insights.push(`### DEVIL'S ADVOCATE
 Scepticisme: ${d.overallSkepticism ?? "N/A"}/100
 Top Concerns: ${concerns.slice(0, 3).join("; ") || "N/A"}
-Kill Reasons: ${(d.killReasons as unknown[])?.length ?? 0} identifiées`);
+Risques structurels critiques: ${structuralRisksDA.length} identifies`);
     }
 
     // Contradiction Detector
@@ -860,14 +691,17 @@ Probabilité Bear: ${(d.scenarios as Array<{ name?: string; probability?: number
 
       const data = result.data as Record<string, unknown>;
 
-      // Extraire les red flags de différentes structures possibles
+      // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy
+      // dans la liste des sources de red flags. Memo lit le nouveau champ.
+      // Migration interne complète de Memo reste à A4.
+      const findingsScope = (data.findings as Record<string, unknown> | undefined) ?? undefined;
       const flagArrays = [
         data.redFlags,
         data.flags,
         data.concerns,
         data.risks,
         data.sectorSpecificRisks,
-        data.killReasons,
+        findingsScope?.structuralRisks,
       ];
 
       for (const flags of flagArrays) {
@@ -882,7 +716,7 @@ Probabilité Bear: ${(d.scenarios as Array<{ name?: string; probability?: number
             id: `RF-${idCounter++}`,
             category: (flag.category as string) ?? this.inferCategory(agentName),
             severity,
-            title: (flag.title as string) ?? (flag.flag as string) ?? (flag.risk as string) ?? (flag.reason as string) ?? "",
+            title: (flag.title as string) ?? (flag.flag as string) ?? (flag.risk as string) ?? (flag.description as string) ?? "",
             description: (flag.description as string) ?? (flag.details as string) ?? "",
             source: agentName,
             location: flag.location as string,
@@ -1149,25 +983,87 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
     consolidatedRedFlags: ConsolidatedRedFlag[],
     consolidatedQuestions: ConsolidatedQuestion[]
   ): MemoGeneratorData {
-    const validRecommendations = ["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"];
+    const validRecommendations = ["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"] as const;
     const validPriorities = ["IMMEDIATE", "BEFORE_TERM_SHEET", "DURING_DD"];
     const validOwners = ["INVESTOR", "FOUNDER"];
+    const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"] as const;
 
     const valuation = deal.valuationPre != null ? Number(deal.valuationPre) : 0;
     const amount = deal.amountRequested != null ? Number(deal.amountRequested) : 0;
+
+    // Phase A slice A4 — `executiveSummary.recommendation` source de vérité
+    // pour l'orientation native (déjà cohérent avec doctrine A4).
+    const recommendation: typeof validRecommendations[number] = validRecommendations.includes(
+      data.executiveSummary?.recommendation as typeof validRecommendations[number]
+    )
+      ? (data.executiveSummary.recommendation as typeof validRecommendations[number])
+      : "contrasted";
+
+    // Phase A slice A4 — `criticalRisks` natif (D1, structuré CriticalRiskRef A1).
+    // Priorité 1 : LLM produit `criticalRisks[]` natif. Filtre les entrées
+    // sans description, contraint severity à CRITICAL|HIGH|MEDIUM.
+    // Priorité 2 (fallback) : dérivation depuis `consolidatedRedFlags`
+    // (severity CRITICAL/HIGH filtrés) — la consolidation lit déjà
+    // `findings.structuralRisks` côté DA (cf. A3 commit).
+    const criticalRisks: CriticalRiskRef[] = (() => {
+      const llmCriticalRisks = Array.isArray(data.criticalRisks)
+        ? data.criticalRisks
+            .filter((r) => (r?.description ?? "").trim().length > 0)
+            .map((r, idx) => {
+              const severity = validSeverities.includes(r.severity as typeof validSeverities[number])
+                ? (r.severity as typeof validSeverities[number])
+                : "MEDIUM";
+              const ref: CriticalRiskRef = {
+                riskId: r.riskId?.trim() ? r.riskId : `mc-risk-${idx + 1}`,
+                severity,
+                description: r.description!,
+              };
+              if (r.evidence) ref.evidence = r.evidence;
+              if (r.source) ref.source = r.source;
+              return ref;
+            })
+        : [];
+      if (llmCriticalRisks.length > 0) return llmCriticalRisks;
+      // Fallback déterministe : prendre les red flags critiques/high consolidés.
+      return consolidatedRedFlags
+        .filter((rf) => rf.severity === "CRITICAL" || rf.severity === "HIGH")
+        .slice(0, 5)
+        .map((rf, idx) => ({
+          riskId: `mc-risk-rf-${idx + 1}`,
+          severity: rf.severity,
+          description: rf.title,
+          evidence: rf.evidence,
+          source: rf.source,
+        }));
+    })();
+
+    // Phase A slice A4 — `signalProfile` natif (Tier3SignalContribution).
+    // Orientation = executiveSummary.recommendation (source de vérité doctrinale
+    // déjà alignée).
+    // Phase A slice A6 round 2 — `evidenceSolidity` + `evidenceSolidityRationale`
+    // sont qualifiés UNIQUEMENT par le service Evidence Solidity côté `execute`
+    // (déterministe, D2 verrouillé). L'ancien mapping LLM `signalProfile.rationale`
+    // → `evidenceSolidityRationale` est retiré : ce champ doit refléter la
+    // solidité des preuves, pas une rationale LLM libre.
+    const signalProfile: Tier3SignalContribution = {
+      orientation: recommendation,
+      evidenceSolidity: null,
+    };
 
     return {
       // Executive Summary
       executiveSummary: {
         oneLiner: data.executiveSummary?.oneLiner ?? `${deal.name} - Investment Memo`,
-        recommendation: validRecommendations.includes(data.executiveSummary?.recommendation ?? "")
-          ? data.executiveSummary.recommendation
-          : "contrasted",
+        recommendation,
         keyPoints: [
           ...(data.executiveSummary?.keyStrengths ?? []).slice(0, 3),
           ...(data.executiveSummary?.keyRisks ?? []).slice(0, 2),
         ],
       },
+
+      // Phase A slice A4 — Contrat natif Phase A.
+      signalProfile,
+      criticalRisks,
 
       // Company Overview
       companyOverview: {

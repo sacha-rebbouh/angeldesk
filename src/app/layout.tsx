@@ -17,9 +17,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Angel Desk - Due Diligence IA pour Business Angels",
+  title: "Angel Desk — Copilote analytique des investisseurs privés",
   description:
-    "La DD d'un fonds VC, accessible à un Business Angel solo. Analysez vos deals en 1 heure.",
+    "Qualifier les preuves disponibles, exposer les contradictions détectées, structurer les signaux, matérialiser les zones d'incertitude. La décision reste à l'investisseur.",
 };
 
 export default function RootLayout({

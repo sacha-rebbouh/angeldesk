@@ -90,6 +90,20 @@ export interface AgentContext {
 import type { CurrentFact } from "@/services/fact-store/types";
 // Import Deck Coherence types for Tier 0 coherence check
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
+// Phase A — Contrats partagés natifs (A1 commit 4c0dff5, étendus en A3/A4)
+// Importés ici (top-of-file) pour usage inline dans les interfaces Tier 3
+// modifiées en A3 (DevilsAdvocateFindings) et A4 (MemoGeneratorData,
+// ScenarioModelerFindings). Les ré-exports en bas de fichier exposent ces
+// mêmes types aux consumers via `import { StructuralRisk } from '@/agents/types'`.
+import type {
+  StructuralRisk as Tier3StructuralRisk,
+  Tier3SignalContribution as Tier3SignalContributionType,
+  CriticalRiskRef as Tier3CriticalRiskRef,
+} from "./tier3/schemas/common";
+// Phase A slice A7b-2 — `Tier1SignalIntensity` natif. Alias `Tier3SignalIntensity`
+// (même enum low/elevated/high/critical). Dérivé déterministe par le runtime
+// via `tier1/utils/derive-alert-signal.ts` (helper A7b-1).
+import type { Tier1SignalIntensity } from "./tier1/utils/derive-alert-signal";
 
 // Enriched context with Context Engine data for Tier 1 agents
 export interface EnrichedAgentContext extends AgentContext {
@@ -692,6 +706,7 @@ export interface DeckForensicsData {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -775,6 +790,9 @@ export interface FinancialAuditData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
@@ -901,6 +919,9 @@ export interface MarketIntelData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
@@ -1088,6 +1109,9 @@ export interface CompetitiveIntelData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
@@ -1358,6 +1382,9 @@ export interface TeamInvestigatorData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -1615,6 +1642,9 @@ export interface TechnicalDDData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -1668,6 +1698,7 @@ export interface TechStackDDData {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -1743,6 +1774,7 @@ export interface TechOpsDDData {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -1925,6 +1957,9 @@ export interface LegalRegulatoryData {
 
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
+
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
 
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
@@ -2218,6 +2253,9 @@ export interface GTMAnalystData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -2491,6 +2529,9 @@ export interface CustomerIntelData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -2727,6 +2768,9 @@ export interface ExitStrategistData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -2957,6 +3001,9 @@ export interface QuestionMasterData {
   // === SIGNAL D'ALERTE ===
   alertSignal: AgentAlertSignal;
 
+  // Phase A slice A7b-2 — signalIntensity natif (dérivé déterministe runtime).
+  signalIntensity: Tier1SignalIntensity;
+
   // === RESUME NARRATIF ===
   narrative: AgentNarrative;
 }
@@ -3122,7 +3169,25 @@ export interface ContradictionDetectorFindings {
     consensusLevel: "STRONG" | "MODERATE" | "WEAK" | "CONFLICTING";
     recommendation: string;
   }[];
+
+  // Phase A slice A4-bis — `signalIntensity` qualifie l'intensité du signal
+  // de contradiction (dérivé déterministe par le runtime depuis severity
+  // counts). Pas une recommandation d'action.
+  signalIntensity: Tier3SignalIntensity;
+
+  // Phase A slice A4-bis — `signalContribution` natif. Orientation dérivée
+  // déterministe depuis signalIntensity. evidenceSolidity null en A4-bis
+  // (D2 verrouillé, A6 qualifiera).
+  signalContribution: Tier3SignalContributionType;
 }
+
+// Phase A slice A4-bis — Énum partagé qualifiant l'intensité d'un signal
+// d'alerte côté agents Tier 3 (contradictions, conditions). Le runtime
+// dérive cette valeur déterministe ; le LLM ne la pilote pas. Utilisé pour
+// remplacer la sémantique action `recommendation: PROCEED/STOP` legacy en
+// SOURCE de vérité native, tout en conservant le contrat global
+// `AgentAlertSignal` intact (dette cross-agent hors A4-bis).
+export type Tier3SignalIntensity = "low" | "elevated" | "high" | "critical";
 
 // ============================================================================
 // CONDITIONS ANALYST AGENT - AI-powered deal terms analysis
@@ -3183,6 +3248,18 @@ export interface ConditionsAnalystFindings {
     blendedEffectiveValuation: number | null;
     triggerRiskLevel: "LOW" | "MEDIUM" | "HIGH";
   };
+
+  // Phase A slice A4-bis — `signalIntensity` qualifie l'intensité du signal
+  // d'alerte conditions (dérivé déterministe par le runtime depuis la
+  // sévérité des red flags + le score conditions). Pas une recommandation
+  // d'action prescriptive — c'est une qualification du signal.
+  signalIntensity: Tier3SignalIntensity;
+
+  // Phase A slice A4-bis — `signalContribution` natif (orientation +
+  // evidenceSolidity null en A4-bis — D2 verrouillé, A6 service Solidité
+  // qualifiera ultérieurement). Dérivé déterministe par le runtime depuis
+  // signalIntensity + score.
+  signalContribution: Tier3SignalContributionType;
 }
 
 export interface ConditionsAnalystData {
@@ -3389,9 +3466,19 @@ export interface ScenarioModelerFindings {
     riskAdjustedAssessment: string;
   };
 
-  // Recommandation scénario le plus probable
-  mostLikelyScenario: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC";
-  mostLikelyRationale: string;
+  // Phase A slice A4 — `dominantScenario` (renommage de l'ancien
+  // `mostLikelyScenario`) qualifie le scénario avec la probabilité la plus
+  // élevée parmi BASE/BULL/BEAR/CATASTROPHIC. Pas une recommandation
+  // d'action — c'est une qualification trajectoire.
+  dominantScenario: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC";
+  dominantScenarioRationale: string;
+
+  // Phase A slice A4 — `signalContribution` natif. Orientation dérivée
+  // déterministe par le runtime depuis les probabilités scenarios
+  // (LLM ne pilote PAS — leçon round 2 A3 sur riskPosture).
+  // evidenceSolidity reste null en A4 (D2 verrouillé, A6 service Solidité
+  // qualifiera ultérieurement).
+  signalContribution: Tier3SignalContributionType;
 }
 
 /** Scenario Modeler Data v2.0 - Structure standardisée */
@@ -3532,29 +3619,17 @@ export interface WorstCaseScenario {
   earlyWarningSigns: string[]; // Signes avant-coureurs a surveiller
 }
 
-/** Raison de ne pas investir (kill reason) */
-export interface KillReason {
-  id: string;
-  reason: string;
-  category: "team" | "market" | "product" | "financials" | "competition" | "timing" | "structural";
-  evidence: string; // Preuve concrete
-  sourceAgent: string; // Quel agent a detecte ca
-  dealBreakerLevel: "ABSOLUTE" | "CONDITIONAL" | "CONCERN";
-  // ABSOLUTE = Ne jamais investir peu importe les reponses
-  // CONDITIONAL = Dealbreaker SI la reponse du fondateur est mauvaise
-  // CONCERN = Preoccupation serieuse mais pas bloquante
-
-  condition?: string; // Si CONDITIONAL, quelle condition
-  resolutionPossible: boolean;
-  resolutionPath?: string;
-
-  // Impact financier
-  impactIfIgnored: string;
-
-  // Question associee
-  questionToFounder: string;
-  redFlagAnswer: string; // Reponse qui confirme le dealbreaker
-}
+// Phase A slice A3 — `KillReason` interface retirée (D1 verrouillé,
+// DA-spécifique).
+//
+// Remplacée par `StructuralRisk` (`src/agents/tier3/schemas/common.ts`,
+// ré-exporté depuis `src/agents/types.ts` et `src/agents/type-modules/tier3.ts`)
+// + `DevilsAdvocateFindings.structuralRisks` (cf. `type-modules/tier3.ts`).
+//
+// Le mapping legacy `dealBreakerLevel: ABSOLUTE|CONDITIONAL|CONCERN`
+// → `severity: CRITICAL|HIGH|MEDIUM` (StructuralRiskSchema A1) est porté
+// par le parser tolérant de `devils-advocate.ts` `normalizeResponse`
+// (lecture LLM dégradé uniquement, jamais en émission).
 
 /** Blind spot identifie */
 export interface BlindSpot {
@@ -3586,7 +3661,13 @@ export interface AlternativeNarrative {
   testToValidate: string; // Comment verifier quelle narrative est vraie
 }
 
-/** Findings specifiques Devil's Advocate (Section 5.4 + extensions) */
+// Phase A slice A3 — Posture de risque structurel (qualifie l'intensité du
+// risque détecté par le contradicteur, pas une action prescriptive).
+// Cohérent avec `DevilsAdvocateRiskPostureSchema`
+// (`src/agents/tier3/schemas/devils-advocate-schema.ts`).
+export type DevilsAdvocateRiskPosture = "light" | "elevated" | "critical" | "structural";
+
+/** Findings specifiques Devil's Advocate (Section 5.4 + extensions Phase A) */
 export interface DevilsAdvocateFindings {
   // Contre-arguments structures (minimum 5)
   counterArguments: CounterArgument[];
@@ -3594,8 +3675,20 @@ export interface DevilsAdvocateFindings {
   // Scenario catastrophe detaille
   worstCaseScenario: WorstCaseScenario;
 
-  // Kill reasons (minimum 3)
-  killReasons: KillReason[];
+  // Phase A slice A3 — `structuralRisks` (StructuralRisk[]) remplace
+  // l'ancien `killReasons` legacy (D1 verrouillé, DA-spécifique).
+  // `severity: CRITICAL|HIGH|MEDIUM` (A1 StructuralRiskSchema).
+  structuralRisks: Tier3StructuralRisk[];
+
+  // Phase A slice A3 — `riskPosture` qualifie l'intensité du risque
+  // structurel détecté, pas une action. Dérivée déterministe depuis
+  // structuralRisks.severity counts côté `transformResponse`.
+  riskPosture: DevilsAdvocateRiskPosture;
+
+  // Phase A slice A3 — `signalContribution` porte l'orientation (axe 1)
+  // dérivée déterministe + `evidenceSolidity` (axe 2) qui reste nullable
+  // en A3 (D2 verrouillé, A6 service Solidité qualifiera ultérieurement).
+  signalContribution: Tier3SignalContributionType;
 
   // Blind spots identifies (minimum 3)
   blindSpots: BlindSpot[];
@@ -3697,12 +3790,24 @@ export interface DevilsAdvocateResult extends AgentResult {
 }
 
 // Memo Generator Agent
+// Phase A slice A4 — Ajout `signalProfile` (Tier3SignalContribution natif —
+// orientation cohérente avec `executiveSummary.recommendation`, evidenceSolidity
+// nullable en A4) + `criticalRisks` (CriticalRiskRef A1 structuré, severity
+// CRITICAL/HIGH/MEDIUM, source, riskId). Conservation du champ existant
+// `keyRisks` (sémantique mitigation/residual propre, pas un alias legacy).
 export interface MemoGeneratorData {
   executiveSummary: {
     oneLiner: string;
     recommendation: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     keyPoints: string[];
   };
+  // Phase A slice A4 — `signalProfile` porte l'orientation native + rationale
+  // + evidenceSolidity (null en A4, qualifié par A6).
+  signalProfile: Tier3SignalContributionType;
+  // Phase A slice A4 — `criticalRisks` structuré (CriticalRiskRef A1).
+  // Distinct de `keyRisks` (sémantique mitigation/residual conservée).
+  // Aucun alias `killReasons` n'est admis (D1 verrouillé).
+  criticalRisks: Tier3CriticalRiskRef[];
   companyOverview: {
     description: string;
     problem: string;
@@ -3956,3 +4061,39 @@ export interface AgentResultWithTrace extends AgentResult {
   /** Full trace with prompts/responses (opt-in, can be large) */
   _traceFull?: StandardTrace;
 }
+
+// ============================================================================
+// Phase A — Contrats partagés natifs (slice A1, additif strict)
+// ============================================================================
+// Ré-exports depuis `src/agents/tier3/schemas/common.ts` pour exposer les
+// nouveaux types Phase A aux consumers via le module central
+// `@/agents/types`.
+//
+// D1 verrouillé : aucun type legacy retiré, aucun champ renommé.
+// D2 verrouillé : EvidenceSolidity Phase A limité à `contradictory` /
+//   `insufficient` / `null` (pas de strong/moderate/low).
+// ============================================================================
+
+export {
+  Tier3OrientationSchema,
+  Tier3EvidenceSolidityEmittedSchema,
+  Tier3SignalContributionSchema,
+  StructuralRiskSchema,
+  CriticalRiskRefSchema,
+  ConditionRefSchema,
+  SourceRefSchema,
+  OpenQuestionRefSchema,
+  ContradictionRefSchema,
+} from "./tier3/schemas/common";
+
+export type {
+  Tier3Orientation,
+  Tier3EvidenceSolidityEmitted,
+  Tier3SignalContribution,
+  StructuralRisk,
+  CriticalRiskRef,
+  ConditionRef,
+  SourceRef,
+  OpenQuestionRef,
+  ContradictionRef,
+} from "./tier3/schemas/common";

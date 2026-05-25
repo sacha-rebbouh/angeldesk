@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import { detectFOMO } from "@/services/fomo-detector";
 import { calculateAgentScore, DECK_FORENSICS_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 
 /**
  * Deck Forensics Agent - REFONTE v2.0
@@ -84,6 +85,8 @@ export interface DeckForensicsDataV2 {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  // Phase A slice A7b-2 — signalIntensity natif dérivé déterministe.
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -317,8 +320,7 @@ OBLIGATOIRE:
 - Etre SPECIFIQUE, pas generique
 - Reporter TOUS les findings (pas de minimum/maximum artificiel)
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<DeckForensicsDataV2> {
@@ -541,8 +543,7 @@ FORMAT DE REPONSE JSON
   "alertSignal": {
     "hasBlocker": true|false,
     "blockerReason": "Si hasBlocker=true, pourquoi",
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
-    "justification": "Explication de la recommandation"
+    "justification": "Explication factuelle du signal (constat, pas instruction d'investissement)"
   },
   "narrative": {
     "oneLiner": "Resume en 1 phrase: verdict global",
@@ -810,14 +811,24 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
         }))
       : [];
 
-    // Normalize alertSignal
-    const validRecommendations = ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"];
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: scoreValue,
+    });
+
+    // Normalize alertSignal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? false,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: validRecommendations.includes(data.alertSignal?.recommendation)
-        ? (data.alertSignal.recommendation as AgentAlertSignal["recommendation"])
-        : "INVESTIGATE_FURTHER",
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "",
     };
 
@@ -837,6 +848,7 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }

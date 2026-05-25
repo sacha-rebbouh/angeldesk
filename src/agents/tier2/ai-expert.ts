@@ -160,7 +160,12 @@ const AIVerdictSchema = z.object({
   technicalCredibility: z.enum(["high", "medium", "low"]).describe("Credibilite technique de l'equipe"),
   moatStrength: z.enum(["strong", "moderate", "weak", "none"]).describe("Force du moat"),
   scalabilityRisk: z.enum(["low", "medium", "high"]).describe("Risque sur la scalabilite"),
-  recommendation: z.enum(["STRONG_AI_PLAY", "SOLID_AI_PLAY", "AI_CONCERNS", "NOT_REAL_AI"]).describe("Recommandation finale"),
+  // Phase A slice A8c — ancienne valeur borderline AI renommée en
+  // `AI_NATIVE_UNCONFIRMED` (wording analytique non prescriptif, cf.
+  // doctrine 2 strates). La valeur reste LLM-facing/locale ; le mapping
+  // runtime canonique vers `NOT_RECOMMENDED` (cf. ligne ~724) reste
+  // inchangé.
+  recommendation: z.enum(["STRONG_AI_PLAY", "SOLID_AI_PLAY", "AI_CONCERNS", "AI_NATIVE_UNCONFIRMED"]).describe("Recommandation finale"),
   keyInsight: z.string().describe("Insight cle pour l'investisseur"),
 });
 
@@ -395,15 +400,12 @@ Chaque dimension:
 - 0-4: Deal breaker (AI-washing ou model casse)
 
 ## RAPPEL FORMAT
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.
-
-## Anti-Hallucination Directive — Self-Audit
-After completing your response, perform a self-audit:
-1. Identify the 3 claims in your response that you are LEAST confident about
-2. For each one, explain what could be wrong and what the alternative might be
-3. Rate your overall response confidence: HIGH / MEDIUM / LOW
-Be ruthlessly honest. I will not penalise you for uncertainty.
+## Anti-Hallucination Directive — Evidence-Based Self-Audit
+After completing your response, perform an evidence-based self-audit:
+1. Identify the 3 claims in your response that have the WEAKEST evidence backing
+2. For each one, list the source (if any) and explain what alternative interpretation the available evidence could support
+3. Flag any claim that relies on inference rather than direct evidence with [INFERRED]
+Be ruthlessly honest. Uncertainty grounded in evidence gaps is valued, not penalised.
 
 Ta reponse DOIT etre un objet JSON valide et RIEN D'AUTRE. Commence directement par { et termine par }.`;
 }
@@ -532,7 +534,7 @@ Verifie au minimum:
 - Credibilite technique: high / medium / low
 - Force du moat: strong / moderate / weak / none
 - Risque scalabilite: low / medium / high
-- Recommandation: STRONG_AI_PLAY / SOLID_AI_PLAY / AI_CONCERNS / NOT_REAL_AI
+- Recommandation: STRONG_AI_PLAY / SOLID_AI_PLAY / AI_CONCERNS / AI_NATIVE_UNCONFIRMED
 
 ### 8. SCORE ET SYNTHESE
 - Score /100 avec breakdown par dimension
@@ -558,7 +560,7 @@ Le JSON doit suivre EXACTEMENT cette structure:
   "greenFlags": [{ "flag": string, "strength": "strong"|"moderate", "evidence": string, "implication": string }],
   "dbComparison": { "similarDealsFound": number, "thisDealsPosition": string },
   "sectorQuestions": [{ "question": string, "category": string, "priority": "must_ask"|"should_ask"|"nice_to_have", "why": string, "greenFlagAnswer": string, "redFlagAnswer": string }],
-  "aiVerdict": { "isRealAI": boolean, "technicalCredibility": "high"|"medium"|"low", "moatStrength": "strong"|"moderate"|"weak"|"none", "scalabilityRisk": "low"|"medium"|"high", "recommendation": "STRONG_AI_PLAY"|"SOLID_AI_PLAY"|"AI_CONCERNS"|"NOT_REAL_AI", "keyInsight": string },
+  "aiVerdict": { "isRealAI": boolean, "technicalCredibility": "high"|"medium"|"low", "moatStrength": "strong"|"moderate"|"weak"|"none", "scalabilityRisk": "low"|"medium"|"high", "recommendation": "STRONG_AI_PLAY"|"SOLID_AI_PLAY"|"AI_CONCERNS"|"AI_NATIVE_UNCONFIRMED", "keyInsight": string },
   "sectorScore": number (0-100),
   "scoreBreakdown": { "technicalDepth": number (0-25), "moatStrength": number (0-25), "unitEconomics": number (0-25), "scalability": number (0-25) },
   "executiveSummary": string,
@@ -724,6 +726,10 @@ function buildExtendedData(raw: AIExpertOutput, completenessLevel: string, rawSc
       cappedScore,
     },
     verdict: {
+      // Phase A slice A8c — `AI_NATIVE_UNCONFIRMED` (renommée depuis
+      // l'ancienne valeur borderline AI) tombe dans le fallback
+      // `NOT_RECOMMENDED` du canonique runtime (mapping inchangé, valeurs
+      // LLM-facing renommées en amont).
       recommendation: raw.aiVerdict.recommendation === "STRONG_AI_PLAY" ? "STRONG_FIT" :
                       raw.aiVerdict.recommendation === "SOLID_AI_PLAY" ? "GOOD_FIT" :
                       raw.aiVerdict.recommendation === "AI_CONCERNS" ? "MODERATE_FIT" : "NOT_RECOMMENDED",
@@ -795,7 +801,7 @@ export const aiExpert = {
       const analyticalTone = "\n\n## TON ANALYTIQUE OBLIGATOIRE (RÈGLE N°1)\nAngel Desk ANALYSE et GUIDE, ne DÉCIDE JAMAIS. Le BA est le seul décideur.\n\n**INTERDIT :** \"Investir\", \"Ne pas investir\", \"Rejeter\", \"Passer\", \"GO/NO-GO\", \"Dealbreaker\", tout impératif.\n**OBLIGATOIRE :** Ton analytique (\"Les données montrent...\", \"Les signaux indiquent...\"). Constater des faits, laisser le BA conclure.\n";
       // Anti-Hallucination Directive — Citation Demand (Prompt 3/5)
       const citationDemand = "\n\n## Anti-Hallucination Directive — Citation Demand\nFor every factual claim in your response:\n1. Cite a specific, verifiable source (name, publication, date)\n2. If you cannot cite a specific source, mark the claim as [UNVERIFIED] and explain why you believe it to be true\n3. If you are relying on general training data rather than a specific source, say so explicitly\nDo not present unverified information as established fact.\n";
-      const structuredUncertainty = "\n\n## Anti-Hallucination Directive — Structured Uncertainty\nStructure your response in three clearly labelled sections:\n**CONFIDENT:** Claims where you have strong evidence and high certainty (>90%)\n**PROBABLE:** Claims where you believe this is likely correct but acknowledge uncertainty (50-90%)\n**SPECULATIVE:** Claims where you are filling in gaps, making inferences, or relying on pattern-matching rather than direct knowledge (<50%)\nEvery claim must be placed in one of these three categories.\nDo not present speculative claims as confident ones.\n";
+      const structuredUncertainty = "\n\n## Anti-Hallucination Directive — Evidence Solidity Classification\nStructure your response in three clearly labelled sections based on EVIDENCE SOLIDITY (not auto-evaluated confidence):\n**SOURCED:** Claims directly backed by a citable source (document, dataset, verified fact)\n**INFERRED:** Claims derived by reasoning from sourced evidence — mark the reasoning step\n**UNSOURCED:** Claims drawn from general knowledge or pattern-matching without specific source backing\nEvery claim must be placed in one of these three categories.\nDo not present unsourced or inferred claims as if they were sourced.\n";
 
       setAgentContext("ai-expert");
 

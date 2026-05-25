@@ -268,7 +268,29 @@ export interface ExtendedSectorData {
     exitReadiness: "ready" | "needs_work" | "far";
   };
 
-  // Verdict
+  /**
+   * Verdict sectoriel canonique — **canal user-facing officiel Tier 2**
+   * (Phase A slice A8b).
+   *
+   * Les consumers UI (`src/components/deals/tier2-results.tsx` →
+   * `<VerdictHero>`) et PDF (`src/lib/pdf/pdf-sections/tier2-expert.tsx`
+   * → `<ExtendedVerdict>`) doivent lire `result._extended.verdict`, jamais
+   * `result.data.verdict` (qui n'existe pas sur `SectorExpertData` et qui
+   * pourrait être confondu avec des sous-champs `verdict` métier dans
+   * `ExtendedSectorData.unitEconomics.*`, `valuationAnalysis`,
+   * `regulatoryDetails`, etc. — ceux-ci sont des évaluations locales
+   * sectorielles, pas le verdict canonique).
+   *
+   * Mapping runtime canonique : chaque expert sectoriel reçoit ses propres
+   * valeurs LLM-facing (ex. `STRONG_AI_PLAY`, `STRONG_SECURITY_PLAY`,
+   * `STRONG_FIT` direct, etc.) puis les convertit vers cet enum canonique
+   * 5-valeurs avant attache à `_extended.verdict.recommendation`. Les
+   * libellés user-facing doctrinaires sont définis dans
+   * `src/lib/ui-configs.ts` (`TIER2_SECTOR_FIT_LABELS`).
+   *
+   * **Ne pas renommer `NOT_RECOMMENDED`** en Phase A (décision Codex A8
+   * audit point 1 — reporté post-Phase A).
+   */
   verdict?: {
     recommendation: "STRONG_FIT" | "GOOD_FIT" | "MODERATE_FIT" | "POOR_FIT" | "NOT_RECOMMENDED";
     confidence: "high" | "medium" | "low";
@@ -359,7 +381,12 @@ export interface ExtendedSectorData {
     technicalCredibility: "high" | "medium" | "low";
     moatStrength: "strong" | "moderate" | "weak" | "none";
     scalabilityRisk: "low" | "medium" | "high";
-    recommendation: "STRONG_AI_PLAY" | "SOLID_AI_PLAY" | "AI_CONCERNS" | "NOT_REAL_AI";
+    // Phase A slice A8c — ancienne valeur borderline AI renommée en
+    // `AI_NATIVE_UNCONFIRMED` (LLM-facing analytique, cf. doctrine 2
+    // strates). Le canal user-facing canonique
+    // `_extended.verdict.recommendation` reste inchangé via mapping
+    // runtime (ai-expert.ts → fallback `NOT_RECOMMENDED`).
+    recommendation: "STRONG_AI_PLAY" | "SOLID_AI_PLAY" | "AI_CONCERNS" | "AI_NATIVE_UNCONFIRMED";
     keyInsight: string;
   };
 

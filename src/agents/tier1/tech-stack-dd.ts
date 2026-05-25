@@ -15,6 +15,7 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from "../types";
+import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, TECH_STACK_DD_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
 /**
@@ -190,8 +191,7 @@ Si le Context Engine fournit des données sur les stacks techniques du secteur, 
 - Évaluer la maturité technique vs les deals comparables au même stage
 - Identifier les risques techniques spécifiques à ce type de produit
 
-## Anti-Hallucination Directive — Confidence Threshold
-Answer only if you are >90% confident, since mistakes are penalised 9 points, while correct answers receive 1 point, and an answer of "I don't know" receives 0 points.`;
+`;
   }
 
   protected async execute(context: EnrichedAgentContext): Promise<TechStackDDData> {
@@ -396,7 +396,6 @@ Chaque affirmation doit être sourcée ou marquée "Non disponible".
   "alertSignal": {
     "hasBlocker": true|false,
     "blockerReason": "Raison si blocker",
-    "recommendation": "PROCEED|PROCEED_WITH_CAUTION|INVESTIGATE_FURTHER|STOP",
     "justification": "Justification"
   },
   "narrative": {
@@ -572,15 +571,24 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
         }))
       : this.getDefaultQuestions();
 
-    // Normalize alertSignal
+    // Phase A slice A7b-2 — signalIntensity dérivé déterministe (helper A7b-1).
+    // Le LLM ne pilote plus `alertSignal.recommendation` ; la valeur est
+    // calculée depuis severity red flags + score métier.
+    const criticalCount = redFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highCount = redFlags.filter((f) => f.severity === "HIGH").length;
+    const signalIntensity: Tier1SignalIntensity = deriveTier1SignalIntensity({
+      criticalCount,
+      highCount,
+      score: score.value,
+    });
+
+    // Normalize alertSignal — `recommendation` dérivé déterministe depuis
+    // signalIntensity. Le contrat global `AgentAlertSignal` reste intact
+    // (compat infra, 102 consumers cross-agent — debt hors A7b).
     const alertSignal: AgentAlertSignal = {
       hasBlocker: data.alertSignal?.hasBlocker ?? false,
       blockerReason: data.alertSignal?.blockerReason,
-      recommendation: this.validateEnum(
-        data.alertSignal?.recommendation,
-        ["PROCEED", "PROCEED_WITH_CAUTION", "INVESTIGATE_FURTHER", "STOP"],
-        "PROCEED_WITH_CAUTION"
-      ),
+      recommendation: signalIntensityToRecommendation(signalIntensity),
       justification: data.alertSignal?.justification ?? "Analyse technique incomplète - prudence recommandée",
     };
 
@@ -610,6 +618,7 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
       redFlags,
       questions,
       alertSignal,
+      signalIntensity,
       narrative,
     };
   }

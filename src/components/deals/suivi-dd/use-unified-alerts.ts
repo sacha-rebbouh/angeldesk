@@ -23,19 +23,23 @@ interface AgentResult {
   data?: unknown;
 }
 
-interface KillReason {
-  id: string;
-  reason: string;
+// Phase A slice A3 — `StructuralRisk` (D1) remplace l'ancien `KillReason`
+// local. Cohérent avec `StructuralRiskSchema` (A1) :
+// severity CRITICAL | HIGH | MEDIUM. Le champ `dealBreakerLevel` est retiré ;
+// `severity` racine porte l'information.
+interface StructuralRiskLocal {
+  riskId: string;
+  description: string;
   category?: string;
-  evidence: string;
-  dealBreakerLevel: "CRITICAL" | "HIGH" | "CONCERN";
-  questionToFounder?: string;
-  impactIfIgnored?: string;
-  resolutionPath?: string;
+  evidence?: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM";
+  source?: string;
+  impact?: string;
+  question?: string;
 }
 
 interface DAFindings {
-  killReasons?: KillReason[];
+  structuralRisks?: StructuralRiskLocal[];
   concernsSummary?: {
     absolute?: string[];
     conditional?: string[];
@@ -148,22 +152,23 @@ export function useUnifiedAlerts({
       if (daResult?.success && daResult.data) {
         const daData = daResult.data as DAData;
 
-        // Kill reasons
-        for (const kr of daData.findings?.killReasons ?? []) {
-          const alertKey = devilsAdvocateAlertKey("killReason", kr.reason);
-          const severity = kr.dealBreakerLevel === "CRITICAL" ? "CRITICAL" : kr.dealBreakerLevel === "HIGH" ? "HIGH" : "MEDIUM";
+        // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
+        // Discriminant alert-key migré vers `"structuralRisk"`.
+        for (const sr of daData.findings?.structuralRisks ?? []) {
+          const alertKey = devilsAdvocateAlertKey("structuralRisk", sr.description);
+          const severity = sr.severity;
 
           let linkedQ: UnifiedAlert["linkedQuestion"] = null;
           let linkedR: UnifiedAlert["linkedResponse"] = null;
-          if (kr.questionToFounder) {
-            const matchedQ = founderQuestions.find(q => wordsOverlap(q.question, kr.questionToFounder!) >= 3);
+          if (sr.question) {
+            const matchedQ = founderQuestions.find(q => wordsOverlap(q.question, sr.question!) >= 3);
             if (matchedQ) {
-              linkedQ = { questionId: matchedQ.id, question: kr.questionToFounder, priority: matchedQ.priority, category: matchedQ.category };
+              linkedQ = { questionId: matchedQ.id, question: sr.question, priority: matchedQ.priority, category: matchedQ.category };
               linkedQuestionIds.add(matchedQ.id);
               const resp = responseMap.get(matchedQ.id);
               if (resp?.answer) linkedR = { answer: resp.answer, status: resp.status };
             } else {
-              linkedQ = { questionId: `da-kr-${kr.id}`, question: kr.questionToFounder, priority: "CRITICAL", category: "OTHER" };
+              linkedQ = { questionId: `da-sr-${sr.riskId}`, question: sr.question, priority: "CRITICAL", category: "OTHER" };
             }
           }
 
@@ -171,14 +176,13 @@ export function useUnifiedAlerts({
             id: alertKey,
             alertKey,
             alertType: "DEVILS_ADVOCATE",
-            subType: "killReason",
+            subType: "structuralRisk",
             severity,
-            title: kr.reason,
-            description: kr.evidence,
-            impact: kr.impactIfIgnored,
+            title: sr.description,
+            description: sr.evidence,
+            impact: sr.impact,
             source: "devils-advocate",
-            dealBreakerLevel: kr.dealBreakerLevel,
-            resolutionPath: kr.resolutionPath,
+            structuralRiskSeverity: sr.severity,
             resolution: resolutionMap[alertKey] ?? null,
             linkedQuestion: linkedQ,
             linkedResponse: linkedR,
@@ -299,7 +303,7 @@ export function useUnifiedAlerts({
       rf.mergedFrom.push(a.alertType);
 
       // Add DA-specific fields
-      if (a.dealBreakerLevel && !rf.dealBreakerLevel) rf.dealBreakerLevel = a.dealBreakerLevel;
+      if (a.structuralRiskSeverity && !rf.structuralRiskSeverity) rf.structuralRiskSeverity = a.structuralRiskSeverity;
       if (a.resolutionPath && !rf.resolutionPath) rf.resolutionPath = a.resolutionPath;
       if (a.suggestedArgument && !rf.suggestedArgument) rf.suggestedArgument = a.suggestedArgument;
       if (a.leverageSource && !rf.leverageSource) rf.leverageSource = a.leverageSource;

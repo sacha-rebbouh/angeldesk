@@ -17,6 +17,7 @@ import {
 } from "../pdf-components";
 import { s, sup } from "../pdf-helpers";
 import { AGENT_DISPLAY_NAMES } from "@/lib/format-utils";
+import { getTier2SectorFitLabel } from "@/lib/ui-configs";
 import type { AgentResult } from "../generate-analysis-pdf";
 
 export function Tier2ExpertSection({
@@ -115,6 +116,12 @@ export function Tier2ExpertSection({
 // --- Sub-components ---
 
 function ExtendedVerdict({ ext }: { ext?: Record<string, unknown> }) {
+  // Phase A slice A8b — canal user-facing canonique Tier 2 :
+  // `_extended.verdict` (cf. doc `ExtendedSectorData.verdict` dans
+  // `src/agents/tier2/types.ts`). Le label `recommendation` passe par
+  // `getTier2SectorFitLabel` (libellés doctrinaires partagés avec l'UI),
+  // au lieu du rendu brut `.replace(/_/g, " ")` qui exposait l'enum
+  // technique côté lecteur du mémo PDF.
   const verdict = ext?.verdict as {
     recommendation?: string;
     confidence?: string;
@@ -123,10 +130,14 @@ function ExtendedVerdict({ ext }: { ext?: Record<string, unknown> }) {
     topConcern?: string;
   } | undefined;
   if (!verdict) return null;
+  // Fallback doctrinaire neutre si la valeur sort de l'enum canonique
+  // (cas dégradé LLM ou analyse persistée hors-spec) : on n'expose JAMAIS
+  // l'enum technique brut au lecteur du PDF.
+  const recommendationLabel = getTier2SectorFitLabel(verdict.recommendation) ?? "Profil sectoriel à qualifier";
   return (
     <>
       <H3>Verdict sectoriel</H3>
-      <LabelValue label="Recommandation" value={s(verdict.recommendation).replace(/_/g, " ")} />
+      <LabelValue label="Recommandation" value={recommendationLabel} />
       <LabelValue label="Confiance" value={s(verdict.confidence)} />
       {verdict.keyInsight && <BodyText>{verdict.keyInsight}</BodyText>}
       {verdict.topStrength && <LabelValue label="Force principale" value={verdict.topStrength} />}

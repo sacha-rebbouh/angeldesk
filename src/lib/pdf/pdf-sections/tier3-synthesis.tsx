@@ -211,10 +211,11 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
     verdictRationale?: string;
   } | undefined;
 
-  const killReasons = findings?.killReasons as Array<{
-    reason?: string;
-    dealBreakerLevel?: string;
-    impactIfIgnored?: string;
+  // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
+  const structuralRisks = findings?.structuralRisks as Array<{
+    description?: string;
+    severity?: string;
+    impact?: string;
   }> | undefined;
 
   const worstCase = findings?.worstCaseScenario as {
@@ -306,19 +307,19 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
         <BodyText>{narrative.summary}</BodyText>
       )}
 
-      {killReasons && killReasons.length > 0 && (
+      {structuralRisks && structuralRisks.length > 0 && (
         <>
           <H3>Signaux d&apos;alerte critiques</H3>
           <PdfTable
             columns={[
-              { header: "Raison", width: 40 },
-              { header: "Niveau", width: 25 },
-              { header: "Impact si ignoré", width: 35 },
+              { header: "Risque", width: 40 },
+              { header: "Sévérité", width: 25 },
+              { header: "Impact", width: 35 },
             ]}
-            rows={killReasons.slice(0, 8).map((k) => [
-              s(k.reason),
-              s(k.dealBreakerLevel).replace(/_/g, " "),
-              s(k.impactIfIgnored),
+            rows={structuralRisks.slice(0, 8).map((r) => [
+              s(r.description),
+              s(r.severity).replace(/_/g, " "),
+              s(r.impact),
             ])}
           />
         </>
@@ -549,10 +550,14 @@ function ScenarioModeler({ result }: { result?: AgentResult }) {
     riskAdjustedAssessment?: string;
   } | undefined;
 
-  const mostLikely = findings?.mostLikelyScenario as string | undefined;
-  const mostLikelyRationale = findings?.mostLikelyRationale as
-    | string
-    | undefined;
+  // Phase A slice A4 — `dominantScenario` natif Phase A. D1 verrouillé :
+  // aucun alias legacy `mostLikelyScenario` ni `mostLikelyRationale` n'est
+  // lu (round 2 Codex : retrait du bridge legacy côté PDF). Si l'analyse
+  // persistée est antérieure à A4 et ne contient pas `dominantScenario`,
+  // la valeur reste `undefined` et le bloc PDF affiche un fallback neutre.
+  const findingsRaw = findings as Record<string, unknown> | undefined;
+  const mostLikely = findingsRaw?.dominantScenario as string | undefined;
+  const mostLikelyRationale = findingsRaw?.dominantScenarioRationale as string | undefined;
 
   const scenariosList = (findings?.scenarios ?? []) as Array<{
     name?: string;

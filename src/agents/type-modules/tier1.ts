@@ -8,6 +8,10 @@ import type {
   AgentNarrative,
   DbCrossReference,
 } from './common';
+// Phase A slice A7b-2 — `Tier1SignalIntensity` natif (alias `Tier3SignalIntensity`,
+// même enum low/elevated/high/critical). Dérivé déterministe par le runtime
+// via `tier1/utils/derive-alert-signal.ts` (helper A7b-1).
+import type { Tier1SignalIntensity } from "../tier1/utils/derive-alert-signal";
 
 // ============================================================================
 // TIER 1 AGENT RESULT TYPES
@@ -66,6 +70,7 @@ export interface DeckForensicsData {
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
   alertSignal: AgentAlertSignal;
+  signalIntensity: Tier1SignalIntensity;
   narrative: AgentNarrative;
 }
 
@@ -122,7 +127,7 @@ export interface FinancialAuditFindings {
 export interface FinancialAuditData {
   meta: AgentMeta; score: AgentScore; findings: FinancialAuditFindings;
   dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[];
-  alertSignal: AgentAlertSignal; narrative: AgentNarrative;
+  alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative;
 }
 
 export interface FinancialAuditResult extends AgentResult {
@@ -183,7 +188,7 @@ export interface MarketIntelFindings {
 export interface MarketIntelData {
   meta: AgentMeta; score: AgentScore; findings: MarketIntelFindings;
   dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[];
-  alertSignal: AgentAlertSignal; narrative: AgentNarrative;
+  alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative;
 }
 
 export interface MarketIntelResult extends AgentResult {
@@ -238,7 +243,7 @@ export interface CompetitiveIntelFindings {
 export interface CompetitiveIntelData {
   meta: AgentMeta; score: AgentScore; findings: CompetitiveIntelFindings;
   dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[];
-  alertSignal: AgentAlertSignal; narrative: AgentNarrative;
+  alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative;
 }
 
 export interface CompetitiveIntelResult extends AgentResult {
@@ -278,7 +283,7 @@ export interface TeamInvestigatorFindings {
 export interface TeamInvestigatorData {
   meta: AgentMeta; score: AgentScore; findings: TeamInvestigatorFindings;
   dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[];
-  alertSignal: AgentAlertSignal; narrative: AgentNarrative;
+  alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative;
 }
 
 export interface TeamInvestigatorResult extends AgentResult {
@@ -305,15 +310,15 @@ export interface TechIPAnalysis { patents: { granted: number; pending: number; d
 
 export interface TechnicalDDFindings { techStack: TechStackAnalysis; scalability: ScalabilityAnalysis; technicalDebt: TechnicalDebtAnalysis; productMaturity: ProductMaturityAnalysis; teamCapability: TechTeamCapability; security: SecurityAnalysis; ipProtection: TechIPAnalysis; technicalRisks: { id: string; risk: string; category: "architecture" | "scalability" | "security" | "team" | "dependency" | "debt" | "other"; severity: "CRITICAL" | "HIGH" | "MEDIUM"; probability: "HIGH" | "MEDIUM" | "LOW"; impact: string; mitigation: string; estimatedCostToMitigate: string; timelineToMitigate: string }[]; sectorBenchmark: { stackVsSector: string; maturityVsSector: string; teamSizeVsSector: string; overallPosition: "ABOVE_AVERAGE" | "AVERAGE" | "BELOW_AVERAGE" } }
 
-export interface TechnicalDDData { meta: AgentMeta; score: AgentScore; findings: TechnicalDDFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
+export interface TechnicalDDData { meta: AgentMeta; score: AgentScore; findings: TechnicalDDFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative }
 export interface TechnicalDDResult extends AgentResult { agentName: "technical-dd"; data: TechnicalDDData }
 
 export interface TechStackDDFindings { techStack: TechStackAnalysis; scalability: ScalabilityAnalysis; technicalDebt: TechnicalDebtAnalysis; technicalRisks: { id: string; risk: string; category: "architecture" | "scalability" | "dependency" | "debt"; severity: "CRITICAL" | "HIGH" | "MEDIUM"; probability: "HIGH" | "MEDIUM" | "LOW"; impact: string; mitigation: string; estimatedCostToMitigate: string; timelineToMitigate: string }[]; sectorBenchmark: { stackVsSector: string; debtVsSector: string; scalabilityVsSector: string; overallPosition: "ABOVE_AVERAGE" | "AVERAGE" | "BELOW_AVERAGE" } }
-export interface TechStackDDData { meta: AgentMeta; score: AgentScore; findings: TechStackDDFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
+export interface TechStackDDData { meta: AgentMeta; score: AgentScore; findings: TechStackDDFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative }
 export interface TechStackDDResult extends AgentResult { agentName: "tech-stack-dd"; data: TechStackDDData }
 
 export interface TechOpsDDFindings { productMaturity: ProductMaturityAnalysis; teamCapability: TechTeamCapability; security: SecurityAnalysis; ipProtection: TechIPAnalysis; technicalRisks: { id: string; risk: string; category: "team" | "security" | "ip" | "operations"; severity: "CRITICAL" | "HIGH" | "MEDIUM"; probability: "HIGH" | "MEDIUM" | "LOW"; impact: string; mitigation: string; estimatedCostToMitigate: string; timelineToMitigate: string }[]; sectorBenchmark: { teamSize: { thisCompany: number; sectorP25: number; sectorMedian: number; sectorP75: number; percentile: string; source: string }; maturity: { thisCompany: string; sectorTypical: string; assessment: string }; security: { thisCompany: string; sectorExpected: string; assessment: string }; maturityVsSector: string; teamSizeVsSector: string; securityVsSector: string; overallPosition: "ABOVE_AVERAGE" | "AVERAGE" | "BELOW_AVERAGE" } }
-export interface TechOpsDDData { meta: AgentMeta; score: AgentScore; findings: TechOpsDDFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
+export interface TechOpsDDData { meta: AgentMeta; score: AgentScore; findings: TechOpsDDFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative }
 export interface TechOpsDDResult extends AgentResult { agentName: "tech-ops-dd"; data: TechOpsDDData }
 
 // ============================================================================
@@ -328,7 +333,7 @@ export interface ContractualRisksAnalysis { keyContracts: { type: string; partie
 export interface LitigationRiskAnalysis { currentLitigation: boolean; currentLitigationDetails?: string[]; potentialClaims: { area: string; probability: "HIGH" | "MEDIUM" | "LOW"; potentialExposure: string }[]; founderDisputes: { exists: boolean; details?: string; severity?: "CRITICAL" | "HIGH" | "MEDIUM" }; riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" }
 export interface SectorRegulatoryPrecedent { company: string; issue: string; outcome: string; relevance: string; source: string }
 export interface LegalRegulatoryFindings { structureAnalysis: LegalStructureAnalysis; compliance: ComplianceArea[]; ipStatus: IPStatusAnalysis; regulatoryRisks: RegulatoryRisk[]; contractualRisks: ContractualRisksAnalysis; litigationRisk: LitigationRiskAnalysis; sectorPrecedents: { issues: SectorRegulatoryPrecedent[]; structureNorms: { typicalStructure: string; comparisonVerdict: string } }; upcomingRegulations: { regulation: string; effectiveDate: string; impact: "HIGH" | "MEDIUM" | "LOW"; preparedness: "READY" | "IN_PROGRESS" | "NOT_STARTED" | "UNKNOWN"; action: string }[] }
-export interface LegalRegulatoryData { meta: AgentMeta; score: AgentScore; findings: LegalRegulatoryFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
+export interface LegalRegulatoryData { meta: AgentMeta; score: AgentScore; findings: LegalRegulatoryFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative }
 export interface LegalRegulatoryResult extends AgentResult { agentName: "legal-regulatory"; data: LegalRegulatoryData }
 
 export interface CapTableAuditData { ownershipBreakdown: { founders: number; employees: number; investors: number; optionPool: number; other: number }; founderDilution: { currentFounderOwnership: number; projectedPostRound: number; atSeriesA?: number; atSeriesB?: number; concern: "none" | "moderate" | "significant" }; investorAnalysis: { existingInvestors: { name: string; ownership: number; reputation: "unknown" | "low" | "medium" | "high" | "top_tier"; signalValue: string }[]; leadInvestorPresent: boolean; followOnCapacity: string }; roundTerms: { preMoneyValuation?: number; roundSize?: number; dilution: number; proRataRights: boolean; liquidationPreference: string; antiDilution: string; participatingPreferred: boolean; concerns: string[] }; optionPoolAnalysis: { currentSize: number; adequacy: "insufficient" | "adequate" | "generous"; refreshNeeded: boolean }; structuralRedFlags: string[]; capTableScore: number }
@@ -340,7 +345,7 @@ export interface GTMExpansionAnalysis { currentGrowthRate: { value?: number; per
 export interface GTMCompetitorPattern { company: string; channel: string; success: "HIGH" | "MEDIUM" | "LOW"; insight: string; source: string }
 export interface GTMCacBenchmark { sector: string; stage: string; p25: number; median: number; p75: number; source: string; thisDeal?: { cac: number; percentile: number } }
 export interface GTMAnalystFindings { channels: GTMChannelAnalysis[]; channelSummary: { primaryChannel: string; channelDiversification: "GOOD" | "MODERATE" | "POOR"; diversificationRationale: string; overallChannelHealth: number }; salesMotion: GTMSalesMotionAnalysis; expansion: GTMExpansionAnalysis; competitorPatterns: { patterns: GTMCompetitorPattern[]; insight: string; gapsVsCompetitors: string[]; advantagesVsCompetitors: string[] }; cacBenchmark: GTMCacBenchmark; unitEconomics: { overall: "HEALTHY" | "ACCEPTABLE" | "CONCERNING" | "UNKNOWN"; rationale: string; keyMetrics: { metric: string; value?: number; benchmark?: number; assessment: string }[] }; deckClaimsAnalysis: { claim: string; location: string; status: "VERIFIED" | "CONTRADICTED" | "EXAGGERATED" | "NOT_VERIFIABLE"; evidence: string; investorImplication: string }[] }
-export interface GTMAnalystData { meta: AgentMeta; score: AgentScore; findings: GTMAnalystFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
+export interface GTMAnalystData { meta: AgentMeta; score: AgentScore; findings: GTMAnalystFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative }
 export interface GTMAnalystResult extends AgentResult { agentName: "gtm-analyst"; data: GTMAnalystData }
 
 export interface CustomerAnalysis { id: string; name: string; type: "enterprise" | "mid_market" | "smb" | "startup" | "unknown"; verified: boolean; verificationSource?: string; relationship: { status: "active" | "pilot" | "churned" | "prospect" | "unknown"; since?: string; contractType?: "subscription" | "one_time" | "usage_based" | "unknown"; dealSize?: "enterprise" | "mid" | "small" | "unknown"; revenueContribution?: number }; satisfaction: { isReference: boolean; hasTestimonial: boolean; hasExpanded: boolean; hasReferred: boolean; publicEndorsement?: string }; risks: string[] }
@@ -350,7 +355,7 @@ export interface PMFAnalysis { pmfScore: number; pmfVerdict: "STRONG" | "EMERGIN
 export interface ConcentrationAnalysis { topCustomerRevenue: number; top3CustomersRevenue: number; top10CustomersRevenue: number; concentrationLevel: "CRITICAL" | "HIGH" | "MODERATE" | "HEALTHY"; concentrationRationale: string; atRiskRevenue: { customerId: string; customerName: string; revenueAtRisk: number; riskReason: string; probability: "HIGH" | "MEDIUM" | "LOW" }[]; diversificationTrend: "IMPROVING" | "STABLE" | "WORSENING" | "UNKNOWN"; trendEvidence: string }
 export interface ExpansionAnalysis { upsell: { potential: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN"; mechanisms: string[]; evidence: string; blockers: string[] }; crossSell: { potential: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN"; opportunities: string[]; evidence: string }; virality: { coefficient?: number; mechanism: string; evidence: string; verdict: "STRONG" | "MODERATE" | "WEAK" | "NONE" }; landAndExpand: { strategy: string; successRate?: number; averageExpansion?: number; evidence: string } }
 export interface CustomerIntelFindings { icp: { description: string; segments: string[]; verticals: string[]; companySize: string; buyerPersona: string; icpClarity: "CLEAR" | "PARTIAL" | "UNCLEAR" }; customerBase: { totalCustomers?: number; payingCustomers?: number; activeUsers?: number; customerQuality: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN"; qualityJustification: string; notableCustomers: CustomerAnalysis[]; customersMissedInDeck: string[] }; claimsValidation: CustomerClaimValidation[]; retention: RetentionAnalysis; pmf: PMFAnalysis; concentration: ConcentrationAnalysis; expansion: ExpansionAnalysis; benchmark?: { vsMedianNRR: string; vsMedianChurn: string; vsMedianPMFScore: string; percentileOverall: number; comparableDeals: { name: string; nrr?: number; churn?: number; pmfStrength: string; outcome: string }[] } }
-export interface CustomerIntelData { meta: AgentMeta; score: AgentScore; findings: CustomerIntelFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
+export interface CustomerIntelData { meta: AgentMeta; score: AgentScore; findings: CustomerIntelFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative }
 export interface CustomerIntelResult extends AgentResult { agentName: "customer-intel"; data: CustomerIntelData }
 
 export interface ExitScenario { id: string; type: "acquisition_strategic" | "acquisition_pe" | "ipo" | "secondary" | "acquihire" | "failure"; name: string; description: string; probability: { level: "HIGH" | "MEDIUM" | "LOW" | "VERY_LOW"; percentage: number; rationale: string; basedOn: string }; timeline: { estimatedYears: number; range: string; milestones: string[]; assumptions: string[] }; exitValuation: { estimated: number; range: { min: number; max: number }; methodology: string; multipleUsed: number; multipleSource: string; calculation: string }; potentialBuyers?: { name: string; type: "strategic" | "pe" | "corporate_vc"; rationale: string; recentAcquisitions?: string[]; likelihoodToBuy: "HIGH" | "MEDIUM" | "LOW" }[]; investorReturn: { initialInvestment: number; ownershipAtEntry: number; dilutionToExit: number; dilutionCalculation: string; ownershipAtExit: number; grossProceeds: number; proceedsCalculation: string; multiple: number; irr: number; irrCalculation: string } }
@@ -358,7 +363,7 @@ export interface ComparableExit { id: string; target: string; acquirer: string; 
 export interface MnAMarketAnalysis { sectorName: string; period: string; activity: { totalDeals: number; totalValue: number; trend: "HEATING" | "STABLE" | "COOLING"; trendRationale: string }; multiples: { revenueMultiple: { p25: number; median: number; p75: number }; arrMultiple?: { p25: number; median: number; p75: number }; ebitdaMultiple?: { p25: number; median: number; p75: number }; source: string }; activeBuyers: { name: string; type: string; recentDeals: number; focusAreas: string[] }[]; exitWindow: { assessment: "EXCELLENT" | "GOOD" | "NEUTRAL" | "POOR" | "CLOSED"; rationale: string; timeRemaining: string } }
 export interface LiquidityRisk { id: string; risk: string; category: "market" | "company" | "structural" | "timing" | "dilution"; severity: "CRITICAL" | "HIGH" | "MEDIUM"; probability: "HIGH" | "MEDIUM" | "LOW"; impact: string; mitigation?: string; questionToAsk: string }
 export interface ExitStrategistFindings { scenarios: ExitScenario[]; comparableExits: ComparableExit[]; mnaMarket: MnAMarketAnalysis; liquidityAnalysis: { overallLiquidity: "HIGH" | "MEDIUM" | "LOW" | "VERY_LOW"; rationale: string; risks: LiquidityRisk[]; timeToLiquidity: { bestCase: string; baseCase: string; worstCase: string } }; deckClaimsAnalysis: { claimsFound: { claim: string; location: string; status: "VERIFIED" | "EXAGGERATED" | "UNREALISTIC" | "NOT_VERIFIABLE"; evidence: string }[]; deckRealism: "REALISTIC" | "OPTIMISTIC" | "VERY_OPTIMISTIC" | "UNREALISTIC"; deckRealismRationale: string }; returnSummary: { expectedCase: { scenario: string; probability: number; multiple: number; irr: number }; upside: { scenario: string; probability: number; multiple: number; irr: number }; downside: { scenario: string; probability: number; multiple: number; irr: number }; probabilityWeightedReturn: { expectedMultiple: number; calculation: string } } }
-export interface ExitStrategistData { meta: AgentMeta; score: AgentScore; findings: ExitStrategistFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
+export interface ExitStrategistData { meta: AgentMeta; score: AgentScore; findings: ExitStrategistFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative }
 export interface ExitStrategistResult extends AgentResult { agentName: "exit-strategist"; data: ExitStrategistData }
 
 // ============================================================================
@@ -378,5 +383,5 @@ export type CriticalQuestion = Dealbreaker;
 export interface AgentFindingsSummary { agentName: string; score: number; grade: "A" | "B" | "C" | "D" | "F"; criticalRedFlagsCount: number; highRedFlagsCount: number; topConcerns: string[]; topStrengths: string[]; questionsGenerated: number }
 
 export interface QuestionMasterFindings { founderQuestions: FounderQuestion[]; referenceChecks: ReferenceCheck[]; diligenceChecklist: { totalItems: number; doneItems: number; blockedItems: number; criticalPathItems: number; items: DiligenceChecklistItem[] }; negotiationPoints: NegotiationPoint[]; criticalQuestions: CriticalQuestion[]; /** @deprecated Use criticalQuestions */ dealbreakers: Dealbreaker[]; tier1Summary: { agentsAnalyzed: AgentFindingsSummary[]; totalCriticalRedFlags: number; totalHighRedFlags: number; overallReadiness: "READY_TO_INVEST" | "NEEDS_MORE_DD" | "SIGNIFICANT_CONCERNS" | "DO_NOT_PROCEED"; readinessRationale: string }; topPriorities: { priority: number; action: string; rationale: string; deadline: string }[]; suggestedTimeline: { phase: string; duration: string; activities: string[]; deliverables: string[] }[] }
-export interface QuestionMasterData { meta: AgentMeta; score: AgentScore; findings: QuestionMasterFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
+export interface QuestionMasterData { meta: AgentMeta; score: AgentScore; findings: QuestionMasterFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; signalIntensity: Tier1SignalIntensity; narrative: AgentNarrative }
 export interface QuestionMasterResult extends AgentResult { agentName: "question-master"; data: QuestionMasterData }

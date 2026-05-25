@@ -36,6 +36,12 @@ const EVALUATIVE_KEYS = new Set([
   "narrative",
   "investmentRecommendation",
   "skepticismAssessment",
+  // Phase A slice A3 — `structuralRisks` + `riskPosture` + `signalContribution`
+  // sont des évaluations Tier 3 DA → stripper avant injection downstream
+  // (équivalent du strip historique sur `killReasons`).
+  "structuralRisks",
+  "riskPosture",
+  "signalContribution",
   "killReasons",
   "concernsSummary",
   "moatVerdict",
