@@ -650,7 +650,11 @@ describe("Phase C C1c — Source guard truncation fail-closed", () => {
     );
     expect(source).toContain("_wasTruncated");
     expect(source).toContain("allowPartialOnTruncation");
-    // Vérifie que les 4 helpers utilisent le check centralisé OU font le check eux-mêmes
+    // Phase C C1d-1 — BaseAgent délègue au helper partagé.
+    expect(source).toContain("assertCompletionNotTruncated");
+    expect(source).toContain("@/services/openrouter/truncation-guard");
+    // Le wrapper privé `assertNotTruncatedResult` reste, mais redirige
+    // désormais vers le helper partagé.
     expect(source).toContain("assertNotTruncatedResult");
     // Streaming : check `result.wasTruncated === true` dédié
     expect(/result\.wasTruncated\s*===\s*true/.test(source)).toBe(true);

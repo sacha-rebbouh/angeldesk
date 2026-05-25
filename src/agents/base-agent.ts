@@ -10,6 +10,7 @@ import {
   type TaskComplexity,
   type StreamCallbacks,
 } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import type { ModelKey } from "@/services/openrouter/client";
 import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed, AgentTraceMetrics } from "./types";
 import { createHash } from "crypto";
@@ -589,35 +590,24 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   }
 
   /**
-   * Phase C slice C1c — Helper centralisé fail-closed sur troncature.
+   * Phase C slice C1d-1 — wrapper du helper partagé
+   * `assertCompletionNotTruncated` (cf.
+   * `src/services/openrouter/truncation-guard.ts`).
    *
-   * Si `data._wasTruncated === true` :
-   *   - Sans opt-in : throw avec message clair.
-   *   - Avec opt-in `allowPartialOnTruncation: true` : retourne `true`
-   *     pour permettre au caller de propager `wasTruncated` dans son
-   *     résultat (et l'agent ajoutera la limitation via `checkTruncation`).
-   *
-   * Centralise la logique pour les 4 helpers `llmCompleteJSON*`. Réutilisé
-   * par `llmCompleteJSONValidated` AVANT `schema.safeParse` car Zod peut
-   * strip `_wasTruncated` (champ non déclaré dans le schéma).
+   * Conserve le scope `caller = ${agentName}.${helperName}` pour les
+   * messages d'erreur (préservation du diagnostic prod établi en C1c).
+   * Sémantique inchangée : fail-closed par défaut, opt-in via
+   * `allowPartialOnTruncation: true`.
    */
   private assertNotTruncatedResult<T>(
     data: T,
     helperName: string,
     allowPartial: boolean | undefined,
   ): boolean {
-    const dataObj = data as unknown as Record<string, unknown> | null;
-    const isTruncated = dataObj != null && dataObj._wasTruncated === true;
-    if (!isTruncated) return false;
-    if (!allowPartial) {
-      throw new Error(
-        `[${this.config.name}] LLM JSON response was truncated and auto-repaired; ` +
-          `refusing partial data (${helperName}). ` +
-          `Pass \`allowPartialOnTruncation: true\` in the LLM options if this agent ` +
-          `knows how to safely degrade with a limitation in meta.`,
-      );
-    }
-    return true;
+    return assertCompletionNotTruncated(data, {
+      caller: `${this.config.name}.${helperName}`,
+      allowPartialOnTruncation: allowPartial,
+    });
   }
 
   /**
