@@ -8,6 +8,10 @@ import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { publishSessionStatus } from "@/lib/live/ably-server";
 import { recordSessionDuration } from "@/services/live-session-limits";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
+import {
+  reserveSessionReanalysis,
+  clearSessionReanalysisReservation,
+} from "@/lib/live/reanalysis-reservation";
 import type { PostCallReport } from "@/lib/live/types";
 
 // ---------------------------------------------------------------------------
@@ -571,7 +575,14 @@ export async function generateAndSavePostCallReport(
       );
     }
 
-    // 6. Trigger targeted reanalysis (fire-and-forget, non-blocking)
+    // 6. Trigger targeted reanalysis (fire-and-forget, non-blocking).
+    //
+    // Phase C slice C1a — réservation partagée avec le chemin manuel
+    // (`/api/coaching/reanalyze`) via `reserveSessionReanalysis()`. Sans
+    // cette réservation, un double webhook Recall `done` ou une race
+    // avec un déclencheur manuel pouvait lancer deux orchestrateurs
+    // `runAnalysis()` parallèles sur le même deal (double coût LLM +
+    // race sur les writes `deal.*Score`).
     if (session.dealId) {
       try {
         const { identifyImpactedAgents, triggerTargetedReanalysis } =
@@ -579,18 +590,52 @@ export async function generateAndSavePostCallReport(
 
         const impactedAgents = identifyImpactedAgents(report);
 
-        if (impactedAgents.length > 0) {
-          // Fire and forget: doesn't block session completion
-          triggerTargetedReanalysis(
-            session.dealId,
-            impactedAgents,
-            sessionId
-          ).catch((err) => {
-            console.error(
-              `[post-call-generator] Reanalysis trigger failed for deal ${session.dealId}:`,
-              err
+        if (impactedAgents.length === 0) {
+          // No agent impacted by the post-call delta — nothing to do.
+        } else {
+          const reservation = await reserveSessionReanalysis(
+            sessionId,
+            session.userId,
+            "targeted",
+          );
+
+          if (reservation.kind === "active") {
+            console.warn(
+              `[post-call-generator] Reanalysis skipped for session ${sessionId}: ` +
+                `a reservation is already active (manual or prior auto trigger).`,
             );
-          });
+          } else if (reservation.kind === "session_not_found") {
+            console.warn(
+              `[post-call-generator] Reanalysis skipped for session ${sessionId}: ` +
+                `session not found or not in completed/processing state.`,
+            );
+          } else {
+            const reservationRequestId = reservation.requestId;
+            // Fire and forget: doesn't block session completion. Clear
+            // the reservation on both success and failure paths so a
+            // future re-trigger isn't blocked by a stale lock.
+            triggerTargetedReanalysis(
+              session.dealId,
+              impactedAgents,
+              sessionId,
+            )
+              .then(async () => {
+                await clearSessionReanalysisReservation(
+                  sessionId,
+                  reservationRequestId,
+                ).catch(() => undefined);
+              })
+              .catch(async (err) => {
+                console.error(
+                  `[post-call-generator] Reanalysis trigger failed for deal ${session.dealId}:`,
+                  err,
+                );
+                await clearSessionReanalysisReservation(
+                  sessionId,
+                  reservationRequestId,
+                ).catch(() => undefined);
+              });
+          }
         }
       } catch (reanalysisError) {
         console.warn(

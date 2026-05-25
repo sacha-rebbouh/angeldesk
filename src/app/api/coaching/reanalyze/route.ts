@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHash, randomUUID } from "crypto";
-import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
@@ -12,81 +10,13 @@ import {
   generateDeltaReport,
   identifyImpactedAgents,
 } from "@/lib/live/post-call-reanalyzer";
+import {
+  reserveSessionReanalysis,
+  clearSessionReanalysisReservation,
+} from "@/lib/live/reanalysis-reservation";
 import type { PostCallReport } from "@/lib/live/types";
 import { assertDealCorpusReady, CorpusNotReadyError } from "@/services/documents/readiness-gate";
 import { corpusNotReadyResponse } from "@/lib/api/corpus-not-ready-response";
-
-const REANALYSIS_STALE_WINDOW_MS = 30 * 60 * 1000;
-
-function hashStringToBigInt(input: string): string {
-  const digest = createHash("sha256").update(input).digest();
-  return digest.readBigInt64BE(0).toString();
-}
-
-async function reserveSessionReanalysis(sessionId: string, userId: string, mode: "targeted" | "full"): Promise<
-  | { kind: "reserved"; requestId: string }
-  | { kind: "active" }
-> {
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashStringToBigInt(`session-reanalysis:${sessionId}`)})`);
-
-    const session = await tx.liveSession.findFirst({
-      where: {
-        id: sessionId,
-        userId,
-        status: { in: ["completed", "processing"] },
-      },
-      select: {
-        id: true,
-        reanalysisRequestId: true,
-        reanalysisRequestedAt: true,
-      },
-    });
-
-    if (!session) {
-      throw new Error("SESSION_NOT_FOUND_OR_INVALID_STATE");
-    }
-
-    if (
-      session.reanalysisRequestId &&
-      session.reanalysisRequestedAt &&
-      session.reanalysisRequestedAt >= new Date(Date.now() - REANALYSIS_STALE_WINDOW_MS)
-    ) {
-      return { kind: "active" as const };
-    }
-
-    const requestId = randomUUID();
-    await tx.liveSession.update({
-      where: { id: sessionId },
-      data: {
-        reanalysisRequestId: requestId,
-        reanalysisMode: mode,
-        reanalysisRequestedAt: new Date(),
-      },
-    });
-
-    return {
-      kind: "reserved" as const,
-      requestId,
-    };
-  }, {
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-  });
-}
-
-async function clearSessionReanalysisReservation(sessionId: string, requestId: string): Promise<void> {
-  await prisma.liveSession.updateMany({
-    where: {
-      id: sessionId,
-      reanalysisRequestId: requestId,
-    },
-    data: {
-      reanalysisRequestId: null,
-      reanalysisMode: null,
-      reanalysisRequestedAt: null,
-    },
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Full list of Tier 1 + Tier 3 agent names for "full" reanalysis mode
@@ -218,12 +148,20 @@ export async function POST(request: NextRequest) {
       agentNames = ALL_AGENT_NAMES;
     }
 
-    const reanalysisReservation = await reserveSessionReanalysis(sessionId, user.id, mode);
+    // mode is "targeted" or "full" here ("delta" déjà court-circuité ligne 184).
+    const reservationMode = mode === "full" ? "full" : "targeted";
+    const reanalysisReservation = await reserveSessionReanalysis(sessionId, user.id, reservationMode);
     if (reanalysisReservation.kind === "active") {
       return NextResponse.json(
         { error: "Une re-analyse est deja en cours pour cette session" },
         { status: 409 }
       );
+    }
+    if (reanalysisReservation.kind === "session_not_found") {
+      // Préserve le comportement legacy : la session a disparu entre le
+      // `findFirst` ligne 149 et l'entrée dans la transaction (TOCTOU).
+      // `handleApiError` mappe vers 500. C'est volontaire — cas dégradé.
+      throw new Error("SESSION_NOT_FOUND_OR_INVALID_STATE");
     }
 
     const reanalysisRequestId = reanalysisReservation.requestId;
