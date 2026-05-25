@@ -11,6 +11,7 @@ import { publishCoachingCard, publishScreenShareState, publishSessionStatus, pub
 import { setScreenShareState } from "@/lib/live/visual-processor";
 import { handleApiError } from "@/lib/api-error";
 import { isValidCuid } from "@/lib/sanitize";
+import { verifyTranscriptWebhookSignature } from "@/lib/live/transcript-webhook-auth";
 import {
   logCoachingLatency,
   logCoachingError,
@@ -287,8 +288,13 @@ async function processUtterance(
 
 // POST /api/live-sessions/[id]/webhook — Receive real-time transcription from Recall.ai
 // Note: This webhook URL is set per-bot via createBot() real_time_transcription config.
-// Security: session ID (CUID, 25 chars, ~72 bits entropy) acts as bearer token.
-// The Svix signing secret only applies to the dashboard-configured status webhook.
+// Security (Phase C C4a — SEC-001): each request must carry a `?sig=` query
+// param equal to HMAC_SHA256(LIVE_TRANSCRIPT_WEBHOOK_SECRET, sessionId). The
+// sessionId CUID alone is NOT sufficient anymore — a leaked CUID without the
+// matching signature is rejected with 401. Verification is timing-safe and
+// happens BEFORE rate-limiting / body parsing so unauthenticated requests are
+// dropped early. The Svix signing secret still applies to the separate
+// dashboard-configured status webhook (`/api/webhooks/recall`).
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
@@ -297,6 +303,21 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json(
         { error: "Invalid session ID format" },
         { status: 400 }
+      );
+    }
+
+    // ── HMAC signature verification (SEC-001) ──
+    // Must run BEFORE rate-limit so unauthenticated probes can't fill the
+    // per-session limit map. Reason codes are logged but the signature itself
+    // is never logged.
+    const verify = verifyTranscriptWebhookSignature(request, id);
+    if (!verify.ok) {
+      logCoachingError(id, "transcript_webhook_auth", new Error(
+        `Transcript webhook auth rejected: ${verify.reason}`
+      ));
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: verify.status }
       );
     }
 

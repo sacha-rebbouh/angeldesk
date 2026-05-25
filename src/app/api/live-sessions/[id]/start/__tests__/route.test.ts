@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHmac } from "node:crypto";
+
+const SECRET = "live-transcript-test-secret-do-not-leak";
 
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
@@ -57,6 +60,16 @@ describe("POST /api/live-sessions/[id]/start", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
+    // Phase C C4a — SEC-001 : `buildTranscriptWebhookUrl` requires the
+    // secret env var (or the dev bypass). Provide a stable secret + appUrl
+    // for every test so the route under test can build a signed URL.
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.angeldesk.test");
+    vi.stubEnv("LIVE_TRANSCRIPT_WEBHOOK_SECRET", SECRET);
+    vi.stubEnv("LIVE_TRANSCRIPT_BYPASS_SIGNATURE", "");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL_ENV", "");
+    vi.stubEnv("VERCEL", "");
+
     mocks.requireAuth.mockResolvedValue({ id: "user_1" });
     mocks.isValidCuid.mockReturnValue(true);
     mocks.liveSessionFindFirst.mockResolvedValue({
@@ -80,6 +93,10 @@ describe("POST /api/live-sessions/[id]/start", () => {
     });
     mocks.publishSessionStatus.mockResolvedValue(undefined);
     mocks.refundCredits.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("returns 409 without charging when another request already claimed the session", async () => {
@@ -122,5 +139,69 @@ describe("POST /api/live-sessions/[id]/start", () => {
         description: "Live coaching session session_1",
       })
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase C C4a — SEC-001 : URL transcript webhook signée
+  // -------------------------------------------------------------------------
+
+  it("envoie une URL transcript webhook SIGNÉE à Recall (sig=HMAC valide)", async () => {
+    await POST(
+      new Request("http://localhost/api/live-sessions/session_1/start", {
+        method: "POST",
+      }) as never,
+      { params: Promise.resolve({ id: "session_1" }) }
+    );
+
+    expect(mocks.createBot).toHaveBeenCalledTimes(1);
+    const botConfig = mocks.createBot.mock.calls[0][0];
+    const endpoints = botConfig.recording_config.realtime_endpoints;
+    const webhookEndpoint = endpoints.find(
+      (ep: { type: string }) => ep.type === "webhook"
+    );
+    expect(webhookEndpoint).toBeDefined();
+
+    const expectedSig = createHmac("sha256", SECRET)
+      .update("session_1")
+      .digest("hex");
+    expect(webhookEndpoint.url).toBe(
+      `https://app.angeldesk.test/api/live-sessions/session_1/webhook?sig=${expectedSig}`
+    );
+  });
+
+  it("l'URL envoyée à Recall NE contient PAS le secret brut", async () => {
+    await POST(
+      new Request("http://localhost/api/live-sessions/session_1/start", {
+        method: "POST",
+      }) as never,
+      { params: Promise.resolve({ id: "session_1" }) }
+    );
+
+    const botConfig = mocks.createBot.mock.calls[0][0];
+    const endpoints = botConfig.recording_config.realtime_endpoints;
+    const webhookEndpoint = endpoints.find(
+      (ep: { type: string }) => ep.type === "webhook"
+    );
+    expect(webhookEndpoint.url.includes(SECRET)).toBe(false);
+    expect(webhookEndpoint.url.includes("LIVE_TRANSCRIPT_WEBHOOK_SECRET")).toBe(
+      false
+    );
+  });
+
+  it("fail-loud (pas de débit/claim) si LIVE_TRANSCRIPT_WEBHOOK_SECRET absent en prod", async () => {
+    vi.stubEnv("LIVE_TRANSCRIPT_WEBHOOK_SECRET", "");
+
+    await expect(
+      POST(
+        new Request("http://localhost/api/live-sessions/session_1/start", {
+          method: "POST",
+        }) as never,
+        { params: Promise.resolve({ id: "session_1" }) }
+      )
+    ).rejects.toThrow(/LIVE_TRANSCRIPT_WEBHOOK_SECRET/);
+
+    expect(mocks.liveSessionUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.deductCredits).not.toHaveBeenCalled();
+    expect(mocks.createBot).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { createBot, leaveMeeting } from "@/lib/live/recall-client";
 import { publishSessionStatus } from "@/lib/live/ably-server";
+import { buildTranscriptWebhookUrl } from "@/lib/live/transcript-webhook-auth";
 import { handleApiError } from "@/lib/api-error";
 
 export const maxDuration = 30;
@@ -60,6 +61,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
+    // Phase C C4a — SEC-001 : pré-vérifier la config webhook signée AVANT
+    // d'appeler `leaveMeeting` ou `createBot`. Voir `start/route.ts` pour la
+    // justification du fail-loud.
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!appUrl) {
+      throw new Error("NEXT_PUBLIC_APP_URL is not set");
+    }
+    const transcriptWebhookUrl = buildTranscriptWebhookUrl(appUrl, id);
+
     // Try to remove the old bot first (best-effort, ignore failures)
     if (session.botId) {
       try {
@@ -70,14 +80,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     // Deploy a new bot with the same config as start route
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const wsRelayUrl = process.env.WS_RELAY_URL;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const realtimeEndpoints: any[] = [
       {
         type: "webhook",
-        url: `${appUrl}/api/live-sessions/${id}/webhook`,
+        url: transcriptWebhookUrl,
         events: [
           "transcript.data",
           "transcript.partial_data",

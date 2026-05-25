@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { isValidCuid } from "@/lib/sanitize";
 import { createBot } from "@/lib/live/recall-client";
 import { publishSessionStatus } from "@/lib/live/ably-server";
+import { buildTranscriptWebhookUrl } from "@/lib/live/transcript-webhook-auth";
 import { deductCredits, refundCredits } from "@/services/credits";
 import { handleApiError } from "@/lib/api-error";
 
@@ -47,6 +48,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
         { status: 400 }
       );
     }
+
+    // Phase C C4a — SEC-001 : pré-vérifier la config webhook signée AVANT
+    // toute mutation (claim + débit). `buildTranscriptWebhookUrl` throw
+    // fail-loud si `LIVE_TRANSCRIPT_WEBHOOK_SECRET` est absent hors bypass
+    // dev — refus de déployer un bot qui appellerait un webhook qui
+    // rejette toutes les requêtes. Faire ce check ici évite de débiter
+    // l'utilisateur ou de claim la session avant de constater l'erreur
+    // de config.
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!appUrl) {
+      throw new Error("NEXT_PUBLIC_APP_URL is not set");
+    }
+    const transcriptWebhookUrl = buildTranscriptWebhookUrl(appUrl, id);
 
     const claim = await prisma.liveSession.updateMany({
       where: {
@@ -94,16 +108,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // Deploy bot via Recall.ai with Deepgram Nova-3 transcription
     // Deepgram handles multilingual (FR/EN) natively via language:"multi"
     // Recall.ai pipes raw audio to Deepgram — no separate WebSocket needed
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const wsRelayUrl = process.env.WS_RELAY_URL; // e.g. wss://angeldesk-ws-relay.fly.dev
 
-    // Webhook for transcript + participant events (video NOT supported via webhook —
-    // Recall docs only list participant_events.* and transcript.* for webhooks)
+    // Webhook URL `transcriptWebhookUrl` already built above (SEC-001).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const realtimeEndpoints: any[] = [
       {
         type: "webhook",
-        url: `${appUrl}/api/live-sessions/${id}/webhook`,
+        url: transcriptWebhookUrl,
         events: [
           "transcript.data",
           "transcript.partial_data",
