@@ -56,6 +56,26 @@ export interface LLMCallOptions {
   maxRetries?: number;
   model?: ModelKey;
   fallbackChain?: ModelKey[];
+
+  /**
+   * Phase C slice C1c — REL-006 truncation fail-closed.
+   *
+   * Quand `completeJSON` détecte une réponse LLM tronquée et auto-réparée,
+   * le router injecte `_wasTruncated: true` sur l'objet. Par défaut, les
+   * helpers `llmCompleteJSON*` de BaseAgent **throw** pour empêcher la
+   * propagation de données partielles vers le scoring déterministe et les
+   * consumers downstream.
+   *
+   * Cet opt-in autorise un agent à accepter une réponse partielle (ex:
+   * `financial-auditor` qui sait dégrader gracieusement via
+   * `checkTruncation` → limitation dans `meta.limitations[]`). À utiliser
+   * uniquement sur les rares chemins où l'agent contracte explicitement
+   * un downgrade contrôlé.
+   *
+   * Allowlist documentée — cf. guard intégré dans
+   * `src/agents/__tests__/base-agent.test.ts`.
+   */
+  allowPartialOnTruncation?: boolean;
 }
 
 export interface LLMStreamOptions extends LLMCallOptions {
@@ -75,6 +95,14 @@ export interface ValidatedLLMResult<T> {
   model?: string;
   validationErrors?: string[];
   resolution: "model_success" | "schema_recovered" | "terminal_fallback";
+  /**
+   * Phase C slice C1c — `true` quand le router a détecté une troncature
+   * et que l'agent a opt-in (`allowPartialOnTruncation: true`). Le flag
+   * survit même si Zod strip `_wasTruncated` à la validation. À utiliser
+   * pour ajouter une limitation user-facing (ex: `checkTruncation` de
+   * BaseAgent).
+   */
+  wasTruncated?: boolean;
 }
 
 // ============================================================================
@@ -474,6 +502,10 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
     model?: string;
     raw?: string;
     usage?: { inputTokens: number; outputTokens: number };
+    // Phase C slice C1c — `true` si le router a injecté `_wasTruncated`
+    // ET que l'agent a opt-in (`allowPartialOnTruncation: true`). Sans
+    // opt-in, le helper throw avant ce retour.
+    wasTruncated?: boolean;
   }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
     const systemPrompt = this.buildFullSystemPrompt(options.systemPrompt);
@@ -512,15 +544,35 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       } : undefined
     );
 
-    return result;
+    // Phase C C1c — REL-006 fail-closed sur troncature détectée par le
+    // router (cf. `_wasTruncated` injecté ligne 794 de router.ts).
+    const wasTruncated = this.assertNotTruncatedResult(
+      result.data,
+      "llmCompleteJSON",
+      options.allowPartialOnTruncation,
+    );
+
+    // Omet `wasTruncated` quand false pour préserver la rétrocompat des
+    // tests qui font `toEqual({ data, cost, model, ... })` strict.
+    return wasTruncated ? { ...result, wasTruncated: true } : result;
   }
 
   /**
-   * Check if LLM response was truncated and add limitation (F54).
+   * Check if LLM response was truncated and add limitation (F54 + C1c).
    * Call at the beginning of normalizeResponse() with the raw LLM data.
+   *
+   * Phase C slice C1c — `wasTruncatedOverride` permet aux agents qui
+   * passent par `llmCompleteJSONValidated` de signaler la troncature
+   * même si Zod a strip le flag `_wasTruncated` à la validation. Quand
+   * `wasTruncatedOverride === true`, la limitation est ajoutée même si
+   * `data._wasTruncated` n'est plus présent.
    */
-  protected checkTruncation(data: Record<string, unknown>): boolean {
-    if (data._wasTruncated === true) {
+  protected checkTruncation(
+    data: Record<string, unknown>,
+    wasTruncatedOverride?: boolean,
+  ): boolean {
+    const isTruncated = data._wasTruncated === true || wasTruncatedOverride === true;
+    if (isTruncated) {
       console.warn(`[${this.config.name}] Response was truncated — analysis may be incomplete`);
       const meta = (data.meta ?? {}) as Record<string, unknown>;
       if (!Array.isArray(meta.limitations)) {
@@ -534,6 +586,38 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       return true;
     }
     return false;
+  }
+
+  /**
+   * Phase C slice C1c — Helper centralisé fail-closed sur troncature.
+   *
+   * Si `data._wasTruncated === true` :
+   *   - Sans opt-in : throw avec message clair.
+   *   - Avec opt-in `allowPartialOnTruncation: true` : retourne `true`
+   *     pour permettre au caller de propager `wasTruncated` dans son
+   *     résultat (et l'agent ajoutera la limitation via `checkTruncation`).
+   *
+   * Centralise la logique pour les 4 helpers `llmCompleteJSON*`. Réutilisé
+   * par `llmCompleteJSONValidated` AVANT `schema.safeParse` car Zod peut
+   * strip `_wasTruncated` (champ non déclaré dans le schéma).
+   */
+  private assertNotTruncatedResult<T>(
+    data: T,
+    helperName: string,
+    allowPartial: boolean | undefined,
+  ): boolean {
+    const dataObj = data as unknown as Record<string, unknown> | null;
+    const isTruncated = dataObj != null && dataObj._wasTruncated === true;
+    if (!isTruncated) return false;
+    if (!allowPartial) {
+      throw new Error(
+        `[${this.config.name}] LLM JSON response was truncated and auto-repaired; ` +
+          `refusing partial data (${helperName}). ` +
+          `Pass \`allowPartialOnTruncation: true\` in the LLM options if this agent ` +
+          `knows how to safely degrade with a limitation in meta.`,
+      );
+    }
+    return true;
   }
 
   /**
@@ -560,14 +644,22 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
           model,
         });
 
+        // Phase C C1c — capture `wasTruncated` AVANT `schema.safeParse`
+        // car Zod peut strip le flag `_wasTruncated` (champ non déclaré
+        // par le schéma). `llmCompleteJSON` aurait déjà thrown si pas
+        // d'opt-in, donc `result.wasTruncated === true` implique que
+        // l'agent a opt-in et veut le propager.
+        const wasTruncated = result.wasTruncated === true;
+
         const parsed = schema.safeParse(result.data);
         if (parsed.success) {
-          return {
+          const base: ValidatedLLMResult<T> = {
             data: parsed.data,
             cost: result.cost,
             model: result.model,
             resolution: "model_success",
           };
+          return wasTruncated ? { ...base, wasTruncated: true } : base;
         }
 
         schemaErrorsLast = parsed.error.issues.map(
@@ -589,13 +681,14 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
               "Schema recovered via fallbackDefaults merge"
             );
 
-            return {
+            const recovered: ValidatedLLMResult<T> = {
               data: retryParsed.data,
               cost: result.cost,
               model: result.model,
               validationErrors: schemaErrorsLast,
               resolution: "schema_recovered",
             };
+            return wasTruncated ? { ...recovered, wasTruncated: true } : recovered;
           }
         }
 
@@ -672,7 +765,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   protected async llmCompleteJSONWithFallback<T>(
     prompt: string,
     options: LLMCallOptions = {}
-  ): Promise<{ data: T; cost: number }> {
+  ): Promise<{ data: T; cost: number; wasTruncated?: boolean }> {
     const timeoutMs = options.timeoutMs ?? this.config.timeoutMs;
     const systemPrompt = this.buildFullSystemPrompt(options.systemPrompt);
     const temperature = options.temperature ?? 0.2;
@@ -708,7 +801,14 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       } : undefined
     );
 
-    return result;
+    // Phase C C1c — REL-006 fail-closed sur troncature.
+    const wasTruncated = this.assertNotTruncatedResult(
+      result.data,
+      "llmCompleteJSONWithFallback",
+      options.allowPartialOnTruncation,
+    );
+
+    return wasTruncated ? { ...result, wasTruncated: true } : result;
   }
 
   // Helper to call LLM with streaming response
@@ -791,6 +891,21 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       throw new Error(
         `Failed to parse LLM streaming response after ${result.continuationAttempts} continuation attempts. ` +
         `Response was ${result.wasTruncated ? "truncated" : "malformed"}.`
+      );
+    }
+
+    // Phase C C1c — REL-006 fail-closed sur troncature.
+    // `completeJSONStreaming` retourne `wasTruncated: true` quand
+    // l'auto-continuation est épuisée (`maxContinuations`) ou quand le
+    // merge partiel reste incomplet. Si la continuation a réussi,
+    // `wasTruncated: false`, donc pas de throw — l'agent reçoit un JSON
+    // complet (cf. doc decisional Codex C1c).
+    if (result.wasTruncated === true && !options.allowPartialOnTruncation) {
+      throw new Error(
+        `[${this.config.name}] LLM streaming response was truncated and auto-repaired; ` +
+          `refusing partial data (llmCompleteJSONStreaming). ` +
+          `Pass \`allowPartialOnTruncation: true\` in the LLM options if this agent ` +
+          `knows how to safely degrade with a limitation in meta.`,
       );
     }
 

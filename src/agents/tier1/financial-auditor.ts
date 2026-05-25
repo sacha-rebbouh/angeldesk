@@ -659,9 +659,19 @@ MONTRE tes calculs.
 }
 \`\`\``;
 
-    const { data, validationErrors } = await this.llmCompleteJSONValidated<LLMFinancialAuditResponse>(
+    const {
+      data,
+      validationErrors,
+      wasTruncated: llmWasTruncated,
+    } = await this.llmCompleteJSONValidated<LLMFinancialAuditResponse>(
       prompt,
       FinancialAuditResponseSchema as unknown as z.ZodSchema<LLMFinancialAuditResponse>,
+      {
+        // Phase C C1c — financial-auditor sait dégrader gracieusement via
+        // `checkTruncation` (ajoute une limitation `meta.limitations[]`).
+        // Allowlisté dans `c1c-truncation-fail-closed.guard.test.ts`.
+        allowPartialOnTruncation: true,
+      },
     );
     if (validationErrors?.length) {
       console.warn(`[financial-auditor] Zod validation: ${validationErrors.length} issues — using best-effort data`);
@@ -713,8 +723,10 @@ MONTRE tes calculs.
       console.error("[financial-auditor] Deterministic scoring failed, using LLM score:", err);
     }
 
-    // Validate and normalize response
-    const result = this.normalizeResponse(data, sector, stage);
+    // Validate and normalize response.
+    // Phase C C1c — propage `llmWasTruncated` car Zod a pu strip
+    // `_wasTruncated` du `data` à la validation.
+    const result = this.normalizeResponse(data, sector, stage, llmWasTruncated === true);
     if (validationErrors?.length) {
       result.meta.dataCompleteness = "minimal";
       result.meta.confidenceLevel = Math.min(result.meta.confidenceLevel, 40);
@@ -776,10 +788,14 @@ MONTRE tes calculs.
   private normalizeResponse(
     data: LLMFinancialAuditResponse,
     sector: string,
-    stage: string
+    stage: string,
+    wasTruncated: boolean = false,
   ): FinancialAuditData {
-    // Check for truncation (F54)
-    this.checkTruncation(data as unknown as Record<string, unknown>);
+    // Check for truncation (F54 + Phase C C1c).
+    // Phase C C1c — `wasTruncated` override permet de signaler la
+    // troncature même quand Zod a strip `_wasTruncated` via
+    // `llmCompleteJSONValidated`.
+    this.checkTruncation(data as unknown as Record<string, unknown>, wasTruncated);
 
     // Normalize meta
     const validCompleteness = ["complete", "partial", "minimal"] as const;
