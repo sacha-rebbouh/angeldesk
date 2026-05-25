@@ -60,3 +60,6 @@ storybook-static
 # Phase B14/B15/B16/B17 audit evidence (screenshots, PDFs, reports, runner output)
 # — re-generable on demand, do not pollute git history.
 /scripts/debug/
+
+# scratch / audit handoff (Codex audits, draft docs, ad-hoc dumps)
+/temp/
