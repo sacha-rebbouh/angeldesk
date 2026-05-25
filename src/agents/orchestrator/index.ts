@@ -2438,6 +2438,23 @@ export class AgentOrchestrator {
       const allSuccess = Object.values(allResults).every((r) => r.success);
       const orchestrationSummary = stateMachine.getSummary();
 
+      await saveCheckpoint(analysis.id, {
+        state: "COMPLETED",
+        completedAgents: Object.keys(allResults),
+        pendingAgents: [],
+        failedAgents: Object.entries(allResults)
+          .filter(([, result]) => !result.success)
+          .map(([agent, result]) => ({
+            agent,
+            error: result.error ?? "no error msg",
+            retries: 1,
+          })),
+        findings: extractAllFindings(allResults).allFindings,
+        results: allResults,
+        totalCost,
+        startTime: new Date(startTime).toISOString(),
+      });
+
       await completeAnalysis({
         analysisId: analysis.id,
         success: allSuccess,
@@ -4877,6 +4894,23 @@ export class AgentOrchestrator {
         `[Orchestrator:Resume] Saving final results: ${Object.keys(allResults).length} total ` +
         `(${successCount} success, ${failCount} failed), completedCount=${completedCount}, allSuccess=${allSuccess}`
       );
+
+      await saveCheckpoint(analysis.id, {
+        state: "COMPLETED",
+        completedAgents: Object.keys(allResults),
+        pendingAgents: [],
+        failedAgents: Object.entries(allResults)
+          .filter(([, result]) => !result.success)
+          .map(([agent, result]) => ({
+            agent,
+            error: result.error ?? "no error msg",
+            retries: 1,
+          })),
+        findings: extractAllFindings(allResults).allFindings,
+        results: allResults,
+        totalCost,
+        startTime: new Date(startTime).toISOString(),
+      });
 
       // SAFETY: Never overwrite existing results with fewer entries
       const existingResultsRaw = await loadResults(analysis.id, {
