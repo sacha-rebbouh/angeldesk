@@ -22,6 +22,7 @@ import {
 } from "@/services/deals/canonical-read-model";
 import { getCurrentFacts, getDisputedFacts, formatFactStoreForAgents } from "@/services/fact-store";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { loadResults } from "@/services/analysis-results/load-results";
 import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
 
@@ -1241,6 +1242,13 @@ REGLES:
         systemPrompt: buildFallbackSystemPrompt(
           "Tu es un analyste qui dedoublonne semantiquement les points de consensus, de friction et les questions produits par un board d'analystes IA. Tu ne produis AUCUN jugement d'investissement, tu fais de la fusion de formulations redondantes uniquement."
         ),
+      });
+
+      // Phase C C1d-2 — fail-closed sur troncature LLM (helper partagé).
+      // Une dédup tronquée pourrait omettre silencieusement des points
+      // de friction critiques avant agrégation board.
+      assertCompletionNotTruncated(result.data, {
+        caller: "board-orchestrator.semanticDedup",
       });
 
       // Validate the response structure

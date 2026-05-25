@@ -1,5 +1,6 @@
 import type { ModelKey } from "@/services/openrouter/client";
 import { setAgentContext, completeJSON } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { compressBoardContext, buildDealSummary } from "./context-compressor";
 import {
   formatAxisPromptLine,
@@ -68,6 +69,11 @@ export class BoardMember {
       this.timeout<never>(THESIS_DEBATE_TIMEOUT_MS, "Thesis debate timeout"),
     ]);
 
+    // Phase C C1d-2 — fail-closed sur troncature LLM (helper partagé).
+    assertCompletionNotTruncated(result.data, {
+      caller: `board-member.${this.id}.thesisDebate`,
+    });
+
     this.totalCost += result.cost;
 
     return {
@@ -94,6 +100,11 @@ export class BoardMember {
       }),
       this.timeout<never>(ANALYSIS_TIMEOUT_MS, "Analysis timeout"),
     ]);
+
+    // Phase C C1d-2 — fail-closed sur troncature LLM (helper partagé).
+    assertCompletionNotTruncated(result.data, {
+      caller: `board-member.${this.id}.initialAnalysis`,
+    });
 
     this.totalCost += result.cost;
 
@@ -127,6 +138,11 @@ export class BoardMember {
       this.timeout<never>(DEBATE_TIMEOUT_MS, "Debate timeout"),
     ]);
 
+    // Phase C C1d-2 — fail-closed sur troncature LLM (helper partagé).
+    assertCompletionNotTruncated(result.data, {
+      caller: `board-member.${this.id}.debateResponse`,
+    });
+
     this.totalCost += result.cost;
 
     return {
@@ -159,6 +175,11 @@ export class BoardMember {
       }),
       this.timeout<never>(VOTE_TIMEOUT_MS, "Vote timeout"),
     ]);
+
+    // Phase C C1d-2 — fail-closed sur troncature LLM (helper partagé).
+    assertCompletionNotTruncated(result.data, {
+      caller: `board-member.${this.id}.finalVote`,
+    });
 
     this.totalCost += result.cost;
 
