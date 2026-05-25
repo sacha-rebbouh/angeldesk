@@ -399,6 +399,44 @@ describe("AnalysisStateMachine — transition-triggered checkpoints", () => {
 
     await sm.fail(new Error("cleanup"));
   });
+
+  it("flushCheckpoint persists completed agent results immediately", async () => {
+    const sm = createStateMachine({
+      enableCheckpointing: true,
+      checkpointInterval: 999_999_999,
+    });
+
+    await sm.start();
+    await sm.startGathering();
+    await sm.startAnalysis();
+    await new Promise((r) => setTimeout(r, 10));
+    mockSaveCheckpoint.mockClear();
+
+    sm.recordAgentComplete("deck-forensics", {
+      agentName: "deck-forensics",
+      success: true,
+      executionTimeMs: 123,
+      cost: 0.12,
+      data: { verdict: "contrasted" as const } as never,
+    });
+
+    await sm.flushCheckpoint();
+
+    expect(mockSaveCheckpoint).toHaveBeenCalledTimes(1);
+    expect(mockSaveCheckpoint.mock.calls[0]?.[1]).toMatchObject({
+      state: "ANALYZING",
+      completedAgents: ["deck-forensics"],
+      pendingAgents: ["financial-auditor"],
+      results: {
+        "deck-forensics": expect.objectContaining({
+          success: true,
+          data: { verdict: "contrasted" },
+        }),
+      },
+    });
+
+    await sm.fail(new Error("cleanup"));
+  });
 });
 
 // ============================================================================

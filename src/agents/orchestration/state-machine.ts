@@ -572,6 +572,17 @@ export class AnalysisStateMachine {
   }
 
   /**
+   * Persist the current checkpoint immediately.
+   *
+   * Used after expensive agent batches so crash recovery does not depend on the
+   * periodic checkpoint timer firing before the serverless runtime is killed.
+   */
+  async flushCheckpoint(): Promise<void> {
+    if (!this.config.enableCheckpointing) return;
+    await this.createCheckpoint(true);
+  }
+
+  /**
    * Restore from an in-memory checkpoint
    */
   restoreFromCheckpoint(checkpoint: AnalysisCheckpoint): void {

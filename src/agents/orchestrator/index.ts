@@ -2762,6 +2762,7 @@ export class AgentOrchestrator {
       }
 
       await updateAnalysisProgress(analysisId, completedCount, params.initialTotalCost + totalCost);
+      await stateMachine?.flushCheckpoint();
 
       const phaseSuccessCount = phaseResults.filter(r => r.result.success).length;
       const phaseFailCount = phaseResults.length - phaseSuccessCount;
