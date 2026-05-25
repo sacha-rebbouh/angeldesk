@@ -5,6 +5,7 @@
 import { prisma } from "@/lib/prisma";
 import { compileDealContext, serializeContext } from "@/lib/live/context-compiler";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { publishSessionStatus } from "@/lib/live/ably-server";
 import { recordSessionDuration } from "@/services/live-session-limits";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
@@ -201,7 +202,7 @@ Pour confidenceDelta, estime l'évolution de confiance basée sur les informatio
 Pour wasFromCoaching dans questionsAsked, identifie si la question posée correspond à une suggestion de coaching card.
 ${screenCaptures.length > 0 ? "Intègre les findings visuels (données extraites des slides, contradictions visuelles) dans les sections correspondantes du rapport (newInformation, contradictions, etc.)." : ""}`;
 
-  const { data: rawReport } = await runWithLLMContext(
+  const reportResult = await runWithLLMContext(
     { agentName: "post-call-report" },
     () =>
       completeJSON<PostCallReport>(prompt, {
@@ -210,6 +211,16 @@ ${screenCaptures.length > 0 ? "Intègre les findings visuels (données extraites
         systemPrompt: POST_CALL_SYSTEM_PROMPT,
       })
   );
+
+  // Phase C C1d-4 — fail-closed strict sur troncature LLM. Le
+  // `PostCallReport` est persisté (`SessionSummary`) et déclenche la
+  // re-analyse Tier 1 via `triggerTargetedReanalysis`. Un partial = trigger
+  // sur input incomplet → cascade de mauvais signaux downstream.
+  assertCompletionNotTruncated(reportResult.data, {
+    caller: "post-call-report",
+  });
+
+  const { data: rawReport } = reportResult;
 
   // Sanitize: LLM may return undefined for optional array fields → default to []
   const report: PostCallReport = {

@@ -8,6 +8,7 @@
 
 import type { SpeakerRole, UtteranceClassification } from "./types";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { sanitizeTranscriptText } from "@/lib/live/sanitize";
 
 // ============================================================================
@@ -163,6 +164,11 @@ async function classifyWithLLM(
           }
         )
     );
+
+    // Phase C C1d-4 — fail-closed strict sur troncature LLM. Le throw
+    // remonte au `catch` ligne ~196 qui retourne le fallback
+    // `strategy_reveal` (fail-open existant — meilleur sur-trigger qu'omission).
+    assertCompletionNotTruncated(result.data, { caller: "utterance-router" });
 
     const { classification, confidence } = result.data;
 

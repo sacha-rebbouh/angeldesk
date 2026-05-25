@@ -11,6 +11,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { compileDealContext, serializeContext } from "@/lib/live/context-compiler";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
 import type { CondensedTranscriptIntel, PostCallReport } from "@/lib/live/types";
@@ -145,7 +146,7 @@ Schéma attendu :
   "confidenceDelta": { "direction": "up"|"down"|"stable", "reason": "..." }
 }`;
 
-  const { data } = await runWithLLMContext(
+  const condenserResult = await runWithLLMContext(
     { agentName: "transcript-condenser" },
     () =>
       completeJSON<CondensedTranscriptIntel>(prompt, {
@@ -155,6 +156,16 @@ Schéma attendu :
         temperature: 0.2,
       })
   );
+
+  // Phase C C1d-4 — fail-closed strict sur troncature LLM. La sortie
+  // alimente `post-call-reanalyzer` (identifyImpactedAgents → trigger
+  // orchestrator Tier 1). Un partial propage l'erreur jusqu'au caller
+  // post-call qui logge et skip — pas de re-analyse sur input incomplet.
+  assertCompletionNotTruncated(condenserResult.data, {
+    caller: "transcript-condenser",
+  });
+
+  const { data } = condenserResult;
 
   // Sanitize: ensure all arrays are present (LLM may omit empty arrays)
   return {

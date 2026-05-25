@@ -10,6 +10,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { serializeContext } from "@/lib/live/context-compiler";
 import { getVisualContextWithFallback } from "@/lib/live/visual-processor";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
@@ -230,6 +231,12 @@ export async function generateCoachingSuggestion(
       console.warn("[coaching-engine] 5s timeout exceeded. Skipping card.");
       return NO_RESPONSE;
     }
+
+    // Phase C C1d-4 — fail-closed strict sur troncature LLM. Le throw
+    // remonte au catch englobant (cf. fonction parent) qui retourne
+    // `NO_RESPONSE` — dégradation propre via fallback existant, jamais
+    // de coaching card construite à partir d'un JSON partiel.
+    assertCompletionNotTruncated(raceResult.data, { caller: "coaching-engine" });
 
     const response = raceResult.data;
 

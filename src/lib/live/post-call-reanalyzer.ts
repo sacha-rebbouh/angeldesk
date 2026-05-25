@@ -4,6 +4,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { loadResults } from "@/services/analysis-results/load-results";
 import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
@@ -346,7 +347,7 @@ ${sessionContext}
 
 Génère un DeltaReport JSON. Pour impactedAgents, liste les noms d'agents dont l'analyse serait modifiée (ex: "financial-auditor", "team-investigator", etc.).`;
 
-  const { data: deltaReport } = await runWithLLMContext(
+  const deltaResult = await runWithLLMContext(
     { agentName: "post-call-delta" },
     () =>
       completeJSON<DeltaReport>(prompt, {
@@ -356,5 +357,13 @@ Génère un DeltaReport JSON. Pour impactedAgents, liste les noms d'agents dont 
       })
   );
 
-  return deltaReport;
+  // Phase C C1d-4 — fail-closed strict sur troncature LLM. Le
+  // `DeltaReport.impactedAgents` détermine quels Tier 1 sont re-runned
+  // par l'orchestrateur. Un partial = mauvais set d'agents → ré-analyse
+  // ciblée incomplète.
+  assertCompletionNotTruncated(deltaResult.data, {
+    caller: "post-call-delta",
+  });
+
+  return deltaResult.data;
 }

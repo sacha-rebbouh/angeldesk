@@ -8,6 +8,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { publishCardAddressed } from "@/lib/live/ably-server";
 import { sanitizeTranscriptText } from "@/lib/live/sanitize";
 
@@ -106,6 +107,12 @@ Quelles cartes ont été substantiellement adressées par ce que le BA vient de 
           temperature: 0.2,
         })
     );
+
+    // Phase C C1d-4 — fail-closed strict sur troncature LLM. Le throw
+    // remonte au `catch` ligne ~122 qui retourne `[]` — fallback
+    // existant (jamais d'auto-dismiss sur erreur), pas de consommation
+    // de JSON partiel.
+    assertCompletionNotTruncated(result.data, { caller: "auto-dismiss" });
 
     const { addressedCardIds } = result.data;
 
