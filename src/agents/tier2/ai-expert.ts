@@ -160,7 +160,12 @@ const AIVerdictSchema = z.object({
   technicalCredibility: z.enum(["high", "medium", "low"]).describe("Credibilite technique de l'equipe"),
   moatStrength: z.enum(["strong", "moderate", "weak", "none"]).describe("Force du moat"),
   scalabilityRisk: z.enum(["low", "medium", "high"]).describe("Risque sur la scalabilite"),
-  recommendation: z.enum(["STRONG_AI_PLAY", "SOLID_AI_PLAY", "AI_CONCERNS", "NOT_REAL_AI"]).describe("Recommandation finale"),
+  // Phase A slice A8c — ancienne valeur borderline AI renommée en
+  // `AI_NATIVE_UNCONFIRMED` (wording analytique non prescriptif, cf.
+  // doctrine 2 strates). La valeur reste LLM-facing/locale ; le mapping
+  // runtime canonique vers `NOT_RECOMMENDED` (cf. ligne ~724) reste
+  // inchangé.
+  recommendation: z.enum(["STRONG_AI_PLAY", "SOLID_AI_PLAY", "AI_CONCERNS", "AI_NATIVE_UNCONFIRMED"]).describe("Recommandation finale"),
   keyInsight: z.string().describe("Insight cle pour l'investisseur"),
 });
 
@@ -529,7 +534,7 @@ Verifie au minimum:
 - Credibilite technique: high / medium / low
 - Force du moat: strong / moderate / weak / none
 - Risque scalabilite: low / medium / high
-- Recommandation: STRONG_AI_PLAY / SOLID_AI_PLAY / AI_CONCERNS / NOT_REAL_AI
+- Recommandation: STRONG_AI_PLAY / SOLID_AI_PLAY / AI_CONCERNS / AI_NATIVE_UNCONFIRMED
 
 ### 8. SCORE ET SYNTHESE
 - Score /100 avec breakdown par dimension
@@ -555,7 +560,7 @@ Le JSON doit suivre EXACTEMENT cette structure:
   "greenFlags": [{ "flag": string, "strength": "strong"|"moderate", "evidence": string, "implication": string }],
   "dbComparison": { "similarDealsFound": number, "thisDealsPosition": string },
   "sectorQuestions": [{ "question": string, "category": string, "priority": "must_ask"|"should_ask"|"nice_to_have", "why": string, "greenFlagAnswer": string, "redFlagAnswer": string }],
-  "aiVerdict": { "isRealAI": boolean, "technicalCredibility": "high"|"medium"|"low", "moatStrength": "strong"|"moderate"|"weak"|"none", "scalabilityRisk": "low"|"medium"|"high", "recommendation": "STRONG_AI_PLAY"|"SOLID_AI_PLAY"|"AI_CONCERNS"|"NOT_REAL_AI", "keyInsight": string },
+  "aiVerdict": { "isRealAI": boolean, "technicalCredibility": "high"|"medium"|"low", "moatStrength": "strong"|"moderate"|"weak"|"none", "scalabilityRisk": "low"|"medium"|"high", "recommendation": "STRONG_AI_PLAY"|"SOLID_AI_PLAY"|"AI_CONCERNS"|"AI_NATIVE_UNCONFIRMED", "keyInsight": string },
   "sectorScore": number (0-100),
   "scoreBreakdown": { "technicalDepth": number (0-25), "moatStrength": number (0-25), "unitEconomics": number (0-25), "scalability": number (0-25) },
   "executiveSummary": string,
@@ -721,6 +726,10 @@ function buildExtendedData(raw: AIExpertOutput, completenessLevel: string, rawSc
       cappedScore,
     },
     verdict: {
+      // Phase A slice A8c — `AI_NATIVE_UNCONFIRMED` (renommée depuis
+      // l'ancienne valeur borderline AI) tombe dans le fallback
+      // `NOT_RECOMMENDED` du canonique runtime (mapping inchangé, valeurs
+      // LLM-facing renommées en amont).
       recommendation: raw.aiVerdict.recommendation === "STRONG_AI_PLAY" ? "STRONG_FIT" :
                       raw.aiVerdict.recommendation === "SOLID_AI_PLAY" ? "GOOD_FIT" :
                       raw.aiVerdict.recommendation === "AI_CONCERNS" ? "MODERATE_FIT" : "NOT_RECOMMENDED",

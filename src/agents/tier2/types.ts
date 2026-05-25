@@ -359,7 +359,12 @@ export interface ExtendedSectorData {
     technicalCredibility: "high" | "medium" | "low";
     moatStrength: "strong" | "moderate" | "weak" | "none";
     scalabilityRisk: "low" | "medium" | "high";
-    recommendation: "STRONG_AI_PLAY" | "SOLID_AI_PLAY" | "AI_CONCERNS" | "NOT_REAL_AI";
+    // Phase A slice A8c — ancienne valeur borderline AI renommée en
+    // `AI_NATIVE_UNCONFIRMED` (LLM-facing analytique, cf. doctrine 2
+    // strates). Le canal user-facing canonique
+    // `_extended.verdict.recommendation` reste inchangé via mapping
+    // runtime (ai-expert.ts → fallback `NOT_RECOMMENDED`).
+    recommendation: "STRONG_AI_PLAY" | "SOLID_AI_PLAY" | "AI_CONCERNS" | "AI_NATIVE_UNCONFIRMED";
     keyInsight: string;
   };
 

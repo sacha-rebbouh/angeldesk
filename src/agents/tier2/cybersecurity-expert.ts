@@ -185,7 +185,12 @@ const CyberVerdictSchema = z.object({
   consolidationRisk: z.enum(["low", "medium", "high", "critical"]),
   moatStrength: z.enum(["strong", "moderate", "weak", "none"]),
   unitEconomicsHealth: z.enum(["excellent", "good", "acceptable", "concerning", "critical"]),
-  recommendation: z.enum(["STRONG_SECURITY_PLAY", "SOLID_SECURITY_PLAY", "SECURITY_CONCERNS", "AVOID"]),
+  // Phase A slice A8c — ancienne valeur prescriptive sectorielle renommée
+  // en `CRITICAL_SECURITY_CONCERNS` (wording analytique non prescriptif,
+  // cf. doctrine 2 strates). La valeur reste LLM-facing/locale ; le
+  // mapping runtime canonique vers `NOT_RECOMMENDED` (cf. ligne ~667)
+  // reste inchangé.
+  recommendation: z.enum(["STRONG_SECURITY_PLAY", "SOLID_SECURITY_PLAY", "SECURITY_CONCERNS", "CRITICAL_SECURITY_CONCERNS"]),
   keyInsight: z.string(),
 });
 
@@ -550,7 +555,7 @@ Verifie au minimum:
 - Risque de consolidation: low / medium / high / critical
 - Force du moat: strong / moderate / weak / none
 - Sante unit economics: excellent / good / acceptable / concerning / critical
-- Recommandation: STRONG_SECURITY_PLAY / SOLID_SECURITY_PLAY / SECURITY_CONCERNS / AVOID
+- Recommandation: STRONG_SECURITY_PLAY / SOLID_SECURITY_PLAY / SECURITY_CONCERNS / CRITICAL_SECURITY_CONCERNS
 
 ### 9. SCORE ET SYNTHESE
 - Score /100 avec breakdown par dimension
@@ -662,6 +667,10 @@ function buildExtendedData(raw: CybersecurityExpertOutput, completenessLevel: st
       justification: raw.executiveSummary,
     },
     verdict: {
+      // Phase A slice A8c — `CRITICAL_SECURITY_CONCERNS` (renommée depuis
+      // l'ancienne valeur prescriptive sectorielle) tombe dans le fallback
+      // `NOT_RECOMMENDED` du canonique runtime (mapping inchangé, valeurs
+      // LLM-facing renommées en amont).
       recommendation: raw.verdict.recommendation === "STRONG_SECURITY_PLAY" ? "STRONG_FIT" :
                       raw.verdict.recommendation === "SOLID_SECURITY_PLAY" ? "GOOD_FIT" :
                       raw.verdict.recommendation === "SECURITY_CONCERNS" ? "MODERATE_FIT" : "NOT_RECOMMENDED",
