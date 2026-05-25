@@ -285,6 +285,60 @@ export const READINESS_LABELS: Record<string, string> = {
 };
 
 // =============================================================================
+// Tier 2 — Sector fit labels (Phase A slice A8b)
+// =============================================================================
+//
+// Source de vérité pour les libellés user-facing du verdict sectoriel
+// canonique exposé par `ExtendedSectorData.verdict.recommendation`
+// (5 valeurs : STRONG_FIT | GOOD_FIT | MODERATE_FIT | POOR_FIT |
+// NOT_RECOMMENDED).
+//
+// Consumers :
+//   - UI : `src/components/deals/tier2-results.tsx` (`SECTOR_FIT_CONFIG`
+//     emprunte ces libellés ; les classes Tailwind + icônes restent
+//     locales au consumer pour permettre l'évolution du design system).
+//   - PDF : `src/lib/pdf/pdf-sections/tier2-expert.tsx` (`<ExtendedVerdict>`
+//     remplace le rendu brut `verdict.recommendation.replace(/_/g, " ")`
+//     par un lookup ici).
+//
+// Wording doctrinaire (cf. § doctrine 2 strates) : tous les libellés sont
+// formulés en termes d'adéquation sectorielle (fit), pas en termes
+// d'instruction d'investissement. `NOT_RECOMMENDED` est verbalisé "Hors
+// profil sectoriel" et non "Ne pas investir" (l'enum interne canonique
+// n'est PAS renommé en Phase A — décision Codex A8 audit point 1).
+
+export type Tier2SectorFitValue =
+  | "STRONG_FIT"
+  | "GOOD_FIT"
+  | "MODERATE_FIT"
+  | "POOR_FIT"
+  | "NOT_RECOMMENDED";
+
+export const TIER2_SECTOR_FIT_LABELS: Record<Tier2SectorFitValue, string> = {
+  STRONG_FIT: "Forte adéquation sectorielle",
+  GOOD_FIT: "Bonne adéquation sectorielle",
+  MODERATE_FIT: "Adéquation sectorielle modérée",
+  POOR_FIT: "Adéquation sectorielle faible",
+  NOT_RECOMMENDED: "Hors profil sectoriel",
+};
+
+/**
+ * Résout un libellé Tier 2 doctrinaire à partir d'une valeur sectorielle
+ * canonique. Retourne `null` si la valeur n'est pas dans l'enum (cas
+ * dégradé — le consumer décide d'afficher un fallback ou rien).
+ *
+ * Lecture seule — aucune dérivation runtime ne doit transiter par ce
+ * helper.
+ */
+export function getTier2SectorFitLabel(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  if (value in TIER2_SECTOR_FIT_LABELS) {
+    return TIER2_SECTOR_FIT_LABELS[value as Tier2SectorFitValue];
+  }
+  return null;
+}
+
+// =============================================================================
 // Evidence Solidity — axe 2 du modèle 2 axes (solidité des preuves)
 // =============================================================================
 //
