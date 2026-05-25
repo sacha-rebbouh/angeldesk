@@ -17,6 +17,7 @@
  */
 
 import { completeJSON } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { getFiveAntiHallucinationDirectives } from "@/agents/orchestration/prompts/anti-hallucination";
 import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
 
@@ -329,6 +330,11 @@ ${context}
     complexity: "simple", // Fast model is sufficient for post-processing
     temperature: 0.3,
   });
+
+  // Phase C C1d-3 — fail-closed sur troncature LLM (helper partagé).
+  // Le plan de négociation est persisté et affiché ; un partial omet des
+  // critical conditions ou negotiation points.
+  assertCompletionNotTruncated(result.data, { caller: "negotiation-strategist" });
 
   const response = result.data;
 

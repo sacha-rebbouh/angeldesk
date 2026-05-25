@@ -6,6 +6,7 @@
  */
 
 import { completeJSON } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { z } from "zod";
 
 // Schema for the LLM response
@@ -76,6 +77,12 @@ Extrais les conditions en JSON (schema: valuationPre, amountRaised, dilutionPct,
     temperature: 0.1,
     maxTokens: 2000,
   });
+
+  // Phase C C1d-3 — fail-closed sur troncature LLM (helper partagé)
+  // AVANT Zod safeParse, car Zod strip les champs inconnus dont
+  // `_wasTruncated`. Un term sheet tronqué silencieusement persisterait
+  // une `DealTermsVersion` incomplète en DB.
+  assertCompletionNotTruncated(result.data, { caller: "term-sheet-extractor" });
 
   // Validate with Zod (completeJSON only parses JSON, doesn't validate schema)
   const parsed = extractionResponseSchema.safeParse(result.data);

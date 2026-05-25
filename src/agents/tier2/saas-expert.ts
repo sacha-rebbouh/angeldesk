@@ -18,6 +18,7 @@ import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertData, SectorExpertResult, SectorExpertType } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
 import { completeJSON, setAgentContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 
 // ============================================================================
 // OUTPUT SCHEMA
@@ -714,6 +715,11 @@ export const saasExpert = {
         complexity: "complex",
         temperature: 0.3,
       });
+
+      // Phase C C1d-3 — fail-closed sur troncature LLM (helper partagé)
+      // AVANT Zod safeParse, car Zod strip les champs inconnus dont
+      // `_wasTruncated`.
+      assertCompletionNotTruncated(rawJson, { caller: "saas-expert" });
 
       // Validate response
       let parsedOutput: SaaSExpertOutput;

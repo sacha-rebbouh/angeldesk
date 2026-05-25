@@ -25,6 +25,7 @@ import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertData, SectorExpertResult, SectorExpertType, ExtendedSectorData } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
 import { completeJSON, setAgentContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 
 // ============================================================================
 // AI-SPECIFIC PATTERNS (Qualitative data - stable)
@@ -810,6 +811,11 @@ export const aiExpert = {
         complexity: "complex",
         temperature: 0.3,
       });
+
+      // Phase C C1d-3 — fail-closed sur troncature LLM (helper partagé)
+      // AVANT Zod safeParse, car Zod strip les champs inconnus dont
+      // `_wasTruncated`.
+      assertCompletionNotTruncated(response.data, { caller: "ai-expert" });
 
       // Parse and validate response
       let parsedOutput: AIExpertOutput;

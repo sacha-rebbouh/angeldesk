@@ -1,4 +1,5 @@
 import { completeJSON, ensureLLMContext } from "@/services/openrouter/router";
+import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import type { ModelKey } from "@/services/openrouter/client";
 
 import type { ExcelExtractionResult } from "./extractor";
@@ -127,6 +128,11 @@ async function runExcelAnalystCompletion(
       model,
     });
 
+    // Phase C C1d-3 — fail-closed sur troncature LLM (helper partagé).
+    // L'`ExcelAnalystReport` est persisté et consommé par financial-auditor ;
+    // un partial fausserait l'analyse financière.
+    assertCompletionNotTruncated(result.data, { caller: "excel-analyst" });
+
     return {
       report: result.data,
       cost: result.cost,
@@ -152,6 +158,13 @@ async function runExcelAnalystCompletion(
       model,
       temperature: 0,
       maxTokens: 2400,
+    });
+
+    // Phase C C1d-3 — fail-closed sur troncature LLM (helper partagé),
+    // y compris sur le chemin retry où `maxTokens` est réduit à 2400 et
+    // donc plus susceptible de tronquer.
+    assertCompletionNotTruncated(retryResult.data, {
+      caller: "excel-analyst.retry",
     });
 
     return {
