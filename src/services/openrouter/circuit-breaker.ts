@@ -22,6 +22,11 @@ export interface CircuitBreakerConfig {
   requestTimeout: number;
 }
 
+export interface CircuitBreakerExecuteOptions {
+  /** Optional per-call timeout override in ms. Defaults to config.requestTimeout. */
+  timeoutMs?: number;
+}
+
 export interface CircuitStats {
   state: CircuitState;
   failures: number;
@@ -78,7 +83,10 @@ export class CircuitBreaker {
   /**
    * Execute a function through the circuit breaker
    */
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
+  async execute<T>(
+    fn: () => Promise<T>,
+    options: CircuitBreakerExecuteOptions = {}
+  ): Promise<T> {
     this.stats.totalRequests++;
 
     // Check circuit state
@@ -95,7 +103,7 @@ export class CircuitBreaker {
 
     try {
       // Execute with timeout
-      const result = await this.executeWithTimeout(fn);
+      const result = await this.executeWithTimeout(fn, options.timeoutMs);
       this.onSuccess();
       return result;
     } catch (error) {
@@ -145,13 +153,14 @@ export class CircuitBreaker {
   // PRIVATE METHODS
   // ============================================================================
 
-  private async executeWithTimeout<T>(fn: () => Promise<T>): Promise<T> {
+  private async executeWithTimeout<T>(fn: () => Promise<T>, timeoutMs?: number): Promise<T> {
     let timeoutId: NodeJS.Timeout | undefined;
+    const effectiveTimeoutMs = timeoutMs ?? this.config.requestTimeout;
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(
-        () => reject(new Error(`Request timeout after ${this.config.requestTimeout}ms`)),
-        this.config.requestTimeout
+        () => reject(new Error(`Request timeout after ${effectiveTimeoutMs}ms`)),
+        effectiveTimeoutMs
       );
     });
 

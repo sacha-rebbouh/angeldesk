@@ -152,6 +152,31 @@ describe("CircuitBreaker — default config", () => {
 });
 
 // ============================================================================
+// PER-CALL TIMEOUT OVERRIDE
+// ============================================================================
+
+describe("CircuitBreaker — per-call timeout override", () => {
+  it("honors execute(..., { timeoutMs }) instead of the default requestTimeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const cb = new CircuitBreaker({
+        requestTimeout: 1_000,
+        failureThreshold: 10,
+      });
+
+      const result = cb.execute(() => new Promise(() => {}), { timeoutMs: 25 });
+      const assertion = expect(result).rejects.toThrow("Request timeout after 25ms");
+
+      await vi.advanceTimersByTimeAsync(25);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ============================================================================
 // STATE TRANSITIONS
 // ============================================================================
 

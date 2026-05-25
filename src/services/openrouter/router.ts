@@ -412,17 +412,19 @@ export async function complete(
       // Execute through circuit breaker. The timeout must abort the provider
       // request itself, not only the caller waiting on it; otherwise a parent
       // agent can fail while the LLM call continues burning real provider cost.
-      const response = await circuitBreaker.execute(() =>
-        openrouter.chat.completions.create(
-          {
-            model: model.id,
-            messages: effectiveMessages,
-            max_tokens: effectiveMaxTokens,
-            temperature: effectiveTemperature,
-            ...(responseFormat ? { response_format: responseFormat } : {}),
-          },
-          { signal: controller.signal }
-        )
+      const response = await circuitBreaker.execute(
+        () =>
+          openrouter.chat.completions.create(
+            {
+              model: model.id,
+              messages: effectiveMessages,
+              max_tokens: effectiveMaxTokens,
+              temperature: effectiveTemperature,
+              ...(responseFormat ? { response_format: responseFormat } : {}),
+            },
+            { signal: controller.signal }
+          ),
+        { timeoutMs }
       );
       clearTimeout(timeoutId);
       timeoutId = undefined;
@@ -1085,17 +1087,19 @@ export async function stream(
 
     // Execute through circuit breaker with streaming
     try {
-      const streamResponse = await circuitBreaker.execute(() =>
-        openrouter.chat.completions.create(
-          {
-            model: model.id,
-            messages,
-            max_tokens: maxTokens,
-            temperature,
-            stream: true,
-          },
-          { signal: controller.signal }
-        )
+      const streamResponse = await circuitBreaker.execute(
+        () =>
+          openrouter.chat.completions.create(
+            {
+              model: model.id,
+              messages,
+              max_tokens: maxTokens,
+              temperature,
+              stream: true,
+            },
+            { signal: controller.signal }
+          ),
+        { timeoutMs }
       );
 
       // Sync circuit breaker state to distributed store (fire-and-forget)
@@ -1320,17 +1324,19 @@ export async function completeJSONStreaming<T>(
       let outputTokens = 0;
 
       try {
-        const streamResponse = await circuitBreaker.execute(() =>
-          openrouter.chat.completions.create(
-            {
-              model: model.id,
-              messages,
-              max_tokens: maxTokens,
-              temperature,
-              stream: true,
-            },
-            { signal: controller.signal }
-          )
+        const streamResponse = await circuitBreaker.execute(
+          () =>
+            openrouter.chat.completions.create(
+              {
+                model: model.id,
+                messages,
+                max_tokens: maxTokens,
+                temperature,
+                stream: true,
+              },
+              { signal: controller.signal }
+            ),
+          { timeoutMs }
         );
 
         // Sync circuit breaker state to distributed store (fire-and-forget)
