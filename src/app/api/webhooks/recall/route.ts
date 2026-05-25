@@ -7,7 +7,47 @@ import { generateAndSavePostCallReport } from "@/lib/live/post-call-generator";
 import { handleApiError } from "@/lib/api-error";
 import type { SessionStatus } from "@/lib/live/types";
 
-export const maxDuration = 10;
+// Phase C slice C1b — REL-003 : `maxDuration` aligné avec stop/retry-report
+// (300s). Le payload `done` peut déclencher `generateAndSavePostCallReport`
+// via `after(...)` qui lance un Sonnet call (~6-15s) + condensation +
+// trigger reanalyze. Sans 300s, le rapport pouvait être tronqué/perdu
+// silencieusement avec `maxDuration=10` qui correspondait à une simple
+// borne d'enqueue.
+export const maxDuration = 300;
+
+/**
+ * Phase C slice C1b round 2 — SEC-002 : quadruple-guard strict avec
+ * opt-in explicite pour le bypass de la vérification Svix.
+ *
+ * Aligné sur le pattern `DEV_MODE` de `src/lib/auth.ts:6-10` (qui exige
+ * `BYPASS_AUTH=true`) et `BYPASS_AUTH` de `src/proxy.ts:21-25`. Empêche
+ * qu'un déploiement preview, self-hosted, ou un environnement Docker
+ * avec `NODE_ENV=development` laissé par accident désactive la
+ * vérification de signature.
+ *
+ * Bypass autorisé uniquement si LES QUATRE conditions sont réunies :
+ *   - `NODE_ENV === "development"` (Next runtime local)
+ *   - `RECALL_WEBHOOK_BYPASS_SIGNATURE === "true"` (opt-in explicite —
+ *     le développeur doit le poser intentionnellement dans son `.env.local`)
+ *   - `VERCEL_ENV !== "production"` (filet contre l'override)
+ *   - `!VERCEL` (set sur tous les déploiements Vercel — preview inclus)
+ *
+ * Le opt-in explicite (`RECALL_WEBHOOK_BYPASS_SIGNATURE=true`) protège
+ * spécifiquement le cas self-hosted Docker / non-Vercel où `NODE_ENV`
+ * peut rester sur "development" par accident sans que VERCEL soit set.
+ * Sans ce flag, le bypass est refusé même en runtime local.
+ *
+ * Évalué à chaque appel (pas au module load) pour permettre tests via
+ * `vi.stubEnv`.
+ */
+function isLocalDevRuntime(): boolean {
+  return (
+    process.env.NODE_ENV === "development" &&
+    process.env.RECALL_WEBHOOK_BYPASS_SIGNATURE === "true" &&
+    process.env.VERCEL_ENV !== "production" &&
+    !process.env.VERCEL
+  );
+}
 
 // POST /api/webhooks/recall — Receive bot status events from Recall.ai
 export async function POST(request: NextRequest) {
@@ -15,7 +55,7 @@ export async function POST(request: NextRequest) {
     // ── Verify Svix webhook signature ──
     const rawBody = await request.text();
     const webhookSecret = process.env.RECALL_WEBHOOK_SECRET;
-    const isDev = process.env.NODE_ENV === "development";
+    const isDev = isLocalDevRuntime();
 
     const svixHeaders = {
       svixId: request.headers.get("svix-id"),
@@ -27,7 +67,7 @@ export async function POST(request: NextRequest) {
       const isValid = verifySvixSignature(rawBody, svixHeaders, webhookSecret);
       if (!isValid) {
         if (isDev) {
-          console.warn("[recall-webhook] Svix signature invalid — BYPASSED in dev mode");
+          console.warn("[recall-webhook] Svix signature invalid — BYPASSED in local dev runtime");
         } else {
           return NextResponse.json(
             { error: "Invalid webhook signature" },
@@ -36,7 +76,7 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (!isDev) {
-      // In production, require signature verification
+      // In production / preview / Vercel, require signature verification.
       console.error("[recall-webhook] Missing webhook secret or Svix headers");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
