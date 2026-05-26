@@ -251,14 +251,20 @@ export const CUSTOMER_INTEL_CRITERIA: ScoringCriteriaMap = {
   },
 };
 
+// Doctrine anti-oraculaire : "Return Potential" basé sur `expected_multiple`
+// + `irr_best_case` (projections inventées par le LLM) remplacé par
+// `Observed Comparable Returns` basé sur `observed_multiple_ceiling`
+// (multiple max OBSERVÉ sur les exits comparables réels de la Funding DB).
+// Le scoring exit reste à 100% (30+25+25+20) mais l'axe "potentiel"
+// est désormais ancré sur des faits historiques, pas sur une projection.
 export const EXIT_STRATEGIST_CRITERIA: ScoringCriteriaMap = {
   "Exit Viability": {
     weight: 30,
     metrics: ["exit_viability_score", "scenario_count"],
   },
-  "Return Potential": {
+  "Observed Comparable Returns": {
     weight: 25,
-    metrics: ["expected_multiple", "irr_best_case"],
+    metrics: ["observed_multiple_ceiling"],
   },
   "Liquidity Risk": {
     weight: 25,

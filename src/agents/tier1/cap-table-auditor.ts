@@ -11,8 +11,12 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { getBenchmark } from "@/services/benchmarks";
-import { simulateWaterfall, type WaterfallInput } from "@/services/waterfall-simulator";
+// `simulateWaterfall` retiré de l'agent (doctrine anti-oraculaire).
+// Il reste exporté depuis `@/services/waterfall-simulator` pour usage
+// éventuel par un outil de sensibilité UI (à venir), où l'investisseur
+// fournit ses hypothèses d'exit.
 import { calculateAgentScore, CAP_TABLE_AUDITOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, formatCapTableCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * CAP TABLE AUDITOR - REFONTE v2.0
@@ -544,7 +548,15 @@ Si le Context Engine fournit des benchmarks de dilution et de valorisation, les 
       ? `\n## Benchmark Dilution (Context Engine)\n${JSON.stringify(dilutionBenchmark, null, 2)}`
       : "";
 
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const capTableCalibration = formatCapTableCalibrationForPrompt(sectorProfile);
+
     const prompt = `# ANALYSE CAP TABLE - ${context.canonicalDeal.name || "Deal"}
+
+${sectorBlock}
+
+${capTableCalibration ?? "## CALIBRATION CAP TABLE\n\nSecteur de type tech/SaaS — cadrage venture standard applicable (Seed → A → B → C → exit)."}
 
 ## CONTEXTE DU DEAL
 ${dealContext}
@@ -659,81 +671,22 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
 
     const { data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(prompt);
 
-    // F76: Run waterfall simulation if cap table data is available from LLM response
-    let waterfallSection = "";
-    if (data.findings?.ownershipBreakdown && data.findings?.roundTerms?.liquidationPreference) {
-      try {
-        const ownership = data.findings.ownershipBreakdown;
-        const terms = data.findings.roundTerms;
-        const baInvestment = context.canonicalDeal.amountRequested != null ? Number(context.canonicalDeal.amountRequested) * 0.10 : 50000;
-        const postMoney = terms.postMoneyValuation ?? (
-          (terms.preMoneyValuation ?? 0) + (terms.roundSize ?? 0)
-        );
-        const baPct = postMoney > 0 ? (baInvestment / postMoney) * 100 : 0;
-
-        const waterfallInput: WaterfallInput = {
-          exitValuation: 0, // set per scenario
-          investors: [
-            ...(ownership.investors ?? []).map(inv => ({
-              name: inv.name,
-              investedAmount: inv.percentage > 0 && postMoney > 0
-                ? (inv.percentage / 100) * postMoney
-                : 0,
-              ownershipPercent: inv.percentage,
-              liquidationPreference: {
-                multiple: terms.liquidationPreference.multiple ?? 1,
-                type: terms.liquidationPreference.type === "unknown"
-                  ? "non_participating" as const
-                  : terms.liquidationPreference.type,
-              },
-              isBA: false,
-            })),
-            {
-              name: "Business Angel (vous)",
-              investedAmount: baInvestment,
-              ownershipPercent: baPct,
-              liquidationPreference: {
-                multiple: terms.liquidationPreference.multiple ?? 1,
-                type: terms.liquidationPreference.type === "unknown"
-                  ? "non_participating" as const
-                  : terms.liquidationPreference.type,
-              },
-              isBA: true,
-            },
-          ],
-          founders: (ownership.founders ?? []).map(f => ({
-            name: f.name,
-            ownershipPercent: f.percentage,
-          })),
-          esopPercent: ownership.optionPool?.size ?? 0,
-        };
-
-        // Simulate at 3 exit valuations: low, medium, high
-        const exitVals = postMoney > 0
-          ? [postMoney * 0.5, postMoney * 2, postMoney * 5]
-          : [1_000_000, 5_000_000, 15_000_000];
-
-        const waterfallResults = simulateWaterfall(waterfallInput, exitVals);
-
-        waterfallSection = "\n\n## SIMULATION WATERFALL (calcul pre-LLM)\n";
-        for (const scenario of waterfallResults) {
-          waterfallSection += `\n### Exit a ${(scenario.exitValuation / 1_000_000).toFixed(1)}M€ (${scenario.exitMultiple}x):\n`;
-          for (const d of scenario.distributions) {
-            waterfallSection += `- ${d.name}: ${(d.amount / 1_000).toFixed(0)}K€ (${d.percentOfExit.toFixed(1)}%)`;
-            if (d.returnMultiple !== null) waterfallSection += ` = ${d.returnMultiple.toFixed(1)}x`;
-            waterfallSection += `\n`;
-          }
-          if (scenario.baReturn) {
-            waterfallSection += `**Votre retour:** ${(scenario.baReturn.amount / 1_000).toFixed(0)}K€ = ${scenario.baReturn.multiple.toFixed(1)}x\n`;
-          }
-          if (scenario.warnings.length > 0) {
-            waterfallSection += `⚠️ ${scenario.warnings.join("; ")}\n`;
-          }
-        }
-      } catch (e) {
-        console.warn(`[cap-table-auditor] Waterfall simulation failed: ${e}`);
-      }
-    }
+    // Doctrine anti-oraculaire : le bloc "SIMULATION WATERFALL" qui
+    // pré-injectait dans le prompt 3 scénarios d'exit hardcodés
+    // (0.5x/2x/5x post-money) avec "Votre retour: X.Xx" a été retiré.
+    // Pattern identique à `scenario-modeler` dégagé en amont — le système
+    // ne pose pas les multiples d'exit ; il les obtient de l'investisseur
+    // via un outil de sensibilité (chantier UI à venir).
+    //
+    // Ce qui reste pour l'analyse cap-table :
+    //   - L'agent dispose de `ownershipBreakdown` (qui détient quoi) et
+    //     de `roundTerms.liquidationPreference` (structure : multiple,
+    //     type participating/non, seniority) via les findings LLM.
+    //   - Il analyse TEXTUELLEMENT le mécanisme de liquidation pref
+    //     dans `narrative.summary`, sans projection chiffrée.
+    //   - Le `simulateWaterfall` reste disponible comme utilitaire mais
+    //     n'est plus appelé depuis l'agent — il est destiné à l'outil
+    //     de sensibilité UI où l'investisseur fournit ses hypothèses.
 
     // Build dbCrossReference
     const dbCrossReference: DbCrossReference = {
@@ -920,22 +873,29 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
           : [],
       },
       dbCrossReference,
-      redFlags: Array.isArray(data.redFlags)
-        ? data.redFlags.map((rf, index) => ({
-            id: rf.id ?? `rf-captable-${String(index + 1).padStart(3, "0")}`,
-            category: rf.category ?? "cap_table",
-            severity: validSeverities.includes(rf.severity as typeof validSeverities[number])
-              ? rf.severity as typeof validSeverities[number]
-              : "MEDIUM",
-            title: rf.title ?? "Red flag non specifie",
-            description: rf.description ?? "",
-            location: rf.location ?? "Non specifie",
-            evidence: rf.evidence ?? "Non disponible",
-            impact: rf.impact ?? "Impact a evaluer",
-            question: rf.question ?? "A clarifier avec le fondateur",
-            redFlagIfBadAnswer: rf.redFlagIfBadAnswer ?? "A evaluer selon la reponse",
-          }))
-        : [],
+      // Filet de sécurité déterministe : drop les red flags cap-table
+      // SaaS non-applicables au secteur (cadence venture Seed→A→B→C,
+      // ESOP, vesting agressif sur consumer / bio / hardware / etc.).
+      redFlags: applySectorRedFlagFilter(
+        Array.isArray(data.redFlags)
+          ? data.redFlags.map((rf, index) => ({
+              id: rf.id ?? `rf-captable-${String(index + 1).padStart(3, "0")}`,
+              category: rf.category ?? "cap_table",
+              severity: validSeverities.includes(rf.severity as typeof validSeverities[number])
+                ? rf.severity as typeof validSeverities[number]
+                : "MEDIUM",
+              title: rf.title ?? "Red flag non specifie",
+              description: rf.description ?? "",
+              location: rf.location ?? "Non specifie",
+              evidence: rf.evidence ?? "Non disponible",
+              impact: rf.impact ?? "Impact a evaluer",
+              question: rf.question ?? "A clarifier avec le fondateur",
+              redFlagIfBadAnswer: rf.redFlagIfBadAnswer ?? "A evaluer selon la reponse",
+            }))
+          : [],
+        context.canonicalDeal.sector,
+        "cap-table-auditor",
+      ),
       questions: Array.isArray(data.questions)
         ? data.questions.map((q) => ({
             priority: validPriorities.includes(q.priority as typeof validPriorities[number])
@@ -956,8 +916,7 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       signalIntensity,
       narrative: {
         oneLiner: data.narrative?.oneLiner ?? "Analyse cap table incomplete - donnees manquantes",
-        summary: (data.narrative?.summary ?? "L'analyse de la cap table n'a pas pu etre completee faute de donnees suffisantes.")
-          + (waterfallSection ? "\n" + waterfallSection : ""),
+        summary: data.narrative?.summary ?? "L'analyse de la cap table n'a pas pu etre completee faute de donnees suffisantes.",
         keyInsights: Array.isArray(data.narrative?.keyInsights) ? data.narrative.keyInsights : [],
         forNegotiation: Array.isArray(data.narrative?.forNegotiation) ? data.narrative.forNegotiation : [],
       },

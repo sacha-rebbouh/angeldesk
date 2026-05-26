@@ -38,7 +38,6 @@ export const AGENT_LABELS_FR: Record<string, string> = {
   "general-expert": "Expert généraliste",
   // Tier 3
   "contradiction-detector": "Détection de contradictions",
-  "scenario-modeler": "Modélisation de scénarios",
   "synthesis-deal-scorer": "Scoring de synthèse",
   "devils-advocate": "Avocat du diable",
   "memo-generator": "Génération du mémo",

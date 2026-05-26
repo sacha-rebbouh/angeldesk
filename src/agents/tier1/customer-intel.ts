@@ -21,6 +21,7 @@ import type {
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { getBenchmark } from "@/services/benchmarks";
 import { calculateAgentScore, CUSTOMER_INTEL_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, formatCustomerCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * Customer Intel Agent - REFONTE v2.0
@@ -442,7 +443,15 @@ ${relevantBenchmarks.map((b) => `| ${b.metricName} | ${b.p25}${b.unit} | ${b.med
       }
     }
 
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const customerCalibration = formatCustomerCalibrationForPrompt(sectorProfile);
+
     const prompt = `Analyse la base clients et le Product-Market Fit de ce deal.
+
+${sectorBlock}
+
+${customerCalibration ?? "## CALIBRATION CUSTOMER METRICS\n\nSecteur de type tech/SaaS — métriques NRR / GRR / Churn / LTV-CAC standard applicables."}
 
 ${dealContext}
 ${customerDataSection}
@@ -451,15 +460,18 @@ ${contextEngineData}
 ${this.formatFactStoreData(context)}
 ## TA MISSION
 
-Produis une analyse EXHAUSTIVE de la base clients avec:
+Produis une analyse de la base clients calibrée sur le profil sectoriel ci-dessus.
+Pour un dossier tech/SaaS, le canevas reste :
 
-1. **ICP Analysis**: Qui est le client idéal? Est-ce clair?
-2. **Customer Base Audit**: Qualité et vérification des clients mentionnés
-3. **Claims Verification**: Chaque claim client du deck vérifié (min 3)
-4. **Retention Deep Dive**: NRR, GRR, Churn avec benchmarks
-5. **PMF Assessment**: Score PMF avec tests structurés
-6. **Concentration Analysis**: Risque de dépendance
-7. **Expansion Potential**: Upsell, cross-sell, virality
+1. **ICP Analysis** : qui est le client idéal ? Clair ou pas ?
+2. **Customer Base Audit** : qualité et vérification des clients mentionnés
+3. **Claims Verification** : chaque claim client du deck vérifié (min 3)
+4. **Retention Deep Dive** : NRR, GRR, Churn avec benchmarks — UNIQUEMENT si pertinent au secteur (cf. calibration ci-dessus)
+5. **PMF Assessment** : score PMF avec tests structurés (PMF se mesure différemment selon le secteur)
+6. **Concentration Analysis** : risque de dépendance
+7. **Expansion Potential** : upsell, cross-sell, virality — pertinence selon le secteur
+
+Pour un dossier non-SaaS (consumer, bio, hardware, climate), substituer les axes pertinents listés dans la calibration ci-dessus (repeat purchase, sell-through, pipeline R&D, etc.). Ne JAMAIS produire un red flag "NRR faible" ou "churn élevé" sur un secteur où ces métriques ne s'appliquent pas.
 
 ## INSTRUCTIONS CRITIQUES
 
@@ -843,6 +855,10 @@ IMPORTANT:
     } catch (err) {
       console.error("[customer-intel] Deterministic scoring failed, using LLM score:", err);
     }
+
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (NRR / churn / LTV-CAC SaaS sur consumer, bio, etc.).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "customer-intel");
 
     return result;
   }

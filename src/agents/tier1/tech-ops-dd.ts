@@ -18,6 +18,7 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, TECH_OPS_DD_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * Tech-Ops-DD Agent - Split from Technical DD v2.0
@@ -256,7 +257,17 @@ ${contextEngineData}`
 → Réduire confidenceLevel de 10-15 points
 → Marquer les benchmarks comme "estimés sans données marché"`;
 
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const applicabilityBlock = sectorProfile.techDDApplicability.applicable
+      ? `## APPLICABILITÉ — DD TECH-OPS PERTINENTE\n\nLa due diligence technique opérationnelle (maturité produit logiciel, équipe tech, sécurité applicative, IP technique logicielle) EST pertinente pour ce dossier (${sectorProfile.displayName}). Procède normalement, en calibrant tes attentes équipe tech sur le profil sectoriel ci-dessus.`
+      : `## APPLICABILITÉ — DD TECH-OPS **NON PERTINENTE** POUR CE SECTEUR\n\nLa DD tech-ops dans son acception logicielle (séniorité ingénieurs, key person risk DevOps, sécurité applicative, IP logicielle) **n'est PAS pertinente** pour ce dossier (${sectorProfile.displayName}).\n\n${sectorProfile.techDDApplicability.rationale}\n\nProduis un output structuré marqué \"non applicable\" :\n- \`score.value\` : 50 (neutre)\n- \`score.breakdown\` : tous les critères marqués \"Non applicable au secteur ${sectorProfile.displayName}\"\n- \`alertSignal.recommendation\` : \"PROCEED\" (ne JAMAIS bloquer un deal sur une DD non pertinente)\n- \`alertSignal.justification\` : explication factuelle\n- \`narrative.summary\` : la DD tech-ops logicielle ne s'applique pas — pointer vers les vraies dimensions opérationnelles du secteur (cf. profil sectoriel)\n- \`redFlags\` : **AUCUN red flag** sur l'absence de séniorité technique logicielle, l'absence de pratiques DevOps, l'absence de brevets logiciels, etc. Ces critères ne sont pas pertinents pour ${sectorProfile.displayName}.\n- \`findings\` : remplir chaque section avec \"Non applicable\" et brève justification factuelle.\n- \`questions\` : 1-2 questions tournées vers les vraies dimensions opérationnelles du secteur (supply chain, certifications, capacité production, etc.).\n\n**Règle absolue** : un seul profil tech logiciel (ou aucun) sur un dossier ${sectorProfile.displayName} **n'est PAS un red flag**. L'équipe attendue pour ce secteur est : ${sectorProfile.teamProfile.coreProfiles.join(", ")}.`;
+
     const prompt = `# ANALYSE TECH-OPS-DD - ${context.canonicalDeal.name}
+
+${sectorBlock}
+
+${applicabilityBlock}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -555,6 +566,10 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
     } catch (err) {
       console.error("[tech-ops-dd] Deterministic scoring failed, using LLM score:", err);
     }
+
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (le LLM peut désobéir aux instructions de calibration).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "tech-ops-dd");
 
     return result;
   }

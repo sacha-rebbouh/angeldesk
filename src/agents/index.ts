@@ -26,7 +26,6 @@ export {
 // Tier 3 Agents (Synthesis)
 export {
   contradictionDetector,
-  scenarioModeler,
   synthesisDealScorer,
   devilsAdvocate,
   memoGenerator,

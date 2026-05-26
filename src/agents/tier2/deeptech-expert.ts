@@ -609,7 +609,7 @@ En utilisant les données DB:
 
 ### 11. EXIT LANDSCAPE ANALYSIS
 - Acquéreurs probables (Big Tech, Pharma, Industrial)?
-- Multiple attendu basé sur technology maturity?
+- Multiples observés sur exits comparables (P25/median/P75 par technology maturity, source DB)?
 - Strategic acquirer fit analysis
 - IPO viability (rare for DeepTech, require massive scale)?
 

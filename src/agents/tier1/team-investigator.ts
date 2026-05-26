@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, TEAM_INVESTIGATOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * Team Investigator Agent - REFONTE v2.0
@@ -727,9 +728,35 @@ Si un fondateur du deck N'APPARAIT PAS comme dirigeant officiel → RED FLAG HIG
       registrySection = "\n## DONNEES REGISTRE\nVerification impossible (erreur technique ou entreprise non francaise).";
     }
 
+    // Sector-aware calibration : ajuste les attentes équipe au profil
+    // sectoriel (food n'attend pas un CTO, bio n'attend pas une équipe
+    // d'ingénieurs logiciels, etc.).
+    const sectorProfile = getSectorProfile(deal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const sectorCalibration = `## CALIBRATION DES ATTENTES ÉQUIPE — IMPORTANT
+
+Tes attentes équipe doivent être calibrées sur le profil sectoriel ci-dessus.
+
+- Pour **${sectorProfile.displayName}**, les profils ATTENDUS sont : ${sectorProfile.teamProfile.coreProfiles.join(", ")}.
+- Le poids du tech dans cette équipe est **${sectorProfile.teamProfile.techWeight}**.
+- ${sectorProfile.teamProfile.description}
+
+### Règles anti-faux-positifs
+
+- ⚠️ Ne FAIS PAS de red flag "manque de profil tech / pas de CTO" sur un dossier où le poids du tech est \`low\` ou \`none\` (consumer, bio, certains climate). Pour ces secteurs, l'absence d'ingénieurs logiciels n'est PAS un signal d'alerte.
+- ⚠️ À l'inverse, l'absence d'un profil PERTINENT POUR LE SECTEUR EST un red flag légitime :
+  - Pour ${sectorProfile.displayName} : absence de l'un des profils typiques (${sectorProfile.teamProfile.coreProfiles.slice(0, 3).join(" / ")}) selon le stade
+- ⚠️ Ne PAS pénaliser le ratio "engineers/total" pour un dossier où ce ratio n'est pas pertinent.
+- ⚠️ Ne PAS comparer la taille d'équipe à un benchmark SaaS pour un dossier non-SaaS.
+
+`;
+
     // Build user prompt
     const prompt = `# ANALYSE TEAM INVESTIGATOR - ${deal.companyName || deal.name}
 
+${sectorBlock}
+
+${sectorCalibration}
 ## DOCUMENTS FOURNIS
 ${dealContext}
 ${extractedSection}
@@ -1094,6 +1121,12 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
     if (registryRedFlags.length > 0) {
       result.redFlags = [...registryRedFlags, ...result.redFlags];
     }
+
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (le LLM peut désobéir aux instructions de calibration).
+    // Appliqué APRÈS injection registry pour ne pas filtrer les red flags
+    // d'identification officielle (toujours pertinents quel que soit le secteur).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, deal.sector, "team-investigator");
 
     return result;
   }

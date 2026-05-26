@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, TECH_STACK_DD_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * Tech-Stack-DD Agent - Split from Technical DD v2.0
@@ -199,6 +200,11 @@ Si le Context Engine fournit des données sur les stacks techniques du secteur, 
     const dealContext = this.formatDealContext(context);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const applicabilityBlock = sectorProfile.techDDApplicability.applicable
+      ? `## APPLICABILITÉ — DD TECHNIQUE PERTINENTE\n\nCette due diligence technique EST pertinente pour ce dossier (${sectorProfile.displayName}). Procède normalement, en calibrant tes attentes sur le profil sectoriel ci-dessus.`
+      : `## APPLICABILITÉ — DD TECHNIQUE **NON PERTINENTE** POUR CE SECTEUR\n\nCette due diligence logicielle (stack, dette technique, scalabilité cloud) **n'est PAS pertinente** pour ce dossier (${sectorProfile.displayName}).\n\n${sectorProfile.techDDApplicability.rationale}\n\nProduis un output structuré marqué \"non applicable\" :\n- \`score.value\` : 50 (neutre — n'indique ni signal favorable ni alerte)\n- \`score.breakdown\` : tous les critères marqués \"Non applicable au secteur ${sectorProfile.displayName}\"\n- \`alertSignal.recommendation\` : \"PROCEED\" (ne JAMAIS bloquer un deal sur la base d'une DD non pertinente)\n- \`alertSignal.justification\` : explication factuelle\n- \`narrative.summary\` : la DD logicielle ne s'applique pas à ce type de business, pointer vers les vraies dimensions de risque (cf. profil sectoriel)\n- \`narrative.keyInsights\` : 1-2 phrases sur où les vrais risques opérationnels se trouvent (supply chain, certifications, R&D selon le secteur)\n- \`redFlags\` : **AUCUN red flag** sur l'absence de stack tech, l'absence de CTO logiciel, la dette technique invisible, l'architecture cloud, etc. Ces critères ne sont pas pertinents pour ${sectorProfile.displayName}.\n- \`findings\` : remplir chaque section avec \"Non applicable\" et brève justification.\n- \`questions\` : 1-2 questions tournées vers les vraies dimensions du secteur (pas sur la stack tech).\n\n**Règle absolue** : ne JAMAIS produire un red flag CRITICAL ou HIGH pour un dossier ${sectorProfile.displayName} sur des critères logiciels qui ne s'appliquent pas à ce secteur.`;
 
     // Build tech-specific context
     let techSection = "";
@@ -213,6 +219,10 @@ Si le Context Engine fournit des données sur les stacks techniques du secteur, 
 
     const prompt = `# ANALYSE TECH-STACK-DD - ${context.canonicalDeal.name}
 
+${sectorBlock}
+
+${applicabilityBlock}
+
 ## DOCUMENTS FOURNIS
 ${dealContext}
 ${techSection}
@@ -222,9 +232,9 @@ ${contextEngineData || "Pas de données Context Engine disponibles pour ce deal.
 ${this.formatFactStoreData(context)}
 ## INSTRUCTIONS SPÉCIFIQUES
 
-1. Analyse CHAQUE composant de la stack mentionné dans les documents
+1. Analyse CHAQUE composant de la stack mentionné dans les documents — uniquement si la DD est pertinente (cf. bloc applicabilité)
 2. Pour chaque technologie, évalue: modernité, adéquation, risques
-3. Identifie les gaps dans les informations techniques (red flag si produit "en production" mais zéro détail tech)
+3. Identifie les gaps dans les informations techniques (red flag si produit "en production" mais zéro détail tech) — uniquement pour les secteurs où le tech est central
 4. Compare avec les standards du secteur si Context Engine disponible
 5. Formule des questions NON-CONFRONTATIONNELLES pour le fondateur
 6. Explique les termes techniques pour un BA non-technique
@@ -458,6 +468,10 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
     } catch (err) {
       console.error("[tech-stack-dd] Deterministic scoring failed, using LLM score:", err);
     }
+
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (le LLM peut désobéir aux instructions de calibration).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "tech-stack-dd");
 
     return result;
   }

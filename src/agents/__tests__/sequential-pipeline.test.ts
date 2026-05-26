@@ -1744,8 +1744,8 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     }
   });
 
-  // ── Step 5a: Tier 3 Batch 1 — contradiction + scenario + devils-advocate ──
-  it("Step 5a: Tier 3 Batch 1 — contradiction-detector, scenario-modeler, devils-advocate (parallel)", async () => {
+  // ── Step 5a: Tier 3 Batch 1 — contradiction + devils-advocate ──
+  it("Step 5a: Tier 3 Batch 1 — contradiction-detector, devils-advocate (parallel)", async () => {
     // Restore full results for Tier 3 (unsanitized)
     for (const [name, result] of Object.entries(allResults)) {
       enrichedContext.previousResults![name] = result;
@@ -1755,7 +1755,6 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
 
     const batch1 = [
       { name: "contradiction-detector", agent: tier3Module.contradictionDetector },
-      { name: "scenario-modeler", agent: tier3Module.scenarioModeler },
       { name: "devils-advocate", agent: tier3Module.devilsAdvocate },
     ];
 
@@ -1840,7 +1839,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
   });
 
   // ── Final: Scorecard ──
-  it("Final: All 21 agents completed — scorecard", () => {
+  it("Final: All 20 agents completed — scorecard", () => {
     const expectedAgents = [
       "fact-extractor",
       "document-extractor",
@@ -1859,7 +1858,6 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       "question-master",
       "saas-expert",
       "contradiction-detector",
-      "scenario-modeler",
       "devils-advocate",
       "synthesis-deal-scorer",
       "memo-generator",
@@ -1875,7 +1873,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     console.log(scorecard.join("\n"));
     console.log(`\nTotal cost: $${totalCost.toFixed(4)}`);
 
-    // Assert all 21 present
+    // Assert all 20 present
     const presentAgents = expectedAgents.filter((name) => allResults[name]);
     const missingAgents = expectedAgents.filter((name) => !allResults[name]);
 
@@ -1883,7 +1881,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       console.log(`\nMISSING agents: ${missingAgents.join(", ")}`);
     }
 
-    expect(presentAgents.length).toBe(21);
+    expect(presentAgents.length).toBe(20);
 
     // Show which failed
     const failed = expectedAgents.filter((name) => allResults[name] && !allResults[name].success);
@@ -1892,7 +1890,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       failed.forEach((name) => console.log(`  - ${name}: ${allResults[name].error}`));
     }
 
-    // This is the key assertion: we want 21/21 success
+    // This is the key assertion: we want 20/20 success
     expect(failed.length).toBe(0);
 
     // Assert total cost > 0 (mock costs are non-zero)

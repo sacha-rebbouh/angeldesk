@@ -2945,9 +2945,9 @@ const ExitStrategistCard = memo(function ExitStrategistCard({
                 )}>
                   {s.probability?.level} ({s.probability?.percentage}%)
                 </Badge>
-                {s.exitValuation?.estimated && (
+                {s.potentialBuyers && s.potentialBuyers.length > 0 && (
                   <p className="text-xs text-muted-foreground mt-1">
-                    {safeFixed(Number(s.exitValuation.estimated) / 1000000, 0)}M
+                    {s.potentialBuyers.slice(0, 2).map((b) => b.name).filter(Boolean).join(", ")}
                   </p>
                 )}
               </div>

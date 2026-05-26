@@ -3,7 +3,6 @@ import { ContradictionDetectorResponseSchema } from "../contradiction-detector-s
 import { ConditionsAnalystResponseSchema } from "../conditions-analyst-schema";
 import { SynthesisDealScorerResponseSchema } from "../synthesis-deal-scorer-schema";
 import { DevilsAdvocateResponseSchema } from "../devils-advocate-schema";
-import { ScenarioModelerResponseSchema } from "../scenario-modeler-schema";
 import { MemoGeneratorResponseSchema } from "../memo-generator-schema";
 
 const baseMeta = {
@@ -430,98 +429,6 @@ describe("Tier 3 Zod Schemas", () => {
     }
   });
 
-  it("ScenarioModelerResponseSchema validates valid data (Phase A A4 — dominantScenario + signalContribution, D1)", () => {
-    // Phase A slice A4 : contrat natif `dominantScenario` (renommé de
-    // `mostLikelyScenario`) + `dominantScenarioRationale` + `signalContribution`.
-    // Le recommendation.{bestScenario,worstScenario,verdict} legacy n'est plus
-    // contractuel.
-    const data = {
-      meta: baseMeta,
-      scenarios: [
-        {
-          id: "s1",
-          name: "Bull case",
-          type: "BULL",
-          probability: 20,
-          description: "Everything goes right",
-          assumptions: ["ARR grows 3x/year"],
-          timeline: "5 years",
-          financialProjection: { exitValuation: 100_000_000 },
-          investorReturn: { multiple: 10 },
-          triggers: ["Product-market fit confirmed"],
-          keyRisks: ["Competition increases"],
-        },
-      ],
-      dominantScenario: "BASE",
-      dominantScenarioRationale: "BASE 50% is the most likely trajectory per DB comparables",
-      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
-    };
-    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(true);
-  });
-
-  it("ScenarioModelerResponseSchema REJETTE `recommendation.verdict` legacy même AVEC payload natif valide (Phase A A4 round 2, .strict())", () => {
-    // Round 2 Codex : par défaut z.object strippe les unknown keys. .strict()
-    // sur le top-level rejette toute clé supplémentaire. Test : payload natif
-    // valide (dominantScenario + dominantScenarioRationale + signalContribution)
-    // + champ legacy `recommendation` en plus → doit échouer.
-    const data = {
-      meta: baseMeta,
-      scenarios: [],
-      dominantScenario: "BASE",
-      dominantScenarioRationale: "Standard trajectory",
-      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
-      recommendation: { // legacy
-        bestScenario: "s1",
-        worstScenario: "s3",
-        expectedValue: "3.5x",
-        verdict: "Risk-adjusted return is acceptable",
-      },
-    };
-    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(false);
-  });
-
-  it("ScenarioModelerResponseSchema REJETTE `mostLikelyScenario`/`mostLikelyRationale` legacy même AVEC payload natif valide (Phase A A4 round 2, .strict())", () => {
-    // Round 2 Codex : payload natif valide + champ legacy `mostLikelyScenario`
-    // + `mostLikelyRationale` en plus → doit échouer (strict rejette les clés
-    // additionnelles).
-    const data = {
-      meta: baseMeta,
-      scenarios: [],
-      dominantScenario: "BASE",
-      dominantScenarioRationale: "x",
-      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
-      mostLikelyScenario: "BASE", // legacy
-      mostLikelyRationale: "test", // legacy
-    };
-    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(false);
-  });
-
-  it("ScenarioModelerResponseSchema REJETTE type `BLACK_SWAN` legacy (Phase A A4 — alignement CATASTROPHIC)", () => {
-    // Drift schema/runtime corrigé en A4 : type aligné CATASTROPHIC.
-    const data = {
-      meta: baseMeta,
-      scenarios: [
-        {
-          id: "s1",
-          name: "Catastrophic case",
-          type: "BLACK_SWAN", // legacy enum
-          probability: 5,
-          description: "x",
-          assumptions: [],
-          timeline: "5y",
-          financialProjection: {},
-          investorReturn: {},
-          triggers: [],
-          keyRisks: [],
-        },
-      ],
-      dominantScenario: "BASE",
-      dominantScenarioRationale: "x",
-      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
-    };
-    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(false);
-  });
-
   it("MemoGeneratorResponseSchema validates valid data (Phase A A4 — signalProfile + criticalRisks, D1)", () => {
     // Phase A slice A4 : contrat natif `memo.signalProfile` + `memo.criticalRisks`.
     // L'ancien `memo.verdict.{recommendation, score, conditions}` est retiré.
@@ -572,31 +479,6 @@ describe("Tier 3 Zod Schemas", () => {
       },
     };
     expect(MemoGeneratorResponseSchema.safeParse(data).success).toBe(false);
-  });
-
-  it("ScenarioModelerResponseSchema rejects invalid probability", () => {
-    const data = {
-      meta: baseMeta,
-      scenarios: [
-        {
-          id: "s1",
-          name: "Invalid",
-          type: "BULL",
-          probability: 150,
-          description: "test",
-          assumptions: [],
-          timeline: "1y",
-          financialProjection: {},
-          investorReturn: {},
-          triggers: [],
-          keyRisks: [],
-        },
-      ],
-      dominantScenario: "BASE",
-      dominantScenarioRationale: "x",
-      signalContribution: { orientation: "contrasted", evidenceSolidity: null },
-    };
-    expect(ScenarioModelerResponseSchema.safeParse(data).success).toBe(false);
   });
 
   it("MemoGeneratorResponseSchema REJETTE criticalRisks avec severity legacy `ABSOLUTE` (Phase A A4)", () => {

@@ -34,7 +34,6 @@ import {
   calculateRuleOf40,
 } from "../orchestration";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
-import { applyTier3Coherence, injectCoherenceIntoContext } from "../orchestration/tier3-coherence";
 import { runTier1CrossValidation } from "../orchestration/tier1-cross-validation";
 import { sanitizeResultForDownstream, sanitizeAgentNarratives } from "../orchestration/result-sanitizer";
 import { costMonitor } from "@/services/cost-monitor";
@@ -953,7 +952,7 @@ export class AgentOrchestrator {
    * Run Tier 3 synthesis (requires Tier 1 results in previousResults)
    *
    * OPTIMIZED: Uses dependency graph for parallel execution
-   * - Batch 1 (parallel): contradiction-detector, scenario-modeler, devils-advocate
+   * - Batch 1 (parallel): contradiction-detector, devils-advocate
    * - Batch 2 (sequential): synthesis-deal-scorer (needs batch 1)
    * - Batch 3 (sequential): memo-generator (needs all)
    */
@@ -1200,33 +1199,10 @@ export class AgentOrchestrator {
         });
       }
 
-      // After first batch (parallel), apply Tier 3 coherence check
-      if (batch === TIER3_EXECUTION_BATCHES[0]) {
-        const coherenceResult = applyTier3Coherence(context.previousResults!);
-        if (coherenceResult.adjusted) {
-          injectCoherenceIntoContext(context.previousResults!, coherenceResult);
-          console.log(`[Tier3Synthesis] Coherence: ${coherenceResult.adjustments.length} adjustments (score was ${coherenceResult.coherenceScore}/100)`);
-        }
-        context.tier3CoherenceResult = {
-          adjusted: coherenceResult.adjusted,
-          adjustments: coherenceResult.adjustments,
-          coherenceScore: coherenceResult.coherenceScore,
-          warnings: coherenceResult.warnings,
-        };
-        // Persist coherence trace
-        await persistReasoningTrace(analysis.id, "tier3-coherence", {
-          taskDescription: "Vérification cohérence inter-agents Tier 3",
-          totalIterations: 1,
-          finalConfidence: coherenceResult.coherenceScore,
-          executionTimeMs: 0,
-          selfCritique: {
-            adjusted: coherenceResult.adjusted,
-            adjustmentCount: coherenceResult.adjustments.length,
-            adjustments: coherenceResult.adjustments,
-            warnings: coherenceResult.warnings,
-          },
-        });
-      }
+      // Tier 3 coherence check retiré : il ne servait qu'à ajuster les
+      // sorties scenario-modeler (probabilités, multiples, IRR). L'agent
+      // étant retiré du pipeline (doctrine anti-oraculaire), le check est
+      // devenu sans objet.
     }
 
     const summary = generateTier3Summary(results);
@@ -2074,7 +2050,8 @@ export class AgentOrchestrator {
       }
 
       // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
-      // Run contradiction-detector, scenario-modeler, devils-advocate in PARALLEL
+      // Run conditions-analyst, contradiction-detector, devils-advocate in PARALLEL
+      // (scenario-modeler retiré du pipeline — doctrine anti-oraculaire)
       await stateMachine.startSynthesis();
 
       const tier3AgentMap = await getTier3Agents();
@@ -2219,33 +2196,9 @@ export class AgentOrchestrator {
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
-        // STEP 5.5: TIER 3 COHERENCE CHECK (deterministic, no LLM)
-        // Adjusts scenario-modeler outputs based on scepticism, T1 scores, red flags
-        const coherenceResult = applyTier3Coherence(enrichedContext.previousResults!);
-        if (coherenceResult.adjusted) {
-          injectCoherenceIntoContext(enrichedContext.previousResults!, coherenceResult);
-          console.log(`[Orchestrator] Tier 3 coherence: ${coherenceResult.adjustments.length} adjustments applied (score was ${coherenceResult.coherenceScore}/100)`);
-        }
-        // Store coherence result for synthesis-deal-scorer access
-        enrichedContext.tier3CoherenceResult = {
-          adjusted: coherenceResult.adjusted,
-          adjustments: coherenceResult.adjustments,
-          coherenceScore: coherenceResult.coherenceScore,
-          warnings: coherenceResult.warnings,
-        };
-        // Persist coherence trace for observability
-        await persistReasoningTrace(analysis.id, "tier3-coherence", {
-          taskDescription: "Vérification cohérence inter-agents Tier 3",
-          totalIterations: 1,
-          finalConfidence: coherenceResult.coherenceScore,
-          executionTimeMs: 0,
-          selfCritique: {
-            adjusted: coherenceResult.adjusted,
-            adjustmentCount: coherenceResult.adjustments.length,
-            adjustments: coherenceResult.adjustments,
-            warnings: coherenceResult.warnings,
-          },
-        });
+        // STEP 5.5 retiré : applyTier3Coherence ajustait uniquement les
+        // sorties scenario-modeler (probabilités, multiples, IRR). L'agent
+        // étant retiré du pipeline, le check est devenu no-op.
 
       } else if (!includeFullTier3) {
         console.log(`[Orchestrator] Tier 3 pre-synthesis agents skipped (FREE plan)`);
@@ -4773,42 +4726,8 @@ export class AgentOrchestrator {
           return true;
         };
 
-        const applyResumeTier3Coherence = async (): Promise<void> => {
-          const preTier3Agents = TIER3_BATCHES_BEFORE_TIER2.flat();
-          const readyForCoherence = preTier3Agents.every((name) => allResults[name]?.success);
-          if (!readyForCoherence) {
-            return;
-          }
-
-          const coherenceResult = applyTier3Coherence(enrichedContext.previousResults!);
-          if (coherenceResult.adjusted) {
-            injectCoherenceIntoContext(enrichedContext.previousResults!, coherenceResult);
-            console.log(
-              `[Orchestrator:Resume] Tier 3 coherence: ${coherenceResult.adjustments.length} adjustments ` +
-              `(score was ${coherenceResult.coherenceScore}/100)`
-            );
-          }
-
-          enrichedContext.tier3CoherenceResult = {
-            adjusted: coherenceResult.adjusted,
-            adjustments: coherenceResult.adjustments,
-            coherenceScore: coherenceResult.coherenceScore,
-            warnings: coherenceResult.warnings,
-          };
-
-          await persistReasoningTrace(analysis.id, "tier3-coherence", {
-            taskDescription: "Vérification cohérence inter-agents Tier 3",
-            totalIterations: 1,
-            finalConfidence: coherenceResult.coherenceScore,
-            executionTimeMs: 0,
-            selfCritique: {
-              adjusted: coherenceResult.adjusted,
-              adjustmentCount: coherenceResult.adjustments.length,
-              adjustments: coherenceResult.adjustments,
-              warnings: coherenceResult.warnings,
-            },
-          });
-        };
+        // applyResumeTier3Coherence retiré : il ajustait uniquement les
+        // sorties scenario-modeler qui ne fait plus partie du pipeline.
 
         await hydrateTier3Context();
         restoreFullTier3Context();
@@ -4817,7 +4736,6 @@ export class AgentOrchestrator {
           for (const batch of TIER3_BATCHES_BEFORE_TIER2) {
             await runResumeTier3Batch(batch);
           }
-          await applyResumeTier3Coherence();
         }
 
         if (
@@ -4869,10 +4787,8 @@ export class AgentOrchestrator {
           : TIER3_EXECUTION_BATCHES;
 
         for (const batch of tier3Batches) {
-          const ranBatch = await runResumeTier3Batch(batch);
-          if (!isFullAnalysis && ranBatch && batch === TIER3_EXECUTION_BATCHES[0]) {
-            await applyResumeTier3Coherence();
-          }
+          await runResumeTier3Batch(batch);
+          // Tier 3 coherence retiré : ne servait qu'à scenario-modeler.
         }
       }
 

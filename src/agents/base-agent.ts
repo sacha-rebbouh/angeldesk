@@ -1276,7 +1276,7 @@ ${sanitizedDeal.description}
       "question-master": { PITCH_DECK: 85, FINANCIAL_MODEL: 70, CAP_TABLE: 70, TERM_SHEET: 70, INVESTOR_MEMO: 75, FINANCIAL_STATEMENTS: 70, LEGAL_DOCS: 65, MARKET_STUDY: 75, PRODUCT_DEMO: 65, CALL_TRANSCRIPT: 75, OTHER: 45 },
     };
 
-    const tier3SynthesisAgents = new Set(["contradiction-detector", "scenario-modeler", "synthesis-deal-scorer", "devils-advocate", "memo-generator"]);
+    const tier3SynthesisAgents = new Set(["contradiction-detector", "synthesis-deal-scorer", "devils-advocate", "memo-generator"]);
     if (tier3SynthesisAgents.has(agent)) {
       return ({ FINANCIAL_MODEL: 45, FINANCIAL_STATEMENTS: 50, PITCH_DECK: 80, INVESTOR_MEMO: 80, MARKET_STUDY: 65, CAP_TABLE: 60, TERM_SHEET: 60, LEGAL_DOCS: 45, PRODUCT_DEMO: 45, CALL_TRANSCRIPT: 50, OTHER: 30 } as Record<string, number>)[documentType] ?? 0;
     }
@@ -1395,7 +1395,6 @@ ${sanitizedDeal.description}
       "question-master",
       "conditions-analyst",
       "contradiction-detector",
-      "scenario-modeler",
       "devils-advocate",
     ]);
     if (standardStructuredAgents.has(this.config.name)) {

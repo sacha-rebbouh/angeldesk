@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { RedFlagSchema, QuestionSchema, MetaSchema, ScoreSchema, AlertSignalSchema, NarrativeSchema } from "./common";
 
+// Schema aligné avec le runtime trimmé (doctrine anti-oraculaire) :
+// les champs `scenarios[].exitValuation` et `scenarios[].investorReturn`
+// (multiple, IRR, proceeds, dilution chiffrée) ont été retirés du
+// contrat de sortie. L'agent ne produit plus que des scénarios
+// qualitatifs (type, timeline, acquéreurs nommés). Le `returnSummary`
+// (expectedCase / upside / downside / probabilityWeightedReturn) est
+// également supprimé du contrat.
 export const ExitStrategistResponseSchema = z.object({
   meta: MetaSchema,
   score: ScoreSchema.extend({ grade: z.enum(["A", "B", "C", "D", "F"]).optional() }),
@@ -12,20 +19,7 @@ export const ExitStrategistResponseSchema = z.object({
       description: z.string(),
       probability: z.unknown(),
       timeline: z.unknown(),
-      exitValuation: z.unknown(),
       potentialBuyers: z.array(z.unknown()).optional(),
-      investorReturn: z.object({
-        initialInvestment: z.number(),
-        ownershipAtEntry: z.number(),
-        dilutionToExit: z.number(),
-        dilutionCalculation: z.string(),
-        ownershipAtExit: z.number(),
-        grossProceeds: z.number(),
-        proceedsCalculation: z.string(),
-        multiple: z.number(),
-        irr: z.number(),
-        irrCalculation: z.string(),
-      }),
     })),
     comparableExits: z.array(z.unknown()),
     mnaMarket: z.unknown(),

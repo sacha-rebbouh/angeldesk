@@ -29,23 +29,6 @@ export interface ConditionsAnalystResult extends AgentResult { agentName: "condi
 export interface ContradictionDetectorData { meta: AgentMeta; score: AgentScore; findings: ContradictionDetectorFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
 export interface ContradictionDetectorResult extends AgentResult { agentName: "contradiction-detector"; data: ContradictionDetectorData }
 
-// ============================================================================
-// SCENARIO MODELER AGENT
-// ============================================================================
-
-export interface SourcedAssumption { assumption: string; value: number | string; source: string; confidence: "high" | "medium" | "low" }
-export interface ScenarioYearMetrics { year: number; revenue: number; revenueSource: string; valuation: number; valuationSource: string; employeeCount: number; employeeCountSource: string }
-export interface InvestorReturnCalculation { initialInvestment: number; initialInvestmentSource: string; ownershipAtEntry: number; ownershipCalculation: string; dilutionToExit: number; dilutionSource: string; ownershipAtExit: number; ownershipAtExitCalculation: string; grossProceeds: number; proceedsCalculation: string; multiple: number; multipleCalculation: string; irr: number; irrCalculation: string; holdingPeriodYears: number }
-export interface ScenarioV2 { name: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC"; description: string; probability: { value: number; rationale: string; source: string }; assumptions: SourcedAssumption[]; metrics: ScenarioYearMetrics[]; exitOutcome: { type: "acquisition_strategic" | "acquisition_pe" | "ipo" | "secondary" | "acquihire" | "shutdown" | "zombie"; typeRationale: string; timing: string; timingSource: string; exitValuation: number; exitValuationCalculation: string; exitMultiple: number; exitMultipleSource: string }; investorReturn: InvestorReturnCalculation; keyRisks: { risk: string; source: string }[]; keyDrivers: { driver: string; source: string }[]; basedOnComparable?: { company: string; trajectory: string; relevance: string; source: string } }
-export interface SensitivityAnalysisV2 { variable: string; baseCase: { value: number; source: string }; impactOnValuation: { change: string; newValuation: number; calculation: string }[]; impactLevel: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"; impactRationale: string }
-export interface ScenarioComparable { company: string; sector: string; stage: string; trajectory: string; outcome: "success" | "moderate_success" | "struggle" | "failure"; relevance: string; source: string; keyMetrics?: { seedValuation?: number; exitValuation?: number; timeToExit?: number; peakEmployees?: number } }
-// Phase A slice A4 — `dominantScenario` renomme l'ancien `mostLikelyScenario`
-// (D1 cohérence, pas un alias legacy). `signalContribution` natif déterministe
-// (LLM ne pilote pas, dérivé runtime depuis probabilités scenarios).
-export interface ScenarioModelerFindings { scenarios: ScenarioV2[]; sensitivityAnalysis: SensitivityAnalysisV2[]; basedOnComparables: ScenarioComparable[]; breakEvenAnalysis: { monthsToBreakeven: number; breakEvenCalculation: string; requiredGrowthRate: number; growthRateSource: string; burnUntilBreakeven: number; burnCalculation: string; achievability: "ACHIEVABLE" | "CHALLENGING" | "UNLIKELY" | "UNKNOWN"; achievabilityRationale: string }; probabilityWeightedOutcome: { expectedMultiple: number; expectedMultipleCalculation: string; expectedIRR: number; expectedIRRCalculation: string; riskAdjustedAssessment: string }; dominantScenario: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC"; dominantScenarioRationale: string; signalContribution: Tier3SignalContribution }
-export interface ScenarioModelerData { meta: AgentMeta; score: AgentScore; findings: ScenarioModelerFindings; dbCrossReference: DbCrossReference; redFlags: AgentRedFlag[]; questions: AgentQuestion[]; alertSignal: AgentAlertSignal; narrative: AgentNarrative }
-export interface ScenarioModelerResult extends AgentResult { agentName: "scenario-modeler"; data: ScenarioModelerData }
-
 // Synthesis Deal Scorer Agent
 // Phase A slice A2 — `verdict` et `investmentRecommendation.action` typés
 // `Tier3Orientation` (alignement nominal — équivalent structurel à l'union

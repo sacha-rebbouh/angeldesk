@@ -41,7 +41,6 @@ const ALL_AGENT_NAMES = [
   "contradiction-detector",
   "synthesis-deal-scorer",
   "devils-advocate",
-  "scenario-modeler",
   "memo-generator",
 ];
 

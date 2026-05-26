@@ -206,10 +206,9 @@ export interface BoardInput {
       sectorExpert?: unknown;       // Sector-specific analysis
     };
 
-    // Tier 3: 5 Synthesis agents (sequential)
+    // Tier 3: 4 Synthesis agents (sequential)
     tier3?: {
       contradictionDetector?: unknown;  // Contradictions between agents
-      scenarioModeler?: unknown;        // Best/base/worst case scenarios
       synthesisDealScorer?: unknown;    // Final weighted score
       devilsAdvocate?: unknown;         // Challenge the thesis
       memoGenerator?: unknown;          // Investment memo

@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, MARKET_INTELLIGENCE_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, formatMarketCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * MARKET INTELLIGENCE AGENT - REFONTE v2.0
@@ -393,7 +394,15 @@ Dans findings.marketSize, ajoute pour sam et som :
 - Un "validated" qui est ton estimation bottom-up (PAS le chiffre du deck)
 `;
 
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const marketCalibration = formatMarketCalibrationForPrompt(sectorProfile);
+
     const prompt = `# ANALYSE MARKET INTELLIGENCE - ${context.canonicalDeal.name}
+
+${sectorBlock}
+
+${marketCalibration ?? "## CALIBRATION MARCHÉ\n\nSecteur de type tech/SaaS — cadrage TAM/SAM/SOM standard applicable."}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -703,6 +712,10 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
       ];
       result.meta.confidenceLevel = Math.min(result.meta.confidenceLevel, 40);
     }
+
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (le LLM peut désobéir aux instructions de calibration).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "market-intelligence");
 
     return result;
   }

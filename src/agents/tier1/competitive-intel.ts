@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, COMPETITIVE_INTEL_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, formatCompetitiveCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * COMPETITIVE INTEL AGENT - REFONTE v2.0
@@ -429,8 +430,16 @@ Vérifie chaque différenciateur: est-il VRAI et DURABLE?`;
       ? `\n## LEVÉE EN COURS\nMontant: €${amountRaising.toLocaleString()}\nCompare ce montant aux concurrents pour évaluer la position.`
       : "";
 
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const competitiveCalibration = formatCompetitiveCalibrationForPrompt(sectorProfile);
+
     // Build the comprehensive prompt
     const prompt = `ANALYSE CONCURRENTIELLE APPROFONDIE
+
+${sectorBlock}
+
+${competitiveCalibration ?? "## CALIBRATION CONCURRENTIELLE\n\nSecteur de type tech/SaaS — lecture standard du moat technologique + network effects + switching costs applicable."}
 
 ${dealContext}
 ${competitorsSection}
@@ -623,6 +632,11 @@ RAPPELS:
       ];
     }
 
+    // Filet de sécurité déterministe : drop les red flags moats tech
+    // non-applicables au secteur (network effects, data moat, switching
+    // costs SaaS sur consumer / bio / hardware / etc.).
+    transformed.redFlags = applySectorRedFlagFilter(transformed.redFlags, context.canonicalDeal.sector, "competitive-intel");
+
     return transformed;
   }
 
@@ -755,7 +769,8 @@ RAPPELS:
       })),
     };
 
-    // Build red flags
+    // Build red flags (le filtrage sector-aware est appliqué côté
+    // execute() où le contexte est disponible — cf. fin de execute()).
     const redFlags: AgentRedFlag[] = (data.redFlags ?? []).map((rf, idx) => ({
       id: `rf-comp-${idx + 1}`,
       category: rf.category ?? "competition",

@@ -13,6 +13,7 @@ import type {
   DbCrossReference,
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
+import { getSectorProfile, formatSectorProfileForPrompt, formatCustomerCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 import { benchmarkService } from "@/scoring";
 import { getBenchmarkFull } from "@/services/benchmarks";
 import { checkBenchmarkFreshness, formatFreshnessWarning } from "@/services/benchmarks/freshness-checker";
@@ -489,8 +490,19 @@ ${discrepancies.map((d: string) => `- ${d}`).join("\n")}
       registryVerification = "\n## VERIFICATION REGISTRE\nVerification impossible (erreur technique). Fiabilite des donnees financieres NON confirmee.";
     }
 
+    const sectorProfile = getSectorProfile(deal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const customerCalibration = formatCustomerCalibrationForPrompt(sectorProfile);
+    const financialCalibration = customerCalibration
+      ? `${customerCalibration}\n\n## CALIBRATION FINANCIÈRE — UNIT ECONOMICS\n\nLes métriques financières fondamentales (revenu, COGS, marge brute, burn, runway, BFR) restent universelles. Mais les agrégats type ARR / MRR / NRR / churn / LTV-CAC / burn multiple **sont SaaS-spécifiques** et ne s'appliquent pas à ce secteur (${sectorProfile.displayName}).\n\nPour ce dossier, lire l'unit economics sur les axes pertinents : marge unitaire brute, fréquence de réachat, retail sell-through, cycle de cash, BFR opérationnel. Ne PAS forcer un cadrage ARR / NRR si la nature du revenu n'est pas une souscription récurrente.`
+      : null;
+
     // Build user prompt
     const prompt = `# ANALYSE FINANCIAL AUDITOR - ${deal.companyName || deal.name}
+
+${sectorBlock}
+
+${financialCalibration ?? "## CALIBRATION FINANCIÈRE\n\nSecteur de type tech/SaaS — lecture standard ARR / MRR / NRR / churn / LTV-CAC / burn multiple applicable."}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -781,6 +793,10 @@ MONTRE tes calculs.
 
     // F56: Apply hard reliability penalties that the LLM might not consistently enforce
     this.applyReliabilityPenalties(result, context);
+
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (ARR / churn / burn multiple SaaS sur consumer / bio / etc.).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "financial-auditor");
 
     return result;
   }

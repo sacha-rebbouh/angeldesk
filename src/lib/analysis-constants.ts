@@ -100,7 +100,6 @@ export const TIER2_AGENTS = [
 
 export const TIER3_AGENTS = [
   "synthesis-deal-scorer",
-  "scenario-modeler",
   "devils-advocate",
   "contradiction-detector",
   "memo-generator",

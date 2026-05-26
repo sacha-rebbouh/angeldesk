@@ -617,7 +617,7 @@ En utilisant les données DB:
 
 ### 10. EXIT LANDSCAPE ANALYSIS
 - Acquéreurs probables pour cette catégorie?
-- Multiple attendu basé sur catégorie et metrics?
+- Multiples observés sur exits comparables (P25/median/P75 par catégorie et metrics, source DB)?
 - CPG strategic fit (Unilever, P&G, L'Oréal)?
 - PE interest (profitability required)?
 - IPO viability (rare for D2C, require category dominance)?

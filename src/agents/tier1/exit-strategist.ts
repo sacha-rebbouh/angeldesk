@@ -19,6 +19,7 @@ import type {
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { getExitBenchmarkFull, getTimeToLiquidity } from "@/services/benchmarks";
 import { calculateAgentScore, EXIT_STRATEGIST_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * EXIT STRATEGIST AGENT - REFONTE v2.0
@@ -81,14 +82,6 @@ interface LLMExitStrategistResponse {
         milestones: string[];
         assumptions: string[];
       };
-      exitValuation: {
-        estimated: number;
-        range: { min: number; max: number };
-        methodology: string;
-        multipleUsed: number;
-        multipleSource: string;
-        calculation: string;
-      };
       potentialBuyers?: {
         name: string;
         type: string;
@@ -96,18 +89,6 @@ interface LLMExitStrategistResponse {
         recentAcquisitions?: string[];
         likelihoodToBuy: string;
       }[];
-      investorReturn: {
-        initialInvestment: number;
-        ownershipAtEntry: number;
-        dilutionToExit: number;
-        dilutionCalculation: string;
-        ownershipAtExit: number;
-        grossProceeds: number;
-        proceedsCalculation: string;
-        multiple: number;
-        irr: number;
-        irrCalculation: string;
-      };
     }[];
     comparableExits: {
       id: string;
@@ -183,30 +164,6 @@ interface LLMExitStrategistResponse {
       deckRealism: string;
       deckRealismRationale: string;
     };
-    returnSummary: {
-      expectedCase: {
-        scenario: string;
-        probability: number;
-        multiple: number;
-        irr: number;
-      };
-      upside: {
-        scenario: string;
-        probability: number;
-        multiple: number;
-        irr: number;
-      };
-      downside: {
-        scenario: string;
-        probability: number;
-        multiple: number;
-        irr: number;
-      };
-      probabilityWeightedReturn: {
-        expectedMultiple: number;
-        calculation: string;
-      };
-    };
   };
   dbCrossReference: {
     claims: {
@@ -270,58 +227,73 @@ Tu es un Managing Director M&A senior avec 20+ ans d'expérience dans les exits 
 Tu as conseillé 200+ transactions (acquisitions, IPOs, secondaries) et vu les patterns de succès/échec.
 Tu combines la rigueur analytique d'un banker Goldman Sachs avec l'instinct d'un Partner VC expérimenté.
 
-Ta mission: Aider un Business Angel à comprendre EXACTEMENT comment il sortira de cet investissement,
-avec quels retours réalistes, et quels sont les risques de liquidité.
+Ta mission : éclairer un Business Angel sur le paysage M&A du secteur,
+les acquéreurs réalistes, les multiples observés historiquement, et les
+risques de liquidité — sans inventer de chiffres prospectifs.
+
+# DOCTRINE ANTI-ORACULAIRE (NON-NEGOCIABLE)
+
+Tu N'INVENTES JAMAIS de valorisation d'exit point-estimate, de multiple
+attendu, d'IRR projeté, ni de dilution prévisionnelle pour CE deal.
+Ces nombres ne peuvent pas être connus : les fournir, c'est mentir.
+
+À la place, tu rapportes des FAITS historiques :
+- Comparables réels du secteur (exits sourcés avec montants observés)
+- Distribution des multiples observés (P25 / médiane / P75) avec source
+- Acheteurs actifs et leurs acquisitions récentes
+- Fenêtre de sortie sectorielle (chaude / stable / refroidie)
 
 # MISSION POUR CE DEAL
 
-Analyser les scénarios de sortie réalistes pour ce deal en:
-1. Identifiant les acheteurs potentiels (stratégiques et financiers)
-2. Calculant les retours attendus avec dilution réaliste
-3. Comparant avec des exits réels du secteur
-4. Alertant sur les risques de liquidité
+1. Identifier les acheteurs potentiels (stratégiques et financiers) avec
+   sources et acquisitions récentes vérifiables
+2. Analyser le marché M&A du secteur : volume, tendance, multiples
+   observés (DB + Crunchbase + sources publiques)
+3. Décrire des scénarios de sortie QUALITATIFS (type d'acquéreur,
+   timeline plausible, jalons) — JAMAIS de valorisation chiffrée pour
+   le deal, JAMAIS d'IRR ou de multiple projeté
+4. Alerter sur les risques de liquidité documentés
 
 # METHODOLOGIE D'ANALYSE
 
-## Etape 1: Comprendre le profil de sortie
-- Identifier le secteur et sous-secteur exact
-- Analyser le business model (SaaS, Marketplace, etc.)
-- Évaluer la "acquirability" (intérêt pour les acheteurs)
-- Identifier les assets uniques (tech, data, équipe, clients)
+## Etape 1 : profil de sortie
+- Secteur et sous-secteur exact
+- Business model
+- Acquirability (intérêt observé pour des cibles similaires)
+- Assets uniques (tech, data, équipe, clients)
 
-## Etape 2: Analyser le marché M&A du secteur
-- Rechercher les exits récents dans le secteur (Context Engine / DB)
-- Calculer les multiples observés (P25, médiane, P75)
-- Identifier les acheteurs actifs et leurs critères
-- Évaluer la fenêtre de sortie actuelle
+## Etape 2 : marché M&A du secteur
+- Exits récents (Context Engine / DB / Crunchbase)
+- Multiples observés P25 / médiane / P75 avec source et période
+- Acheteurs actifs et leurs critères
+- Fenêtre de sortie actuelle
 
-## Etape 3: Modéliser les scénarios d'exit
-Pour CHAQUE scénario, calculer avec précision:
-- Timeline réaliste avec milestones
-- Valorisation à l'exit (multiple × métriques projetées)
-- Dilution cumulative jusqu'à l'exit (série par série)
-- Retour brut pour le BA (ownership × exit value)
-- IRR annualisé (formule: (retour/investissement)^(1/années) - 1)
+## Etape 3 : scénarios de sortie qualitatifs
+Pour CHAQUE scénario :
+- Type d'exit (acquisition_strategic / acquisition_pe / ipo / etc.)
+- Probabilité quantifiée (avec rationale + source)
+- Timeline plausible avec jalons
+- Acheteurs potentiels nominés
+- Description narrative
+INTERDIT : exit valuation chiffrée, IRR, multiple attendu, dilution prévisionnelle
 
-## Etape 4: Valider vs comparables réels
-- Croiser chaque projection avec des exits réels
-- Ajuster les multiples si nécessaire
-- Identifier les écarts vs marché
+## Etape 4 : valider vs comparables réels
+- Recoller chaque scénario qualitatif à des exits historiques similaires
+- Documenter les similarités et différences
 
-## Etape 5: Identifier les risques de liquidité
-- Évaluer la probabilité de chaque scénario
-- Identifier les blockers potentiels
-- Calculer le retour pondéré par les probabilités
+## Etape 5 : risques de liquidité
+- Probabilité de chaque scénario
+- Blockers potentiels documentés
+- Fenêtre de sortie
 
 # FRAMEWORK D'EVALUATION - EXIT ATTRACTIVENESS SCORE
 
 | Critère | Poids | Score 0-25 | Score 25-50 | Score 50-75 | Score 75-100 |
 |---------|-------|------------|-------------|-------------|--------------|
-| Acquirability (intérêt acheteurs) | 25% | Aucun acheteur identifiable | 1-2 acheteurs potentiels | 3-5 acheteurs actifs | Multiple acheteurs, signaux d'intérêt |
-| Multiples secteur | 20% | <3x revenue | 3-5x revenue | 5-10x revenue | >10x revenue |
-| Fenêtre de sortie | 20% | Fermée/très difficile | Refroidissement | Stable | Chaude, consolidation active |
-| Timeline réaliste | 15% | >10 ans ou très incertain | 7-10 ans | 5-7 ans | 3-5 ans avec jalons clairs |
-| Retour attendu (IRR) | 20% | <10% IRR | 10-20% IRR | 20-35% IRR | >35% IRR |
+| Acquirability (acheteurs identifiés) | 30% | Aucun acheteur identifiable | 1-2 acheteurs potentiels | 3-5 acheteurs actifs | Multiple acheteurs avec signaux |
+| Multiples observés (DB) | 25% | <3x revenue | 3-5x revenue | 5-10x revenue | >10x revenue |
+| Fenêtre de sortie | 25% | Fermée/très difficile | Refroidissement | Stable | Chaude, consolidation active |
+| Timeline plausible | 20% | >10 ans ou très incertain | 7-10 ans | 5-7 ans | 3-5 ans avec jalons clairs |
 
 # RED FLAGS SPECIFIQUES A DETECTER
 
@@ -330,110 +302,79 @@ Pour CHAQUE scénario, calculer avec précision:
    - Secteur sans précédent d'exit
    - Business model non scalable pour exit
 
-2. **CRITICAL - Unrealistic Projections**
-   - Valorisation exit du deck 5x+ vs comparables
-   - Timeline 2-3 ans pour exit alors que moyenne secteur = 7 ans
-   - IRR promis > 50% sans justification
+2. **CRITICAL - Deck Unrealistic**
+   - Valorisation exit du deck >5x au-dessus des comparables observés
+   - Timeline 2-3 ans alors que moyenne secteur = 7 ans
+   - IRR promis par les fondateurs >50% sans comparable
 
-3. **HIGH - Excessive Dilution**
-   - Dilution projetée > 80% seed→exit
-   - Plusieurs tours avant profitabilité
-   - Option pool à créer pre-exit
-
-4. **HIGH - Market Window Closing**
+3. **HIGH - Market Window Closing**
    - Activité M&A en baisse >30% YoY
    - Multiples en compression
    - Consolidation déjà faite
 
-5. **MEDIUM - Single Buyer Dependency**
+4. **MEDIUM - Single Buyer Dependency**
    - Un seul acheteur logique
    - Risque de négociation déséquilibrée
 
-6. **MEDIUM - Long Time to Exit**
+5. **MEDIUM - Long Time to Exit**
    - >7 ans avant liquidité probable
-   - Plusieurs pivots possibles avant exit
-
-# REGLES DE CALCUL
-
-## Dilution standard (à ajuster selon secteur)
-- Seed → Series A: 25-30%
-- Series A → Series B: 20-25%
-- Series B → Series C/Exit: 15-20%
-- ESOP refresh: 5-10% par round
-- Total seed→exit: 55-70% typique
-
-## Formules obligatoires
-
-IRR = (Exit Proceeds / Initial Investment)^(1/years) - 1
-
-Ownership at Exit = Initial % × (1 - Dilution_A) × (1 - Dilution_B) × ...
-
-Exit Proceeds = Exit Valuation × Ownership at Exit
-
-Expected Multiple = Σ (Scenario Probability × Scenario Multiple)
 
 # FORMAT DE SORTIE
 
-Produis un JSON structuré avec:
-- meta: dataCompleteness, confidenceLevel, limitations
-- score: value (0-100), grade, breakdown par critère
-- findings: scenarios (4+), comparableExits (3+), mnaMarket, liquidityAnalysis, returnSummary
-- dbCrossReference: claims vérifiés vs Context Engine
-- redFlags: avec les 5 composants obligatoires
-- questions: pour le fondateur avec contexte
-- alertSignal: hasBlocker, blockerReason, justification (constat factuel, pas instruction)
-- narrative: oneLiner, summary, keyInsights, forNegotiation
+Produis un JSON structuré avec :
+- meta : dataCompleteness, confidenceLevel, limitations
+- score : value (0-100), grade, breakdown par critère
+- findings : scenarios (3-5 qualitatifs), comparableExits (3+ avec montants observés), mnaMarket, liquidityAnalysis, deckClaimsAnalysis
+- dbCrossReference : claims vérifiés vs Context Engine
+- redFlags : avec les composants obligatoires
+- questions : pour le fondateur avec contexte
+- alertSignal : hasBlocker, blockerReason, justification (constat factuel)
+- narrative : oneLiner, summary, keyInsights, forNegotiation
 
 # REGLES ABSOLUES
 
-1. JAMAIS inventer de comparables - utiliser uniquement ceux du Context Engine ou sources vérifiables
-2. TOUJOURS montrer les calculs (IRR, dilution, proceeds)
-3. TOUJOURS citer la source des multiples ("DB median SaaS 2024", "Crunchbase", etc.)
+1. JAMAIS inventer de comparables — uniquement Context Engine ou sources vérifiables
+2. JAMAIS produire d'exit valuation, IRR ou multiple ATTENDU pour ce deal
+3. TOUJOURS citer la source des multiples observés ("DB median SaaS 2024", "Crunchbase 2023", etc.)
 4. QUANTIFIER les probabilités (pas juste "probable")
-5. Le scénario "failure" doit TOUJOURS être inclus avec perte totale
-6. Le BA doit pouvoir expliquer ces projections à un co-investisseur
+5. Le scénario "failure" doit TOUJOURS être inclus
+6. Si une vérification de claim du deck mentionne un multiple/IRR/valo
+   projetée par les fondateurs, le citer dans deckClaimsAnalysis avec
+   son statut (REALISTIC / OPTIMISTIC / UNREALISTIC) — sans le valider
+   par une contre-projection
 
 # EXEMPLES
 
-## Exemple de BON output (scénario):
+## Exemple de BON output (scénario) :
 {
   "type": "acquisition_strategic",
   "name": "Acquisition par acteur SaaS RH établi",
+  "description": "Consolidation par un éditeur RH européen cherchant à compléter sa suite analytics",
   "probability": {
     "level": "MEDIUM",
     "percentage": 35,
-    "rationale": "3 acteurs actifs dans le secteur, 2 acquisitions similaires en 2024",
-    "basedOn": "DB: 2 exits SaaS RH France 2024 (Lucca acquiert PayFit analytics, Workday acquiert Peakon)"
+    "rationale": "3 acteurs actifs dans le secteur, 2 acquisitions similaires observées en 2024",
+    "basedOn": "DB: Lucca acquiert PayFit analytics 2024, Workday acquiert Peakon 2024"
   },
-  "exitValuation": {
-    "estimated": 45000000,
-    "methodology": "8x ARR projeté Y5",
-    "multipleUsed": 8,
-    "multipleSource": "DB median SaaS B2B Europe exits 2023-2024: 7.2x ARR",
-    "calculation": "ARR Y5 projeté: 5.6M€ × 8 = 44.8M€, arrondi 45M€"
+  "timeline": {
+    "estimatedYears": 5,
+    "range": "4-6 ans",
+    "milestones": ["ARR > 3M€", "Coverage 5+ pays", "Intégrations API établies"],
+    "assumptions": ["Marché reste consolidé", "Pas de récession majeure"]
   },
-  "investorReturn": {
-    "initialInvestment": 50000,
-    "ownershipAtEntry": 1.67,
-    "dilutionToExit": 62,
-    "dilutionCalculation": "Seed: 100% → SerA (-28%): 72% → SerB (-22%): 56% → Pre-exit ESOP (-10%): 50.4% | Total dilution: 1 - 0.504/1 = 49.6% sur ownership, ownership finale: 1.67% × 0.504 = 0.84%",
-    "ownershipAtExit": 0.84,
-    "grossProceeds": 378000,
-    "proceedsCalculation": "45M€ × 0.84% = 378K€",
-    "multiple": 7.56,
-    "irr": 40.2,
-    "irrCalculation": "(378000/50000)^(1/5) - 1 = 7.56^0.2 - 1 = 40.2%"
-  }
+  "potentialBuyers": [
+    {"name": "Lucca", "type": "strategic", "rationale": "...", "likelihoodToBuy": "MEDIUM"}
+  ]
 }
 
-## Exemple de MAUVAIS output (à éviter):
+## Exemple de MAUVAIS output (interdit) :
 {
-  "type": "acquisition",
-  "probability": "medium",
-  "exitValuation": 50000000,
-  "investorReturn": { "multiple": 10 }
+  "type": "acquisition_strategic",
+  "exitValuation": { "estimated": 45000000, "multipleUsed": 8 },
+  "investorReturn": { "multiple": 7.56, "irr": 40.2 }
 }
-→ Aucun calcul montré, aucune source, probabilité non quantifiée.
+→ Le système invente des valorisations et IRR qu'il ne peut pas connaître.
+   Le BA porte ces hypothèses dans son propre modèle, pas l'agent.
 
 `;
   }
@@ -457,7 +398,12 @@ Produis un JSON structuré avec:
     const ticketSize = Math.min(investmentAmount * 0.10, 50000); // Generic: 10% of round, max 50K€
     const initialOwnership = (ticketSize / (valuation + investmentAmount)) * 100;
 
+    const sectorProfile = getSectorProfile(deal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+
     const prompt = `# ANALYSE EXIT STRATEGIST - ${deal.name || deal.companyName}
+
+${sectorBlock}
 
 ## DOCUMENTS ET CONTEXTE
 ${dealContext}
@@ -479,44 +425,41 @@ ${this.formatFactStoreData(context)}
 
 ## INSTRUCTIONS SPECIFIQUES
 
-1. **Scénarios obligatoires** (minimum 4):
+1. **Scénarios qualitatifs obligatoires** (3-5 minimum) :
    - Acquisition stratégique (acteur du secteur)
    - Acquisition financière (PE/Growth)
-   - IPO ou late-stage exit (si applicable)
+   - IPO ou late-stage exit (si applicable au secteur)
    - Failure (perte totale) - OBLIGATOIRE
 
-2. **Pour chaque scénario**:
-   - Probabilité chiffrée avec justification
-   - Timeline avec milestones
-   - Valorisation avec calcul montré
-   - Dilution détaillée par round
-   - Retour BA avec formule IRR
+2. **Pour chaque scénario** :
+   - Probabilité chiffrée avec rationale et source
+   - Timeline avec milestones et hypothèses
+   - Acheteurs potentiels nominés avec rationale
+   - INTERDIT : exitValuation chiffrée, IRR, multiple, dilution prévisionnelle
 
-3. **Comparables**:
+3. **Comparables** (cœur de la valeur analytique) :
    - Utiliser les exits du Context Engine si disponibles
    - Sinon, rechercher des exits publics du secteur
-   - Minimum 3 comparables avec multiples
+   - Minimum 3 comparables avec montants observés et multiples observés
 
-4. **Validation deck**:
-   - Si le deck mentionne des projections d'exit, les vérifier
-   - Comparer aux multiples réels du marché
+4. **Validation deck** :
+   - Si le deck mentionne des projections d'exit (valo, multiple, IRR), les citer dans deckClaimsAnalysis
+   - Statut : VERIFIED si cohérent avec comparables observés, OPTIMISTIC/UNREALISTIC sinon
+   - NE PAS produire de contre-projection chiffrée pour CE deal
 
-5. **Red flags à vérifier**:
+5. **Red flags à vérifier** :
    - Aucun acheteur logique = CRITICAL
-   - Projections exit irréalistes = CRITICAL
-   - Dilution > 75% = HIGH
+   - Projections deck irréalistes vs comparables = CRITICAL
    - Time to exit > 8 ans = HIGH
 
-6. **IMPORTANT - Données financières**:
-   - Si ARR = 0 ou non fourni: dataCompleteness = "minimal", confidenceLevel MAX 40%
-   - Les projections sont alors des ESTIMATIONS basées sur benchmarks sectoriels
-   - OBLIGATOIRE d'ajouter en limitation: "Projections basées sur benchmarks sectoriels, pas de données financières réelles"
-   - La methodology de chaque scénario DOIT préciser "Estimation benchmark" si pas d'ARR
+6. **IMPORTANT - Données financières** :
+   - Si ARR = 0 ou non fourni : dataCompleteness = "minimal", confidenceLevel MAX 40%
+   - L'absence de données rend les comparaisons plus indicatives
+   - OBLIGATOIRE d'ajouter en limitation : "Pas de données financières réelles, lecture indicative"
 
 Produis une analyse EXIT STRATEGIST complète au format JSON.
-Standard: Qualité M&A Goldman Sachs.
-Le BA doit pouvoir utiliser ces projections dans sa décision d'investissement.
-HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que de produire des chiffres précis non fondés.
+HONNÊTETÉ : si les données sont insuffisantes, le dire — préférer
+"Aucun comparable trouvé dans la DB" à inventer.
 
 \`\`\`json
 {
@@ -541,9 +484,7 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
         "description": "string",
         "probability": { "level": "HIGH|MEDIUM|LOW|VERY_LOW", "percentage": 0-100, "rationale": "string", "basedOn": "string" },
         "timeline": { "estimatedYears": number, "range": "string", "milestones": ["string"], "assumptions": ["string"] },
-        "exitValuation": { "estimated": number, "range": { "min": number, "max": number }, "methodology": "string", "multipleUsed": number, "multipleSource": "string", "calculation": "string" },
-        "potentialBuyers": [{ "name": "string", "type": "strategic|pe|corporate_vc", "rationale": "string", "likelihoodToBuy": "HIGH|MEDIUM|LOW" }],
-        "investorReturn": { "initialInvestment": number, "ownershipAtEntry": number, "dilutionToExit": number, "dilutionCalculation": "string", "ownershipAtExit": number, "grossProceeds": number, "proceedsCalculation": "string", "multiple": number, "irr": number, "irrCalculation": "string" }
+        "potentialBuyers": [{ "name": "string", "type": "strategic|pe|corporate_vc", "rationale": "string", "likelihoodToBuy": "HIGH|MEDIUM|LOW" }]
       }
     ],
     "comparableExits": [
@@ -567,12 +508,6 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
       "claimsFound": [{ "claim": "string", "location": "string", "status": "VERIFIED|EXAGGERATED|UNREALISTIC|NOT_VERIFIABLE", "evidence": "string" }],
       "deckRealism": "REALISTIC|OPTIMISTIC|VERY_OPTIMISTIC|UNREALISTIC",
       "deckRealismRationale": "string"
-    },
-    "returnSummary": {
-      "expectedCase": { "scenario": "string", "probability": number, "multiple": number, "irr": number },
-      "upside": { "scenario": "string", "probability": number, "multiple": number, "irr": number },
-      "downside": { "scenario": "string", "probability": number, "multiple": number, "irr": number },
-      "probabilityWeightedReturn": { "expectedMultiple": number, "calculation": "string" }
     }
   },
   "dbCrossReference": {
@@ -615,15 +550,16 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
         unit: "score", source: "Exit scenario analysis", dataReliability: "DECLARED", category: "financial",
       });
 
-      // Best-case return multiple
-      const multiples = scenarios
-        .map(s => s.investorReturn?.multiple)
+      // Observed multiple ceiling — from REAL comparable exits, not invented projections
+      const comparablesForMultiple = data.findings?.comparableExits ?? [];
+      const observedMultiples = comparablesForMultiple
+        .map(c => c.multipleArr ?? c.multipleRevenue)
         .filter((m): m is number => m != null && m > 0);
-      if (multiples.length > 0) {
-        const bestMultiple = Math.max(...multiples);
+      if (observedMultiples.length > 0) {
+        const maxObserved = Math.max(...observedMultiples);
         extractedMetrics.push({
-          name: "expected_multiple", value: Math.min(100, bestMultiple * 10),
-          unit: "score", source: "Exit scenario calculations", dataReliability: "DECLARED", category: "financial",
+          name: "observed_multiple_ceiling", value: Math.min(100, maxObserved * 10),
+          unit: "score", source: "Observed multiples in comparable exits", dataReliability: "DECLARED", category: "financial",
         });
       }
 
@@ -653,6 +589,11 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
     } catch (err) {
       console.error("[exit-strategist] Deterministic scoring failed, using LLM score:", err);
     }
+
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (NRR/ARR/churn/IRR/dette technique SaaS sur consumer/bio/
+    // hardware/climate). Cohérent avec les 9 autres agents Tier 1 sector-aware.
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "exit-strategist");
 
     return result;
   }
@@ -732,17 +673,6 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
             milestones: Array.isArray(s.timeline?.milestones) ? s.timeline.milestones : [],
             assumptions: Array.isArray(s.timeline?.assumptions) ? s.timeline.assumptions : [],
           },
-          exitValuation: {
-            estimated: s.exitValuation?.estimated ?? 0,
-            range: {
-              min: s.exitValuation?.range?.min ?? 0,
-              max: s.exitValuation?.range?.max ?? 0,
-            },
-            methodology: s.exitValuation?.methodology ?? "",
-            multipleUsed: s.exitValuation?.multipleUsed ?? 0,
-            multipleSource: s.exitValuation?.multipleSource ?? "Non sourcé",
-            calculation: s.exitValuation?.calculation ?? "",
-          },
           potentialBuyers: s.potentialBuyers?.map((b) => ({
             name: b.name ?? "",
             type: this.normalizeBuyerType(b.type),
@@ -750,18 +680,6 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
             recentAcquisitions: b.recentAcquisitions,
             likelihoodToBuy: this.normalizeLikelihood(b.likelihoodToBuy),
           })),
-          investorReturn: {
-            initialInvestment: s.investorReturn?.initialInvestment ?? ticketSize,
-            ownershipAtEntry: s.investorReturn?.ownershipAtEntry ?? initialOwnership,
-            dilutionToExit: s.investorReturn?.dilutionToExit ?? 60,
-            dilutionCalculation: s.investorReturn?.dilutionCalculation ?? "",
-            ownershipAtExit: s.investorReturn?.ownershipAtExit ?? initialOwnership * 0.4,
-            grossProceeds: s.investorReturn?.grossProceeds ?? 0,
-            proceedsCalculation: s.investorReturn?.proceedsCalculation ?? "",
-            multiple: s.investorReturn?.multiple ?? 0,
-            irr: s.investorReturn?.irr ?? 0,
-            irrCalculation: s.investorReturn?.irrCalculation ?? "",
-          },
         }))
       : [];
 
@@ -862,15 +780,6 @@ HONNÊTETÉ: Si les données sont insuffisantes, le dire clairement plutôt que 
           : [],
         deckRealism: this.normalizeDeckRealism(data.findings?.deckClaimsAnalysis?.deckRealism),
         deckRealismRationale: data.findings?.deckClaimsAnalysis?.deckRealismRationale ?? "",
-      },
-      returnSummary: {
-        expectedCase: data.findings?.returnSummary?.expectedCase ?? { scenario: "", probability: 0, multiple: 0, irr: 0 },
-        upside: data.findings?.returnSummary?.upside ?? { scenario: "", probability: 0, multiple: 0, irr: 0 },
-        downside: data.findings?.returnSummary?.downside ?? { scenario: "", probability: 0, multiple: 0, irr: 0 },
-        probabilityWeightedReturn: {
-          expectedMultiple: data.findings?.returnSummary?.probabilityWeightedReturn?.expectedMultiple ?? 0,
-          calculation: data.findings?.returnSummary?.probabilityWeightedReturn?.calculation ?? "",
-        },
       },
     };
 

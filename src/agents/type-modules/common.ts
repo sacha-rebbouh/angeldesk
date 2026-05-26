@@ -109,14 +109,6 @@ export interface EnrichedAgentContext extends AgentContext {
   // BA preferences for personalized analysis (Tier 3)
   baPreferences?: BAPreferences;
 
-  // Tier 3 coherence result (injected after T3 Batch 1)
-  tier3CoherenceResult?: {
-    adjusted: boolean;
-    adjustments: { rule: string; field: string; before: number; after: number; reason: string }[];
-    coherenceScore: number;
-    warnings: string[];
-  };
-
   // Fact Store - Verified facts extracted from documents (Tier 0)
   factStore?: CurrentFact[];
   factStoreFormatted?: string;

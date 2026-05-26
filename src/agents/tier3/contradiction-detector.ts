@@ -1045,7 +1045,7 @@ Produis un JSON avec cette structure:
       "team-investigator", "tech-stack-dd", "tech-ops-dd", "legal-regulatory", "cap-table-auditor",
       "gtm-analyst", "customer-intel", "exit-strategist", "question-master"
     ];
-    const tier3 = ["contradiction-detector", "synthesis-deal-scorer", "devils-advocate", "scenario-modeler", "memo-generator"];
+    const tier3 = ["contradiction-detector", "synthesis-deal-scorer", "devils-advocate", "memo-generator"];
 
     if (tier1.includes(agentName)) return 1;
     if (tier3.includes(agentName)) return 3;

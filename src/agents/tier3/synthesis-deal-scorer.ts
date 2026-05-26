@@ -352,7 +352,6 @@ export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData,
     const baPrefsSection = this.formatBAPreferences(context.baPreferences, deal.sector, deal.stage);
     const contradictions = this.extractContradictions(context);
     const conditionsSection = this.extractConditionsData(context);
-    const coherenceSection = this.formatCoherenceData(context);
 
     // F23: Build deal source analysis section
     const dealSourceSection = this.buildDealSourceSection(context);
@@ -391,11 +390,6 @@ ${contradictions}
 
 ## CONDITIONS D'INVESTISSEMENT (conditions-analyst)
 ${conditionsSection}
-
----
-
-## COHÉRENCE INTER-AGENTS TIER 3
-${coherenceSection}
 
 ---
 
@@ -892,46 +886,6 @@ ${Array.isArray(topConcerns) ? topConcerns.map((c: string) => `- ${c}`).join("\n
     }
 
     return "Aucun expert sectoriel Tier 2 n'a été exécuté.";
-  }
-
-  private formatCoherenceData(context: EnrichedAgentContext): string {
-    const coherence = context.tier3CoherenceResult;
-
-    if (!coherence) {
-      return "Module de cohérence Tier 3 non exécuté.";
-    }
-
-    if (!coherence.adjusted) {
-      return `**Score de cohérence**: ${coherence.coherenceScore}/100
-✅ Aucun ajustement nécessaire — les agents Tier 3 sont cohérents entre eux.`;
-    }
-
-    let output = `**Score de cohérence PRÉ-AJUSTEMENT**: ${coherence.coherenceScore}/100
-⚠️ **${coherence.adjustments.length} ajustements appliqués** aux scénarios pour corriger des incohérences inter-agents.
-
-### Ajustements effectués
-`;
-
-    for (const adj of coherence.adjustments) {
-      output += `- **[${adj.rule}]** ${adj.field}: ${adj.before} → ${adj.after} — ${adj.reason}\n`;
-    }
-
-    output += `
-### Impact sur ton analyse
-- Les scénarios que tu reçois ont DÉJÀ été ajustés par le module de cohérence
-- Les scénarios marqués **adjusted: true** ont été modifiés par rapport à l'output original de scenario-modeler
-- Les scénarios marqués **reliable: false** sont à interpréter avec prudence (scepticisme élevé)
-- **IMPORTANT**: Ton score final doit être COHÉRENT avec ces scénarios ajustés. Un deal avec CATASTROPHIC > 60% ne peut PAS avoir un score > 55.
-`;
-
-    if (coherence.warnings.length > 0) {
-      output += `\n### Avertissements\n`;
-      for (const w of coherence.warnings) {
-        output += `- ${w}\n`;
-      }
-    }
-
-    return output;
   }
 
   private extractContradictions(context: EnrichedAgentContext): string {

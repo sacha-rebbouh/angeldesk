@@ -544,13 +544,17 @@ function extractExitFindings(
 ): ScoredFinding[] {
   const result: ScoredFinding[] = [];
 
+  // Doctrine anti-oraculaire : exit-strategist ne produit plus de
+  // `scenarios[].investorReturn.multiple` ni `exitValuation.estimated`.
+  // L'ancien finding `best_return_multiple` (assessment "exceptional/
+  // above_average/etc." sur un multiple inventé par le LLM) est retiré.
+  // On extrait uniquement des findings qualitatifs : probabilité de
+  // chaque type de scénario.
   const scenarios = findings.scenarios as Array<{
     type?: string;
     name?: string;
     probability?: { percentage?: number; level?: string };
     timeline?: { estimatedYears?: number };
-    exitValuation?: { estimated?: number };
-    investorReturn?: { multiple?: number };
   }> | undefined;
 
   if (scenarios) {
@@ -564,31 +568,11 @@ function extractExitFindings(
           unit: "%",
           assessment: scenario.probability.level ?? "unknown",
           confidence: baseConfidence,
-          evidence: [
-            ...(scenario.timeline?.estimatedYears ? [{ content: `Timeline: ${scenario.timeline.estimatedYears} years` }] : []),
-            ...(scenario.investorReturn?.multiple ? [{ content: `Return multiple: ${scenario.investorReturn.multiple}x` }] : []),
-          ],
+          evidence: scenario.timeline?.estimatedYears
+            ? [{ content: `Timeline: ${scenario.timeline.estimatedYears} years` }]
+            : [],
         }));
       }
-    }
-
-    // Best case return multiple
-    const bestReturn = scenarios.reduce((max, s) => {
-      const m = s.investorReturn?.multiple ?? 0;
-      return m > max ? m : max;
-    }, 0);
-
-    if (bestReturn > 0) {
-      result.push(createScoredFinding({
-        agentName,
-        metric: "best_return_multiple",
-        category: "exit",
-        value: bestReturn,
-        unit: "x",
-        assessment: bestReturn >= 10 ? "exceptional" : bestReturn >= 5 ? "above_average" : bestReturn >= 3 ? "average" : "below_average",
-        confidence: baseConfidence,
-        evidence: [],
-      }));
     }
   }
 

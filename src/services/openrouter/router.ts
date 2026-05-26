@@ -231,7 +231,6 @@ export function selectModel(complexity: TaskComplexity, agentName?: string): Mod
     // Tier 3 synthesis agents need stronger reasoning
     "synthesis-deal-scorer": "GEMINI_PRO",
     "contradiction-detector": "GEMINI_PRO",
-    "scenario-modeler": "GEMINI_PRO",
     "devils-advocate": "GEMINI_PRO",
     "memo-generator": "GEMINI_PRO",
     // Board members already specify their models via options.model

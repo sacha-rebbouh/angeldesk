@@ -1751,7 +1751,6 @@ describe("Agent Pipeline Tests", () => {
     // ------ TIER 3 AGENTS ------
     const tier3Agents = [
       "contradiction-detector",
-      "scenario-modeler",
       "devils-advocate",
       "synthesis-deal-scorer",
       "memo-generator",
@@ -1765,7 +1764,6 @@ describe("Agent Pipeline Tests", () => {
         const mod = await import("@/agents/tier3");
         tier3Module = {
           "contradiction-detector": mod.contradictionDetector,
-          "scenario-modeler": mod.scenarioModeler,
           "synthesis-deal-scorer": mod.synthesisDealScorer,
           "devils-advocate": mod.devilsAdvocate,
           "memo-generator": mod.memoGenerator,
@@ -1960,15 +1958,14 @@ describe("Agent Pipeline Tests", () => {
       expect(agentNames).toContain("question-master");
     });
 
-    it("getTier3Agents() should return all 7 agents (incluant thesis-reconciler)", async () => {
+    it("getTier3Agents() should return all 6 agents (incluant thesis-reconciler)", async () => {
       const { getTier3Agents } = await import("@/agents/orchestrator/agent-registry");
 
       const agents = await getTier3Agents();
       const agentNames = Object.keys(agents);
 
-      expect(agentNames).toHaveLength(7);
+      expect(agentNames).toHaveLength(6);
       expect(agentNames).toContain("contradiction-detector");
-      expect(agentNames).toContain("scenario-modeler");
       expect(agentNames).toContain("synthesis-deal-scorer");
       expect(agentNames).toContain("devils-advocate");
       expect(agentNames).toContain("memo-generator");
@@ -2053,7 +2050,7 @@ describe("Agent Pipeline Tests", () => {
       const tier3 = await getTier3Agents();
 
       expect(Object.keys(tier1)).toHaveLength(13);
-      expect(Object.keys(tier3)).toHaveLength(7); // thesis-first : +thesis-reconciler
+      expect(Object.keys(tier3)).toHaveLength(6); // 5 synthesis agents + thesis-reconciler (scenario-modeler retiré)
     });
   });
 

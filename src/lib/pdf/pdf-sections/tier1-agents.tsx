@@ -889,23 +889,23 @@ function MarketFindings({ f }: { f: Record<string, unknown> }) {
 function ExitFindings({ f }: { f: Record<string, unknown> }) {
   const exitScenarios = f.scenarios as Array<{
     type?: string;
-    probability?: number;
-    timeline?: string;
-    exitValuation?: number;
-    investorReturn?: { multiple?: number; irr?: number };
+    name?: string;
+    probability?: number | { percentage?: number; level?: string };
+    timeline?: { range?: string; estimatedYears?: number } | string;
+    potentialBuyers?: Array<{ name?: string; likelihoodToBuy?: string }>;
   }> | undefined;
   const comparables = f.comparableExits as Array<{
+    target?: string;
     company?: string;
-    exitValue?: string;
+    acquirer?: string;
+    year?: number;
+    exitValue?: number | string;
+    multipleArr?: number;
+    multipleRevenue?: number;
     multiple?: number;
+    source?: string;
     relevance?: number;
   }> | undefined;
-  const ret = f.returnSummary as {
-    expectedMultiple?: number;
-    expectedIrr?: number;
-    downsideMultiple?: number;
-    upsideMultiple?: number;
-  } | undefined;
   const mna = f.mnaMarket as { activity?: unknown; exitWindow?: string } | undefined;
   const liquidity = f.liquidity as {
     secondaryMarket?: string;
@@ -922,79 +922,57 @@ function ExitFindings({ f }: { f: Record<string, unknown> }) {
     <>
       {exitScenarios && exitScenarios.length > 0 && (
         <>
-          <H3>Scénarios de sortie</H3>
+          <H3>Scénarios de sortie (qualitatifs)</H3>
           <PdfTable
             columns={[
-              { header: "Type", width: 20 },
-              { header: "Prob.", width: 12 },
-              { header: "Timeline", width: 18 },
-              { header: "Valo exit", width: 18 },
-              { header: "Multiple", width: 16 },
-              { header: "IRR", width: 16 },
+              { header: "Type", width: 25 },
+              { header: "Prob.", width: 15 },
+              { header: "Timeline", width: 25 },
+              { header: "Acquéreurs identifiés", width: 35 },
             ]}
-            rows={exitScenarios.slice(0, 6).map((sc) => [
-              s(sc.type),
-              fmtPct(sc.probability),
-              formatValue(sc.timeline),
-              typeof sc.exitValuation === "number"
-                ? `${(sc.exitValuation / 1_000_000).toFixed(0)}M`
-                : s(sc.exitValuation),
-              sc.investorReturn?.multiple != null
-                ? `${sc.investorReturn.multiple.toFixed(1)}x`
-                : "N/A",
-              sc.investorReturn?.irr != null
-                ? `${sc.investorReturn.irr.toFixed(1)}%`
-                : "N/A",
-            ])}
+            rows={exitScenarios.slice(0, 6).map((sc) => {
+              const probPct = typeof sc.probability === "number"
+                ? sc.probability
+                : sc.probability?.percentage;
+              const timeline = typeof sc.timeline === "string"
+                ? sc.timeline
+                : sc.timeline?.range ?? (sc.timeline?.estimatedYears != null ? `${sc.timeline.estimatedYears} ans` : "");
+              const buyers = sc.potentialBuyers?.slice(0, 3).map((b) => b.name).filter(Boolean).join(", ") ?? "—";
+              return [
+                s(sc.name ?? sc.type),
+                fmtPct(probPct),
+                formatValue(timeline),
+                s(buyers),
+              ];
+            })}
           />
         </>
       )}
       {comparables && comparables.length > 0 && (
         <>
-          <H3>Exits comparables</H3>
+          <H3>Exits comparables observés</H3>
           <PdfTable
             columns={[
-              { header: "Entreprise", width: 30 },
-              { header: "Valeur exit", width: 25 },
-              { header: "Multiple", width: 20 },
-              { header: "Pertinence", width: 25 },
+              { header: "Entreprise", width: 25 },
+              { header: "Acquéreur", width: 22 },
+              { header: "Année", width: 10 },
+              { header: "Valeur exit", width: 18 },
+              { header: "Multiple observé", width: 25 },
             ]}
-            rows={comparables.slice(0, 5).map((c) => [
-              s(c.company),
-              s(c.exitValue),
-              typeof c.multiple === "number" ? `${c.multiple}x` : s(c.multiple),
-              fmtPct(c.relevance),
-            ])}
+            rows={comparables.slice(0, 8).map((c) => {
+              const multipleObs = c.multipleArr ?? c.multipleRevenue ?? c.multiple;
+              const valueLabel = typeof c.exitValue === "number"
+                ? `${(c.exitValue / 1_000_000).toFixed(0)}M€`
+                : s(c.exitValue);
+              return [
+                s(c.target ?? c.company),
+                s(c.acquirer),
+                c.year != null ? String(c.year) : "—",
+                valueLabel,
+                multipleObs != null ? `${multipleObs.toFixed(1)}x` : "—",
+              ];
+            })}
           />
-        </>
-      )}
-      {ret && (
-        <>
-          <H3>Résumé des retours</H3>
-          {ret.expectedMultiple != null && (
-            <LabelValue
-              label="Multiple attendu"
-              value={`${ret.expectedMultiple.toFixed(1)}x`}
-            />
-          )}
-          {ret.expectedIrr != null && (
-            <LabelValue
-              label="IRR attendu"
-              value={`${ret.expectedIrr.toFixed(1)}%`}
-            />
-          )}
-          {ret.downsideMultiple != null && (
-            <LabelValue
-              label="Downside"
-              value={`${ret.downsideMultiple.toFixed(1)}x`}
-            />
-          )}
-          {ret.upsideMultiple != null && (
-            <LabelValue
-              label="Upside"
-              value={`${ret.upsideMultiple.toFixed(1)}x`}
-            />
-          )}
         </>
       )}
       {mna && (

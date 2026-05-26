@@ -51,8 +51,9 @@ import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
 import { DeckCoherenceReport as DeckCoherenceReportPanel } from "./deck-coherence-report";
 import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
-import { NextStepsGuide } from "./next-steps-guide";
 import { PartialAnalysisBanner } from "./partial-analysis-banner";
+import { AnalysisInvestorView } from "./analysis-investor-view";
+import { AnalysisMemoFull } from "./analysis-memo-full";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 import { formatAgentErrorSeverity, formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
 import { consolidateAcrossAnalyses } from "@/lib/question-consolidator";
@@ -336,7 +337,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   const [showAgentDetails, setShowAgentDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCreditModal, setShowCreditModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<"results" | "suivi-dd" | "coherence">("results");
+  const [activeTab, setActiveTab] = useState<"results" | "memo" | "details" | "suivi-dd" | "coherence" | "ai-board">("results");
   const [isSubmittingResponses, setIsSubmittingResponses] = useState(false);
   // On-demand results cache for historical analyses (loaded when user navigates history)
   const [onDemandResults, setOnDemandResults] = useState<Record<string, Record<string, AgentResult>>>({});
@@ -876,7 +877,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
 
   // Memoized tab change handler (extracted from inline callback)
   const handleTabChange = useCallback((value: string) => {
-    setActiveTab(value as "results" | "suivi-dd" | "coherence");
+    setActiveTab(value as "results" | "memo" | "details" | "suivi-dd" | "coherence" | "ai-board");
   }, []);
 
   // Handle founder responses - save only (without re-analyze)
@@ -1549,8 +1550,24 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 </div>
               </div>
               {/* Tabs Navigation */}
-              <TabsList className="mt-3">
-                <TabsTrigger value="results">Résultats</TabsTrigger>
+              <TabsList className="mt-3 flex w-full justify-start overflow-x-auto">
+                <TabsTrigger value="results">Vue investisseur</TabsTrigger>
+                <TabsTrigger value="memo" className="flex items-center gap-1.5">
+                  <FileText className="h-4 w-4" />
+                  Mémo entier
+                  {displayedResult.results?.["memo-generator"]?.success && (
+                    <Badge variant="secondary" className="ml-1 text-xs">1</Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="details" className="flex items-center gap-1.5">
+                  <FileText className="h-4 w-4" />
+                  Analyse complète
+                  {displayedResult.results && (
+                    <Badge variant="secondary" className="ml-1 text-xs">
+                      {Object.keys(displayedResult.results).length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
                 {deckCoherenceReport && (
                   <TabsTrigger value="coherence" className="flex items-center gap-1.5">
                     <ShieldAlert className="h-4 w-4" />
@@ -1581,6 +1598,48 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
             <CardContent className="space-y-4">
               {/* Results Tab Content */}
               <TabsContent value="results" className="mt-0 space-y-4">
+                {displayedResult.results && (
+                  <AnalysisInvestorView
+                    dealName={dealName}
+                    results={displayedResult.results}
+                    thesis={thesis}
+                    totalTimeMs={displayedResult.totalTimeMs}
+                    totalCost={displayedResult.totalCost}
+                    currentScore={currentScore ?? null}
+                  />
+                )}
+
+                {/* Partial Analysis Banner for FREE users (F32) */}
+                <PartialAnalysisBanner
+                  subscriptionPlan={effectivePlan}
+                  isMissingTier3={!isTier3Analysis}
+                />
+
+                {/* Credit upsell banner for users who haven't purchased yet */}
+                {quota && (quota.totalPurchased ?? 0) === 0 && displayedResult.success && !isTier3Analysis && (
+                  <ProTeaserBanner />
+                )}
+              </TabsContent>
+
+              <TabsContent value="memo" className="mt-0">
+                {displayedResult.results && (
+                  <AnalysisMemoFull
+                    dealName={dealName}
+                    results={displayedResult.results}
+                    totalTimeMs={displayedResult.totalTimeMs}
+                    totalCost={displayedResult.totalCost}
+                  />
+                )}
+              </TabsContent>
+
+              <TabsContent value="details" className="mt-0 space-y-4">
+                <div className="rounded-xl border bg-background p-4">
+                  <h3 className="font-semibold tracking-normal">Analyse complète</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Le gros pavé reste ici: thèse détaillée, agents de synthèse, agents d’investigation, erreurs, score, scénarios et sorties brutes.
+                  </p>
+                </div>
+
                 {/* Thesis Hero Card — thesis-first : affichee en HAUT avant tout */}
                 {thesis && (
                   <ThesisHeroCard
@@ -1845,36 +1904,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     <h4 className="font-medium mb-2">Résumé</h4>
                     <div className="text-sm whitespace-pre-wrap">{displayedResult.summary}</div>
                   </div>
-                )}
-
-                {/* Partial Analysis Banner for FREE users (F32) */}
-                <PartialAnalysisBanner
-                  subscriptionPlan={effectivePlan}
-                  isMissingTier3={!isTier3Analysis}
-                />
-
-                {/* Next Steps Guide (F29) */}
-                {displayedResult.success && (
-                  <NextStepsGuide
-                    criticalRedFlagCount={
-                      displayedResult.results
-                        ? Object.values(displayedResult.results).reduce((count, r) => {
-                            if (!r.success || !r.data) return count;
-                            const data = r.data as { redFlags?: Array<{ severity: string }> };
-                            return count + (data.redFlags?.filter(f => f.severity === "CRITICAL").length ?? 0);
-                          }, 0)
-                        : 0
-                    }
-                    questionsCount={founderQuestions.length}
-                    avgScore={currentScore ?? 0}
-                    hasTier3={isTier3Analysis}
-                    subscriptionPlan={effectivePlan}
-                  />
-                )}
-
-                {/* Credit upsell banner for users who haven't purchased yet */}
-                {quota && (quota.totalPurchased ?? 0) === 0 && displayedResult.success && !isTier3Analysis && (
-                  <ProTeaserBanner />
                 )}
               </TabsContent>
 

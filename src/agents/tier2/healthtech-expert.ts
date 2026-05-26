@@ -571,7 +571,7 @@ En utilisant les données DB:
 
 ### 10. EXIT LANDSCAPE ANALYSIS
 - Acquéreurs probables pour ce type de deal?
-- Multiple attendu basé sur comparables?
+- Multiples observés sur exits comparables (P25/median/P75 par comparables, source DB)?
 - Timeline typique to exit?
 - IPO viability?
 
