@@ -26,7 +26,7 @@ import {
 } from "./solidity-aggregator";
 import type { AgentCardSignal } from "../atoms/agent-card";
 import type { EvidenceRowProps } from "../atoms/evidence-row";
-import type { RankRowItem, ThesisCard, LoadBearingClaim, ThesisAlert } from "./view-types";
+import type { RankRowItem, SignalWithSource, ThesisCard, LoadBearingClaim, ThesisAlert } from "./view-types";
 import { collectEvidence } from "./evidence-collector";
 
 const SEVERITY_RANK: Record<string, number> = {
@@ -99,10 +99,8 @@ function extractRanksFromQuestionMaster(results: ResultsMap | null | undefined):
       description: compactString(description ?? riskIf, 280) ?? undefined,
       severity,
       severityLabel: severityLabel(severity),
-      tags: [
-        sourceAgent ? { label: `Source : ${sourceAgent}`, tone: "neutral" as const } : null,
-        timeToResolve ? { label: `Délai : ${timeToResolve}`, tone: "info" as const } : null,
-      ].filter((t): t is { label: string; tone: "neutral" | "info" } => t !== null),
+      source: sourceAgent ?? "question-master",
+      tags: timeToResolve ? [{ label: `Délai : ${timeToResolve}`, tone: "info" as const }] : [],
     });
   }
   return ranks;
@@ -131,8 +129,8 @@ function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, l
         description: compactString([description, impact].filter(Boolean).join(" · "), 280),
         severity,
         severityLabel: severityLabel(severity),
+        source: name,
         tags: [
-          { label: `Source : ${name}`, tone: "neutral" as const },
           location ? { label: location, tone: "neutral" as const } : null,
           evidence ? { label: compactString(evidence, 80) ?? "", tone: "info" as const } : null,
         ].filter((t): t is { label: string; tone: "neutral" | "info" } => t !== null && t.label.length > 0),
@@ -147,15 +145,15 @@ function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, l
     const key = item.title.toLowerCase().slice(0, 80);
     if (seen.has(key)) continue;
     seen.add(key);
-    deduped.push({ id: item.id, title: item.title, description: item.description, severity: item.severity, severityLabel: item.severityLabel, tags: item.tags });
+    deduped.push({ id: item.id, title: item.title, description: item.description, severity: item.severity, severityLabel: item.severityLabel, source: item.source, tags: item.tags });
     if (deduped.length >= limit) break;
   }
   return deduped;
 }
 
-function extractPositiveSignals(results: ResultsMap | null | undefined, limit: number): string[] {
+function extractPositiveSignals(results: ResultsMap | null | undefined, limit: number): SignalWithSource[] {
   if (!results) return [];
-  const out: string[] = [];
+  const out: SignalWithSource[] = [];
   for (const [name, entry] of Object.entries(results)) {
     if (!entry?.success) continue;
     const insights = arrayAt(entry.data, ["narrative", "keyInsights"]);
@@ -163,7 +161,7 @@ function extractPositiveSignals(results: ResultsMap | null | undefined, limit: n
       if (!isString(insight)) continue;
       if (NEGATIVE_KEYWORDS.test(insight)) continue;
       if (POSITIVE_KEYWORDS.test(insight)) {
-        out.push(`${insight} — source : ${name}`);
+        out.push({ text: insight, source: name });
       }
       if (out.length >= limit) break;
     }
@@ -172,16 +170,16 @@ function extractPositiveSignals(results: ResultsMap | null | undefined, limit: n
   return out;
 }
 
-function extractVigilanceSignals(results: ResultsMap | null | undefined, limit: number): string[] {
+function extractVigilanceSignals(results: ResultsMap | null | undefined, limit: number): SignalWithSource[] {
   if (!results) return [];
-  const out: string[] = [];
+  const out: SignalWithSource[] = [];
   for (const [name, entry] of Object.entries(results)) {
     if (!entry?.success) continue;
     const insights = arrayAt(entry.data, ["narrative", "keyInsights"]);
     for (const insight of insights) {
       if (!isString(insight)) continue;
       if (!NEGATIVE_KEYWORDS.test(insight)) continue;
-      out.push(`${insight} — source : ${name}`);
+      out.push({ text: insight, source: name });
       if (out.length >= limit) break;
     }
     if (out.length >= limit) break;
@@ -397,8 +395,8 @@ export type MemoSectionModel =
   | {
       kind: "reconstituted";
       reason: string;
-      strengths: string[];
-      criticalRisks: Array<{ title: string; detail: string | null; sourceAgent: string }>;
+      strengths: SignalWithSource[];
+      criticalRisks: Array<{ title: string; detail: string | null; source: string }>;
       topPriorities: Array<{ action: string; rationale: string | null; deadline: string | null; priority: string | null }>;
       diligenceItems: Array<{ item: string; documentsNeeded: string[]; estimatedEffort: string | null }>;
       negotiationPoints: Array<{ point: string; category: string | null; argument: string | null }>;
@@ -454,7 +452,7 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       .map((r) => ({
         title: r.title,
         detail: r.description ?? null,
-        sourceAgent: r.tags?.find((t) => t.label.startsWith("Source"))?.label.replace(/^Source\s*:\s*/, "") ?? "Tier 1",
+        source: r.source ?? "Tier 1",
       })),
     topPriorities: topPrioritiesRaw
       .map((p) => {

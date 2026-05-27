@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { SourcePin } from "./source-pin";
 import { StatusPill, type StatusPillSeverity } from "./status-pill";
 
 type Tag = {
@@ -13,6 +14,7 @@ type RankRowProps = {
   description?: string;
   severity: StatusPillSeverity;
   severityLabel?: string;
+  source?: string | null;
   tags?: Tag[];
   rightSlot?: ReactNode;
 };
@@ -37,7 +39,7 @@ function TagBadge({ tag }: { tag: Tag }) {
   );
 }
 
-export function RankRow({ rank, title, description, severity, severityLabel, tags, rightSlot }: RankRowProps) {
+export function RankRow({ rank, title, description, severity, severityLabel, source, tags, rightSlot }: RankRowProps) {
   return (
     <article
       className="grid items-start gap-4 rounded-xl border bg-[var(--av-surface)] p-4 sm:grid-cols-[40px_minmax(0,1fr)_auto]"
@@ -47,7 +49,10 @@ export function RankRow({ rank, title, description, severity, severityLabel, tag
         {rank}
       </div>
       <div className="min-w-0">
-        <h4 className="text-[15px] font-semibold leading-snug text-[var(--av-ink)]">{title}</h4>
+        <div className="flex items-start gap-1.5">
+          <h4 className="text-[15px] font-semibold leading-snug text-[var(--av-ink)]">{title}</h4>
+          {source ? <SourcePin source={source} className="mt-0.5" /> : null}
+        </div>
         {description ? (
           <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--av-muted)]">{description}</p>
         ) : null}

@@ -1,6 +1,7 @@
 import { Callout } from "../atoms/callout";
 import { PartialBanner } from "../atoms/partial-banner";
 import { RankRow } from "../atoms/rank-row";
+import { SourcePin } from "../atoms/source-pin";
 import type { buildDecisionSectionModel } from "../lib/selectors";
 
 type Model = ReturnType<typeof buildDecisionSectionModel>;
@@ -25,9 +26,10 @@ export function DecisionSection({ model }: { model: Model }) {
           ) : (
             <ul className="flex flex-col gap-2">
               {favorable.map((s, i) => (
-                <li key={i} className="flex gap-2">
+                <li key={i} className="flex items-start gap-2">
                   <span aria-hidden="true" className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--av-favorable)]" />
-                  <span>{s}</span>
+                  <span className="flex-1">{s.text}</span>
+                  <SourcePin source={s.source} className="mt-0.5" />
                 </li>
               ))}
             </ul>
@@ -39,9 +41,10 @@ export function DecisionSection({ model }: { model: Model }) {
           ) : (
             <ul className="flex flex-col gap-2">
               {vigilance.map((s, i) => (
-                <li key={i} className="flex gap-2">
+                <li key={i} className="flex items-start gap-2">
                   <span aria-hidden="true" className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--av-vigilance)]" />
-                  <span>{s}</span>
+                  <span className="flex-1">{s.text}</span>
+                  <SourcePin source={s.source} className="mt-0.5" />
                 </li>
               ))}
             </ul>
@@ -65,6 +68,7 @@ export function DecisionSection({ model }: { model: Model }) {
                   description={r.description ?? undefined}
                   severity={r.severity}
                   severityLabel={r.severityLabel}
+                  source={r.source}
                   tags={r.tags}
                 />
               </li>

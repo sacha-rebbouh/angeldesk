@@ -1,4 +1,5 @@
 import { PartialBanner } from "../atoms/partial-banner";
+import { SourcePin } from "../atoms/source-pin";
 import { StatusPill } from "../atoms/status-pill";
 import type { MemoSectionModel } from "../lib/selectors";
 
@@ -92,9 +93,10 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
             ) : (
               <ul className="flex flex-col gap-2 text-[14px] text-[var(--av-ink)]">
                 {model.strengths.map((s, i) => (
-                  <li key={i} className="flex gap-2">
+                  <li key={i} className="flex items-start gap-2">
                     <span aria-hidden="true" className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--av-favorable)]" />
-                    <span>{s}</span>
+                    <span className="flex-1">{s.text}</span>
+                    <SourcePin source={s.source} className="mt-0.5" />
                   </li>
                 ))}
               </ul>
@@ -106,9 +108,9 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
               <ul className="flex flex-col gap-3 text-[14px] text-[var(--av-ink)]">
                 {model.criticalRisks.map((r, i) => (
                   <li key={i} className="flex flex-col gap-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <strong className="text-[14px] font-semibold">{r.title}</strong>
-                      <span className="text-[11px] uppercase tracking-wide text-[var(--av-muted)]">{r.sourceAgent}</span>
+                    <div className="flex items-start gap-1.5">
+                      <strong className="text-[14px] font-semibold flex-1">{r.title}</strong>
+                      <SourcePin source={r.source} className="mt-0.5" />
                     </div>
                     {r.detail ? <span className="text-[13px] text-[var(--av-muted)]">{r.detail}</span> : null}
                   </li>

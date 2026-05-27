@@ -6,7 +6,13 @@ export type RankRowItem = {
   description?: string | null;
   severity: StatusPillSeverity;
   severityLabel: string;
+  source?: string | null;
   tags?: Array<{ label: string; tone?: "neutral" | "favorable" | "vigilance" | "alert" | "info" }>;
+};
+
+export type SignalWithSource = {
+  text: string;
+  source: string;
 };
 
 export type ThesisCard = {
