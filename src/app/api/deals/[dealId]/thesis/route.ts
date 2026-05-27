@@ -146,7 +146,6 @@ export async function GET(request: Request, context: RouteContext) {
           solution: h.solution,
           whyNow: h.whyNow,
           moat: h.moat,
-          pathToExit: h.pathToExit,
           loadBearing: h.loadBearing,
           evaluationAxes: normalizeThesisEvaluation({
             verdict: h.verdict as never,

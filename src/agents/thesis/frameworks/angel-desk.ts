@@ -143,7 +143,6 @@ export function buildAngelDeskLensUserPrompt(params: {
   solution: string;
   whyNow: string;
   moat: string | null;
-  pathToExit: string | null;
   contextSummary: string;
   dealStage?: string;
   dealSector?: string;
@@ -167,9 +166,6 @@ ${params.whyNow}
 
 **Moat revendique :**
 ${params.moat ?? "(non declare)"}
-
-**Path to exit :**
-${params.pathToExit ?? "(non declare)"}
 
 ## PARAMETRES DEAL (critiques pour Angel Desk)
 

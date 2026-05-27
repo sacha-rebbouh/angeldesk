@@ -9,7 +9,6 @@ function makeValidOutput() {
     solution: "Une solution crédible",
     whyNow: "Une fenêtre de marché identifiable",
     moat: null,
-    pathToExit: null,
     verdict: "favorable" as const,
     confidence: 72,
     loadBearing: [

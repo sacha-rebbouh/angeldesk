@@ -79,7 +79,6 @@ export const ThesisExtractorOutputSchema = z.object({
   solution: z.string().min(1),
   whyNow: z.string().min(1),
   moat: z.string().nullable(),
-  pathToExit: z.string().nullable(),
   verdict: ThesisVerdictSchema,
   confidence: z.number().min(0).max(100),
   loadBearing: z.array(LoadBearingAssumptionSchema),

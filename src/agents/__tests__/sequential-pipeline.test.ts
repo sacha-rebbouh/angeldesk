@@ -605,38 +605,6 @@ function buildAgentMockResponse(prompt: string, systemPrompt?: string): unknown 
     });
   }
 
-  // -- exit-strategist --
-  if (combined.includes("exit strateg") || combined.includes("strategie de sortie") || combined.includes("liquidite")) {
-    return buildTier1Response("exit-strategist", {
-      exitPaths: [
-        {
-          type: "Acquisition", probability: 60, timeline: "4-6 years",
-          potentialAcquirers: ["Datadog", "Salesforce"],
-          expectedMultiple: { min: 5, median: 8, max: 15 },
-          prerequisites: ["ARR > 10M", "Enterprise customers"],
-          assessment: "Most likely exit path for B2B SaaS at this stage",
-        },
-        {
-          type: "IPO", probability: 10, timeline: "7-10 years",
-          expectedMultiple: { min: 10, median: 15, max: 25 },
-          prerequisites: ["ARR > 100M", "Profitability"],
-          assessment: "Long-term possibility if growth continues",
-        },
-      ],
-      timeToLiquidity: {
-        estimated: "5-7 years",
-        factors: ["Market conditions", "Growth trajectory"],
-        assessment: "Standard for Seed SaaS investment",
-      },
-      returnAnalysis: {
-        baseCase: { multiple: 5, irr: 35 },
-        bullCase: { multiple: 15, irr: 60 },
-        bearCase: { multiple: 1, irr: 0 },
-        assessment: "Asymmetric upside typical of Seed stage",
-      },
-    });
-  }
-
   // -- question-master --
   if (combined.includes("question master") || combined.includes("questions a poser") || combined.includes("diligence checklist")) {
     return buildTier1Response("question-master", {
@@ -753,8 +721,8 @@ function buildAgentMockResponse(prompt: string, systemPrompt?: string): unknown 
     };
   }
 
-  // -- Tier 3: scenario-modeler --
-  if (combined.includes("scenario") || combined.includes("modelisation") || combined.includes("bull.*bear") || combined.includes("irr")) {
+  // -- Tier 3: scenario-modeler (retiré) — bloc legacy ci-dessous never used (combined ne matche plus rien d'utile) --
+  if (false && (combined.includes("scenario") || combined.includes("modelisation") || combined.includes("bull.*bear") || combined.includes("irr"))) {
     return {
       scenarios: [
         {
@@ -1673,8 +1641,8 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     expect(allResults["market-intelligence"]).toBeDefined();
   });
 
-  // ── Step 3d: Phase D — 8 remaining agents (parallel) ──
-  it("Step 3d: Phase D — 8 remaining Tier 1 agents (parallel)", async () => {
+  // ── Step 3d: Phase D — 7 remaining agents (parallel) ──
+  it("Step 3d: Phase D — 7 remaining Tier 1 agents (parallel)", async () => {
     const tier1Module = await import("../tier1");
 
     const agentsD = [
@@ -1684,7 +1652,6 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       { name: "cap-table-auditor", agent: tier1Module.capTableAuditor },
       { name: "gtm-analyst", agent: tier1Module.gtmAnalyst },
       { name: "customer-intel", agent: tier1Module.customerIntel },
-      { name: "exit-strategist", agent: tier1Module.exitStrategist },
       { name: "question-master", agent: tier1Module.questionMaster },
     ];
 
@@ -1744,8 +1711,8 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     }
   });
 
-  // ── Step 5a: Tier 3 Batch 1 — contradiction + scenario + devils-advocate ──
-  it("Step 5a: Tier 3 Batch 1 — contradiction-detector, scenario-modeler, devils-advocate (parallel)", async () => {
+  // ── Step 5a: Tier 3 Batch 1 — contradiction + devils-advocate ──
+  it("Step 5a: Tier 3 Batch 1 — contradiction-detector, devils-advocate (parallel)", async () => {
     // Restore full results for Tier 3 (unsanitized)
     for (const [name, result] of Object.entries(allResults)) {
       enrichedContext.previousResults![name] = result;
@@ -1755,7 +1722,6 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
 
     const batch1 = [
       { name: "contradiction-detector", agent: tier3Module.contradictionDetector },
-      { name: "scenario-modeler", agent: tier3Module.scenarioModeler },
       { name: "devils-advocate", agent: tier3Module.devilsAdvocate },
     ];
 
@@ -1840,7 +1806,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
   });
 
   // ── Final: Scorecard ──
-  it("Final: All 21 agents completed — scorecard", () => {
+  it("Final: All 19 agents completed — scorecard", () => {
     const expectedAgents = [
       "fact-extractor",
       "document-extractor",
@@ -1855,11 +1821,9 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       "cap-table-auditor",
       "gtm-analyst",
       "customer-intel",
-      "exit-strategist",
       "question-master",
       "saas-expert",
       "contradiction-detector",
-      "scenario-modeler",
       "devils-advocate",
       "synthesis-deal-scorer",
       "memo-generator",
@@ -1875,7 +1839,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     console.log(scorecard.join("\n"));
     console.log(`\nTotal cost: $${totalCost.toFixed(4)}`);
 
-    // Assert all 21 present
+    // Assert all 19 present (exit-strategist + scenario-modeler retirés)
     const presentAgents = expectedAgents.filter((name) => allResults[name]);
     const missingAgents = expectedAgents.filter((name) => !allResults[name]);
 
@@ -1883,7 +1847,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       console.log(`\nMISSING agents: ${missingAgents.join(", ")}`);
     }
 
-    expect(presentAgents.length).toBe(21);
+    expect(presentAgents.length).toBe(19);
 
     // Show which failed
     const failed = expectedAgents.filter((name) => allResults[name] && !allResults[name].success);

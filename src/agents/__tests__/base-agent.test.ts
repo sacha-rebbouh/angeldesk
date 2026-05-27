@@ -347,7 +347,6 @@ describe("run", () => {
         solution: "Plateforme operateur + pricing optimise.",
         whyNow: "Consolidation acceleree du marche.",
         moat: "Donnees proprietaires d'occupation et pricing.",
-        pathToExit: "Rachat par un consolidateur europeen.",
         verdict: "vigilance",
         confidence: 74,
         loadBearing: [

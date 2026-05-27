@@ -80,7 +80,6 @@ export const ThesisCoreStructuredSchema = z.preprocess(
     solutionClaims: z.array(ThesisCoreClaimSchema).min(1),
     whyNowClaims: z.array(ThesisCoreClaimSchema).min(1),
     moatClaims: z.array(ThesisCoreClaimSchema).default([]),
-    pathToExitClaims: z.array(ThesisCoreClaimSchema).default([]),
     loadBearing: z.array(LoadBearingAssumptionSchema),
     alerts: z.array(ThesisAlertSchema),
   })
@@ -100,7 +99,6 @@ export interface RepairedStructuredSections {
   solution: ThesisCoreClaim[];
   whyNow: ThesisCoreClaim[];
   moat: ThesisCoreClaim[];
-  pathToExit: ThesisCoreClaim[];
 }
 
 const NUMERIC_PATTERN = /\d|[%€$£]|\b(?:eur|usd|nok|gbp|bn|million|millions|milliard|milliards|x)\b/i;
@@ -402,7 +400,6 @@ export function repairStructuredClaims(
     solution: sections.solution.map((claim) => repairClaim(claim, scope)),
     whyNow: sections.whyNow.map((claim) => repairClaim(claim, scope)),
     moat: sections.moat.map((claim) => repairClaim(claim, scope)),
-    pathToExit: sections.pathToExit.map((claim) => repairClaim(claim, scope)),
   };
 }
 

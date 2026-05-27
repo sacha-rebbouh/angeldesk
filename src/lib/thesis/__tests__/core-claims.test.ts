@@ -45,7 +45,6 @@ describe("ThesisCoreStructuredSchema", () => {
         solutionClaims: [{ kind: "unknown", text: "Solution indisponible." }],
         whyNowClaims: [{ kind: "unknown", text: "Why-now indisponible." }],
         moatClaims: [],
-        pathToExitClaims: [],
         loadBearing: [],
         alerts: [],
       },
@@ -72,7 +71,6 @@ describe("ThesisCoreStructuredSchema", () => {
       ],
       whyNowClaims: [{ kind: "unknown", text: "Le timing reste à vérifier." }],
       moatClaims: [],
-      pathToExitClaims: [],
       loadBearing: [
         {
           statement: "La croissance commerciale peut rester efficace.",
@@ -215,7 +213,6 @@ describe("structured core thesis claims", () => {
             supportingFactKeys: ["team.size"],
           },
         ],
-        pathToExit: [],
       },
       scope
     );
@@ -248,7 +245,6 @@ describe("structured core thesis claims", () => {
         solution: [],
         whyNow: [],
         moat: [],
-        pathToExit: [],
       },
       buildThesisFactScope([])
     );
@@ -283,7 +279,6 @@ describe("structured core thesis claims", () => {
         solution: [],
         whyNow: [],
         moat: [],
-        pathToExit: [],
       },
       scope
     );
@@ -319,7 +314,6 @@ describe("structured core thesis claims", () => {
         solution: [],
         whyNow: [],
         moat: [],
-        pathToExit: [],
       },
       scope
     );
@@ -355,7 +349,6 @@ describe("structured core thesis claims", () => {
         solution: [],
         whyNow: [],
         moat: [],
-        pathToExit: [],
       },
       scope
     );
@@ -390,7 +383,6 @@ describe("structured core thesis claims", () => {
         solution: [],
         whyNow: [],
         moat: [],
-        pathToExit: [],
       },
       scope
     );

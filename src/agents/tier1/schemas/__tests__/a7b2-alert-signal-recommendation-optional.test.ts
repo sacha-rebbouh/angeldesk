@@ -45,7 +45,6 @@ import { TechOpsDDResponseSchema } from "../tech-ops-dd-schema";
 import { TechStackDDResponseSchema } from "../tech-stack-dd-schema";
 import { CapTableAuditorResponseSchema } from "../cap-table-auditor-schema";
 import { CustomerIntelResponseSchema } from "../customer-intel-schema";
-import { ExitStrategistResponseSchema } from "../exit-strategist-schema";
 import { GTMAnalystResponseSchema } from "../gtm-analyst-schema";
 import { QuestionMasterResponseSchema } from "../question-master-schema";
 import { AlertSignalSchema } from "../common";
@@ -166,7 +165,6 @@ describe("Phase A A7b-2 round 3 — Sentinelles cross-Tier 1 (cohérence input o
     { name: "TechStackDDResponseSchema", schema: TechStackDDResponseSchema },
     { name: "CapTableAuditorResponseSchema", schema: CapTableAuditorResponseSchema },
     { name: "CustomerIntelResponseSchema", schema: CustomerIntelResponseSchema },
-    { name: "ExitStrategistResponseSchema", schema: ExitStrategistResponseSchema },
     { name: "GTMAnalystResponseSchema", schema: GTMAnalystResponseSchema },
     { name: "QuestionMasterResponseSchema", schema: QuestionMasterResponseSchema },
   ];

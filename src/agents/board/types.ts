@@ -122,7 +122,6 @@ export interface BoardInput {
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     verdict: string;
     confidence: number;
     loadBearing: Array<{

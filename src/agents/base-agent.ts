@@ -1967,7 +1967,6 @@ Probleme: ${sanitize(thesis.problem, 280)}
 Solution: ${sanitize(thesis.solution, 280)}
 Why now: ${sanitize(thesis.whyNow, 280)}
 Moat: ${sanitize(thesis.moat, 240)}
-Path to exit: ${sanitize(thesis.pathToExit, 240)}
 Frameworks: YC=${thesis.ycVerdict} | Thiel=${thesis.thielVerdict} | AngelDesk=${thesis.angelDeskVerdict}
 Decision BA: ${context.analysis?.thesisBypass ? "continue (bypass these fragile actif)" : "alignement these standard"}
 Nombre d'alertes structurelles: ${thesis.alertsCount}

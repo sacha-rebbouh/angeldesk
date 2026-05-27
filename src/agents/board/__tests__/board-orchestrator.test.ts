@@ -74,7 +74,6 @@ function makeLatestThesis(overrides: Record<string, unknown> = {}) {
     solution: "Solution",
     whyNow: "Why now",
     moat: null,
-    pathToExit: null,
     verdict: "contrasted",
     confidence: 62,
     loadBearing: [],

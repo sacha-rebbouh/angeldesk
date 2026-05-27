@@ -20,7 +20,6 @@ function buildThesis(): ThesisExtractorOutput {
     solution: "Une plateforme automatisee pour les equipes operationnelles.",
     whyNow: "Le virage IA rend l'automatisation abordable.",
     moat: "Un moat produit + distribution",
-    pathToExit: "Acquisition par un consolidateur logiciel",
     verdict: "contrasted",
     confidence: 72,
     loadBearing: [
@@ -130,7 +129,6 @@ describe("ThesisReconcilerAgent deterministic guardrails", () => {
           severity: "CRITICAL",
         }),
         expect.objectContaining({
-          field: "pathToExit",
           agentName: "financial-auditor",
           severity: "HIGH",
         }),

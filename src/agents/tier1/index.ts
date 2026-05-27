@@ -1,8 +1,9 @@
 /**
  * Tier 1 Agents - Investigation
  *
- * 13 agents qui s'executent en parallele pour analyser un deal sous tous les angles.
+ * 12 agents qui s'executent en parallele pour analyser un deal sous tous les angles.
  * Chaque agent reçoit le contexte enrichi par le Context Engine.
+ * exit-strategist retiré (doctrine : pas de projection chiffrée de retour).
  */
 
 // Agents critiques (dependances sur document-extractor)
@@ -19,7 +20,6 @@ export { marketIntelligence } from "./market-intelligence";
 export { legalRegulatory } from "./legal-regulatory";
 export { gtmAnalyst } from "./gtm-analyst";
 export { customerIntel } from "./customer-intel";
-export { exitStrategist } from "./exit-strategist";
 
 // Agent de synthese (peut utiliser les resultats des autres)
 export { questionMaster } from "./question-master";

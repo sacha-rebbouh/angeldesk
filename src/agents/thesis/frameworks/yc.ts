@@ -106,7 +106,6 @@ export function buildYcLensUserPrompt(params: {
   solution: string;
   whyNow: string;
   moat: string | null;
-  pathToExit: string | null;
   contextSummary: string;
 }): string {
   return `## THESE A EVALUER (vue YC)
@@ -125,9 +124,6 @@ ${params.whyNow}
 
 **Moat revendique :**
 ${params.moat ?? "(non declare)"}
-
-**Path to exit :**
-${params.pathToExit ?? "(non declare)"}
 
 ## CONTEXTE DISPONIBLE (fact store + deck + context engine)
 

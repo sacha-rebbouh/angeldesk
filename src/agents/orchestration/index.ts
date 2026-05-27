@@ -87,15 +87,6 @@ export {
   type CalculationResult,
 } from "./utils/financial-calculations";
 
-// Export Tier 3 coherence engine (deterministic inter-agent coherence)
-export {
-  applyTier3Coherence,
-  injectCoherenceIntoContext,
-  type CoherenceResult,
-  type CoherenceAdjustment,
-  type AdjustedScenarioV2,
-} from "./tier3-coherence";
-
 // Export finding extractor (for Standard agents → Consensus/Reflexion)
 export {
   extractAgentData,
