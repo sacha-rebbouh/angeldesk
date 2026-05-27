@@ -1886,13 +1886,13 @@ describe("Agent Pipeline Tests", () => {
   // ==========================================================================
 
   describe("Part 3: Pipeline Integration", () => {
-    it("getTier1Agents() should return all 13 agents", async () => {
+    it("getTier1Agents() should return all 12 agents", async () => {
       const { getTier1Agents } = await import("@/agents/orchestrator/agent-registry");
 
       const agents = await getTier1Agents();
       const agentNames = Object.keys(agents);
 
-      expect(agentNames).toHaveLength(13);
+      expect(agentNames).toHaveLength(12);
       expect(agentNames).toContain("deck-forensics");
       expect(agentNames).toContain("financial-auditor");
       expect(agentNames).toContain("team-investigator");
@@ -1998,8 +1998,8 @@ describe("Agent Pipeline Tests", () => {
       const tier1 = await getTier1Agents();
       const tier3 = await getTier3Agents();
 
-      expect(Object.keys(tier1)).toHaveLength(13);
-      expect(Object.keys(tier3)).toHaveLength(7); // thesis-first : +thesis-reconciler
+      expect(Object.keys(tier1)).toHaveLength(12);
+      expect(Object.keys(tier3)).toHaveLength(6); // thesis-first : +thesis-reconciler
     });
   });
 

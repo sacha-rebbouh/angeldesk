@@ -1806,7 +1806,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
   });
 
   // ── Final: Scorecard ──
-  it("Final: All 21 agents completed — scorecard", () => {
+  it("Final: All 19 agents completed — scorecard", () => {
     const expectedAgents = [
       "fact-extractor",
       "document-extractor",
@@ -1839,7 +1839,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     console.log(scorecard.join("\n"));
     console.log(`\nTotal cost: $${totalCost.toFixed(4)}`);
 
-    // Assert all 21 present
+    // Assert all 19 present (exit-strategist + scenario-modeler retirés)
     const presentAgents = expectedAgents.filter((name) => allResults[name]);
     const missingAgents = expectedAgents.filter((name) => !allResults[name]);
 
@@ -1847,7 +1847,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       console.log(`\nMISSING agents: ${missingAgents.join(", ")}`);
     }
 
-    expect(presentAgents.length).toBe(21);
+    expect(presentAgents.length).toBe(19);
 
     // Show which failed
     const failed = expectedAgents.filter((name) => allResults[name] && !allResults[name].success);

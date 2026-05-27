@@ -37,7 +37,6 @@ const TIER1_FILES = [
   "src/agents/tier1/competitive-intel.ts",
   "src/agents/tier1/customer-intel.ts",
   "src/agents/tier1/deck-forensics.ts",
-  "src/agents/tier1/exit-strategist.ts",
   "src/agents/tier1/financial-auditor.ts",
   "src/agents/tier1/gtm-analyst.ts",
   "src/agents/tier1/legal-regulatory.ts",
