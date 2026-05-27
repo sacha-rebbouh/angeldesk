@@ -346,7 +346,6 @@ export async function POST(request: Request, context: RouteContext) {
       solution: latest.solution,
       whyNow: latest.whyNow,
       moat: latest.moat,
-      pathToExit: latest.pathToExit,
       verdict: latest.verdict as ThesisExtractorOutput["verdict"],
       confidence: latest.confidence,
       loadBearing: (latest.loadBearing as ThesisExtractorOutput["loadBearing"]) ?? [],

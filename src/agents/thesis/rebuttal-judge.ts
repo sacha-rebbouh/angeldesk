@@ -66,7 +66,6 @@ const RebuttalJudgeSchema = z.object({
       solution: z.string().optional(),
       whyNow: z.string().optional(),
       moat: z.string().optional(),
-      pathToExit: z.string().optional(),
     })
     .optional(),
 });
@@ -110,7 +109,7 @@ Un rebuttal est REJETE si:
 - **verdict**: "valid" ou "rejected"
 - **reasoning**: 2-4 phrases expliquant ta decision (en francais, ton analytique)
 - **regenerate**: true SEULEMENT si verdict=valid ET la correction justifie une re-extraction complete
-- **adjustedElements** (si verdict=valid): indique quels champs de la these doivent etre revus par le thesis-extractor lors de la re-extraction (problem / solution / whyNow / moat / pathToExit). Peut contenir des suggestions de formulation.
+- **adjustedElements** (si verdict=valid): indique quels champs de la these doivent etre revus par le thesis-extractor lors de la re-extraction (problem / solution / whyNow / moat). Peut contenir des suggestions de formulation.
 
 # REGLES DE RIGUEUR
 
@@ -161,7 +160,6 @@ LANGUE: Francais.`;
 **Solution:** ${t.solution}
 **Why-now:** ${t.whyNow}
 **Moat:** ${t.moat ?? "(non declare)"}
-**Path to exit:** ${t.pathToExit ?? "(non declare)"}
 
 Load-bearing:
 ${t.loadBearing.map((a) => `- [${a.status}] ${a.statement}`).join("\n")}

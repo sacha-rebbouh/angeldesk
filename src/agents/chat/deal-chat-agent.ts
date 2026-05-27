@@ -173,7 +173,6 @@ export interface FullChatContext {
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     verdict: string;
     confidence: number;
     loadBearing: Array<{
@@ -672,7 +671,6 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       contextPrompt += `- **Solution** : ${thesisCtx.solution}\n`;
       contextPrompt += `- **Why-now** : ${thesisCtx.whyNow}\n`;
       contextPrompt += `- **Moat** : ${thesisCtx.moat ?? "Non declare"}\n`;
-      contextPrompt += `- **Path to exit** : ${thesisCtx.pathToExit ?? "Non declare"}\n`;
       contextPrompt += formatAxisPromptLine("Axe Thesis Quality", thesisCtx.evaluationAxes.thesisQuality);
       contextPrompt += formatAxisPromptLine("Axe Investor Profile Fit", thesisCtx.evaluationAxes.investorProfileFit);
       contextPrompt += formatAxisPromptLine("Axe Deal Accessibility", thesisCtx.evaluationAxes.dealAccessibility);

@@ -19,14 +19,12 @@ export {
   legalRegulatory,
   gtmAnalyst,
   customerIntel,
-  exitStrategist,
   questionMaster,
 } from "./tier1";
 
 // Tier 3 Agents (Synthesis)
 export {
   contradictionDetector,
-  scenarioModeler,
   synthesisDealScorer,
   devilsAdvocate,
   memoGenerator,

@@ -10,7 +10,6 @@ function makeOutput(overrides: Partial<ThesisExtractorOutput> = {}): ThesisExtra
     solution: "Solution",
     whyNow: "Why now",
     moat: null,
-    pathToExit: null,
     verdict: "favorable",
     confidence: 78,
     loadBearing: [],

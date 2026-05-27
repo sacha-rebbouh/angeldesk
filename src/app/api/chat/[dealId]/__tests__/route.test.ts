@@ -107,7 +107,6 @@ const thesisRecord = {
   solution: "Automation",
   whyNow: "Regulatory shift",
   moat: "Distribution moat",
-  pathToExit: "Strategic M&A",
   verdict: "fragile",
   confidence: 62,
   loadBearing: [],

@@ -193,7 +193,7 @@ export interface PausedAnalysisResult extends AnalysisResult {
   alertsCount: number;
 }
 
-// Tier 1 agent names (13 agents)
+// Tier 1 agent names (12 agents — exit-strategist retiré, doctrine pas de projection)
 export const TIER1_AGENT_NAMES = [
   "deck-forensics",
   "financial-auditor",
@@ -206,7 +206,6 @@ export const TIER1_AGENT_NAMES = [
   "cap-table-auditor",
   "gtm-analyst",
   "customer-intel",
-  "exit-strategist",
   "question-master",
 ] as const;
 
@@ -228,7 +227,7 @@ export const TIER1_PHASE_B = ["financial-auditor"] as const;
 export const TIER1_PHASE_C = ["team-investigator", "competitive-intel", "market-intelligence"] as const;
 export const TIER1_PHASE_D = [
   "tech-stack-dd", "tech-ops-dd", "legal-regulatory", "cap-table-auditor",
-  "gtm-analyst", "customer-intel", "exit-strategist", "question-master",
+  "gtm-analyst", "customer-intel", "question-master",
 ] as const;
 
 /** All phases in execution order */
@@ -237,11 +236,10 @@ export const TIER1_PHASES = [TIER1_PHASE_A, TIER1_PHASE_B, TIER1_PHASE_C, TIER1_
 /** Phases where reflexion is ALWAYS applied (regardless of confidence) */
 export const TIER1_ALWAYS_REFLECT_PHASES: ReadonlyArray<string> = [...TIER1_PHASE_A, ...TIER1_PHASE_B];
 
-// Tier 3 agent names for standalone `tier3_synthesis` (6 agents).
+// Tier 3 agent names for standalone `tier3_synthesis` (5 agents — scenario-modeler retiré).
 export const TIER3_AGENT_NAMES = [
   "conditions-analyst",
   "contradiction-detector",
-  "scenario-modeler",
   "synthesis-deal-scorer",
   "devils-advocate",
   "memo-generator",
@@ -253,7 +251,6 @@ export const TIER3_AGENT_NAMES = [
 export const FULL_ANALYSIS_TIER3_AGENT_NAMES = [
   "conditions-analyst",
   "contradiction-detector",
-  "scenario-modeler",
   "devils-advocate",
   "thesis-reconciler",
   "synthesis-deal-scorer",
@@ -272,10 +269,9 @@ export const FULL_ANALYSIS_TIER3_AGENT_NAMES = [
 export const TIER3_DEPENDENCIES: Record<typeof TIER3_AGENT_NAMES[number], string[]> = {
   "conditions-analyst": [],     // No deps - runs immediately (only needs Tier 1 results)
   "contradiction-detector": [], // No deps - runs immediately
-  "scenario-modeler": [],       // No deps - runs immediately
   "devils-advocate": [],        // No deps - runs immediately
-  "synthesis-deal-scorer": ["contradiction-detector", "scenario-modeler", "conditions-analyst"], // Needs insights from all three
-  "memo-generator": ["contradiction-detector", "scenario-modeler", "synthesis-deal-scorer", "devils-advocate", "conditions-analyst"], // Needs all
+  "synthesis-deal-scorer": ["contradiction-detector", "conditions-analyst"], // Needs insights from both
+  "memo-generator": ["contradiction-detector", "synthesis-deal-scorer", "devils-advocate", "conditions-analyst"], // Needs all
 };
 
 /**
@@ -287,8 +283,8 @@ export const TIER3_DEPENDENCIES: Record<typeof TIER3_AGENT_NAMES[number], string
  */
 export const TIER3_EXECUTION_BATCHES = [
   // Batch 1: All independent agents (parallel)
-  ["conditions-analyst", "contradiction-detector", "scenario-modeler", "devils-advocate"],
-  // Batch 2: Depends on conditions-analyst + contradiction-detector + scenario-modeler
+  ["conditions-analyst", "contradiction-detector", "devils-advocate"],
+  // Batch 2: Depends on conditions-analyst + contradiction-detector
   ["synthesis-deal-scorer"],
   // Batch 3: Depends on all above
   ["memo-generator"],
@@ -300,7 +296,7 @@ export const TIER3_EXECUTION_BATCHES = [
  */
 export const TIER3_BATCHES_BEFORE_TIER2 = [
   // Batch 1: All independent agents (parallel)
-  ["conditions-analyst", "contradiction-detector", "scenario-modeler", "devils-advocate"],
+  ["conditions-analyst", "contradiction-detector", "devils-advocate"],
 ] as const;
 
 /**

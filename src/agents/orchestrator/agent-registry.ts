@@ -38,7 +38,6 @@ export async function getTier1Agents(): Promise<Record<string, DynamicAgent>> {
       "cap-table-auditor": tier1Module.capTableAuditor,
       "gtm-analyst": tier1Module.gtmAnalyst,
       "customer-intel": tier1Module.customerIntel,
-      "exit-strategist": tier1Module.exitStrategist,
       "question-master": tier1Module.questionMaster,
     };
   }
@@ -46,8 +45,9 @@ export async function getTier1Agents(): Promise<Record<string, DynamicAgent>> {
 }
 
 /**
- * Get all Tier 3 agent modules (7 total). `thesis-reconciler` only participates
+ * Get all Tier 3 agent modules (6 total). `thesis-reconciler` only participates
  * in thesis-first full-analysis/resume flows after Tier 1/2 findings are ready.
+ * scenario-modeler retiré (doctrine : pas de projection chiffrée de retour).
  */
 export async function getTier3Agents(): Promise<Record<string, DynamicAgent>> {
   if (!tier3Agents) {
@@ -55,7 +55,6 @@ export async function getTier3Agents(): Promise<Record<string, DynamicAgent>> {
     tier3Agents = {
       "conditions-analyst": tier3Module.conditionsAnalyst,
       "contradiction-detector": tier3Module.contradictionDetector,
-      "scenario-modeler": tier3Module.scenarioModeler,
       "synthesis-deal-scorer": tier3Module.synthesisDealScorer,
       "devils-advocate": tier3Module.devilsAdvocate,
       "memo-generator": tier3Module.memoGenerator,

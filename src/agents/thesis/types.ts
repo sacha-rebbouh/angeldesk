@@ -167,7 +167,6 @@ export interface ThesisExtractorOutput {
   solution: string;           // description de la solution apportee
   whyNow: string;             // pourquoi cette these est pertinente maintenant
   moat: string | null;        // defensibilite durable (null si aucune claim credible)
-  pathToExit: string | null;  // chemin d'exit envisage (null si indetermine)
 
   // Verdict consolide (worst-of-3 des 3 lunettes)
   verdict: ThesisVerdict;
@@ -230,7 +229,6 @@ export interface RebuttalJudgeOutput {
     solution?: string;
     whyNow?: string;
     moat?: string;
-    pathToExit?: string;
   };
 }
 

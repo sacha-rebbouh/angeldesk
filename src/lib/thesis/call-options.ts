@@ -105,7 +105,7 @@ function getFallbackDefaultsForRole<T>(
 ): Partial<T> | undefined {
     switch (role) {
       case "core":
-      return { moat: null, pathToExit: null } as unknown as Partial<T>;
+      return { moat: null } as unknown as Partial<T>;
     case "yc-lens":
     case "thiel-lens":
     case "angel-desk-lens":

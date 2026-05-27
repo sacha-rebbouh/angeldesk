@@ -396,7 +396,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
             solution: latestThesis.solution,
             whyNow: latestThesis.whyNow,
             moat: latestThesis.moat,
-            pathToExit: latestThesis.pathToExit,
             verdict: latestThesis.verdict,
             confidence: latestThesis.confidence,
             loadBearing: (latestThesis.loadBearing as Array<{

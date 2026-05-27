@@ -225,7 +225,6 @@ function makeExtractorOutput(overrides: Partial<ThesisExtractorOutput> = {}): Th
     solution: "Test solution",
     whyNow: "Test why-now",
     moat: "Test moat",
-    pathToExit: "Test path",
     verdict: "contrasted",
     confidence: 55,
     loadBearing: [],
@@ -315,17 +314,15 @@ describe("thesisService.create", () => {
     ).rejects.toThrow("thesisService.create trust boundary rejection");
   });
 
-  it("accepte moat et pathToExit null", async () => {
+  it("accepte moat null", async () => {
     const created = await thesisService.create({
       dealId: "deal_nullables",
       extractorOutput: makeExtractorOutput({
         moat: null,
-        pathToExit: null,
       }),
     });
 
     expect(created.moat).toBeNull();
-    expect(created.pathToExit).toBeNull();
   });
 });
 
