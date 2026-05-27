@@ -1,6 +1,86 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-27 — `analysis-redesign-opus` — V2 de la page d'analyse, namespace isolé, branchée Avekapeti
+
+### Contexte
+Codex a livré une refonte du front d'analyse sur `analysis-redesign-avekapeti` (~10 fichiers modifiés + mockup HTML 1091 lignes). Audit en 6 agents parallèles (Codex inventory, mockup, doctrine, data Avekapeti, design+a11y, perf React) a relevé : (a) doctrine — vocabulaire prescriptif réintroduit (`Pause avant investissement`, `Bloquant`, axe `Confiance`, `next-steps-guide.tsx` entièrement impératif), `RECOMMENDATION_CONFIG` et `EVIDENCE_SOLIDITY_CONFIG` ignorés au profit de tables locales divergentes. (b) scoring 2 axes — absent partout. (c) hiérarchie — méta-instrumentation (coût/temps/agents échoués) avant verdict. (d) palette — 7+ familles chromatiques au lieu de 4. (e) evidence-first — preuves dispersées dans 3 composants au lieu d'une table unifiée. (f) perf — `tier1-results.tsx` à 3901 lignes, helpers dupliqués dans 3 fichiers. (g) données Avekapeti — `synthesis-deal-scorer`, `memo-generator`, `devils-advocate`, `legal-regulatory`, `cap-table-auditor` en échec (timeout/parse), `deal.globalScore = null`, `thesis-reconciler` non exécuté → la page doit gérer Tier 3 partiel sans inventer de score.
+
+### Modifications
+
+**Branche** `analysis-redesign-opus` créée depuis `main` via `git worktree add /Users/sacharebbouh/Desktop/angeldesk-opus` — n'interfère pas avec le travail Codex/autre Claude en cours sur `analysis-redesign-avekapeti`.
+
+**Périmètre** purement additif : zéro fichier existant modifié. Tout vit dans le namespace `src/components/deals/analysis-v2/` + une route preview locale.
+
+**Route preview** `src/app/(dashboard)/deals/analysis-preview/avekapeti-v2/page.tsx` :
+- Server Component, `Promise.all([deal, analysis, thesis])`, gate `isLocalPreviewEnabled()` identique à l'existant.
+- Comparable side-by-side avec la route Codex `/deals/analysis-preview/avekapeti`.
+
+**Design tokens** `src/components/deals/analysis-v2/tokens.css` :
+- Scopés au container `.analysis-v2` — sandbox visuelle, ne touche pas au design system global.
+- Palette 4 familles × 2 saturations alignée mockup (favorable teal / vigilance ambre / alert rouge / info bleu + soft).
+- `--av-muted: #5a6b7a` plus sombre que `#667085` du mockup pour atteindre WCAG AA strict sur surface muted.
+- Reduced-motion respecté (toutes transitions wrappées).
+
+**Atomes** (`atoms/`, 9 fichiers) : `status-pill`, `callout`, `mini-bar` (`role="progressbar"` + `aria-valuenow`), `badge-pair` (orientation × solidité, le composant central qui rend le scoring 2 axes visible), `rank-row` (risques numérotés), `partial-banner`, `empty-agent-card`, `evidence-row`, `agent-card`. Tous Server. `tabular-nums` sur chaque chiffre. Aucun label hardcodé — tout consume `RECOMMENDATION_CONFIG` / `EVIDENCE_SOLIDITY_CONFIG` / `SEVERITY_STYLES` depuis `ui-configs.ts`.
+
+**Lib selectors** (`lib/`, 5 fichiers) :
+- `extractors.ts` — helpers polymorphes (`valueAt`, `agentData`, `stringAt`, `numberAt`, `compactString`). Source unique (élimine la triplette `isNegativeSignal` / `valueAt` / `text` dupliquée dans 3 composants Codex).
+- `solidity-aggregator.ts` — `aggregateOrientation` / `aggregateSolidity` qui consomment d'abord `synthesis-deal-scorer.signalContribution` quand dispo, sinon agrègent depuis `contradiction-detector` + intensités Tier 1 + cohérence deck. Retourne `null` si rien d'exploitable (jamais d'invention). Plus `buildAgentSnapshots`, `pickTier2ExpertSnapshot`, `flattenInsights`, `summarizeOneLiner`, `tier3CompletionState`.
+- `evidence-collector.ts` — fusionne `fact-extractor.facts[]` + `deck-forensics.claimVerification[]` + `deck-coherence-checker.issues[]` + `contradiction-detector.contradictions[]` en une seule liste `EvidenceRowProps[]` pour la table unifiée.
+- `selectors.ts` — `buildAnalysisV2ViewModel()` retourne un ViewModel structuré par section. Toute la logique d'extraction des risques (`extractRanksFromQuestionMaster`, `extractRanksFromTier1RedFlags`), signaux positifs/vigilance, memo reconstitué vit ici. Pure functions, testables, zero hook.
+- `view-types.ts` — types `RankRowItem`, `ThesisCard`, `LoadBearingClaim`, `ThesisAlert`.
+
+**Composants page** :
+- `page-shell.tsx` (Server) — header deal + DecisionStrip + TabsNav + 5 sections + footer.
+- `decision-strip.tsx` (Server) — 4 cartes : Lecture consolidée (BadgePair orientation × solidité + convergence d'alerte STOP/INVESTIGATE/CAUTION/PROCEED), Verdict thèse, Cohérence du deck, Couverture. Bordure colorée à gauche par card selon tone.
+- `tabs-nav.tsx` (Client) — Tabs sticky avec backdrop-blur, `role="tablist"`, navigation clavier ArrowLeft/Right/Home/End, `IntersectionObserver` pour auto-highlight de la section visible, `focus-visible` ring, touch targets ≥ 44px (`min-h-11`), `prefers-reduced-motion` honoré sur scroll-into-view.
+
+**5 sections** (`sections/`, Server) :
+- `decision-section.tsx` — 2 callouts (Signaux qui étayent la thèse / Points qui la fragilisent) + risques rangés numérotés + bandeau convergence alert.
+- `thesis-section.tsx` — bandeau "Réconciliation non effectuée" (Avekapeti), 6 cartes (Reformulation/Problème/Solution/Why-now/Moat/Path-to-exit), hypothèses porteuses avec statut declared/verified/contradicted (icônes + couleurs), alertes thèse en grille 2-col.
+- `signals-section.tsx` — grille 3-col des 12 cartes Tier 1 + carte expert sectoriel. Cartes en échec ou non exécutées affichées explicitement via `EmptyAgentCard`.
+- `evidence-section.tsx` — table unifiée 5 colonnes (Affirmation / Source / Fraîcheur / Solidité / Lecture). Mobile reflow via `data-label` (pattern repris du mockup).
+- `memo-section.tsx` — switch `kind: "generated"` vs `kind: "reconstituted"`. Cas Avekapeti : bandeau "Mémo reconstitué à partir des findings" + sections Forces étayées / Risques critiques consolidés (avec sourceAgent par item) / Priorités d'investigation (numérotées avec deadline+rationale+pill priorité) / Checklist DD / Points de négociation.
+
+**Doctrine guard test** `__tests__/doctrine-guard.test.ts` (Vitest) :
+- Scanne récursivement `analysis-v2/**/*.{ts,tsx,css}` (exclut `__tests__/`).
+- 10 patterns regex bannis (Pause avant investissement, Bloquant, Dealbreaker, GO/NO-GO, Recommandation: PASS, Décision proposée, axe Confiance user-facing, défendre un ticket/deal, etc.).
+- 10/10 tests passent. Empêche la régression sur la prochaine itération.
+
+### Vérification
+
+- `npx tsc --noEmit` exit 0.
+- `npx vitest run src/components/deals/analysis-v2` — 10/10 tests doctrine guard passent.
+- `npm run dev` (port 3004) + navigation `/deals/analysis-preview/avekapeti-v2` : page rendue avec vraies données Avekapeti (23 agents, 5 échecs incl. synthesis-scorer/memo/devils-advocate), 4 sections visibles, sticky tabs fonctionnels au clavier (ArrowRight passe de Décision → Thèse).
+- Scan DOM en live : zéro violation des 8 patterns bannis sur la surface rendue (32k caractères de texte).
+- Console : 0 erreur, seulement 2 warnings Clerk dev (sans rapport).
+- Responsive 414px : cards stackent verticalement, decision strip 1-col, tabs scrollables.
+
+### Out of scope (intentionnel)
+
+- Pas de refonte de la page deal de prod (`[dealId]/page.tsx`).
+- Pas de remplacement des fichiers Codex (`analysis-investor-view.tsx`, `analysis-memo-full.tsx`, etc.) — Sacha décide après comparaison.
+- Guard doctrinal scopé au namespace `analysis-v2` seulement (pas global) pour ne pas casser le CI Codex.
+- Refactor `tier1-results.tsx` (3901 l) hors scope (la v2 ne le consomme pas).
+- Schema `signalContribution` côté agents (chantier distinct mentionné CLAUDE.md).
+
+### Fichiers
+
+**Nouveaux** (25) :
+- 1 route (`src/app/(dashboard)/deals/analysis-preview/avekapeti-v2/page.tsx`)
+- 1 page shell (`src/components/deals/analysis-v2/page-shell.tsx`)
+- 1 decision strip (`src/components/deals/analysis-v2/decision-strip.tsx`)
+- 1 tabs nav (`src/components/deals/analysis-v2/tabs-nav.tsx`)
+- 1 CSS (`src/components/deals/analysis-v2/tokens.css`)
+- 5 sections (`src/components/deals/analysis-v2/sections/*.tsx`)
+- 9 atomes (`src/components/deals/analysis-v2/atoms/*.tsx`)
+- 5 lib (`src/components/deals/analysis-v2/lib/*.ts`)
+- 1 test (`src/components/deals/analysis-v2/__tests__/doctrine-guard.test.ts`)
+
+**Modifiés** : 1 (`changes-log.md`).
+
+---
 ## 2026-05-23 — Pivot doctrinal (clôture — §33) — KPI Governance refondue en matrice + cascade TERMINÉE pour le périmètre repéré
 
 ### Contexte
