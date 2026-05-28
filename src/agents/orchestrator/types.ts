@@ -193,7 +193,7 @@ export interface PausedAnalysisResult extends AnalysisResult {
   alertsCount: number;
 }
 
-// Tier 1 agent names (12 agents)
+// Tier 1 agent names (12 agents — exit-strategist retiré, doctrine anti-oraculaire pas de projection)
 export const TIER1_AGENT_NAMES = [
   "deck-forensics",
   "financial-auditor",

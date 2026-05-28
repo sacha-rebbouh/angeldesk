@@ -1199,10 +1199,10 @@ export class AgentOrchestrator {
         });
       }
 
-      // Tier 3 coherence check retiré : il ne servait qu'à ajuster les
-      // sorties scenario-modeler (probabilités, multiples, IRR). L'agent
-      // étant retiré du pipeline (doctrine anti-oraculaire), le check est
-      // devenu sans objet.
+      // Tier 3 coherence check retiré : il ajustait scenario-modeler
+      // (probabilités, multiples, IRR). L'agent est retiré du pipeline
+      // (doctrine anti-oraculaire : pas de projection chiffrée de retour),
+      // donc le check n'a plus d'objet.
     }
 
     const summary = generateTier3Summary(results);
@@ -2196,10 +2196,7 @@ export class AgentOrchestrator {
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
-        // STEP 5.5 retiré : applyTier3Coherence ajustait uniquement les
-        // sorties scenario-modeler (probabilités, multiples, IRR). L'agent
-        // étant retiré du pipeline, le check est devenu no-op.
-
+        // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé, doctrine anti-oraculaire).
       } else if (!includeFullTier3) {
         console.log(`[Orchestrator] Tier 3 pre-synthesis agents skipped (FREE plan)`);
       } else {
@@ -4725,7 +4722,7 @@ export class AgentOrchestrator {
         };
 
         // applyResumeTier3Coherence retiré : il ajustait uniquement les
-        // sorties scenario-modeler qui ne fait plus partie du pipeline.
+        // sorties scenario-modeler qui ne fait plus partie du pipeline (doctrine anti-oraculaire).
 
         await hydrateTier3Context();
         restoreFullTier3Context();

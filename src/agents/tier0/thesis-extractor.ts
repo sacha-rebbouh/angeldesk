@@ -120,7 +120,7 @@ Pour chacun des 5 champs, tu retournes UNE LISTE DE CLAIMS STRUCTURES (pas du te
 4. **whyNowClaims** — claims sur le catalyseur temporel.
 5. **moatClaims** — claims sur la defensibilite durable.
 
-Ne produis pas de scenario de liquidite, de projection de sortie ni de retour estime : cette analyse reste factuelle et anti-oraculaire.
+Ne produis pas de scenario de liquidite, de projection de sortie ni de retour estime : cette analyse reste factuelle et anti-oraculaire. Le champ pathToExit a été retiré.
 
 Chaque claim doit etre de l'un de ces 4 types:
 - **direct_fact**: reference un factKey du THESIS FACT SCOPE + une phrase d'amorce SANS chiffres

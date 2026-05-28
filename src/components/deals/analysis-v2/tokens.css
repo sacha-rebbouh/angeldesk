@@ -1,0 +1,128 @@
+/*
+ * Analysis V2 design tokens — scoped to .analysis-v2 container.
+ * Palette : 4 familles × 2 saturations, alignée mockup mais resserrée pour AA strict.
+ * Aucune dépendance globale. La sandbox visuelle vit ici, pas dans globals.css.
+ */
+
+.analysis-v2 {
+  /* Hérite du fond app global (Tailwind --background) pour se confondre avec
+     la page parent en mode embedded ; fallback ancien gris pâle si --background
+     non défini (preview standalone, environnements de test). */
+  --av-bg: var(--background, #f6f8fa);
+  /* Cartes / surfaces : transparentes pour hériter du fond panel,
+     bordure + ombre suffisent à les démarquer. */
+  --av-surface: transparent;
+  --av-surface-muted: #f1f5f4;
+  --av-ink: #17202a;
+  --av-muted: #5a6b7a;
+  --av-line: #d8dee4;
+  --av-line-strong: #b8c1cc;
+
+  --av-favorable: #0f766e;
+  --av-favorable-soft: #dff4f0;
+  --av-favorable-edge: #9bd4ca;
+
+  --av-vigilance: #b45309;
+  --av-vigilance-soft: #fff3d8;
+  --av-vigilance-edge: #f1c37d;
+
+  --av-alert: #b42318;
+  --av-alert-soft: #ffe4df;
+  --av-alert-edge: #ffb4aa;
+
+  --av-info: #3451b2;
+  --av-info-soft: #e8edff;
+  --av-info-edge: #b3c0ef;
+
+  --av-shadow: 0 14px 40px rgba(23, 32, 42, 0.08);
+  --av-shadow-soft: 0 6px 20px rgba(23, 32, 42, 0.06);
+
+  background: var(--av-bg);
+  color: var(--av-ink);
+  font-feature-settings: "ss01", "cv11";
+}
+
+.analysis-v2 .av-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-v2 .av-panel {
+  background: var(--av-surface);
+  border: 1px solid var(--av-line);
+  border-radius: 12px;
+  box-shadow: var(--av-shadow);
+}
+
+.analysis-v2 .av-panel-muted {
+  background: var(--av-surface-muted);
+  border: 1px solid var(--av-line);
+  border-radius: 12px;
+}
+
+.analysis-v2 .av-eyebrow {
+  color: var(--av-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.analysis-v2 .av-h1 {
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.analysis-v2 .av-h2 {
+  font-size: 20px;
+  line-height: 1.25;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  text-wrap: balance;
+}
+
+.analysis-v2 .av-h3 {
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 650;
+  text-wrap: balance;
+}
+
+.analysis-v2 .av-note {
+  color: var(--av-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.analysis-v2 .av-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 12px 16px;
+  background: var(--av-ink);
+  color: #fff;
+  border-radius: 0 0 8px 0;
+}
+
+.analysis-v2 .av-skip-link:focus {
+  left: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .analysis-v2 {
+    scroll-behavior: smooth;
+  }
+  .analysis-v2 .av-transition {
+    transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analysis-v2 * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

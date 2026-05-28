@@ -9,7 +9,6 @@ import { TechOpsDDResponseSchema } from "../tech-ops-dd-schema";
 import { TechStackDDResponseSchema } from "../tech-stack-dd-schema";
 import { CapTableAuditorResponseSchema } from "../cap-table-auditor-schema";
 import { CustomerIntelResponseSchema } from "../customer-intel-schema";
-import { ExitStrategistResponseSchema } from "../exit-strategist-schema";
 import { GTMAnalystResponseSchema } from "../gtm-analyst-schema";
 import { QuestionMasterResponseSchema } from "../question-master-schema";
 
@@ -303,25 +302,6 @@ describe("Tier 1 Zod Schemas", () => {
       narrative: baseNarrative,
     };
     const result = CustomerIntelResponseSchema.safeParse(data);
-    expect(result.success).toBe(true);
-  });
-
-  it("ExitStrategistResponseSchema validates minimal data", () => {
-    const data = {
-      meta: baseMeta,
-      score: baseScore,
-      findings: {
-        scenarios: [],
-        comparableExits: [],
-        mnaMarket: null,
-        liquidityAnalysis: null,
-      },
-      redFlags: [],
-      questions: [],
-      alertSignal: baseAlertSignal,
-      narrative: baseNarrative,
-    };
-    const result = ExitStrategistResponseSchema.safeParse(data);
     expect(result.success).toBe(true);
   });
 

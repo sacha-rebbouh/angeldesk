@@ -535,54 +535,6 @@ vi.mock("@/services/openrouter/router", () => {
       });
     }
 
-    // ----- TIER 1: Exit Strategist -----
-    if (promptLower.includes("exit") || promptLower.includes("sortie")) {
-      return buildTier1Response("exit-strategist", {
-        exitOptions: [
-          {
-            type: "ACQUISITION",
-            probability: 60,
-            timeline: "5-7 years",
-            potentialAcquirers: ["BigCo", "MegaCorp"],
-            estimatedValuation: 100000000,
-            rationale: "Strategic acquisition by analytics incumbents",
-          },
-        ],
-        returnAnalysis: {
-          investmentAmount: 2000000,
-          currentValuation: 10000000,
-          ownership: 20,
-          scenarios: [
-            { scenario: "Base case", exitValuation: 50000000, multiple: 5, irr: 35 },
-          ],
-          verdict: "Attractive return potential in base case",
-        },
-        comparableExits: [
-          {
-            company: "SimilarExit",
-            sector: "SaaS Analytics",
-            exitType: "acquisition",
-            exitValuation: 75000000,
-            multiple: 8,
-            year: 2023,
-            acquirer: "BigTechCo",
-          },
-        ],
-        exitReadiness: {
-          score: 45,
-          strengths: ["Growing ARR", "Clean cap table"],
-          gaps: ["Need more enterprise customers", "No SOC2"],
-          verdict: "Not exit-ready, needs 3-5 years of growth",
-        },
-        liquidityTimeline: {
-          bestCase: "4 years",
-          likelyCase: "6 years",
-          worstCase: "8+ years or no exit",
-          verdict: "Typical SaaS exit timeline",
-        },
-      });
-    }
-
     // ----- TIER 1: Question Master -----
     if (promptLower.includes("question") && promptLower.includes("master")) {
       return buildTier1Response("question-master", {
