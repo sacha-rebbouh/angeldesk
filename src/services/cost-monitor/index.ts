@@ -1064,7 +1064,6 @@ class CostMonitor {
       userId: string;
       userName: string | null;
       userEmail: string;
-      subscriptionStatus: string;
       totalCost: number;
       dealCount: number;
       analysisCount: number;
@@ -1088,7 +1087,6 @@ class CostMonitor {
         id: true,
         name: true,
         email: true,
-        subscriptionStatus: true,
         deals: {
           select: {
             id: true,
@@ -1148,7 +1146,6 @@ class CostMonitor {
         userId: user.id,
         userName: user.name,
         userEmail: user.email,
-        subscriptionStatus: user.subscriptionStatus,
         totalCost,
         dealCount: dealsWithActivity.length,
         analysisCount: totalAnalyses,

@@ -364,7 +364,6 @@ export async function POST(request: NextRequest) {
 
     // Use the requested analysis type directly — credit check already validated the tier
     const effectiveType: AnalysisType = type as AnalysisType;
-    const effectivePlan = requestedTier >= 2 ? "PRO" : "FREE";
     const dispatchRefundKey = `refund:analyze-dispatch:${dealId}:${analysisAttemptId}`;
     const dispatchEventId = `analysis:deal.analyze:${dealId}:${analysisAttemptId}`;
 
@@ -380,7 +379,6 @@ export async function POST(request: NextRequest) {
           dealId,
           type: effectiveType,
           enableTrace,
-          userPlan: effectivePlan,
           userId: user.id,
           dispatchRefundKey,
         },
@@ -456,7 +454,6 @@ export async function GET() {
         usedThisMonth: usageStatus.usedThisMonth,
         remainingDeals: usageStatus.remainingDeals,
         maxTier: usageStatus.maxTier,
-        subscriptionStatus: usageStatus.subscriptionStatus,
         isUnlimited: usageStatus.isUnlimited,
         nextResetDate: usageStatus.nextResetDate.toISOString(),
       },
