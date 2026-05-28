@@ -9,7 +9,9 @@
      la page parent en mode embedded ; fallback ancien gris pâle si --background
      non défini (preview standalone, environnements de test). */
   --av-bg: var(--background, #f6f8fa);
-  --av-surface: #ffffff;
+  /* Cartes / surfaces : transparentes pour hériter du fond panel,
+     bordure + ombre suffisent à les démarquer. */
+  --av-surface: transparent;
   --av-surface-muted: #f1f5f4;
   --av-ink: #17202a;
   --av-muted: #5a6b7a;
