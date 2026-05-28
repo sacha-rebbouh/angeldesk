@@ -61,7 +61,7 @@ export function DecisionStrip({ model }: { model: Model }) {
   const alertConvergence = (() => {
     const { STOP, INVESTIGATE_FURTHER, PROCEED_WITH_CAUTION, PROCEED, total } = alertDistribution;
     if (total === 0) return "Aucun signal agrégé disponible.";
-    return `${STOP} STOP · ${INVESTIGATE_FURTHER} investigation · ${PROCEED_WITH_CAUTION} attention · ${PROCEED} conforme`;
+    return `${STOP} alerte${STOP > 1 ? "s" : ""} · ${INVESTIGATE_FURTHER} investigation${INVESTIGATE_FURTHER > 1 ? "s" : ""} · ${PROCEED_WITH_CAUTION} vigilance · ${PROCEED} conforme${PROCEED > 1 ? "s" : ""}`;
   })();
 
   const thesisLabel = thesisVerdict ? THESIS_VERDICT_CONFIG[thesisVerdict]?.label ?? thesisVerdict : "Thèse non qualifiée";
@@ -105,7 +105,7 @@ export function DecisionStrip({ model }: { model: Model }) {
         />
         <MetricCard
           eyebrow="Couverture"
-          primary={model.header.completedAgents != null && model.header.totalAgents != null ? `${model.header.completedAgents} / ${model.header.totalAgents}` : "—"}
+          primary={model.header.completedAgents != null && model.header.totalAgents != null ? `${Math.min(model.header.completedAgents, model.header.totalAgents)} / ${model.header.totalAgents}` : "—"}
           tone={completion.failedAgents.length === 0 ? "favorable" : completion.failedAgents.length <= 2 ? "vigilance" : "alert"}
           detail={`${completion.failedAgents.length} agent${completion.failedAgents.length > 1 ? "s" : ""} en échec${model.header.totalDurationMin != null ? ` · ${model.header.totalDurationMin} min` : ""}${model.header.totalCostUsd != null ? ` · $${model.header.totalCostUsd.toFixed(2)}` : ""}`}
         />

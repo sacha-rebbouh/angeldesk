@@ -35,6 +35,13 @@ import {
   resolveCanonicalDealFields,
 } from "@/services/deals/canonical-read-model";
 
+function capitalizeFirst(value: string | null | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return value ?? "";
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 async function getDeal(dealId: string, userId: string) {
   return prisma.deal.findFirst({
     where: {
@@ -250,7 +257,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
       <nav aria-label="Fil d'Ariane" className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <Link href="/deals" className="hover:text-foreground transition-colors">Deals</Link>
         <span className="text-muted-foreground/40">/</span>
-        <span className="text-foreground font-medium truncate max-w-[200px]">{deal.name}</span>
+        <span className="text-foreground font-medium truncate max-w-[200px]">{capitalizeFirst(deal.name)}</span>
       </nav>
 
       {/* Header — enriched with stage, sector, amount */}
@@ -263,7 +270,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold tracking-tight">{deal.name}</h1>
+              <h1 className="text-3xl font-bold tracking-tight">{capitalizeFirst(deal.name)}</h1>
               <Badge
                 variant="secondary"
                 className={getStatusColor(deal.status)}
@@ -391,7 +398,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
         {/* Tab 2: Analyse IA — V2 Page Shell quand une analyse COMPLETED existe, sinon ancien panel pour les contrôles */}
         <TabsContent value="analysis" className="space-y-6">
           {analysisV2ViewModel ? (
-            <AnalysisV2PageShell dealName={canonicalDeal.companyName ?? deal.name} vm={analysisV2ViewModel} />
+            <AnalysisV2PageShell dealName={capitalizeFirst(canonicalDeal.companyName ?? deal.name)} vm={analysisV2ViewModel} hideHeader />
           ) : (
             <AnalysisPanelWrapper
               dealId={deal.id}

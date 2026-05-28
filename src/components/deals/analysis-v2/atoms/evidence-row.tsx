@@ -83,7 +83,7 @@ export function EvidenceRow({ claim, source, sourceDetail, freshness, solidity, 
         {solidityCfg && solidityTone ? (
           <Pill label={solidityCfg.shortLabel} bg={solidityTone.bg} edge={solidityTone.edge} color={solidityTone.color} />
         ) : (
-          <span className="text-[12px] text-[var(--av-muted)]">Non qualifiée</span>
+          <span className="text-[12px] text-[var(--av-muted)]">—</span>
         )}
       </td>
       <td className="px-3 py-3 align-top" data-label="Status">

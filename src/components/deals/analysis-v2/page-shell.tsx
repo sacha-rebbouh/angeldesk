@@ -12,20 +12,39 @@ import type { AnalysisV2ViewModel } from "./lib/selectors";
 type Props = {
   dealName: string;
   vm: AnalysisV2ViewModel;
+  hideHeader?: boolean;
 };
+
+const MODE_LABELS_FR: Record<string, string> = {
+  full_analysis: "Deep Dive thèse-first",
+  tier3_synthesis: "Synthèse Tier 3",
+  tier2_sector: "Expert sectoriel",
+  extraction: "Extraction documents",
+};
+
+function formatModeLabel(mode: string | null | undefined): string {
+  if (!mode) return "";
+  const key = mode.trim().toLowerCase();
+  return MODE_LABELS_FR[key] ?? key.replace(/_/g, " ");
+}
 
 function HeaderBar({ dealName, vm }: Props) {
   const { header, completion } = vm.decisionStrip;
+  const modeLabel = formatModeLabel(header.mode);
+  const completedDisplay =
+    header.completedAgents != null && header.totalAgents != null
+      ? Math.min(header.completedAgents, header.totalAgents)
+      : null;
   return (
     <header className="flex flex-col gap-2">
-      <span className="av-eyebrow">Analyse complète {header.mode ? `· ${header.mode.replace(/_/g, " ")}` : ""}</span>
+      <span className="av-eyebrow">Analyse complète{modeLabel ? ` · ${modeLabel}` : ""}</span>
       <h1 className="av-h1">{dealName}</h1>
       <div className="flex flex-wrap items-center gap-3 text-[13px] text-[var(--av-muted)] av-tabular">
         {header.completedAt ? (
           <span>Analyse complétée le {header.completedAt.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })}</span>
         ) : null}
-        {header.completedAgents != null && header.totalAgents != null ? (
-          <span>· {header.completedAgents} / {header.totalAgents} agents exploitables</span>
+        {completedDisplay != null && header.totalAgents != null ? (
+          <span>· {completedDisplay} / {header.totalAgents} agents exploitables</span>
         ) : null}
         {completion.failedAgents.length > 0 ? (
           <span>· {completion.failedAgents.length} en échec</span>
@@ -42,7 +61,7 @@ export function AnalysisV2PageShell(props: Props) {
     <div className="analysis-v2 -m-4 min-h-screen p-4 sm:-m-6 sm:p-6 lg:-m-8 lg:p-8">
       <a href="#main" className="av-skip-link">Aller au contenu</a>
       <main id="main" className="mx-auto flex max-w-[1440px] flex-col gap-6">
-        <HeaderBar {...props} />
+        {props.hideHeader ? null : <HeaderBar {...props} />}
         <DecisionStrip model={props.vm.decisionStrip} />
         <TabsNav />
         <DecisionSection model={props.vm.decisionSection} />

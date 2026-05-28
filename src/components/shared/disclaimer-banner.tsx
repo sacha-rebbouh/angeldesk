@@ -23,7 +23,7 @@ export const DisclaimerBanner = memo(function DisclaimerBanner() {
           className="text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           <AlertTriangle className="h-3 w-3 inline mr-1" />
-          Avertissement legal
+          Avertissement légal
         </button>
       </div>
     );
@@ -42,20 +42,20 @@ export const DisclaimerBanner = memo(function DisclaimerBanner() {
         <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
         <div className="flex-1">
           <p className="text-xs text-amber-800 dark:text-amber-200">
-            <strong>Avertissement</strong> : Angel Desk fournit des analyses automatisees a titre informatif uniquement.
+            <strong>Avertissement</strong> : Angel Desk fournit des analyses automatisées à titre informatif uniquement.
             Ces analyses <strong>ne constituent pas un conseil en investissement</strong>.
             Tout investissement dans des startups comporte un <strong>risque de perte totale du capital investi</strong>.
-            Consultez un conseiller financier agree avant toute decision d&apos;investissement.
+            Consultez un conseiller financier agréé avant toute décision d&apos;investissement.
           </p>
           <div className="flex gap-3 mt-1.5">
             <Link href="/legal/cgu" className="text-xs text-amber-700 underline hover:text-amber-900">
               CGU
             </Link>
             <Link href="/legal/mentions-legales" className="text-xs text-amber-700 underline hover:text-amber-900">
-              Mentions legales
+              Mentions légales
             </Link>
             <Link href="/legal/confidentialite" className="text-xs text-amber-700 underline hover:text-amber-900">
-              Politique de confidentialite
+              Politique de confidentialité
             </Link>
           </div>
         </div>

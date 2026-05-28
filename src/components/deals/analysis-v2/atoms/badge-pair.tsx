@@ -74,20 +74,26 @@ export function BadgePair({ orientation, solidity, layout = "horizontal", size =
     ? SOLIDITY_TONE[solidity]
     : { color: "var(--av-muted)", bg: "var(--av-surface-muted)", edge: "var(--av-line)" };
 
+  if (!orientation && !solidity) return null;
+
   return (
     <div className={`flex ${layout === "stacked" ? "flex-col" : "flex-wrap"} gap-2`}>
-      <Badge
-        axis="Orientation"
-        label={orientationCfg?.label ?? "Non qualifiée"}
-        tone={orientationTone}
-        size={size}
-      />
-      <Badge
-        axis="Solidité des preuves"
-        label={solidityCfg?.label ?? "Non qualifiée"}
-        tone={solidityTone}
-        size={size}
-      />
+      {orientation ? (
+        <Badge
+          axis="Orientation"
+          label={orientationCfg?.label ?? "—"}
+          tone={orientationTone}
+          size={size}
+        />
+      ) : null}
+      {solidity ? (
+        <Badge
+          axis="Solidité des preuves"
+          label={solidityCfg?.label ?? "—"}
+          tone={solidityTone}
+          size={size}
+        />
+      ) : null}
     </div>
   );
 }
