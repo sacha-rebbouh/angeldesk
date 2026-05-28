@@ -697,3 +697,4 @@
   `formatDocumentDate(null)` retourne déjà `"date inconnue"`. Pour le tri chronologique, retourner `Number.MAX_SAFE_INTEGER` quand pas de source date → les docs non datés vont à la **fin** (les docs datés sont plus exploitables). Tests : `src/agents/__tests__/base-agent-date-rendering.test.ts` (4 tests — couvre §6.5 #23 du schema Phase 1).
 - **Ce qui N'A PAS fonctionné** : N/A — fix direct et chirurgical.
 - **Agent/Auteur** : Découvert pendant Phase 0.5 Evidence Engine audit (Codex), fix Phase 1 parallèle Claude.
+
