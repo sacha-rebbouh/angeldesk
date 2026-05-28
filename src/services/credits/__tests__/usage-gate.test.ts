@@ -91,8 +91,12 @@ describe('FULL_DEAL_PACKAGE_CREDITS', () => {
 // ============================================================================
 
 describe('FREE_TIER', () => {
-  it('should grant 5 initial credits (1 Deep Dive)', () => {
-    expect(FREE_TIER.initialCredits).toBe(5);
+  it('should grant 10 weekly credits (use-it-or-lose-it)', () => {
+    expect(FREE_TIER.weeklyAllowance).toBe(10);
+  });
+
+  it('should have a 7-day window', () => {
+    expect(FREE_TIER.windowDurationMs).toBe(7 * 24 * 60 * 60 * 1000);
   });
 
   it('should not require a card', () => {
