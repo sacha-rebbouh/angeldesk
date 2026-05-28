@@ -60,7 +60,6 @@ function makeLLMResponse(overrides: Record<string, unknown> = {}): unknown {
     termsAnalysis: [],
     dealStructure: { valuation: "x", roundSize: "x", keyTerms: [], negotiationPoints: [] },
     investmentThesis: { bull: [], bear: [], keyAssumptions: [], thesis: "x" },
-    exitStrategy: { primaryPath: "x", timeline: "5y", potentialAcquirers: [], expectedMultiple: { min: 1, median: 5, max: 10 } },
     nextSteps: [],
     questionsForFounder: [],
     narrative: { summary: "x", keyInsights: [], forNegotiation: [] },

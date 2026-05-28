@@ -95,6 +95,26 @@ describe("ThesisCoreStructuredSchema", () => {
     });
     expect(normalizeLoadBearingAssumptions(parsed.data.loadBearing)[0]?.id).toBe("lb-1");
   });
+
+  it("accepts unknown derived metric keys before the repair layer downgrades them", () => {
+    const parsed = ThesisCoreStructuredSchema.safeParse({
+      reformulatedClaims: [{ kind: "unknown", text: "Thèse indisponible." }],
+      problemClaims: [{ kind: "unknown", text: "Problème indisponible." }],
+      solutionClaims: [{ kind: "unknown", text: "Solution indisponible." }],
+      whyNowClaims: [{ kind: "unknown", text: "Why-now indisponible." }],
+      moatClaims: [
+        {
+          kind: "derived_metric",
+          metricKey: "gross_margin",
+          framing: "La société revendique une marge brute de",
+        },
+      ],
+      loadBearing: [],
+      alerts: [],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
 });
 
 describe("structured core thesis claims", () => {
@@ -358,6 +378,31 @@ describe("structured core thesis claims", () => {
       text: "Information insuffisamment documentée.",
     });
     expect(() => assertValidStructuredClaims(repaired, scope)).not.toThrow();
+  });
+
+  it("downgrades unknown derived_metric keys to unknown before validation", () => {
+    const repaired = repairStructuredClaims(
+      {
+        reformulated: [
+          {
+            kind: "derived_metric",
+            metricKey: "gross_margin",
+            framing: "La société affiche une marge brute de",
+          },
+        ],
+        problem: [],
+        solution: [],
+        whyNow: [],
+        moat: [],
+      },
+      buildThesisFactScope([])
+    );
+
+    expect(repaired.reformulated[0]).toEqual({
+      kind: "unknown",
+      text: "Information insuffisamment documentée.",
+    });
+    expect(() => assertValidStructuredClaims(repaired, buildThesisFactScope([]))).not.toThrow();
   });
 
   it("strips numeric assertions from direct facts inferred from judgment claims", () => {

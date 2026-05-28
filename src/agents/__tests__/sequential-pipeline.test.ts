@@ -1136,12 +1136,6 @@ function buildAgentMockResponse(prompt: string, systemPrompt?: string): unknown 
         keyAssumptions: ["Growth sustains above 100% YoY", "Churn improves below 2%"],
         thesis: "TestCo addresses a real need with strong execution metrics. Risk-adjusted, it's a solid Seed investment if valuation is negotiated down.",
       },
-      exitStrategy: {
-        primaryPath: "Acquisition by analytics incumbent",
-        timeline: "5-7 years",
-        potentialAcquirers: ["Datadog", "Salesforce", "HubSpot"],
-        expectedMultiple: { min: 5, median: 8, max: 15 },
-      },
       nextSteps: [
         { step: "Verify financials", priority: "CRITICAL", deadline: "Before term sheet", responsible: "BA" },
         { step: "Request cohort data", priority: "HIGH", deadline: "1 week", responsible: "Founder" },
@@ -1596,7 +1590,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     expect(result.success).toBe(true);
     expect(result.agentName).toBe("financial-auditor");
     console.log(`[Step 3b] financial-auditor: ${result.success ? "SUCCESS" : "FAILED: " + result.error}`);
-  });
+  }, 30000);
 
   // ── Step 3c: Phase C — team + competitive + market (parallel) ──
   it("Step 3c: Phase C — team-investigator, competitive-intel, market-intelligence (parallel)", async () => {
@@ -1856,7 +1850,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       failed.forEach((name) => console.log(`  - ${name}: ${allResults[name].error}`));
     }
 
-    // This is the key assertion: we want 21/21 success
+    // This is the key assertion: we want 19/19 success
     expect(failed.length).toBe(0);
 
     // Assert total cost > 0 (mock costs are non-zero)

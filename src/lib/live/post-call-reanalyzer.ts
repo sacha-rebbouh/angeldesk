@@ -24,7 +24,6 @@ const CATEGORY_AGENT_MAP: Record<string, string[]> = {
   legal: ["legal-regulatory"],
   gtm: ["gtm-analyst"],
   customer: ["customer-intel"],
-  exit: ["exit-strategist"],
   cap_table: ["cap-table-auditor"],
 };
 
@@ -227,7 +226,7 @@ export async function triggerTargetedReanalysis(
   // 2. Determine analysis type based on impacted agents
   const tier3Names = [
     "synthesis-deal-scorer", "memo-generator", "contradiction-detector",
-    "devils-advocate", "scenario-modeler", "conditions-analyst",
+    "devils-advocate", "conditions-analyst",
   ];
   const hasTier1Agents = agentNames.some((name) => !tier3Names.includes(name));
   const analysisType = hasTier1Agents ? "full_analysis" : "tier3_synthesis";

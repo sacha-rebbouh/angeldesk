@@ -680,7 +680,7 @@ export class AgentOrchestrator {
   ): Promise<AnalysisResult> {
     const { onEarlyWarning, isUpdate = false, analysisModeOverride } = advancedOptions;
     const startTime = Date.now();
-    const TIER1_AGENT_COUNT = TIER1_AGENT_NAMES.length; // 13
+    const TIER1_AGENT_COUNT = TIER1_AGENT_NAMES.length;
     const collectedWarnings: EarlyWarning[] = [];
 
     const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
@@ -952,7 +952,7 @@ export class AgentOrchestrator {
    * Run Tier 3 synthesis (requires Tier 1 results in previousResults)
    *
    * OPTIMIZED: Uses dependency graph for parallel execution
-   * - Batch 1 (parallel): contradiction-detector, scenario-modeler, devils-advocate
+   * - Batch 1 (parallel): contradiction-detector, devils-advocate
    * - Batch 2 (sequential): synthesis-deal-scorer (needs batch 1)
    * - Batch 3 (sequential): memo-generator (needs all)
    */
@@ -1201,8 +1201,8 @@ export class AgentOrchestrator {
 
       // Tier 3 coherence check retiré : il ajustait scenario-modeler
       // (probabilités, multiples, IRR). L'agent est retiré du pipeline
-      // (doctrine : pas de projection chiffrée de retour), donc le check
-      // n'a plus d'objet.
+      // (doctrine anti-oraculaire : pas de projection chiffrée de retour),
+      // donc le check n'a plus d'objet.
     }
 
     const summary = generateTier3Summary(results);
@@ -1849,7 +1849,7 @@ export class AgentOrchestrator {
       // Phase A: deck-forensics → validates deck claims
       // Phase B: financial-auditor → validates financial metrics
       // Phase C: team + competitive + market (parallel) → using validated facts
-      // Phase D: remaining 8 agents (parallel) → using all validated facts
+      // Phase D: remaining agents (parallel) → using all validated facts
       await stateMachine.startAnalysis();
 
       const tier1AgentMap = await getTier1Agents();
@@ -2050,7 +2050,8 @@ export class AgentOrchestrator {
       }
 
       // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
-      // Run contradiction-detector, scenario-modeler, devils-advocate in PARALLEL
+      // Run conditions-analyst, contradiction-detector, devils-advocate in PARALLEL
+      // (scenario-modeler retiré du pipeline — doctrine anti-oraculaire)
       await stateMachine.startSynthesis();
 
       const tier3AgentMap = await getTier3Agents();
@@ -2113,7 +2114,7 @@ export class AgentOrchestrator {
       }
       enrichedContext.conditionsAnalystMode = "pipeline";
 
-      // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + scenario + devil's advocate)
+      // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
       // Skip for FREE plan (these are TIER_3 agents, not SYNTHESIS)
       if (includeFullTier3 && !(maxCostUsd && totalCost >= maxCostUsd)) {
         const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0];
@@ -2195,7 +2196,7 @@ export class AgentOrchestrator {
           totalAgents: TOTAL_AGENTS,
           estimatedCostSoFar: totalCost,
         });
-        // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé).
+        // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé, doctrine anti-oraculaire).
       } else if (!includeFullTier3) {
         console.log(`[Orchestrator] Tier 3 pre-synthesis agents skipped (FREE plan)`);
       } else {
@@ -4720,9 +4721,8 @@ export class AgentOrchestrator {
           return true;
         };
 
-        const applyResumeTier3Coherence = async (): Promise<void> => {
-          // Tier 3 coherence retiré (ajustait scenario-modeler — agent supprimé).
-        };
+        // applyResumeTier3Coherence retiré : il ajustait uniquement les
+        // sorties scenario-modeler qui ne fait plus partie du pipeline (doctrine anti-oraculaire).
 
         await hydrateTier3Context();
         restoreFullTier3Context();
@@ -4731,7 +4731,6 @@ export class AgentOrchestrator {
           for (const batch of TIER3_BATCHES_BEFORE_TIER2) {
             await runResumeTier3Batch(batch);
           }
-          await applyResumeTier3Coherence();
         }
 
         if (
@@ -4783,10 +4782,8 @@ export class AgentOrchestrator {
           : TIER3_EXECUTION_BATCHES;
 
         for (const batch of tier3Batches) {
-          const ranBatch = await runResumeTier3Batch(batch);
-          if (!isFullAnalysis && ranBatch && batch === TIER3_EXECUTION_BATCHES[0]) {
-            await applyResumeTier3Coherence();
-          }
+          await runResumeTier3Batch(batch);
+          // Tier 3 coherence retiré : ne servait qu'à scenario-modeler.
         }
       }
 

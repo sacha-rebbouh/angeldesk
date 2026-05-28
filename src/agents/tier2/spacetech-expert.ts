@@ -753,7 +753,7 @@ En utilisant les donnees DB:
 
 ### 13. EXIT LANDSCAPE ANALYSIS
 - Acquireurs probables (Primes, PE, strategic)?
-- Multiple attendu base sur segment et heritage?
+- Multiples observés sur exits comparables (P25/median/P75 par segment et heritage, source DB)?
 - IPO viability (post-SPAC market reality)?
 - Strategic acquirer fit analysis
 

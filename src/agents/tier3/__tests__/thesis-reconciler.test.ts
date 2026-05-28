@@ -108,8 +108,8 @@ describe("ThesisReconcilerAgent deterministic guardrails", () => {
             redFlags: [
               {
                 severity: "HIGH",
-                title: "Exit hautement improbable",
-                description: "La trajectoire de burn rend le path to exit peu credible",
+                title: "Unit economics non soutenables",
+                description: "La trajectoire de burn fragilise la these economique",
               },
             ],
           },
@@ -129,6 +129,7 @@ describe("ThesisReconcilerAgent deterministic guardrails", () => {
           severity: "CRITICAL",
         }),
         expect.objectContaining({
+          field: "loadBearing",
           agentName: "financial-auditor",
           severity: "HIGH",
         }),

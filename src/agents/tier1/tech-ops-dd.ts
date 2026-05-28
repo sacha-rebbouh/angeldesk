@@ -18,6 +18,10 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, TECH_OPS_DD_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
+
+const TECH_OPS_PROVIDER_TIMEOUT_MS = 90_000;
+const TECH_OPS_MAX_TOKENS = 10_000;
 
 /**
  * Tech-Ops-DD Agent - Split from Technical DD v2.0
@@ -256,7 +260,17 @@ ${contextEngineData}`
 → Réduire confidenceLevel de 10-15 points
 → Marquer les benchmarks comme "estimés sans données marché"`;
 
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const applicabilityBlock = sectorProfile.techDDApplicability.applicable
+      ? `## APPLICABILITÉ — DD TECH-OPS PERTINENTE\n\nLa due diligence technique opérationnelle (maturité produit logiciel, équipe tech, sécurité applicative, IP technique logicielle) EST pertinente pour ce dossier (${sectorProfile.displayName}). Procède normalement, en calibrant tes attentes équipe tech sur le profil sectoriel ci-dessus.`
+      : `## APPLICABILITÉ — DD TECH-OPS **NON PERTINENTE** POUR CE SECTEUR\n\nLa DD tech-ops dans son acception logicielle (séniorité ingénieurs, key person risk DevOps, sécurité applicative, IP logicielle) **n'est PAS pertinente** pour ce dossier (${sectorProfile.displayName}).\n\n${sectorProfile.techDDApplicability.rationale}\n\nProduis un output structuré marqué \"non applicable\" :\n- \`score.value\` : 50 (neutre)\n- \`score.breakdown\` : tous les critères marqués \"Non applicable au secteur ${sectorProfile.displayName}\"\n- \`alertSignal.recommendation\` : \"PROCEED\" (ne JAMAIS bloquer un deal sur une DD non pertinente)\n- \`alertSignal.justification\` : explication factuelle\n- \`narrative.summary\` : la DD tech-ops logicielle ne s'applique pas — pointer vers les vraies dimensions opérationnelles du secteur (cf. profil sectoriel)\n- \`redFlags\` : **AUCUN red flag** sur l'absence de séniorité technique logicielle, l'absence de pratiques DevOps, l'absence de brevets logiciels, etc. Ces critères ne sont pas pertinents pour ${sectorProfile.displayName}.\n- \`findings\` : remplir chaque section avec \"Non applicable\" et brève justification factuelle.\n- \`questions\` : 1-2 questions tournées vers les vraies dimensions opérationnelles du secteur (supply chain, certifications, capacité production, etc.).\n\n**Règle absolue** : un seul profil tech logiciel (ou aucun) sur un dossier ${sectorProfile.displayName} **n'est PAS un red flag**. L'équipe attendue pour ce secteur est : ${sectorProfile.teamProfile.coreProfiles.join(", ")}.`;
+
     const prompt = `# ANALYSE TECH-OPS-DD - ${context.canonicalDeal.name}
+
+${sectorBlock}
+
+${applicabilityBlock}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -483,11 +497,25 @@ STYLE D'ÉCRITURE:
 - ÉVITER: introductions inutiles, répétitions, formules creuses
 - INCLURE: chiffres, calculs montrés, sources - c'est le contenu utile
 
-NE PAS limiter le nombre d'éléments: inclure TOUS les red flags, gaps et questions pertinents.
+Limiter la sortie pour garantir un JSON complet: redFlags MAX 5, technicalRisks MAX 5, questions MAX 5, keyInsights MAX 5.
 
 CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arrête JAMAIS au milieu.`;
 
-    const { data } = await this.llmCompleteJSON<LLMTechOpsDDResponse>(prompt, {});
+    let data: LLMTechOpsDDResponse;
+    try {
+      ({ data } = await this.llmCompleteJSON<LLMTechOpsDDResponse>(prompt, {
+        timeoutMs: TECH_OPS_PROVIDER_TIMEOUT_MS,
+        maxRetries: 0,
+        maxTokens: TECH_OPS_MAX_TOKENS,
+      }));
+    } catch (error) {
+      console.warn(
+        `[tech-ops-dd] LLM JSON unavailable; using structured degraded output: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      data = this.buildTerminalTechOpsFallback(context, error);
+    }
 
     const result = this.normalizeResponse(data, context);
 
@@ -556,7 +584,133 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
       console.error("[tech-ops-dd] Deterministic scoring failed, using LLM score:", err);
     }
 
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (le LLM peut désobéir aux instructions de calibration).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "tech-ops-dd");
+
     return result;
+  }
+
+  private buildTerminalTechOpsFallback(context: EnrichedAgentContext, error: unknown): LLMTechOpsDDResponse {
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      meta: {
+        agentName: "tech-ops-dd",
+        analysisDate: new Date().toISOString(),
+        dataCompleteness: "minimal",
+        confidenceLevel: 20,
+        limitations: [
+          `Sortie LLM tech-ops indisponible ou JSON invalide: ${reason.slice(0, 180)}`,
+          "Analyse degradee: aucune conclusion technique bloquante ne doit etre inferee automatiquement.",
+        ],
+      },
+      score: {
+        value: sectorProfile.techDDApplicability.applicable ? 35 : 50,
+        grade: "D",
+        breakdown: [
+          { criterion: "Maturité Produit", weight: 33, score: 35, justification: "Sortie LLM indisponible; maturite non verifiee." },
+          { criterion: "Équipe Tech", weight: 33, score: 35, justification: "Sortie LLM indisponible; equipe tech non verifiee." },
+          { criterion: "Sécurité", weight: 22, score: 35, justification: "Sortie LLM indisponible; securite non verifiee." },
+          { criterion: "IP Technique", weight: 11, score: 35, justification: "Sortie LLM indisponible; IP non verifiee." },
+        ],
+      },
+      findings: {
+        productMaturity: {
+          stage: "mvp",
+          stageEvidence: "Non verifie dans cette passe.",
+          stability: { score: 0, incidentFrequency: "Unknown", uptimeEstimate: "Unknown", assessment: "Non verifie." },
+          featureCompleteness: { score: 0, coreFeatures: [], roadmapClarity: "Non verifie." },
+          releaseVelocity: { frequency: "Unknown", assessment: "Non verifie.", concern: "Sortie LLM indisponible" },
+        },
+        teamCapability: {
+          teamSize: { current: 0, breakdown: [] },
+          seniorityLevel: {
+            assessment: "UNKNOWN",
+            evidence: "Non verifie dans cette passe.",
+            averageYears: 0,
+            benchmarkForStage: 0,
+          },
+          gaps: [],
+          keyPersonRisk: { exists: false, persons: [], mitigation: "Non verifie." },
+          hiringNeeds: [],
+          overallCapabilityScore: 0,
+        },
+        security: {
+          posture: "UNKNOWN",
+          compliance: { gdpr: "UNKNOWN", soc2: "UNKNOWN", other: [] },
+          practices: [],
+          vulnerabilities: [],
+          assessment: "Non verifie dans cette passe.",
+          securityScore: 0,
+        },
+        ipProtection: {
+          patents: { granted: 0, pending: 0, domains: [], strategicValue: "Non verifie." },
+          tradeSecrets: { exists: false, protected: false, description: "Non verifie." },
+          openSourceRisk: { level: "NONE", licenses: [], concerns: [] },
+          proprietaryTech: { exists: false, description: "Non verifie.", defensibility: "Non verifie." },
+          ipScore: 0,
+        },
+        technicalRisks: [
+          {
+            id: "risk-tech-ops-unavailable",
+            risk: "Due diligence tech-ops automatisee indisponible",
+            category: "operations",
+            severity: "HIGH",
+            probability: "MEDIUM",
+            impact: "Les risques produit, securite, equipe technique et IP restent a verifier manuellement.",
+            mitigation: "Revue CTO externe ou questions fondateur ciblees.",
+            estimatedCostToMitigate: "Non estime",
+            timelineToMitigate: "Avant decision",
+          },
+        ],
+        sectorBenchmark: {
+          maturityVsSector: "Non verifie.",
+          teamSizeVsSector: "Non verifie.",
+          securityVsSector: "Non verifie.",
+          overallPosition: "BELOW_AVERAGE",
+        },
+      },
+      dbCrossReference: {
+        claims: [],
+        uncheckedClaims: ["Claims tech-ops non verifies dans cette passe"],
+      },
+      redFlags: sectorProfile.techDDApplicability.applicable
+        ? [
+            {
+              id: "rf-tech-ops-unavailable",
+              category: "technical",
+              severity: "HIGH",
+              title: "DD tech-ops indisponible",
+              description: "Le modele n'a pas rendu un JSON tech-ops exploitable.",
+              location: "tech-ops-dd",
+              evidence: "Fallback terminal active",
+              impact: "Les risques produit, securite, equipe technique et IP restent ouverts.",
+              question: "Pouvez-vous documenter architecture, securite, ownership technique et processus de livraison ?",
+              redFlagIfBadAnswer: "Risque operationnel non quantifiable avant investissement.",
+            },
+          ]
+        : [],
+      questions: [
+        {
+          priority: "HIGH",
+          category: "technical",
+          question: "Quelles preuves produit/operations/securite pouvez-vous fournir avant decision ?",
+          context: "La DD tech-ops automatisee est degradee sur cette passe.",
+          whatToLookFor: "Documentation, responsable technique/operations, incidents, process qualite, conformite.",
+        },
+      ],
+      alertSignal: {
+        hasBlocker: false,
+        justification: "Sortie tech-ops indisponible; verification manuelle requise.",
+      },
+      narrative: {
+        oneLiner: "DD tech-ops automatisee indisponible.",
+        summary: "Le pipeline n'a pas obtenu de JSON tech-ops exploitable. Cette dimension doit etre consideree comme ouverte, sans bloquer automatiquement le deal.",
+        keyInsights: ["Verification tech-ops manuelle requise"],
+        forNegotiation: ["Demander documentation produit, securite et ownership technique avant closing"],
+      },
+    };
   }
 
   private normalizeResponse(data: LLMTechOpsDDResponse, _context: EnrichedAgentContext): TechOpsDDData {

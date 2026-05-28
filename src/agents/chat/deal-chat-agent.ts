@@ -1008,7 +1008,6 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       "team-investigator": "Investigation Equipe",
       "market-intelligence": "Intelligence Marche",
       "competitive-intel": "Intelligence Concurrentielle",
-      "exit-strategist": "Strategie Exit",
       "tech-stack-dd": "Due Diligence Tech Stack",
       "tech-ops-dd": "Due Diligence Tech Ops",
       "legal-regulatory": "Legal & Reglementaire",

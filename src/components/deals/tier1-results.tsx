@@ -29,7 +29,6 @@ import {
   PieChart,
   Rocket,
   UserCheck,
-  TrendingUp,
   HelpCircle,
   AlertTriangle,
   CheckCircle,
@@ -51,7 +50,6 @@ import type {
   CapTableAuditData,
   GTMAnalystData,
   CustomerIntelData,
-  ExitStrategistData,
   QuestionMasterData,
 } from "@/agents/types";
 import type { ReasoningTrace } from "@/agents/react/types";
@@ -243,7 +241,7 @@ function formatAmount(value: number | string | undefined | null): string {
  * Phase A slice A7b-3 — Affichage unifié du signal d'alerte Tier 1.
  *
  * L'UI lit en priorité `signalIntensity` natif (post-A7b-2 — émis par les
- * 13 agents Tier 1 via le helper `deriveTier1SignalIntensity`). En l'absence
+ * 12 agents Tier 1 via le helper `deriveTier1SignalIntensity`). En l'absence
  * de `signalIntensity` (analyses persistées avant A7b-2), un fallback
  * read-only sur `alertSignal.recommendation` mappe les valeurs legacy
  * `PROCEED|...|STOP` vers l'intensité correspondante.
@@ -303,6 +301,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
   const availableMetrics = data.findings?.metrics?.filter((m: { status: string }) => m.status === "available") ?? [];
   const criticalFlags = data.redFlags?.filter((f: { severity: string }) => f.severity === "CRITICAL") ?? [];
   const otherFlags = data.redFlags?.filter((f: { severity: string }) => f.severity !== "CRITICAL") ?? [];
+  const unitEconomics = data.findings?.unitEconomics;
 
   return (
     <Card className="md:col-span-2">
@@ -393,6 +392,60 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
             </div>
             {data.findings.burn.assessment && (
               <p className="text-xs text-muted-foreground mt-2">{data.findings.burn.assessment}</p>
+            )}
+          </div>
+        )}
+
+        {/* Unit Economics */}
+        {unitEconomics && (
+          <div className="p-3 rounded-lg border bg-card">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium">Unit Economics</span>
+              {unitEconomics.ltvCacRatio != null && (
+                <Badge variant="outline" className={cn(
+                  "text-xs",
+                  unitEconomics.ltvCacRatio >= 3 ? "bg-green-100 text-green-800" :
+                  unitEconomics.ltvCacRatio >= 1 ? "bg-yellow-100 text-yellow-800" :
+                  "bg-red-100 text-red-800"
+                )}>
+                  LTV/CAC {safeFixed(unitEconomics.ltvCacRatio, 1)}x
+                </Badge>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-center">
+              {unitEconomics.cac?.value != null && (
+                <div>
+                  <div className="text-xs text-muted-foreground"><GlossaryTerm term="CAC" /></div>
+                  <div className="font-semibold">{formatAmount(unitEconomics.cac.value)}</div>
+                </div>
+              )}
+              {unitEconomics.ltv?.value != null && (
+                <div>
+                  <div className="text-xs text-muted-foreground"><GlossaryTerm term="LTV" /></div>
+                  <div className="font-semibold">{formatAmount(unitEconomics.ltv.value)}</div>
+                </div>
+              )}
+              {unitEconomics.ltvCacRatio != null && (
+                <div>
+                  <div className="text-xs text-muted-foreground"><GlossaryTerm term="LTV/CAC" /></div>
+                  <div className="font-semibold">{safeFixed(unitEconomics.ltvCacRatio, 1)}x</div>
+                </div>
+              )}
+              {unitEconomics.paybackMonths != null && (
+                <div>
+                  <div className="text-xs text-muted-foreground">Payback CAC</div>
+                  <div className="font-semibold">{safeFixed(unitEconomics.paybackMonths, 1)} mois</div>
+                </div>
+              )}
+            </div>
+            {unitEconomics.assessment && (
+              <p className="text-xs text-muted-foreground mt-2">{unitEconomics.assessment}</p>
+            )}
+            {(unitEconomics.cac?.calculation || unitEconomics.ltv?.calculation) && (
+              <div className="text-xs text-blue-600 mt-2 space-y-1">
+                {unitEconomics.cac?.calculation && <p>CAC: {unitEconomics.cac.calculation}</p>}
+                {unitEconomics.ltv?.calculation && <p>LTV: {unitEconomics.ltv.calculation}</p>}
+              </div>
             )}
           </div>
         )}
@@ -2199,8 +2252,8 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
                     </div>
                   </div>
                   <div className="flex gap-3 text-xs text-muted-foreground">
-                    {c.economics?.cac && <span>CAC: {formatAmount(c.economics.cac)}</span>}
-                    {c.economics?.ltvCacRatio && <span>LTV/CAC: {safeFixed(c.economics.ltvCacRatio, 1)}x</span>}
+                    {c.economics?.cac != null && <span>CAC: {formatAmount(c.economics.cac)}</span>}
+                    {c.economics?.ltvCacRatio != null && <span>LTV/CAC: {safeFixed(c.economics.ltvCacRatio, 1)}x</span>}
                     <span>Scalabilité: {c.scalability?.level}</span>
                   </div>
                   {c.verdict && <p className="text-xs text-muted-foreground mt-1">{c.verdict}</p>}
@@ -2894,119 +2947,6 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
   );
 });
 
-// Exit Strategist Card - Updated for v2.0 structure
-const ExitStrategistCard = memo(function ExitStrategistCard({
-  data,
-  reactData,
-  onShowTrace
-}: {
-  data: ExitStrategistData;
-  reactData?: ReActMetadata;
-  onShowTrace?: () => void;
-}) {
-  const scenarios = data.findings?.scenarios ?? [];
-  const liquidityRisks = data.findings?.liquidityAnalysis?.risks ?? [];
-  const activeBuyers = data.findings?.mnaMarket?.activeBuyers ?? [];
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-lime-600" />
-            <CardTitle className="text-lg">Exit Strategy</CardTitle>
-            {reactData && onShowTrace && (
-              <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
-            )}
-          </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
-        </div>
-        <CardDescription>Scénarios de sortie et ROI</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Summary */}
-        {data.narrative?.summary && (
-          <p className="text-sm text-muted-foreground">{data.narrative.summary}</p>
-        )}
-
-        {/* Exit Scenarios */}
-        <div className="space-y-2">
-          {scenarios.slice(0, 3).map((s, i) => (
-            <div key={i} className="flex items-center justify-between p-2 border rounded">
-              <div>
-                <span className="text-sm font-medium">{s.name ?? s.type?.replace(/_/g, " ")}</span>
-                <p className="text-xs text-muted-foreground">{s.timeline?.range ?? `${s.timeline?.estimatedYears} ans`}</p>
-              </div>
-              <div className="text-right">
-                <Badge variant="outline" className={cn(
-                  s.probability?.level === "HIGH" ? "bg-green-100 text-green-800" :
-                  s.probability?.level === "MEDIUM" ? "bg-yellow-100 text-yellow-800" :
-                  "bg-red-100 text-red-800"
-                )}>
-                  {s.probability?.level} ({s.probability?.percentage}%)
-                </Badge>
-                {s.exitValuation?.estimated && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {safeFixed(Number(s.exitValuation.estimated) / 1000000, 0)}M
-                  </p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Active Buyers from M&A Market */}
-        {activeBuyers.length > 0 && (
-          <ExpandableSection title={`Acheteurs actifs (${activeBuyers.length})`}>
-            <div className="space-y-2 mt-2">
-              {activeBuyers.map((b, i) => (
-                <div key={i} className="p-2 border rounded">
-                  <span className="font-medium text-sm">{b.name}</span>
-                  <span className="text-xs text-muted-foreground ml-2">({b.type})</span>
-                  <p className="text-xs text-muted-foreground">{b.recentDeals} deals - {b.focusAreas?.join(", ")}</p>
-                </div>
-              ))}
-            </div>
-          </ExpandableSection>
-        )}
-
-        {/* Liquidity Risks */}
-        {liquidityRisks.length > 0 && (
-          <div className="pt-2 border-t">
-            <p className="text-sm font-medium text-orange-600 mb-1">Risques liquidité</p>
-            <ul className="text-sm text-muted-foreground list-disc list-inside">
-              {liquidityRisks.slice(0, 3).map((r, i) => <li key={i}>{r.risk}</li>)}
-            </ul>
-          </div>
-        )}
-
-        {/* Red Flags */}
-        {data.redFlags && data.redFlags.length > 0 && (
-          <ExpandableSection title={`Red Flags (${data.redFlags.length})`}>
-            <ul className="space-y-2 mt-2">
-              {data.redFlags.map((rf, i) => (
-                <li key={i} className="p-2 rounded border">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className={cn(
-                      "h-4 w-4 shrink-0 mt-0.5",
-                      rf.severity === "CRITICAL" ? "text-red-600" :
-                      rf.severity === "HIGH" ? "text-orange-500" : "text-yellow-500"
-                    )} />
-                    <div>
-                      <span className="font-medium">{rf.title}</span>
-                      <p className="text-xs text-muted-foreground mt-1">{rf.evidence}</p>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </ExpandableSection>
-        )}
-      </CardContent>
-    </Card>
-  );
-});
-
 // Question Master Card - v2.0 Refonte
 const QuestionMasterCard = memo(function QuestionMasterCard({
   data,
@@ -3661,7 +3601,6 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
   const capTableData = getAgentData<CapTableAuditData>("cap-table-auditor");
   const gtmData = getAgentData<GTMAnalystData>("gtm-analyst");
   const customerData = getAgentData<CustomerIntelData>("customer-intel");
-  const exitData = getAgentData<ExitStrategistData>("exit-strategist");
   const questionData = getAgentData<QuestionMasterData>("question-master");
 
   // Count agents with ReAct data
@@ -3692,9 +3631,8 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
     }
     if (gtmData) scoreList.push({ name: "GTM", score: gtmData.score?.value ?? 0, icon: <Rocket className="h-4 w-4" /> });
     if (customerData) scoreList.push({ name: "Customer", score: customerData.score?.value ?? 0, icon: <UserCheck className="h-4 w-4" /> });
-    if (exitData) scoreList.push({ name: "Exit", score: exitData.score?.value ?? 0, icon: <TrendingUp className="h-4 w-4" /> });
     return scoreList;
-  }, [financialData, teamData, competitiveData, marketData, techStackData, techOpsData, legalData, capTableData, gtmData, customerData, exitData]);
+  }, [financialData, teamData, competitiveData, marketData, techStackData, techOpsData, legalData, capTableData, gtmData, customerData]);
 
   const avgScore = useMemo(() => {
     if (scores.length === 0) return 0;
@@ -3718,7 +3656,6 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
     "cap-table-auditor": () => setOpenTraceAgent("cap-table-auditor"),
     "gtm-analyst": () => setOpenTraceAgent("gtm-analyst"),
     "customer-intel": () => setOpenTraceAgent("customer-intel"),
-    "exit-strategist": () => setOpenTraceAgent("exit-strategist"),
     "question-master": () => setOpenTraceAgent("question-master"),
   }), []);
 
@@ -3769,10 +3706,9 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
     addAgent("cap-table-auditor", capTableData);
     addAgent("gtm-analyst", gtmData);
     addAgent("customer-intel", customerData);
-    addAgent("exit-strategist", exitData);
 
     return agents;
-  }, [financialData, teamData, competitiveData, deckData, marketData, techStackData, techOpsData, legalData, capTableData, gtmData, customerData, exitData]);
+  }, [financialData, teamData, competitiveData, deckData, marketData, techStackData, techOpsData, legalData, capTableData, gtmData, customerData]);
 
   return (
     <div className="space-y-6">
@@ -3900,13 +3836,6 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
                 data={capTableData}
                 reactData={getReactData("cap-table-auditor")}
                 onShowTrace={traceHandlers["cap-table-auditor"]}
-              />
-            )}
-            {exitData && (
-              <ExitStrategistCard
-                data={exitData}
-                reactData={getReactData("exit-strategist")}
-                onShowTrace={traceHandlers["exit-strategist"]}
               />
             )}
           </div>

@@ -11,8 +11,20 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { getBenchmark } from "@/services/benchmarks";
-import { simulateWaterfall, type WaterfallInput } from "@/services/waterfall-simulator";
+// `simulateWaterfall` retiré de l'agent (doctrine anti-oraculaire).
+// Il reste exporté depuis `@/services/waterfall-simulator` pour usage
+// éventuel par un outil de sensibilité UI (à venir), où l'investisseur
+// fournit ses hypothèses d'exit.
 import { calculateAgentScore, CAP_TABLE_AUDITOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, formatCapTableCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
+
+const CAP_TABLE_OTHER_DOC_MAX_CHARS = 6_000;
+const CAP_TABLE_RELEVANT_DOC_MAX_CHARS = 24_000;
+const CAP_TABLE_EXTRACTED_INFO_MAX_CHARS = 10_000;
+const CAP_TABLE_CONTEXT_ENGINE_MAX_CHARS = 22_000;
+const CAP_TABLE_PRO_TIMEOUT_MS = 115_000;
+const CAP_TABLE_FLASH_FALLBACK_TIMEOUT_MS = 75_000;
+const CAP_TABLE_MAX_TOKENS = 10_000;
 
 /**
  * CAP TABLE AUDITOR - REFONTE v2.0
@@ -490,8 +502,12 @@ Si le Context Engine fournit des benchmarks de dilution et de valorisation, les 
 
   protected async execute(context: EnrichedAgentContext): Promise<CapTableAuditDataV2> {
     this._dealStage = context.canonicalDeal.stage;
-    const dealContext = this.formatDealContext(context);
-    const contextEngineData = this.formatContextEngineData(context);
+    const promptContext = this.buildCapTablePromptContext(context);
+    const dealContext = this.formatDealContext(promptContext);
+    const contextEngineData = this.sanitizeDocumentContent(
+      this.formatContextEngineData(context),
+      CAP_TABLE_CONTEXT_ENGINE_MAX_CHARS,
+    );
     const extractedInfo = this.getExtractedInfo(context);
 
     // Build specific cap table section from extracted data
@@ -505,8 +521,16 @@ Si le Context Engine fournit des benchmarks de dilution et de valorisation, les 
         valuationPost: extractedInfo.valuationPost,
         amountRaising: extractedInfo.amountRaising,
         founders: extractedInfo.founders,
+        ownership: extractedInfo.ownership,
+        capTable: extractedInfo.capTable,
+        termSheet: extractedInfo.termSheet,
+        sourceReferences: Array.isArray(extractedInfo.sourceReferences)
+          ? extractedInfo.sourceReferences.slice(0, 12)
+          : extractedInfo.sourceReferences,
       };
-      capTableSection = `\n## Donnees Cap Table Extraites du Deck\n${JSON.stringify(relevantData, null, 2)}`;
+      capTableSection =
+        `\n## Donnees Cap Table Extraites du Deck\n` +
+        this.sanitizeDataForPrompt(relevantData, CAP_TABLE_EXTRACTED_INFO_MAX_CHARS);
     }
 
     // Extract dilution benchmarks from Context Engine if available
@@ -544,7 +568,15 @@ Si le Context Engine fournit des benchmarks de dilution et de valorisation, les 
       ? `\n## Benchmark Dilution (Context Engine)\n${JSON.stringify(dilutionBenchmark, null, 2)}`
       : "";
 
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const capTableCalibration = formatCapTableCalibrationForPrompt(sectorProfile);
+
     const prompt = `# ANALYSE CAP TABLE - ${context.canonicalDeal.name || "Deal"}
+
+${sectorBlock}
+
+${capTableCalibration ?? "## CALIBRATION CAP TABLE\n\nSecteur de type tech/SaaS — cadrage venture standard applicable (Seed → A → B → C → exit)."}
 
 ## CONTEXTE DU DEAL
 ${dealContext}
@@ -655,85 +687,62 @@ REGLES DE SCORING OBLIGATOIRES (coherence data/score):
 - Donnees MINIMAL → score MAXIMUM 30, grade "D" ou "F"
 - Donnees PARTIAL → score MAXIMUM 50, grade "C", "D" ou "F"
 - Donnees COMPLETE → score libre 0-100
-On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
+On ne peut PAS bien noter ce qu'on ne peut pas evaluer!
 
-    const { data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(prompt);
+CONTRAINTE DE SORTIE:
+- Limiter la sortie pour garantir un JSON complet: structuralIssues MAX 5, redFlags MAX 5, questions MAX 5, keyInsights MAX 5.
+- Réponds UNIQUEMENT avec un JSON valide qui commence par { et se termine par }.`;
 
-    // F76: Run waterfall simulation if cap table data is available from LLM response
-    let waterfallSection = "";
-    if (data.findings?.ownershipBreakdown && data.findings?.roundTerms?.liquidationPreference) {
+    let data: LLMCapTableAuditResponse;
+    try {
+      ({ data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(prompt, {
+        timeoutMs: CAP_TABLE_PRO_TIMEOUT_MS,
+        maxRetries: 0,
+        maxTokens: CAP_TABLE_MAX_TOKENS,
+      }));
+    } catch (primaryError) {
+      console.warn(
+        `[cap-table-auditor] Gemini Pro unavailable; falling back to Gemini 3 Flash: ${
+          primaryError instanceof Error ? primaryError.message : String(primaryError)
+        }`
+      );
       try {
-        const ownership = data.findings.ownershipBreakdown;
-        const terms = data.findings.roundTerms;
-        const baInvestment = context.canonicalDeal.amountRequested != null ? Number(context.canonicalDeal.amountRequested) * 0.10 : 50000;
-        const postMoney = terms.postMoneyValuation ?? (
-          (terms.preMoneyValuation ?? 0) + (terms.roundSize ?? 0)
+        ({ data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(
+          `${prompt}\n\nCONTRAINTE DE SECOURS: reponds en JSON strict plus concis. ` +
+            `Priorise la disponibilite des donnees, les terms bloquants et les questions actionnables.`,
+          {
+            model: "GEMINI_3_FLASH",
+            timeoutMs: CAP_TABLE_FLASH_FALLBACK_TIMEOUT_MS,
+            maxRetries: 0,
+            maxTokens: CAP_TABLE_MAX_TOKENS,
+          },
+        ));
+      } catch (fallbackError) {
+        console.warn(
+          `[cap-table-auditor] LLM JSON unavailable; using structured degraded output: ${
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+          }`
         );
-        const baPct = postMoney > 0 ? (baInvestment / postMoney) * 100 : 0;
-
-        const waterfallInput: WaterfallInput = {
-          exitValuation: 0, // set per scenario
-          investors: [
-            ...(ownership.investors ?? []).map(inv => ({
-              name: inv.name,
-              investedAmount: inv.percentage > 0 && postMoney > 0
-                ? (inv.percentage / 100) * postMoney
-                : 0,
-              ownershipPercent: inv.percentage,
-              liquidationPreference: {
-                multiple: terms.liquidationPreference.multiple ?? 1,
-                type: terms.liquidationPreference.type === "unknown"
-                  ? "non_participating" as const
-                  : terms.liquidationPreference.type,
-              },
-              isBA: false,
-            })),
-            {
-              name: "Business Angel (vous)",
-              investedAmount: baInvestment,
-              ownershipPercent: baPct,
-              liquidationPreference: {
-                multiple: terms.liquidationPreference.multiple ?? 1,
-                type: terms.liquidationPreference.type === "unknown"
-                  ? "non_participating" as const
-                  : terms.liquidationPreference.type,
-              },
-              isBA: true,
-            },
-          ],
-          founders: (ownership.founders ?? []).map(f => ({
-            name: f.name,
-            ownershipPercent: f.percentage,
-          })),
-          esopPercent: ownership.optionPool?.size ?? 0,
-        };
-
-        // Simulate at 3 exit valuations: low, medium, high
-        const exitVals = postMoney > 0
-          ? [postMoney * 0.5, postMoney * 2, postMoney * 5]
-          : [1_000_000, 5_000_000, 15_000_000];
-
-        const waterfallResults = simulateWaterfall(waterfallInput, exitVals);
-
-        waterfallSection = "\n\n## SIMULATION WATERFALL (calcul pre-LLM)\n";
-        for (const scenario of waterfallResults) {
-          waterfallSection += `\n### Exit a ${(scenario.exitValuation / 1_000_000).toFixed(1)}M€ (${scenario.exitMultiple}x):\n`;
-          for (const d of scenario.distributions) {
-            waterfallSection += `- ${d.name}: ${(d.amount / 1_000).toFixed(0)}K€ (${d.percentOfExit.toFixed(1)}%)`;
-            if (d.returnMultiple !== null) waterfallSection += ` = ${d.returnMultiple.toFixed(1)}x`;
-            waterfallSection += `\n`;
-          }
-          if (scenario.baReturn) {
-            waterfallSection += `**Votre retour:** ${(scenario.baReturn.amount / 1_000).toFixed(0)}K€ = ${scenario.baReturn.multiple.toFixed(1)}x\n`;
-          }
-          if (scenario.warnings.length > 0) {
-            waterfallSection += `⚠️ ${scenario.warnings.join("; ")}\n`;
-          }
-        }
-      } catch (e) {
-        console.warn(`[cap-table-auditor] Waterfall simulation failed: ${e}`);
+        data = this.buildTerminalCapTableFallback(context, fallbackError);
       }
     }
+
+    // Doctrine anti-oraculaire : le bloc "SIMULATION WATERFALL" qui
+    // pré-injectait dans le prompt 3 scénarios d'exit hardcodés
+    // (0.5x/2x/5x post-money) avec "Votre retour: X.Xx" a été retiré.
+    // Pattern identique à `scenario-modeler` dégagé en amont — le système
+    // ne pose pas les multiples d'exit ; il les obtient de l'investisseur
+    // via un outil de sensibilité (chantier UI à venir).
+    //
+    // Ce qui reste pour l'analyse cap-table :
+    //   - L'agent dispose de `ownershipBreakdown` (qui détient quoi) et
+    //     de `roundTerms.liquidationPreference` (structure : multiple,
+    //     type participating/non, seniority) via les findings LLM.
+    //   - Il analyse TEXTUELLEMENT le mécanisme de liquidation pref
+    //     dans `narrative.summary`, sans projection chiffrée.
+    //   - Le `simulateWaterfall` reste disponible comme utilitaire mais
+    //     n'est plus appelé depuis l'agent — il est destiné à l'outil
+    //     de sensibilité UI où l'investisseur fournit ses hypothèses.
 
     // Build dbCrossReference
     const dbCrossReference: DbCrossReference = {
@@ -920,22 +929,29 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
           : [],
       },
       dbCrossReference,
-      redFlags: Array.isArray(data.redFlags)
-        ? data.redFlags.map((rf, index) => ({
-            id: rf.id ?? `rf-captable-${String(index + 1).padStart(3, "0")}`,
-            category: rf.category ?? "cap_table",
-            severity: validSeverities.includes(rf.severity as typeof validSeverities[number])
-              ? rf.severity as typeof validSeverities[number]
-              : "MEDIUM",
-            title: rf.title ?? "Red flag non specifie",
-            description: rf.description ?? "",
-            location: rf.location ?? "Non specifie",
-            evidence: rf.evidence ?? "Non disponible",
-            impact: rf.impact ?? "Impact a evaluer",
-            question: rf.question ?? "A clarifier avec le fondateur",
-            redFlagIfBadAnswer: rf.redFlagIfBadAnswer ?? "A evaluer selon la reponse",
-          }))
-        : [],
+      // Filet de sécurité déterministe : drop les red flags cap-table
+      // SaaS non-applicables au secteur (cadence venture Seed→A→B→C,
+      // ESOP, vesting agressif sur consumer / bio / hardware / etc.).
+      redFlags: applySectorRedFlagFilter(
+        Array.isArray(data.redFlags)
+          ? data.redFlags.map((rf, index) => ({
+              id: rf.id ?? `rf-captable-${String(index + 1).padStart(3, "0")}`,
+              category: rf.category ?? "cap_table",
+              severity: validSeverities.includes(rf.severity as typeof validSeverities[number])
+                ? rf.severity as typeof validSeverities[number]
+                : "MEDIUM",
+              title: rf.title ?? "Red flag non specifie",
+              description: rf.description ?? "",
+              location: rf.location ?? "Non specifie",
+              evidence: rf.evidence ?? "Non disponible",
+              impact: rf.impact ?? "Impact a evaluer",
+              question: rf.question ?? "A clarifier avec le fondateur",
+              redFlagIfBadAnswer: rf.redFlagIfBadAnswer ?? "A evaluer selon la reponse",
+            }))
+          : [],
+        context.canonicalDeal.sector,
+        "cap-table-auditor",
+      ),
       questions: Array.isArray(data.questions)
         ? data.questions.map((q) => ({
             priority: validPriorities.includes(q.priority as typeof validPriorities[number])
@@ -956,10 +972,142 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
       signalIntensity,
       narrative: {
         oneLiner: data.narrative?.oneLiner ?? "Analyse cap table incomplete - donnees manquantes",
-        summary: (data.narrative?.summary ?? "L'analyse de la cap table n'a pas pu etre completee faute de donnees suffisantes.")
-          + (waterfallSection ? "\n" + waterfallSection : ""),
+        summary: data.narrative?.summary ?? "L'analyse de la cap table n'a pas pu etre completee faute de donnees suffisantes.",
         keyInsights: Array.isArray(data.narrative?.keyInsights) ? data.narrative.keyInsights : [],
         forNegotiation: Array.isArray(data.narrative?.forNegotiation) ? data.narrative.forNegotiation : [],
+      },
+    };
+  }
+
+  private buildCapTablePromptContext(context: EnrichedAgentContext): EnrichedAgentContext {
+    const documents = context.documents?.map((doc) => {
+      if (!doc.extractedText) return doc;
+      if (["CAP_TABLE", "TERM_SHEET"].includes(doc.type)) return doc;
+      if (["FINANCIAL_MODEL", "LEGAL_DOCS"].includes(doc.type)) {
+        if (doc.extractedText.length <= CAP_TABLE_RELEVANT_DOC_MAX_CHARS) return doc;
+        return {
+          ...doc,
+          extractedText:
+            doc.extractedText.slice(0, CAP_TABLE_RELEVANT_DOC_MAX_CHARS) +
+            `\n\n[TRONQUE POUR cap-table-auditor: document pertinent limite a ${CAP_TABLE_RELEVANT_DOC_MAX_CHARS} caracteres. Les donnees structurees restent disponibles via Fact Store et Document Extractor.]`,
+        };
+      }
+      if (doc.extractedText.length <= CAP_TABLE_OTHER_DOC_MAX_CHARS) return doc;
+
+      return {
+        ...doc,
+        extractedText:
+          doc.extractedText.slice(0, CAP_TABLE_OTHER_DOC_MAX_CHARS) +
+          `\n\n[TRONQUE POUR cap-table-auditor: document secondaire limite a ${CAP_TABLE_OTHER_DOC_MAX_CHARS} caracteres. Les faits extraits restent disponibles via Fact Store et Document Extractor.]`,
+      };
+    });
+
+    return { ...context, documents };
+  }
+
+  private buildTerminalCapTableFallback(
+    context: EnrichedAgentContext,
+    error: unknown,
+  ): LLMCapTableAuditResponse {
+    const reason = error instanceof Error ? error.message : String(error);
+    const hasCapTableDoc = context.documents?.some((doc) => doc.type === "CAP_TABLE") ?? false;
+    const hasTermSheetDoc = context.documents?.some((doc) => doc.type === "TERM_SHEET") ?? false;
+    const dataQuality: "MINIMAL" | "NONE" = hasCapTableDoc ? "MINIMAL" : "NONE";
+    const missingCriticalInfo = [
+      !hasCapTableDoc ? "Cap table detaillee" : null,
+      !hasTermSheetDoc ? "Term sheet" : null,
+      "Vesting schedule",
+      "Droits investisseurs",
+    ].filter((value): value is string => Boolean(value));
+
+    const primaryRedFlag = hasCapTableDoc
+      ? {
+          id: "rf-captable-audit-unavailable",
+          category: "transparency",
+          severity: "HIGH" as const,
+          title: "Audit cap table indisponible",
+          description: "Le modele n'a pas rendu un JSON cap-table exploitable.",
+          location: "cap-table-auditor",
+          evidence: "Fallback terminal active",
+          impact: "Ownership, dilution, terms et droits investisseurs restent a verifier manuellement.",
+          question: "Pouvez-vous fournir une cap table exportee et le term sheet complet pour verification ?",
+          redFlagIfBadAnswer: "Impossible de verifier la dilution et les droits avant investissement.",
+        }
+      : {
+          id: "rf-captable-missing",
+          category: "transparency",
+          severity: "CRITICAL" as const,
+          title: "Cap table non fournie",
+          description: "Aucun document de cap table n'est disponible dans le corpus analyse.",
+          location: "Documents fournis",
+          evidence: "Aucun document type CAP_TABLE detecte",
+          impact: "Impossible de verifier ownership, dilution, droits existants et risques de controle.",
+          question: "Pouvez-vous fournir la cap table detaillee avec toutes les classes d'actions et droits attaches ?",
+          redFlagIfBadAnswer: "Refus ou hesitation a fournir la cap table = deal-breaker potentiel.",
+        };
+
+    return {
+      meta: {
+        dataCompleteness: "minimal",
+        confidenceLevel: 20,
+        limitations: [
+          `Sortie LLM cap-table indisponible ou JSON invalide: ${reason.slice(0, 180)}`,
+          "Analyse degradee: aucune conclusion de dilution ou terms ne doit etre inferee automatiquement.",
+        ],
+      },
+      score: {
+        value: hasCapTableDoc ? 20 : 15,
+        grade: "F",
+        breakdown: [
+          { criterion: "Ownership fondateurs", weight: 30, score: 15, justification: "Ownership non verifie dans cette passe." },
+          { criterion: "Terms du round", weight: 25, score: 15, justification: "Terms non verifies dans cette passe." },
+          { criterion: "Option pool", weight: 15, score: 15, justification: "ESOP non verifie dans cette passe." },
+          { criterion: "Transparence", weight: 15, score: hasCapTableDoc ? 25 : 10, justification: hasCapTableDoc ? "Cap table detectee mais non auditee automatiquement." : "Cap table non fournie." },
+          { criterion: "Investisseurs existants", weight: 15, score: 15, justification: "Investisseurs et droits non verifies." },
+        ],
+      },
+      findings: {
+        dataAvailability: {
+          capTableProvided: hasCapTableDoc,
+          termSheetProvided: hasTermSheetDoc,
+          dataQuality,
+          missingCriticalInfo,
+          recommendation: "Demander cap table complete, term sheet, vesting schedule et droits investisseurs avant decision.",
+        },
+        ownershipBreakdown: null,
+        dilutionProjection: null,
+        roundTerms: null,
+        optionPool: null,
+        investorAnalysis: null,
+        structuralIssues: [
+          {
+            issue: "Audit cap table automatise indisponible",
+            severity: hasCapTableDoc ? "HIGH" : "CRITICAL",
+            impact: "La dilution et les droits economiques/politiques ne sont pas verifies.",
+            recommendation: "Revue manuelle des documents sources ou relance ciblee apres correction LLM.",
+          },
+        ],
+      },
+      redFlags: [primaryRedFlag],
+      questions: [
+        {
+          priority: "CRITICAL",
+          category: "cap_table",
+          question: "Pouvez-vous fournir la cap table detaillee et le term sheet complet ?",
+          context: "L'audit cap table automatise est degrade sur cette passe.",
+          whatToLookFor: "Ownership pre/post, ESOP, liquidation preference, anti-dilution, board, pro-rata et vesting.",
+        },
+      ],
+      alertSignal: {
+        hasBlocker: false,
+        recommendation: "INVESTIGATE_FURTHER",
+        justification: "Audit cap table automatise indisponible; verification manuelle requise.",
+      },
+      narrative: {
+        oneLiner: "Audit cap table automatise indisponible.",
+        summary: "Le pipeline n'a pas obtenu de JSON cap-table exploitable. Ownership, dilution, terms et droits investisseurs doivent etre controles manuellement avant decision.",
+        keyInsights: ["Verification cap table manuelle requise"],
+        forNegotiation: ["Conditionner toute avance a la reception de la cap table et du term sheet complets"],
       },
     };
   }

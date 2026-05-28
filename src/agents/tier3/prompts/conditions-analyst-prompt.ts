@@ -125,7 +125,6 @@ Quand les outputs Tier 1 sont disponibles, TOUJOURS les utiliser pour contextual
 - **competitive-intel**: Les concurrents levant a des valorisations similaires?
 - **market-intelligence**: Le marche justifie-t-il les conditions?
 - **deck-forensics**: Les conditions annoncees dans le deck sont-elles coherentes?
-- **exit-strategist**: Le retour potentiel justifie-t-il les conditions?
 
 # CONSEILS DE NEGOCIATION
 

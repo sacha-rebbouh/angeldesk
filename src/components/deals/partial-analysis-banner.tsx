@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   Shield,
   Brain,
-  BarChart3,
   FileText,
   Zap,
   Crown,
@@ -32,11 +31,6 @@ const MISSING_AGENTS_FOR_FREE: MissingAgent[] = [
     name: "Détecteur de contradictions",
     icon: <Zap className="h-4 w-4 text-amber-500" />,
     impact: "Compare les affirmations du deck entre elles et avec les données réelles. Détecte les incohérences cachées.",
-  },
-  {
-    name: "Modélisation de scénarios",
-    icon: <BarChart3 className="h-4 w-4 text-indigo-500" />,
-    impact: "Calcule votre retour potentiel (IRR, multiple) dans 4 scénarios avec probabilités.",
   },
   {
     name: "Expert sectoriel",
@@ -74,7 +68,7 @@ export const PartialAnalysisBanner = memo(function PartialAnalysisBanner({
                 Votre analyse est partielle
               </p>
               <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-300 text-xs">
-                5 agents manquants
+                {MISSING_AGENTS_FOR_FREE.length} agents manquants
               </Badge>
             </div>
             <p className="text-sm text-amber-800 mb-3">

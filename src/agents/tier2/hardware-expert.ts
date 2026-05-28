@@ -1192,7 +1192,7 @@ En utilisant les données DB:
 
 ### 10. EXIT LANDSCAPE ANALYSIS
 - Acquéreurs probables pour ce type de hardware?
-- Multiple attendu basé sur attach rate?
+- Multiples observés sur exits comparables (P25/median/P75 par attach rate, source DB)?
 - Strategic fit avec Big Tech (Apple, Google, Amazon)?
 - PE interest (mature hardware businesses)?
 

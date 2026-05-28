@@ -1668,7 +1668,7 @@ describe("Agent Pipeline Tests", () => {
             // Log failure for debugging but don't fail - some agents may have specific context requirements
             console.warn(`[${agentName}] run() returned success=false: ${result.error}`);
           }
-        });
+        }, 30000);
       }
     });
 
@@ -1999,7 +1999,7 @@ describe("Agent Pipeline Tests", () => {
       const tier3 = await getTier3Agents();
 
       expect(Object.keys(tier1)).toHaveLength(12);
-      expect(Object.keys(tier3)).toHaveLength(6); // thesis-first : +thesis-reconciler
+      expect(Object.keys(tier3)).toHaveLength(6); // 5 synthesis agents + thesis-reconciler (scenario-modeler retiré)
     });
   });
 

@@ -21,6 +21,13 @@ import type {
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, LEGAL_REGULATORY_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 
+const LEGAL_REGULATORY_OTHER_DOC_MAX_CHARS = 7_000;
+const LEGAL_REGULATORY_EXTRACTED_INFO_MAX_CHARS = 12_000;
+const LEGAL_REGULATORY_CONTEXT_ENGINE_MAX_CHARS = 24_000;
+const LEGAL_REGULATORY_PRO_TIMEOUT_MS = 115_000;
+const LEGAL_REGULATORY_FLASH_FALLBACK_TIMEOUT_MS = 75_000;
+const LEGAL_REGULATORY_MAX_TOKENS = 10_000;
+
 /**
  * Legal & Regulatory Agent - REFONTE v2.0
  *
@@ -406,9 +413,19 @@ Si le Context Engine fournit des données sur le secteur (deals similaires, pré
 
   protected async execute(context: EnrichedAgentContext): Promise<LegalRegulatoryData> {
     this._dealStage = context.canonicalDeal.stage;
-    const dealContext = this.formatDealContext(context);
-    const contextEngineData = this.formatContextEngineData(context);
+    const promptContext = this.buildLegalPromptContext(context);
+    const dealContext = this.formatDealContext(promptContext);
+    const contextEngineData = this.sanitizeDocumentContent(
+      this.formatContextEngineData(context),
+      LEGAL_REGULATORY_CONTEXT_ENGINE_MAX_CHARS,
+    );
     const extractedInfo = this.getExtractedInfo(context);
+    const extractedInfoSection = extractedInfo
+      ? this.sanitizeDataForPrompt(
+          this.compactExtractedInfoForPrompt(extractedInfo),
+          LEGAL_REGULATORY_EXTRACTED_INFO_MAX_CHARS,
+        )
+      : "Aucune donnée extraite disponible";
 
     // F79: Check legal registries based on geography
     let registrySection = "";
@@ -436,7 +453,7 @@ Si le Context Engine fournit des données sur le secteur (deals similaires, pré
 ${dealContext}
 
 ## DONNEES EXTRAITES (Document Extractor)
-${extractedInfo ? JSON.stringify(extractedInfo, null, 2) : "Aucune donnée extraite disponible"}
+${extractedInfoSection}
 
 ## CONTEXTE EXTERNE (Context Engine)
 ${contextEngineData || "Aucune donnée Context Engine disponible"}
@@ -669,9 +686,43 @@ RAPPELS CRITIQUES:
 - Minimum 3 risques réglementaires identifiés (ou expliciter pourquoi moins)
 - Minimum 5 questions pour le fondateur
 - Chaque red flag DOIT avoir: severity + location + evidence + impact + question + redFlagIfBadAnswer
-- Si données manquantes = limitations explicites + score plafonné`;
+- Si données manquantes = limitations explicites + score plafonné
+- Limiter la sortie pour garantir un JSON complet: compliance MAX 5, regulatoryRisks MAX 5, redFlags MAX 5, questions MAX 5, keyInsights MAX 5
+- Réponds UNIQUEMENT avec un JSON valide qui commence par { et se termine par }.`;
 
-    const { data } = await this.llmCompleteJSON<LLMLegalRegulatoryResponse>(prompt);
+    let data: LLMLegalRegulatoryResponse;
+    try {
+      ({ data } = await this.llmCompleteJSON<LLMLegalRegulatoryResponse>(prompt, {
+        timeoutMs: LEGAL_REGULATORY_PRO_TIMEOUT_MS,
+        maxRetries: 0,
+        maxTokens: LEGAL_REGULATORY_MAX_TOKENS,
+      }));
+    } catch (primaryError) {
+      console.warn(
+        `[legal-regulatory] Gemini Pro unavailable; falling back to Gemini 3 Flash: ${
+          primaryError instanceof Error ? primaryError.message : String(primaryError)
+        }`
+      );
+      try {
+        ({ data } = await this.llmCompleteJSON<LLMLegalRegulatoryResponse>(
+          `${prompt}\n\nCONTRAINTE DE SECOURS: reponds en JSON strict plus concis. ` +
+            `Priorise les risques juridiques/reglementaires qui changent vraiment la decision investisseur.`,
+          {
+            model: "GEMINI_3_FLASH",
+            timeoutMs: LEGAL_REGULATORY_FLASH_FALLBACK_TIMEOUT_MS,
+            maxRetries: 0,
+            maxTokens: LEGAL_REGULATORY_MAX_TOKENS,
+          },
+        ));
+      } catch (fallbackError) {
+        console.warn(
+          `[legal-regulatory] LLM JSON unavailable; using structured degraded output: ${
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+          }`
+        );
+        data = this.buildTerminalLegalFallback(context, fallbackError);
+      }
+    }
 
     // Validate and normalize the response
     const result = this.normalizeResponse(data, context);
@@ -751,6 +802,198 @@ RAPPELS CRITIQUES:
     }
 
     return result;
+  }
+
+  private buildLegalPromptContext(context: EnrichedAgentContext): EnrichedAgentContext {
+    const documents = context.documents?.map((doc) => {
+      if (!doc.extractedText) return doc;
+      if (["LEGAL_DOCS", "TERM_SHEET", "CAP_TABLE"].includes(doc.type)) return doc;
+      if (doc.extractedText.length <= LEGAL_REGULATORY_OTHER_DOC_MAX_CHARS) return doc;
+
+      return {
+        ...doc,
+        extractedText:
+          doc.extractedText.slice(0, LEGAL_REGULATORY_OTHER_DOC_MAX_CHARS) +
+          `\n\n[TRONQUE POUR legal-regulatory: document secondaire limite a ${LEGAL_REGULATORY_OTHER_DOC_MAX_CHARS} caracteres. Les faits extraits restent disponibles via Fact Store et Document Extractor.]`,
+      };
+    });
+
+    return { ...context, documents };
+  }
+
+  private compactExtractedInfoForPrompt(extractedInfo: Record<string, unknown>): Record<string, unknown> {
+    return {
+      companyName: extractedInfo.companyName,
+      sector: extractedInfo.sector,
+      stage: extractedInfo.stage,
+      geography: extractedInfo.geography,
+      instrument: extractedInfo.instrument,
+      amountRaising: extractedInfo.amountRaising,
+      valuationPre: extractedInfo.valuationPre,
+      valuationPost: extractedInfo.valuationPost,
+      founders: extractedInfo.founders,
+      previousRounds: extractedInfo.previousRounds,
+      businessModel: extractedInfo.businessModel,
+      customers: extractedInfo.customers,
+      complianceClaims: extractedInfo.complianceClaims,
+      legalClaims: extractedInfo.legalClaims,
+      ipClaims: extractedInfo.ipClaims,
+      sourceReferences: Array.isArray(extractedInfo.sourceReferences)
+        ? extractedInfo.sourceReferences.slice(0, 12)
+        : extractedInfo.sourceReferences,
+    };
+  }
+
+  private buildTerminalLegalFallback(
+    context: EnrichedAgentContext,
+    error: unknown,
+  ): LLMLegalRegulatoryResponse {
+    const reason = error instanceof Error ? error.message : String(error);
+    const geography = context.canonicalDeal.geography ?? "Unknown";
+    return {
+      meta: {
+        dataCompleteness: "minimal",
+        confidenceLevel: 20,
+        limitations: [
+          `Sortie LLM legal-regulatory indisponible ou JSON invalide: ${reason.slice(0, 180)}`,
+          "Analyse degradee: aucune conclusion juridique definitive ne doit etre inferee automatiquement.",
+        ],
+      },
+      score: {
+        value: 25,
+        grade: "D",
+        breakdown: [
+          { criterion: "Structure juridique", weight: 20, score: 25, justification: "Structure non verifiee dans cette passe." },
+          { criterion: "Conformite reglementaire", weight: 30, score: 25, justification: "Conformite non verifiee dans cette passe." },
+          { criterion: "Protection IP", weight: 20, score: 25, justification: "IP non verifiee dans cette passe." },
+          { criterion: "Risques contractuels", weight: 15, score: 25, justification: "Contrats non audites dans cette passe." },
+          { criterion: "Risques litige", weight: 15, score: 25, justification: "Litiges non verifies dans cette passe." },
+        ],
+      },
+      findings: {
+        structureAnalysis: {
+          entityType: "UNKNOWN",
+          jurisdiction: geography,
+          appropriateness: "UNKNOWN",
+          concerns: ["Structure juridique non verifiee par legal-regulatory"],
+          recommendations: ["Demander statuts, pacte, Kbis/incorporation et tableau de gouvernance avant decision."],
+          vestingInPlace: false,
+          vestingDetails: "Non verifie",
+          shareholderAgreement: "UNKNOWN",
+          shareholderConcerns: ["Pacte d'actionnaires non verifie"],
+        },
+        compliance: [
+          {
+            area: "RGPD / donnees personnelles",
+            status: "UNKNOWN",
+            requirements: ["Cartographie des donnees", "Base legale", "DPA et politique de retention"],
+            gaps: ["Documents de conformite non audites dans cette passe"],
+            risk: "MEDIUM",
+            evidence: "Fallback terminal active",
+            remediation: {
+              action: "Fournir registre de traitement, DPA et politique privacy",
+              estimatedCost: "Non estime",
+              timeline: "Avant closing",
+            },
+          },
+          {
+            area: "Droit societaire / gouvernance",
+            status: "UNKNOWN",
+            requirements: ["Statuts", "Pacte", "vesting fondateurs", "droits investisseurs"],
+            gaps: ["Structure et droits non verifies"],
+            risk: "HIGH",
+            evidence: "Fallback terminal active",
+          },
+          {
+            area: "Contrats commerciaux et IP",
+            status: "UNKNOWN",
+            requirements: ["Contrats clients/fournisseurs", "cession IP", "marques", "licences"],
+            gaps: ["Contrats et IP non audites"],
+            risk: "MEDIUM",
+            evidence: "Fallback terminal active",
+          },
+        ],
+        ipStatus: {
+          patents: { count: 0, status: "unknown", value: "Non verifie", domains: [], risks: ["Portefeuille brevets non verifie"] },
+          trademarks: { count: 0, status: "unknown", territories: [], conflicts: ["Marques non verifiees"] },
+          tradeSecrets: { protected: false, measures: [], risks: ["Mesures de protection non verifiees"] },
+          copyrights: { openSourceRisk: "UNKNOWN", licenses: [], concerns: ["Licences code/contenu non verifiees"] },
+          overallIPStrength: 0,
+          ipVerdict: "IP non verifiee dans cette passe.",
+        },
+        regulatoryRisks: [
+          {
+            id: "rr-legal-unavailable",
+            risk: "Risques juridiques et reglementaires non verifies",
+            regulation: "Reglementations applicables au secteur",
+            probability: "MEDIUM",
+            impact: "Un risque bloquant peut rester non detecte avant investissement.",
+            timeline: "Avant decision",
+            mitigation: "Revue juridique externe ou relance de l'agent avec documents sources.",
+            estimatedCost: "Non estime",
+          },
+        ],
+        contractualRisks: {
+          keyContracts: [],
+          customerConcentration: { exists: false, risk: "Non verifie" },
+          vendorDependencies: [],
+          concerningClauses: ["Clauses contractuelles non auditees"],
+        },
+        litigationRisk: {
+          currentLitigation: false,
+          currentLitigationDetails: ["Non verifie dans cette passe"],
+          potentialClaims: [],
+          founderDisputes: { exists: false, details: "Non verifie" },
+          riskLevel: "MEDIUM",
+        },
+        sectorPrecedents: {
+          issues: [],
+          structureNorms: {
+            typicalStructure: "Non verifie",
+            comparisonVerdict: "Contexte sectoriel legal non verifie dans cette passe.",
+          },
+        },
+        upcomingRegulations: [],
+      },
+      dbCrossReference: {
+        claims: [],
+        uncheckedClaims: ["Claims juridiques, reglementaires et IP non verifies par legal-regulatory"],
+      },
+      redFlags: [
+        {
+          id: "rf-legal-unavailable",
+          category: "legal",
+          severity: "HIGH",
+          title: "Audit legal automatise indisponible",
+          description: "Le modele n'a pas rendu une analyse legal-regulatory exploitable.",
+          location: "legal-regulatory",
+          evidence: "Fallback terminal active",
+          impact: "Les risques de structure, conformite, IP, contrats et litiges restent ouverts.",
+          question: "Pouvez-vous fournir les statuts, pacte, cap table, contrats clefs, preuves IP et documents de conformite ?",
+          redFlagIfBadAnswer: "Impossible de verifier le risque juridique avant investissement.",
+        },
+      ],
+      questions: [
+        {
+          priority: "HIGH",
+          category: "legal",
+          question: "Quels documents juridiques et de conformite pouvez-vous fournir avant decision ?",
+          context: "L'audit legal automatise est degrade sur cette passe.",
+          whatToLookFor: "Statuts, pacte, vesting, cessions IP, privacy/DPA, contrats clients et litiges.",
+        },
+      ],
+      alertSignal: {
+        hasBlocker: false,
+        recommendation: "INVESTIGATE_FURTHER",
+        justification: "Audit legal automatise indisponible; verification manuelle requise.",
+      },
+      narrative: {
+        oneLiner: "Audit legal automatise indisponible.",
+        summary: "Le pipeline n'a pas obtenu de JSON legal-regulatory exploitable. Cette dimension doit etre consideree comme ouverte et revue manuellement avant decision.",
+        keyInsights: ["Verification juridique manuelle requise"],
+        forNegotiation: ["Conditionner toute avance a la fourniture des pieces juridiques et de conformite"],
+      },
+    };
   }
 
   private normalizeResponse(

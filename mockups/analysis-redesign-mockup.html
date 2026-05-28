@@ -1,0 +1,1091 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AngelDesk - mockup analyse</title>
+    <style>
+      :root {
+        --bg: #f6f8fa;
+        --surface: #ffffff;
+        --surface-muted: #f1f5f4;
+        --ink: #17202a;
+        --muted: #667085;
+        --line: #d8dee4;
+        --line-strong: #b8c1cc;
+        --accent: #0f766e;
+        --accent-soft: #dff4f0;
+        --warning: #b45309;
+        --warning-soft: #fff3d8;
+        --danger: #b42318;
+        --danger-soft: #ffe4df;
+        --blue: #3451b2;
+        --blue-soft: #e8edff;
+        --violet: #6941c6;
+        --violet-soft: #f0e9ff;
+        --shadow: 0 14px 40px rgba(23, 32, 42, 0.08);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .page {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 20px 24px 56px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 20px 0 16px;
+      }
+
+      .eyebrow {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        margin-top: 8px;
+        font-size: clamp(28px, 4vw, 44px);
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .top-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+
+      .button {
+        display: inline-flex;
+        min-height: 40px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 0 14px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .button.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #ffffff;
+      }
+
+      .icon {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+      }
+
+      .tabs {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        gap: 6px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.92);
+        padding: 6px;
+        box-shadow: 0 6px 20px rgba(23, 32, 42, 0.06);
+        backdrop-filter: blur(12px);
+      }
+
+      .tab {
+        min-height: 36px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--muted);
+        padding: 0 14px;
+        font-weight: 750;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .tab.active {
+        background: var(--ink);
+        color: #ffffff;
+      }
+
+      .decision-strip {
+        display: grid;
+        grid-template-columns: 1.1fr repeat(4, minmax(140px, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .metric,
+      .verdict {
+        min-height: 112px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        padding: 16px;
+        box-shadow: var(--shadow);
+      }
+
+      .verdict {
+        border-left: 5px solid var(--warning);
+      }
+
+      .label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 760;
+      }
+
+      .value {
+        margin-top: 8px;
+        font-size: 28px;
+        font-weight: 820;
+        line-height: 1;
+      }
+
+      .value.small {
+        font-size: 20px;
+        line-height: 1.2;
+      }
+
+      .note {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .main-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.85fr) minmax(320px, 0.8fr);
+        gap: 18px;
+        margin-top: 18px;
+        align-items: start;
+      }
+
+      .stack {
+        display: grid;
+        gap: 18px;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid var(--line);
+        padding: 18px 20px;
+      }
+
+      .panel-title {
+        font-size: 20px;
+        line-height: 1.2;
+      }
+
+      .panel-kicker {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .panel-body {
+        padding: 20px;
+      }
+
+      .thesis-summary {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      .callout {
+        border-radius: 10px;
+        padding: 16px;
+        background: var(--surface-muted);
+      }
+
+      .callout.warning {
+        border: 1px solid #f1c37d;
+        background: var(--warning-soft);
+      }
+
+      .callout.positive {
+        border: 1px solid #9bd4ca;
+        background: var(--accent-soft);
+      }
+
+      .callout h3 {
+        font-size: 16px;
+        line-height: 1.25;
+      }
+
+      .callout p {
+        margin-top: 8px;
+        color: #344054;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .priority-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .risk-row {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: start;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px;
+        background: #ffffff;
+      }
+
+      .rank {
+        display: inline-grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border-radius: 999px;
+        background: var(--ink);
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: 820;
+      }
+
+      .risk-title {
+        font-size: 16px;
+        font-weight: 800;
+        line-height: 1.35;
+      }
+
+      .risk-text {
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .badge {
+        display: inline-flex;
+        min-height: 24px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #ffffff;
+        color: #344054;
+        padding: 0 9px;
+        font-size: 12px;
+        font-weight: 720;
+      }
+
+      .badge.warning {
+        border-color: #efb15e;
+        background: var(--warning-soft);
+        color: var(--warning);
+      }
+
+      .badge.danger {
+        border-color: #ffb4aa;
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .badge.good {
+        border-color: #9bd4ca;
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .status-pill {
+        min-width: 104px;
+        border-radius: 8px;
+        padding: 8px 10px;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 820;
+      }
+
+      .status-pill.warning {
+        background: var(--warning-soft);
+        color: var(--warning);
+      }
+
+      .status-pill.danger {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .status-pill.good {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .memo {
+        display: grid;
+        gap: 14px;
+        color: #344054;
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      .memo strong {
+        color: var(--ink);
+      }
+
+      .evidence-table {
+        width: 100%;
+        border-collapse: collapse;
+        overflow: hidden;
+        font-size: 14px;
+      }
+
+      .evidence-table th,
+      .evidence-table td {
+        border-bottom: 1px solid var(--line);
+        padding: 12px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .evidence-table th {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 780;
+      }
+
+      .evidence-table tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .source {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.35;
+      }
+
+      .side-panel {
+        position: sticky;
+        top: 66px;
+      }
+
+      .agent-health {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .health-box {
+        border-radius: 9px;
+        padding: 12px;
+        text-align: center;
+      }
+
+      .health-box.good {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .health-box.warning {
+        background: var(--warning-soft);
+        color: var(--warning);
+      }
+
+      .health-box.danger {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .health-number {
+        font-size: 22px;
+        font-weight: 840;
+        line-height: 1;
+      }
+
+      .health-label {
+        margin-top: 5px;
+        font-size: 12px;
+        font-weight: 720;
+      }
+
+      .agent-group {
+        border-top: 1px solid var(--line);
+        padding: 14px 0;
+      }
+
+      .agent-group:first-of-type {
+        border-top: 0;
+        padding-top: 0;
+      }
+
+      .agent-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .agent-title {
+        font-weight: 800;
+      }
+
+      .agent-meta {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.35;
+      }
+
+      .questions {
+        display: grid;
+        gap: 10px;
+      }
+
+      .question {
+        border-left: 3px solid var(--blue);
+        background: var(--blue-soft);
+        border-radius: 8px;
+        padding: 12px 12px 12px 14px;
+        color: #22304f;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .scenario-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+
+      .scenario {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px;
+      }
+
+      .scenario h3 {
+        font-size: 15px;
+      }
+
+      .scenario .value {
+        font-size: 24px;
+      }
+
+      .mini-bars {
+        display: grid;
+        gap: 10px;
+      }
+
+      .bar-row {
+        display: grid;
+        grid-template-columns: 110px minmax(0, 1fr) 44px;
+        gap: 10px;
+        align-items: center;
+        font-size: 13px;
+      }
+
+      .bar-track {
+        height: 10px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e7ebef;
+      }
+
+      .bar-fill {
+        height: 100%;
+        border-radius: inherit;
+        background: var(--accent);
+      }
+
+      .bar-fill.warning {
+        background: var(--warning);
+      }
+
+      .bar-fill.danger {
+        background: var(--danger);
+      }
+
+      .footer-note {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
+      }
+
+      @media (max-width: 1100px) {
+        .decision-strip {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .verdict {
+          grid-column: 1 / -1;
+        }
+
+        .main-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .side-panel {
+          position: static;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          padding: 14px 12px 36px;
+        }
+
+        .topbar {
+          display: grid;
+        }
+
+        .top-actions {
+          justify-content: stretch;
+        }
+
+        .button {
+          flex: 1 1 180px;
+        }
+
+        .tabs {
+          overflow-x: auto;
+        }
+
+        .decision-strip,
+        .thesis-summary,
+        .scenario-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .risk-row {
+          grid-template-columns: 34px minmax(0, 1fr);
+        }
+
+        .status-pill {
+          grid-column: 2;
+          width: fit-content;
+          min-width: 0;
+        }
+
+        .panel-header {
+          display: grid;
+        }
+
+        .evidence-table,
+        .evidence-table tbody,
+        .evidence-table tr,
+        .evidence-table td {
+          display: block;
+          width: 100%;
+        }
+
+        .evidence-table thead {
+          display: none;
+        }
+
+        .evidence-table tr {
+          border-bottom: 1px solid var(--line);
+          padding: 10px 0;
+        }
+
+        .evidence-table tr:last-child {
+          border-bottom: 0;
+        }
+
+        .evidence-table td {
+          border-bottom: 0;
+          padding: 6px 0;
+        }
+
+        .evidence-table td::before {
+          display: block;
+          content: attr(data-label);
+          color: var(--muted);
+          font-size: 12px;
+          font-weight: 780;
+          margin-bottom: 3px;
+        }
+
+        .bar-row {
+          grid-template-columns: 86px minmax(0, 1fr) 38px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Analyse complète · 23 agents exécutés · 18 sorties exploitables · 7 documents analysés</div>
+          <h1>Avekapeti</h1>
+          <p class="subtitle">Marketplace traiteur B2B · France · analyse complète du 25 mai 2026</p>
+        </div>
+        <div class="top-actions">
+          <button class="button" type="button" title="Télécharger le mémo">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            Exporter le mémo
+          </button>
+          <button class="button primary" type="button" title="Ouvrir le chat IA">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            Ouvrir le chat IA
+          </button>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Navigation du mockup">
+        <button class="tab active" type="button" data-target="decision">Décision</button>
+        <button class="tab" type="button" data-target="risques">Risques</button>
+        <button class="tab" type="button" data-target="memo">Mémo</button>
+        <button class="tab" type="button" data-target="preuves">Preuves</button>
+        <button class="tab" type="button" data-target="agents">Agents</button>
+      </nav>
+
+      <section class="decision-strip" aria-label="Résumé de décision">
+        <article class="verdict">
+          <div class="label">Recommandation</div>
+          <div class="value small">Pause avant investissement</div>
+          <p class="note">Le dossier a de vrais signaux de traction, mais les chiffres clés doivent être prouvés avant de défendre un ticket.</p>
+        </article>
+        <article class="metric">
+          <div class="label">Verdict thèse</div>
+          <div class="value small">Contrasté</div>
+          <p class="note">Confiance 90 %, mais données financières fragiles</p>
+        </article>
+        <article class="metric">
+          <div class="label">Cohérence du dossier</div>
+          <div class="value">65</div>
+          <p class="note">2 incohérences critiques détectées</p>
+        </article>
+        <article class="metric">
+          <div class="label">Risque principal</div>
+          <div class="value small">CA non audité</div>
+          <p class="note">CA 2024 et 2025 déclarés autour de 3 M€</p>
+        </article>
+        <article class="metric">
+          <div class="label">Décision proposée</div>
+          <div class="value small">DD finance d’abord</div>
+          <p class="note">P&L 2026 YTD, liasses fiscales, cohortes, cap table à jour</p>
+        </article>
+      </section>
+
+      <div class="main-grid">
+        <div class="stack">
+          <section class="panel" id="decision">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Synthèse de décision</h2>
+                <p class="panel-kicker">La lecture commence par ce qui influence vraiment la décision d’investissement.</p>
+              </div>
+              <span class="badge warning">Vigilance forte</span>
+            </div>
+            <div class="panel-body">
+              <div class="thesis-summary">
+                <div class="callout positive">
+                  <h3>Pourquoi continuer</h3>
+                  <p>
+                    Avekapeti adresse un vrai besoin B2B: traiteur plus qualitatif, plus flexible et plus aligné RSE. Le
+                    modèle sans cuisine centrale limite les CAPEX, la marque a servi les JO 2024, et le dossier revendique
+                    449 clients payants ainsi qu’un CA 2024 d’environ 3 M€.
+                  </p>
+                </div>
+                <div class="callout warning">
+                  <h3>Pourquoi rester prudent</h3>
+                  <p>
+                    La communication financière est instable: valorisation annoncée à 10 M€ puis 6 M€, CA 2025 proche de
+                    2024 dans le BP, forecast 2026 de 4,4 M€ présenté trop agressivement, et aucune liasse fiscale fournie.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel" id="risques">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Ce qui peut changer la décision</h2>
+                <p class="panel-kicker">Risques classés par impact investisseur, pas par agent technique.</p>
+              </div>
+              <span class="badge danger">4 sujets critiques</span>
+            </div>
+            <div class="panel-body">
+              <div class="priority-list">
+                <article class="risk-row">
+                  <span class="rank">1</span>
+                  <div>
+                    <div class="risk-title">Les chiffres de CA ne racontent pas la même histoire</div>
+                    <p class="risk-text">Le deck met en avant une forte croissance fin 2025, alors que le BP affiche 3 004 716 € de CA 2025, très proche du CA 2024 déclaré à 3 M€.</p>
+                    <div class="badge-row">
+                      <span class="badge danger">Critique</span>
+                      <span class="badge">Source: deck + BP 2026</span>
+                      <span class="badge">À demander: liasses fiscales 2024-2025</span>
+                    </div>
+                  </div>
+                  <span class="status-pill danger">Bloquant</span>
+                </article>
+                <article class="risk-row">
+                  <span class="rank">2</span>
+                  <div>
+                    <div class="risk-title">La valorisation a chuté de 10 M€ à 6 M€ sans explication</div>
+                    <p class="risk-text">Les emails de levée ne convergent pas sur les termes: 10 M€ dans une communication, puis 6 M€ pre-money et 500 k€ recherchés dans une autre.</p>
+                    <div class="badge-row">
+                      <span class="badge danger">Critique</span>
+                      <span class="badge">Source: Mail 3.pdf + email du 06/05/2026</span>
+                      <span class="badge">À demander: termes arrêtés du tour</span>
+                    </div>
+                  </div>
+                  <span class="status-pill danger">Bloquant</span>
+                </article>
+                <article class="risk-row">
+                  <span class="rank">3</span>
+                  <div>
+                    <div class="risk-title">Le ratio LTV/CAC de 16,1x repose sur une LTV non prouvée</div>
+                    <p class="risk-text">La LTV de 1 971 € est calculée sur 3 ans, mais aucune cohorte de rétention ou de churn B2B n’est fournie pour soutenir l’hypothèse.</p>
+                    <div class="badge-row">
+                      <span class="badge warning">Élevé</span>
+                      <span class="badge">Source: deck slides 9-10</span>
+                      <span class="badge">À demander: cohortes 24 mois</span>
+                    </div>
+                  </div>
+                  <span class="status-pill warning">À clarifier</span>
+                </article>
+                <article class="risk-row">
+                  <span class="rank">4</span>
+                  <div>
+                    <div class="risk-title">La cap table utilisée est obsolète</div>
+                    <p class="risk-text">Le document disponible date de septembre 2024. L’analyse ne peut pas évaluer correctement la dilution, les droits existants et l’alignement de la fondatrice.</p>
+                    <div class="badge-row">
+                      <span class="badge warning">Élevé</span>
+                      <span class="badge">Source: Table de capi Septembre 2024</span>
+                      <span class="badge">À demander: cap table signée à jour</span>
+                    </div>
+                  </div>
+                  <span class="status-pill warning">À obtenir</span>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel" id="memo">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Mémo investisseur</h2>
+                <p class="panel-kicker">Lecture linéaire pour comité: moins de panneaux, plus de substance.</p>
+              </div>
+              <span class="badge warning">Brouillon comité</span>
+            </div>
+            <div class="panel-body">
+              <div class="memo">
+                <p><strong>Thèse.</strong> Avekapeti est une marketplace de traiteur B2B asset-light: chefs indépendants, livraison organisée, positionnement RSE, et capacité déclarée à gérer des clients exigeants comme les JO 2024, Engie, Canal+ ou L’Oréal.</p>
+                <p><strong>Angle d’investissement.</strong> Le potentiel existe si le CA, la rentabilité et la rétention sont réels. Mais l’analyse ressort en vigilance: finance notée F, contradictions à 29/100, score scénario à 42/100, et rendement pondéré attendu seulement à 1,3x.</p>
+                <p><strong>Prochaine étape.</strong> Ne pas défendre le deal en comité tant que le P&L réalisé janvier-avril 2026, les liasses fiscales 2024-2025, les cohortes client et une cap table à jour n’ont pas été fournis et rapprochés des claims du deck.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel" id="preuves">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Preuves utilisées</h2>
+                <p class="panel-kicker">Chaque affirmation importante doit être reliée à une source lisible.</p>
+              </div>
+              <span class="badge">7 documents sources</span>
+            </div>
+            <div class="panel-body">
+              <table class="evidence-table">
+                <thead>
+                  <tr>
+                    <th>Affirmation</th>
+                    <th>Source</th>
+                    <th>Lecture</th>
+                    <th>Confiance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td data-label="Affirmation">CA 2024 déclaré à 3 M€</td>
+                    <td data-label="Source"><div class="source">Deck_Avekapeti VF.pdf · slide 7 · email du 06/05/2026</div></td>
+                    <td data-label="Lecture">Chiffre attractif pour le stade, mais déclaré et non audité.</td>
+                    <td data-label="Confiance"><span class="badge warning">Moyenne</span></td>
+                  </tr>
+                  <tr>
+                    <td data-label="Affirmation">CA 2025 calculé à 3 004 716 €</td>
+                    <td data-label="Source"><div class="source">BP Avekapeti 2026 VF.xlsx · onglet “§2025”</div></td>
+                    <td data-label="Lecture">Contredit le narratif de forte croissance 2025 vs 2024.</td>
+                    <td data-label="Confiance"><span class="badge good">Forte</span></td>
+                  </tr>
+                  <tr>
+                    <td data-label="Affirmation">Forecast 2026 de 4,4 M€</td>
+                    <td data-label="Source"><div class="source">Gmail · “Co-invest VC, marketplace impact 4,4M€ CA 2026 (est.)”</div></td>
+                    <td data-label="Lecture">Projection, pas réalisé. À valider avec le CA facturé au 30 avril 2026.</td>
+                    <td data-label="Confiance"><span class="badge danger">Faible</span></td>
+                  </tr>
+                  <tr>
+                    <td data-label="Affirmation">Valorisation passée de 10 M€ à 6 M€</td>
+                    <td data-label="Source"><div class="source">Mail 3.pdf · Mail.pdf · email du 06/05/2026</div></td>
+                    <td data-label="Lecture">Signal de négociation fort, mais nécessite une explication fondatrice claire.</td>
+                    <td data-label="Confiance"><span class="badge good">Forte</span></td>
+                  </tr>
+                  <tr>
+                    <td data-label="Affirmation">LTV/CAC annoncé à 16,1x</td>
+                    <td data-label="Source"><div class="source">Deck_Avekapeti VF.pdf · slides 9-10</div></td>
+                    <td data-label="Lecture">Très bon si vrai, mais repose sur une LTV à 3 ans sans cohortes fournies.</td>
+                    <td data-label="Confiance"><span class="badge warning">Moyenne</span></td>
+                  </tr>
+                  <tr>
+                    <td data-label="Affirmation">Cap table datée de septembre 2024</td>
+                    <td data-label="Source"><div class="source">Table de capi Septembre 2024 signeģe.png</div></td>
+                    <td data-label="Lecture">Document trop ancien pour juger la dilution actuelle.</td>
+                    <td data-label="Confiance"><span class="badge warning">Moyenne</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Scénarios financiers</h2>
+                <p class="panel-kicker">Sorties du scenario-modeler, avec ticket BA de 50 k€ et dilution estimée.</p>
+              </div>
+              <span class="badge warning">Rendement pondéré 1,3x</span>
+            </div>
+            <div class="panel-body">
+              <div class="scenario-grid">
+                <article class="scenario">
+                  <h3>Base · 35 %</h3>
+                  <div class="value">1,94x</div>
+                  <p class="note">12 M€ de CA à 5 ans, sortie stratégique à 18 M€, IRR 14,2 %.</p>
+                </article>
+                <article class="scenario">
+                  <h3>Ambitieux · 15 %</h3>
+                  <div class="value">3,68x</div>
+                  <p class="note">25 M€ de CA à 5 ans, sortie à 40 M€ si le scale national fonctionne.</p>
+                </article>
+                <article class="scenario">
+                  <h3>Prudent · 30 %</h3>
+                  <div class="value">0,23x</div>
+                  <p class="note">Stagnation du CA, hausse CAC, downround puis rachat faible.</p>
+                </article>
+                <article class="scenario">
+                  <h3>Rupture · 20 %</h3>
+                  <div class="value">0x</div>
+                  <p class="note">Risque sanitaire, rupture de cash ou impossibilité de lever sur métriques dégradées.</p>
+                </article>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="stack side-panel">
+          <section class="panel" id="agents">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Agents</h2>
+                <p class="panel-kicker">Santé de l’analyse, sans prendre toute la page.</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="agent-health">
+                <div class="health-box good">
+                  <div class="health-number">18</div>
+                  <div class="health-label">réussis</div>
+                </div>
+                <div class="health-box warning">
+                  <div class="health-number">23</div>
+                  <div class="health-label">exécutés</div>
+                </div>
+                <div class="health-box danger">
+                  <div class="health-number">5</div>
+                  <div class="health-label">échoués</div>
+                </div>
+              </div>
+
+              <div class="agent-group">
+                <div class="agent-line">
+                  <div>
+                    <div class="agent-title">Marché et clients</div>
+                    <div class="agent-meta">market intelligence 50, customer intel 50, GTM 50</div>
+                  </div>
+                  <span class="badge warning">C</span>
+                </div>
+              </div>
+              <div class="agent-group">
+                <div class="agent-line">
+                  <div>
+                    <div class="agent-title">Finance</div>
+                    <div class="agent-meta">financial auditor F, scénario 42, conditions non disponibles</div>
+                  </div>
+                  <span class="badge danger">F</span>
+                </div>
+              </div>
+              <div class="agent-group">
+                <div class="agent-line">
+                  <div>
+                    <div class="agent-title">Technique</div>
+                    <div class="agent-meta">plateforme en production, mais CTO key person risk</div>
+                  </div>
+                  <span class="badge warning">52</span>
+                </div>
+              </div>
+              <div class="agent-group">
+                <div class="agent-line">
+                  <div>
+                    <div class="agent-title">Contradictions</div>
+                    <div class="agent-meta">CA, valorisation, LTV/CAC, cap table obsolète</div>
+                  </div>
+                  <span class="badge danger">29</span>
+                </div>
+              </div>
+              <div class="agent-group">
+                <div class="agent-line">
+                  <div>
+                    <div class="agent-title">Sorties manquantes</div>
+                    <div class="agent-meta">mémo, devil’s advocate, legal, cap table auditor, score final</div>
+                  </div>
+                  <span class="badge warning">5</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Questions à poser</h2>
+                <p class="panel-kicker">Prêtes pour le prochain call fondateur.</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="questions">
+                <div class="question">Quel est le chiffre d’affaires HT réalisé et facturé du 1er janvier au 30 avril 2026, comparé au budget ?</div>
+                <div class="question">Pouvez-vous fournir les liasses fiscales 2024-2025 et les comptes annuels signés par l’expert-comptable ?</div>
+                <div class="question">Pourquoi la valorisation est-elle passée de 10 M€ à 6 M€ en quelques semaines ?</div>
+                <div class="question">Quel est le taux de réachat trimestriel des clients B2B hors JO et grands événements ponctuels ?</div>
+                <div class="question">Pouvez-vous partager les cohortes qui justifient la LTV de 1 971 € sur 3 ans ?</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Lecture par dimensions</h2>
+                <p class="panel-kicker">Score compact, pas une mosaïque d’onglets.</p>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="mini-bars">
+                <div class="bar-row">
+                  <span>Marché</span>
+                  <span class="bar-track"><span class="bar-fill warning" style="width: 50%"></span></span>
+                  <strong>50</strong>
+                </div>
+                <div class="bar-row">
+                  <span>Clients</span>
+                  <span class="bar-track"><span class="bar-fill warning" style="width: 50%"></span></span>
+                  <strong>50</strong>
+                </div>
+                <div class="bar-row">
+                  <span>Finance</span>
+                  <span class="bar-track"><span class="bar-fill danger" style="width: 8%"></span></span>
+                  <strong>F</strong>
+                </div>
+                <div class="bar-row">
+                  <span>Équipe</span>
+                  <span class="bar-track"><span class="bar-fill danger" style="width: 28%"></span></span>
+                  <strong>28</strong>
+                </div>
+                <div class="bar-row">
+                  <span>Scénarios</span>
+                  <span class="bar-track"><span class="bar-fill warning" style="width: 42%"></span></span>
+                  <strong>42</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+
+      <p class="footer-note">
+        Mockup statique alimenté avec les données de l’analyse Avekapeti. Les agents restent disponibles, mais la lecture principale suit la décision d’investissement.
+      </p>
+    </main>
+
+    <script>
+      const tabs = Array.from(document.querySelectorAll(".tab"));
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          tabs.forEach((item) => item.classList.remove("active"));
+          tab.classList.add("active");
+          const target = document.getElementById(tab.dataset.target);
+          if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      });
+    </script>
+  </body>
+</html>

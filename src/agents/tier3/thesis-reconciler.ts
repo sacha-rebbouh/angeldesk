@@ -12,7 +12,7 @@
 
 import { z } from "zod";
 import { BaseAgent } from "../base-agent";
-import type { AgentContext, AgentResult, EnrichedAgentContext } from "../types";
+import type { AgentContext, AgentResult } from "../types";
 import type {
   ThesisReconcilerOutput,
   ThesisVerdict,
@@ -158,8 +158,6 @@ LANGUE: Francais.`;
   }
 
   protected async execute(context: AgentContext): Promise<ThesisReconcilerOutput> {
-    const enriched = context as EnrichedAgentContext;
-
     // 1. Recuperer la these initiale depuis previousResults
     const thesisResult = context.previousResults?.["thesis-extractor"];
     if (!thesisResult || !thesisResult.success || !("data" in thesisResult)) {
@@ -252,7 +250,6 @@ LANGUE: Francais.`;
       "tech-ops-dd",
       "legal-regulatory",
       "cap-table-auditor",
-      "exit-strategist",
       "deck-forensics",
     ];
 
@@ -310,7 +307,6 @@ LANGUE: Francais.`;
       "tech-ops-dd",
       "legal-regulatory",
       "cap-table-auditor",
-      "exit-strategist",
       "deck-forensics",
     ];
 

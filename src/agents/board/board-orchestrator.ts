@@ -515,7 +515,6 @@ export class BoardOrchestrator {
         capTableAuditor: analysisResults["cap-table-auditor"],
         gtmAnalyst: analysisResults["gtm-analyst"],
         customerIntel: analysisResults["customer-intel"],
-        exitStrategist: analysisResults["exit-strategist"],
         questionMaster: analysisResults["question-master"],
       };
 
@@ -535,10 +534,9 @@ export class BoardOrchestrator {
         }
       }
 
-      // Tier 3: 5 Synthesis agents
+      // Tier 3: 4 Synthesis agents
       agentOutputs.tier3 = {
         contradictionDetector: analysisResults["contradiction-detector"],
-        scenarioModeler: analysisResults["scenario-modeler"],
         synthesisDealScorer: analysisResults["synthesis-deal-scorer"],
         devilsAdvocate: analysisResults["devils-advocate"],
         memoGenerator: analysisResults["memo-generator"],

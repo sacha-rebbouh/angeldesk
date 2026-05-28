@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, useEffect, useRef, memo } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Loader2, Play, CheckCircle, XCircle, ChevronDown, ChevronUp, Clock, History, AlertCircle, AlertTriangle, FileWarning, ShieldAlert, Download, FileText, ClipboardCheck, MessageSquareText } from "lucide-react";
+import { Loader2, Play, CheckCircle, ChevronDown, Clock, History, AlertCircle, AlertTriangle, FileWarning, ShieldAlert, Download, FileText, ClipboardCheck, MessageSquareText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,19 +51,15 @@ import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
 import { DeckCoherenceReport as DeckCoherenceReportPanel } from "./deck-coherence-report";
 import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
-import { NextStepsGuide } from "./next-steps-guide";
 import { PartialAnalysisBanner } from "./partial-analysis-banner";
+import { AnalysisCompleteView } from "./analysis-complete-view";
+import { AnalysisInvestorView } from "./analysis-investor-view";
+import { AnalysisMemoFull } from "./analysis-memo-full";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
-import { formatAgentErrorSeverity, formatDetailedError, getAgentErrorImpact } from "@/lib/agent-error-impact";
+import { formatAgentErrorSeverity, getAgentErrorImpact } from "@/lib/agent-error-impact";
 import { consolidateAcrossAnalyses } from "@/lib/question-consolidator";
 import { consolidateRedFlagsFromResults } from "@/services/red-flag-dedup/consolidate";
 import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 // Dynamic imports for heavy Tier components - reduces initial bundle by ~50KB
 const Tier1Results = dynamic(
@@ -333,10 +329,9 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   } = useResolutions(dealId);
   const [liveResult, setLiveResult] = useState<AnalysisResult | null>(null);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
-  const [showAgentDetails, setShowAgentDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCreditModal, setShowCreditModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<"results" | "suivi-dd" | "coherence">("results");
+  const [activeTab, setActiveTab] = useState<"results" | "memo" | "details" | "suivi-dd" | "coherence" | "ai-board">("results");
   const [isSubmittingResponses, setIsSubmittingResponses] = useState(false);
   // On-demand results cache for historical analyses (loaded when user navigates history)
   const [onDemandResults, setOnDemandResults] = useState<Record<string, Record<string, AgentResult>>>({});
@@ -402,7 +397,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       return response.json();
     },
     onSuccess: () => {
-      toast.success("Decision d'extraction enregistree");
+      toast.success("Décision sur le document enregistrée");
       queryClient.invalidateQueries({ queryKey: ["deal-document-readiness", dealId] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -449,7 +444,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     verdict: string;
     confidence: number;
     loadBearing: Array<{
@@ -488,12 +482,16 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     solution?: string;
     whyNow?: string;
     moat?: string | null;
-    pathToExit?: string | null;
     loadBearing?: ThesisPayload["loadBearing"];
     evaluationAxes?: NormalizedThesisEvaluation;
   };
 
-  const thesisAnalysisId = selectedAnalysisId
+  const runningAnalysisId = polledAnalysis?.data?.status === "RUNNING"
+    ? polledAnalysis.data.id
+    : analyses.find((analysis) => analysis.status === "RUNNING")?.id ?? null;
+
+  const thesisAnalysisId = runningAnalysisId
+    ?? selectedAnalysisId
     ?? analyses.find((analysis) => analysis.status === "COMPLETED")?.id
     ?? null;
 
@@ -796,7 +794,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   // Handle analysis button click - check credit balance
   const handleAnalyzeClick = useCallback(() => {
     if (documentReadiness && !documentReadiness.ready) {
-      toast.error("Extraction documentaire incomplète. Traitez les pages bloquées avant de lancer l'analyse.");
+      toast.error("Lecture documentaire incomplète. Traitez les pages bloquées avant de lancer l'analyse.");
       return;
     }
     if (quota) {
@@ -826,7 +824,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     action: "BYPASS_PAGE" | "EXCLUDE_PAGE"
   ) => {
     if (!issue.runId) {
-      toast.error("Relancez d'abord l'extraction stricte du document.");
+      toast.error("Relancez d'abord la lecture contrôlée du document.");
       return;
     }
 
@@ -866,17 +864,13 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     }
   }, [analyses, onDemandResults, dealId]);
 
-  const toggleAgentDetails = useCallback(() => {
-    setShowAgentDetails(prev => !prev);
-  }, []);
-
   const toggleHistory = useCallback(() => {
     setShowHistory(prev => !prev);
   }, []);
 
   // Memoized tab change handler (extracted from inline callback)
   const handleTabChange = useCallback((value: string) => {
-    setActiveTab(value as "results" | "suivi-dd" | "coherence");
+    setActiveTab(value as "results" | "memo" | "details" | "suivi-dd" | "coherence" | "ai-board");
   }, []);
 
   // Handle founder responses - save only (without re-analyze)
@@ -1202,7 +1196,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
             solution: previousThesisVersion.solution ?? "",
             whyNow: previousThesisVersion.whyNow ?? "",
             moat: previousThesisVersion.moat ?? null,
-            pathToExit: previousThesisVersion.pathToExit ?? null,
             loadBearing: previousThesisVersion.loadBearing ?? [],
             createdAt: previousThesisVersion.createdAt,
           }}
@@ -1216,7 +1209,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
             solution: thesis.solution,
             whyNow: thesis.whyNow,
             moat: thesis.moat,
-            pathToExit: thesis.pathToExit,
             loadBearing: thesis.loadBearing,
             createdAt: thesis.createdAt,
           }}
@@ -1229,7 +1221,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
           <CardHeader className="pb-3">
             <CardTitle className={`flex items-center gap-2 text-base ${!documentReadiness.ready ? "text-red-900" : "text-amber-900"}`}>
               <ShieldAlert className="h-5 w-5" />
-              Contrôle extraction documentaire
+              Contrôle des documents
             </CardTitle>
             <CardDescription className={!documentReadiness.ready ? "text-red-800" : "text-amber-800"}>
               {documentReadiness.ready
@@ -1242,7 +1234,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
               <div key={`${issue.documentId}-${issue.pageNumber ?? issue.code}`} className="rounded-lg border border-red-200 bg-white p-3">
                 <p className="font-medium text-red-900">{issue.message}</p>
                 <p className="mt-1 text-sm text-red-700">
-                  Relancez OCR, uploadez une version corrigée, ou prenez une décision explicite si le risque est acceptable.
+                  Relancez la lecture automatique du document, uploadez une version corrigée, ou prenez une décision explicite si le risque est acceptable.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {issue.canBypass && (
@@ -1318,7 +1310,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   {!canRunAnalysis ? (
                     <>
                       <AlertCircle className="mr-2 h-4 w-4" />
-                      {documentReadiness && !documentReadiness.ready ? "Extraction incomplète" : "Limite atteinte"}
+                      {documentReadiness && !documentReadiness.ready ? "Documents incomplets" : "Limite atteinte"}
                     </>
                   ) : (
                     <>
@@ -1391,7 +1383,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     Analyse interrompue ({interruptedAnalysis.completedAgents}/{interruptedAnalysis.totalAgents} étapes terminées)
                   </p>
                   <p className="text-sm text-blue-700">
-                    L&apos;analyse récente la plus aboutie a été interrompue. Cliquez pour reprendre là où elle s&apos;est arrêtée sans repayer les agents déjà terminés.
+                    L&apos;analyse récente la plus aboutie a été interrompue. Cliquez pour reprendre là où elle s&apos;est arrêtée sans repayer les étapes déjà terminées.
                   </p>
                 </div>
               </div>
@@ -1533,15 +1525,15 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                             <Download className="h-4 w-4 text-blue-600" />
                             Rapport complet
                           </div>
-                          <span className="text-xs text-muted-foreground ml-6">30-50 pages — DD exhaustive, tous les agents</span>
+                          <span className="text-xs text-muted-foreground ml-6">30-50 pages — dossier complet, toutes les analyses</span>
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   )}
                   {displayedResult.success ? (
-                    <Badge variant="default" className="bg-green-500">Réussi</Badge>
+                    <Badge variant="default" className="bg-green-500">Analyse disponible</Badge>
                   ) : (
-                    <Badge variant="destructive">Échoué</Badge>
+                    <Badge variant="destructive">Analyse incomplète</Badge>
                   )}
                   <span className="text-sm text-muted-foreground">
                     {(displayedResult.totalTimeMs / 1000).toFixed(1)}s
@@ -1549,8 +1541,21 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 </div>
               </div>
               {/* Tabs Navigation */}
-              <TabsList className="mt-3">
-                <TabsTrigger value="results">Résultats</TabsTrigger>
+              <TabsList className="mt-3 flex w-full justify-start overflow-x-auto">
+                <TabsTrigger value="results">Vue investisseur</TabsTrigger>
+                <TabsTrigger value="memo" className="flex items-center gap-1.5">
+                  <FileText className="h-4 w-4" />
+                  {displayedResult.results?.["memo-generator"]?.success ? "Mémo d’investissement" : "Dossier de décision"}
+                </TabsTrigger>
+                <TabsTrigger value="details" className="flex items-center gap-1.5">
+                  <FileText className="h-4 w-4" />
+                  Analyses détaillées
+                  {displayedResult.results && (
+                    <Badge variant="secondary" className="ml-1 text-xs">
+                      {Object.keys(displayedResult.results).length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
                 {deckCoherenceReport && (
                   <TabsTrigger value="coherence" className="flex items-center gap-1.5">
                     <ShieldAlert className="h-4 w-4" />
@@ -1581,7 +1586,48 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
             <CardContent className="space-y-4">
               {/* Results Tab Content */}
               <TabsContent value="results" className="mt-0 space-y-4">
-                {/* Thesis Hero Card — thesis-first : affichee en HAUT avant tout */}
+                {displayedResult.results && (
+                  <AnalysisInvestorView
+                    dealName={dealName}
+                    results={displayedResult.results}
+                    thesis={thesis}
+                    totalTimeMs={displayedResult.totalTimeMs}
+                    totalCost={displayedResult.totalCost}
+                    currentScore={currentScore ?? null}
+                  />
+                )}
+
+                {/* Partial Analysis Banner for FREE users (F32) */}
+                <PartialAnalysisBanner
+                  subscriptionPlan={effectivePlan}
+                  isMissingTier3={!isTier3Analysis}
+                />
+
+                {/* Credit upsell banner for users who haven't purchased yet */}
+                {quota && (quota.totalPurchased ?? 0) === 0 && displayedResult.success && !isTier3Analysis && (
+                  <ProTeaserBanner />
+                )}
+              </TabsContent>
+
+              <TabsContent value="memo" className="mt-0">
+                {displayedResult.results && (
+                  <AnalysisMemoFull
+                    dealName={dealName}
+                    results={displayedResult.results}
+                    totalTimeMs={displayedResult.totalTimeMs}
+                    totalCost={displayedResult.totalCost}
+                  />
+                )}
+              </TabsContent>
+
+              <TabsContent value="details" className="mt-0 space-y-4">
+                <div className="rounded-xl border bg-background p-4">
+                  <h3 className="font-semibold tracking-normal">Analyses détaillées</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Thèse, angles d’analyse, risques, erreurs et sections détaillées restent consultables ici.
+                  </p>
+                </div>
+
                 {thesis && (
                   <ThesisHeroCard
                     reformulated={thesis.reformulated}
@@ -1589,7 +1635,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     solution={thesis.solution}
                     whyNow={thesis.whyNow}
                     moat={thesis.moat}
-                    pathToExit={thesis.pathToExit}
                     verdict={thesis.verdict}
                     confidence={thesis.confidence}
                     loadBearing={thesis.loadBearing}
@@ -1601,7 +1646,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   />
                 )}
 
-                {/* Thesis Frameworks Expand : 3 lunettes YC/Thiel/Angel Desk en detail */}
                 {thesis && thesis.ycLens && thesis.thielLens && thesis.angelDeskLens && (
                   <ThesisFrameworksExpand
                     ycLens={thesis.ycLens}
@@ -1611,7 +1655,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   />
                 )}
 
-                {/* Early Warnings Panel - Show prominently at top */}
                 {displayedResult.earlyWarnings && displayedResult.earlyWarnings.length > 0 && (
                   <EarlyWarningsPanel
                     warnings={displayedResult.earlyWarnings}
@@ -1619,12 +1662,11 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   />
                 )}
 
-                {/* Error Summary Banner - Show if any agent failed (F85) */}
                 {displayedResult.results && (() => {
-                  const failedAgents = Object.entries(displayedResult.results).filter(([, r]) => !r.success);
-                  if (failedAgents.length === 0) return null;
+                  const failedAnalyses = Object.entries(displayedResult.results).filter(([, result]) => !result.success);
+                  if (failedAnalyses.length === 0) return null;
 
-                  const criticalFailures = failedAgents.filter(([name]) =>
+                  const criticalFailures = failedAnalyses.filter(([name]) =>
                     getAgentErrorImpact(name).severity === "CRITICAL"
                   );
 
@@ -1635,11 +1677,11 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                           <AlertTriangle className={cn("h-5 w-5 shrink-0 mt-0.5", criticalFailures.length > 0 ? "text-red-600" : "text-amber-600")} />
                           <div>
                             <p className="font-medium text-sm">
-                              {failedAgents.length} agent{failedAgents.length > 1 ? "s" : ""} en échec
+                              {failedAnalyses.length} analyse{failedAnalyses.length > 1 ? "s" : ""} manquante{failedAnalyses.length > 1 ? "s" : ""}
                               {criticalFailures.length > 0 && ` dont ${criticalFailures.length} critique${criticalFailures.length > 1 ? "s" : ""}`}
                             </p>
                             <ul className="mt-1 space-y-0.5">
-                              {failedAgents.map(([name]) => {
+                              {failedAnalyses.map(([name]) => {
                                 const impact = getAgentErrorImpact(name);
                                 return (
                                   <li key={name} className="text-xs text-muted-foreground">
@@ -1658,12 +1700,11 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   );
                 })()}
 
-                {/* Tier 3 Results - Synthesis Agents (Score, Scenarios, Devil's Advocate, Memo) */}
                 {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
                   <Tier3Results
                     results={tier3Results}
                     subscriptionPlan={effectivePlan}
-                    totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter(r => r.success).length : 0}
+                    totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter((result) => result.success).length : 0}
                     resolutionMap={resolutionMap}
                     resolutions={resolutions}
                     onResolve={resolveAlert}
@@ -1674,7 +1715,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   />
                 )}
 
-                {/* Tier 2 Results - Sector Expert Analysis (PRO only) */}
                 {isTier2Analysis && displayedResult.success && Object.keys(tier2Results).length > 0 && (
                   <ChangedSection
                     isNew={!previousAnalysis}
@@ -1685,7 +1725,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   </ChangedSection>
                 )}
 
-                {/* Tier 1 Results - 12 Investigation Agents (FREE sees limited items + teasers) */}
                 {isTier1Analysis && displayedResult.success && Object.keys(tier1Results).length > 0 && (
                   <Tier1Results
                     results={tier1Results}
@@ -1697,184 +1736,15 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   />
                 )}
 
-                {/* Agent Results - Collapsible for Tier 1/2/3 */}
-                {(isTier1Analysis || isTier2Analysis || isTier3Analysis) ? (
-                  <div className="border rounded-lg">
-                    <button
-                      onClick={toggleAgentDetails}
-                      aria-expanded={showAgentDetails}
-                      aria-label="Afficher les détails des agents"
-                      className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
-                    >
-                      <span className="font-medium text-sm">
-                        Détails des agents ({Object.keys(displayedResult.results).length})
-                      </span>
-                      {showAgentDetails ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                    </button>
-                    {showAgentDetails && (
-                      <div className="p-3 pt-0 border-t space-y-2">
-                        {Object.entries(displayedResult.results).map(([name, agentResult]) => (
-                          <div
-                            key={name}
-                            className="flex items-center justify-between rounded-lg border p-3"
-                          >
-                            <div className="flex items-center gap-2">
-                              {agentResult.success ? (
-                                <CheckCircle className="h-4 w-4 text-green-500" />
-                              ) : (
-                                <XCircle className="h-4 w-4 text-red-500" />
-                              )}
-                              <span className="font-medium">{formatAgentName(name)}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm text-muted-foreground">
-                                {(agentResult.executionTimeMs / 1000).toFixed(1)}s
-                              </span>
-                              {agentResult.error && (() => {
-                                const errorInfo = formatDetailedError(name, agentResult.error);
-                                return (
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Badge
-                                          variant="destructive"
-                                          className={cn(
-                                            "cursor-help",
-                                            errorInfo.impact.severity === "CRITICAL" && "bg-red-600 animate-pulse",
-                                            errorInfo.impact.severity === "HIGH" && "bg-orange-600",
-                                          )}
-                                        >
-                                          {errorInfo.shortMessage}
-                                        </Badge>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="left" className="max-w-sm p-3">
-                                        <div className="space-y-2">
-                                          <p className="font-semibold text-sm">
-                                            {formatAgentName(name)} — {errorInfo.shortMessage}
-                                          </p>
-                                          <p className="text-xs text-muted-foreground">
-                                            <strong>Impact :</strong> {errorInfo.impact.missingAnalysis}
-                                          </p>
-                                          <p className="text-xs">
-                                            {errorInfo.impact.recommendation}
-                                          </p>
-                                          {errorInfo.detailedMessage !== errorInfo.shortMessage && (
-                                            <p className="text-xs text-muted-foreground/70 font-mono">
-                                              {errorInfo.detailedMessage.slice(0, 200)}
-                                            </p>
-                                          )}
-                                        </div>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                );
-                              })()}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {Object.entries(displayedResult.results).map(([name, agentResult]) => (
-                      <div
-                        key={name}
-                        className="flex items-center justify-between rounded-lg border p-3"
-                      >
-                        <div className="flex items-center gap-2">
-                          {agentResult.success ? (
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-red-500" />
-                          )}
-                          <span className="font-medium">{formatAgentName(name)}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-muted-foreground">
-                            {(agentResult.executionTimeMs / 1000).toFixed(1)}s
-                          </span>
-                          {agentResult.error && (() => {
-                            const errorInfo = formatDetailedError(name, agentResult.error);
-                            return (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge
-                                      variant="destructive"
-                                      className={cn(
-                                        "cursor-help",
-                                        errorInfo.impact.severity === "CRITICAL" && "bg-red-600 animate-pulse",
-                                        errorInfo.impact.severity === "HIGH" && "bg-orange-600",
-                                      )}
-                                    >
-                                      {errorInfo.shortMessage}
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="left" className="max-w-sm p-3">
-                                    <div className="space-y-2">
-                                      <p className="font-semibold text-sm">
-                                        {formatAgentName(name)} — {errorInfo.shortMessage}
-                                      </p>
-                                      <p className="text-xs text-muted-foreground">
-                                        <strong>Impact :</strong> {errorInfo.impact.missingAnalysis}
-                                      </p>
-                                      <p className="text-xs">
-                                        {errorInfo.impact.recommendation}
-                                      </p>
-                                      {errorInfo.detailedMessage !== errorInfo.shortMessage && (
-                                        <p className="text-xs text-muted-foreground/70 font-mono">
-                                          {errorInfo.detailedMessage.slice(0, 200)}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                {displayedResult.results && !isTier1Analysis && !isTier2Analysis && !isTier3Analysis && (
+                  <AnalysisCompleteView results={displayedResult.results} showHeader={false} />
                 )}
 
-                {/* Summary */}
                 {displayedResult.summary && !isTier1Analysis && !isTier2Analysis && (
                   <div className="rounded-lg bg-muted p-4">
                     <h4 className="font-medium mb-2">Résumé</h4>
                     <div className="text-sm whitespace-pre-wrap">{displayedResult.summary}</div>
                   </div>
-                )}
-
-                {/* Partial Analysis Banner for FREE users (F32) */}
-                <PartialAnalysisBanner
-                  subscriptionPlan={effectivePlan}
-                  isMissingTier3={!isTier3Analysis}
-                />
-
-                {/* Next Steps Guide (F29) */}
-                {displayedResult.success && (
-                  <NextStepsGuide
-                    criticalRedFlagCount={
-                      displayedResult.results
-                        ? Object.values(displayedResult.results).reduce((count, r) => {
-                            if (!r.success || !r.data) return count;
-                            const data = r.data as { redFlags?: Array<{ severity: string }> };
-                            return count + (data.redFlags?.filter(f => f.severity === "CRITICAL").length ?? 0);
-                          }, 0)
-                        : 0
-                    }
-                    questionsCount={founderQuestions.length}
-                    avgScore={currentScore ?? 0}
-                    hasTier3={isTier3Analysis}
-                    subscriptionPlan={effectivePlan}
-                  />
-                )}
-
-                {/* Credit upsell banner for users who haven't purchased yet */}
-                {quota && (quota.totalPurchased ?? 0) === 0 && displayedResult.success && !isTier3Analysis && (
-                  <ProTeaserBanner />
                 )}
               </TabsContent>
 

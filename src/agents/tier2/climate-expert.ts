@@ -625,7 +625,7 @@ En utilisant les données DB:
 
 ### 10. EXIT LANDSCAPE ANALYSIS
 - Acquéreurs probables pour ce type de deal?
-- Multiple attendu basé sur comparables?
+- Multiples observés sur exits comparables (P25/median/P75 par comparables, source DB)?
 - IPO/SPAC viability (avec warning sur track record SPAC)?
 - Strategic acquirers (Shell New Energies, BP Ventures, etc.)?
 

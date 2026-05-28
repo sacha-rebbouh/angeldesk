@@ -29,7 +29,6 @@ const ALL_AGENT_NAMES = [
   "team-investigator",
   "market-intelligence",
   "competitive-intel",
-  "exit-strategist",
   "tech-stack-dd",
   "tech-ops-dd",
   "legal-regulatory",
@@ -41,7 +40,6 @@ const ALL_AGENT_NAMES = [
   "contradiction-detector",
   "synthesis-deal-scorer",
   "devils-advocate",
-  "scenario-modeler",
   "memo-generator",
 ];
 

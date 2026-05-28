@@ -225,12 +225,20 @@ const MarketplaceExpertOutputSchema = z.object({
   sector_risks: z.array(MarketplaceSectorRiskSchema),
 
   // === EXIT LANDSCAPE ===
+  // Doctrine anti-oraculaire : `observed_exit_multiple_range` rapporte
+  // les multiples OBSERVÉS sur les comparables historiques du segment
+  // (P25 / médiane / P75 + période + source), pas un range "attendu"
+  // pour CE deal. L'ancien `typical_exit_multiple_range` était ambigu
+  // et pouvait être interprété par le LLM comme une projection.
   exit_landscape: z.object({
-    typical_exit_multiple_range: z.object({
-      low: z.number(),
+    observed_exit_multiple_range: z.object({
+      p25: z.number(),
       median: z.number(),
-      high: z.number(),
+      p75: z.number(),
       multiple_basis: z.enum(["gmv", "revenue", "arr"]),
+      sample_size: z.number().int().nonnegative(),
+      period: z.string(),
+      source: z.string(),
     }),
     recent_comparable_exits: z.array(z.object({
       company: z.string(),

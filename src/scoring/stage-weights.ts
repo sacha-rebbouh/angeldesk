@@ -168,7 +168,7 @@ export function formatWeightsForPrompt(weights: DimensionWeights): string {
     productTech: { label: 'Product/Tech', agents: 'tech-stack-dd, tech-ops-dd, deck-forensics' },
     gtmTraction: { label: 'GTM/Traction', agents: 'gtm-analyst, customer-intel' },
     competitive: { label: 'Competitive', agents: 'competitive-intel' },
-    exitPotential: { label: 'Exit Potential', agents: 'exit-strategist' },
+    exitPotential: { label: 'Exit Potential', agents: 'market-intelligence, competitive-intel, sector-expert' },
   };
 
   let table = '| Dimension | Poids | Agents sources |\n|-----------|-------|----------------|\n';

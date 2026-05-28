@@ -13,6 +13,7 @@ import type {
   DbCrossReference,
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
+import { getSectorProfile, formatSectorProfileForPrompt, formatCustomerCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 import { benchmarkService } from "@/scoring";
 import { getBenchmarkFull } from "@/services/benchmarks";
 import { checkBenchmarkFreshness, formatFreshnessWarning } from "@/services/benchmarks/freshness-checker";
@@ -20,6 +21,13 @@ import { verifyFinancialMetrics, extractRawInputsFromMetrics, type FinancialVeri
 import { calculateAgentScore, normalizeMetricName, FINANCIAL_AUDITOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 import { z } from "zod";
 import { FinancialAuditResponseSchema } from "./schemas/financial-auditor-schema";
+
+const FINANCIAL_AUDIT_OTHER_DOC_MAX_CHARS = 6_000;
+const FINANCIAL_AUDIT_EXTRACTED_INFO_MAX_CHARS = 12_000;
+const FINANCIAL_AUDIT_CONTEXT_ENGINE_MAX_CHARS = 30_000;
+const FINANCIAL_AUDIT_MODEL_MAX_CHARS = 45_000;
+const FINANCIAL_AUDIT_PROVIDER_TIMEOUT_MS = 115_000;
+const FINANCIAL_AUDIT_MAX_TOKENS = 12_000;
 
 /**
  * Financial Auditor Agent - REFONTE v2.0
@@ -165,7 +173,7 @@ export class FinancialAuditorAgent extends BaseAgent<FinancialAuditData, Financi
       // 240s: P0 bump depuis 180s pour couvrir les gros pitch decks (80+ pages)
       // + modele complex sans risquer le timeout Phase B (non-fatal mais cascade
       // sur Tier3 scorer vide de red flags financiers).
-      timeoutMs: 240000,
+      timeoutMs: 260000,
       dependencies: ["document-extractor"],
     });
   }
@@ -358,7 +366,7 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
   "location": "Slide 12, Financial Model onglet Projections",
   "evidence": "ARR 2024: 624K€ → ARR 2025: 2.5M€ = +300% YoY. Équipe actuelle: 1 sales.",
   "contextEngineData": "Benchmark Seed SaaS B2B: croissance médiane 120% YoY (source: OpenView 2024)",
-  "impact": "Si l'investisseur base son ROI sur ces projections, il sera déçu de 60%+",
+  "impact": "Si l'investisseur base sa décision sur ces projections, la trajectoire financière réelle peut être très inférieure aux attentes",
   "question": "Comment comptez-vous atteindre 2.5M€ d'ARR avec une équipe de 1 sales?",
   "redFlagIfBadAnswer": "Fondateur déconnecté de la réalité opérationnelle - deal breaker potentiel"
 }
@@ -376,17 +384,29 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
 
   protected async execute(context: EnrichedAgentContext): Promise<FinancialAuditData> {
     this._dealStage = context.canonicalDeal.stage;
-    const dealContext = this.formatDealContext(context);
-    const contextEngineData = this.formatContextEngineData(context);
+    const promptContext = this.buildFinancialAuditPromptContext(context);
+    const dealContext = this.formatDealContext(promptContext);
+    const contextEngineData = this.sanitizeDocumentContent(
+      this.formatContextEngineData(context),
+      FINANCIAL_AUDIT_CONTEXT_ENGINE_MAX_CHARS,
+    );
     const extractedInfo = this.getExtractedInfo(context);
 
     let extractedSection = "";
     if (extractedInfo) {
-      extractedSection = `\n## Données Extraites du Pitch Deck (Document Extractor)\n${JSON.stringify(extractedInfo, null, 2)}`;
+      extractedSection =
+        `\n## Données Extraites du Pitch Deck (Document Extractor)\n` +
+        this.sanitizeDataForPrompt(
+          this.compactExtractedInfoForPrompt(extractedInfo),
+          FINANCIAL_AUDIT_EXTRACTED_INFO_MAX_CHARS,
+        );
     }
 
     // Get raw financial model content (Excel with multiple sheets)
-    const financialModelContent = this.getFinancialModelContent(context);
+    const rawFinancialModelContent = this.getFinancialModelContent(context);
+    const financialModelContent = rawFinancialModelContent
+      ? this.sanitizeDocumentContent(rawFinancialModelContent, FINANCIAL_AUDIT_MODEL_MAX_CHARS)
+      : null;
     const financialModelAuditSummary = this.getFinancialModelAuditSummary(context);
     let financialModelSection = "";
     if (financialModelAuditSummary) {
@@ -489,8 +509,19 @@ ${discrepancies.map((d: string) => `- ${d}`).join("\n")}
       registryVerification = "\n## VERIFICATION REGISTRE\nVerification impossible (erreur technique). Fiabilite des donnees financieres NON confirmee.";
     }
 
+    const sectorProfile = getSectorProfile(deal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+    const customerCalibration = formatCustomerCalibrationForPrompt(sectorProfile);
+    const financialCalibration = customerCalibration
+      ? `${customerCalibration}\n\n## CALIBRATION FINANCIÈRE — UNIT ECONOMICS\n\nLes métriques financières fondamentales (revenu, COGS, marge brute, burn, runway, BFR) restent universelles. Mais les agrégats type ARR / MRR / NRR / churn / LTV-CAC / burn multiple **sont SaaS-spécifiques** et ne s'appliquent pas à ce secteur (${sectorProfile.displayName}).\n\nPour ce dossier, lire l'unit economics sur les axes pertinents : marge unitaire brute, fréquence de réachat, retail sell-through, cycle de cash, BFR opérationnel. Ne PAS forcer un cadrage ARR / NRR si la nature du revenu n'est pas une souscription récurrente.`
+      : null;
+
     // Build user prompt
     const prompt = `# ANALYSE FINANCIAL AUDITOR - ${deal.companyName || deal.name}
+
+${sectorBlock}
+
+${financialCalibration ?? "## CALIBRATION FINANCIÈRE\n\nSecteur de type tech/SaaS — lecture standard ARR / MRR / NRR / churn / LTV-CAC / burn multiple applicable."}
 
 ## DOCUMENTS FOURNIS
 ${dealContext}
@@ -671,6 +702,11 @@ MONTRE tes calculs.
         // `checkTruncation` (ajoute une limitation `meta.limitations[]`).
         // Allowlisté dans `c1c-truncation-fail-closed.guard.test.ts`.
         allowPartialOnTruncation: true,
+        fallbackChain: ["GEMINI_PRO", "GEMINI_3_FLASH"],
+        maxRetries: 0,
+        maxTokens: FINANCIAL_AUDIT_MAX_TOKENS,
+        timeoutMs: FINANCIAL_AUDIT_PROVIDER_TIMEOUT_MS,
+        terminalFallbackData: this.buildTerminalFinancialFallback(),
       },
     );
     if (validationErrors?.length) {
@@ -782,7 +818,141 @@ MONTRE tes calculs.
     // F56: Apply hard reliability penalties that the LLM might not consistently enforce
     this.applyReliabilityPenalties(result, context);
 
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (ARR / churn / burn multiple SaaS sur consumer / bio / etc.).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "financial-auditor");
+
     return result;
+  }
+
+  private buildFinancialAuditPromptContext(context: EnrichedAgentContext): EnrichedAgentContext {
+    const documents = context.documents?.map((doc) => {
+      if (!doc.extractedText) return doc;
+      if (doc.type === "FINANCIAL_MODEL") {
+        return { ...doc, extractedText: "" };
+      }
+      if (doc.extractedText.length <= FINANCIAL_AUDIT_OTHER_DOC_MAX_CHARS) return doc;
+
+      return {
+        ...doc,
+        extractedText:
+          doc.extractedText.slice(0, FINANCIAL_AUDIT_OTHER_DOC_MAX_CHARS) +
+          `\n\n[TRONQUE POUR financial-auditor: document secondaire limite a ${FINANCIAL_AUDIT_OTHER_DOC_MAX_CHARS} caracteres. Les faits financiers extraits restent disponibles via Fact Store et Document Extractor.]`,
+      };
+    });
+
+    return { ...context, documents };
+  }
+
+  private compactExtractedInfoForPrompt(extractedInfo: Record<string, unknown>): Record<string, unknown> {
+    return {
+      companyName: extractedInfo.companyName,
+      sector: extractedInfo.sector,
+      stage: extractedInfo.stage,
+      geography: extractedInfo.geography,
+      revenue: extractedInfo.revenue,
+      arr: extractedInfo.arr,
+      mrr: extractedInfo.mrr,
+      growthRateYoY: extractedInfo.growthRateYoY,
+      amountRaising: extractedInfo.amountRaising,
+      valuationPre: extractedInfo.valuationPre,
+      valuationPost: extractedInfo.valuationPost,
+      runway: extractedInfo.runway,
+      burnRate: extractedInfo.burnRate,
+      grossMargin: extractedInfo.grossMargin,
+      cac: extractedInfo.cac,
+      ltv: extractedInfo.ltv,
+      churnRate: extractedInfo.churnRate,
+      customers: extractedInfo.customers,
+      businessModel: extractedInfo.businessModel,
+      financialDataType: extractedInfo.financialDataType,
+      financialDataAsOf: extractedInfo.financialDataAsOf,
+      projectionReliability: extractedInfo.projectionReliability,
+      financialRedFlags: extractedInfo.financialRedFlags,
+      sourceReferences: Array.isArray(extractedInfo.sourceReferences)
+        ? extractedInfo.sourceReferences.slice(0, 12)
+        : extractedInfo.sourceReferences,
+    };
+  }
+
+  private buildTerminalFinancialFallback(): LLMFinancialAuditResponse {
+    return {
+      meta: {
+        dataCompleteness: "minimal",
+        confidenceLevel: 20,
+        limitations: [
+          "Analyse financiere LLM indisponible apres fallback; utiliser le Fact Store et demander les pieces financieres sources.",
+        ],
+      },
+      score: {
+        value: 25,
+        breakdown: [
+          { criterion: "Data Transparency", weight: 25, score: 20, justification: "Sortie LLM indisponible; transparence financiere non verifiee." },
+          { criterion: "Metrics Health", weight: 25, score: 25, justification: "Metriques non auditees dans cette passe." },
+          { criterion: "Valuation Rationality", weight: 20, score: 25, justification: "Valorisation non benchmarkee dans cette passe." },
+          { criterion: "Unit Economics Viability", weight: 15, score: 25, justification: "Unit economics non verifies dans cette passe." },
+          { criterion: "Burn Efficiency", weight: 15, score: 25, justification: "Burn/runway non verifies dans cette passe." },
+        ],
+      },
+      findings: {
+        metrics: [],
+        projections: {
+          realistic: false,
+          assumptions: [],
+          concerns: ["Audit financier LLM indisponible"],
+        },
+        valuation: {
+          benchmarkMultiple: 0,
+          verdict: "CANNOT_ASSESS",
+          comparables: [],
+        },
+        unitEconomics: {
+          assessment: "Non verifiable dans cette passe.",
+        },
+        burn: {
+          efficiency: "UNKNOWN",
+          assessment: "Non verifiable dans cette passe.",
+        },
+      },
+      dbCrossReference: {
+        claims: [],
+        uncheckedClaims: ["Claims financiers non verifies par financial-auditor"],
+      },
+      redFlags: [
+        {
+          id: "RF-FINANCIAL-AUDIT-UNAVAILABLE",
+          category: "missing_data",
+          severity: "HIGH",
+          title: "Audit financier indisponible",
+          description: "Le modele n'a pas rendu une analyse financiere exploitable apres fallback.",
+          location: "financial-auditor",
+          evidence: "Fallback terminal active",
+          impact: "Les metriques financieres, la valorisation et les unit economics doivent etre revus manuellement avant decision.",
+          question: "Pouvez-vous fournir le modele financier source, le CA realise par mois et les justificatifs de valorisation ?",
+          redFlagIfBadAnswer: "Impossible de verifier la these financiere du deal.",
+        },
+      ],
+      questions: [
+        {
+          priority: "CRITICAL",
+          category: "financials",
+          question: "Quels chiffres sont realises versus projetes dans le BP et le deck ?",
+          context: "L'audit financier automatise est indisponible sur cette passe.",
+          whatToLookFor: "Separations mensuelles realise/projete, justificatifs bancaires ou export comptable.",
+        },
+      ],
+      alertSignal: {
+        hasBlocker: false,
+        recommendation: "INVESTIGATE_FURTHER",
+        justification: "Audit financier automatise indisponible; verification manuelle requise.",
+      },
+      narrative: {
+        oneLiner: "Audit financier automatise indisponible.",
+        summary: "Le pipeline n'a pas obtenu une sortie financiere LLM exploitable. Les chiffres doivent etre controles via Fact Store, BP source et justificatifs avant decision.",
+        keyInsights: ["Audit financier a traiter comme incomplet"],
+        forNegotiation: ["Conditionner toute avance a la fourniture des chiffres realises et du modele source"],
+      },
+    };
   }
 
   private normalizeResponse(

@@ -10,9 +10,9 @@
  * Standard: Memo qualité institutionnelle facturable 50K€
  *
  * Inputs:
- * - Tous les outputs Tier 1 (13 agents d'analyse)
+ * - Tous les outputs Tier 1 (12 agents d'analyse)
  * - Tous les outputs Tier 2 (expert sectoriel activé)
- * - Outputs Tier 3 (contradiction-detector, synthesis-deal-scorer, devils-advocate, scenario-modeler)
+ * - Outputs Tier 3 (contradiction-detector, synthesis-deal-scorer, devils-advocate)
  * - Context Engine (benchmarks, comparables, tendances)
  * - Préférences BA (ticket, secteurs, stages)
  *
@@ -200,12 +200,6 @@ interface LLMMemoResponse {
     keyAssumptions: string[];
     thesis: string;
   };
-  exitStrategy: {
-    primaryPath: string;
-    timeline: string;
-    potentialAcquirers: string[];
-    expectedMultiple: { min: number; median: number; max: number };
-  };
   nextSteps: NextStepItem[];
   questionsForFounder: {
     priority: "CRITICAL" | "HIGH" | "MEDIUM";
@@ -240,7 +234,7 @@ export class MemoGeneratorAgent extends BaseAgent<MemoGeneratorData, MemoGenerat
       modelComplexity: "complex",
       maxRetries: 2,
       timeoutMs: 180000, // 3 minutes - synthèse complexe
-      dependencies: ["synthesis-deal-scorer", "devils-advocate", "scenario-modeler", "contradiction-detector"],
+      dependencies: ["synthesis-deal-scorer", "devils-advocate", "contradiction-detector"],
     });
   }
 
@@ -413,12 +407,6 @@ Réponds en JSON avec cette structure exacte:
     "keyAssumptions": ["Hypothèse clé 1", "Hypothèse clé 2"],
     "thesis": "Thèse d'investissement en 2-3 phrases"
   },
-  "exitStrategy": {
-    "primaryPath": "M&A par Big Corp",
-    "timeline": "5-7 ans",
-    "potentialAcquirers": ["Acquéreur 1", "Acquéreur 2"],
-    "expectedMultiple": {"min": 3, "median": 8, "max": 15}
-  },
   "nextSteps": [
     {"action": "Vérifier background équipe fondatrice", "priority": "IMMEDIATE", "owner": "INVESTOR", "context": "Non vérifié par team-investigator"},
     {"action": "Fournir détail client top 3", "priority": "BEFORE_TERM_SHEET", "owner": "FOUNDER"}
@@ -511,7 +499,6 @@ Si un chiffre est marque [ESTIME], tu DOIS mentionner qu'il s'agit d'une estimat
       "cap-table-auditor",
       "gtm-analyst",
       "customer-intel",
-      "exit-strategist",
       "question-master",
     ];
 
@@ -661,17 +648,6 @@ Risques structurels critiques: ${structuralRisksDA.length} identifies`);
 Consistance: ${d.consistencyScore ?? "N/A"}/100
 Contradictions: ${(d.contradictions as unknown[])?.length ?? 0} détectées
 Assessment: ${d.summaryAssessment ?? "N/A"}`);
-    }
-
-    // Scenario Modeler
-    const scenarios = results["scenario-modeler"];
-    if (scenarios?.success && "data" in scenarios) {
-      const d = scenarios.data as Record<string, unknown>;
-      insights.push(`### SCENARIO MODELER
-Scénario recommandé: ${d.recommendedScenario ?? "N/A"}
-Confiance: ${d.confidenceLevel ?? "N/A"}%
-Probabilité Bull: ${(d.scenarios as Array<{ name?: string; probability?: number }>)?.find(s => s.name === "BULL")?.probability ?? "N/A"}%
-Probabilité Bear: ${(d.scenarios as Array<{ name?: string; probability?: number }>)?.find(s => s.name === "BEAR")?.probability ?? "N/A"}%`);
     }
 
     return insights.length > 0 ? insights.join("\n\n") : "[Aucune synthèse Tier 3 disponible]";
@@ -915,17 +891,21 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
     lines.push(`### Votre investissement potentiel`);
     lines.push(`- Ticket recommandé: €${ticketSize.toLocaleString()}`);
     lines.push(`- Part au capital (post-money): ${ownership.toFixed(2)}%`);
+    lines.push(`- Horizon d'investissement renseigné: ${prefs.expectedHoldingPeriod} ans`);
 
-    // Scénarios de retour
-    const exitMultiples = [5, 10, 20];
-    lines.push(`\n### Scénarios de retour (pour €${ticketSize.toLocaleString()} investi)`);
-    for (const mult of exitMultiples) {
-      const exitValue = ticketSize * mult;
-      const irr = Math.pow(mult, 1 / prefs.expectedHoldingPeriod) - 1;
-      lines.push(
-        `- Exit x${mult}: €${exitValue.toLocaleString()} (IRR ~${(irr * 100).toFixed(0)}% sur ${prefs.expectedHoldingPeriod} ans)`
-      );
-    }
+    // Sensibilité retour — doctrine anti-oraculaire : aucun multiple ni
+    // IRR projeté n'est pré-calculé ici. La math est triviale (proceeds
+    // = ticket × multiple choisi par l'investisseur ; IRR = multiple^(1/n)
+    // − 1) et appartient au calculateur de sensibilité côté UI (à venir).
+    // Injecter des x5/x10/x20 hardcodés dans le contexte du LLM le
+    // pousserait à les utiliser comme baseline narrative, ce qui n'est
+    // pas une analyse mais une suggestion oraculaire déguisée.
+    lines.push(
+      `\n### Sensibilité au retour (à calculer côté investisseur)`
+    );
+    lines.push(
+      `Aucun multiple ni IRR n'est pré-calculé : ces nombres ne sont pas connus du système. L'investisseur saisit ses propres hypothèses (multiple cible, dilution attendue, horizon) dans son outil de sensibilité et la math s'applique sur SES hypothèses, pas sur des valeurs inventées par l'agent.`
+    );
 
     // Alignement avec le profil
     lines.push(`\n### Alignement avec votre profil (fit investisseur, distinct de la these)`);
@@ -1151,11 +1131,6 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
 
       // Investment Thesis
       investmentThesis: data.investmentThesis?.thesis ?? "",
-
-      // Exit Strategy
-      exitStrategy:
-        data.exitStrategy?.primaryPath ??
-        `Timeline: ${data.exitStrategy?.timeline ?? "N/A"}, Multiple attendu: ${data.exitStrategy?.expectedMultiple?.median ?? "N/A"}x`,
 
       // Next Steps (enrichis)
       nextSteps: Array.isArray(data.nextSteps)

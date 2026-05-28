@@ -74,11 +74,6 @@ export const AGENT_ERROR_IMPACT: Record<string, {
     missingAnalysis: "Score final synthétique et recommandation",
     recommendation: "Le score final n'a pas pu être calculé. Relancez l'analyse.",
   },
-  "scenario-modeler": {
-    severity: "HIGH",
-    missingAnalysis: "Modélisation des scénarios (BULL/BASE/BEAR/CATASTROPHIC)",
-    recommendation: "Les scénarios de retour ne sont pas disponibles.",
-  },
   "devils-advocate": {
     severity: "HIGH",
     missingAnalysis: "Analyse contradictoire (kill reasons, blind spots)",

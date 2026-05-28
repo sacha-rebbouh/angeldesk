@@ -24,7 +24,6 @@ interface MockThesis {
   solution: string;
   whyNow: string;
   moat: string | null;
-  pathToExit: string | null;
   loadBearing: unknown;
   ycLens: unknown;
   thielLens: unknown;
@@ -123,7 +122,6 @@ const mockPrisma = {
         solution: (data.solution as string) ?? "",
         whyNow: (data.whyNow as string) ?? "",
         moat: (data.moat as string | null) ?? null,
-        pathToExit: (data.pathToExit as string | null) ?? null,
         loadBearing: data.loadBearing ?? [],
         ycLens: data.ycLens ?? {},
         thielLens: data.thielLens ?? {},

@@ -81,7 +81,7 @@ const DETECTION_RULES: DetectionRule[] = [
     recommendation: "investigate",
     questionsToAsk: [
       "What justifies this premium valuation?",
-      "Are there comparable exits at these multiples?",
+      "Are there comparable financing rounds at these multiples?",
     ],
   },
 
@@ -321,25 +321,6 @@ const DETECTION_RULES: DetectionRule[] = [
     title: "Misleading Claims in Pitch Deck",
     descriptionTemplate: "Deck analysis found potentially misleading claims requiring verification.",
     recommendation: "investigate",
-  },
-
-  // ============================================================================
-  // EXIT STRATEGIST (refactored v2.0 - data is { meta, score, findings, ... })
-  // ============================================================================
-  {
-    agentName: "exit-strategist",
-    field: "score.value",
-    condition: "below",
-    threshold: 20,
-    severity: "high",
-    category: "deal_structure",
-    title: "Very Low Exit Potential",
-    descriptionTemplate: "Exit score of {value}/100 — limited viable exit paths identified.",
-    recommendation: "investigate",
-    questionsToAsk: [
-      "What are your realistic exit scenarios?",
-      "Who are potential acquirers in this space?",
-    ],
   },
 
   // ============================================================================

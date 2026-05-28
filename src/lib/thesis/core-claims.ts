@@ -16,7 +16,6 @@ const ThesisAlertCategorySchema = z.enum([
   "solution_fit",
   "moat",
   "unit_economics",
-  "path_to_exit",
   "team_dependency",
   "market_size",
   "assumption_fragile",
@@ -46,7 +45,7 @@ export const ThesisCoreClaimSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("derived_metric"),
-    metricKey: z.enum(["ebitda_margin"]),
+    metricKey: z.string().min(1),
     framing: z.string().min(1),
   }),
   z.object({

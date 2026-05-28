@@ -335,13 +335,6 @@ export function ExecutiveSummarySection({
         </>
       )}
 
-      {/* Exit strategy */}
-      {!!data.exitStrategy && (
-        <>
-          <SubsectionTitle>Strategie de sortie</SubsectionTitle>
-          <BodyText>{String(data.exitStrategy)}</BodyText>
-        </>
-      )}
       </View>
     </PdfPage>
   );

@@ -7,7 +7,7 @@
 export const ANALYSIS_TYPES = [
   { value: "extraction", label: "Extraction documents", description: "~1min", tier: 1 },
   { value: "tier2_sector", label: "Expert Sectoriel Tier 2", description: "1 expert selon secteur", tier: 2 },
-  { value: "tier3_synthesis", label: "Synthèse Tier 3", description: "6 agents (nécessite Tier 1)", tier: 3 },
+  { value: "tier3_synthesis", label: "Synthèse Tier 3", description: "5 agents (nécessite Tier 1)", tier: 3 },
   { value: "full_analysis", label: "Deep Dive thesis-first", description: "Thèse d'abord, puis analyse complète si la gate le permet", tier: 3 },
 ] as const;
 
@@ -54,7 +54,7 @@ export const FULL_DISPLAY_LIMITS = {
   criticalQuestions: Infinity,
   score: true,
   contradictions: true,
-  scenarios: true,
+  scenarios: false,
   sectorExpert: true,
   memo: true,
 } as const;
@@ -81,7 +81,6 @@ export const TIER1_AGENTS = [
   "cap-table-auditor",
   "gtm-analyst",
   "customer-intel",
-  "exit-strategist",
   "question-master",
 ] as const;
 
@@ -100,7 +99,6 @@ export const TIER2_AGENTS = [
 
 export const TIER3_AGENTS = [
   "synthesis-deal-scorer",
-  "scenario-modeler",
   "devils-advocate",
   "contradiction-detector",
   "memo-generator",

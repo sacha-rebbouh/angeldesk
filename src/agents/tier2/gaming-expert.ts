@@ -652,7 +652,7 @@ En utilisant les données DB:
 
 ### 10. EXIT LANDSCAPE ANALYSIS
 - Acquéreurs probables pour ce type de deal?
-- Multiple attendu basé sur genre et metrics?
+- Multiples observés sur exits comparables (P25/median/P75 par genre et metrics, source DB)?
 - Strategic fit with acquirers (Tencent, EA, Take-Two, Microsoft)?
 - IPO viability (rare for gaming, require massive scale)?
 

@@ -144,7 +144,7 @@ export function runTier1CrossValidation(
     "financial-auditor", "team-investigator", "competitive-intel",
     "market-intelligence", "tech-stack-dd", "tech-ops-dd",
     "legal-regulatory", "gtm-analyst", "customer-intel",
-    "exit-strategist", "deck-forensics", "cap-table-auditor",
+    "deck-forensics", "cap-table-auditor",
   ];
 
   const agentScores: { name: string; score: number }[] = [];

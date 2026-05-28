@@ -27,12 +27,12 @@ export const ANALYSIS_CONFIGS = {
   },
   tier3_synthesis: {
     agents: [] as BaseAgentName[], // Special handling - uses Tier 3 agents after Tier 1
-    description: "Synthese complete avec 6 agents (requires Tier 1 results)",
+    description: "Synthese complete avec 5 agents (requires Tier 1 results)",
     parallel: false, // Tier 3 runs sequentially
   },
   full_analysis: {
     agents: [] as BaseAgentName[], // Special handling - Tier 1 + Tier 2 + Tier 3
-    description: "Thesis-first Deep Dive: thesis gate, then Tier 1 (13) + Tier 2 (1) + Tier 3 (7 incl. thesis-reconciler)",
+    description: "Thesis-first Deep Dive: thesis gate, then Tier 1 (12) + Tier 2 (1) + Tier 3 (6 incl. thesis-reconciler)",
     parallel: false,
   },
 } as const;
@@ -193,7 +193,7 @@ export interface PausedAnalysisResult extends AnalysisResult {
   alertsCount: number;
 }
 
-// Tier 1 agent names (12 agents — exit-strategist retiré, doctrine pas de projection)
+// Tier 1 agent names (12 agents — exit-strategist retiré, doctrine anti-oraculaire pas de projection)
 export const TIER1_AGENT_NAMES = [
   "deck-forensics",
   "financial-auditor",
@@ -220,7 +220,7 @@ export const TIER1_AGENT_NAMES = [
  * Phase A: deck-forensics verifies deck claims → establishes factual ground truth
  * Phase B: financial-auditor calculates metrics → using verified claims from Phase A
  * Phase C: team + competitive + market (parallel) → using verified facts from A+B
- * Phase D: remaining 8 agents (parallel) → using all validated facts from A+B+C
+ * Phase D: remaining 7 agents (parallel) → using all validated facts from A+B+C
  */
 export const TIER1_PHASE_A = ["deck-forensics"] as const;
 export const TIER1_PHASE_B = ["financial-auditor"] as const;
@@ -236,7 +236,10 @@ export const TIER1_PHASES = [TIER1_PHASE_A, TIER1_PHASE_B, TIER1_PHASE_C, TIER1_
 /** Phases where reflexion is ALWAYS applied (regardless of confidence) */
 export const TIER1_ALWAYS_REFLECT_PHASES: ReadonlyArray<string> = [...TIER1_PHASE_A, ...TIER1_PHASE_B];
 
-// Tier 3 agent names for standalone `tier3_synthesis` (5 agents — scenario-modeler retiré).
+// Tier 3 agent names for standalone `tier3_synthesis` (5 agents).
+// scenario-modeler retiré du pipeline (doctrine anti-oraculaire) : ses
+// sorties point-estimate (exitValuation, IRR, multiple) ne pouvaient pas
+// être réconciliées avec la doctrine "evidence-first / pas de prédiction".
 export const TIER3_AGENT_NAMES = [
   "conditions-analyst",
   "contradiction-detector",

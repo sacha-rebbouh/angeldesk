@@ -62,7 +62,6 @@ export const ThesisAlertSchema = z.object({
     "solution_fit",
     "moat",
     "unit_economics",
-    "path_to_exit",
     "team_dependency",
     "market_size",
     "assumption_fragile",

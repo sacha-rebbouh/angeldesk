@@ -1,6 +1,333 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-28 — Sanitization & compaction prompts Tier 1 + extraction AnalysisCompleteView + narrative-guards absence patterns
+
+### Contexte
+Couche d'agents Tier 1 (cap-table-auditor, deck-forensics, financial-auditor, legal-regulatory, tech-ops-dd) souffrait de payloads trop gros vers le LLM (decks volumineux, context engine, données extraites complètes en JSON brut) → risque de troncation JSON + timeouts. Parallèlement, le composant `AnalysisCompleteView` était défini inline dans `analysis-preview-tabs.tsx` (~330 lignes) et causait un doublon visuel quand rendu également dans `analysis-panel.tsx`. Et `narrative-guards` flaggait les phrases « non fourni / aucun / missing » comme claims numériques non sourcés (faux positifs).
+
+### Modifications
+- **Sanitization & compaction prompts Tier 1** sur `cap-table-auditor`, `deck-forensics`, `financial-auditor`, `legal-regulatory`, `tech-ops-dd` :
+  - Constantes `MAX_CHARS` nommées par section (other doc, relevant doc, extracted info, context engine, model).
+  - Nouveaux helpers `buildXxxPromptContext(context)` (tronque les docs secondaires) + `sanitizeDocumentContent(content, max)` + `compactExtractedInfoForPrompt(extracted)`.
+  - Timeouts provider Pro/Flash et `maxTokens` explicites par agent (constantes nommées).
+  - `fallbackChain: ["GEMINI_PRO", "GEMINI_3_FLASH"]` + `terminalFallbackData` sur `financial-auditor`.
+  - Limites de sortie : `compliance / regulatoryRisks / redFlags / questions / keyInsights MAX 5` (ajout dans le prompt).
+  - Bump timeout interne `financial-auditor` 240s → 260s (gros pitch decks 80+ pages).
+- **Tests bump timeout** : `agent-pipeline.test.ts` (boucle smoke Tier 1) et `sequential-pipeline.test.ts` (Phase B financial-auditor) → `30000ms` (la fallback chain de financial-auditor faisait sortir le default 5s à l'import à froid du module tier1).
+- **Extraction `AnalysisCompleteView`** : nouveau fichier `src/components/deals/analysis-complete-view.tsx` (362 lignes) — extrait depuis `analysis-preview-tabs.tsx`. Labels recadrés sur la doctrine anti-oraculaire : `"Réussi" / "Échec"` → `"Analyse disponible" / "Analyse manquante"`. Bloc d'erreur enrichi (impact severity + missingAnalysis + recommendation via `formatDetailedError`). `HIDDEN_COMPLETE_VIEW_AGENTS = { exit-strategist, scenario-modeler }` pour filtrer les anciennes analyses persistées. `analysis-preview-tabs.tsx` retire `pathToExit` du type `AnalysisThesis`.
+- **`narrative-guards`** : nouveaux patterns `ABSENCE_OR_INSUFFICIENCY_PATTERNS` (11 regex FR + EN : `aucun`, `pas de`, `non fourni`, `not provided`, `unavailable`, etc.) + helpers `containsMetricValueAssertion` et `isAbsenceOrInsufficiencySentence`. Une phrase reconnue comme absence-only (sans `%`, `€`, `$`, `bn`, `million`, `x`) est skip de la détection de claim numérique non sourcé. Tests `narrative-guards.test.ts` enrichis (+12 lignes).
+
+### Vérification
+- `npx tsc --noEmit` → 0 erreur.
+- `npx vitest run` → 4078 passed / 3 ajustés par bump timeout / 2 skipped (4081 au total).
+
+### Points à arbitrer (hors scope ce commit)
+- Vérifier en runtime que les `MAX_CHARS` ne tronquent pas du contexte critique sur de gros decks (cap-table : 24K relevant doc, financial : 45K model, legal : 24K context engine).
+- Le bump timeout test 30s masque l'augmentation réelle du temps d'import du module tier1 due à la fallback chain : si ça monte, monitorer la latence Phase B en prod.
+
+---
+## 2026-05-26 (audit post-Codex) — Retrait exit-strategist du pipeline actif, fix tests et filtres
+
+### Contexte
+Audit du commit Codex qui retire `exit-strategist` du pipeline Tier 1 (13 → 12 agents) et `scenario-modeler` était déjà retiré du Tier 3 (6 → 5 autonomes). Codex disait `npm run build` OK mais `tsc --noEmit` cassait sur deux tests, et plusieurs surfaces résiduelles (chat / board / PDF / labels / reanalyze coaching) référençaient toujours l'agent. Le filtre `isNegativeSignal` ajouté par Codex (`valorisation`, `difficile`, `agressif`, `inconnu`) filtrait des signaux positifs légitimes.
+
+### Modifications
+- **Tests cassés réparés** : `src/agents/__tests__/agent-pipeline.test.ts` (tier1Agents → 12), `src/agents/__tests__/sequential-pipeline.test.ts` (Phase D → 7 agents, scorecard final 20 → 19).
+- **Filtres `isNegativeSignal` resserrés** dans `analysis-investor-view.tsx` et `analysis-memo-full.tsx` : retrait des mots-clés trop larges (`valorisation`, `difficile`, `agressif`, `inconnu`) qui filtraient les signaux positifs légitimes. Patterns regex anti-oraculaires (`\broi\b`, `\bproject/projection/projete`, `\bsi maint/reel`, `\bobjectif d'exit`) conservés.
+- **Surfaces résiduelles purgées** :
+  - `src/app/api/coaching/reanalyze/route.ts` — retiré `"exit-strategist"` de `ALL_AGENT_NAMES`.
+  - `src/lib/live/post-call-reanalyzer.ts` — retiré `exit: ["exit-strategist"]` du mapping.
+  - `src/agents/chat/context-retriever.ts` — retiré topics `exit/acquisition/ipo/liquidity` du `TOPIC_TO_AGENTS` ; `valuation` ne pointe plus vers `exit-strategist`.
+  - `src/agents/chat/deal-chat-agent.ts` — retiré entrée `"exit-strategist": "Strategie Exit"` du label map.
+  - `src/agents/board/board-orchestrator.ts` — ne passe plus `exitStrategist` au compressor.
+  - `src/agents/board/context-compressor.ts` — retrait de la ligne `["Exit Strategist", t1.exitStrategist]`.
+  - `src/agents/board/types.ts` — retrait du champ `exitStrategist?: unknown` (Tier 1 = 12 agents).
+  - `src/config/labels-fr.ts` — retrait de l'entrée FR `"exit-strategist": "Stratégie de sortie"`.
+  - `src/agents/stage-calibration.ts` et `src/agents/document-context-retriever.ts` — retrait des entrées exit-strategist du mapping keywords.
+  - `src/agents/base-agent.ts` — retrait de `exit-strategist` de la table de scoring DOCUMENT_TYPE_RELEVANCE et de la liste `standardStructuredAgents`.
+  - `src/lib/pdf/pdf-sections/tier1-agents.tsx` — retrait du `case "exit-strategist"` du switch et de la fonction `ExitFindings()` (~145 lignes mortes).
+- **`src/scoring/stage-weights.ts`** — `formatWeightsForPrompt()` : la source de la dimension `exitPotential` passe de `exit-strategist` à `market-intelligence, competitive-intel, sector-expert`. La dimension elle-même reste dans `DimensionWeights` (cf. § "Points à arbitrer" ci-dessous).
+- **`src/components/deals/analysis-panel.tsx`** — `AnalysisCompleteView` n'est plus rendu dans l'onglet "Analyses détaillées" pour les analyses Tier1/2/3 (qui ont déjà leur propre rendu spécialisé). Fin du doublon visuel.
+- **`CLAUDE.md`** — mise à jour des compteurs : Couche 1 = 12 (au lieu de 13), Couche 3 = 5 autonomes / 6 en analyse complète (au lieu de 6/7), suppression de `exit-strategist.ts` et `scenario-modeler.ts` des listes, retrait de la ligne "Comparables exit" dans le tableau d'usages DB.
+
+### Vérification
+- `npx tsc --noEmit` → OK (0 erreur).
+
+### Points à arbitrer (hors scope ce commit)
+- `DimensionWeights.exitPotential` (5-15% selon stade) reste dans le scoring déterministe : à décider si on retire entièrement la dimension ou si on garde l'évaluation via experts sectoriels Tier 2 (qui ont déjà `exitPotential` dans leur schema).
+- `src/agents/types.ts`, `src/agents/type-modules/pipeline.ts`, `src/agents/type-modules/tier1.ts` exportent encore `ExitStrategistData/Result/Findings` pour la compatibilité avec les analyses persistées en DB (idem `finding-extractor.ts` et `agent-error-impact.ts`).
+- `src/agents/tier1/exit-strategist.ts` est conservé pour les anciennes analyses, mais n'est plus enregistré dans le pipeline actif.
+
+---
+## 2026-05-26 (fin) — Filtre déterministe sector-aware sur red flags + tests unitaires
+
+### Contexte
+La sector-awareness des vagues 1-3 reposait uniquement sur **prompt injection**. Limite reconnue dans chaque entry précédente : un LLM peut désobéir à "ne JAMAIS produire un red flag X" et générer quand même un faux positif. Cette passe ferme la limite avec un post-processeur **déterministe** qui drop les red flags non-pertinents au secteur, indépendamment du comportement LLM. C'est le filet de sécurité contractuel : même si le LLM hallucine un red flag "NRR declining" sur Avekapeti (food), le filtre l'élimine avant que la sortie n'atteigne le synthesis-deal-scorer ou l'utilisateur.
+
+### Modifications
+
+**`src/agents/orchestration/sector-profiles.ts`** — extension du contrat + helpers déterministes :
+- Ajout d'un champ optionnel `filterKeywords?: string[]` sur `SectorProfile`. **Hand-maintenu par famille non-tech** (consumer, bio, hardware-tech, climate). Séparé de `notApplicableCriteria` (descriptif, pour prompt) pour éviter les faux matches : "Logo churn / Logo retention" est lisible pour le LLM dans le prompt, mais ne matchait pas une red flag "Churn elevated" tout court. Les filterKeywords sont atomiques ("churn", "arpu", "nrr") et orthogonaux à la lecture humaine.
+- `filterKeywords` renseignés pour 4 familles :
+  - **consumer** : nrr, arr, mrr, churn, ltv, cac, mau, dau, arpu, logo retention, logo churn, dette technique, stack frontend/backend, architecture cloud, ratio engineers, vitesse d'itération, network effects logiciels, data moat logiciel, switching costs saas, absence de series, esop, vesting agressif, tam saas, tam cloud, adressable software market, single tech profile, no cto, pas de cto, manque de cto, tech team thin, équipe tech faible.
+  - **bio** : nrr, arr, mrr, churn, ltv, cac, mau, dau, arpu, dette technique, stack frontend/backend, stack web/mobile, architecture cloud, ratio engineers, network effects logiciels, data moat logiciel, switching costs saas, absence de big pharma.
+  - **hardware-tech** : nrr, arr, mrr, churn, ltv-cac saas, mau, dau, network effects logiciels, data moat logiciel, switching costs saas (plus court — la stack hardware reste auditable).
+  - **climate** : nrr, arr, mrr, churn, ltv-cac saas, mau, dau, dette technique logicielle, stack frontend/backend, network effects logiciels, data moat logiciel, switching costs saas.
+- Helper `buildNotApplicableKeywords(profile)` : priorité 1 = `filterKeywords` hand-maintenus ; fallback = tokenisation des sources descriptives. Tri par longueur décroissante (compound > atom) pour que "tam saas" matche avant "arpu" sur un titre qui contient les deux.
+- Helper `filterRedFlagsBySector(flags, profile): { kept, filtered, trace }` : drop les flags dont le titre matche un mot-clé non-applicable avec word boundaries. Retourne aussi `filtered` + `trace` pour audit. Pas de filtrage pour pure-tech / platform-tech / unknown (zéro régression sur les dossiers SaaS).
+- Helper `applySectorRedFlagFilter(flags, sector, agentName)` : sucre syntaxique qui logge la trace audit côté console (`console.warn`) et retourne les flags conservés. Appelé en fin de `execute()` de chaque agent sector-aware.
+- Helper `isWordMatch(haystack, needle)` : matching avec word boundaries (regex `(?<![a-zA-Z])needle(?![a-zA-Z])`). Corrige aussi `getSectorProfile` pour ne plus matcher "agroalimentaire" → "ai" (le mot-clé "ai" était capturé en sous-chaîne).
+
+**Câblage dans les 9 agents Couche 1 sector-aware** :
+- Pattern A — 7 agents avec `return result;` à la fin d'`execute()` : 1 ligne ajoutée `result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "<agent-name>");` juste avant le return. Fichiers : `tech-stack-dd.ts`, `tech-ops-dd.ts`, `team-investigator.ts` (filtre APRÈS injection registry pour ne pas filtrer les red flags d'identification officielle), `market-intelligence.ts`, `customer-intel.ts`, `financial-auditor.ts`, `gtm-analyst.ts`.
+- Pattern B — `competitive-intel.ts` : filtre appliqué dans `execute()` après l'appel à `transformResponse()` via `transformed.redFlags = applySectorRedFlagFilter(transformed.redFlags, context.canonicalDeal.sector, "competitive-intel");`.
+- Pattern C — `cap-table-auditor.ts` : enveloppement du tableau inline dans `applySectorRedFlagFilter(...)` directement dans l'objet de retour, car la red-flags array est construite inline (pas extraite dans une variable locale).
+
+**Nouveau test unitaire `src/agents/orchestration/__tests__/sector-profiles.test.ts`** (30 tests, tous verts) :
+- `getSectorProfile` : food → consumer, foodtech → consumer, agroalimentaire → consumer (vérification du fix word boundary), SaaS B2B → pure-tech, biotech → bio, fashion → consumer, hardware → hardware-tech, secteur inconnu → unknown, null/undefined → unknown.
+- `isTechDDApplicable` : vrai pour SaaS/marketplace, faux pour food/bio/climate, vrai pour unknown.
+- `buildNotApplicableKeywords` : keywords présents pour consumer (nrr, churn, arr), liste vide pour pure-tech, keywords cap-table + SaaS pour bio.
+- `filterRedFlagsBySector` : filtre "NRR declining" / "Churn elevated" / "Dette technique" / "TAM SaaS" sur consumer (avec trace correcte du keyword matché), garde "Cap table fragmented" / "Founder absent du registre" sur consumer (vrais signaux), ne filtre RIEN sur SaaS / unknown, préserve un mix kept + filtered.
+- `applySectorRedFlagFilter` : retourne uniquement les flags conservés + logge la trace, passe through pour secteurs tech, gère secteur null sans crasher.
+
+### Cas Avekapeti — garantie déterministe
+Avant cette passe : si le LLM team-investigator décidait d'ignorer l'instruction "ne PAS flagger absence de CTO sur consumer", le red flag passait dans la sortie finale. Maintenant : le filtre déterministe attrape "Single tech profile", "No CTO identified", "Tech team thin" et les drop. Trace dans les logs : `[sector-filter] team-investigator on sector "food" (consumer): filtered 1 red flag(s) non-applicables. "Single tech profile" matched "single tech profile"`.
+
+### Cohabitation prompt-injection + post-processeur
+- **La prompt-injection reste utile** : elle calibre la narrative, les questions, l'alertSignal.justification, et réduit le taux d'apparition de faux positifs. Le LLM bien instruit produit DÉJÀ moins de faux red flags.
+- **Le filtre déterministe est le filet de sécurité** : pour les cas où le LLM désobéit malgré l'instruction. Il ne touche que `redFlags`, pas la narrative ni les findings (qui restent du texte libre).
+- Les deux mécaniques sont complémentaires, pas redondantes.
+
+### Précautions importantes
+- **Le filtre est conservatif** : il match seulement sur `title + category` du red flag, pas sur `description` / `evidence`. Évite de drop un red flag légitime qui mentionne une métrique en passant. Le titre étant court et direct ("NRR declining", "Single tech profile"), c'est le signal le plus fiable.
+- **Word boundaries** : "arpu" ne matche pas "rapport", "arr" ne matche pas "narration". Mais "arrival" matcherait "arr" — c'est le compromis ; les chances de faux match en pratique sont faibles vu les titres typiques de red flags.
+- **filterKeywords hand-maintenu** : nécessite mise à jour quand on observe de nouveaux faux positifs LLM en prod. Plus de discipline mais évite les explosions de faux matches via auto-extraction.
+- **Type-check global** `npx tsc --noEmit` passe vert.
+- **Tests unitaires** : `npx vitest run src/agents/orchestration/__tests__/sector-profiles.test.ts` → 30/30 ✅.
+
+### Pas faits dans cette passe
+- Logging structuré des filtrages (Prisma `Audit` log) — actuellement juste `console.warn`. Ajouter persistence pour analyse a posteriori si on veut traquer les patterns LLM problématiques.
+- Filtre sur les autres tier (Tier 0, Tier 2 experts sectoriels, Tier 3 synthesis) — non nécessaire en théorie car ces tiers sont moins exposés au biais SaaS-par-défaut, mais à auditer ultérieurement.
+- Test E2E sur Avekapeti complet (relancer l'analyse + vérifier la sortie) — toujours pertinent mais hors scope de cette passe code.
+- Audit `question-master` sector-awareness (toujours pending).
+- Calculateur de sensibilité UI (toujours pending).
+
+---
+## 2026-05-26 (suite) — Trim memo-generator.expectedMultiple + sector-awareness vague 3 (financial + gtm)
+
+### Contexte
+Dernière passe du grand nettoyage anti-oraculaire + sector-awareness. Deux items résiduels identifiés dans les passes antérieures : (1) `memo-generator.exitStrategy.expectedMultiple { min, median, max }` était le dernier point de fuite oraculaire — le LLM continuait à inventer un multiple attendu pour le memo final. (2) `financial-auditor` (ARR/MRR/NRR/churn/burn multiple sont SaaS-spécifiques) et `gtm-analyst` (motions PLG/Sales-led/Community-led sont SaaS) avaient toujours un biais SaaS résiduel.
+
+### Modifications
+
+**`src/agents/tier3/memo-generator.ts`** — trim final de `expectedMultiple` :
+- Interface `LLMMemoResponse.exitStrategy` (l. 203) : suppression du champ `expectedMultiple: { min, median, max }`. Conservé : `primaryPath`, `timeline`, `potentialAcquirers`.
+- Exemple de JSON dans le prompt (l. 416-421) : suppression de la ligne `"expectedMultiple": {...}` + ajout d'un disclaimer "description qualitative, sans valorisation chiffrée" et "range plausible, sans présumer l'exit valuation".
+- Fallback construction (l. 1145-1147) : remplacé `\`Timeline: X, Multiple attendu: Yx\`` par `\`Timeline plausible : X — acquéreurs envisageables : A, B, C\``. La math `expectedMultiple?.median ?? "N/A"` est définitivement supprimée du runtime.
+- Sensibilité retour pour le BA (l. 901-915) : suppression du bloc qui hardcodait `exitMultiples = [5, 10, 20]` et calculait IRR sur chaque pour injection dans le contexte du LLM. Remplacé par un disclaimer explicite : "Aucun multiple ni IRR n'est pré-calculé : ces nombres ne sont pas connus du système. L'investisseur saisit ses propres hypothèses dans son outil de sensibilité et la math s'applique sur SES hypothèses, pas sur des valeurs inventées par l'agent." Ce bloc apparaît dans la section BA personalization du prompt et était donc une suggestion oraculaire injectée dans le contexte du LLM.
+- Commentaire de doctrine ajouté dans la fonction de fallback : "doctrine anti-oraculaire : pas de multiple ni IRR projeté pour ce deal".
+
+**`src/agents/tier1/financial-auditor.ts`** — sector-awareness injecté :
+- Import `getSectorProfile` + `formatSectorProfileForPrompt` + `formatCustomerCalibrationForPrompt`.
+- Injection dans `execute()` : `sectorBlock` (profil complet) + bloc "CALIBRATION FINANCIÈRE — UNIT ECONOMICS" reprenant la calibration customer-metrics du secteur (NRR / ARR / MRR / LTV-CAC / burn multiple marqués comme non-applicables pour consumer/bio/hardware/climate) + précision spécifique financial-auditor : "les fondamentaux (revenu, COGS, marge brute, burn, runway, BFR) restent universels ; ce sont les agrégats ARR/MRR/NRR/churn/LTV-CAC qui sont SaaS-spécifiques. Pour ce dossier, lire l'unit economics sur marge unitaire brute, fréquence de réachat, retail sell-through, cycle de cash, BFR opérationnel." Fallback quand tech/SaaS : "lecture standard ARR / MRR / NRR / churn / LTV-CAC / burn multiple applicable".
+
+**`src/agents/tier1/gtm-analyst.ts`** — sector-awareness injecté avec calibration GTM par famille (switch dédié) :
+- Import `getSectorProfile` + `formatSectorProfileForPrompt`.
+- Injection dans `execute()` : `sectorBlock` + `gtmCalibration` calculé via switch sur `sectorProfile.family`. Chaque famille non-tech a sa propre calibration GTM :
+  - **consumer** : référencement retail (DN/DP), trade marketing, brand marketing (TV / digital / influence), e-commerce, distribution physique. Motions consumer : trade-led, brand-led, retail-led, DTC, hybrid retail+DTC. CAC = coût acquisition consommateur × fréquence × marge unitaire (pas CAC SaaS).
+  - **bio** : cycle réglementaire (FDA/EMA/CE), accès au marché (reimbursement), partenariats prescripteurs (KOLs, hôpitaux), licensing deals big pharma, sales force médicale.
+  - **hardware-tech** : cycles de vente enterprise B2B longs, intégrateurs / channel partners, POCs et pilotes, accords OEM, certifications préalables.
+  - **climate** : cycles B2B/B2G longs, RFPs publics, partenariats stratégiques utilities/corporates, programmes carbone, subventions.
+  - **pure-tech / platform-tech / unknown** : fallback standard (PLG / Sales-led / Hybrid / Community-led).
+- Réécriture du bloc "## INSTRUCTIONS SPÉCIFIQUES" pour expliciter "Type pertinent au secteur" sur la classification des canaux et "Classifie selon les motions PERTINENTES au secteur" sur la motion de vente. Règle absolue ajoutée : "Ne JAMAIS forcer PLG sur un dossier où la motion n'existe pas".
+
+### Cas Avekapeti — effet attendu sur la vague 3
+- `financial-auditor` : ne mesure plus NRR / churn / burn multiple. Lit la marge unitaire brute, la fréquence de réachat, le retail sell-through, le cycle de cash. Plus de red flag "churn 8%" ou "NRR sous-benchmark" sur un produit physique.
+- `gtm-analyst` : ne tente plus de classifier "PLG vs Sales-led". Lit la motion en retail-led / trade-led / brand-led / DTC. Plus de red flag "motion peu claire" parce que l'agent attendait une catégorie SaaS.
+
+### Statut sector-awareness Couche 1 (récapitulatif)
+Toute la Couche 1 est désormais sector-aware via injection du `SectorProfile` dans les prompts :
+- Vague 1 (2026-05-25) : `team-investigator`, `tech-stack-dd`, `tech-ops-dd`.
+- Vague 2 (2026-05-26 matin) : `market-intelligence`, `competitive-intel`, `cap-table-auditor`, `customer-intel`.
+- Vague 3 (2026-05-26 soir) : `financial-auditor`, `gtm-analyst`.
+- **9 agents Couche 1 sur 13** sector-aware. Restants : `deck-forensics` (déjà multi-secteur par construction — extrait des claims du deck quel que soit le secteur), `legal-regulatory` (déjà sector-aware par nature — la juridiction et la réglementation dépendent du secteur), `question-master` (méta-agent qui agrège, biais SaaS résiduel possible mais pas critique).
+
+### Précautions importantes
+- Toujours de la prompt injection, pas un post-processor déterministe. Si on observe des faux positifs résiduels en prod, ajouter un filtre par catégorie de critère selon le secteur.
+- Le bloc sensibilité retour BA dans `memo-generator` perd une feature (les scénarios x5/x10/x20 hardcodés). À remplacer côté UI par un calculateur de sensibilité où l'investisseur saisit SES hypothèses (chantier toujours pending).
+- **Type-check global** `npx tsc --noEmit` passe vert.
+
+### Pas faits dans cette passe
+- Calculateur de sensibilité côté UI (composant React déterministe, sans LLM, pour permettre à l'investisseur de saisir entry valo / dilution / horizon / exit cible → math affichée). Toujours pending — pourrait devenir prioritaire maintenant que le contexte LLM du memo-generator n'a plus de sensibilité injectée.
+- `question-master` audit sector-awareness (méta-agent, biais SaaS résiduel possible).
+- Tests unitaires sur les helpers `formatXxxCalibrationForPrompt` et `getSectorProfile` (source-guards).
+
+---
+## 2026-05-26 — Sector-awareness Couche 1 vague 2 — extension à market / competitive / cap-table / customer
+
+### Contexte
+Suite directe de la vague 1 (team-investigator + tech-stack-dd + tech-ops-dd). Extension de la sector-awareness aux 4 agents Couche 1 qui présumaient SaaS par défaut : `market-intelligence` (cadrait systématiquement TAM/SAM/SOM façon cloud), `competitive-intel` (lecture du moat en mode tech / network effects / switching costs SaaS), `cap-table-auditor` (présume cadence venture Seed → A → B → C → exit avec ESOP et vesting agressif), `customer-intel` (mesure NRR / churn / LTV-CAC SaaS en flat assumption). Sur un dossier consumer / bio / hardware / climate, ces 4 axes produisent des red flags structurellement faux.
+
+### Modifications
+
+**`src/agents/orchestration/sector-profiles.ts`** — extension du contrat `SectorProfile` :
+- Ajout d'un champ optionnel `domainCalibration` avec 4 sous-blocs eux-mêmes optionnels : `customerMetrics` (relevant + notApplicable + rationale), `marketLens` (description + relevantSizing + notApplicableSizing), `competitiveLens` (description + relevantMoats + notApplicableMoats), `capTableContext` (description + typicalRoundShape + notApplicablePatterns).
+- Calibrations renseignées pour les 4 familles non-tech : `hardware-tech`, `bio`, `consumer`, `climate`. Les familles `pure-tech` et `platform-tech` n'ont pas de calibration domaine (l'agent reste sur ses défauts SaaS-friendly).
+- 4 helpers de formatage exportés : `formatCustomerCalibrationForPrompt`, `formatMarketCalibrationForPrompt`, `formatCompetitiveCalibrationForPrompt`, `formatCapTableCalibrationForPrompt`. Chacun retourne `null` si le profil n'a pas de calibration pour ce domaine (l'agent applique alors un message neutre par défaut).
+- Exemples concrets de calibrations (extraits) :
+  - **Consumer / food** customerMetrics : pertinent = repeat purchase rate, distribution numérique/pondérée, retail sell-through, brand awareness, marge unitaire ; non-pertinent = NRR, churn SaaS, LTV/CAC SaaS, ARR/MRR, MAU/DAU.
+  - **Bio** marketLens : pertinent = populations patient × prévalence × prescribing patterns × reimbursement landscape ; non-pertinent = TAM SaaS basé sur comptes × ARPU.
+  - **Hardware** competitiveLens : moats pertinents = brevets technique, maturité industrielle, supply chain exclusive, certifications ; moats non-pertinents = network effects logiciels, data moat (sauf plateforme companion), switching costs SaaS.
+  - **Bio** capTableContext : forme typique = rounds milestone-based plus larges et plus longs que tech, IND filing / phase II readout comme jalons, parfois corporate VC big pharma. Patterns non applicables = cadence Seed → A → B venture tech (cycles 10-15 ans en bio), absence de big pharma corporate comme red flag au seed, faibles montants levés comme red flag si milestone non encore atteint.
+
+**`src/agents/tier1/market-intelligence.ts`** — import des helpers + injection dans `execute()` du `sectorBlock` (profil complet) + d'un `marketCalibration` (calibrations marché) en tête de prompt. Fallback string explicite quand secteur tech/SaaS : "cadrage TAM/SAM/SOM standard applicable".
+
+**`src/agents/tier1/competitive-intel.ts`** — import + injection du `sectorBlock` + `competitiveCalibration`. Fallback string quand tech/SaaS : "lecture standard du moat technologique + network effects + switching costs applicable".
+
+**`src/agents/tier1/cap-table-auditor.ts`** — import + injection du `sectorBlock` + `capTableCalibration`. Fallback quand tech/SaaS : "cadrage venture standard applicable (Seed → A → B → C → exit)".
+
+**`src/agents/tier1/customer-intel.ts`** — import + injection + réécriture de la "## TA MISSION" pour expliciter que les axes NRR/GRR/Churn sont mesurés "UNIQUEMENT si pertinent au secteur (cf. calibration ci-dessus)" et qu'un dossier non-SaaS doit utiliser les axes pertinents listés (repeat purchase, sell-through, pipeline R&D, etc.). Règle absolue ajoutée : "ne JAMAIS produire un red flag 'NRR faible' ou 'churn élevé' sur un secteur où ces métriques ne s'appliquent pas".
+
+### Cas Avekapeti (food) — effet attendu sur la vague 2
+- `market-intelligence` : ne cadre plus TAM/SAM/SOM SaaS. Lecture du marché en taille catégorie food en valeur + volume, parts de marché en linéaire, MDD, pénétration retail. Plus de red flag "TAM trop petit" basé sur un cadrage cloud.
+- `competitive-intel` : ne cherche plus un moat tech. Évalue brand equity, distribution rights, sourcing, brevets de procédé, certifications produit. Plus de red flag "pas de moat technologique".
+- `cap-table-auditor` : ne pénalise plus l'absence de Series A/B/C formel, l'absence d'ESOP, l'absence de vesting agressif fondateurs. Forme typique consumer = family/friends + BA + petit tour avant rachat stratégique.
+- `customer-intel` : ne cherche plus NRR / churn / LTV-CAC SaaS. Mesure repeat purchase rate, distribution numérique/pondérée, retail sell-through, brand awareness. Plus de red flag "NRR faible".
+
+### Récupération d'une suppression accidentelle
+Pendant cette passe, le type-check a remonté 4 fichiers supprimés qui étaient revenus (probablement restauration IDE) : `src/agents/orchestration/tier3-coherence.ts`, `src/agents/tier3/prompts/scenario-modeler-prompt.ts`, `src/agents/tier3/scenario-modeler.ts`, `src/agents/tier3/schemas/scenario-modeler-schema.ts`. Re-suppression et type-check à nouveau vert.
+
+### Précautions importantes
+- Même limite que la vague 1 : c'est de la prompt injection, pas un early-return déterministe. Le LLM peut désobéir aux instructions de calibration. Si on observe des faux positifs résiduels en prod, ajouter un post-processor déterministe qui filtre les red flags par catégorie de critère selon le secteur.
+- La taxonomie des familles est faite à la main. Un secteur exotique non listé tombe sur `unknown` = DD standard SaaS-friendly. Couverture à étendre au fil des cas réels.
+- La vague 2 ne touche pas : `deck-forensics` (déjà multi-secteur par construction), `financial-auditor` (les fondamentaux financiers sont les mêmes, mais ARR / churn ne s'appliquent pas — à auditer ultérieurement), `legal-regulatory` (déjà sector-aware par nature), `gtm-analyst` (à auditer ultérieurement — possible biais SaaS sur le GTM).
+- **Type-check global** `npx tsc --noEmit` passe vert.
+
+### Pas faits dans cette passe
+- Tests unitaires sur les helpers `formatXxxCalibrationForPrompt` (à ajouter si on veut une garantie source-guard sur les calibrations).
+- Audit `financial-auditor` + `gtm-analyst` pour biais SaaS résiduel (chantier potentiel vague 3).
+- Calculateur de sensibilité côté UI (toujours pending depuis les chantiers antérieurs).
+- Trim équivalent sur le bloc `data.exitStrategy.expectedMultiple` du `memo-generator` (toujours pending).
+
+---
+## 2026-05-25 (suite) — Sector-awareness Couche 1 — fin du biais startup-tech sur les dossiers non-tech
+
+### Contexte
+Suite immédiate du nettoyage anti-oraculaire. **Deuxième symptôme identifié sur Avekapeti (boîte food)** : les agents Couche 1 appliquent des heuristiques startup-tech par défaut à tous les dossiers, indépendamment du secteur réel. Résultat sur Avekapeti : red flag "single tech profile" alors qu'une boîte food n'a structurellement pas besoin d'une équipe d'ingénieurs — elle a besoin d'un food scientist, d'un supply chain manager, d'un commercial retail. Le critère "tech team thin" n'est pas pertinent pour ce secteur, donc le faux positif viole frontalement le § *Discipline anti-faux-positifs* (CLAUDE.md). Décision : sector-awareness paramétrique injectée dans les prompts Couche 1, avec skip explicite des DD techniques pour les secteurs où la stack logicielle n'est pas le cœur du produit.
+
+### Modifications
+
+**Nouveau module `src/agents/orchestration/sector-profiles.ts`** (270 lignes, source de vérité unique) :
+- Type `SectorFamily` à 6 valeurs canoniques : `pure-tech` / `platform-tech` / `hardware-tech` / `bio` / `consumer` / `climate` + fallback `unknown`.
+- Interface `SectorProfile` : `teamProfile` (coreProfiles + techWeight + description), `techDDApplicability` (applicable + rationale), `scalingDimensions`, `notApplicableCriteria`.
+- Mapping `SECTOR_KEYWORDS` par mots-clés case-insensitive (absorbe "SaaS B2B", "Food & Beverage", "agroalimentaire" → famille canonique).
+- 7 profils détaillés : pure-tech (CTO + engineering + sales attendus, tech-DD applicable), platform-tech (mix tech + ops), hardware-tech (CTO matériel + industrialisation), bio (CSO + réglementaire + clinique, tech-DD NON applicable sauf SaMD), **consumer/food (fondateur produit + supply chain + retail + food scientist, tech-DD NON applicable**), climate (R&D + industrialisation + affaires publiques), unknown (DD standard avec limitations).
+- Fonctions exportées : `getSectorProfile(sector)`, `formatSectorProfileForPrompt(profile)`, `isTechDDApplicable(sector)`.
+
+**`src/agents/tier1/team-investigator.ts`** :
+- Import `getSectorProfile` + `formatSectorProfileForPrompt`.
+- Dans `execute()`, résolution du profil sectoriel + injection dans le prompt utilisateur via un bloc "CALIBRATION DES ATTENTES ÉQUIPE" qui explicite les profils attendus pour ce secteur, le poids du tech (high/medium/low/none), et les règles anti-faux-positifs : (a) ne PAS flagger "manque de CTO" si techWeight = low/none, (b) flagger l'absence d'un profil pertinent au secteur (food scientist sur food, lead réglementaire sur bio), (c) ne PAS comparer la taille d'équipe à un benchmark SaaS pour un dossier non-SaaS.
+
+**`src/agents/tier1/tech-stack-dd.ts`** :
+- Import `getSectorProfile` + `formatSectorProfileForPrompt`.
+- Dans `execute()`, injection du profil sectoriel + d'un bloc "APPLICABILITÉ" :
+  - Si `techDDApplicability.applicable === true` : DD pertinente, procède en calibrant sur le secteur.
+  - Si `false` : instruction stricte de produire un output structuré marqué "non applicable" (score 50 neutre, `alertSignal.recommendation: "PROCEED"`, narrative qui pointe vers les vraies dimensions de risque, **AUCUN red flag** sur absence de stack/CTO/dette technique, findings remplis "Non applicable" avec brève justification, questions tournées vers les vraies dimensions du secteur).
+  - Règle absolue : ne JAMAIS produire un red flag CRITICAL/HIGH pour un dossier non-tech sur des critères logiciels.
+
+**`src/agents/tier1/tech-ops-dd.ts`** :
+- Import identique + injection identique du profil + bloc "APPLICABILITÉ" symétrique.
+- Règle absolue spécifique : "un seul profil tech logiciel (ou aucun) sur un dossier consumer/bio/etc. **n'est PAS un red flag**. L'équipe attendue pour ce secteur est : …".
+
+### Cas Avekapeti — effet attendu
+- `getSectorProfile("food")` → famille `consumer` (mots-clés "food", "alimentaire", "agroalimentaire", "foodtech" mappent tous vers `consumer`).
+- Profil consumer : `teamProfile.techWeight: "low"`, `techDDApplicability.applicable: false`.
+- Conséquence sur les 3 agents :
+  - `team-investigator` : calibre ses attentes sur "fondateur marque + supply chain + sales/distribution + food scientist". L'absence de CTO n'est plus un red flag.
+  - `tech-stack-dd` : produit un output "non applicable" avec score neutre 50, alertSignal PROCEED, narrative qui pointe vers supply chain / certifications sanitaires / référencement retail.
+  - `tech-ops-dd` : idem.
+
+### Précautions importantes
+- **Le LLM peut désobéir aux instructions**. La sector-awareness fonctionne par prompt injection, pas par early-return déterministe. Si on observe des faux positifs résiduels en production, ajouter un early-return dans `execute()` qui construit un `TechStackDDData` / `TechOpsDDData` neutre à la main sans appeler le LLM.
+- **Profils sectoriels par mots-clés**. Le matching est par inclusion case-insensitive, donc "SaaS B2B" matche `saas` → pure-tech. Si un secteur arrive sous une forme exotique ("FoodTech B2B SaaS"), le premier match l'emporte ("foodtech" → consumer). Ordre des entries dans `SECTOR_KEYWORDS` à surveiller si conflits.
+- **Famille `unknown` = DD standard**. Quand le secteur n'est pas identifié, on garde un comportement standard pour éviter les régressions. La rationale est ajoutée aux limitations.
+- **Couche 2 sector-experts** (saas-expert, foodtech-expert, etc.) déjà sector-aware par construction (1 expert activé selon le secteur). Le sector-profiles.ts ne se substitue PAS à eux — il calibre les agents Couche 1 horizontaux qui tournaient en mode startup-tech par défaut.
+- **Type-check global** `npx tsc --noEmit` passe vert.
+
+### Pas faits dans cette passe (suite)
+- Early-return déterministe non-LLM dans `tech-stack-dd` / `tech-ops-dd` quand `!techDDApplicability.applicable` (économie de tokens + garantie zéro faux positif). À ajouter si l'injection de prompt seule ne suffit pas en production.
+- Sector-awareness sur les autres agents Couche 1 qui ont des biais résiduels (`competitive-intel`, `market-intelligence` qui présument souvent SaaS, `cap-table-auditor` qui présume rounds de venture, `customer-intel` qui mesure NRR/churn sur des modèles qui n'en ont pas).
+- Tests unitaires sur `sector-profiles.ts` (`getSectorProfile("food")` → consumer, etc.).
+- Calculateur de sensibilité côté UI (chantier antérieur, toujours pending).
+- Trim équivalent sur le bloc `data.exitStrategy.expectedMultiple` du `memo-generator` (chantier antérieur, toujours pending).
+
+---
+## 2026-05-25 — Grand nettoyage anti-oraculaire — scenario-modeler dégagé + exit-strategist trimmé
+
+### Contexte
+**Décision utilisateur sur la branche `analysis-redesign-avekapeti`.** En relisant le deal Avekapeti, constat que l'IA produit des projections oraculaires (exit valuations chiffrées, multiples attendus, IRR projetés, "x370" en bull case) que le système ne peut pas honnêtement connaître. Contraire frontal à la doctrine § *Strate 2 — garde-fou* : *"Angel Desk ANALYSE et GUIDE. Angel Desk ne DÉCIDE JAMAIS."* et au § *Discipline anti-faux-positifs* (CLAUDE.md). Deux agents identifiés comme structurellement responsables : `scenario-modeler` (Couche 3, schéma demande littéralement `exitValuation: number`, `irr: number`, `multiple: number` pour 4 scénarios) et `exit-strategist` (Couche 1, schéma mixte avec analyses M&A légitimes + projections oraculaires `investorReturn` / `returnSummary`). Le rendu UI (`analysis-investor-view.tsx`) affichait littéralement "Rendement pondéré 5.2x · IRR attendu 47%" comme MetricTile de premier plan. Décision : dump intégral de `scenario-modeler` (pas de soft-kill), trim chirurgical de `exit-strategist` (garder mnaMarket + comparableExits + buyers + liquidity + deckClaims, dégager investorReturn + exitValuation + returnSummary), purge des surfaces oraculaires côté UI et PDF.
+
+### Modifications
+
+**Suppression intégrale `scenario-modeler` (Couche 3)** :
+- Fichiers supprimés : `src/agents/tier3/scenario-modeler.ts` (1236 lignes), `src/agents/tier3/prompts/scenario-modeler-prompt.ts`, `src/agents/tier3/schemas/scenario-modeler-schema.ts`, `src/agents/tier3/__tests__/scenario-modeler-transform.test.ts`, `src/agents/tier3/__tests__/scenario-modeler-prompt.guard.test.ts`.
+- Fichiers supprimés tier3-coherence (entièrement dédié à scenario-modeler) : `src/agents/orchestration/tier3-coherence.ts`, `src/agents/orchestration/__tests__/tier3-coherence.test.ts`.
+- `src/agents/types.ts` : retrait des types `SourcedAssumption`, `ScenarioYearMetrics`, `InvestorReturnCalculation`, `ScenarioV2`, `SensitivityAnalysisV2`, `ScenarioComparable`, `ScenarioModelerFindings`, `ScenarioModelerData`, `ScenarioModelerResult` + `tier3CoherenceResult` sur `EnrichedAgentContext` + retrait de `ScenarioModelerResult` du union `AnalysisAgentResult` + retrait de `"scenario-modeler"` du type `Tier3AgentName`.
+- `src/agents/type-modules/tier3.ts` : retrait des mêmes types.
+- `src/agents/type-modules/pipeline.ts` : retrait de `ScenarioModelerResult` de l'import + union + `Tier3AgentName`.
+- `src/agents/type-modules/common.ts` : retrait de `tier3CoherenceResult` sur `EnrichedAgentContext`.
+- `src/agents/index.ts` + `src/agents/tier3/index.ts` : retrait des exports `scenarioModeler` / `ScenarioModelerAgent`.
+- `src/agents/orchestrator/agent-registry.ts` : retrait de l'enregistrement `"scenario-modeler": tier3Module.scenarioModeler`.
+- `src/agents/orchestrator/types.ts` : retrait de `"scenario-modeler"` de `TIER3_AGENT_NAMES` + `FULL_ANALYSIS_TIER3_AGENT_NAMES` + `TIER3_DEPENDENCIES` + `TIER3_EXECUTION_BATCHES` + `TIER3_BATCHES_BEFORE_TIER2` + retrait de la dépendance de `synthesis-deal-scorer` et `memo-generator` envers `scenario-modeler`.
+- `src/agents/orchestrator/index.ts` : retrait de l'import `applyTier3Coherence` + `injectCoherenceIntoContext` + retrait des 3 sites d'appel coherence + retrait de la fonction `applyResumeTier3Coherence`.
+- `src/agents/orchestration/index.ts` : retrait des exports `applyTier3Coherence`, `injectCoherenceIntoContext`, `CoherenceResult`, `CoherenceAdjustment`, `AdjustedScenarioV2`.
+- `src/agents/tier3/synthesis-deal-scorer.ts` : retrait de la méthode `formatCoherenceData()` + retrait de son site d'appel + retrait de la section `## COHÉRENCE INTER-AGENTS TIER 3` du prompt.
+- `src/agents/tier3/memo-generator.ts` : retrait de `"scenario-modeler"` de la liste de dépendances `BaseAgent` + retrait du bloc d'extraction `### SCENARIO MODELER` dans `extractTier3Insights` + retrait du commentaire d'en-tête mentionnant scenario-modeler.
+- `src/agents/tier3/contradiction-detector.ts` : retrait de `"scenario-modeler"` de l'array `tier3` dans `getAgentTier()`.
+- `src/agents/board/types.ts` : retrait du champ `scenarioModeler?: unknown` dans `tier3?`.
+- `src/agents/board/board-orchestrator.ts` : retrait de `scenarioModeler: analysisResults["scenario-modeler"]` dans `agentOutputs.tier3`.
+- `src/agents/board/context-compressor.ts` : retrait du bloc `if (t3.scenarioModeler) { parts.push("### Scenarios..."); }`.
+- `src/agents/base-agent.ts` : retrait de `"scenario-modeler"` des deux `Set` (`tier3SynthesisAgents` + `standardStructuredAgents` checkpoint).
+- `src/config/labels-fr.ts` : retrait de l'entrée `"scenario-modeler": "Modélisation de scénarios"`.
+- `src/lib/analysis-constants.ts` : retrait de `"scenario-modeler"` de `TIER3_AGENTS`.
+- `src/lib/agent-error-impact.ts` : retrait de l'entrée `"scenario-modeler"` du dictionnaire d'impact.
+- `src/lib/live/post-call-reanalyzer.ts` : retrait de `"scenario-modeler"` de l'array `tier3Names`.
+- `src/services/openrouter/router.ts` : retrait de `"scenario-modeler": "GEMINI_PRO"` du mapping de modèles.
+- `src/app/api/coaching/reanalyze/route.ts` : retrait de `"scenario-modeler"` de la liste de réanalyse.
+
+**Trim chirurgical `exit-strategist` (Couche 1)** :
+- `src/agents/tier1/exit-strategist.ts` : prompt entièrement réécrit pour aligner sur la doctrine anti-oraculaire (suppression des directives "Calculer les retours attendus avec dilution réaliste", "MONTRER les calculs IRR, dilution, proceeds", "Formules obligatoires IRR/Ownership/ExitProceeds/ExpectedMultiple", des règles de dilution standard Seed → Series A → B → Exit, et des exemples BON/MAUVAIS basés sur IRR/multiple). Ajout d'une section explicite "DOCTRINE ANTI-ORACULAIRE (NON-NEGOCIABLE)" + interdiction explicite de produire `exitValuation` / `IRR` / `multiple` / `dilution` projetés pour CE deal. Schéma JSON de sortie trimé : suppression de `scenarios[i].exitValuation`, `scenarios[i].investorReturn`, et bloc `returnSummary` entier. Normalize trimmée. F03 deterministic scoring : remplacement de la métrique `expected_multiple` (basée sur `scenarios[i].investorReturn.multiple` inventé) par `observed_multiple_ceiling` (basée sur les multiples observés dans les comparables exits réels).
+- `src/agents/types.ts` : `ExitScenario` allégée (suppression de `exitValuation` + `investorReturn`, conservation de `id` / `type` / `name` / `description` / `probability` / `timeline` / `potentialBuyers`) + `ExitStrategistFindings` : retrait du bloc `returnSummary`. Commentaire de bloc mis à jour pour refléter la doctrine anti-oraculaire.
+- `src/agents/type-modules/tier1.ts` : `ExitScenario` et `ExitStrategistFindings` mises à jour identiquement.
+
+**Purge UI** :
+- `src/components/deals/analysis-investor-view.tsx` (WIP redesign branche `analysis-redesign-avekapeti`) : retrait du `MetricTile` "Rendement pondéré" + section "Scénarios financiers" + extracteur `extractScenarios()` + interface `ScenarioItem` + dictionnaire `scenarioLabels` + dimension "Scénarios" du bar chart + lecture `getPrimarySummary` du fallback scenario-modeler (remplacé par market-intelligence).
+- `src/components/deals/tier1-results.tsx` : pour `ExitStrategist`, remplacement de l'affichage `s.exitValuation.estimated` (point-estimate inventé) par `s.potentialBuyers` (acquéreurs identifiés réels).
+
+**Purge PDF** :
+- `src/lib/pdf/pdf-sections/tier3-synthesis.tsx` : suppression intégrale du composant `ScenarioModeler` (272 lignes — Multiple attendu, IRR attendu, table 4 scénarios avec Exit Valo/Multiple/IRR, sensibilité, break-even) + retrait de l'appel dans `Tier3SynthesisSection`. Garde uniquement `ContradictionDetector` + `DevilsAdvocate`.
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` : `ExitFindings` réécrit. Table "Scénarios de sortie" en mode qualitatif (Type / Prob. / Timeline / Acquéreurs identifiés). Table "Exits comparables observés" enrichie (Entreprise / Acquéreur / Année / Valeur exit / Multiple observé). Suppression du bloc "Résumé des retours" (Multiple attendu / IRR attendu / Downside / Upside).
+
+**Ajustement tests typecheck** :
+- `src/agents/tier3/schemas/__tests__/schemas.test.ts` : retrait de l'import `ScenarioModelerResponseSchema` + retrait des 5 test cases ScenarioModelerResponseSchema.
+- `src/agents/__tests__/agent-pipeline.test.ts` : retrait de `"scenario-modeler"` de `tier3Agents` + `tier3Module` + mise à jour de l'assertion "all 7 agents" → "all 6 agents".
+- `src/agents/__tests__/sequential-pipeline.test.ts` : retrait de `"scenario-modeler"` du batch 1 Tier 3 + du scorecard final 21 agents.
+- `src/components/deals/analysis-memo-full.tsx:53` : strict null check ajouté sur `isMemoGeneratorData` (collatéral typecheck strict après suppression de types tier3CoherenceResult).
+
+### Précautions importantes
+- **Cohérence Tier 3 retirée**. La fonction `applyTier3Coherence` ajustait les probabilités scenarios + le `probabilityWeightedOutcome` selon le scepticisme devils-advocate. Sans scenario-modeler ce check est dead code. Le code de l'orchestrator garde des commentaires explicatifs pour la lisibilité historique.
+- **memo-generator** garde son champ `data.exitStrategy.expectedMultiple: { min, median, max }` (LLM-généré dans le memo synthétique). C'est un chantier séparé — la doctrine s'applique aussi mais n'a pas été touchée dans cette passe.
+- **Test mocks**. Le fichier `sequential-pipeline.test.ts` conserve des mock fixtures pour scenario-modeler (lignes 750-900) qui ne seront plus jamais matchées au runtime (le router LLM ne déclenchera plus ces blocs). Le mock financial-calculations (calculateIRR) est conservé bien que plus consommé par exit-strategist. À nettoyer dans une passe ultérieure si besoin.
+- **Branch redesign en cours**. Les changes touchent `analysis-investor-view.tsx` qui était un WIP utilisateur sur cette branche. Modifications surgicales préservant le reste de la maquette (synthèse, dimensions, preuves, actions immédiates, santé analyse).
+- **Type-check global** `npx tsc --noEmit` passe vert après l'ensemble des changements.
+
+### Pas faits dans cette passe (chantiers liés)
+- Biais sectoriel tech sur les agents Couche 1 (`team-investigator`, `tech-stack-dd`, `tech-ops-dd`) pour les boîtes non-tech (cas Avekapeti = food). Chantier doctrinal séparé — sector-aware agents.
+- Calculateur de sensibilité côté UI (composant React déterministe pour permettre à l'investisseur de saisir ses propres hypothèses entry valo / dilution / exit cible → math affichée). Reste à construire en remplacement direct du "Rendement pondéré".
+- Trim équivalent sur le bloc `data.exitStrategy.expectedMultiple` du `memo-generator`.
+
+---
 ## 2026-05-23 — Pivot doctrinal (clôture — §33) — KPI Governance refondue en matrice + cascade TERMINÉE pour le périmètre repéré
 
 ### Contexte

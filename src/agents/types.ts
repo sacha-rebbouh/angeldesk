@@ -92,9 +92,9 @@ import type { CurrentFact } from "@/services/fact-store/types";
 import type { DeckCoherenceReport } from "@/agents/tier0/deck-coherence-checker";
 // Phase A — Contrats partagés natifs (A1 commit 4c0dff5, étendus en A3/A4)
 // Importés ici (top-of-file) pour usage inline dans les interfaces Tier 3
-// modifiées en A3 (DevilsAdvocateFindings) et A4 (MemoGeneratorData,
-// ScenarioModelerFindings). Les ré-exports en bas de fichier exposent ces
-// mêmes types aux consumers via `import { StructuralRisk } from '@/agents/types'`.
+// modifiées en A3 (DevilsAdvocateFindings) et A4 (MemoGeneratorData).
+// Les ré-exports en bas de fichier exposent ces mêmes types aux consumers
+// via `import { StructuralRisk } from '@/agents/types'`.
 import type {
   StructuralRisk as Tier3StructuralRisk,
   Tier3SignalContribution as Tier3SignalContributionType,
@@ -2539,7 +2539,12 @@ export interface CustomerIntelResult extends AgentResult {
 // Standard: Big4 + Partner VC - Chaque projection sourcée, calculs montrés
 // Minimum: 4+ scénarios, 3+ comparables réels, 3+ red flags, 5+ questions
 
-/** Scénario d'exit détaillé avec calculs montrés */
+/** Scénario d'exit qualitatif — décrit la nature d'une sortie possible
+ * (type d'acquéreur, timeline, jalons). Aucune projection chiffrée de
+ * valorisation, multiple ou IRR : la doctrine anti-oraculaire interdit
+ * d'inventer ces nombres. Les chiffres factuels (comparables historiques,
+ * distributions de multiples observées) vivent dans `comparableExits` et
+ * `mnaMarket`. */
 export interface ExitScenario {
   id: string;
   type: "acquisition_strategic" | "acquisition_pe" | "ipo" | "secondary" | "acquihire" | "failure";
@@ -2562,16 +2567,6 @@ export interface ExitScenario {
     assumptions: string[];
   };
 
-  // Valorisation à l'exit
-  exitValuation: {
-    estimated: number;
-    range: { min: number; max: number };
-    methodology: string; // "Multiple ARR", "Multiple EBITDA", etc.
-    multipleUsed: number;
-    multipleSource: string; // "DB median SaaS exits 2024"
-    calculation: string; // Calcul montré
-  };
-
   // Acheteurs potentiels (si applicable)
   potentialBuyers?: {
     name: string;
@@ -2580,20 +2575,6 @@ export interface ExitScenario {
     recentAcquisitions?: string[];
     likelihoodToBuy: "HIGH" | "MEDIUM" | "LOW";
   }[];
-
-  // Retour pour le BA
-  investorReturn: {
-    initialInvestment: number;
-    ownershipAtEntry: number;
-    dilutionToExit: number;
-    dilutionCalculation: string; // Calcul montré
-    ownershipAtExit: number;
-    grossProceeds: number;
-    proceedsCalculation: string; // Calcul montré
-    multiple: number;
-    irr: number;
-    irrCalculation: string; // Calcul montré
-  };
 }
 
 /** Acquisition comparable réelle (sourcée) */
@@ -2707,32 +2688,6 @@ export interface ExitStrategistFindings {
     }[];
     deckRealism: "REALISTIC" | "OPTIMISTIC" | "VERY_OPTIMISTIC" | "UNREALISTIC";
     deckRealismRationale: string;
-  };
-
-  // Synthèse retour investisseur
-  returnSummary: {
-    expectedCase: {
-      scenario: string;
-      probability: number;
-      multiple: number;
-      irr: number;
-    };
-    upside: {
-      scenario: string;
-      probability: number;
-      multiple: number;
-      irr: number;
-    };
-    downside: {
-      scenario: string;
-      probability: number;
-      multiple: number;
-      irr: number;
-    };
-    probabilityWeightedReturn: {
-      expectedMultiple: number;
-      calculation: string;
-    };
   };
 }
 
@@ -3300,210 +3255,6 @@ export interface ContradictionDetectorResult extends AgentResult {
   data: ContradictionDetectorData;
 }
 
-// ============================================================================
-// SCENARIO MODELER AGENT - REFONTE v2.0
-// ============================================================================
-// Mission: Modéliser 4 scénarios (BASE, BULL, BEAR, CATASTROPHIC) basés sur
-// des trajectoires RÉELLES d'entreprises comparables - NE JAMAIS INVENTER
-// Standard: Big4 + Partner VC - Chaque hypothèse sourcée, calculs montrés
-// Minimum: 4 scénarios, 3+ comparables réels, calculs IRR explicites
-
-/** Hypothèse sourcée - CHAQUE HYPOTHESE DOIT AVOIR UNE SOURCE */
-export interface SourcedAssumption {
-  assumption: string;
-  value: number | string;
-  source: string; // "Deck Slide X", "DB median SaaS Seed", "financial-auditor", etc.
-  confidence: "high" | "medium" | "low";
-}
-
-/** Métriques annuelles projetées avec source */
-export interface ScenarioYearMetrics {
-  year: number;
-  revenue: number;
-  revenueSource: string; // Comment on arrive à ce chiffre
-  valuation: number;
-  valuationSource: string; // Multiple utilisé + source
-  employeeCount: number;
-  employeeCountSource: string;
-}
-
-/** Calcul de retour investisseur avec formules explicites */
-export interface InvestorReturnCalculation {
-  initialInvestment: number;
-  initialInvestmentSource: string;
-  ownershipAtEntry: number;
-  ownershipCalculation: string; // "50K / (2M pre + 500K round) = 2.0%"
-  dilutionToExit: number;
-  dilutionSource: string; // "Standard Seed→A→B = ~60% dilution (DB median)"
-  ownershipAtExit: number;
-  ownershipAtExitCalculation: string;
-  grossProceeds: number;
-  proceedsCalculation: string; // "2.0% × (1-0.60) × 50M exit = 400K"
-  multiple: number;
-  multipleCalculation: string; // "400K / 50K = 8.0x"
-  irr: number;
-  irrCalculation: string; // "((8.0)^(1/6) - 1) × 100 = 41.4%"
-  holdingPeriodYears: number;
-}
-
-/** Scénario complet v2.0 avec sourcing obligatoire */
-export interface ScenarioV2 {
-  name: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC";
-  description: string;
-
-  // Probabilité avec source
-  probability: {
-    value: number; // 0-100
-    rationale: string;
-    source: string; // "DB: X% des Seed SaaS atteignent Series A"
-  };
-
-  // Hypothèses clés - CHACUNE SOURCÉE
-  assumptions: SourcedAssumption[];
-
-  // Métriques par année (Y1, Y3, Y5)
-  metrics: ScenarioYearMetrics[];
-
-  // Exit outcome avec calculs montrés
-  exitOutcome: {
-    type: "acquisition_strategic" | "acquisition_pe" | "ipo" | "secondary" | "acquihire" | "shutdown" | "zombie";
-    typeRationale: string;
-    timing: string;
-    timingSource: string;
-    exitValuation: number;
-    exitValuationCalculation: string; // "15M ARR × 5x (DB median SaaS exit) = 75M"
-    exitMultiple: number;
-    exitMultipleSource: string;
-  };
-
-  // Retour investisseur avec TOUS les calculs montrés
-  investorReturn: InvestorReturnCalculation;
-
-  // Risques et drivers spécifiques à ce scénario
-  keyRisks: { risk: string; source: string }[];
-  keyDrivers: { driver: string; source: string }[];
-
-  // Comparable réel qui ancre ce scénario
-  basedOnComparable?: {
-    company: string;
-    trajectory: string;
-    relevance: string;
-    source: string;
-  };
-}
-
-/** Analyse de sensibilité v2.0 */
-export interface SensitivityAnalysisV2 {
-  variable: string;
-  baseCase: {
-    value: number;
-    source: string;
-  };
-  impactOnValuation: {
-    change: string; // "+20%", "-30%", etc.
-    newValuation: number;
-    calculation: string;
-  }[];
-  impactLevel: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-  impactRationale: string;
-}
-
-/** Comparable réel de la DB avec trajectoire */
-export interface ScenarioComparable {
-  company: string;
-  sector: string;
-  stage: string;
-  trajectory: string; // "Seed 2020 → Series A 2021 (2.5M) → Acquired 2023 (45M)"
-  outcome: "success" | "moderate_success" | "struggle" | "failure";
-  relevance: string; // Pourquoi ce comparable est pertinent
-  source: string; // "Funding DB", "Crunchbase", etc.
-  keyMetrics?: {
-    seedValuation?: number;
-    exitValuation?: number;
-    timeToExit?: number;
-    peakEmployees?: number;
-  };
-}
-
-/** Findings spécifiques Scenario Modeler v2.0 */
-export interface ScenarioModelerFindings {
-  // 4 scénarios obligatoires
-  scenarios: ScenarioV2[];
-
-  // Analyse de sensibilité
-  sensitivityAnalysis: SensitivityAnalysisV2[];
-
-  // OBLIGATOIRE: Comparables réels qui ancrent les scénarios
-  basedOnComparables: ScenarioComparable[];
-
-  // Break-even analysis
-  breakEvenAnalysis: {
-    monthsToBreakeven: number;
-    breakEvenCalculation: string;
-    requiredGrowthRate: number;
-    growthRateSource: string;
-    burnUntilBreakeven: number;
-    burnCalculation: string;
-    achievability: "ACHIEVABLE" | "CHALLENGING" | "UNLIKELY" | "UNKNOWN";
-    achievabilityRationale: string;
-  };
-
-  // Synthèse probabilité-pondérée
-  probabilityWeightedOutcome: {
-    expectedMultiple: number;
-    expectedMultipleCalculation: string; // "30%×12x + 40%×4x + 20%×0.5x + 10%×0x = 5.3x"
-    expectedIRR: number;
-    expectedIRRCalculation: string;
-    riskAdjustedAssessment: string;
-  };
-
-  // Phase A slice A4 — `dominantScenario` (renommage de l'ancien
-  // `mostLikelyScenario`) qualifie le scénario avec la probabilité la plus
-  // élevée parmi BASE/BULL/BEAR/CATASTROPHIC. Pas une recommandation
-  // d'action — c'est une qualification trajectoire.
-  dominantScenario: "BASE" | "BULL" | "BEAR" | "CATASTROPHIC";
-  dominantScenarioRationale: string;
-
-  // Phase A slice A4 — `signalContribution` natif. Orientation dérivée
-  // déterministe par le runtime depuis les probabilités scenarios
-  // (LLM ne pilote PAS — leçon round 2 A3 sur riskPosture).
-  // evidenceSolidity reste null en A4 (D2 verrouillé, A6 service Solidité
-  // qualifiera ultérieurement).
-  signalContribution: Tier3SignalContributionType;
-}
-
-/** Scenario Modeler Data v2.0 - Structure standardisée */
-export interface ScenarioModelerData {
-  // === META ===
-  meta: AgentMeta;
-
-  // === SCORE PRINCIPAL ===
-  score: AgentScore;
-
-  // === FINDINGS SPECIFIQUES ===
-  findings: ScenarioModelerFindings;
-
-  // === DB CROSS-REFERENCE ===
-  dbCrossReference: DbCrossReference;
-
-  // === RED FLAGS ===
-  redFlags: AgentRedFlag[];
-
-  // === QUESTIONS POUR LE FONDATEUR ===
-  questions: AgentQuestion[];
-
-  // === SIGNAL D'ALERTE ===
-  alertSignal: AgentAlertSignal;
-
-  // === RESUME NARRATIF ===
-  narrative: AgentNarrative;
-}
-
-export interface ScenarioModelerResult extends AgentResult {
-  agentName: "scenario-modeler";
-  data: ScenarioModelerData;
-}
-
 // Synthesis Deal Scorer Agent
 export interface SynthesisDealScorerData {
   overallScore: number; // 0-100
@@ -3835,7 +3586,6 @@ export interface MemoGeneratorData {
     redFlags: string[];
   };
   investmentThesis: string;
-  exitStrategy: string;
   nextSteps: string[];
   appendix: {
     financialModel?: string;
@@ -3870,7 +3620,6 @@ export type AnalysisAgentResult =
   | QuestionMasterResult
   | ConditionsAnalystResult
   | ContradictionDetectorResult
-  | ScenarioModelerResult
   | SynthesisDealScorerResult
   | DevilsAdvocateResult
   | MemoGeneratorResult;
@@ -3895,7 +3644,6 @@ export type Tier1AgentName =
 // Tier 3 agent names
 export type Tier3AgentName =
   | "contradiction-detector"
-  | "scenario-modeler"
   | "synthesis-deal-scorer"
   | "devils-advocate"
   | "memo-generator";

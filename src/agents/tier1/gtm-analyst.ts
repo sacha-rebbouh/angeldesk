@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 import { calculateAgentScore, GTM_ANALYST_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
+import { getSectorProfile, formatSectorProfileForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
 /**
  * GTM Analyst Agent - REFONTE v2.0
@@ -493,7 +494,34 @@ Si le Context Engine fournit des données de marché (CAC benchmarks, deals simi
       }
     }
 
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const sectorBlock = formatSectorProfileForPrompt(sectorProfile);
+
+    // Calibration GTM par famille sectorielle. Pas de helper dédié dans
+    // sector-profiles.ts car le GTM analyst a un cadre déjà sectoriel
+    // (canaux variables selon le marché) — on lui rappelle juste de ne
+    // PAS forcer PLG / Sales-led / Community-led pour des secteurs où
+    // ces motions n'ont pas de sens.
+    const gtmCalibration = (() => {
+      switch (sectorProfile.family) {
+        case "consumer":
+          return `## CALIBRATION GTM — ${sectorProfile.displayName}\n\nLe GTM consumer s'analyse sur : référencement retail (DN/DP), trade marketing, brand marketing (TV / digital / influence), e-commerce, distribution physique. Les motions SaaS (PLG / Sales-led / Community-led) ne sont PAS le bon cadre. Ne PAS classifier en \`PLG/SALES_LED/HYBRID/COMMUNITY_LED/UNCLEAR\` pour ce dossier — préciser la motion consumer (trade-led, brand-led, retail-led, DTC, hybrid retail+DTC). Le CAC se calcule en coût acquisition consommateur × fréquence × marge unitaire, pas en CAC SaaS.`;
+        case "bio":
+          return `## CALIBRATION GTM — ${sectorProfile.displayName}\n\nLe GTM bio/health s'analyse sur : cycle réglementaire (FDA/EMA/CE), accès au marché (reimbursement), partenariats prescripteurs (KOLs, hôpitaux), licensing deals big pharma, sales force médicale. Les motions SaaS (PLG, Sales-led tech) ne s'appliquent pas. Ne PAS forcer ces catégories — utiliser le vocabulaire bio (B2B2C via prescripteurs, partenariat licensing, sales force médicale spécialisée).`;
+        case "hardware-tech":
+          return `## CALIBRATION GTM — ${sectorProfile.displayName}\n\nLe GTM hardware s'analyse sur : cycles de vente enterprise B2B longs, intégrateurs / channel partners, POCs et pilotes, accords OEM, certifications préalables. CAC mesuré par opportunité enterprise, pas par seat SaaS. Ne PAS forcer PLG.`;
+        case "climate":
+          return `## CALIBRATION GTM — ${sectorProfile.displayName}\n\nLe GTM climate s'analyse sur : cycles B2B/B2G longs, RFPs publics, partenariats stratégiques utilities/corporates, programmes carbone, subventions. CAC mesuré par opportunité, pas par seat SaaS.`;
+        default:
+          return `## CALIBRATION GTM\n\nSecteur de type tech/SaaS — cadrage motion (PLG / Sales-led / Hybrid / Community-led) et CAC SaaS applicable.`;
+      }
+    })();
+
     const prompt = `Analyse la stratégie Go-to-Market de ce deal avec la rigueur d'un Partner VC.
+
+${sectorBlock}
+
+${gtmCalibration}
 
 ${dealContext}
 ${gtmSection}
@@ -503,13 +531,13 @@ ${contextEngineData}
 ${this.formatFactStoreData(context)}
 ## INSTRUCTIONS SPÉCIFIQUES
 
-1. **Analyse des Canaux**: Identifie TOUS les canaux mentionnés ou détectables. Pour chacun:
-   - Type (organic/paid/sales/partnership/referral/viral)
-   - Contribution estimée (% revenue ou % customers)
-   - CAC si calculable, sinon estimation avec méthode
+1. **Analyse des Canaux**: Identifie TOUS les canaux mentionnés ou détectables, calibrés sur le secteur (cf. calibration ci-dessus). Pour chacun:
+   - Type pertinent au secteur (pour SaaS : organic/paid/sales/partnership/referral/viral ; pour consumer : retail/DTC/trade/brand/influence ; pour bio : licensing/prescripteurs/sales force médicale ; etc.)
+   - Contribution estimée
+   - Coût d'acquisition si calculable (CAC SaaS, coût retail listing, sales rep cost selon le secteur)
    - Scalabilité avec contraintes concrètes
 
-2. **Motion de Vente**: Classifie en PLG/SALES_LED/HYBRID/COMMUNITY_LED/UNCLEAR
+2. **Motion de Vente**: Classifie selon les motions PERTINENTES au secteur. Pour SaaS : PLG/SALES_LED/HYBRID/COMMUNITY_LED/UNCLEAR. Pour consumer/bio/hardware : utiliser le vocabulaire propre au secteur (cf. calibration). Ne JAMAIS forcer PLG sur un dossier où la motion n'existe pas.
    - Justifie avec des PREUVES du deck
    - Compare aux succès du secteur
 
@@ -590,6 +618,10 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
     } catch (err) {
       console.error("[gtm-analyst] Deterministic scoring failed, using LLM score:", err);
     }
+
+    // Filet de sécurité déterministe : drop les red flags non-applicables
+    // au secteur (PLG / Sales-led classifiés à tort sur consumer / bio / etc.).
+    result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "gtm-analyst");
 
     return result;
   }

@@ -2,7 +2,7 @@
  * Thesis-First Architecture — types partages
  *
  * Principe : la these d'une societe est decomposee en axes structurels
- * (probleme, solution, why-now, moat, path-to-exit) + hypotheses porteuses
+ * (probleme, solution, why-now, moat) + hypotheses porteuses
  * (load-bearing). Elle est ensuite analysee via 3 lunettes canoniques (YC, Thiel,
  * Angel Desk) qui extraient chacune leurs claims specifiques et verdict.
  *
@@ -144,7 +144,6 @@ export type ThesisAlertCategory =
   | "solution_fit"
   | "moat"
   | "unit_economics"
-  | "path_to_exit"
   | "team_dependency"
   | "market_size"
   | "assumption_fragile";

@@ -159,11 +159,6 @@ function buildTier3Section(input: BoardInput): string | null {
     parts.push(`### Contradictions Detectees\n${extractStructuredSummary(t3.contradictionDetector, 1500)}`);
   }
 
-  // Scenario Modeler
-  if (t3.scenarioModeler) {
-    parts.push(`### Scenarios (scenario-modeler)\n${extractStructuredSummary(t3.scenarioModeler, 2000)}`);
-  }
-
   // Quant score kept last to avoid anchoring the board on a single number.
   if (t3.synthesisDealScorer) {
     parts.push(
@@ -190,7 +185,6 @@ function buildTier1Summaries(input: BoardInput): string | null {
     ["Cap Table Auditor", t1.capTableAuditor],
     ["GTM Analyst", t1.gtmAnalyst],
     ["Customer Intel", t1.customerIntel],
-    ["Exit Strategist", t1.exitStrategist],
     ["Question Master", t1.questionMaster],
   ];
 

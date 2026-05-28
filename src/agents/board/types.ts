@@ -182,7 +182,7 @@ export interface BoardInput {
       redFlagDetector?: unknown;    // Red flags detection
     };
 
-    // Tier 1: 13 Investigation agents (parallel)
+    // Tier 1: 12 Investigation agents (parallel)
     tier1?: {
       deckForensics?: unknown;      // Deck quality, claims verification
       financialAuditor?: unknown;   // Financial metrics, unit economics
@@ -195,7 +195,6 @@ export interface BoardInput {
       capTableAuditor?: unknown;    // Cap table, dilution
       gtmAnalyst?: unknown;         // Go-to-market, channels
       customerIntel?: unknown;      // Customer analysis, retention
-      exitStrategist?: unknown;     // Exit scenarios, IRR
       questionMaster?: unknown;     // Questions to ask founder
     };
 
@@ -205,10 +204,9 @@ export interface BoardInput {
       sectorExpert?: unknown;       // Sector-specific analysis
     };
 
-    // Tier 3: 5 Synthesis agents (sequential)
+    // Tier 3: 4 Synthesis agents (sequential)
     tier3?: {
       contradictionDetector?: unknown;  // Contradictions between agents
-      scenarioModeler?: unknown;        // Best/base/worst case scenarios
       synthesisDealScorer?: unknown;    // Final weighted score
       devilsAdvocate?: unknown;         // Challenge the thesis
       memoGenerator?: unknown;          // Investment memo

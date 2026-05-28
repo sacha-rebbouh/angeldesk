@@ -41,6 +41,18 @@ describe("thesis narrative guards", () => {
     ).toThrow("Unsupported thesis narrative claims detected");
   });
 
+  it("accepts absence narratives that mention missing derived metrics without asserting a value", () => {
+    expect(
+      findUnsupportedThesisNarrativeClaims(
+        {
+          moat:
+            "Aucune projection de rentabilite (EBITDA margin, FCF) n'est fournie pour evaluer la defensibilite economique.",
+        },
+        buildThesisFactScope([])
+      )
+    ).toEqual([]);
+  });
+
   it("accepts a supported EBITDA margin narrative when the precomputed metric exists", () => {
     const facts: CurrentFact[] = [
       makeFact({

@@ -13,6 +13,12 @@ import { detectFOMO } from "@/services/fomo-detector";
 import { calculateAgentScore, DECK_FORENSICS_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
 
+const DECK_FORENSICS_OTHER_DOC_MAX_CHARS = 5_000;
+const DECK_FORENSICS_EXTRACTED_INFO_MAX_CHARS = 18_000;
+const DECK_FORENSICS_PRO_TIMEOUT_MS = 190_000;
+const DECK_FORENSICS_FLASH_FALLBACK_TIMEOUT_MS = 80_000;
+const DECK_FORENSICS_MAX_TOKENS = 16_000;
+
 /**
  * Deck Forensics Agent - REFONTE v2.0
  *
@@ -207,7 +213,7 @@ export class DeckForensicsAgent extends BaseAgent<DeckForensicsDataV2, DeckForen
       description: "Analyse forensique approfondie du pitch deck - Standard Big4/VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 280000, // Leaves headroom under the 300s Inngest/Vercel ceiling.
+      timeoutMs: 290000, // Leaves headroom under the 300s Inngest/Vercel ceiling.
       dependencies: ["document-extractor"],
     });
   }
@@ -325,13 +331,19 @@ OBLIGATOIRE:
 
   protected async execute(context: EnrichedAgentContext): Promise<DeckForensicsDataV2> {
     this._dealStage = context.canonicalDeal.stage;
-    const dealContext = this.formatDealContext(context);
+    const promptContext = this.buildDeckForensicsPromptContext(context);
+    const dealContext = this.formatDealContext(promptContext);
     const contextEngineData = this.formatContextEngineData(context);
     const extractedInfo = this.getExtractedInfo(context);
 
     let extractedSection = "";
     if (extractedInfo) {
-      extractedSection = `\n## Donnees Extraites du Deck (Document Extractor)\n${JSON.stringify(extractedInfo, null, 2)}`;
+      extractedSection =
+        `\n## Donnees Extraites du Deck (Document Extractor)\n` +
+        this.sanitizeDataForPrompt(
+          this.compactExtractedInfoForPrompt(extractedInfo),
+          DECK_FORENSICS_EXTRACTED_INFO_MAX_CHARS,
+        );
     }
 
     // Build competitor context for DB cross-reference
@@ -556,15 +568,36 @@ FORMAT DE REPONSE JSON
 
 RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum artificiel.`;
 
-    const { data } = await this.llmCompleteJSON<LLMDeckForensicsResponse>(prompt, {
-      // Production B16 showed a valid Gemini Pro response arriving around 180s
-      // while the old 150s agent timeout had already marked the required agent
-      // failed. Use a realistic provider budget, and avoid same-model retries on
-      // this expensive prompt; a true timeout should fail cleanly, not burn a
-      // second full prompt.
-      timeoutMs: 260000,
-      maxRetries: 0,
-    });
+    let data: LLMDeckForensicsResponse;
+    try {
+      ({ data } = await this.llmCompleteJSON<LLMDeckForensicsResponse>(prompt, {
+        // Keep Gemini Pro as primary for quality, but do not let one slow
+        // provider call consume the whole Inngest/Vercel budget.
+        timeoutMs: DECK_FORENSICS_PRO_TIMEOUT_MS,
+        maxRetries: 0,
+        maxTokens: DECK_FORENSICS_MAX_TOKENS,
+      }));
+    } catch (error) {
+      if (!this.isTimeoutError(error)) {
+        throw error;
+      }
+
+      console.warn(
+        `[deck-forensics] Gemini Pro timed out after ${DECK_FORENSICS_PRO_TIMEOUT_MS}ms; ` +
+        `falling back to Gemini 3 Flash with bounded output.`
+      );
+      ({ data } = await this.llmCompleteJSON<LLMDeckForensicsResponse>(
+        `${prompt}\n\n` +
+          `CONTRAINTE DE SECOURS: reponds en JSON strict, plus concis. ` +
+          `Priorise les claims, red flags et questions qui changent vraiment la lecture investisseur.`,
+        {
+          model: "GEMINI_3_FLASH",
+          timeoutMs: DECK_FORENSICS_FLASH_FALLBACK_TIMEOUT_MS,
+          maxRetries: 0,
+          maxTokens: 12_000,
+        }
+      ));
+    }
 
     // Validate and normalize response
     const result = this.normalizeResponse(data);
@@ -640,6 +673,68 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
     }
 
     return result;
+  }
+
+  private buildDeckForensicsPromptContext(context: EnrichedAgentContext): EnrichedAgentContext {
+    const documents = context.documents?.map((doc) => {
+      if (!doc.extractedText) return doc;
+      if (doc.type === "PITCH_DECK") return doc;
+      if (doc.extractedText.length <= DECK_FORENSICS_OTHER_DOC_MAX_CHARS) return doc;
+
+      return {
+        ...doc,
+        extractedText:
+          doc.extractedText.slice(0, DECK_FORENSICS_OTHER_DOC_MAX_CHARS) +
+          `\n\n[TRONQUE POUR deck-forensics: document secondaire limite a ${DECK_FORENSICS_OTHER_DOC_MAX_CHARS} caracteres. Les contradictions et faits extraits restent disponibles via Fact Store, Document Extractor et Deck Coherence.]`,
+      };
+    });
+
+    return { ...context, documents };
+  }
+
+  private isTimeoutError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /timeout|timed out|abort/i.test(message);
+  }
+
+  private compactExtractedInfoForPrompt(extractedInfo: Record<string, unknown>): Record<string, unknown> {
+    return {
+      companyName: extractedInfo.companyName,
+      tagline: extractedInfo.tagline,
+      sector: extractedInfo.sector,
+      stage: extractedInfo.stage,
+      instrument: extractedInfo.instrument,
+      geography: extractedInfo.geography,
+      foundedYear: extractedInfo.foundedYear,
+      teamSize: extractedInfo.teamSize,
+      arr: extractedInfo.arr,
+      revenue: extractedInfo.revenue,
+      growthRateYoY: extractedInfo.growthRateYoY,
+      amountRaising: extractedInfo.amountRaising,
+      valuationPre: extractedInfo.valuationPre,
+      valuationPost: extractedInfo.valuationPost,
+      customers: extractedInfo.customers,
+      churnRate: extractedInfo.churnRate,
+      cac: extractedInfo.cac,
+      ltv: extractedInfo.ltv,
+      grossMargin: extractedInfo.grossMargin,
+      productDescription: extractedInfo.productDescription,
+      businessModel: extractedInfo.businessModel,
+      coreValueProposition: extractedInfo.coreValueProposition,
+      competitiveAdvantage: extractedInfo.competitiveAdvantage,
+      keyDifferentiators: extractedInfo.keyDifferentiators,
+      competitors: extractedInfo.competitors,
+      teamMembers: extractedInfo.teamMembers,
+      previousRounds: extractedInfo.previousRounds,
+      dataClassifications: extractedInfo.dataClassifications,
+      financialDataType: extractedInfo.financialDataType,
+      financialDataAsOf: extractedInfo.financialDataAsOf,
+      projectionReliability: extractedInfo.projectionReliability,
+      financialRedFlags: extractedInfo.financialRedFlags,
+      sourceReferences: Array.isArray(extractedInfo.sourceReferences)
+        ? extractedInfo.sourceReferences.slice(0, 12)
+        : extractedInfo.sourceReferences,
+    };
   }
 
   private normalizeResponse(data: LLMDeckForensicsResponse): DeckForensicsDataV2 {
