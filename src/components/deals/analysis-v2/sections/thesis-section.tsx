@@ -10,6 +10,20 @@ const STATUS_ICON = {
   contradicted: { icon: XCircle, label: "Contredit", color: "var(--av-alert)" },
 };
 
+function formatLargeNumbersInText(text: string): string {
+  return text.replace(/\b(\d{7,})\b/g, (match) => {
+    const n = Number(match);
+    if (!Number.isFinite(n)) return match;
+    if (n >= 1_000_000_000) {
+      return `${(n / 1_000_000_000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Md`;
+    }
+    if (n >= 1_000_000) {
+      return `${(n / 1_000_000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} M`;
+    }
+    return n.toLocaleString("fr-FR");
+  });
+}
+
 export function ThesisSection({ model }: { model: ThesisSectionModel }) {
   return (
     <section id="these" className="flex scroll-mt-44 flex-col gap-5">
@@ -41,7 +55,7 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
               style={{ border: "1px solid var(--av-line)", boxShadow: "var(--av-shadow-soft)" }}
             >
               <span className="av-eyebrow">{card.title}</span>
-              <p className="text-[14px] leading-relaxed text-[var(--av-ink)]">{card.body}</p>
+              <p className="text-[14px] leading-relaxed text-[var(--av-ink)]">{formatLargeNumbersInText(card.body)}</p>
             </article>
           ))}
         </div>
@@ -62,12 +76,12 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
                   <li key={lb.id} className="grid items-start gap-3 px-4 py-3 sm:grid-cols-[24px_minmax(0,1fr)_auto]">
                     <Icon size={18} aria-hidden="true" style={{ color: meta.color, marginTop: 2 }} />
                     <div className="min-w-0">
-                      <p className="text-[14px] font-medium text-[var(--av-ink)]">{lb.statement}</p>
+                      <p className="text-[14px] font-medium text-[var(--av-ink)]">{formatLargeNumbersInText(lb.statement)}</p>
                       {lb.impact ? (
-                        <p className="mt-1 text-[12px] text-[var(--av-muted)]">Impact : {lb.impact}</p>
+                        <p className="mt-1 text-[12px] text-[var(--av-muted)]">Impact : {formatLargeNumbersInText(lb.impact)}</p>
                       ) : null}
                       {lb.validationPath ? (
-                        <p className="mt-1 text-[12px] text-[var(--av-muted)]">À vérifier : {lb.validationPath}</p>
+                        <p className="mt-1 text-[12px] text-[var(--av-muted)]">À vérifier : {formatLargeNumbersInText(lb.validationPath)}</p>
                       ) : null}
                     </div>
                     <span
@@ -98,7 +112,7 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
                     <h4 className="text-[14px] font-semibold leading-snug text-[var(--av-ink)]">{alert.title}</h4>
                     <StatusPill severity={alert.severity} label={alert.severityLabel} />
                   </div>
-                  {alert.detail ? <p className="text-[12px] leading-relaxed text-[var(--av-muted)]">{alert.detail}</p> : null}
+                  {alert.detail ? <p className="text-[12px] leading-relaxed text-[var(--av-muted)]">{formatLargeNumbersInText(alert.detail)}</p> : null}
                   {alert.category ? (
                     <span className="text-[11px] uppercase tracking-wide text-[var(--av-muted)]">{alert.category}</span>
                   ) : null}
