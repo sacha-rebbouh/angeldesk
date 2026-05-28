@@ -57,8 +57,14 @@ function HeaderBar({ dealName, vm }: Props) {
 }
 
 export function AnalysisV2PageShell(props: Props) {
+  // En mode embedded (hideHeader=true, ex: tab "Analyse IA" de /deals/[id]),
+  // on supprime les marges négatives et min-h-screen qui font déborder le
+  // composant hors de son conteneur parent (chevauche les onglets + breadcrumb).
+  const wrapperClass = props.hideHeader
+    ? "analysis-v2"
+    : "analysis-v2 -m-4 min-h-screen p-4 sm:-m-6 sm:p-6 lg:-m-8 lg:p-8";
   return (
-    <div className="analysis-v2 -m-4 min-h-screen p-4 sm:-m-6 sm:p-6 lg:-m-8 lg:p-8">
+    <div className={wrapperClass}>
       <a href="#main" className="av-skip-link">Aller au contenu</a>
       <main id="main" className="mx-auto flex max-w-[1440px] flex-col gap-6">
         {props.hideHeader ? null : <HeaderBar {...props} />}
