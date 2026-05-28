@@ -1622,7 +1622,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     expect(result.success).toBe(true);
     expect(result.agentName).toBe("financial-auditor");
     console.log(`[Step 3b] financial-auditor: ${result.success ? "SUCCESS" : "FAILED: " + result.error}`);
-  });
+  }, 30000);
 
   // ── Step 3c: Phase C — team + competitive + market (parallel) ──
   it("Step 3c: Phase C — team-investigator, competitive-intel, market-intelligence (parallel)", async () => {

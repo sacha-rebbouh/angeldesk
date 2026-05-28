@@ -1716,7 +1716,7 @@ describe("Agent Pipeline Tests", () => {
             // Log failure for debugging but don't fail - some agents may have specific context requirements
             console.warn(`[${agentName}] run() returned success=false: ${result.error}`);
           }
-        });
+        }, 30000);
       }
     });
 

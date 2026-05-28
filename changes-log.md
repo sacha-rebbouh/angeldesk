@@ -1,6 +1,32 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-28 — Sanitization & compaction prompts Tier 1 + extraction AnalysisCompleteView + narrative-guards absence patterns
+
+### Contexte
+Couche d'agents Tier 1 (cap-table-auditor, deck-forensics, financial-auditor, legal-regulatory, tech-ops-dd) souffrait de payloads trop gros vers le LLM (decks volumineux, context engine, données extraites complètes en JSON brut) → risque de troncation JSON + timeouts. Parallèlement, le composant `AnalysisCompleteView` était défini inline dans `analysis-preview-tabs.tsx` (~330 lignes) et causait un doublon visuel quand rendu également dans `analysis-panel.tsx`. Et `narrative-guards` flaggait les phrases « non fourni / aucun / missing » comme claims numériques non sourcés (faux positifs).
+
+### Modifications
+- **Sanitization & compaction prompts Tier 1** sur `cap-table-auditor`, `deck-forensics`, `financial-auditor`, `legal-regulatory`, `tech-ops-dd` :
+  - Constantes `MAX_CHARS` nommées par section (other doc, relevant doc, extracted info, context engine, model).
+  - Nouveaux helpers `buildXxxPromptContext(context)` (tronque les docs secondaires) + `sanitizeDocumentContent(content, max)` + `compactExtractedInfoForPrompt(extracted)`.
+  - Timeouts provider Pro/Flash et `maxTokens` explicites par agent (constantes nommées).
+  - `fallbackChain: ["GEMINI_PRO", "GEMINI_3_FLASH"]` + `terminalFallbackData` sur `financial-auditor`.
+  - Limites de sortie : `compliance / regulatoryRisks / redFlags / questions / keyInsights MAX 5` (ajout dans le prompt).
+  - Bump timeout interne `financial-auditor` 240s → 260s (gros pitch decks 80+ pages).
+- **Tests bump timeout** : `agent-pipeline.test.ts` (boucle smoke Tier 1) et `sequential-pipeline.test.ts` (Phase B financial-auditor) → `30000ms` (la fallback chain de financial-auditor faisait sortir le default 5s à l'import à froid du module tier1).
+- **Extraction `AnalysisCompleteView`** : nouveau fichier `src/components/deals/analysis-complete-view.tsx` (362 lignes) — extrait depuis `analysis-preview-tabs.tsx`. Labels recadrés sur la doctrine anti-oraculaire : `"Réussi" / "Échec"` → `"Analyse disponible" / "Analyse manquante"`. Bloc d'erreur enrichi (impact severity + missingAnalysis + recommendation via `formatDetailedError`). `HIDDEN_COMPLETE_VIEW_AGENTS = { exit-strategist, scenario-modeler }` pour filtrer les anciennes analyses persistées. `analysis-preview-tabs.tsx` retire `pathToExit` du type `AnalysisThesis`.
+- **`narrative-guards`** : nouveaux patterns `ABSENCE_OR_INSUFFICIENCY_PATTERNS` (11 regex FR + EN : `aucun`, `pas de`, `non fourni`, `not provided`, `unavailable`, etc.) + helpers `containsMetricValueAssertion` et `isAbsenceOrInsufficiencySentence`. Une phrase reconnue comme absence-only (sans `%`, `€`, `$`, `bn`, `million`, `x`) est skip de la détection de claim numérique non sourcé. Tests `narrative-guards.test.ts` enrichis (+12 lignes).
+
+### Vérification
+- `npx tsc --noEmit` → 0 erreur.
+- `npx vitest run` → 4078 passed / 3 ajustés par bump timeout / 2 skipped (4081 au total).
+
+### Points à arbitrer (hors scope ce commit)
+- Vérifier en runtime que les `MAX_CHARS` ne tronquent pas du contexte critique sur de gros decks (cap-table : 24K relevant doc, financial : 45K model, legal : 24K context engine).
+- Le bump timeout test 30s masque l'augmentation réelle du temps d'import du module tier1 due à la fallback chain : si ça monte, monitorer la latence Phase B en prod.
+
+---
 ## 2026-05-26 (audit post-Codex) — Retrait exit-strategist du pipeline actif, fix tests et filtres
 
 ### Contexte
