@@ -24,7 +24,6 @@ interface MockThesis {
   solution: string;
   whyNow: string;
   moat: string | null;
-  pathToExit: string | null;
   loadBearing: unknown;
   ycLens: unknown;
   thielLens: unknown;
@@ -123,7 +122,6 @@ const mockPrisma = {
         solution: (data.solution as string) ?? "",
         whyNow: (data.whyNow as string) ?? "",
         moat: (data.moat as string | null) ?? null,
-        pathToExit: (data.pathToExit as string | null) ?? null,
         loadBearing: data.loadBearing ?? [],
         ycLens: data.ycLens ?? {},
         thielLens: data.thielLens ?? {},
@@ -225,7 +223,6 @@ function makeExtractorOutput(overrides: Partial<ThesisExtractorOutput> = {}): Th
     solution: "Test solution",
     whyNow: "Test why-now",
     moat: "Test moat",
-    pathToExit: "Test path",
     verdict: "contrasted",
     confidence: 55,
     loadBearing: [],
@@ -315,17 +312,15 @@ describe("thesisService.create", () => {
     ).rejects.toThrow("thesisService.create trust boundary rejection");
   });
 
-  it("accepte moat et pathToExit null", async () => {
+  it("accepte moat null", async () => {
     const created = await thesisService.create({
       dealId: "deal_nullables",
       extractorOutput: makeExtractorOutput({
         moat: null,
-        pathToExit: null,
       }),
     });
 
     expect(created.moat).toBeNull();
-    expect(created.pathToExit).toBeNull();
   });
 });
 

@@ -18,6 +18,14 @@ import { getBenchmark } from "@/services/benchmarks";
 import { calculateAgentScore, CAP_TABLE_AUDITOR_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 import { getSectorProfile, formatSectorProfileForPrompt, formatCapTableCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
+const CAP_TABLE_OTHER_DOC_MAX_CHARS = 6_000;
+const CAP_TABLE_RELEVANT_DOC_MAX_CHARS = 24_000;
+const CAP_TABLE_EXTRACTED_INFO_MAX_CHARS = 10_000;
+const CAP_TABLE_CONTEXT_ENGINE_MAX_CHARS = 22_000;
+const CAP_TABLE_PRO_TIMEOUT_MS = 115_000;
+const CAP_TABLE_FLASH_FALLBACK_TIMEOUT_MS = 75_000;
+const CAP_TABLE_MAX_TOKENS = 10_000;
+
 /**
  * CAP TABLE AUDITOR - REFONTE v2.0
  *
@@ -494,8 +502,12 @@ Si le Context Engine fournit des benchmarks de dilution et de valorisation, les 
 
   protected async execute(context: EnrichedAgentContext): Promise<CapTableAuditDataV2> {
     this._dealStage = context.canonicalDeal.stage;
-    const dealContext = this.formatDealContext(context);
-    const contextEngineData = this.formatContextEngineData(context);
+    const promptContext = this.buildCapTablePromptContext(context);
+    const dealContext = this.formatDealContext(promptContext);
+    const contextEngineData = this.sanitizeDocumentContent(
+      this.formatContextEngineData(context),
+      CAP_TABLE_CONTEXT_ENGINE_MAX_CHARS,
+    );
     const extractedInfo = this.getExtractedInfo(context);
 
     // Build specific cap table section from extracted data
@@ -509,8 +521,16 @@ Si le Context Engine fournit des benchmarks de dilution et de valorisation, les 
         valuationPost: extractedInfo.valuationPost,
         amountRaising: extractedInfo.amountRaising,
         founders: extractedInfo.founders,
+        ownership: extractedInfo.ownership,
+        capTable: extractedInfo.capTable,
+        termSheet: extractedInfo.termSheet,
+        sourceReferences: Array.isArray(extractedInfo.sourceReferences)
+          ? extractedInfo.sourceReferences.slice(0, 12)
+          : extractedInfo.sourceReferences,
       };
-      capTableSection = `\n## Donnees Cap Table Extraites du Deck\n${JSON.stringify(relevantData, null, 2)}`;
+      capTableSection =
+        `\n## Donnees Cap Table Extraites du Deck\n` +
+        this.sanitizeDataForPrompt(relevantData, CAP_TABLE_EXTRACTED_INFO_MAX_CHARS);
     }
 
     // Extract dilution benchmarks from Context Engine if available
@@ -667,9 +687,45 @@ REGLES DE SCORING OBLIGATOIRES (coherence data/score):
 - Donnees MINIMAL → score MAXIMUM 30, grade "D" ou "F"
 - Donnees PARTIAL → score MAXIMUM 50, grade "C", "D" ou "F"
 - Donnees COMPLETE → score libre 0-100
-On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
+On ne peut PAS bien noter ce qu'on ne peut pas evaluer!
 
-    const { data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(prompt);
+CONTRAINTE DE SORTIE:
+- Limiter la sortie pour garantir un JSON complet: structuralIssues MAX 5, redFlags MAX 5, questions MAX 5, keyInsights MAX 5.
+- Réponds UNIQUEMENT avec un JSON valide qui commence par { et se termine par }.`;
+
+    let data: LLMCapTableAuditResponse;
+    try {
+      ({ data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(prompt, {
+        timeoutMs: CAP_TABLE_PRO_TIMEOUT_MS,
+        maxRetries: 0,
+        maxTokens: CAP_TABLE_MAX_TOKENS,
+      }));
+    } catch (primaryError) {
+      console.warn(
+        `[cap-table-auditor] Gemini Pro unavailable; falling back to Gemini 3 Flash: ${
+          primaryError instanceof Error ? primaryError.message : String(primaryError)
+        }`
+      );
+      try {
+        ({ data } = await this.llmCompleteJSON<LLMCapTableAuditResponse>(
+          `${prompt}\n\nCONTRAINTE DE SECOURS: reponds en JSON strict plus concis. ` +
+            `Priorise la disponibilite des donnees, les terms bloquants et les questions actionnables.`,
+          {
+            model: "GEMINI_3_FLASH",
+            timeoutMs: CAP_TABLE_FLASH_FALLBACK_TIMEOUT_MS,
+            maxRetries: 0,
+            maxTokens: CAP_TABLE_MAX_TOKENS,
+          },
+        ));
+      } catch (fallbackError) {
+        console.warn(
+          `[cap-table-auditor] LLM JSON unavailable; using structured degraded output: ${
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+          }`
+        );
+        data = this.buildTerminalCapTableFallback(context, fallbackError);
+      }
+    }
 
     // Doctrine anti-oraculaire : le bloc "SIMULATION WATERFALL" qui
     // pré-injectait dans le prompt 3 scénarios d'exit hardcodés
@@ -919,6 +975,139 @@ On ne peut PAS bien noter ce qu'on ne peut pas evaluer!`;
         summary: data.narrative?.summary ?? "L'analyse de la cap table n'a pas pu etre completee faute de donnees suffisantes.",
         keyInsights: Array.isArray(data.narrative?.keyInsights) ? data.narrative.keyInsights : [],
         forNegotiation: Array.isArray(data.narrative?.forNegotiation) ? data.narrative.forNegotiation : [],
+      },
+    };
+  }
+
+  private buildCapTablePromptContext(context: EnrichedAgentContext): EnrichedAgentContext {
+    const documents = context.documents?.map((doc) => {
+      if (!doc.extractedText) return doc;
+      if (["CAP_TABLE", "TERM_SHEET"].includes(doc.type)) return doc;
+      if (["FINANCIAL_MODEL", "LEGAL_DOCS"].includes(doc.type)) {
+        if (doc.extractedText.length <= CAP_TABLE_RELEVANT_DOC_MAX_CHARS) return doc;
+        return {
+          ...doc,
+          extractedText:
+            doc.extractedText.slice(0, CAP_TABLE_RELEVANT_DOC_MAX_CHARS) +
+            `\n\n[TRONQUE POUR cap-table-auditor: document pertinent limite a ${CAP_TABLE_RELEVANT_DOC_MAX_CHARS} caracteres. Les donnees structurees restent disponibles via Fact Store et Document Extractor.]`,
+        };
+      }
+      if (doc.extractedText.length <= CAP_TABLE_OTHER_DOC_MAX_CHARS) return doc;
+
+      return {
+        ...doc,
+        extractedText:
+          doc.extractedText.slice(0, CAP_TABLE_OTHER_DOC_MAX_CHARS) +
+          `\n\n[TRONQUE POUR cap-table-auditor: document secondaire limite a ${CAP_TABLE_OTHER_DOC_MAX_CHARS} caracteres. Les faits extraits restent disponibles via Fact Store et Document Extractor.]`,
+      };
+    });
+
+    return { ...context, documents };
+  }
+
+  private buildTerminalCapTableFallback(
+    context: EnrichedAgentContext,
+    error: unknown,
+  ): LLMCapTableAuditResponse {
+    const reason = error instanceof Error ? error.message : String(error);
+    const hasCapTableDoc = context.documents?.some((doc) => doc.type === "CAP_TABLE") ?? false;
+    const hasTermSheetDoc = context.documents?.some((doc) => doc.type === "TERM_SHEET") ?? false;
+    const dataQuality: "MINIMAL" | "NONE" = hasCapTableDoc ? "MINIMAL" : "NONE";
+    const missingCriticalInfo = [
+      !hasCapTableDoc ? "Cap table detaillee" : null,
+      !hasTermSheetDoc ? "Term sheet" : null,
+      "Vesting schedule",
+      "Droits investisseurs",
+    ].filter((value): value is string => Boolean(value));
+
+    const primaryRedFlag = hasCapTableDoc
+      ? {
+          id: "rf-captable-audit-unavailable",
+          category: "transparency",
+          severity: "HIGH" as const,
+          title: "Audit cap table indisponible",
+          description: "Le modele n'a pas rendu un JSON cap-table exploitable.",
+          location: "cap-table-auditor",
+          evidence: "Fallback terminal active",
+          impact: "Ownership, dilution, terms et droits investisseurs restent a verifier manuellement.",
+          question: "Pouvez-vous fournir une cap table exportee et le term sheet complet pour verification ?",
+          redFlagIfBadAnswer: "Impossible de verifier la dilution et les droits avant investissement.",
+        }
+      : {
+          id: "rf-captable-missing",
+          category: "transparency",
+          severity: "CRITICAL" as const,
+          title: "Cap table non fournie",
+          description: "Aucun document de cap table n'est disponible dans le corpus analyse.",
+          location: "Documents fournis",
+          evidence: "Aucun document type CAP_TABLE detecte",
+          impact: "Impossible de verifier ownership, dilution, droits existants et risques de controle.",
+          question: "Pouvez-vous fournir la cap table detaillee avec toutes les classes d'actions et droits attaches ?",
+          redFlagIfBadAnswer: "Refus ou hesitation a fournir la cap table = deal-breaker potentiel.",
+        };
+
+    return {
+      meta: {
+        dataCompleteness: "minimal",
+        confidenceLevel: 20,
+        limitations: [
+          `Sortie LLM cap-table indisponible ou JSON invalide: ${reason.slice(0, 180)}`,
+          "Analyse degradee: aucune conclusion de dilution ou terms ne doit etre inferee automatiquement.",
+        ],
+      },
+      score: {
+        value: hasCapTableDoc ? 20 : 15,
+        grade: "F",
+        breakdown: [
+          { criterion: "Ownership fondateurs", weight: 30, score: 15, justification: "Ownership non verifie dans cette passe." },
+          { criterion: "Terms du round", weight: 25, score: 15, justification: "Terms non verifies dans cette passe." },
+          { criterion: "Option pool", weight: 15, score: 15, justification: "ESOP non verifie dans cette passe." },
+          { criterion: "Transparence", weight: 15, score: hasCapTableDoc ? 25 : 10, justification: hasCapTableDoc ? "Cap table detectee mais non auditee automatiquement." : "Cap table non fournie." },
+          { criterion: "Investisseurs existants", weight: 15, score: 15, justification: "Investisseurs et droits non verifies." },
+        ],
+      },
+      findings: {
+        dataAvailability: {
+          capTableProvided: hasCapTableDoc,
+          termSheetProvided: hasTermSheetDoc,
+          dataQuality,
+          missingCriticalInfo,
+          recommendation: "Demander cap table complete, term sheet, vesting schedule et droits investisseurs avant decision.",
+        },
+        ownershipBreakdown: null,
+        dilutionProjection: null,
+        roundTerms: null,
+        optionPool: null,
+        investorAnalysis: null,
+        structuralIssues: [
+          {
+            issue: "Audit cap table automatise indisponible",
+            severity: hasCapTableDoc ? "HIGH" : "CRITICAL",
+            impact: "La dilution et les droits economiques/politiques ne sont pas verifies.",
+            recommendation: "Revue manuelle des documents sources ou relance ciblee apres correction LLM.",
+          },
+        ],
+      },
+      redFlags: [primaryRedFlag],
+      questions: [
+        {
+          priority: "CRITICAL",
+          category: "cap_table",
+          question: "Pouvez-vous fournir la cap table detaillee et le term sheet complet ?",
+          context: "L'audit cap table automatise est degrade sur cette passe.",
+          whatToLookFor: "Ownership pre/post, ESOP, liquidation preference, anti-dilution, board, pro-rata et vesting.",
+        },
+      ],
+      alertSignal: {
+        hasBlocker: false,
+        recommendation: "INVESTIGATE_FURTHER",
+        justification: "Audit cap table automatise indisponible; verification manuelle requise.",
+      },
+      narrative: {
+        oneLiner: "Audit cap table automatise indisponible.",
+        summary: "Le pipeline n'a pas obtenu de JSON cap-table exploitable. Ownership, dilution, terms et droits investisseurs doivent etre controles manuellement avant decision.",
+        keyInsights: ["Verification cap table manuelle requise"],
+        forNegotiation: ["Conditionner toute avance a la reception de la cap table et du term sheet complets"],
       },
     };
   }

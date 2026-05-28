@@ -15,7 +15,6 @@ function makeBoardInput(): BoardInput {
       solution: "Un outil plus rapide.",
       whyNow: "Les budgets repartent.",
       moat: null,
-      pathToExit: null,
       verdict: "vigilance",
       confidence: 62,
       loadBearing: [

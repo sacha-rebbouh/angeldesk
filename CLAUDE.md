@@ -204,11 +204,11 @@ Le nombre "44 agents" est une preuve technique sous le capot, pas une accroche p
 | Couche | Nb | Rôle | Exécution |
 |------|----|------|-----------|
 | Couche 0 | 3 | Extraction, scoring initial, détection de signaux d'alerte | Selon le parcours |
-| Couche 1 | 13 | Lentilles d'analyse horizontales | Parallèle |
+| Couche 1 | 12 | Lentilles d'analyse horizontales | Parallèle |
 | Couche 2 | 22 | Bibliothèques / experts sectoriels | Dynamique (1 expert activé selon secteur) |
-| Couche 3 | 6 autonomes / 7 en analyse complète (`full_analysis`) | Synthèse, contradiction, scoring, memo, challenge | Séquentiel (après couches 1 & 2) |
+| Couche 3 | 5 autonomes / 6 en analyse complète (`full_analysis`) | Synthèse, contradiction, scoring, memo, challenge | Séquentiel (après couches 1 & 2) |
 
-> `technical-dd` a été split en `tech-stack-dd` + `tech-ops-dd` (optimisation coûts/timeouts Haiku).
+> `technical-dd` a été split en `tech-stack-dd` + `tech-ops-dd` (optimisation coûts/timeouts Haiku). `exit-strategist` et `scenario-modeler` retirés du pipeline actif (doctrine anti-oraculaire — pas de projection multiple/IRR/exit valuation).
 
 ### Couche 0 — Extraction et pré-analyse (3 agents)
 ```
@@ -218,7 +218,7 @@ src/agents/base/
 └── deal-scorer.ts             Scoring initial
 ```
 
-### Couche 1 — Analyse horizontale (13 agents)
+### Couche 1 — Analyse horizontale (12 agents)
 ```
 src/agents/tier1/
 ├── financial-auditor.ts      [P1]
@@ -226,7 +226,6 @@ src/agents/tier1/
 ├── team-investigator.ts      [P1]
 ├── market-intelligence.ts    [P2]
 ├── competitive-intel.ts      [P2]
-├── exit-strategist.ts        [P2]
 ├── tech-stack-dd.ts          [P3] Stack + Scalabilité + Dette
 ├── tech-ops-dd.ts            [P3] Maturité + Équipe + Sécu + IP
 ├── legal-regulatory.ts       [P3]
@@ -258,12 +257,11 @@ Activation : 1 expert sectoriel activé dynamiquement selon le secteur détecté
 
 Support : `base-sector-expert.ts`, `sector-standards.ts`, `benchmark-injector.ts`.
 
-### Couche 3 — Synthèse et challenge (6 autonomes / 7 en analyse complète)
+### Couche 3 — Synthèse et challenge (5 autonomes / 6 en analyse complète)
 ```
 src/agents/tier3/
 ├── conditions-analyst.ts      [HIGH]
 ├── contradiction-detector.ts   [CRITIQUE]
-├── scenario-modeler.ts         [HIGH]
 ├── synthesis-deal-scorer.ts    [CRITIQUE]
 ├── devils-advocate.ts          [HIGH]
 ├── memo-generator.ts           [HIGH]
@@ -295,7 +293,6 @@ La DB de deals (5,000+ cible) est exploitée par les agents d'analyse.
 | `financial-auditor` | Benchmark valo, multiples |
 | `competitive-intel` | Détection concurrents |
 | `market-intelligence` | Tendances marché |
-| `exit-strategist` | Comparables exit |
 | `deck-forensics` | Vérification déclarations vs DB |
 
 ### Cross-reference obligatoire

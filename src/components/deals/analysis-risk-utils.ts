@@ -37,6 +37,12 @@ function records(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -88,7 +94,26 @@ function addRisk(
   const title = risk.title.trim();
   if (!title) return;
   const normalized = title.toLowerCase();
-  if (seen.has(normalized)) return;
+  if (seen.has(normalized)) {
+    const existing = risks.find((item) => item.title.toLowerCase() === normalized);
+    if (!existing) return;
+    if (severityRank[risk.severity] < severityRank[existing.severity]) {
+      existing.severity = risk.severity;
+    }
+    if (risk.description && !existing.description.includes(risk.description)) {
+      existing.description = [existing.description, risk.description].filter(Boolean).join(" ");
+    }
+    if (risk.source && !existing.source?.includes(risk.source)) {
+      existing.source = [existing.source, risk.source].filter(Boolean).join(", ");
+    }
+    if (risk.evidence && !existing.evidence?.includes(risk.evidence)) {
+      existing.evidence = [existing.evidence, risk.evidence].filter(Boolean).join(" ");
+    }
+    if (risk.question && !existing.question?.includes(risk.question)) {
+      existing.question = [existing.question, risk.question].filter(Boolean).join(" ");
+    }
+    return;
+  }
   seen.add(normalized);
   risks.push({
     id: risk.id ?? `risk-${risks.length}`,
@@ -114,6 +139,18 @@ export function extractDecisionRisks(results: Record<string, AnalysisAgentResult
       records(data.redFlags),
       records(valueAt(data, ["findings", "redFlags"])),
       records(data.criticalRisks),
+      records(data.keyRisks),
+      records(data.sectorRedFlags),
+      records(valueAt(data, ["findings", "risks"])),
+      records(valueAt(data, ["findings", "keyRisks"])),
+      records(valueAt(data, ["findings", "topWeaknesses"])),
+      records(valueAt(data, ["findings", "weaknesses"])),
+      records(valueAt(data, ["riskAssessment", "risks"])),
+      records(valueAt(data, ["riskAssessment", "redFlags"])),
+      records(valueAt(data, ["investmentThesis", "keyRisks"])),
+      records(valueAt(data, ["executiveSummary", "keyRisks"])),
+      records(valueAt(data, ["dueDiligenceFindings", "redFlags"])),
+      records(valueAt(data, ["sectorFit", "weaknesses"])),
       records(valueAt(data, ["signalProfile", "criticalRisks"])),
       records(valueAt(data, ["findings", "structuralRisks"])),
     ];
@@ -139,6 +176,15 @@ export function extractDecisionRisks(results: Record<string, AnalysisAgentResult
         severity: severityFrom(item.severity, text(item.residualRisk).toLowerCase() === "high" ? "HIGH" : "MEDIUM"),
         source,
         evidence: text(item.evidence),
+      });
+    }
+
+    for (const riskText of stringArray(valueAt(data, ["narrative", "risks"]))) {
+      addRisk(risks, seen, {
+        title: riskText,
+        description: "",
+        severity: "HIGH",
+        source,
       });
     }
 

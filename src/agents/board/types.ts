@@ -122,7 +122,6 @@ export interface BoardInput {
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     verdict: string;
     confidence: number;
     loadBearing: Array<{
@@ -183,7 +182,7 @@ export interface BoardInput {
       redFlagDetector?: unknown;    // Red flags detection
     };
 
-    // Tier 1: 13 Investigation agents (parallel)
+    // Tier 1: 12 Investigation agents (parallel)
     tier1?: {
       deckForensics?: unknown;      // Deck quality, claims verification
       financialAuditor?: unknown;   // Financial metrics, unit economics
@@ -196,7 +195,6 @@ export interface BoardInput {
       capTableAuditor?: unknown;    // Cap table, dilution
       gtmAnalyst?: unknown;         // Go-to-market, channels
       customerIntel?: unknown;      // Customer analysis, retention
-      exitStrategist?: unknown;     // Exit scenarios, IRR
       questionMaster?: unknown;     // Questions to ask founder
     };
 

@@ -19,7 +19,7 @@ let tier1Agents: Record<string, DynamicAgent> | null = null;
 let tier3Agents: Record<string, DynamicAgent> | null = null;
 
 /**
- * Get Tier 1 agents (13 investigation agents)
+ * Get Tier 1 agents (12 investigation agents)
  * Note: technical-dd has been split into tech-stack-dd and tech-ops-dd
  */
 export async function getTier1Agents(): Promise<Record<string, DynamicAgent>> {
@@ -38,7 +38,6 @@ export async function getTier1Agents(): Promise<Record<string, DynamicAgent>> {
       "cap-table-auditor": tier1Module.capTableAuditor,
       "gtm-analyst": tier1Module.gtmAnalyst,
       "customer-intel": tier1Module.customerIntel,
-      "exit-strategist": tier1Module.exitStrategist,
       "question-master": tier1Module.questionMaster,
     };
   }

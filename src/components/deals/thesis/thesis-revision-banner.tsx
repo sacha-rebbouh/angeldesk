@@ -31,7 +31,6 @@ interface ThesisVersion {
   solution: string;
   whyNow: string;
   moat: string | null;
-  pathToExit: string | null;
   loadBearing: Array<{
     id: string;
     statement: string;
@@ -184,12 +183,6 @@ export function ThesisRevisionBanner({ previous, latest, triggerDocumentName, on
               label="Moat"
               before={previous.moat ?? "(non declare)"}
               after={latest.moat ?? "(non declare)"}
-              multiline
-            />
-            <DiffSection
-              label="Path to exit"
-              before={previous.pathToExit ?? "(non declare)"}
-              after={latest.pathToExit ?? "(non declare)"}
               multiline
             />
 

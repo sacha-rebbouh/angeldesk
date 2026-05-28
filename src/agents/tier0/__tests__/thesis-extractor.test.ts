@@ -76,7 +76,6 @@ describe("ThesisExtractorAgent degradation handling", () => {
               { kind: "unknown", text: "La premiumisation du pet care accélère maintenant." },
             ],
             moatClaims: [],
-            pathToExitClaims: [],
             loadBearing: [
               {
                 id: "lb_1",
@@ -167,7 +166,6 @@ describe("ThesisExtractorAgent degradation handling", () => {
           solutionClaims: [{ kind: "unknown", text: "Une solution crédible." }],
           whyNowClaims: [{ kind: "unknown", text: "Le marché s'ouvre maintenant." }],
           moatClaims: [],
-          pathToExitClaims: [],
           loadBearing: [],
           alerts: [],
         },
@@ -244,7 +242,6 @@ describe("ThesisExtractorAgent degradation handling", () => {
           solutionClaims: [{ kind: "unknown", text: "Une solution crédible." }],
           whyNowClaims: [{ kind: "unknown", text: "Le marché s'ouvre maintenant." }],
           moatClaims: [],
-          pathToExitClaims: [],
           loadBearing: [],
           alerts: [],
         },
@@ -327,7 +324,6 @@ describe("ThesisExtractorAgent degradation handling", () => {
         solutionClaims: [{ kind: "unknown", text: "Une solution crédible." }],
         whyNowClaims: [{ kind: "unknown", text: "Le marché s'ouvre maintenant." }],
         moatClaims: [],
-        pathToExitClaims: [],
         loadBearing: [],
         alerts: [],
       },

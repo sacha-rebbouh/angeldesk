@@ -8,7 +8,7 @@
  * Standard: Qualite facturable 50K€ - Chaque contradiction sourcee et quantifiee
  *
  * Inputs:
- * - Tous les outputs Tier 1 (13 agents)
+ * - Tous les outputs Tier 1 (12 agents)
  * - Output Tier 2 expert sectoriel
  * - Deck original (via extractedData)
  * - Context Engine data
@@ -230,7 +230,7 @@ export class ContradictionDetectorAgent extends BaseAgent<ContradictionDetectorD
     const tier1Agents = [
       "deck-forensics", "financial-auditor", "market-intelligence", "competitive-intel",
       "team-investigator", "tech-stack-dd", "tech-ops-dd", "legal-regulatory", "cap-table-auditor",
-      "gtm-analyst", "customer-intel", "exit-strategist", "question-master"
+      "gtm-analyst", "customer-intel", "question-master"
     ];
 
     const sections: string[] = ["## OUTPUTS AGENTS TIER 1"];
@@ -1043,7 +1043,7 @@ Produis un JSON avec cette structure:
     const tier1 = [
       "deck-forensics", "financial-auditor", "market-intelligence", "competitive-intel",
       "team-investigator", "tech-stack-dd", "tech-ops-dd", "legal-regulatory", "cap-table-auditor",
-      "gtm-analyst", "customer-intel", "exit-strategist", "question-master"
+      "gtm-analyst", "customer-intel", "question-master"
     ];
     const tier3 = ["contradiction-detector", "synthesis-deal-scorer", "devils-advocate", "memo-generator"];
 
@@ -1068,7 +1068,7 @@ Produis un JSON avec cette structure:
     const successfulAgents = Object.keys(results).filter(k => results[k]?.success);
 
     if (successfulAgents.length < 13) {
-      limitations.push(`Seulement ${successfulAgents.length}/13 agents Tier 1 ont produit un output`);
+      limitations.push(`Seulement ${successfulAgents.length}/12 agents Tier 1 ont produit un output`);
     }
 
     if (!context.fundingDbContext && !context.fundingContext) {

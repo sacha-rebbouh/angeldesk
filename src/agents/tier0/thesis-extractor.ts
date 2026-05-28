@@ -108,18 +108,19 @@ Tu es un analyste these d'investissement senior, specialise dans la lecture stru
 
 # MISSION
 
-Extraire la these d'investissement de la societe en 6 champs structurels + decomposer ses hypotheses porteuses + identifier les alertes structurelles a watcher.
+Extraire la these d'investissement de la societe en 5 champs structurels + decomposer ses hypotheses porteuses + identifier les alertes structurelles a watcher.
 
-# 6 CHAMPS A EXTRAIRE
+# 5 CHAMPS A EXTRAIRE
 
-Pour chacun des 6 champs, tu retournes UNE LISTE DE CLAIMS STRUCTURES (pas du texte final libre).
+Pour chacun des 5 champs, tu retournes UNE LISTE DE CLAIMS STRUCTURES (pas du texte final libre).
 
 1. **reformulatedClaims** — claims qui resument la these : "Angel Desk parie que X en visant Y via Z".
 2. **problemClaims** — claims sur le probleme vise.
 3. **solutionClaims** — claims sur la solution apportee.
 4. **whyNowClaims** — claims sur le catalyseur temporel.
 5. **moatClaims** — claims sur la defensibilite durable.
-6. **pathToExitClaims** — claims sur le chemin d'exit.
+
+Ne produis pas de scenario de liquidite, de projection de sortie ni de retour estime : cette analyse reste factuelle et anti-oraculaire.
 
 Chaque claim doit etre de l'un de ces 4 types:
 - **direct_fact**: reference un factKey du THESIS FACT SCOPE + une phrase d'amorce SANS chiffres
@@ -141,7 +142,7 @@ Pour chacune:
 
 Toutes les alertes structurelles (pas limite arbitraire). Chaque alerte:
 - **severity** : critical / high / medium / low
-- **category** : why_now | problem_reality | solution_fit | moat | unit_economics | path_to_exit | team_dependency | market_size | assumption_fragile
+- **category** : why_now | problem_reality | solution_fit | moat | unit_economics | team_dependency | market_size | assumption_fragile
 - **title** : titre court (10 mots max)
 - **detail** : explication (3-5 phrases max)
 - **linkedAssumptionId** : ref a une load-bearing si applicable
@@ -185,7 +186,6 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
         solution: core.solutionClaims,
         whyNow: core.whyNowClaims,
         moat: core.moatClaims,
-        pathToExit: core.pathToExitClaims,
       },
       factScope
     );
@@ -200,9 +200,6 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     const moat = repairedSections.moat.length > 0
       ? renderStructuredClaims(repairedSections.moat, factScope)
       : null;
-    const pathToExit = repairedSections.pathToExit.length > 0
-      ? renderStructuredClaims(repairedSections.pathToExit, factScope)
-      : null;
     assertSupportedThesisNarrative(
       {
         reformulated,
@@ -210,7 +207,6 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
         solution,
         whyNow,
         moat,
-        pathToExit,
       },
       (context as EnrichedAgentContext).factStore ?? []
     );
@@ -222,7 +218,6 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
       solution,
       whyNow,
       moat,
-      pathToExit,
       contextSummary,
     };
 
@@ -290,7 +285,6 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
       solution,
       whyNow,
       moat,
-      pathToExit,
       verdict,
       confidence,
       loadBearing,
@@ -312,7 +306,6 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     contextSummary: string;
   }): Promise<FrameworkExecutionResult<YcLensOutput>> {
     const result = await this.llmCompleteJSONValidated<YcLensOutput>(
@@ -337,7 +330,6 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     contextSummary: string;
   }): Promise<FrameworkExecutionResult<ThielLensOutput>> {
     const result = await this.llmCompleteJSONValidated<ThielLensOutput>(
@@ -362,7 +354,6 @@ ${THESIS_ANTI_HALLUCINATION_DIRECTIVES}
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     contextSummary: string;
     dealStage?: string;
     dealSector?: string;
@@ -571,7 +562,7 @@ ${contextSummary}
 
 ## THESIS FACT SCOPE (source canonique pour TOUTE affirmation numerique)
 
-Utilise UNIQUEMENT les facts et metriques pre-calculees ci-dessous pour toute affirmation chiffrée dans reformulated / problem / solution / whyNow / moat / pathToExit.
+Utilise UNIQUEMENT les facts et metriques pre-calculees ci-dessous pour toute affirmation chiffrée dans reformulated / problem / solution / whyNow / moat.
 - Si un chiffre ou une metrique n'apparait pas dans ce scope, ne le mentionne pas.
 - Tu n'as PAS le droit de calculer toi-meme une marge, un multiple, un runway, un burn/revenue, un LTV/CAC ou toute autre metrique derivee.
 - Si une information chiffrée manque ou n'est pas coherente, ecris "inconnu" ou n'en parle pas.
@@ -581,7 +572,7 @@ ${formattedFactScope}
 
 ---
 
-Applique ta mission: extrait la these en 6 listes de claims structures (reformulatedClaims, problemClaims, solutionClaims, whyNowClaims, moatClaims, pathToExitClaims), identifie 3-5 load-bearing assumptions structurelles, et remonte les alertes (pas de limite arbitraire).
+Applique ta mission: extrait la these en 5 listes de claims structures (reformulatedClaims, problemClaims, solutionClaims, whyNowClaims, moatClaims), identifie 3-5 load-bearing assumptions structurelles, et remonte les alertes (pas de limite arbitraire).
 
 INTERDICTIONS CRITIQUES:
 - N'invente aucun ratio financier.
@@ -590,7 +581,7 @@ INTERDICTIONS CRITIQUES:
 - N'ecris AUCUN chiffre dans les claims de type judgment ou unknown.
 - N'ecris AUCUN chiffre dans les champs framing de direct_fact ou derived_metric. Le code injectera la valeur numerique lui-meme.
 
-OUTPUT ATTENDU: JSON strict SANS wrapping. Les champs reformulatedClaims, problemClaims, solutionClaims, whyNowClaims, moatClaims, pathToExitClaims, loadBearing et alerts doivent etre a la RACINE du JSON.
+OUTPUT ATTENDU: JSON strict SANS wrapping. Les champs reformulatedClaims, problemClaims, solutionClaims, whyNowClaims, moatClaims, loadBearing et alerts doivent etre a la RACINE du JSON.
 PAS de cle enveloppante type "thesis", "data", "output" ou "result".
 
 Exemple attendu:
@@ -607,9 +598,6 @@ Exemple attendu:
     { "kind": "unknown", "text": "Le why-now reste insuffisamment documente." }
   ],
   "moatClaims": [],
-  "pathToExitClaims": [
-    { "kind": "direct_fact", "factKey": "market.tam", "framing": "Le memo cible une valeur de sortie autour de" }
-  ],
   "loadBearing": [],
   "alerts": []
 }

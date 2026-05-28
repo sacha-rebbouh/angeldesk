@@ -70,7 +70,7 @@ Produire un INVESTMENT MEMO de qualité institutionnelle qui:
 - Formater de manière non-confrontationnelle
 
 ## Étape 3: Synthèse des Scores
-- Agréger les scores des 13 agents Tier 1
+- Agréger les scores des 12 agents Tier 1
 - Intégrer le score du synthesis-deal-scorer
 - Pondérer selon l'importance (Team 25%, Financials 25%, Market 20%, Product 15%, Traction 15%)
 - Ajuster selon les contradictions détectées

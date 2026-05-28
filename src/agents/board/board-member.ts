@@ -419,7 +419,6 @@ ${t.reformulated}
 - **Solution** : ${t.solution}
 - **Why-now** : ${t.whyNow}
 - **Moat** : ${t.moat ?? "Non declare"}
-- **Path to exit** : ${t.pathToExit ?? "Non declare"}
 
 ### Axes canoniques
 ${formatAxisPromptLine("Thesis Quality", t.evaluationAxes.thesisQuality)}${formatAxisPromptLine("Investor Profile Fit", t.evaluationAxes.investorProfileFit)}${formatAxisPromptLine("Deal Accessibility", t.evaluationAxes.dealAccessibility)}

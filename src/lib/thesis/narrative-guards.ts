@@ -78,6 +78,20 @@ const DERIVED_METRIC_RULES = [
 
 const NON_NUMERIC_BUSINESS_MODEL_PATTERN = /\bB2B(?:2C|toC)?\b|\bB2C\b/gi;
 
+const ABSENCE_OR_INSUFFICIENCY_PATTERNS = [
+  /\baucun(?:e|s)?\b/i,
+  /\bpas\s+(?:de|d['’])/i,
+  /\bnon\s+(?:fourni|fournie|fournis|fournies|disponible|disponibles)\b/i,
+  /\bnon\s+(?:documente|documentee|documentes|documentees|documenté|documentée|documentés|documentées)\b/i,
+  /\bnon\s+(?:communique|communiquee|communiques|communiquees|communiqué|communiquée|communiqués|communiquées)\b/i,
+  /\bnon\s+(?:declare|declaree|declares|declarees|déclaré|déclarée|déclarés|déclarées)\b/i,
+  /\b(?:absent|absente|absents|absentes|indisponible|inconnu|inconnue|indetermine|indéterminé|manquant|manquante)\b/i,
+  /\bsans\s+(?:projection|donnee|donnée|metrique|métrique|chiffre|precision|précision|element|élément|garantie)\b/i,
+  /\bnot\s+(?:provided|available|disclosed|documented|stated)\b/i,
+  /\bno\s+(?:projection|metric|data|figure|number|disclosure)\b/i,
+  /\b(?:missing|unavailable|unknown|undisclosed|undocumented)\b/i,
+];
+
 export interface ThesisNarrativeGuardIssue {
   field: string;
   sentence: string;
@@ -95,6 +109,16 @@ function containsNumericAssertion(sentence: string): boolean {
   return /\d|[%€$£]|\b(?:eur|usd|nok|gbp|bn|million|millions|milliard|milliards|x)\b/i.test(
     sentence.replace(NON_NUMERIC_BUSINESS_MODEL_PATTERN, "")
   );
+}
+
+function containsMetricValueAssertion(sentence: string): boolean {
+  return /[%€$£]|\b(?:eur|usd|nok|gbp|bn|million|millions|milliard|milliards|x)\b/i.test(
+    sentence.replace(NON_NUMERIC_BUSINESS_MODEL_PATTERN, "")
+  );
+}
+
+function isAbsenceOrInsufficiencySentence(sentence: string): boolean {
+  return ABSENCE_OR_INSUFFICIENCY_PATTERNS.some((pattern) => pattern.test(sentence));
 }
 
 function extractFirstPercentage(sentence: string): number | null {
@@ -121,6 +145,13 @@ export function findUnsupportedThesisNarrativeClaims(
     const sentences = splitIntoSentences(value);
     for (const sentence of sentences) {
       const numericAssertion = containsNumericAssertion(sentence);
+      const absenceOnly =
+        isAbsenceOrInsufficiencySentence(sentence) &&
+        !containsMetricValueAssertion(sentence);
+
+      if (absenceOnly) {
+        continue;
+      }
 
       for (const rule of DERIVED_METRIC_RULES) {
         if (!rule.patterns.some((pattern) => pattern.test(sentence))) {

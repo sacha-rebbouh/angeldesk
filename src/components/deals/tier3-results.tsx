@@ -778,7 +778,7 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
             <CheckCircle className="h-8 w-8 text-green-600" />
             <div>
               <p className="font-medium text-green-800">Aucune contradiction majeure</p>
-              <p className="text-sm text-green-700">Les analyses des 13 agents sont cohérentes entre elles.</p>
+              <p className="text-sm text-green-700">Les analyses disponibles sont cohérentes entre elles.</p>
             </div>
           </div>
         )}

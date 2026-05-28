@@ -1,6 +1,39 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-26 (audit post-Codex) — Retrait exit-strategist du pipeline actif, fix tests et filtres
+
+### Contexte
+Audit du commit Codex qui retire `exit-strategist` du pipeline Tier 1 (13 → 12 agents) et `scenario-modeler` était déjà retiré du Tier 3 (6 → 5 autonomes). Codex disait `npm run build` OK mais `tsc --noEmit` cassait sur deux tests, et plusieurs surfaces résiduelles (chat / board / PDF / labels / reanalyze coaching) référençaient toujours l'agent. Le filtre `isNegativeSignal` ajouté par Codex (`valorisation`, `difficile`, `agressif`, `inconnu`) filtrait des signaux positifs légitimes.
+
+### Modifications
+- **Tests cassés réparés** : `src/agents/__tests__/agent-pipeline.test.ts` (tier1Agents → 12), `src/agents/__tests__/sequential-pipeline.test.ts` (Phase D → 7 agents, scorecard final 20 → 19).
+- **Filtres `isNegativeSignal` resserrés** dans `analysis-investor-view.tsx` et `analysis-memo-full.tsx` : retrait des mots-clés trop larges (`valorisation`, `difficile`, `agressif`, `inconnu`) qui filtraient les signaux positifs légitimes. Patterns regex anti-oraculaires (`\broi\b`, `\bproject/projection/projete`, `\bsi maint/reel`, `\bobjectif d'exit`) conservés.
+- **Surfaces résiduelles purgées** :
+  - `src/app/api/coaching/reanalyze/route.ts` — retiré `"exit-strategist"` de `ALL_AGENT_NAMES`.
+  - `src/lib/live/post-call-reanalyzer.ts` — retiré `exit: ["exit-strategist"]` du mapping.
+  - `src/agents/chat/context-retriever.ts` — retiré topics `exit/acquisition/ipo/liquidity` du `TOPIC_TO_AGENTS` ; `valuation` ne pointe plus vers `exit-strategist`.
+  - `src/agents/chat/deal-chat-agent.ts` — retiré entrée `"exit-strategist": "Strategie Exit"` du label map.
+  - `src/agents/board/board-orchestrator.ts` — ne passe plus `exitStrategist` au compressor.
+  - `src/agents/board/context-compressor.ts` — retrait de la ligne `["Exit Strategist", t1.exitStrategist]`.
+  - `src/agents/board/types.ts` — retrait du champ `exitStrategist?: unknown` (Tier 1 = 12 agents).
+  - `src/config/labels-fr.ts` — retrait de l'entrée FR `"exit-strategist": "Stratégie de sortie"`.
+  - `src/agents/stage-calibration.ts` et `src/agents/document-context-retriever.ts` — retrait des entrées exit-strategist du mapping keywords.
+  - `src/agents/base-agent.ts` — retrait de `exit-strategist` de la table de scoring DOCUMENT_TYPE_RELEVANCE et de la liste `standardStructuredAgents`.
+  - `src/lib/pdf/pdf-sections/tier1-agents.tsx` — retrait du `case "exit-strategist"` du switch et de la fonction `ExitFindings()` (~145 lignes mortes).
+- **`src/scoring/stage-weights.ts`** — `formatWeightsForPrompt()` : la source de la dimension `exitPotential` passe de `exit-strategist` à `market-intelligence, competitive-intel, sector-expert`. La dimension elle-même reste dans `DimensionWeights` (cf. § "Points à arbitrer" ci-dessous).
+- **`src/components/deals/analysis-panel.tsx`** — `AnalysisCompleteView` n'est plus rendu dans l'onglet "Analyses détaillées" pour les analyses Tier1/2/3 (qui ont déjà leur propre rendu spécialisé). Fin du doublon visuel.
+- **`CLAUDE.md`** — mise à jour des compteurs : Couche 1 = 12 (au lieu de 13), Couche 3 = 5 autonomes / 6 en analyse complète (au lieu de 6/7), suppression de `exit-strategist.ts` et `scenario-modeler.ts` des listes, retrait de la ligne "Comparables exit" dans le tableau d'usages DB.
+
+### Vérification
+- `npx tsc --noEmit` → OK (0 erreur).
+
+### Points à arbitrer (hors scope ce commit)
+- `DimensionWeights.exitPotential` (5-15% selon stade) reste dans le scoring déterministe : à décider si on retire entièrement la dimension ou si on garde l'évaluation via experts sectoriels Tier 2 (qui ont déjà `exitPotential` dans leur schema).
+- `src/agents/types.ts`, `src/agents/type-modules/pipeline.ts`, `src/agents/type-modules/tier1.ts` exportent encore `ExitStrategistData/Result/Findings` pour la compatibilité avec les analyses persistées en DB (idem `finding-extractor.ts` et `agent-error-impact.ts`).
+- `src/agents/tier1/exit-strategist.ts` est conservé pour les anciennes analyses, mais n'est plus enregistré dans le pipeline actif.
+
+---
 ## 2026-05-26 (fin) — Filtre déterministe sector-aware sur red flags + tests unitaires
 
 ### Contexte

@@ -24,7 +24,6 @@ const CATEGORY_AGENT_MAP: Record<string, string[]> = {
   legal: ["legal-regulatory"],
   gtm: ["gtm-analyst"],
   customer: ["customer-intel"],
-  exit: ["exit-strategist"],
   cap_table: ["cap-table-auditor"],
 };
 

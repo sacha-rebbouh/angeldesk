@@ -241,7 +241,6 @@ export class QuestionMasterAgent extends BaseAgent<QuestionMasterData, QuestionM
         "market-intelligence",
         "competitive-intel",
         "team-investigator",
-        "exit-strategist",
       ],
     });
   }
@@ -422,7 +421,7 @@ Regles:
     "sourceAgent": "financial-auditor",
     "redFlagId": "RF-003",
     "triggerData": "Projection ARR 2025: 2.5M€ (+300%) avec 1 sales. Benchmark median: 120% avec 3-4 sales.",
-    "whyItMatters": "Si la projection est irrealiste, le ROI sera 60% inferieur aux attentes"
+    "whyItMatters": "Si la projection est irrealiste, la trajectoire financiere sera largement inferieure aux attentes"
   },
   "evaluation": {
     "goodAnswer": "Plan de recrutement de 3 sales en Q1, pipeline deja qualifie de 500K€, contrats enterprise en cours",
@@ -916,7 +915,6 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       "cap-table-auditor",
       "gtm-analyst",
       "customer-intel",
-      "exit-strategist",
     ];
 
     for (const agentName of tier1Agents) {

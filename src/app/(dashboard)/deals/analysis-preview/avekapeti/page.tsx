@@ -66,7 +66,6 @@ export default async function AvekapetiAnalysisPreviewPage() {
         solution: true,
         whyNow: true,
         moat: true,
-        pathToExit: true,
         verdict: true,
         confidence: true,
       },

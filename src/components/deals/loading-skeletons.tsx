@@ -91,10 +91,10 @@ export function Tier2ResultsSkeleton() {
         </CardContent>
       </Card>
 
-      {/* Scenario cards skeleton */}
+      {/* Synthesis cards skeleton */}
       <div className="grid gap-4 md:grid-cols-3">
-        {["Bull", "Base", "Bear"].map((scenario) => (
-          <Card key={scenario}>
+        {["Synthèse", "Risques", "Mémo"].map((item) => (
+          <Card key={item}>
             <CardHeader className="pb-2">
               <Skeleton className="h-5 w-20" />
             </CardHeader>

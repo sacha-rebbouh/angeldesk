@@ -12,7 +12,7 @@
 
 import { z } from "zod";
 import { BaseAgent } from "../base-agent";
-import type { AgentContext, AgentResult, EnrichedAgentContext } from "../types";
+import type { AgentContext, AgentResult } from "../types";
 import type {
   ThesisReconcilerOutput,
   ThesisVerdict,
@@ -58,7 +58,6 @@ type DeterministicThesisField =
   | "solution"
   | "whyNow"
   | "moat"
-  | "pathToExit"
   | "loadBearing";
 
 type DeterministicChallenge = {
@@ -159,8 +158,6 @@ LANGUE: Francais.`;
   }
 
   protected async execute(context: AgentContext): Promise<ThesisReconcilerOutput> {
-    const enriched = context as EnrichedAgentContext;
-
     // 1. Recuperer la these initiale depuis previousResults
     const thesisResult = context.previousResults?.["thesis-extractor"];
     if (!thesisResult || !thesisResult.success || !("data" in thesisResult)) {
@@ -253,7 +250,6 @@ LANGUE: Francais.`;
       "tech-ops-dd",
       "legal-regulatory",
       "cap-table-auditor",
-      "exit-strategist",
       "deck-forensics",
     ];
 
@@ -311,7 +307,6 @@ LANGUE: Francais.`;
       "tech-ops-dd",
       "legal-regulatory",
       "cap-table-auditor",
-      "exit-strategist",
       "deck-forensics",
     ];
 
@@ -416,9 +411,6 @@ LANGUE: Francais.`;
     if (/(why now|timing|fen[eê]tre|window|r[eé]glement|regulat|tailwind|headwind)/i.test(normalized)) {
       return "whyNow";
     }
-    if (/(exit|acqu[eé]reur|ipo|liquidit|m&a)/i.test(normalized)) {
-      return "pathToExit";
-    }
     if (/(problem|douleur|pain|customer need|besoin|demande|adoption)/i.test(normalized)) {
       return "problem";
     }
@@ -472,7 +464,6 @@ LANGUE: Francais.`;
 **Solution:** ${thesis.solution}
 **Why-now:** ${thesis.whyNow}
 **Moat:** ${thesis.moat ?? "(non declare)"}
-**Path to exit:** ${thesis.pathToExit ?? "(non declare)"}
 
 **Verdict initial:** ${thesis.verdict} (confidence ${thesis.confidence})
 

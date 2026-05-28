@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatAgentName } from "@/lib/format-utils";
 import type { MemoGeneratorData } from "@/agents/types";
+import { extractDecisionRisks } from "./analysis-risk-utils";
 
 interface AgentResult {
   agentName: string;
@@ -124,14 +125,25 @@ function getAgentSummary(data: unknown): string {
     || "";
 }
 
-function getAgentInsights(data: unknown, limit = 8): string[] {
+function getPositiveInsights(data: unknown, limit = 8): string[] {
   return [
     ...stringItems(valueAt(data, ["narrative", "keyInsights"]), limit),
     ...stringItems(valueAt(data, ["executiveSummary", "keyPoints"]), limit),
     ...stringItems(valueAt(data, ["keyStrengths"]), limit),
-    ...stringItems(valueAt(data, ["keyWeaknesses"]), limit),
     ...stringItems(valueAt(data, ["findings", "topStrengths"]), limit),
+    ...stringItems(valueAt(data, ["investmentHighlights"]), limit),
+  ].filter((item) => !isNegativeSignal(item)).slice(0, limit);
+}
+
+function getNegativeInsights(data: unknown, limit = 8): string[] {
+  return [
+    ...stringItems(valueAt(data, ["keyWeaknesses"]), limit),
     ...stringItems(valueAt(data, ["findings", "topWeaknesses"]), limit),
+    ...stringItems(valueAt(data, ["findings", "weaknesses"]), limit),
+    ...stringItems(valueAt(data, ["findings", "risks"]), limit),
+    ...stringItems(valueAt(data, ["findings", "keyRisks"]), limit),
+    ...stringItems(valueAt(data, ["riskAssessment", "risks"]), limit),
+    ...stringItems(valueAt(data, ["narrative", "risks"]), limit),
   ].slice(0, limit);
 }
 
@@ -148,6 +160,19 @@ function uniqueStrings(items: string[], limit = items.length): string[] {
 
 function isNegativeSignal(item: string): boolean {
   const normalized = normalizeForMatch(item);
+  const blockedPositiveClaimPatterns = [
+    /\broi\b/,
+    /\bsi maint/,
+    /\bsi reel/,
+    /\bsi les chiffres/,
+    /\bproject/,
+    /\bprojection/,
+    /\bprojete/,
+    /\bobjectif\s+d['’]?exit/,
+  ];
+  if (blockedPositiveClaimPatterns.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
   return [
     "risque",
     "fragilise",
@@ -164,8 +189,16 @@ function isNegativeSignal(item: string): boolean {
     "instabil",
     "non quantifi",
     "non prouve",
+    "non realise",
+    "non verifi",
+    "sans aucune verification",
+    "suspect",
+    "preuve manquante",
     "inflation",
-    "cout",
+    "hausse du cout",
+    "cout en hausse",
+    "cout augmente",
+    "couts augmentent",
     "retention",
     "bloquant",
     "alerte",
@@ -183,6 +216,9 @@ function collectStrengths(results: Record<string, AgentResult>, synthesis: Recor
     ...stringItems(valueAt(synthesis, ["keyStrengths"]), limit),
     ...stringItems(valueAt(synthesis, ["findings", "topStrengths"]), limit),
     ...stringItems(valueAt(synthesis, ["investmentThesis", "strengths"]), limit),
+    ...stringItems(valueAt(market, ["narrative", "keyInsights"]), limit),
+    ...stringItems(valueAt(customer, ["narrative", "keyInsights"]), limit),
+    ...stringItems(valueAt(gtm, ["narrative", "keyInsights"]), limit),
     ...stringItems(valueAt(market, ["findings", "topStrengths"]), limit),
     ...stringItems(valueAt(customer, ["findings", "topStrengths"]), limit),
     ...stringItems(valueAt(financial, ["findings", "topStrengths"]), limit),
@@ -245,19 +281,13 @@ function getFindingRows(data: unknown, limit = 8): Array<{ label: string; value:
 }
 
 function collectRedFlags(results: Record<string, AgentResult>, limit = 18): string[] {
-  const flags: string[] = [];
-  for (const [agentName, result] of Object.entries(results)) {
-    if (!result.success || !result.data) continue;
-    const agentLabel = formatAgentName(agentName);
-    const agentFlags = [
-      ...stringItems(valueAt(result.data, ["redFlags"]), limit),
-      ...stringItems(valueAt(result.data, ["findings", "redFlags"]), limit),
-      ...stringItems(valueAt(result.data, ["criticalRisks"]), limit),
-      ...stringItems(valueAt(result.data, ["findings", "structuralRisks"]), limit),
-    ];
-    for (const flag of agentFlags) flags.push(`${flag} (${agentLabel})`);
-  }
-  return Array.from(new Set(flags)).slice(0, limit);
+  return extractDecisionRisks(results)
+    .map((risk) => [
+      risk.title,
+      risk.description,
+      risk.source ? `(${risk.source})` : "",
+    ].filter(Boolean).join(" — "))
+    .slice(0, limit);
 }
 
 function collectQuestions(results: Record<string, AgentResult>, limit = 18): string[] {
@@ -276,6 +306,12 @@ function collectQuestions(results: Record<string, AgentResult>, limit = 18): str
   return Array.from(new Set(questions)).slice(0, limit);
 }
 
+function displayDealName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return name;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 function FallbackAgentBlock({
   title,
   agentNames,
@@ -292,30 +328,38 @@ function FallbackAgentBlock({
       return {
         name,
         summary: getAgentSummary(data),
-        insights: getAgentInsights(data, 5),
+        positiveInsights: getPositiveInsights(data, 5),
+        negativeInsights: getNegativeInsights(data, 5),
         findings: getFindingRows(data, 5),
       };
     })
     .filter((item): item is {
       name: string;
       summary: string;
-      insights: string[];
+      positiveInsights: string[];
+      negativeInsights: string[];
       findings: Array<{ label: string; value: string }>;
     } => Boolean(item));
 
   if (briefs.length === 0) return null;
 
   return (
-    <Section title={title} icon={FileText} aside={<Badge variant="outline">{briefs.length} agents</Badge>}>
+    <Section title={title} icon={FileText} aside={<Badge variant="outline">{briefs.length} analyses</Badge>}>
       <div className="space-y-4">
         {briefs.map((brief) => (
           <article key={brief.name} className="rounded-lg border bg-muted/20 p-4">
             <h4 className="font-semibold tracking-normal">{formatAgentName(brief.name)}</h4>
             {brief.summary && <p className="mt-2 text-sm leading-7 text-foreground">{brief.summary}</p>}
-            {brief.insights.length > 0 && (
+            {brief.positiveInsights.length > 0 && (
               <div className="mt-3">
-                <p className="text-xs font-medium text-muted-foreground">Points clés</p>
-                <div className="mt-2"><BulletList items={brief.insights} /></div>
+                <p className="text-xs font-medium text-muted-foreground">Signaux positifs</p>
+                <div className="mt-2"><BulletList items={brief.positiveInsights} /></div>
+              </div>
+            )}
+            {brief.negativeInsights.length > 0 && (
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs font-medium text-amber-900">Points de vigilance</p>
+                <div className="mt-2"><BulletList items={brief.negativeInsights} /></div>
               </div>
             )}
             {brief.findings.length > 0 && (
@@ -340,6 +384,7 @@ function ReconstructedMemo({
   results,
   totalTimeMs,
 }: AnalysisMemoFullProps & { error?: string }) {
+  const displayedDealName = displayDealName(dealName);
   const succeededCount = Object.values(results).filter((result) => result.success).length;
   const synthesis = agentData(results, "synthesis-deal-scorer");
   const devilsAdvocate = agentData(results, "devils-advocate");
@@ -349,7 +394,7 @@ function ReconstructedMemo({
   const synthesisSummary = getAgentSummary(synthesis)
     || getAgentSummary(devilsAdvocate)
     || getAgentSummary(contradiction)
-    || "Le mémo final n’a pas été produit, mais les agents d’analyse ont retourné des sorties exploitables pour reconstituer la lecture investisseur.";
+    || "Le mémo final n’a pas été produit, mais les analyses disponibles permettent de reconstituer une lecture investisseur.";
   const strengths = collectStrengths(results, synthesis);
   const weaknesses = collectWeaknesses(results, synthesis, devilsAdvocate, contradiction, redFlags);
 
@@ -363,21 +408,21 @@ function ReconstructedMemo({
                 <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
                   Mémo d’investissement
                 </Badge>
-                <Badge variant="secondary">{succeededCount} agents exploités</Badge>
+                <Badge variant="secondary">{succeededCount} analyses utilisées</Badge>
                 <Badge variant="outline">{formatRuntime(totalTimeMs)}</Badge>
               </div>
               <h2 className="mt-4 text-2xl font-semibold tracking-normal text-foreground">
-                Mémo consolidé — {dealName}
+                Dossier de décision — {displayedDealName}
               </h2>
               <p className="mt-3 max-w-5xl text-sm leading-7 text-muted-foreground">
-                Ce mémo consolide les sorties des agents d’analyse en un dossier lisible pour décider quoi creuser,
-                quoi challenger et quelles preuves demander avant comité.
+                Ce dossier rassemble les analyses disponibles pour décider quoi creuser, quoi challenger
+                et quelles preuves demander avant comité.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2 rounded-lg border bg-background p-2 text-center lg:min-w-[220px]">
               <div className="rounded-md bg-emerald-50 px-3 py-2 text-emerald-700">
                 <div className="text-xl font-semibold">{succeededCount}</div>
-                <div className="text-xs">agents exploités</div>
+                <div className="text-xs">analyses utilisées</div>
               </div>
               <div className="rounded-md bg-slate-50 px-3 py-2 text-slate-700">
                 <div className="text-xl font-semibold">6</div>
@@ -421,8 +466,8 @@ function ReconstructedMemo({
         results={results}
       />
       <FallbackAgentBlock
-        title="Sortie et synthèse"
-        agentNames={["exit-strategist", "synthesis-deal-scorer", "devils-advocate", "contradiction-detector"]}
+        title="Synthèse et contradictions"
+        agentNames={["synthesis-deal-scorer", "devils-advocate", "contradiction-detector"]}
         results={results}
       />
 
@@ -436,18 +481,18 @@ function ReconstructedMemo({
         <BulletList items={questions} empty="Aucune question consolidée disponible." />
       </Section>
 
-      <Section title="Agents exécutés" icon={FileText}>
+      <Section title="Analyses disponibles" icon={FileText}>
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {Object.entries(results).map(([name, result]) => (
             <div key={name} className="rounded-lg border bg-muted/20 p-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-medium">{formatAgentName(name)}</p>
-                <Badge variant={result.success ? "secondary" : "destructive"}>{result.success ? "Réussi" : "Échec"}</Badge>
+                <Badge variant={result.success ? "secondary" : "destructive"}>{result.success ? "Disponible" : "Manquante"}</Badge>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 {(result.executionTimeMs / 1000).toFixed(1)}s · {result.cost.toFixed(4)} $
               </p>
-              {result.error && <p className="mt-2 text-xs leading-5 text-red-700">Agent non disponible dans cette analyse.</p>}
+              {result.error && <p className="mt-2 text-xs leading-5 text-red-700">Analyse indisponible dans ce dossier.</p>}
             </div>
           ))}
         </div>
@@ -527,6 +572,7 @@ export const AnalysisMemoFull = memo(function AnalysisMemoFull({
   totalTimeMs,
   totalCost,
 }: AnalysisMemoFullProps) {
+  const displayedDealName = displayDealName(dealName);
   const memoResult = results["memo-generator"];
   const memoData = memoResult?.success && isMemoGeneratorData(memoResult.data)
     ? memoResult.data
@@ -566,12 +612,12 @@ export const AnalysisMemoFull = memo(function AnalysisMemoFull({
                 <Badge variant="outline" className={cn("border", recommendation?.className)}>
                   {recommendation?.label}
                 </Badge>
-                <Badge variant="secondary">{successfulAgents}/{Object.keys(results).length} agents réussis</Badge>
+                <Badge variant="secondary">{successfulAgents}/{Object.keys(results).length} analyses disponibles</Badge>
                 <Badge variant="outline">{formatRuntime(totalTimeMs)}</Badge>
                 <Badge variant="outline">{formatCost(totalCost)}</Badge>
               </div>
               <h2 className="mt-4 text-2xl font-semibold tracking-normal text-foreground">
-                Mémo d’investissement entier — {dealName}
+                Mémo d’investissement — {displayedDealName}
               </h2>
               <p className="mt-3 max-w-5xl text-base leading-7 text-foreground">
                 {memoData.executiveSummary.oneLiner}
@@ -590,7 +636,7 @@ export const AnalysisMemoFull = memo(function AnalysisMemoFull({
           {memoData.executiveSummary.keyPoints.map((point, index) => (
             <div key={`${point}-${index}`} className="rounded-lg border bg-muted/20 p-4">
               <div className="flex items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                 <p className="text-sm leading-6">{point}</p>
               </div>
             </div>
@@ -749,16 +795,10 @@ export const AnalysisMemoFull = memo(function AnalysisMemoFull({
         </div>
       </Section>
 
-      <Section title="Sortie et prochaines étapes" icon={Target}>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-          <div className="rounded-lg border bg-muted/20 p-4">
-            <p className="text-sm font-semibold">Stratégie de sortie</p>
-            <TextBlock>{memoData.exitStrategy}</TextBlock>
-          </div>
-          <div className="rounded-lg border bg-muted/20 p-4">
-            <p className="text-sm font-semibold">Prochaines étapes</p>
-            <div className="mt-3"><BulletList items={memoData.nextSteps} /></div>
-          </div>
+      <Section title="Prochaines étapes" icon={Target}>
+        <div className="rounded-lg border bg-muted/20 p-4">
+          <p className="text-sm font-semibold">Actions à mener</p>
+          <div className="mt-3"><BulletList items={memoData.nextSteps} /></div>
         </div>
       </Section>
 

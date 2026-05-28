@@ -35,7 +35,6 @@ interface AnalysisThesis {
   solution?: string | null;
   whyNow?: string | null;
   moat?: string | null;
-  pathToExit?: string | null;
   verdict?: string | null;
   confidence?: number | null;
 }
@@ -143,16 +142,6 @@ function formatCompactMoney(value: number | null): string {
   return formatMoney(value);
 }
 
-function formatPercent(value: number | null): string {
-  if (value == null) return "n/a";
-  return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(value)} %`;
-}
-
-function formatMultiple(value: number | null): string {
-  if (value == null) return "n/a";
-  return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value)}x`;
-}
-
 function severityLabel(severity: Severity): string {
   const labels: Record<Severity, string> = {
     CRITICAL: "Critique",
@@ -230,6 +219,19 @@ function normalizeForMatch(value: string): string {
 
 function isNegativeSignal(item: string): boolean {
   const normalized = normalizeForMatch(item);
+  const blockedPositiveClaimPatterns = [
+    /\broi\b/,
+    /\bsi maint/,
+    /\bsi reel/,
+    /\bsi les chiffres/,
+    /\bproject/,
+    /\bprojection/,
+    /\bprojete/,
+    /\bobjectif\s+d['’]?exit/,
+  ];
+  if (blockedPositiveClaimPatterns.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
   return [
     "risque",
     "fragile",
@@ -246,6 +248,11 @@ function isNegativeSignal(item: string): boolean {
     "instabil",
     "non quantifi",
     "non prouve",
+    "non realise",
+    "non verifi",
+    "sans aucune verification",
+    "suspect",
+    "preuve manquante",
     "inflation",
     "retention",
     "bloquant",
@@ -265,13 +272,20 @@ function extractPositiveSignals(results: Record<string, AgentResult>): string[] 
     ...stringItems(valueAt(synthesis, ["keyStrengths"]), 8),
     ...stringItems(valueAt(synthesis, ["findings", "topStrengths"]), 8),
     ...stringItems(valueAt(synthesis, ["investmentThesis", "strengths"]), 8),
+    ...stringItems(valueAt(market, ["narrative", "keyInsights"]), 5),
+    ...stringItems(valueAt(customer, ["narrative", "keyInsights"]), 5),
+    ...stringItems(valueAt(gtm, ["narrative", "keyInsights"]), 5),
     ...stringItems(valueAt(market, ["findings", "topStrengths"]), 5),
     ...stringItems(valueAt(customer, ["findings", "topStrengths"]), 5),
     ...stringItems(valueAt(financial, ["findings", "topStrengths"]), 5),
     ...stringItems(valueAt(gtm, ["findings", "topStrengths"]), 5),
-    ...stringItems(valueAt(market, ["narrative", "keyInsights"]), 5),
-    ...stringItems(valueAt(customer, ["narrative", "keyInsights"]), 5),
   ].filter((item) => !isNegativeSignal(item)))).slice(0, 5);
+}
+
+function displayDealName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return name;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
 function extractEvidence(results: Record<string, AgentResult>): EvidenceItem[] {
@@ -344,10 +358,16 @@ function extractQuestions(results: Record<string, AgentResult>): QuestionItem[] 
 }
 
 function getPrimarySummary(results: Record<string, AgentResult>, thesis?: AnalysisThesis | null): string {
+  const memoSummary = text(valueAt(agentData(results, "memo-generator"), ["executiveSummary", "oneLiner"]))
+    || text(valueAt(agentData(results, "memo-generator"), ["investmentThesis"]));
+  const synthesisSummary = text(valueAt(agentData(results, "synthesis-deal-scorer"), ["narrative", "summary"]))
+    || text(valueAt(agentData(results, "synthesis-deal-scorer"), ["investmentThesis", "summary"]));
+  const devilsSummary = text(valueAt(agentData(results, "devils-advocate"), ["narrative", "summary"]));
+  const contradictionSummary = text(valueAt(agentData(results, "contradiction-detector"), ["narrative", "summary"]));
   const financialSummary = text(valueAt(agentData(results, "financial-auditor"), ["narrative", "summary"]));
   const marketSummary = text(valueAt(agentData(results, "market-intelligence"), ["narrative", "summary"]));
   const thesisText = text(thesis?.reformulated);
-  return financialSummary || marketSummary || thesisText || "L’analyse a été consolidée en lecture investisseur. Les détails restent disponibles dans la section complète.";
+  return memoSummary || synthesisSummary || devilsSummary || contradictionSummary || financialSummary || marketSummary || thesisText || "L’analyse a été consolidée en lecture investisseur. Les détails restent disponibles dans la section complète.";
 }
 
 function getRecommendation(params: {
@@ -447,6 +467,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
   totalCost,
   currentScore,
 }: AnalysisInvestorViewProps) {
+  const displayedDealName = displayDealName(dealName);
   const financial = agentData(results, "financial-auditor");
   const contradiction = agentData(results, "contradiction-detector");
   const market = agentData(results, "market-intelligence");
@@ -462,15 +483,16 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
   const teamScore = extractScore(team);
   const techScore = extractScore(techOps);
 
-  const risks = useMemo(() => extractDecisionRisks(results).slice(0, 5), [results]);
+  const allRisks = useMemo(() => extractDecisionRisks(results), [results]);
+  const risks = allRisks.slice(0, 5);
   const positiveSignals = useMemo(() => extractPositiveSignals(results), [results]);
   const evidence = useMemo(() => extractEvidence(results), [results]);
   const questions = useMemo(() => extractQuestions(results), [results]);
 
   const succeededCount = Object.values(results).filter((result) => result.success).length;
   const failedCount = Object.values(results).length - succeededCount;
-  const criticalRisks = risks.filter((risk) => risk.severity === "CRITICAL").length;
-  const highRisks = risks.filter((risk) => risk.severity === "HIGH").length;
+  const criticalRisks = allRisks.filter((risk) => risk.severity === "CRITICAL").length;
+  const highRisks = allRisks.filter((risk) => risk.severity === "HIGH").length;
   const coherenceScore = numberValue(deckCoherence?.coherenceScore);
   const recommendation = getRecommendation({
     criticalRisks,
@@ -536,7 +558,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
                 )}
               </div>
               <h2 className="mt-4 text-2xl font-semibold tracking-normal text-foreground">
-                Lecture investisseur de {dealName}
+                Lecture investisseur de {displayedDealName}
               </h2>
               <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
                 {recommendation.note}
@@ -545,15 +567,15 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
             <div className="grid grid-cols-3 gap-2 rounded-lg border bg-background p-2 text-center lg:min-w-[280px]">
               <div className="rounded-md bg-emerald-50 px-3 py-2 text-emerald-700">
                 <div className="text-lg font-semibold">{succeededCount}</div>
-                <div className="text-xs">réussis</div>
+                <div className="text-xs">disponibles</div>
               </div>
               <div className="rounded-md bg-red-50 px-3 py-2 text-red-700">
                 <div className="text-lg font-semibold">{failedCount}</div>
-                <div className="text-xs">échoués</div>
+                <div className="text-xs">manquantes</div>
               </div>
               <div className="rounded-md bg-slate-50 px-3 py-2 text-slate-700">
                 <div className="text-lg font-semibold">{Object.keys(results).length}</div>
-                <div className="text-xs">agents</div>
+                <div className="text-xs">analyses</div>
               </div>
             </div>
           </div>
@@ -563,7 +585,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
           <MetricTile
             label="Score final"
             value={currentScore != null ? `${currentScore}/100` : "Non calculé"}
-            note={currentScore == null ? "Score final indisponible, lecture basée sur les agents spécialisés." : "Score consolidé de l’analyse."}
+            note={currentScore == null ? "Score final indisponible, lecture basée sur les analyses disponibles." : "Score consolidé de l’analyse."}
             tone={currentScore == null ? "warning" : toneFromScore(currentScore)}
           />
           <MetricTile
@@ -591,16 +613,16 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
               <p className="mt-1 text-lg font-semibold">{formattedRuntime ?? "n/a"}</p>
             </div>
             <div className="rounded-lg border bg-background p-3">
-              <p className="text-xs text-muted-foreground">Agents exécutés</p>
+              <p className="text-xs text-muted-foreground">Analyses disponibles</p>
               <p className="mt-1 text-lg font-semibold">{Object.keys(results).length}</p>
             </div>
             <div className="rounded-lg border bg-background p-3">
               <p className="text-xs text-muted-foreground">Angles couverts</p>
-              <p className="mt-1 text-sm font-medium leading-5">Finance, marché, clients, équipe, technique, scénarios</p>
+              <p className="mt-1 text-sm font-medium leading-5">Finance, marché, clients, équipe, technique, risques</p>
             </div>
             <div className="rounded-lg border bg-background p-3">
-              <p className="text-xs text-muted-foreground">Analyse exhaustive</p>
-              <p className="mt-1 text-sm font-medium leading-5">Onglet “Analyse complète”</p>
+              <p className="text-xs text-muted-foreground">Détail complet</p>
+              <p className="mt-1 text-sm font-medium leading-5">Onglet “Analyses détaillées”</p>
             </div>
           </div>
         </div>
@@ -785,7 +807,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
             </div>
             <div className="mt-4 space-y-3 text-sm">
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Agents réussis</span>
+                <span className="text-muted-foreground">Analyses disponibles</span>
                 <span className="font-medium">{succeededCount}/{Object.keys(results).length}</span>
               </div>
               <div className="flex items-center justify-between">
@@ -797,7 +819,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
                 <span className="font-medium">{formattedRuntime ?? "n/a"}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Coût LLM</span>
+                <span className="text-muted-foreground">Coût d’analyse</span>
                 <span className="font-medium">{totalCost != null ? `${totalCost.toFixed(2)} $` : "n/a"}</span>
               </div>
             </div>
@@ -819,7 +841,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
               </div>
               <div className="flex items-start gap-2">
                 <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <span>Les panneaux détaillés restent disponibles dans l’onglet Analyse complète.</span>
+                <span>Le détail par angle reste disponible dans “Analyses détaillées”.</span>
               </div>
             </div>
           </section>
@@ -828,7 +850,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
         <CircleDollarSign className="h-4 w-4" />
-        <span>Cette vue consolide les agents réussis et signale explicitement les sorties manquantes.</span>
+        <span>Cette vue consolide les analyses disponibles et signale explicitement les analyses manquantes.</span>
         <TrendingUp className="ml-auto h-4 w-4 hidden sm:block" />
       </div>
     </div>

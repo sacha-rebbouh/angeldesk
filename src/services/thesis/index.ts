@@ -61,7 +61,6 @@ export interface ThesisRecord {
   solution: string;
   whyNow: string;
   moat: string | null;
-  pathToExit: string | null;
   verdict: string;
   confidence: number;
   loadBearing: unknown;
@@ -231,7 +230,6 @@ export const thesisService = {
           solution: validatedOutput.solution,
           whyNow: validatedOutput.whyNow,
           moat: validatedOutput.moat ?? null,
-          pathToExit: validatedOutput.pathToExit ?? null,
           verdict: validatedOutput.verdict,
           confidence: validatedOutput.confidence,
           loadBearing: validatedOutput.loadBearing as unknown as Prisma.InputJsonValue,

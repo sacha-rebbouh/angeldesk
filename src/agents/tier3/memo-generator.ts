@@ -10,7 +10,7 @@
  * Standard: Memo qualité institutionnelle facturable 50K€
  *
  * Inputs:
- * - Tous les outputs Tier 1 (13 agents d'analyse)
+ * - Tous les outputs Tier 1 (12 agents d'analyse)
  * - Tous les outputs Tier 2 (expert sectoriel activé)
  * - Outputs Tier 3 (contradiction-detector, synthesis-deal-scorer, devils-advocate)
  * - Context Engine (benchmarks, comparables, tendances)
@@ -199,11 +199,6 @@ interface LLMMemoResponse {
     bear: string[];
     keyAssumptions: string[];
     thesis: string;
-  };
-  exitStrategy: {
-    primaryPath: string;
-    timeline: string;
-    potentialAcquirers: string[];
   };
   nextSteps: NextStepItem[];
   questionsForFounder: {
@@ -412,11 +407,6 @@ Réponds en JSON avec cette structure exacte:
     "keyAssumptions": ["Hypothèse clé 1", "Hypothèse clé 2"],
     "thesis": "Thèse d'investissement en 2-3 phrases"
   },
-  "exitStrategy": {
-    "primaryPath": "M&A par acteur stratégique (description qualitative, sans valorisation chiffrée)",
-    "timeline": "5-7 ans (range plausible, sans présumer l'exit valuation)",
-    "potentialAcquirers": ["Acquéreur 1", "Acquéreur 2"]
-  },
   "nextSteps": [
     {"action": "Vérifier background équipe fondatrice", "priority": "IMMEDIATE", "owner": "INVESTOR", "context": "Non vérifié par team-investigator"},
     {"action": "Fournir détail client top 3", "priority": "BEFORE_TERM_SHEET", "owner": "FOUNDER"}
@@ -509,7 +499,6 @@ Si un chiffre est marque [ESTIME], tu DOIS mentionner qu'il s'agit d'une estimat
       "cap-table-auditor",
       "gtm-analyst",
       "customer-intel",
-      "exit-strategist",
       "question-master",
     ];
 
@@ -1142,18 +1131,6 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
 
       // Investment Thesis
       investmentThesis: data.investmentThesis?.thesis ?? "",
-
-      // Exit Strategy — synthèse qualitative (doctrine anti-oraculaire :
-      // pas de multiple ni IRR projeté pour ce deal). Si `primaryPath`
-      // manque, on fallback sur timeline + acquéreurs (faits) sans
-      // inventer de retour chiffré.
-      exitStrategy:
-        data.exitStrategy?.primaryPath ??
-        `Timeline plausible : ${data.exitStrategy?.timeline ?? "N/A"}${
-          data.exitStrategy?.potentialAcquirers?.length
-            ? ` — acquéreurs envisageables : ${data.exitStrategy.potentialAcquirers.slice(0, 3).join(", ")}`
-            : ""
-        }`,
 
       // Next Steps (enrichis)
       nextSteps: Array.isArray(data.nextSteps)

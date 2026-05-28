@@ -24,7 +24,6 @@ const AGENT_KEYWORDS: Record<string, string[]> = {
   "legal-regulatory": ["term", "safe", "equity", "liquidation", "preference", "pro rata", "vesting", "warranty", "shareholder", "cap table", "gdpr", "regulatory"],
   "conditions-analyst": ["valuation", "pre-money", "post-money", "dilution", "safe", "equity", "term", "liquidation", "pro rata", "vesting", "esop"],
   "cap-table-auditor": ["cap table", "shareholder", "dilution", "option pool", "esop", "vesting", "safe", "equity", "pre-money", "post-money"],
-  "exit-strategist": ["exit", "acquirer", "m&a", "ipo", "multiple", "strategic", "comparable", "valuation", "market"],
   "deck-forensics": ["slide", "claim", "deck", "story", "traction", "team", "market", "chart", "table", "source"],
 };
 

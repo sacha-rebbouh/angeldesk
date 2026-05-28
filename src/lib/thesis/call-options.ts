@@ -103,9 +103,9 @@ function getFallbackDefaultsForRole<T>(
   role: ThesisRole,
   context?: ThesisCallContext
 ): Partial<T> | undefined {
-    switch (role) {
-      case "core":
-      return { moat: null, pathToExit: null } as unknown as Partial<T>;
+  switch (role) {
+    case "core":
+      return { moat: null } as unknown as Partial<T>;
     case "yc-lens":
     case "thiel-lens":
     case "angel-desk-lens":

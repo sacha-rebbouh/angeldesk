@@ -19,11 +19,11 @@ describe("getThesisCallOptions", () => {
   it("returns upgraded core chain with strict null defaults and no terminal fallback", () => {
     delete process.env.THESIS_MODEL_TIER;
 
-    const options = getThesisCallOptions<{ moat: string | null; pathToExit: string | null }>("core");
+    const options = getThesisCallOptions<{ moat: string | null }>("core");
 
     expect(options.fallbackChain).toEqual(["CLAUDE_SONNET_45", "HAIKU"]);
     expect(options.timeoutMs).toBe(110_000);
-    expect(options.fallbackDefaults).toEqual({ moat: null, pathToExit: null });
+    expect(options.fallbackDefaults).toEqual({ moat: null });
     expect(options.terminalFallbackData).toBeUndefined();
   });
 
@@ -127,7 +127,7 @@ describe("getThesisCallOptions", () => {
     const judge = getThesisCallOptions("judge");
 
     expect(core.fallbackChain).toBeUndefined();
-    expect(core.fallbackDefaults).toEqual({ moat: null, pathToExit: null });
+    expect(core.fallbackDefaults).toEqual({ moat: null });
     expect(core.terminalFallbackData).toBeUndefined();
 
     expect(yc.fallbackChain).toBeUndefined();

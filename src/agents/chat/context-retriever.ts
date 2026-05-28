@@ -160,7 +160,7 @@ const TOPIC_TO_AGENTS: Record<string, string[]> = {
   // Financial topics
   financial: ["financial-auditor", "cap-table-auditor"],
   finance: ["financial-auditor", "cap-table-auditor"],
-  valuation: ["financial-auditor", "exit-strategist"],
+  valuation: ["financial-auditor"],
   revenue: ["financial-auditor"],
   arr: ["financial-auditor"],
   mrr: ["financial-auditor"],
@@ -209,12 +209,6 @@ const TOPIC_TO_AGENTS: Record<string, string[]> = {
   regulatory: ["legal-regulatory"],
   compliance: ["legal-regulatory"],
   ip: ["legal-regulatory", "tech-ops-dd"],
-
-  // Exit topics
-  exit: ["exit-strategist"],
-  acquisition: ["exit-strategist"],
-  ipo: ["exit-strategist"],
-  liquidity: ["exit-strategist"],
 
   // Deck topics
   deck: ["deck-forensics"],

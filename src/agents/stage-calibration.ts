@@ -49,7 +49,6 @@ const AGENT_DIMENSION_MAP: Record<string, CalibrationDimension[]> = {
   "gtm-analyst": ["gtm_traction"],
   "customer-intel": ["gtm_traction"],
   "competitive-intel": ["competitive"],
-  "exit-strategist": ["exit"],
   "cap-table-auditor": ["cap_table"],
   "market-intelligence": ["competitive", "gtm_traction"],
   "question-master": [],
@@ -227,7 +226,7 @@ const CALIBRATION: Record<CalibrationStage, Record<CalibrationDimension, Calibra
     ],
     exit: [
       { situation: "Pas de réflexion sur la sortie", severity: "LOW", justification: "Moins acceptable qu'en pre-seed. Fondateur doit avoir identifié des acquéreurs." },
-      { situation: "Scénario de sortie articulé avec comparables", severity: "NORMAL", justification: "Attendu en Seed." },
+      { situation: "Hypothese de liquidite explicite et sourcée", severity: "NORMAL", justification: "Utile en Seed, sans projection de retour." },
       { situation: "Secteur avec 5+ exits >100M en 3 ans", severity: "NORMAL", justification: "Marché liquide. Très positif." },
       { situation: "Secteur avec 0 exit connu", severity: "MEDIUM", justification: "Risque de liquidité pour l'investisseur." },
       { situation: "Time to exit 4-6 ans", severity: "NORMAL", justification: "Range standard Seed (PitchBook 2024)." },

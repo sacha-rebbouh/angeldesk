@@ -41,7 +41,6 @@ interface ThesisHeroCardProps {
   solution: string;
   whyNow: string;
   moat: string | null;
-  pathToExit: string | null;
   verdict: string;
   confidence: number;
   loadBearing: LoadBearing[];
@@ -134,9 +133,6 @@ export function ThesisHeroCard(props: ThesisHeroCardProps) {
           <ThesisField label="Solution" value={props.solution} />
           <ThesisField label="Pourquoi maintenant" value={props.whyNow} />
           <ThesisField label="Défensibilité" value={props.moat} fallback="Non déclaré" />
-          <div className="md:col-span-2">
-            <ThesisField label="Scénario de sortie" value={props.pathToExit} fallback="Non déclaré" />
-          </div>
         </div>
 
         <div>

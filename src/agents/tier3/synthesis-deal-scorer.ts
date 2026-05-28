@@ -2,7 +2,7 @@
  * SYNTHESIS DEAL SCORER - TIER 3 - REFONTE v2.0
  *
  * Mission: Produire le SCORE FINAL et la RECOMMANDATION d'investissement
- *          en synthétisant TOUS les outputs Tier 1 (13 agents) et Tier 2 (expert sectoriel)
+ *          en synthétisant TOUS les outputs Tier 1 (12 agents) et Tier 2 (expert sectoriel)
  *
  * Persona: Senior Investment Committee Partner (20+ ans d'expérience)
  *          - A siégé à 200+ IC meetings
@@ -18,7 +18,7 @@
  * - Output informatif: profil de signal clair, le BA décide
  *
  * Inputs:
- * - Tous les résultats Tier 1 (13 agents)
+ * - Tous les résultats Tier 1 (12 agents)
  * - Résultat Tier 2 (expert sectoriel si disponible)
  * - Context Engine data
  * - Funding DB comparables
@@ -297,7 +297,6 @@ export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData,
         "team-investigator",
         "market-intelligence",
         "competitive-intel",
-        "exit-strategist",
         "tech-stack-dd",
         "tech-ops-dd",
         "legal-regulatory",
@@ -363,7 +362,7 @@ ${dealContext}
 
 ---
 
-## SCORES BRUTS TIER 1 (13 agents) — À AJUSTER avec Tier 2/3
+## SCORES BRUTS TIER 1 (12 agents) — À AJUSTER avec Tier 2/3
 ${tier1Scores}
 
 ---
@@ -459,7 +458,7 @@ ${weightsTable}
 ⚠️ **SOIS INFORMATIF** — Profil de signal clair, le BA décide
 ⚠️ **CONSOLIDE LES RED FLAGS** - Ne répète pas, synthétise avec priorité
 ⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences dans \`baAlignment\`, les conditions et le narratif, sans confondre cela avec la qualité intrinsèque du deal
-⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les scénarios ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal alert_dominant avec scepticisme >80 ne peut pas avoir un score > 40.
+⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les risques critiques ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal alert_dominant avec scepticisme >80 ne peut pas avoir un score > 40.
 ⚠️ **score.value = Σ(breakdown weights × breakdown scores)** — Le score.value DOIT être la moyenne pondérée de ton breakdown. Si ton breakdown donne 50, score.value DOIT être ~50, PAS 2 ou 5. C'est un entier 0-100.
 ⚠️ **NE CONFONDS PAS FIT ET QUALITÉ** — ticket minimum, secteur hors mandat BA, ou horizon peu adapté au profil investisseur doivent etre surfaces comme \`baAlignment\` / \`conditions\`, pas comme preuve que la these est faible.
 
@@ -646,7 +645,6 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
       "cap-table-auditor": { field: "capTableScore", dimension: "Cap Table" },
       "gtm-analyst": { field: "score.value", dimension: "GTM" },
       "customer-intel": { field: "score.value", dimension: "Traction" },
-      "exit-strategist": { field: "score.value", dimension: "Exit" },
       "deck-forensics": { field: "score.value", dimension: "Deck Quality" },
       "question-master": { field: "score.value", dimension: "DD Readiness" },
     };
@@ -800,7 +798,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
     const tier1Agents = [
       "deck-forensics", "financial-auditor", "team-investigator", "market-intelligence",
-      "competitive-intel", "exit-strategist", "tech-stack-dd", "tech-ops-dd", "legal-regulatory",
+      "competitive-intel", "tech-stack-dd", "tech-ops-dd", "legal-regulatory",
       "gtm-analyst", "customer-intel", "cap-table-auditor", "question-master"
     ];
 
@@ -1273,7 +1271,7 @@ Aucune incohérence majeure détectée entre les agents.`;
       "financial-auditor", "team-investigator", "competitive-intel",
       "market-intelligence", "tech-stack-dd", "tech-ops-dd",
       "legal-regulatory", "gtm-analyst", "customer-intel",
-      "exit-strategist", "deck-forensics", "cap-table-auditor", "question-master",
+      "deck-forensics", "cap-table-auditor", "question-master",
       "thesis-extractor", "thesis-reconciler",
     ];
     const partialAgents: string[] = [];

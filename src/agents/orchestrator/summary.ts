@@ -38,7 +38,6 @@ export function generateTier1Summary(results: Record<string, AgentResult>): stri
     "cap-table-auditor": "capTableScore",
     "gtm-analyst": "gtmScore",
     "customer-intel": "customerScore",
-    "exit-strategist": "exitScore",
   };
 
   for (const [agentName, scoreField] of Object.entries(agentScoreFields)) {

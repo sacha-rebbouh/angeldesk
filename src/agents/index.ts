@@ -19,7 +19,6 @@ export {
   legalRegulatory,
   gtmAnalyst,
   customerIntel,
-  exitStrategist,
   questionMaster,
 } from "./tier1";
 

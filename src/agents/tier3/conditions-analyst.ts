@@ -527,7 +527,6 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
     const relevantAgents = [
       "financial-auditor", "cap-table-auditor", "team-investigator",
       "competitive-intel", "market-intelligence", "deck-forensics",
-      "exit-strategist",
     ];
 
     for (const name of relevantAgents) {

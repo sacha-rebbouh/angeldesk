@@ -515,7 +515,6 @@ export class BoardOrchestrator {
         capTableAuditor: analysisResults["cap-table-auditor"],
         gtmAnalyst: analysisResults["gtm-analyst"],
         customerIntel: analysisResults["customer-intel"],
-        exitStrategist: analysisResults["exit-strategist"],
         questionMaster: analysisResults["question-master"],
       };
 
@@ -1401,7 +1400,6 @@ function mapBoardThesisInput(
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     verdict: string;
     confidence: number;
     loadBearing: unknown;
@@ -1421,7 +1419,6 @@ function mapBoardThesisInput(
     solution: thesis.solution,
     whyNow: thesis.whyNow,
     moat: thesis.moat,
-    pathToExit: thesis.pathToExit,
     verdict: thesis.verdict,
     confidence: thesis.confidence,
     loadBearing: loadBearingArr as NonNullable<BoardInput["thesis"]>["loadBearing"],

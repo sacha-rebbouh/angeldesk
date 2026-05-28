@@ -185,7 +185,6 @@ function buildTier1Summaries(input: BoardInput): string | null {
     ["Cap Table Auditor", t1.capTableAuditor],
     ["GTM Analyst", t1.gtmAnalyst],
     ["Customer Intel", t1.customerIntel],
-    ["Exit Strategist", t1.exitStrategist],
     ["Question Master", t1.questionMaster],
   ];
 

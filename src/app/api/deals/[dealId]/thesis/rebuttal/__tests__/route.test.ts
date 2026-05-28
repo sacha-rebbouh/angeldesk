@@ -151,7 +151,6 @@ describe("POST /api/deals/[dealId]/thesis/rebuttal", () => {
       solution: "Solution",
       whyNow: "Why now",
       moat: null,
-      pathToExit: null,
       verdict: "vigilance",
       confidence: 52,
       loadBearing: [],

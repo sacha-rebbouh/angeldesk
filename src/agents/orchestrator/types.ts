@@ -27,12 +27,12 @@ export const ANALYSIS_CONFIGS = {
   },
   tier3_synthesis: {
     agents: [] as BaseAgentName[], // Special handling - uses Tier 3 agents after Tier 1
-    description: "Synthese complete avec 6 agents (requires Tier 1 results)",
+    description: "Synthese complete avec 5 agents (requires Tier 1 results)",
     parallel: false, // Tier 3 runs sequentially
   },
   full_analysis: {
     agents: [] as BaseAgentName[], // Special handling - Tier 1 + Tier 2 + Tier 3
-    description: "Thesis-first Deep Dive: thesis gate, then Tier 1 (13) + Tier 2 (1) + Tier 3 (7 incl. thesis-reconciler)",
+    description: "Thesis-first Deep Dive: thesis gate, then Tier 1 (12) + Tier 2 (1) + Tier 3 (6 incl. thesis-reconciler)",
     parallel: false,
   },
 } as const;
@@ -193,7 +193,7 @@ export interface PausedAnalysisResult extends AnalysisResult {
   alertsCount: number;
 }
 
-// Tier 1 agent names (13 agents)
+// Tier 1 agent names (12 agents)
 export const TIER1_AGENT_NAMES = [
   "deck-forensics",
   "financial-auditor",
@@ -206,7 +206,6 @@ export const TIER1_AGENT_NAMES = [
   "cap-table-auditor",
   "gtm-analyst",
   "customer-intel",
-  "exit-strategist",
   "question-master",
 ] as const;
 
@@ -221,14 +220,14 @@ export const TIER1_AGENT_NAMES = [
  * Phase A: deck-forensics verifies deck claims → establishes factual ground truth
  * Phase B: financial-auditor calculates metrics → using verified claims from Phase A
  * Phase C: team + competitive + market (parallel) → using verified facts from A+B
- * Phase D: remaining 8 agents (parallel) → using all validated facts from A+B+C
+ * Phase D: remaining 7 agents (parallel) → using all validated facts from A+B+C
  */
 export const TIER1_PHASE_A = ["deck-forensics"] as const;
 export const TIER1_PHASE_B = ["financial-auditor"] as const;
 export const TIER1_PHASE_C = ["team-investigator", "competitive-intel", "market-intelligence"] as const;
 export const TIER1_PHASE_D = [
   "tech-stack-dd", "tech-ops-dd", "legal-regulatory", "cap-table-auditor",
-  "gtm-analyst", "customer-intel", "exit-strategist", "question-master",
+  "gtm-analyst", "customer-intel", "question-master",
 ] as const;
 
 /** All phases in execution order */

@@ -20,6 +20,9 @@ import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1
 import { calculateAgentScore, TECH_OPS_DD_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 import { getSectorProfile, formatSectorProfileForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
+const TECH_OPS_PROVIDER_TIMEOUT_MS = 90_000;
+const TECH_OPS_MAX_TOKENS = 10_000;
+
 /**
  * Tech-Ops-DD Agent - Split from Technical DD v2.0
  *
@@ -494,11 +497,25 @@ STYLE D'ÉCRITURE:
 - ÉVITER: introductions inutiles, répétitions, formules creuses
 - INCLURE: chiffres, calculs montrés, sources - c'est le contenu utile
 
-NE PAS limiter le nombre d'éléments: inclure TOUS les red flags, gaps et questions pertinents.
+Limiter la sortie pour garantir un JSON complet: redFlags MAX 5, technicalRisks MAX 5, questions MAX 5, keyInsights MAX 5.
 
 CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arrête JAMAIS au milieu.`;
 
-    const { data } = await this.llmCompleteJSON<LLMTechOpsDDResponse>(prompt, {});
+    let data: LLMTechOpsDDResponse;
+    try {
+      ({ data } = await this.llmCompleteJSON<LLMTechOpsDDResponse>(prompt, {
+        timeoutMs: TECH_OPS_PROVIDER_TIMEOUT_MS,
+        maxRetries: 0,
+        maxTokens: TECH_OPS_MAX_TOKENS,
+      }));
+    } catch (error) {
+      console.warn(
+        `[tech-ops-dd] LLM JSON unavailable; using structured degraded output: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      data = this.buildTerminalTechOpsFallback(context, error);
+    }
 
     const result = this.normalizeResponse(data, context);
 
@@ -572,6 +589,128 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
     result.redFlags = applySectorRedFlagFilter(result.redFlags, context.canonicalDeal.sector, "tech-ops-dd");
 
     return result;
+  }
+
+  private buildTerminalTechOpsFallback(context: EnrichedAgentContext, error: unknown): LLMTechOpsDDResponse {
+    const sectorProfile = getSectorProfile(context.canonicalDeal.sector);
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      meta: {
+        agentName: "tech-ops-dd",
+        analysisDate: new Date().toISOString(),
+        dataCompleteness: "minimal",
+        confidenceLevel: 20,
+        limitations: [
+          `Sortie LLM tech-ops indisponible ou JSON invalide: ${reason.slice(0, 180)}`,
+          "Analyse degradee: aucune conclusion technique bloquante ne doit etre inferee automatiquement.",
+        ],
+      },
+      score: {
+        value: sectorProfile.techDDApplicability.applicable ? 35 : 50,
+        grade: "D",
+        breakdown: [
+          { criterion: "Maturité Produit", weight: 33, score: 35, justification: "Sortie LLM indisponible; maturite non verifiee." },
+          { criterion: "Équipe Tech", weight: 33, score: 35, justification: "Sortie LLM indisponible; equipe tech non verifiee." },
+          { criterion: "Sécurité", weight: 22, score: 35, justification: "Sortie LLM indisponible; securite non verifiee." },
+          { criterion: "IP Technique", weight: 11, score: 35, justification: "Sortie LLM indisponible; IP non verifiee." },
+        ],
+      },
+      findings: {
+        productMaturity: {
+          stage: "mvp",
+          stageEvidence: "Non verifie dans cette passe.",
+          stability: { score: 0, incidentFrequency: "Unknown", uptimeEstimate: "Unknown", assessment: "Non verifie." },
+          featureCompleteness: { score: 0, coreFeatures: [], roadmapClarity: "Non verifie." },
+          releaseVelocity: { frequency: "Unknown", assessment: "Non verifie.", concern: "Sortie LLM indisponible" },
+        },
+        teamCapability: {
+          teamSize: { current: 0, breakdown: [] },
+          seniorityLevel: {
+            assessment: "UNKNOWN",
+            evidence: "Non verifie dans cette passe.",
+            averageYears: 0,
+            benchmarkForStage: 0,
+          },
+          gaps: [],
+          keyPersonRisk: { exists: false, persons: [], mitigation: "Non verifie." },
+          hiringNeeds: [],
+          overallCapabilityScore: 0,
+        },
+        security: {
+          posture: "UNKNOWN",
+          compliance: { gdpr: "UNKNOWN", soc2: "UNKNOWN", other: [] },
+          practices: [],
+          vulnerabilities: [],
+          assessment: "Non verifie dans cette passe.",
+          securityScore: 0,
+        },
+        ipProtection: {
+          patents: { granted: 0, pending: 0, domains: [], strategicValue: "Non verifie." },
+          tradeSecrets: { exists: false, protected: false, description: "Non verifie." },
+          openSourceRisk: { level: "NONE", licenses: [], concerns: [] },
+          proprietaryTech: { exists: false, description: "Non verifie.", defensibility: "Non verifie." },
+          ipScore: 0,
+        },
+        technicalRisks: [
+          {
+            id: "risk-tech-ops-unavailable",
+            risk: "Due diligence tech-ops automatisee indisponible",
+            category: "operations",
+            severity: "HIGH",
+            probability: "MEDIUM",
+            impact: "Les risques produit, securite, equipe technique et IP restent a verifier manuellement.",
+            mitigation: "Revue CTO externe ou questions fondateur ciblees.",
+            estimatedCostToMitigate: "Non estime",
+            timelineToMitigate: "Avant decision",
+          },
+        ],
+        sectorBenchmark: {
+          maturityVsSector: "Non verifie.",
+          teamSizeVsSector: "Non verifie.",
+          securityVsSector: "Non verifie.",
+          overallPosition: "BELOW_AVERAGE",
+        },
+      },
+      dbCrossReference: {
+        claims: [],
+        uncheckedClaims: ["Claims tech-ops non verifies dans cette passe"],
+      },
+      redFlags: sectorProfile.techDDApplicability.applicable
+        ? [
+            {
+              id: "rf-tech-ops-unavailable",
+              category: "technical",
+              severity: "HIGH",
+              title: "DD tech-ops indisponible",
+              description: "Le modele n'a pas rendu un JSON tech-ops exploitable.",
+              location: "tech-ops-dd",
+              evidence: "Fallback terminal active",
+              impact: "Les risques produit, securite, equipe technique et IP restent ouverts.",
+              question: "Pouvez-vous documenter architecture, securite, ownership technique et processus de livraison ?",
+              redFlagIfBadAnswer: "Risque operationnel non quantifiable avant investissement.",
+            },
+          ]
+        : [],
+      questions: [
+        {
+          priority: "HIGH",
+          category: "technical",
+          question: "Quelles preuves produit/operations/securite pouvez-vous fournir avant decision ?",
+          context: "La DD tech-ops automatisee est degradee sur cette passe.",
+          whatToLookFor: "Documentation, responsable technique/operations, incidents, process qualite, conformite.",
+        },
+      ],
+      alertSignal: {
+        hasBlocker: false,
+        justification: "Sortie tech-ops indisponible; verification manuelle requise.",
+      },
+      narrative: {
+        oneLiner: "DD tech-ops automatisee indisponible.",
+        summary: "Le pipeline n'a pas obtenu de JSON tech-ops exploitable. Cette dimension doit etre consideree comme ouverte, sans bloquer automatiquement le deal.",
+        keyInsights: ["Verification tech-ops manuelle requise"],
+        forNegotiation: ["Demander documentation produit, securite et ownership technique avant closing"],
+      },
+    };
   }
 
   private normalizeResponse(data: LLMTechOpsDDResponse, _context: EnrichedAgentContext): TechOpsDDData {

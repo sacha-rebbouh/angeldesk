@@ -33,6 +33,76 @@ function hashStringToBigInt(input: string): string {
   return digest.readBigInt64BE(0).toString();
 }
 
+const PRE_THESIS_PHASE1_STALE_MS = 6 * 60 * 1000;
+
+async function failStalePreThesisAnalysisBeforeRetry(dealId: string): Promise<string | null> {
+  const staleCutoff = new Date(Date.now() - PRE_THESIS_PHASE1_STALE_MS);
+  const staleAnalysis = await prisma.analysis.findFirst({
+    where: {
+      dealId,
+      status: "RUNNING",
+      mode: "full_analysis",
+      thesisId: null,
+      startedAt: { lt: staleCutoff },
+    },
+    orderBy: { startedAt: "asc" },
+    select: {
+      id: true,
+      startedAt: true,
+      completedAgents: true,
+      totalAgents: true,
+      checkpoints: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { state: true, createdAt: true },
+      },
+    },
+  });
+
+  if (!staleAnalysis) {
+    return null;
+  }
+
+  const latestCheckpoint = staleAnalysis.checkpoints[0];
+  if (latestCheckpoint?.state === "ANALYZING") {
+    logger.warn(
+      {
+        dealId,
+        analysisId: staleAnalysis.id,
+        checkpointState: latestCheckpoint.state,
+      },
+      "Skipping stale pre-thesis cleanup because checkpoint is already ANALYZING"
+    );
+    return null;
+  }
+
+  await prisma.analysis.update({
+    where: { id: staleAnalysis.id },
+    data: {
+      status: "FAILED",
+      completedAt: new Date(),
+      summary:
+        "Analyse interrompue avant revue de these (timeout Vercel phase 1). " +
+        "La tentative est cloturee pour permettre le retry Inngest.",
+    },
+  });
+
+  logger.warn(
+    {
+      dealId,
+      analysisId: staleAnalysis.id,
+      startedAt: staleAnalysis.startedAt,
+      completedAgents: staleAnalysis.completedAgents,
+      totalAgents: staleAnalysis.totalAgents,
+      checkpointState: latestCheckpoint?.state ?? null,
+      checkpointAt: latestCheckpoint?.createdAt ?? null,
+    },
+    "Marked stale pre-thesis analysis as FAILED before Inngest retry"
+  );
+
+  return staleAnalysis.id;
+}
+
 // ============================================================================
 // FUNCTIONS
 // ============================================================================
@@ -329,6 +399,10 @@ export const dealAnalysisFunction = inngest.createFunction(
     let phase1;
     try {
       phase1 = await step.run('phase1-extract-thesis', async () => {
+        if (withThesisGate) {
+          await failStalePreThesisAnalysisBeforeRetry(dealId);
+        }
+
         const { orchestrator } = await import("@/agents");
         return await orchestrator.runAnalysis({
           dealId,

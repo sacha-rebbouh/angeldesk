@@ -1655,7 +1655,6 @@ describe("Agent Pipeline Tests", () => {
       "cap-table-auditor",
       "gtm-analyst",
       "customer-intel",
-      "exit-strategist",
       "question-master",
     ] as const;
 
@@ -1677,7 +1676,6 @@ describe("Agent Pipeline Tests", () => {
           "cap-table-auditor": mod.capTableAuditor,
           "gtm-analyst": mod.gtmAnalyst,
           "customer-intel": mod.customerIntel,
-          "exit-strategist": mod.exitStrategist,
           "question-master": mod.questionMaster,
         };
       });
@@ -1936,13 +1934,13 @@ describe("Agent Pipeline Tests", () => {
   // ==========================================================================
 
   describe("Part 3: Pipeline Integration", () => {
-    it("getTier1Agents() should return all 13 agents", async () => {
+    it("getTier1Agents() should return all 12 agents", async () => {
       const { getTier1Agents } = await import("@/agents/orchestrator/agent-registry");
 
       const agents = await getTier1Agents();
       const agentNames = Object.keys(agents);
 
-      expect(agentNames).toHaveLength(13);
+      expect(agentNames).toHaveLength(12);
       expect(agentNames).toContain("deck-forensics");
       expect(agentNames).toContain("financial-auditor");
       expect(agentNames).toContain("team-investigator");
@@ -1954,7 +1952,6 @@ describe("Agent Pipeline Tests", () => {
       expect(agentNames).toContain("cap-table-auditor");
       expect(agentNames).toContain("gtm-analyst");
       expect(agentNames).toContain("customer-intel");
-      expect(agentNames).toContain("exit-strategist");
       expect(agentNames).toContain("question-master");
     });
 
@@ -2049,7 +2046,7 @@ describe("Agent Pipeline Tests", () => {
       const tier1 = await getTier1Agents();
       const tier3 = await getTier3Agents();
 
-      expect(Object.keys(tier1)).toHaveLength(13);
+      expect(Object.keys(tier1)).toHaveLength(12);
       expect(Object.keys(tier3)).toHaveLength(6); // 5 synthesis agents + thesis-reconciler (scenario-modeler retiré)
     });
   });

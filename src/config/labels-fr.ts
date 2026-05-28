@@ -20,7 +20,6 @@ export const AGENT_LABELS_FR: Record<string, string> = {
   "cap-table-auditor": "Audit cap table",
   "gtm-analyst": "Analyse GTM",
   "customer-intel": "Intelligence client",
-  "exit-strategist": "Stratégie de sortie",
   "question-master": "Questions au fondateur",
   // Tier 2
   "saas-expert": "Expert SaaS",

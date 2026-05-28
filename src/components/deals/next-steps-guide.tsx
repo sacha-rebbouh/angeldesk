@@ -86,7 +86,7 @@ export const NextStepsGuide = memo(function NextStepsGuide({
       actions.push({
         id: "run-full-analysis",
         label: "Lancer l'analyse complète",
-        description: "Obtenez le Devil's Advocate, les scénarios financiers, le détecteur de contradictions et le mémo d'investissement.",
+        description: "Obtenez le Devil's Advocate, le détecteur de contradictions, l'expert sectoriel et le mémo d'investissement.",
         icon: <Crown className="h-5 w-5 text-amber-500" />,
         priority: "medium",
         proOnly: true,

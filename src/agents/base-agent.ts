@@ -1272,7 +1272,6 @@ ${sanitizedDeal.description}
       "legal-regulatory": { LEGAL_DOCS: 100, TERM_SHEET: 95, CAP_TABLE: 75, PITCH_DECK: 45, INVESTOR_MEMO: 45, CALL_TRANSCRIPT: 35, OTHER: 35 },
       "cap-table-auditor": { CAP_TABLE: 100, TERM_SHEET: 95, FINANCIAL_MODEL: 65, LEGAL_DOCS: 55, PITCH_DECK: 45, INVESTOR_MEMO: 45, OTHER: 30 },
       "conditions-analyst": { TERM_SHEET: 100, CAP_TABLE: 90, LEGAL_DOCS: 70, FINANCIAL_MODEL: 45, PITCH_DECK: 55, INVESTOR_MEMO: 50, OTHER: 30 },
-      "exit-strategist": { MARKET_STUDY: 90, PITCH_DECK: 80, INVESTOR_MEMO: 75, FINANCIAL_MODEL: 55, CALL_TRANSCRIPT: 35, OTHER: 30 },
       "question-master": { PITCH_DECK: 85, FINANCIAL_MODEL: 70, CAP_TABLE: 70, TERM_SHEET: 70, INVESTOR_MEMO: 75, FINANCIAL_STATEMENTS: 70, LEGAL_DOCS: 65, MARKET_STUDY: 75, PRODUCT_DEMO: 65, CALL_TRANSCRIPT: 75, OTHER: 45 },
     };
 
@@ -1391,7 +1390,6 @@ ${sanitizedDeal.description}
       "cap-table-auditor",
       "gtm-analyst",
       "customer-intel",
-      "exit-strategist",
       "question-master",
       "conditions-analyst",
       "contradiction-detector",
@@ -1966,7 +1964,6 @@ Probleme: ${sanitize(thesis.problem, 280)}
 Solution: ${sanitize(thesis.solution, 280)}
 Why now: ${sanitize(thesis.whyNow, 280)}
 Moat: ${sanitize(thesis.moat, 240)}
-Path to exit: ${sanitize(thesis.pathToExit, 240)}
 Frameworks: YC=${thesis.ycVerdict} | Thiel=${thesis.thielVerdict} | AngelDesk=${thesis.angelDeskVerdict}
 Decision BA: ${context.analysis?.thesisBypass ? "continue (bypass these fragile actif)" : "alignement these standard"}
 Nombre d'alertes structurelles: ${thesis.alertsCount}

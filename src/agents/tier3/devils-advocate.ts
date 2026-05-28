@@ -302,7 +302,6 @@ export class DevilsAdvocateAgent extends BaseAgent<DevilsAdvocateData, DevilsAdv
         "team-investigator",
         "market-intelligence",
         "competitive-intel",
-        "exit-strategist",
       ],
     });
   }
@@ -524,7 +523,6 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
       "team-investigator",
       "market-intelligence",
       "competitive-intel",
-      "exit-strategist",
       "tech-stack-dd",
       "tech-ops-dd",
       "legal-regulatory",

@@ -63,7 +63,6 @@ const latestThesis = {
   solution: "Solution",
   whyNow: "Why now",
   moat: null,
-  pathToExit: null,
   verdict: "favorable",
   confidence: 85,
   ycLens: {},

@@ -680,7 +680,7 @@ export class AgentOrchestrator {
   ): Promise<AnalysisResult> {
     const { onEarlyWarning, isUpdate = false, analysisModeOverride } = advancedOptions;
     const startTime = Date.now();
-    const TIER1_AGENT_COUNT = TIER1_AGENT_NAMES.length; // 13
+    const TIER1_AGENT_COUNT = TIER1_AGENT_NAMES.length;
     const collectedWarnings: EarlyWarning[] = [];
 
     const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
@@ -1849,7 +1849,7 @@ export class AgentOrchestrator {
       // Phase A: deck-forensics → validates deck claims
       // Phase B: financial-auditor → validates financial metrics
       // Phase C: team + competitive + market (parallel) → using validated facts
-      // Phase D: remaining 8 agents (parallel) → using all validated facts
+      // Phase D: remaining agents (parallel) → using all validated facts
       await stateMachine.startAnalysis();
 
       const tier1AgentMap = await getTier1Agents();
@@ -2114,7 +2114,7 @@ export class AgentOrchestrator {
       }
       enrichedContext.conditionsAnalystMode = "pipeline";
 
-      // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + scenario + devil's advocate)
+      // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
       // Skip for FREE plan (these are TIER_3 agents, not SYNTHESIS)
       if (includeFullTier3 && !(maxCostUsd && totalCost >= maxCostUsd)) {
         const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0];
@@ -3274,7 +3274,6 @@ export class AgentOrchestrator {
         solution: thesisOutput.solution,
         whyNow: thesisOutput.whyNow,
         moat: thesisOutput.moat,
-        pathToExit: thesisOutput.pathToExit,
         verdict: thesisOutput.verdict,
         confidence: thesisOutput.confidence,
         loadBearing: thesisOutput.loadBearing,
@@ -3506,7 +3505,6 @@ export class AgentOrchestrator {
       solution: persistedThesis.solution,
       whyNow: persistedThesis.whyNow,
       moat: persistedThesis.moat,
-      pathToExit: persistedThesis.pathToExit,
       verdict: persistedThesis.verdict as ThesisVerdictStr,
       confidence: persistedThesis.confidence,
       loadBearing,

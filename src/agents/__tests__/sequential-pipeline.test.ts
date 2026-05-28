@@ -1168,12 +1168,6 @@ function buildAgentMockResponse(prompt: string, systemPrompt?: string): unknown 
         keyAssumptions: ["Growth sustains above 100% YoY", "Churn improves below 2%"],
         thesis: "TestCo addresses a real need with strong execution metrics. Risk-adjusted, it's a solid Seed investment if valuation is negotiated down.",
       },
-      exitStrategy: {
-        primaryPath: "Acquisition by analytics incumbent",
-        timeline: "5-7 years",
-        potentialAcquirers: ["Datadog", "Salesforce", "HubSpot"],
-        expectedMultiple: { min: 5, median: 8, max: 15 },
-      },
       nextSteps: [
         { step: "Verify financials", priority: "CRITICAL", deadline: "Before term sheet", responsible: "BA" },
         { step: "Request cohort data", priority: "HIGH", deadline: "1 week", responsible: "Founder" },
@@ -1673,8 +1667,8 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
     expect(allResults["market-intelligence"]).toBeDefined();
   });
 
-  // ── Step 3d: Phase D — 8 remaining agents (parallel) ──
-  it("Step 3d: Phase D — 8 remaining Tier 1 agents (parallel)", async () => {
+  // ── Step 3d: Phase D — 7 remaining agents (parallel) ──
+  it("Step 3d: Phase D — 7 remaining Tier 1 agents (parallel)", async () => {
     const tier1Module = await import("../tier1");
 
     const agentsD = [
@@ -1684,7 +1678,6 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       { name: "cap-table-auditor", agent: tier1Module.capTableAuditor },
       { name: "gtm-analyst", agent: tier1Module.gtmAnalyst },
       { name: "customer-intel", agent: tier1Module.customerIntel },
-      { name: "exit-strategist", agent: tier1Module.exitStrategist },
       { name: "question-master", agent: tier1Module.questionMaster },
     ];
 
@@ -1839,7 +1832,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
   });
 
   // ── Final: Scorecard ──
-  it("Final: All 20 agents completed — scorecard", () => {
+  it("Final: All 19 agents completed — scorecard", () => {
     const expectedAgents = [
       "fact-extractor",
       "document-extractor",
@@ -1854,7 +1847,6 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       "cap-table-auditor",
       "gtm-analyst",
       "customer-intel",
-      "exit-strategist",
       "question-master",
       "saas-expert",
       "contradiction-detector",
@@ -1881,7 +1873,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       console.log(`\nMISSING agents: ${missingAgents.join(", ")}`);
     }
 
-    expect(presentAgents.length).toBe(20);
+    expect(presentAgents.length).toBe(19);
 
     // Show which failed
     const failed = expectedAgents.filter((name) => allResults[name] && !allResults[name].success);
@@ -1890,7 +1882,7 @@ describe("Sequential Pipeline — Full Analysis Simulation", () => {
       failed.forEach((name) => console.log(`  - ${name}: ${allResults[name].error}`));
     }
 
-    // This is the key assertion: we want 20/20 success
+    // This is the key assertion: we want 19/19 success
     expect(failed.length).toBe(0);
 
     // Assert total cost > 0 (mock costs are non-zero)

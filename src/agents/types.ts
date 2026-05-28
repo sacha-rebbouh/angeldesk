@@ -192,7 +192,6 @@ export interface EnrichedAgentContext extends AgentContext {
     solution: string;
     whyNow: string;
     moat: string | null;
-    pathToExit: string | null;
     verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     confidence: number;
     loadBearing: Array<{
@@ -3587,7 +3586,6 @@ export interface MemoGeneratorData {
     redFlags: string[];
   };
   investmentThesis: string;
-  exitStrategy: string;
   nextSteps: string[];
   appendix: {
     financialModel?: string;
