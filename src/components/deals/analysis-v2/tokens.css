@@ -5,7 +5,10 @@
  */
 
 .analysis-v2 {
-  --av-bg: #f6f8fa;
+  /* Hérite du fond app global (Tailwind --background) pour se confondre avec
+     la page parent en mode embedded ; fallback ancien gris pâle si --background
+     non défini (preview standalone, environnements de test). */
+  --av-bg: var(--background, #f6f8fa);
   --av-surface: #ffffff;
   --av-surface-muted: #f1f5f4;
   --av-ink: #17202a;
