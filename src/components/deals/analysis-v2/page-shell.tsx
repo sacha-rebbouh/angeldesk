@@ -60,8 +60,10 @@ export function AnalysisV2PageShell(props: Props) {
   // En mode embedded (hideHeader=true, ex: tab "Analyse IA" de /deals/[id]),
   // on supprime les marges négatives et min-h-screen qui font déborder le
   // composant hors de son conteneur parent (chevauche les onglets + breadcrumb).
+  // Embedded : panel à coins arrondis avec padding, pour ne pas coller aux onglets parents.
+  // Standalone (preview) : marges négatives pour pleine largeur + min-h-screen.
   const wrapperClass = props.hideHeader
-    ? "analysis-v2"
+    ? "analysis-v2 rounded-xl p-4 sm:p-6"
     : "analysis-v2 -m-4 min-h-screen p-4 sm:-m-6 sm:p-6 lg:-m-8 lg:p-8";
   return (
     <div className={wrapperClass}>
