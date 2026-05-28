@@ -15,6 +15,9 @@ import {
   Radio,
 } from "lucide-react";
 import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
+import { AnalysisV2PageShell } from "@/components/deals/analysis-v2/page-shell";
+import { buildAnalysisV2ViewModel } from "@/components/deals/analysis-v2/lib/selectors";
+import type { ResultsMap } from "@/components/deals/analysis-v2/lib/extractors";
 import { ScoreGrid } from "@/components/deals/score-display";
 import { DocumentsTab } from "@/components/deals/documents-tab";
 import { DealDetailTabs } from "@/components/deals/deal-detail-tabs";
@@ -195,6 +198,51 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
     !overviewAnalysisForThesis?.thesisBypass;
   const showOverviewScores = canonicalDeal.globalScore != null && !!latestThesis && !thesisGated;
 
+  const [latestCompletedAnalysis, latestThesisFull] = await Promise.all([
+    prisma.analysis.findFirst({
+      where: { dealId: deal.id, status: "COMPLETED" },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        results: true,
+        totalCost: true,
+        totalTimeMs: true,
+        completedAt: true,
+        totalAgents: true,
+        completedAgents: true,
+        mode: true,
+      },
+    }),
+    prisma.thesis.findFirst({
+      where: { dealId: deal.id, isLatest: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  const analysisV2ViewModel =
+    latestCompletedAnalysis?.results && typeof latestCompletedAnalysis.results === "object" && !Array.isArray(latestCompletedAnalysis.results)
+      ? buildAnalysisV2ViewModel({
+          deal: {
+            id: deal.id,
+            name: deal.name,
+            companyName: deal.companyName,
+            status: deal.status ?? null,
+            sector: deal.sector ?? null,
+            stage: deal.stage ?? null,
+          },
+          analysis: {
+            results: latestCompletedAnalysis.results as unknown as ResultsMap,
+            completedAt: latestCompletedAnalysis.completedAt,
+            totalCost: typeof latestCompletedAnalysis.totalCost === "number" ? latestCompletedAnalysis.totalCost : null,
+            totalTimeMs: typeof latestCompletedAnalysis.totalTimeMs === "number" ? latestCompletedAnalysis.totalTimeMs : null,
+            totalAgents: latestCompletedAnalysis.totalAgents,
+            completedAgents: latestCompletedAnalysis.completedAgents,
+            mode: latestCompletedAnalysis.mode,
+          },
+          thesis: latestThesisFull ? (latestThesisFull as unknown as Record<string, unknown>) : null,
+        })
+      : null;
+
 
   const content = (
     <div className="space-y-6">
@@ -340,21 +388,25 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           </div>
         </TabsContent>
 
-        {/* Tab 2: Analyse IA — Analysis Panel (includes AI Board as sub-tab) */}
+        {/* Tab 2: Analyse IA — V2 Page Shell quand une analyse COMPLETED existe, sinon ancien panel pour les contrôles */}
         <TabsContent value="analysis" className="space-y-6">
-          <AnalysisPanelWrapper
-            dealId={deal.id}
-            dealName={deal.name}
-            currentStatus={deal.status}
-            analyses={deal.analyses.map(a => ({
-              ...a,
-              results: null,
-              startedAt: a.startedAt?.toISOString() ?? null,
-              completedAt: a.completedAt?.toISOString() ?? null,
-              totalCost: a.totalCost?.toString() ?? null,
-              createdAt: a.createdAt.toISOString(),
-            }))}
-          />
+          {analysisV2ViewModel ? (
+            <AnalysisV2PageShell dealName={canonicalDeal.companyName ?? deal.name} vm={analysisV2ViewModel} />
+          ) : (
+            <AnalysisPanelWrapper
+              dealId={deal.id}
+              dealName={deal.name}
+              currentStatus={deal.status}
+              analyses={deal.analyses.map(a => ({
+                ...a,
+                results: null,
+                startedAt: a.startedAt?.toISOString() ?? null,
+                completedAt: a.completedAt?.toISOString() ?? null,
+                totalCost: a.totalCost?.toString() ?? null,
+                createdAt: a.createdAt.toISOString(),
+              }))}
+            />
+          )}
         </TabsContent>
 
         {/* Tab 3: Documents & Team */}
