@@ -18,15 +18,12 @@ export async function GET(request: NextRequest) {
       offset,
     });
 
-    // Get users from Prisma for subscription status
-    // Note: We fetch all users to match with Clerk data. In production with many users,
-    // consider caching or fetching only the users returned by Clerk.
+    // Get users from Prisma for deal count + credits info
     const prismaUsers = await prisma.user.findMany({
       select: {
         id: true,
         clerkId: true,
         email: true,
-        subscriptionStatus: true,
         createdAt: true,
         _count: {
           select: {
@@ -53,7 +50,6 @@ export async function GET(request: NextRequest) {
         image: clerkUser.imageUrl,
         role: (clerkUser.publicMetadata?.role as string) ?? "user",
         isOwner: (clerkUser.publicMetadata?.isOwner as boolean) ?? false,
-        subscriptionStatus: prismaUser?.subscriptionStatus ?? "FREE",
         dealsCount: prismaUser?._count.deals ?? 0,
         createdAt: clerkUser.createdAt,
         lastSignInAt: clerkUser.lastSignInAt,

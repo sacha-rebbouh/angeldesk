@@ -75,7 +75,6 @@ import {
   type AnalysisResult,
   type AnalysisType,
   type AdvancedAnalysisOptions,
-  type UserPlan,
   type PausedAnalysisResult,
   ANALYSIS_CONFIGS,
   AGENT_COUNTS,
@@ -89,7 +88,6 @@ import {
   TIER3_EXECUTION_BATCHES,
   TIER3_BATCHES_BEFORE_TIER2,
   TIER3_BATCHES_AFTER_TIER2,
-  FREE_TIER3_BATCHES_AFTER_TIER2,
 } from "./types";
 import {
   BASE_AGENTS,
@@ -147,7 +145,7 @@ async function loadEvidenceContextSafe(
 }
 
 // Re-export types
-export type { AnalysisOptions, AnalysisResult, AnalysisType, EarlyWarning, UserPlan };
+export type { AnalysisOptions, AnalysisResult, AnalysisType, EarlyWarning };
 
 /**
  * Infer FactCategory from a factKey prefix.
@@ -277,7 +275,6 @@ export class AgentOrchestrator {
       maxCostUsd,
       onEarlyWarning,
       isUpdate = false, // If true, uses UPDATE_ANALYSIS credits (2) vs INITIAL_ANALYSIS (5)
-      userPlan = "FREE",
     } = options;
     const startTime = Date.now();
 
@@ -327,7 +324,6 @@ export class AgentOrchestrator {
           enableTrace,
           analysisModeOverride,
           isUpdate,
-          userPlan,
         });
         break;
       case "full_analysis":
@@ -339,7 +335,6 @@ export class AgentOrchestrator {
           enableTrace,
           analysisModeOverride,
           isUpdate,
-          userPlan,
           pauseAfterThesis: options.pauseAfterThesis,
         });
         break;
@@ -1421,7 +1416,6 @@ export class AgentOrchestrator {
       maxCostUsd,
       onEarlyWarning,
       isUpdate = false,
-      userPlan = "FREE",
       enableTrace = true,
       pauseAfterThesis = false,
       analysisModeOverride,
@@ -1429,29 +1423,19 @@ export class AgentOrchestrator {
     const startTime = Date.now();
     const collectedWarnings: EarlyWarning[] = [];
 
-    // Determine available tiers based on user plan
-    const availableTiers = userPlan === "PRO"
-      ? ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"]
-      : ["TIER_1", "SYNTHESIS"]; // FREE: Tier 1 + synthesis-deal-scorer only
-
-    const includeTier2 = availableTiers.includes("TIER_2");
-    const includeFullTier3 = availableTiers.includes("TIER_3");
+    // Crédits-only : tout user a accès au pipeline complet. Le gating se fait
+    // exclusivement via les crédits côté API route, pas ici.
     const initialFactStore = await getCurrentFacts(dealId).catch(() => []);
     const initialCanonicalDeal = buildCanonicalRuntimeDeal(deal, {
       factStore: initialFactStore,
     });
 
-    console.log(`[Orchestrator] Tier gating: plan=${userPlan}, tiers=${availableTiers.join(",")}`);
-
-    const sectorExpert = includeTier2
-      ? await getTier2SectorExpert(initialCanonicalDeal.sector)
-      : null;
+    const sectorExpert = await getTier2SectorExpert(initialCanonicalDeal.sector);
     const hasSectorExpert = sectorExpert !== null;
 
-    // Adjust total agent count based on plan
-    // FREE: 13 Tier1 + 1 extractor + 1 fact-extractor + 1 synthesis-deal-scorer = 16
-    // PRO:  13 Tier1 + 7 Tier3 + 1 extractor + 1 fact-extractor + (0-1 sector expert) = 22-23
-    const tier3AgentCount = includeFullTier3 ? FULL_ANALYSIS_TIER3_AGENT_NAMES.length : 1;
+    // Pipeline complet : Tier 1 (12 agents) + Tier 3 (5 agents en autonomous,
+    // +1 thesis-reconciler en full_analysis) + extractor + fact-extractor + (0-1 sector expert)
+    const tier3AgentCount = FULL_ANALYSIS_TIER3_AGENT_NAMES.length;
     const TOTAL_AGENTS = TIER1_AGENT_NAMES.length + tier3AgentCount + 1 + 1 + (hasSectorExpert ? 1 : 0);
 
     const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
@@ -1780,10 +1764,8 @@ export class AgentOrchestrator {
         // FIX (audit P0 #1) : saveCheckpoint OBLIGATOIRE pour que resumeAnalysis retrouve
         // l'etat sur le continue/contest. Sans ca resumeAnalysis throws "no checkpoint".
         const pendingTier1 = [...TIER1_AGENT_NAMES];
-        const pendingTier2 = includeTier2 && sectorExpert ? [sectorExpert.name] : [];
-        const pendingTier3 = includeFullTier3
-          ? [...FULL_ANALYSIS_TIER3_AGENT_NAMES]
-          : FREE_TIER3_BATCHES_AFTER_TIER2.flat();
+        const pendingTier2 = sectorExpert ? [sectorExpert.name] : [];
+        const pendingTier3 = [...FULL_ANALYSIS_TIER3_AGENT_NAMES];
         const completedAgentsSet = Object.keys(allResults).filter((k) => allResults[k]?.success);
         await saveCheckpoint(analysis.id, {
           state: "ANALYZING",
@@ -1940,7 +1922,7 @@ export class AgentOrchestrator {
             totalCost,
             totalTimeMs,
             summary,
-            tiersExecuted: availableTiers,
+            tiersExecuted: ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"],
           }, collectedWarnings);
         }
       }
@@ -1993,7 +1975,7 @@ export class AgentOrchestrator {
           totalCost,
           totalTimeMs,
           summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
-          tiersExecuted: availableTiers,
+          tiersExecuted: ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"],
         }, collectedWarnings);
       }
 
@@ -2115,8 +2097,7 @@ export class AgentOrchestrator {
       enrichedContext.conditionsAnalystMode = "pipeline";
 
       // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
-      // Skip for FREE plan (these are TIER_3 agents, not SYNTHESIS)
-      if (includeFullTier3 && !(maxCostUsd && totalCost >= maxCostUsd)) {
+      if (!(maxCostUsd && totalCost >= maxCostUsd)) {
         const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0];
 
         onProgress?.({
@@ -2197,13 +2178,11 @@ export class AgentOrchestrator {
           estimatedCostSoFar: totalCost,
         });
         // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé, doctrine anti-oraculaire).
-      } else if (!includeFullTier3) {
-        console.log(`[Orchestrator] Tier 3 pre-synthesis agents skipped (FREE plan)`);
       } else {
         console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
       }
 
-      // STEP 6: SECTOR EXPERT PHASE - Tier 2 (if available, PRO plan only)
+      // STEP 6: SECTOR EXPERT PHASE - Tier 2 (active si secteur détecté)
       if (sectorExpert) {
         onProgress?.({
           currentAgent: `tier2-${sectorExpert.name}`,
@@ -2293,10 +2272,8 @@ export class AgentOrchestrator {
         enrichedContext.previousResults![agentName] = result;
       }
 
-      // FREE plan: only synthesis-deal-scorer; PRO plan: synthesis-deal-scorer + memo-generator
-      const finalSynthesisBatches = includeFullTier3
-        ? TIER3_BATCHES_AFTER_TIER2
-        : FREE_TIER3_BATCHES_AFTER_TIER2;
+      // Crédits-only : pipeline complet pour tous (synthesis-deal-scorer + memo-generator)
+      const finalSynthesisBatches = TIER3_BATCHES_AFTER_TIER2;
 
       for (const batch of finalSynthesisBatches) {
         // REAL-TIME COST CHECK: Before each batch
@@ -2427,21 +2404,6 @@ export class AgentOrchestrator {
 
       await updateDealStatus(dealId, "IN_DD");
 
-      // F83: Dispatch webhook event (fire-and-forget)
-      try {
-        const { dispatchWebhookEvent } = await import("@/services/webhook-dispatcher");
-        dispatchWebhookEvent(deal.userId, allSuccess ? "analysis.completed" : "analysis.failed", {
-          dealId,
-          analysisId: analysis.id,
-          type: "full_analysis",
-          success: allSuccess,
-          totalTimeMs,
-          totalCost,
-        }).catch(err => console.error("[Webhook] Dispatch failed:", err));
-      } catch {
-        // Webhook dispatch is optional - don't block
-      }
-
       // F40: Calculate analysis delta for re-analyses
       let analysisDelta;
       if (isUpdate) {
@@ -2472,7 +2434,7 @@ export class AgentOrchestrator {
         totalCost,
         totalTimeMs,
         summary,
-        tiersExecuted: availableTiers,
+        tiersExecuted: ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"],
         analysisDelta: analysisDelta ?? undefined,
       }, collectedWarnings);
     } catch (error) {
@@ -2514,7 +2476,7 @@ export class AgentOrchestrator {
         totalCost,
         totalTimeMs,
         summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        tiersExecuted: availableTiers,
+        tiersExecuted: ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"],
       }, collectedWarnings);
     }
   }
@@ -3392,22 +3354,16 @@ export class AgentOrchestrator {
     });
   }
 
-  private inferFullAnalysisResumeTopology(totalAgents: number, hasSectorExpert: boolean): {
+  private inferFullAnalysisResumeTopology(_totalAgents: number, hasSectorExpert: boolean): {
     includeFullTier3: boolean;
     includeTier2: boolean;
   } {
-    const freeTotal =
-      TIER1_AGENT_NAMES.length +
-      FREE_TIER3_BATCHES_AFTER_TIER2.flat().length +
-      2; // fact-extractor + document-extractor
-    const proTotalWithoutTier2 =
-      TIER1_AGENT_NAMES.length +
-      FULL_ANALYSIS_TIER3_AGENT_NAMES.length +
-      2;
-
+    // Crédits-only : toujours le pipeline complet. Les analyses RUNNING legacy
+    // (avant le refactor) reprennent en pipeline complet (perte contrôlée
+    // assumée, cf. plan refactor /Users/sacharebbouh/.claude/plans/structured-finding-chipmunk.md).
     return {
-      includeFullTier3: totalAgents >= proTotalWithoutTier2,
-      includeTier2: hasSectorExpert && totalAgents >= proTotalWithoutTier2 + 1 && totalAgents > freeTotal,
+      includeFullTier3: true,
+      includeTier2: hasSectorExpert,
     };
   }
 
@@ -4778,7 +4734,7 @@ export class AgentOrchestrator {
         restoreFullTier3Context();
 
         const tier3Batches = isFullAnalysis
-          ? (fullAnalysisTopology.includeFullTier3 ? TIER3_BATCHES_AFTER_TIER2 : FREE_TIER3_BATCHES_AFTER_TIER2)
+          ? TIER3_BATCHES_AFTER_TIER2
           : TIER3_EXECUTION_BATCHES;
 
         for (const batch of tier3Batches) {

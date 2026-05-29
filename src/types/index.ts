@@ -16,7 +16,6 @@ import type {
   RedFlagStatus,
   AnalysisType,
   AnalysisStatus,
-  SubscriptionStatus,
 } from "@prisma/client";
 
 // Re-export Prisma types for convenience
@@ -38,7 +37,6 @@ export type {
   RedFlagStatus,
   AnalysisType,
   AnalysisStatus,
-  SubscriptionStatus,
 };
 
 // Extended types with relations

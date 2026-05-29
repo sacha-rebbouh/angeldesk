@@ -1928,7 +1928,6 @@ describe("Agent Pipeline Tests", () => {
         FULL_ANALYSIS_TIER3_AGENT_NAMES,
         TIER3_BATCHES_BEFORE_TIER2,
         TIER3_BATCHES_AFTER_TIER2,
-        FREE_TIER3_BATCHES_AFTER_TIER2,
         AGENT_COUNTS,
         TIER1_AGENT_NAMES,
         TIER2_SECTOR_EXPERT_COUNT,
@@ -1938,7 +1937,6 @@ describe("Agent Pipeline Tests", () => {
       expect(FULL_ANALYSIS_TIER3_AGENT_NAMES).toContain("thesis-reconciler");
       expect(TIER3_BATCHES_AFTER_TIER2[0]).toEqual(["thesis-reconciler"]);
       expect(TIER3_BATCHES_AFTER_TIER2[1]).toEqual(["synthesis-deal-scorer"]);
-      expect(FREE_TIER3_BATCHES_AFTER_TIER2).toEqual([["synthesis-deal-scorer"]]);
       expect([
         ...TIER3_BATCHES_BEFORE_TIER2.flat(),
         ...TIER3_BATCHES_AFTER_TIER2.flat(),

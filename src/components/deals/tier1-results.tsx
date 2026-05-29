@@ -55,9 +55,7 @@ import type {
 import type { ReasoningTrace } from "@/agents/react/types";
 import type { ScoredFinding, ConfidenceScore } from "@/scoring/types";
 import { ReActTraceViewer } from "./react-trace-viewer";
-import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-teaser";
 import { DataCompletenessGuide } from "@/components/shared/data-completeness-guide";
-import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
 import { Lightbulb } from "lucide-react";
 import {
   ALERT_SIGNAL_LABELS,
@@ -94,7 +92,6 @@ interface AgentResultWithReAct {
 
 interface Tier1ResultsProps {
   results: Record<string, AgentResultWithReAct>;
-  subscriptionPlan?: SubscriptionPlan;
   resolutionMap?: Record<string, import("@/hooks/use-resolutions").AlertResolution>;
   onResolve?: (input: import("@/hooks/use-resolutions").CreateResolutionInput) => Promise<unknown>;
   onUnresolve?: (alertKey: string) => Promise<unknown>;
@@ -3152,9 +3149,6 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                 </div>
               </div>
             ))}
-            {hiddenCriticalCount > 0 && (
-              <ProTeaserInline hiddenCount={hiddenCriticalCount} itemLabel="questions CRITICAL" />
-            )}
           </div>
         </ExpandableSection>
 
@@ -3233,13 +3227,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
         )}
 
         {/* Negotiation Points */}
-        {negotiationPoints.length > 0 && questionLimit !== Infinity ? (
-          <ProTeaserSection
-            title="Points de négociation"
-            description={`${negotiationPoints.length} leviers de négociation identifiés`}
-            icon={Lightbulb}
-          />
-        ) : negotiationPoints.length > 0 && (
+        {negotiationPoints.length > 0 && (
           <ExpandableSection title={`Points de négociation (${negotiationPoints.length})`}>
             <div className="space-y-2 mt-2">
               {negotiationPoints.map((n: {
@@ -3571,12 +3559,9 @@ const Tier1SummaryView = memo(function Tier1SummaryView({
 });
 
 // Main Tier 1 Results Component
-export const Tier1Results = memo(function Tier1Results({ results, subscriptionPlan = "FREE", resolutionMap, onResolve, onUnresolve, isResolving }: Tier1ResultsProps) {
+export const Tier1Results = memo(function Tier1Results({ results, resolutionMap, onResolve, onUnresolve, isResolving }: Tier1ResultsProps) {
   // State for tracking which agent's trace panel is open
   const [openTraceAgent, setOpenTraceAgent] = useState<string | null>(null);
-
-  // Get display limits based on plan
-  const displayLimits = useMemo(() => getDisplayLimits(subscriptionPlan), [subscriptionPlan]);
 
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
@@ -3881,7 +3866,6 @@ export const Tier1Results = memo(function Tier1Results({ results, subscriptionPl
                 data={questionData}
                 reactData={getReactData("question-master")}
                 onShowTrace={traceHandlers["question-master"]}
-                questionLimit={displayLimits.criticalQuestions}
               />
             )}
           </div>

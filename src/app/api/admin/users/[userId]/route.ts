@@ -5,7 +5,6 @@ import { clerkClient } from "@/lib/clerk";
 import { prisma } from "@/lib/prisma";
 
 const updateUserSchema = z.object({
-  subscriptionStatus: z.enum(["FREE", "PRO"]).optional(),
   role: z.enum(["admin", "user"]).optional(),
   isOwner: z.boolean().optional(),
   name: z.string().optional(),
@@ -23,7 +22,7 @@ export async function PATCH(
     const body = await request.json();
     const data = updateUserSchema.parse(body);
 
-    const results: { clerk?: boolean; prisma?: boolean } = {};
+    const results: { clerk?: boolean } = {};
 
     // Update Clerk metadata if role or isOwner changed
     if (data.role !== undefined || data.isOwner !== undefined || data.name !== undefined) {
@@ -51,21 +50,6 @@ export async function PATCH(
 
       await clerkClient.users.updateUser(userId, updateData);
       results.clerk = true;
-    }
-
-    // Update Prisma if subscriptionStatus changed
-    if (data.subscriptionStatus !== undefined) {
-      const prismaUser = await prisma.user.findUnique({
-        where: { clerkId: userId },
-      });
-
-      if (prismaUser) {
-        await prisma.user.update({
-          where: { clerkId: userId },
-          data: { subscriptionStatus: data.subscriptionStatus },
-        });
-        results.prisma = true;
-      }
     }
 
     return NextResponse.json({

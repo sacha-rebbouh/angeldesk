@@ -64,7 +64,6 @@ describe("GET /api/user/export", () => {
       email: "user@example.com",
       name: "User",
       image: null,
-      subscriptionStatus: "active",
       investmentPreferences: null,
       createdAt: new Date("2026-04-01T10:00:00Z"),
       updatedAt: new Date("2026-04-20T10:00:00Z"),

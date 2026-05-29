@@ -26,8 +26,6 @@ import {
   formatAnalysisMode,
   formatDate,
   categorizeResults,
-  PLAN_ANALYSIS_CONFIG,
-  type SubscriptionPlan,
   type AnalysisTypeValue,
 } from "@/lib/analysis-constants";
 import {
@@ -42,7 +40,6 @@ import { ThesisHeroCard } from "./thesis/thesis-hero-card";
 import { ThesisReviewModal } from "./thesis/thesis-review-modal";
 import { ThesisFrameworksExpand } from "./thesis/thesis-frameworks-expand";
 import { ThesisRevisionBanner } from "./thesis/thesis-revision-banner";
-import { ProTeaserBanner } from "@/components/shared/pro-teaser";
 import { AnalysisProgress, type AgentStatus } from "./analysis-progress";
 import { TimelineVersions } from "./timeline-versions";
 import { type AgentQuestion, type QuestionResponse } from "./founder-responses";
@@ -51,7 +48,6 @@ import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
 import { DeckCoherenceReport as DeckCoherenceReportPanel } from "./deck-coherence-report";
 import type { NormalizedThesisEvaluation } from "@/agents/thesis/types";
-import { PartialAnalysisBanner } from "./partial-analysis-banner";
 import { AnalysisCompleteView } from "./analysis-complete-view";
 import { AnalysisInvestorView } from "./analysis-investor-view";
 import { AnalysisMemoFull } from "./analysis-memo-full";
@@ -689,13 +685,11 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     && new Set(["alert_dominant", "vigilance"]).has(thesis.verdict)
     && !thesis.thesisBypass;
 
-  // Determine analysis type based on credit balance (not subscription plan)
+  // Determine analysis type based on credit balance
   // Thesis-first : tier1_complete retire. Seul Deep Dive (full_analysis) existe.
   // Si insuffisant → pas d'analyse possible (modal credits affiche).
-  const subscriptionPlan: SubscriptionPlan = (usage?.subscriptionStatus as SubscriptionPlan) ?? "FREE";
   const canAffordDeepDive = (quota?.balance ?? 0) >= (quota?.costs?.DEEP_DIVE ?? 5);
   const analysisType: AnalysisTypeValue = "full_analysis";
-  const planConfig = canAffordDeepDive ? PLAN_ANALYSIS_CONFIG.PRO : PLAN_ANALYSIS_CONFIG.FREE;
 
   // Check if this is an update (has previous analysis)
   const hasExistingAnalysis = analyses.some((a) => a.status === "COMPLETED");
@@ -949,10 +943,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       deckCoherenceReport,
     };
   }, [displayedResult]);
-
-  // Effective plan for results display:
-  // If displayed results contain Tier 2/3 data, user paid for a Deep Dive → show all
-  const effectivePlan: SubscriptionPlan = (isTier2Analysis || isTier3Analysis) ? "PRO" : subscriptionPlan;
 
   // Filter completed analyses for history (results loaded on-demand, not required here)
   const completedAnalyses = useMemo(() => {
@@ -1282,7 +1272,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   {displayedResult ? "Relancer une analyse" : "Analyse IA"}
                 </CardTitle>
                 <CardDescription className="text-sm">
-                  {planConfig.description}
+                  Deep Dive thesis-first (12 agents Tier 1 + expert sectoriel + 5 agents Tier 3)
                   {quota && (
                     <span className="ml-2 text-muted-foreground">
                       ({quota.balance} crédit{quota.balance !== 1 ? "s" : ""} disponible{quota.balance !== 1 ? "s" : ""})
@@ -1597,16 +1587,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   />
                 )}
 
-                {/* Partial Analysis Banner for FREE users (F32) */}
-                <PartialAnalysisBanner
-                  subscriptionPlan={effectivePlan}
-                  isMissingTier3={!isTier3Analysis}
-                />
-
-                {/* Credit upsell banner for users who haven't purchased yet */}
-                {quota && (quota.totalPurchased ?? 0) === 0 && displayedResult.success && !isTier3Analysis && (
-                  <ProTeaserBanner />
-                )}
               </TabsContent>
 
               <TabsContent value="memo" className="mt-0">
@@ -1703,7 +1683,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                 {isTier3Analysis && displayedResult.success && Object.keys(tier3Results).length > 0 && (
                   <Tier3Results
                     results={tier3Results}
-                    subscriptionPlan={effectivePlan}
                     totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter((result) => result.success).length : 0}
                     resolutionMap={resolutionMap}
                     resolutions={resolutions}
@@ -1721,14 +1700,13 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     isChanged={previousAnalysis !== null}
                     changeType="neutral"
                   >
-                    <Tier2Results results={tier2Results} subscriptionPlan={effectivePlan} />
+                    <Tier2Results results={tier2Results} />
                   </ChangedSection>
                 )}
 
                 {isTier1Analysis && displayedResult.success && Object.keys(tier1Results).length > 0 && (
                   <Tier1Results
                     results={tier1Results}
-                    subscriptionPlan={effectivePlan}
                     resolutionMap={resolutionMap}
                     onResolve={resolveAlert}
                     onUnresolve={unresolveAlert}

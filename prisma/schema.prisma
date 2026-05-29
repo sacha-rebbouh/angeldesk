@@ -16,8 +16,6 @@ model User {
   name    String?
   image   String?
 
-  subscriptionStatus SubscriptionStatus @default(FREE)
-
   // Préférences d'investissement BA (Business Angel)
   // Stocké en JSON pour flexibilité (voir BAPreferences dans services/benchmarks/types.ts)
   investmentPreferences Json?
@@ -38,12 +36,6 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-}
-
-enum SubscriptionStatus {
-  FREE
-  PRO
-  ENTERPRISE
 }
 
 // ============================================================================
@@ -73,12 +65,16 @@ model UserCreditBalance {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  balance        Int     @default(0) // Current credit balance
-  totalPurchased Int     @default(0) // Lifetime credits purchased (for tier access)
+  balance        Int     @default(0) // Paid credit balance (cumulatif, ne reset jamais sauf via expiry)
+  totalPurchased Int     @default(0) // Lifetime credits purchased (audit historique)
   lastPackName   String? // Last pack purchased (for rate limits)
 
-  // Free tier: 5 credits granted at signup (1 Deep Dive)
-  freeCreditsGranted Boolean @default(false)
+  // Free tier hebdo "use it or lose it"
+  // 10 crédits free dans une fenêtre de 7 jours qui démarre au 1er deduct du free.
+  // Au reset, balanceFree est écrasé à 10 (pas additif).
+  // freeResetStartedAt = null signifie "fenêtre non démarrée" (juste après reset ou row neuve).
+  balanceFree        Int       @default(10)
+  freeResetStartedAt DateTime?
 
   // Auto-refill
   autoRefill         Boolean @default(false)
@@ -288,7 +284,7 @@ model Document {
   linkedQuestionSource LinkedQuestionSource?
   linkedQuestionText   String?
   linkedRedFlagId      String?
-  linkedRedFlag        RedFlag? @relation("DocumentLinkedRedFlag", fields: [linkedRedFlagId], references: [id], onDelete: SetNull)
+  linkedRedFlag        RedFlag?              @relation("DocumentLinkedRedFlag", fields: [linkedRedFlagId], references: [id], onDelete: SetNull)
 
   // Corpus attachment link: a FILE document can be attached to an EMAIL/NOTE
   // without overloading parentDocumentId, which is reserved for F62 versioning.
@@ -439,9 +435,9 @@ model DocumentExtractionRun {
   startedAt   DateTime  @default(now())
   completedAt DateTime?
 
-  pages         DocumentExtractionPage[]
-  overrides     DocumentExtractionOverride[]
-  analysisLinks AnalysisExtractionRun[]
+  pages                 DocumentExtractionPage[]
+  overrides             DocumentExtractionOverride[]
+  analysisLinks         AnalysisExtractionRun[]
   corpusSnapshotMembers CorpusSnapshotMember[]
 
   // Evidence signals produced by this extraction run.
@@ -774,21 +770,21 @@ model CorpusSnapshot {
 
   createdAt DateTime @default(now())
 
+  @@unique([dealId, sourceHash])
   @@index([dealId])
   @@index([dealId, createdAt])
-  @@unique([dealId, sourceHash])
 }
 
 // Table de jointure CorpusSnapshot ↔ Document.
 // Additive only: ne remplace pas encore AnalysisDocument / Thesis.sourceDocumentIds.
 model CorpusSnapshotMember {
   corpusSnapshotId String
-  corpusSnapshot   CorpusSnapshot @relation(fields: [corpusSnapshotId], references: [id], onDelete: Cascade)
+  corpusSnapshot   CorpusSnapshot         @relation(fields: [corpusSnapshotId], references: [id], onDelete: Cascade)
   documentId       String
-  document         Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document         Document               @relation(fields: [documentId], references: [id], onDelete: Cascade)
   extractionRunId  String?
   extractionRun    DocumentExtractionRun? @relation(fields: [extractionRunId], references: [id], onDelete: SetNull)
-  createdAt        DateTime       @default(now())
+  createdAt        DateTime               @default(now())
 
   @@id([corpusSnapshotId, documentId])
   @@index([documentId])
@@ -2382,11 +2378,11 @@ model LiveSession {
   botJoinUrl      String?
 
   // Session state
-  status       String  @default("created")
+  status                String    @default("created")
   // Values: "created" | "bot_joining" | "live" | "processing" | "completed" | "failed"
-  errorMessage String? @db.Text
-  reanalysisRequestId String?
-  reanalysisMode      String?
+  errorMessage          String?   @db.Text
+  reanalysisRequestId   String?
+  reanalysisMode        String?
   reanalysisRequestedAt DateTime?
 
   // Participants mapping (BA labels who is who)

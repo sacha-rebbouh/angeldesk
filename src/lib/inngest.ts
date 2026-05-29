@@ -380,11 +380,10 @@ export const dealAnalysisFunction = inngest.createFunction(
   },
   { event: 'analysis/deal.analyze' },
   async ({ event, step }) => {
-    const { dealId, type, enableTrace, userPlan, userId, dispatchRefundKey } = event.data as {
+    const { dealId, type, enableTrace, userId, dispatchRefundKey } = event.data as {
       dealId: string;
       type: string;
       enableTrace: boolean;
-      userPlan: string;
       userId: string;
       dispatchRefundKey?: string;
     };
@@ -408,7 +407,6 @@ export const dealAnalysisFunction = inngest.createFunction(
           dealId,
           type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
           enableTrace,
-          userPlan: userPlan as "FREE" | "PRO",
           pauseAfterThesis: withThesisGate,
         });
       });
@@ -822,7 +820,6 @@ export const thesisReextractFunction = inngest.createFunction(
           const res = await orchestrator.runAnalysis({
             dealId,
             type: "full_analysis",
-            userPlan: "PRO",
             pauseAfterThesis: true,
             forceRefresh: true,
           });

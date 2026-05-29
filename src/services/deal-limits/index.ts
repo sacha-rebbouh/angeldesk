@@ -5,7 +5,6 @@ import { CREDIT_COSTS, getActionForAnalysisType } from "@/services/credits/types
 // DEAL LIMITS — Credit-based (replaces old monthly quota system)
 // ============================================================================
 
-export type SubscriptionTier = 'FREE' | 'PRO' | 'ENTERPRISE';
 export type AnalysisTier = 1 | 2 | 3;
 
 export interface DealUsageStatus {
@@ -24,7 +23,6 @@ export interface DealUsageStatus {
   monthlyLimit: number;
   usedThisMonth: number;
   remainingDeals: number;
-  subscriptionStatus: SubscriptionTier;
   isUnlimited: boolean;
   nextResetDate: Date;
   tier1Count: number;
@@ -75,17 +73,17 @@ export async function getUsageStatus(userId: string): Promise<DealUsageStatus> {
   const balance = await getCreditBalance(userId);
 
   return {
-    canAnalyze: balance.balance >= CREDIT_COSTS.QUICK_SCAN,
-    reason: balance.balance < CREDIT_COSTS.QUICK_SCAN ? "Crédits insuffisants" : undefined,
-    creditBalance: balance.balance,
+    canAnalyze: balance.totalAvailable >= CREDIT_COSTS.QUICK_SCAN,
+    reason: balance.totalAvailable < CREDIT_COSTS.QUICK_SCAN ? "Crédits insuffisants" : undefined,
+    creditBalance: balance.totalAvailable,
     totalPurchased: balance.totalPurchased,
     maxTier: 3,
-    canUseTier: (tier: AnalysisTier) => balance.balance >= (tier <= 1 ? CREDIT_COSTS.QUICK_SCAN : CREDIT_COSTS.DEEP_DIVE),
+    canUseTier: (tier: AnalysisTier) =>
+      balance.totalAvailable >= (tier <= 1 ? CREDIT_COSTS.QUICK_SCAN : CREDIT_COSTS.DEEP_DIVE),
     // Legacy fields
-    monthlyLimit: balance.balance,
+    monthlyLimit: balance.totalAvailable,
     usedThisMonth: 0,
-    remainingDeals: balance.balance,
-    subscriptionStatus: balance.totalPurchased > 0 ? 'PRO' : 'FREE',
+    remainingDeals: balance.totalAvailable,
     isUnlimited: false,
     nextResetDate: balance.expiresAt ?? new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
     tier1Count: 0,

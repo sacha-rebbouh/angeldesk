@@ -3,12 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   ANALYSIS_TYPES,
   CREDIT_ANALYSIS_CONFIG,
-  PLAN_ANALYSIS_CONFIG,
   formatAnalysisMode,
-  getAnalysisTypeForPlan,
 } from "../analysis-constants";
 
-describe("analysis-constants thesis-first contract", () => {
+describe("analysis-constants — crédits-only contract", () => {
   it("n'expose plus aucun entrypoint public legacy", () => {
     const publicTypes = ANALYSIS_TYPES.map((entry) => entry.value);
 
@@ -18,16 +16,9 @@ describe("analysis-constants thesis-first contract", () => {
     expect(publicTypes).not.toContain("tier1_complete");
   });
 
-  it("aligne tous les plans sur le meme Deep Dive thesis-first", () => {
+  it("expose un seul produit thesis-first DEEP_DIVE", () => {
     expect(CREDIT_ANALYSIS_CONFIG.DEEP_DIVE.analysisType).toBe("full_analysis");
-
-    expect(getAnalysisTypeForPlan("FREE")).toBe("full_analysis");
-    expect(getAnalysisTypeForPlan("PRO")).toBe("full_analysis");
-    expect(getAnalysisTypeForPlan("ENTERPRISE")).toBe("full_analysis");
-
-    expect(PLAN_ANALYSIS_CONFIG.FREE).toBe(CREDIT_ANALYSIS_CONFIG.DEEP_DIVE);
-    expect(PLAN_ANALYSIS_CONFIG.PRO).toBe(CREDIT_ANALYSIS_CONFIG.DEEP_DIVE);
-    expect(PLAN_ANALYSIS_CONFIG.ENTERPRISE).toBe(CREDIT_ANALYSIS_CONFIG.DEEP_DIVE);
+    expect(CREDIT_ANALYSIS_CONFIG.DEEP_DIVE.credits).toBe(5);
   });
 
   it("garde les libelles legacy en lecture seule sans les re-promettre comme produit actif", () => {

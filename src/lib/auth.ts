@@ -15,7 +15,6 @@ const DEV_USER = {
   email: "dev@angeldesk.local",
   name: "Dev User",
   image: null,
-  subscriptionStatus: "PRO" as const,
   investmentPreferences: null,
   cguAcceptedAt: new Date(), // Dev user always has CGU accepted
   createdAt: new Date(),
@@ -63,7 +62,6 @@ export async function getOrCreateUser() {
           clerkId: DEV_USER.clerkId,
           email: DEV_USER.email,
           name: DEV_USER.name,
-          subscriptionStatus: DEV_USER.subscriptionStatus,
         },
       });
       // Grant admin credits
@@ -200,7 +198,7 @@ async function ensureAdminCredits(userId: string): Promise<void> {
           balance: ADMIN_CREDITS,
           totalPurchased: ADMIN_CREDITS,
           lastPackName: 'admin',
-          freeCreditsGranted: true,
+          // balanceFree=10 via schema default
         },
       });
       return;

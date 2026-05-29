@@ -15,7 +15,13 @@ import {
 // ============================================================================
 
 /**
- * Check if user has enough credits for an action
+ * Check if user has enough credits for an action.
+ *
+ * Projection lazy reset : si la fenêtre free a expiré (freeResetStartedAt + 7j < now),
+ * on projette mentalement balanceFree = weeklyAllowance (10) SANS écrire en DB.
+ * L'écriture du reset se fera lors du prochain deductCreditAmount.
+ *
+ * `balance` retourné = total disponible (free + paid).
  */
 export async function checkCredits(
   userId: string,
@@ -30,27 +36,31 @@ export async function checkCredits(
 
   const balanceRecord = await getOrCreateBalance(userId);
 
-  // Check expiry
+  // Check expiry sur le paid uniquement (free n'expire pas, il reset hebdo)
   if (balanceRecord.expiresAt && new Date() > balanceRecord.expiresAt) {
-    // Credits expired — set balance to 0
     await expireCredits(userId, balanceRecord.balance);
+    // Après expiry du paid, totalAvailable = balanceFree projeté
+    const projectedFree = projectBalanceFree(balanceRecord);
+    const allowed = projectedFree >= cost;
     return {
-      allowed: false,
-      reason: 'INSUFFICIENT_CREDITS',
-      balance: 0,
+      allowed,
+      reason: allowed ? 'OK' : 'INSUFFICIENT_CREDITS',
+      balance: projectedFree,
       cost,
-      balanceAfter: 0,
+      balanceAfter: allowed ? projectedFree - cost : projectedFree,
     };
   }
 
-  const allowed = balanceRecord.balance >= cost;
+  const projectedFree = projectBalanceFree(balanceRecord);
+  const totalAvailable = balanceRecord.balance + projectedFree;
+  const allowed = totalAvailable >= cost;
 
   return {
     allowed,
     reason: allowed ? 'OK' : 'INSUFFICIENT_CREDITS',
-    balance: balanceRecord.balance,
+    balance: totalAvailable,
     cost,
-    balanceAfter: allowed ? balanceRecord.balance - cost : balanceRecord.balance,
+    balanceAfter: allowed ? totalAvailable - cost : totalAvailable,
   };
 }
 
@@ -82,7 +92,20 @@ export interface CreditDeductionContext {
 
 /**
  * Deduct an explicit credit amount for variable-cost operations.
- * This is used for extraction because the billable primitive is page-level.
+ *
+ * Algo (doctrine money-touching errors.md 2026-03-12 CREDITS) :
+ *   1. Idempotency check via UNIQUE constraint sur CreditTransaction.idempotencyKey
+ *   2. Read balance, check expiry sur le paid uniquement
+ *   3. Lazy reset : si freeResetStartedAt + 7j < now → updateMany WHERE
+ *      freeResetStartedAt = $oldValue SET balanceFree=10, freeResetStartedAt=null
+ *   4. Compute free/paid split : freeUsed = min(balanceFree, cost), paidUsed = cost - freeUsed
+ *   5. Fail si balanceFree + balance < cost
+ *   6. Update atomique avec optimistic locking sur (balanceFree, balance, freeResetStartedAt)
+ *      Le WHERE freeResetStartedAt = $oldValue empêche un autre worker d'avoir reset entre temps
+ *   7. Si freeUsed > 0 ET freeResetStartedAt était null, démarrer la fenêtre (= ce timestamp)
+ *   8. Log transaction avec balanceAfter = newPaid + newFree (TOTAL)
+ *
+ * balanceAfter = TOTAL (free + paid) — sémantique cohérente avec l'UI.
  */
 export async function deductCreditAmount(
   userId: string,
@@ -107,7 +130,7 @@ export async function deductCreditAmount(
         }
       }
 
-      const balance = await tx.userCreditBalance.findUnique({
+      let balance = await tx.userCreditBalance.findUnique({
         where: { userId },
       });
 
@@ -115,42 +138,80 @@ export async function deductCreditAmount(
         return { success: false, balanceAfter: 0, error: 'Compte crédits non trouvé' };
       }
 
-      // Check expiry
+      // Check expiry sur le paid uniquement
       if (balance.expiresAt && new Date() > balance.expiresAt) {
-        return { success: false, balanceAfter: 0, error: 'Crédits expirés' };
+        return { success: false, balanceAfter: balance.balanceFree, error: 'Crédits expirés' };
       }
 
-      if (balance.balance < cost) {
+      const now = new Date();
+
+      // Lazy reset : si fenêtre expirée, on remet balanceFree=10 et freeResetStartedAt=null
+      const needsReset =
+        balance.freeResetStartedAt !== null &&
+        now.getTime() - balance.freeResetStartedAt.getTime() >= FREE_TIER.windowDurationMs;
+
+      if (needsReset && balance.freeResetStartedAt) {
+        const resetUpdate = await tx.userCreditBalance.updateMany({
+          where: { userId, freeResetStartedAt: balance.freeResetStartedAt },
+          data: { balanceFree: FREE_TIER.weeklyAllowance, freeResetStartedAt: null },
+        });
+        if (resetUpdate.count === 0) {
+          // Un autre worker a déjà reset entre notre read et notre write — re-fetch
+          balance = await tx.userCreditBalance.findUnique({ where: { userId } });
+          if (!balance) {
+            return { success: false, balanceAfter: 0, error: 'Compte crédits non trouvé' };
+          }
+        } else {
+          balance = { ...balance, balanceFree: FREE_TIER.weeklyAllowance, freeResetStartedAt: null };
+        }
+      }
+
+      // Compute free/paid split (free d'abord)
+      const freeUsed = Math.min(balance.balanceFree, cost);
+      const paidUsed = cost - freeUsed;
+      const totalAvailable = balance.balanceFree + balance.balance;
+
+      if (totalAvailable < cost) {
         return {
           success: false,
-          balanceAfter: balance.balance,
-          error: `Crédits insuffisants (${balance.balance} disponibles, ${cost} requis)`,
+          balanceAfter: totalAvailable,
+          error: `Crédits insuffisants (${totalAvailable} disponibles, ${cost} requis)`,
         };
       }
 
-      // Atomic deduction with optimistic locking
+      // Démarre la fenêtre si on consomme du free pour la 1ère fois depuis le dernier reset
+      const shouldStartWindow = balance.freeResetStartedAt === null && freeUsed > 0;
+      const newFreeResetStartedAt = shouldStartWindow ? now : balance.freeResetStartedAt;
+
+      // Update atomique avec optimistic locking sur les 3 champs concernés
       const updated = await tx.userCreditBalance.updateMany({
         where: {
           userId,
-          balance: { gte: cost },
+          balanceFree: { gte: freeUsed },
+          balance: { gte: paidUsed },
+          freeResetStartedAt: balance.freeResetStartedAt,
         },
         data: {
-          balance: { decrement: cost },
+          balanceFree: { decrement: freeUsed },
+          balance: { decrement: paidUsed },
+          freeResetStartedAt: newFreeResetStartedAt,
         },
       });
 
       if (updated.count === 0) {
-        return { success: false, balanceAfter: balance.balance, error: 'Concurrence détectée' };
+        return { success: false, balanceAfter: totalAvailable, error: 'Concurrence détectée' };
       }
 
-      const newBalance = balance.balance - cost;
+      const newPaid = balance.balance - paidUsed;
+      const newFree = balance.balanceFree - freeUsed;
+      const balanceAfter = newPaid + newFree;
 
-      // Log the transaction
+      // Log la transaction. balanceAfter = TOTAL (free + paid).
       await tx.creditTransaction.create({
         data: {
           userId,
           amount: -cost,
-          balanceAfter: newBalance,
+          balanceAfter,
           action: action as CreditAction,
           description: context.description ?? getActionDescription(action),
           dealId: context.dealId ?? null,
@@ -161,7 +222,7 @@ export async function deductCreditAmount(
         },
       });
 
-      return { success: true, balanceAfter: newBalance };
+      return { success: true, balanceAfter };
     });
 
     return result;
@@ -211,8 +272,8 @@ export async function addCredits(
           balance: effectiveCredits,
           totalPurchased: credits,
           lastPackName: packName,
-          freeCreditsGranted: false,
           expiresAt: getExpiryDate(),
+          // balanceFree démarre à 10 par défaut (schema), freeResetStartedAt null
         },
         update: {
           balance: { increment: effectiveCredits },
@@ -246,7 +307,13 @@ export async function addCredits(
 }
 
 /**
- * Grant free credits at signup (1 Deep Dive = 5 credits)
+ * Initialise la row UserCreditBalance au signup.
+ *
+ * Le free tier hebdo (10 crédits, fenêtre 7j use-it-or-lose-it) est appliqué
+ * automatiquement par le DEFAULT 10 sur balanceFree dans le schema.
+ * Si la row existe déjà : no-op (return false).
+ *
+ * Le timer de la fenêtre démarre au 1er deduct du free, pas au signup.
  */
 export async function grantFreeCredits(userId: string): Promise<boolean> {
   try {
@@ -254,36 +321,27 @@ export async function grantFreeCredits(userId: string): Promise<boolean> {
       where: { userId },
     });
 
-    if (existing?.freeCreditsGranted) {
-      return false; // Already granted
+    if (existing) {
+      return false; // Row déjà initialisée — pas de double grant
     }
 
-    const credits = FREE_TIER.initialCredits;
-
     await prisma.$transaction(async (tx) => {
-      await tx.userCreditBalance.upsert({
-        where: { userId },
-        create: {
+      await tx.userCreditBalance.create({
+        data: {
           userId,
-          balance: credits,
+          balance: 0, // pas de paid au signup
           totalPurchased: 0,
-          freeCreditsGranted: true,
-          expiresAt: getExpiryDate(),
-        },
-        update: {
-          balance: { increment: credits },
-          freeCreditsGranted: true,
-          expiresAt: getExpiryDate(),
+          // balanceFree = 10 et freeResetStartedAt = null via schema default
         },
       });
 
       await tx.creditTransaction.create({
         data: {
           userId,
-          amount: credits,
-          balanceAfter: credits,
+          amount: FREE_TIER.weeklyAllowance,
+          balanceAfter: FREE_TIER.weeklyAllowance,
           action: 'FREE_GRANT',
-          description: '1 Deep Dive offert (inscription)',
+          description: `${FREE_TIER.weeklyAllowance} crédits free hebdomadaires (inscription)`,
         },
       });
     });
@@ -417,18 +475,37 @@ export async function refundCreditAmount(
 }
 
 /**
- * Get user's credit balance info
+ * Get user's credit balance info.
+ *
+ * Projection lazy reset : si la fenêtre free a expiré, balanceFree projeté = 10
+ * (la vraie écriture en DB se fait au prochain deductCreditAmount).
+ *
+ * totalAvailable = balance + balanceFree (projeté). nextFreeResetAt = freeResetStartedAt + 7j.
  */
 export async function getCreditBalance(userId: string): Promise<CreditBalanceInfo> {
   const balance = await getOrCreateBalance(userId);
 
+  const projectedFree = projectBalanceFree(balance);
+  // Si la projection a fait le reset, on doit aussi nuller le timestamp côté affichage
+  const projectedReset =
+    balance.freeResetStartedAt !== null &&
+    new Date().getTime() - balance.freeResetStartedAt.getTime() >= FREE_TIER.windowDurationMs
+      ? null
+      : balance.freeResetStartedAt;
+  const nextFreeResetAt = projectedReset
+    ? new Date(projectedReset.getTime() + FREE_TIER.windowDurationMs)
+    : null;
+
   return {
     balance: balance.balance,
+    balanceFree: projectedFree,
+    totalAvailable: balance.balance + projectedFree,
     totalPurchased: balance.totalPurchased,
     lastPackName: balance.lastPackName,
     autoRefill: balance.autoRefill,
     expiresAt: balance.expiresAt,
-    freeCreditsGranted: balance.freeCreditsGranted,
+    freeResetStartedAt: projectedReset,
+    nextFreeResetAt,
   };
 }
 
@@ -502,7 +579,7 @@ async function getOrCreateBalance(userId: string) {
           userId,
           balance: 0,
           totalPurchased: 0,
-          freeCreditsGranted: false,
+          // balanceFree=10 + freeResetStartedAt=null via schema default
         },
       });
     }
@@ -515,16 +592,34 @@ async function getOrCreateBalance(userId: string) {
     }
     logger.warn({ userId }, 'Credit tables not available — returning unlimited balance (dev only)');
     return {
+      id: 'dev-fallback',
       userId,
       balance: 9999,
+      balanceFree: 9999,
+      freeResetStartedAt: null,
       totalPurchased: 9999,
       lastPackName: null,
-      freeCreditsGranted: true,
       autoRefill: false,
       autoRefillPackName: null,
       expiresAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     };
   }
+}
+
+/**
+ * Projection mentale du balanceFree post-reset (si la fenêtre a expiré).
+ * Pas d'écriture en DB — le reset réel se fait lors du prochain deductCreditAmount.
+ */
+function projectBalanceFree(balance: { balanceFree: number; freeResetStartedAt: Date | null }): number {
+  if (
+    balance.freeResetStartedAt !== null &&
+    new Date().getTime() - balance.freeResetStartedAt.getTime() >= FREE_TIER.windowDurationMs
+  ) {
+    return FREE_TIER.weeklyAllowance;
+  }
+  return balance.balanceFree;
 }
 
 async function expireCredits(userId: string, currentBalance: number) {

@@ -13,7 +13,6 @@ export interface BoardCreditsStatus {
   remainingMonthly: number;
   extraCredits: number;
   totalAvailable: number;
-  subscriptionStatus: "FREE" | "PRO" | "ENTERPRISE";
   nextResetDate: Date;
   // New fields
   creditBalance: number;
@@ -65,7 +64,6 @@ export async function getCreditsStatus(userId: string): Promise<BoardCreditsStat
     remainingMonthly: result.balance,
     extraCredits: 0,
     totalAvailable: result.balance,
-    subscriptionStatus: balance.totalPurchased > 0 ? "PRO" : "FREE",
     nextResetDate: balance.expiresAt ?? new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
   };
 }

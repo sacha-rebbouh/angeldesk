@@ -89,9 +89,12 @@ export const CREDIT_PACKS: CreditPackConfig[] = [
   },
 ] as const;
 
-// --- Free tier ---
+// --- Free tier hebdo "use it or lose it" ---
+// 10 crédits free renouvelés chaque 7j à partir du 1er deduct du free.
+// Au reset, balanceFree est écrasé à 10 (pas additif).
 export const FREE_TIER = {
-  initialCredits: 5, // 1 Deep Dive offert
+  weeklyAllowance: 10,
+  windowDurationMs: 7 * 24 * 60 * 60 * 1000, // 7 jours
   requiresCard: false,
 } as const;
 
@@ -119,12 +122,15 @@ export interface CreditCheckResult {
 }
 
 export interface CreditBalanceInfo {
-  balance: number;
+  balance: number; // crédits payés
+  balanceFree: number; // crédits free restants dans la fenêtre courante
+  totalAvailable: number; // balance + balanceFree (champ dérivé pour l'UI)
   totalPurchased: number;
   lastPackName: string | null;
   autoRefill: boolean;
-  expiresAt: Date | null;
-  freeCreditsGranted: boolean;
+  expiresAt: Date | null; // s'applique uniquement au balance paid
+  freeResetStartedAt: Date | null;
+  nextFreeResetAt: Date | null; // freeResetStartedAt + 7j, null si fenêtre non démarrée
 }
 
 // --- Full deal package cost ---

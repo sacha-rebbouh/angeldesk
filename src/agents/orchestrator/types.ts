@@ -90,13 +90,6 @@ export type OnEarlyWarning = (warning: EarlyWarning) => void;
  */
 export type AnalysisMode = "full";
 
-/**
- * User subscription plan - determines which tiers are available
- * - FREE: Tier 1 + synthesis-deal-scorer only
- * - PRO: All tiers (Tier 1 + Tier 2 + full Tier 3)
- */
-export type UserPlan = "FREE" | "PRO";
-
 export interface AnalysisOptions {
   dealId: string;
   type: AnalysisType;
@@ -124,8 +117,6 @@ export interface AnalysisOptions {
     estimatedCostSoFar?: number;
   }) => void;
   onEarlyWarning?: OnEarlyWarning; // Callback when potential dealbreaker detected
-  /** User subscription plan - determines tier gating (default: "FREE") */
-  userPlan?: UserPlan;
   /**
    * Thesis-first gate : pause AFTER thesis-extractor (Tier 0.5) completes.
    * When true, runFullAnalysis returns early with {pausedAfterThesis: true, thesisId, verdict}.
@@ -178,8 +169,6 @@ export interface AdvancedAnalysisOptions {
   analysisModeOverride?: string;
   /** If true, uses UPDATE_ANALYSIS credits instead of INITIAL_ANALYSIS */
   isUpdate?: boolean;
-  /** User subscription plan for tier gating */
-  userPlan?: UserPlan;
   /** Thesis-first gate — passed-through from AnalysisOptions */
   pauseAfterThesis?: boolean;
 }
@@ -316,14 +305,6 @@ export const TIER3_BATCHES_AFTER_TIER2 = [
   ["synthesis-deal-scorer"],
   // memo-generator: Investment memo with complete analysis
   ["memo-generator"],
-] as const;
-
-/**
- * FREE full-analysis resumes/runs only the final scorer after Tier 1.
- * Keep this explicit so thesis-reconciler ordering never depends on array indices.
- */
-export const FREE_TIER3_BATCHES_AFTER_TIER2 = [
-  ["synthesis-deal-scorer"],
 ] as const;
 
 export const FULL_ANALYSIS_TIER3_EXECUTION_BATCHES = [

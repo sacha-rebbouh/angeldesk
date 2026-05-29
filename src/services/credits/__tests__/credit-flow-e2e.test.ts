@@ -20,10 +20,11 @@ import {
 
 interface InMemoryBalance {
   userId: string;
-  balance: number;
+  balance: number; // paid
+  balanceFree: number; // free hebdo "use it or lose it"
+  freeResetStartedAt: Date | null;
   totalPurchased: number;
   lastPackName: string | null;
-  freeCreditsGranted: boolean;
   autoRefill: boolean;
   autoRefillPackName: string | null;
   expiresAt: Date | null;
@@ -61,6 +62,40 @@ function nextId() {
 // Mock Prisma
 // ============================================================================
 
+function applyBalanceUpdate(record: InMemoryBalance, data: Record<string, unknown>): void {
+  if (data.balance !== undefined) {
+    if (typeof data.balance === 'object' && data.balance !== null) {
+      const op = data.balance as { increment?: number; decrement?: number };
+      if (op.increment) record.balance += op.increment;
+      if (op.decrement) record.balance -= op.decrement;
+    } else {
+      record.balance = data.balance as number;
+    }
+  }
+  if (data.balanceFree !== undefined) {
+    if (typeof data.balanceFree === 'object' && data.balanceFree !== null) {
+      const op = data.balanceFree as { increment?: number; decrement?: number };
+      if (op.increment) record.balanceFree += op.increment;
+      if (op.decrement) record.balanceFree -= op.decrement;
+    } else {
+      record.balanceFree = data.balanceFree as number;
+    }
+  }
+  if ('freeResetStartedAt' in data) {
+    record.freeResetStartedAt = data.freeResetStartedAt as Date | null;
+  }
+  if (data.totalPurchased !== undefined) {
+    if (typeof data.totalPurchased === 'object' && data.totalPurchased !== null) {
+      const op = data.totalPurchased as { increment?: number };
+      if (op.increment) record.totalPurchased += op.increment;
+    } else {
+      record.totalPurchased = data.totalPurchased as number;
+    }
+  }
+  if (data.lastPackName !== undefined) record.lastPackName = data.lastPackName as string;
+  if (data.expiresAt !== undefined) record.expiresAt = data.expiresAt as Date;
+}
+
 const mockTx = {
   userCreditBalance: {
     findUnique: vi.fn(async ({ where }: { where: { userId: string } }) => {
@@ -72,9 +107,10 @@ const mockTx = {
       const record: InMemoryBalance = {
         userId: data.userId!,
         balance: data.balance ?? 0,
+        balanceFree: data.balanceFree ?? 10, // schema default
+        freeResetStartedAt: data.freeResetStartedAt ?? null,
         totalPurchased: data.totalPurchased ?? 0,
         lastPackName: data.lastPackName ?? null,
-        freeCreditsGranted: data.freeCreditsGranted ?? false,
         autoRefill: false,
         autoRefillPackName: null,
         expiresAt: data.expiresAt ?? null,
@@ -85,15 +121,7 @@ const mockTx = {
     update: vi.fn(async ({ where, data }: { where: { userId: string }; data: Record<string, unknown> }) => {
       const record = balances.get(where.userId);
       if (!record) throw new Error(`Balance not found for ${where.userId}`);
-      if (data.balance !== undefined) {
-        if (typeof data.balance === 'object' && data.balance !== null) {
-          const op = data.balance as { increment?: number; decrement?: number };
-          if (op.increment) record.balance += op.increment;
-          if (op.decrement) record.balance -= op.decrement;
-        } else {
-          record.balance = data.balance as number;
-        }
-      }
+      applyBalanceUpdate(record, data);
       return record;
     }),
     updateMany: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
@@ -101,21 +129,27 @@ const mockTx = {
       const record = balances.get(userId);
       if (!record) return { count: 0 };
 
-      // Check balance constraint
+      // Vérifier les contraintes WHERE (balance, balanceFree, freeResetStartedAt)
       const balanceConstraint = where.balance as { gte?: number } | undefined;
       if (balanceConstraint?.gte !== undefined && record.balance < balanceConstraint.gte) {
         return { count: 0 };
       }
-
-      if (data.balance !== undefined) {
-        if (typeof data.balance === 'object' && data.balance !== null) {
-          const op = data.balance as { increment?: number; decrement?: number };
-          if (op.increment) record.balance += op.increment;
-          if (op.decrement) record.balance -= op.decrement;
-        } else {
-          record.balance = data.balance as number;
+      const freeConstraint = where.balanceFree as { gte?: number } | undefined;
+      if (freeConstraint?.gte !== undefined && record.balanceFree < freeConstraint.gte) {
+        return { count: 0 };
+      }
+      if ('freeResetStartedAt' in where) {
+        const expectedReset = where.freeResetStartedAt;
+        // Compare null vs null, ou date vs date (égalité référentielle suffit pour mock)
+        if (
+          (expectedReset === null && record.freeResetStartedAt !== null) ||
+          (expectedReset !== null && record.freeResetStartedAt?.getTime() !== (expectedReset as Date).getTime())
+        ) {
+          return { count: 0 };
         }
       }
+
+      applyBalanceUpdate(record, data);
       return { count: 1 };
     }),
     upsert: vi.fn(async ({ where, create, update }: {
@@ -128,9 +162,10 @@ const mockTx = {
         const record: InMemoryBalance = {
           userId: where.userId,
           balance: (create.balance as number) ?? 0,
+          balanceFree: (create.balanceFree as number) ?? 10,
+          freeResetStartedAt: (create.freeResetStartedAt as Date) ?? null,
           totalPurchased: (create.totalPurchased as number) ?? 0,
           lastPackName: (create.lastPackName as string) ?? null,
-          freeCreditsGranted: (create.freeCreditsGranted as boolean) ?? false,
           autoRefill: false,
           autoRefillPackName: null,
           expiresAt: (create.expiresAt as Date) ?? null,
@@ -138,23 +173,7 @@ const mockTx = {
         balances.set(where.userId, record);
         return record;
       }
-      // Apply update
-      if (update.balance !== undefined) {
-        if (typeof update.balance === 'object' && update.balance !== null) {
-          const op = update.balance as { increment?: number; decrement?: number };
-          if (op.increment) existing.balance += op.increment;
-          if (op.decrement) existing.balance -= op.decrement;
-        }
-      }
-      if (update.totalPurchased !== undefined) {
-        if (typeof update.totalPurchased === 'object' && update.totalPurchased !== null) {
-          const op = update.totalPurchased as { increment?: number };
-          if (op.increment) existing.totalPurchased += op.increment;
-        }
-      }
-      if (update.lastPackName !== undefined) existing.lastPackName = update.lastPackName as string;
-      if (update.freeCreditsGranted !== undefined) existing.freeCreditsGranted = update.freeCreditsGranted as boolean;
-      if (update.expiresAt !== undefined) existing.expiresAt = update.expiresAt as Date;
+      applyBalanceUpdate(existing, update);
       return existing;
     }),
   },
@@ -241,7 +260,10 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
   });
 
   // --------------------------------------------------------------------------
-  // SETUP: User starts with 100 credits from a Pro pack purchase
+  // SETUP: User starts with 100 PAID credits from a Pro pack purchase.
+  // Zero-out le balanceFree pour préserver les assertions historiques de ces tests
+  // (qui focalisent sur le ledger paid). Les tests dédiés au free hebdo sont en
+  // fin de fichier (suite "Free hebdo 'use it or lose it'").
   // --------------------------------------------------------------------------
 
   async function setupUser() {
@@ -249,6 +271,13 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
     expect(result.success).toBe(true);
     expect(result.newBalance).toBe(100);
     expect(getBalance()).toBe(100);
+
+    // Zero-out le balanceFree (défaut 10 du schema) pour ces tests legacy
+    const record = balances.get(USER);
+    if (record) {
+      record.balanceFree = 0;
+      record.freeResetStartedAt = null;
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -368,8 +397,11 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
   // --------------------------------------------------------------------------
 
   it('should block deduction when credits are insufficient', async () => {
-    // Setup with only 7 credits
+    // Setup with only 7 credits paid (et zero-out balanceFree pour tester le paid)
     await addCredits(USER, 'starter', 7);
+    const record = balances.get(USER)!;
+    record.balanceFree = 0;
+    record.freeResetStartedAt = null;
 
     // Live Coaching costs 8 — should fail
     const result = await deductCredits(USER, 'LIVE_COACHING', DEAL);
@@ -453,8 +485,11 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
   // --------------------------------------------------------------------------
 
   it('should drain to zero then block all paid actions', async () => {
-    // Start with exactly 10 credits
+    // Start with exactly 10 credits paid (et zero-out balanceFree pour focus paid)
     await addCredits(USER, 'starter', 10);
+    const record = balances.get(USER)!;
+    record.balanceFree = 0;
+    record.freeResetStartedAt = null;
 
     // Quick Scan x10 = 10 credits (drains to 0)
     for (let i = 0; i < 10; i++) {
@@ -506,15 +541,19 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
   // TEST 10: Free credits grant
   // --------------------------------------------------------------------------
 
-  it('grantFreeCredits should give 5 credits exactly once', async () => {
+  it('grantFreeCredits should init row with balanceFree=10, balance=0, exactly once', async () => {
     const granted1 = await grantFreeCredits(USER);
     expect(granted1).toBe(true);
-    expect(getBalance()).toBe(5);
+    // paid balance reste 0 (le free n'est pas du paid)
+    expect(getBalance()).toBe(0);
+    // balanceFree = 10 via schema default
+    expect(balances.get(USER)?.balanceFree).toBe(10);
+    expect(balances.get(USER)?.freeResetStartedAt).toBeNull();
 
-    // Second grant should be blocked
+    // Second grant doit être no-op (row déjà initialisée)
     const granted2 = await grantFreeCredits(USER);
     expect(granted2).toBe(false);
-    expect(getBalance()).toBe(5);
+    expect(balances.get(USER)?.balanceFree).toBe(10);
   });
 
   // --------------------------------------------------------------------------
@@ -523,6 +562,9 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
 
   it('should succeed when balance equals exact cost', async () => {
     await addCredits(USER, 'starter', 10);
+    const record = balances.get(USER)!;
+    record.balanceFree = 0;
+    record.freeResetStartedAt = null;
 
     const check = await checkCredits(USER, 'AI_BOARD'); // costs 10
     expect(check.allowed).toBe(true);
@@ -747,5 +789,162 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
     const info = await getCreditBalance(USER);
     expect(info.totalPurchased).toBe(130); // 100 + 30
     expect(info.lastPackName).toBe('standard');
+  });
+});
+
+// ============================================================================
+// FREE HEBDO "use it or lose it" — tests dédiés
+// ============================================================================
+
+describe('Free hebdo "use it or lose it"', () => {
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  async function setupUserWithFreeOnly(): Promise<void> {
+    // Init row via grantFreeCredits : balance=0, balanceFree=10, freeResetStartedAt=null
+    await grantFreeCredits(USER);
+    const record = balances.get(USER);
+    expect(record).toBeDefined();
+    expect(record!.balanceFree).toBe(10);
+    expect(record!.balance).toBe(0);
+    expect(record!.freeResetStartedAt).toBeNull();
+  }
+
+  it('should consume free credits first when paid + free both available', async () => {
+    // Setup : user a 100 paid + 10 free (les 10 du default)
+    await addCredits(USER, 'pro', 100);
+    const record = balances.get(USER)!;
+    expect(record.balance).toBe(100);
+    expect(record.balanceFree).toBe(10);
+
+    // DEEP_DIVE (5cr) → consomme 5 du free, paid intact
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(true);
+    expect(result.balanceAfter).toBe(105); // total (free + paid) = 5 + 100
+    expect(record.balance).toBe(100);
+    expect(record.balanceFree).toBe(5);
+    expect(record.freeResetStartedAt).not.toBeNull(); // timer démarré
+  });
+
+  it('should split free + paid when cost exceeds balanceFree', async () => {
+    // Setup : 100 paid + 4 free
+    await addCredits(USER, 'pro', 100);
+    const record = balances.get(USER)!;
+    record.balanceFree = 4;
+
+    // DEEP_DIVE (5cr) → 4 du free + 1 du paid
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(true);
+    expect(result.balanceAfter).toBe(99); // 0 + 99
+    expect(record.balance).toBe(99);
+    expect(record.balanceFree).toBe(0);
+    expect(record.freeResetStartedAt).not.toBeNull();
+  });
+
+  it('should reset balanceFree to 10 after 7d window expires (lazy reset on next deduct)', async () => {
+    await setupUserWithFreeOnly();
+
+    // Démarre une fenêtre il y a 8 jours
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    const record = balances.get(USER)!;
+    record.balanceFree = 0; // consommé
+    record.freeResetStartedAt = eightDaysAgo;
+
+    // Achat un peu de paid pour pas tomber à 0 total (mais on testera quand même)
+    await addCredits(USER, 'starter', 5);
+
+    // Au prochain deduct, lazy reset → balanceFree devient 10, freeResetStartedAt=null
+    // Puis on consomme depuis le free reset (5cr depuis free, paid intact)
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(true);
+    expect(record.balanceFree).toBe(5); // 10 - 5 = 5
+    expect(record.balance).toBe(5); // paid intact
+    // Le timer redémarre (au reset + 1er deduct du free)
+    expect(record.freeResetStartedAt).not.toBeNull();
+    expect(record.freeResetStartedAt!.getTime()).toBeGreaterThan(eightDaysAgo.getTime());
+  });
+
+  it('should NOT reset balanceFree if window still active (< 7d)', async () => {
+    await setupUserWithFreeOnly();
+    await addCredits(USER, 'starter', 5);
+
+    // Démarre une fenêtre il y a 3 jours, déjà 6 consommés
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const record = balances.get(USER)!;
+    record.balanceFree = 4; // 10 - 6 consommés
+    record.freeResetStartedAt = threeDaysAgo;
+
+    // Deduct DEEP_DIVE (5) : 4 du free + 1 paid, pas de reset
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(true);
+    expect(record.balanceFree).toBe(0);
+    expect(record.balance).toBe(4); // 5 - 1
+    expect(record.freeResetStartedAt!.getTime()).toBe(threeDaysAgo.getTime()); // timer inchangé
+  });
+
+  it('should start the timer only when consuming free credits (not when paid-only)', async () => {
+    // 100 paid + 0 balanceFree (zero-out pour ce test)
+    await addCredits(USER, 'pro', 100);
+    const record = balances.get(USER)!;
+    record.balanceFree = 0;
+    record.freeResetStartedAt = null;
+
+    // DEEP_DIVE (5cr) : entièrement depuis le paid, freeResetStartedAt reste null
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(true);
+    expect(record.balance).toBe(95);
+    expect(record.balanceFree).toBe(0);
+    expect(record.freeResetStartedAt).toBeNull(); // pas de timer démarré
+  });
+
+  it('should refund 100% to paid balance (free not restored even if freeUsed > 0)', async () => {
+    // Setup : 100 paid + 10 free, on consomme 5 (depuis le free)
+    await addCredits(USER, 'pro', 100);
+    await deductCredits(USER, 'DEEP_DIVE', DEAL, {
+      idempotencyKey: 'deduct:DEEP_DIVE:001',
+    });
+    const record = balances.get(USER)!;
+    expect(record.balance).toBe(100);
+    expect(record.balanceFree).toBe(5);
+
+    // Refund 5 cr → tout va dans le paid (conservateur, pas de pro-rata)
+    await refundCredits(USER, 'DEEP_DIVE', DEAL, {
+      idempotencyKey: 'refund:DEEP_DIVE:001',
+    });
+    expect(record.balance).toBe(105); // paid +5
+    expect(record.balanceFree).toBe(5); // free pas touché
+  });
+
+  it('should fail with clear error when totalAvailable < cost', async () => {
+    await setupUserWithFreeOnly();
+    const record = balances.get(USER)!;
+    record.balanceFree = 3; // total = 0 paid + 3 free = 3
+
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL); // cost 5
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('3 disponibles');
+    expect(result.error).toContain('5 requis');
+    // Pas de mutation sur l'échec
+    expect(record.balanceFree).toBe(3);
+    expect(record.balance).toBe(0);
+  });
+
+  it('getCreditBalance should expose balanceFree + totalAvailable + nextFreeResetAt', async () => {
+    await addCredits(USER, 'pro', 100);
+    const startedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000); // il y a 2j
+    const record = balances.get(USER)!;
+    record.balanceFree = 6;
+    record.freeResetStartedAt = startedAt;
+
+    const info = await getCreditBalance(USER);
+    expect(info.balance).toBe(100);
+    expect(info.balanceFree).toBe(6);
+    expect(info.totalAvailable).toBe(106);
+    expect(info.freeResetStartedAt?.getTime()).toBe(startedAt.getTime());
+    expect(info.nextFreeResetAt).not.toBeNull();
+    // nextFreeResetAt = startedAt + 7j
+    expect(info.nextFreeResetAt!.getTime()).toBe(startedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
   });
 });
