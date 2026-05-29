@@ -577,11 +577,26 @@ export class ReflexionEngine {
           qualityScoreRevised =
             improvementResult.data.qualityMetrics.revisedScore;
 
-          // Apply revisedOutput to currentResult if provided
+          // Apply revisedOutput to currentResult if provided.
+          // MERGE onto the existing data instead of replacing it wholesale: the
+          // improvement LLM typically returns only the fields it revised
+          // (meta/score/findings) and omits the rest of the agent contract
+          // (narrative, redFlags, questions, alertSignal, signalIntensity,
+          // dbCrossReference). A wholesale replace silently strips those fields
+          // from the persisted result, which surfaces in the UI as
+          // "Pas de synthèse explicite produite par l'agent".
           if (improvementResult.data.revisedOutput) {
+            const prevData = extractResultData(currentResult);
+            const revised = improvementResult.data.revisedOutput as unknown;
+            const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+              v != null && typeof v === "object" && !Array.isArray(v);
+            const mergedData =
+              isPlainObject(prevData) && isPlainObject(revised)
+                ? { ...prevData, ...revised }
+                : revised;
             currentResult = {
               ...currentResult,
-              data: improvementResult.data.revisedOutput,
+              data: mergedData,
             } as AnalysisAgentResult;
           }
 

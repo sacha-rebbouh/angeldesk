@@ -1370,7 +1370,6 @@ vi.mock("@/agents/tier2/sector-standards", () => {
     redFlagRules: [],
     sectorRisks: [],
     successPatterns: [],
-    typicalAcquirers: [],
     benchmarkSearchQueries: [],
   };
   return {

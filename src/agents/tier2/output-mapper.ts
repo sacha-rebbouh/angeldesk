@@ -115,10 +115,6 @@ export function transformToSectorData(
       competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
       consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
       barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-      typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 5,
-      recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(
-        e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`
-      ) ?? [],
     },
     sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
       question: q.question,

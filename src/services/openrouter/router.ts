@@ -200,7 +200,9 @@ function isRetryableError(error: unknown): boolean {
       message.includes("503") ||
       message.includes("service unavailable") ||
       message.includes("500") ||
-      message.includes("internal server")
+      message.includes("internal server") ||
+      // Réponse vide (0 caractère) : surcharge transitoire du provider → rejouable.
+      message.includes("empty_response")
     );
   }
   return false;
@@ -217,6 +219,17 @@ function calculateBackoff(attempt: number): number {
 // =============================================================================
 // MODEL SELECTION
 // =============================================================================
+
+// Fallback modèle "model-aware" pour completeJSON : si le modèle primaire échoue
+// (timeout / réponse vide / parse impossible) APRÈS ses propres retries, on tente UNE
+// fois un modèle de famille différente (ex. Gemini → Anthropic) pour échapper à une
+// panne/surcharge spécifique à un provider. Une seule bascule (recursion guard).
+const JSON_FALLBACK_MODEL: Partial<Record<ModelKey, ModelKey>> = {
+  GEMINI_PRO: "HAIKU",
+  GEMINI_3_FLASH: "HAIKU",
+  HAIKU: "GEMINI_3_FLASH",
+  SONNET: "GEMINI_PRO",
+};
 
 export function selectModel(complexity: TaskComplexity, agentName?: string): ModelKey {
   // Agent-specific overrides (for agents with known model requirements)
@@ -283,6 +296,8 @@ export interface CompletionOptions {
     temperature?: number;
     maxTokens?: number;
   } | undefined;
+  /** Interne (completeJSON) : marque qu'une tentative de fallback modèle a déjà eu lieu. */
+  _fallbackAttempted?: boolean;
 }
 
 export interface CompletionResult {
@@ -433,6 +448,17 @@ export async function complete(
 
       const content = response.choices[0]?.message?.content ?? "";
       const usage = response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
+      // Une réponse vide (0 caractère utile) n'est PAS un succès : c'est typiquement
+      // une surcharge/instabilité transitoire du provider (cas cap-table-auditor :
+      // "Unexpected end of JSON input, Response length: 0"). On la traite comme une
+      // erreur REJOUABLE → bénéficie du retry + backoff exponentiel existant, au lieu
+      // d'être renvoyée en succès puis de faire échouer le JSON.parse en aval sans
+      // retry. Bonus observabilité : l'appel est alors loggé comme erreur, pas succès.
+      if (content.trim().length === 0) {
+        throw new Error("empty_response: le modèle a renvoyé une réponse vide (0 caractère)");
+      }
+
       const durationMs = Date.now() - startTime;
 
       const successCost =
@@ -748,37 +774,38 @@ export async function completeJSON<T>(
   if (process.env.NODE_ENV === 'development') {
     console.log(`[completeJSON] Calling complete with maxTokens=${options.maxTokens ?? 'default'}, responseFormat=json_object`);
   }
-  const result = await complete(prompt, {
-    ...options,
-    temperature: options.temperature ?? 0.3, // Lower temperature for structured output
-    responseFormat: { type: "json_object" }, // Force JSON output at API level
-    // F95: Adaptive retry enabled by default for JSON completions
-    adaptiveRetry: options.adaptiveRetry ?? true,
-    onRetryAdapt: options.onRetryAdapt ?? ((params) => {
-      const errorMsg = params.error.message;
-
-      // JSON parsing error: add explicit instruction
-      if (errorMsg.includes("Failed to parse") || errorMsg.includes("JSON") || errorMsg.includes("parse")) {
-        return {
-          prompt: `${params.originalPrompt}\n\n[IMPORTANT: Your previous response was not valid JSON. Error: "${errorMsg.substring(0, 200)}". Please respond with ONLY a valid JSON object, no text before or after.]`,
-          temperature: Math.max(0, (options.temperature ?? 0.3) - 0.1),
-        };
-      }
-
-      // Timeout: no prompt adaptation needed (LLM is just slow)
-      if (errorMsg.includes("timeout")) {
-        return {};
-      }
-
-      // Other errors: use default adaptation
-      return undefined;
-    }),
-  });
-
-  // Extract first valid JSON object (handles trailing text after JSON)
-  const jsonString = extractFirstJSON(result.content);
-
+  let jsonString = "";
   try {
+    const result = await complete(prompt, {
+      ...options,
+      temperature: options.temperature ?? 0.3, // Lower temperature for structured output
+      responseFormat: { type: "json_object" }, // Force JSON output at API level
+      // F95: Adaptive retry enabled by default for JSON completions
+      adaptiveRetry: options.adaptiveRetry ?? true,
+      onRetryAdapt: options.onRetryAdapt ?? ((params) => {
+        const errorMsg = params.error.message;
+
+        // JSON parsing error: add explicit instruction
+        if (errorMsg.includes("Failed to parse") || errorMsg.includes("JSON") || errorMsg.includes("parse")) {
+          return {
+            prompt: `${params.originalPrompt}\n\n[IMPORTANT: Your previous response was not valid JSON. Error: "${errorMsg.substring(0, 200)}". Please respond with ONLY a valid JSON object, no text before or after.]`,
+            temperature: Math.max(0, (options.temperature ?? 0.3) - 0.1),
+          };
+        }
+
+        // Timeout: no prompt adaptation needed (LLM is just slow)
+        if (errorMsg.includes("timeout")) {
+          return {};
+        }
+
+        // Other errors: use default adaptation
+        return undefined;
+      }),
+    });
+
+    // Extract first valid JSON object (handles trailing text after JSON)
+    jsonString = extractFirstJSON(result.content);
+
     const data = JSON.parse(jsonString) as T;
 
     // Check for truncation marker injected by extractBracedJSON (F54)
@@ -802,11 +829,27 @@ export async function completeJSON<T>(
       model: result.model,
       usage: result.usage,
     };
-  } catch (parseError) {
-    throw new Error(
-      `Failed to parse LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}. ` +
-      `Response length: ${jsonString.length} characters.`
-    );
+  } catch (err) {
+    // Fallback modèle "model-aware" : le modèle primaire a échoué APRÈS ses retries
+    // (timeout / réponse vide / JSON impossible). On tente UNE fois un modèle d'une
+    // autre famille pour échapper à une panne/surcharge provider-spécifique.
+    if (options._fallbackAttempted !== true) {
+      const primaryKey = options.model ?? selectModel(options.complexity ?? "medium", getAgentContext() ?? undefined);
+      const fallbackKey = JSON_FALLBACK_MODEL[primaryKey];
+      if (fallbackKey && fallbackKey !== primaryKey) {
+        console.warn(
+          `[completeJSON] modèle ${primaryKey} en échec (${(err instanceof Error ? err.message : String(err)).slice(0, 80)}), fallback → ${fallbackKey}`
+        );
+        return completeJSON<T>(prompt, { ...options, model: fallbackKey, _fallbackAttempted: true });
+      }
+    }
+    // Préserver le message de parse explicite attendu en aval.
+    if (err instanceof SyntaxError) {
+      throw new Error(
+        `Failed to parse LLM response: ${err.message}. Response length: ${jsonString.length} characters.`
+      );
+    }
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }
 

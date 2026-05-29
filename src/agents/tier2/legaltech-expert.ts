@@ -265,21 +265,6 @@ const LegaltechExpertOutputSchema = z.object({
     consolidationEvidence: z.string(),
     barrierToEntry: z.enum(["low", "medium", "high", "very_high"]),
     barrierDetails: z.string(),
-    typicalExitMultiple: z.number(),
-    exitMultipleRange: z.object({
-      low: z.number(),
-      median: z.number(),
-      high: z.number(),
-    }),
-    recentExits: z.array(
-      z.object({
-        company: z.string(),
-        acquirer: z.string(),
-        multiple: z.number(),
-        year: z.number(),
-        relevance: z.string(),
-      })
-    ),
     bigTechThreat: z.object({
       level: z.enum(["low", "medium", "high", "critical"]),
       players: z.array(z.string()),
@@ -856,10 +841,6 @@ export const legaltechExpert = {
           competitionIntensity: parsedOutput.sectorDynamics.competitionIntensity,
           consolidationTrend: parsedOutput.sectorDynamics.consolidationTrend,
           barrierToEntry: parsedOutput.sectorDynamics.barrierToEntry === "very_high" ? "high" : parsedOutput.sectorDynamics.barrierToEntry,
-          typicalExitMultiple: parsedOutput.sectorDynamics.typicalExitMultiple,
-          recentExits: parsedOutput.sectorDynamics.recentExits.map(
-            e => `${e.company} -> ${e.acquirer} (${e.multiple}x, ${e.year})`
-          ),
         },
 
         sectorQuestions: parsedOutput.sectorQuestions.map(q => ({
@@ -978,8 +959,6 @@ function getDefaultLegaltechData(): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: "high",
-      typicalExitMultiple: 5,
-      recentExits: [],
     },
     sectorQuestions: [
       {

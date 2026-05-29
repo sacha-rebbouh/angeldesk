@@ -616,8 +616,6 @@ function transformOutput(raw: AIExpertOutput, cappedScore: number, cappedFitScor
       competitionIntensity: "intense",
       consolidationTrend: "consolidating",
       barrierToEntry: (raw.moatAnalysis?.overallMoatScore ?? 0) > 50 ? "high" : "medium",
-      typicalExitMultiple: 12, // Placeholder - multiples actuels via recherche web
-      recentExits: [], // Exits recents via recherche web, pas hardcodes
     },
 
     sectorQuestions: (raw.sectorQuestions ?? []).map(q => ({
@@ -767,8 +765,6 @@ function getDefaultData(): SectorExpertData {
       competitionIntensity: "intense",
       consolidationTrend: "consolidating",
       barrierToEntry: "medium",
-      typicalExitMultiple: 12, // Placeholder - multiples actuels via recherche web
-      recentExits: [],
     },
     sectorQuestions: [],
     sectorFit: {

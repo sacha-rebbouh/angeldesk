@@ -428,11 +428,6 @@ Tu dois retourner un JSON valide avec cette structure exacte:
       "level": "low" | "medium" | "high",
       "keyRegulations": ["liste des regulations applicables"],
       "upcomingChanges": ["changements a venir"]
-    },
-    "exitLandscape": {
-      "typicalMultiple": { "low": number, "median": number, "high": number },
-      "recentExits": ["exemples d'exits recents dans le secteur"],
-      "likelyAcquirers": ["acquereurs potentiels"]
     }
   },
   "sectorQuestions": [
@@ -622,8 +617,6 @@ export const creatorExpert = {
           competitionIntensity: output.sectorDynamics?.competitionIntensity ?? "high",
           consolidationTrend: output.sectorDynamics?.consolidationTrend ?? "stable",
           barrierToEntry: output.sectorDynamics?.barrierToEntry ?? "low",
-          typicalExitMultiple: output.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 3,
-          recentExits: output.sectorDynamics?.exitLandscape?.recentExits ?? [],
         },
         sectorQuestions: output.sectorQuestions?.map((q: { question: string; priority: string; expectedGoodAnswer?: string; redFlagAnswer?: string }) => ({
           question: q.question,

@@ -186,26 +186,44 @@ export async function completeAnalysis(params: {
   /** Override status — use "FAILED" only for actual crashes, not partial agent failures */
   statusOverride?: "COMPLETED" | "FAILED";
 }) {
-  // Count successful agents for completedAgents field
-  const successfulCount = Object.values(params.results).filter((r) => r.success).length;
-  const serializedResults = JSON.parse(JSON.stringify(params.results));
+  const serializedResults = JSON.parse(JSON.stringify(params.results)) as Record<string, unknown>;
+
+  // Capturé depuis la transaction pour réutiliser le set MERGÉ dans le cache blob.
+  let mergedResults: Record<string, unknown> = serializedResults;
 
   const analysis = await prisma.$transaction(async (tx) => {
     const current = await tx.analysis.findUnique({
       where: { id: params.analysisId },
-      select: { completedAgents: true, totalCost: true },
+      select: { completedAgents: true, totalCost: true, results: true },
     });
+
+    // INVARIANT MONOTONE DES RÉSULTATS : ne JAMAIS dropper un agent déjà persisté.
+    // completeAnalysis peut être appelé avec un set PARTIEL (chemin stop=thesis_only,
+    // double-complétion, lecture périmée du cost-monitor) → sans merge, un agent — même
+    // échoué — disparaissait de analysis.results (cas Avekapeti : legal-regulatory +
+    // cap-table-auditor absents alors que présents en checkpoint). On merge avec
+    // l'existant (comme saveCheckpoint), cohérent avec monotoneCompletedAgents. Les
+    // mêmes clés sont écrasées par le nouveau set (résultats plus récents prioritaires).
+    mergedResults = mergeAnalysisResults(current?.results, serializedResults);
+
+    // Compte les agents réellement aboutis dans le set MERGÉ (pas le set partiel reçu).
+    const successfulCount = Object.values(mergedResults).filter(
+      (r) => isJsonObject(r) && (r as { success?: unknown }).success === true,
+    ).length;
 
     return tx.analysis.update({
       where: { id: params.analysisId },
       data: {
         status: params.statusOverride ?? "COMPLETED",
         completedAt: new Date(),
+        // Compteur monotone volontaire (cf. persistence-progress-monotone.test).
+        // La couverture HONNÊTE affichée à l'utilisateur est recalculée côté UI
+        // (analysis-v2 buildDecisionStripModel.coverage), pas via ce champ DB.
         completedAgents: monotoneCompletedAgents(current?.completedAgents, successfulCount),
         totalCost: monotoneCost(current?.totalCost, params.totalCost),
         totalTimeMs: params.totalTimeMs,
         summary: params.summary,
-        results: serializedResults,
+        results: mergedResults as Prisma.InputJsonValue,
         mode: params.mode,
       },
     });
@@ -216,7 +234,7 @@ export async function completeAnalysis(params: {
   // Blob/CDN serves the same data in <1s.
   try {
     const { uploadFile } = await import("@/services/storage");
-    const jsonBuffer = Buffer.from(JSON.stringify(serializedResults));
+    const jsonBuffer = Buffer.from(JSON.stringify(mergedResults));
     await uploadFile(`analysis-results/${params.analysisId}.json`, jsonBuffer, {
       access: "private",
       allowOverwrite: true,

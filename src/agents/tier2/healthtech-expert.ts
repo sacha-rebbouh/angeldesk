@@ -51,26 +51,10 @@ export const HEALTHTECH_BENCHMARKS = {
   redFlagRules: HEALTHTECH_STANDARDS.redFlagRules,
   sectorSpecificRisks: HEALTHTECH_STANDARDS.sectorRisks,
   sectorSuccessPatterns: HEALTHTECH_STANDARDS.successPatterns,
-  typicalAcquirers: HEALTHTECH_STANDARDS.typicalAcquirers,
 
   // Primary and secondary metrics (norms only, no percentiles)
   primaryMetrics: HEALTHTECH_STANDARDS.primaryMetrics,
   secondaryMetrics: HEALTHTECH_STANDARDS.secondaryMetrics,
-
-  // Exit multiples - to be searched online
-  exitMultiples: {
-    low: "4-6",
-    median: "8-12",
-    high: "15-20",
-    topDecile: "30+",
-    typicalAcquirers: HEALTHTECH_STANDARDS.typicalAcquirers,
-    recentExits: [
-      { company: "Livongo", acquirer: "Teladoc", multiple: "18.5x", year: 2020 },
-      { company: "One Medical", acquirer: "Amazon", multiple: "6x", year: 2023 },
-      { company: "Signify Health", acquirer: "CVS Health", multiple: "7x", year: 2022 },
-    ],
-    note: "⚠️ Rechercher en ligne: 'healthtech digital health acquisition multiples 2024' pour données actuelles",
-  },
 
   // Helper to get formatted standards
   getFormattedStandards: (stage: string = "SEED") => {
@@ -231,11 +215,6 @@ Tu es un **expert sectoriel senior** spécialisé dans le secteur **HealthTech/D
 - Pharmacy/PBM partnerships
 - Value-based contracts et outcomes guarantees
 
-### Exit Landscape
-- Strategic acquirers: UnitedHealth/Optum, CVS/Aetna, Teladoc, Pharma
-- Recent M&A multiples et deal structures
-- IPO window et public market comparables
-
 ---
 
 ## STANDARDS DE QUALITÉ (Big4 + Partner VC)
@@ -297,20 +276,6 @@ ${getStandardsOnlyInjection("HealthTech", stage)}
 - 99491: Additional 30 min ($73-83)
 
 **Sans CPT codes = out-of-pocket only = TAM limité de 60-70%**
-
----
-
-## EXIT LANDSCAPE HEALTHTECH
-
-**Acquéreurs Typiques:**
-${HEALTHTECH_STANDARDS.typicalAcquirers.map((a) => `- ${a}`).join("\n")}
-
-**Exits Récents (historique):**
-- Livongo → Teladoc à 18.5x (2020)
-- One Medical → Amazon à 6x (2023)
-- Signify Health → CVS Health à 7x (2022)
-
-⚠️ **EXIT MULTIPLES**: Rechercher en ligne "healthtech digital health acquisition multiples 2024" pour données actuelles.
 
 ---
 
@@ -569,20 +534,14 @@ En utilisant les données DB:
 - Gap de funding vs concurrents au même stage
 - Qui a réussi le regulatory et comment?
 
-### 10. EXIT LANDSCAPE ANALYSIS
-- Acquéreurs probables pour ce type de deal?
-- Multiples observés sur exits comparables (P25/median/P75 par comparables, source DB)?
-- Timeline typique to exit?
-- IPO viability?
-
-### 11. KILLER QUESTIONS HEALTHTECH
+### 10. KILLER QUESTIONS HEALTHTECH
 Génère 6-8 questions spécifiques:
 - Au moins 2 sur clinical outcomes / regulatory
 - Au moins 2 sur reimbursement / payer strategy
 - Au moins 2 sur provider adoption / sales
 - Avec good answer et red flag answer pour chaque
 
-### 12. NEGOTIATION AMMUNITION
+### 11. NEGOTIATION AMMUNITION
 Identifie 3-5 leviers basés sur:
 - Métriques sous-benchmark
 - Regulatory uncertainty
@@ -590,7 +549,7 @@ Identifie 3-5 leviers basés sur:
 - Comparaison valorisation vs deals HealthTech DB
 - Clinical evidence gaps
 
-### 13. EXECUTIVE SUMMARY
+### 12. EXECUTIVE SUMMARY
 - Verdict one-line
 - Score sectoriel (0-100) avec breakdown
 - Top 3 strengths (avec preuves)
@@ -758,8 +717,6 @@ export const healthtechExpert = {
           competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
           consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
           barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-          typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 8,
-          recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) ?? [],
         },
         sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
           question: q.question,
@@ -818,8 +775,6 @@ export const healthtechExpert = {
             patientRetention: parsedOutput.metricsAnalysis?.find(m => m.metricName.toLowerCase().includes("retention"))?.metricValue as number ?? null,
             patientSatisfaction: parsedOutput.metricsAnalysis?.find(m => m.metricName.toLowerCase().includes("nps") || m.metricName.toLowerCase().includes("satisfaction"))?.metricValue as number ?? null,
           },
-          exitLandscape: parsedOutput.sectorDynamics?.exitLandscape ?? null,
-          potentialAcquirers: HEALTHTECH_BENCHMARKS.typicalAcquirers ?? [],
           competitivePosition: parsedOutput.competitorBenchmark ?? null,
           sectorSpecificRisks: parsedOutput.sectorRedFlags?.filter(rf =>
             rf.flag.toLowerCase().includes("regulatory") ||
@@ -886,8 +841,6 @@ interface ExtendedHealthTechData {
     patientRetention: number | null;
     patientSatisfaction: number | null;
   };
-  exitLandscape: unknown;
-  potentialAcquirers: string[];
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   fullMetricsAnalysis: unknown[];
@@ -933,8 +886,6 @@ function getDefaultHealthTechData(): SectorExpertData {
       competitionIntensity: "medium",
       consolidationTrend: "consolidating",
       barrierToEntry: "high",
-      typicalExitMultiple: 8,
-      recentExits: [],
     },
     sectorQuestions: [
       {

@@ -45,7 +45,6 @@ export const BIOTECH_BENCHMARKS = {
   redFlagRules: BIOTECH_STANDARDS.redFlagRules,
   sectorSpecificRisks: BIOTECH_STANDARDS.sectorRisks,
   sectorSuccessPatterns: BIOTECH_STANDARDS.successPatterns,
-  typicalAcquirers: BIOTECH_STANDARDS.typicalAcquirers,
 
   // Primary and secondary metrics (norms only, no percentiles)
   primaryMetrics: BIOTECH_STANDARDS.primaryMetrics,
@@ -70,23 +69,6 @@ export const BIOTECH_BENCHMARKS = {
     phase2: { min: 10, max: 50, unit: "$M", duration: "1-3 years" },
     phase3: { min: 50, max: 300, unit: "$M", duration: "2-4 years" },
     note: "Actual costs depend on therapeutic area, endpoints, patient population",
-  },
-
-  // Exit multiples - to be searched online
-  exitMultiples: {
-    preclinical: "0.5-2x invested capital (high risk)",
-    phase1: "1-3x (early validation)",
-    phase2: "2-5x (efficacy signal)",
-    phase3: "3-8x (de-risked)",
-    approved: "5-15x+ (commercial asset)",
-    typicalAcquirers: BIOTECH_STANDARDS.typicalAcquirers,
-    recentExits: [
-      { company: "Seagen", acquirer: "Pfizer", value: "$43B", year: 2023, stage: "Commercial" },
-      { company: "Prometheus Biosciences", acquirer: "Merck", value: "$10.8B", year: 2023, stage: "Phase II" },
-      { company: "Horizon Therapeutics", acquirer: "Amgen", value: "$27.8B", year: 2023, stage: "Commercial" },
-      { company: "Karuna Therapeutics", acquirer: "Bristol-Myers Squibb", value: "$14B", year: 2024, stage: "Phase III" },
-    ],
-    note: "Rechercher en ligne: 'biotech M&A multiples [current year]' pour donnees actuelles",
   },
 
   // Helper to get formatted standards
@@ -454,17 +436,6 @@ ${BIOTECH_STANDARDS.successPatterns.map((p) => `✅ ${p}`).join("\n")}
 
 ## SECTOR RISK PATTERNS
 ${BIOTECH_STANDARDS.sectorRisks.map((r) => `⚠️ ${r}`).join("\n")}
-
----
-
-## ACQUIRERS TYPIQUES
-${BIOTECH_STANDARDS.typicalAcquirers.join(", ")}
-
-**Recent M&A (reference):**
-- Seagen → Pfizer $43B (2023) - Commercial ADC platform
-- Prometheus → Merck $10.8B (2023) - Phase II IBD
-- Horizon → Amgen $27.8B (2023) - Commercial rare disease
-- Karuna → BMS $14B (2024) - Phase III CNS
 
 ---
 
@@ -945,8 +916,6 @@ export const biotechExpert = {
           competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
           consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
           barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-          typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 15,
-          recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) ?? [],
         },
         sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
           question: q.question,
@@ -1007,8 +976,6 @@ export const biotechExpert = {
             scaleUpStatus: null,
             cogsAtScale: null,
           },
-          exitLandscape: parsedOutput.sectorDynamics?.exitLandscape ?? null,
-          potentialAcquirers: BIOTECH_BENCHMARKS.typicalAcquirers ?? [],
           competitivePosition: parsedOutput.competitorBenchmark ?? null,
           sectorSpecificRisks: parsedOutput.sectorRedFlags?.filter(rf =>
             rf.flag.toLowerCase().includes("clinical") ||
@@ -1070,8 +1037,6 @@ interface ExtendedBioTechData {
     scaleUpStatus: string | null;
     cogsAtScale: number | null;
   };
-  exitLandscape: unknown;
-  potentialAcquirers: string[];
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   fullMetricsAnalysis: unknown[];
@@ -1101,8 +1066,6 @@ function getDefaultBioTechData(): SectorExpertData {
       competitionIntensity: "medium",
       consolidationTrend: "consolidating",
       barrierToEntry: "high",
-      typicalExitMultiple: 15,
-      recentExits: [],
     },
     sectorQuestions: [
       {

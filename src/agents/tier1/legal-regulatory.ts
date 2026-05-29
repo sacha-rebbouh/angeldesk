@@ -231,7 +231,11 @@ export class LegalRegulatoryAgent extends BaseAgent<LegalRegulatoryData, LegalRe
       description: "Analyse juridique et réglementaire exhaustive - Standards Big4 + Partner VC",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 180000, // 3 min - complex legal/regulatory analysis
+      // L'enveloppe DOIT couvrir le fallback interne PRO→FLASH (115s + 75s = 190s).
+      // À 180s elle tuait le fallback Flash en cours (cas Avekapeti : "timed out
+      // after 180000ms" alors que le Flash de secours tournait encore). 210s laisse
+      // PRO(115) + FLASH(75) + overhead aboutir dans une seule tentative.
+      timeoutMs: 210000,
     });
   }
 

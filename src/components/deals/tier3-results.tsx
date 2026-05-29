@@ -392,7 +392,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
                 <AlertTriangle className="h-5 w-5" /> Risques importants ({highStructuralRisks.length})
               </p>
               <ul className="space-y-3">
-                {highStructuralRisks.slice(0, 5).map((sr) => {
+                {highStructuralRisks.map((sr) => {
                   const key = devilsAdvocateAlertKey("structuralRisk", sr.description);
                   const resolution = resolutionMap?.[key];
                   return (
@@ -437,7 +437,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           <div className="pt-3 border-t">
             <ExpandableSection title="Points de vigilance" count={allConcerns.length}>
               <ul className="space-y-2 mt-2">
-                {allConcerns.slice(0, 8).map((c) => {
+                {allConcerns.map((c) => {
                   const key = devilsAdvocateAlertKey("concern", c.text);
                   const resolution = resolutionMap?.[key];
                   return (

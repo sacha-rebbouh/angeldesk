@@ -14,10 +14,10 @@ import {
   LabelValue,
   PdfTable,
   Spacer,
-  RecommendationBadge,
   BodyText,
 } from "../pdf-components";
 import { s, sup } from "../pdf-helpers";
+import { parseNextStep, nextStepPriorityLabel, nextStepOwnerLabel } from "@/lib/ui-configs";
 import { isThesisAxisUnavailable } from "@/agents/thesis/types";
 import type { AgentResult, PdfExportData } from "../generate-analysis-pdf";
 import { hasFragileThesis } from "../thesis-gating";
@@ -82,14 +82,6 @@ export function ExecutiveSummarySection({
             label="Deal Accessibility"
             value={isThesisAxisUnavailable(thesis.evaluationAxes.dealAccessibility) ? "INDISPONIBLE" : sup(thesis.evaluationAxes.dealAccessibility.verdict)}
           />
-        </View>
-      )}
-
-      {/* Recommendation badge */}
-      {exec?.recommendation && !thesisGated && (
-        <View style={{ marginBottom: 10 }}>
-          <Text style={[gs.label, { marginBottom: 4 }]}>LECTURE TIER 3</Text>
-          <RecommendationBadge recommendation={exec.recommendation} />
         </View>
       )}
 
@@ -331,7 +323,15 @@ export function ExecutiveSummarySection({
       {!!(nextSteps && nextSteps.length > 0) && !thesisGated && (
         <>
           <SubsectionTitle>Prochaines etapes</SubsectionTitle>
-          <BulletList items={nextSteps} />
+          <BulletList
+            items={nextSteps.map((raw) => {
+              const step = parseNextStep(raw);
+              const tags = [nextStepPriorityLabel(step.priority), nextStepOwnerLabel(step.owner)]
+                .filter(Boolean)
+                .join(" · ");
+              return tags ? `${tags} — ${step.text}` : step.text;
+            })}
+          />
         </>
       )}
 

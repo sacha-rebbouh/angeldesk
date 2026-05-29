@@ -254,20 +254,6 @@ const FoodTechOutputSchema = z.object({
     redFlagAnswer: z.string(),
   })),
 
-  // Exit potential
-  exitPotential: z.object({
-    typicalMultiple: z.number(),
-    multipleType: z.enum(["revenue", "ebitda"]),
-    likelyAcquirers: z.array(z.string()),
-    strategicFit: z.array(z.object({
-      acquirer: z.string(),
-      rationale: z.string(),
-    })),
-    timeToExit: z.string(),
-    exitReadiness: z.enum(["ready", "needs_work", "far"]),
-    ipoViability: z.boolean(),
-  }),
-
   // Score et Synthèse
   sectorScore: z.number().min(0).max(100),
   scoreBreakdown: z.object({
@@ -369,7 +355,7 @@ function buildSystemPrompt(stage: string): string {
 - Tu connais les unit economics par sous-secteur: D2C brands, alt protein, meal kits, agtech, restaurant tech
 - Tu sais que "food is hard" - les marges sont fines, la logistique complexe, les consommateurs inconstants
 - Tu as vu des brands D2C exploser leur CAC sans repeat, des startups alt protein brûler du cash sans scale
-- Tu connais les success stories (Oatly, Beyond Meat IPO, Impossible exit, Athletic Greens scale)
+- Tu connais les trajectoires de scale (Oatly, Athletic Greens)
 - Tu sais évaluer la vélocité retail, les risques co-packer, les pièges du trade spend
 
 ## TA MISSION
@@ -638,8 +624,6 @@ function transformOutput(raw: FoodTechExpertOutput): SectorExpertData {
       consolidationTrend: "consolidating",
       barrierToEntry: raw.competitivePosition.moatStrength === "strong" ? "high" :
                       raw.competitivePosition.moatStrength === "moderate" ? "medium" : "low",
-      typicalExitMultiple: raw.exitPotential.typicalMultiple,
-      recentExits: [],
     },
 
     sectorQuestions: raw.sectorQuestions.map(q => ({
@@ -689,8 +673,6 @@ function getDefaultData(): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: "low",
-      typicalExitMultiple: 2.5,
-      recentExits: [],
     },
     sectorQuestions: [],
     sectorFit: {
@@ -826,12 +808,6 @@ export const foodtechExpert = {
             growth: parsedOutput.scoreBreakdown.brandRetention,
             retention: parsedOutput.scoreBreakdown.distribution,
             gtmEfficiency: parsedOutput.scoreBreakdown.supplyChainOps,
-          },
-          exitPotential: {
-            typicalMultiple: parsedOutput.exitPotential.typicalMultiple,
-            likelyAcquirers: parsedOutput.exitPotential.likelyAcquirers,
-            timeToExit: parsedOutput.exitPotential.timeToExit,
-            exitReadiness: parsedOutput.exitPotential.exitReadiness,
           },
           investmentImplication: parsedOutput.investmentImplication === "strong_foodtech_fundamentals" ? "strong_saas_fundamentals" :
                                  parsedOutput.investmentImplication === "solid_with_concerns" ? "solid_with_concerns" :

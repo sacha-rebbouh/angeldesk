@@ -190,8 +190,6 @@ Do not present unsourced or inferred claims as if they were sourced.
             competitionIntensity: output.sectorDynamics?.competitionIntensity ?? "moderate",
             consolidationTrend: output.sectorDynamics?.consolidationTrend ?? "stable",
             barrierToEntry: output.sectorDynamics?.barrierToEntry ?? "medium",
-            typicalExitMultiple: output.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 5,
-            recentExits: output.sectorDynamics?.exitLandscape?.recentExits ?? [],
           },
           sectorQuestions: output.sectorQuestions?.map((q: { question: string; priority: string }) => ({
             question: q.question,

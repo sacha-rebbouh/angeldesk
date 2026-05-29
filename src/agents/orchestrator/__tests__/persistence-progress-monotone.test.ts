@@ -99,6 +99,48 @@ describe("analysis progress persistence monotonicity", () => {
     );
   });
 
+  it("never drops agents already persisted when completeAnalysis receives a partial result set", async () => {
+    // La DB contient déjà 3 agents (dont 2 échoués) plus tôt dans le run.
+    prismaMocks.prisma.analysis.findUnique.mockResolvedValueOnce({
+      completedAgents: 3,
+      totalCost: "1.00",
+      results: {
+        "financial-auditor": { agentName: "financial-auditor", success: true, cost: 0.1, executionTimeMs: 10 },
+        "legal-regulatory": { agentName: "legal-regulatory", success: false, cost: 0, executionTimeMs: 0, error: "timed out after 180000ms" },
+        "cap-table-auditor": { agentName: "cap-table-auditor", success: false, cost: 0, executionTimeMs: 0, error: "empty_response" },
+      },
+    });
+
+    // Le chemin stop=thesis_only re-complète avec un set PARTIEL (extracteur seul).
+    await completeAnalysis({
+      analysisId: "analysis_1",
+      success: true,
+      totalCost: 1.0,
+      totalTimeMs: 1000,
+      summary: "thesis only",
+      mode: "thesis_only",
+      results: {
+        "document-extractor": { agentName: "document-extractor", success: true, cost: 0.05, executionTimeMs: 5 },
+      },
+    });
+
+    const updateArg = prismaMocks.prisma.analysis.update.mock.calls[0][0] as {
+      data: { results: Record<string, { success?: boolean }>; completedAgents: number };
+    };
+    const persisted = updateArg.data.results;
+    // Aucun agent pré-existant n'est droppé — y compris les échoués.
+    expect(Object.keys(persisted).sort()).toEqual([
+      "cap-table-auditor",
+      "document-extractor",
+      "financial-auditor",
+      "legal-regulatory",
+    ]);
+    expect(persisted["legal-regulatory"].success).toBe(false);
+    expect(persisted["cap-table-auditor"].success).toBe(false);
+    // completedAgents reste monotone (max(3, 2 succès dans le set mergé)).
+    expect(updateArg.data.completedAgents).toBe(3);
+  });
+
   it("keeps checkpoint writes from lowering progress or dropping existing result keys", async () => {
     prismaMocks.prisma.analysis.findUnique.mockResolvedValueOnce({
       status: "RUNNING",

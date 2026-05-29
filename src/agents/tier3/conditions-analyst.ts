@@ -19,6 +19,7 @@
  */
 
 import { BaseAgent } from "../base-agent";
+import { severityRank } from "@/services/red-flag-dedup";
 import { CONDITIONS_ANALYST_SYSTEM_PROMPT } from "./prompts/conditions-analyst-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 import type {
@@ -559,8 +560,14 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       // Red flags
       if (Array.isArray(data.redFlags) && data.redFlags.length > 0) {
         agentLines.push(`Red Flags (${data.redFlags.length}):`);
-        for (const rf of (data.redFlags as { severity?: string; title?: string }[]).slice(0, 3)) {
+        const rfArr = data.redFlags as { severity?: string; title?: string }[];
+        for (const rf of [...rfArr]
+          .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+          .slice(0, 8)) {
           agentLines.push(`- [${rf.severity ?? "?"}] ${rf.title ?? "?"}`);
+        }
+        if (rfArr.length > 8) {
+          agentLines.push(`- … et ${rfArr.length - 8} autres`);
         }
       }
 

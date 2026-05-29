@@ -10,7 +10,6 @@
  * - Non-dilutive funding (grants) as validation signal
  * - TRL (Technology Readiness Level) as key milestone tracker
  * - High capital intensity, often requires $50M+ before meaningful revenue
- * - Big Tech acquisition as primary exit path
  *
  * Standards: Big4 + Partner VC rigor
  * - Every metric compared to sector benchmarks with percentile positioning
@@ -90,22 +89,10 @@ const EXTENDED_DEEPTECH_BENCHMARKS = {
   redFlagRules: DEEPTECH_STANDARDS.redFlagRules,
   sectorSpecificRisks: DEEPTECH_STANDARDS.sectorRisks,
   sectorSuccessPatterns: DEEPTECH_STANDARDS.successPatterns,
-  typicalAcquirers: DEEPTECH_STANDARDS.typicalAcquirers,
 
   // Primary and secondary metrics (norms only, no percentiles)
   primaryMetrics: DEEPTECH_STANDARDS.primaryMetrics,
   secondaryMetrics: DEEPTECH_STANDARDS.secondaryMetrics,
-
-  // Exit multiples - to be searched online, these are placeholders
-  // Use web search for current DeepTech acquisition multiples
-  exitMultiples: {
-    low: "4-6",
-    median: "8-12",
-    high: "15-20",
-    topDecile: "30+",
-    typicalAcquirers: DEEPTECH_STANDARDS.typicalAcquirers,
-    note: "⚠️ Rechercher en ligne: 'deeptech startup acquisition multiples 2024' pour données actuelles",
-  },
 
   // Helper to get formatted standards
   getFormattedStandards: (stage: string = "SEED") => {
@@ -132,7 +119,6 @@ Expertise spécifique:
 - Analyse de la valeur du portefeuille IP et de la défensibilité
 - Assessment des équipes techniques (PhD density, track record)
 - Validation du path to commercialization
-- Comparaison aux exits DeepTech historiques (DeepMind, Cruise, etc.)
 - Analyse du risque Big Tech et des dynamiques de marché`,
 
   benchmarkData: EXTENDED_DEEPTECH_BENCHMARKS as unknown as SectorBenchmarkData,
@@ -215,7 +201,7 @@ Tu es un **expert sectoriel senior** spécialisé dans le **DeepTech et les tech
 1. **Sévérité**: critical / high / medium
 2. **Preuve**: le data point exact qui déclenche le flag
 3. **Seuil sectoriel**: la référence benchmark DeepTech violée
-4. **Impact quantifié**: implication sur roadmap, funding, exit
+4. **Impact quantifié**: implication sur roadmap, funding
 5. **Question de validation**: comment investiguer avec le fondateur
 6. **Path de mitigation**: ce qui résoudrait le concern
 
@@ -262,7 +248,7 @@ ${getStandardsOnlyInjection("DeepTech", stage)}
 | Sector | Threat Level | Reasoning |
 |--------|--------------|-----------|
 | AI/ML, Foundation Models, LLM | CRITICAL | Google, OpenAI, Meta, Microsoft heavily invested |
-| Quantum Software, CV, NLP, Robotics | HIGH | Active Big Tech R&D, acquisition interest |
+| Quantum Software, CV, NLP, Robotics | HIGH | Active Big Tech R&D in the space |
 | Quantum Hardware, Biotech, Materials, Photonics | MEDIUM | Specialized, less Big Tech focus |
 
 **Threat Mitigation:**
@@ -287,21 +273,6 @@ ${getStandardsOnlyInjection("DeepTech", stage)}
 | State/University | Weak | Variable |
 
 **No grants for DeepTech = missed opportunity for validation and runway extension.**
-
----
-
-## EXIT LANDSCAPE DEEPTECH
-
-**Acquéreurs Typiques DeepTech:**
-${DEEPTECH_STANDARDS.typicalAcquirers.map((a) => `- ${a}`).join("\n")}
-
-**Notable DeepTech Exits (historique):**
-- DeepMind → Google (2014): $500M+
-- Cruise → GM (2016): $1B+
-- MosaicML → Databricks (2023): $1.3B
-- Anthropic, OpenAI: Massive private valuations
-
-⚠️ **EXIT MULTIPLES**: Rechercher en ligne "deeptech acquisition multiples 2024" pour données actuelles.
 
 ---
 
@@ -605,15 +576,8 @@ En utilisant les données DB:
 - Funding comparatif
 - IP landscape vs competitors
 - TRL comparison if available
-- Exit precedents dans le sous-secteur
 
-### 11. EXIT LANDSCAPE ANALYSIS
-- Acquéreurs probables (Big Tech, Pharma, Industrial)?
-- Multiples observés sur exits comparables (P25/median/P75 par technology maturity, source DB)?
-- Strategic acquirer fit analysis
-- IPO viability (rare for DeepTech, require massive scale)?
-
-### 12. KILLER QUESTIONS DEEPTECH
+### 11. KILLER QUESTIONS DEEPTECH
 Génère 6-8 questions spécifiques:
 - Au moins 2 sur TRL et commercialization path
 - Au moins 2 sur team et key person risk
@@ -621,7 +585,7 @@ Génère 6-8 questions spécifiques:
 - Au moins 1 sur Big Tech threat
 - Avec good answer et red flag answer pour chaque
 
-### 13. NEGOTIATION AMMUNITION
+### 12. NEGOTIATION AMMUNITION
 Identifie 3-5 leviers basés sur:
 - TRL behind expectations
 - Key person risk without succession
@@ -629,7 +593,7 @@ Identifie 3-5 leviers basés sur:
 - Big Tech threat without mitigation
 - No grant validation
 
-### 14. EXECUTIVE SUMMARY
+### 13. EXECUTIVE SUMMARY
 - Verdict one-line
 - Score sectoriel (0-100) avec breakdown
 - Top 3 strengths (avec preuves quantifiées)
@@ -808,8 +772,6 @@ export const deeptechExpert = {
           competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
           consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
           barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-          typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 10,
-          recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) ?? [],
         },
         sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
           question: q.question,
@@ -858,7 +820,6 @@ export const deeptechExpert = {
             industryExperience: null,
           },
           bigTechThreat: null,
-          exitLandscape: parsedOutput.sectorDynamics?.exitLandscape ?? null,
           competitivePosition: parsedOutput.competitorBenchmark ?? null,
           sectorSpecificRisks: parsedOutput.sectorRedFlags?.filter(rf =>
             rf.flag.toLowerCase().includes("trl") ||
@@ -920,7 +881,6 @@ interface ExtendedDeepTechData {
     industryExperience: string | null;
   };
   bigTechThreat: unknown;
-  exitLandscape: unknown;
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   scoringWeights: typeof DEEPTECH_SCORING_WEIGHTS;
@@ -967,8 +927,6 @@ function getDefaultDeepTechData(): SectorExpertData {
       competitionIntensity: "medium",
       consolidationTrend: "stable",
       barrierToEntry: "high",
-      typicalExitMultiple: 10,
-      recentExits: [],
     },
     sectorQuestions: [
       {
@@ -1055,12 +1013,12 @@ export function assessTRLForStage(trl: number, stage: string): {
  * Evaluate Big Tech threat level for a DeepTech company
  *
  * Threat Level Categorization:
- * - Based on historical patterns of Big Tech acquisitions and internal development
- * - High-risk sectors: Areas where FAANG companies have large internal teams and acquisition history
+ * - Based on patterns of Big Tech internal development capacity
+ * - High-risk sectors: Areas where FAANG companies have large internal teams
  * - Medium-risk: Areas of interest but less concentrated internal development
  * - Lower-risk: Specialized domains requiring deep expertise Big Tech typically doesn't build in-house
  *
- * Source: Analysis of Google, Microsoft, Apple, Meta, Amazon acquisitions and org structures
+ * Source: Analysis of Google, Microsoft, Apple, Meta, Amazon org structures
  *
  * @param sector Sub-sector (AI/ML, Quantum, etc.)
  * @param hasDefensibleIP Whether company has strong patent protection
@@ -1076,8 +1034,8 @@ export function assessBigTechThreat(
   reasoning: string;
   mitigation: string[];
 } {
-  // Sector risk categorization based on Big Tech activity and acquisition patterns
-  // Source: CB Insights Big Tech acquisition data, company org structure analysis
+  // Sector risk categorization based on Big Tech internal R&D activity
+  // Source: company org structure analysis
   const highRiskSectors = ["AI/ML", "Foundation Models", "LLM", "MLOps", "AI Infrastructure"];
   const mediumRiskSectors = ["Quantum Software", "Computer Vision", "NLP", "Robotics"];
   const lowerRiskSectors = ["Quantum Hardware", "Biotech", "Advanced Materials", "Photonics"];

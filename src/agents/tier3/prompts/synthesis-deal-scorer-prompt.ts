@@ -71,7 +71,7 @@ Exemple: Si Tier 1 financial-auditor donne Market=70 mais que l'expert sectoriel
 ## Étape 2: PONDÉRATION DES DIMENSIONS
 Les poids sont ADAPTÉS AU STAGE et au SECTEUR du deal (fournis dans le user prompt).
 En l'absence de pondérations spécifiques, utiliser les poids par défaut:
-Team(25%) + Financials(20%) + Market(15%) + GTM(15%) + Product(15%) + Competitive(5%) + Exit(5%)
+Team(26%) + Financials(21%) + Market(16%) + GTM(16%) + Product(16%) + Competitive(5%)
 
 IMPORTANT: Les poids varient SIGNIFICATIVEMENT selon le stage:
 - Pre-Seed: Team 40%, Market 20%, Product 15%, les autres se partagent le reste
@@ -188,15 +188,6 @@ Pour chaque profil sauf alert_dominant:
 | 40-59 | Concurrence présente mais gérable |
 | 20-39 | Concurrents mieux financés, différenciation floue |
 | 0-19 | Big Tech ou leader établi sur le marché |
-
-### EXIT (5%)
-| Score | Critères |
-|-------|----------|
-| 80-100 | Acquéreurs identifiés actifs, multiples >10x, track sector |
-| 60-79 | Exit path plausible, M&A actif dans le secteur |
-| 40-59 | Exit possible mais timeline longue |
-| 20-39 | Exit incertain, multiples faibles |
-| 0-19 | Pas de path to exit identifié |
 
 ---
 
@@ -449,7 +440,7 @@ L'outil ANALYSE et GUIDE. Il ne DECIDE JAMAIS a la place du Business Angel.
    - bull/bear thesis: MAX 4 items chacun
    - keyAssumptions: MAX 3 items
    - nextSteps: MAX 5 items
-   - topStrengths/topWeaknesses: MAX 4 items chacun
+   - topStrengths/topWeaknesses: tous les éléments matériels pour la décision (typiquement 4-8 chacun, priorisés par importance décroissante ; ne jamais inventer pour remplir)
    - redFlags: MAX 6 items (les plus critiques)
    - questions: MAX 5 items
    - keyInsights: MAX 4 items

@@ -12,8 +12,8 @@ const REASON_COPY: Record<EmptyAgentCardProps["reason"], { title: string; descri
     description: "L'agent n'a pas pu produire de résultat exploitable lors de cette analyse.",
   },
   missing: {
-    title: "Analyse non exécutée",
-    description: "Cet agent n'a pas été déclenché sur ce dossier.",
+    title: "Résultat indisponible",
+    description: "Aucun résultat n'a été enregistré pour cet agent sur cette analyse.",
   },
   not_activated: {
     title: "Lentille spécialisée non activée",

@@ -159,21 +159,6 @@ const FintechExpertOutputSchema = z.object({
     consolidationEvidence: z.string(),
     barrierToEntry: z.enum(["low", "medium", "high"]),
     barrierDetails: z.string(),
-    typicalExitMultiple: z.number(),
-    exitMultipleRange: z.object({
-      low: z.number(),
-      median: z.number(),
-      high: z.number(),
-    }),
-    recentExits: z.array(
-      z.object({
-        company: z.string(),
-        acquirer: z.string(),
-        multiple: z.number(),
-        year: z.number(),
-        relevance: z.string(),
-      })
-    ),
     bigTechThreat: z.object({
       level: z.enum(["low", "medium", "high", "critical"]),
       players: z.array(z.string()),
@@ -665,10 +650,6 @@ export const fintechExpert = {
           competitionIntensity: dynData.competitionIntensity ?? "medium",
           consolidationTrend: dynData.consolidationTrend ?? "stable",
           barrierToEntry: dynData.barrierToEntry ?? "medium",
-          typicalExitMultiple: dynData.typicalExitMultiple ?? 0,
-          recentExits: (dynData.recentExits ?? []).map(
-            e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`
-          ),
         },
 
         sectorQuestions: (parsedOutput.sectorQuestions ?? []).map(q => ({
@@ -753,8 +734,6 @@ function getDefaultFintechData(): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: "high",
-      typicalExitMultiple: 6, // Placeholder - multiples actuels via recherche web
-      recentExits: [], // Exits recents via recherche web, pas hardcodes
     },
     sectorQuestions: [
       {

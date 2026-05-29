@@ -21,7 +21,6 @@ interface ExtendedMarketplaceData {
   benchmarkAnalysis: MarketplaceExpertOutput["benchmark_analysis"];
   competitiveDynamics: MarketplaceExpertOutput["competitive_dynamics"];
   sectorRisks: MarketplaceExpertOutput["sector_risks"];
-  exitLandscape: MarketplaceExpertOutput["exit_landscape"];
   criticalQuestions: MarketplaceExpertOutput["critical_questions"];
   scores: MarketplaceExpertOutput["scores"];
 }
@@ -224,42 +223,6 @@ const MarketplaceExpertOutputSchema = z.object({
   // === SECTOR-SPECIFIC RISKS ===
   sector_risks: z.array(MarketplaceSectorRiskSchema),
 
-  // === EXIT LANDSCAPE ===
-  // Doctrine anti-oraculaire : `observed_exit_multiple_range` rapporte
-  // les multiples OBSERVÉS sur les comparables historiques du segment
-  // (P25 / médiane / P75 + période + source), pas un range "attendu"
-  // pour CE deal. L'ancien `typical_exit_multiple_range` était ambigu
-  // et pouvait être interprété par le LLM comme une projection.
-  exit_landscape: z.object({
-    observed_exit_multiple_range: z.object({
-      p25: z.number(),
-      median: z.number(),
-      p75: z.number(),
-      multiple_basis: z.enum(["gmv", "revenue", "arr"]),
-      sample_size: z.number().int().nonnegative(),
-      period: z.string(),
-      source: z.string(),
-    }),
-    recent_comparable_exits: z.array(z.object({
-      company: z.string(),
-      acquirer: z.string(),
-      year: z.number(),
-      multiple: z.number(),
-      relevance: z.string(),
-    })),
-    potential_acquirers: z.array(z.object({
-      name: z.string(),
-      strategic_rationale: z.string(),
-      likelihood: z.enum(["high", "medium", "low"]),
-    })),
-    ipo_viability: z.object({
-      feasible: z.boolean(),
-      timeline_years: z.union([z.number(), z.null()]),
-      requirements_gap: z.string().nullable(),
-    }),
-    exit_score: z.number().min(0).max(100),
-  }),
-
   // === DUE DILIGENCE QUESTIONS ===
   critical_questions: z.array(MarketplaceQuestionSchema),
 
@@ -270,7 +233,6 @@ const MarketplaceExpertOutputSchema = z.object({
     unit_economics: z.number().min(0).max(100),
     competitive_position: z.number().min(0).max(100),
     defensibility: z.number().min(0).max(100),
-    exit_potential: z.number().min(0).max(100),
     overall_sector_score: z.number().min(0).max(100),
     score_methodology: z.string(),
   }),
@@ -366,7 +328,6 @@ ${getStandardsOnlyInjection("Marketplace", "SEED")}
 4. **CALCULER** les unit economics (take rate, contribution, LTV/CAC dual)
 5. **BENCHMARKER** chaque métrique vs percentiles secteur
 6. **IDENTIFIER** les risques spécifiques marketplace
-7. **PROJETER** les scénarios de sortie réalistes
 
 ## LEXIQUE MARKETPLACE
 
@@ -502,12 +463,7 @@ Produis une analyse MARKETPLACE EXPERT complète :
    - Réglementation
    - Competition big tech
 
-7. **PROJETER LES EXITS**
-   - Multiples réalistes
-   - Acquéreurs potentiels
-   - Timeline IPO si applicable
-
-8. **GÉNÉRER 7-10 QUESTIONS CRITIQUES**
+7. **GÉNÉRER 7-10 QUESTIONS CRITIQUES**
    - Focus sur liquidity, unit economics, defensibility
    - Avec expected good answer et red flag answer
 
@@ -627,7 +583,6 @@ Compare ce deal aux marketplaces de la Funding Database avec :
           benchmarkAnalysis: output.benchmark_analysis,
           competitiveDynamics: output.competitive_dynamics,
           sectorRisks: output.sector_risks,
-          exitLandscape: output.exit_landscape,
           criticalQuestions: output.critical_questions,
           scores: output.scores,
         },

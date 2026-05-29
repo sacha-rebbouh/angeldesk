@@ -515,3 +515,164 @@ export function getEnumLabel(value: string, labels?: Record<string, string>): st
   if (value in LEVEL_LABELS) return LEVEL_LABELS[value];
   return value.replace(/_/g, " ");
 }
+
+// =============================================================================
+// Fact key display labels — libellés FR courts pour la taxonomie FACT_KEYS
+// (src/services/fact-store/fact-keys.ts). Affichés dans la colonne « Affirmation »
+// de la table Preuves consolidées. Les acronymes métier (ARR/MRR/CAC/LTV/EBITDA/
+// TAM…) restent en EN. Doit rester aligné sur FACT_KEYS — clés inconnues =>
+// fallback humanisé par getFactKeyLabel().
+// =============================================================================
+export const FACT_KEY_LABELS: Record<string, string> = {
+  "company.name": "Nom de la société",
+  // Financial
+  "financial.arr": "ARR",
+  "financial.mrr": "MRR",
+  "financial.revenue": "Chiffre d'affaires",
+  "financial.revenue_growth_yoy": "Croissance du CA (YoY)",
+  "financial.revenue_growth_mom": "Croissance du CA (MoM)",
+  "financial.burn_rate": "Burn rate",
+  "financial.runway_months": "Runway (mois)",
+  "financial.gross_margin": "Marge brute",
+  "financial.net_margin": "Marge nette",
+  "financial.ebitda": "EBITDA",
+  "financial.cash_position": "Trésorerie",
+  "financial.debt": "Dette",
+  "financial.valuation_pre": "Valorisation pre-money",
+  "financial.valuation_post": "Valorisation post-money",
+  "financial.valuation_multiple": "Multiple de valorisation",
+  "financial.amount_raised_total": "Total levé à ce jour",
+  "financial.amount_raising": "Montant recherché",
+  "financial.dilution_current_round": "Dilution (tour en cours)",
+  "financial.post_money_ownership_founders": "Détention fondateurs (post-money)",
+  // Traction
+  "traction.churn_monthly": "Churn mensuel",
+  "traction.churn_annual": "Churn annuel",
+  "traction.nrr": "NRR",
+  "traction.grr": "GRR",
+  "traction.cac": "CAC",
+  "traction.ltv": "LTV",
+  "traction.ltv_cac_ratio": "Ratio LTV/CAC",
+  "traction.payback_months": "Payback (mois)",
+  "traction.customers_count": "Nombre de clients",
+  "traction.users_count": "Nombre d'utilisateurs",
+  "traction.dau": "DAU",
+  "traction.mau": "MAU",
+  "traction.conversion_rate": "Taux de conversion",
+  "traction.arpu": "ARPU",
+  "traction.arppu": "ARPPU",
+  // Team
+  "team.size": "Effectif",
+  "team.headcount": "Effectif",
+  "team.founders_count": "Nombre de fondateurs",
+  "team.technical_count": "Effectif technique",
+  "team.technical_ratio": "Ratio technique",
+  "team.ceo.name": "CEO",
+  "team.ceo.linkedin": "LinkedIn du CEO",
+  "team.ceo.background": "Parcours du CEO",
+  "team.ceo.previous_exits": "Exits précédents du CEO",
+  "team.cto.name": "CTO",
+  "team.cto.linkedin": "LinkedIn du CTO",
+  "team.cto.background": "Parcours du CTO",
+  "team.advisors_count": "Nombre de conseillers",
+  "team.advisors": "Conseillers",
+  "team.vesting_months": "Vesting (mois)",
+  "team.cliff_months": "Cliff (mois)",
+  // Market
+  "market.tam": "TAM",
+  "market.sam": "SAM",
+  "market.som": "SOM",
+  "market.cagr": "CAGR du marché",
+  "market.geography_primary": "Géographie principale",
+  "market.geography_expansion": "Expansion géographique",
+  "market.segment": "Segment",
+  "market.vertical": "Verticale",
+  "market.b2b_or_b2c": "Modèle (B2B/B2C)",
+  "market.timing_assessment": "Timing de marché",
+  // Product
+  "product.name": "Produit",
+  "product.tagline": "Tagline",
+  "product.stage": "Stade produit",
+  "product.launch_date": "Date de lancement",
+  "product.tech_stack": "Stack technique",
+  "product.moat": "Moat",
+  "product.ip_patents_count": "Brevets (IP)",
+  "product.nps": "NPS",
+  "product.time_to_value_days": "Time-to-value (jours)",
+  "product.integration_count": "Intégrations",
+  // Competition
+  "competition.main_competitor": "Concurrent principal",
+  "competition.competitors_count": "Nombre de concurrents",
+  "competition.competitor_count": "Nombre de concurrents",
+  "competition.competitors_list": "Liste des concurrents",
+  "competition.competitors_funded": "Concurrents financés",
+  "competition.differentiation": "Différenciation",
+  "competition.market_position": "Position de marché",
+  "competition.switching_cost": "Coût de changement",
+  "competition.big_tech_threat": "Menace des Big Tech",
+  // Legal
+  "legal.incorporation_country": "Pays d'incorporation",
+  "legal.incorporation_date": "Date d'incorporation",
+  "legal.legal_structure": "Structure juridique",
+  "legal.patents_filed": "Brevets déposés",
+  "legal.patents_granted": "Brevets accordés",
+  "legal.pending_litigation": "Litiges en cours",
+  "legal.regulatory_approvals": "Agréments réglementaires",
+  "legal.compliance_certifications": "Certifications de conformité",
+  // Other
+  "other.founding_date": "Date de création",
+  "other.headquarters": "Siège social",
+  "other.website": "Site web",
+  "other.sector": "Secteur",
+};
+
+/**
+ * Libellé FR court pour une clé fact-key. Fallback gracieux pour toute clé non
+ * mappée : dernier segment, underscores → espaces, première lettre en majuscule.
+ */
+export function getFactKeyLabel(key: string): string {
+  if (key in FACT_KEY_LABELS) return FACT_KEY_LABELS[key];
+  const last = key.split(".").pop() ?? key;
+  const humanized = last.replace(/_/g, " ").trim();
+  return humanized.length > 0 ? humanized.charAt(0).toUpperCase() + humanized.slice(1) : key;
+}
+
+// =============================================================================
+// Next steps — le memo-generator sérialise chaque étape en "[PRIORITY] [OWNER] action".
+// Source unique du parsing + des libellés FR (badges), partagée par toutes les
+// surfaces de rendu (Tier 3 web, mémo V2, mémo complet, PDF).
+// =============================================================================
+export const NEXT_STEP_PRIORITY_LABELS: Record<string, string> = {
+  IMMEDIATE: "Immédiat",
+  BEFORE_TERM_SHEET: "Avant term sheet",
+  DURING_DD: "Pendant la DD",
+};
+
+export const NEXT_STEP_OWNER_LABELS: Record<string, string> = {
+  INVESTOR: "Investisseur",
+  FOUNDER: "Fondateur",
+};
+
+export type ParsedNextStep = { priority: string | null; owner: string | null; text: string };
+
+/** Parse "[IMMEDIATE] [INVESTOR] action" → { priority, owner, text }. */
+export function parseNextStep(raw: string): ParsedNextStep {
+  const match = raw.match(/^(?:\[([A-Z_]+)\])?\s*(?:\[([A-Z_]+)\])?\s*([\s\S]+)$/);
+  if (!match) return { priority: null, owner: null, text: raw };
+  let priority: string | null = null;
+  let owner: string | null = null;
+  for (const tag of [match[1], match[2]]) {
+    if (!tag) continue;
+    if (tag in NEXT_STEP_PRIORITY_LABELS) priority = tag;
+    else if (tag in NEXT_STEP_OWNER_LABELS) owner = tag;
+  }
+  return { priority, owner, text: match[3].trim() };
+}
+
+export function nextStepPriorityLabel(priority: string | null): string | null {
+  return priority ? NEXT_STEP_PRIORITY_LABELS[priority] ?? priority : null;
+}
+
+export function nextStepOwnerLabel(owner: string | null): string | null {
+  return owner ? NEXT_STEP_OWNER_LABELS[owner] ?? owner : null;
+}

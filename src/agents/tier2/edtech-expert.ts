@@ -250,15 +250,6 @@ const EdTechOutputSchema = z.object({
     redFlagAnswer: z.string(),
   })),
 
-  // Exit potential
-  exitPotential: z.object({
-    typicalMultiple: z.number(),
-    likelyAcquirers: z.array(z.string()),
-    timeToExit: z.string(),
-    exitReadiness: z.enum(["ready", "needs_work", "far"]),
-    bestExitPath: z.enum(["strategic_acquisition", "pe_buyout", "ipo", "unclear"]),
-  }),
-
   // Score et Synthèse
   sectorScore: z.number().min(0).max(100),
   scoreBreakdown: z.object({
@@ -561,7 +552,7 @@ Vérifie au minimum:
 
 ### 8. VALORISATION VS BENCHMARKS
 - Calcule le multiple demandé (ARR ou Revenue)
-- Compare aux multiples EdTech actuels (rechercher "edtech exit multiples ${new Date().getFullYear()}")
+- Compare aux multiples de valorisation EdTech actuels du benchmark sectoriel
 - Donne une range fair value
 - Identifie les arguments de négociation
 
@@ -634,8 +625,6 @@ function transformOutput(raw: EdTechExpertOutput): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: raw.edtechCompetitiveMoat.switchingCosts === "high" ? "high" : "medium",
-      typicalExitMultiple: raw.exitPotential.typicalMultiple,
-      recentExits: [],
     },
 
     sectorQuestions: raw.sectorQuestions.map(q => ({
@@ -685,8 +674,6 @@ function getDefaultData(): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: "medium",
-      typicalExitMultiple: 5,
-      recentExits: [],
     },
     sectorQuestions: [],
     sectorFit: {
@@ -831,7 +818,6 @@ export const edtechExpert = {
             salesCycleMonths: parsedOutput.gtmAssessment.salesCycle.lengthMonths,
             keyInsight: parsedOutput.gtmAssessment.keyInsight,
           },
-          exitPotential: parsedOutput.exitPotential,
           // Map EdTech-specific values to common type values
           investmentImplication: parsedOutput.investmentImplication === "strong_edtech_fundamentals" ? "strong_saas_fundamentals" :
                                  parsedOutput.investmentImplication === "edtech_model_broken" ? "saas_model_broken" :

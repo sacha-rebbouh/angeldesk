@@ -80,9 +80,6 @@ export interface SectorStandards {
   /** Patterns de succes du secteur (qualitatifs, stables) */
   successPatterns: string[];
 
-  /** Acquéreurs typiques (relativement stable) */
-  typicalAcquirers: string[];
-
   /** Questions de recherche pour benchmarks dynamiques */
   benchmarkSearchQueries: string[];
 }
@@ -276,20 +273,14 @@ export const SAAS_STANDARDS: SectorStandards = {
     "Multi-product: Second product adding to NRR",
   ],
 
-  typicalAcquirers: [
-    "Salesforce", "Microsoft", "SAP", "Oracle", "Adobe",
-    "ServiceNow", "Workday", "Intuit", "HubSpot",
-    "Private Equity (Thoma Bravo, Vista, Silver Lake)",
-  ],
-
   benchmarkSearchQueries: [
     "SaaS benchmarks {current_year} seed series A median",
     "OpenView SaaS benchmarks report {current_year}",
     "KeyBanc SaaS survey {current_year} metrics",
     "SaaS ARR growth benchmarks by stage {current_year}",
     "SaaS NRR median {current_year}",
-    "SaaS exit multiples {current_year}",
-    "Recent SaaS acquisitions {current_year} multiples",
+    "SaaS valuation multiples {current_year}",
+    "SaaS funding round benchmarks {current_year}",
   ],
 };
 
@@ -453,17 +444,12 @@ export const FINTECH_STANDARDS: SectorStandards = {
     "Cross-sell engine: Multiple products per customer",
   ],
 
-  typicalAcquirers: [
-    "JPMorgan", "Goldman Sachs", "Visa", "Mastercard",
-    "PayPal", "Block", "Fiserv", "FIS", "Global Payments",
-  ],
-
   benchmarkSearchQueries: [
     "fintech benchmarks {current_year}",
     "payment processing take rate {current_year}",
     "neobank unit economics {current_year}",
     "fintech default rates {current_year}",
-    "recent fintech acquisitions {current_year} multiples",
+    "fintech valuation multiples {current_year}",
     "a16z fintech benchmarks {current_year}",
   ],
 };
@@ -620,17 +606,12 @@ export const MARKETPLACE_STANDARDS: SectorStandards = {
     "Data moat: Proprietary data improving matching over time",
   ],
 
-  typicalAcquirers: [
-    "Amazon", "eBay", "Uber", "DoorDash", "Booking Holdings",
-    "Expedia", "Etsy", "Airbnb", "Private Equity",
-  ],
-
   benchmarkSearchQueries: [
     "marketplace benchmarks {current_year}",
     "a16z marketplace 100 {current_year}",
     "marketplace take rate by category {current_year}",
     "marketplace GMV growth benchmarks {current_year}",
-    "recent marketplace acquisitions {current_year}",
+    "marketplace valuation multiples {current_year}",
   ],
 };
 
@@ -771,17 +752,12 @@ export const AI_STANDARDS: SectorStandards = {
     "Compute efficiency: Better performance per dollar than competitors",
   ],
 
-  typicalAcquirers: [
-    "Google", "Microsoft", "Meta", "Apple", "Amazon",
-    "NVIDIA", "Salesforce", "ServiceNow", "Databricks",
-  ],
-
   benchmarkSearchQueries: [
     "AI startup benchmarks {current_year}",
     "LLM inference cost trends {current_year}",
     "AI startup gross margins {current_year}",
     "GenAI company valuations {current_year}",
-    "AI acquisitions {current_year} multiples",
+    "AI startup valuation multiples {current_year}",
     "a16z AI infrastructure report {current_year}",
   ],
 };
@@ -921,16 +897,11 @@ export const HEALTHTECH_STANDARDS: SectorStandards = {
     "Regulatory clearance: FDA cleared/approved",
   ],
 
-  typicalAcquirers: [
-    "UnitedHealth/Optum", "CVS Health", "Cigna/Evernorth",
-    "Teladoc", "Major Pharma", "Health Systems", "Private Equity",
-  ],
-
   benchmarkSearchQueries: [
     "digital health benchmarks {current_year}",
     "Rock Health funding report {current_year}",
     "digital therapeutics outcomes benchmark",
-    "healthtech exit multiples {current_year}",
+    "healthtech valuation multiples {current_year}",
     "telehealth adoption rates {current_year}",
   ],
 };
@@ -1064,17 +1035,11 @@ export const DEEPTECH_STANDARDS: SectorStandards = {
     "10x improvement: Not incremental, order of magnitude better",
   ],
 
-  typicalAcquirers: [
-    "Google", "Microsoft", "Apple", "NVIDIA", "Intel",
-    "Qualcomm", "Defense Primes (Lockheed, Raytheon)",
-    "Industrial Giants (Siemens, GE, Honeywell)",
-  ],
-
   benchmarkSearchQueries: [
     "deeptech funding benchmarks {current_year}",
     "deep technology startup metrics",
     "SBIR STTR funding statistics {current_year}",
-    "deeptech exits {current_year}",
+    "deeptech valuation multiples {current_year}",
     "hard tech VC benchmarks",
   ],
 };
@@ -1186,7 +1151,6 @@ export const CLIMATE_STANDARDS: SectorStandards = {
     "Commodity exposure: Margins tied to energy prices",
     "Grid interconnection: Transmission constraints blocking projects",
     "Greenwashing scrutiny: Regulatory and reputational risk",
-    "Exit path uncertainty: Strategic acquirers selective",
   ],
 
   successPatterns: [
@@ -1200,18 +1164,12 @@ export const CLIMATE_STANDARDS: SectorStandards = {
     "First-mover: Leading position in emerging segment",
   ],
 
-  typicalAcquirers: [
-    "Shell", "BP", "TotalEnergies", "Chevron",
-    "Brookfield", "Engie", "Enel",
-    "Industrial Giants", "Private Equity",
-  ],
-
   benchmarkSearchQueries: [
     "climate tech benchmarks {current_year}",
     "BloombergNEF climate investment {current_year}",
     "IEA clean energy investment {current_year}",
     "carbon credit prices {current_year}",
-    "climate tech exits {current_year}",
+    "climate tech valuation multiples {current_year}",
     "PwC State of Climate Tech {current_year}",
   ],
 };
@@ -1359,16 +1317,11 @@ export const CONSUMER_STANDARDS: SectorStandards = {
     "Community: Strong brand community driving advocacy",
   ],
 
-  typicalAcquirers: [
-    "P&G", "Unilever", "L'Oreal", "Nestle", "Coca-Cola",
-    "Amazon", "Walmart", "Target", "Private Equity",
-  ],
-
   benchmarkSearchQueries: [
     "D2C benchmarks {current_year}",
     "ecommerce CAC benchmark {current_year}",
     "D2C repeat purchase rates {current_year}",
-    "consumer brand acquisitions {current_year}",
+    "consumer brand valuation multiples {current_year}",
     "ecommerce unit economics report {current_year}",
   ],
 };
@@ -1508,16 +1461,11 @@ export const GAMING_STANDARDS: SectorStandards = {
     "Soft launch: 3-6+ months iteration before global",
   ],
 
-  typicalAcquirers: [
-    "Microsoft", "Sony", "Tencent", "NetEase",
-    "EA", "Take-Two", "Embracer", "Zynga",
-  ],
-
   benchmarkSearchQueries: [
     "mobile game benchmarks {current_year}",
     "game retention benchmarks {current_year}",
     "mobile game CPI {current_year}",
-    "gaming acquisitions {current_year} multiples",
+    "gaming valuation multiples {current_year}",
     "GameAnalytics benchmarks {current_year}",
   ],
 };
@@ -1658,17 +1606,11 @@ export const HARDWARE_STANDARDS: SectorStandards = {
     "China+ strategy: Diversified manufacturing",
   ],
 
-  typicalAcquirers: [
-    "Apple", "Google", "Amazon", "Samsung", "Sony",
-    "Industrial Giants (Siemens, Honeywell, ABB)",
-    "Private Equity",
-  ],
-
   benchmarkSearchQueries: [
     "hardware startup benchmarks {current_year}",
     "consumer electronics margins {current_year}",
     "IoT unit economics benchmark",
-    "hardware acquisitions {current_year}",
+    "hardware startup valuation multiples {current_year}",
     "HAX hardware benchmarks",
   ],
 };
@@ -1863,21 +1805,14 @@ export const BIOTECH_STANDARDS: SectorStandards = {
     "Clear regulatory path: Well-defined endpoints accepted by FDA",
   ],
 
-  typicalAcquirers: [
-    "Pfizer", "Merck", "Johnson & Johnson", "Roche/Genentech",
-    "Novartis", "Bristol-Myers Squibb", "AbbVie", "AstraZeneca",
-    "Eli Lilly", "Gilead", "Amgen", "Biogen", "Sanofi",
-    "Private Equity (specialized healthcare funds)",
-  ],
-
   benchmarkSearchQueries: [
     "biotech valuation by clinical phase {current_year}",
     "drug development success rates {current_year}",
-    "biotech M&A multiples {current_year}",
+    "biotech valuation multiples {current_year}",
     "clinical trial cost benchmarks {current_year}",
     "FDA approval probability by phase {current_year}",
-    "biotech IPO valuations {current_year}",
-    "orphan drug acquisition multiples {current_year}",
+    "biotech funding round benchmarks {current_year}",
+    "orphan drug valuation multiples {current_year}",
   ],
 };
 
@@ -2082,21 +2017,13 @@ export const EDTECH_STANDARDS: SectorStandards = {
     "ISA/outcomes-based: Aligned incentives - paid when learner succeeds",
   ],
 
-  typicalAcquirers: [
-    "Pearson", "McGraw-Hill", "Wiley", "Cengage",
-    "Chegg", "Coursera", "2U", "Duolingo",
-    "Google (for Education)", "Microsoft (LinkedIn Learning)",
-    "Byju's", "Guild Education",
-    "Private Equity (Vista, Providence, TPG)",
-  ],
-
   benchmarkSearchQueries: [
     "edtech benchmarks {current_year}",
     "online education metrics {current_year}",
     "e-learning completion rate statistics {current_year}",
     "K-12 edtech market analysis {current_year}",
     "corporate learning LTV CAC {current_year}",
-    "edtech exits acquisitions {current_year}",
+    "edtech valuation multiples {current_year}",
     "HolonIQ edtech report {current_year}",
     "GSV edtech funding {current_year}",
   ],
@@ -2339,23 +2266,15 @@ export const FOODTECH_STANDARDS: SectorStandards = {
     "International expansion: US brand with proven European or Asian traction",
   ],
 
-  typicalAcquirers: [
-    "Nestlé", "PepsiCo", "Coca-Cola", "Unilever", "Danone",
-    "Kraft Heinz", "General Mills", "Kellogg's", "Mars",
-    "Tyson Foods", "JBS", "Cargill", "ADM",
-    "Conagra", "Mondelez", "Campbell Soup",
-    "Private Equity: L Catterton, KKR, Bain Capital, TSG Consumer",
-  ],
-
   benchmarkSearchQueries: [
     "CPG food brand benchmarks {current_year}",
     "D2C food unit economics {current_year}",
     "alt protein market growth {current_year}",
-    "food brand acquisition multiples {current_year}",
+    "food brand valuation multiples {current_year}",
     "meal kit industry metrics {current_year}",
     "foodtech VC investment trends {current_year}",
     "CPG gross margin benchmarks {current_year}",
-    "food startup exits {current_year}",
+    "food startup funding round benchmarks {current_year}",
     "vertical farming unit economics {current_year}",
     "plant-based meat market share {current_year}",
   ],
@@ -2590,21 +2509,13 @@ export const MOBILITY_STANDARDS: SectorStandards = {
     "Last-mile for e-commerce: Riding e-commerce growth wave",
   ],
 
-  typicalAcquirers: [
-    "Uber", "Lyft", "Grab", "DiDi", "Bolt",
-    "Amazon", "FedEx", "UPS", "DHL",
-    "Automotive OEMs (GM, Ford, VW, Toyota)",
-    "Private Equity",
-    "Strategic logistics players",
-  ],
-
   benchmarkSearchQueries: [
     "mobility startup benchmarks {current_year}",
     "ridesharing unit economics {current_year}",
     "delivery platform take rate benchmark {current_year}",
     "micromobility utilization rates {current_year}",
     "logistics operating ratio benchmark {current_year}",
-    "mobility acquisitions {current_year} multiples",
+    "mobility valuation multiples {current_year}",
     "gig economy driver retention {current_year}",
     "last-mile delivery economics {current_year}",
     "autonomous vehicle investment trends {current_year}",
@@ -2859,22 +2770,13 @@ export const PROPTECH_STANDARDS: SectorStandards = {
     "Construction tech with GC relationships: Deep integration with general contractors",
   ],
 
-  typicalAcquirers: [
-    "CoStar Group", "Zillow Group", "Redfin", "Realogy",
-    "RealPage", "AppFolio", "Yardi", "MRI Software",
-    "Procore", "Autodesk", "Trimble",
-    "Brookfield", "Blackstone", "CBRE", "JLL",
-    "Private Equity (Vista, Thoma Bravo for SaaS)",
-    "Big Banks (for mortgage tech)",
-  ],
-
   benchmarkSearchQueries: [
     "proptech funding {current_year}",
     "real estate tech valuation multiples {current_year}",
     "iBuyer unit economics {current_year}",
     "property management SaaS benchmarks {current_year}",
     "construction tech market {current_year}",
-    "proptech M&A exits {current_year}",
+    "proptech funding round benchmarks {current_year}",
     "coworking occupancy rates {current_year}",
     "mortgage tech cost per loan {current_year}",
     "Fifth Wall proptech report {current_year}",
@@ -3095,24 +2997,17 @@ export const CYBERSECURITY_STANDARDS: SectorStandards = {
     "CISO advisory board: Strong relationships with security leaders",
   ],
 
-  typicalAcquirers: [
-    "Palo Alto Networks", "CrowdStrike", "Cisco", "Microsoft",
-    "Fortinet", "Zscaler", "SentinelOne", "Splunk",
-    "Broadcom", "Thoma Bravo", "Vista Equity", "Insight Partners",
-    "Google (Mandiant/Chronicle)", "IBM Security", "Proofpoint",
-  ],
-
   benchmarkSearchQueries: [
     "cybersecurity startup benchmarks {current_year}",
     "security software ARR growth {current_year}",
     "cybersecurity NRR benchmark {current_year}",
     "infosec company valuations {current_year}",
-    "cybersecurity M&A multiples {current_year}",
+    "cybersecurity valuation multiples {current_year}",
     "Momentum Cyber cybersecurity report {current_year}",
     "CISO spending survey {current_year}",
     "cybersecurity market size forecast {current_year}",
     "security software gross margin benchmark",
-    "cybersecurity IPO multiples {current_year}",
+    "cybersecurity funding round benchmarks {current_year}",
   ],
 };
 
@@ -3360,25 +3255,17 @@ export const HRTECH_STANDARDS: SectorStandards = {
     "M&A roll-up: Acquiring point solutions to build suite (Rippling model)",
   ],
 
-  typicalAcquirers: [
-    "Workday", "ADP", "Paylocity", "Paycom", "Paychex",
-    "UKG (Ultimate Kronos Group)", "Ceridian", "SAP SuccessFactors",
-    "Oracle HCM", "Deel", "Rippling", "Gusto",
-    "Private Equity (Vista, Thoma Bravo, Hellman & Friedman)",
-    "Insurance carriers (for benefits tech)",
-  ],
-
   benchmarkSearchQueries: [
     "HRTech benchmarks {current_year}",
     "HR software metrics {current_year}",
     "HRIS market size {current_year}",
     "HRTech valuation multiples {current_year}",
-    "HR software M&A {current_year}",
+    "HR software funding round benchmarks {current_year}",
     "payroll software market {current_year}",
     "HRTech NRR benchmark {current_year}",
     "enterprise HR software sales cycle {current_year}",
     "PEPM pricing benchmark {current_year}",
-    "HRTech IPO {current_year}",
+    "HRTech funding rounds {current_year}",
     "Workday competitor analysis {current_year}",
     "HR software implementation time benchmark",
   ],
@@ -3576,23 +3463,11 @@ export const LEGALTECH_STANDARDS: SectorStandards = {
     "SMB focus: Shorter sales cycles, faster iteration, lower CAC",
   ],
 
-  typicalAcquirers: [
-    "Thomson Reuters",
-    "LexisNexis (RELX)",
-    "Wolters Kluwer",
-    "Litera",
-    "Intapp",
-    "Clio",
-    "Thoma Bravo",
-    "Vista Equity Partners",
-    "Insight Partners",
-  ],
-
   benchmarkSearchQueries: [
     "legaltech benchmarks {current_year}",
     "CLM market size growth {current_year}",
     "legal software ARR benchmarks {current_year}",
-    "legaltech M&A activity {current_year}",
+    "legaltech funding round benchmarks {current_year}",
     "legal tech valuations multiples {current_year}",
     "law firm technology adoption survey {current_year}",
     "legaltech funding trends {current_year}",
@@ -3822,15 +3697,6 @@ export const CREATOR_STANDARDS: SectorStandards = {
     "Cross-platform tools: Tools that work across platforms are more valuable than single-platform tools",
   ],
 
-  typicalAcquirers: [
-    "Meta (Facebook/Instagram)", "Google (YouTube)", "ByteDance (TikTok)", "Amazon (Twitch)",
-    "Spotify", "Apple", "Netflix", "Disney",
-    "WPP", "Omnicom", "Publicis", "IPG (agency holding companies)",
-    "Patreon", "Substack", "Kajabi", "Teachable",
-    "Canva", "Adobe", "HubSpot (for creator marketing tools)",
-    "Private Equity (for roll-ups of creator tools/agencies)",
-  ],
-
   benchmarkSearchQueries: [
     "creator economy market size {current_year}",
     "influencer marketing benchmark {current_year}",
@@ -3841,7 +3707,7 @@ export const CREATOR_STANDARDS: SectorStandards = {
     "newsletter monetization benchmark {current_year}",
     "creator platform retention rates {current_year}",
     "influencer engagement rate benchmark {current_year}",
-    "creator economy exits acquisitions {current_year}",
+    "creator economy valuation multiples {current_year}",
     "SignalFire creator economy report {current_year}",
     "Goldman Sachs creator economy {current_year}",
   ],
@@ -4033,12 +3899,6 @@ export const BLOCKCHAIN_STANDARDS: SectorStandards = {
     "Real-world adoption: Use cases beyond speculation/yield farming",
   ],
 
-  typicalAcquirers: [
-    "Coinbase", "Binance", "Circle", "ConsenSys", "Galaxy Digital",
-    "DCG (Digital Currency Group)", "Ripple", "Block (Square)",
-    "PayPal", "Stripe (crypto infrastructure)",
-  ],
-
   benchmarkSearchQueries: [
     "DeFi protocol revenue benchmark {current_year}",
     "crypto TVL trends {current_year}",
@@ -4051,7 +3911,7 @@ export const BLOCKCHAIN_STANDARDS: SectorStandards = {
     "crypto regulatory landscape {current_year}",
     "Token Terminal crypto revenue {current_year}",
     "Electric Capital developer report {current_year}",
-    "recent crypto acquisitions {current_year}",
+    "crypto funding round benchmarks {current_year}",
   ],
 };
 

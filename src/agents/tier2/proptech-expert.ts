@@ -252,21 +252,6 @@ const PropTechOutputSchema = z.object({
     redFlagAnswer: z.string(),
   })),
 
-  // Exit potential PropTech
-  exitPotential: z.object({
-    typicalMultiple: z.number(),
-    exitPath: z.enum(["strategic_acquisition", "pe_rollup", "ipo", "unclear"]),
-    likelyAcquirers: z.array(z.string()),
-    timeToExit: z.string(),
-    exitReadiness: z.enum(["ready", "needs_work", "far"]),
-    recentComparableExits: z.array(z.object({
-      company: z.string(),
-      acquirer: z.string(),
-      multiple: z.number(),
-      year: z.number(),
-    })).optional(),
-  }),
-
   // Score et Synthèse
   sectorScore: z.number().min(0).max(100),
   scoreBreakdown: z.object({
@@ -677,8 +662,6 @@ function transformOutput(raw: PropTechExpertOutput): SectorExpertData {
       consolidationTrend: "consolidating",
       barrierToEntry: raw.propTechMoat.regulatoryMoat === "strong" || raw.capitalIntensity.level === "very_high"
         ? "high" : "medium",
-      typicalExitMultiple: raw.exitPotential.typicalMultiple,
-      recentExits: raw.exitPotential.recentComparableExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) || [],
     },
 
     sectorQuestions: raw.sectorQuestions.map(q => ({
@@ -733,8 +716,6 @@ function getDefaultData(): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: "medium",
-      typicalExitMultiple: 4,
-      recentExits: [],
     },
     sectorQuestions: [{
       question: "Comment votre business survit-il à une hausse des taux de 200bp et une baisse de l'immobilier de 20%?",
@@ -876,12 +857,6 @@ export const proptechExpert = {
             moatStrength: parsedOutput.scoreBreakdown.moatStrength,
             growthPotential: parsedOutput.scoreBreakdown.growthPotential,
             executionRisk: parsedOutput.scoreBreakdown.executionRisk,
-          },
-          exitPotential: {
-            typicalMultiple: parsedOutput.exitPotential.typicalMultiple,
-            likelyAcquirers: parsedOutput.exitPotential.likelyAcquirers,
-            timeToExit: parsedOutput.exitPotential.timeToExit,
-            exitReadiness: parsedOutput.exitPotential.exitReadiness,
           },
           verdict: {
             recommendation: parsedOutput.investmentImplication === "strong_proptech_fundamentals" ? "STRONG_FIT"

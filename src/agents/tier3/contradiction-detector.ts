@@ -29,6 +29,7 @@
  */
 
 import { BaseAgent } from "../base-agent";
+import { severityRank } from "@/services/red-flag-dedup";
 import { CONTRADICTION_DETECTOR_SYSTEM_PROMPT } from "./prompts/contradiction-detector-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 import type {
@@ -307,9 +308,14 @@ export class ContradictionDetectorAgent extends BaseAgent<ContradictionDetectorD
     // Extract red flags
     if (Array.isArray(obj.redFlags) && obj.redFlags.length > 0) {
       lines.push(`\n**Red Flags (${obj.redFlags.length}):**`);
-      for (const rf of obj.redFlags.slice(0, 5)) {
-        const flag = rf as { severity?: string; title?: string; description?: string };
+      const rfArr = obj.redFlags as Array<{ severity?: string; title?: string; description?: string }>;
+      for (const flag of [...rfArr]
+        .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+        .slice(0, 8)) {
         lines.push(`- [${flag.severity ?? "?"}] ${flag.title ?? flag.description ?? "?"}`);
+      }
+      if (rfArr.length > 8) {
+        lines.push(`- … et ${rfArr.length - 8} autres`);
       }
     }
 

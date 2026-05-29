@@ -48,7 +48,7 @@ import type {
   Tier3SignalContribution,
 } from "../types";
 import type { BAPreferences } from "@/services/benchmarks";
-import { RedFlagDedup, inferRedFlagTopic } from "@/services/red-flag-dedup";
+import { RedFlagDedup, inferRedFlagTopic, severityRank } from "@/services/red-flag-dedup";
 import type { RedFlagSeverity } from "@/services/red-flag-dedup";
 import { getWeightsForDeal, formatWeightsForPrompt } from "@/scoring/stage-weights";
 import { SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT } from "./prompts/synthesis-deal-scorer-prompt";
@@ -488,7 +488,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
         console.warn(
           `[synthesis-deal-scorer] LLM returned ${firstBreakdown.length} dimension scores — retrying (${Math.round(timeRemaining / 1000)}s remaining)`
         );
-        const retryPrompt = prompt + `\n\n---\n\n**INSTRUCTION CRITIQUE**: Ta réponse DOIT inclure "score.breakdown" avec AU MINIMUM 7 dimensions (Team, Financials, Market, Product/Tech, GTM/Traction, Competitive, Exit Potential), chacune avec "criterion", "weight", "score" et "justification". Sans ce breakdown, l'analyse est inutilisable.`;
+        const retryPrompt = prompt + `\n\n---\n\n**INSTRUCTION CRITIQUE**: Ta réponse DOIT inclure "score.breakdown" avec AU MINIMUM 6 dimensions (Team, Financials, Market, Product/Tech, GTM/Traction, Competitive), chacune avec "criterion", "weight", "score" et "justification". Sans ce breakdown, l'analyse est inutilisable.`;
         const retryAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(retryPrompt);
         data = retryAttempt.data;
       } else {
@@ -973,8 +973,13 @@ Aucune incohérence majeure détectée entre les agents.`;
     // Red flags
     if (redFlags && redFlags.length > 0) {
       lines.push(`\n**Red Flags conditions (${redFlags.length}):**`);
-      for (const rf of redFlags.slice(0, 3)) {
+      for (const rf of [...redFlags]
+        .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+        .slice(0, 8)) {
         lines.push(`- [${rf.severity ?? "?"}] ${rf.title ?? "?"}`);
+      }
+      if (redFlags.length > 8) {
+        lines.push(`- … et ${redFlags.length - 8} autres`);
       }
     }
 
@@ -1397,9 +1402,9 @@ Aucune incohérence majeure détectée entre les agents.`;
                        data.investmentRecommendation?.suggestedTerms ??
                        data.recommendation?.suggestedTerms,
       },
-      keyStrengths: Array.isArray(keyStrengths) ? keyStrengths.slice(0, 5) : [],
-      keyWeaknesses: Array.isArray(keyWeaknesses) ? keyWeaknesses.slice(0, 5) : [],
-      criticalRisks: Array.isArray(criticalRisks) ? criticalRisks.slice(0, 3) : [],
+      keyStrengths: Array.isArray(keyStrengths) ? keyStrengths.slice(0, 8) : [],
+      keyWeaknesses: Array.isArray(keyWeaknesses) ? keyWeaknesses.slice(0, 8) : [],
+      criticalRisks: Array.isArray(criticalRisks) ? criticalRisks.slice(0, 8) : [],
       // Phase A slice A2 — Contribution Tier 3 (D1 + D2 verrouillés).
       // - orientation : strictement alignée sur `finalVerdict` (déterministe).
       // - evidenceSolidity : null en A2 — sera renseigné par le service

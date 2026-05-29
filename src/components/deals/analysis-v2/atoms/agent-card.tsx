@@ -29,7 +29,7 @@ export function AgentCard({ signal }: { signal: AgentCardSignal }) {
         <p className="text-[13px] leading-relaxed text-[var(--av-ink)]">{signal.oneLiner}</p>
       ) : (
         <p className="text-[13px] leading-relaxed text-[var(--av-muted)]">
-          Pas de synthèse explicite produite par l'agent.
+          Synthèse textuelle non fournie par le modèle — voir le score et les signaux ci-dessous.
         </p>
       )}
       {signal.insights.length > 0 ? (

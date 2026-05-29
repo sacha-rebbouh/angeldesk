@@ -88,8 +88,8 @@ const HARDWARE_BENCHMARK_DATA: SectorBenchmarkData & {
         concerning: 15,
       },
       sectorContext:
-        "L'attach rate est LE différenciateur entre hardware commodity (2-4x exit) " +
-        "et hardware-enabled software (8-15x exit). Ring, Nest, Peloton = 60%+ attach rate. " +
+        "L'attach rate est LE différenciateur entre hardware commodity " +
+        "et hardware-enabled software. Ring, Nest, Peloton = 60%+ attach rate. " +
         "Sans software attach, c'est un business de commodity avec zero moat.",
       source: "Bessemer Hardware Index, Lux Capital Hardware Playbook",
     },
@@ -317,7 +317,7 @@ const HARDWARE_BENCHMARK_DATA: SectorBenchmarkData & {
       threshold: 10,
       severity: "high",
       reason:
-        "Sans software/services attach, c'est du pure hardware commodity. Exit multiples 2-3x max. Zero moat.",
+        "Sans software/services attach, c'est du pure hardware commodity. Zero moat, race to the bottom sur le prix.",
     },
     {
       metric: "Time to Production",
@@ -430,66 +430,6 @@ const HARDWARE_BENCHMARK_DATA: SectorBenchmarkData & {
       },
     },
   ],
-
-  // =========================================================================
-  // EXIT MULTIPLES - Réalité du marché Hardware
-  // =========================================================================
-  exitMultiples: {
-    low: 2, // Pure hardware commodity
-    median: 4, // Hardware with some differentiation
-    high: 10, // Hardware + strong software attach
-    topDecile: 20, // Platform play (Nest, Ring tier)
-    typicalAcquirers: [
-      "Apple",
-      "Google/Alphabet",
-      "Amazon",
-      "Samsung",
-      "Sony",
-      "Honeywell",
-      "Bosch",
-      "Philips",
-      "Private Equity (Vista, Thoma Bravo)",
-      "Industrial conglomerates",
-    ],
-    recentExits: [
-      {
-        company: "Nest",
-        acquirer: "Google",
-        multiple: 15,
-        year: 2014,
-      },
-      {
-        company: "Ring",
-        acquirer: "Amazon",
-        multiple: 10,
-        year: 2018,
-      },
-      {
-        company: "Beats",
-        acquirer: "Apple",
-        multiple: 8,
-        year: 2014,
-      },
-      {
-        company: "Fitbit",
-        acquirer: "Google",
-        multiple: 4,
-        year: 2021,
-      },
-      {
-        company: "iRobot",
-        acquirer: "Amazon (blocked)",
-        multiple: 6,
-        year: 2022,
-      },
-      {
-        company: "Tile",
-        acquirer: "Life360",
-        multiple: 3,
-        year: 2021,
-      },
-    ],
-  },
 
   // =========================================================================
   // SECTOR-SPECIFIC SUCCESS PATTERNS
@@ -653,7 +593,7 @@ export const HardwareExpertExtendedOutputSchema = z.object({
     }),
 
     valuation_implication: z.string().describe(
-      "Impact on exit multiple: pure hardware (2-4x) vs hardware+software (6-15x)"
+      "Impact du software attach sur la qualité du business model: pure hardware commodity vs hardware-enabled software"
     ),
   }),
 
@@ -733,14 +673,6 @@ Expected margin at scale = (ASP - True COGS) / ASP
 \`\`\`
 
 ### C. ATTACH RATE & SOFTWARE VALUE
-
-**Impact sur la valorisation:**
-| Attach Rate | Typical Exit Multiple | Examples |
-|------------|----------------------|----------|
-| 0-15% | 2-4x revenue | Commodity hardware |
-| 15-40% | 4-6x revenue | Hardware + services |
-| 40-60% | 6-10x revenue | Hardware + SaaS |
-| 60%+ | 8-15x revenue | Nest, Ring, Peloton |
 
 **Questions à évaluer:**
 - Quelle est la proposition de valeur du software/service?
@@ -874,7 +806,7 @@ Tu es un **expert sectoriel senior** spécialisé dans le **Hardware, IoT et Rob
 
 ### RÈGLE ABSOLUE: Chaque affirmation doit être sourcée
 - ❌ "Les marges sont bonnes"
-- ✅ "Hardware GM 38% (P65 vs stage median 35%), blended 52% avec 45% attach rate. Comparable à Ring pre-acquisition."
+- ✅ "Hardware GM 38% (P65 vs stage median 35%), blended 52% avec 45% attach rate. Profil comparable au benchmark hardware-enabled software."
 
 ### RÈGLE ABSOLUE: Chaque red flag doit avoir
 1. **Sévérité**: critical / high / medium
@@ -884,13 +816,8 @@ Tu es un **expert sectoriel senior** spécialisé dans le **Hardware, IoT et Rob
 5. **Question de validation**: comment investiguer avec le fondateur
 6. **Path de mitigation**: ce qui résoudrait le concern
 
-### RÈGLE ABSOLUE: L'attach rate détermine la valorisation
-| Attach Rate | Exit Multiple | Example |
-|-------------|---------------|---------|
-| 0-15% | 2-4x | Commodity hardware |
-| 15-40% | 4-6x | Hardware + services |
-| 40-60% | 6-10x | Hardware + SaaS |
-| 60%+ | 8-15x | Nest, Ring, Peloton |
+### RÈGLE ABSOLUE: L'attach rate est le différenciateur du business model
+L'attach rate (% de clients avec revenu récurrent software/services) distingue le hardware commodity du hardware-enabled software.
 
 **Sans software attach, c'est une race to the bottom sur le prix.**
 
@@ -905,21 +832,6 @@ ${getStandardsOnlyInjection("Hardware", stage)}
 ---
 
 ${buildHardwareSpecificPromptSection()}
-
----
-
-## EXIT LANDSCAPE HARDWARE
-
-**Acquéreurs Typiques:**
-${HARDWARE_STANDARDS.typicalAcquirers.map((a) => `- ${a}`).join("\n")}
-
-**Recent Exits (historique):**
-- Nest → Google (2014): ~15x
-- Ring → Amazon (2018): ~10x
-- Beats → Apple (2014): ~8x
-- Fitbit → Google (2021): ~4x
-
-⚠️ **EXIT MULTIPLES**: Rechercher en ligne "hardware IoT startup acquisition multiples 2024" pour données actuelles.
 
 ---
 
@@ -983,11 +895,7 @@ Attach Rate Analysis:
 - Software revenue: €3.60/customer/month blended (35% × €9.99 + 65% × €0)
 - Annual software: €43/customer at 100% GM
 - LTV with attach: Hardware margin €81 + Software €129 (3 year avg lifetime) = €210
-- LTV/CAC: 4.2x (CAC €50)
-
-Exit Multiple Implication:
-- With 35% attach: expect 5-6x revenue multiple
-- Path to 50% attach: new IoT analytics features in roadmap could justify 7-8x"
+- LTV/CAC: 4.2x (CAC €50)"
 
 ### Exemple de MAUVAIS output (à éviter):
 "The product has good margins and the team has hardware experience.
@@ -1124,13 +1032,12 @@ Calcule précisément:
 - Breakeven volume (units to recover NRE + tooling)
 - Compare à stage benchmarks
 
-### 3. ATTACH RATE ANALYSIS (CRITICAL - Détermine la valorisation)
+### 3. ATTACH RATE ANALYSIS (CRITICAL - Qualité du business model)
 - Current attach rate (% customers avec recurring revenue)
 - Software/services value proposition
 - Lock-in mechanisms (data, integrations, consumables)
 - Revenue breakdown: hardware vs software vs services
 - Target attach rate et crédibilité
-- **Impact explicite sur exit multiple**
 
 ### 4. MANUFACTURING RISK ASSESSMENT
 **Supply Chain:**
@@ -1188,15 +1095,8 @@ En utilisant les données DB:
 - Qui sont les leaders hardware similaires?
 - Funding comparatif
 - Attach rates des concurrents si disponible
-- Exit precedents dans la catégorie
 
-### 10. EXIT LANDSCAPE ANALYSIS
-- Acquéreurs probables pour ce type de hardware?
-- Multiples observés sur exits comparables (P25/median/P75 par attach rate, source DB)?
-- Strategic fit avec Big Tech (Apple, Google, Amazon)?
-- PE interest (mature hardware businesses)?
-
-### 11. KILLER QUESTIONS HARDWARE
+### 10. KILLER QUESTIONS HARDWARE
 Génère 6-8 questions spécifiques:
 - Au moins 2 sur manufacturing et supply chain
 - Au moins 2 sur unit economics et BOM
@@ -1204,7 +1104,7 @@ Génère 6-8 questions spécifiques:
 - Au moins 1 sur certification timeline
 - Avec good answer et red flag answer pour chaque
 
-### 12. NEGOTIATION AMMUNITION
+### 11. NEGOTIATION AMMUNITION
 Identifie 3-5 leviers basés sur:
 - Margins below benchmark
 - Low or no attach rate
@@ -1212,19 +1112,18 @@ Identifie 3-5 leviers basés sur:
 - Supply chain concentration
 - NRE/capital intensity
 
-### 13. EXECUTIVE SUMMARY
+### 12. EXECUTIVE SUMMARY
 - Verdict one-line
 - Score sectoriel (0-100) avec breakdown
 - Top 3 strengths (avec preuves quantifiées)
 - Top 3 concerns (avec preuves quantifiées)
-- Implication sur exit multiple (attach rate impact)
 - Confidence level et data gaps
 
 ---
 
 ## RAPPELS CRITIQUES
 
-⚠️ **ATTACH RATE = VALUATION**: Sans software, exit à 2-4x. Avec 50%+ attach, 8-15x.
+⚠️ **ATTACH RATE = BUSINESS MODEL**: Sans software attach, hardware commodity sans moat. Avec un attach rate élevé, hardware-enabled software.
 ⚠️ **TIMELINES SLIP**: Multiplier par 2 toute estimation fondateur
 ⚠️ **UNIT ECONOMICS AT SCALE**: Model BOM at 10K, 50K, 100K - les chiffres current sont TOUJOURS pires
 ⚠️ **CERTIFICATION RISK**: FCC/CE/UL peuvent bloquer 6-12 mois
@@ -1407,8 +1306,6 @@ export const hardwareExpert = {
           competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
           consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
           barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-          typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 5,
-          recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) ?? [],
         },
         sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
           question: q.question,
@@ -1466,7 +1363,6 @@ export const hardwareExpert = {
             toolingCost: null,
             inventoryFloat: null,
           },
-          exitLandscape: parsedOutput.sectorDynamics?.exitLandscape ?? null,
           competitivePosition: parsedOutput.competitorBenchmark ?? null,
           sectorSpecificRisks: parsedOutput.sectorRedFlags?.filter(rf =>
             rf.flag.toLowerCase().includes("bom") ||
@@ -1525,7 +1421,6 @@ interface ExtendedHardwareData {
     toolingCost: number | null;
     inventoryFloat: number | null;
   };
-  exitLandscape: unknown;
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   fullMetricsAnalysis: unknown[];
@@ -1555,8 +1450,6 @@ function getDefaultHardwareData(): SectorExpertData {
       competitionIntensity: "medium",
       consolidationTrend: "consolidating",
       barrierToEntry: "high",
-      typicalExitMultiple: 5,
-      recentExits: [],
     },
     sectorQuestions: [
       {

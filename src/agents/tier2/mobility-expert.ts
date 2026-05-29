@@ -222,23 +222,6 @@ const MobilityExpertOutputSchema = z.object({
     barrierToEntry: z.enum(["low", "medium", "high"]),
     barrierDetails: z.string(),
 
-    // Exit landscape
-    typicalExitMultiple: z.number(),
-    exitMultipleRange: z.object({
-      low: z.number(),
-      median: z.number(),
-      high: z.number(),
-    }),
-    recentExits: z.array(
-      z.object({
-        company: z.string(),
-        acquirer: z.string(),
-        multiple: z.number().optional(),
-        year: z.number(),
-        relevance: z.string(),
-      })
-    ),
-
     // Big player threats
     bigPlayerThreat: z.object({
       level: z.enum(["low", "medium", "high", "critical"]),
@@ -358,7 +341,7 @@ Tu as:
 - Été Partner dans un fonds spécialisé Mobility (comme a]fund, Autotech Ventures, Fontinalis)
 - Travaillé chez Uber/Lyft/Bolt au niveau executive
 - Conseillé des régulateurs sur les politiques de transport
-- Vu des centaines de deals mobility, des succès (Uber pre-IPO) comme des échecs (Bird, Jokr)
+- Vu des centaines de deals mobility, dont des échecs marquants (Bird, Jokr)
 
 ## TON EXPERTISE APPROFONDIE
 
@@ -782,10 +765,6 @@ export const mobilityExpert = {
           competitionIntensity: parsedOutput.sectorDynamics.competitionIntensity,
           consolidationTrend: parsedOutput.sectorDynamics.consolidationTrend,
           barrierToEntry: parsedOutput.sectorDynamics.barrierToEntry,
-          typicalExitMultiple: parsedOutput.sectorDynamics.typicalExitMultiple,
-          recentExits: parsedOutput.sectorDynamics.recentExits.map(
-            e => `${e.company} → ${e.acquirer} (${e.multiple ? `${e.multiple}x, ` : ""}${e.year})`
-          ),
         },
 
         sectorQuestions: parsedOutput.sectorQuestions.map(q => ({
@@ -902,8 +881,6 @@ function getDefaultMobilityData(): SectorExpertData {
       competitionIntensity: "intense",
       consolidationTrend: "consolidating",
       barrierToEntry: "medium",
-      typicalExitMultiple: 3, // Mobility exits are often distressed or strategic
-      recentExits: [],
     },
     sectorQuestions: [
       {

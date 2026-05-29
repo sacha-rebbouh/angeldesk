@@ -27,6 +27,17 @@ const SEVERITY_ORDER: Record<RedFlagSeverity, number> = {
   LOW: 1,
 };
 
+/**
+ * Rang de sévérité pour le tri (plus haut = plus sévère).
+ * Tolérant à la casse et aux valeurs inconnues (→ 0, donc en queue d'un tri décroissant).
+ * À utiliser pour trier les red flags AVANT tout `slice` dans les feeds inter-agents,
+ * afin que les flags les plus sévères ne soient jamais droppés silencieusement.
+ */
+export function severityRank(severity: string | null | undefined): number {
+  if (!severity) return 0;
+  return SEVERITY_ORDER[severity.toUpperCase() as RedFlagSeverity] ?? 0;
+}
+
 // ============================================================================
 // DOMAIN AUTHORITY — quel agent fait foi pour quel topic
 // ============================================================================
