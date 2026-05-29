@@ -1,6 +1,19 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-29 — Bouton « Relancer une analyse » sur la vue v2 + progression live (PR #15, prod)
+
+### Contexte
+Le contrôle de relance avait disparu à la migration v2 : il vivait dans l'ancien `AnalysisPanel`, masqué dès qu'une analyse était `COMPLETED` → plus aucun moyen de relancer un deal déjà analysé depuis le nouveau front.
+
+### Modifications
+- **`relaunch-analysis-button.tsx`** (nouveau) : dropdown « Relancer » à côté d'Export PDF dans la barre d'onglets v2 ; item explicite « Relancer l'analyse complète · consomme des crédits » (garde-fou anti-misclic). `POST /api/analyze` (full_analysis), gestion crédits (403/`upgradeRequired` → toast + `/pricing`), succès → toast + `router.refresh()`.
+- **`page-shell.tsx`** : `rightSlot` rend Export PDF + Relancer côte à côte.
+- **`[dealId]/page.tsx`** : pendant une analyse **RUNNING**, la page affiche l'ancien panel (progression live : barre d'agents + polling) au lieu de la v2 figée ; retour auto sur la v2 une fois terminé. Signal de bascule = analyse `RUNNING` (pas `deal.status`) → évite le piège « ANALYZING zombie » qui cacherait la dernière v2 valide derrière une progression bloquée.
+
+Pas de migration (UI pure). Vérif : `tsc --noEmit` 0 erreur ; CI verte (type-check + unit-tests) ; deploy production Vercel `success` (commit `813dbe5`).
+
+---
 ## 2026-05-29 — Purge exit Tier 2 finale : acquéreurs + requêtes + prose/JSDoc
 
 ### Contexte
