@@ -3,6 +3,7 @@ import "./tokens.css";
 import { DecisionStrip } from "./decision-strip";
 import { TabsNav } from "./tabs-nav";
 import { ExportPdfButton } from "./export-pdf-button";
+import { RelaunchAnalysisButton } from "./relaunch-analysis-button";
 import { DecisionSection } from "./sections/decision-section";
 import { ThesisSection } from "./sections/thesis-section";
 import { SignalsSection } from "./sections/signals-section";
@@ -80,7 +81,16 @@ export function AnalysisV2PageShell(props: Props) {
           </PartialBanner>
         ) : null}
         <DecisionStrip model={props.vm.decisionStrip} />
-        <TabsNav rightSlot={props.dealId ? <ExportPdfButton dealId={props.dealId} /> : undefined} />
+        <TabsNav
+          rightSlot={
+            props.dealId ? (
+              <div className="flex items-center gap-2">
+                <ExportPdfButton dealId={props.dealId} />
+                <RelaunchAnalysisButton dealId={props.dealId} />
+              </div>
+            ) : undefined
+          }
+        />
         <DecisionSection model={props.vm.decisionSection} />
         <ThesisSection model={props.vm.thesisSection} />
         <SignalsSection model={props.vm.signalsSection} />
