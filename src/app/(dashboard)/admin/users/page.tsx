@@ -69,7 +69,6 @@ interface AdminUser {
   image: string | null;
   role: string;
   isOwner: boolean;
-  subscriptionStatus: "FREE" | "PRO";
   dealsCount: number;
   createdAt: number;
   lastSignInAt: number | null;
@@ -95,7 +94,6 @@ async function fetchUsers(): Promise<UsersResponse> {
 async function updateUser(
   userId: string,
   data: {
-    subscriptionStatus?: "FREE" | "PRO";
     role?: "admin" | "user";
     isOwner?: boolean;
   }
@@ -146,29 +144,14 @@ function getInitials(name: string | null, email: string): string {
   return email.slice(0, 2).toUpperCase();
 }
 
-function SubscriptionBadge({
-  status,
-}: {
-  status: "FREE" | "PRO";
-}) {
-  return status === "PRO" ? (
-    <Badge className="bg-gradient-to-r from-amber-500 to-orange-600 border-0">
-      PRO
-    </Badge>
-  ) : (
-    <Badge variant="secondary">FREE</Badge>
-  );
-}
-
 export default function AdminUsersPage() {
   const queryClient = useQueryClient();
   const [deleteDialogUser, setDeleteDialogUser] = useState<AdminUser | null>(null);
   const [editDialogUser, setEditDialogUser] = useState<AdminUser | null>(null);
   const [editForm, setEditForm] = useState<{
-    subscriptionStatus: "FREE" | "PRO";
     role: "admin" | "user";
     isOwner: boolean;
-  }>({ subscriptionStatus: "FREE", role: "user", isOwner: false });
+  }>({ role: "user", isOwner: false });
 
   const { data, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: queryKeys.admin.users(),
@@ -217,7 +200,6 @@ export default function AdminUsersPage() {
   const handleOpenEdit = useCallback((user: AdminUser) => {
     setEditDialogUser(user);
     setEditForm({
-      subscriptionStatus: user.subscriptionStatus,
       role: user.role as "admin" | "user",
       isOwner: user.isOwner,
     });
@@ -236,12 +218,10 @@ export default function AdminUsersPage() {
   }, [refetch]);
 
   const stats = useMemo(() => {
-    if (!data) return { total: 0, admins: 0, pro: 0, free: 0 };
+    if (!data) return { total: 0, admins: 0 };
     return {
       total: data.data.length,
       admins: data.data.filter((u) => u.role === "admin").length,
-      pro: data.data.filter((u) => u.subscriptionStatus === "PRO").length,
-      free: data.data.filter((u) => u.subscriptionStatus === "FREE").length,
     };
   }, [data]);
 
@@ -295,24 +275,6 @@ export default function AdminUsersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.admins}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Pro</CardTitle>
-            <Crown className="h-4 w-4 text-amber-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.pro}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Free</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.free}</div>
           </CardContent>
         </Card>
       </div>
@@ -378,9 +340,6 @@ export default function AdminUsersPage() {
                         <Badge variant="secondary">User</Badge>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <SubscriptionBadge status={user.subscriptionStatus} />
-                    </TableCell>
                     <TableCell>{user.dealsCount}</TableCell>
                     <TableCell>
                       {user.lastSignInAt
@@ -441,26 +400,6 @@ export default function AdminUsersPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Abonnement</label>
-              <Select
-                value={editForm.subscriptionStatus}
-                onValueChange={(v) =>
-                  setEditForm((f) => ({
-                    ...f,
-                    subscriptionStatus: v as "FREE" | "PRO",
-                  }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="FREE">FREE</SelectItem>
-                  <SelectItem value="PRO">PRO</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Rôle</label>
               <Select

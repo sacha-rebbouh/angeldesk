@@ -57,7 +57,6 @@ describe("GET /api/board", () => {
       remainingMonthly: 2,
       extraCredits: 0,
       totalAvailable: 2,
-      subscriptionStatus: "PRO",
       nextResetDate: "2026-05-01T00:00:00.000Z",
     });
     mocks.boardSessionFindFirst.mockResolvedValue(null);

@@ -99,7 +99,6 @@ interface UserCostStat {
   userId: string;
   userName: string | null;
   userEmail: string;
-  subscriptionStatus: string;
   totalCost: number;
   dealCount: number;
   analysisCount: number;
@@ -953,11 +952,6 @@ function UsersTab({
                     <div className="font-medium">{user.userName ?? "No name"}</div>
                     <div className="text-xs text-muted-foreground">{user.userEmail}</div>
                   </div>
-                </TableCell>
-                <TableCell>
-                  <Badge variant={user.subscriptionStatus === "PRO" ? "default" : "secondary"}>
-                    {user.subscriptionStatus}
-                  </Badge>
                 </TableCell>
                 <TableCell className="text-right">{user.dealCount}</TableCell>
                 <TableCell className="text-right">{user.analysisCount}</TableCell>

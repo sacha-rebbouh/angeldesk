@@ -11,7 +11,6 @@ import { KeyPointsSection } from "./key-points-section";
 import { DebateViewer } from "./debate-viewer";
 import { ThesisDebateView } from "./thesis-debate-view";
 import { BoardProgress } from "./board-progress";
-import { BoardTeaser } from "./board-teaser";
 import { BOARD_MEMBERS_PROD, BOARD_MEMBERS_TEST } from "@/agents/board/types";
 import type {
   BoardProgressEvent,
@@ -29,7 +28,6 @@ interface BoardCreditsStatus {
   remainingMonthly: number;
   extraCredits: number;
   totalAvailable: number;
-  subscriptionStatus: "FREE" | "PRO" | "ENTERPRISE";
   nextResetDate: string;
 }
 
@@ -363,11 +361,6 @@ export const AIBoardPanel = memo(function AIBoardPanel({ dealId, dealName }: AIB
 
     setIsRunning(false);
   }, []);
-
-  // Show teaser for FREE users
-  if (!isLoadingBoard && creditsData?.subscriptionStatus === "FREE") {
-    return <BoardTeaser dealName={dealName} />;
-  }
 
   // Loading state
   if (isLoadingBoard) {

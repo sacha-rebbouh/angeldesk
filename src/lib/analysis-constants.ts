@@ -28,46 +28,6 @@ export const CREDIT_ANALYSIS_CONFIG = {
   },
 } as const;
 
-// Plans now resolve to the same thesis-first Deep Dive product entrypoint.
-export const PLAN_ANALYSIS_CONFIG = {
-  FREE: CREDIT_ANALYSIS_CONFIG.DEEP_DIVE,
-  PRO: CREDIT_ANALYSIS_CONFIG.DEEP_DIVE,
-  ENTERPRISE: CREDIT_ANALYSIS_CONFIG.DEEP_DIVE,
-} as const;
-
-export type SubscriptionPlan = keyof typeof PLAN_ANALYSIS_CONFIG;
-
-export function getAnalysisTypeForPlan(plan: SubscriptionPlan): AnalysisTypeValue {
-  return PLAN_ANALYSIS_CONFIG[plan].analysisType;
-}
-
-// =============================================================================
-// DISPLAY LIMITS — Credit system: all users see full results for what they paid
-// No more blur/teaser — if you paid for a Deep Dive, you see everything
-// =============================================================================
-
-export const FULL_DISPLAY_LIMITS = {
-  strengths: Infinity,
-  weaknesses: Infinity,
-  redFlags: Infinity,
-  devilsAdvocate: Infinity,
-  criticalQuestions: Infinity,
-  score: true,
-  contradictions: true,
-  scenarios: false,
-  sectorExpert: true,
-  memo: true,
-} as const;
-
-// Legacy aliases — with credits, everyone who paid sees full results
-export const FREE_DISPLAY_LIMITS = FULL_DISPLAY_LIMITS;
-export const PRO_DISPLAY_LIMITS = FULL_DISPLAY_LIMITS;
-
-export function getDisplayLimits(_plan: SubscriptionPlan) {
-  void _plan;
-  return FULL_DISPLAY_LIMITS;
-}
-
 // Agent lists for categorizing results
 export const TIER1_AGENTS = [
   "financial-auditor",

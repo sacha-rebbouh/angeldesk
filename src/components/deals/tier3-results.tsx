@@ -35,8 +35,6 @@ import type {
   DetectedContradiction,
   DataGap,
 } from "@/agents/types";
-import { ProTeaserInline, ProTeaserSection } from "@/components/shared/pro-teaser";
-import { getDisplayLimits, type SubscriptionPlan } from "@/lib/analysis-constants";
 import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
 import { ResolutionBadge } from "./resolution-badge";
 import { ResolutionDialog } from "./resolution-dialog";
@@ -52,7 +50,6 @@ interface Tier3ResultsProps {
     error?: string;
     data?: unknown;
   }>;
-  subscriptionPlan?: SubscriptionPlan;
   totalAgentsRun?: number;
   resolutionMap?: Record<string, import("@/hooks/use-resolutions").AlertResolution>;
   resolutions?: import("@/hooks/use-resolutions").AlertResolution[];
@@ -101,9 +98,6 @@ const RecommendationBadge = memo(function RecommendationBadge({ action }: { acti
 const SynthesisScorerCard = memo(function SynthesisScorerCard({
   data,
   devilsData,
-  strengthsLimit = Infinity,
-  weaknessesLimit = Infinity,
-  showFullScore = true,
   hideCriticalRisks = false,
   resolutions,
   resolutionMap,
@@ -113,9 +107,6 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
 }: {
   data: SynthesisDealScorerData;
   devilsData?: DevilsAdvocateData | null;
-  strengthsLimit?: number;
-  weaknessesLimit?: number;
-  showFullScore?: boolean;
   hideCriticalRisks?: boolean;
   resolutions?: AlertResolution[];
   resolutionMap?: Record<string, AlertResolution>;
@@ -123,10 +114,8 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
   onUnresolve?: (alertKey: string) => Promise<unknown>;
   isResolving?: boolean;
 }) {
-  const visibleStrengths = useMemo(() => data.keyStrengths.slice(0, strengthsLimit), [data.keyStrengths, strengthsLimit]);
-  const hiddenStrengthsCount = Math.max(0, data.keyStrengths.length - strengthsLimit);
-  const visibleWeaknesses = useMemo(() => data.keyWeaknesses.slice(0, weaknessesLimit), [data.keyWeaknesses, weaknessesLimit]);
-  const hiddenWeaknessesCount = Math.max(0, data.keyWeaknesses.length - weaknessesLimit);
+  const visibleStrengths = data.keyStrengths;
+  const visibleWeaknesses = data.keyWeaknesses;
   const comparativeRankingMethod = data.comparativeRanking.method;
   const comparativeRankingWeak =
     data.comparativeRanking.insufficientData === true ||
@@ -196,48 +185,36 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           <RecommendationBadge action={data.investmentRecommendation.action} />
         </div>
 
-        {/* Dimension Scores - Only for PRO */}
-        {showFullScore ? (
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Scores par dimension</p>
-            <div className="grid gap-2">
-              {data.dimensionScores.map((dim) => (
-                <div key={dim.dimension} className="flex items-center justify-between p-2 border rounded">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm">{dim.dimension}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-24 h-2 rounded-full bg-muted">
-                      <div
-                        className={cn(
-                          "h-full rounded-full",
-                          dim.score >= 80 ? "bg-green-500" :
-                          dim.score >= 60 ? "bg-blue-500" :
-                          dim.score >= 40 ? "bg-yellow-500" : "bg-red-500"
-                        )}
-                        style={{ width: `${dim.score}%` }}
-                      />
-                    </div>
-                    <span className="text-sm font-medium w-12 text-right">{dim.score}/100</span>
-                  </div>
+        {/* Scores par dimension */}
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Scores par dimension</p>
+          <div className="grid gap-2">
+            {data.dimensionScores.map((dim) => (
+              <div key={dim.dimension} className="flex items-center justify-between p-2 border rounded">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-sm">{dim.dimension}</span>
                 </div>
-              ))}
-            </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-24 h-2 rounded-full bg-muted">
+                    <div
+                      className={cn(
+                        "h-full rounded-full",
+                        dim.score >= 80 ? "bg-green-500" :
+                        dim.score >= 60 ? "bg-blue-500" :
+                        dim.score >= 40 ? "bg-yellow-500" : "bg-red-500"
+                      )}
+                      style={{ width: `${dim.score}%` }}
+                    />
+                  </div>
+                  <span className="text-sm font-medium w-12 text-right">{dim.score}/100</span>
+                </div>
+              </div>
+            ))}
           </div>
-        ) : (
-          <ProTeaserSection
-            title="Score détaillé par dimension"
-            description={`${data.dimensionScores.length} dimensions analysées avec benchmarks`}
-            icon={Target}
-            previewText={canTrustComparativeRanking
-              ? `Score global: ${data.overallScore}/100 - Top ${data.comparativeRanking.percentileSector}% du secteur`
-              : `Score global: ${data.overallScore}/100`
-            }
-          />
-        )}
+        </div>
 
         {/* Comparative ranking caveat */}
-        {showFullScore && !canTrustComparativeRanking && (
+        {!canTrustComparativeRanking && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
             <div className="flex items-start gap-2">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
@@ -251,8 +228,8 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           </div>
         )}
 
-        {/* Comparative Ranking - Only for PRO when the benchmark is statistically usable */}
-        {showFullScore && canTrustComparativeRanking && (
+        {/* Comparative Ranking - quand le benchmark est statistiquement utilisable */}
+        {canTrustComparativeRanking && (
           <div className="space-y-2">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="p-3 rounded-lg bg-muted text-center">
@@ -284,9 +261,6 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
                 </li>
               ))}
             </ul>
-            {hiddenStrengthsCount > 0 && (
-              <ProTeaserInline hiddenCount={hiddenStrengthsCount} itemLabel="points forts" />
-            )}
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium text-red-600 flex items-center gap-1">
@@ -299,9 +273,6 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
                 </li>
               ))}
             </ul>
-            {hiddenWeaknessesCount > 0 && (
-              <ProTeaserInline hiddenCount={hiddenWeaknessesCount} itemLabel="faiblesses" />
-            )}
           </div>
         </div>
 
@@ -1046,7 +1017,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
 });
 
 // Main Tier 3 Results Component - Synthesis Agents (3 cards: Verdict, Coherence, Memo)
-export const Tier3Results = memo(function Tier3Results({ results, subscriptionPlan = "FREE", totalAgentsRun, resolutionMap, resolutions, onResolve, onUnresolve, isResolving, thesisVerdict, thesisBypass }: Tier3ResultsProps) {
+export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun, resolutionMap, resolutions, onResolve, onUnresolve, isResolving, thesisVerdict, thesisBypass }: Tier3ResultsProps) {
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
     if (!result?.success || !result.data) return null;
@@ -1062,10 +1033,6 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
   const fragileThesisVerdicts = new Set(["alert_dominant", "vigilance"]);
   const thesisGated =
     !!thesisVerdict && fragileThesisVerdicts.has(thesisVerdict) && !thesisBypass;
-
-  // Get display limits based on plan
-  const displayLimits = useMemo(() => getDisplayLimits(subscriptionPlan), [subscriptionPlan]);
-  const isFree = subscriptionPlan === "FREE";
 
   const successfulAgents = useMemo(() => {
     return Object.values(results).filter(r => r.success).length;
@@ -1253,7 +1220,7 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
             </Card>
           )}
           {(() => {
-            const showNoGo = !isFree && scorerData && (scorerData.overallScore ?? 100) < 35 && !thesisGated;
+            const showNoGo = scorerData && (scorerData.overallScore ?? 100) < 35 && !thesisGated;
             return (
               <>
                 <div className="grid gap-4 md:grid-cols-2">
@@ -1261,9 +1228,6 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
                     <SynthesisScorerCard
                       data={scorerData}
                       devilsData={devilsData}
-                      strengthsLimit={displayLimits.strengths}
-                      weaknessesLimit={displayLimits.weaknesses}
-                      showFullScore={displayLimits.score}
                       hideCriticalRisks={!!showNoGo}
                       resolutions={resolutions}
                       resolutionMap={resolutionMap}
@@ -1287,32 +1251,12 @@ export const Tier3Results = memo(function Tier3Results({ results, subscriptionPl
 
         {/* Tab 2: Coherence — Contradictions */}
         <TabsContent value="coherence" className="space-y-4 mt-4">
-          {isFree ? (
-            <ProTeaserSection
-              title="Contradictions détectées"
-              description={contradictionData
-                ? `${contradictionData.findings?.contradictions?.length ?? 0} contradiction(s) identifiée(s) entre les analyses`
-                : "Détection automatique des incohérences"}
-              icon={Zap}
-              previewText={contradictionData ? `Score cohérence: ${contradictionData.findings?.consistencyAnalysis?.overallScore ?? contradictionData.score?.value ?? 0}/100` : undefined}
-            />
-          ) : (
-            contradictionData && <ContradictionDetectorCard data={contradictionData} />
-          )}
+          {contradictionData && <ContradictionDetectorCard data={contradictionData} />}
         </TabsContent>
 
         {/* Tab 3: Memo */}
         <TabsContent value="memo" className="space-y-4 mt-4">
-          {isFree ? (
-            <ProTeaserSection
-              title="Memo d'investissement"
-              description="Memo d'investissement complet et exportable en PDF"
-              icon={FileText}
-              previewText={memoData ? memoData.executiveSummary.oneLiner : undefined}
-            />
-          ) : (
-            memoData && <MemoGeneratorCard data={memoData} />
-          )}
+          {memoData && <MemoGeneratorCard data={memoData} />}
         </TabsContent>
       </Tabs>
     </div>
