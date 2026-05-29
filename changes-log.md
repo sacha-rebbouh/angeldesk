@@ -1,6 +1,68 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-29 — Refactor crédits-only + free hebdo "use it or lose it"
+
+### Contexte
+Le système avait un modèle économique hybride non assumé : pricing déjà migré vers crédits (page pricing-content.tsx "Des crédits, pas des abonnements", sidebar CreditCard sans mention plan), mais infrastructure tier-gating + champ DB `User.subscriptionStatus` restés en place créant 3 zones de friction : (1) pipeline d'analyse tronqué pour les FREE (13 agents vs 19-20+ pour PRO), (2) UI paywalls ProTeaser qui verrouillaient Tier 2/3 derrière "passez au PRO", (3) dérivations backend `effectivePlan`, `subscriptionStatus: totalPurchased > 0 ? "PRO" : "FREE"` qui maintenaient l'illusion d'un plan. Décision produit Sacha (session 2026-05-28) : passer 100% crédits + introduire free hebdo "use it or lose it" 10cr/7j.
+
+### Modifications (refactor en 5 phases commitées indépendamment, branche `refactor/credits-only`)
+
+#### Phase 1 — Schema Prisma + Migrations
+- 2 migrations séparées pour rollback granular :
+  - `20260528150000_add_weekly_free_credits` (additive) : `ALTER TABLE UserCreditBalance ADD balanceFree INT DEFAULT 10, ADD freeResetStartedAt TIMESTAMP`
+  - `20260528150100_drop_subscription_status_and_free_flag` (destructive) : `DROP COLUMN subscriptionStatus + freeCreditsGranted + DROP TYPE SubscriptionStatus`
+- Le `DEFAULT 10` sur `balanceFree` backfille les rows existantes (1 user prod actuellement, Sacha admin).
+
+#### Phase 2 — Service crédits
+- `types.ts` : `FREE_TIER = { weeklyAllowance: 10, windowDurationMs: 7j }` (remplace `initialCredits: 5`). `CreditBalanceInfo` : ADD `balanceFree`, `totalAvailable`, `freeResetStartedAt`, `nextFreeResetAt` ; REMOVE `freeCreditsGranted`.
+- `usage-gate.ts:deductCreditAmount` : refonte avec lazy reset (`updateMany WHERE freeResetStartedAt = $oldValue SET balanceFree=10, freeResetStartedAt=null` si fenêtre expirée), free-first split (freeUsed = min(balanceFree, cost)), démarrage timer dans la même tx si freeUsed > 0 ET freeResetStartedAt was null, balanceAfter = newPaid + newFree (TOTAL).
+- `refundCreditAmount` : 100% paid (conservateur, pas de pro-rata).
+- `grantFreeCredits` simplifié (create si row absente, balanceFree=10 via schema default).
+- `getCreditBalance` expose les nouveaux champs.
+- Helper interne `projectBalanceFree` pour la projection sans écriture DB (utilisé par `checkCredits` + `getCreditBalance`).
+- 8 nouveaux tests E2E dédiés au free hebdo (consommation free-first, lazy reset post-7j, pas de reset si <7j, timer démarre uniquement si freeUsed > 0, refund 100% paid, erreur claire si totalAvailable < cost).
+
+#### Phase 3 — Backend (orchestrator + routes + Inngest + services dérivés)
+- `agents/orchestrator/types.ts` + `index.ts` : DROP `UserPlan` type + `AnalysisOptions.userPlan` + `availableTiers/includeTier2/includeFullTier3` gating (toujours pipeline complet) + constante `FREE_TIER3_BATCHES_AFTER_TIER2` (4 call sites adaptés). Simplification de `inferFullAnalysisResumeTopology` (retourne toujours `{ includeFullTier3: true, includeTier2: hasSectorExpert }`).
+- `/api/analyze/route.ts` : DROP `effectivePlan` + `userPlan` dans payload Inngest + `subscriptionStatus` GET response.
+- API v1 supprimée totalement : dossier `src/app/api/v1/` (12 fichiers) + libs orphelines `src/lib/{api-key-auth,api-logger}.ts` + `src/services/webhook-dispatcher.ts`.
+- `src/lib/inngest.ts` : DROP `userPlan` du destructure event.data + de l'appel orchestrator + `userPlan: "PRO"` hardcoded dans `run-thesis-reextract`.
+- Routes admin (`/api/admin/users[/userId]`, `/api/user/export`) : DROP `subscriptionStatus` du Zod schema + select + mutations.
+- Services dérivés (`deal-limits`, `board-credits`, `cost-monitor`) : DROP `subscriptionStatus` du type retour + de la dérivation `totalPurchased > 0`.
+- `src/lib/auth.ts` : DROP `subscriptionStatus` de `DEV_USER` + de `prisma.user.create` + `freeCreditsGranted: true` dans `ensureAdminCredits`.
+- `src/types/index.ts` : DROP re-export `SubscriptionStatus`.
+
+#### Phase 4 — UI cleanup
+- Composants supprimés : `pro-teaser.tsx` (ProTeaser + Inline + Section + Banner), `partial-analysis-banner.tsx`, `next-steps-guide.tsx`, `board-teaser.tsx`.
+- Composants refactorisés (DROP `subscriptionPlan` prop + `getDisplayLimits` + ProTeaser usages + `isFree` branches) : `tier1-results.tsx`, `tier2-results.tsx`, `tier3-results.tsx`, `analysis-panel.tsx` (DROP cascade props + `effectivePlan` + `PartialAnalysisBanner` + `ProTeaserBanner`), `ai-board-panel.tsx` (DROP `subscriptionStatus` de l'interface + check 'FREE' + BoardTeaser).
+- Admin UI : `admin/users/page.tsx` (DROP `SubscriptionBadge` + colonne table + Select Abonnement + stats pro/free), `costs-dashboard-v2.tsx` (DROP `subscriptionStatus` UserCostStat + badge colonne).
+- `lib/analysis-constants.ts` : DROP `PLAN_ANALYSIS_CONFIG`, `SubscriptionPlan` type, `getAnalysisTypeForPlan`, `getDisplayLimits`, `FULL/FREE/PRO_DISPLAY_LIMITS`. Test associé simplifié.
+
+#### Phase 5 — Documentation + commit + push
+- `errors.md` : ADD entrée détaillée + index 1-ligne.
+- `changes-log.md` : présente entrée.
+- Obsidian vault à mettre à jour (Cible BA, Value Proposition, Principes Dev, créer Modèle Pricing Crédits, MAJ index/log).
+
+### Vérifications
+- `npx tsc --noEmit` : 0 erreur après chaque phase.
+- `npx vitest run` : 282 test files / 4066 tests verts / 2 skipped.
+- Doctrine money-touching errors.md 2026-03-12 CREDITS conservée : fail-closed prod, idempotency UNIQUE constraint, $transaction wrapping, optimistic locking étendu au `freeResetStartedAt`.
+
+### Doctrine appliquée (Karpathy + projet)
+- **Think Before Coding** : 3 Explore agents parallèles puis 3 Plan agents parallèles avant tout edit. Plan structuré à `/Users/sacharebbouh/.claude/plans/structured-finding-chipmunk.md`.
+- **Simplicity First** : refund 100% paid (pas pro-rata), constante code (pas col DB), commit après chaque phase pour rollback simple.
+- **Surgical Changes** : pattern décrit une fois (DROP subscriptionStatus du select), appliqué à 6 routes sans toucher au code voisin.
+- **Goal-Driven Execution** : critères de succès vérifiables (tsc 0 erreur, vitest 4066 verts, 0 résultats grep subscriptionStatus/userPlan dans src/ après refactor).
+- **Doctrine projet anti-oraculaire** : AI Board affiche "Coût : 10 crédits" (info exacte, à l'investisseur de décider), pas de "Tu n'as pas le plan PRO".
+
+### Points à arbitrer (hors scope ce refactor)
+- `tiersExecuted: ["TIER_1","TIER_2","TIER_3","SYNTHESIS"]` est désormais une constante littérale dans 4 sites de `orchestrator/index.ts` — à externaliser dans une constante exportée si on veut auditer plus tard.
+- Modèles Prisma `ApiKey` + `Webhook` conservés en DB (tables vides, drop dans refactor futur).
+- `QUICK_SCAN` déprécié dans `CREDIT_COSTS` mais conservé pour historique transactions.
+- `AnalyzeError.upgradeRequired` reste côté backend (champ optionnel non lu côté UI) — cleanup follow-up.
+
+---
 ## 2026-05-28 — Sanitization & compaction prompts Tier 1 + extraction AnalysisCompleteView + narrative-guards absence patterns
 
 ### Contexte
