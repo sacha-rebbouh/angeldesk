@@ -395,9 +395,9 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           </div>
         </TabsContent>
 
-        {/* Tab 2: Analyse IA — V2 Page Shell quand une analyse COMPLETED existe, sinon ancien panel pour les contrôles */}
+        {/* Tab 2: Analyse IA — V2 Page Shell quand une analyse COMPLETED existe ET qu'aucune analyse n'est en cours ; sinon l'ancien panel (contrôles + progression live de la relance). Signal "en cours" = analyse RUNNING (pas deal.status, qui peut rester ANALYZING à tort → on garderait alors la dernière v2 valide). */}
         <TabsContent value="analysis" className="space-y-6">
-          {analysisV2ViewModel ? (
+          {analysisV2ViewModel && !deal.analyses.some((a) => a.status === "RUNNING") ? (
             <AnalysisV2PageShell dealName={capitalizeFirst(canonicalDeal.companyName ?? deal.name)} vm={analysisV2ViewModel} hideHeader dealId={deal.id} />
           ) : (
             <AnalysisPanelWrapper
