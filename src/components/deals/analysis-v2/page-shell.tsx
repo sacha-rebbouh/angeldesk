@@ -2,17 +2,20 @@ import "./tokens.css";
 
 import { DecisionStrip } from "./decision-strip";
 import { TabsNav } from "./tabs-nav";
+import { ExportPdfButton } from "./export-pdf-button";
 import { DecisionSection } from "./sections/decision-section";
 import { ThesisSection } from "./sections/thesis-section";
 import { SignalsSection } from "./sections/signals-section";
 import { EvidenceSection } from "./sections/evidence-section";
 import { MemoSection } from "./sections/memo-section";
+import { PartialBanner } from "./atoms/partial-banner";
 import type { AnalysisV2ViewModel } from "./lib/selectors";
 
 type Props = {
   dealName: string;
   vm: AnalysisV2ViewModel;
   hideHeader?: boolean;
+  dealId?: string;
 };
 
 const MODE_LABELS_FR: Record<string, string> = {
@@ -29,12 +32,8 @@ function formatModeLabel(mode: string | null | undefined): string {
 }
 
 function HeaderBar({ dealName, vm }: Props) {
-  const { header, completion } = vm.decisionStrip;
+  const { header, coverage } = vm.decisionStrip;
   const modeLabel = formatModeLabel(header.mode);
-  const completedDisplay =
-    header.completedAgents != null && header.totalAgents != null
-      ? Math.min(header.completedAgents, header.totalAgents)
-      : null;
   return (
     <header className="flex flex-col gap-2">
       <span className="av-eyebrow">Analyse complète{modeLabel ? ` · ${modeLabel}` : ""}</span>
@@ -43,11 +42,13 @@ function HeaderBar({ dealName, vm }: Props) {
         {header.completedAt ? (
           <span>Analyse complétée le {header.completedAt.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })}</span>
         ) : null}
-        {completedDisplay != null && header.totalAgents != null ? (
-          <span>· {completedDisplay} / {header.totalAgents} agents exploitables</span>
-        ) : null}
-        {completion.failedAgents.length > 0 ? (
-          <span>· {completion.failedAgents.length} en échec</span>
+        {coverage.isThesisOnly ? (
+          <span>· Thèse seule (Tier 1/3 non lancés)</span>
+        ) : (
+          <span>· {coverage.ok} / {coverage.total} agents aboutis</span>
+        )}
+        {coverage.incompleteAgents.length > 0 ? (
+          <span>· {coverage.incompleteAgents.length} non aboutis</span>
         ) : null}
         {header.totalDurationMin != null ? <span>· {header.totalDurationMin} min de calcul</span> : null}
         {header.totalCostUsd != null ? <span>· ${header.totalCostUsd.toFixed(2)}</span> : null}
@@ -70,8 +71,16 @@ export function AnalysisV2PageShell(props: Props) {
       <a href="#main" className="av-skip-link">Aller au contenu</a>
       <main id="main" className="mx-auto flex max-w-[1440px] flex-col gap-6">
         {props.hideHeader ? null : <HeaderBar {...props} />}
+        {props.vm.decisionStrip.coverage.incompleteAgents.length > 0 ? (
+          <PartialBanner tone="vigilance" title="Analyse incomplète">
+            {props.vm.decisionStrip.coverage.incompleteAgents.length} agent
+            {props.vm.decisionStrip.coverage.incompleteAgents.length > 1 ? "s n'ont" : " n'a"} pas abouti sur cette
+            analyse : {props.vm.decisionStrip.coverage.incompleteAgents.map((a) => a.label).join(", ")}. Les signaux et
+            le score consolidé ci-dessous sont donc partiels.
+          </PartialBanner>
+        ) : null}
         <DecisionStrip model={props.vm.decisionStrip} />
-        <TabsNav />
+        <TabsNav rightSlot={props.dealId ? <ExportPdfButton dealId={props.dealId} /> : undefined} />
         <DecisionSection model={props.vm.decisionSection} />
         <ThesisSection model={props.vm.thesisSection} />
         <SignalsSection model={props.vm.signalsSection} />

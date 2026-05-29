@@ -204,6 +204,34 @@ export function buildDecisionStripModel(deal: { id: string; name?: string | null
   ).length;
   const thesisVerdict = isString(thesis?.verdict) ? (thesis!.verdict as Orientation) : null;
 
+  // Couverture HONNÊTE : ne pas se fier à analysis.completedAgents (compteur DB
+  // gonflé — incrémenté même pour les échecs). On recalcule depuis les résultats
+  // réellement aboutis. En mode thesis_only, Tier 1/3 ne sont pas attendus.
+  const isThesisOnly = analysis.mode === "thesis_only";
+  const snapshots = buildAgentSnapshots(analysis.results);
+  const tier1NotOk = snapshots
+    .filter((s) => s.status !== "ok")
+    .map((s) => ({ label: s.label, status: s.status as "failed" | "missing" }));
+  const TIER3_EXPECTED: Array<{ key: string; label: string }> = [
+    { key: "synthesis-deal-scorer", label: "Score de synthèse" },
+    { key: "contradiction-detector", label: "Détection de contradictions" },
+    { key: "conditions-analyst", label: "Conditions critiques" },
+    { key: "devils-advocate", label: "Avocat du diable" },
+    { key: "memo-generator", label: "Mémo synthétique" },
+    { key: "thesis-reconciler", label: "Réconciliation de thèse" },
+  ];
+  const tier3NotOk = TIER3_EXPECTED
+    .filter((a) => analysis.results?.[a.key]?.success !== true)
+    .map((a) => ({ label: a.label, status: (analysis.results?.[a.key] ? "failed" : "missing") as "failed" | "missing" }));
+  const incompleteAgents = isThesisOnly ? [] : [...tier1NotOk, ...tier3NotOk];
+  const expectedTotal = snapshots.length + TIER3_EXPECTED.length;
+  const coverage = {
+    ok: expectedTotal - (tier1NotOk.length + tier3NotOk.length),
+    total: expectedTotal,
+    incompleteAgents,
+    isThesisOnly,
+  };
+
   return {
     header,
     orientation,
@@ -214,6 +242,7 @@ export function buildDecisionStripModel(deal: { id: string; name?: string | null
     totalContradictions,
     thesisVerdict,
     completion,
+    coverage,
   };
 }
 
@@ -249,7 +278,7 @@ export type ThesisSectionModel = {
   confidence: number | null;
 };
 
-export function buildThesisSectionModel(thesis: Record<string, unknown> | null, results: ResultsMap | null | undefined): ThesisSectionModel {
+export function buildThesisSectionModel(thesis: Record<string, unknown> | null, results: ResultsMap | null | undefined, analysisMode?: string | null): ThesisSectionModel {
   if (!thesis) {
     return { cards: [], loadBearing: [], alerts: [], reconciled: false, reconciliationReason: "Aucune thèse enregistrée pour ce dossier.", verdict: null, confidence: null };
   }
@@ -298,10 +327,28 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
     .filter((x): x is ThesisAlert => x !== null)
     .sort((a, b) => rankSeverity(a.severity) - rankSeverity(b.severity));
 
-  const reconciled = results?.["thesis-reconciler"]?.success === true;
-  const reconciliationReason = reconciled
-    ? null
-    : "Le réconciliateur de thèse n'a pas tourné sur cette analyse. Les hypothèses porteuses ci-dessous n'ont pas été confrontées aux résultats des Tier 1.";
+  // Distinguer les états réels : réconcilié / non-applicable (analyse arrêtée à
+  // la thèse) / échec ou timeout (l'agent a tourné mais n'a pas abouti) / non lancé.
+  // Le message « n'a pas tourné » était faux quand l'agent avait timeout.
+  const reconcilerEntry = results?.["thesis-reconciler"];
+  const reconciled = reconcilerEntry?.success === true;
+  let reconciliationReason: string | null = null;
+  if (!reconciled) {
+    const reconcilerError = reconcilerEntry && isString(reconcilerEntry.error) ? reconcilerEntry.error : null;
+    if (analysisMode === "thesis_only") {
+      reconciliationReason =
+        "Analyse arrêtée après l'extraction de thèse : les Tier 1 n'ont pas été lancés, la réconciliation ne s'applique pas à ce stade.";
+    } else if (reconcilerError && /timed?\s*out|timeout|délai/i.test(reconcilerError)) {
+      reconciliationReason =
+        "Le réconciliateur de thèse a dépassé son délai d'exécution : les hypothèses porteuses ci-dessous n'ont pas pu être confrontées aux résultats des Tier 1.";
+    } else if (reconcilerError) {
+      reconciliationReason =
+        "Le réconciliateur de thèse a échoué : les hypothèses porteuses ci-dessous n'ont pas été confrontées aux résultats des Tier 1.";
+    } else {
+      reconciliationReason =
+        "Le réconciliateur de thèse n'a pas été exécuté sur cette analyse. Les hypothèses porteuses ci-dessous n'ont pas été confrontées aux résultats des Tier 1.";
+    }
+  }
 
   return {
     cards,
@@ -336,7 +383,7 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
           : null;
       const solidity = isString(solidityFromContribution) ? (solidityFromContribution as EvidenceSolidity) : null;
       const insights = flattenInsights(snap.data, 3);
-      const oneLiner = summarizeOneLiner(snap.data);
+      const oneLiner = summarizeOneLiner(snap.data) ?? deriveFallbackOneLiner(snap.data);
       const redFlags = arrayAt(snap.data, ["redFlags"]).length;
       const questions = arrayAt(snap.data, ["questions"]).length;
       const score = numberAt(snap.data, ["score", "value"]);
@@ -361,6 +408,38 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
   }
   const tier2Snapshot = pickTier2ExpertSnapshot(results);
   return { cards, emptyCards, tier2: { snapshot: tier2Snapshot, activated: tier2Snapshot !== null } };
+}
+
+/**
+ * When an agent succeeded but emitted no narrative text — e.g. its result was
+ * revised by the reflexion engine (which returns only meta/score/findings), or a
+ * degraded run — derive a meaningful one-liner from its structured output instead
+ * of showing the ambiguous "Pas de synthèse explicite produite par l'agent".
+ */
+function deriveFallbackOneLiner(data: unknown): string | null {
+  const insights = flattenInsights(data, 1);
+  if (insights.length > 0 && insights[0].trim().length > 0) {
+    return compactString(insights[0], 180);
+  }
+  for (const rf of arrayAt(data, ["redFlags"])) {
+    if (!isRecord(rf)) continue;
+    const t = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]);
+    if (t) return compactString(`Signal d'alerte : ${t}`, 180);
+  }
+  const score = numberAt(data, ["score", "value"]);
+  if (typeof score === "number") {
+    const intensity = stringAt(data, ["signalIntensity"]);
+    const intl = intensity
+      ? ({
+          low: "signal favorable",
+          elevated: "signal contrasté",
+          high: "vigilance requise",
+          critical: "signal d'alerte",
+        } as Record<string, string>)[intensity]
+      : null;
+    return `Score ${Math.round(score)}/100${intl ? ` · ${intl}` : ""}`;
+  }
+  return null;
 }
 
 function intensityToOrientation(intensity: string): Orientation | null {
@@ -389,7 +468,7 @@ export type MemoSectionModel =
       keyPoints: string[];
       companyOverview: string | null;
       investmentThesis: string | null;
-      criticalRisks: Array<{ title: string; detail: string | null }>;
+      criticalRisks: Array<{ title: string; detail: string | null; severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"; severityLabel: string; source: string | null }>;
       nextSteps: string[];
     }
   | {
@@ -416,12 +495,28 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       investmentThesis: isString(valueAt(memo, ["investmentThesis"]))
         ? (valueAt(memo, ["investmentThesis"]) as string)
         : stringAt(memo, ["investmentThesis", "summary"]),
+      // memo-generator émet criticalRisks[] = {riskId, severity, description, evidence, source}
+      // (PAS de `title`). On dérive donc le titre de `description` et le détail de
+      // `evidence`, et on conserve severity + source (jetés auparavant → tous les
+      // risques s'affichaient « Risque » sans pondération).
       criticalRisks: arrayAt(memo, ["criticalRisks"])
         .map((r) => {
           if (!isRecord(r)) return null;
-          return { title: stringAt(r, ["title"]) ?? "Risque", detail: stringAt(r, ["detail"]) ?? stringAt(r, ["description"]) };
+          const severity = severityToPill(stringAt(r, ["severity"]));
+          const title = stringAt(r, ["description"]) ?? stringAt(r, ["title"]) ?? "Risque identifié";
+          const detail = stringAt(r, ["evidence"]) ?? stringAt(r, ["detail"]);
+          return {
+            title: compactString(title, 200) ?? "Risque identifié",
+            detail: detail ? compactString(detail, 320) : null,
+            severity,
+            severityLabel: severityLabel(severity),
+            source: stringAt(r, ["source"]) ?? null,
+          };
         })
-        .filter((r): r is { title: string; detail: string | null } => r !== null),
+        .filter(
+          (r): r is { title: string; detail: string | null; severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"; severityLabel: string; source: string | null } =>
+            r !== null,
+        ),
       nextSteps: arrayAt(memo, ["nextSteps"])
         .map((s) => (isString(s) ? s : null))
         .filter((s): s is string => s !== null),
@@ -508,7 +603,7 @@ export function buildAnalysisV2ViewModel(input: {
   return {
     decisionStrip: buildDecisionStripModel(deal, analysis, thesis ? { verdict: isString(thesis.verdict) ? thesis.verdict : null, reformulated: stringAt(thesis, ["reformulated"]) } : null),
     decisionSection: buildDecisionSectionModel(analysis.results),
-    thesisSection: buildThesisSectionModel(thesis, analysis.results),
+    thesisSection: buildThesisSectionModel(thesis, analysis.results, analysis.mode),
     signalsSection: buildSignalsSectionModel(analysis.results),
     evidenceSection: buildEvidenceSectionModel(analysis.results),
     memoSection: buildMemoSectionModel(analysis.results),

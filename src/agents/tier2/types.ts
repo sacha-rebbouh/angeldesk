@@ -103,8 +103,6 @@ export interface SectorExpertData {
     competitionIntensity: "low" | "medium" | "high" | "intense";
     consolidationTrend: "fragmenting" | "stable" | "consolidating";
     barrierToEntry: "low" | "medium" | "high";
-    typicalExitMultiple: number;
-    recentExits: string[];
   };
 
   // Sector-specific due diligence questions
@@ -258,14 +256,6 @@ export interface ExtendedSectorData {
     level: "low" | "medium" | "high" | "critical";
     players: string[];
     rationale: string;
-  };
-
-  // Exit Potential (SaaS)
-  exitPotential?: {
-    typicalMultiple: number;
-    likelyAcquirers: string[];
-    timeToExit: string;
-    exitReadiness: "ready" | "needs_work" | "far";
   };
 
   /**

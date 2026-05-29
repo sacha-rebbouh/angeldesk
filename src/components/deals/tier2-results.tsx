@@ -880,22 +880,7 @@ const SectorDynamicsSection = memo(function SectorDynamicsSection({ dynamics }: 
           <p className="text-xs text-muted-foreground">Barrier to Entry</p>
           <Badge variant="outline" className="text-xs capitalize">{dynamics.barrierToEntry}</Badge>
         </div>
-        <div className="space-y-1">
-          <p className="text-xs text-muted-foreground">Typical Exit Multiple</p>
-          <span className="text-sm font-bold">{dynamics.typicalExitMultiple}x</span>
-        </div>
       </div>
-
-      {dynamics.recentExits.length > 0 && (
-        <div>
-          <p className="text-xs font-medium mb-2">Recent Exits:</p>
-          <ul className="text-xs text-muted-foreground space-y-1">
-            {dynamics.recentExits.map((exit, idx) => (
-              <li key={idx}>{exit}</li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   );
 });

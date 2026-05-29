@@ -190,14 +190,6 @@ const SPACETECH_INLINE_STANDARDS = {
     "Non-dilutive: NASA SBIR, DARPA, Space Force grants",
     "Regulatory moat: Secured spectrum/orbital rights = defensibility",
   ],
-
-  typicalAcquirers: [
-    "Lockheed Martin", "Northrop Grumman", "Boeing", "Raytheon", "L3Harris",
-    "Airbus Defence & Space", "Thales Alenia Space",
-    "Rocket Lab", "Planet Labs", "Maxar Technologies",
-    "BAE Systems", "General Dynamics",
-    "PE (AE Industrial Partners, Veritas)",
-  ],
 };
 
 // =============================================================================
@@ -252,8 +244,7 @@ Expertise specifique:
 - Government contracts et budget cycles
 - Constellation economics et payback analysis
 - SpaceX competitive threat assessment
-- Capital intensity et runway planning
-- Exit landscape (Primes, PE, SPAC history)`,
+- Capital intensity et runway planning`,
 
   benchmarkData: SPACETECH_INLINE_STANDARDS as unknown as SectorBenchmarkData,
   scoringWeights: SPACETECH_SCORING_WEIGHTS,
@@ -405,29 +396,6 @@ SpaceX is the benchmark and often the competitor. Assess impact on each deal:
 | FCC Spectrum | FCC | US ground/space comms | Variable |
 
 **Red Flag**: No regulatory strategy = existential risk for satellites/launch.
-
----
-
-## EXIT LANDSCAPE SPACETECH
-
-**Typical Acquirers:**
-${SPACETECH_INLINE_STANDARDS.typicalAcquirers.slice(0, 8).map(a => `- ${a}`).join("\n")}
-
-**Exit Multiples** (varies significantly by segment and heritage):
-| Segment | Revenue Multiple | Context |
-|---------|------------------|---------|
-| Launch (proven) | 3-8x | Rare exits, strategic |
-| EO/Data | 5-15x | Data/analytics premium |
-| Comms/IoT | 4-10x | Recurring revenue valued |
-| Components | 2-5x | Lower, commoditized |
-| Infrastructure | 3-8x | Early market |
-
-**Notable Exits/IPOs:**
-- Rocket Lab (SPAC 2021): $4.1B valuation
-- Planet Labs (SPAC 2021): $2.8B valuation
-- Spire Global (SPAC 2021): $1.6B valuation
-- Maxar (PE take-private 2023): $6.4B
-- Note: Many SPACs traded down significantly post-IPO
 
 ---
 
@@ -749,15 +717,8 @@ En utilisant les donnees DB:
 - Qui sont les leaders du segment?
 - Funding comparatif
 - Heritage comparison
-- Exit precedents
 
-### 13. EXIT LANDSCAPE ANALYSIS
-- Acquireurs probables (Primes, PE, strategic)?
-- Multiples observés sur exits comparables (P25/median/P75 par segment et heritage, source DB)?
-- IPO viability (post-SPAC market reality)?
-- Strategic acquirer fit analysis
-
-### 14. KILLER QUESTIONS SPACETECH
+### 13. KILLER QUESTIONS SPACETECH
 Genere 6-8 questions specifiques:
 - Au moins 2 sur TRL et path to flight
 - Au moins 2 sur team et execution experience
@@ -766,7 +727,7 @@ Genere 6-8 questions specifiques:
 - Au moins 1 sur capital/runway
 - Avec good answer et red flag answer pour chaque
 
-### 15. NEGOTIATION AMMUNITION
+### 14. NEGOTIATION AMMUNITION
 Identifie 3-5 leviers bases sur:
 - TRL behind expectations
 - No flight heritage
@@ -775,7 +736,7 @@ Identifie 3-5 leviers bases sur:
 - Gov dependency
 - Capital intensity vs runway
 
-### 16. EXECUTIVE SUMMARY
+### 15. EXECUTIVE SUMMARY
 - Verdict one-line
 - Score sectoriel (0-100) avec breakdown
 - Top 3 strengths (avec preuves quantifiees)
@@ -957,8 +918,6 @@ export const spacetechExpert = {
           competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
           consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
           barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-          typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 8,
-          recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) ?? [],
         },
         sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
           question: q.question,
@@ -1013,7 +972,6 @@ export const spacetechExpert = {
             commercialPipeline: null,
           },
           spaceXThreat: null,
-          exitLandscape: parsedOutput.sectorDynamics?.exitLandscape ?? null,
           competitivePosition: parsedOutput.competitorBenchmark ?? null,
           sectorSpecificRisks: parsedOutput.sectorRedFlags?.filter(rf =>
             rf.flag.toLowerCase().includes("spacex") ||
@@ -1081,7 +1039,6 @@ interface ExtendedSpaceTechData {
     commercialPipeline: number | null;
   };
   spaceXThreat: unknown;
-  exitLandscape: unknown;
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   scoringWeights: typeof SPACETECH_SCORING_WEIGHTS;
@@ -1128,8 +1085,6 @@ function getDefaultSpaceTechData(): SectorExpertData {
       competitionIntensity: "medium",
       consolidationTrend: "consolidating",
       barrierToEntry: "high",
-      typicalExitMultiple: 8,
-      recentExits: [],
     },
     sectorQuestions: [
       {

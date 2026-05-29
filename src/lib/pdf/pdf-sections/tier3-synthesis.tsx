@@ -16,7 +16,7 @@ import {
   Spacer,
   BodyText,
 } from "../pdf-components";
-import { s } from "../pdf-helpers";
+import { s, severityOrder } from "../pdf-helpers";
 import type { AgentResult } from "../generate-analysis-pdf";
 
 export function Tier3SynthesisSection({
@@ -65,6 +65,9 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
     confidenceLevel?: number;
     resolution?: { likely?: string; reasoning?: string };
   }> | undefined;
+  const detectedSorted = [...(detected ?? [])].sort(
+    (a, b) => severityOrder(a.severity ?? "") - severityOrder(b.severity ?? ""),
+  );
 
   const consistency = findings?.consistencyAnalysis as {
     overallScore?: number;
@@ -117,7 +120,7 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
               { header: "Sources", width: 35 },
               { header: "Confiance", width: 15 },
             ]}
-            rows={detected.slice(0, 20).map((c) => [
+            rows={detectedSorted.map((c) => [
               c.topic ?? c.description ?? "N/A",
               s(c.severity),
               [
@@ -130,7 +133,7 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
             ])}
           />
 
-          {detected.slice(0, 8).map(
+          {detectedSorted.map(
             (c, i) =>
               (c.analysis || c.resolution?.reasoning) && (
                 <View key={i} style={{ marginBottom: 6 }} wrap={false}>
@@ -216,6 +219,9 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
     severity?: string;
     impact?: string;
   }> | undefined;
+  const structuralRisksSorted = [...(structuralRisks ?? [])].sort(
+    (a, b) => severityOrder(a.severity ?? "") - severityOrder(b.severity ?? ""),
+  );
 
   const worstCase = findings?.worstCaseScenario as {
     name?: string;
@@ -315,7 +321,7 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
               { header: "Sévérité", width: 25 },
               { header: "Impact", width: 35 },
             ]}
-            rows={structuralRisks.slice(0, 8).map((r) => [
+            rows={structuralRisksSorted.map((r) => [
               s(r.description),
               s(r.severity).replace(/_/g, " "),
               s(r.impact),

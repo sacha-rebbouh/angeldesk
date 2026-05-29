@@ -88,14 +88,17 @@ describe("SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT — runtime invariant (Phase A v12
     expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/"GO"\s*\/\s*"NO-GO"\s*\/\s*"Dealbreaker"/);
   });
 
-  it("conserve les 7 dimensions de scoring", () => {
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Team\(25%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Financials\(20%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Market\(15%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/GTM\(15%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Product\(15%\)/);
+  it("conserve les 6 dimensions de scoring (dimension Exit retirée — anti-oraculaire)", () => {
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Team\(26%\)/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Financials\(21%\)/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Market\(16%\)/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/GTM\(16%\)/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Product\(16%\)/);
     expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Competitive\(5%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Exit\(5%\)/);
+    // Doctrine anti-oraculaire : la dimension de scoring "Exit" ne doit JAMAIS revenir
+    // (l'exit-strategist a été retiré du pipeline ; pas de projection multiple/IRR/exit).
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/Exit\(\d+%\)/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/###\s*EXIT/);
   });
 
   it("est une string non vide", () => {

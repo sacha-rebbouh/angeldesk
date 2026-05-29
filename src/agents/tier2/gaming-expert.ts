@@ -11,7 +11,6 @@
  * - LiveOps is table stakes: players expect constant content updates
  * - Whale concentration: top 1-5% of players drive 70-90% of revenue
  * - UA costs exploded post-iOS14, organic/viral essential
- * - Exit path: strategic acquirers (Tencent, Microsoft, Sony, EA, Take-Two)
  *
  * Sub-sectors covered:
  * - Mobile gaming (F2P, hypercasual, midcore, strategy)
@@ -181,16 +180,6 @@ const EXTENDED_GAMING_BENCHMARKS = {
   // Red flag rules from standards
   redFlagRules: GAMING_STANDARDS.redFlagRules,
 
-  // Exit multiples - placeholder, actual values from web search
-  exitMultiples: {
-    low: 1,
-    median: 4,
-    high: 10,
-    topDecile: 20,
-    typicalAcquirers: GAMING_STANDARDS.typicalAcquirers,
-    recentExits: [], // Must come from web search
-  },
-
   // Sector-specific patterns (qualitative - stable)
   sectorSpecificRisks: GAMING_STANDARDS.sectorRisks,
   sectorSuccessPatterns: GAMING_STANDARDS.successPatterns,
@@ -221,7 +210,6 @@ Expertise spécifique:
 - Assessment de la stratégie UA post-iOS14 (ATT impact, SKAN)
 - Analyse du pipeline LiveOps et coûts de content treadmill
 - Positionnement genre et timing marché (genre saturation analysis)
-- Comparaison aux exits gaming historiques (Supercell, Zynga, Activision)
 - Évaluation du risque plateforme (Apple/Google policy, Steam algorithm)`,
 
   benchmarkData: EXTENDED_GAMING_BENCHMARKS as unknown as SectorBenchmarkData,
@@ -323,7 +311,7 @@ Tu es un **expert sectoriel senior** spécialisé dans le **Gaming et l'Interact
 1. **Sévérité**: critical / high / medium
 2. **Preuve**: le data point exact qui déclenche le flag
 3. **Seuil sectoriel**: la référence benchmark Gaming violée
-4. **Impact quantifié**: implication sur unit economics, scalability, exit
+4. **Impact quantifié**: implication sur unit economics, scalability
 5. **Question de validation**: comment investiguer avec le fondateur
 6. **Path de mitigation**: ce qui résoudrait le concern
 
@@ -377,20 +365,6 @@ ${benchmarks.redFlagRules.map((r) => `- **${r.severity.toUpperCase()}**: ${r.met
 
 ## UNIT ECONOMICS FORMULAS
 ${benchmarks.unitEconomicsFormulas.map((f) => `- **${f.name}** = ${f.formula}\n  - Good: ${f.benchmark.good} | Excellent: ${f.benchmark.excellent}`).join("\n")}
-
----
-
-## EXIT LANDSCAPE GAMING
-
-**Exit Multiples (Revenue):**
-| P25 | Median | P75 | Top 10% |
-|-----|--------|-----|---------|
-| ${benchmarks.exitMultiples.low}x | ${benchmarks.exitMultiples.median}x | ${benchmarks.exitMultiples.high}x | ${benchmarks.exitMultiples.topDecile}x |
-
-**Acquéreurs Typiques:**
-${benchmarks.exitMultiples.typicalAcquirers.map((a) => `- ${a}`).join("\n")}
-
-**Warning**: Gaming exits are highly hit-driven. Most studios exit at 2-4x. Only breakout hits get 10x+.
 
 ---
 
@@ -648,15 +622,8 @@ En utilisant les données DB:
 - Qui sont les leaders du genre? Funding comparatif?
 - Position vs concurrent médian
 - What metrics differentiate top performers?
-- Exit precedents dans le genre?
 
-### 10. EXIT LANDSCAPE ANALYSIS
-- Acquéreurs probables pour ce type de deal?
-- Multiples observés sur exits comparables (P25/median/P75 par genre et metrics, source DB)?
-- Strategic fit with acquirers (Tencent, EA, Take-Two, Microsoft)?
-- IPO viability (rare for gaming, require massive scale)?
-
-### 11. KILLER QUESTIONS GAMING
+### 10. KILLER QUESTIONS GAMING
 Génère 6-8 questions spécifiques:
 - Au moins 2 sur retention et core loop
 - Au moins 2 sur UA economics et post-iOS14 strategy
@@ -664,7 +631,7 @@ Génère 6-8 questions spécifiques:
 - Au moins 1 sur platform diversification
 - Avec good answer et red flag answer pour chaque
 
-### 12. NEGOTIATION AMMUNITION
+### 11. NEGOTIATION AMMUNITION
 Identifie 3-5 leviers basés sur:
 - Metrics below genre benchmark (with percentiles)
 - UA efficiency concerns
@@ -672,7 +639,7 @@ Identifie 3-5 leviers basés sur:
 - Genre saturation
 - LiveOps sustainability questions
 
-### 13. EXECUTIVE SUMMARY
+### 12. EXECUTIVE SUMMARY
 - Verdict one-line
 - Score sectoriel (0-100) avec breakdown
 - Top 3 strengths (avec preuves quantifiées)
@@ -869,8 +836,6 @@ export const gamingExpert = {
           competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
           consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
           barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-          typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 4,
-          recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) ?? [],
         },
         sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
           question: q.question,
@@ -916,7 +881,6 @@ export const gamingExpert = {
             organicRate: parsedOutput.metricsAnalysis?.find(m => m.metricName.toLowerCase().includes("organic"))?.metricValue as number ?? null,
           },
           platformRisk: null,
-          exitLandscape: parsedOutput.sectorDynamics?.exitLandscape ?? null,
           competitivePosition: parsedOutput.competitorBenchmark ?? null,
           sectorSpecificRisks: parsedOutput.sectorRedFlags?.filter(rf =>
             rf.flag.toLowerCase().includes("retention") ||
@@ -963,7 +927,6 @@ interface ExtendedGamingData {
     organicRate: number | null;
   };
   platformRisk: unknown;
-  exitLandscape: unknown;
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   scoringWeights: typeof GAMING_SCORING_WEIGHTS;
@@ -994,8 +957,6 @@ function getDefaultGamingData(): SectorExpertData {
       competitionIntensity: "intense",
       consolidationTrend: "consolidating",
       barrierToEntry: "medium",
-      typicalExitMultiple: 4,
-      recentExits: [],
     },
     sectorQuestions: [
       {

@@ -500,7 +500,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
             )}
             {data.findings.valuation.comparables?.length > 0 && (
               <div className="text-xs text-muted-foreground mt-2">
-                Comparables: {data.findings.valuation.comparables.slice(0, 2).map((c: { name: string; multiple: number }) => `${c.name} (${c.multiple}x)`).join(", ")}
+                Comparables: {data.findings.valuation.comparables.map((c: { name: string; multiple: number }) => `${c.name} (${c.multiple}x)`).join(", ")}
               </div>
             )}
           </div>
@@ -521,12 +521,12 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
             {data.findings.projections.assumptions?.length > 0 && (
               <div className="text-xs text-muted-foreground">
                 <span className="font-medium">Hypothèses:</span>{" "}
-                {data.findings.projections.assumptions.slice(0, 2).join(", ")}
+                {data.findings.projections.assumptions.join(", ")}
               </div>
             )}
             {data.findings.projections.concerns?.length > 0 && (
               <div className="text-xs text-orange-600 mt-1">
-                ⚠️ {data.findings.projections.concerns.slice(0, 2).join(" | ")}
+                ⚠️ {data.findings.projections.concerns.join(" | ")}
               </div>
             )}
           </div>

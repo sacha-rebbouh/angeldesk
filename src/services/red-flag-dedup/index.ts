@@ -1,4 +1,4 @@
-export { RedFlagDedup, inferRedFlagTopic, TOPIC_AUTHORITY } from "./dedup";
+export { RedFlagDedup, inferRedFlagTopic, TOPIC_AUTHORITY, severityRank } from "./dedup";
 export type {
   AgentRedFlagEntry,
   ConsolidatedRedFlag,

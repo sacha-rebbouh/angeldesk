@@ -87,7 +87,10 @@ export class ThesisReconcilerAgent extends BaseAgent<ThesisReconcilerOutput> {
       description: "Reconciliation de la these initiale vs findings Tier 1/2/3 (Tier 3)",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 120000,
+      // 180s : le réconciliateur confronte la thèse à TOUS les findings Tier 1/2/3.
+      // À 120s il timeoutait (2 tentatives) sur les gros dossiers ; l'input est aussi
+      // réduit dans buildAgentFindingsSummary pour tenir dans le budget.
+      timeoutMs: 180000,
       // Dependencies: agents dont les findings peuvent contredire la these
       dependencies: [
         "thesis-extractor",
@@ -272,27 +275,30 @@ LANGUE: Francais.`;
       // Narrative / oneLiner
       const narrative = data.narrative as { oneLiner?: string; summary?: string } | undefined;
       if (narrative?.oneLiner) summary.push(`OneLiner: ${narrative.oneLiner}`);
-      if (narrative?.summary) summary.push(`Summary: ${narrative.summary.slice(0, 600)}`);
+      if (narrative?.summary) summary.push(`Summary: ${narrative.summary.slice(0, 400)}`);
 
       // Key findings (top metrics, top red flags)
       const findings = data.findings as Record<string, unknown> | undefined;
       if (findings) {
-        const findingsJson = JSON.stringify(findings).slice(0, 1500);
+        const findingsJson = JSON.stringify(findings).slice(0, 900);
         summary.push(`Findings (trunc): ${findingsJson}`);
       }
 
       // Red flags
       const redFlags = data.redFlags as Array<{ title?: string; severity?: string; description?: string }> | undefined;
       if (Array.isArray(redFlags) && redFlags.length > 0) {
-        const top = redFlags.slice(0, 5).map((r) => `  - [${r.severity}] ${r.title}`).join("\n");
+        const top = redFlags.slice(0, 3).map((r) => `  - [${r.severity}] ${r.title}`).join("\n");
         summary.push(`Top red flags:\n${top}`);
       }
 
       parts.push(summary.join("\n"));
     }
 
+    // Budget réduit (30k → 12k) : le réconciliateur timeoutait sur les gros
+    // dossiers. On garde les agents prioritaires (financial/market/team/competitive
+    // en tête de relevantAgents) ; la troncature coupe d'abord les moins prioritaires.
     const combined = parts.join("\n\n");
-    return sanitizeForLLM(combined, { maxLength: 30000, preserveNewlines: true });
+    return sanitizeForLLM(combined, { maxLength: 12000, preserveNewlines: true });
   }
 
   private buildDeterministicGuardrails(context: AgentContext): DeterministicGuardrails {

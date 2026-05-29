@@ -154,22 +154,6 @@ const GeneralOutputSchema = z.object({
     }),
   }),
 
-  // Section 9: Paysage Exit
-  exitLandscape: z.object({
-    recentExits: z.array(z.object({
-      company: z.string(),
-      acquirer: z.string().optional().default("Unknown"),
-      multiple: z.union([z.number(), z.string()]).optional().nullable(),
-      year: z.number().optional().nullable(),
-      source: z.string().optional().default("web search"),
-    })).describe("Exits trouves via recherche"),
-    typicalAcquirers: z.array(z.string()),
-    medianMultiple: z.union([z.number(), z.string(), z.null()]).describe("Multiple median trouve avec source"),
-    multipleSource: z.string().nullable(),
-    timeToExitYears: z.string(),
-    exitPotentialAssessment: z.enum(["strong", "moderate", "weak", "uncertain"]),
-  }),
-
   // Section 10: Valorisation
   valuationAnalysis: z.object({
     askMultiple: z.union([z.number(), z.null()]).describe("Multiple demande (si calculable)"),
@@ -291,7 +275,6 @@ Pour chaque metrique importante, tu dois avoir cherche:
 - "${new Date().getFullYear()} [secteur] benchmarks"
 - "[secteur] startup KPIs"
 - "[secteur] valuation multiples ${new Date().getFullYear()}"
-- "[secteur] exit multiples acquisitions"
 
 ### 3. TRANSPARENCE TOTALE
 Chaque section doit indiquer:
@@ -533,13 +516,6 @@ Pour chaque metrique disponible dans le deal:
 - Menace Big Tech
 - Environnement reglementaire
 
-### TACHE 7: PAYSAGE EXIT
-Recherche:
-- Exits recents dans ce secteur (avec source)
-- Multiples de sortie observes (avec source)
-- Acquereurs typiques
-- Time to exit estime
-
 ### TACHE 8: ANALYSE VALORISATION
 - Calcule le multiple demande (quel type de multiple est pertinent pour ce secteur?)
 - Compare aux multiples trouves via recherche
@@ -720,41 +696,6 @@ function normalizeOutput(raw: unknown): unknown {
     }
   }
 
-  // Ensure exitLandscape exists with all required fields
-  const validExitAssessment = ["strong", "moderate", "weak", "uncertain"];
-  if (!obj.exitLandscape || typeof obj.exitLandscape !== "object") {
-    obj.exitLandscape = {
-      recentExits: [],
-      typicalAcquirers: [],
-      medianMultiple: null,
-      multipleSource: null,
-      timeToExitYears: "5-7 ans",
-      exitPotentialAssessment: "uncertain",
-    };
-  } else {
-    const el = obj.exitLandscape as Record<string, unknown>;
-    // Normalize recentExits - ensure each item has required fields
-    const rawExits = Array.isArray(el.recentExits) ? el.recentExits : [];
-    el.recentExits = rawExits.map((exit: unknown) => {
-      if (!exit || typeof exit !== "object") return { company: "Unknown", acquirer: "Unknown" };
-      const e = exit as Record<string, unknown>;
-      return {
-        company: e.company || "Unknown",
-        acquirer: e.acquirer || "Unknown",
-        multiple: e.multiple ?? null,
-        year: typeof e.year === "number" ? e.year : null,
-        source: e.source || "web search",
-      };
-    });
-    el.typicalAcquirers = Array.isArray(el.typicalAcquirers) ? el.typicalAcquirers : [];
-    el.medianMultiple = el.medianMultiple ?? null;
-    el.multipleSource = el.multipleSource ?? null;
-    el.timeToExitYears = el.timeToExitYears || "5-7 ans";
-    el.exitPotentialAssessment = validExitAssessment.includes(el.exitPotentialAssessment as string)
-      ? el.exitPotentialAssessment
-      : "uncertain";
-  }
-
   // Ensure valuationAnalysis exists with all required fields
   if (!obj.valuationAnalysis || typeof obj.valuationAnalysis !== "object") {
     obj.valuationAnalysis = {
@@ -875,11 +816,6 @@ function transformOutput(raw: GeneralExpertOutput): SectorExpertData {
                           raw.sectorDynamics.consolidationTrend as "fragmenting" | "stable" | "consolidating",
       barrierToEntry: raw.sectorDynamics.barrierToEntry === "very_high" ? "high" :
                       raw.sectorDynamics.barrierToEntry as "low" | "medium" | "high",
-      typicalExitMultiple: typeof raw.exitLandscape.medianMultiple === "number" ?
-                           raw.exitLandscape.medianMultiple : 0,
-      recentExits: raw.exitLandscape.recentExits.map(e =>
-        `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`
-      ),
     },
 
     sectorQuestions: raw.sectorQuestions.map(q => ({
@@ -930,8 +866,6 @@ function getDefaultData(): SectorExpertData {
       competitionIntensity: "medium",
       consolidationTrend: "stable",
       barrierToEntry: "medium",
-      typicalExitMultiple: 0,
-      recentExits: [],
     },
     sectorQuestions: [{
       question: "Pouvez-vous decrire votre secteur et les metriques cles que vous suivez?",
@@ -1074,15 +1008,6 @@ export const generalExpert = {
             verdict: parsedOutput.valuationAnalysis.verdict === "cannot_assess" ? "fair" :
                      parsedOutput.valuationAnalysis.verdict,
             negotiationLeverage: parsedOutput.valuationAnalysis.negotiationLeverage.join("; "),
-          },
-          // Exit potential
-          exitPotential: {
-            typicalMultiple: typeof parsedOutput.exitLandscape.medianMultiple === "number" ?
-                             parsedOutput.exitLandscape.medianMultiple : 0,
-            likelyAcquirers: parsedOutput.exitLandscape.typicalAcquirers,
-            timeToExit: parsedOutput.exitLandscape.timeToExitYears,
-            exitReadiness: parsedOutput.exitLandscape.exitPotentialAssessment === "strong" ? "ready" :
-                           parsedOutput.exitLandscape.exitPotentialAssessment === "weak" ? "far" : "needs_work",
           },
           // Verdict
           verdict: {

@@ -36,6 +36,12 @@ import type {
 import { calculateBATicketSize, type BAPreferences } from "@/services/benchmarks";
 import { MEMO_GENERATOR_SYSTEM_PROMPT } from "./prompts/memo-generator-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
+import {
+  consolidateRedFlagsFromAgents,
+  type AgentRedFlagsInput,
+  type RawRedFlag,
+} from "@/services/red-flag-dedup/consolidate";
+import { severityRank } from "@/services/red-flag-dedup";
 
 // ============================================================================
 // TYPES INTERNES
@@ -659,17 +665,17 @@ Assessment: ${d.summaryAssessment ?? "N/A"}`);
 
   private consolidateRedFlags(context: EnrichedAgentContext): ConsolidatedRedFlag[] {
     const results = context.previousResults ?? {};
-    const allFlags: ConsolidatedRedFlag[] = [];
-    let idCounter = 1;
+
+    // Regroupe les red flags bruts par agent depuis TOUTES les sources, incl. les
+    // `structuralRisks` du Devil's Advocate, `concerns`, `risks`, `sectorSpecificRisks`.
+    const agentInputs: AgentRedFlagsInput[] = [];
 
     for (const [agentName, result] of Object.entries(results)) {
       if (!result.success || !("data" in result) || !result.data) continue;
 
       const data = result.data as Record<string, unknown>;
 
-      // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy
-      // dans la liste des sources de red flags. Memo lit le nouveau champ.
-      // Migration interne complète de Memo reste à A4.
+      // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
       const findingsScope = (data.findings as Record<string, unknown> | undefined) ?? undefined;
       const flagArrays = [
         data.redFlags,
@@ -680,36 +686,51 @@ Assessment: ${d.summaryAssessment ?? "N/A"}`);
         findingsScope?.structuralRisks,
       ];
 
+      const rawFlags: RawRedFlag[] = [];
       for (const flags of flagArrays) {
         if (!Array.isArray(flags)) continue;
 
         for (const flag of flags as Array<Record<string, unknown>>) {
-          const severity = this.normalizeSeverity(
-            (flag.severity as string) ?? (flag.level as string) ?? "MEDIUM"
-          );
-
-          allFlags.push({
-            id: `RF-${idCounter++}`,
-            category: (flag.category as string) ?? this.inferCategory(agentName),
-            severity,
+          rawFlags.push({
+            severity: this.normalizeSeverity(
+              (flag.severity as string) ?? (flag.level as string) ?? "MEDIUM"
+            ),
             title: (flag.title as string) ?? (flag.flag as string) ?? (flag.risk as string) ?? (flag.description as string) ?? "",
             description: (flag.description as string) ?? (flag.details as string) ?? "",
-            source: agentName,
-            location: flag.location as string,
             evidence: (flag.evidence as string) ?? (flag.proof as string) ?? "",
             impact: (flag.impact as string) ?? "",
-            question: flag.question as string,
+            category: flag.category as string | undefined,
+            question: flag.question as string | undefined,
           });
         }
       }
+
+      if (rawFlags.length > 0) {
+        agentInputs.push({ agentName, redFlags: rawFlags });
+      }
     }
 
-    // Dédupliquer et trier par sévérité
-    const deduplicated = this.deduplicateRedFlags(allFlags);
-    return deduplicated.sort((a, b) => {
-      const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 };
-      return order[a.severity] - order[b.severity];
-    });
+    // Consolidation canonique : dédup par topic (`inferRedFlagTopic`) + sévérité par
+    // domain authority — logique partagée avec l'UI (red-flags-summary, use-unified-alerts).
+    // Remplace l'ancienne dédup par préfixe de titre (fragile) + max aveugle de sévérité.
+    const consolidated = consolidateRedFlagsFromAgents(agentInputs);
+
+    return consolidated
+      .map((flag, idx) => ({
+        id: `RF-${idx + 1}`,
+        category: this.inferCategory(flag.detectedBy[0] ?? ""),
+        severity: (flag.severity === "LOW" ? "MEDIUM" : flag.severity) as
+          | "CRITICAL"
+          | "HIGH"
+          | "MEDIUM",
+        title: flag.title,
+        description: flag.description ?? "",
+        source: flag.detectedBy.join(", "),
+        evidence: flag.evidence ?? "",
+        impact: flag.impact ?? "",
+        question: flag.question,
+      }))
+      .sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
   }
 
   private normalizeSeverity(severity: string): "CRITICAL" | "HIGH" | "MEDIUM" {
@@ -726,28 +747,6 @@ Assessment: ${d.summaryAssessment ?? "N/A"}`);
     if (agentName.includes("legal") || agentName.includes("regulatory")) return "legal";
     if (agentName.includes("technical")) return "technical";
     return "general";
-  }
-
-  private deduplicateRedFlags(flags: ConsolidatedRedFlag[]): ConsolidatedRedFlag[] {
-    const seen = new Map<string, ConsolidatedRedFlag>();
-
-    for (const flag of flags) {
-      // Créer une clé basée sur le titre normalisé
-      const key = flag.title.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 50);
-
-      if (!seen.has(key)) {
-        seen.set(key, flag);
-      } else {
-        // Garder le plus sévère
-        const existing = seen.get(key)!;
-        const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 };
-        if (order[flag.severity] < order[existing.severity]) {
-          seen.set(key, flag);
-        }
-      }
-    }
-
-    return Array.from(seen.values());
   }
 
   private formatConsolidatedRedFlags(flags: ConsolidatedRedFlag[]): string {

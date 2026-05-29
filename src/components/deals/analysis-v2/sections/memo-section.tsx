@@ -1,7 +1,36 @@
 import { PartialBanner } from "../atoms/partial-banner";
 import { SourcePin } from "../atoms/source-pin";
 import { StatusPill } from "../atoms/status-pill";
+import { nextStepOwnerLabel, nextStepPriorityLabel, parseNextStep } from "@/lib/ui-configs";
 import type { MemoSectionModel } from "../lib/selectors";
+
+function NextStepItem({ index, raw }: { index: number; raw: string }) {
+  const step = parseNextStep(raw);
+  const prio = nextStepPriorityLabel(step.priority);
+  const owner = nextStepOwnerLabel(step.owner);
+  return (
+    <li className="flex gap-2">
+      <span className="av-tabular text-[var(--av-muted)]">{index + 1}.</span>
+      <div className="flex flex-1 flex-col gap-1">
+        {prio || owner ? (
+          <div className="flex flex-wrap gap-1.5">
+            {prio ? (
+              <span className="rounded-full bg-[var(--av-surface-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--av-ink)]" style={{ border: "1px solid var(--av-line-strong)" }}>
+                {prio}
+              </span>
+            ) : null}
+            {owner ? (
+              <span className="rounded-full px-2 py-0.5 text-[11px] text-[var(--av-muted)]" style={{ border: "1px solid var(--av-line)" }}>
+                {owner}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        <span>{step.text}</span>
+      </div>
+    </li>
+  );
+}
 
 function SectionBlock({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -62,11 +91,15 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
           ) : null}
           {model.criticalRisks.length > 0 ? (
             <SectionBlock title="Risques critiques">
-              <ul className="flex flex-col gap-2 text-[14px] text-[var(--av-ink)]">
+              <ul className="flex flex-col gap-3 text-[14px] text-[var(--av-ink)]">
                 {model.criticalRisks.map((r, i) => (
                   <li key={i} className="flex flex-col gap-1">
-                    <strong className="text-[14px] font-semibold">{r.title}</strong>
-                    {r.detail ? <span className="text-[13px] text-[var(--av-muted)]">{r.detail}</span> : null}
+                    <div className="flex items-start gap-2">
+                      <StatusPill severity={r.severity} label={r.severityLabel} />
+                      <strong className="flex-1 text-[14px] font-semibold leading-snug">{r.title}</strong>
+                      {r.source ? <SourcePin source={r.source} className="mt-0.5" /> : null}
+                    </div>
+                    {r.detail ? <span className="pl-1 text-[13px] text-[var(--av-muted)]">{r.detail}</span> : null}
                   </li>
                 ))}
               </ul>
@@ -74,12 +107,9 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
           ) : null}
           {model.nextSteps.length > 0 ? (
             <SectionBlock title="Prochaines étapes">
-              <ol className="flex flex-col gap-1.5 text-[14px] text-[var(--av-ink)]">
+              <ol className="flex flex-col gap-2.5 text-[14px] text-[var(--av-ink)]">
                 {model.nextSteps.map((s, i) => (
-                  <li key={i} className="flex gap-2">
-                    <span className="av-tabular text-[var(--av-muted)]">{i + 1}.</span>
-                    <span>{s}</span>
-                  </li>
+                  <NextStepItem key={i} index={i} raw={s} />
                 ))}
               </ol>
             </SectionBlock>

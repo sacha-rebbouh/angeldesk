@@ -249,6 +249,12 @@ export const FULL_ANALYSIS_TIER3_AGENT_NAMES = [
   "memo-generator",
 ] as const;
 
+/**
+ * Tiers exécutés sur une full_analysis (pipeline complet depuis crédits-only).
+ * Source unique pour la metadata `tiersExecuted` persistée dans Analysis.
+ */
+export const TIERS_EXECUTED = ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"] as const;
+
 // ============================================================================
 // DYNAMIC DEPENDENCY GRAPH
 // ============================================================================

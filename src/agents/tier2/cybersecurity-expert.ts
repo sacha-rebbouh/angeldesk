@@ -360,7 +360,6 @@ function buildSystemPrompt(stage: string): string {
 - Tu as vu des dizaines de startups se faire absorber ou marginaliser par les plateformes
 - Tu sais distinguer un vrai produit security d'une feature qui sera integree
 - Tu connais les patterns d'achat CISO (POC fatigue, vendor consolidation, compliance-driven)
-- Tu as vu des exits spectaculaires (Demisto → Palo Alto, Phantom → Splunk, Duo → Cisco) et des echecs
 
 ## TA MISSION
 Analyser ce deal Cybersecurity pour determiner:
@@ -613,8 +612,6 @@ function transformOutput(raw: CybersecurityExpertOutput, cappedScore: number, ca
                             raw.categoryAnalysis.bigTechThreat.level === "high" ? "high" : "medium",
       consolidationTrend: raw.categoryAnalysis.categoryMaturity === "consolidating" ? "consolidating" : "stable",
       barrierToEntry: raw.moatAnalysis.overallMoatScore > 60 ? "high" : raw.moatAnalysis.overallMoatScore > 30 ? "medium" : "low",
-      typicalExitMultiple: 8, // Placeholder - recherche web pour donnees actuelles
-      recentExits: [], // A remplir par recherche web
     },
 
     sectorQuestions: raw.sectorQuestions.map(q => ({
@@ -718,8 +715,6 @@ function getDefaultData(): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: "medium",
-      typicalExitMultiple: 8,
-      recentExits: [],
     },
     sectorQuestions: [],
     sectorFit: {

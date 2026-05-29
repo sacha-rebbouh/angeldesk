@@ -178,14 +178,6 @@ const SaaSOutputSchema = z.object({
     redFlagAnswer: z.string(),
   })),
 
-  // Exit potential
-  exitPotential: z.object({
-    typicalMultiple: z.number(),
-    likelyAcquirers: z.array(z.string()),
-    timeToExit: z.string(),
-    exitReadiness: z.enum(["ready", "needs_work", "far"]),
-  }),
-
   // Score et Synthèse
   sectorScore: z.number().min(0).max(100),
   scoreBreakdown: z.object({
@@ -457,7 +449,7 @@ Vérifie au minimum:
 
 ### 5. VALORISATION VS BENCHMARKS
 - Calcule le multiple ARR demandé
-- Compare aux multiples de marche actuels (rechercher "SaaS exit multiples ${new Date().getFullYear()}")
+- Compare aux multiples ARR de financement de marché actuels
 - Donne une range fair value
 - Identifie les arguments de négociation
 
@@ -618,9 +610,6 @@ function transformOutput(raw: SaaSExpertOutput, cappedScore: number, cappedFitSc
         competitionIntensity: "high",
         consolidationTrend: "consolidating",
         barrierToEntry: raw.saasCompetitiveMoat?.switchingCostLevel === "high" ? "high" : "medium",
-        typicalExitMultiple: raw.exitPotential?.typicalMultiple ?? 5,
-        // Exits recents: doivent venir de la recherche web, pas de donnees hardcodees
-        recentExits: [],
       },
 
       sectorQuestions: (raw.sectorQuestions ?? []).map(q => ({
@@ -670,8 +659,6 @@ function getDefaultData(): SectorExpertData {
       competitionIntensity: "medium",
       consolidationTrend: "stable",
       barrierToEntry: "medium",
-      typicalExitMultiple: 8, // Placeholder - les multiples actuels doivent venir de recherche web
-      recentExits: [],
     },
     sectorQuestions: [],
     sectorFit: {
@@ -796,7 +783,6 @@ export const saasExpert = {
           gtmAssessment: parsedOutput.gtmAssessment,
           cohortHealth: parsedOutput.cohortHealth,
           saasCompetitiveMoat: parsedOutput.saasCompetitiveMoat,
-          exitPotential: parsedOutput.exitPotential,
           investmentImplication: parsedOutput.investmentImplication,
           dbCrossReference: parsedOutput.dbCrossReference,
           dataCompleteness: {

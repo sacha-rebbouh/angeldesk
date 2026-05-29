@@ -6,6 +6,7 @@ import { Brain, Handshake, ShieldAlert, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getSeverityStyle, getScoreColor, getScoreLabel, RECOMMENDATION_CONFIG } from "@/lib/ui-configs";
 import { ScoreRing } from "@/components/ui/score-ring";
+import { ExpandableList } from "@/components/shared/expandable-list";
 
 interface RedFlagItem {
   title: string;
@@ -224,8 +225,11 @@ export const VerdictPanel = memo(function VerdictPanel({
                     {criticalFlags.length} risque{criticalFlags.length > 1 ? "s" : ""} critique{criticalFlags.length > 1 ? "s" : ""}
                   </span>
                 </div>
-                <div className="space-y-1.5">
-                  {criticalFlags.slice(0, 5).map((flag, i) => {
+                <ExpandableList
+                  items={criticalFlags}
+                  initialCount={5}
+                  className="space-y-1.5"
+                  renderItem={(flag, i) => {
                     const style = getSeverityStyle(flag.severity);
                     return (
                       <div key={i} className="flex items-center gap-2.5 text-[13px] group">
@@ -244,8 +248,8 @@ export const VerdictPanel = memo(function VerdictPanel({
                         )}
                       </div>
                     );
-                  })}
-                </div>
+                  }}
+                />
               </div>
             )}
 
@@ -258,14 +262,17 @@ export const VerdictPanel = memo(function VerdictPanel({
                     Conditions à négocier
                   </span>
                 </div>
-                <div className="space-y-1.5">
-                  {conditionIssues.slice(0, 3).map((issue, i) => (
+                <ExpandableList
+                  items={conditionIssues}
+                  initialCount={3}
+                  className="space-y-1.5"
+                  renderItem={(issue, i) => (
                     <div key={i} className="text-[13px] text-foreground/70 leading-snug">
                       <span className="font-medium text-foreground/85">{issue.label}:</span>{" "}
                       {issue.current}
                     </div>
-                  ))}
-                </div>
+                  )}
+                />
               </div>
             )}
 

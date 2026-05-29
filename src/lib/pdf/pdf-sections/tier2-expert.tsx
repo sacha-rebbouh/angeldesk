@@ -97,9 +97,6 @@ export function Tier2ExpertSection({
             {/* GTM Assessment (SaaS) */}
             <GtmAssessment gtm={ext?.gtmAssessment} />
 
-            {/* Exit Potential (SaaS) */}
-            <ExitPotential exitPot={ext?.exitPotential} />
-
             {/* Sector-specific data */}
             <SectorSpecificExtended agentName={agentName} ext={ext} />
 
@@ -327,7 +324,6 @@ function SectorDynamics({ dynamics }: { dynamics: unknown }) {
     competitionIntensity?: string;
     consolidationTrend?: string;
     barrierToEntry?: string;
-    typicalExitMultiple?: number;
   } | undefined;
   if (!d) return null;
   return (
@@ -336,7 +332,6 @@ function SectorDynamics({ dynamics }: { dynamics: unknown }) {
       {d.competitionIntensity && <LabelValue label="Concurrence" value={sup(d.competitionIntensity)} />}
       {d.consolidationTrend && <LabelValue label="Consolidation" value={d.consolidationTrend} />}
       {d.barrierToEntry && <LabelValue label="Barrière entrée" value={sup(d.barrierToEntry)} />}
-      {d.typicalExitMultiple && <LabelValue label="Multiple exit typique" value={`${d.typicalExitMultiple}x`} />}
     </>
   );
 }
@@ -354,8 +349,8 @@ function SectorFit({ fit }: { fit: unknown }) {
       <H3>Adéquation sectorielle</H3>
       {f.score !== undefined && <LabelValue label="Score fit" value={`${f.score}/100`} />}
       {f.sectorTiming && <LabelValue label="Timing" value={sup(f.sectorTiming)} />}
-      {f.strengths && f.strengths.length > 0 && <BulletList items={f.strengths.slice(0, 3).map((st) => `+ ${st}`)} />}
-      {f.weaknesses && f.weaknesses.length > 0 && <BulletList items={f.weaknesses.slice(0, 3).map((w) => `- ${w}`)} />}
+      {f.strengths && f.strengths.length > 0 && <BulletList items={f.strengths.map((st) => `+ ${st}`)} />}
+      {f.weaknesses && f.weaknesses.length > 0 && <BulletList items={f.weaknesses.map((w) => `- ${w}`)} />}
     </>
   );
 }
@@ -443,20 +438,6 @@ function GtmAssessment({ gtm }: { gtm: unknown }) {
       {g.efficiency && <LabelValue label="Efficacité" value={sup(g.efficiency)} />}
       {g.salesCycleMonths !== undefined && <LabelValue label="Cycle de vente" value={`${g.salesCycleMonths} mois`} />}
       {g.keyInsight && <BodyText>{g.keyInsight}</BodyText>}
-    </>
-  );
-}
-
-function ExitPotential({ exitPot }: { exitPot: unknown }) {
-  const e = exitPot as { typicalMultiple?: number; likelyAcquirers?: string[]; timeToExit?: string; exitReadiness?: string } | undefined;
-  if (!e) return null;
-  return (
-    <>
-      <H3>Potentiel de sortie</H3>
-      {e.typicalMultiple && <LabelValue label="Multiple typique" value={`${e.typicalMultiple}x`} />}
-      {e.timeToExit && <LabelValue label="Horizon" value={e.timeToExit} />}
-      {e.exitReadiness && <LabelValue label="Maturité exit" value={sup(e.exitReadiness).replace(/_/g, " ")} />}
-      {e.likelyAcquirers && e.likelyAcquirers.length > 0 && <LabelValue label="Acquéreurs potentiels" value={e.likelyAcquirers.join(", ")} />}
     </>
   );
 }

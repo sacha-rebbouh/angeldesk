@@ -116,7 +116,7 @@ export function QuestionsSection({
                 <SubsectionTitle>
                   Détail des questions critiques
                 </SubsectionTitle>
-                {critical.slice(0, 10).map((q, i) => (
+                {critical.map((q, i) => (
                   <View key={i} style={{ marginBottom: 6 }} wrap={false}>
                     <Text style={gs.bodyBold}>Q: {q.question}</Text>
                     {q.context?.sourceAgent && (
@@ -190,7 +190,7 @@ export function QuestionsSection({
       {refChecks && refChecks.length > 0 && (
         <>
           <SubsectionTitle>Vérifications de références</SubsectionTitle>
-          {refChecks.slice(0, 6).map((ref, i) => {
+          {refChecks.map((ref, i) => {
             const header =
               typeof ref.targetProfile === "object" && ref.targetProfile
                 ? ref.targetProfile.description ?? "Reference"
@@ -224,7 +224,7 @@ export function QuestionsSection({
                 {ref.rationale && <BodyText>{ref.rationale}</BodyText>}
                 {ref.questions && ref.questions.length > 0 && (
                   <BulletList
-                    items={ref.questions.slice(0, 5).map((q) => {
+                    items={ref.questions.map((q) => {
                       if (typeof q === "string") return q;
                       return `${s(q.question)}${q.whatToLookFor ? ` → A surveiller: ${q.whatToLookFor}` : ""}${q.redFlagAnswer ? ` [Red flag: ${q.redFlagAnswer}]` : ""}`;
                     })}
@@ -247,7 +247,6 @@ export function QuestionsSection({
               { header: "Résolvabilité", width: 25 },
             ]}
             rows={dealbreakers
-              .slice(0, 8)
               .map((d) => [
                 s(d.description),
                 s(d.severity),
@@ -263,7 +262,6 @@ export function QuestionsSection({
           <SubsectionTitle>Actions prioritaires</SubsectionTitle>
           <BulletList
             items={priorities
-              .slice(0, 5)
               .map((p) => `${s(p.action)} — ${s(p.rationale)}`)}
           />
         </>
@@ -307,7 +305,6 @@ export function QuestionsSection({
                           { header: "Criticité", width: 25 },
                         ]}
                         rows={cl.items
-                          .slice(0, 15)
                           .map((c) => [
                             s(c.item ?? c.description),
                             s(c.status),
@@ -331,7 +328,6 @@ export function QuestionsSection({
                   { header: "Criticité", width: 25 },
                 ]}
                 rows={items
-                  .slice(0, 15)
                   .map((c) => [
                     s(c.item ?? c.description),
                     s(c.status),

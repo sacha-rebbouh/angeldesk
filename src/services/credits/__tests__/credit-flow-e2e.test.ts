@@ -796,155 +796,186 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
 // FREE HEBDO "use it or lose it" — tests dédiés
 // ============================================================================
 
-describe('Free hebdo "use it or lose it"', () => {
+describe('Free hebdo Option B "use it or lose it (non-purchasers only)"', () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
   });
 
-  async function setupUserWithFreeOnly(): Promise<void> {
-    // Init row via grantFreeCredits : balance=0, balanceFree=10, freeResetStartedAt=null
+  async function setupNonPurchaser(): Promise<void> {
+    // Init row via grantFreeCredits : balance=0, balanceFree=10, totalPurchased=0
     await grantFreeCredits(USER);
     const record = balances.get(USER);
     expect(record).toBeDefined();
     expect(record!.balanceFree).toBe(10);
     expect(record!.balance).toBe(0);
+    expect(record!.totalPurchased).toBe(0);
     expect(record!.freeResetStartedAt).toBeNull();
   }
 
-  it('should consume free credits first when paid + free both available', async () => {
-    // Setup : user a 100 paid + 10 free (les 10 du default)
+  // --------------------------------------------------------------------------
+  // Doctrine Option B : un purchaser n'a JAMAIS accès au free, peu importe
+  // l'état des colonnes balanceFree / freeResetStartedAt en DB.
+  // --------------------------------------------------------------------------
+
+  it('purchaser : deduct should consume 100% paid (free reset à 0 au moment de l\'achat)', async () => {
+    // Setup : addCredits reset balanceFree=0 + freeResetStartedAt=null (doctrine B-strict)
     await addCredits(USER, 'pro', 100);
     const record = balances.get(USER)!;
     expect(record.balance).toBe(100);
-    expect(record.balanceFree).toBe(10);
+    expect(record.balanceFree).toBe(0); // reset à l'achat
+    expect(record.totalPurchased).toBe(100);
 
-    // DEEP_DIVE (5cr) → consomme 5 du free, paid intact
+    // DEEP_DIVE (5cr) → 100% paid
     const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
     expect(result.success).toBe(true);
-    expect(result.balanceAfter).toBe(105); // total (free + paid) = 5 + 100
-    expect(record.balance).toBe(100);
-    expect(record.balanceFree).toBe(5);
-    expect(record.freeResetStartedAt).not.toBeNull(); // timer démarré
-  });
-
-  it('should split free + paid when cost exceeds balanceFree', async () => {
-    // Setup : 100 paid + 4 free
-    await addCredits(USER, 'pro', 100);
-    const record = balances.get(USER)!;
-    record.balanceFree = 4;
-
-    // DEEP_DIVE (5cr) → 4 du free + 1 du paid
-    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
-    expect(result.success).toBe(true);
-    expect(result.balanceAfter).toBe(99); // 0 + 99
-    expect(record.balance).toBe(99);
-    expect(record.balanceFree).toBe(0);
-    expect(record.freeResetStartedAt).not.toBeNull();
-  });
-
-  it('should reset balanceFree to 10 after 7d window expires (lazy reset on next deduct)', async () => {
-    await setupUserWithFreeOnly();
-
-    // Démarre une fenêtre il y a 8 jours
-    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
-    const record = balances.get(USER)!;
-    record.balanceFree = 0; // consommé
-    record.freeResetStartedAt = eightDaysAgo;
-
-    // Achat un peu de paid pour pas tomber à 0 total (mais on testera quand même)
-    await addCredits(USER, 'starter', 5);
-
-    // Au prochain deduct, lazy reset → balanceFree devient 10, freeResetStartedAt=null
-    // Puis on consomme depuis le free reset (5cr depuis free, paid intact)
-    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
-    expect(result.success).toBe(true);
-    expect(record.balanceFree).toBe(5); // 10 - 5 = 5
-    expect(record.balance).toBe(5); // paid intact
-    // Le timer redémarre (au reset + 1er deduct du free)
-    expect(record.freeResetStartedAt).not.toBeNull();
-    expect(record.freeResetStartedAt!.getTime()).toBeGreaterThan(eightDaysAgo.getTime());
-  });
-
-  it('should NOT reset balanceFree if window still active (< 7d)', async () => {
-    await setupUserWithFreeOnly();
-    await addCredits(USER, 'starter', 5);
-
-    // Démarre une fenêtre il y a 3 jours, déjà 6 consommés
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-    const record = balances.get(USER)!;
-    record.balanceFree = 4; // 10 - 6 consommés
-    record.freeResetStartedAt = threeDaysAgo;
-
-    // Deduct DEEP_DIVE (5) : 4 du free + 1 paid, pas de reset
-    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
-    expect(result.success).toBe(true);
-    expect(record.balanceFree).toBe(0);
-    expect(record.balance).toBe(4); // 5 - 1
-    expect(record.freeResetStartedAt!.getTime()).toBe(threeDaysAgo.getTime()); // timer inchangé
-  });
-
-  it('should start the timer only when consuming free credits (not when paid-only)', async () => {
-    // 100 paid + 0 balanceFree (zero-out pour ce test)
-    await addCredits(USER, 'pro', 100);
-    const record = balances.get(USER)!;
-    record.balanceFree = 0;
-    record.freeResetStartedAt = null;
-
-    // DEEP_DIVE (5cr) : entièrement depuis le paid, freeResetStartedAt reste null
-    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
-    expect(result.success).toBe(true);
+    expect(result.balanceAfter).toBe(95);
     expect(record.balance).toBe(95);
     expect(record.balanceFree).toBe(0);
-    expect(record.freeResetStartedAt).toBeNull(); // pas de timer démarré
+    expect(record.freeResetStartedAt).toBeNull();
   });
 
-  it('should refund 100% to paid balance (free not restored even if freeUsed > 0)', async () => {
-    // Setup : 100 paid + 10 free, on consomme 5 (depuis le free)
+  it('purchaser : checkCredits should ignore balanceFree, only count paid', async () => {
+    // 3 paid + 10 free dormant (jamais utilisable car purchaser)
+    await addCredits(USER, 'starter', 3);
+    const record = balances.get(USER)!;
+    record.balanceFree = 10;
+
+    // DEEP_DIVE (5cr) > 3 paid disponibles → refus (free n'est pas considéré)
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('3 disponibles');
+    expect(result.error).toContain('5 requis');
+    expect(record.balance).toBe(3); // pas de mutation
+    expect(record.balanceFree).toBe(10);
+  });
+
+  it('purchaser : getCreditBalance should expose balanceFree=0 + nextFreeResetAt=null', async () => {
+    await addCredits(USER, 'pro', 100);
+    // Même si DB a balanceFree=10 et un timer actif, l'API doit masquer
+    const record = balances.get(USER)!;
+    record.balanceFree = 10;
+    record.freeResetStartedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+
+    const info = await getCreditBalance(USER);
+    expect(info.balance).toBe(100);
+    expect(info.balanceFree).toBe(0); // masqué
+    expect(info.totalAvailable).toBe(100); // pas de free
+    expect(info.freeResetStartedAt).toBeNull(); // masqué
+    expect(info.nextFreeResetAt).toBeNull(); // masqué
+    expect(info.totalPurchased).toBe(100);
+  });
+
+  it('purchaser : refund crédite 100% en paid (cohérent avec Option B)', async () => {
     await addCredits(USER, 'pro', 100);
     await deductCredits(USER, 'DEEP_DIVE', DEAL, {
       idempotencyKey: 'deduct:DEEP_DIVE:001',
     });
     const record = balances.get(USER)!;
-    expect(record.balance).toBe(100);
-    expect(record.balanceFree).toBe(5);
+    expect(record.balance).toBe(95); // 100 - 5 paid
 
-    // Refund 5 cr → tout va dans le paid (conservateur, pas de pro-rata)
     await refundCredits(USER, 'DEEP_DIVE', DEAL, {
       idempotencyKey: 'refund:DEEP_DIVE:001',
     });
-    expect(record.balance).toBe(105); // paid +5
-    expect(record.balanceFree).toBe(5); // free pas touché
+    expect(record.balance).toBe(100); // paid +5
+    expect(record.balanceFree).toBe(0); // reste à 0 (acheteur)
   });
 
-  it('should fail with clear error when totalAvailable < cost', async () => {
-    await setupUserWithFreeOnly();
+  // --------------------------------------------------------------------------
+  // Non-purchaser : bénéficie du free hebdo "use it or lose it"
+  // --------------------------------------------------------------------------
+
+  it('non-purchaser : deduct consume free credits (paid=0)', async () => {
+    await setupNonPurchaser();
+
+    // DEEP_DIVE (5cr) consomme 5 du free
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(true);
+    expect(result.balanceAfter).toBe(5); // 0 paid + 5 free restant
     const record = balances.get(USER)!;
-    record.balanceFree = 3; // total = 0 paid + 3 free = 3
-
-    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL); // cost 5
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('3 disponibles');
-    expect(result.error).toContain('5 requis');
-    // Pas de mutation sur l'échec
-    expect(record.balanceFree).toBe(3);
     expect(record.balance).toBe(0);
+    expect(record.balanceFree).toBe(5);
+    expect(record.freeResetStartedAt).not.toBeNull(); // timer démarré
   });
 
-  it('getCreditBalance should expose balanceFree + totalAvailable + nextFreeResetAt', async () => {
-    await addCredits(USER, 'pro', 100);
-    const startedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000); // il y a 2j
+  it('non-purchaser : lazy reset balanceFree à 10 après 7j (use-it-or-lose-it)', async () => {
+    await setupNonPurchaser();
+
+    // Démarre une fenêtre il y a 8 jours
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    const record = balances.get(USER)!;
+    record.balanceFree = 0;
+    record.freeResetStartedAt = eightDaysAgo;
+
+    // Au prochain deduct, lazy reset → balanceFree=10, freeResetStartedAt=null
+    // Puis consomme 5 → balanceFree=5, timer redémarré
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(true);
+    expect(record.balanceFree).toBe(5);
+    expect(record.balance).toBe(0);
+    expect(record.freeResetStartedAt!.getTime()).toBeGreaterThan(eightDaysAgo.getTime());
+  });
+
+  it('non-purchaser : NOT reset balanceFree si fenêtre encore active (< 7j)', async () => {
+    await setupNonPurchaser();
+
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const record = balances.get(USER)!;
+    record.balanceFree = 4;
+    record.freeResetStartedAt = threeDaysAgo;
+
+    // Deduct DEEP_DIVE (5) : 4 free disponibles, refus (pas de paid)
+    const result = await deductCredits(USER, 'DEEP_DIVE', DEAL);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('4 disponibles');
+    expect(record.balanceFree).toBe(4); // intact
+    expect(record.freeResetStartedAt!.getTime()).toBe(threeDaysAgo.getTime()); // timer intact
+  });
+
+  it('non-purchaser : timer démarre uniquement au 1er deduct du free', async () => {
+    await setupNonPurchaser();
+
+    // 1er deduct → timer démarre
+    await deductCredits(USER, 'DEEP_DIVE', DEAL, { idempotencyKey: 'd1' });
+    const record = balances.get(USER)!;
+    const firstTimer = record.freeResetStartedAt;
+    expect(firstTimer).not.toBeNull();
+
+    // 2e deduct → timer reste sur le 1er timestamp (pas reset)
+    await deductCredits(USER, 'DEEP_DIVE', 'deal_2', { idempotencyKey: 'd2' });
+    expect(record.freeResetStartedAt!.getTime()).toBe(firstTimer!.getTime());
+    expect(record.balanceFree).toBe(0); // 10 - 5 - 5
+  });
+
+  it('non-purchaser : refund crédite 100% en free (Option B-strict, le free reste perdable)', async () => {
+    // Doctrine B-strict : un non-purchaser ne peut pas accumuler de paid via refund
+    // (sinon on transforme du free perdable en paid permanent = exploit). Le refund
+    // crédite directement balanceFree → le free récupéré reste use-it-or-lose-it.
+    await setupNonPurchaser();
+    await deductCredits(USER, 'DEEP_DIVE', DEAL, { idempotencyKey: 'd1' });
+
+    const record = balances.get(USER)!;
+    expect(record.balanceFree).toBe(5);
+    expect(record.balance).toBe(0);
+
+    await refundCredits(USER, 'DEEP_DIVE', DEAL, { idempotencyKey: 'r1' });
+    expect(record.balanceFree).toBe(10); // 5 + 5 refund free
+    expect(record.balance).toBe(0); // pas de paid créé
+  });
+
+  it('non-purchaser : getCreditBalance expose balanceFree + nextFreeResetAt', async () => {
+    await setupNonPurchaser();
+    const startedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
     const record = balances.get(USER)!;
     record.balanceFree = 6;
     record.freeResetStartedAt = startedAt;
 
     const info = await getCreditBalance(USER);
-    expect(info.balance).toBe(100);
+    expect(info.balance).toBe(0);
     expect(info.balanceFree).toBe(6);
-    expect(info.totalAvailable).toBe(106);
+    expect(info.totalAvailable).toBe(6);
     expect(info.freeResetStartedAt?.getTime()).toBe(startedAt.getTime());
-    expect(info.nextFreeResetAt).not.toBeNull();
-    // nextFreeResetAt = startedAt + 7j
     expect(info.nextFreeResetAt!.getTime()).toBe(startedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+    expect(info.totalPurchased).toBe(0);
   });
 });

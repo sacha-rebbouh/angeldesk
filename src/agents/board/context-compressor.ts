@@ -7,6 +7,7 @@
  */
 
 import { sanitizeName, sanitizeDocumentText, sanitizeForLLM } from "@/lib/sanitize";
+import { severityRank } from "@/services/red-flag-dedup";
 import {
   formatAxisPromptLine,
   formatAxisVerdictToken,
@@ -342,7 +343,14 @@ export function extractAgentSummary(data: unknown): string {
   const redFlags =
     obj.redFlags ?? obj.concerns ?? obj.risks ?? obj.warnings ?? obj.criticalIssues;
   if (Array.isArray(redFlags) && redFlags.length > 0) {
-    const topFlags = redFlags.slice(0, 3).map((f) => {
+    const topFlags = [...redFlags]
+      .sort(
+        (a, b) =>
+          severityRank((b as { severity?: string }).severity) -
+          severityRank((a as { severity?: string }).severity),
+      )
+      .slice(0, 3)
+      .map((f) => {
       if (typeof f === "string") return f;
       if (typeof f === "object" && f !== null) {
         const fi = f as Record<string, unknown>;

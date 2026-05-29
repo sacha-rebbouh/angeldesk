@@ -1,6 +1,159 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-29 — Purge exit Tier 2 finale : acquéreurs + requêtes + prose/JSDoc
+
+### Contexte
+Après le retrait de l'exit du scoring/PDF/schémas Tier 2, audit des résidus « internes » (non livrés à l'utilisateur). Décision Sacha : **tout purger**, y compris prose/JSDoc. Sweep ciblé ~10 fichiers (détail par fichier dans les entrées ci-dessous).
+
+### Modifications
+- **`sector-standards.ts`** : suppression du champ d'interface `typicalAcquirers` + des **20 définitions** de listes d'acquéreurs ; **remplacement** de toutes les `benchmarkSearchQueries` « exit/M&A/IPO/acquisitions multiples » par des équivalents non-exit (« valuation/funding multiples »), intention de sourcing marché préservée ; suppression d'un `sectorRisk` Climate « Exit path uncertainty ». Stub mort `typicalAcquirers: []` retiré dans `sequential-pipeline.test.ts`.
+- **Experts** (biotech/climate/deeptech/consumer) : retrait des références `X_STANDARDS.typicalAcquirers` + `potentialAcquirers`.
+- **Prose/JSDoc** : retrait des « Exit path: … » (consumer/deeptech/gaming), success-stories d'exit/IPO (Beyond Meat IPO/Impossible exit, Uber pre-IPO, Dollar Shave Club…), hardware « 2-4x exit vs 8-15x exit » (reformulé sans multiple), commentaire « historical exits » (sector-benchmarks).
+
+### Garde-fou (CONSERVÉ — non oraculaire)
+- **« prior exits »** dans critères ÉQUIPE/FONDATEUR (`sector-benchmarks:666,836`, `deeptech-expert:63,181,339,520`) = track-record fondateur.
+- **Customer acquisition / CAC** (consumer, mobility, gtm) = coût d'acquisition client.
+- Clauses légales drag-along/tag-along, timing marché, échecs comparables (closures).
+
+Vérif : `tsc --noEmit` 0 erreur ; suite 284 fichiers / 4075 tests verts ; `rg` zéro résidu exit-oraculaire dans `src/agents/tier2`.
+
+---
+## 2026-05-29 — Purge exit oraculaire dans deeptech-expert.ts
+
+### Contexte
+Balayage anti-oraculaire de `src/agents/tier2/deeptech-expert.ts` : retrait des références « exit » (sortie d'entreprise) et acquéreurs probables, en préservant le track-record fondateur (« prior exits ») et l'analyse de menace concurrentielle Big Tech (qui n'est pas de l'exit).
+
+### Modifications — `src/agents/tier2/deeptech-expert.ts`
+- JSDoc header : suppression de la ligne `Big Tech acquisition as primary exit path`.
+- `EXTENDED_DEEPTECH_BENCHMARKS` : suppression du champ `typicalAcquirers: DEEPTECH_STANDARDS.typicalAcquirers` (aucun consommateur dans le fichier, cast `as unknown as SectorBenchmarkData` inchangé).
+- Table BIG TECH THREAT (system prompt) : `Active Big Tech R&D, acquisition interest` → `Active Big Tech R&D in the space`.
+- JSDoc `assessBigTechThreat` : retrait des mentions « acquisitions / acquisition history » (recentré sur capacité de R&D interne / org structures).
+- Commentaire inline `assessBigTechThreat` : `CB Insights Big Tech acquisition data` → `company org structure analysis`.
+
+### Conservé (track-record fondateur, pas de l'exit)
+- `prior exits` dans critères équipe (JSDoc weights, métriques team, exemple `$15M exit (acqui-hire)`, mission TEAM ANALYSIS).
+
+### Vérification
+- `npx tsc --noEmit` : aucune erreur sur `deeptech-expert.ts`. Aucune ref pendante à `typicalAcquirers`.
+- `sector-standards.ts` (champ `typicalAcquirers` partagé + query `deeptech exits`) NON touché : hors scope (utilisé par tous les experts Tier 2).
+
+---
+## 2026-05-29 — Retrait doctrinal de l'« exit » : dimension de scoring + PDF + guard
+
+### Contexte
+Le PDF affichait une dimension de scoring « Exit Potential » (5-15%) + une force « chemin vers la sortie » alors que l'exit est exclu de l'analyse (anti-oraculaire) et absent du front V2. Racine : seul l'agent exit-strategist avait été retiré ; la **dimension de scoring** + l'analyse exit des experts Tier 2 avaient survécu, et le PDF rendait des champs scorer que le front V2 ignore. (Le balayage Tier 2 détaillé est dans les entrées ci-dessous.)
+
+### Modifications — dimension de scoring
+- `src/scoring/stage-weights.ts` : retrait de `exitPotential` de `DimensionWeights` + **reweight proportionnel** des 6 dimensions restantes sur les 6 stages (somme = 1.0) ; retrait de `SECTOR_ADJUSTMENTS.deeptech.exitPotential` + ligne `exitPotential` dans `formatWeightsForPrompt`.
+- `src/agents/tier3/prompts/synthesis-deal-scorer-prompt.ts` : poids par défaut `…Competitive(5%)` (Exit retiré, reweight 100%) + **suppression du framework `### EXIT (5%)`** (critères oraculaires multiples >10x / path-to-exit).
+- `src/agents/tier3/synthesis-deal-scorer.ts` : instruction retry « 7 dimensions … Exit Potential » → **6 dimensions** sans Exit.
+
+### Modifications — PDF aligné sur la doctrine V2
+- `src/lib/pdf/pdf-sections/score-breakdown.tsx` : **réécrit** — purge des champs scorer que le front V2 ignore (décompo 7 dims dont Exit, `comparativeRanking` « Top 100% », `investmentRecommendation`, `keyStrengths`/`keyWeaknesses`). Conservé : score + verdict + risques critiques.
+- `src/lib/pdf/pdf-sections/executive-summary.tsx` : retrait du badge « LECTURE TIER 3 » (source de l'incohérence couverture « contrastés » vs « alerte dominants »).
+
+### Tests / dead code
+- Guard `synthesis-deal-scorer-prompt.guard.test.ts` : maj 6 dimensions / Team(26%) + **assertion négative** interdisant le retour de `Exit(N%)` / `### EXIT`. Fixture `transform` 7→6 dims.
+- Constantes mortes `*_BENCHMARKS.exitMultiples` purgées (base type field + biotech/consumer/climate/hardware) après retrait de `formatExitData`.
+- Vérif : `tsc --noEmit` 0 erreur ; suite 284 fichiers / 4074 tests verts ; `rg` zéro résidu exit dans `src/agents/tier2`.
+
+### Tier 2 — purge acquéreurs (biotech-expert)
+- `src/agents/tier2/biotech-expert.ts` : retrait de `BIOTECH_BENCHMARKS.typicalAcquirers` (réf `BIOTECH_STANDARDS.typicalAcquirers`), du champ `_extended.potentialAcquirers` (`BIOTECH_BENCHMARKS.typicalAcquirers ?? []`) et de la prop `potentialAcquirers: string[]` de l'interface `ExtendedBioTechData`. `sector-standards.ts` (source partagée) inchangé. Aucune prose exit résiduelle ; `Comparables transactions (M&A, licensing)` conservé (méthode de valorisation, pas voie de sortie). `tsc --noEmit` OK.
+
+---
+## 2026-05-29 — Purge exit Tier 2 — schéma Zod + prompt de base (anti-oraculaire)
+
+### Contexte
+Suite de la purge exit Tier 2. La racine oraculaire restait dans `base-sector-expert.ts` : le schéma Zod partagé `SectorExpertOutputSchema` instruisait encore le LLM à produire un bloc `exitLandscape` (typicalMultiple / recentExits / potentialAcquirers / timeToExitYears) dans `sectorDynamics`, et le prompt de base injectait une section `## EXIT LANDSCAPE`.
+
+### Modifications (`src/agents/tier2/base-sector-expert.ts`)
+- Schéma `SectorExpertOutputSchema.sectorDynamics` : suppression intégrale du bloc `exitLandscape: z.object({...})`. Ne reste que `competitionIntensity` / `consolidationTrend` / `barrierToEntry` / `regulatoryRisk`.
+- `getDefaultSectorData()` : suppression du littéral `exitLandscape` du fallback `sectorDynamics` (sinon excess property vs type réduit).
+- Prompt système : suppression de la section `## EXIT LANDSCAPE ${config.name}` + appel `formatExitData(...)`, et de la puce « Historique des exits et acquéreurs typiques » dans TON EXPERTISE.
+- Prompt user : suppression de la consigne « Paysage exit avec comparables récents » (section 6 SECTOR DYNAMICS).
+- Fonction `formatExitData()` supprimée (dead code après retrait de son unique appel).
+- Conservé : interface `SectorBenchmarkData.exitMultiples` (champ requis peuplé par ~10 fichiers benchmark hors scope ; plus aucune lecture runtime depuis ce fichier). `npx tsc --noEmit` : 0 erreur sur tout le projet.
+
+---
+## 2026-05-29 — Purge exit Tier 2 (anti-oraculaire)
+
+### Contexte
+Doctrine anti-oraculaire : aucune projection d'exit (multiple de sortie, IRR, recent exits) dans le Tier 2. Les champs `typicalExitMultiple` et `recentExits` avaient déjà été retirés du type `SectorExpertData.sectorDynamics` (types.ts), mais le littéral de `index.ts` les produisait encore → erreur TS (excess property check, ligne 193).
+
+### Modifications
+- **`src/agents/tier2/index.ts`** : retrait des lignes `typicalExitMultiple: output.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 5` et `recentExits: output.sectorDynamics?.exitLandscape?.recentExits ?? []` du littéral `sectorDynamics`. Ne reste que `competitionIntensity` / `consolidationTrend` / `barrierToEntry`. Type check OK.
+- **`src/components/deals/tier2-results.tsx`** : dans `SectorDynamicsSection`, retrait du bloc UI « Typical Exit Multiple » (lisait `dynamics.typicalExitMultiple`, source de l'erreur TS ligne 885) et du bloc « Recent Exits » (lisait `dynamics.recentExits`). Conservation de competitionIntensity / consolidationTrend / barrierToEntry. `npx tsc --noEmit` : aucune erreur sur le fichier.
+- **`src/agents/tier2/spacetech-expert.ts`** : purge complète des traces exit. Retrait de `typicalExitMultiple`/`recentExits` des deux littéraux `sectorDynamics` (run + getDefaultSpaceTechData, erreurs TS ~960/1131), retrait de l'assignation `_extended.exitLandscape` (lisait `parsedOutput.sectorDynamics?.exitLandscape`) + du champ `exitLandscape` de l'interface `ExtendedSpaceTechData`. Prompt : retrait de la section système « EXIT LANDSCAPE SPACETECH » (typical acquirers, exit multiples, notable SPAC exits), de la ligne config description « Exit landscape », de la section user « 13. EXIT LANDSCAPE ANALYSIS » (renumérotation 14→13, 15→14, 16→15) et du bullet « Exit precedents » de la section COMPETITOR BENCHMARK. Retrait du bloc de données `typicalAcquirers` (devenu mort). `npx tsc --noEmit` : 0 erreur.
+
+---
+## 2026-05-29 — Intégrité de complétude + honnêteté d'état de l'analyse (V2) + correctifs de rendu
+
+### Contexte
+Audit des 7 problèmes signalés sur le rendu d'analyse (deals Fur Love / Avekapeti, forensic DB). Cause racine transverse : le pipeline complète des analyses matériellement incomplètes et l'UI V2 les présente comme complètes (« 15/15 · 0 agent en échec ») avec des messages trompeurs. Cause racine #3 isolée par forensic checkpoints : le moteur reflexion écrasait le résultat complet d'un agent par sa sortie révisée partielle.
+
+### Modifications
+- **`src/agents/orchestration/reflexion.ts`** (ROOT CAUSE #3) : `revisedOutput` était appliqué en **remplacement** wholesale du `data` agent (`{...currentResult, data: revisedOutput}`) → perte de narrative/redFlags/questions/alertSignal/signalIntensity quand le LLM de reflexion ne renvoie que meta/score/findings. Désormais **merge** (`{...prevData, ...revised}`). Touche les 3 agents les plus bas-score (team/legal/cap-table sur Fur Love) qui s'affichaient « Pas de synthèse ».
+- **`src/agents/tier3/thesis-reconciler.ts`** (#1/#2) : `timeoutMs` 120000→180000 + `buildAgentFindingsSummary` réduit (maxLength 30k→12k, redFlags 5→3, summary 600→400, findings 1500→900) — le réconciliateur timeoutait sur les 2 tentatives.
+- **`src/components/deals/analysis-v2/lib/solidity-aggregator.ts`** (#4) : retrait de `exit-strategist` de `AGENT_DEFINITIONS` + `TIER1_LABELS` (agent retiré du runtime mais encore listé → carte fantôme « Analyse non exécutée »).
+- **`.../lib/selectors.ts`** : (B5) `deriveFallbackOneLiner` (dérive un one-liner depuis findings/score/redFlags quand narrative absent) ; (B4) `buildThesisSectionModel(thesis, results, analysisMode)` distingue timeout/échec/non-applicable(thesis_only)/non-lancé ; (D1) `buildMemoSectionModel` mappe `title←description`, conserve `severity`+`source` (fini le « Risque » générique) ; (B1) modèle `coverage` honnête recalculé depuis les résultats réels (ne se fie plus à `analysis.completedAgents` gonflé).
+- **`.../decision-strip.tsx`** : carte Couverture = `coverage.ok/total` honnête + détail incomplétude ; détail thèse non absolu.
+- **`.../page-shell.tsx`** : bandeau « Analyse incomplète : N agents non aboutis » + en-tête honnête.
+- **`.../atoms/{agent-card,empty-agent-card}.tsx`** : copie honnête (« Synthèse textuelle non fournie par le modèle » ; « Résultat indisponible » au lieu de « n'a pas été déclenché »).
+- **`.../sections/memo-section.tsx`** (#7) : risques critiques rendus avec `StatusPill` (sévérité) + `SourcePin` ; (#6) badges Prochaines étapes via `NextStepItem`.
+- **`src/lib/ui-configs.ts`** (#5/#6) : `FACT_KEY_LABELS` (~90 clés, acronymes EN conservés) + `getFactKeyLabel` ; `parseNextStep` + `NEXT_STEP_PRIORITY/OWNER_LABELS`.
+- **`.../lib/evidence-collector.ts`** (#5) : colonne Affirmation = libellé FR au lieu du factKey brut.
+- **`src/lib/pdf/pdf-sections/executive-summary.tsx`** (#6 PDF) : Prochaines étapes préfixées des libellés FR (« Immédiat · Investisseur — … »).
+- **`src/services/openrouter/router.ts`** (A4, robustesse LLM) : forensic = les échecs d'agents (Avekapeti legal-regulatory `timed out`, cap-table-auditor `réponse vide 0 char` ; Fur Love reconciler `timed out`) sont des défaillances LLM transitoires. (1) **Réponse vide (0 char) traitée comme erreur REJOUABLE** dans `complete()` (avant : renvoyée en succès → `JSON.parse('')` échouait sans retry, et loggée en *succès*) → réutilise le backoff exponentiel + `empty_response` ajouté à `isRetryableError`. (2) **Fallback modèle model-aware** dans `completeJSON` : si le modèle primaire échoue après ses retries, une tentative sur un modèle d'autre famille (`JSON_FALLBACK_MODEL` Gemini↔Anthropic), recursion guard `_fallbackAttempted` ; message de parse explicite préservé.
+- **`src/agents/tier1/legal-regulatory.ts`** (A4, timeout) : root cause = budget de timeout mal calibré. L'agent a un fallback interne PRO(115s)→FLASH(75s) = 190s, mais l'enveloppe externe `config.timeoutMs` était à 180s → elle tuait le Flash de secours en cours (cas Avekapeti « timed out after 180000ms »). Enveloppe portée à **210000** pour laisser le fallback aboutir.
+- **`src/agents/orchestrator/persistence.ts`** (don't-drop, bulletproof) : root cause de la disparition d'agents échoués de `analysis.results` (Avekapeti legal/cap-table absents alors que présents en checkpoint) = `completeAnalysis` **écrasait** `results` avec le set reçu, parfois PARTIEL (chemin stop=thesis_only, double-complétion, read-modify-write périmé du cost-monitor `endAnalysis`). Fix = **invariant monotone des résultats** : `completeAnalysis` merge désormais avec l'existant (`mergeAnalysisResults`, comme `saveCheckpoint`) → ne droppe JAMAIS un agent déjà persisté ; compteur recalculé sur le set mergé ; cache blob cohérent. Test ajouté (`persistence-progress-monotone.test.ts`). Persistance robuste quelle que soit la race.
+- **`scripts/debug/inspect-deal-analysis.ts`** (nouveau, read-only) : inspection forensic d'une analyse (mode, narrative, reconciler, docs, erreurs LLM).
+
+Vérif : `tsc --noEmit` 0 erreur ; **1222/1222 tests agents+router verts** (dont le nouveau test don't-drop) + 320 UI/lib. Reste à faire : vérif visuelle navigateur + re-run d'une analyse fraîche end-to-end.
+
+---
+## 2026-05-29 — Restauration du bouton Export PDF sur la vue analyse v2
+
+### Contexte
+Régression de migration : la page deal (`[dealId]/page.tsx`, tab "Analyse IA") rend `AnalysisV2PageShell` dès qu'une analyse COMPLETED existe (l'ancien `AnalysisPanel`, qui portait le bouton Export PDF, n'est plus qu'un fallback). Résultat : plus aucun bouton pour générer le PDF sur le nouveau front. La route `GET /api/deals/:dealId/export-pdf?analysisId&format=full|summary` (auth + ownership + tests) existait toujours mais n'avait plus de caller UI (vérifié : 0 caller hors ancien panel).
+
+### Modifications
+- Nouveau `src/components/deals/analysis-v2/export-pdf-button.tsx` (client) : dropdown Résumé / Rapport complet, logique de téléchargement portée à l'identique de l'ancien `AnalysisPanel.handleExportPdf` (fetch blob → `<a download>`, toast succès, gestion 403 crédits → /pricing, état loading). Props `{ dealId, analysisId? }` — `analysisId` optionnel car la route retombe sur la dernière analyse COMPLETED, exactement ce que la vue v2 affiche.
+- Placement : bouton rendu **à droite de la barre d'onglets internes** (`tabs-nav.tsx` reçoit un `rightSlot?: ReactNode`, poussé `ml-auto`, `stopPropagation` sur le keydown pour ne pas interférer avec la nav clavier des onglets). `page-shell.tsx` reçoit un `dealId?` optionnel et passe `<ExportPdfButton dealId={dealId} />` au `rightSlot` quand présent. `[dealId]/page.tsx` passe `dealId={deal.id}` au shell (uniquement quand une analyse COMPLETED existe). Preview standalone (`avekapeti-v2`) sans `dealId` → pas de bouton.
+
+Vérif : `tsc --noEmit` 0 erreur ; tests `analysis-v2` (doctrine-guard) 10/10 verts. Confirmation visuelle/fonctionnelle = refresh de la page deal (rendu navigateur non exécuté ici).
+
+---
+## 2026-05-29 — Memo-generator : dédup red flags via le service canonique
+
+### Contexte
+`memo-generator.consolidateRedFlags` avait son propre pipeline de consolidation, inférieur sur 3 points : (1) dédup par **préfixe de titre** (`title.slice(0,50)`) → deux flags "valuation" formulés différemment restaient en double dans le mémo/PDF ; (2) sévérité par **max aveugle** ; (3) perte de LOW (collapse → MEDIUM). Le service canonique `consolidateRedFlagsFromAgents` (dédup par **topic** via `inferRedFlagTopic` + sévérité par **domain authority**), déjà utilisé par l'UI (`red-flags-summary`, `use-unified-alerts`), faisait mieux. Décision Sacha : basculer dessus (#1 de la liste « hors scope » précédente).
+
+### Modifications
+- `src/agents/tier3/memo-generator.ts` : `consolidateRedFlags` réécrit. **L'ingestion large des 6 sources est PRÉSERVÉE** (`redFlags`, `flags`, `concerns`, `risks`, `sectorSpecificRisks`, `findings.structuralRisks` du Devil's Advocate) — `consolidateRedFlagsFromResults` ne lisant que `data.redFlags`, j'utilise la fonction sous-jacente `consolidateRedFlagsFromAgents` après regroupement par agent en `RawRedFlag[]`. Mapping `ConsolidatedFlag → ConsolidatedRedFlag` interne (id, category via `inferCategory(detectedBy[0])`, severity collapse LOW→MEDIUM pour préserver le contrat 3 niveaux, source = `detectedBy.join`), tri final par `severityRank`. Méthode morte `deduplicateRedFlags` (dédup par préfixe de titre) supprimée. `normalizeSeverity`/`inferCategory` conservés (toujours utilisés). Contrat aval (`normalizeResponse`, `formatConsolidatedRedFlags`) et tests existants inchangés.
+- **Test** : `src/agents/tier3/__tests__/memo-generator-consolidate.test.ts` — dédup par topic (2 flags "valuation" / 2 agents → 1, sévérité domain-authority) + non-régression ingestion `structuralRisks` DA. Vérif : `tsc --noEmit` 0 erreur ; suite unitaire 4074 tests verts (memo transform/guard inchangés).
+
+### Hors scope (inchangé, décidé)
+- Dédup des **questions** (`deduplicateQuestions`) : analogue mais service distinct (`question-consolidator.ts`), non touché ce lot. Maps de sévérité dupliquées + cap chat : laissés (cf. entrée caps).
+
+---
+## 2026-05-29 — Caps sur findings : justesse inter-agents + anti-troncature-muette + matérialité
+
+### Contexte
+Le sujet « les caps `MAX 4`/`slice(0,5)` nous limitent » était mal localisé. Cartographie (5 lecteurs parallèles) → 3 familles de caps confondues : (1) feeds de contexte inter-agents qui coupaient les red flags à 3-5 **sans tri par sévérité** → un flag CRITICAL émis en position profonde pouvait ne jamais atteindre le scorer/synthèse/contradictions/questions (justesse, invisible) ; (2) troncature silencieuse UI/PDF (le PDF `tier1-agents` coupait à 12 red flags **sans même trier**) ; (3) cap éditorial de la synthèse (légitime car le détail Tier 1/2 est déjà affiché non capé). Décisions Sacha : approche **par couches** (corriger 1, tuer le masquage muet en 2, alléger 3) + **PDF exhaustif trié par sévérité**. Zéro migration DB (tout vit dans `Analysis.results` JSON).
+
+### Modifications
+- **Brique partagée** : `src/services/red-flag-dedup/dedup.ts` expose `severityRank()` (réutilise `SEVERITY_ORDER`, tolérant casse/inconnu→0) ; re-export via `index.ts`. Nouveau composant `src/components/shared/expandable-list.tsx` (factorise le « voir plus » de `thesis-hero-card`, render-prop).
+- **Famille 1 (justesse)** — tri par sévérité AVANT slice + relèvement 3/5→8 + ligne overflow « … et N autres » dans : `synthesis-deal-scorer.ts` (contexte conditions), `tier3/conditions-analyst.ts` (formatAgentInsights), `tier1/question-master.ts`, `tier3/contradiction-detector.ts`. Board `context-compressor.ts` : tri des redFlags (cap 3 conservé, budget tokens serré).
+- **Famille 2 PDF (tout imprimer + tri sévérité)** — `pdf-sections/tier1-agents.tsx` : ajout du tri manquant (réutilise `severityOrder`) + suppression `slice(0,12)`/`slice(0,5)`. `tier2-expert.tsx` : suppression `slice(0,3)` strengths/weaknesses. `tier3-synthesis.tsx` : tri + suppression slices contradictions (20/8) & risques structurels (8). `questions.tsx` : suppression des 7 caps (déjà trié par priorité).
+- **Famille 2 UI** — `verdict-panel.tsx` : criticalFlags + conditionIssues via `ExpandableList` (compact + voir plus). `tier3-results.tsx` : suppression slices internes highStructuralRisks (5) & concerns (8, déjà dans ExpandableSection avec compteur). `tier1-results.tsx` : suppression `slice(0,2)` comparables/assumptions/concerns inline.
+- **Famille 3 (synthèse, léger)** — `prompts/synthesis-deal-scorer-prompt.ts` : `topStrengths/topWeaknesses MAX 4` → critère de matérialité (typiquement 4-8, priorisés, ne pas inventer). `synthesis-deal-scorer.ts` : slices runtime keyStrengths/keyWeaknesses 5→8, criticalRisks 3→8.
+- **Test** : `src/services/red-flag-dedup/__tests__/severity-rank.test.ts` (ordering, casse, inconnu→0, invariant sort-before-slice). Vérif : `tsc --noEmit` 0 erreur ; suite unitaire 4072 tests verts.
+
+### Hors scope (signalé, non touché)
+- `memo-generator.ts` dédup inline naïve (duplique `RedFlagDedup` en moins bien) — consolidation possible en follow-up. Maps de sévérité dupliquées (~6 endroits). Feed chat `context-retriever.ts` findings.slice(0,10) (strings sans sévérité, tri non pertinent) laissé tel quel.
+
+---
 ## 2026-05-29 — Refactor crédits-only + free hebdo "use it or lose it"
 
 ### Contexte

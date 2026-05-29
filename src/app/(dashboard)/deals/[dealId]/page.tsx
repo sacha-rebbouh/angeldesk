@@ -398,7 +398,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
         {/* Tab 2: Analyse IA — V2 Page Shell quand une analyse COMPLETED existe, sinon ancien panel pour les contrôles */}
         <TabsContent value="analysis" className="space-y-6">
           {analysisV2ViewModel ? (
-            <AnalysisV2PageShell dealName={capitalizeFirst(canonicalDeal.companyName ?? deal.name)} vm={analysisV2ViewModel} hideHeader />
+            <AnalysisV2PageShell dealName={capitalizeFirst(canonicalDeal.companyName ?? deal.name)} vm={analysisV2ViewModel} hideHeader dealId={deal.id} />
           ) : (
             <AnalysisPanelWrapper
               dealId={deal.id}

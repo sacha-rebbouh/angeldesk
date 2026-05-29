@@ -10,7 +10,6 @@
  * - Platform dependency: Meta/Google algorithm changes can kill overnight
  * - Working capital trap: Inventory + receivables eat cash faster than growth
  * - Funding collapsed 97% from $5B (2021) to $130M (2024) - profitability required
- * - Exit path: CPG acquirers (Unilever, P&G, L'Oréal) or PE
  *
  * Sub-sectors covered:
  * - D2C Brands (fashion, beauty, home, wellness, food & beverage)
@@ -93,8 +92,7 @@ const CONSUMER_SUCCESS_PATTERNS: string[] = [
   "Organic acquisition: 30%+ of new customers from organic/word-of-mouth = sustainable",
   "Community moat: Active customer community driving word-of-mouth and UGC content",
 
-  // Exit patterns - documented in Houlihan Lokey report
-  "CPG acquisition target: Major CPG companies actively acquiring D2C brands with strong data",
+  // Margin and category patterns - documented in Houlihan Lokey report
   "Gross margin improvement: Cheaper Asia sourcing and lower transport costs improving margins (H2 2024)",
   "Category leadership: #1 or #2 position in defined niche with brand recognition",
   "First-order profitability: Best D2C brands are contribution-margin positive on first order",
@@ -111,26 +109,10 @@ const CONSUMER_BENCHMARKS = {
   redFlagRules: CONSUMER_STANDARDS.redFlagRules,
   sectorSpecificRisks: CONSUMER_SECTOR_RISKS,
   sectorSuccessPatterns: CONSUMER_SUCCESS_PATTERNS,
-  typicalAcquirers: CONSUMER_STANDARDS.typicalAcquirers,
 
   // Primary and secondary metrics (norms only, no percentiles)
   primaryMetrics: CONSUMER_STANDARDS.primaryMetrics,
   secondaryMetrics: CONSUMER_STANDARDS.secondaryMetrics,
-
-  // Exit multiples - to be searched online
-  exitMultiples: {
-    low: "1-2",
-    median: "3-5",
-    high: "6-10",
-    topDecile: "12+",
-    typicalAcquirers: CONSUMER_STANDARDS.typicalAcquirers,
-    recentExits: [
-      { company: "Dr. Squatch", acquirer: "Unilever", multiple: "N/A", year: 2025 },
-      { company: "Dollar Shave Club", acquirer: "Unilever", multiple: "~5x", year: 2016 },
-      { company: "Native Deodorant", acquirer: "P&G", multiple: "~10x", year: 2017 },
-    ],
-    note: "⚠️ Rechercher en ligne: 'D2C consumer brand acquisition multiples 2024' pour données actuelles",
-  },
 
   // Helper to get formatted standards
   getFormattedStandards: (stage: string = "SEED") => {
@@ -192,7 +174,6 @@ Expertise spécifique:
 - Assessment du risque de dépendance plateforme (Meta, Google, Amazon)
 - Analyse du risque inventory et working capital
 - Positionnement catégorie et timing marché
-- Comparaison aux exits Consumer historiques (Dollar Shave Club, Native, Dr. Squatch)
 - Évaluation du brand strength et du potentiel viral
 
 Sources: First Page Sage, Triple Whale, MobiLoud, Houlihan Lokey.`,
@@ -292,7 +273,6 @@ Tu es un **expert sectoriel senior** spécialisé dans le **Consumer, D2C et E-c
 - **Profitability is mandatory**: Growth-at-all-costs is dead
 - **CAC inflation post-iOS14**: Meta/Google costs up 40-100%
 - **Return to fundamentals**: Unit economics, retention, profitability path required
-- **CPG acquirers active**: Unilever, P&G, L'Oréal buying profitable D2C brands
 
 ---
 
@@ -306,7 +286,7 @@ Tu es un **expert sectoriel senior** spécialisé dans le **Consumer, D2C et E-c
 1. **Sévérité**: critical / high / medium
 2. **Preuve**: le data point exact qui déclenche le flag
 3. **Seuil sectoriel**: la référence benchmark Consumer violée
-4. **Impact quantifié**: implication sur unit economics, scalability, exit
+4. **Impact quantifié**: implication sur unit economics, scalability
 5. **Question de validation**: comment investiguer avec le fondateur
 6. **Path de mitigation**: ce qui résoudrait le concern
 
@@ -334,22 +314,6 @@ ${getStandardsOnlyInjection("Consumer", stage)}
 - Grocery: 40-65%, Pet: 30-40%, Beauty: 25-30%, Fashion: 25-26%, Home: 14-18%, Luxury: 8-12%
 
 ⚠️ **RECHERCHE EN LIGNE REQUISE**: Pour les percentiles CAC et métriques marché actuels, effectuer une recherche web (First Page Sage, Triple Whale, MobiLoud 2025+).
-
----
-
-## EXIT LANDSCAPE CONSUMER
-
-**Acquéreurs Typiques:**
-${CONSUMER_STANDARDS.typicalAcquirers.map((a) => `- ${a}`).join("\n")}
-
-**Exits Récents (historique):**
-- Dr. Squatch → Unilever $1.5B (2025)
-- Dollar Shave Club → Unilever $1B (2016)
-- Native Deodorant → P&G $100M (2017)
-
-**Warning**: Consumer exits are highly dependent on category leadership and profitability. Most D2C brands exit at 1-3x revenue. Only category leaders with strong margins get 5x+.
-
-⚠️ **EXIT MULTIPLES**: Rechercher en ligne "D2C consumer brand acquisition multiples 2024" pour données actuelles.
 
 ---
 
@@ -613,14 +577,6 @@ En utilisant les données DB:
 - Qui sont les leaders de la catégorie? Funding comparatif?
 - Position vs concurrent médian
 - What metrics differentiate successful D2C brands?
-- Exit precedents dans la catégorie?
-
-### 10. EXIT LANDSCAPE ANALYSIS
-- Acquéreurs probables pour cette catégorie?
-- Multiples observés sur exits comparables (P25/median/P75 par catégorie et metrics, source DB)?
-- CPG strategic fit (Unilever, P&G, L'Oréal)?
-- PE interest (profitability required)?
-- IPO viability (rare for D2C, require category dominance)?
 
 ### 11. KILLER QUESTIONS CONSUMER
 Génère 6-8 questions spécifiques:
@@ -847,8 +803,6 @@ export const consumerExpert = {
           competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
           consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
           barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-          typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 3,
-          recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) ?? [],
         },
         sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
           question: q.question,
@@ -901,7 +855,6 @@ export const consumerExpert = {
             turnoverDays: parsedOutput.metricsAnalysis?.find(m => m.metricName.toLowerCase().includes("inventory") || m.metricName.toLowerCase().includes("turnover"))?.metricValue as number ?? null,
             workingCapitalNeed: null,
           },
-          exitLandscape: parsedOutput.sectorDynamics?.exitLandscape ?? null,
           competitivePosition: parsedOutput.competitorBenchmark ?? null,
           sectorSpecificRisks: parsedOutput.sectorRedFlags?.filter(rf =>
             rf.flag.toLowerCase().includes("cac") ||
@@ -955,7 +908,6 @@ interface ExtendedConsumerData {
     turnoverDays: number | null;
     workingCapitalNeed: number | null;
   };
-  exitLandscape: unknown;
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   fullMetricsAnalysis: unknown[];
@@ -985,8 +937,6 @@ function getDefaultConsumerData(): SectorExpertData {
       competitionIntensity: "intense",
       consolidationTrend: "stable",
       barrierToEntry: "low",
-      typicalExitMultiple: 3,
-      recentExits: [],
     },
     sectorQuestions: [
       {

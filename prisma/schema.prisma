@@ -95,8 +95,10 @@ model CreditTransaction {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  amount                  Int // Positive = added, negative = consumed
-  balanceAfter            Int // Balance after this transaction
+  amount                  Int // Positive = added, negative = consumed (invariant : amount = freeAmount + paidAmount)
+  freeAmount              Int     @default(0) // Part free de cette tx (négatif si deduct du free, positif si grant/refund free)
+  paidAmount              Int     @default(0) // Part paid de cette tx (négatif si deduct du paid, positif si purchase/refund paid)
+  balanceAfter            Int // Balance "exposée à l'user" après cette tx (paid only pour purchaser, paid+free pour non-purchaser)
   action                  CreditAction // What triggered this transaction
   description             String? // Human-readable description
   dealId                  String? // Associated deal (if applicable)

@@ -18,7 +18,6 @@
  * - Technology readiness and commercial scalability
  * - Offtake agreements and revenue visibility
  * - Unit economics vs carbon credit alternatives
- * - Exit landscape (energy majors, industrial acquirers, IPO/SPAC)
  *
  * Cross-reference obligatoire avec Funding DB
  */
@@ -65,21 +64,10 @@ export const EXTENDED_CLIMATE_BENCHMARKS = {
   redFlagRules: CLIMATE_STANDARDS.redFlagRules,
   sectorSpecificRisks: CLIMATE_STANDARDS.sectorRisks,
   sectorSuccessPatterns: CLIMATE_STANDARDS.successPatterns,
-  typicalAcquirers: CLIMATE_STANDARDS.typicalAcquirers,
 
   // Primary and secondary metrics (norms only, no percentiles)
   primaryMetrics: CLIMATE_STANDARDS.primaryMetrics,
   secondaryMetrics: CLIMATE_STANDARDS.secondaryMetrics,
-
-  // Exit multiples - to be searched online
-  exitMultiples: {
-    low: "3-5",
-    median: "6-10",
-    high: "12-15",
-    topDecile: "20+",
-    typicalAcquirers: CLIMATE_STANDARDS.typicalAcquirers,
-    note: "⚠️ Rechercher en ligne: 'climate tech startup acquisition multiples 2024' pour données actuelles",
-  },
 
   // Helper to get formatted standards
   getFormattedStandards: (stage: string = "SEED") => {
@@ -260,7 +248,6 @@ Tu es un **expert sectoriel senior** spécialisé dans le secteur **Climate Tech
 - **Project Finance**: Offtake agreements, PPAs, bankability requirements
 - **Enterprise Sales**: Utility, industrial, corporate procurement cycles (12-24 months)
 - **Grants & Non-Dilutive**: DOE, ARPA-E, EU Horizon, national climate funds
-- **Exit Landscape**: Energy majors (Shell, BP, Total), industrial acquirers, SPAC history
 
 ---
 
@@ -324,17 +311,6 @@ ${getStandardsOnlyInjection("Climate", stage)}
 **Early Commercial**: Offshore wind, green hydrogen, point-source capture
 **Demonstration**: DAC, long-duration storage, green steel, SAF
 **Pre-Commercial**: Fusion, advanced geothermal, ocean carbon removal
-
----
-
-## EXIT LANDSCAPE CLIMATE
-
-**Acquéreurs Typiques:**
-${CLIMATE_STANDARDS.typicalAcquirers.map((a) => `- ${a}`).join("\n")}
-
-**Warning SPAC**: Les valorisations SPAC 2020-2021 étaient souvent gonflées. Proterra a fait faillite en 2023.
-
-⚠️ **EXIT MULTIPLES**: Rechercher en ligne "climate tech acquisition multiples 2024" pour données actuelles.
 
 ---
 
@@ -623,20 +599,14 @@ En utilisant les données DB:
 - Gap de funding vs concurrents au même stage
 - Qui a des offtakes/policy alignment et comment?
 
-### 10. EXIT LANDSCAPE ANALYSIS
-- Acquéreurs probables pour ce type de deal?
-- Multiples observés sur exits comparables (P25/median/P75 par comparables, source DB)?
-- IPO/SPAC viability (avec warning sur track record SPAC)?
-- Strategic acquirers (Shell New Energies, BP Ventures, etc.)?
-
-### 11. KILLER QUESTIONS CLIMATE
+### 10. KILLER QUESTIONS CLIMATE
 Génère 6-8 questions spécifiques:
 - Au moins 2 sur carbon impact / verification
 - Au moins 2 sur policy dependency / timeline
 - Au moins 2 sur technology readiness / scale-up
 - Avec good answer et red flag answer pour chaque
 
-### 12. NEGOTIATION AMMUNITION
+### 11. NEGOTIATION AMMUNITION
 Identifie 3-5 leviers basés sur:
 - Métriques sous-benchmark
 - Policy uncertainty
@@ -644,7 +614,7 @@ Identifie 3-5 leviers basés sur:
 - Comparaison valorisation vs deals Climate DB
 - Carbon impact verification gaps
 
-### 13. EXECUTIVE SUMMARY
+### 12. EXECUTIVE SUMMARY
 - Verdict one-line
 - Score sectoriel (0-100) avec breakdown
 - Top 3 strengths (avec preuves)
@@ -1079,8 +1049,7 @@ Expertise spécifique:
 - Analyse de l'alignement policy (IRA, EU Green Deal, carbon pricing)
 - Assessment de la maturité technologique (TRL, scale-up risk)
 - Validation des offtakes et revenue visibility
-- Comparaison unit economics vs carbon credit alternatives
-- Exit landscape (energy majors, industrial acquirers)`,
+- Comparaison unit economics vs carbon credit alternatives`,
 
   benchmarkData: EXTENDED_CLIMATE_BENCHMARKS as unknown as SectorBenchmarkData,
   scoringWeights: CLIMATE_SCORING_WEIGHTS,
@@ -1249,8 +1218,6 @@ export const climateExpert = {
           competitionIntensity: mapCompetition(parsedOutput.sectorDynamics?.competitionIntensity),
           consolidationTrend: mapConsolidation(parsedOutput.sectorDynamics?.consolidationTrend),
           barrierToEntry: mapBarrier(parsedOutput.sectorDynamics?.barrierToEntry),
-          typicalExitMultiple: parsedOutput.sectorDynamics?.exitLandscape?.typicalMultiple?.median ?? 8,
-          recentExits: parsedOutput.sectorDynamics?.exitLandscape?.recentExits?.map(e => `${e.company} → ${e.acquirer} (${e.multiple}x, ${e.year})`) ?? [],
         },
         sectorQuestions: parsedOutput.mustAskQuestions?.map(q => ({
           question: q.question,
@@ -1304,7 +1271,6 @@ export const climateExpert = {
             averageTermYears: null,
           },
           policyTailwinds: CLIMATE_POLICY_LANDSCAPE ?? null,
-          exitLandscape: parsedOutput.sectorDynamics?.exitLandscape ?? null,
           competitivePosition: parsedOutput.competitorBenchmark ?? null,
           sectorSpecificRisks: parsedOutput.sectorRedFlags?.filter(rf =>
             rf.flag.toLowerCase().includes("policy") ||
@@ -1370,7 +1336,6 @@ interface ExtendedClimateData {
     averageTermYears: number | null;
   };
   policyTailwinds: unknown;
-  exitLandscape: unknown;
   competitivePosition: unknown;
   sectorSpecificRisks: Array<{ flag: string; severity: string; sectorThreshold?: string }>;
   fullMetricsAnalysis: unknown[];
@@ -1416,8 +1381,6 @@ function getDefaultClimateData(): SectorExpertData {
       competitionIntensity: "medium",
       consolidationTrend: "consolidating",
       barrierToEntry: "high",
-      typicalExitMultiple: 8,
-      recentExits: [],
     },
     sectorQuestions: [
       {

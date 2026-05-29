@@ -16,7 +16,7 @@ import {
   Spacer,
   BodyText,
 } from "../pdf-components";
-import { s, sup, formatValue, fmtPct, fmtWeight } from "../pdf-helpers";
+import { s, sup, formatValue, fmtPct, fmtWeight, severityOrder } from "../pdf-helpers";
 import { AGENT_DISPLAY_NAMES } from "@/lib/format-utils";
 import {
   ALERT_SIGNAL_LABELS,
@@ -110,6 +110,9 @@ function AgentBlock({
     question?: string;
     location?: string;
   }> | undefined;
+  const sortedRedFlags = [...(redFlags ?? [])].sort(
+    (a, b) => severityOrder(a.severity ?? "") - severityOrder(b.severity ?? ""),
+  );
 
   const questions = data.questions as Array<{
     question: string;
@@ -236,18 +239,17 @@ function AgentBlock({
               { header: "Evidence", width: 30 },
               { header: "Impact", width: 28 },
             ]}
-            rows={redFlags.slice(0, 12).map((rf) => [
+            rows={sortedRedFlags.map((rf) => [
               rf.title ?? rf.description ?? "N/A",
               rf.severity ?? "N/A",
               rf.evidence ?? "",
               rf.impact ?? "",
             ])}
           />
-          {redFlags
+          {sortedRedFlags
             .filter(
               (rf) => rf.severity === "CRITICAL" || rf.severity === "HIGH"
             )
-            .slice(0, 5)
             .map(
               (rf, i) =>
                 (rf.question || rf.description) && (

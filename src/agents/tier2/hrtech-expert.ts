@@ -287,15 +287,6 @@ const HRTechOutputSchema = z.object({
     redFlagAnswer: z.string(),
   })),
 
-  // Exit potential
-  exitPotential: z.object({
-    typicalMultiple: z.number(),
-    likelyAcquirers: z.array(z.string()),
-    strategicFit: z.array(z.string()).describe("Why would these acquirers buy?"),
-    timeToExit: z.string(),
-    exitReadiness: z.enum(["ready", "needs_work", "far"]),
-  }),
-
   // Score et Synthese
   sectorScore: z.number().min(0).max(100),
   scoreBreakdown: z.object({
@@ -426,12 +417,6 @@ function buildSystemPrompt(stage: string): string {
 - NRR < 100% (le client ne croit pas = churn)
 - Single geography payroll sans roadmap internationale
 - Pas de SOC 2 Type II (deal breaker enterprise)
-
-### Acquireurs Typiques
-- **Strategic**: Workday, ADP, Paylocity, Paycom, UKG, Paychex
-- **Platform consolidators**: Rippling model (buy and integrate)
-- **PE**: Vista, Thoma Bravo (lots of HR roll-ups)
-- **Big Tech**: Microsoft (LinkedIn + Viva), Salesforce (some HR moves)
 
 ## TA MISSION
 Analyser ce deal HRTech a travers le prisme sectoriel specifique, en:
@@ -619,7 +604,7 @@ Verifie au minimum:
 
 ### 8. VALORISATION VS BENCHMARKS
 - Calcule le multiple ARR demande
-- Compare aux multiples de marche actuels (rechercher "HRTech exit multiples ${new Date().getFullYear()}")
+- Compare aux multiples de marche actuels (rechercher "HRTech ARR multiples ${new Date().getFullYear()}")
 - Donne une range fair value
 - Identifie les arguments de negociation
 
@@ -697,8 +682,6 @@ function transformOutput(raw: HRTechExpertOutput): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: raw.hrtechMoat.switchingCosts === "very_high" || raw.hrtechMoat.switchingCosts === "high" ? "high" : "medium",
-      typicalExitMultiple: raw.exitPotential.typicalMultiple,
-      recentExits: [], // Doit venir de la recherche web
     },
 
     sectorQuestions: raw.sectorQuestions.map(q => ({
@@ -748,8 +731,6 @@ function getDefaultData(): SectorExpertData {
       competitionIntensity: "high",
       consolidationTrend: "consolidating",
       barrierToEntry: "medium",
-      typicalExitMultiple: 6, // Placeholder - doit venir de recherche web
-      recentExits: [],
     },
     sectorQuestions: [],
     sectorFit: {
@@ -890,7 +871,6 @@ export const hrtechExpert = {
           hrtechCustomerAnalysis: parsedOutput.customerAnalysis,
           hrtechRetention: parsedOutput.retentionAnalysis,
           hrtechMoat: parsedOutput.hrtechMoat,
-          exitPotential: parsedOutput.exitPotential,
           verdict: {
             recommendation: parsedOutput.investmentImplication === "strong_hrtech_fundamentals" ? "STRONG_FIT" :
                            parsedOutput.investmentImplication === "solid_with_concerns" ? "GOOD_FIT" :

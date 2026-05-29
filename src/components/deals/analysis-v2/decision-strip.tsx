@@ -66,9 +66,13 @@ export function DecisionStrip({ model }: { model: Model }) {
 
   const thesisLabel = thesisVerdict ? THESIS_VERDICT_CONFIG[thesisVerdict]?.label ?? thesisVerdict : "Thèse non qualifiée";
   const thesisDetail = (() => {
-    if (!completion.hasThesisReconciler) return "Réconciliation thèse vs findings non effectuée.";
-    return "Réconciliation thèse effectuée.";
+    if (completion.hasThesisReconciler) return "Réconciliation thèse effectuée.";
+    if (model.coverage.isThesisOnly) return "Réconciliation non applicable (analyse arrêtée à la thèse).";
+    return "Réconciliation thèse vs findings non aboutie.";
   })();
+
+  const { coverage } = model;
+  const incompleteCount = coverage.incompleteAgents.length;
 
   const coherenceLabel = coherenceScore != null ? `${coherenceScore} / 100` : "Score indisponible";
   const coherenceDetail = totalContradictions > 0
@@ -105,9 +109,15 @@ export function DecisionStrip({ model }: { model: Model }) {
         />
         <MetricCard
           eyebrow="Couverture"
-          primary={model.header.completedAgents != null && model.header.totalAgents != null ? `${Math.min(model.header.completedAgents, model.header.totalAgents)} / ${model.header.totalAgents}` : "—"}
-          tone={completion.failedAgents.length === 0 ? "favorable" : completion.failedAgents.length <= 2 ? "vigilance" : "alert"}
-          detail={`${completion.failedAgents.length} agent${completion.failedAgents.length > 1 ? "s" : ""} en échec${model.header.totalDurationMin != null ? ` · ${model.header.totalDurationMin} min` : ""}${model.header.totalCostUsd != null ? ` · $${model.header.totalCostUsd.toFixed(2)}` : ""}`}
+          primary={coverage.isThesisOnly ? "Thèse seule" : `${coverage.ok} / ${coverage.total}`}
+          tone={coverage.isThesisOnly ? "info" : incompleteCount === 0 ? "favorable" : incompleteCount <= 2 ? "vigilance" : "alert"}
+          detail={`${
+            coverage.isThesisOnly
+              ? "Analyse arrêtée à la thèse (Tier 1/3 non lancés)"
+              : incompleteCount === 0
+                ? "Analyse complète"
+                : `${incompleteCount} agent${incompleteCount > 1 ? "s" : ""} non abouti${incompleteCount > 1 ? "s" : ""}`
+          }${model.header.totalDurationMin != null ? ` · ${model.header.totalDurationMin} min` : ""}`}
         />
       </div>
     </div>

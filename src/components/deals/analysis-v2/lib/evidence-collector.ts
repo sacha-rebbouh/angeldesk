@@ -1,4 +1,4 @@
-import type { EvidenceSolidity } from "@/lib/ui-configs";
+import { getFactKeyLabel, type EvidenceSolidity } from "@/lib/ui-configs";
 
 import {
   agentData,
@@ -83,11 +83,12 @@ function collectFromFactExtractor(results: ResultsMap): EvidenceRowProps[] {
   const out: EvidenceRowProps[] = [];
   for (const fact of facts) {
     if (!isRecord(fact)) continue;
-    const factKey = stringAt(fact, ["factKey"]) ?? "Fait extrait";
+    const factKey = stringAt(fact, ["factKey"]);
+    const factLabel = factKey ? getFactKeyLabel(factKey) : "Fait extrait";
     const displayValue = stringAt(fact, ["displayValue"]);
     const value = valueAt(fact, ["value"]);
     const unit = stringAt(fact, ["unit"]);
-    const claimParts = [factKey, displayValue ?? (isFiniteNumber(value) ? `${value}${unit ? ` ${unit}` : ""}` : null)];
+    const claimParts = [factLabel, displayValue ?? (isFiniteNumber(value) ? `${value}${unit ? ` ${unit}` : ""}` : null)];
     const claim = claimParts.filter(Boolean).join(" — ");
     const source = stringAt(fact, ["source"]) ?? "Source non précisée";
     const extracted = stringAt(fact, ["extractedText"]);

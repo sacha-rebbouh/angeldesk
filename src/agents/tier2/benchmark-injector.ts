@@ -110,9 +110,6 @@ ${risks}
 
 ### PATTERNS DE SUCCES DU SECTEUR
 ${successPatterns}
-
-### ACQUEREURS TYPIQUES
-${standards.typicalAcquirers.join(", ")}
 `;
 }
 
@@ -208,7 +205,7 @@ ${standards ? getBenchmarkSearchQueries(sector).map((q) => `- "${q}"`).join("\n"
 
 1. **Standards etablis** (formules, seuils, red flags): Utiliser directement, ce sont des regles stables.
 
-2. **Donnees de marche** (percentiles, exits recents): ${
+2. **Donnees de marche** (percentiles): ${
     usedWebSearch && dynamicBenchmarks
       ? "Utiliser les donnees de la recherche ci-dessus, TOUJOURS citer la source."
       : "Recherche non disponible - NE PAS inventer de chiffres. Indiquer 'Donnees de marche non disponibles' si necessaire."
@@ -252,7 +249,7 @@ Utiliser les principes generaux d'evaluation startup.
 
 Les donnees ci-dessus sont des **standards etablis** (formules, seuils, regles).
 
-Pour les **donnees de marche actuelles** (percentiles P25/median/P75, exits recents, multiples de valorisation):
+Pour les **donnees de marche actuelles** (percentiles P25/median/P75):
 - Ces donnees changent chaque annee
 - NE PAS utiliser de chiffres sans source verifiee
 - Rechercher en ligne avec: ${getBenchmarkSearchQueries(sector).map((q) => `"${q}"`).join(", ")}

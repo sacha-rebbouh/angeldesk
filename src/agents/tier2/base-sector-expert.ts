@@ -110,27 +110,6 @@ export const SectorExpertOutputSchema = z.object({
     consolidationTrend: z.enum(["fragmenting", "stable", "consolidating", "winner_take_all"]),
     barrierToEntry: z.enum(["low", "medium", "high", "very_high"]),
 
-    // Exit expectations with evidence
-    exitLandscape: z.object({
-      typicalMultiple: z.object({
-        low: z.number(),
-        median: z.number(),
-        high: z.number(),
-        topDecile: z.number(),
-      }),
-      recentExits: z.array(z.object({
-        company: z.string(),
-        acquirer: z.string(),
-        multiple: z.number(),
-        year: z.number(),
-      })),
-      potentialAcquirers: z.array(z.string()),
-      timeToExitYears: z.object({
-        typical: z.number(),
-        range: z.string(),
-      }),
-    }),
-
     // Regulatory context
     regulatoryRisk: z.object({
       level: z.enum(["low", "medium", "high", "very_high"]),
@@ -294,20 +273,6 @@ export interface SectorBenchmarkData {
     source?: string;
   }>;
 
-  exitMultiples: {
-    low: number;
-    median: number;
-    high: number;
-    topDecile: number;
-    typicalAcquirers: string[];
-    recentExits: Array<{
-      company: string;
-      acquirer: string;
-      multiple: number;
-      year: number;
-    }>;
-  };
-
   sectorSpecificRisks: string[];
   sectorSuccessPatterns: string[];
 }
@@ -362,24 +327,6 @@ function formatUnitEconomicsFormulas(formulas: SectorBenchmarkData["unitEconomic
   ).join("\n");
 }
 
-function formatExitData(exits: SectorBenchmarkData["exitMultiples"]): string {
-  const recentExitsStr = exits.recentExits
-    .slice(0, 5)
-    .map(e => `  - ${e.company} → ${e.acquirer} at ${e.multiple}x (${e.year})`)
-    .join("\n");
-
-  return `
-**Exit Multiples (Revenue/ARR):**
-| P25 | Median | P75 | Top 10% |
-|-----|--------|-----|---------|
-| ${exits.low}x | ${exits.median}x | ${exits.high}x | ${exits.topDecile}x |
-
-**Typical Acquirers:** ${exits.typicalAcquirers.join(", ")}
-
-**Recent Exits:**
-${recentExitsStr}`;
-}
-
 export function buildSectorExpertPrompt(
   context: EnrichedAgentContext,
   config: SectorConfig
@@ -405,7 +352,6 @@ Tu es un **expert sectoriel senior** spécialisé dans le secteur **${config.nam
 - Paysage réglementaire et exigences de conformité
 - Dynamiques concurrentielles et positionnement marché
 - Patterns d'échec et red flags spécifiques au ${config.name}
-- Historique des exits et acquéreurs typiques
 
 ## STANDARDS DE QUALITÉ (Big4 + Partner VC)
 
@@ -448,11 +394,6 @@ ${formatRedFlagRules(benchmarks.redFlagRules)}
 
 ## UNIT ECONOMICS FORMULAS
 ${formatUnitEconomicsFormulas(benchmarks.unitEconomicsFormulas)}
-
----
-
-## EXIT LANDSCAPE ${config.name.toUpperCase()}
-${formatExitData(benchmarks.exitMultiples)}
 
 ---
 
@@ -642,7 +583,6 @@ En utilisant les données DB:
 - Intensité concurrentielle
 - Tendance consolidation
 - Barrières à l'entrée
-- Paysage exit avec comparables récents
 
 ### 7. KILLER QUESTIONS
 Génère 5-7 questions spécifiques ${config.name}:
@@ -763,12 +703,6 @@ export function getDefaultSectorData(sectorName: string): SectorExpertOutput {
       competitionIntensity: "moderate",
       consolidationTrend: "stable",
       barrierToEntry: "medium",
-      exitLandscape: {
-        typicalMultiple: { low: 0, median: 0, high: 0, topDecile: 0 },
-        recentExits: [],
-        potentialAcquirers: [],
-        timeToExitYears: { typical: 0, range: "N/A" },
-      },
       regulatoryRisk: {
         level: "medium",
         keyRegulations: [],

@@ -45,15 +45,6 @@ export interface SectorBenchmarkData {
   primaryMetrics: SectorMetricBenchmark[];
   // Secondary metrics - supporting indicators
   secondaryMetrics: SectorMetricBenchmark[];
-  // Exit expectations
-  exitMultiples: {
-    low: number;
-    median: number;
-    high: number;
-    topDecile: number;
-    typicalAcquirers: string[];
-    recentExits: { company: string; acquirer: string; multiple: number; year: number }[];
-  };
   // Unit economics formulas specific to this sector
   unitEconomicsFormulas: {
     name: string;
@@ -232,19 +223,6 @@ export const SAAS_BENCHMARKS: SectorBenchmarkData = {
       source: "KeyBanc 2024 SaaS Survey - churn by customer segment",
     },
   ],
-  exitMultiples: {
-    low: 4,
-    median: 8,
-    high: 15,
-    topDecile: 25,
-    typicalAcquirers: ["Salesforce", "Microsoft", "SAP", "Oracle", "Adobe", "ServiceNow", "Private Equity"],
-    recentExits: [
-      // Note: Figma deal (2022) was CANCELLED in Dec 2023 - removed
-      { company: "Slack", acquirer: "Salesforce", multiple: 26, year: 2021 }, // $27.7B / ~$1B ARR - public deal
-      { company: "Mailchimp", acquirer: "Intuit", multiple: 14, year: 2021 }, // $12B / ~$800M revenue - public
-      { company: "Qualtrics", acquirer: "SAP (then spun out)", multiple: 12, year: 2019 }, // $8B deal
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "LTV", formula: "ARPA × Gross Margin × (1 / Churn Rate)", benchmark: { good: 3, excellent: 5 } },
     { name: "CAC Ratio", formula: "(S&M Spend) / (New Customers)", benchmark: { good: 0.33, excellent: 0.2 } },
@@ -388,19 +366,6 @@ export const FINTECH_BENCHMARKS: SectorBenchmarkData = {
       source: "Basel Committee on Banking Supervision - Basel III standards; FDIC well-capitalized thresholds",
     },
   ],
-  exitMultiples: {
-    low: 3,
-    median: 6,
-    high: 12,
-    topDecile: 20,
-    typicalAcquirers: ["JPMorgan", "Goldman Sachs", "Visa", "Mastercard", "PayPal", "Block", "Fiserv"],
-    recentExits: [
-      // Note: Plaid/Visa deal was BLOCKED by DOJ - removed
-      { company: "Credit Karma", acquirer: "Intuit", multiple: 14, year: 2020 }, // $7.1B deal - public
-      { company: "Honey", acquirer: "PayPal", multiple: 0, year: 2020 }, // $4B - revenue multiple unknown
-      { company: "Bill.com acquired Invoice2go", acquirer: "Bill.com", multiple: 8, year: 2021 }, // public
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "Revenue per Transaction", formula: "TPV × Take Rate / Transactions", benchmark: { good: 0.5, excellent: 1.5 } },
     { name: "Contribution Margin", formula: "(Revenue - Variable Costs) / Revenue", benchmark: { good: 0.4, excellent: 0.6 } },
@@ -528,18 +493,6 @@ export const MARKETPLACE_BENCHMARKS: SectorBenchmarkData = {
       source: "Industry estimates - varies significantly by vertical (food $30 vs real estate $300K)",
     },
   ],
-  exitMultiples: {
-    low: 1,
-    median: 3,
-    high: 8,
-    topDecile: 15,
-    typicalAcquirers: ["Amazon", "eBay", "Etsy", "Uber", "DoorDash", "Booking Holdings", "Private Equity"],
-    recentExits: [
-      { company: "Depop", acquirer: "Etsy", multiple: 0, year: 2021 }, // $1.625B - revenue multiple not public
-      { company: "Reverb", acquirer: "Etsy", multiple: 0, year: 2019 }, // $275M - revenue not disclosed
-      { company: "Postmates", acquirer: "Uber", multiple: 0, year: 2020 }, // $2.65B all-stock deal
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "Buyer LTV", formula: "AOV × Take Rate × Purchases/Year × Lifespan", benchmark: { good: 100, excellent: 300 } },
     { name: "Contribution/Transaction", formula: "AOV × Take Rate - Fulfillment Costs", benchmark: { good: 5, excellent: 15 } },
@@ -667,18 +620,6 @@ export const HEALTHTECH_BENCHMARKS: SectorBenchmarkData = {
       source: "CMS data - commercial and Medicare reimbursement rates by service type",
     },
   ],
-  exitMultiples: {
-    low: 3,
-    median: 7,
-    high: 15,
-    topDecile: 25,
-    typicalAcquirers: ["UnitedHealth", "CVS Health", "Teladoc", "Cigna", "Major Pharma", "Private Equity"],
-    recentExits: [
-      { company: "Livongo", acquirer: "Teladoc", multiple: 0, year: 2020 }, // $18.5B deal - complex stock transaction
-      { company: "MDLive", acquirer: "Cigna", multiple: 0, year: 2021 }, // Terms not disclosed
-      { company: "One Medical", acquirer: "Amazon", multiple: 0, year: 2022 }, // $3.9B - revenue multiple not clear
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "Revenue per Patient", formula: "Total Revenue / Active Patients", benchmark: { good: 500, excellent: 1500 } },
     { name: "Cost per Outcome", formula: "Total Costs / Patients with Improved Outcomes", benchmark: { good: 1000, excellent: 500 } },
@@ -851,20 +792,6 @@ export const DEEPTECH_BENCHMARKS: SectorBenchmarkData & {
       source: "NASA Technology Readiness Levels official definition (NASA NPR 7123.1B)",
     },
   ],
-  exitMultiples: {
-    low: 2,
-    median: 6,
-    high: 15,
-    topDecile: 35,
-    typicalAcquirers: ["Google", "Microsoft", "Apple", "NVIDIA", "Intel", "Qualcomm", "Defense Primes", "Industrial Giants"],
-    recentExits: [
-      // Note: DeepMind multiple was NOT disclosed - £400M deal, valuation uncertain
-      { company: "DeepMind", acquirer: "Google", multiple: 0, year: 2014 }, // £400M - multiple unknown
-      { company: "Cruise", acquirer: "GM", multiple: 0, year: 2016 }, // $1B - pre-revenue, multiple N/A
-      // Arm/NVIDIA deal was BLOCKED - removed
-      { company: "Nuance", acquirer: "Microsoft", multiple: 5, year: 2021 }, // $19.7B / ~$4B revenue
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "R&D ROI", formula: "Future Revenue Value / Cumulative R&D Spend", benchmark: { good: 3, excellent: 10 } },
     { name: "IP Value/Employee", formula: "Patent Portfolio Value / Technical Employees", benchmark: { good: 500000, excellent: 2000000 } },
@@ -894,7 +821,7 @@ export const CLIMATE_BENCHMARKS: SectorBenchmarkData & {
 
   // ============================================================================
   // SECTOR-SPECIFIC SUCCESS PATTERNS
-  // Source: PwC State of Climate Tech 2024, CTVC analysis, historical exits
+  // Source: PwC State of Climate Tech 2024, CTVC analysis
   // ============================================================================
   sectorSuccessPatterns: [
     "Strong policy alignment with IRA, EU Green Deal, or regional carbon pricing mechanisms",
@@ -929,7 +856,6 @@ export const CLIMATE_BENCHMARKS: SectorBenchmarkData & {
     "Supply chain concentration: Critical minerals (lithium, rare earths) geopolitically exposed",
     "Integration complexity: Enterprise/industrial sales cycles 12-24 months",
     "Measurement challenges: Carbon accounting methodologies still evolving, audit risk",
-    "Exit path uncertainty: Energy majors acquiring selectively, IPO window unpredictable",
     "Team burnout: Mission-driven founders may underestimate commercial execution needs",
   ],
   primaryMetrics: [
@@ -1034,19 +960,6 @@ export const CLIMATE_BENCHMARKS: SectorBenchmarkData & {
       source: "BloombergNEF - PPA and offtake agreement duration analysis",
     },
   ],
-  exitMultiples: {
-    low: 2,
-    median: 5,
-    high: 12,
-    topDecile: 25,
-    typicalAcquirers: ["Shell", "BP", "TotalEnergies", "Brookfield", "Engie", "Enel", "Industrial Giants", "PE"],
-    recentExits: [
-      // SPAC valuations were often inflated - marking multiples as uncertain
-      { company: "ChargePoint", acquirer: "SPAC/IPO", multiple: 0, year: 2021 }, // Valuation fluctuated significantly
-      { company: "Proterra", acquirer: "SPAC", multiple: 0, year: 2021 }, // Filed bankruptcy 2023
-      { company: "Sunrun", acquirer: "IPO", multiple: 0, year: 2015 }, // Complex lease model, multiple unclear
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "Revenue per tCO2e", formula: "Total Revenue / Carbon Reduced", benchmark: { good: 50, excellent: 150 } },
     { name: "Customer ROI", formula: "(Energy Savings + Carbon Credit Value) / Solution Cost", benchmark: { good: 2, excellent: 5 } },
@@ -1171,18 +1084,6 @@ export const HARDWARE_BENCHMARKS: SectorBenchmarkData = {
       source: "First Round Capital - hardware scaling cost curves analysis",
     },
   ],
-  exitMultiples: {
-    low: 1,
-    median: 3,
-    high: 8,
-    topDecile: 15,
-    typicalAcquirers: ["Apple", "Google", "Amazon", "Samsung", "Sony", "Industrial Giants", "PE"],
-    recentExits: [
-      { company: "Nest", acquirer: "Google", multiple: 0, year: 2014 }, // $3.2B - was pre-profit, multiple N/A
-      { company: "Ring", acquirer: "Amazon", multiple: 0, year: 2018 }, // $1B+ - revenue not disclosed
-      { company: "Beats", acquirer: "Apple", multiple: 0, year: 2014 }, // $3B - $1.5B rev rumored = ~2x
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "LTV:Hardware", formula: "(Hardware Margin + Lifetime Software Revenue) / CAC", benchmark: { good: 3, excellent: 5 } },
     { name: "Payback (units)", formula: "Fixed Costs / (Revenue per Unit - Variable Cost per Unit)", benchmark: { good: 5000, excellent: 2000 } },
@@ -1312,18 +1213,6 @@ export const GAMING_BENCHMARKS: SectorBenchmarkData & {
       source: "Sensor Tower 2024 - ARPPU by genre and region",
     },
   ],
-  exitMultiples: {
-    low: 1,
-    median: 4,
-    high: 10,
-    topDecile: 20,
-    typicalAcquirers: ["Microsoft", "Sony", "Tencent", "NetEase", "EA", "Take-Two", "Embracer", "PE"],
-    recentExits: [
-      { company: "Activision Blizzard", acquirer: "Microsoft", multiple: 6, year: 2023 }, // $69B / ~$8B rev = 8.5x EV/Rev
-      { company: "Zynga", acquirer: "Take-Two", multiple: 4, year: 2022 }, // $12.7B / ~$2.8B rev
-      { company: "Supercell", acquirer: "Tencent", multiple: 0, year: 2016 }, // $8.6B for 84% - EBITDA multiple, not rev
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "LTV", formula: "ARPDAU × Average Lifetime Days", benchmark: { good: 3, excellent: 8 } },
     { name: "Contribution Margin", formula: "(LTV - CPI) / LTV", benchmark: { good: 0.25, excellent: 0.5 } },
@@ -1528,19 +1417,6 @@ export const AI_BENCHMARKS: SectorBenchmarkData & {
       source: "Analysis of AI startup defensibility patterns - Sequoia/a16z frameworks",
     },
   ],
-  exitMultiples: {
-    low: 5,
-    median: 12,
-    high: 25,
-    topDecile: 50,
-    typicalAcquirers: ["Google", "Microsoft", "Meta", "Apple", "Amazon", "NVIDIA", "Salesforce", "ServiceNow", "Databricks"],
-    recentExits: [
-      { company: "Inflection AI", acquirer: "Microsoft (acqui-hire)", multiple: 0, year: 2024 }, // $650M for talent, not product
-      { company: "Character.ai", acquirer: "Google (licensing deal)", multiple: 20, year: 2024 }, // $2.7B licensing
-      { company: "Mosaic ML", acquirer: "Databricks", multiple: 18, year: 2023 }, // $1.3B acquisition
-      { company: "Adept", acquirer: "Amazon (acqui-hire)", multiple: 0, year: 2024 }, // Talent acquisition
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "Cost per Inference", formula: "(GPU Cost + API Costs + Bandwidth) / Total Queries", benchmark: { good: "$0.005", excellent: "$0.001" }, source: "a16z AI cost analysis" },
     { name: "Gross Margin", formula: "(Revenue - Inference Costs) / Revenue", benchmark: { good: "60%", excellent: "75%" }, source: "AI company financials" },
@@ -1713,19 +1589,6 @@ export const CONSUMER_BENCHMARKS: SectorBenchmarkData = {
       source: "Triple Whale - Ecommerce Metrics Guide",
     },
   ],
-  exitMultiples: {
-    low: 1,
-    median: 3,
-    high: 8,
-    topDecile: 15,
-    typicalAcquirers: ["P&G", "Unilever", "L'Oréal", "Nestlé", "Amazon", "Walmart", "Private Equity"],
-    recentExits: [
-      // Note: Multiples not always disclosed - using estimates where available
-      { company: "Dr. Squatch", acquirer: "Unilever", multiple: 0, year: 2025 }, // $1.5B - multiple not public
-      { company: "Dollar Shave Club", acquirer: "Unilever", multiple: 5, year: 2016 }, // $1B / ~$200M rev = ~5x
-      { company: "Native", acquirer: "P&G", multiple: 0, year: 2017 }, // $100M - revenue not disclosed
-    ],
-  },
   unitEconomicsFormulas: [
     { name: "Payback Period", formula: "CAC / (AOV × Contribution Margin × Orders/Year)", benchmark: { good: 12, excellent: 6 } },
     { name: "First Order Profit", formula: "AOV × Contribution Margin - CAC", benchmark: { good: 0, excellent: 15 } },

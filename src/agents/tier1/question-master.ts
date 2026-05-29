@@ -1,4 +1,5 @@
 import { BaseAgent } from "../base-agent";
+import { severityRank } from "@/services/red-flag-dedup";
 import type {
   EnrichedAgentContext,
   QuestionMasterResult,
@@ -938,9 +939,14 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
         // Extract red flags if available
         if (Array.isArray(data.redFlags) && data.redFlags.length > 0) {
           agentSummary += `Red Flags (${data.redFlags.length}):\n`;
-          for (const rf of data.redFlags.slice(0, 5)) {
-            const flag = rf as { severity?: string; title?: string; description?: string };
+          const rfArr = data.redFlags as Array<{ severity?: string; title?: string; description?: string }>;
+          for (const flag of [...rfArr]
+            .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+            .slice(0, 8)) {
             agentSummary += `  - [${flag.severity || "UNKNOWN"}] ${flag.title || flag.description || "Red flag detected"}\n`;
+          }
+          if (rfArr.length > 8) {
+            agentSummary += `  - … et ${rfArr.length - 8} autres\n`;
           }
         }
 

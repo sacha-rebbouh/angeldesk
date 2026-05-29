@@ -165,7 +165,6 @@ export function dimensionsSummary(results: ResultsMap | null | undefined): Array
     "team-investigator": "Équipe",
     "market-intelligence": "Marché",
     "competitive-intel": "Concurrence",
-    "exit-strategist": "Exit",
     "tech-stack-dd": "Stack tech.",
     "tech-ops-dd": "Ops & sécurité",
     "legal-regulatory": "Légal",
@@ -235,13 +234,15 @@ export type AgentSnapshot = {
   error: string | null;
 };
 
+// NOTE: doit rester synchronisé avec TIER1_AGENT_NAMES (src/agents/orchestrator/types.ts).
+// exit-strategist + scenario-modeler ont été retirés du runtime (doctrine anti-oraculaire) :
+// ne PAS les réintroduire ici, sinon ils réapparaissent en carte « Analyse non exécutée ».
 const AGENT_DEFINITIONS: Array<{ key: string; label: string; role: string }> = [
   { key: "financial-auditor", label: "Audit financier", role: "Finance" },
   { key: "deck-forensics", label: "Forensique du deck", role: "Deck" },
   { key: "team-investigator", label: "Investigation équipe", role: "Équipe" },
   { key: "market-intelligence", label: "Intelligence marché", role: "Marché" },
   { key: "competitive-intel", label: "Veille concurrentielle", role: "Concurrence" },
-  { key: "exit-strategist", label: "Stratégie d'exit", role: "Exit" },
   { key: "tech-stack-dd", label: "Stack technique", role: "Tech" },
   { key: "tech-ops-dd", label: "Ops & sécurité", role: "Tech" },
   { key: "legal-regulatory", label: "Légal & régulatoire", role: "Légal" },

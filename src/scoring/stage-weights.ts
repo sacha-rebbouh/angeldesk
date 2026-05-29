@@ -15,63 +15,59 @@ export interface DimensionWeights {
   productTech: number;
   gtmTraction: number;
   competitive: number;
-  exitPotential: number;
 }
 
+// Poids reweightés à 6 dimensions (dimension "exitPotential" retirée — doctrine
+// anti-oraculaire, pas de projection d'exit). Le poids exit a été redistribué
+// proportionnellement aux 6 dimensions restantes ; chaque profil somme à 1.0.
 export const STAGE_WEIGHTS: Record<string, DimensionWeights> = {
   PRE_SEED: {
-    team: 0.40,
+    team: 0.42,
     financials: 0.05,
-    market: 0.20,
-    productTech: 0.15,
+    market: 0.21,
+    productTech: 0.16,
     gtmTraction: 0.05,
-    competitive: 0.10,
-    exitPotential: 0.05,
+    competitive: 0.11,
   },
   SEED: {
-    team: 0.30,
+    team: 0.32,
     financials: 0.10,
-    market: 0.15,
-    productTech: 0.15,
-    gtmTraction: 0.15,
+    market: 0.16,
+    productTech: 0.16,
+    gtmTraction: 0.16,
     competitive: 0.10,
-    exitPotential: 0.05,
   },
   SERIES_A: {
-    team: 0.20,
-    financials: 0.20,
-    market: 0.15,
-    productTech: 0.15,
-    gtmTraction: 0.20,
+    team: 0.21,
+    financials: 0.21,
+    market: 0.16,
+    productTech: 0.16,
+    gtmTraction: 0.21,
     competitive: 0.05,
-    exitPotential: 0.05,
   },
   SERIES_B: {
-    team: 0.15,
-    financials: 0.30,
-    market: 0.10,
-    productTech: 0.10,
-    gtmTraction: 0.20,
-    competitive: 0.05,
-    exitPotential: 0.10,
+    team: 0.17,
+    financials: 0.33,
+    market: 0.11,
+    productTech: 0.11,
+    gtmTraction: 0.22,
+    competitive: 0.06,
   },
   SERIES_C: {
-    team: 0.10,
-    financials: 0.35,
-    market: 0.10,
-    productTech: 0.10,
-    gtmTraction: 0.15,
-    competitive: 0.05,
-    exitPotential: 0.15,
+    team: 0.12,
+    financials: 0.41,
+    market: 0.12,
+    productTech: 0.12,
+    gtmTraction: 0.17,
+    competitive: 0.06,
   },
   LATER: {
-    team: 0.10,
-    financials: 0.35,
-    market: 0.10,
-    productTech: 0.10,
-    gtmTraction: 0.15,
-    competitive: 0.05,
-    exitPotential: 0.15,
+    team: 0.12,
+    financials: 0.41,
+    market: 0.12,
+    productTech: 0.12,
+    gtmTraction: 0.17,
+    competitive: 0.06,
   },
 };
 
@@ -85,7 +81,6 @@ export const SECTOR_ADJUSTMENTS: Record<string, Partial<Record<keyof DimensionWe
   deeptech: {
     productTech: 1.5,
     gtmTraction: 0.5,
-    exitPotential: 0.7,
   },
   saas: {
     financials: 1.3,
@@ -168,7 +163,6 @@ export function formatWeightsForPrompt(weights: DimensionWeights): string {
     productTech: { label: 'Product/Tech', agents: 'tech-stack-dd, tech-ops-dd, deck-forensics' },
     gtmTraction: { label: 'GTM/Traction', agents: 'gtm-analyst, customer-intel' },
     competitive: { label: 'Competitive', agents: 'competitive-intel' },
-    exitPotential: { label: 'Exit Potential', agents: 'market-intelligence, competitive-intel, sector-expert' },
   };
 
   let table = '| Dimension | Poids | Agents sources |\n|-----------|-------|----------------|\n';

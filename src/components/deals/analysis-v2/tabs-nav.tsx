@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 type TabDef = { id: string; label: string };
 
@@ -12,7 +12,7 @@ const TABS: TabDef[] = [
   { id: "memo", label: "Mémo" },
 ];
 
-export function TabsNav() {
+export function TabsNav({ rightSlot }: { rightSlot?: ReactNode }) {
   const [active, setActive] = useState<string>(TABS[0].id);
   const refs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
@@ -104,6 +104,11 @@ export function TabsNav() {
           </button>
         );
       })}
+      {rightSlot ? (
+        <div className="ml-auto flex items-center" onKeyDown={(e) => e.stopPropagation()}>
+          {rightSlot}
+        </div>
+      ) : null}
     </div>
   );
 }
