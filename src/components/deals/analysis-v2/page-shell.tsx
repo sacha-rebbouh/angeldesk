@@ -17,6 +17,9 @@ type Props = {
   vm: AnalysisV2ViewModel;
   hideHeader?: boolean;
   dealId?: string;
+  /** Relance pilotée par AnalysisV2Live (progression + revue de thèse dans la v2). */
+  onRelaunch?: () => void;
+  isRelaunching?: boolean;
 };
 
 const MODE_LABELS_FR: Record<string, string> = {
@@ -86,7 +89,12 @@ export function AnalysisV2PageShell(props: Props) {
             props.dealId ? (
               <div className="flex items-center gap-2">
                 <ExportPdfButton dealId={props.dealId} />
-                <RelaunchAnalysisButton dealId={props.dealId} />
+                {props.onRelaunch ? (
+                  <RelaunchAnalysisButton
+                    onRelaunch={props.onRelaunch}
+                    isRelaunching={props.isRelaunching ?? false}
+                  />
+                ) : null}
               </div>
             ) : undefined
           }

@@ -15,7 +15,7 @@ import {
   Radio,
 } from "lucide-react";
 import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
-import { AnalysisV2PageShell } from "@/components/deals/analysis-v2/page-shell";
+import { AnalysisV2Live } from "@/components/deals/analysis-v2/analysis-v2-live";
 import { buildAnalysisV2ViewModel } from "@/components/deals/analysis-v2/lib/selectors";
 import type { ResultsMap } from "@/components/deals/analysis-v2/lib/extractors";
 import { ScoreGrid } from "@/components/deals/score-display";
@@ -395,10 +395,21 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           </div>
         </TabsContent>
 
-        {/* Tab 2: Analyse IA — V2 Page Shell quand une analyse COMPLETED existe ET qu'aucune analyse n'est en cours ; sinon l'ancien panel (contrôles + progression live de la relance). Signal "en cours" = analyse RUNNING (pas deal.status, qui peut rester ANALYZING à tort → on garderait alors la dernière v2 valide). */}
+        {/* Tab 2: Analyse IA — la vue v2 dès qu'une analyse COMPLETED existe. AnalysisV2Live
+            porte le cycle de vie DANS la v2 (relance → revue de thèse → progression →
+            résultat), donc plus de bascule vers l'ancien panel : ce ping-pong créait le trou
+            de timing SSR↔Inngest et l'impasse « revue de thèse en attente ». `initialActive`
+            amorce le suivi live si une analyse RUNNING est détectée au chargement. L'ancien
+            panel ne sert plus que pour la toute première analyse (aucune v2 à afficher encore). */}
         <TabsContent value="analysis" className="space-y-6">
-          {analysisV2ViewModel && !deal.analyses.some((a) => a.status === "RUNNING") ? (
-            <AnalysisV2PageShell dealName={capitalizeFirst(canonicalDeal.companyName ?? deal.name)} vm={analysisV2ViewModel} hideHeader dealId={deal.id} />
+          {analysisV2ViewModel ? (
+            <AnalysisV2Live
+              dealName={capitalizeFirst(canonicalDeal.companyName ?? deal.name)}
+              vm={analysisV2ViewModel}
+              dealId={deal.id}
+              hideHeader
+              initialActive={deal.analyses.some((a) => a.status === "RUNNING")}
+            />
           ) : (
             <AnalysisPanelWrapper
               dealId={deal.id}

@@ -1,6 +1,23 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-29 — V2 autosuffisante sur le cycle de vie (relance + revue de thèse + progression)
+
+### Contexte / bug
+Cliquer « Relancer » sur la vue v2 menait à un 409 *« Une revue de thèse est déjà en attente… »* + un reload sans issue. Cause racine : le flux est **thesis-first** (un Deep Dive extrait la thèse puis se met en PAUSE sur une revue que le BA doit finaliser via `ThesisReviewModal`), mais ce modal n'existait **que** dans l'ancien `AnalysisPanel`. La v2 ne le portait pas. Le bouton PR #15 faisait `POST /api/analyze` + `router.refresh()` qui **courait après le worker Inngest** (async) → la page restait sur la v2 figée, la thèse se parkait sans UI, et tout reclic était bloqué par la garde `pending_thesis` (`reserveFullAnalysisDispatch`). La bascule v2 ↔ ancien panel était la source de fragilité.
+
+### Décision
+Supprimer la bascule : rendre la **v2 autosuffisante** sur tout le cycle de vie. Plus de ping-pong de surfaces.
+
+### Modifications
+- **`analysis-v2/analysis-v2-live.tsx`** (nouveau) — couche client qui porte le cycle de vie DANS la v2 : polling statut analyse (`GET /api/deals/[id]/analyses`, 3s) + thèse (`GET …/thesis`, 5s) ; auto-ouverture du `ThesisReviewModal` réutilisé tel quel (self-routing `/thesis/decision` & `/thesis/rebuttal`) ; `AnalysisProgress` pendant un RUNNING ; relance **thèse-aware** (POST → bascule client immédiate sur le suivi, sans `router.refresh()` qui courait après Inngest ; 403/`upgradeRequired` → toast + `/pricing` ; **409 → bascule sur le suivi** pour surfacer le modal au lieu d'un cul-de-sac) ; au COMPLETED/FAILED de l'analyse **suivie** (`watchedIdRef` : ignore le COMPLETED de l'ancienne analyse tant que la nouvelle RUNNING n'est pas captée) → `router.refresh()` reconstruit la v2 finale ; filet anti-spinner 30 min.
+- **`analysis-v2/relaunch-analysis-button.tsx`** — devient présentationnel (`onRelaunch` + `isRelaunching`) ; la logique remonte dans `AnalysisV2Live`.
+- **`analysis-v2/page-shell.tsx`** — props `onRelaunch?`/`isRelaunching?` ; le bouton Relancer ne s'affiche que si `dealId && onRelaunch` (préserve la page preview sans `dealId`).
+- **`[dealId]/page.tsx`** — rend `AnalysisV2Live` dès qu'une analyse COMPLETED existe (`initialActive` = une analyse RUNNING détectée au chargement → amorce le suivi live, ce qui surface aussi une revue de thèse parkée). **Suppression** de la bascule `!some(RUNNING) → ancien panel`. L'ancien panel ne sert plus que pour la toute première analyse (aucune v2 à afficher encore).
+
+Pas de migration (UI pure). Vérif : `tsc --noEmit` 0 erreur ; suite unit 284 fichiers / 4075 tests verts.
+
+---
 ## 2026-05-29 — Purge exit Tier 2 finale : acquéreurs + requêtes + prose/JSDoc
 
 ### Contexte

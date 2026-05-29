@@ -1,7 +1,5 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,58 +8,24 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ChevronDown, Loader2, RotateCw } from "lucide-react";
-import { toast } from "sonner";
 
 interface RelaunchAnalysisButtonProps {
-  dealId: string;
+  onRelaunch: () => void;
+  isRelaunching: boolean;
 }
 
 /**
  * Bouton « Relancer une analyse » de la vue v2, à côté de l'Export PDF.
- * Reproduit l'appel de l'ancien AnalysisPanel (POST /api/analyze, full_analysis).
- * En dropdown : le clic explicite sur l'item sert de garde-fou (la relance
- * consomme des crédits et lance une nouvelle analyse en arrière-plan).
  *
- * Feedback : toast + router.refresh() (pas de progression live sur la v2 — éviter
- * de cacher la dernière analyse valide derrière un état ANALYZING potentiellement
- * bloqué). La nouvelle analyse apparaît au rechargement une fois terminée.
+ * Présentationnel : toute la logique (POST /api/analyze, gestion crédits / 409,
+ * progression live, revue de thèse) est portée par `AnalysisV2Live`. Objectif :
+ * la relance reste DANS la v2 (progression + modal de thèse), sans bascule vers
+ * l'ancien panel — c'est ce ping-pong qui créait le trou de timing et l'impasse.
+ *
+ * Le dropdown sert de garde-fou : le clic explicite confirme une relance qui
+ * consomme des crédits.
  */
-export function RelaunchAnalysisButton({ dealId }: RelaunchAnalysisButtonProps) {
-  const router = useRouter();
-  const [isRelaunching, setIsRelaunching] = useState(false);
-
-  const handleRelaunch = useCallback(async () => {
-    setIsRelaunching(true);
-    try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dealId, type: "full_analysis" }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        if (response.status === 403 || err.upgradeRequired) {
-          toast.error(err.error || "Crédits insuffisants pour relancer l'analyse", {
-            action: { label: "Acheter des crédits", onClick: () => router.push("/pricing") },
-          });
-          return;
-        }
-        throw new Error(err.error || "Échec du lancement de l'analyse");
-      }
-
-      toast.success(
-        "Analyse relancée en arrière-plan — recharge la page dans quelques minutes pour voir le nouveau résultat.",
-      );
-      router.refresh();
-    } catch (error) {
-      console.error("[RelaunchAnalysisButton] relaunch error:", error);
-      toast.error(error instanceof Error ? error.message : "Erreur lors de la relance de l'analyse");
-    } finally {
-      setIsRelaunching(false);
-    }
-  }, [dealId, router]);
-
+export function RelaunchAnalysisButton({ onRelaunch, isRelaunching }: RelaunchAnalysisButtonProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -77,7 +41,7 @@ export function RelaunchAnalysisButton({ dealId }: RelaunchAnalysisButtonProps) 
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuItem
-          onClick={handleRelaunch}
+          onClick={onRelaunch}
           className="flex flex-col items-start gap-0.5 py-2.5"
         >
           <div className="flex items-center gap-2 font-medium">
