@@ -85,6 +85,7 @@ import {
   TIER1_PHASE_D,
   TIER3_AGENT_NAMES,
   FULL_ANALYSIS_TIER3_AGENT_NAMES,
+  TIERS_EXECUTED,
   TIER3_EXECUTION_BATCHES,
   TIER3_BATCHES_BEFORE_TIER2,
   TIER3_BATCHES_AFTER_TIER2,
@@ -1922,7 +1923,7 @@ export class AgentOrchestrator {
             totalCost,
             totalTimeMs,
             summary,
-            tiersExecuted: ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"],
+            tiersExecuted: [...TIERS_EXECUTED],
           }, collectedWarnings);
         }
       }
@@ -1975,7 +1976,7 @@ export class AgentOrchestrator {
           totalCost,
           totalTimeMs,
           summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
-          tiersExecuted: ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"],
+          tiersExecuted: [...TIERS_EXECUTED],
         }, collectedWarnings);
       }
 
@@ -2434,7 +2435,7 @@ export class AgentOrchestrator {
         totalCost,
         totalTimeMs,
         summary,
-        tiersExecuted: ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"],
+        tiersExecuted: [...TIERS_EXECUTED],
         analysisDelta: analysisDelta ?? undefined,
       }, collectedWarnings);
     } catch (error) {
@@ -2476,7 +2477,7 @@ export class AgentOrchestrator {
         totalCost,
         totalTimeMs,
         summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        tiersExecuted: ["TIER_1", "TIER_2", "TIER_3", "SYNTHESIS"],
+        tiersExecuted: [...TIERS_EXECUTED],
       }, collectedWarnings);
     }
   }

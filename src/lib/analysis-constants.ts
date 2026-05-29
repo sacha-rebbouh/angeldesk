@@ -28,6 +28,31 @@ export const CREDIT_ANALYSIS_CONFIG = {
   },
 } as const;
 
+// =============================================================================
+// DISPLAY LIMITS — restauré 2026-05-29
+// Centralise les limites d'affichage par tier de results. Valeurs Infinity par
+// défaut = afficher tout ce qui a été payé. Le user peut décider ultérieurement
+// de remplacer Infinity par des valeurs finies (ex strengths=5) pour éviter de
+// surcharger l'UI sur des Tier 3 verbeux.
+// =============================================================================
+
+export const FULL_DISPLAY_LIMITS = {
+  strengths: Infinity,
+  weaknesses: Infinity,
+  redFlags: Infinity,
+  devilsAdvocate: Infinity,
+  criticalQuestions: Infinity,
+  score: true,
+  contradictions: true,
+  scenarios: false,
+  sectorExpert: true,
+  memo: true,
+} as const;
+
+export function getDisplayLimits() {
+  return FULL_DISPLAY_LIMITS;
+}
+
 // Agent lists for categorizing results
 export const TIER1_AGENTS = [
   "financial-auditor",

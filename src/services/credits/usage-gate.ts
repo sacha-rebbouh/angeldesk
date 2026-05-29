@@ -93,19 +93,21 @@ export interface CreditDeductionContext {
 /**
  * Deduct an explicit credit amount for variable-cost operations.
  *
+ * Doctrine "free hebdo Option B" (depuis 2026-05-29) :
+ *   Le free hebdo (10cr/7j use-it-or-lose-it) est réservé aux users qui n'ont jamais
+ *   acheté (totalPurchased === 0). Dès le 1er pack acheté, l'user "sort" du free et
+ *   vit uniquement sur son balance paid. Empêche cannibalisation des packs.
+ *
  * Algo (doctrine money-touching errors.md 2026-03-12 CREDITS) :
  *   1. Idempotency check via UNIQUE constraint sur CreditTransaction.idempotencyKey
  *   2. Read balance, check expiry sur le paid uniquement
- *   3. Lazy reset : si freeResetStartedAt + 7j < now → updateMany WHERE
- *      freeResetStartedAt = $oldValue SET balanceFree=10, freeResetStartedAt=null
- *   4. Compute free/paid split : freeUsed = min(balanceFree, cost), paidUsed = cost - freeUsed
- *   5. Fail si balanceFree + balance < cost
- *   6. Update atomique avec optimistic locking sur (balanceFree, balance, freeResetStartedAt)
- *      Le WHERE freeResetStartedAt = $oldValue empêche un autre worker d'avoir reset entre temps
- *   7. Si freeUsed > 0 ET freeResetStartedAt était null, démarrer la fenêtre (= ce timestamp)
- *   8. Log transaction avec balanceAfter = newPaid + newFree (TOTAL)
- *
- * balanceAfter = TOTAL (free + paid) — sémantique cohérente avec l'UI.
+ *   3. Si totalPurchased > 0 (acheteur) → SKIP free totalement, deduct = 100% paid
+ *   4. Sinon (non-acheteur, free actif) :
+ *      a. Lazy reset si freeResetStartedAt + 7j < now → updateMany WHERE = $oldValue
+ *      b. Compute split : freeUsed = min(balanceFree, cost), paidUsed = cost - freeUsed
+ *      c. Démarre la fenêtre si freeUsed > 0 ET freeResetStartedAt était null
+ *   5. Update atomique avec optimistic locking sur (balanceFree, balance, freeResetStartedAt)
+ *   6. Log transaction avec balanceAfter = newPaid + newFree (TOTAL)
  */
 export async function deductCreditAmount(
   userId: string,
@@ -145,31 +147,38 @@ export async function deductCreditAmount(
 
       const now = new Date();
 
-      // Lazy reset : si fenêtre expirée, on remet balanceFree=10 et freeResetStartedAt=null
-      const needsReset =
-        balance.freeResetStartedAt !== null &&
-        now.getTime() - balance.freeResetStartedAt.getTime() >= FREE_TIER.windowDurationMs;
+      // Option B : si l'user a déjà acheté, le free hebdo ne s'applique pas
+      const isPaidUser = balance.totalPurchased > 0;
 
-      if (needsReset && balance.freeResetStartedAt) {
-        const resetUpdate = await tx.userCreditBalance.updateMany({
-          where: { userId, freeResetStartedAt: balance.freeResetStartedAt },
-          data: { balanceFree: FREE_TIER.weeklyAllowance, freeResetStartedAt: null },
-        });
-        if (resetUpdate.count === 0) {
-          // Un autre worker a déjà reset entre notre read et notre write — re-fetch
-          balance = await tx.userCreditBalance.findUnique({ where: { userId } });
-          if (!balance) {
-            return { success: false, balanceAfter: 0, error: 'Compte crédits non trouvé' };
+      // Lazy reset (uniquement pour les non-acheteurs)
+      if (!isPaidUser) {
+        const needsReset =
+          balance.freeResetStartedAt !== null &&
+          now.getTime() - balance.freeResetStartedAt.getTime() >= FREE_TIER.windowDurationMs;
+
+        if (needsReset && balance.freeResetStartedAt) {
+          const resetUpdate = await tx.userCreditBalance.updateMany({
+            where: { userId, freeResetStartedAt: balance.freeResetStartedAt },
+            data: { balanceFree: FREE_TIER.weeklyAllowance, freeResetStartedAt: null },
+          });
+          if (resetUpdate.count === 0) {
+            balance = await tx.userCreditBalance.findUnique({ where: { userId } });
+            if (!balance) {
+              return { success: false, balanceAfter: 0, error: 'Compte crédits non trouvé' };
+            }
+          } else {
+            balance = { ...balance, balanceFree: FREE_TIER.weeklyAllowance, freeResetStartedAt: null };
           }
-        } else {
-          balance = { ...balance, balanceFree: FREE_TIER.weeklyAllowance, freeResetStartedAt: null };
         }
       }
 
-      // Compute free/paid split (free d'abord)
-      const freeUsed = Math.min(balance.balanceFree, cost);
+      // Compute split selon le statut de l'user
+      // - Acheteur (Option B) : 100% paid, free ignoré
+      // - Non-acheteur : free d'abord, puis paid (théoriquement balance=0 mais safe)
+      const effectiveFree = isPaidUser ? 0 : balance.balanceFree;
+      const freeUsed = Math.min(effectiveFree, cost);
       const paidUsed = cost - freeUsed;
-      const totalAvailable = balance.balanceFree + balance.balance;
+      const totalAvailable = effectiveFree + balance.balance;
 
       if (totalAvailable < cost) {
         return {
@@ -179,11 +188,11 @@ export async function deductCreditAmount(
         };
       }
 
-      // Démarre la fenêtre si on consomme du free pour la 1ère fois depuis le dernier reset
-      const shouldStartWindow = balance.freeResetStartedAt === null && freeUsed > 0;
+      // Démarre la fenêtre uniquement pour les non-acheteurs au 1er deduct du free
+      const shouldStartWindow = !isPaidUser && balance.freeResetStartedAt === null && freeUsed > 0;
       const newFreeResetStartedAt = shouldStartWindow ? now : balance.freeResetStartedAt;
 
-      // Update atomique avec optimistic locking sur les 3 champs concernés
+      // Update atomique avec optimistic locking
       const updated = await tx.userCreditBalance.updateMany({
         where: {
           userId,
@@ -204,13 +213,17 @@ export async function deductCreditAmount(
 
       const newPaid = balance.balance - paidUsed;
       const newFree = balance.balanceFree - freeUsed;
-      const balanceAfter = newPaid + newFree;
+      // Option B : pour un purchaser, balanceAfter = newPaid only (le free n'est pas
+      // exposé à l'user). Pour un non-purchaser, balanceAfter = newPaid + newFree.
+      const balanceAfter = isPaidUser ? newPaid : newPaid + newFree;
 
-      // Log la transaction. balanceAfter = TOTAL (free + paid).
+      // Log la transaction avec le split exact (pour refund pro-rata futur)
       await tx.creditTransaction.create({
         data: {
           userId,
           amount: -cost,
+          freeAmount: -freeUsed,
+          paidAmount: -paidUsed,
           balanceAfter,
           action: action as CreditAction,
           description: context.description ?? getActionDescription(action),
@@ -265,6 +278,8 @@ export async function addCredits(
         effectiveCredits = Math.min(credits, Math.max(0, maxBalance - currentBalance));
       }
 
+      // Option B : dès qu'un user achète, il "sort" du free hebdo →
+      // balanceFree = 0 + freeResetStartedAt = null à la création ET à l'update.
       const balance = await tx.userCreditBalance.upsert({
         where: { userId },
         create: {
@@ -273,21 +288,26 @@ export async function addCredits(
           totalPurchased: credits,
           lastPackName: packName,
           expiresAt: getExpiryDate(),
-          // balanceFree démarre à 10 par défaut (schema), freeResetStartedAt null
+          balanceFree: 0, // purchaser dès le départ
+          freeResetStartedAt: null,
         },
         update: {
           balance: { increment: effectiveCredits },
           totalPurchased: { increment: credits },
           lastPackName: packName,
-          expiresAt: getExpiryDate(), // Reset expiry on new purchase
+          expiresAt: getExpiryDate(),
+          balanceFree: 0, // reset si l'user passait de non-purchaser à purchaser
+          freeResetStartedAt: null,
         },
       });
 
-      // Log the transaction
+      // Log la transaction (paidAmount = +credits, freeAmount = 0)
       await tx.creditTransaction.create({
         data: {
           userId,
           amount: credits,
+          freeAmount: 0,
+          paidAmount: credits,
           balanceAfter: balance.balance,
           action: 'PURCHASE',
           description: `Achat pack ${packName}`,
@@ -339,6 +359,8 @@ export async function grantFreeCredits(userId: string): Promise<boolean> {
         data: {
           userId,
           amount: FREE_TIER.weeklyAllowance,
+          freeAmount: FREE_TIER.weeklyAllowance,
+          paidAmount: 0,
           balanceAfter: FREE_TIER.weeklyAllowance,
           action: 'FREE_GRANT',
           description: `${FREE_TIER.weeklyAllowance} crédits free hebdomadaires (inscription)`,
@@ -356,11 +378,12 @@ export async function grantFreeCredits(userId: string): Promise<boolean> {
 /**
  * Refund credits for a failed action.
  *
- * P1 — Idempotence fine: l'ancienne cle `(userId, dealId, action='REFUND')`
- * bloquait tout refund ulterieur sur le MEME deal meme si plusieurs analyses
- * echouaient (cas resumable qui re-fail). On utilise maintenant un
- * idempotencyKey scope precis (analysisId si dispo, sinon dealId + timestamp
- * arrondi a la minute pour absorber les doubles clics).
+ * Doctrine Option B-strict : pas de mix free/paid possible au moment d'un deduct
+ * (purchaser → 100% paid, non-purchaser → 100% free). Donc le refund cible le
+ * même pot : crédite en `balance` paid si purchaser, en `balanceFree` si non-purchaser.
+ *
+ * Idempotence : scopedKey scope précis (analysisId si dispo, sinon dealId
+ * + timestamp arrondi à la minute pour absorber les doubles clics).
  */
 export async function refundCredits(
   userId: string,
@@ -391,18 +414,30 @@ export async function refundCredits(
         }
       }
 
+      const balance = await tx.userCreditBalance.findUnique({
+        where: { userId },
+        select: { totalPurchased: true },
+      });
+      const creditToFree = !balance || balance.totalPurchased === 0;
+
       const updated = await tx.userCreditBalance.update({
         where: { userId },
-        data: {
-          balance: { increment: cost },
-        },
+        data: creditToFree
+          ? { balanceFree: { increment: cost } }
+          : { balance: { increment: cost } },
       });
+
+      const exposedBalance = updated.totalPurchased > 0
+        ? updated.balance
+        : updated.balance + updated.balanceFree;
 
       await tx.creditTransaction.create({
         data: {
           userId,
           amount: cost,
-          balanceAfter: updated.balance,
+          freeAmount: creditToFree ? cost : 0,
+          paidAmount: creditToFree ? 0 : cost,
+          balanceAfter: exposedBalance,
           action: 'REFUND',
           description: `Remboursement ${getActionDescription(action)}`,
           dealId: dealId ?? null,
@@ -443,16 +478,31 @@ export async function refundCreditAmount(
         }
       }
 
+      // Option B-strict : crédite en free pour non-purchaser, en paid pour purchaser
+      const existingBalance = await tx.userCreditBalance.findUnique({
+        where: { userId },
+        select: { totalPurchased: true },
+      });
+      const creditToFree = !existingBalance || existingBalance.totalPurchased === 0;
+
       const updated = await tx.userCreditBalance.update({
         where: { userId },
-        data: { balance: { increment: amount } },
+        data: creditToFree
+          ? { balanceFree: { increment: amount } }
+          : { balance: { increment: amount } },
       });
+
+      const exposedBalance = updated.totalPurchased > 0
+        ? updated.balance
+        : updated.balance + updated.balanceFree;
 
       await tx.creditTransaction.create({
         data: {
           userId,
           amount,
-          balanceAfter: updated.balance,
+          freeAmount: creditToFree ? amount : 0,
+          paidAmount: creditToFree ? 0 : amount,
+          balanceAfter: exposedBalance,
           action: 'REFUND',
           description: context.description ?? `Remboursement ${getActionDescription(action)}`,
           dealId: context.dealId ?? null,
@@ -463,7 +513,7 @@ export async function refundCreditAmount(
         },
       });
 
-      return { success: true, balanceAfter: updated.balance };
+      return { success: true, balanceAfter: exposedBalance };
     });
 
     return result;
@@ -485,11 +535,14 @@ export async function refundCreditAmount(
 export async function getCreditBalance(userId: string): Promise<CreditBalanceInfo> {
   const balance = await getOrCreateBalance(userId);
 
+  // Option B : acheteur → free totalement masqué (0, pas de timer)
+  const isPaidUser = balance.totalPurchased > 0;
   const projectedFree = projectBalanceFree(balance);
-  // Si la projection a fait le reset, on doit aussi nuller le timestamp côté affichage
-  const projectedReset =
-    balance.freeResetStartedAt !== null &&
-    new Date().getTime() - balance.freeResetStartedAt.getTime() >= FREE_TIER.windowDurationMs
+
+  const projectedReset = isPaidUser
+    ? null
+    : balance.freeResetStartedAt !== null &&
+      new Date().getTime() - balance.freeResetStartedAt.getTime() >= FREE_TIER.windowDurationMs
       ? null
       : balance.freeResetStartedAt;
   const nextFreeResetAt = projectedReset
@@ -611,8 +664,18 @@ async function getOrCreateBalance(userId: string) {
 /**
  * Projection mentale du balanceFree post-reset (si la fenêtre a expiré).
  * Pas d'écriture en DB — le reset réel se fait lors du prochain deductCreditAmount.
+ *
+ * Option B : si l'user est acheteur (totalPurchased > 0), il ne bénéficie plus du free
+ * hebdo — on retourne 0 quoi qu'il arrive.
  */
-function projectBalanceFree(balance: { balanceFree: number; freeResetStartedAt: Date | null }): number {
+function projectBalanceFree(balance: {
+  balanceFree: number;
+  freeResetStartedAt: Date | null;
+  totalPurchased: number;
+}): number {
+  if (balance.totalPurchased > 0) {
+    return 0;
+  }
   if (
     balance.freeResetStartedAt !== null &&
     new Date().getTime() - balance.freeResetStartedAt.getTime() >= FREE_TIER.windowDurationMs
