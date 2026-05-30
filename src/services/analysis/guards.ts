@@ -41,17 +41,6 @@ export async function getRunningAnalysisForDeal(
   });
 }
 
-export function isPendingThesisReview(
-  analysis: Pick<RunningAnalysisGuard, "status" | "mode" | "thesisDecision"> | null | undefined
-): boolean {
-  return Boolean(
-    analysis &&
-      analysis.status === "RUNNING" &&
-      analysis.mode === "full_analysis" &&
-      analysis.thesisDecision === null
-  );
-}
-
 export function isFullAnalysisInProgress(
   analysis: Pick<RunningAnalysisGuard, "status" | "mode"> | null | undefined
 ): boolean {
@@ -65,8 +54,7 @@ export function isFullAnalysisInProgress(
 export type FullAnalysisDispatchReservation =
   | { kind: "reserved" }
   | { kind: "pending_dispatch" }
-  | { kind: "running"; analysisId: string; thesisId: string | null }
-  | { kind: "pending_thesis"; analysisId: string; thesisId: string | null };
+  | { kind: "running"; analysisId: string; thesisId: string | null };
 
 export async function reserveFullAnalysisDispatch(
   dealId: string
@@ -95,14 +83,6 @@ export async function reserveFullAnalysisDispatch(
     });
 
     if (runningAnalysis) {
-      if (isPendingThesisReview(runningAnalysis)) {
-        return {
-          kind: "pending_thesis",
-          analysisId: runningAnalysis.id,
-          thesisId: runningAnalysis.thesisId,
-        };
-      }
-
       const hasMeaningfulProgress =
         (runningAnalysis.completedAgents ?? 0) > 0 ||
         runningAnalysis.thesisDecision != null ||

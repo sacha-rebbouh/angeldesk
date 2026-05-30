@@ -10,7 +10,7 @@ import {
   patchDocumentSourceMetadataAtomic,
 } from "@/services/documents/source-metadata";
 import { runEvidenceForDocument } from "@/services/evidence";
-import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
+import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
 import { tryDecryptJsonField } from "@/lib/encryption";
 
 /**
@@ -202,9 +202,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (runningAnalysis) {
       return NextResponse.json(
         {
-          error: isPendingThesisReview(runningAnalysis)
-            ? "Une revue de thèse est en attente. Finalisez-la avant de corriger les métadonnées du document."
-            : "Une analyse est en cours sur ce deal. Finalisez-la avant de corriger les métadonnées du document.",
+          error: "Une analyse est en cours sur ce deal. Finalisez-la avant de corriger les métadonnées du document.",
           reason: "analysis_running",
           analysisId: runningAnalysis.id,
         },

@@ -320,17 +320,6 @@ export async function POST(request: NextRequest) {
 
     const dispatchReservation = await reserveFullAnalysisDispatch(dealId);
 
-    if (dispatchReservation.kind === "pending_thesis") {
-      return NextResponse.json(
-        {
-          error: "Une revue de these est deja en attente pour ce deal. Finalisez-la avant de relancer un Deep Dive.",
-          analysisId: dispatchReservation.analysisId,
-          thesisId: dispatchReservation.thesisId,
-        },
-        { status: 409 }
-      );
-    }
-
     if (dispatchReservation.kind === "running") {
       return NextResponse.json({ error: "An analysis is already running for this deal" }, { status: 409 });
     }

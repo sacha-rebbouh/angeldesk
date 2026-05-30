@@ -20,7 +20,7 @@ import { requireAuth } from "@/lib/auth";
 import { handleApiError } from "@/lib/api-error";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
-import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
+import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
 import {
   ingestTextCorpusItem,
   textIngestionInputSchema,
@@ -83,9 +83,7 @@ export async function POST(request: NextRequest) {
     if (runningAnalysis) {
       return NextResponse.json(
         {
-          error: isPendingThesisReview(runningAnalysis)
-            ? "Une revue de thèse est en attente. Finalisez-la avant d'ajouter une pièce au corpus."
-            : "Une analyse est déjà en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
+          error: "Une analyse est déjà en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
           pendingAnalysisId: runningAnalysis.id,
           pendingThesisId: runningAnalysis.thesisId,
         },

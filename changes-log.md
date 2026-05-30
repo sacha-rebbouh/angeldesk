@@ -1,6 +1,25 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-31 — Fix régression : deadlock dispatch après retrait du gate (guards.ts)
+
+### Contexte
+Suivi live d'une analyse prod post-déploiement (`cmpsybp5f`) : morte après `document-extractor` (deal flaky, crash précoce déjà observé avant le déploiement) **mais bloquée en `RUNNING` indéfiniment** au lieu de `FAILED`. Cause : régression introduite par le retrait du gate. `src/services/analysis/guards.ts` `isPendingThesisReview` = `status==="RUNNING" && mode==="full_analysis" && thesisDecision===null`. Le gate retiré → `thesisDecision` TOUJOURS null → `isPendingThesisReview` renvoie `true` pour **toute** analyse full_analysis en cours → `reserveFullAnalysisDispatch` renvoie `pending_thesis` (court-circuite le nettoyage stale) → `/api/analyze` répond 409 « revue de thèse déjà en attente » = **deadlock non-relançable** (le bug que la PR #16 avait corrigé, ré-introduit car le retrait du gate n'avait pas nettoyé `guards.ts` ni les routes). Sévérité : une analyse qui ne crashe pas se termine normalement ; le bug mord sur les runs crashés (deadlock) + un mauvais message pendant un run.
+
+### Modifications (fix-forward, pas de revert)
+- **`src/services/analysis/guards.ts`** : suppression de `isPendingThesisReview` + du kind `pending_thesis` (union) + de la branche correspondante dans `reserveFullAnalysisDispatch` (une analyse en cours = `running`, et le nettoyage stale redevient atteignable).
+- **`src/app/api/analyze/route.ts`** : suppression de la branche `pending_thesis`.
+- **4 routes documents** (`upload`, `text`, `[documentId]/metadata`, `upload/client`) : message « analyse en cours » au lieu du ternaire thèse ; import `isPendingThesisReview` retiré.
+- **`analyze/__tests__/route.test.ts`** : test `pending_thesis` converti en cas `running` (409 « already running »).
+
+Vérif : `tsc --noEmit` **exit 0** ; suite unit complète **4063 passés / 2 skipped / 0 échec** (sur base `origin/main` + fix). Branche `fix/thesis-gate-guard` (off origin/main), **non pushée**.
+
+### Reste (ton appel)
+- **Déployer** le fix sur `main` (régression prod active sur les runs crashés).
+- **Débloquer `cmpsybp5f`** → `FAILED` (mutation prod ; `scripts/unblock-stale-analysis.ts`).
+- **Gap plus profond (à part)** : `reserveFullAnalysisDispatch` ne récupère pas un run **mort-avec-progression** (`hasMeaningfulProgress` bloque le cutoff stale 2h ; pas de timestamp d'activité sur `Analysis`) → un crash mid-analyse reste non-récupérable auto. Design à revoir.
+
+---
 ## 2026-05-31 — Transparence crédit sur la re-extraction de thèse (upload doc)
 
 ### Contexte

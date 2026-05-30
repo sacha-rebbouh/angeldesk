@@ -28,7 +28,7 @@ import {
 import { reuseCompletedExtractionForContentHash } from "@/services/documents/extraction-reuse";
 import { runEvidenceForDocument } from "@/services/evidence";
 import { CHARGE_DOCUMENT_EXTRACTION_CREDITS, deductCreditAmount, refundCreditAmount } from "@/services/credits";
-import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
+import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
 import type {
   DocumentPageArtifact,
   ExtractionCreditEstimate,
@@ -272,9 +272,7 @@ export async function POST(request: NextRequest) {
 
     if (runningAnalysis) {
       return bailWithCleanup(409, {
-        error: isPendingThesisReview(runningAnalysis)
-          ? "Une revue de these est en attente. Finalisez-la avant d'uploader un nouveau document sur ce deal."
-          : "Une analyse est deja en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
+        error: "Une analyse est deja en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
         pendingAnalysisId: runningAnalysis.id,
         pendingThesisId: runningAnalysis.thesisId,
       });

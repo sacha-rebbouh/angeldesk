@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { authenticateOrUnauthorized } from "@/lib/auth-helpers";
 import { handleApiError } from "@/lib/api-error";
 import { checkRateLimitDistributed } from "@/lib/sanitize";
-import { getRunningAnalysisForDeal, isPendingThesisReview } from "@/services/analysis/guards";
+import { getRunningAnalysisForDeal } from "@/services/analysis/guards";
 
 export const maxDuration = 30;
 
@@ -125,9 +125,7 @@ export async function POST(request: NextRequest) {
         const runningAnalysis = await getRunningAnalysisForDeal(parsedPayload.dealId);
         if (runningAnalysis) {
           throw new ClientUploadTokenError(
-            isPendingThesisReview(runningAnalysis)
-              ? "Une revue de these est en attente. Finalisez-la avant d'uploader un nouveau document sur ce deal."
-              : "Une analyse est deja en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
+            "Une analyse est deja en cours sur ce deal. Attendez sa fin avant de modifier le corpus documentaire.",
             409
           );
         }

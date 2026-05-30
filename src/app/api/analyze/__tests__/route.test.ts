@@ -171,10 +171,10 @@ describe("POST /api/analyze thesis-first contract", () => {
     }));
   });
 
-  it("refuse de relancer un deep dive quand une revue de these est deja en attente", async () => {
+  it("refuse de relancer un deep dive quand une analyse est deja en cours (gate thèse retiré)", async () => {
     mocks.analysisFindFirst.mockResolvedValueOnce(null); // resumable lookup
     mocks.reserveFullAnalysisDispatch.mockResolvedValue({
-      kind: "pending_thesis",
+      kind: "running",
       analysisId: "analysis_running",
       thesisId: "thesis_active",
     });
@@ -194,11 +194,7 @@ describe("POST /api/analyze thesis-first contract", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(409);
-    expect(payload).toMatchObject({
-      analysisId: "analysis_running",
-      thesisId: "thesis_active",
-    });
-    expect(String(payload.error)).toContain("revue de these");
+    expect(String(payload.error)).toContain("already running");
     expect(mocks.recordDealAnalysis).not.toHaveBeenCalled();
     expect(mocks.inngestSend).not.toHaveBeenCalled();
   });
