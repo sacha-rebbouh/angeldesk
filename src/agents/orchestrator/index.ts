@@ -75,7 +75,6 @@ import {
   type AnalysisResult,
   type AnalysisType,
   type AdvancedAnalysisOptions,
-  type PausedAnalysisResult,
   ANALYSIS_CONFIGS,
   AGENT_COUNTS,
   TIER1_AGENT_NAMES,
@@ -336,7 +335,7 @@ export class AgentOrchestrator {
           enableTrace,
           analysisModeOverride,
           isUpdate,
-          pauseAfterThesis: options.pauseAfterThesis,
+          stopAfterThesis: options.stopAfterThesis,
         });
         break;
       case "tier3_synthesis":
@@ -1418,7 +1417,7 @@ export class AgentOrchestrator {
       onEarlyWarning,
       isUpdate = false,
       enableTrace = true,
-      pauseAfterThesis = false,
+      stopAfterThesis = false,
       analysisModeOverride,
     } = advancedOptions;
     const startTime = Date.now();
@@ -1719,25 +1718,24 @@ export class AgentOrchestrator {
         }
       }
 
-      // STEP 2.6: THESIS GATE — pause pipeline mi-analyse pour Inngest step.waitForEvent
-      // Si pauseAfterThesis=true, on persiste l'etat et on retourne early. L'analyse reste
-      // en RUNNING en DB. Inngest ensuite : step.waitForEvent('thesis.decision', 24h) puis
-      // orchestrator.continueAnalysisAfterThesis(analysisId, decision) pour reprendre.
-      if (pauseAfterThesis) {
-        // FIX (audit P0 #7) : si thesis-extractor a echoue (thesisOutput null) OU si la these
-        // n'a pas ete persistee, on ne peut pas continuer le flow gate. On abort proprement
-        // avec refund integral puisque le BA a paye Deep Dive (5cr) pour une analyse gated.
+      // STEP 2.6: STOP-AFTER-THESIS — re-extraction de these (upload doc / admin backfill).
+      // Pas de gate, pas de decision : on s'arrete apres la these et on COMPLETE l'analyse
+      // en mode thesis_only (meme compute qu'avant — seuls Tier 0 + these tournent, 1 cr).
+      // Le lancement normal (stopAfterThesis=false) enchaine directement Tier 1/2/3 ci-dessous.
+      if (stopAfterThesis) {
+        // Si thesis-extractor a echoue, on ne peut pas livrer la these → FAILED (le refund
+        // est gere par l'appelant Inngest sur result.success === false).
         if (!thesisOutput || !enrichedContext.thesis) {
           console.error(
-            `[Orchestrator:FullAnalysis] pauseAfterThesis=true mais thesis-extractor a echoue (output=${!!thesisOutput}, thesisCtx=${!!enrichedContext.thesis}). Abort avec refund.`
+            `[Orchestrator:FullAnalysis] stopAfterThesis=true mais thesis-extractor a echoue (output=${!!thesisOutput}, thesisCtx=${!!enrichedContext.thesis}).`
           );
-          await stateMachine.fail(new Error("Thesis extraction failed before review gate"));
+          await stateMachine.fail(new Error("Thesis extraction failed during re-extraction"));
           await completeAnalysis({
             analysisId: analysis.id,
             success: false,
             totalCost,
             totalTimeMs: Date.now() - startTime,
-            summary: "Extraction de these echouee — analyse annulee, credits rembourses.",
+            summary: "Extraction de these echouee.",
             results: allResults,
             statusOverride: "FAILED",
           });
@@ -1756,59 +1754,22 @@ export class AgentOrchestrator {
         }
 
         console.log(
-          `[Orchestrator:FullAnalysis] Pause-after-thesis triggered (analysisId=${analysis.id}, thesisId=${enrichedContext.thesis.id}, verdict=${thesisOutput.verdict})`
+          `[Orchestrator:FullAnalysis] Stop-after-thesis (re-extraction) — analysisId=${analysis.id}, thesisId=${enrichedContext.thesis.id}, verdict=${thesisOutput.verdict}`
         );
 
-        // Checkpoint state (resumeAnalysis pourra reprendre d'ici)
-        await stateMachine.startAnalysis();
-
-        // FIX (audit P0 #1) : saveCheckpoint OBLIGATOIRE pour que resumeAnalysis retrouve
-        // l'etat sur le continue/contest. Sans ca resumeAnalysis throws "no checkpoint".
-        const pendingTier1 = [...TIER1_AGENT_NAMES];
-        const pendingTier2 = sectorExpert ? [sectorExpert.name] : [];
-        const pendingTier3 = [...FULL_ANALYSIS_TIER3_AGENT_NAMES];
-        const completedAgentsSet = Object.keys(allResults).filter((k) => allResults[k]?.success);
-        await saveCheckpoint(analysis.id, {
-          state: "ANALYZING",
-          completedAgents: completedAgentsSet,
-          pendingAgents: [...pendingTier1, ...pendingTier2, ...pendingTier3],
-          failedAgents: Object.entries(allResults)
-            .filter(([, r]) => r && !r.success)
-            .map(([name, r]) => ({ agent: name, error: r.error ?? "unknown", retries: 0 })),
-          findings: [],
-          results: allResults as Record<string, AgentResult>,
-          totalCost,
-          startTime: new Date(startTime).toISOString(),
-        }).catch((err: unknown) =>
-          console.warn("[Orchestrator:FullAnalysis] Failed to save checkpoint for pause:", err)
-        );
-
+        const reextractSummary = `These re-extraite — verdict ${thesisOutput.verdict} (confiance ${thesisOutput.confidence}/100).`;
         await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-        await prisma.analysis.update({
-          where: { id: analysis.id },
-          data: { results: JSON.parse(JSON.stringify(allResults)) },
-        }).catch((err: unknown) => console.warn("[Orchestrator:FullAnalysis] Failed to persist partial results:", err));
+        await completeAnalysis({
+          analysisId: analysis.id,
+          success: true,
+          totalCost,
+          totalTimeMs: Date.now() - startTime,
+          summary: reextractSummary,
+          results: allResults,
+          mode: "thesis_only",
+        });
 
-        // Emit event Inngest (non-bloquant) pour signaler au worker qu'il peut transitioner
-        // vers step.waitForEvent. En dev/tests sans Inngest, c'est un no-op propre.
-        try {
-          const { inngest: inngestClient } = await import("@/lib/inngest-client");
-          await inngestClient.send({
-            name: "analysis/thesis.review-required",
-            data: {
-              analysisId: analysis.id,
-              thesisId: enrichedContext.thesis.id,
-              dealId,
-              verdict: thesisOutput.verdict,
-              confidence: thesisOutput.confidence,
-              alertsCount: thesisOutput.alerts.length,
-            },
-          });
-        } catch (err) {
-          console.warn("[Orchestrator:FullAnalysis] Failed to emit thesis.review-required event:", err);
-        }
-
-        const pausedResult: AnalysisResult = {
+        return {
           sessionId: analysis.id,
           dealId,
           type: "full_analysis" as const,
@@ -1816,16 +1777,10 @@ export class AgentOrchestrator {
           results: allResults,
           totalCost,
           totalTimeMs: Date.now() - startTime,
-          summary: `Phase 1 complete — verdict these ${thesisOutput.verdict} (confiance ${thesisOutput.confidence}/100). En attente decision BA.`,
+          summary: reextractSummary,
           earlyWarnings: collectedWarnings,
           hasCriticalWarnings: collectedWarnings.some(w => w.severity === "critical"),
         };
-        (pausedResult as PausedAnalysisResult).pausedAfterThesis = true;
-        (pausedResult as PausedAnalysisResult).thesisId = enrichedContext.thesis.id;
-        (pausedResult as PausedAnalysisResult).thesisVerdict = thesisOutput.verdict;
-        (pausedResult as PausedAnalysisResult).thesisConfidence = thesisOutput.confidence;
-        (pausedResult as PausedAnalysisResult).alertsCount = thesisOutput.alerts.length;
-        return pausedResult;
       }
 
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases
@@ -4080,152 +4035,6 @@ export class AgentOrchestrator {
       ...analysis,
       canResume: analysis.lastCheckpointAt !== null,
     }));
-  }
-
-  /**
-   * Continue a RUNNING analysis that was paused after thesis-extraction (pauseAfterThesis=true).
-   * Called by Inngest AFTER step.waitForEvent('analysis/thesis.decision') resolves.
-   *
-   * Decision semantics :
-   *  - "stop"    : completes analysis as thesis-only (status=COMPLETED, mode=thesis_only).
-   *                Partial refund (3 credits on 5 for Deep Dive) handled by Inngest post-call.
-   *  - "continue": runs Tier 1/2/3 via resumeAnalysis. If verdict fragile, sets thesisBypass=true.
-   *  - "contest" : closes the current paused review as superseded. The new thesis review
-   *                cycle is handled by analysis/thesis.reextract.
-   *  - "timeout" : completes analysis as expired, full refund (5 credits).
-   */
-  async continueAnalysisAfterThesis(
-    analysisId: string,
-    decision: "stop" | "continue" | "contest" | "timeout",
-    options: { thesisBypass?: boolean } = {},
-  ): Promise<AnalysisResult> {
-    return runWithLLMContext(
-      { agentName: null, analysisId },
-      () => this._continueAnalysisAfterThesisImpl(analysisId, decision, options)
-    );
-  }
-
-  private async _continueAnalysisAfterThesisImpl(
-    analysisId: string,
-    decision: "stop" | "continue" | "contest" | "timeout",
-    options: { thesisBypass?: boolean } = {},
-  ): Promise<AnalysisResult> {
-    console.log(
-      `[Orchestrator] Continuing analysis after thesis decision: analysisId=${analysisId}, decision=${decision}, bypass=${options.thesisBypass ?? false}`
-    );
-
-    const analysis = await prisma.analysis.findUnique({
-      where: { id: analysisId },
-      select: {
-        id: true,
-        dealId: true,
-        type: true,
-        mode: true,
-        status: true,
-        totalCost: true,
-        totalTimeMs: true,
-        deal: true,
-      },
-    });
-
-    if (!analysis) {
-      throw new Error(`Analysis ${analysisId} not found`);
-    }
-
-    if (analysis.status !== "RUNNING") {
-      logger.warn(
-        { analysisId, status: analysis.status, decision },
-        "Skipping thesis decision continuation because analysis is no longer running"
-      );
-      return {
-        sessionId: analysisId,
-        dealId: analysis.dealId,
-        type: (analysis.type as AnalysisType) ?? "full_analysis",
-        success: false,
-        results: {},
-        totalCost: Number(analysis.totalCost ?? 0),
-        totalTimeMs: analysis.totalTimeMs ?? 0,
-        summary: `Skipped thesis decision because analysis is ${analysis.status.toLowerCase()}.`,
-      };
-    }
-
-    // Persist decision metadata
-    await prisma.analysis.update({
-      where: { id: analysisId },
-      data: {
-        thesisDecision: decision,
-        thesisDecisionAt: new Date(),
-        thesisBypass: options.thesisBypass ?? false,
-      },
-    });
-
-    // Short-circuit : stop or timeout → complete as thesis-only / expired
-    if (decision === "stop" || decision === "timeout") {
-      const summary = decision === "timeout"
-        ? "Analyse expiree : 24h sans decision sur la these. Les credits ont ete rembourses integralement."
-        : "Analyse arretee par le BA apres extraction de la these. Rapport these-only genere.";
-
-      const existingResultsRaw = await loadResults(analysisId, {
-        preferDb: true,
-        backfillCache: false,
-      });
-      const existingResults = toAgentResultsRecord(existingResultsRaw) ?? {};
-
-      await completeAnalysis({
-        analysisId,
-        success: true,
-        summary,
-        totalCost: Number(analysis.totalCost ?? 0),
-        totalTimeMs: analysis.totalTimeMs ?? 0,
-        results: existingResults,
-        mode: "thesis_only",
-      });
-
-      console.log(`[Orchestrator] Analysis ${analysisId} completed as ${decision}`);
-
-      return {
-        sessionId: analysisId,
-        dealId: analysis.dealId,
-        type: (analysis.type as AnalysisType) ?? "full_analysis",
-        success: true,
-        results: existingResults,
-        totalCost: Number(analysis.totalCost ?? 0),
-        totalTimeMs: analysis.totalTimeMs ?? 0,
-        summary,
-      };
-    }
-
-    if (decision === "contest") {
-      const existingResultsRaw = await loadResults(analysisId, {
-        preferDb: true,
-        backfillCache: false,
-      });
-      const existingResults = toAgentResultsRecord(existingResultsRaw) ?? {};
-
-      await completeAnalysis({
-        analysisId,
-        success: true,
-        summary: "Analyse initiale remplacee apres contest valide. Une nouvelle these est en review.",
-        totalCost: Number(analysis.totalCost ?? 0),
-        totalTimeMs: analysis.totalTimeMs ?? 0,
-        results: existingResults,
-        mode: "thesis_only",
-      });
-
-      return {
-        sessionId: analysisId,
-        dealId: analysis.dealId,
-        type: (analysis.type as AnalysisType) ?? "full_analysis",
-        success: true,
-        results: existingResults,
-        totalCost: Number(analysis.totalCost ?? 0),
-        totalTimeMs: analysis.totalTimeMs ?? 0,
-        summary: "Analyse initiale superseded after valid rebuttal.",
-      };
-    }
-
-    // continue → reprendre via resumeAnalysis (qui rebuildd le state et lance Tier 1/2/3)
-    return this.resumeAnalysis(analysisId);
   }
 
   /**

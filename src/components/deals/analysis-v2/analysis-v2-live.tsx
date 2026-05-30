@@ -11,7 +11,6 @@ import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { queryKeys } from "@/lib/query-keys";
 import { AnalysisProgress } from "../analysis-progress";
-import { ThesisReviewModal } from "../thesis/thesis-review-modal";
 import { AnalysisV2PageShell } from "./page-shell";
 import type { AnalysisV2ViewModel } from "./lib/selectors";
 
@@ -27,13 +26,6 @@ type LatestAnalysis = {
   startedAt: string | null;
   createdAt: string;
   mode: string | null;
-};
-
-type ThesisLite = {
-  reformulated: string;
-  verdict: string;
-  confidence: number;
-  alerts?: Array<unknown>;
 };
 
 type Props = {
@@ -98,17 +90,15 @@ function ActiveAnalysisView({
 /**
  * AnalysisV2Live — couche opérationnelle de la vue v2.
  *
- * Rend la v2 autosuffisante sur tout le cycle de vie (relance → revue de thèse →
- * progression → résultat), pour supprimer la bascule v2 ↔ ancien panel qui créait
- * le trou de timing (SSR vs Inngest async) et l'impasse « revue de thèse en attente ».
+ * Rend la v2 autosuffisante sur le cycle de vie (relance → progression → résultat),
+ * pour supprimer la bascule v2 ↔ ancien panel qui créait le trou de timing
+ * (SSR vs Inngest async). Le gate thèse ayant été retiré, l'analyse déroule d'une
+ * traite sans pause ni décision.
  *
- * - Polling du statut de la dernière analyse + de la thèse (hasPendingDecision).
- * - Auto-ouverture du `ThesisReviewModal` (réutilisé tel quel — self-routing vers
- *   /thesis/decision & /thesis/rebuttal) dès qu'une thèse est en attente.
- * - Relance thèse-aware : POST /api/analyze, puis bascule immédiate (client) sur le
- *   suivi live — pas de `router.refresh()` qui courait après le worker Inngest. Sur
- *   409 (analyse/thèse déjà en cours), on bascule aussi sur le suivi pour surfacer le
- *   modal au lieu d'un toast en cul-de-sac.
+ * - Polling du statut de la dernière analyse.
+ * - Relance : POST /api/analyze, puis bascule immédiate (client) sur le suivi live —
+ *   pas de `router.refresh()` qui courait après le worker Inngest. Sur 409 (analyse
+ *   déjà en cours), on bascule aussi sur le suivi pour capter la progression.
  * - Au COMPLETED/FAILED de l'analyse suivie, `router.refresh()` reconstruit la vue v2.
  */
 export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive }: Props) {
@@ -116,7 +106,6 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
   const queryClient = useQueryClient();
   const [isActive, setIsActive] = useState(initialActive);
   const [isRelaunching, setIsRelaunching] = useState(false);
-  const [isThesisModalOpen, setIsThesisModalOpen] = useState(false);
 
   // Id de l'analyse RUNNING qu'on suit. Tant qu'il est null après une relance, un
   // statut COMPLETED correspond encore à l'ANCIENNE analyse → on l'ignore (le worker
@@ -139,34 +128,6 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
 
   const status = latest?.data?.status ?? null;
   const runningAnalysisId = status === "RUNNING" ? latest?.data?.id ?? null : null;
-
-  const { data: thesisData } = useQuery({
-    queryKey: [...queryKeys.thesis.byDeal(dealId), runningAnalysisId ?? "latest"],
-    queryFn: async () => {
-      const search = runningAnalysisId ? `?analysisId=${runningAnalysisId}` : "";
-      const res = await fetch(`/api/deals/${dealId}/thesis${search}`);
-      if (!res.ok) throw new Error("Failed to fetch thesis");
-      const json = await res.json();
-      return json.data as { thesis: ThesisLite | null; hasPendingDecision: boolean };
-    },
-    refetchInterval: isActive ? 5000 : false,
-    refetchOnWindowFocus: true,
-    staleTime: isActive ? 0 : 15_000,
-  });
-
-  const thesis = thesisData?.thesis ?? null;
-  const hasPendingDecision = thesisData?.hasPendingDecision ?? false;
-
-  // Auto-open / auto-close du modal de revue de thèse (guard `!!thesis` : on n'ouvre
-  // pas si le serveur renvoie pendingDecision=true mais thesis=null, état incohérent).
-  useEffect(() => {
-    if (hasPendingDecision && !!thesis && !isThesisModalOpen) {
-      setIsThesisModalOpen(true);
-    }
-    if ((!hasPendingDecision || !thesis) && isThesisModalOpen) {
-      setIsThesisModalOpen(false);
-    }
-  }, [hasPendingDecision, thesis, isThesisModalOpen]);
 
   // Détection du terminal de l'analyse suivie → on rend la vue v2 (recharge SSR).
   useEffect(() => {
@@ -230,13 +191,12 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
           return;
         }
         if (res.status === 409) {
-          // Analyse (ou revue de thèse) déjà en cours pour ce deal : on bascule sur le
-          // suivi live — le polling captera la progression et ouvrira le modal de thèse.
+          // Analyse déjà en cours pour ce deal : on bascule sur le suivi live — le
+          // polling captera la progression jusqu'au résultat.
           watchedIdRef.current = null;
           activeSinceRef.current = Date.now();
           setIsActive(true);
           queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
-          queryClient.invalidateQueries({ queryKey: queryKeys.thesis.byDeal(dealId) });
           toast.info(err.error || "Une analyse est déjà en cours pour ce deal.");
           return;
         }
@@ -258,27 +218,6 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
     }
   }, [dealId, router, queryClient]);
 
-  const handleThesisDecided = useCallback(
-    (decision: "stop" | "continue" | "contest") => {
-      setIsThesisModalOpen(false);
-      queryClient.invalidateQueries({ queryKey: queryKeys.thesis.byDeal(dealId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
-      // On reste en suivi : "continue" reprend le Deep Dive, "stop" finalise (thèse-only),
-      // "contest" relance une extraction → nouvelle version à revoir. Le polling gère la suite.
-      activeSinceRef.current = Date.now();
-      setIsActive(true);
-      if (decision === "stop") {
-        toast.info("Analyse arrêtée. Rapport de thèse disponible.");
-      } else if (decision === "continue") {
-        toast.success("Analyse reprise.");
-      } else {
-        toast.info("Rebuttal soumis. Vérification en cours.");
-      }
-    },
-    [dealId, queryClient]
-  );
-
   return (
     <>
       {isActive ? (
@@ -293,17 +232,6 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
           isRelaunching={isRelaunching}
         />
       )}
-      {thesis && isThesisModalOpen ? (
-        <ThesisReviewModal
-          open={isThesisModalOpen}
-          dealId={dealId}
-          reformulated={thesis.reformulated}
-          verdict={thesis.verdict}
-          confidence={thesis.confidence}
-          alertsCount={thesis.alerts?.length ?? 0}
-          onDecided={(decision) => handleThesisDecided(decision)}
-        />
-      ) : null}
     </>
   );
 }

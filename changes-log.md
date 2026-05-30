@@ -1,6 +1,44 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-31 — Transparence crédit sur la re-extraction de thèse (upload doc)
+
+### Contexte
+Suite au retrait du gate : ajouter un document à un deal qui a déjà une thèse déclenche une **re-extraction automatique facturée 1 crédit** (`THESIS_REEXTRACT`), sans aucune confirmation. Décision Sacha : il faut de la transparence sur ce débit. Audit (workflow, 4 angles) : (1) seuls les **fichiers/PDF + pièces jointes email/note** (→ `/api/documents/upload`) déclenchent la re-extraction ; le **texte pur email/note** (→ `/api/documents/text`) ne coûte rien. (2) **Bug réel trouvé** : le `ThesisRevisionBanner` (qui affiche déjà « 1 crédit facturé ») était masquable définitivement — `revisionBannerDismissed` ne se réinitialisait jamais → après une fermeture, toutes les re-extractions suivantes passaient en silence.
+
+### Modifications
+- **`src/components/deals/analysis-panel.tsx`** : `useEffect` qui remet `revisionBannerDismissed=false` quand `thesis?.version` change → le banner (avec son « 1 crédit facturé » + diff) réapparaît de façon fiable à chaque nouvelle version de thèse. (Revue adverse : pas de boucle de rendu, pas de ré-affichage parasite sur poll à version stable.)
+- **`src/components/deals/document-upload-dialog.tsx`** : query légère `deal-thesis-exists` (`enabled:open`) → `dealHasThesis` ; dans `handleAllComplete` (path fichier, couvre sync + PDF async), si `dealHasThesis` toast « Thèse en cours de mise à jour — 1 crédit facturé une fois l'extraction terminée ». Wording **conditionnel** (pas une affirmation) suite à la revue adverse : un upload réussi dont l'extraction échoue ne facture rien → on ne sur-promet pas. Le texte email/note (`handleTextCreated`) n'affiche PAS ce toast (pas de re-extraction).
+
+Vérif : `tsc --noEmit` **exit 0** ; **464 tests** components/deals verts (+ 19 dialog re-runs après le fix de wording). Revue adverse (2 agents) : banner = sound ; toast = wording durci sur le cas échec-extraction, race query-lente acceptée (le banner reste le filet post-hoc). Non commité.
+
+### Limites connues (non bloquantes)
+- Les **pièces jointes** d'email/note déclenchent la re-extraction mais passent par les forms (pas le batch fichier) → pas de toast immédiat ; le banner les couvre après coup.
+- Race rare : si la query thèse n'a pas résolu avant la fin de l'upload, le toast peut être manqué (le banner reste le filet).
+
+---
+## 2026-05-31 — Suppression COMPLÈTE du gate thèse (analyse en une traite, code mort purgé)
+
+### Contexte
+Décision produit : retirer le gate thèse (pause + décision BA après le thesis-extractor). Logique crédits-only : on lance, ça coûte les crédits, l'analyse va au bout, aucune question. Le gate ajoutait de la friction + une cascade de bugs (modal qui ne s'impose pas, flicker, run FAILED à 5h car le job Inngest en `waitForEvent` meurt au redémarrage dev). **La thèse reste** (extraction Tier 0.5 + réconciliation Tier 3 inchangées). Annule l'entrée précédente « décision inratable + fix flicker » (la bannière/anti-flicker n'ont plus lieu d'être).
+
+**Découverte clé** : le mécanisme de gate (`pauseAfterThesis`, modal/route `thesis/decision`, `continueAnalysisAfterThesis`, branche pause orchestrateur, `thesis.decision`/`hasPendingDecision`) était **partagé** entre le lancement ET le flux **re-extraction de thèse** (upload doc / admin backfill). Impossible de supprimer le code du gate sans traiter les deux. Le `ThesisRevisionBanner` (re-extraction, informatif, aucune décision) est **conservé**.
+
+### Sécurité crédits (vérifiée)
+Débit fait **au lancement** (`POST /api/analyze` → `deductCreditAmount("DEEP_DIVE",5)`, idempotent, avant Inngest). Retrait du gate = aucun changement de débit. La re-extraction tournait déjà thèse-only (elle pausait *après* la thèse) → passer à « complète en `thesis_only` » = **même compute, même 1 cr** (aucun mispricing). Seuls les refunds DU gate disparaissent ; `compensateFailedAnalysis` (refund total sur vrai crash) + le refund reextract-on-failure restent.
+
+### Modifications (suppression complète des deux flux)
+- **`src/agents/orchestrator/index.ts`** : branche `if(pauseAfterThesis){…pause+review-required+PausedAnalysisResult}` → remplacée par `if(stopAfterThesis){…completeAnalysis(mode:"thesis_only")}` (re-extraction : s'arrête après thèse et COMPLÈTE, plus de pause/checkpoint/event). `continueAnalysisAfterThesis` + `_continueAnalysisAfterThesisImpl` **supprimés** (plus aucun appelant). `pauseAfterThesis` → `stopAfterThesis`. Import `PausedAnalysisResult` retiré.
+- **`src/agents/orchestrator/types.ts`** : `PausedAnalysisResult` supprimé ; `pauseAfterThesis` → `stopAfterThesis` (AnalysisOptions + AdvancedAnalysisOptions).
+- **`src/lib/inngest.ts`** : `dealAnalysisFunction` déroule l'analyse d'une traite (`run-analysis` → refund-on-failure → return ; bloc Phase 2/3 `waitForEvent`/phase3/refunds-gate supprimé, `withThesisGate` supprimé). `thesisReextractFunction` : `stopAfterThesis:true` + retour direct du résultat (bloc post-pause `waitForEvent`/`continueAnalysisAfterThesis`/supersede contest supprimé). `failStalePreThesisAnalysisBeforeRetry` + `PRE_THESIS_PHASE1_STALE_MS` supprimés (n'étaient appelés que par le gate). `supersededAnalysisId` retiré du destructuring reextract.
+- **UI** : `thesis-review-modal.tsx` **supprimé** ; routes `/thesis/decision` + `/thesis/rebuttal` (+ leurs `__tests__`) **supprimées** ; `thesis-hero-card.tsx` — bouton « Décider » + props `hasPendingDecision`/`decision`/`onReviewDecisionClick` retirés ; `analysis-panel.tsx` — appel hero-card nettoyé + `hasPendingDecision` retiré du type de payload ; `/thesis/route.ts` — `hasPendingDecision` retiré du payload ; `ui-helpers.test.ts` — import `isRetryableRebuttalResponse` (du modal supprimé) + son test retirés. **Affichage de la thèse conservé** (hero card + frameworks + RevisionBanner).
+
+Vérif : `tsc --noEmit` **exit 0** ; **4063 tests passés / 2 skipped / 0 échec** (suite unit complète). Repro live (analyse en une traite, aucun modal/pause ; upload doc → thèse re-extraite + bannière info) = à valider. Non commité.
+
+### Laissé volontairement (dead code backend non-bloquant, hors « gate » strict)
+- Agent `rebuttal-judge.ts` + types rebuttal (`agents/thesis/types.ts`) + méthodes contest/décision de `services/thesis/index.ts` : devenus inatteignables (plus de route appelante) mais tsc-clean ; suppression = refacto plus profonde du service/registry, à part.
+- **DB** : colonnes `Analysis.thesisDecision`/`thesisDecisionAt` — `DROP COLUMN` à faire séparément/prudemment (inoffensives en l'état, lues sans incidence). NE PAS toucher `thesisId`/`thesisBypass`/table `Thesis`.
+---
 ## 2026-05-29 — V2 autosuffisante sur le cycle de vie (relance + revue de thèse + progression)
 
 ### Contexte / bug

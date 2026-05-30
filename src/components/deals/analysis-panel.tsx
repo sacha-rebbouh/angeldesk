@@ -37,7 +37,6 @@ import { EarlyWarningsPanel } from "./early-warnings-panel";
 import { EvidenceHealthPanel } from "./evidence-health-panel";
 import type { EarlyWarning } from "@/types";
 import { ThesisHeroCard } from "./thesis/thesis-hero-card";
-import { ThesisReviewModal } from "./thesis/thesis-review-modal";
 import { ThesisFrameworksExpand } from "./thesis/thesis-frameworks-expand";
 import { ThesisRevisionBanner } from "./thesis/thesis-revision-banner";
 import { AnalysisProgress, type AgentStatus } from "./analysis-progress";
@@ -501,7 +500,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
       return json.data as {
         thesis: ThesisPayload | null;
         history: ThesisHistoryEntry[];
-        hasPendingDecision: boolean;
       };
     },
     refetchInterval: isPolling ? 5000 : false,
@@ -511,8 +509,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
 
   const thesis = thesisData?.thesis ?? null;
   const thesisHistory = useMemo(() => thesisData?.history ?? [], [thesisData?.history]);
-  const hasPendingDecision = thesisData?.hasPendingDecision ?? false;
-  const [isThesisModalOpen, setIsThesisModalOpen] = useState(false);
   const [revisionBannerDismissed, setRevisionBannerDismissed] = useState(false);
 
   // Detection d'une nouvelle version de these : on compare latest avec la version
@@ -522,34 +518,13 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     return thesisHistory.find((h) => h.version === thesis.version - 1) ?? null;
   }, [thesis, thesisHistory]);
 
-  // Auto-open modal dès que hasPendingDecision devient vrai ET thesis dispo (Tier 0.5 termine)
-  // FIX (audit P2 #24) : guard `!!thesis` pour eviter boucle ouverture si serveur en
-  // etat incoherent (pendingDecision=true mais thesis=null).
+  // Transparence crédits : quand une nouvelle version de these apparait (re-extraction
+  // auto apres ajout d'un document), on re-affiche le banner meme si l'utilisateur avait
+  // ferme le precedent. Sans ce reset, une fermeture rendait TOUTES les re-extractions
+  // suivantes silencieuses (le "1 credit facture" du banner ne revenait jamais).
   useEffect(() => {
-    if (hasPendingDecision && !!thesis && !isThesisModalOpen) {
-      setIsThesisModalOpen(true);
-    }
-    if ((!hasPendingDecision || !thesis) && isThesisModalOpen) {
-      setIsThesisModalOpen(false);
-    }
-  }, [hasPendingDecision, thesis, isThesisModalOpen]);
-
-  const handleThesisDecided = useCallback(
-    (decision: "stop" | "continue" | "contest") => {
-      setIsThesisModalOpen(false);
-      queryClient.invalidateQueries({ queryKey: queryKeys.thesis.byDeal(dealId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.deals.detail(dealId) });
-      if (decision === "stop") {
-        toast.info("Analyse arrêtée. Rapport de thèse disponible.");
-      } else if (decision === "continue") {
-        toast.success("Analyse reprise.");
-      } else {
-        toast.info("Rebuttal soumis. Verification en cours.");
-      }
-    },
-    [dealId, queryClient]
-  );
+    setRevisionBannerDismissed(false);
+  }, [thesis?.version]);
 
   // Helper: populate live results into UI state (callers handle SSR refresh separately)
   const loadCompletedAnalysis = useCallback((polledData: NonNullable<LatestAnalysisResponse["data"]>) => {
@@ -1159,19 +1134,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
         />
       )}
 
-      {/* Thesis Review Modal — non-dismissible, force decision BA apres Tier 0.5 */}
-      {thesis && isThesisModalOpen && (
-        <ThesisReviewModal
-          open={isThesisModalOpen}
-          dealId={dealId}
-          reformulated={thesis.reformulated}
-          verdict={thesis.verdict}
-          confidence={thesis.confidence}
-          alertsCount={thesis.alerts.length}
-          onDecided={(decision) => handleThesisDecided(decision)}
-        />
-      )}
-
       {/* Thesis Revision Banner — affiche quand une nouvelle version de these apparait
           (ex: re-extraction auto apres upload nouveau document). Le BA peut voir le diff. */}
       {thesis && previousThesisVersion && !revisionBannerDismissed && (
@@ -1620,9 +1582,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     loadBearing={thesis.loadBearing}
                     alerts={thesis.alerts}
                     evaluationAxes={thesis.evaluationAxes}
-                    hasPendingDecision={hasPendingDecision}
-                    decision={thesis.decision}
-                    onReviewDecisionClick={() => setIsThesisModalOpen(true)}
                   />
                 )}
 
