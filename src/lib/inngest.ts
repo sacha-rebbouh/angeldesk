@@ -25,6 +25,7 @@ import { logger } from '@/lib/logger'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
 import type { SourceStats } from '@/agents/maintenance/types'
 import { inngest } from '@/lib/inngest-client'
+import { compensateFailedAnalysis, reapStaleAnalyses } from '@/lib/analysis-compensation'
 
 export { inngest }
 
@@ -355,59 +356,19 @@ export const dealAnalysisFunction = inngest.createFunction(
 );
 
 /**
- * Helper — compensation d'une analyse qui a echoue (refund + reset deal status).
+ * STALE ANALYSIS REAPER — watchdog (cron Inngest)
+ *
+ * Filet de sécurité : toute analyse RUNNING figée (worker tué mid-step par le
+ * plafond Vercel 300s, etc.) est terminalisée en FAILED + remboursée + deal remis
+ * en IN_DD pour autoriser la relance. La logique vit dans `reapStaleAnalyses`
+ * (@/lib/analysis-compensation) — testée en isolation. Planifié par le scheduler
+ * Inngest (pas un cron Vercel → ne consomme pas le quota cron Vercel).
  */
-async function compensateFailedAnalysis(params: {
-  analysisId?: string;
-  userId: string;
-  dealId: string;
-  type: string;
-  refundIdempotencyKey?: string;
-  refundAmount?: number;
-}) {
-  const { refundCredits, refundCreditAmount, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
-  const action = getActionForAnalysisType(params.type);
-  try {
-    const refundAmount = params.refundAmount;
-    if (typeof refundAmount === "number" && refundAmount > 0) {
-      await refundCreditAmount(params.userId, action, refundAmount, {
-        dealId: params.dealId,
-        idempotencyKey: params.refundIdempotencyKey,
-        description: `Remboursement analyse echouee (${refundAmount} credits)`,
-      });
-    } else {
-      await refundCredits(params.userId, action, params.dealId, {
-        analysisId: params.analysisId,
-        ...(params.refundIdempotencyKey
-          ? { idempotencyKey: params.refundIdempotencyKey }
-          : {}),
-      });
-    }
-    if (params.analysisId) {
-      await prisma.analysis.update({
-        where: { id: params.analysisId },
-        data: { refundedAt: new Date(), refundAmount: refundAmount ?? CREDIT_COSTS[action] ?? null },
-      }).catch((err: unknown) => logger.warn({ err, analysisId: params.analysisId }, 'Could not mark refundedAt'));
-    }
-  } catch (err) {
-    logger.error({ err, dealId: params.dealId, userId: params.userId }, 'Inngest refund failed for failed analysis');
-  }
-  try {
-    const anotherRunningAnalysis = await prisma.analysis.findFirst({
-      where: {
-        dealId: params.dealId,
-        status: "RUNNING",
-      },
-      select: { id: true },
-    });
-
-    if (!anotherRunningAnalysis) {
-      await prisma.deal.update({ where: { id: params.dealId }, data: { status: 'IN_DD' } });
-    }
-  } catch (err) {
-    logger.error({ err, dealId: params.dealId }, 'Inngest deal status reset failed');
-  }
-}
+export const staleAnalysisReaperFunction = inngest.createFunction(
+  { id: 'stale-analysis-reaper', name: 'Stale Analysis Reaper', retries: 1 },
+  { cron: '*/5 * * * *' },
+  async () => reapStaleAnalyses()
+);
 
 /**
  * DEAL ANALYSIS RESUME via Inngest
@@ -946,4 +907,4 @@ export const documentExtractionFunction = inngest.createFunction(
 );
 
 // Export all functions for the serve handler
-export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction, thesisReextractFunction, documentExtractionFunction]
+export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction, staleAnalysisReaperFunction, thesisReextractFunction, documentExtractionFunction]

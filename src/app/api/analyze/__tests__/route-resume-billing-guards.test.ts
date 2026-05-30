@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 
 const routeSource = readFileSync("src/app/api/analyze/route.ts", "utf8");
 const inngestSource = readFileSync("src/lib/inngest.ts", "utf8");
+// compensateFailedAnalysis a été extrait vers analysis-compensation.ts
+// (source unique, partagée avec le watchdog reapStaleAnalyses). Les invariants
+// de facturation sont identiques — seul le fichier propriétaire a changé.
+const compensationSource = readFileSync("src/lib/analysis-compensation.ts", "utf8");
 
 describe("Codex live incident — resume billing guards", () => {
   it("resume re-debits only the refunded amount, not the full analysis price", () => {
@@ -19,8 +23,8 @@ describe("Codex live incident — resume billing guards", () => {
   });
 
   it("Inngest resume compensation refunds the explicit amount when present", () => {
-    expect(inngestSource).toContain("refundAmount?: number");
-    expect(inngestSource).toContain("refundCreditAmount(params.userId, action, refundAmount");
-    expect(inngestSource).toContain("data: { refundedAt: new Date(), refundAmount: refundAmount ?? CREDIT_COSTS[action] ?? null }");
+    expect(compensationSource).toContain("refundAmount?: number");
+    expect(compensationSource).toContain("refundCreditAmount(params.userId, action, refundAmount");
+    expect(compensationSource).toContain("data: { refundedAt: new Date(), refundAmount: refundAmount ?? CREDIT_COSTS[action] ?? null }");
   });
 });

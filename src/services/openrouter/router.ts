@@ -831,9 +831,19 @@ export async function completeJSON<T>(
     };
   } catch (err) {
     // Fallback modèle "model-aware" : le modèle primaire a échoué APRÈS ses retries
-    // (timeout / réponse vide / JSON impossible). On tente UNE fois un modèle d'une
+    // (timeout / JSON impossible / panne provider). On tente UNE fois un modèle d'une
     // autre famille pour échapper à une panne/surcharge provider-spécifique.
-    if (options._fallbackAttempted !== true) {
+    //
+    // EXCEPTION (anti-amplification) : une `empty_response` est typiquement
+    // DÉTERMINISTE (input manquant / refus / content-filter) — à température basse,
+    // le modèle de l'autre famille renverra lui aussi du vide. Le round-trip
+    // cross-family est alors du temps-mur pur perdu qui sature le rate-limiter et
+    // pousse l'étape Inngest vers son plafond 300s. La récupération transitoire d'une
+    // vraie réponse vide est déjà couverte par le retry+backoff de `complete()`
+    // (empty_response reste dans isRetryableError) ; on ne RAJOUTE simplement pas la
+    // bascule de modèle par-dessus. Le timeout/parse/5xx gardent le fallback.
+    const isEmptyResponse = err instanceof Error && err.message.includes("empty_response");
+    if (options._fallbackAttempted !== true && !isEmptyResponse) {
       const primaryKey = options.model ?? selectModel(options.complexity ?? "medium", getAgentContext() ?? undefined);
       const fallbackKey = JSON_FALLBACK_MODEL[primaryKey];
       if (fallbackKey && fallbackKey !== primaryKey) {

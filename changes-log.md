@@ -1,6 +1,26 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-05-31 — Watchdog anti-zombie + de-amplification retry router (gel Deep Dive)
+
+### Contexte (forensic avekapeti, workflow 6 enquêteurs + DB read-only)
+Deep Dive figé 6/21, `RUNNING`, ~160 min, plus aucun checkpoint. **Cause racine** : `full_analysis` déroule Tier 0→0.5→1→2→3 dans **UNE seule step Inngest** (`run-analysis`), plafonnée à 300s côté Vercel. Un agent qui sérialise assez de retries/timeouts dépasse 300s → Vercel tue la fonction mid-step → la ligne reste `RUNNING` à vie. Aucun watchdog ne couvrait ce cas depuis le retrait du gate thèse. **Hypothèse cap-table FALSIFIÉE** par la DB : avekapeti A une cap table, et `cap-table-auditor` n'a jamais tourné (gel après `financial-auditor`/`market-intelligence`). Zéro `empty_response` sur 7 jours.
+
+### Modifications
+- **`src/lib/analysis-compensation.ts`** (nouveau) : `compensateFailedAnalysis` extraite de `inngest.ts` (source unique, deps légères) + `reapStaleAnalyses(nowMs)` — cœur testable du watchdog. Passe en FAILED + rembourse + deal→IN_DD toute analyse RUNNING sans activité (dernier checkpoint, sinon `startedAt`) depuis >20 min. **Flip atomique** `updateMany where status RUNNING` → refund déclenché **une seule fois** (anti double-spend, anti-course avec une complétion normale) ; `refundedAt` posé (le resume logic ne re-facture pas).
+- **`src/lib/inngest.ts`** : `staleAnalysisReaperFunction` (cron Inngest `*/5`, pas de quota cron Vercel) ; importe les deux helpers depuis le nouveau module ; `compensateFailedAnalysis` inline supprimée.
+- **`src/services/openrouter/router.ts`** : `completeJSON` ne déclenche plus le **fallback cross-family** (GEMINI_PRO→HAIKU) sur `empty_response` — une réponse vide déterministe (input manquant/refus) revient vide aussi de l'autre famille à temp basse = temps-mur pur perdu qui sature le rate-limiter et pousse la step vers 300s. La récup transitoire reste assurée par retry+backoff de `complete()` (empty_response reste rejouable). Timeout/parse/5xx gardent le fallback. **Aucun prompt ni output modifié.**
+- **`src/lib/__tests__/stale-analysis-reaper.test.ts`** (nouveau, 6 tests) : reap stale, run frais épargné, course perdue→pas de refund, fallback startedAt, abstention sans signal, userId manquant.
+- **`route-resume-billing-guards.test.ts`** : guard de facturation redirigé vers `analysis-compensation.ts` (invariants inchangés).
+
+Vérif : `tsc --noEmit` **exit 0** ; **283 fichiers / 4069 tests verts** (2 skipped). Non commité.
+
+### Reste à faire (staged, non livré — voir CLAUDE.md plan)
+- **Fix C** : split de `run-analysis` en steps Inngest par tier (chacun <300s, resume DB) — nécessite test d'idempotence resume-merge avant prod.
+- **Fix D** : durcir le timeout du hang silencieux post-`market-intelligence` (non-LLM).
+- **Short-circuit pré-LLM no-input** (cap-table/financial/deck) keyé sur **présence document brute** (pas champs parsés) — protège le cas réel « deal sans cap table ».
+
+---
 ## 2026-05-31 — Transparence crédit sur la re-extraction de thèse (upload doc)
 
 ### Contexte
