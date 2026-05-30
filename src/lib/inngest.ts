@@ -33,76 +33,6 @@ function hashStringToBigInt(input: string): string {
   return digest.readBigInt64BE(0).toString();
 }
 
-const PRE_THESIS_PHASE1_STALE_MS = 6 * 60 * 1000;
-
-async function failStalePreThesisAnalysisBeforeRetry(dealId: string): Promise<string | null> {
-  const staleCutoff = new Date(Date.now() - PRE_THESIS_PHASE1_STALE_MS);
-  const staleAnalysis = await prisma.analysis.findFirst({
-    where: {
-      dealId,
-      status: "RUNNING",
-      mode: "full_analysis",
-      thesisId: null,
-      startedAt: { lt: staleCutoff },
-    },
-    orderBy: { startedAt: "asc" },
-    select: {
-      id: true,
-      startedAt: true,
-      completedAgents: true,
-      totalAgents: true,
-      checkpoints: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: { state: true, createdAt: true },
-      },
-    },
-  });
-
-  if (!staleAnalysis) {
-    return null;
-  }
-
-  const latestCheckpoint = staleAnalysis.checkpoints[0];
-  if (latestCheckpoint?.state === "ANALYZING") {
-    logger.warn(
-      {
-        dealId,
-        analysisId: staleAnalysis.id,
-        checkpointState: latestCheckpoint.state,
-      },
-      "Skipping stale pre-thesis cleanup because checkpoint is already ANALYZING"
-    );
-    return null;
-  }
-
-  await prisma.analysis.update({
-    where: { id: staleAnalysis.id },
-    data: {
-      status: "FAILED",
-      completedAt: new Date(),
-      summary:
-        "Analyse interrompue avant revue de these (timeout Vercel phase 1). " +
-        "La tentative est cloturee pour permettre le retry Inngest.",
-    },
-  });
-
-  logger.warn(
-    {
-      dealId,
-      analysisId: staleAnalysis.id,
-      startedAt: staleAnalysis.startedAt,
-      completedAgents: staleAnalysis.completedAgents,
-      totalAgents: staleAnalysis.totalAgents,
-      checkpointState: latestCheckpoint?.state ?? null,
-      checkpointAt: latestCheckpoint?.createdAt ?? null,
-    },
-    "Marked stale pre-thesis analysis as FAILED before Inngest retry"
-  );
-
-  return staleAnalysis.id;
-}
-
 // ============================================================================
 // FUNCTIONS
 // ============================================================================
@@ -388,30 +318,22 @@ export const dealAnalysisFunction = inngest.createFunction(
       dispatchRefundKey?: string;
     };
 
-    // Thesis-first gate actif uniquement pour full_analysis (Deep Dive).
-    // Les autres types (extraction, tier2_sector, tier3_synthesis) bypass.
-    const withThesisGate = type === "full_analysis";
-
-    // ========================================================================
-    // PHASE 1 : Analyse jusqu'a l'extraction de la these (Tier 0.5)
-    // ========================================================================
-    let phase1;
+    // Gate thèse RETIRÉ (2026-05-30) : plus aucune pause ni décision BA après
+    // l'extraction de thèse. `full_analysis` déroule Tier 0→0.5(thèse)→1→2→3 d'une
+    // traite. La thèse reste extraite + réconciliée. Crédits : débit plein au
+    // lancement (POST /analyze), refund total seulement sur vrai échec.
+    let analysisResult;
     try {
-      phase1 = await step.run('phase1-extract-thesis', async () => {
-        if (withThesisGate) {
-          await failStalePreThesisAnalysisBeforeRetry(dealId);
-        }
-
+      analysisResult = await step.run('run-analysis', async () => {
         const { orchestrator } = await import("@/agents");
         return await orchestrator.runAnalysis({
           dealId,
           type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
           enableTrace,
-          pauseAfterThesis: withThesisGate,
         });
       });
     } catch (error) {
-      await step.run('compensate-phase1-throw', async () => {
+      await step.run('compensate-analysis-throw', async () => {
         await compensateFailedAnalysis({
           userId,
           dealId,
@@ -422,149 +344,13 @@ export const dealAnalysisFunction = inngest.createFunction(
       throw error;
     }
 
-    // Pas de pause (non-Deep-Dive ou pause non appliquee) → on se comporte comme avant
-    const paused = withThesisGate && (phase1 as { pausedAfterThesis?: boolean }).pausedAfterThesis === true;
-
-    if (!paused) {
-      if (!phase1.success) {
-        await step.run('refund-on-failure', async () => {
-          await compensateFailedAnalysis({ analysisId: phase1.sessionId, userId, dealId, type });
-        });
-      }
-      return phase1;
-    }
-
-    // ========================================================================
-    // PHASE 2 : Attente de la decision BA via step.waitForEvent (timeout 24h)
-    // ========================================================================
-    const analysisId = phase1.sessionId;
-
-    const decisionEvent = await step.waitForEvent('wait-thesis-decision', {
-      event: 'analysis/thesis.decision',
-      timeout: '24h',
-      if: `async.data.analysisId == "${analysisId}"`,
-    });
-
-    const decisionData = decisionEvent?.data as
-      | { analysisId: string; decision: "stop" | "continue" | "contest"; thesisBypass?: boolean }
-      | undefined;
-
-    const decision: "stop" | "continue" | "contest" | "timeout" = decisionData?.decision ?? "timeout";
-    const thesisBypass = decisionData?.thesisBypass ?? false;
-
-    const currentAnalysis = await step.run('load-analysis-after-thesis-wait', async () => {
-      return await prisma.analysis.findUnique({
-        where: { id: analysisId },
-        select: { status: true, thesisDecision: true, completedAt: true },
-      });
-    });
-
-    if (!currentAnalysis) {
-      logger.warn({ analysisId }, 'Thesis gate analysis disappeared while waiting for decision');
-      return {
-        ...phase1,
-        success: false,
-        summary: "Analysis disappeared while waiting for thesis decision.",
-      };
-    }
-
-    if (currentAnalysis.status !== "RUNNING") {
-      logger.info(
-        { analysisId, status: currentAnalysis.status, thesisDecision: currentAnalysis.thesisDecision },
-        'Skipping thesis wait continuation because analysis is no longer running'
-      );
-      return {
-        sessionId: analysisId,
-        dealId,
-        type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
-        success: true,
-        results: phase1.results,
-        totalCost: phase1.totalCost,
-        totalTimeMs: phase1.totalTimeMs,
-        summary: currentAnalysis.thesisDecision === "contest"
-          ? "Original thesis review superseded by a valid rebuttal re-extraction."
-          : "Analysis already closed while waiting for thesis decision.",
-      };
-    }
-
-    // ========================================================================
-    // PHASE 3 : Reprise selon la decision
-    //  - stop/timeout : completer these-only + refund partiel/complet
-    //  - continue : lancer Tier 1/2/3 via continueAnalysisAfterThesis
-    //  - contest : ferme l'analyse initiale comme superseded, la nouvelle review
-    //              est portee par analysis/thesis.reextract
-    // ========================================================================
-    const phase3 = await step.run('phase3-post-thesis', async () => {
-      const { orchestrator } = await import("@/agents");
-      return await orchestrator.continueAnalysisAfterThesis(analysisId, decision, { thesisBypass });
-    });
-
-    // Refund partiel sur stop (3 credits sur 5), complet sur timeout
-    if (decision === "stop" || decision === "timeout") {
-      await step.run('partial-refund-on-thesis-stop', async () => {
-        const { refundCreditAmount, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
-        const action = getActionForAnalysisType(type);
-        const fullCost = CREDIT_COSTS[action] ?? 5;
-        // Timeout: full refund. Stop: partial (rembourse ce qui n'a pas ete consomme = Tier1/2/3).
-        // Estimation : thesis + tier 0 coute ~2 credits, reste = fullCost - 2.
-        const refundAmount = decision === "timeout" ? fullCost : Math.max(0, fullCost - 2);
-        if (refundAmount > 0) {
-          try {
-            const refundResult = await refundCreditAmount(userId, action, refundAmount, {
-              dealId,
-              idempotencyKey: `thesis:${decision}-refund:${analysisId}`,
-              description: decision === "timeout"
-                ? `Thesis timeout — refund integral ${refundAmount}cr (deal ${dealId})`
-                : `Thesis stop — refund partiel ${refundAmount}cr (deal ${dealId})`,
-            });
-            if (refundResult.success) {
-              await prisma.analysis.update({
-                where: { id: analysisId },
-                data: { refundedAt: new Date(), refundAmount },
-              }).catch((err: unknown) => logger.warn({ err, analysisId }, 'Could not mark refundedAt'));
-            }
-          } catch (err) {
-            logger.error({ err, dealId, userId, analysisId, decision }, 'Partial refund on thesis-stop failed');
-          }
-        }
+    if (!analysisResult.success) {
+      await step.run('refund-on-failure', async () => {
+        await compensateFailedAnalysis({ analysisId: analysisResult.sessionId, userId, dealId, type });
       });
     }
 
-    // Compensation si phase3 echoue — CAS SPECIAL : si paused, le BA a deja recu
-    // la valeur "these" (Tier 0.5 complet). Refund partiel UNIQUEMENT du reste
-    // (Tier 1/2/3 non livre). FIX (audit P1 #10) : avant on refund integral = double valeur.
-    if (!phase3.success && decision !== "contest") {
-      await step.run('refund-on-phase3-failure', async () => {
-        if (paused) {
-          // Phase3 fail apres continue/contest → rembourser 3cr (meme montant que stop)
-          // car les Tier 1/2/3 n'ont pas produit la valeur finale.
-          const { refundCreditAmount, CREDIT_COSTS } = await import("@/services/credits");
-          const partialRefund = Math.max(0, (CREDIT_COSTS["DEEP_DIVE"] ?? 5) - 2);
-          try {
-            await refundCreditAmount(userId, "DEEP_DIVE", partialRefund, {
-              dealId,
-              idempotencyKey: `thesis:phase3-fail-refund:${analysisId}`,
-              description: `Partial refund apres echec phase3 (these livree, Tier 1/2/3 non-livre)`,
-            });
-            await prisma.analysis.update({
-              where: { id: analysisId },
-              data: { refundedAt: new Date(), refundAmount: partialRefund },
-            }).catch((err: unknown) => logger.warn({ err, analysisId }, 'Could not mark refundedAt'));
-          } catch (err) {
-            logger.error({ err, dealId, userId, analysisId }, 'Partial refund on phase3 failure (paused path) failed');
-          }
-          try {
-            await prisma.deal.update({ where: { id: dealId }, data: { status: 'IN_DD' } });
-          } catch (err) {
-            logger.error({ err, dealId }, 'Deal status reset failed');
-          }
-        } else {
-          await compensateFailedAnalysis({ analysisId: phase3.sessionId, userId, dealId, type });
-        }
-      });
-    }
-
-    return phase3;
+    return analysisResult;
   }
 );
 
@@ -699,14 +485,13 @@ export const thesisReextractFunction = inngest.createFunction(
   },
   { event: 'analysis/thesis.reextract' },
   async ({ event, step }) => {
-    const { dealId, userId, previousThesisId, triggeredByAdminId, triggeredByRebuttal, supersededAnalysisId } = event.data as {
+    const { dealId, userId, previousThesisId, triggeredByAdminId, triggeredByRebuttal } = event.data as {
       dealId: string;
       userId: string;
       triggeredByDocumentId?: string;
       previousThesisId?: string;
       triggeredByAdminId?: string;
       triggeredByRebuttal?: boolean;
-      supersededAnalysisId?: string;
     };
 
     const reextractRefundAttemptKey = await step.run('prepare-reextract-refund-key', async () => crypto.randomUUID());
@@ -815,12 +600,13 @@ export const thesisReextractFunction = inngest.createFunction(
       result = await step.run('run-thesis-reextract', async () => {
         const { orchestrator } = await import("@/agents");
         try {
-          // runAnalysis en mode "extraction" + pauseAfterThesis = uniquement Tier 0 + thesis.
-          // Apres pause, BA decide via modal. Le pipeline ne poursuit PAS automatiquement.
+          // stopAfterThesis : on relance Tier 0 + thesis-extractor uniquement, puis on
+          // COMPLETE l'analyse en mode thesis_only (pas de gate, pas de decision). La
+          // nouvelle version de these est affichee via ThesisRevisionBanner (informatif).
           const res = await orchestrator.runAnalysis({
             dealId,
             type: "full_analysis",
-            pauseAfterThesis: true,
+            stopAfterThesis: true,
             forceRefresh: true,
           });
           return res;
@@ -840,72 +626,7 @@ export const thesisReextractFunction = inngest.createFunction(
       return result;
     }
 
-    const reextractAnalysisId = result.sessionId;
-    const reextractThesisId = (result as { thesisId?: string }).thesisId;
-    const reextractPaused = (result as { pausedAfterThesis?: boolean }).pausedAfterThesis === true;
-
-    if (triggeredByRebuttal && supersededAnalysisId && reextractPaused) {
-      await step.run('mark-superseded-analysis-contested', async () => {
-        await prisma.analysis.update({
-          where: { id: supersededAnalysisId },
-          data: {
-            status: 'COMPLETED',
-            completedAt: new Date(),
-            thesisDecision: 'contest',
-            thesisDecisionAt: new Date(),
-            thesisBypass: false,
-            summary: 'Initial thesis review superseded after valid rebuttal. A new thesis version is awaiting review.',
-          },
-        });
-      });
-    }
-
-    if (!reextractPaused) {
-      return result;
-    }
-
-    const decisionEvent = await step.waitForEvent('wait-reextracted-thesis-decision', {
-      event: 'analysis/thesis.decision',
-      timeout: '24h',
-      if: `async.data.analysisId == "${reextractAnalysisId}"`,
-    });
-
-    const decisionData = decisionEvent?.data as
-      | { analysisId: string; decision: "stop" | "continue"; thesisBypass?: boolean }
-      | undefined;
-
-    const decision: "stop" | "continue" | "timeout" = decisionData?.decision ?? "timeout";
-    const thesisBypass = decisionData?.thesisBypass ?? false;
-
-    const liveAnalysis = await step.run('load-reextract-analysis-after-wait', async () => {
-      return await prisma.analysis.findUnique({
-        where: { id: reextractAnalysisId },
-        select: { status: true },
-      });
-    });
-
-    if (!liveAnalysis || liveAnalysis.status !== "RUNNING") {
-      logger.info({ reextractAnalysisId, status: liveAnalysis?.status }, 'Skipping reextract continuation because analysis is no longer running');
-      return result;
-    }
-
-    if (decision === "timeout") {
-      await refundReextractCharge('refund-reextract-on-timeout', 'timeout');
-    }
-
-    const postDecisionResult = await step.run('continue-after-reextracted-thesis', async () => {
-      const { orchestrator } = await import("@/agents");
-      return await orchestrator.continueAnalysisAfterThesis(reextractAnalysisId, decision, { thesisBypass });
-    });
-
-    return {
-      ...postDecisionResult,
-      sessionId: reextractAnalysisId,
-      dealId,
-      summary: reextractThesisId
-        ? postDecisionResult.summary
-        : `${postDecisionResult.summary} (new thesis review cycle)`,
-    };
+    return result;
   }
 );
 

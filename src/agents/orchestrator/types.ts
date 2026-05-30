@@ -118,18 +118,12 @@ export interface AnalysisOptions {
   }) => void;
   onEarlyWarning?: OnEarlyWarning; // Callback when potential dealbreaker detected
   /**
-   * Thesis-first gate : pause AFTER thesis-extractor (Tier 0.5) completes.
-   * When true, runFullAnalysis returns early with {pausedAfterThesis: true, thesisId, verdict}.
-   * The analysis stays in RUNNING state in DB. Tier 1/2/3 are NOT executed.
-   *
-   * Inngest wraps this in a split:
-   *  - Step A: runAnalysis({pauseAfterThesis: true}) → returns thesisId, verdict
-   *  - Step B: step.waitForEvent('analysis/thesis.decision', 24h)
-   *  - Step C: orchestrator.continueAnalysisAfterThesis(analysisId, decision)
-   *
-   * Absent flag = no gate (default behaviour : runs full analysis end-to-end).
+   * Re-extraction de these : stoppe APRES le thesis-extractor (Tier 0.5) et COMPLETE
+   * l'analyse en mode thesis_only (Tier 1/2/3 NON executes). Utilise par le flux
+   * thesis-reextract (upload doc / admin backfill). Absent/false = analyse complete
+   * end-to-end (comportement par defaut du lancement).
    */
-  pauseAfterThesis?: boolean;
+  stopAfterThesis?: boolean;
 }
 
 export interface AnalysisResult {
@@ -169,17 +163,8 @@ export interface AdvancedAnalysisOptions {
   analysisModeOverride?: string;
   /** If true, uses UPDATE_ANALYSIS credits instead of INITIAL_ANALYSIS */
   isUpdate?: boolean;
-  /** Thesis-first gate — passed-through from AnalysisOptions */
-  pauseAfterThesis?: boolean;
-}
-
-/** Extended AnalysisResult when the pipeline paused after thesis-extraction for BA review */
-export interface PausedAnalysisResult extends AnalysisResult {
-  pausedAfterThesis: true;
-  thesisId: string;
-  thesisVerdict: string;
-  thesisConfidence: number;
-  alertsCount: number;
+  /** Re-extraction de these — passed-through from AnalysisOptions (stop apres thesis, mode thesis_only) */
+  stopAfterThesis?: boolean;
 }
 
 // Tier 1 agent names (12 agents — exit-strategist retiré, doctrine anti-oraculaire pas de projection)

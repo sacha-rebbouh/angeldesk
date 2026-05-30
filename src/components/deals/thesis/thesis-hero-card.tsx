@@ -46,9 +46,6 @@ interface ThesisHeroCardProps {
   loadBearing: LoadBearing[];
   alerts: AlertItem[];
   evaluationAxes: NormalizedThesisEvaluation;
-  hasPendingDecision: boolean;
-  decision: string | null;
-  onReviewDecisionClick?: () => void;
   onShowFrameworksClick?: () => void;
 }
 
@@ -231,16 +228,6 @@ export function ThesisHeroCard(props: ThesisHeroCardProps) {
 
         {/* Actions */}
         <div className="flex items-center gap-2 pt-2 border-t">
-          {props.hasPendingDecision && props.onReviewDecisionClick && (
-            <Button onClick={props.onReviewDecisionClick} className="flex-1">
-              Décider (Stop / Continuer / Contester)
-            </Button>
-          )}
-          {!props.hasPendingDecision && props.decision && (
-            <Badge variant="outline" className="text-xs">
-              Décision : {props.decision === "stop" ? "Analyse arrêtée" : props.decision === "continue" ? "Analyse poursuivie" : "Contestation soumise"}
-            </Badge>
-          )}
           {props.onShowFrameworksClick && (
             <Button variant="outline" onClick={props.onShowFrameworksClick} size="sm">
               Voir par framework (YC / Thiel / Angel Desk)

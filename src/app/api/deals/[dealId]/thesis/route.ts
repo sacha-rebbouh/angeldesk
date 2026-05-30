@@ -97,12 +97,9 @@ export async function GET(request: Request, context: RouteContext) {
         data: {
           thesis: null,
           history: [],
-          hasPendingDecision: false,
         },
       });
     }
-
-    const hasPendingDecision = selectedThesis.decision === null;
 
     // Propagation de thesisBypass depuis l'analyse la plus recente liee a cette these
     const linkedAnalysis = await prisma.analysis.findFirst({
@@ -155,7 +152,6 @@ export async function GET(request: Request, context: RouteContext) {
             angelDeskLens: h.angelDeskLens as never,
           }),
         })),
-        hasPendingDecision,
       },
     });
   } catch (error) {

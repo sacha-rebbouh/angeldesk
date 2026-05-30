@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState, memo, useEffect, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ClipboardCopy, Loader2 } from "lucide-react";
 import {
@@ -65,6 +65,21 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
   onUploadSuccess,
 }: DocumentUploadDialogProps) {
   const queryClient = useQueryClient();
+  // Transparence crédits : si le deal a deja une these, ajouter un document (fichier/PDF)
+  // declenche une re-extraction automatique facturee 1 credit (THESIS_REEXTRACT). On
+  // verifie l'existence d'une these pour prevenir l'utilisateur au moment de l'upload.
+  // (Les emails/notes en texte pur ne declenchent PAS de re-extraction → pas de toast.)
+  const { data: dealHasThesis = false } = useQuery({
+    queryKey: ["deal-thesis-exists", dealId],
+    queryFn: async () => {
+      const res = await fetch(`/api/deals/${dealId}/thesis`);
+      if (!res.ok) return false;
+      const json = await res.json();
+      return Boolean(json?.data?.thesis);
+    },
+    enabled: open,
+    staleTime: 30_000,
+  });
   const [uploadedCount, setUploadedCount] = useState(0);
   const [hasUploaded, setHasUploaded] = useState(false);
   // B4 — live snapshot of the file tab's queue. Drives the footer summary
@@ -173,6 +188,15 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
       toast.success("Documents uploadés avec succès");
     }
 
+    // Transparence crédits : un document ajouté à un deal qui a déjà une thèse
+    // déclenche une re-extraction automatique facturée 1 crédit. On le signale au
+    // moment de l'upload (le banner de révision le confirmera ensuite avec le diff).
+    if (dealHasThesis) {
+      toast("Thèse en cours de mise à jour", {
+        description: "Ce document déclenche une re-extraction de la thèse — 1 crédit facturé une fois l'extraction terminée.",
+      });
+    }
+
     // B4 — only auto-close when the batch is FULLY terminal AND clean (no
     // errors, no extracting). Previously the modal auto-closed 500ms
     // after the first batch success, even if extractions for OTHER files
@@ -186,7 +210,7 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
     // B9.4 — see handleTextCreated for the rationale (defensive
     // evidence-health invalidation, works regardless of consumer).
     queryClient.invalidateQueries({ queryKey: queryKeys.evidenceHealth.byDeal(dealId) });
-  }, [queryClient, dealId]);
+  }, [queryClient, dealId, dealHasThesis]);
 
   const handleError = useCallback((error: string) => {
     toast.error(error);

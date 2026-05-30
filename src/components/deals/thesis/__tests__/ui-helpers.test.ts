@@ -2,21 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { getAxisDisplayState } from "../thesis-hero-card";
 import { getFrameworkLensDisplayState } from "../thesis-frameworks-expand";
-import { isRetryableRebuttalResponse } from "../thesis-review-modal";
 
 describe("thesis UI helpers", () => {
-  it("detects retryable rebuttal responses", () => {
-    expect(
-      isRetryableRebuttalResponse(503, {
-        retryable: true,
-        error: "Juge temporairement indisponible",
-      })
-    ).toBe(true);
-
-    expect(isRetryableRebuttalResponse(500, { retryable: true })).toBe(false);
-    expect(isRetryableRebuttalResponse(503, { retryable: false })).toBe(false);
-  });
-
   it("renders degraded framework lenses as unavailable", () => {
     const display = getFrameworkLensDisplayState({
       verdict: "contrasted",
