@@ -60,7 +60,7 @@ describe("snapshot helpers — state value", () => {
 });
 
 describe("writeStepwiseSnapshot", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => vi.resetAllMocks());
 
   it("écrit un AnalysisCheckpoint STEPWISE:<unit> avec le StepState dans results", async () => {
     mockPrisma.analysisCheckpoint.create.mockResolvedValue({ id: "ck1" });
@@ -83,7 +83,7 @@ describe("writeStepwiseSnapshot", () => {
 });
 
 describe("readLatestStepwiseSnapshot", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => vi.resetAllMocks());
 
   it("filtre sur state STEPWISE:* + createdAt desc, et désérialise", async () => {
     const s = makeValidState();
@@ -93,7 +93,7 @@ describe("readLatestStepwiseSnapshot", () => {
     const arg = mockPrisma.analysisCheckpoint.findFirst.mock.calls[0][0];
     expect(arg.where.analysisId).toBe("a1");
     expect(arg.where.state).toEqual({ startsWith: STEPWISE_STATE_PREFIX });
-    expect(arg.orderBy).toEqual({ createdAt: "desc" });
+    expect(arg.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 
   it("retourne null si aucun snapshot", async () => {
@@ -115,7 +115,7 @@ describe("readLatestStepwiseSnapshot", () => {
 });
 
 describe("round-trip write→read via DB mockée (carry de bout en bout)", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => vi.resetAllMocks());
 
   it("le state lu == le state écrit (tous les blobs non reconstructibles survivent)", async () => {
     // Simule un vrai aller-retour DB : create capture la row, findFirst la rejoue.

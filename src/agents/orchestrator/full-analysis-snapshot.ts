@@ -74,7 +74,9 @@ export async function readLatestStepwiseSnapshot(
 ): Promise<FullAnalysisStepState | null> {
   const row = await prisma.analysisCheckpoint.findFirst({
     where: { analysisId, state: { startsWith: STEPWISE_STATE_PREFIX } },
-    orderBy: { createdAt: "desc" },
+    // Tie-break par id desc : deux checkpoints peuvent partager la même createdAt
+    // (granularité timestamp) → garantit un « dernier » déterministe (audit Codex #3).
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: { results: true },
   });
   if (!row || row.results == null) return null;

@@ -18,7 +18,8 @@
  * INVARIANT (audit Codex #2) : DTO sérialisable STRICT, pas un EnrichedAgentContext
  * déguisé. Aucune fonction/classe/Map/Set/Date/undefined/NaN non normalisés. Les
  * champs « riches » sont au niveau fil (JSON brut) ; les domain types sont reconstruits
- * par le consommateur. `assertSerializableStepState` applique l'invariant au write.
+ * par le consommateur. Validation STRICTE au write (assertSerializableStepState) ET au
+ * load (parseStepState) : tous les blobs requis présents + typés + JSON pur.
  */
 
 /** Version du schéma de snapshot — bump si la forme change (compat snapshot en vol). */
@@ -50,6 +51,8 @@ export const FULL_ANALYSIS_UNITS: readonly FullAnalysisUnit[] = [
   "tier3-post",
 ];
 
+const UNIT_SET: ReadonlySet<string> = new Set<string>(FULL_ANALYSIS_UNITS);
+
 /**
  * État sérialisable transféré entre steps. TOUTES les valeurs doivent être du JSON
  * pur (cf. assertSerializableStepState).
@@ -72,6 +75,9 @@ export interface FullAnalysisStepState {
   /** true => pipeline terminé (le dispatcher arrête la boucle). */
   done: boolean;
 
+  /** factStoreFormatted — bytes exacts utilisés dans les prompts. */
+  factStoreFormatted: string;
+
   // --- blobs JSON (artefacts non reconstructibles depuis la DB) ---
   /** Sorties d'agents mutées (incl. entrées révisées par reflexion). JSON pur. */
   allResults: Record<string, unknown>;
@@ -84,8 +90,6 @@ export interface FullAnalysisStepState {
   tier1CrossValidation: Record<string, unknown> | null;
   /** Sortie de consolidateRedFlags (inline-only). null avant post-Tier1. */
   consolidatedRedFlags: unknown[] | null;
-  /** factStoreFormatted — bytes exacts utilisés dans les prompts. */
-  factStoreFormatted: string;
   /**
    * verificationContext sérialisé (carry, PAS rebuild — la funding-DB peut drifter).
    * null tant que Tier1 n'a pas produit son verificationContext.
@@ -98,12 +102,20 @@ const SCALAR_FIELDS: ReadonlyArray<[keyof FullAnalysisStepState, "string" | "num
   ["analysisId", "string"],
   ["dealId", "string"],
   ["analysisType", "string"],
+  ["factStoreFormatted", "string"],
   ["totalAgents", "number"],
   ["completedCount", "number"],
   ["totalCost", "number"],
   ["lastUnit", "string"],
   ["done", "boolean"],
 ];
+
+/** true si v est un objet « plain » (prototype Object.prototype ou null). */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
 
 /**
  * Garde de sérialisabilité STRICTE (audit Codex #2). Lève si `value` contient autre
@@ -131,7 +143,6 @@ export function assertPlainJson(value: unknown, path = "$"): void {
     return;
   }
 
-  // objet : doit être « plain » (prototype Object.prototype ou null).
   const proto = Object.getPrototypeOf(value as object);
   if (proto !== Object.prototype && proto !== null) {
     const ctor = (value as { constructor?: { name?: string } })?.constructor?.name ?? "unknown";
@@ -143,43 +154,71 @@ export function assertPlainJson(value: unknown, path = "$"): void {
 }
 
 /**
- * Valide un objet `unknown` comme FullAnalysisStepState (version + scalaires + champs
- * blob présents). Lève sinon. Utilisé au load snapshot (où Prisma renvoie un objet
- * Json déjà parsé) et par deserializeStepState (string).
+ * Valide un objet `unknown` comme FullAnalysisStepState et renvoie le type.
+ * Lève si : pas un objet plain, version inconnue, scalaire manquant/mal typé,
+ * scalaire numérique non-fini, lastUnit hors enum, blob requis absent ou mal typé,
+ * ou contenu non JSON-pur. Utilisé au load snapshot (objet Json déjà parsé par Prisma)
+ * et par deserializeStepState (string) ET par assertSerializableStepState (au write).
  */
 export function parseStepState(value: unknown): FullAnalysisStepState {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainObject(value)) {
     throw new Error("[StepState] le snapshot n'est pas un objet");
   }
-  const o = value as Record<string, unknown>;
+  const o = value;
+
   if (o.version !== FULL_ANALYSIS_STEP_STATE_VERSION) {
     throw new Error(`[StepState] version non supportée: ${String(o.version)}`);
   }
+
+  // Scalaires : présence + typeof + finitude (audit Codex #2).
   for (const [field, expected] of SCALAR_FIELDS) {
-    if (typeof o[field] !== expected) {
+    const v = o[field as string];
+    if (typeof v !== expected) {
       throw new Error(`[StepState] champ "${String(field)}" manquant ou mal typé (attendu ${expected})`);
     }
+    if (expected === "number" && !Number.isFinite(v as number)) {
+      throw new Error(`[StepState] champ "${String(field)}" non-fini (NaN/Infinity)`);
+    }
   }
-  for (const blob of ["allResults", "factStoreFormatted"] as const) {
-    if (!(blob in o)) throw new Error(`[StepState] champ "${blob}" manquant`);
+
+  // lastUnit doit appartenir à l'enum (audit Codex #2).
+  if (!UNIT_SET.has(o.lastUnit as string)) {
+    throw new Error(`[StepState] lastUnit invalide: ${String(o.lastUnit)}`);
   }
-  if (typeof o.factStoreFormatted !== "string") {
-    throw new Error(`[StepState] factStoreFormatted doit être string`);
+
+  // Blobs requis : présence + typage (audit Codex #1).
+  if (!("allResults" in o) || !isPlainObject(o.allResults)) {
+    throw new Error(`[StepState] allResults doit être un objet`);
   }
-  return value as FullAnalysisStepState;
+  for (const field of ["consensusResolutions", "tier1CrossValidation", "verificationContext"] as const) {
+    if (!(field in o)) throw new Error(`[StepState] champ "${field}" manquant`);
+    if (!(o[field] === null || isPlainObject(o[field]))) {
+      throw new Error(`[StepState] ${field} doit être un objet ou null`);
+    }
+  }
+  if (!("consolidatedRedFlags" in o)) {
+    throw new Error(`[StepState] champ "consolidatedRedFlags" manquant`);
+  }
+  if (!(o.consolidatedRedFlags === null || Array.isArray(o.consolidatedRedFlags))) {
+    throw new Error(`[StepState] consolidatedRedFlags doit être un tableau ou null`);
+  }
+
+  // Contenu JSON pur (rejette Date/Map/function/NaN imbriqués) — audit Codex #1.
+  assertPlainJson(o.allResults, "$.allResults");
+  assertPlainJson(o.consensusResolutions, "$.consensusResolutions");
+  assertPlainJson(o.tier1CrossValidation, "$.tier1CrossValidation");
+  assertPlainJson(o.consolidatedRedFlags, "$.consolidatedRedFlags");
+  assertPlainJson(o.verificationContext, "$.verificationContext");
+
+  return value as unknown as FullAnalysisStepState;
 }
 
 /**
- * Valide un state complet avant écriture du snapshot : scalaires + version + contenu
- * JSON-pur de tous les blobs. Lève sinon.
+ * Valide un state complet avant écriture du snapshot. Équivalent à parseStepState
+ * (qui valide désormais scalaires + blobs + JSON pur). Lève sinon.
  */
 export function assertSerializableStepState(state: FullAnalysisStepState): void {
-  parseStepState(state); // version + scalaires
-  assertPlainJson(state.allResults, "$.allResults");
-  assertPlainJson(state.consensusResolutions, "$.consensusResolutions");
-  assertPlainJson(state.tier1CrossValidation, "$.tier1CrossValidation");
-  assertPlainJson(state.consolidatedRedFlags, "$.consolidatedRedFlags");
-  assertPlainJson(state.verificationContext, "$.verificationContext");
+  parseStepState(state);
 }
 
 /** Sérialise un state validé en JSON. Lève si non sérialisable. */

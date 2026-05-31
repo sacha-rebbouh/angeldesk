@@ -127,4 +127,56 @@ describe("parseStepState / deserializeStepState — validation au load", () => {
     expect(() => parseStepState(null)).toThrow(/n'est pas un objet/);
     expect(() => parseStepState([1, 2])).toThrow(/n'est pas un objet/);
   });
+
+  // --- audit Codex #2 : scalaires numériques NaN/Infinity + lastUnit enum ---
+  it("REJETTE un scalaire numérique NaN (parse direct, hors JSON qui le perd)", () => {
+    const bad = { ...JSON.parse(serializeStepState(makeValidState())), totalCost: NaN };
+    expect(() => parseStepState(bad)).toThrow(/non-fini/);
+  });
+  it("REJETTE un scalaire numérique Infinity", () => {
+    const bad = { ...JSON.parse(serializeStepState(makeValidState())), completedCount: Infinity };
+    expect(() => parseStepState(bad)).toThrow(/non-fini/);
+  });
+  it("REJETTE lastUnit hors de l'enum FULL_ANALYSIS_UNITS", () => {
+    const bad = { ...JSON.parse(serializeStepState(makeValidState())), lastUnit: "tier-99" };
+    expect(() => parseStepState(bad)).toThrow(/lastUnit invalide/);
+  });
+
+  // --- audit Codex #1 : tous les blobs requis présents + typés + JSON pur au load ---
+  it("REJETTE consensusResolutions manquant", () => {
+    const bad = JSON.parse(serializeStepState(makeValidState()));
+    delete bad.consensusResolutions;
+    expect(() => parseStepState(bad)).toThrow(/consensusResolutions/);
+  });
+  it("REJETTE tier1CrossValidation manquant", () => {
+    const bad = JSON.parse(serializeStepState(makeValidState()));
+    delete bad.tier1CrossValidation;
+    expect(() => parseStepState(bad)).toThrow(/tier1CrossValidation/);
+  });
+  it("REJETTE consolidatedRedFlags manquant", () => {
+    const bad = JSON.parse(serializeStepState(makeValidState()));
+    delete bad.consolidatedRedFlags;
+    expect(() => parseStepState(bad)).toThrow(/consolidatedRedFlags/);
+  });
+  it("REJETTE verificationContext manquant", () => {
+    const bad = JSON.parse(serializeStepState(makeValidState()));
+    delete bad.verificationContext;
+    expect(() => parseStepState(bad)).toThrow(/verificationContext/);
+  });
+  it("REJETTE allResults absent ou non-objet (array)", () => {
+    const bad = { ...JSON.parse(serializeStepState(makeValidState())), allResults: [1, 2] };
+    expect(() => parseStepState(bad)).toThrow(/allResults/);
+  });
+  it("REJETTE consolidatedRedFlags mal typé (objet au lieu de tableau)", () => {
+    const bad = { ...JSON.parse(serializeStepState(makeValidState())), consolidatedRedFlags: { x: 1 } };
+    expect(() => parseStepState(bad)).toThrow(/consolidatedRedFlags/);
+  });
+  it("REJETTE consensusResolutions mal typé (tableau au lieu d'objet|null)", () => {
+    const bad = { ...JSON.parse(serializeStepState(makeValidState())), consensusResolutions: [1] };
+    expect(() => parseStepState(bad)).toThrow(/consensusResolutions/);
+  });
+  it("VALIDE JSON pur au load : rejette une Date imbriquée dans un blob", () => {
+    const bad = { ...JSON.parse(serializeStepState(makeValidState())), verificationContext: { when: new Date() } };
+    expect(() => parseStepState(bad)).toThrow(/non-plain|sérialisable/);
+  });
 });
