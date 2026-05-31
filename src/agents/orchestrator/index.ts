@@ -1591,6 +1591,59 @@ export class AgentOrchestrator {
     return baseContext;
   }
 
+  /**
+   * C.2a — STEP 0 Tier 0 fact extraction, extrait BYTE-INERT de runFullAnalysis.
+   * Mute allResults["fact-extractor"] PAR RÉFÉRENCE (allResults passé en param) et
+   * renvoie les let mutés. N'extrait QUE STEP 0 (pas document-extractor/deck/context/thesis).
+   * Ordre et mutations strictement identiques à l'inline d'origine.
+   */
+  private async runTier0Step(params: {
+    deal: DealWithDocs;
+    scopedDocuments: DealWithDocs["documents"];
+    isUpdate: boolean;
+    onProgress: AnalysisOptions["onProgress"];
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+  }): Promise<{
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+  }> {
+    const { deal, scopedDocuments, isUpdate, onProgress, allResults } = params;
+    let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = params;
+    if (scopedDocuments.length > 0) {
+      const tier0Result = await this.runTier0FactExtraction(
+        { ...deal, documents: scopedDocuments },
+        isUpdate,
+        onProgress
+      );
+      factStore = tier0Result.factStore;
+      factStoreFormatted = tier0Result.factStoreFormatted;
+      founderResponses = tier0Result.founderResponses;
+      totalCost += tier0Result.cost;
+      completedCount++;
+
+      if (tier0Result.extractionResult) {
+        allResults["fact-extractor"] = {
+          agentName: "fact-extractor",
+          success: true,
+          executionTimeMs: tier0Result.executionTimeMs,
+          cost: tier0Result.cost,
+          data: tier0Result.extractionResult,
+        } as AgentResult & { data: FactExtractorOutput };
+      }
+
+      console.log(`[Orchestrator:FullAnalysis] Tier 0 complete: ${factStore.length} facts in store`);
+    }
+    return { totalCost, completedCount, factStore, factStoreFormatted, founderResponses };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -1633,30 +1686,18 @@ export class AgentOrchestrator {
 
       // STEP 0: TIER 0 FACT EXTRACTION (runs BEFORE everything)
       // Extracts structured facts that will be available to all agents
-      if (scopedDocuments.length > 0) {
-        const tier0Result = await this.runTier0FactExtraction(
-          { ...deal, documents: scopedDocuments },
-          isUpdate,
-          onProgress
-        );
-        factStore = tier0Result.factStore;
-        factStoreFormatted = tier0Result.factStoreFormatted;
-        founderResponses = tier0Result.founderResponses;
-        totalCost += tier0Result.cost;
-        completedCount++;
-
-        if (tier0Result.extractionResult) {
-          allResults["fact-extractor"] = {
-            agentName: "fact-extractor",
-            success: true,
-            executionTimeMs: tier0Result.executionTimeMs,
-            cost: tier0Result.cost,
-            data: tier0Result.extractionResult,
-          } as AgentResult & { data: FactExtractorOutput };
-        }
-
-        console.log(`[Orchestrator:FullAnalysis] Tier 0 complete: ${factStore.length} facts in store`);
-      }
+({ totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = await this.runTier0Step({
+        deal,
+        scopedDocuments,
+        isUpdate,
+        onProgress,
+        allResults,
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+        founderResponses,
+      }));
 
       // STEP 1: DOCUMENT EXTRACTION (must run first)
       // We need extracted data (tagline, competitors, founders) for Context Engine
