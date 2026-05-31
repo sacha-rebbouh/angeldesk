@@ -1,0 +1,107 @@
+# Plan — Durabilité du pipeline Deep Dive (full_analysis)
+
+> Document versionné, destiné à audit (Codex) puis exécution **incrémentale**.
+> Source de vérité = `tsc` / `vitest` / `git`, **jamais** l'affichage Read (qui a corrompu le multi-lignes lors de sessions précédentes → utiliser des codemods Node sur octets disque + `grep -c` pour vérifier).
+>
+> Branche : `fix/thesis-gate-guard` (= `main` `ff87da4` + C2a `de02b77`). **`main` n'est PAS touché** avant l'étape I, flag OFF.
+
+---
+
+## 0. Cause racine (vérifiée)
+
+Un Deep Dive `full_analysis` exécute Tier 0→0.5(thèse)→1→2→3 dans **UNE seule step Inngest** `step.run('run-analysis')` (`src/lib/inngest.ts:328`), qui appelle tout `orchestrator.runAnalysis` → `runFullAnalysis` d'un bloc. La step est plafonnée à **300s** par Vercel (`src/app/api/inngest/route.ts` `maxDuration=300`). L'orchestrateur (`src/agents/orchestrator/index.ts`, 4724 lignes) n'a **aucune frontière `step.run` interne**.
+
+**Conséquence** : dès qu'un agent ou la glue inter-agents (sélection expert secteur, consensus, reflexion, funding-DB) pousse le wall-clock au-delà de 300s, Vercel tue la fonction mid-step → la ligne `Analysis` reste `RUNNING` à vie (zombie).
+
+**Données réelles (DB, `totalTimeMs` des `full_analysis` COMPLETED)** : p50 = 21 min, max = 30 min, **6/8 runs > 800s**. → Le pipeline dépasse structurellement tout budget de step unique. **Monter `maxDuration` ne suffit pas** (plafond plateforme < 21 min). Le **split en steps durables est obligatoire**.
+
+Hypothèse cap-table **falsifiée** (DB) : avekapeti A une cap table ; `cap-table-auditor` n'a jamais tourné ; 0 `empty_response` sur 7 jours. Le gel n'est pas lié à un agent « sans données » mais au budget de step.
+
+---
+
+## 1. État déjà livré (ne pas refaire)
+
+### En PROD (`main` `ff87da4`, build vert, Inngest synced)
+- **Watchdog `reapStaleAnalyses`** (`src/lib/analysis-compensation.ts`) — cron Inngest `staleAnalysisReaperFunction` `*/5`. Toute analyse `RUNNING` sans activité (dernier checkpoint, sinon `startedAt`) depuis > 20 min → `FAILED` + refund + deal `IN_DD`. Flip atomique `updateMany where status RUNNING` → refund **une seule fois** (anti double-spend). + route Vercel fallback `/api/cron/reap-stale-analyses`. 6 tests.
+- **Fix B router** (`src/services/openrouter/router.ts`) — `completeJSON` ne déclenche plus le fallback cross-family GEMINI_PRO→HAIKU sur `empty_response`.
+
+**Effet** : plus de gel PERMANENT (zombie reapé ≤ 5 min). **NE garantit PAS la complétion** d'un Deep Dive dont une étape dépasse 300s.
+
+### Sur la branche `fix/thesis-gate-guard` (`de02b77`, NON déployé)
+- **C2a** — helper `persistTierCheckpoint` (`src/agents/orchestrator/index.ts`, `state:'ANALYZING'`) appelé à 4 frontières dans `runFullAnalysis` (avant STEP 3 / après Tier 1 / avant STEP 6 / avant STEP 7). Rend une analyse tuée mid-pipeline reprenable au lieu de `RUNNING`-sans-checkpoint (que `resume` marquait `FAILED`). **Prérequis du split.** tsc 0, 4069 tests verts.
+  - **Précision (audit Codex #7)** : `saveCheckpoint` crée **une ligne `AnalysisCheckpoint` à chaque frontière** (effet réel : +N rows). Seul l'`update` de `Analysis.results` est RUNNING-gated. Ce n'est donc PAS « aucun effet absolu » — c'est « pas de régression de la sortie finale ».
+
+---
+
+## 2. Objectif
+
+Un Deep Dive **complète toujours** (ou échoue proprement + refund), **quel que soit** le wall-clock, **sans changer un prompt / output / schéma / directive anti-hallucination**. Moyen : découper `runFullAnalysis` en **unités durables** (step Inngest par phase Tier1 A/B/C/D + par batch Tier3), chacune < 300s, l'état survivant entre steps via un DTO sérialisable + snapshot DB. Réutiliser le checkpoint/resume existant. Tout derrière un flag `DEEP_DIVE_STEPWISE` (OFF = code actuel exact = rollback instantané).
+
+---
+
+## 3. Invariants (à ne jamais casser)
+
+1. **Byte-équivalence — scindée en 3 claims distincts** (audit Codex v2 #1) :
+   - **E1** : single-pass vs stepwise sur **run neuf sain** → sortie identique.
+   - **E2** : kill/resume vs run ininterrompu → identique, **seulement après** unification du resume (étape G).
+   - **E3** : compatibilité UI/PDF/Findings sur **analyses historiques** (qui changeront de richesse après G).
+2. **Crédits** : 1 débit au dispatch (`POST /analyze`), 1 refund keyé via compensation sur échec persistant. Le split n'introduit **aucun** débit/refund supplémentaire.
+3. **Coûts LLM / logs / side-effects** (audit Codex v2 #6) : NE doublent PAS sur retry → mécanisme « agent result déjà présent ⇒ skip » (agent + `processAgentResult` + writes), réutilise le `completedSet` du resume.
+4. **Pas de boucle infinie** : complétion bornée OU FAILED+refund.
+5. **Watchdog compatible** : un run stepwise sain n'est jamais reapé en cours.
+6. **`main` jamais cassé** : chaque incrément vérifié (`tsc` + `vitest` ciblé, sortie **relue** avant tout commit) AVANT commit ; jamais d'édition à l'aveugle (codemod Node + `grep -c`). **Ne jamais commiter si tsc ≠ 0.**
+
+---
+
+## 4. Faits vérifiés (sous-agent Explore, process propre — base de C/D/E)
+
+- **completedSet** (corrige audit Codex #1) : **PAS** à `index.ts:4114-4121` (c'est le recovery load). Il est construit dans `_resumeAnalysisImpl` **après le merge checkpoint/DB** — re-localiser exactement au moment de coder.
+- **DebateRecord** (`schema.prisma:912`) : `contradictionId @unique` (ligne 917), **pas** de composite. → upsert possible **par `contradictionId`**. `persistDebateRecord` (`persistence.ts:358`) = `create` (insert) → passer en `upsert({ where: { contradictionId } })`.
+- **ScoredFinding** (`schema.prisma:849`) : **AUCUNE contrainte unique**, pas de natural key. `persistScoredFindings` (`persistence.ts:320`) = `createMany` INSERT-only, scopé `(analysisId, agentName)` dans le payload mais **sans dédup DB** → double-write sur replay. Fix : **delete + insert transactionnel par `(analysisId, agentName)`** (ou ajouter `@@unique`).
+- **processAgentResult** (`persistence.ts:407`) écrit en DB selon le type d'agent : `document-extractor`→`deal.update` (:526) ; `red-flag-detector`→`redFlag.createMany` (:544) ; `synthesis-deal-scorer`→`deal.update` scores (:576) ; `conditions-analyst`→`deal.update` (:601) ; `team-investigator`→`$transaction` founder.update+createMany (:696). → si result déjà `success`, **ne pas rerun l'agent NI `processAgentResult` NI réécrire findings/debates**. Skip **AVANT** tout side-effect.
+- **costMonitor** (`cost-monitor.ts`) : `recordCall` **no-op si `currentAnalysis` null** (:243, pas de throw) ; `endAnalysis` lit l'accumulateur **EN MÉMOIRE** seulement (pas de DB read). → état **non cross-step** : ne pas en dépendre entre steps (DB/log-derived, ou re-start par step).
+- **setAnalysisContext** (`router.ts:68`) = **AsyncLocalStorage** via `runWithLLMContext` (:32). → chaque step Inngest doit **re-wrapper** dans `runWithLLMContext({ analysisId })` avant tout appel LLM, sinon `LLMCallLog` perd `analysisId`. Sites actuels : `index.ts` 572/705/992/1287/1465/4360.
+- **Snapshot DB tranché** (audit Codex #3) : réutiliser **`AnalysisCheckpoint`** avec `state:"STEPWISE:<unit>"` + `results` (Json) = le `StepState` sérialisé. Write = `saveCheckpoint` ; read = `loadLatestCheckpoint`. **Pas de nouvelle table.** Décidé d'emblée (ne pas attendre le câblage) car le payload `step.run` peut dépasser le cap Inngest.
+
+---
+
+## 5. Roadmap (incréments livrables, ordre STRICT — chaque étape auditée par Codex avant la suivante)
+
+### A — C2a (FAIT, `de02b77`)
+À auditer (forme checkpoint, RUNNING-gate, précision « +N rows »). Vérif : `tsc` 0 ; `vitest src/agents/orchestrator` vert.
+
+### B — Type `FullAnalysisStepState` + snapshot + tests (PROCHAIN LIVRABLE, B SEUL)
+- Type **sérialisable strict** (DTO, pas un `EnrichedAgentContext` déguisé — audit #2). Champs : `version, analysisId, dealId, analysisType, totalAgents, completedCount, totalCost, lastUnit, done, allResults, previousResults/consensusResolutions, factStoreFormatted, verificationContext, tier1CrossValidation, consolidatedRedFlags`.
+- **Garde runtime** `assertPlainJson` : rejette Date / Map / Set / function / undefined / NaN / instances de classe (chemin fautif renvoyé). `serialize`/`deserialize` versionnés + validation des scalaires au load.
+- **Helpers snapshot read/write** via `AnalysisCheckpoint` `state:"STEPWISE:<unit>"`.
+- **Tests** (`vitest`) : round-trip/carry ; **négatif** (drop `verificationContext` ⇒ deep-equal échoue, preuve que le test a des dents) ; **funding-DB drift** (le mock renvoie des données différentes au 2e appel ⇒ passe SSI `verificationContext` est **porté**, pas reconstruit).
+- Vérif : `tsc --noEmit` = 0 (relire la sortie) + `vitest` ciblé + `src/agents/orchestrator`. **STOP après B pour audit Codex.**
+
+### C — Bootstrap + extraction des méthodes par-phase (byte-inert, flag OFF)
+- **D'abord** extraire `initializeFullAnalysisRun` (crée Analysis, snapshot corpus, costMonitor, stateMachine, baseContext, `setAnalysisContext`) — audit Codex v2 #2.
+- Puis `runTier0AndThesis`, `runTier1PhaseA..D` (une par phase ; un tier entier > 300s), `runPostTier1Glue` (consensus global + cross-val + red-flags + `persistScoredFindings`), `runTier3PreBatch`, `runTier2Sector` (+ son consensus/reflexion), `runTier3PostBatch`.
+- **Test E1 avant/après CHAQUE extraction** (pas un seul gros harness en fin). Flag OFF = byte-inert.
+
+### D — Idempotence + câblage Inngest stepwise (conçus ENSEMBLE — audit v2 #5)
+- Skip agent déjà réussi **avant tout side-effect** (`completedSet`). `persistDebateRecord` → upsert par `contradictionId`. `persistScoredFindings` → delete+insert transactionnel par `(analysisId, agentName)`. Confirmer contrainte `createFactEventsBatch`. **Splitter unit D (7 agents) en sub-steps par agent** UP FRONT.
+- Chaque step re-wrappe `runWithLLMContext({ analysisId })`. Un `step.run` par méthode sous le flag ; OFF = `step.run('run-analysis')` actuel inchangé. State via snapshot `AnalysisCheckpoint` `STEPWISE:<unit>` + token. Dispatcher lit le marqueur `done` (cost-limit early-return, thesis-reconciler conditionnel — pas de séquence hardcodée). Échec → même handler de compensation = 1 refund keyé.
+
+### F — Watchdog recalibration
+Confirmer que chaque `persistTierCheckpoint` rafraîchit le clock de staleness ; seuil reaper > (max wall-clock d'une unité + latence inter-step). Guard test.
+
+### G — Unification du resume (EN DERNIER)
+Router `_resumeAnalysisImpl` via les méthodes partagées → résout l'asymétrie qualité (le resume gagne consensus/cross-val/red-flags/`persistScoredFindings` qu'il skippait). ⚠️ Vérifier qu'aucun consommateur (PDF, UI score badge, dashboard Findings, snapshot test) n'assert l'ancienne forme « thin » (E3). Test E2 kill/resume == ininterrompu.
+
+### H — Hard walls C1 (APRÈS le split)
+`withHardWall(label, fn, wallMs)` autour de la glue non bornée (`getTier2SectorExpert`, `detectContradictions`, funding-DB `Promise.all`, consensus/reflexion). **NE PAS** présupposer que chaque site « dégrade gracieusement » sans **test par call-site** (audit v3 #8 : certains appels peuvent laisser un état partiellement muté). Valeur du mur = timeout configuré de l'agent + buffer (pas un global 310s). Résiduel connu : Promise.race n'abort pas le Prisma sous-jacent → follow-up AbortController, hors scope.
+
+### I — Activation progressive
+Merge → `main` flag **OFF** (code dormant). Preview `DEEP_DIVE_STEPWISE=1` → Deep Dive lourd réel → vérif complétion + multiples steps dashboard + pas de double-charge (LLMCallLog) + pas de doublon (Findings) + watchdog OK. Puis prod. Rollback = `DEEP_DIVE_STEPWISE=0` (instantané, pas de migration DB).
+
+---
+
+## 6. Interdits (jusqu'à validation B par Codex)
+- Ne pas extraire `runFullAnalysis`. Ne pas toucher Inngest. Ne pas faire C. Ne pas modifier prompts/schemas/agents. **Ne pas commiter si `tsc` ≠ 0.**
+
+## 7. Faux blocker écarté
+« Corruption disque de `inngest.ts` » (relevé par un critic) = artefact d'affichage de session ; `tsc --noEmit` = 0, fichier valide.
