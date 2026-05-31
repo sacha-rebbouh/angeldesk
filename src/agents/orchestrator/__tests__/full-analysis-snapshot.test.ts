@@ -40,7 +40,7 @@ function makeValidState(over: Partial<FullAnalysisStepState> = {}): FullAnalysis
     lastUnit: "tier1-phase-b",
     done: false,
     allResults: { "deck-forensics": { success: true }, "financial-auditor": { success: true } },
-    consensusResolutions: { _consensus_resolutions: [{ id: "c1" }] },
+    previousResults: { "deck-forensics": { success: true }, _consensus_resolutions: [{ id: "c1" }] },
     tier1CrossValidation: { adjusted: true },
     consolidatedRedFlags: [{ severity: "HIGH" }],
     factStoreFormatted: "FACT: x",
@@ -131,7 +131,7 @@ describe("round-trip write→read via DB mockée (carry de bout en bout)", () =>
     const back = await readLatestStepwiseSnapshot("a1");
     expect(back).toEqual(s);
     expect(back?.verificationContext).toEqual({ fundingDb: { p50: 5, p75: 9 } });
-    expect(back?.consensusResolutions).toEqual(s.consensusResolutions);
+    expect(back?.previousResults).toEqual(s.previousResults);
   });
 
   it("FUNDING-DB DRIFT : le snapshot rend le verificationContext PORTÉ (p50:5), pas la valeur driftée (p50:9)", async () => {

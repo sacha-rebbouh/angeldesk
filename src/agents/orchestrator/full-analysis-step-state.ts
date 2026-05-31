@@ -8,8 +8,11 @@
  * le retour JSON mémoïsé survit. Ce type est le contrat EXPLICITE de ce qui doit
  * transiter d'une unité (phase/batch) à la suivante, en particulier les artefacts
  * NON reconstructibles depuis la DB :
- *   - `consensusResolutions` (_consensus_resolutions) : injecté en mémoire dans
- *     enrichedContext.previousResults, JAMAIS persisté → carry obligatoire.
+ *   - `previousResults` : l'OVERLAY complet (résultats d'agents sanitizés pour les
+ *     agents downstream) injecté dans enrichedContext.previousResults, qui CONTIENT
+ *     la clé synthétique `_consensus_resolutions` (jamais persistée ailleurs). On porte
+ *     TOUT previousResults, pas seulement la résolution consensus (audit Codex) — car
+ *     les agents downstream lisent l'overlay entier (formes sanitizées ≠ allResults brut).
  *   - `tier1CrossValidation` / `consolidatedRedFlags` : calculés inline-only après Tier1.
  *   - `verificationContext` : dépend de la funding-DB qui peut DRIFTER entre passes →
  *     carry (pas rebuild), sinon byte-divergence.
@@ -19,7 +22,8 @@
  * déguisé. Aucune fonction/classe/Map/Set/Date/undefined/NaN non normalisés. Les
  * champs « riches » sont au niveau fil (JSON brut) ; les domain types sont reconstruits
  * par le consommateur. Validation STRICTE au write (assertSerializableStepState) ET au
- * load (parseStepState) : tous les blobs requis présents + typés + JSON pur.
+ * load (parseStepState) : tous les blobs requis présents + typés + JSON pur, scalaires
+ * bornés.
  */
 
 /** Version du schéma de snapshot — bump si la forme change (compat snapshot en vol). */
@@ -61,13 +65,16 @@ export interface FullAnalysisStepState {
   /** Version du schéma (validation au load). */
   version: typeof FULL_ANALYSIS_STEP_STATE_VERSION;
 
-  // --- identité / progression (scalaires) ---
+  // --- identité / progression (scalaires bornés) ---
   analysisId: string;
   dealId: string;
   /** AnalysisType au niveau fil (string), recasté par le consommateur. */
   analysisType: string;
+  /** Entier > 0. */
   totalAgents: number;
+  /** Entier >= 0 et <= totalAgents. */
   completedCount: number;
+  /** >= 0. */
   totalCost: number;
 
   /** Dernière unité dont le travail est inclus dans ce state. */
@@ -82,10 +89,11 @@ export interface FullAnalysisStepState {
   /** Sorties d'agents mutées (incl. entrées révisées par reflexion). JSON pur. */
   allResults: Record<string, unknown>;
   /**
-   * Overlay synthétique `_consensus_resolutions` injecté dans previousResults,
-   * jamais persisté ailleurs. null si aucun consensus encore produit.
+   * Overlay complet enrichedContext.previousResults : résultats sanitizés consommés
+   * par les agents downstream, CONTENANT la clé synthétique `_consensus_resolutions`
+   * (jamais persistée ailleurs). Carry intégral obligatoire (audit Codex).
    */
-  consensusResolutions: Record<string, unknown> | null;
+  previousResults: Record<string, unknown>;
   /** Sortie de runTier1CrossValidation (inline-only). null avant post-Tier1. */
   tier1CrossValidation: Record<string, unknown> | null;
   /** Sortie de consolidateRedFlags (inline-only). null avant post-Tier1. */
@@ -156,9 +164,10 @@ export function assertPlainJson(value: unknown, path = "$"): void {
 /**
  * Valide un objet `unknown` comme FullAnalysisStepState et renvoie le type.
  * Lève si : pas un objet plain, version inconnue, scalaire manquant/mal typé,
- * scalaire numérique non-fini, lastUnit hors enum, blob requis absent ou mal typé,
- * ou contenu non JSON-pur. Utilisé au load snapshot (objet Json déjà parsé par Prisma)
- * et par deserializeStepState (string) ET par assertSerializableStepState (au write).
+ * scalaire numérique non-fini / hors bornes, lastUnit hors enum, blob requis absent
+ * ou mal typé, ou contenu non JSON-pur. Utilisé au load snapshot (objet Json déjà
+ * parsé par Prisma), par deserializeStepState (string) ET par
+ * assertSerializableStepState (au write).
  */
 export function parseStepState(value: unknown): FullAnalysisStepState {
   if (!isPlainObject(value)) {
@@ -170,7 +179,7 @@ export function parseStepState(value: unknown): FullAnalysisStepState {
     throw new Error(`[StepState] version non supportée: ${String(o.version)}`);
   }
 
-  // Scalaires : présence + typeof + finitude (audit Codex #2).
+  // Scalaires : présence + typeof + finitude.
   for (const [field, expected] of SCALAR_FIELDS) {
     const v = o[field as string];
     if (typeof v !== expected) {
@@ -181,16 +190,35 @@ export function parseStepState(value: unknown): FullAnalysisStepState {
     }
   }
 
-  // lastUnit doit appartenir à l'enum (audit Codex #2).
+  // Bornes métier des scalaires numériques (audit Codex).
+  const totalAgents = o.totalAgents as number;
+  const completedCount = o.completedCount as number;
+  const totalCost = o.totalCost as number;
+  if (!Number.isInteger(totalAgents) || totalAgents <= 0) {
+    throw new Error(`[StepState] totalAgents doit être un entier > 0 (reçu ${totalAgents})`);
+  }
+  if (!Number.isInteger(completedCount) || completedCount < 0) {
+    throw new Error(`[StepState] completedCount doit être un entier >= 0 (reçu ${completedCount})`);
+  }
+  if (completedCount > totalAgents) {
+    throw new Error(`[StepState] completedCount (${completedCount}) > totalAgents (${totalAgents})`);
+  }
+  if (totalCost < 0) {
+    throw new Error(`[StepState] totalCost doit être >= 0 (reçu ${totalCost})`);
+  }
+
+  // lastUnit doit appartenir à l'enum.
   if (!UNIT_SET.has(o.lastUnit as string)) {
     throw new Error(`[StepState] lastUnit invalide: ${String(o.lastUnit)}`);
   }
 
-  // Blobs requis : présence + typage (audit Codex #1).
-  if (!("allResults" in o) || !isPlainObject(o.allResults)) {
-    throw new Error(`[StepState] allResults doit être un objet`);
+  // Blobs requis : présence + typage.
+  for (const field of ["allResults", "previousResults"] as const) {
+    if (!(field in o) || !isPlainObject(o[field])) {
+      throw new Error(`[StepState] ${field} doit être un objet`);
+    }
   }
-  for (const field of ["consensusResolutions", "tier1CrossValidation", "verificationContext"] as const) {
+  for (const field of ["tier1CrossValidation", "verificationContext"] as const) {
     if (!(field in o)) throw new Error(`[StepState] champ "${field}" manquant`);
     if (!(o[field] === null || isPlainObject(o[field]))) {
       throw new Error(`[StepState] ${field} doit être un objet ou null`);
@@ -203,9 +231,9 @@ export function parseStepState(value: unknown): FullAnalysisStepState {
     throw new Error(`[StepState] consolidatedRedFlags doit être un tableau ou null`);
   }
 
-  // Contenu JSON pur (rejette Date/Map/function/NaN imbriqués) — audit Codex #1.
+  // Contenu JSON pur (rejette Date/Map/function/NaN imbriqués).
   assertPlainJson(o.allResults, "$.allResults");
-  assertPlainJson(o.consensusResolutions, "$.consensusResolutions");
+  assertPlainJson(o.previousResults, "$.previousResults");
   assertPlainJson(o.tier1CrossValidation, "$.tier1CrossValidation");
   assertPlainJson(o.consolidatedRedFlags, "$.consolidatedRedFlags");
   assertPlainJson(o.verificationContext, "$.verificationContext");
@@ -215,7 +243,7 @@ export function parseStepState(value: unknown): FullAnalysisStepState {
 
 /**
  * Valide un state complet avant écriture du snapshot. Équivalent à parseStepState
- * (qui valide désormais scalaires + blobs + JSON pur). Lève sinon.
+ * (qui valide désormais scalaires bornés + blobs + JSON pur). Lève sinon.
  */
 export function assertSerializableStepState(state: FullAnalysisStepState): void {
   parseStepState(state);
