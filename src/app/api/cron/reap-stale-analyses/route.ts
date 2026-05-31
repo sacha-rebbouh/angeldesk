@@ -2,17 +2,18 @@
  * API Route — Stale Analysis Reaper (fallback cron Vercel)
  *
  * Filet de secours pour le watchdog des analyses figées. La planification
- * PRIMAIRE est le cron Inngest `staleAnalysisReaperFunction` (*/5). Comme c'est
- * le premier cron Inngest du repo (les autres jobs sont event-triggered) et que
- * l'enregistrement cloud d'un `{ cron }` n'est pas garanti, cette route Vercel
- * appelle le MÊME cœur `reapStaleAnalyses` — idempotent et sûr à exécuter en
- * parallèle du cron Inngest (flip atomique RUNNING→FAILED, refund une seule fois).
+ * PRIMAIRE est le cron Inngest staleAnalysisReaperFunction (toutes les 5 min).
+ * Comme c'est le premier cron Inngest du repo (les autres jobs sont
+ * event-triggered) et que l'enregistrement cloud d'un cron Inngest n'est pas
+ * garanti, cette route Vercel appelle le MEME coeur reapStaleAnalyses —
+ * idempotent et sur a executer en parallele du cron Inngest (flip atomique
+ * RUNNING vers FAILED, refund une seule fois).
  *
- * Sécurité : Bearer CRON_SECRET en comparaison timing-safe (même pattern que les
+ * Securite : Bearer CRON_SECRET en comparaison timing-safe (meme pattern que les
  * routes cron maintenance).
  *
- * Planification : à déclarer côté Vercel (dashboard OU vercel.json). La fréquence
- * `*/5` dépend du plan Vercel — à vérifier.
+ * Planification : a declarer cote Vercel (dashboard OU vercel.json). La frequence
+ * (toutes les 5 min) depend du plan Vercel — a verifier.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
