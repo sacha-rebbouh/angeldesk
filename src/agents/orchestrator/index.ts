@@ -1686,7 +1686,13 @@ export class AgentOrchestrator {
 
       // STEP 0: TIER 0 FACT EXTRACTION (runs BEFORE everything)
       // Extracts structured facts that will be available to all agents
-({ totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = await this.runTier0Step({
+      ({
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+        founderResponses,
+      } = await this.runTier0Step({
         deal,
         scopedDocuments,
         isUpdate,
