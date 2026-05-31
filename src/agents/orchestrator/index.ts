@@ -1644,6 +1644,78 @@ export class AgentOrchestrator {
     return { totalCost, completedCount, factStore, factStoreFormatted, founderResponses };
   }
 
+  /**
+   * C.2b — STEP 1 document-extractor, extrait BYTE-INERT de runFullAnalysis.
+   * baseContext et allResults sont mutés PAR RÉFÉRENCE (passés en param), comme l'inline
+   * d'origine (baseContext.previousResults["document-extractor"], allResults[...]).
+   * Renvoie les let mutés (totalCost, completedCount, extractedData). N'inclut PAS la
+   * deck coherence (STEP 1.5), ni le context engine, ni la thèse.
+   */
+  private async runDocumentExtractorStep(params: {
+    baseContext: AgentContext;
+    scopedDocuments: DealWithDocs["documents"];
+    onProgress: AnalysisOptions["onProgress"];
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    stateMachine: AnalysisStateMachine;
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    completedCount: number;
+    TOTAL_AGENTS: number;
+  }): Promise<{
+    totalCost: number;
+    completedCount: number;
+    extractedData: ContextSeed;
+  }> {
+    const { baseContext, scopedDocuments, onProgress, analysis, stateMachine, allResults, TOTAL_AGENTS } = params;
+    let { totalCost, completedCount } = params;
+    // STEP 1: DOCUMENT EXTRACTION (must run first)
+    // We need extracted data (tagline, competitors, founders) for Context Engine
+    await stateMachine.startExtraction();
+
+    onProgress?.({
+      currentAgent: "document-extractor",
+      completedAgents: completedCount,
+      totalAgents: TOTAL_AGENTS,
+    });
+
+    // Extract data from documents first
+    let extractedData: ContextSeed = {};
+
+    if (scopedDocuments.length > 0) {
+      try {
+        const extractorResult = await BASE_AGENTS["document-extractor"].run(baseContext);
+        allResults["document-extractor"] = extractorResult;
+        totalCost += extractorResult.cost;
+        baseContext.previousResults!["document-extractor"] = extractorResult;
+        completedCount++;
+
+        stateMachine.recordAgentComplete(
+          "document-extractor",
+          extractorResult as AnalysisAgentResult
+        );
+        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+        // Extract data for Context Engine
+        if (extractorResult.success) {
+          extractedData = this.extractContextSeed(extractorResult);
+          console.log(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
+        }
+      } catch (error) {
+        const errorResult: AgentResult = {
+          agentName: "document-extractor",
+          success: false,
+          executionTimeMs: 0,
+          cost: 0,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+        allResults["document-extractor"] = errorResult;
+        stateMachine.recordAgentFailed("document-extractor", errorResult.error ?? "Unknown");
+        completedCount++;
+      }
+    }
+    return { totalCost, completedCount, extractedData };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -1705,51 +1777,18 @@ export class AgentOrchestrator {
         founderResponses,
       }));
 
-      // STEP 1: DOCUMENT EXTRACTION (must run first)
-      // We need extracted data (tagline, competitors, founders) for Context Engine
-      await stateMachine.startExtraction();
-
-      onProgress?.({
-        currentAgent: "document-extractor",
-        completedAgents: completedCount,
-        totalAgents: TOTAL_AGENTS,
-      });
-
-      // Extract data from documents first
-      let extractedData: ContextSeed = {};
-
-      if (scopedDocuments.length > 0) {
-        try {
-          const extractorResult = await BASE_AGENTS["document-extractor"].run(baseContext);
-          allResults["document-extractor"] = extractorResult;
-          totalCost += extractorResult.cost;
-          baseContext.previousResults!["document-extractor"] = extractorResult;
-          completedCount++;
-
-          stateMachine.recordAgentComplete(
-            "document-extractor",
-            extractorResult as AnalysisAgentResult
-          );
-          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-          // Extract data for Context Engine
-          if (extractorResult.success) {
-            extractedData = this.extractContextSeed(extractorResult);
-            console.log(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
-          }
-        } catch (error) {
-          const errorResult: AgentResult = {
-            agentName: "document-extractor",
-            success: false,
-            executionTimeMs: 0,
-            cost: 0,
-            error: error instanceof Error ? error.message : "Unknown error",
-          };
-          allResults["document-extractor"] = errorResult;
-          stateMachine.recordAgentFailed("document-extractor", errorResult.error ?? "Unknown");
-          completedCount++;
-        }
-      }
+      let extractedData: ContextSeed;
+      ({ totalCost, completedCount, extractedData } = await this.runDocumentExtractorStep({
+        baseContext,
+        scopedDocuments,
+        onProgress,
+        analysis,
+        stateMachine,
+        allResults,
+        totalCost,
+        completedCount,
+        TOTAL_AGENTS,
+      }));
 
       // STEP 1.5: DECK COHERENCE CHECK (Tier 0.5)
       // Verifies data consistency before Tier 1 agents analyze
