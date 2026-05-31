@@ -1,7 +1,6 @@
 # Changes Log - Angel Desk
 
 ---
-<<<<<<< HEAD
 ## 2026-05-31 — Fix régression : deadlock dispatch après retrait du gate (guards.ts)
 
 ### Contexte
@@ -19,7 +18,8 @@ Vérif : `tsc --noEmit` **exit 0** ; suite unit complète **4063 passés / 2 ski
 - **Déployer** le fix sur `main` (régression prod active sur les runs crashés).
 - **Débloquer `cmpsybp5f`** → `FAILED` (mutation prod ; `scripts/unblock-stale-analysis.ts`).
 - **Gap plus profond (à part)** : `reserveFullAnalysisDispatch` ne récupère pas un run **mort-avec-progression** (`hasMeaningfulProgress` bloque le cutoff stale 2h ; pas de timestamp d'activité sur `Analysis`) → un crash mid-analyse reste non-récupérable auto. Design à revoir.
-=======
+
+---
 ## 2026-05-31 — Watchdog anti-zombie + de-amplification retry router (gel Deep Dive)
 
 ### Contexte (forensic avekapeti, workflow 6 enquêteurs + DB read-only)
@@ -38,7 +38,6 @@ Vérif : `tsc --noEmit` **exit 0** ; **283 fichiers / 4069 tests verts** (2 skip
 - **Fix C** : split de `run-analysis` en steps Inngest par tier (chacun <300s, resume DB) — nécessite test d'idempotence resume-merge avant prod.
 - **Fix D** : durcir le timeout du hang silencieux post-`market-intelligence` (non-LLM).
 - **Short-circuit pré-LLM no-input** (cap-table/financial/deck) keyé sur **présence document brute** (pas champs parsés) — protège le cas réel « deal sans cap table ».
->>>>>>> 417ab84 (fix(analyse): watchdog anti-zombie + de-amplification retry router)
 
 ---
 ## 2026-05-31 — Transparence crédit sur la re-extraction de thèse (upload doc)
