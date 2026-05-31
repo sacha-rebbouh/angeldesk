@@ -1554,6 +1554,43 @@ export class AgentOrchestrator {
     };
   }
 
+  /**
+   * C.1b — Construit le baseContext de full_analysis (evidence + AgentContext de base).
+   * Extrait de runFullAnalysis ; appelé DANS le try, APRÈS stateMachine.start() et
+   * AVANT STEP 0. loadEvidenceContextSafe est best-effort (déjà tolérant). Byte-inert.
+   */
+  private async buildBaseAnalysisContext(params: {
+    dealId: string;
+    initialCanonicalDeal: ReturnType<typeof buildCanonicalRuntimeDeal>;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    corpusSnapshot: Awaited<ReturnType<AgentOrchestrator["materializeAnalysisCorpusSnapshot"]>>;
+    scopedDocuments: DealWithDocs["documents"];
+  }): Promise<AgentContext> {
+    const { dealId, initialCanonicalDeal, analysis, analysisModeOverride, corpusSnapshot, scopedDocuments } = params;
+    // Phase 5.1 (Codex round 15 P1) — wire evidence into full_analysis path.
+    const { evidenceContext: fullEvidenceContext, evidenceToday: fullEvidenceToday } =
+      await loadEvidenceContextSafe(dealId);
+    const baseContext: AgentContext = {
+      dealId,
+      deal: initialCanonicalDeal,
+      canonicalDeal: initialCanonicalDeal,
+      analysis: {
+        id: analysis.id,
+        mode: analysis.mode ?? analysisModeOverride ?? "full_analysis",
+        thesisBypass: false,
+        thesisId: null,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
+      documents: scopedDocuments,
+      evidenceContext: fullEvidenceContext,
+      evidenceToday: fullEvidenceToday,
+      previousResults: {},
+    };
+
+    return baseContext;
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -1585,25 +1622,14 @@ export class AgentOrchestrator {
     try {
       await stateMachine.start();
 
-      // Phase 5.1 (Codex round 15 P1) — wire evidence into full_analysis path.
-      const { evidenceContext: fullEvidenceContext, evidenceToday: fullEvidenceToday } =
-        await loadEvidenceContextSafe(dealId);
-      const baseContext: AgentContext = {
+      const baseContext = await this.buildBaseAnalysisContext({
         dealId,
-        deal: initialCanonicalDeal,
-        canonicalDeal: initialCanonicalDeal,
-        analysis: {
-          id: analysis.id,
-          mode: analysis.mode ?? analysisModeOverride ?? "full_analysis",
-          thesisBypass: false,
-          thesisId: null,
-          corpusSnapshotId: corpusSnapshot?.id ?? null,
-        },
-        documents: scopedDocuments,
-        evidenceContext: fullEvidenceContext,
-        evidenceToday: fullEvidenceToday,
-        previousResults: {},
-      };
+        initialCanonicalDeal,
+        analysis,
+        analysisModeOverride,
+        corpusSnapshot,
+        scopedDocuments,
+      });
 
       // STEP 0: TIER 0 FACT EXTRACTION (runs BEFORE everything)
       // Extracts structured facts that will be available to all agents
