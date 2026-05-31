@@ -1783,6 +1783,8 @@ export class AgentOrchestrator {
         };
       }
 
+      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases
       // Phase A: deck-forensics → validates deck claims
       // Phase B: financial-auditor → validates financial metrics
@@ -1833,6 +1835,8 @@ export class AgentOrchestrator {
       if (allFindings.length > 0) {
         await persistScoredFindings(analysis.id, "tier1-aggregate", allFindings);
       }
+
+      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
 
       // Diagnostic log: show tier1 success/failure breakdown
       const tier1SuccessCount = TIER1_AGENT_NAMES.filter(n => allResults[n]?.success).length;
@@ -2138,6 +2142,8 @@ export class AgentOrchestrator {
         console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
       }
 
+      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+
       // STEP 6: SECTOR EXPERT PHASE - Tier 2 (active si secteur détecté)
       if (sectorExpert) {
         onProgress?.({
@@ -2218,6 +2224,8 @@ export class AgentOrchestrator {
           }
         }
       }
+
+      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
 
       // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
       // Restore full (unsanitized) results for final synthesis agents.
@@ -4046,6 +4054,44 @@ export class AgentOrchestrator {
    * 3. Continue from where it left off
    * 4. Skip already completed agents
    */
+  /**
+   * C2a — Checkpoint durable RUNNING a une frontiere de tier (runFullAnalysis).
+   * Rend une analyse tuee mid-pipeline (budget Vercel 300s) reprenable au lieu de
+   * rester RUNNING-sans-checkpoint (que resume marquait FAILED — locus du gel avekapeti).
+   * Additif + RUNNING-gated (saveCheckpoint n'update la ligne que si status RUNNING et
+   * merge monotone) => zero impact sur une analyse saine (le checkpoint COMPLETED terminal
+   * merge par-dessus). En pass-0 allResults n'ajoute que des agents (pas de regression
+   * succes->echec) => success-preserving par construction. Best-effort : un echec de
+   * checkpoint ne fait JAMAIS echouer l'analyse.
+   */
+  private async persistTierCheckpoint(
+    analysisId: string,
+    allResults: Record<string, AgentResult>,
+    totalCost: number,
+    startTimeMs: number,
+  ): Promise<void> {
+    try {
+      await saveCheckpoint(analysisId, {
+        state: "ANALYZING",
+        completedAgents: Object.keys(allResults),
+        pendingAgents: [],
+        failedAgents: Object.entries(allResults)
+          .filter(([, result]) => !result.success)
+          .map(([agent, result]) => ({
+            agent,
+            error: result.error ?? "no error msg",
+            retries: 1,
+          })),
+        findings: extractAllFindings(allResults).allFindings,
+        results: allResults,
+        totalCost,
+        startTime: new Date(startTimeMs).toISOString(),
+      });
+    } catch (err) {
+      console.warn("[Orchestrator] persistTierCheckpoint non-fatal:", err);
+    }
+  }
+
   async resumeAnalysis(
     analysisId: string,
     onProgress?: AnalysisOptions["onProgress"],
