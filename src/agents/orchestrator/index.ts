@@ -1716,6 +1716,52 @@ export class AgentOrchestrator {
     return { totalCost, completedCount, extractedData };
   }
 
+  /**
+   * C.2c — STEP 1.5 deck coherence check, extrait BYTE-INERT de runFullAnalysis.
+   * allResults muté PAR RÉFÉRENCE (param) comme l'inline (allResults["deck-coherence-checker"]).
+   * Renvoie les mutés (totalCost, deckCoherenceReport). N'inclut PAS le context engine
+   * (STEP 2), la thèse, ni Tier1.
+   */
+  private async runDeckCoherenceStep(params: {
+    deal: DealWithDocs;
+    scopedDocuments: DealWithDocs["documents"];
+    extractedData: ContextSeed;
+    onProgress: AnalysisOptions["onProgress"];
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+  }): Promise<{
+    totalCost: number;
+    deckCoherenceReport: DeckCoherenceReport | null;
+  }> {
+    const { deal, scopedDocuments, extractedData, onProgress, allResults } = params;
+    let { totalCost } = params;
+    // STEP 1.5: DECK COHERENCE CHECK (Tier 0.5)
+    // Verifies data consistency before Tier 1 agents analyze
+    let deckCoherenceReport: DeckCoherenceReport | null = null;
+    if (scopedDocuments.length > 0 && allResults["document-extractor"]?.success) {
+      const coherenceResult = await this.runDeckCoherenceCheck(
+        { ...deal, documents: scopedDocuments },
+        extractedData as Record<string, unknown> | undefined,
+        onProgress
+      );
+      deckCoherenceReport = coherenceResult.report;
+      totalCost += coherenceResult.cost;
+
+      if (deckCoherenceReport) {
+        allResults["deck-coherence-checker"] = {
+          agentName: "deck-coherence-checker",
+          success: true,
+          executionTimeMs: coherenceResult.executionTimeMs,
+          cost: coherenceResult.cost,
+          data: deckCoherenceReport,
+        } as AgentResult & { data: DeckCoherenceReport };
+      }
+
+      console.log(`[Orchestrator:FullAnalysis] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
+    }
+    return { totalCost, deckCoherenceReport };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -1790,30 +1836,15 @@ export class AgentOrchestrator {
         TOTAL_AGENTS,
       }));
 
-      // STEP 1.5: DECK COHERENCE CHECK (Tier 0.5)
-      // Verifies data consistency before Tier 1 agents analyze
-      let deckCoherenceReport: DeckCoherenceReport | null = null;
-      if (scopedDocuments.length > 0 && allResults["document-extractor"]?.success) {
-        const coherenceResult = await this.runDeckCoherenceCheck(
-          { ...deal, documents: scopedDocuments },
-          extractedData as Record<string, unknown> | undefined,
-          onProgress
-        );
-        deckCoherenceReport = coherenceResult.report;
-        totalCost += coherenceResult.cost;
-
-        if (deckCoherenceReport) {
-          allResults["deck-coherence-checker"] = {
-            agentName: "deck-coherence-checker",
-            success: true,
-            executionTimeMs: coherenceResult.executionTimeMs,
-            cost: coherenceResult.cost,
-            data: deckCoherenceReport,
-          } as AgentResult & { data: DeckCoherenceReport };
-        }
-
-        console.log(`[Orchestrator:FullAnalysis] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
-      }
+      let deckCoherenceReport: DeckCoherenceReport | null;
+      ({ totalCost, deckCoherenceReport } = await this.runDeckCoherenceStep({
+        deal,
+        scopedDocuments,
+        extractedData,
+        onProgress,
+        allResults,
+        totalCost,
+      }));
 
       // STEP 2: CONTEXT ENGINE (runs AFTER extraction to use extracted data)
       await stateMachine.startGathering();
