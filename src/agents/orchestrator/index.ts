@@ -1762,6 +1762,92 @@ export class AgentOrchestrator {
     return { totalCost, deckCoherenceReport };
   }
 
+  /**
+   * C.2d — STEP 2 Context Engine, extrait BYTE-INERT de runFullAnalysis.
+   * Enrichit le factStore (enrichContext + mergeContextEngineFacts), filtre pour Tier 1,
+   * charge les questions précédentes, construit l'enrichedContext (attachEvidenceLedger).
+   * Renvoie factStore/factStoreFormatted réassignés + enrichedContext. N'inclut PAS la
+   * thèse (STEP 2.5) ni Tier1.
+   */
+  private async runContextEngineStep(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    baseContext: AgentContext;
+    stateMachine: AnalysisStateMachine;
+    extractedData: ContextSeed;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    corpusSnapshot: Awaited<ReturnType<AgentOrchestrator["materializeAnalysisCorpusSnapshot"]>>;
+    deckCoherenceReport: DeckCoherenceReport | null;
+    founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+    onProgress: AnalysisOptions["onProgress"];
+    completedCount: number;
+    TOTAL_AGENTS: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+  }): Promise<{
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    enrichedContext: EnrichedAgentContext;
+  }> {
+    const { deal, dealId, baseContext, stateMachine, extractedData, analysis, corpusSnapshot, deckCoherenceReport, founderResponses, onProgress, completedCount, TOTAL_AGENTS } = params;
+    let { factStore, factStoreFormatted } = params;
+    // STEP 2: CONTEXT ENGINE (runs AFTER extraction to use extracted data)
+    await stateMachine.startGathering();
+
+    onProgress?.({
+      currentAgent: "context-engine",
+      completedAgents: completedCount,
+      totalAgents: TOTAL_AGENTS,
+    });
+
+    const contextEngineData = await this.enrichContext(deal, extractedData, factStore);
+    const mergedContextFacts = await this.mergeContextEngineFacts(
+      dealId,
+      contextEngineData,
+      factStore,
+      corpusSnapshot?.id ?? null
+    );
+    factStore = mergedContextFacts.factStore;
+    factStoreFormatted = mergedContextFacts.factStoreFormatted;
+
+    const filteredFactStore = replaceUnreliableWithPlaceholders(factStore);
+    const filteredFactStoreFormatted = factStore.length > 0
+      ? formatFactsForScoringAgents(factStore)
+      : factStoreFormatted;
+
+    // Load questions from previous analysis for cross-run persistence
+    const prevQuestions = await loadPreviousAnalysisQuestions(dealId);
+    const previousAnalysisQuestions = prevQuestions.questions.map((q) => ({
+      ...q,
+      answered: prevQuestions.answeredQuestionTexts.some(
+        (a) => a.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) ===
+          q.question.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40)
+      ),
+    }));
+    if (previousAnalysisQuestions.length > 0) {
+      console.log(`[Orchestrator:FullAnalysis] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
+    }
+
+    // Build enriched context with Fact Store for all agents
+    const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
+      ...baseContext,
+      contextEngine: contextEngineData,
+      factStore: filteredFactStore,
+      factStoreFormatted: filteredFactStoreFormatted,
+      extractedData: this.toExtractedContextData(extractedData),
+      analysis: {
+        id: analysis.id,
+        thesisBypass: false,
+        thesisId: null,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
+      deckCoherenceReport: deckCoherenceReport ?? undefined,
+      founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
+      previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
+    });
+    return { factStore, factStoreFormatted, enrichedContext };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -1846,60 +1932,23 @@ export class AgentOrchestrator {
         totalCost,
       }));
 
-      // STEP 2: CONTEXT ENGINE (runs AFTER extraction to use extracted data)
-      await stateMachine.startGathering();
-
-      onProgress?.({
-        currentAgent: "context-engine",
-        completedAgents: completedCount,
-        totalAgents: TOTAL_AGENTS,
-      });
-
-      const contextEngineData = await this.enrichContext(deal, extractedData, factStore);
-      const mergedContextFacts = await this.mergeContextEngineFacts(
+      let enrichedContext: EnrichedAgentContext;
+      ({ factStore, factStoreFormatted, enrichedContext } = await this.runContextEngineStep({
+        deal,
         dealId,
-        contextEngineData,
+        baseContext,
+        stateMachine,
+        extractedData,
+        analysis,
+        corpusSnapshot,
+        deckCoherenceReport,
+        founderResponses,
+        onProgress,
+        completedCount,
+        TOTAL_AGENTS,
         factStore,
-        corpusSnapshot?.id ?? null
-      );
-      factStore = mergedContextFacts.factStore;
-      factStoreFormatted = mergedContextFacts.factStoreFormatted;
-
-      const filteredFactStore = replaceUnreliableWithPlaceholders(factStore);
-      const filteredFactStoreFormatted = factStore.length > 0
-        ? formatFactsForScoringAgents(factStore)
-        : factStoreFormatted;
-
-      // Load questions from previous analysis for cross-run persistence
-      const prevQuestions = await loadPreviousAnalysisQuestions(dealId);
-      const previousAnalysisQuestions = prevQuestions.questions.map((q) => ({
-        ...q,
-        answered: prevQuestions.answeredQuestionTexts.some(
-          (a) => a.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) ===
-            q.question.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40)
-        ),
+        factStoreFormatted,
       }));
-      if (previousAnalysisQuestions.length > 0) {
-        console.log(`[Orchestrator:FullAnalysis] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
-      }
-
-      // Build enriched context with Fact Store for all agents
-      const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
-        ...baseContext,
-        contextEngine: contextEngineData,
-        factStore: filteredFactStore,
-        factStoreFormatted: filteredFactStoreFormatted,
-        extractedData: this.toExtractedContextData(extractedData),
-        analysis: {
-          id: analysis.id,
-          thesisBypass: false,
-          thesisId: null,
-          corpusSnapshotId: corpusSnapshot?.id ?? null,
-        },
-        deckCoherenceReport: deckCoherenceReport ?? undefined,
-        founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
-        previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
-      });
 
       // STEP 2.5: THESIS EXTRACTION (Tier 0.5) — thesis-first architecture
       // Extrait la these d'investissement, la teste contre 3 frameworks (YC/Thiel/AD),
