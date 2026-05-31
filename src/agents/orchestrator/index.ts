@@ -241,6 +241,31 @@ function attachEvidenceLedger(context: EnrichedAgentContext): EnrichedAgentConte
   };
 }
 
+interface FullAnalysisRunInit {
+  failFastOnCritical: AdvancedAnalysisOptions["failFastOnCritical"];
+  maxCostUsd: AdvancedAnalysisOptions["maxCostUsd"];
+  onEarlyWarning: AdvancedAnalysisOptions["onEarlyWarning"];
+  isUpdate: boolean;
+  enableTrace: boolean;
+  stopAfterThesis: boolean;
+  analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+  startTime: number;
+  collectedWarnings: EarlyWarning[];
+  initialCanonicalDeal: ReturnType<typeof buildCanonicalRuntimeDeal>;
+  sectorExpert: Awaited<ReturnType<typeof getTier2SectorExpert>>;
+  TOTAL_AGENTS: number;
+  corpusSnapshot: Awaited<ReturnType<AgentOrchestrator["materializeAnalysisCorpusSnapshot"]>>;
+  scopedDocuments: DealWithDocs["documents"];
+  analysis: Awaited<ReturnType<typeof createAnalysis>>;
+  stateMachine: AnalysisStateMachine;
+  allResults: Record<string, AgentResult>;
+  totalCost: number;
+  completedCount: number;
+  factStore: CurrentFact[];
+  factStoreFormatted: string;
+  founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+}
+
 export class AgentOrchestrator {
   /**
    * Run a complete analysis session
@@ -1405,12 +1430,18 @@ export class AgentOrchestrator {
    *
    * Includes consensus debates and reflexion engines for quality assurance.
    */
-  private async runFullAnalysis(
+  /**
+   * C.1 — Bootstrap de full_analysis extrait BYTE-INERT de runFullAnalysis (avant le try).
+   * Crée l'Analysis, le corpus snapshot, le costMonitor, la stateMachine (+onStateChange),
+   * setAnalysisContext, messageBus.clear ; renvoie tous les locals consommés ensuite.
+   * NE contient PAS stateMachine.start()/loadEvidenceContextSafe/baseContext/STEP 0
+   * (restent dans le try de runFullAnalysis — frontière try/catch inchangée).
+   */
+  private async initializeFullAnalysisRun(
     deal: DealWithDocs,
     dealId: string,
-    onProgress: AnalysisOptions["onProgress"],
     advancedOptions: AdvancedAnalysisOptions
-  ): Promise<AnalysisResult> {
+  ): Promise<FullAnalysisRunInit> {
     const {
       failFastOnCritical,
       maxCostUsd,
@@ -1496,6 +1527,60 @@ export class AgentOrchestrator {
     let factStore: CurrentFact[] = [];
     let factStoreFormatted = "";
     let founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }> = [];
+
+    return {
+      failFastOnCritical,
+      maxCostUsd,
+      onEarlyWarning,
+      isUpdate,
+      enableTrace,
+      stopAfterThesis,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      initialCanonicalDeal,
+      sectorExpert,
+      TOTAL_AGENTS,
+      corpusSnapshot,
+      scopedDocuments,
+      analysis,
+      stateMachine,
+      allResults,
+      totalCost,
+      completedCount,
+      factStore,
+      factStoreFormatted,
+      founderResponses,
+    };
+  }
+
+  private async runFullAnalysis(
+    deal: DealWithDocs,
+    dealId: string,
+    onProgress: AnalysisOptions["onProgress"],
+    advancedOptions: AdvancedAnalysisOptions
+  ): Promise<AnalysisResult> {
+    const init = await this.initializeFullAnalysisRun(deal, dealId, advancedOptions);
+    const {
+      failFastOnCritical,
+      maxCostUsd,
+      onEarlyWarning,
+      isUpdate,
+      enableTrace,
+      stopAfterThesis,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      initialCanonicalDeal,
+      sectorExpert,
+      TOTAL_AGENTS,
+      corpusSnapshot,
+      scopedDocuments,
+      analysis,
+      stateMachine,
+      allResults,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
 
     try {
       await stateMachine.start();
