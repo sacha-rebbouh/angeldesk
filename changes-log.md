@@ -1,6 +1,27 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-01 — Durabilité Deep Dive D.5d-1 (driver foundation) + design split d-2..k verrouillé
+
+### Contexte
+Conversion du driver stepwise unifié (Modèle B). Tout gaté Codex par micro-étape (nouveau thread `019e84c8-4e63-7583-88f5-f78b96167fc6` ; les threads #1/#2 ont expiré). Sur `fix/thesis-gate-guard`, NON poussé.
+
+### Modifications (5 commits, tous gated APPROVE)
+- **D.5d-1b (`d42d1a5`)** : extraction byte-inert du corps pipeline → `runFullAnalysisPipeline(deal,dealId,onProgress,init)` ; `runFullAnalysis` = bootstrap + délégation. Frontière try/catch FAILED intégralement déplacée. Déplacement net.
+- **D.5d-1c (`e9a75a0`)** : wrapper stepwise « 1 step englobante » (Modèle B). `full-analysis-driver.ts` `runTerminalStepwiseDriver({stepRunner,stepwise,pipeline,loadPersistedResults})` à dépendances injectées (testable sans DB). OFF (InlineStepRunner défaut) byte-inert = liveResult exact ; ON → step durable ; au replay reconstruction depuis enveloppe + `results` relu via `loadResults`. Bridge : `buildTerminalEnvelope` (EXCLUT `results`=allResults, cap 4 MB Inngest) + `reviveTerminalEnvelope` (ravive `earlyWarnings[].timestamp` seul ; analysisDelta string-only). `AnalysisOptions.stepRunner`. Golden driver (E1 Inline===Fake===liveResult ; OFF byte-inert sans relecture ; E2 durabilité = corps NON rejoué + dents Date + results réinjectés ; results manquants→{}). +9 tests.
+- **D.5d-1d (`173c3e1`)** : inngest ON. `dealAnalysisFunction` OFF inchangé (runAnalysis dans `step.run('run-analysis')`) ; ON = runAnalysis HORS step externe + `new InngestStepRunner(step)` (cast Jsonify<T>≡T documenté) + `stepwise:true` + `dispatchEventId`. `route.ts` ajoute `dispatchEventId` à event.data. `initializeFullAnalysisRun` threade `dispatchEventId` → `createAnalysis`. +4 tests inngest.
+- **D.5d-1d fix gate Codex P0 (`494f6d6`)** : (a) **createAnalysis get-or-create TOUT STATUT** (suppr. `status:"RUNNING"`, +`orderBy createdAt asc`) — Inngest ré-invoque la fonction après le step → le bootstrap (hors step) re-tourne quand l'analyse est déjà COMPLETED → matcher RUNNING créait un run zombie + loadResults sur mauvais id. +test reuse-COMPLETED. (b) **mode stepwise STICKY** : décidé au dispatch (`event.data.stepwise`, route.ts), le handler le lit (plus `process.env`) → graphe de steps IMMUABLE par run (flip du flag = nouveaux dispatches seulement).
+
+### Design split d-2..k VERROUILLÉ + APPROVE (Codex, 3 tours design-gate)
+Blueprint ON v2 : OFF strict (`runFullAnalysisPipeline` direct) ; unités `tier0-facts`(step frère, DTO wire de TOUTE la mutation tier0)→`tier0-thesis`(1er snapshot)→early-returns IDs dédiés→`post-tier1-glue`(Tier1 entier transitoire mesuré, `tier1Findings` porté)→`tier3-pre`→`tier2-sector`→`tier3-post`→terminal-final durable. 5 locks : `stepwiseGraphVersion` EXACT par graphe ; tier0-facts = step de sortie (pas snapshot, pas de readLatestStepwiseSnapshot au memo hit) ; DTO tier0-facts = toute la mutation runTier0Step ; `tier1Findings` DTO v3 + reviver createdAt (findings ids crypto.randomUUID NON re-dérivables, réutilisés consensus Tier2) ; `runTerminalStepwiseDriver(stepId)` paramétrable. Rehydrate UNIQUE. Détail complet dans `PLAN-DEEPDIVE-DURABILITY.md` §5-D.
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, appel séparé, AVANT chaque commit) ; vitest unit **4205 passés / 2 skipped (292 fichiers)** ; orchestrateur+orchestration **242**.
+
+### Reste
+**d-2a** (additif : DTO v3 + stepId paramétrable + stepwiseGraphVersion) puis **d-2b..d-7** (split byte-critique 1 frontière/commit), **D.6** (activation version preview→prod + go/no-go FactEvent réel), **F** (watchdog), **G** (unification resume).
+
+---
 ## 2026-06-01 — Durabilité Deep Dive D.5c + design D.5d + D.5d-1a (harness infra + fondations driver)
 
 ### Contexte
