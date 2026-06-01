@@ -2612,6 +2612,106 @@ export class AgentOrchestrator {
     return { totalCost, completedCount };
   }
 
+  private async runFinalCompletion(params: {
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    startTime: number;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    isUpdate: boolean;
+    collectedWarnings: EarlyWarning[];
+  }): Promise<AnalysisResult> {
+    const { allResults, totalCost, stateMachine, analysis, dealId, startTime, analysisModeOverride, isUpdate, collectedWarnings } = params;
+    // COMPLETE
+    await stateMachine.complete();
+    // DEBUG log removed for production - uncomment for debugging:
+    // console.log("[Orchestrator:DEBUG] State machine completed, generating summary...");
+
+    const summary = generateFullAnalysisSummary(allResults);
+    const totalTimeMs = Date.now() - startTime;
+    const failedAgents = Object.entries(allResults).filter(([, r]) => !r.success).map(([k, r]) => `${k}: ${r.error ?? "no error msg"}`);
+    if (failedAgents.length > 0) {
+      console.log(`[Orchestrator] Failed agents in allResults: ${failedAgents.join(", ")}`);
+    }
+    const allSuccess = Object.values(allResults).every((r) => r.success);
+    const orchestrationSummary = stateMachine.getSummary();
+
+    await saveCheckpoint(analysis.id, {
+      state: "COMPLETED",
+      completedAgents: Object.keys(allResults),
+      pendingAgents: [],
+      failedAgents: Object.entries(allResults)
+        .filter(([, result]) => !result.success)
+        .map(([agent, result]) => ({
+          agent,
+          error: result.error ?? "no error msg",
+          retries: 1,
+        })),
+      findings: extractAllFindings(allResults).allFindings,
+      results: allResults,
+      totalCost,
+      startTime: new Date(startTime).toISOString(),
+    });
+
+    await completeAnalysis({
+      analysisId: analysis.id,
+      success: allSuccess,
+      totalCost,
+      totalTimeMs,
+      summary: `${summary}\n\n**Orchestration**: ${orchestrationSummary.transitions} state transitions, ${orchestrationSummary.totalFindings} findings`,
+      results: allResults,
+      mode: analysisModeOverride ?? "full_analysis",
+    });
+    // End cost monitoring after final results are persisted so `_costReport`
+    // is merged into the canonical completed payload instead of being overwritten.
+    const costReport = await costMonitor.endAnalysis({
+      persistAnalysisSummary: false,
+    });
+    if (costReport) {
+      console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
+    }
+    // DEBUG log removed for production - uncomment for debugging:
+    // console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
+
+    await updateDealStatus(dealId, "IN_DD");
+
+    // F40: Calculate analysis delta for re-analyses
+    let analysisDelta;
+    if (isUpdate) {
+      try {
+        const { calculateAnalysisDelta } = await import("@/services/analysis-delta");
+        const previousAnalysis = await prisma.analysis.findFirst({
+          where: { dealId, id: { not: analysis.id }, completedAt: { not: null } },
+          orderBy: { completedAt: "desc" },
+          select: { id: true },
+        });
+        if (previousAnalysis) {
+          analysisDelta = await calculateAnalysisDelta(analysis.id, previousAnalysis.id);
+          if (analysisDelta) {
+            console.log(`[Orchestrator] F40: Delta vs previous analysis: ${analysisDelta.scoreDelta.overall.delta >= 0 ? "+" : ""}${analysisDelta.scoreDelta.overall.delta} points`);
+          }
+        }
+      } catch (err) {
+        console.error("[Orchestrator] Analysis delta failed:", err);
+      }
+    }
+
+    return this.addWarningsToResult({
+      sessionId: analysis.id,
+      dealId,
+      type: "full_analysis",
+      success: allSuccess,
+      results: allResults,
+      totalCost,
+      totalTimeMs,
+      summary,
+      tiersExecuted: [...TIERS_EXECUTED],
+      analysisDelta: analysisDelta ?? undefined,
+    }, collectedWarnings);
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2934,92 +3034,17 @@ export class AgentOrchestrator {
         TOTAL_AGENTS,
       }));
 
-      // COMPLETE
-      await stateMachine.complete();
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.log("[Orchestrator:DEBUG] State machine completed, generating summary...");
-
-      const summary = generateFullAnalysisSummary(allResults);
-      const totalTimeMs = Date.now() - startTime;
-      const failedAgents = Object.entries(allResults).filter(([, r]) => !r.success).map(([k, r]) => `${k}: ${r.error ?? "no error msg"}`);
-      if (failedAgents.length > 0) {
-        console.log(`[Orchestrator] Failed agents in allResults: ${failedAgents.join(", ")}`);
-      }
-      const allSuccess = Object.values(allResults).every((r) => r.success);
-      const orchestrationSummary = stateMachine.getSummary();
-
-      await saveCheckpoint(analysis.id, {
-        state: "COMPLETED",
-        completedAgents: Object.keys(allResults),
-        pendingAgents: [],
-        failedAgents: Object.entries(allResults)
-          .filter(([, result]) => !result.success)
-          .map(([agent, result]) => ({
-            agent,
-            error: result.error ?? "no error msg",
-            retries: 1,
-          })),
-        findings: extractAllFindings(allResults).allFindings,
-        results: allResults,
+      return await this.runFinalCompletion({
+        allResults,
         totalCost,
-        startTime: new Date(startTime).toISOString(),
-      });
-
-      await completeAnalysis({
-        analysisId: analysis.id,
-        success: allSuccess,
-        totalCost,
-        totalTimeMs,
-        summary: `${summary}\n\n**Orchestration**: ${orchestrationSummary.transitions} state transitions, ${orchestrationSummary.totalFindings} findings`,
-        results: allResults,
-        mode: analysisModeOverride ?? "full_analysis",
-      });
-      // End cost monitoring after final results are persisted so `_costReport`
-      // is merged into the canonical completed payload instead of being overwritten.
-      const costReport = await costMonitor.endAnalysis({
-        persistAnalysisSummary: false,
-      });
-      if (costReport) {
-        console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
-      }
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
-
-      await updateDealStatus(dealId, "IN_DD");
-
-      // F40: Calculate analysis delta for re-analyses
-      let analysisDelta;
-      if (isUpdate) {
-        try {
-          const { calculateAnalysisDelta } = await import("@/services/analysis-delta");
-          const previousAnalysis = await prisma.analysis.findFirst({
-            where: { dealId, id: { not: analysis.id }, completedAt: { not: null } },
-            orderBy: { completedAt: "desc" },
-            select: { id: true },
-          });
-          if (previousAnalysis) {
-            analysisDelta = await calculateAnalysisDelta(analysis.id, previousAnalysis.id);
-            if (analysisDelta) {
-              console.log(`[Orchestrator] F40: Delta vs previous analysis: ${analysisDelta.scoreDelta.overall.delta >= 0 ? "+" : ""}${analysisDelta.scoreDelta.overall.delta} points`);
-            }
-          }
-        } catch (err) {
-          console.error("[Orchestrator] Analysis delta failed:", err);
-        }
-      }
-
-      return this.addWarningsToResult({
-        sessionId: analysis.id,
+        stateMachine,
+        analysis,
         dealId,
-        type: "full_analysis",
-        success: allSuccess,
-        results: allResults,
-        totalCost,
-        totalTimeMs,
-        summary,
-        tiersExecuted: [...TIERS_EXECUTED],
-        analysisDelta: analysisDelta ?? undefined,
-      }, collectedWarnings);
+        startTime,
+        analysisModeOverride,
+        isUpdate,
+        collectedWarnings,
+      });
     } catch (error) {
       // DEBUG log removed for production - uncomment for debugging:
       // console.error("[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
