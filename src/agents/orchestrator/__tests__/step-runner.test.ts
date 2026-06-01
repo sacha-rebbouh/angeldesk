@@ -139,7 +139,7 @@ describe("Intégration bridge — un StepState survit à la frontière durable +
       buildStepState({
         analysisId: "a1", dealId: "d1", analysisType: "full_analysis",
         totalAgents: 21, completedCount: 2, totalCost: 1, startTimeMs: 1_700_000_000_000,
-        lastUnit: "tier1-phase-b", done: false,
+        transitionCount: 4, lastUnit: "tier1-phase-b", done: false,
         enrichedContext: makeLiveContext(),
         allResults: { "deck-forensics": { agentName: "deck-forensics", success: true } },
         verificationContext: null,

@@ -32,6 +32,8 @@ function makeValidState(over: Partial<FullAnalysisStepState> = {}): FullAnalysis
     verificationContext: { facts: ["f1"], fundingDb: { p50: 5 } },
     // --- v2 (D.5b) : contrat d'état complet (wire ; Date → ISO) ---
     startTimeMs: 1_700_000_000_000,
+    transitionCount: 4,
+    terminalResult: null,
     evidenceLedgerFormatted: "EVIDENCE: source=deck (HIGH)",
     evidenceTodayIso: "2026-06-01T00:00:00.000Z",
     conditionsAnalystMode: "pipeline",
@@ -300,17 +302,27 @@ describe("FullAnalysisStepState v2 — contrat d'état complet (D.5b)", () => {
     expect(deserializeStepState(serializeStepState(s))).toEqual(s);
   });
 
-  it("REJETTE un nouveau champ requis manquant (canonicalDeal / scopedDocuments / factStore / startTimeMs)", () => {
-    for (const field of ["canonicalDeal", "analysisBinding", "scopedDocuments", "factStore", "founderResponses", "collectedWarnings", "evidenceLedgerFormatted", "evidenceTodayIso", "startTimeMs"]) {
+  it("REJETTE un nouveau champ requis manquant (canonicalDeal / scopedDocuments / factStore / startTimeMs / transitionCount / terminalResult)", () => {
+    for (const field of ["canonicalDeal", "analysisBinding", "scopedDocuments", "factStore", "founderResponses", "collectedWarnings", "evidenceLedgerFormatted", "evidenceTodayIso", "startTimeMs", "transitionCount", "terminalResult"]) {
       const bad = base();
       delete bad[field];
       expect(() => parseStepState(bad), `champ ${field}`).toThrow(new RegExp(field));
     }
   });
 
-  it("REJETTE startTimeMs négatif ou non entier", () => {
+  it("REJETTE startTimeMs / transitionCount négatif ou non entier", () => {
     expect(() => parseStepState({ ...base(), startTimeMs: -1 })).toThrow(/startTimeMs/);
     expect(() => parseStepState({ ...base(), startTimeMs: 1.5 })).toThrow(/startTimeMs/);
+    expect(() => parseStepState({ ...base(), transitionCount: -1 })).toThrow(/transitionCount/);
+    expect(() => parseStepState({ ...base(), transitionCount: 2.5 })).toThrow(/transitionCount/);
+  });
+
+  it("ACCEPTE tier0-facts comme lastUnit (unité isolée D.5d) et terminalResult objet (early-return)", () => {
+    expect(() => parseStepState({ ...base(), lastUnit: "tier0-facts" })).not.toThrow();
+    const withTerminal = makeValidState({ done: true, terminalResult: { sessionId: "a1", success: false, summary: "cost limit" } });
+    const back = deserializeStepState(serializeStepState(withTerminal));
+    expect(back.terminalResult).toEqual({ sessionId: "a1", success: false, summary: "cost limit" });
+    expect(back.done).toBe(true);
   });
 
   it("REJETTE un blob OBJET requis non-objet (canonicalDeal array)", () => {

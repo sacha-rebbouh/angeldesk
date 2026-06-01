@@ -56,6 +56,7 @@ export interface StateTransition {
  */
 const UNIT_TO_STATE: Record<FullAnalysisUnit, AnalysisState> = {
   "init": "INITIALIZING",
+  "tier0-facts": "INITIALIZING",
   "tier0-thesis": "GATHERING",
   "tier1-phase-a": "ANALYZING",
   "tier1-phase-b": "ANALYZING",
@@ -97,6 +98,12 @@ export class AnalysisStateMachine {
   private state: AnalysisState = "IDLE";
   private config: StateMachineConfig;
   private transitions: StateTransition[] = [];
+  /**
+   * Base CUMULATIVE de transitions restaurée depuis un StepState (D.5d). Le compteur de
+   * transitions exposé (getTransitionCount) = base + transitions de cette invocation, pour
+   * que le summary user reste identique au single-pass après un resume.
+   */
+  private restoredTransitionBase = 0;
   private checkpoints: AnalysisCheckpoint[] = [];
 
   // Agent tracking
@@ -721,6 +728,10 @@ export class AnalysisStateMachine {
     this.startTime = new Date(state.startTimeMs);
     this.stateStartTime = new Date();
     this.state = UNIT_TO_STATE[state.lastUnit];
+    // Compteur de transitions CUMULATIF : la base = count porté ; les transitions de cette
+    // invocation repartent de [] et s'ajoutent à la base (getTransitionCount).
+    this.restoredTransitionBase = state.transitionCount;
+    this.transitions = [];
 
     console.log(
       `[StateMachine] Restored from StepState: unit=${state.lastUnit} -> state=${this.state}, ` +
@@ -833,7 +844,16 @@ export class AnalysisStateMachine {
       completedAgents: this.completedAgents.size,
       failedAgents: this.failedAgents.size,
       totalFindings: this.findings.length,
-      transitions: this.transitions.length,
+      transitions: this.getTransitionCount(),
     };
+  }
+
+  /**
+   * Compteur CUMULATIF de transitions (D.5d) : base restaurée d'un StepState + transitions
+   * de cette invocation. Sur run sain base=0 → = this.transitions.length (inchangé). Porté
+   * par buildStepState pour préserver le `transitions` du summary user au replay.
+   */
+  getTransitionCount(): number {
+    return this.restoredTransitionBase + this.transitions.length;
   }
 }

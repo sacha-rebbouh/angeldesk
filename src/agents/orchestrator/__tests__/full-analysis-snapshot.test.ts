@@ -47,6 +47,8 @@ function makeValidState(over: Partial<FullAnalysisStepState> = {}): FullAnalysis
     verificationContext: { fundingDb: { p50: 5 } },
     // --- v2 (D.5b) ---
     startTimeMs: 1_700_000_000_000,
+    transitionCount: 4,
+    terminalResult: null,
     evidenceLedgerFormatted: "EVIDENCE: x",
     evidenceTodayIso: "2026-06-01T00:00:00.000Z",
     conditionsAnalystMode: null,

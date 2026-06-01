@@ -60,6 +60,7 @@ function build(over: Partial<EnrichedAgentContext> = {}, locals: Partial<Paramet
     completedCount: 6,
     totalCost: 1.23,
     startTimeMs: 1_700_000_000_000,
+    transitionCount: 4,
     lastUnit: "tier1-phase-b",
     done: false,
     enrichedContext: makeLiveContext(over),
@@ -240,9 +241,10 @@ describe("rehydrateContext (D.5b b-3) — DTO wire -> état vivant (revive Date)
     const dto2 = buildStepState({
       analysisId: r.analysisId, dealId: r.dealId, analysisType: r.analysisType,
       totalAgents: r.totalAgents, completedCount: r.completedCount, totalCost: r.totalCost,
-      startTimeMs: r.startTimeMs, lastUnit: r.lastUnit, done: r.done,
+      startTimeMs: r.startTimeMs, transitionCount: r.transitionCount, lastUnit: r.lastUnit, done: r.done,
       enrichedContext: r.enrichedContext, allResults: r.allResults,
       verificationContext: r.verificationContext, collectedWarnings: r.collectedWarnings,
+      terminalResult: r.terminalResult,
     });
     expect(dto2).toEqual(dto1);
   });

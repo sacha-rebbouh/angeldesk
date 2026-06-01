@@ -32,8 +32,12 @@ export interface BuildStepStateInput {
   totalCost: number;
   /** Début réel du run (epoch ms), pour préserver totalTimeMs/durée au replay. */
   startTimeMs: number;
+  /** Compteur CUMULATIF de transitions de la state machine (stateMachine.getTransitionCount()). */
+  transitionCount: number;
   lastUnit: FullAnalysisUnit;
   done: boolean;
+  /** Résultat terminal wire (early-return failFast/cost-limit), sinon null. */
+  terminalResult?: Record<string, unknown> | null;
   /** Contexte enrichi VIVANT (avec Date objects) au boundary de l'unité. */
   enrichedContext: EnrichedAgentContext;
   /** allResults brut (non sanitizé) du run. */
@@ -143,6 +147,7 @@ export function buildStepState(input: BuildStepStateInput): FullAnalysisStepStat
     completedCount: input.completedCount,
     totalCost: input.totalCost,
     startTimeMs: input.startTimeMs,
+    transitionCount: input.transitionCount,
     lastUnit: input.lastUnit,
     done: input.done,
 
@@ -167,6 +172,7 @@ export function buildStepState(input: BuildStepStateInput): FullAnalysisStepStat
     baPreferences: toWireObjectOrNull(ctx.baPreferences, "$.baPreferences"),
     dealTerms: toWireObjectOrNull(ctx.dealTerms, "$.dealTerms"),
     dealStructure: toWireObjectOrNull(ctx.dealStructure, "$.dealStructure"),
+    terminalResult: toWireObjectOrNull(input.terminalResult, "$.terminalResult"),
 
     scopedDocuments: toWireArray(ctx.documents, "$.scopedDocuments"),
     factStore: toWireArray(ctx.factStore, "$.factStore"),
@@ -351,9 +357,12 @@ export interface RehydratedState {
   totalCost: number;
   completedCount: number;
   startTimeMs: number;
+  transitionCount: number;
   totalAgents: number;
   lastUnit: FullAnalysisUnit;
   done: boolean;
+  /** Résultat terminal wire si l'unité a early-return (done=true), sinon null. */
+  terminalResult: Record<string, unknown> | null;
   analysisId: string;
   dealId: string;
   analysisType: string;
@@ -398,9 +407,11 @@ export function rehydrateContext(state: FullAnalysisStepState): RehydratedState 
     totalCost: state.totalCost,
     completedCount: state.completedCount,
     startTimeMs: state.startTimeMs,
+    transitionCount: state.transitionCount,
     totalAgents: state.totalAgents,
     lastUnit: state.lastUnit,
     done: state.done,
+    terminalResult: cloneWire(state.terminalResult),
     analysisId: state.analysisId,
     dealId: state.dealId,
     analysisType: state.analysisType,

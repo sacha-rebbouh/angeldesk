@@ -28,8 +28,10 @@ function makeStepState(over: Partial<FullAnalysisStepState> = {}): FullAnalysisS
     completedCount: 2,
     totalCost: 1,
     startTimeMs: 1_700_000_000_000,
+    transitionCount: 5,
     lastUnit: "tier1-phase-b",
     done: false,
+    terminalResult: null,
     factStoreFormatted: "",
     evidenceLedgerFormatted: "",
     evidenceTodayIso: "2026-06-01T00:00:00.000Z",
@@ -62,6 +64,7 @@ function makeStepState(over: Partial<FullAnalysisStepState> = {}): FullAnalysisS
 describe("AnalysisStateMachine.restoreFromStepState (D.5b b-4)", () => {
   const UNIT_STATES: Array<[FullAnalysisUnit, AnalysisState]> = [
     ["init", "INITIALIZING"],
+    ["tier0-facts", "INITIALIZING"],
     ["tier0-thesis", "GATHERING"],
     ["tier1-phase-a", "ANALYZING"],
     ["tier1-phase-d", "ANALYZING"],
@@ -150,5 +153,22 @@ describe("AnalysisStateMachine.restoreFromStepState (D.5b b-4)", () => {
     const summary = sm.getSummary();
     // totalTime = now - startTime(2023) -> très grand, pas ~0 (preuve que startTime n'est pas new Date())
     expect(summary.totalTime).toBeGreaterThan(1_000_000_000);
+  });
+
+  it("getTransitionCount CUMULATIF après restore : base portée + transitions de l'invocation (E2 summary === E1)", async () => {
+    const sm = makeMachine();
+    sm.restoreFromStepState(makeStepState({ transitionCount: 5, lastUnit: "post-tier1-glue" })); // base 5, state DEBATING
+    expect(sm.getTransitionCount()).toBe(5);
+    expect(sm.getSummary().transitions).toBe(5);
+    await sm.startSynthesis(); // DEBATING -> SYNTHESIZING : +1 transition
+    expect(sm.getTransitionCount()).toBe(6);
+    expect(sm.getSummary().transitions).toBe(6);
+  });
+
+  it("run sain (pas de restore) : getTransitionCount = transitions de l'invocation (base 0)", async () => {
+    const sm = makeMachine();
+    await sm.start(); // IDLE -> INITIALIZING : +1
+    expect(sm.getTransitionCount()).toBe(1);
+    expect(sm.getSummary().transitions).toBe(1);
   });
 });

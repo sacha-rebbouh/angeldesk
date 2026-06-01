@@ -32,9 +32,14 @@
 /** Version du schéma de snapshot — bump si la forme change (compat snapshot en vol). */
 export const FULL_ANALYSIS_STEP_STATE_VERSION = 2 as const;
 
-/** Identifiants d'unités du pipeline stepwise (ordre d'exécution). */
+/**
+ * Identifiants d'unités du pipeline stepwise (ordre d'exécution). `tier0-facts` est
+ * ISOLÉ de `tier0-thesis` (D.5d, gate Codex) pour confiner la ré-exécution du
+ * `createFactEventsBatch` non idempotent à sa propre unité durable.
+ */
 export type FullAnalysisUnit =
   | "init"
+  | "tier0-facts"
   | "tier0-thesis"
   | "tier1-phase-a"
   | "tier1-phase-b"
@@ -47,6 +52,7 @@ export type FullAnalysisUnit =
 
 export const FULL_ANALYSIS_UNITS: readonly FullAnalysisUnit[] = [
   "init",
+  "tier0-facts",
   "tier0-thesis",
   "tier1-phase-a",
   "tier1-phase-b",
@@ -82,6 +88,12 @@ export interface FullAnalysisStepState {
   totalCost: number;
   /** Début RÉEL du run (epoch ms). Porté pour préserver totalTimeMs/durée au replay. */
   startTimeMs: number;
+  /**
+   * Nombre CUMULATIF de transitions de la state machine au boundary (D.5d). Porté pour
+   * que `getSummary().transitions` (injecté dans le summary user) reste identique au
+   * single-pass après un resume (restoreFromStepState ne rejoue pas l'historique).
+   */
+  transitionCount: number;
 
   /** Dernière unité dont le travail est inclus dans ce state. */
   lastUnit: FullAnalysisUnit;
@@ -135,6 +147,13 @@ export interface FullAnalysisStepState {
   dealTerms: Record<string, unknown> | null;
   /** DealStructure convertie (PLAIN, Number()). null si absent. */
   dealStructure: Record<string, unknown> | null;
+  /**
+   * Résultat terminal wire (AnalysisResult sérialisé) posé par un early-return
+   * (runPostTier1FailFast / runPostConsensusCostLimit), avec `done=true`. Le driver le
+   * rehydrate et le retourne au replay (reconstruction exacte du retour terminal). null
+   * tant qu'aucun early-return terminal n'a eu lieu (D.5d, gate Codex).
+   */
+  terminalResult: Record<string, unknown> | null;
 
   // --- blobs TABLEAU requis (JSON pur) ---
   /** scopedDocuments (wire ; Date uploadedAt/sourceDate/receivedAt en ISO). */
@@ -165,6 +184,7 @@ const SCALAR_FIELDS: ReadonlyArray<[keyof FullAnalysisStepState, "string" | "num
   ["completedCount", "number"],
   ["totalCost", "number"],
   ["startTimeMs", "number"],
+  ["transitionCount", "number"],
   ["lastUnit", "string"],
   ["done", "boolean"],
 ];
@@ -190,6 +210,7 @@ const NULLABLE_OBJECT_BLOBS: ReadonlyArray<keyof FullAnalysisStepState> = [
   "baPreferences",
   "dealTerms",
   "dealStructure",
+  "terminalResult",
 ];
 
 /** Blobs TABLEAU requis (présents + array + JSON pur). */
@@ -302,6 +323,10 @@ export function parseStepState(value: unknown): FullAnalysisStepState {
   }
   if (!Number.isInteger(startTimeMs) || startTimeMs < 0) {
     throw new Error(`[StepState] startTimeMs doit être un entier >= 0 (reçu ${startTimeMs})`);
+  }
+  const transitionCount = o.transitionCount as number;
+  if (!Number.isInteger(transitionCount) || transitionCount < 0) {
+    throw new Error(`[StepState] transitionCount doit être un entier >= 0 (reçu ${transitionCount})`);
   }
 
   // lastUnit doit appartenir à l'enum.
