@@ -113,17 +113,23 @@ export async function createAnalysis(params: {
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashForLock})`);
 
     if (params.type === "full_analysis") {
-      // Phase D — idempotence de l'unit `init` : si une analyse RUNNING du MÊME run
-      // (même dispatchEventId) existe déjà (retry d'un step Inngest survenu après le
-      // analysis.create mais avant le retour mémoïsé du step), on la RÉUTILISE au lieu
-      // de buter sur la garde "1 full_analysis RUNNING / deal" ci-dessous.
+      // Phase D — idempotence de l'unit `init` : si une analyse du MÊME run (même
+      // dispatchEventId) existe déjà, on la RÉUTILISE au lieu de buter sur la garde
+      // "1 full_analysis RUNNING / deal" ci-dessous OU de créer un doublon.
+      // D.5d-1d (gate Codex P0) : matcher TOUT STATUT, pas seulement RUNNING. En stepwise
+      // le bootstrap tourne HORS step → re-tourne à CHAQUE ré-invocation Inngest, y compris
+      // APRÈS que le body a COMPLÉTÉ l'analyse (status COMPLETED). Matcher seulement RUNNING
+      // créait un 2e run (zombie) + faisait lire `loadResults` sur le mauvais id au replay.
+      // dispatchEventId est unique par dispatch (id de l'event) → exactement une analyse à
+      // réutiliser (la plus ancienne par sécurité), quel que soit son statut → analysis.id
+      // stable, loadResults lit le bon run.
       if (params.dispatchEventId) {
         const sameRun = await tx.analysis.findFirst({
           where: {
             dealId: params.dealId,
-            status: "RUNNING",
             dispatchEventId: params.dispatchEventId,
           },
+          orderBy: { createdAt: "asc" },
         });
         if (sameRun) return sameRun;
       }

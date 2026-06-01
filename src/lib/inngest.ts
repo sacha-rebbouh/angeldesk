@@ -311,13 +311,14 @@ export const dealAnalysisFunction = inngest.createFunction(
   },
   { event: 'analysis/deal.analyze' },
   async ({ event, step }) => {
-    const { dealId, type, enableTrace, userId, dispatchRefundKey, dispatchEventId } = event.data as {
+    const { dealId, type, enableTrace, userId, dispatchRefundKey, dispatchEventId, stepwise: stepwiseFromDispatch } = event.data as {
       dealId: string;
       type: string;
       enableTrace: boolean;
       userId: string;
       dispatchRefundKey?: string;
       dispatchEventId?: string;
+      stepwise?: boolean;
     };
 
     // Gate thèse RETIRÉ (2026-05-30) : plus aucune pause ni décision BA après
@@ -325,15 +326,18 @@ export const dealAnalysisFunction = inngest.createFunction(
     // traite. La thèse reste extraite + réconciliée. Crédits : débit plein au
     // lancement (POST /analyze), refund total seulement sur vrai échec.
     //
-    // D.5a/D.5d — Deep Dive durable (stepwise). Flag OFF (défaut) = chemin actuel exact :
-    // runAnalysis encapsulé dans l'unique step.run('run-analysis') externe (mémoïsation
-    // monolithique). Flag ON (DEEP_DIVE_STEPWISE=1) + full_analysis (D.5d-1d) : runAnalysis
-    // est appelé HORS du step.run externe avec un InngestStepRunner → l'unique step durable
-    // 'run-analysis' est créé À L'INTÉRIEUR du driver (Modèle B ; le split en N unités vient
-    // d-2..k). Le bootstrap (createAnalysis) tourne alors hors step → re-tourne au replay ;
-    // dispatchEventId rend l'init idempotent (get-or-create, analysis.id stable). AUCUN
-    // checkpoint legacy émis en stepwise. Rollback = DEEP_DIVE_STEPWISE=0.
-    const runStepwise = process.env.DEEP_DIVE_STEPWISE === "1" && type === "full_analysis";
+    // D.5a/D.5d — Deep Dive durable (stepwise). Mode STICKY : décidé au DISPATCH
+    // (event.data.stepwise, route.ts) et IMMUABLE sur tout le run → pas de changement de
+    // graphe de steps en vol si le flag DEEP_DIVE_STEPWISE est flippé (gate Codex). OFF
+    // (défaut / events legacy sans le champ) = chemin actuel exact : runAnalysis encapsulé
+    // dans l'unique step.run('run-analysis') externe (mémoïsation monolithique). ON
+    // (D.5d-1d) : runAnalysis appelé HORS du step.run externe avec un InngestStepRunner →
+    // l'unique step durable 'run-analysis' est créé À L'INTÉRIEUR du driver (Modèle B ; split
+    // en N unités d-2..k). Le bootstrap (createAnalysis) tourne hors step → re-tourne à chaque
+    // ré-invocation ; dispatchEventId rend l'init idempotent (get-or-create tout statut,
+    // analysis.id stable). AUCUN checkpoint legacy en stepwise. Rollback = DEEP_DIVE_STEPWISE=0
+    // (n'affecte que les nouveaux dispatches).
+    const runStepwise = stepwiseFromDispatch === true;
     let analysisResult;
     try {
       if (runStepwise) {

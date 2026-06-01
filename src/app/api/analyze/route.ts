@@ -382,6 +382,11 @@ export async function POST(request: NextRequest) {
           // dealAnalysisFunction en mode stepwise → createAnalysis get-or-create (analysis.id
           // stable au replay). Inerte hors stepwise.
           dispatchEventId,
+          // D.5d-1d (gate Codex) — mode stepwise STICKY : décidé AU DISPATCH (pas au worker)
+          // pour qu'il soit IMMUABLE sur toute la durée du run (le flag est lu une fois ici).
+          // Un flip du flag n'affecte que les NOUVEAUX dispatches → pas de changement de
+          // graphe de steps en vol. Inerte hors full_analysis.
+          stepwise: process.env.DEEP_DIVE_STEPWISE === "1" && effectiveType === "full_analysis",
         },
       });
     } catch (sendErr) {

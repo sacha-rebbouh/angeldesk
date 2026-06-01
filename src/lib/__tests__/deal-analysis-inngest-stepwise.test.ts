@@ -1,10 +1,12 @@
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// D.5d-1d — contrat de branchement stepwise de `dealAnalysisFunction`.
-//   OFF (DEEP_DIVE_STEPWISE != "1" OU type != full_analysis) : runAnalysis encapsulé dans
-//     l'unique step.run('run-analysis') externe ; AUCUN stepwise/stepRunner/dispatchEventId.
-//   ON  (DEEP_DIVE_STEPWISE == "1" + full_analysis) : runAnalysis appelé HORS du step.run
-//     externe, avec stepwise:true + un InngestStepRunner + dispatchEventId.
+// D.5d-1d — contrat de branchement stepwise de `dealAnalysisFunction`. Mode STICKY :
+// le handler lit `event.data.stepwise` (décidé au dispatch, immuable sur le run) — PAS
+// process.env (qui ferait varier le graphe de steps en vol au flip du flag).
+//   OFF (event.data.stepwise != true) : runAnalysis encapsulé dans l'unique
+//     step.run('run-analysis') externe ; AUCUN stepwise/stepRunner/dispatchEventId.
+//   ON  (event.data.stepwise === true) : runAnalysis appelé HORS du step.run externe,
+//     avec stepwise:true + un InngestStepRunner + dispatchEventId.
 // On exerce le handler directement avec un fake `step` (pas de dev-server Inngest).
 
 const mocks = vi.hoisted(() => ({
@@ -61,17 +63,11 @@ const baseData = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.runAnalysis.mockResolvedValue({ success: true, sessionId: "a1" });
-  delete process.env.DEEP_DIVE_STEPWISE;
 });
 
-afterEach(() => {
-  delete process.env.DEEP_DIVE_STEPWISE;
-});
-
-describe("dealAnalysisFunction — D.5d-1d branchement stepwise", () => {
-  it("ON (flag=1 + full_analysis) : runAnalysis HORS step.run, stepwise+InngestStepRunner+dispatchEventId", async () => {
-    process.env.DEEP_DIVE_STEPWISE = "1";
-    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis" });
+describe("dealAnalysisFunction — D.5d-1d branchement stepwise (sticky)", () => {
+  it("ON (event.data.stepwise=true) : runAnalysis HORS step.run, stepwise+InngestStepRunner+dispatchEventId", async () => {
+    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis", stepwise: true });
 
     expect(mocks.runAnalysis).toHaveBeenCalledTimes(1);
     const arg = mocks.runAnalysis.mock.calls[0][0];
@@ -83,8 +79,8 @@ describe("dealAnalysisFunction — D.5d-1d branchement stepwise", () => {
     expect(stepRunCalls).not.toContain("run-analysis");
   });
 
-  it("OFF (flag absent) : runAnalysis DANS step.run('run-analysis'), sans stepwise/stepRunner/dispatchEventId", async () => {
-    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis" });
+  it("OFF (event.data.stepwise=false) : runAnalysis DANS step.run('run-analysis'), sans stepwise/stepRunner/dispatchEventId", async () => {
+    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis", stepwise: false });
 
     expect(mocks.runAnalysis).toHaveBeenCalledTimes(1);
     const arg = mocks.runAnalysis.mock.calls[0][0];
@@ -94,9 +90,8 @@ describe("dealAnalysisFunction — D.5d-1d branchement stepwise", () => {
     expect(stepRunCalls).toContain("run-analysis");
   });
 
-  it("OFF (flag=1 mais type != full_analysis) : reste sur le chemin externe non-stepwise", async () => {
-    process.env.DEEP_DIVE_STEPWISE = "1";
-    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "tier1_complete" });
+  it("OFF (event legacy sans champ stepwise) : défaut sûr = chemin externe non-stepwise", async () => {
+    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis" });
 
     const arg = mocks.runAnalysis.mock.calls[0][0];
     expect(arg.stepwise).toBeUndefined();
@@ -105,9 +100,8 @@ describe("dealAnalysisFunction — D.5d-1d branchement stepwise", () => {
   });
 
   it("ON : échec → refund (step refund-on-failure), sans run-analysis externe", async () => {
-    process.env.DEEP_DIVE_STEPWISE = "1";
     mocks.runAnalysis.mockResolvedValue({ success: false, sessionId: "a1" });
-    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis" });
+    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis", stepwise: true });
 
     expect(stepRunCalls).not.toContain("run-analysis");
     expect(stepRunCalls).toContain("refund-on-failure");

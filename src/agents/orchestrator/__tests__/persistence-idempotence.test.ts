@@ -207,12 +207,35 @@ describe("createAnalysis — init idempotent par dispatchEventId (Phase D)", () 
 
     expect(result).toBe(existing);
     expect(prismaMocks.prisma.analysis.create).not.toHaveBeenCalled();
+    // D.5d-1d (gate Codex P0) : reuse par dispatchEventId TOUT STATUT (pas de filtre status),
+    // ordonné createdAt asc (l'analyse d'origine).
     expect(prismaMocks.prisma.analysis.findFirst).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        where: { dealId: "deal_1", status: "RUNNING", dispatchEventId: "evt_1" },
+        where: { dealId: "deal_1", dispatchEventId: "evt_1" },
+        orderBy: { createdAt: "asc" },
       })
     );
+  });
+
+  it("réutilise l'analyse même COMPLETED (replay-après-complétion) : zéro create, id d'origine stable", async () => {
+    // Scénario P0 Codex : pass 1 a COMPLÉTÉ l'analyse ; au replay le bootstrap re-tourne ;
+    // l'analyse d'origine est COMPLETED → DOIT être réutilisée (sinon un 2e run zombie + un
+    // loadResults sur le mauvais id). Matcher RUNNING seulement aurait créé un doublon.
+    const completed = { id: "analysis_origin", dealId: "deal_1", status: "COMPLETED", dispatchEventId: "evt_1" };
+    prismaMocks.prisma.analysis.findFirst.mockResolvedValueOnce(completed); // reuse check: hit (COMPLETED)
+
+    const result = await createAnalysis({
+      dealId: "deal_1",
+      type: "full_analysis",
+      totalAgents: 21,
+      dispatchEventId: "evt_1",
+      documentIds: [],
+    });
+
+    expect(result).toBe(completed); // id d'origine → loadResults(analysis.id) lit le bon run
+    expect(prismaMocks.prisma.analysis.create).not.toHaveBeenCalled(); // zéro doublon
+    expect(prismaMocks.prisma.analysis.findFirst).toHaveBeenCalledTimes(1); // pas de garde après reuse
   });
 
   it("crée avec dispatchEventId si aucun run existant (reuse manqué + garde libre)", async () => {
