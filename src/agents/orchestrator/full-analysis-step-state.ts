@@ -22,6 +22,11 @@
  * ou dépend du wall-clock / d'une donnée DB mutable est PORTÉ, pas recalculé. Seul le
  * sectorExpert (closure) n'est jamais porté (reconstruit via le secteur au step Tier2).
  *
+ * VERSION 3 (d-2a) — AJOUT `tier1Findings` (blob tableau requis). Les findings agrégés Tier1
+ * (extractAllFindings(...).allFindings) portent un `id` et un `createdAt` (`new Date()`)
+ * générés à l'extraction et NON re-dérivables byte-identique ; ils sont réutilisés tels quels
+ * au consensus Tier2-sectoriel (lock Codex #4) → ils doivent être PORTÉS, pas re-extraits.
+ *
  * SÉRIALISATION : ce DTO est du JSON pur (cf. assertPlainJson). Les valeurs riches sont
  * stockées au niveau fil (Date → string ISO ; aucun Map/Set — confirmé par l'audit). Les
  * Date sont RAVIVÉES par le consommateur (rehydrateContext, étape D.5b ultérieure) aux
@@ -30,7 +35,7 @@
  */
 
 /** Version du schéma de snapshot — bump si la forme change (compat snapshot en vol). */
-export const FULL_ANALYSIS_STEP_STATE_VERSION = 2 as const;
+export const FULL_ANALYSIS_STEP_STATE_VERSION = 3 as const;
 
 /**
  * Identifiants d'unités du pipeline stepwise (ordre d'exécution). `tier0-facts` est
@@ -164,6 +169,15 @@ export interface FullAnalysisStepState {
   founderResponses: unknown[];
   /** collectedWarnings (wire ; Date timestamp en ISO). */
   collectedWarnings: unknown[];
+  /**
+   * tier1Findings — findings agrégés Tier1 (`extractAllFindings(...).allFindings`, des
+   * ScoredFinding). PORTÉ (v3, d-2a) car non re-dérivable byte-identique : chaque finding a
+   * un `id` et un `createdAt` (`new Date()`) générés à l'extraction, et l'objet est réutilisé
+   * tel quel au consensus Tier2-sectoriel (lock Codex #4). `createdAt` est la SEULE Date d'un
+   * ScoredFinding Tier1 (le finding-extractor n'émet pas de benchmarkData.updatedAt) → ravivé
+   * seul au rehydrate. `lowConfidenceAgents` reste re-dérivé (log-only, hors invariant). Vide
+   * (`[]`) tant que l'agrégation post-Tier1 n'a pas tourné. */
+  tier1Findings: unknown[];
 
   // --- blobs TABLEAU nullable ---
   /** Sortie de consolidateRedFlags (inline-only). null avant post-Tier1. */
@@ -219,6 +233,7 @@ const REQUIRED_ARRAY_BLOBS: ReadonlyArray<keyof FullAnalysisStepState> = [
   "factStore",
   "founderResponses",
   "collectedWarnings",
+  "tier1Findings",
 ];
 
 /** Blobs TABLEAU nullable (null OU array + JSON pur). */

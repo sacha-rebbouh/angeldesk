@@ -53,6 +53,10 @@ function makeValidState(over: Partial<FullAnalysisStepState> = {}): FullAnalysis
     founderResponses: [{ questionId: "q1", question: "?", answer: "a", category: "team" }],
     collectedWarnings: [{ severity: "high", title: "w", timestamp: "2026-06-01T00:00:00.000Z" }],
     previousAnalysisQuestions: [{ question: "q", priority: "high", answered: false }],
+    // v3 (d-2a) : findings agrégés Tier1 portés (createdAt = SEULE Date, wire ISO ici)
+    tier1Findings: [
+      { id: "deck-forensics_story_coherence_ab12cd34", agentName: "deck-forensics", metric: "story_coherence", value: 72, createdAt: "2026-04-20T00:00:00.000Z" },
+    ],
     ...over,
   };
 }
@@ -254,8 +258,8 @@ describe("parseStepState — validation des blobs requis (audit Codex #1)", () =
 describe("FullAnalysisStepState v2 — contrat d'état complet (D.5b)", () => {
   const base = () => JSON.parse(serializeStepState(makeValidState()));
 
-  it("version courante = 2", () => {
-    expect(FULL_ANALYSIS_STEP_STATE_VERSION).toBe(2);
+  it("version courante = 3", () => {
+    expect(FULL_ANALYSIS_STEP_STATE_VERSION).toBe(3);
   });
 
   it("round-trip préserve les nouveaux champs v2 (deal snapshot, factStore, evidenceContext, collectedWarnings, dates ISO)", () => {
@@ -302,8 +306,8 @@ describe("FullAnalysisStepState v2 — contrat d'état complet (D.5b)", () => {
     expect(deserializeStepState(serializeStepState(s))).toEqual(s);
   });
 
-  it("REJETTE un nouveau champ requis manquant (canonicalDeal / scopedDocuments / factStore / startTimeMs / transitionCount / terminalResult)", () => {
-    for (const field of ["canonicalDeal", "analysisBinding", "scopedDocuments", "factStore", "founderResponses", "collectedWarnings", "evidenceLedgerFormatted", "evidenceTodayIso", "startTimeMs", "transitionCount", "terminalResult"]) {
+  it("REJETTE un nouveau champ requis manquant (canonicalDeal / scopedDocuments / factStore / startTimeMs / transitionCount / terminalResult / tier1Findings)", () => {
+    for (const field of ["canonicalDeal", "analysisBinding", "scopedDocuments", "factStore", "founderResponses", "collectedWarnings", "evidenceLedgerFormatted", "evidenceTodayIso", "startTimeMs", "transitionCount", "terminalResult", "tier1Findings"]) {
       const bad = base();
       delete bad[field];
       expect(() => parseStepState(bad), `champ ${field}`).toThrow(new RegExp(field));
@@ -323,6 +327,19 @@ describe("FullAnalysisStepState v2 — contrat d'état complet (D.5b)", () => {
     const back = deserializeStepState(serializeStepState(withTerminal));
     expect(back.terminalResult).toEqual({ sessionId: "a1", success: false, summary: "cost limit" });
     expect(back.done).toBe(true);
+  });
+
+  it("v3 (d-2a) : tier1Findings est un blob TABLEAU requis qui round-trip (incl. createdAt wire)", () => {
+    const s = makeValidState();
+    const back = deserializeStepState(serializeStepState(s));
+    expect(back.tier1Findings).toEqual(s.tier1Findings);
+    // createdAt reste une string ISO au niveau fil (ravivée en Date par rehydrateContext, pas ici)
+    expect(typeof (s.tier1Findings[0] as { createdAt: unknown }).createdAt).toBe("string");
+  });
+
+  it("v3 : tier1Findings vide accepté (avant agrégation post-Tier1) ; objet rejeté (doit être tableau)", () => {
+    expect(() => parseStepState({ ...base(), tier1Findings: [] })).not.toThrow();
+    expect(() => parseStepState({ ...base(), tier1Findings: { x: 1 } })).toThrow(/tier1Findings/);
   });
 
   it("REJETTE un blob OBJET requis non-objet (canonicalDeal array)", () => {

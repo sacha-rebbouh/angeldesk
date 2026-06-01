@@ -311,7 +311,7 @@ export const dealAnalysisFunction = inngest.createFunction(
   },
   { event: 'analysis/deal.analyze' },
   async ({ event, step }) => {
-    const { dealId, type, enableTrace, userId, dispatchRefundKey, dispatchEventId, stepwise: stepwiseFromDispatch } = event.data as {
+    const { dealId, type, enableTrace, userId, dispatchRefundKey, dispatchEventId, stepwise: stepwiseFromDispatch, stepwiseGraphVersion } = event.data as {
       dealId: string;
       type: string;
       enableTrace: boolean;
@@ -319,6 +319,7 @@ export const dealAnalysisFunction = inngest.createFunction(
       dispatchRefundKey?: string;
       dispatchEventId?: string;
       stepwise?: boolean;
+      stepwiseGraphVersion?: number;
     };
 
     // Gate thèse RETIRÉ (2026-05-30) : plus aucune pause ni décision BA après
@@ -357,6 +358,10 @@ export const dealAnalysisFunction = inngest.createFunction(
           stepwise: true,
           stepRunner: inngestStepRunner,
           dispatchEventId,
+          // d-2a — version STICKY du graphe (stampée au dispatch). Threadée jusqu'à
+          // runFullAnalysis qui route EXACTEMENT dessus (undefined|1 → driver 1-step ;
+          // v2+ à d-2b). Garantit qu'un replay reprend sur le graphe d'origine.
+          stepwiseGraphVersion,
         });
       } else {
         analysisResult = await step.run('run-analysis', async () => {

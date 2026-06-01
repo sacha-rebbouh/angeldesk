@@ -19,6 +19,7 @@ const DOC_UPLOADED = new Date("2026-04-01T00:00:00.000Z");
 const FACT_DATE = new Date("2026-04-15T00:00:00.000Z");
 const WARN_TS = new Date("2026-06-01T12:00:00.000Z");
 const EVIDENCE_TODAY = new Date(ISO);
+const FINDING_CREATED = new Date("2026-04-20T00:00:00.000Z");
 
 // Contexte VIVANT minimal (avec Date objects) — cast pour ne fournir que les champs lus.
 function makeLiveContext(over: Partial<EnrichedAgentContext> = {}): EnrichedAgentContext {
@@ -73,6 +74,10 @@ function build(over: Partial<EnrichedAgentContext> = {}, locals: Partial<Paramet
     allResults: { "deck-forensics": { success: true, score: 72 } },
     verificationContext: { facts: ["f1"] },
     collectedWarnings: [{ severity: "high", title: "w", timestamp: WARN_TS }],
+    // tier1Findings (v3 d-2a) — local de runFullAnalysis ; createdAt = Date vivante (-> ISO)
+    tier1Findings: [
+      { id: "deck-forensics_story_coherence_ab12cd34", agentName: "deck-forensics", metric: "story_coherence", value: 72, createdAt: FINDING_CREATED },
+    ],
     ...locals,
   });
 }
@@ -250,9 +255,26 @@ describe("rehydrateContext (D.5b b-3) — DTO wire -> état vivant (revive Date)
       startTimeMs: r.startTimeMs, transitionCount: r.transitionCount, lastUnit: r.lastUnit, done: r.done,
       enrichedContext: r.enrichedContext, allResults: r.allResults,
       verificationContext: r.verificationContext, collectedWarnings: r.collectedWarnings,
+      tier1Findings: r.tier1Findings,
       terminalResult: r.terminalResult,
     });
     expect(dto2).toEqual(dto1);
+  });
+
+  it("tier1Findings (v3 d-2a) : createdAt normalisé en ISO au build, ravivé en Date au rehydrate (SEULE date)", () => {
+    const state = build();
+    // build : createdAt -> ISO (wire) ; le reste du finding intact
+    const wired = state.tier1Findings[0] as { id: string; createdAt: unknown; value: number };
+    expect(wired.createdAt).toBe(FINDING_CREATED.toISOString());
+    expect(wired.id).toBe("deck-forensics_story_coherence_ab12cd34");
+    expect(wired.value).toBe(72);
+    // rehydrate : RehydratedState.tier1Findings (hors enrichedContext), createdAt -> Date
+    const r = rehydrateContext(state);
+    expect(Array.isArray(r.tier1Findings)).toBe(true);
+    const revived = r.tier1Findings[0] as { createdAt: Date; id: string };
+    expect(revived.createdAt).toBeInstanceOf(Date);
+    expect(revived.createdAt.getTime()).toBe(FINDING_CREATED.getTime());
+    expect(revived.id).toBe("deck-forensics_story_coherence_ab12cd34");
   });
 
   it("revive PROFOND evidenceContext (forecast/actuals/claims/detectedAttachments)", () => {

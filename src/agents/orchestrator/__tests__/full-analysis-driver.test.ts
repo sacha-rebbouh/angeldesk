@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runTerminalStepwiseDriver } from "../full-analysis-driver";
+import { runTerminalStepwiseDriver, STEPWISE_GRAPH_VERSION } from "../full-analysis-driver";
 import { InlineStepRunner, FakeStepRunner } from "../step-runner";
 import type { AnalysisResult } from "../types";
 
@@ -134,5 +134,27 @@ describe("runTerminalStepwiseDriver (golden driver D.5d-1c)", () => {
     });
     expect(r2.results).toEqual({});
     expect(r2.sessionId).toBe("a1");
+  });
+
+  it("stepId (d-2a) : défaut 'run-analysis' (back-compat), paramétrable = clé de mémoïsation", async () => {
+    const fakeDefault = new FakeStepRunner();
+    await runTerminalStepwiseDriver({
+      stepRunner: fakeDefault, stepwise: true, pipeline: async () => makeResult(), loadPersistedResults: async () => null,
+    });
+    expect(fakeDefault.executedIds).toEqual(["run-analysis"]);
+
+    const fakeCustom = new FakeStepRunner();
+    await runTerminalStepwiseDriver({
+      stepRunner: fakeCustom, stepwise: true, stepId: "terminal-final-completion",
+      pipeline: async () => makeResult(), loadPersistedResults: async () => null,
+    });
+    expect(fakeCustom.executedIds).toEqual(["terminal-final-completion"]);
+    expect(fakeCustom.executedIds).not.toContain("run-analysis");
+  });
+});
+
+describe("STEPWISE_GRAPH_VERSION (d-2a)", () => {
+  it("vaut 1 (driver « 1 step englobante ») à d-2a", () => {
+    expect(STEPWISE_GRAPH_VERSION).toBe(1);
   });
 });

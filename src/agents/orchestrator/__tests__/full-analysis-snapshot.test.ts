@@ -67,6 +67,7 @@ function makeValidState(over: Partial<FullAnalysisStepState> = {}): FullAnalysis
     factStore: [],
     founderResponses: [],
     collectedWarnings: [],
+    tier1Findings: [],
     previousAnalysisQuestions: null,
     ...over,
   };

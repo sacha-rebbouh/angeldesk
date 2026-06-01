@@ -21,6 +21,7 @@ import { claimFailedAnalysisResume, reserveFullAnalysisDispatch } from "@/servic
 import { inngest } from "@/lib/inngest-client";
 import { logger } from "@/lib/logger";
 import { STEPWISE_STATE_PREFIX } from "@/agents/orchestrator/full-analysis-snapshot";
+import { STEPWISE_GRAPH_VERSION } from "@/agents/orchestrator/full-analysis-driver";
 
 // Vercel: Allow long-running analysis. Requires Pro plan (300s max).
 // Without this, the fire-and-forget promise may be killed after 10s.
@@ -387,6 +388,11 @@ export async function POST(request: NextRequest) {
           // Un flip du flag n'affecte que les NOUVEAUX dispatches → pas de changement de
           // graphe de steps en vol. Inerte hors full_analysis.
           stepwise: process.env.DEEP_DIVE_STEPWISE === "1" && effectiveType === "full_analysis",
+          // d-2a — version du graphe de steps stepwise, STICKY (lock Codex #1). Capturée au
+          // dispatch = le graphe que ce build produit ; le handler route EXACTEMENT dessus au
+          // replay (jamais un graphe déployé après ce run). Consommée seulement en mode
+          // stepwise ; métadonnée inerte sinon.
+          stepwiseGraphVersion: STEPWISE_GRAPH_VERSION,
         },
       });
     } catch (sendErr) {

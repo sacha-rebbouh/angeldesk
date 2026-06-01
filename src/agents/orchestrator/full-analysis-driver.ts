@@ -20,6 +20,19 @@ import type { AnalysisResult } from "./types";
 import type { StepRunner } from "./step-runner";
 import { buildTerminalEnvelope, reviveTerminalEnvelope } from "./full-analysis-step-state-bridge";
 
+/**
+ * Version du GRAPHE de steps stepwise — distincte de FULL_ANALYSIS_STEP_STATE_VERSION (qui
+ * versionne la FORME du DTO d'état). Stampée dans `event.data` au dispatch (route.ts) et
+ * IMMUABLE sur tout le run (lock Codex #1, mode STICKY) : au replay Inngest, le handler route
+ * sur CETTE version → un run en vol ne bascule jamais sur un graphe déployé après lui.
+ *   - 1 (d-2a)  : driver « 1 step englobante » (runTerminalStepwiseDriver, step 'run-analysis').
+ *   - 2 (d-2b+) : graphe multi-unités (tier0-facts/tier0-thesis/…), à venir.
+ * Routing EXACT côté orchestrateur (runFullAnalysis) : `undefined|1` → driver 1-step ; chaque
+ * version future = sa propre branche (on N'UTILISE PAS cette constante dans l'égalité de
+ * routing — elle ne sert qu'à STAMPER la version courante au dispatch).
+ */
+export const STEPWISE_GRAPH_VERSION = 1 as const;
+
 export interface TerminalStepwiseDriverParams {
   /** Runner d'unité : InlineStepRunner (OFF/single-pass) ou InngestStepRunner/FakeStepRunner. */
   stepRunner: StepRunner;
@@ -29,6 +42,12 @@ export interface TerminalStepwiseDriverParams {
   pipeline: () => Promise<AnalysisResult>;
   /** Relit allResults déjà persistés (loadResults en prod ; stub en test). Replay uniquement. */
   loadPersistedResults: () => Promise<AnalysisResult["results"] | null>;
+  /**
+   * ID du step durable = clé de mémoïsation Inngest (d-2a). Défaut `'run-analysis'` =
+   * back-compat exacte (D.5d-1c). Paramétrable pour que le split d-2b+ donne à chaque unité
+   * son propre ID de step distinct (IDs terminaux inclus, lock Codex #5).
+   */
+  stepId?: string;
 }
 
 /**
@@ -39,12 +58,12 @@ export interface TerminalStepwiseDriverParams {
 export async function runTerminalStepwiseDriver(
   params: TerminalStepwiseDriverParams
 ): Promise<AnalysisResult> {
-  const { stepRunner, stepwise, pipeline, loadPersistedResults } = params;
+  const { stepRunner, stepwise, pipeline, loadPersistedResults, stepId = "run-analysis" } = params;
 
   let bodyRan = false;
   let liveResult: AnalysisResult | undefined;
 
-  const envelope = await stepRunner.run("run-analysis", async () => {
+  const envelope = await stepRunner.run(stepId, async () => {
     bodyRan = true;
     liveResult = await pipeline();
     // OFF (non stepwise) → null : jamais lu (bodyRan=true sur ce chemin). ON → enveloppe wire.

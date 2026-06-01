@@ -366,6 +366,7 @@ export class AgentOrchestrator {
           stopAfterThesis: options.stopAfterThesis,
           stepwise: options.stepwise,
           dispatchEventId: options.dispatchEventId,
+          stepwiseGraphVersion: options.stepwiseGraphVersion,
         }, options.stepRunner ?? new InlineStepRunner());
         break;
       case "tier3_synthesis":
@@ -2748,6 +2749,22 @@ export class AgentOrchestrator {
     stepRunner: StepRunner = new InlineStepRunner()
   ): Promise<AnalysisResult> {
     const init = await this.initializeFullAnalysisRun(deal, dealId, advancedOptions);
+
+    // d-2a — Routing EXACT par version de graphe stepwise (lock Codex #1). La version est
+    // STICKY (stampée au dispatch, route.ts) → un run en vol reprend TOUJOURS sur SON graphe,
+    // jamais sur un graphe déployé après lui. On compare à des littéraux (PAS à
+    // STEPWISE_GRAPH_VERSION qui bumpe à d-2b) : chaque version mappe à son implémentation.
+    //   - `undefined|1` → driver « 1 step englobante » (D.5d-1c, ci-dessous).
+    //   - v2 (d-2b) → branche `runFullAnalysisStepwise` (à venir).
+    // Une version inconnue (worker obsolète vs dispatch) LÈVE plutôt que de tomber
+    // silencieusement sur le mauvais graphe. Byte-inert : tous les appelants actuels passent
+    // `undefined` (appels directs / thesis-reextract) ou `1` (dispatch Inngest).
+    const graphVersion = advancedOptions.stepwiseGraphVersion;
+    if (graphVersion !== undefined && graphVersion !== 1) {
+      throw new Error(
+        `[stepwise] version de graphe ${graphVersion} non supportée par ce worker (dispatch plus récent que le code déployé)`
+      );
+    }
 
     // D.5d-1c — Wrapper stepwise « 1 step englobante » (Modèle B). Le bootstrap
     // (initializeFullAnalysisRun) tourne TOUJOURS hors step (crée la state machine

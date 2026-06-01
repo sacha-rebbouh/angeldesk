@@ -79,6 +79,16 @@ describe("dealAnalysisFunction — D.5d-1d branchement stepwise (sticky)", () =>
     expect(stepRunCalls).not.toContain("run-analysis");
   });
 
+  it("ON : stepwiseGraphVersion (d-2a) threadé event.data → runAnalysis (routing EXACT sticky)", async () => {
+    await invokeHandler({ ...baseData, type: "full_analysis", stepwise: true, stepwiseGraphVersion: 1 });
+    expect(mocks.runAnalysis.mock.calls[0][0].stepwiseGraphVersion).toBe(1);
+  });
+
+  it("ON sans stepwiseGraphVersion (event legacy) : threadé undefined → routing 1-step par défaut", async () => {
+    await invokeHandler({ ...baseData, type: "full_analysis", stepwise: true });
+    expect(mocks.runAnalysis.mock.calls[0][0].stepwiseGraphVersion).toBeUndefined();
+  });
+
   it("OFF (event.data.stepwise=false) : runAnalysis DANS step.run('run-analysis'), sans stepwise/stepRunner/dispatchEventId", async () => {
     const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis", stepwise: false });
 

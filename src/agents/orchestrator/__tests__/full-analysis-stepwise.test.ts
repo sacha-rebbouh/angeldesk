@@ -64,6 +64,20 @@ type OrchestratorPrivateMethods = {
   runFinalCompletion: (params: Record<string, unknown>) => Promise<unknown>;
 };
 
+// d-2a — surface privée pour tester le routing EXACT par version de graphe stepwise.
+// On stube initializeFullAnalysisRun + runFullAnalysisPipeline (le bootstrap DB et le corps
+// pipeline ne sont pas le sujet) pour exercer SEULEMENT la branche de routing.
+type RoutingPrivateMethods = {
+  runFullAnalysis: (
+    deal: unknown,
+    dealId: string,
+    onProgress: undefined,
+    advancedOptions: { stepwiseGraphVersion?: number },
+  ) => Promise<{ sessionId?: string }>;
+  initializeFullAnalysisRun: (...args: unknown[]) => Promise<unknown>;
+  runFullAnalysisPipeline: (...args: unknown[]) => Promise<unknown>;
+};
+
 function makeFakeStateMachine() {
   return {
     complete: vi.fn().mockResolvedValue(undefined),
@@ -124,5 +138,41 @@ describe("D.5a — zéro checkpoint legacy en mode stepwise", () => {
       expect(persistenceMocks.saveCheckpoint.mock.calls[0][1]).toMatchObject({ state: "COMPLETED" });
       expect(persistenceMocks.completeAnalysis).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("d-2a — runFullAnalysis : routing EXACT par stepwiseGraphVersion (lock Codex #1)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function makeRoutingOrchestrator(stepwise: boolean) {
+    const orch = new AgentOrchestrator() as unknown as RoutingPrivateMethods;
+    orch.initializeFullAnalysisRun = vi
+      .fn()
+      .mockResolvedValue({ stepwise, analysis: { id: "a1" } }) as RoutingPrivateMethods["initializeFullAnalysisRun"];
+    orch.runFullAnalysisPipeline = vi
+      .fn()
+      .mockResolvedValue({ sessionId: "a1", success: true }) as RoutingPrivateMethods["runFullAnalysisPipeline"];
+    return orch;
+  }
+
+  it("undefined → driver « 1 step englobante » (back-compat), ne LÈVE pas", async () => {
+    const orch = makeRoutingOrchestrator(false);
+    const r = await orch.runFullAnalysis({}, "deal_1", undefined, {});
+    expect(r).toMatchObject({ sessionId: "a1" });
+  });
+
+  it("version 1 → driver « 1 step englobante », ne LÈVE pas", async () => {
+    const orch = makeRoutingOrchestrator(false);
+    const r = await orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 1 });
+    expect(r).toMatchObject({ sessionId: "a1" });
+  });
+
+  it("version inconnue (ex. 2, worker obsolète vs dispatch) → LÈVE, ne tombe pas sur le mauvais graphe", async () => {
+    const orch = makeRoutingOrchestrator(true);
+    await expect(orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 2 })).rejects.toThrow(
+      /version de graphe 2 non supportée/,
+    );
+    // le corps pipeline ne tourne JAMAIS quand le routing rejette
+    expect((orch.runFullAnalysisPipeline as unknown as { mock: { calls: unknown[] } }).mock.calls).toHaveLength(0);
   });
 });

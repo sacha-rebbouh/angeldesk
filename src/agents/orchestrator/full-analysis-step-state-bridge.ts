@@ -47,6 +47,11 @@ export interface BuildStepStateInput {
   verificationContext: Record<string, unknown> | null;
   /** Accumulateur de warnings (Date timestamp). */
   collectedWarnings: unknown[];
+  /**
+   * Findings agrégés Tier1 (`extractAllFindings(...).allFindings`). Local de runFullAnalysis,
+   * PAS porté par enrichedContext. Vide (`[]`) avant l'agrégation post-Tier1. Chaque finding a
+   * un `createdAt` (Date) normalisé en ISO ; ravivé seul au rehydrate (lock Codex #4, v3 d-2a). */
+  tier1Findings: unknown[];
 }
 
 /**
@@ -179,6 +184,7 @@ export function buildStepState(input: BuildStepStateInput): FullAnalysisStepStat
     factStore: toWireArray(ctx.factStore, "$.factStore"),
     founderResponses: toWireArray(ctx.founderResponses, "$.founderResponses"),
     collectedWarnings: toWireArray(input.collectedWarnings, "$.collectedWarnings"),
+    tier1Findings: toWireArray(input.tier1Findings, "$.tier1Findings"),
 
     consolidatedRedFlags: toWireArrayOrNull(ctx.consolidatedRedFlags, "$.consolidatedRedFlags"),
     previousAnalysisQuestions: toWireArrayOrNull(ctx.previousAnalysisQuestions, "$.previousAnalysisQuestions"),
@@ -298,6 +304,20 @@ function reviveWarnings(wire: unknown[]): unknown[] {
 }
 
 /**
+ * tier1Findings : `createdAt` (`new Date()` posé à l'extraction) — SEULE Date d'un
+ * ScoredFinding Tier1 (le finding-extractor n'émet pas de benchmarkData.updatedAt). Lock
+ * Codex #4 (v3 d-2a) : raviver `createdAt` seul ; le reste du finding est wire-stable.
+ */
+function reviveTier1Findings(wire: unknown[]): unknown[] {
+  const findings = cloneWire(wire);
+  findings.forEach((f, i) => {
+    const o = asRecord(f);
+    if (o) reviveField(o, "createdAt", `tier1Findings[${i}]`);
+  });
+  return findings;
+}
+
+/**
  * evidenceContext : Record<docId, DocumentEvidenceContext>. Dates profondes —
  * documentDate.date, asOf.date, forecast.start/end, actuals[].start/end,
  * detectedAttachments[].emailSourceDate, claims[].dateStart/dateEnd.
@@ -355,6 +375,8 @@ export interface RehydratedState {
   allResults: Record<string, unknown>;
   verificationContext: Record<string, unknown> | null;
   collectedWarnings: unknown[];
+  /** Findings agrégés Tier1 (createdAt ravivé). Local de runFullAnalysis (hors enrichedContext). */
+  tier1Findings: unknown[];
   totalCost: number;
   completedCount: number;
   startTimeMs: number;
@@ -405,6 +427,7 @@ export function rehydrateContext(state: FullAnalysisStepState): RehydratedState 
     allResults: cloneWire(state.allResults),
     verificationContext: cloneWire(state.verificationContext),
     collectedWarnings: reviveWarnings(state.collectedWarnings),
+    tier1Findings: reviveTier1Findings(state.tier1Findings),
     totalCost: state.totalCost,
     completedCount: state.completedCount,
     startTimeMs: state.startTimeMs,

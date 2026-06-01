@@ -150,6 +150,14 @@ export interface AnalysisOptions {
    * Absent → createAnalysis crée comme avant (chemin OFF byte-inert).
    */
   dispatchEventId?: string;
+  /**
+   * d-2a — Version du graphe de steps stepwise, STICKY (stampée au dispatch, route.ts, =
+   * STEPWISE_GRAPH_VERSION). Lue par runFullAnalysis pour router EXACTEMENT sur l'implémentation
+   * de graphe correspondante : `undefined|1` → driver « 1 step englobante » (D.5d-1c) ; chaque
+   * version future aura sa branche (d-2b+). Threadée depuis dealAnalysisFunction en mode
+   * stepwise. Absent → routing `undefined` (driver 1-step). Ignoré hors full_analysis.
+   */
+  stepwiseGraphVersion?: number;
 }
 
 export interface AnalysisResult {
@@ -195,6 +203,8 @@ export interface AdvancedAnalysisOptions {
   stepwise?: boolean;
   /** D.5d-1d — clé d'idempotence init durable (cf. AnalysisOptions.dispatchEventId). */
   dispatchEventId?: string;
+  /** d-2a — version du graphe de steps stepwise (cf. AnalysisOptions.stepwiseGraphVersion). */
+  stepwiseGraphVersion?: number;
 }
 
 // Tier 1 agent names (12 agents — exit-strategist retiré, doctrine anti-oraculaire pas de projection)

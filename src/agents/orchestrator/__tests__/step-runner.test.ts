@@ -144,6 +144,7 @@ describe("Intégration bridge — un StepState survit à la frontière durable +
         allResults: { "deck-forensics": { agentName: "deck-forensics", success: true } },
         verificationContext: null,
         collectedWarnings: [],
+        tier1Findings: [],
       })
     );
 
