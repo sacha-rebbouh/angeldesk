@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const prismaMocks = vi.hoisted(() => {
   const prisma = {
     debateRecord: { upsert: vi.fn() },
+    scoredFinding: { deleteMany: vi.fn(), createMany: vi.fn() },
+    $transaction: vi.fn(),
   };
   return { prisma };
 });
@@ -21,7 +23,8 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/services/storage", () => ({ uploadFile: vi.fn() }));
 
-import { persistDebateRecord } from "../persistence";
+import { persistDebateRecord, persistScoredFindings } from "../persistence";
+import type { ScoredFinding } from "@/scoring/types";
 
 const debateResult = {
   contradiction: {
@@ -72,5 +75,61 @@ describe("persistence idempotence (Phase D replay-safety)", () => {
     const where1 = (prismaMocks.prisma.debateRecord.upsert.mock.calls[1][0] as { where: unknown }).where;
     expect(where0).toEqual({ contradictionId: "contra_1" });
     expect(where1).toEqual({ contradictionId: "contra_1" });
+  });
+});
+
+const scoredFindings = [
+  {
+    metric: "ARR growth",
+    category: "financial",
+    value: 120,
+    unit: "%",
+    normalizedValue: 0.8,
+    percentile: 75,
+    assessment: "strong",
+    benchmarkData: null,
+    confidence: { level: "high", score: 0.9, factors: [] },
+    evidence: [],
+  },
+] as unknown as ScoredFinding[];
+
+describe("persistScoredFindings — delete+insert transactionnel (Phase D replay-safety)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMocks.prisma.$transaction.mockResolvedValue([]);
+    prismaMocks.prisma.scoredFinding.deleteMany.mockReturnValue({ __op: "deleteMany" });
+    prismaMocks.prisma.scoredFinding.createMany.mockReturnValue({ __op: "createMany" });
+  });
+
+  it("supprime puis réinsère, scopé par (analysisId, agentName), dans une seule transaction", async () => {
+    await persistScoredFindings("analysis_1", "financial-auditor", scoredFindings);
+
+    expect(prismaMocks.prisma.scoredFinding.deleteMany).toHaveBeenCalledWith({
+      where: { analysisId: "analysis_1", agentName: "financial-auditor" },
+    });
+    expect(prismaMocks.prisma.scoredFinding.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.prisma.$transaction).toHaveBeenCalledTimes(1);
+    const txArg = prismaMocks.prisma.$transaction.mock.calls[0][0];
+    expect(Array.isArray(txArg)).toBe(true);
+    expect(txArg).toHaveLength(2); // [deleteMany, createMany] atomiques
+  });
+
+  it("re-persist (retry de step) répète delete+insert → set final identique, pas d'accumulation", async () => {
+    await persistScoredFindings("analysis_1", "financial-auditor", scoredFindings);
+    await persistScoredFindings("analysis_1", "financial-auditor", scoredFindings);
+
+    expect(prismaMocks.prisma.scoredFinding.deleteMany).toHaveBeenCalledTimes(2);
+    expect(prismaMocks.prisma.scoredFinding.deleteMany).toHaveBeenNthCalledWith(1, {
+      where: { analysisId: "analysis_1", agentName: "financial-auditor" },
+    });
+    expect(prismaMocks.prisma.scoredFinding.deleteMany).toHaveBeenNthCalledWith(2, {
+      where: { analysisId: "analysis_1", agentName: "financial-auditor" },
+    });
+  });
+
+  it("no-op si aucun finding (early return, ne supprime PAS les findings existants)", async () => {
+    await persistScoredFindings("analysis_1", "financial-auditor", []);
+    expect(prismaMocks.prisma.$transaction).not.toHaveBeenCalled();
+    expect(prismaMocks.prisma.scoredFinding.deleteMany).not.toHaveBeenCalled();
   });
 });

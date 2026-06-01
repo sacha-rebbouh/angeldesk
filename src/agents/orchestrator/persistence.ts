@@ -344,7 +344,16 @@ export async function persistScoredFindings(
       evidence: JSON.parse(JSON.stringify(finding.evidence ?? [])),
     }));
 
-    await prisma.scoredFinding.createMany({ data });
+    // Phase D — replay-safe : delete+insert transactionnel par (analysisId, agentName).
+    // ScoredFinding n'a AUCUNE contrainte unique → un createMany seul double-écrit sur le
+    // retry d'un step. Le deleteMany préalable (scopé à l'agent) rend l'opération idempotente :
+    // un replay produit le même set final sans doublon. Sur run neuf, le deleteMany ne
+    // supprime rien ⇒ équivalent à l'ancien createMany. Atomique via $transaction (pas de
+    // fenêtre "supprimé mais pas réinséré" en cas de crash entre les deux).
+    await prisma.$transaction([
+      prisma.scoredFinding.deleteMany({ where: { analysisId, agentName } }),
+      prisma.scoredFinding.createMany({ data }),
+    ]);
   } catch (error) {
     logPersistenceError("persistScoredFindings", error, {
       analysisId, agentName, findingsCount: findings.length,
