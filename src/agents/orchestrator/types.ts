@@ -1,4 +1,5 @@
 import type { AgentResult } from "../types";
+import type { StepRunner } from "./step-runner";
 
 // Base agents registry type
 export type BaseAgentName = "red-flag-detector" | "document-extractor" | "deal-scorer";
@@ -133,6 +134,13 @@ export interface AnalysisOptions {
    * DEEP_DIVE_STEPWISE. Ignoré hors full_analysis.
    */
   stepwise?: boolean;
+  /**
+   * D.5d-1c — Runner d'unité durable du driver stepwise (Modèle B). Objet IN-PROCESS
+   * (jamais sérialisé). Absent → InlineStepRunner (single-pass = chemin OFF byte-inert).
+   * dealAnalysisFunction passe un InngestStepRunner sous le flag DEEP_DIVE_STEPWISE
+   * (D.5d-1d). Ignoré hors full_analysis.
+   */
+  stepRunner?: StepRunner;
 }
 
 export interface AnalysisResult {

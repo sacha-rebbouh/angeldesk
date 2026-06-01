@@ -54,6 +54,8 @@ import { thesisExtractorAgent } from "@/agents/tier0/thesis-extractor";
 import type { ThesisExtractorOutput, ThesisReconcilerOutput } from "@/agents/thesis/types";
 import { thesisService } from "@/services/thesis";
 import { loadResults } from "@/services/analysis-results/load-results";
+import { InlineStepRunner, type StepRunner } from "./step-runner";
+import { runTerminalStepwiseDriver } from "./full-analysis-driver";
 import {
   getCurrentFacts,
   formatFactStoreForAgents,
@@ -363,7 +365,7 @@ export class AgentOrchestrator {
           isUpdate,
           stopAfterThesis: options.stopAfterThesis,
           stepwise: options.stepwise,
-        });
+        }, options.stepRunner ?? new InlineStepRunner());
         break;
       case "tier3_synthesis":
         result = await this.runTier3Synthesis(
@@ -2736,10 +2738,25 @@ export class AgentOrchestrator {
     deal: DealWithDocs,
     dealId: string,
     onProgress: AnalysisOptions["onProgress"],
-    advancedOptions: AdvancedAnalysisOptions
+    advancedOptions: AdvancedAnalysisOptions,
+    stepRunner: StepRunner = new InlineStepRunner()
   ): Promise<AnalysisResult> {
     const init = await this.initializeFullAnalysisRun(deal, dealId, advancedOptions);
-    return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
+
+    // D.5d-1c — Wrapper stepwise « 1 step englobante » (Modèle B). Le bootstrap
+    // (initializeFullAnalysisRun) tourne TOUJOURS hors step (crée la state machine
+    // non-sérialisable ; idempotence de l'init au replay via dispatchEventId — câblage
+    // Inngest D.5d-1d). Le corps pipeline tourne dans l'unique unité durable. Sur run sain
+    // on retourne le liveResult EXACT → OFF (InlineStepRunner par défaut) BYTE-INERT, E1
+    // trivial. Au replay (step mémoïsé), reconstruction depuis l'enveloppe wire + results
+    // relus de la persistance (cf. full-analysis-driver).
+    return runTerminalStepwiseDriver({
+      stepRunner,
+      stepwise: init.stepwise,
+      pipeline: () => this.runFullAnalysisPipeline(deal, dealId, onProgress, init),
+      loadPersistedResults: async () =>
+        (await loadResults(init.analysis.id)) as AnalysisResult["results"] | null,
+    });
   }
 
   /**

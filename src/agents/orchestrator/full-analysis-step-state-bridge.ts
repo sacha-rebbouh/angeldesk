@@ -16,6 +16,7 @@
  */
 
 import type { EnrichedAgentContext } from "@/agents/types";
+import type { AnalysisResult } from "./types";
 import {
   FULL_ANALYSIS_STEP_STATE_VERSION,
   type FullAnalysisStepState,
@@ -416,4 +417,48 @@ export function rehydrateContext(state: FullAnalysisStepState): RehydratedState 
     dealId: state.dealId,
     analysisType: state.analysisType,
   };
+}
+
+// ============================================================================
+// D.5d-1c — Enveloppe terminale durable de l'AnalysisResult (Modèle B, 1 step englobante)
+// ============================================================================
+
+/**
+ * Construit l'enveloppe WIRE durable d'un AnalysisResult pour la sortie de l'unique step
+ * stepwise (Modèle B). Exclut DÉLIBÉRÉMENT le champ lourd `results` (= allResults, non
+ * borné) : le mémoïser dans la sortie `step.run` dépasserait le cap Inngest de 4 MB par
+ * step (gate Codex). `results` est relu de la persistance (completeAnalysis a déjà écrit
+ * allResults) à la reconstruction. Les `earlyWarnings[].timestamp` (Date) sont normalisés
+ * en ISO via le normalizer STRICT (rejette tout non-wire-safe résiduel). Le reste reste
+ * wire (analysisDelta porte des dates string-only, cohérent avec le traitement d'allResults
+ * partout dans le chantier).
+ */
+export function buildTerminalEnvelope(result: AnalysisResult): Record<string, unknown> {
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(result)) {
+    if (k === "results") continue; // exclu (cap 4 MB sortie de step) — relu à la reconstruction
+    rest[k] = v;
+  }
+  const wire = normalizeToWire(rest, "$.terminalEnvelope");
+  if (wire === null || typeof wire !== "object" || Array.isArray(wire)) {
+    throw new Error("[buildTerminalEnvelope] objet wire attendu");
+  }
+  return wire as Record<string, unknown>;
+}
+
+/**
+ * Ravive l'enveloppe WIRE en la part « hors results » d'un AnalysisResult au replay
+ * (bodyRan=false). Seule Date top-level ravivée : `earlyWarnings[].timestamp` (gate Codex —
+ * `analysisDelta` est string-only, `results` est réinjecté par l'appelant depuis la
+ * persistance). Renvoie un objet plain SANS `results` ; l'appelant ajoute `results`.
+ */
+export function reviveTerminalEnvelope(envelope: Record<string, unknown>): Record<string, unknown> {
+  const revived = cloneWire(envelope);
+  if (Array.isArray(revived.earlyWarnings)) {
+    (revived.earlyWarnings as unknown[]).forEach((w, i) => {
+      const o = asRecord(w);
+      if (o) reviveField(o, "timestamp", `terminalEnvelope.earlyWarnings[${i}]`);
+    });
+  }
+  return revived;
 }

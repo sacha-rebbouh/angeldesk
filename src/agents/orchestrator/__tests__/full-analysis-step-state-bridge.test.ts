@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import type { EnrichedAgentContext } from "@/agents/types";
-import { buildStepState, rehydrateContext } from "../full-analysis-step-state-bridge";
+import {
+  buildStepState,
+  rehydrateContext,
+  buildTerminalEnvelope,
+  reviveTerminalEnvelope,
+} from "../full-analysis-step-state-bridge";
+import type { AnalysisResult } from "../types";
 import {
   FULL_ANALYSIS_STEP_STATE_VERSION,
   serializeStepState,
@@ -282,5 +288,72 @@ describe("rehydrateContext (D.5b b-3) — DTO wire -> état vivant (revive Date)
     const bad = deserializeStepState(serializeStepState(build()));
     expect(() => rehydrateContext({ ...bad, evidenceTodayIso: "not-a-date" })).toThrow(/invalide|date/i);
     expect(() => rehydrateContext({ ...bad, canonicalDeal: { id: "d1", createdAt: "garbage" } })).toThrow(/invalide|date/i);
+  });
+});
+
+describe("buildTerminalEnvelope / reviveTerminalEnvelope (D.5d-1c — enveloppe terminale)", () => {
+  const TS = new Date("2026-06-01T12:00:00.000Z");
+
+  function makeResult(over: Partial<AnalysisResult> = {}): AnalysisResult {
+    return {
+      sessionId: "a1",
+      dealId: "d1",
+      type: "full_analysis",
+      success: true,
+      results: { "deck-forensics": { success: true } } as unknown as AnalysisResult["results"],
+      totalCost: 1.23,
+      totalTimeMs: 42000,
+      summary: "résumé",
+      earlyWarnings: [
+        {
+          id: "w1",
+          timestamp: TS,
+          agentName: "red-flag-detector",
+          severity: "high",
+          category: "financial_critical",
+          title: "t",
+          description: "d",
+          evidence: ["e"],
+          confidence: 80,
+          recommendation: "investigate",
+        },
+      ],
+      hasCriticalWarnings: false,
+      tiersExecuted: ["tier0", "tier1"],
+      ...over,
+    } as AnalysisResult;
+  }
+
+  it("buildTerminalEnvelope EXCLUT results et normalise earlyWarnings[].timestamp en ISO", () => {
+    const env = buildTerminalEnvelope(makeResult());
+    expect("results" in env).toBe(false);
+    expect(env.sessionId).toBe("a1");
+    expect(env.totalCost).toBe(1.23);
+    const warns = env.earlyWarnings as Array<Record<string, unknown>>;
+    expect(warns[0].timestamp).toBe(TS.toISOString()); // Date -> string ISO (wire)
+  });
+
+  it("reviveTerminalEnvelope ravive earlyWarnings[].timestamp en Date (round-trip JSON)", () => {
+    // Simule la frontière durable : enveloppe wire passée par JSON (comme step.run).
+    const wire = JSON.parse(JSON.stringify(buildTerminalEnvelope(makeResult())));
+    expect(typeof wire.earlyWarnings[0].timestamp).toBe("string"); // dents : bien une string avant revive
+    const revived = reviveTerminalEnvelope(wire);
+    const warns = revived.earlyWarnings as Array<Record<string, unknown>>;
+    expect(warns[0].timestamp).toBeInstanceOf(Date);
+    expect((warns[0].timestamp as Date).toISOString()).toBe(TS.toISOString());
+  });
+
+  it("build∘revive (+ results réinjecté) reconstruit l'AnalysisResult d'origine", () => {
+    const original = makeResult();
+    const wire = JSON.parse(JSON.stringify(buildTerminalEnvelope(original)));
+    const reconstructed = { ...reviveTerminalEnvelope(wire), results: original.results } as unknown as AnalysisResult;
+    expect(reconstructed).toEqual(original);
+  });
+
+  it("sans earlyWarnings : enveloppe valide, revive no-op", () => {
+    const env = buildTerminalEnvelope(makeResult({ earlyWarnings: undefined }));
+    expect("earlyWarnings" in env).toBe(false); // undefined droppé (comme JSON)
+    const revived = reviveTerminalEnvelope(JSON.parse(JSON.stringify(env)));
+    expect(revived.sessionId).toBe("a1");
   });
 });
