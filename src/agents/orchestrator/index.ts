@@ -1930,17 +1930,11 @@ export class AgentOrchestrator {
    */
   private async runPostTier1Aggregation(params: {
     enrichedContext: EnrichedAgentContext;
-    tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
     analysis: Awaited<ReturnType<typeof createAnalysis>>;
-    dealId: string;
-    onProgress: AnalysisOptions["onProgress"];
-    TOTAL_AGENTS: number;
-    onEarlyWarning?: OnEarlyWarning;
-    collectedWarnings: EarlyWarning[];
     allResults: Record<string, AgentResult>;
     extractedData: ContextSeed;
-    stateMachine: AnalysisStateMachine;
     startTime: number;
+    phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>>;
     totalCost: number;
     completedCount: number;
     factStore: CurrentFact[];
@@ -1954,28 +1948,8 @@ export class AgentOrchestrator {
     allFindings: ScoredFinding[];
     lowConfidenceAgents: string[];
   }> {
-    const {
-      enrichedContext, tier1AgentMap, analysis, dealId, onProgress, TOTAL_AGENTS,
-      onEarlyWarning, collectedWarnings, allResults, extractedData, stateMachine, startTime,
-    } = params;
+    const { enrichedContext, analysis, allResults, extractedData, startTime, phasesResult } = params;
     let { totalCost, completedCount, factStore, factStoreFormatted } = params;
-    const phasesResult = await this.runTier1Phases({
-      enrichedContext,
-      tier1AgentMap,
-      analysisId: analysis.id,
-      dealId,
-      onProgress,
-      totalAgents: TOTAL_AGENTS,
-      onEarlyWarning,
-      collectedWarnings,
-      allResults,
-      initialTotalCost: totalCost,
-      initialCompletedCount: completedCount,
-      factStore,
-      factStoreFormatted,
-      extractedData,
-      stateMachine,
-    });
 
     const { allFindings, lowConfidenceAgents } = phasesResult;
     totalCost += phasesResult.costIncurred;
@@ -2207,22 +2181,34 @@ export class AgentOrchestrator {
 
       const tier1AgentMap = await getTier1Agents();
 
+      const phasesResult = await this.runTier1Phases({
+        enrichedContext,
+        tier1AgentMap,
+        analysisId: analysis.id,
+        dealId,
+        onProgress,
+        totalAgents: TOTAL_AGENTS,
+        onEarlyWarning,
+        collectedWarnings,
+        allResults,
+        initialTotalCost: totalCost,
+        initialCompletedCount: completedCount,
+        factStore,
+        factStoreFormatted,
+        extractedData,
+        stateMachine,
+      });
+
       let verificationContext: VerificationContext;
       let allFindings: ScoredFinding[];
       let lowConfidenceAgents: string[];
       ({ totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings, lowConfidenceAgents } = await this.runPostTier1Aggregation({
         enrichedContext,
-        tier1AgentMap,
         analysis,
-        dealId,
-        onProgress,
-        TOTAL_AGENTS,
-        onEarlyWarning,
-        collectedWarnings,
         allResults,
         extractedData,
-        stateMachine,
         startTime,
+        phasesResult,
         totalCost,
         completedCount,
         factStore,
