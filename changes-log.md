@@ -1,6 +1,25 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-02 — Durabilité Deep Dive d-2a (préparation byte-inert du split)
+
+### Contexte
+1er pas du split stepwise (design APPROVE Codex). ADDITIF byte-inert : prépare d-2b SANS changer le runtime (flag DEEP_DIVE_STEPWISE OFF en prod ; aucun snapshot DTO écrit/lu au runtime aujourd'hui). Sur `fix/thesis-gate-guard`, NON poussé. Gate Codex APPROVE (nouveau thread `019e8519-5e0d-7670-a92a-4d3c9a93de07` ; threads #1/#2/#3 expirés).
+
+### Modifications (1 commit `270de17`, gated APPROVE — 7 source + 8 test)
+- **DTO v3** (`full-analysis-step-state.ts`) : `FULL_ANALYSIS_STEP_STATE_VERSION` 2→3 + champ requis `tier1Findings` (blob tableau) + `REQUIRED_ARRAY_BLOBS`.
+- **Bridge** (`full-analysis-step-state-bridge.ts`) : `BuildStepStateInput.tier1Findings` (requis) ; `buildStepState` normalise via `toWireArray` ; `rehydrateContext` ravive `tier1Findings[].createdAt` SEUL (unique Date d'un ScoredFinding Tier1 sur le chemin `extractAllFindings` — le `createScoredFinding` local de finding-extractor.ts n'a pas de `benchmarkData.updatedAt`, contrairement au type global) et l'expose en `RehydratedState.tier1Findings` (HORS enrichedContext, comme `allResults`).
+- **Driver** (`full-analysis-driver.ts`) : `runTerminalStepwiseDriver(stepId?)` paramétrable, défaut `'run-analysis'` (back-compat exacte) ; constante `STEPWISE_GRAPH_VERSION=1`.
+- **stepwiseGraphVersion** : stampée inconditionnellement dans `event.data` au dispatch (`route.ts`) ; threadée `AnalysisOptions`/`AdvancedAnalysisOptions` (`types.ts`) → handler `dealAnalysisFunction` branche ON (`inngest.ts`) → `runAnalysis` → **routing EXACT dans `runFullAnalysis`** (`index.ts`, littéraux : `undefined|1`→driver 1-step ; throw sinon). Sticky → un run en vol reprend sur SON graphe.
+- Tests : DTO v3 (version=3, `tier1Findings` requis/round-trip/vide-ok), bridge (createdAt ISO→Date, round-trip build∘rehydrate∘build), driver (stepId défaut vs custom = clé mémo ; `STEPWISE_GRAPH_VERSION`=1), inngest (threading), orchestrateur (routing undefined/1→pas de throw ; 2→throw + pipeline jamais appelé), + 3 helpers makeState/buildStepState mis à jour pour le champ requis.
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, appel séparé, AVANT commit) ; vitest unit **4215 passés / 2 skipped (292 fichiers)** ; golden driver E1/E2 verts.
+
+### Reste
+**d-2b** (1re vraie unité byte-critique : `tier0-facts` step frère + `tier0-thesis` snapshot + `rest` terminal transitoire, active graphe v2) → **d-3..d-7** (split, 1 frontière/commit) → **D.6** (activation version preview→prod + go/no-go FactEvent réel), **F** (watchdog), **G** (unification resume).
+
+---
 ## 2026-06-01 — Durabilité Deep Dive D.5d-1 (driver foundation) + design split d-2..k verrouillé
 
 ### Contexte
