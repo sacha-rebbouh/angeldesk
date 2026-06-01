@@ -1848,6 +1848,78 @@ export class AgentOrchestrator {
     return { factStore, factStoreFormatted, enrichedContext };
   }
 
+  /**
+   * C.2e — STEP 2.5 thesis extraction, extrait BYTE-INERT de runFullAnalysis.
+   * Branche post_call_reanalysis (reuse latest thesis + rehydrate + prisma.analysis.update)
+   * ou branche normale (runThesisExtraction). enrichedContext et allResults sont mutés PAR
+   * RÉFÉRENCE (params), comme l'inline (enrichedContext.analysis, allResults["thesis-extractor"]).
+   * Renvoie totalCost, completedCount, thesisOutput. N'inclut PAS STEP 2.6 stop-after-thesis
+   * ni Tier1.
+   */
+  private async runThesisExtractionStep(params: {
+    dealId: string;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    enrichedContext: EnrichedAgentContext;
+    corpusSnapshot: Awaited<ReturnType<AgentOrchestrator["materializeAnalysisCorpusSnapshot"]>>;
+    allResults: Record<string, AgentResult>;
+    enableTrace: boolean;
+    totalCost: number;
+    completedCount: number;
+  }): Promise<{
+    totalCost: number;
+    completedCount: number;
+    thesisOutput: ThesisExtractorOutput | null;
+  }> {
+    const { dealId, analysisModeOverride, analysis, enrichedContext, corpusSnapshot, allResults, enableTrace } = params;
+    let { totalCost, completedCount } = params;
+    // STEP 2.5: THESIS EXTRACTION (Tier 0.5) — thesis-first architecture
+    // Extrait la these d'investissement, la teste contre 3 frameworks (YC/Thiel/AD),
+    // persiste en DB, injecte dans enrichedContext pour que Tier 1/2/3 l'utilisent.
+    const shouldReuseLatestThesis = analysisModeOverride === "post_call_reanalysis";
+    let thesisOutput: ThesisExtractorOutput | null = null;
+
+    if (shouldReuseLatestThesis) {
+      const latestThesis = await thesisService.getLatest(dealId);
+      if (!latestThesis) {
+        throw new Error("Cannot run post-call reanalysis without a canonical latest thesis");
+      }
+
+      await this.rehydrateResumeThesis(analysis.id, latestThesis.id, enrichedContext);
+      enrichedContext.analysis = {
+        ...(enrichedContext.analysis ?? { id: analysis.id }),
+        mode: enrichedContext.analysis?.mode ?? analysis.mode ?? analysisModeOverride ?? "full_analysis",
+        thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
+        thesisId: latestThesis.id,
+        corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
+      };
+
+      await prisma.analysis.update({
+        where: { id: analysis.id },
+        data: { thesisId: latestThesis.id },
+      });
+
+      console.log(
+        `[Orchestrator:FullAnalysis] Reusing canonical latest thesis for post-call reanalysis ` +
+        `(analysisId=${analysis.id}, thesisId=${latestThesis.id})`
+      );
+    } else {
+      thesisOutput = await this.runThesisExtraction(
+        enrichedContext,
+        analysis.id,
+        dealId,
+        allResults,
+        enableTrace,
+        corpusSnapshot,
+      );
+      if (allResults["thesis-extractor"]?.cost) {
+        totalCost += allResults["thesis-extractor"].cost;
+        completedCount++;
+      }
+    }
+    return { totalCost, completedCount, thesisOutput };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -1950,50 +2022,18 @@ export class AgentOrchestrator {
         factStoreFormatted,
       }));
 
-      // STEP 2.5: THESIS EXTRACTION (Tier 0.5) — thesis-first architecture
-      // Extrait la these d'investissement, la teste contre 3 frameworks (YC/Thiel/AD),
-      // persiste en DB, injecte dans enrichedContext pour que Tier 1/2/3 l'utilisent.
-      const shouldReuseLatestThesis = analysisModeOverride === "post_call_reanalysis";
-      let thesisOutput: ThesisExtractorOutput | null = null;
-
-      if (shouldReuseLatestThesis) {
-        const latestThesis = await thesisService.getLatest(dealId);
-        if (!latestThesis) {
-          throw new Error("Cannot run post-call reanalysis without a canonical latest thesis");
-        }
-
-        await this.rehydrateResumeThesis(analysis.id, latestThesis.id, enrichedContext);
-        enrichedContext.analysis = {
-          ...(enrichedContext.analysis ?? { id: analysis.id }),
-          mode: enrichedContext.analysis?.mode ?? analysis.mode ?? analysisModeOverride ?? "full_analysis",
-          thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
-          thesisId: latestThesis.id,
-          corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
-        };
-
-        await prisma.analysis.update({
-          where: { id: analysis.id },
-          data: { thesisId: latestThesis.id },
-        });
-
-        console.log(
-          `[Orchestrator:FullAnalysis] Reusing canonical latest thesis for post-call reanalysis ` +
-          `(analysisId=${analysis.id}, thesisId=${latestThesis.id})`
-        );
-      } else {
-        thesisOutput = await this.runThesisExtraction(
-          enrichedContext,
-          analysis.id,
-          dealId,
-          allResults,
-          enableTrace,
-          corpusSnapshot,
-        );
-        if (allResults["thesis-extractor"]?.cost) {
-          totalCost += allResults["thesis-extractor"].cost;
-          completedCount++;
-        }
-      }
+      let thesisOutput: ThesisExtractorOutput | null;
+      ({ totalCost, completedCount, thesisOutput } = await this.runThesisExtractionStep({
+        dealId,
+        analysisModeOverride,
+        analysis,
+        enrichedContext,
+        corpusSnapshot,
+        allResults,
+        enableTrace,
+        totalCost,
+        completedCount,
+      }));
 
       // STEP 2.6: STOP-AFTER-THESIS — re-extraction de these (upload doc / admin backfill).
       // Pas de gate, pas de decision : on s'arrete apres la these et on COMPLETE l'analyse
