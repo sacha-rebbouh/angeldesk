@@ -2288,6 +2288,112 @@ export class AgentOrchestrator {
     return { tier3AgentMap };
   }
 
+  private async runTier3PreTier2Batch(params: {
+    maxCostUsd?: number;
+    totalCost: number;
+    completedCount: number;
+    tier3AgentMap: Awaited<ReturnType<typeof getTier3Agents>>;
+    enrichedContext: EnrichedAgentContext;
+    allResults: Record<string, AgentResult>;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    startTime: number;
+    onProgress: AnalysisOptions["onProgress"];
+    TOTAL_AGENTS: number;
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { maxCostUsd, tier3AgentMap, enrichedContext, allResults, stateMachine, analysis, dealId, startTime, onProgress, TOTAL_AGENTS } = params;
+    let { totalCost, completedCount } = params;
+    // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
+    if (!(maxCostUsd && totalCost >= maxCostUsd)) {
+      const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0];
+
+      onProgress?.({
+        currentAgent: `tier3-parallel (${tier3BeforeAgents.join(", ")})`,
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+        estimatedCostSoFar: totalCost,
+      });
+
+      const batchResults = await Promise.all(
+        tier3BeforeAgents.map(async (agentName) => {
+          const agent = tier3AgentMap[agentName];
+          try {
+            const result = await agent.run(enrichedContext);
+            return { agentName, result };
+          } catch (error) {
+            return {
+              agentName,
+              result: {
+                agentName,
+                success: false,
+                executionTimeMs: 0,
+                cost: 0,
+                error: error instanceof Error ? error.message : "Unknown error",
+              } as AgentResult,
+            };
+          }
+        })
+      );
+
+      // Auto-retry failed agents (1 retry each, sequential to avoid overload)
+      for (let i = 0; i < batchResults.length; i++) {
+        if (!batchResults[i].result.success) {
+          const { agentName } = batchResults[i];
+          console.log(`[Orchestrator] Retrying failed agent: ${agentName}`);
+          const agent = tier3AgentMap[agentName];
+          try {
+            const retryResult = await agent.run(enrichedContext);
+            batchResults[i] = { agentName, result: retryResult };
+            console.log(`[Orchestrator] Retry succeeded for ${agentName}`);
+          } catch (retryError) {
+            console.log(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
+          }
+        }
+      }
+
+      // Collect batch results
+      for (const { agentName, result } of batchResults) {
+        // Sanitize narrative fields for prescriptive language (Rule #1)
+        if (result.success && "data" in result) {
+          const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+          if (totalViolations > 0) {
+            console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+            (result as { data: unknown }).data = sanitized;
+          }
+        }
+        allResults[agentName] = result;
+        totalCost += result.cost;
+        completedCount++;
+        // F97: Tier 3 results stored unsanitized (they contain synthesis/evaluations needed by later Tier 3 agents)
+        enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result, { skipSanitization: true });
+
+        if (result.success) {
+          stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
+        } else {
+          stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
+        }
+
+        await processAgentResult(dealId, agentName, result);
+      }
+
+      await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+      onProgress?.({
+        currentAgent: `tier3-parallel completed`,
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+        estimatedCostSoFar: totalCost,
+      });
+      // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé, doctrine anti-oraculaire).
+    } else {
+      console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
+    }
+
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+    return { totalCost, completedCount };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2557,93 +2663,20 @@ export class AgentOrchestrator {
 
       const { tier3AgentMap } = await this.runSynthesisSetupStep({ deal, dealId, stateMachine, enrichedContext });
 
-      // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
-      if (!(maxCostUsd && totalCost >= maxCostUsd)) {
-        const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0];
-
-        onProgress?.({
-          currentAgent: `tier3-parallel (${tier3BeforeAgents.join(", ")})`,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-
-        const batchResults = await Promise.all(
-          tier3BeforeAgents.map(async (agentName) => {
-            const agent = tier3AgentMap[agentName];
-            try {
-              const result = await agent.run(enrichedContext);
-              return { agentName, result };
-            } catch (error) {
-              return {
-                agentName,
-                result: {
-                  agentName,
-                  success: false,
-                  executionTimeMs: 0,
-                  cost: 0,
-                  error: error instanceof Error ? error.message : "Unknown error",
-                } as AgentResult,
-              };
-            }
-          })
-        );
-
-        // Auto-retry failed agents (1 retry each, sequential to avoid overload)
-        for (let i = 0; i < batchResults.length; i++) {
-          if (!batchResults[i].result.success) {
-            const { agentName } = batchResults[i];
-            console.log(`[Orchestrator] Retrying failed agent: ${agentName}`);
-            const agent = tier3AgentMap[agentName];
-            try {
-              const retryResult = await agent.run(enrichedContext);
-              batchResults[i] = { agentName, result: retryResult };
-              console.log(`[Orchestrator] Retry succeeded for ${agentName}`);
-            } catch (retryError) {
-              console.log(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
-            }
-          }
-        }
-
-        // Collect batch results
-        for (const { agentName, result } of batchResults) {
-          // Sanitize narrative fields for prescriptive language (Rule #1)
-          if (result.success && "data" in result) {
-            const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
-            if (totalViolations > 0) {
-              console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
-              (result as { data: unknown }).data = sanitized;
-            }
-          }
-          allResults[agentName] = result;
-          totalCost += result.cost;
-          completedCount++;
-          // F97: Tier 3 results stored unsanitized (they contain synthesis/evaluations needed by later Tier 3 agents)
-          enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result, { skipSanitization: true });
-
-          if (result.success) {
-            stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-          } else {
-            stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
-          }
-
-          await processAgentResult(dealId, agentName, result);
-        }
-
-        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-        onProgress?.({
-          currentAgent: `tier3-parallel completed`,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-        // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé, doctrine anti-oraculaire).
-      } else {
-        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
-      }
-
-      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+      ({ totalCost, completedCount } = await this.runTier3PreTier2Batch({
+        maxCostUsd,
+        totalCost,
+        completedCount,
+        tier3AgentMap,
+        enrichedContext,
+        allResults,
+        stateMachine,
+        analysis,
+        dealId,
+        startTime,
+        onProgress,
+        TOTAL_AGENTS,
+      }));
 
       // STEP 6: SECTOR EXPERT PHASE - Tier 2 (active si secteur détecté)
       if (sectorExpert) {
