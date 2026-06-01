@@ -2049,6 +2049,44 @@ export class AgentOrchestrator {
     return { done: false };
   }
 
+  /**
+   * C.3d — STEP 4 global consensus (contradictions cross-phase), extrait BYTE-INERT
+   * de runFullAnalysis. allFindings/verificationContext/enrichedContext passés en params
+   * sans mutation de forme. Renvoie totalCost. N'inclut PAS le cost-limit, la
+   * cross-validation, les red-flags, ni Tier2/Tier3.
+   */
+  private async runGlobalConsensusStep(params: {
+    allFindings: ScoredFinding[];
+    verificationContext: VerificationContext;
+    enrichedContext: EnrichedAgentContext;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    onProgress: AnalysisOptions["onProgress"];
+    completedCount: number;
+    TOTAL_AGENTS: number;
+    totalCost: number;
+  }): Promise<{ totalCost: number }> {
+    const { allFindings, verificationContext, enrichedContext, stateMachine, analysis, onProgress, completedCount, TOTAL_AGENTS } = params;
+    let { totalCost } = params;
+    // STEP 4: GLOBAL CONSENSUS - Cross-phase contradiction detection
+    // (Phases already ran intra-phase consensus, this catches cross-phase contradictions)
+    if (allFindings.length > 1) {
+      await stateMachine.startDebate();
+
+      onProgress?.({
+        currentAgent: "consensus-engine (global cross-phase contradictions)",
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+        estimatedCostSoFar: totalCost,
+      });
+
+      const debateStats = await this.runConsensusDebate(analysis.id, allFindings, verificationContext, enrichedContext);
+      totalCost += debateStats.totalTokens * 0.00001;
+      console.log(`[ConsensusEngine] Global: ${debateStats.debateCount} debates completed`);
+    }
+    return { totalCost };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2287,22 +2325,17 @@ export class AgentOrchestrator {
       });
       if (failFastResult.done) return failFastResult.result;
 
-      // STEP 4: GLOBAL CONSENSUS - Cross-phase contradiction detection
-      // (Phases already ran intra-phase consensus, this catches cross-phase contradictions)
-      if (allFindings.length > 1) {
-        await stateMachine.startDebate();
-
-        onProgress?.({
-          currentAgent: "consensus-engine (global cross-phase contradictions)",
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-
-        const debateStats = await this.runConsensusDebate(analysis.id, allFindings, verificationContext, enrichedContext);
-        totalCost += debateStats.totalTokens * 0.00001;
-        console.log(`[ConsensusEngine] Global: ${debateStats.debateCount} debates completed`);
-      }
+      ({ totalCost } = await this.runGlobalConsensusStep({
+        allFindings,
+        verificationContext,
+        enrichedContext,
+        stateMachine,
+        analysis,
+        onProgress,
+        completedCount,
+        TOTAL_AGENTS,
+        totalCost,
+      }));
 
       // Check cost limit before synthesis phase
       if (maxCostUsd && totalCost >= maxCostUsd) {
