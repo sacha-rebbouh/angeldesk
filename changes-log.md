@@ -1,6 +1,25 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-02 — Durabilité Deep Dive d-2b (1re vraie unité du split stepwise, graphe v2)
+
+### Contexte
+d-2b = 1re vraie unité durable (byte-CRITIQUE, design split d-2..k APPROVE). Décomposé en 5 micro-commits gatés Codex (thread `019e853b-9b84-7f51-ae9d-a15544e372db` ; thread #4 `019e8519` expiré → rouvert). Sur `fix/thesis-gate-guard`, NON poussé. Graphe v2 DORMANT en prod (flag DEEP_DIVE_STEPWISE OFF → OFF-strict → runFullAnalysisPipeline) ; activable preview.
+
+### Modifications (5 commits, tous gated APPROVE)
+- **d-2b-1 (`1bb6b9b`)** : extraction byte-inerte du tail post-thèse de runFullAnalysisPipeline → `runFullAnalysisPostThesis` (séquence partagée single-pass + stepwise « rest », pas de drift). Gate Codex 1 REQUEST_CHANGES (coût stale au catch terminal sur échec post-thèse : le tail mutait son `totalCost` local passé par valeur) → fix : callback `reportTotalCost` dans un `finally` remonte le coût courant au scope du catch (byte-équiv sur succès/early-return/exception).
+- **d-2b-2 (`fb8a0fe`)** : bridge `buildTier0FactsWire`/`applyTier0FactsWire` (DTO « step de sortie » de runTier0Step : factStore+factStoreFormatted+founderResponses+totalCost/completedCount+allResults["fact-extractor"] ; factStore ravivé = single-pass, factExtractorResult wire = cohérent rehydrateContext). +4 tests.
+- **d-2b-3 (`2576599`)** : handler d'échec terminal extrait BYTE-INERT → `failFullAnalysis` (partagé pipeline + stepwise, pas de drift).
+- **d-2b-4 (`a385cf0`)** : `runFullAnalysisStepwise` (3 unités : `tier0-facts` step de SORTIE [DTO appliqué au memo hit, pas de read snapshot] → `tier0-thesis` 1er SNAPSHOT → `rest` terminal transitoire via runTerminalStepwiseDriver(stepId='rest')). Modèle B (run sain === single-pass ; REHYDRATE UNIQUE au memo hit de tier0-thesis : rehydrateContext + restoreFromStepState ; allResults remplacé EN PLACE car lu via init). NON câblé (routing v2 throw encore). Golden `full-analysis-stepwise-graph.test.ts` (3) : E1 (pipeline===Inline===Fake) + E2-par-frontière (kill après tier0-facts → re-run frais ; kill après tier0-thesis → rehydrate ; snapshot 1 write). Résiduels D.6 : thesisOutput=null au rehydrate (stopAfterThesis=false), extractedData edge hasContextSeed.
+- **d-2b-5 (`3f8adf5`)** : câblage routing + bump `STEPWISE_GRAPH_VERSION` 1→2. runFullAnalysis : **OFF strict** (`!stepwise` → runFullAnalysisPipeline direct, byte-inert prod) ; ON `undefined|1` → driver 1-step (in-flight sticky) ; ON `2` → runFullAnalysisStepwise (garde `stopAfterThesis` → single-pass = invariant « v2 ∌ stopAfterThesis ») ; version inconnue → LÈVE. route.ts stampe désormais 2 (OFF l'ignore).
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, appel séparé, AVANT chaque commit) ; vitest unit **4224 passés / 2 skipped (293 fichiers)** ; golden d-2b E1+E2-par-frontière verts.
+
+### Reste
+**d-3** `post-tier1-glue` (Tier1 ENTIER hors « rest » ; **MESURER le wall-clock Tier1 réel d'abord** — si >300s, split plus fin par phase A/B/C/D) → **d-4** tier3-pre → **d-5** tier2-sector → **d-6** tier3-post → **d-7** terminal-final-completion (chaque frontière : golden E1+E2-par-frontière). Puis **D.6** (activation version preview→prod + go/no-go FactEvent réel), **F** (watchdog recalibration), **G** (unification resume).
+
+---
 ## 2026-06-02 — Durabilité Deep Dive d-2a (préparation byte-inert du split)
 
 ### Contexte
