@@ -2142,6 +2142,51 @@ export class AgentOrchestrator {
     return { done: false };
   }
 
+  /**
+   * C.3f — STEP 4.5 Tier 1 cross-validation (déterministe, no LLM), extrait BYTE-INERT
+   * de runFullAnalysis. Mute les scores/grades/meta.limitations dans allResults (par
+   * référence) et injecte le résultat dans enrichedContext.tier1CrossValidation comme
+   * aujourd'hui. Retourne crossValidation pour disponibilité downstream. N'inclut PAS
+   * STEP 4.6 red-flags ni Tier2/Tier3.
+   */
+  private runTier1CrossValidationStep(params: {
+    allResults: Record<string, AgentResult>;
+    enrichedContext: EnrichedAgentContext;
+  }): ReturnType<typeof runTier1CrossValidation> {
+    const { allResults, enrichedContext } = params;
+    // STEP 4.5: TIER 1 CROSS-VALIDATION (deterministic, no LLM) (F34/F39)
+    const crossValidation = runTier1CrossValidation(allResults);
+    if (crossValidation.validations.length > 0 || crossValidation.warnings.length > 0) {
+      console.log(
+        `[Orchestrator] Tier 1 cross-validation: ${crossValidation.validations.length} divergences, ${crossValidation.adjustments.length} adjustments, ${crossValidation.warnings.length} warnings`
+      );
+
+      // Apply score adjustments
+      for (const adj of crossValidation.adjustments) {
+        const result = allResults[adj.agentName];
+        if (result?.success && "data" in result) {
+          const data = (result as { data?: Record<string, unknown> }).data;
+          const scoreObj = data?.score as { value?: number } | undefined;
+          if (scoreObj && typeof scoreObj.value === "number") {
+            scoreObj.value = adj.after;
+            (scoreObj as { grade?: string }).grade = gradeFromScore(adj.after);
+            const meta = data?.meta as { limitations?: string[] } | undefined;
+            if (meta) {
+              meta.limitations = [
+                ...(Array.isArray(meta.limitations) ? meta.limitations : []),
+                `Tier 1 cross-validation adjustment ${adj.crossValidationId}: ${adj.reason}`,
+              ];
+            }
+          }
+        }
+      }
+
+      // Inject into context for Tier 3 agents
+      enrichedContext.tier1CrossValidation = crossValidation;
+    }
+    return crossValidation;
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2405,36 +2450,7 @@ export class AgentOrchestrator {
       });
       if (costLimitResult.done) return costLimitResult.result;
 
-      // STEP 4.5: TIER 1 CROSS-VALIDATION (deterministic, no LLM) (F34/F39)
-      const crossValidation = runTier1CrossValidation(allResults);
-      if (crossValidation.validations.length > 0 || crossValidation.warnings.length > 0) {
-        console.log(
-          `[Orchestrator] Tier 1 cross-validation: ${crossValidation.validations.length} divergences, ${crossValidation.adjustments.length} adjustments, ${crossValidation.warnings.length} warnings`
-        );
-
-        // Apply score adjustments
-        for (const adj of crossValidation.adjustments) {
-          const result = allResults[adj.agentName];
-          if (result?.success && "data" in result) {
-            const data = (result as { data?: Record<string, unknown> }).data;
-            const scoreObj = data?.score as { value?: number } | undefined;
-            if (scoreObj && typeof scoreObj.value === "number") {
-              scoreObj.value = adj.after;
-              (scoreObj as { grade?: string }).grade = gradeFromScore(adj.after);
-              const meta = data?.meta as { limitations?: string[] } | undefined;
-              if (meta) {
-                meta.limitations = [
-                  ...(Array.isArray(meta.limitations) ? meta.limitations : []),
-                  `Tier 1 cross-validation adjustment ${adj.crossValidationId}: ${adj.reason}`,
-                ];
-              }
-            }
-          }
-        }
-
-        // Inject into context for Tier 3 agents
-        enrichedContext.tier1CrossValidation = crossValidation;
-      }
+      this.runTier1CrossValidationStep({ allResults, enrichedContext });
 
       // STEP 4.6: CONSOLIDATE RED FLAGS (F77 - unified taxonomy)
       try {
