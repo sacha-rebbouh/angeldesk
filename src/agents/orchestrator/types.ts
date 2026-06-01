@@ -124,6 +124,15 @@ export interface AnalysisOptions {
    * end-to-end (comportement par defaut du lancement).
    */
   stopAfterThesis?: boolean;
+  /**
+   * D.5a — exécution durable « stepwise » du Deep Dive. Quand true, le pipeline
+   * full_analysis n'émet AUCUN checkpoint legacy (state machine enableCheckpointing:false,
+   * persistTierCheckpoint no-op, runFinalCompletion sans saveCheckpoint COMPLETED) ;
+   * l'état durable passe par les snapshots STEPWISE:* (cf. full-analysis-snapshot).
+   * Absent/false = comportement actuel exact. Posé par dealAnalysisFunction sous le flag
+   * DEEP_DIVE_STEPWISE. Ignoré hors full_analysis.
+   */
+  stepwise?: boolean;
 }
 
 export interface AnalysisResult {
@@ -165,6 +174,8 @@ export interface AdvancedAnalysisOptions {
   isUpdate?: boolean;
   /** Re-extraction de these — passed-through from AnalysisOptions (stop apres thesis, mode thesis_only) */
   stopAfterThesis?: boolean;
+  /** D.5a — passe le mode stepwise depuis AnalysisOptions (cf. AnalysisOptions.stepwise). */
+  stepwise?: boolean;
 }
 
 // Tier 1 agent names (12 agents — exit-strategist retiré, doctrine anti-oraculaire pas de projection)

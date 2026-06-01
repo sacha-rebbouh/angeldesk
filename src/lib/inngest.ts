@@ -323,6 +323,14 @@ export const dealAnalysisFunction = inngest.createFunction(
     // l'extraction de thèse. `full_analysis` déroule Tier 0→0.5(thèse)→1→2→3 d'une
     // traite. La thèse reste extraite + réconciliée. Crédits : débit plein au
     // lancement (POST /analyze), refund total seulement sur vrai échec.
+    //
+    // D.5a — Deep Dive durable (stepwise). Flag OFF (défaut) = chemin actuel exact.
+    // Flag ON (DEEP_DIVE_STEPWISE=1) + full_analysis = même run single-pass mais en
+    // mode stepwise : AUCUN checkpoint legacy émis (state machine enableCheckpointing:false,
+    // persistTierCheckpoint no-op, runFinalCompletion sans saveCheckpoint COMPLETED ;
+    // l'état durable passe par les snapshots STEPWISE:*). Le découpage en N steps
+    // durables vient en D.5d ; ici c'est le stub fondation. Rollback = DEEP_DIVE_STEPWISE=0.
+    const runStepwise = process.env.DEEP_DIVE_STEPWISE === "1" && type === "full_analysis";
     let analysisResult;
     try {
       analysisResult = await step.run('run-analysis', async () => {
@@ -331,6 +339,7 @@ export const dealAnalysisFunction = inngest.createFunction(
           dealId,
           type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
           enableTrace,
+          ...(runStepwise ? { stepwise: true } : {}),
         });
       });
     } catch (error) {

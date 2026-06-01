@@ -248,6 +248,7 @@ interface FullAnalysisRunInit {
   isUpdate: boolean;
   enableTrace: boolean;
   stopAfterThesis: boolean;
+  stepwise: boolean;
   analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
   startTime: number;
   collectedWarnings: EarlyWarning[];
@@ -361,6 +362,7 @@ export class AgentOrchestrator {
           analysisModeOverride,
           isUpdate,
           stopAfterThesis: options.stopAfterThesis,
+          stepwise: options.stepwise,
         });
         break;
       case "tier3_synthesis":
@@ -1449,6 +1451,7 @@ export class AgentOrchestrator {
       isUpdate = false,
       enableTrace = true,
       stopAfterThesis = false,
+      stepwise = false,
       analysisModeOverride,
     } = advancedOptions;
     const startTime = Date.now();
@@ -1509,7 +1512,10 @@ export class AgentOrchestrator {
       dealId,
       mode: "full_analysis",
       agents: ["document-extractor", ...TIER1_AGENT_NAMES, ...FULL_ANALYSIS_TIER3_AGENT_NAMES],
-      enableCheckpointing: true,
+      // D.5a — en mode stepwise la state machine n'émet AUCUN checkpoint (ni périodique,
+      // ni par transition, ni au flush) : c'est l'invariant « zéro checkpoint legacy en
+      // stepwise ». OFF (défaut) → !false = true = comportement actuel exact.
+      enableCheckpointing: !stepwise,
     });
 
     stateMachine.onStateChange(async (from, to, trigger) => {
@@ -1551,6 +1557,7 @@ export class AgentOrchestrator {
       factStore,
       factStoreFormatted,
       founderResponses,
+      stepwise,
     };
   }
 
@@ -1934,6 +1941,7 @@ export class AgentOrchestrator {
    * la cross-validation, la consolidation red-flags, ni Tier2/Tier3.
    */
   private async runPostTier1Aggregation(params: {
+    stepwise: boolean;
     enrichedContext: EnrichedAgentContext;
     analysis: Awaited<ReturnType<typeof createAnalysis>>;
     allResults: Record<string, AgentResult>;
@@ -1953,7 +1961,7 @@ export class AgentOrchestrator {
     allFindings: ScoredFinding[];
     lowConfidenceAgents: string[];
   }> {
-    const { enrichedContext, analysis, allResults, extractedData, startTime, phasesResult } = params;
+    const { stepwise, enrichedContext, analysis, allResults, extractedData, startTime, phasesResult } = params;
     let { totalCost, completedCount, factStore, factStoreFormatted } = params;
 
     const { allFindings, lowConfidenceAgents } = phasesResult;
@@ -1980,7 +1988,7 @@ export class AgentOrchestrator {
       await persistScoredFindings(analysis.id, "tier1-aggregate", allFindings);
     }
 
-    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
 
     // Diagnostic log: show tier1 success/failure breakdown
     const tier1SuccessCount = TIER1_AGENT_NAMES.filter(n => allResults[n]?.success).length;
@@ -2294,6 +2302,7 @@ export class AgentOrchestrator {
   }
 
   private async runTier3PreTier2Batch(params: {
+    stepwise: boolean;
     maxCostUsd?: number;
     totalCost: number;
     completedCount: number;
@@ -2307,7 +2316,7 @@ export class AgentOrchestrator {
     onProgress: AnalysisOptions["onProgress"];
     TOTAL_AGENTS: number;
   }): Promise<{ totalCost: number; completedCount: number }> {
-    const { maxCostUsd, tier3AgentMap, enrichedContext, allResults, stateMachine, analysis, dealId, startTime, onProgress, TOTAL_AGENTS } = params;
+    const { stepwise, maxCostUsd, tier3AgentMap, enrichedContext, allResults, stateMachine, analysis, dealId, startTime, onProgress, TOTAL_AGENTS } = params;
     let { totalCost, completedCount } = params;
     // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
     if (!(maxCostUsd && totalCost >= maxCostUsd)) {
@@ -2395,7 +2404,7 @@ export class AgentOrchestrator {
       console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
     }
 
-    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
     return { totalCost, completedCount };
   }
 
@@ -2463,6 +2472,7 @@ export class AgentOrchestrator {
   }
 
   private async runTier2ConsensusReflexionStep(params: {
+    stepwise: boolean;
     sectorExpert: Awaited<ReturnType<typeof getTier2SectorExpert>>;
     allResults: Record<string, AgentResult>;
     allFindings: ScoredFinding[];
@@ -2472,7 +2482,7 @@ export class AgentOrchestrator {
     analysis: Awaited<ReturnType<typeof createAnalysis>>;
     startTime: number;
   }): Promise<{ totalCost: number }> {
-    const { sectorExpert, allResults, allFindings, verificationContext, enrichedContext, analysis, startTime } = params;
+    const { stepwise, sectorExpert, allResults, allFindings, verificationContext, enrichedContext, analysis, startTime } = params;
     let { totalCost } = params;
     // STEP 6.5: CONSENSUS + REFLEXION for Tier 2 sector expert
     if (sectorExpert) {
@@ -2508,7 +2518,7 @@ export class AgentOrchestrator {
       }
     }
 
-    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
     return { totalCost };
   }
 
@@ -2618,6 +2628,7 @@ export class AgentOrchestrator {
   }
 
   private async runFinalCompletion(params: {
+    stepwise: boolean;
     allResults: Record<string, AgentResult>;
     totalCost: number;
     stateMachine: AnalysisStateMachine;
@@ -2628,7 +2639,7 @@ export class AgentOrchestrator {
     isUpdate: boolean;
     collectedWarnings: EarlyWarning[];
   }): Promise<AnalysisResult> {
-    const { allResults, totalCost, stateMachine, analysis, dealId, startTime, analysisModeOverride, isUpdate, collectedWarnings } = params;
+    const { stepwise, allResults, totalCost, stateMachine, analysis, dealId, startTime, analysisModeOverride, isUpdate, collectedWarnings } = params;
     // COMPLETE
     await stateMachine.complete();
     // DEBUG log removed for production - uncomment for debugging:
@@ -2643,22 +2654,26 @@ export class AgentOrchestrator {
     const allSuccess = Object.values(allResults).every((r) => r.success);
     const orchestrationSummary = stateMachine.getSummary();
 
-    await saveCheckpoint(analysis.id, {
-      state: "COMPLETED",
-      completedAgents: Object.keys(allResults),
-      pendingAgents: [],
-      failedAgents: Object.entries(allResults)
-        .filter(([, result]) => !result.success)
-        .map(([agent, result]) => ({
-          agent,
-          error: result.error ?? "no error msg",
-          retries: 1,
-        })),
-      findings: extractAllFindings(allResults).allFindings,
-      results: allResults,
-      totalCost,
-      startTime: new Date(startTime).toISOString(),
-    });
+    // D.5a — en mode stepwise, pas de checkpoint legacy COMPLETED : la complétion
+    // canonique passe par completeAnalysis ci-dessous ; l'état durable via STEPWISE:*.
+    if (!stepwise) {
+      await saveCheckpoint(analysis.id, {
+        state: "COMPLETED",
+        completedAgents: Object.keys(allResults),
+        pendingAgents: [],
+        failedAgents: Object.entries(allResults)
+          .filter(([, result]) => !result.success)
+          .map(([agent, result]) => ({
+            agent,
+            error: result.error ?? "no error msg",
+            retries: 1,
+          })),
+        findings: extractAllFindings(allResults).allFindings,
+        results: allResults,
+        totalCost,
+        startTime: new Date(startTime).toISOString(),
+      });
+    }
 
     await completeAnalysis({
       analysisId: analysis.id,
@@ -2742,6 +2757,7 @@ export class AgentOrchestrator {
       analysis,
       stateMachine,
       allResults,
+      stepwise,
     } = init;
     let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
 
@@ -2897,7 +2913,7 @@ export class AgentOrchestrator {
         };
       }
 
-      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
 
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases
       // Phase A: deck-forensics → validates deck claims
@@ -2930,6 +2946,7 @@ export class AgentOrchestrator {
       let allFindings: ScoredFinding[];
       let lowConfidenceAgents: string[];
       ({ totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings, lowConfidenceAgents } = await this.runPostTier1Aggregation({
+        stepwise,
         enrichedContext,
         analysis,
         allResults,
@@ -2987,6 +3004,7 @@ export class AgentOrchestrator {
       const { tier3AgentMap } = await this.runSynthesisSetupStep({ deal, dealId, stateMachine, enrichedContext });
 
       ({ totalCost, completedCount } = await this.runTier3PreTier2Batch({
+        stepwise,
         maxCostUsd,
         totalCost,
         completedCount,
@@ -3015,6 +3033,7 @@ export class AgentOrchestrator {
       }));
 
       ({ totalCost } = await this.runTier2ConsensusReflexionStep({
+        stepwise,
         sectorExpert,
         allResults,
         allFindings,
@@ -3040,6 +3059,7 @@ export class AgentOrchestrator {
       }));
 
       return await this.runFinalCompletion({
+        stepwise,
         allResults,
         totalCost,
         stateMachine,
@@ -4892,7 +4912,11 @@ export class AgentOrchestrator {
     allResults: Record<string, AgentResult>,
     totalCost: number,
     startTimeMs: number,
+    stepwise: boolean,
   ): Promise<void> {
+    // D.5a — en mode stepwise, AUCUN checkpoint legacy n'est émis : l'état durable
+    // passe par les snapshots STEPWISE:* (cf. full-analysis-snapshot). No-op ici.
+    if (stepwise) return;
     try {
       await saveCheckpoint(analysisId, {
         state: "ANALYZING",
