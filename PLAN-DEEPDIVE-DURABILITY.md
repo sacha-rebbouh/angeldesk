@@ -27,9 +27,11 @@ Hypothèse cap-table **falsifiée** (DB) : avekapeti A une cap table ; `cap-tabl
 
 **Effet** : plus de gel PERMANENT (zombie reapé ≤ 5 min). **NE garantit PAS la complétion** d'un Deep Dive dont une étape dépasse 300s.
 
-### Sur la branche `fix/thesis-gate-guard` (`de02b77`, NON déployé)
+### Sur la branche `fix/thesis-gate-guard` (NON poussé ; HEAD `4ebca1d`)
 - **C2a** — helper `persistTierCheckpoint` (`src/agents/orchestrator/index.ts`, `state:'ANALYZING'`) appelé à 4 frontières dans `runFullAnalysis` (avant STEP 3 / après Tier 1 / avant STEP 6 / avant STEP 7). Rend une analyse tuée mid-pipeline reprenable au lieu de `RUNNING`-sans-checkpoint (que `resume` marquait `FAILED`). **Prérequis du split.** tsc 0, 4069 tests verts.
   - **Précision (audit Codex #7)** : `saveCheckpoint` crée **une ligne `AnalysisCheckpoint` à chaque frontière** (effet réel : +N rows). Seul l'`update` de `Analysis.results` est RUNNING-gated. Ce n'est donc PAS « aucun effet absolu » — c'est « pas de régression de la sortie finale ».
+- **B (FAIT)** — DTO strict `FullAnalysisStepState` + garde `assertPlainJson` + helpers snapshot `AnalysisCheckpoint state:"STEPWISE:<unit>"` + tests (round-trip, négatif à dents, funding-DB drift). Validé Codex.
+- **C.1 → C.3f (FAIT)** — 13 helpers byte-inert extraits de `runFullAnalysis`, 1 commit + 1 audit Codex chacun, tsc 0 + vitest orchestrateur 75/75 à chaque pas : `initializeFullAnalysisRun`, `buildBaseAnalysisContext`, `runTier0Step`, `runDocumentExtractorStep`, `runDeckCoherenceStep`, `runContextEngineStep`, `runThesisExtractionStep`, `runTier1Phase`/`runTier1Phases`, `runPostTier1FailFast`, `runGlobalConsensusStep`, `runPostConsensusCostLimit`, `runTier1CrossValidationStep`.
 
 ---
 
@@ -70,17 +72,28 @@ Un Deep Dive **complète toujours** (ou échoue proprement + refund), **quel que
 ### A — C2a (FAIT, `de02b77`)
 À auditer (forme checkpoint, RUNNING-gate, précision « +N rows »). Vérif : `tsc` 0 ; `vitest src/agents/orchestrator` vert.
 
-### B — Type `FullAnalysisStepState` + snapshot + tests (PROCHAIN LIVRABLE, B SEUL)
+### B — Type `FullAnalysisStepState` + snapshot + tests (FAIT, validé Codex)
 - Type **sérialisable strict** (DTO, pas un `EnrichedAgentContext` déguisé — audit #2). Champs : `version, analysisId, dealId, analysisType, totalAgents, completedCount, totalCost, lastUnit, done, allResults, previousResults/consensusResolutions, factStoreFormatted, verificationContext, tier1CrossValidation, consolidatedRedFlags`.
-- **Garde runtime** `assertPlainJson` : rejette Date / Map / Set / function / undefined / NaN / instances de classe (chemin fautif renvoyé). `serialize`/`deserialize` versionnés + validation des scalaires au load.
+- **Garde runtime** `assertPlainJson` (rejette Date / Map / Set / function / undefined / NaN / instances de classe, chemin fautif renvoyé), `serialize`/`deserialize` versionnés, validation des scalaires au load.
 - **Helpers snapshot read/write** via `AnalysisCheckpoint` `state:"STEPWISE:<unit>"`.
-- **Tests** (`vitest`) : round-trip/carry ; **négatif** (drop `verificationContext` ⇒ deep-equal échoue, preuve que le test a des dents) ; **funding-DB drift** (le mock renvoie des données différentes au 2e appel ⇒ passe SSI `verificationContext` est **porté**, pas reconstruit).
-- Vérif : `tsc --noEmit` = 0 (relire la sortie) + `vitest` ciblé + `src/agents/orchestrator`. **STOP après B pour audit Codex.**
+- **Tests** : round-trip/carry ; négatif (drop `verificationContext` ⇒ deep-equal échoue) ; funding-DB drift (passe SSI `verificationContext` est **porté**, pas reconstruit).
 
-### C — Bootstrap + extraction des méthodes par-phase (byte-inert, flag OFF)
-- **D'abord** extraire `initializeFullAnalysisRun` (crée Analysis, snapshot corpus, costMonitor, stateMachine, baseContext, `setAnalysisContext`) — audit Codex v2 #2.
-- Puis `runTier0AndThesis`, `runTier1PhaseA..D` (une par phase ; un tier entier > 300s), `runPostTier1Glue` (consensus global + cross-val + red-flags + `persistScoredFindings`), `runTier3PreBatch`, `runTier2Sector` (+ son consensus/reflexion), `runTier3PostBatch`.
-- **Test E1 avant/après CHAQUE extraction** (pas un seul gros harness en fin). Flag OFF = byte-inert.
+### C — Extraction des méthodes par-phase (byte-inert, flag OFF)
+**C.1 → C.3f : FAIT** (cf. §1). `runFullAnalysis` est déjà majoritairement un séquenceur de helpers jusqu'à STEP 4.5 inclus.
+
+**Phase 1 restante — 7 micro-étapes (C.3g → C.3m), 1 commit + 1 audit Codex chacune.** Objectif : finir de transformer `runFullAnalysis` en pur séquenceur (précondition du split). Numéros de ligne `index.ts` à **re-vérifier** (le fichier bouge) :
+
+| Étape | Bloc | Lignes ≈ | Helper | Contrat |
+|---|---|---|---|---|
+| **C.3g** | STEP 4.6 red-flag consolidation (`try/catch`, `consolidateRedFlags`, inject) | 2455–2475 | `runRedFlagConsolidationStep` | mute `enrichedContext.consolidatedRedFlags` par réf ; **void** |
+| **C.3h** | STEP 5 setup synthèse (`startSynthesis`, `getTier3Agents`, BA prefs, `DealTerms`/`DealStructure`, `conditionsAnalystMode`) | 2476–2540 | `runSynthesisSetupStep` | mute `enrichedContext` par réf (baPreferences/dealTerms/dealStructure/conditionsAnalystMode) ; retourne **`{ tier3AgentMap }`** uniquement (seul local consommé downstream — 2554/2578/2733) |
+| **C.3i** | Tier 3 **pré-Tier2** batch (conditions/contradiction/devil's-advocate) + cost-check « skip Tier 3 » **+ `persistTierCheckpoint`** | 2541–2627 | `runTier3PreTier2Batch` | mute `allResults` ; **inclut le `persistTierCheckpoint` final (L.2627)** ; retourne `{ totalCost, completedCount }` (gated, pas de return terminal) |
+| **C.3j** | STEP 6 expert sectoriel Tier 2 (si secteur détecté) | 2629–2675 | `runTier2SectorStep` | mute `allResults` ; retourne agrégats coût/compteur |
+| **C.3k** | STEP 6.5 consensus + reflexion Tier 2 (+ `persistTierCheckpoint` L.2710) | 2676–2711 | `runTier2ConsensusReflexionStep` | mute `allResults` ; retourne agrégats |
+| **C.3l** | STEP 7 synthèse finale Tier 3 (après Tier 2) + persist `thesis-reconciler` | 2712–2800 | `runTier3PostTier2Batch` | mute `allResults` ; retourne agrégats. **Si diff trop gros : batch d'abord, completion (C.3m) après — déjà séparés.** |
+| **C.3m** | Complétion terminale succès (`stateMachine.complete` + `generateFullAnalysisSummary` + `completeAnalysis` + `return addWarningsToResult`) | 2801–2885 | `runFinalCompletion` | retourne `AnalysisResult` → caller `return this.runFinalCompletion(...)`. Le **`catch (error)` final (2886–2927) RESTE** dans `runFullAnalysis`. |
+
+- **Test E1 avant/après CHAQUE extraction** (pas un seul gros harness en fin). Flag OFF = byte-inert. Codemod Node sur octets disque (bloc pris par slice de lignes, dé-indent, insertion `split/join` — jamais `.replace`, piège `$$`). Vérif `tsc`=0 (relu, call séparé) + vitest 75/75 + diff = déplacement net.
 
 ### D — Idempotence + câblage Inngest stepwise (conçus ENSEMBLE — audit v2 #5)
 - Skip agent déjà réussi **avant tout side-effect** (`completedSet`). `persistDebateRecord` → upsert par `contradictionId`. `persistScoredFindings` → delete+insert transactionnel par `(analysisId, agentName)`. Confirmer contrainte `createFactEventsBatch`. **Splitter unit D (7 agents) en sub-steps par agent** UP FRONT.
@@ -100,8 +113,11 @@ Merge → `main` flag **OFF** (code dormant). Preview `DEEP_DIVE_STEPWISE=1` →
 
 ---
 
-## 6. Interdits (jusqu'à validation B par Codex)
-- Ne pas extraire `runFullAnalysis`. Ne pas toucher Inngest. Ne pas faire C. Ne pas modifier prompts/schemas/agents. **Ne pas commiter si `tsc` ≠ 0.**
+## 6. Interdits (standing, sur toute la suite)
+- **1 micro-étape = 1 commit = 1 audit Codex**, ordre strict, pas de saut, pas de regroupement. Refactor et docs **jamais** dans le même commit.
+- Ne pas toucher : Inngest / flag `DEEP_DIVE_STEPWISE` / schéma / migrations / prompts / schemas / agents / directives anti-hallucination — sauf si explicitement dans le périmètre de l'étape en cours (Phases 2+).
+- Ne pas toucher les fichiers untracked préexistants (`api-key-auth.ts`, `api-logger.ts`, `webhook-dispatcher.ts`, `scripts/*`).
+- **Ne jamais commiter si `tsc` ≠ 0** (lire la sortie tsc dans un appel SÉPARÉ avant le commit). **Ne jamais pousser** (Sacha contrôle push/merge).
 
 ## 7. Faux blocker écarté
 « Corruption disque de `inngest.ts` » (relevé par un critic) = artefact d'affichage de session ; `tsc --noEmit` = 0, fichier valide.
