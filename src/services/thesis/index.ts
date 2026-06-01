@@ -78,6 +78,8 @@ export interface ThesisRecord {
   sourceDocumentIds: string[];
   sourceHash: string;
   corpusSnapshotId: string | null;
+  idempotencyKey: string | null;
+  extractionCost: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -140,6 +142,15 @@ export const thesisService = {
     corpusSnapshotId?: string | null;
     sourceDocumentIds?: string[];
     sourceHash?: string;
+    /**
+     * Phase D — clé d'idempotence de l'extraction (ex. `thesis-extractor:${analysisId}`).
+     * Quand fournie : si une thèse de ce run existe déjà, elle est RÉUTILISÉE (pas de
+     * nouvelle version / nouveau thesisId) → la création survit au replay d'un step
+     * stepwise. Non fournie ⇒ comportement inchangé (toujours une nouvelle version).
+     */
+    idempotencyKey?: string;
+    /** Phase D — coût LLM de l'extraction, persisté pour le re-add canonique au replay. */
+    extractionCost?: number;
   }): Promise<ThesisRecord> {
     const {
       dealId,
@@ -147,6 +158,8 @@ export const thesisService = {
       corpusSnapshotId,
       sourceDocumentIds = extractorOutput.sourceDocumentIds,
       sourceHash = extractorOutput.sourceHash,
+      idempotencyKey,
+      extractionCost,
     } = params;
 
     // FIX (audit P0 #6) : advisory lock Postgres pour serialiser les create() concurrents
@@ -204,6 +217,18 @@ export const thesisService = {
       // Acquire advisory lock — bloque si une autre tx tient le meme lock
       await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashForLock})`);
 
+      // Phase D — idempotence de l'extraction au replay stepwise : si une these de CE run
+      // (meme idempotencyKey) existe deja, la REUTILISER au lieu de creer une nouvelle
+      // version (sinon un retry de step genere un thesisId different => sortie non
+      // equivalente). Re-check DANS la transaction, APRES l'advisory lock, AVANT le
+      // updateMany(isLatest=false) — sinon course / flip isLatest inutile.
+      if (idempotencyKey) {
+        const existingByKey = await tx.thesis.findUnique({ where: { idempotencyKey } });
+        if (existingByKey) {
+          return existingByKey as unknown as ThesisRecord;
+        }
+      }
+
       // Marquer l'ancienne latest comme non-latest (toutes les rows isLatest=true si multiple
       // via race passee → on en force une seule)
       await tx.thesis.updateMany({
@@ -240,6 +265,8 @@ export const thesisService = {
           sourceDocumentIds: resolvedSourceDocumentIds,
           sourceHash: resolvedSourceHash,
           corpusSnapshotId: resolvedCorpusSnapshotId,
+          idempotencyKey: idempotencyKey ?? null,
+          extractionCost: extractionCost ?? null,
         },
       });
 
@@ -258,6 +285,17 @@ export const thesisService = {
   async getById(thesisId: string): Promise<ThesisRecord | null> {
     const record = await prisma.thesis.findUnique({
       where: { id: thesisId },
+    });
+    return (record as unknown as ThesisRecord) ?? null;
+  },
+
+  /**
+   * Phase D — récupère la thèse d'un run par sa clé d'idempotence (`thesis-extractor:${analysisId}`).
+   * Permet au court-circuit replay de réutiliser la thèse existante sans relancer le LLM.
+   */
+  async getByIdempotencyKey(idempotencyKey: string): Promise<ThesisRecord | null> {
+    const record = await prisma.thesis.findUnique({
+      where: { idempotencyKey },
     });
     return (record as unknown as ThesisRecord) ?? null;
   },

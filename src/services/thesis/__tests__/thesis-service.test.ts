@@ -39,6 +39,8 @@ interface MockThesis {
   sourceDocumentIds: string[];
   sourceHash: string;
   corpusSnapshotId: string | null;
+  idempotencyKey: string | null;
+  extractionCost: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -70,7 +72,10 @@ const mockPrisma = {
       }
       return matches[0] ?? null;
     }),
-    findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+    findUnique: vi.fn(async ({ where }: { where: { id?: string; idempotencyKey?: string } }) => {
+      if (where.idempotencyKey !== undefined) {
+        return store.find((t) => t.idempotencyKey === where.idempotencyKey) ?? null;
+      }
       return store.find((t) => t.id === where.id) ?? null;
     }),
     findMany: vi.fn(async ({ where, orderBy, take, skip }: { where: Record<string, unknown>; orderBy?: Record<string, unknown>; take?: number; skip?: number; include?: Record<string, unknown> }) => {
@@ -137,6 +142,8 @@ const mockPrisma = {
         sourceDocumentIds: (data.sourceDocumentIds as string[]) ?? [],
         sourceHash: (data.sourceHash as string) ?? "hash",
         corpusSnapshotId: (data.corpusSnapshotId as string | null) ?? null,
+        idempotencyKey: (data.idempotencyKey as string | null) ?? null,
+        extractionCost: (data.extractionCost as number | null) ?? null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -292,6 +299,42 @@ describe("thesisService.create", () => {
     const v2 = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
     expect(v2.version).toBe(2);
     expect(v2.isLatest).toBe(true);
+    expect(store.find((t) => t.version === 1)?.isLatest).toBe(false);
+  });
+
+  it("reutilise la these du meme run (idempotencyKey) au lieu de creer une version — Phase D replay", async () => {
+    const first = await thesisService.create({
+      dealId: "deal_1",
+      extractorOutput: makeExtractorOutput(),
+      idempotencyKey: "thesis-extractor:analysis_1",
+      extractionCost: 0.42,
+    });
+    // Replay du meme run (retry de step) : meme idempotencyKey, sortie LLM differente (ignoree).
+    const replay = await thesisService.create({
+      dealId: "deal_1",
+      extractorOutput: makeExtractorOutput({ verdict: "favorable" }),
+      idempotencyKey: "thesis-extractor:analysis_1",
+      extractionCost: 0.99, // ignore : la version existante (0.42) est reutilisee
+    });
+    expect(replay.id).toBe(first.id); // meme these reutilisee → meme thesisId
+    expect(replay.version).toBe(1);
+    expect(replay.verdict).toBe(first.verdict); // version existante reutilisee telle quelle (pas la sortie du replay)
+    expect(replay.extractionCost).toBe(0.42); // cout CANONIQUE du 1er run (re-add reproductible dans totalCost)
+    expect(store.filter((t) => t.dealId === "deal_1").length).toBe(1); // une seule version, pas de doublon
+  });
+
+  it("un run different (idempotencyKey different) cree bien une nouvelle version", async () => {
+    await thesisService.create({
+      dealId: "deal_1",
+      extractorOutput: makeExtractorOutput(),
+      idempotencyKey: "thesis-extractor:analysis_1",
+    });
+    const v2 = await thesisService.create({
+      dealId: "deal_1",
+      extractorOutput: makeExtractorOutput(),
+      idempotencyKey: "thesis-extractor:analysis_2",
+    });
+    expect(v2.version).toBe(2);
     expect(store.find((t) => t.version === 1)?.isLatest).toBe(false);
   });
 

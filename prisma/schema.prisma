@@ -703,6 +703,18 @@ model Thesis {
   version  Int     @default(1)
   isLatest Boolean @default(true)
 
+  // Phase D — cle d'idempotence de l'extraction (valeur `thesis-extractor:${analysisId}`).
+  // Rend la creation de these idempotente au replay d'un step stepwise : si une these de ce
+  // run existe deja, thesisService.create la REUTILISE (pas de nouvelle version / nouveau
+  // thesisId). Nullable + @unique : theses existantes / hors-stepwise restent a null
+  // (Postgres autorise plusieurs NULL sous un index unique).
+  idempotencyKey String? @unique
+
+  // Phase D — coût LLM (USD) de l'extraction qui a produit cette thèse. Persisté pour que le
+  // court-circuit replay réinjecte le coût CANONIQUE dans totalCost (sans relancer le LLM),
+  // au lieu de 0 → totalCost reproductible. Nullable/additif : null sur theses pre-Phase-D.
+  extractionCost Float?
+
   // These reformulee — plusieurs champs pour eviter un bloc monolithique
   reformulated String  @db.Text // "Angel Desk parie que X en visant Y via Z"
   problem      String  @db.Text

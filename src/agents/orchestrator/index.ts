@@ -1912,8 +1912,13 @@ export class AgentOrchestrator {
         enableTrace,
         corpusSnapshot,
       );
-      if (allResults["thesis-extractor"]?.cost) {
-        totalCost += allResults["thesis-extractor"].cost;
+      // Compter sur le SUCCÈS, pas sur le coût : un thesis-extractor réutilisé au replay
+      // (Phase D) reste un agent complété → pas de divergence de completedCount vs un run sain.
+      // totalCost += cost = coût CANONIQUE du 1er run (réinjecté via Thesis.extractionCost au
+      // reuse) ; pas de double-charge car le reuse n'arrive que si le step n'a pas été retourné.
+      const thesisAgentResult = allResults["thesis-extractor"];
+      if (thesisAgentResult?.success) {
+        totalCost += thesisAgentResult.cost;
         completedCount++;
       }
     }
@@ -3868,6 +3873,40 @@ export class AgentOrchestrator {
     let thesisResultForDiagnostics: AgentResult | null = null;
 
     try {
+      // Phase D — court-circuit replay : si la thèse de CE run est déjà persistée
+      // (thesis-extractor:${analysisId}), la réutiliser SANS relancer le LLM. Downstream
+      // identique au 1er run ; résultat déterministe (coût = extractionCost CANONIQUE du 1er
+      // run réinjecté dans totalCost, executionTimeMs = 0 télémétrie résiduelle, aucune fuite
+      // volatile), pas de coût LLM gaspillé, pas de nouvelle version. Run neuf : null → flux normal.
+      const existingThesis = await thesisService.getByIdempotencyKey(`thesis-extractor:${analysisId}`);
+      if (existingThesis) {
+        const reusedOutput = this.thesisRecordToExtractorOutput(existingThesis);
+        const reusedResult: AgentResult & { data: ThesisExtractorOutput } = {
+          agentName: "thesis-extractor",
+          success: true,
+          executionTimeMs: 0,
+          // Coût CANONIQUE du 1er run (persisté sur la thèse) → totalCost reproductible au
+          // replay sans relancer le LLM. executionTimeMs=0 (télémétrie résiduelle, normalisée
+          // par le golden harness). Pas de double-charge : le reuse n'arrive que si le step
+          // n'a pas été mémoïsé terminé (Inngest ne repasse pas par un step déjà retourné).
+          cost: existingThesis.extractionCost ?? 0,
+          data: reusedOutput,
+        };
+        await this.linkAndInjectThesis(
+          enrichedContext,
+          allResults,
+          analysisId,
+          existingThesis.id,
+          reusedOutput,
+          reusedResult,
+          corpusSnapshot,
+        );
+        console.log(
+          `[Orchestrator:ThesisExtraction] Réutilisée (replay idempotent) thesisId=${existingThesis.id}`
+        );
+        return reusedOutput;
+      }
+
       const thesisResult = await thesisExtractorAgent.run(enrichedContext, { enableTrace });
       thesisResultForDiagnostics = thesisResult;
       allResults["thesis-extractor"] = thesisResult;
@@ -3879,51 +3918,48 @@ export class AgentOrchestrator {
 
       const thesisOutput = (thesisResult as AgentResult & { data: ThesisExtractorOutput }).data;
 
-      // Persist Thesis (cree une nouvelle version, marque l'ancienne isLatest=false)
+      // Persist Thesis. Idempotent (Phase D) : au replay du même run (même idempotencyKey),
+      // thesisService.create RÉUTILISE la version existante (pas de nouvelle version/thesisId).
       const persisted = await thesisService.create({
         dealId,
         extractorOutput: thesisOutput,
         corpusSnapshotId: corpusSnapshot?.id ?? enrichedContext.analysis?.corpusSnapshotId ?? null,
+        // Phase D — idempotence replay : même run (analysisId) ⇒ réutilise la thèse existante.
+        idempotencyKey: `thesis-extractor:${analysisId}`,
+        // Phase D — coût persisté pour le re-add canonique au replay (totalCost reproductible).
+        extractionCost: thesisResult.cost,
       });
 
-      // Link to Analysis
-      await prisma.analysis.update({
-        where: { id: analysisId },
-        data: { thesisId: persisted.id },
-      });
-
-      enrichedContext.analysis = {
-        ...(enrichedContext.analysis ?? { id: analysisId }),
-        thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
-        thesisId: persisted.id,
-        corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
+      // Phase D — le downstream consomme le contenu CANONIQUE persisté (la thèse réellement
+      // en base, réutilisée au replay), PAS la sortie LLM du run courant qui peut diverger au
+      // retry. Sur run neuf : identique à thesisOutput (schéma extractor = validation pure +
+      // stockage JSON fidèle). Garantit qu'un retry de step n'injecte pas une thèse divergente
+      // dans enrichedContext / previousResults / allResults malgré le même thesisId.
+      const canonicalOutput = this.thesisRecordToExtractorOutput(persisted);
+      const canonicalResult: AgentResult & { data: ThesisExtractorOutput } = {
+        ...thesisResult,
+        // Coût CANONIQUE persisté : si `create` a RÉUTILISÉ une thèse existante via son
+        // re-check intra-tx (cas de course : 2 exécutions du même run passent le pré-check
+        // avant que la thèse existe), `persisted.extractionCost` = coût du 1er run, pas le
+        // coût LLM volatile de CE run. Byte-inert run neuf (extractionCost == thesisResult.cost
+        // qu'on vient juste de persister).
+        cost: persisted.extractionCost ?? thesisResult.cost,
+        data: canonicalOutput,
       };
-
-      // Injection dans enrichedContext pour Tier 1/2/3
-      enrichedContext.thesis = {
-        id: persisted.id,
-        reformulated: thesisOutput.reformulated,
-        problem: thesisOutput.problem,
-        solution: thesisOutput.solution,
-        whyNow: thesisOutput.whyNow,
-        moat: thesisOutput.moat,
-        verdict: thesisOutput.verdict,
-        confidence: thesisOutput.confidence,
-        loadBearing: thesisOutput.loadBearing,
-        alertsCount: thesisOutput.alerts.length,
-        ycVerdict: thesisOutput.ycLens.verdict,
-        thielVerdict: thesisOutput.thielLens.verdict,
-        angelDeskVerdict: thesisOutput.angelDeskLens.verdict,
-      };
-      enrichedContext.previousResults = {
-        ...(enrichedContext.previousResults ?? {}),
-        "thesis-extractor": thesisResult,
-      };
+      await this.linkAndInjectThesis(
+        enrichedContext,
+        allResults,
+        analysisId,
+        persisted.id,
+        canonicalOutput,
+        canonicalResult,
+        corpusSnapshot,
+      );
 
       console.log(
-        `[Orchestrator:ThesisExtraction] verdict=${thesisOutput.verdict} confidence=${thesisOutput.confidence} alerts=${thesisOutput.alerts.length} (thesisId=${persisted.id})`
+        `[Orchestrator:ThesisExtraction] verdict=${canonicalOutput.verdict} confidence=${canonicalOutput.confidence} alerts=${canonicalOutput.alerts.length} (thesisId=${persisted.id})`
       );
-      return thesisOutput;
+      return canonicalOutput;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       allResults["thesis-extractor"] = thesisResultForDiagnostics
@@ -3942,6 +3978,83 @@ export class AgentOrchestrator {
       console.error(`[Orchestrator:ThesisExtraction] Crashed (non-fatal):`, err);
       return null;
     }
+  }
+
+  /**
+   * Phase D — reconstruit un ThesisExtractorOutput depuis la thèse PERSISTÉE (canonique).
+   * Inverse fidèle du mapping de thesisService.create : le schéma extractor est une validation
+   * pure (pas de transform) et les lentilles / loadBearing / alerts sont stockés en JSON tels
+   * quels, donc record→output est exact. Sert à faire consommer au downstream la thèse réelle
+   * (réutilisée au replay idempotent) plutôt que la sortie LLM volatile du run courant.
+   */
+  private thesisRecordToExtractorOutput(
+    t: Awaited<ReturnType<typeof thesisService.create>>
+  ): ThesisExtractorOutput {
+    return {
+      reformulated: t.reformulated,
+      problem: t.problem,
+      solution: t.solution,
+      whyNow: t.whyNow,
+      moat: t.moat,
+      verdict: t.verdict as ThesisExtractorOutput["verdict"],
+      confidence: t.confidence,
+      loadBearing: t.loadBearing as ThesisExtractorOutput["loadBearing"],
+      alerts: t.alerts as ThesisExtractorOutput["alerts"],
+      ycLens: t.ycLens as ThesisExtractorOutput["ycLens"],
+      thielLens: t.thielLens as ThesisExtractorOutput["thielLens"],
+      angelDeskLens: t.angelDeskLens as ThesisExtractorOutput["angelDeskLens"],
+      sourceDocumentIds: t.sourceDocumentIds,
+      sourceHash: t.sourceHash,
+    };
+  }
+
+  /**
+   * Phase D — link Analysis.thesisId + injection de la thèse dans enrichedContext
+   * (analysis / thesis / previousResults) + allResults["thesis-extractor"]. Partagé par le
+   * flux normal ET le court-circuit replay → hydratation downstream identique dans les deux cas.
+   */
+  private async linkAndInjectThesis(
+    enrichedContext: EnrichedAgentContext,
+    allResults: Record<string, AgentResult>,
+    analysisId: string,
+    thesisId: string,
+    output: ThesisExtractorOutput,
+    result: AgentResult,
+    corpusSnapshot?: CorpusSnapshotMaterialization | null,
+  ): Promise<void> {
+    allResults["thesis-extractor"] = result;
+
+    await prisma.analysis.update({
+      where: { id: analysisId },
+      data: { thesisId },
+    });
+
+    enrichedContext.analysis = {
+      ...(enrichedContext.analysis ?? { id: analysisId }),
+      thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
+      thesisId,
+      corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
+    };
+
+    enrichedContext.thesis = {
+      id: thesisId,
+      reformulated: output.reformulated,
+      problem: output.problem,
+      solution: output.solution,
+      whyNow: output.whyNow,
+      moat: output.moat,
+      verdict: output.verdict,
+      confidence: output.confidence,
+      loadBearing: output.loadBearing,
+      alertsCount: output.alerts.length,
+      ycVerdict: output.ycLens.verdict,
+      thielVerdict: output.thielLens.verdict,
+      angelDeskVerdict: output.angelDeskLens.verdict,
+    };
+    enrichedContext.previousResults = {
+      ...(enrichedContext.previousResults ?? {}),
+      "thesis-extractor": result,
+    };
   }
 
   /**
