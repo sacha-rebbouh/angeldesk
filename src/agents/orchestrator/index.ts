@@ -2757,36 +2757,43 @@ export class AgentOrchestrator {
   ): Promise<AnalysisResult> {
     const init = await this.initializeFullAnalysisRun(deal, dealId, advancedOptions);
 
-    // d-2a — Routing EXACT par version de graphe stepwise (lock Codex #1). La version est
-    // STICKY (stampée au dispatch, route.ts) → un run en vol reprend TOUJOURS sur SON graphe,
-    // jamais sur un graphe déployé après lui. On compare à des littéraux (PAS à
-    // STEPWISE_GRAPH_VERSION qui bumpe à d-2b) : chaque version mappe à son implémentation.
-    //   - `undefined|1` → driver « 1 step englobante » (D.5d-1c, ci-dessous).
-    //   - v2 (d-2b) → branche `runFullAnalysisStepwise` (à venir).
-    // Une version inconnue (worker obsolète vs dispatch) LÈVE plutôt que de tomber
-    // silencieusement sur le mauvais graphe. Byte-inert : tous les appelants actuels passent
-    // `undefined` (appels directs / thesis-reextract) ou `1` (dispatch Inngest).
-    const graphVersion = advancedOptions.stepwiseGraphVersion;
-    if (graphVersion !== undefined && graphVersion !== 1) {
-      throw new Error(
-        `[stepwise] version de graphe ${graphVersion} non supportée par ce worker (dispatch plus récent que le code déployé)`
-      );
+    // d-2b — OFF STRICT : flag stepwise OFF → chemin single-pass EXACT (zéro driver/snapshot),
+    // BYTE-INERT en prod (DEEP_DIVE_STEPWISE=0). === comportement d'avant le câblage stepwise
+    // (runTerminalStepwiseDriver avec stepwise=false retournait déjà le liveResult exact).
+    if (!init.stepwise) {
+      return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
     }
 
-    // D.5d-1c — Wrapper stepwise « 1 step englobante » (Modèle B). Le bootstrap
-    // (initializeFullAnalysisRun) tourne TOUJOURS hors step (crée la state machine
-    // non-sérialisable ; idempotence de l'init au replay via dispatchEventId — câblage
-    // Inngest D.5d-1d). Le corps pipeline tourne dans l'unique unité durable. Sur run sain
-    // on retourne le liveResult EXACT → OFF (InlineStepRunner par défaut) BYTE-INERT, E1
-    // trivial. Au replay (step mémoïsé), reconstruction depuis l'enveloppe wire + results
-    // relus de la persistance (cf. full-analysis-driver).
-    return runTerminalStepwiseDriver({
-      stepRunner,
-      stepwise: init.stepwise,
-      pipeline: () => this.runFullAnalysisPipeline(deal, dealId, onProgress, init),
-      loadPersistedResults: async () =>
-        (await loadResults(init.analysis.id)) as AnalysisResult["results"] | null,
-    });
+    // ON — Routing EXACT par version de graphe stepwise (lock Codex #1). La version est STICKY
+    // (stampée au dispatch, route.ts) → un run en vol reprend TOUJOURS sur SON graphe, jamais
+    // sur un graphe déployé après lui. Littéraux (PAS STEPWISE_GRAPH_VERSION qui bumpe) :
+    //   - `undefined|1` (d-2a) → driver « 1 step englobante » (D.5d-1c) : runs dispatchés AVANT
+    //     d-2b (graphVersion 1) reprennent sur ce graphe.
+    //   - `2` (d-2b) → graphe multi-unités durable (runFullAnalysisStepwise).
+    // Version inconnue (worker obsolète vs dispatch plus récent) → LÈVE plutôt que mauvais graphe.
+    const graphVersion = advancedOptions.stepwiseGraphVersion;
+    if (graphVersion === undefined || graphVersion === 1) {
+      return runTerminalStepwiseDriver({
+        stepRunner,
+        stepwise: true,
+        pipeline: () => this.runFullAnalysisPipeline(deal, dealId, onProgress, init),
+        loadPersistedResults: async () =>
+          (await loadResults(init.analysis.id)) as AnalysisResult["results"] | null,
+      });
+    }
+    if (graphVersion === 2) {
+      // INVARIANT : le graphe v2 ne voit JAMAIS stopAfterThesis. Une re-extraction (stopAfterThesis)
+      // est courte (Tier 0 + thèse, 1 step) → aucun besoin de durabilité Tier1+, et le snapshot v2
+      // ne porte PAS thesisOutput (lu uniquement par le bloc stopAfterThesis ; null au rehydrate).
+      // On la route donc en single-pass → matérialise l'invariant (cf. gate Codex d-2b-4).
+      if (init.stopAfterThesis) {
+        return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
+      }
+      return this.runFullAnalysisStepwise(deal, dealId, onProgress, init, stepRunner);
+    }
+    throw new Error(
+      `[stepwise] version de graphe ${graphVersion} non supportée par ce worker (dispatch plus récent que le code déployé)`
+    );
   }
 
   /**

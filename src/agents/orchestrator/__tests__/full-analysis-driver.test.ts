@@ -153,8 +153,8 @@ describe("runTerminalStepwiseDriver (golden driver D.5d-1c)", () => {
   });
 });
 
-describe("STEPWISE_GRAPH_VERSION (d-2a)", () => {
-  it("vaut 1 (driver « 1 step englobante ») à d-2a", () => {
-    expect(STEPWISE_GRAPH_VERSION).toBe(1);
+describe("STEPWISE_GRAPH_VERSION", () => {
+  it("vaut 2 (graphe multi-unités durable) à d-2b", () => {
+    expect(STEPWISE_GRAPH_VERSION).toBe(2);
   });
 });

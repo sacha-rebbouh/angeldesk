@@ -25,13 +25,15 @@ import { buildTerminalEnvelope, reviveTerminalEnvelope } from "./full-analysis-s
  * versionne la FORME du DTO d'état). Stampée dans `event.data` au dispatch (route.ts) et
  * IMMUABLE sur tout le run (lock Codex #1, mode STICKY) : au replay Inngest, le handler route
  * sur CETTE version → un run en vol ne bascule jamais sur un graphe déployé après lui.
- *   - 1 (d-2a)  : driver « 1 step englobante » (runTerminalStepwiseDriver, step 'run-analysis').
- *   - 2 (d-2b+) : graphe multi-unités (tier0-facts/tier0-thesis/…), à venir.
- * Routing EXACT côté orchestrateur (runFullAnalysis) : `undefined|1` → driver 1-step ; chaque
- * version future = sa propre branche (on N'UTILISE PAS cette constante dans l'égalité de
- * routing — elle ne sert qu'à STAMPER la version courante au dispatch).
+ *   - 1 (d-2a)  : driver « 1 step englobante » (runTerminalStepwiseDriver, step 'run-analysis') —
+ *     runs en vol dispatchés AVANT d-2b reprennent sur ce graphe (sticky).
+ *   - 2 (d-2b)  : graphe multi-unités durable (tier0-facts / tier0-thesis / rest ; split
+ *     tier1/tier3/tier2 à venir d-3..d-7) — runFullAnalysisStepwise.
+ * Routing EXACT côté orchestrateur (runFullAnalysis) : `undefined|1` → driver 1-step ; `2` →
+ * runFullAnalysisStepwise ; version inconnue → LÈVE. On N'UTILISE PAS cette constante dans
+ * l'égalité de routing (littéraux) — elle ne sert qu'à STAMPER la version courante au dispatch.
  */
-export const STEPWISE_GRAPH_VERSION = 1 as const;
+export const STEPWISE_GRAPH_VERSION = 2 as const;
 
 export interface TerminalStepwiseDriverParams {
   /** Runner d'unité : InlineStepRunner (OFF/single-pass) ou InngestStepRunner/FakeStepRunner. */
