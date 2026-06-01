@@ -2107,7 +2107,7 @@ export class AgentOrchestrator {
     const { maxCostUsd, totalCost, stateMachine, allResults, analysis, analysisModeOverride, dealId, collectedWarnings, startTime } = params;
     // Check cost limit before synthesis phase
     if (maxCostUsd && totalCost >= maxCostUsd) {
-      console.log(`[Orchestrator] Cost limit reached (${totalCost.toFixed(2)} >= ${maxCostUsd}), skipping remaining phases`);
+      console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), skipping remaining phases`);
       await stateMachine.complete();
 
       const summary = generateFullAnalysisSummary(allResults);
@@ -2118,7 +2118,7 @@ export class AgentOrchestrator {
         success: true,
         totalCost,
         totalTimeMs,
-        summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit (${maxCostUsd})`,
+        summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
         results: allResults,
         mode: analysisModeOverride ?? "full_analysis",
       });
@@ -2135,7 +2135,7 @@ export class AgentOrchestrator {
         results: allResults,
         totalCost,
         totalTimeMs,
-        summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit (${maxCostUsd})`,
+        summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
         tiersExecuted: [...TIERS_EXECUTED],
       }, collectedWarnings) };
     }
