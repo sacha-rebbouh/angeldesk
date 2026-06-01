@@ -1,6 +1,28 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-01 — Durabilité Deep Dive Phase 1 : extraction byte-inert C.3g→C.3m + dette doc
+
+### Contexte
+Suite du chantier durabilité Deep Dive (split `runFullAnalysis` en unités durables, voir `PLAN-DEEPDIVE-DURABILITY.md`). Objectif Phase 1 : finir de transformer `runFullAnalysis` (orchestrator/index.ts, ~5300 l.) en **pur séquenceur** de helpers, par extractions byte-inert (flag absent = comportement identique), avant le câblage Inngest stepwise (phases ultérieures). Boucle autonome avec **gate Codex MCP read-only par micro-étape** (thread persistant `019e82e8-…`, `.codex-gate-thread`).
+
+### Modifications (7 commits code byte-inert sur `fix/thesis-gate-guard`, NON poussé)
+Chaque commit : 1 helper extrait + bloc inline remplacé par l'appel, `tsc --noEmit` = 0 (lu avant commit, appel séparé) + `vitest src/agents/orchestrator` 75/75 + audit Codex `APPROVE`.
+- **C.3g** `runRedFlagConsolidationStep` (STEP 4.6 consolidation red-flags) — `1051981`
+- **C.3h** `runSynthesisSetupStep` (STEP 5 setup synthèse, retourne `{ tier3AgentMap }`) — `1e6264f`
+- **C.3i** `runTier3PreTier2Batch` (cost-check + batch Tier3 pré-Tier2 + checkpoint) — `bddc0be`
+- **C.3j** `runTier2SectorStep` (STEP 6 expert sectoriel Tier 2) — `39b9c69`
+- **C.3k** `runTier2ConsensusReflexionStep` (STEP 6.5 consensus+reflexion Tier 2 + checkpoint) — `b62880e`
+- **C.3l** `runTier3PostTier2Batch` (STEP 7 synthèse finale Tier 3 + persist thesis-reconciler) — `3ba1b3f`
+- **C.3m** `runFinalCompletion` (complétion terminale ; `catch` final reste inline dans `runFullAnalysis`) — `e274d24`
+
+### Doc (commit docs-only séparé, jamais mêlé au refactor)
+`PLAN-DEEPDIVE-DURABILITY.md` : statut C.1→C.3m FAIT + 4 nits P2 du 1er audit Codex corrigés (§66 `saveCheckpoint`/`loadLatestCheckpoint` → réels `writeStepwiseSnapshot`/`readLatestStepwiseSnapshot` via `analysisCheckpoint.create/findFirst` direct, qui évitent le merge `Analysis.results` de `saveCheckpoint` ; HEAD périmé ; ajout `runPostTier1Aggregation` à la liste ; mutations `previousResults` explicitées). Cette entrée changes-log.
+
+### Reste (hors Phase 1)
+Phase D = idempotence (skip agent avant side-effect ; upsert `persistDebateRecord` par `contradictionId` ; delete+insert `persistScoredFindings`) + câblage Inngest stepwise sous flag `DEEP_DIVE_STEPWISE` — comportemental, touche flag/Inngest → exige design + greenlight explicite. Caveat connu : branche `stopAfterThesis` reste inline dans `runFullAnalysis` (préexistante, hors chemin Deep Dive complet).
+
+---
 ## 2026-05-31 — Fix régression : deadlock dispatch après retrait du gate (guards.ts)
 
 ### Contexte

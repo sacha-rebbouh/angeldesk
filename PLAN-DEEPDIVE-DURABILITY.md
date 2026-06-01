@@ -27,11 +27,12 @@ Hypothèse cap-table **falsifiée** (DB) : avekapeti A une cap table ; `cap-tabl
 
 **Effet** : plus de gel PERMANENT (zombie reapé ≤ 5 min). **NE garantit PAS la complétion** d'un Deep Dive dont une étape dépasse 300s.
 
-### Sur la branche `fix/thesis-gate-guard` (NON poussé ; HEAD `4ebca1d`)
+### Sur la branche `fix/thesis-gate-guard` (NON poussé ; HEAD `e274d24` — Phase 1 C.3g→C.3m terminée)
 - **C2a** — helper `persistTierCheckpoint` (`src/agents/orchestrator/index.ts`, `state:'ANALYZING'`) appelé à 4 frontières dans `runFullAnalysis` (avant STEP 3 / après Tier 1 / avant STEP 6 / avant STEP 7). Rend une analyse tuée mid-pipeline reprenable au lieu de `RUNNING`-sans-checkpoint (que `resume` marquait `FAILED`). **Prérequis du split.** tsc 0, 4069 tests verts.
   - **Précision (audit Codex #7)** : `saveCheckpoint` crée **une ligne `AnalysisCheckpoint` à chaque frontière** (effet réel : +N rows). Seul l'`update` de `Analysis.results` est RUNNING-gated. Ce n'est donc PAS « aucun effet absolu » — c'est « pas de régression de la sortie finale ».
 - **B (FAIT)** — DTO strict `FullAnalysisStepState` + garde `assertPlainJson` + helpers snapshot `AnalysisCheckpoint state:"STEPWISE:<unit>"` + tests (round-trip, négatif à dents, funding-DB drift). Validé Codex.
-- **C.1 → C.3f (FAIT)** — 13 helpers byte-inert extraits de `runFullAnalysis`, 1 commit + 1 audit Codex chacun, tsc 0 + vitest orchestrateur 75/75 à chaque pas : `initializeFullAnalysisRun`, `buildBaseAnalysisContext`, `runTier0Step`, `runDocumentExtractorStep`, `runDeckCoherenceStep`, `runContextEngineStep`, `runThesisExtractionStep`, `runTier1Phase`/`runTier1Phases`, `runPostTier1FailFast`, `runGlobalConsensusStep`, `runPostConsensusCostLimit`, `runTier1CrossValidationStep`.
+- **C.1 → C.3f (FAIT)** — 13 helpers byte-inert extraits de `runFullAnalysis`, 1 commit + 1 audit Codex chacun, tsc 0 + vitest orchestrateur 75/75 à chaque pas : `initializeFullAnalysisRun`, `buildBaseAnalysisContext`, `runTier0Step`, `runDocumentExtractorStep`, `runDeckCoherenceStep`, `runContextEngineStep`, `runThesisExtractionStep`, `runTier1Phase`/`runTier1Phases`, `runPostTier1Aggregation`, `runPostTier1FailFast`, `runGlobalConsensusStep`, `runPostConsensusCostLimit`, `runTier1CrossValidationStep`.
+- **C.3g → C.3m (FAIT, 2026-06-01)** — 7 derniers helpers byte-inert extraits, 1 commit + 1 audit Codex APPROVE chacun, tsc 0 + vitest 75/75 à chaque pas : `runRedFlagConsolidationStep` (`1051981`), `runSynthesisSetupStep` (`1e6264f`), `runTier3PreTier2Batch` (`bddc0be`), `runTier2SectorStep` (`39b9c69`), `runTier2ConsensusReflexionStep` (`b62880e`), `runTier3PostTier2Batch` (`3ba1b3f`), `runFinalCompletion` (`e274d24`). **`runFullAnalysis` est désormais un pur séquenceur de helpers + le `catch` final inline** (caveat non bloquant : la branche `stopAfterThesis` reste inline, préexistante hors chemin Deep Dive complet).
 
 ---
 
@@ -63,7 +64,7 @@ Un Deep Dive **complète toujours** (ou échoue proprement + refund), **quel que
 - **processAgentResult** (`persistence.ts:407`) écrit en DB selon le type d'agent : `document-extractor`→`deal.update` (:526) ; `red-flag-detector`→`redFlag.createMany` (:544) ; `synthesis-deal-scorer`→`deal.update` scores (:576) ; `conditions-analyst`→`deal.update` (:601) ; `team-investigator`→`$transaction` founder.update+createMany (:696). → si result déjà `success`, **ne pas rerun l'agent NI `processAgentResult` NI réécrire findings/debates**. Skip **AVANT** tout side-effect.
 - **costMonitor** (`cost-monitor.ts`) : `recordCall` **no-op si `currentAnalysis` null** (:243, pas de throw) ; `endAnalysis` lit l'accumulateur **EN MÉMOIRE** seulement (pas de DB read). → état **non cross-step** : ne pas en dépendre entre steps (DB/log-derived, ou re-start par step).
 - **setAnalysisContext** (`router.ts:68`) = **AsyncLocalStorage** via `runWithLLMContext` (:32). → chaque step Inngest doit **re-wrapper** dans `runWithLLMContext({ analysisId })` avant tout appel LLM, sinon `LLMCallLog` perd `analysisId`. Sites actuels : `index.ts` 572/705/992/1287/1465/4360.
-- **Snapshot DB tranché** (audit Codex #3) : réutiliser **`AnalysisCheckpoint`** avec `state:"STEPWISE:<unit>"` + `results` (Json) = le `StepState` sérialisé. Write = `saveCheckpoint` ; read = `loadLatestCheckpoint`. **Pas de nouvelle table.** Décidé d'emblée (ne pas attendre le câblage) car le payload `step.run` peut dépasser le cap Inngest.
+- **Snapshot DB tranché** (audit Codex #3) : réutiliser **`AnalysisCheckpoint`** avec `state:"STEPWISE:<unit>"` + `results` (Json) = le `StepState` sérialisé. Write = `writeStepwiseSnapshot` (= `prisma.analysisCheckpoint.create` **DIRECT** — **PAS** `saveCheckpoint`, qui merge son `results` dans `Analysis.results`) ; read = `readLatestStepwiseSnapshot` (= `findFirst`). Helpers livrés en étape B (`full-analysis-snapshot.ts`). **Pas de nouvelle table.** Décidé d'emblée (ne pas attendre le câblage) car le payload `step.run` peut dépasser le cap Inngest.
 
 ---
 
@@ -79,9 +80,9 @@ Un Deep Dive **complète toujours** (ou échoue proprement + refund), **quel que
 - **Tests** : round-trip/carry ; négatif (drop `verificationContext` ⇒ deep-equal échoue) ; funding-DB drift (passe SSI `verificationContext` est **porté**, pas reconstruit).
 
 ### C — Extraction des méthodes par-phase (byte-inert, flag OFF)
-**C.1 → C.3f : FAIT** (cf. §1). `runFullAnalysis` est déjà majoritairement un séquenceur de helpers jusqu'à STEP 4.5 inclus.
+**C.1 → C.3m : FAIT** (cf. §1). `runFullAnalysis` est désormais un **pur séquenceur** de helpers (initialize → tier0/thèse → tier1 → post-tier1 → consensus global → cross-val → red-flags → synthesis-setup → tier3-pré → tier2-sector → tier2-consensus/reflexion → tier3-post → final-completion) + le `catch` final inline.
 
-**Phase 1 restante — 7 micro-étapes (C.3g → C.3m), 1 commit + 1 audit Codex chacune.** Objectif : finir de transformer `runFullAnalysis` en pur séquenceur (précondition du split). Numéros de ligne `index.ts` à **re-vérifier** (le fichier bouge) :
+**Phase 1 — TERMINÉE (2026-06-01).** Les 7 micro-étapes C.3g → C.3m ont été extraites byte-inert (mapping commits en §1), chacune `tsc` 0 + vitest 75/75 + audit Codex APPROVE. La table ci-dessous documente les contrats réalisés (à noter : `runTier3PreTier2Batch` (C.3i) et `runTier3PostTier2Batch` (C.3l) mutent aussi `enrichedContext.previousResults` par réf ; `runTier2ConsensusReflexionStep` (C.3k) mute `allResults` via `applyReflexion`). Numéros de ligne périmés (le fichier a évolué) :
 
 | Étape | Bloc | Lignes ≈ | Helper | Contrat |
 |---|---|---|---|---|
