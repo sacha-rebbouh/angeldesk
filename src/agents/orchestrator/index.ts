@@ -2797,24 +2797,18 @@ export class AgentOrchestrator {
     init: FullAnalysisRunInit
   ): Promise<AnalysisResult> {
     const {
-      failFastOnCritical,
-      maxCostUsd,
-      onEarlyWarning,
       isUpdate,
       enableTrace,
-      stopAfterThesis,
       analysisModeOverride,
       startTime,
       collectedWarnings,
       initialCanonicalDeal,
-      sectorExpert,
       TOTAL_AGENTS,
       corpusSnapshot,
       scopedDocuments,
       analysis,
       stateMachine,
       allResults,
-      stepwise,
     } = init;
     let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
 
@@ -2905,6 +2899,111 @@ export class AgentOrchestrator {
         completedCount,
       }));
 
+      return await this.runFullAnalysisPostThesis({
+        deal,
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        extractedData,
+        thesisOutput,
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+        // d-2b-1 (gate Codex) — remonte le coût courant du tail dans CE scope pour que le
+        // catch terminal ci-dessous reste byte-équivalent sur un échec post-thèse.
+        reportTotalCost: (c: number) => { totalCost = c; },
+      });
+    } catch (error) {
+      // DEBUG log removed for production - uncomment for debugging:
+      // console.error("[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
+      // DEBUG log removed for production - uncomment for debugging:
+      // console.error("[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
+      // Only transition to FAILED if not already completed
+      const currentState = stateMachine.getState();
+      if (currentState !== "COMPLETED" && currentState !== "FAILED") {
+        await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
+      }
+
+      const totalTimeMs = Date.now() - startTime;
+
+      await completeAnalysis({
+        analysisId: analysis.id,
+        success: false,
+        totalCost,
+        totalTimeMs,
+        summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        results: allResults,
+        mode: analysisModeOverride ?? "full_analysis",
+        statusOverride: "FAILED",
+      });
+
+      // End cost monitoring after final results are persisted so `_costReport`
+      // survives the failed completion payload as well.
+      await costMonitor.endAnalysis({
+        persistAnalysisSummary: false,
+      });
+
+      return this.addWarningsToResult({
+        sessionId: analysis.id,
+        dealId,
+        type: "full_analysis",
+        success: false,
+        results: allResults,
+        totalCost,
+        totalTimeMs,
+        summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        tiersExecuted: [...TIERS_EXECUTED],
+      }, collectedWarnings);
+    }
+  }
+
+
+  /**
+   * d-2b — Tail post-thèse de full_analysis (STEP 2.6 stop-after-thesis -> Tier 1/2/3 ->
+   * complétion finale), extrait BYTE-INERT de runFullAnalysisPipeline. Séquence PARTAGÉE
+   * par le chemin single-pass (runFullAnalysisPipeline) ET le chemin durable
+   * (runFullAnalysisStepwise, unité « rest » à venir) -> aucun drift de séquence. Reçoit
+   * l'état VIVANT au boundary post-thèse (enrichedContext + locals mutés) + l'init statique.
+   * Le try/catch terminal reste chez l'appelant (frontière inchangée). Retourne l'AnalysisResult
+   * terminal (succès, early-return failFast/cost-limit, ou stop-after-thesis).
+   */
+  private async runFullAnalysisPostThesis(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    extractedData: ContextSeed;
+    thesisOutput: ThesisExtractorOutput | null;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    /** Remonte le totalCost courant du tail au scope appelant (catch terminal de
+     *  runFullAnalysisPipeline) : byte-équivalence du coût sur le chemin d'échec post-thèse. */
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<AnalysisResult> {
+    const { deal, dealId, onProgress, init, enrichedContext, extractedData, thesisOutput, reportTotalCost } = params;
+    const {
+      failFastOnCritical,
+      maxCostUsd,
+      onEarlyWarning,
+      isUpdate,
+      stopAfterThesis,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      sectorExpert,
+      TOTAL_AGENTS,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    try {
       // STEP 2.6: STOP-AFTER-THESIS — re-extraction de these (upload doc / admin backfill).
       // Pas de gate, pas de decision : on s'arrete apres la these et on COMPLETE l'analyse
       // en mode thesis_only (meme compute qu'avant — seuls Tier 0 + these tournent, 1 cr).
@@ -3127,47 +3226,11 @@ export class AgentOrchestrator {
         isUpdate,
         collectedWarnings,
       });
-    } catch (error) {
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.error("[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.error("[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
-      // Only transition to FAILED if not already completed
-      const currentState = stateMachine.getState();
-      if (currentState !== "COMPLETED" && currentState !== "FAILED") {
-        await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
-      }
-
-      const totalTimeMs = Date.now() - startTime;
-
-      await completeAnalysis({
-        analysisId: analysis.id,
-        success: false,
-        totalCost,
-        totalTimeMs,
-        summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        results: allResults,
-        mode: analysisModeOverride ?? "full_analysis",
-        statusOverride: "FAILED",
-      });
-
-      // End cost monitoring after final results are persisted so `_costReport`
-      // survives the failed completion payload as well.
-      await costMonitor.endAnalysis({
-        persistAnalysisSummary: false,
-      });
-
-      return this.addWarningsToResult({
-        sessionId: analysis.id,
-        dealId,
-        type: "full_analysis",
-        success: false,
-        results: allResults,
-        totalCost,
-        totalTimeMs,
-        summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        tiersExecuted: [...TIERS_EXECUTED],
-      }, collectedWarnings);
+    } finally {
+      // d-2b-1 (gate Codex) — coût courant remonté sur TOUS les chemins de sortie (succès,
+      // early-return, exception) → le catch terminal de runFullAnalysisPipeline voit le même
+      // totalCost qu'avant l'extraction.
+      reportTotalCost(totalCost);
     }
   }
 
