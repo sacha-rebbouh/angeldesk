@@ -365,6 +365,7 @@ export class AgentOrchestrator {
           isUpdate,
           stopAfterThesis: options.stopAfterThesis,
           stepwise: options.stepwise,
+          dispatchEventId: options.dispatchEventId,
         }, options.stepRunner ?? new InlineStepRunner());
         break;
       case "tier3_synthesis":
@@ -1454,6 +1455,7 @@ export class AgentOrchestrator {
       enableTrace = true,
       stopAfterThesis = false,
       stepwise = false,
+      dispatchEventId,
       analysisModeOverride,
     } = advancedOptions;
     const startTime = Date.now();
@@ -1495,6 +1497,10 @@ export class AgentOrchestrator {
       documentIds,
       corpusSnapshotId: corpusSnapshot?.id,
       extractionRunIds: corpusSnapshot?.extractionRunIds,
+      // D.5d-1d — idempotence init durable : en stepwise le bootstrap re-tourne au replay
+      // Inngest ; get-or-create par dispatchEventId (D.4b) → réutilise l'Analysis RUNNING du
+      // même run (analysis.id stable). null hors stepwise (OFF byte-inert : create classique).
+      dispatchEventId: dispatchEventId ?? null,
     });
 
     // Set analysis context for LLM logging

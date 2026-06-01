@@ -141,6 +141,15 @@ export interface AnalysisOptions {
    * (D.5d-1d). Ignoré hors full_analysis.
    */
   stepRunner?: StepRunner;
+  /**
+   * D.5d-1d — Clé d'idempotence de l'init durable (= id de l'event Inngest de dispatch,
+   * `analysis:deal.analyze:${dealId}:${analysisAttemptId}`). En mode stepwise le bootstrap
+   * tourne HORS step → re-tourne au replay Inngest ; createAnalysis (get-or-create par
+   * dispatchEventId, D.4b) réutilise alors l'Analysis RUNNING du même run → `analysis.id`
+   * STABLE (la reconstruction `loadResults(analysis.id)` lit le bon run, gate Codex 1c#4).
+   * Absent → createAnalysis crée comme avant (chemin OFF byte-inert).
+   */
+  dispatchEventId?: string;
 }
 
 export interface AnalysisResult {
@@ -184,6 +193,8 @@ export interface AdvancedAnalysisOptions {
   stopAfterThesis?: boolean;
   /** D.5a — passe le mode stepwise depuis AnalysisOptions (cf. AnalysisOptions.stepwise). */
   stepwise?: boolean;
+  /** D.5d-1d — clé d'idempotence init durable (cf. AnalysisOptions.dispatchEventId). */
+  dispatchEventId?: string;
 }
 
 // Tier 1 agent names (12 agents — exit-strategist retiré, doctrine anti-oraculaire pas de projection)

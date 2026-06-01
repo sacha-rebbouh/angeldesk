@@ -311,12 +311,13 @@ export const dealAnalysisFunction = inngest.createFunction(
   },
   { event: 'analysis/deal.analyze' },
   async ({ event, step }) => {
-    const { dealId, type, enableTrace, userId, dispatchRefundKey } = event.data as {
+    const { dealId, type, enableTrace, userId, dispatchRefundKey, dispatchEventId } = event.data as {
       dealId: string;
       type: string;
       enableTrace: boolean;
       userId: string;
       dispatchRefundKey?: string;
+      dispatchEventId?: string;
     };
 
     // Gate thèse RETIRÉ (2026-05-30) : plus aucune pause ni décision BA après
@@ -324,24 +325,45 @@ export const dealAnalysisFunction = inngest.createFunction(
     // traite. La thèse reste extraite + réconciliée. Crédits : débit plein au
     // lancement (POST /analyze), refund total seulement sur vrai échec.
     //
-    // D.5a — Deep Dive durable (stepwise). Flag OFF (défaut) = chemin actuel exact.
-    // Flag ON (DEEP_DIVE_STEPWISE=1) + full_analysis = même run single-pass mais en
-    // mode stepwise : AUCUN checkpoint legacy émis (state machine enableCheckpointing:false,
-    // persistTierCheckpoint no-op, runFinalCompletion sans saveCheckpoint COMPLETED ;
-    // l'état durable passe par les snapshots STEPWISE:*). Le découpage en N steps
-    // durables vient en D.5d ; ici c'est le stub fondation. Rollback = DEEP_DIVE_STEPWISE=0.
+    // D.5a/D.5d — Deep Dive durable (stepwise). Flag OFF (défaut) = chemin actuel exact :
+    // runAnalysis encapsulé dans l'unique step.run('run-analysis') externe (mémoïsation
+    // monolithique). Flag ON (DEEP_DIVE_STEPWISE=1) + full_analysis (D.5d-1d) : runAnalysis
+    // est appelé HORS du step.run externe avec un InngestStepRunner → l'unique step durable
+    // 'run-analysis' est créé À L'INTÉRIEUR du driver (Modèle B ; le split en N unités vient
+    // d-2..k). Le bootstrap (createAnalysis) tourne alors hors step → re-tourne au replay ;
+    // dispatchEventId rend l'init idempotent (get-or-create, analysis.id stable). AUCUN
+    // checkpoint legacy émis en stepwise. Rollback = DEEP_DIVE_STEPWISE=0.
     const runStepwise = process.env.DEEP_DIVE_STEPWISE === "1" && type === "full_analysis";
     let analysisResult;
     try {
-      analysisResult = await step.run('run-analysis', async () => {
+      if (runStepwise) {
         const { orchestrator } = await import("@/agents");
-        return await orchestrator.runAnalysis({
+        const { InngestStepRunner } = await import("@/agents/orchestrator/step-runner");
+        // Inngest `step.run` renvoie Promise<Jsonify<T>> (sérialisation JSON du retour de
+        // step). Nos sorties de step sont déjà wire-safe (enveloppe JSON-pure, Date→ISO) →
+        // Jsonify<T> ≡ T : on adapte au contrat structurel du StepRunner (qui évite tout
+        // import de types Inngest).
+        const inngestStepRunner = new InngestStepRunner(
+          step as unknown as { run<T>(id: string, fn: () => Promise<T>): Promise<T> }
+        );
+        analysisResult = await orchestrator.runAnalysis({
           dealId,
           type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
           enableTrace,
-          ...(runStepwise ? { stepwise: true } : {}),
+          stepwise: true,
+          stepRunner: inngestStepRunner,
+          dispatchEventId,
         });
-      });
+      } else {
+        analysisResult = await step.run('run-analysis', async () => {
+          const { orchestrator } = await import("@/agents");
+          return await orchestrator.runAnalysis({
+            dealId,
+            type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
+            enableTrace,
+          });
+        });
+      }
     } catch (error) {
       await step.run('compensate-analysis-throw', async () => {
         await compensateFailedAnalysis({

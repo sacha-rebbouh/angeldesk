@@ -378,6 +378,10 @@ export async function POST(request: NextRequest) {
           enableTrace,
           userId: user.id,
           dispatchRefundKey,
+          // D.5d-1d — clé d'idempotence init durable (= id de l'event ci-dessus). Lue par
+          // dealAnalysisFunction en mode stepwise → createAnalysis get-or-create (analysis.id
+          // stable au replay). Inerte hors stepwise.
+          dispatchEventId,
         },
       });
     } catch (sendErr) {
