@@ -228,6 +228,45 @@ describe("POST /api/analyze thesis-first contract", () => {
     expect(mocks.inngestSend).not.toHaveBeenCalled();
   });
 
+  it("ne propose PAS de resume legacy sans checkpoint legacy réel (ex. analyse stepwise-only) — Phase D", async () => {
+    mocks.thesisFindFirst.mockResolvedValue({ id: "thesis_active", corpusSnapshotId: "snap_1" });
+    mocks.analysisFindFirst
+      .mockResolvedValueOnce({
+        id: "analysis_resumable",
+        mode: "full_analysis",
+        thesisId: "thesis_active",
+        corpusSnapshotId: "snap_1",
+        refundedAt: null,
+        refundAmount: null,
+        // L'include filtre les STEPWISE:* → une analyse stepwise-only ressort SANS checkpoint legacy.
+        checkpoints: [],
+        completedAgents: 3,
+        totalAgents: 20,
+      })
+      .mockResolvedValueOnce(null);
+
+    const request = new Request("http://localhost/api/analyze", {
+      method: "POST",
+      body: JSON.stringify({
+        dealId: "cm1234567890123456789012",
+        type: "full_analysis",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+
+    const response = await POST(request as never);
+    await response.json();
+
+    // canResume=false (pas de checkpoint legacy) → le resume legacy, qui throwerait sans
+    // checkpoint, n'est PAS tenté ; on retombe sur un dispatch frais.
+    expect(mocks.claimFailedAnalysisResume).not.toHaveBeenCalled();
+    expect(mocks.inngestSend).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "analysis/deal.resume" })
+    );
+  });
+
   it("re-debite seulement le montant rembourse sur un resume partiellement rembourse et reset refundedAt", async () => {
     mocks.thesisFindFirst.mockResolvedValue({ id: "thesis_active", corpusSnapshotId: "snap_1" });
     mocks.analysisFindFirst

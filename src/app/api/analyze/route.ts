@@ -20,6 +20,7 @@ import { evaluateDealDocumentReadiness } from "@/services/documents/extraction-r
 import { claimFailedAnalysisResume, reserveFullAnalysisDispatch } from "@/services/analysis/guards";
 import { inngest } from "@/lib/inngest-client";
 import { logger } from "@/lib/logger";
+import { STEPWISE_STATE_PREFIX } from "@/agents/orchestrator/full-analysis-snapshot";
 
 // Vercel: Allow long-running analysis. Requires Pro plan (300s max).
 // Without this, the fire-and-forget promise may be killed after 10s.
@@ -161,6 +162,11 @@ export async function POST(request: NextRequest) {
           orderBy: { completedAgents: "desc" },
           include: {
             checkpoints: {
+              // Phase D — ne compter QUE les checkpoints legacy comme preuve de reprise.
+              // Un `STEPWISE:*` n'est pas reprenable par le resume legacy (loadLatestCheckpoint
+              // les filtre → _resumeAnalysisImpl throw). Les analyses stepwise reprennent via
+              // leur propre mécanisme (readLatestStepwiseSnapshot).
+              where: { state: { not: { startsWith: STEPWISE_STATE_PREFIX } } },
               orderBy: { createdAt: "desc" },
               take: 1,
             },
@@ -168,14 +174,16 @@ export async function POST(request: NextRequest) {
         })
       : null;
 
-    // Resume is possible if we have an analysis with results in DB (even without checkpoints,
-    // the resume logic merges DB results with checkpoint data)
+    // Resume exige un checkpoint legacy réel : `_resumeAnalysisImpl` marque FAILED + throw
+    // s'il n'y a pas de checkpoint (loadAnalysisForRecovery → loadLatestCheckpoint, désormais
+    // filtré STEPWISE). On ne propose donc PAS un resume voué à l'échec sur `completedAgents > 0`
+    // seul. Les checkpoints stepwise sont déjà exclus de l'include ci-dessus.
     const canResume = Boolean(
       resumableAnalysis &&
       latestThesis?.id &&
       latestThesis.corpusSnapshotId &&
       resumableAnalysis.corpusSnapshotId === latestThesis.corpusSnapshotId &&
-      (resumableAnalysis.checkpoints.length > 0 || resumableAnalysis.completedAgents > 0)
+      resumableAnalysis.checkpoints.length > 0
     );
 
     const resumeCandidate = canResume ? resumableAnalysis : null;
