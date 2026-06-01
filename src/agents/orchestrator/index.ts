@@ -2507,6 +2507,111 @@ export class AgentOrchestrator {
     return { totalCost };
   }
 
+  private async runTier3PostTier2Batch(params: {
+    maxCostUsd?: number;
+    totalCost: number;
+    completedCount: number;
+    tier3AgentMap: Awaited<ReturnType<typeof getTier3Agents>>;
+    enrichedContext: EnrichedAgentContext;
+    allResults: Record<string, AgentResult>;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    TOTAL_AGENTS: number;
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { maxCostUsd, tier3AgentMap, enrichedContext, allResults, stateMachine, analysis, dealId, onProgress, TOTAL_AGENTS } = params;
+    let { totalCost, completedCount } = params;
+    // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
+    // Restore full (unsanitized) results for final synthesis agents.
+    // Sanitization (F52) was needed between Tier 1 agents to prevent confirmation bias.
+    // Final synthesis agents (synthesis-deal-scorer, memo-generator) NEED scores/verdicts
+    // to produce the global deal score and investment memo.
+    for (const [agentName, result] of Object.entries(allResults)) {
+      enrichedContext.previousResults![agentName] = result;
+    }
+
+    // Crédits-only : pipeline complet pour tous (synthesis-deal-scorer + memo-generator)
+    const finalSynthesisBatches = TIER3_BATCHES_AFTER_TIER2;
+
+    for (const batch of finalSynthesisBatches) {
+      // REAL-TIME COST CHECK: Before each batch
+      if (maxCostUsd && totalCost >= maxCostUsd) {
+        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
+        break;
+      }
+
+      // These are single-agent batches, run sequentially
+      const agentName = batch[0];
+      const agent = tier3AgentMap[agentName];
+
+      onProgress?.({
+        currentAgent: agentName,
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+        estimatedCostSoFar: totalCost,
+      });
+
+      let agentResult: AgentResult | null = null;
+
+      // Try up to 2 attempts (initial + 1 retry)
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const result = await agent.run(enrichedContext);
+          agentResult = result;
+          break; // Success, exit retry loop
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : "Unknown error";
+          if (attempt === 1) {
+            console.log(`[Orchestrator] ${agentName} failed (attempt ${attempt}), retrying... Error: ${errMsg}`);
+          } else {
+            console.log(`[Orchestrator] ${agentName} failed after ${attempt} attempts: ${errMsg}`);
+            agentResult = {
+              agentName,
+              success: false,
+              executionTimeMs: 0,
+              cost: 0,
+              error: errMsg,
+            };
+          }
+        }
+      }
+
+      if (agentResult) {
+        allResults[agentName] = agentResult;
+        totalCost += agentResult.cost;
+        completedCount++;
+        enrichedContext.previousResults![agentName] = agentResult;
+
+        if (agentResult.success) {
+          stateMachine.recordAgentComplete(agentName, agentResult as AnalysisAgentResult);
+        } else {
+          stateMachine.recordAgentFailed(agentName, agentResult.error ?? "Unknown");
+        }
+        await processAgentResult(dealId, agentName, agentResult);
+        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+        // Thesis-first — apres thesis-reconciler, persister la reconciliation sur
+        // la these initiale (maj verdict + confidence + reconciliationJson + notes)
+        if (
+          agentName === "thesis-reconciler" &&
+          enrichedContext.analysis?.mode !== "post_call_reanalysis"
+        ) {
+          await this.applyThesisReconciliation(enrichedContext, agentResult);
+        }
+
+        onProgress?.({
+          currentAgent: agentName,
+          completedAgents: completedCount,
+          totalAgents: TOTAL_AGENTS,
+          latestResult: agentResult,
+          estimatedCostSoFar: totalCost,
+        });
+      }
+    }
+    return { totalCost, completedCount };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2815,93 +2920,19 @@ export class AgentOrchestrator {
         startTime,
       }));
 
-      // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
-      // Restore full (unsanitized) results for final synthesis agents.
-      // Sanitization (F52) was needed between Tier 1 agents to prevent confirmation bias.
-      // Final synthesis agents (synthesis-deal-scorer, memo-generator) NEED scores/verdicts
-      // to produce the global deal score and investment memo.
-      for (const [agentName, result] of Object.entries(allResults)) {
-        enrichedContext.previousResults![agentName] = result;
-      }
-
-      // Crédits-only : pipeline complet pour tous (synthesis-deal-scorer + memo-generator)
-      const finalSynthesisBatches = TIER3_BATCHES_AFTER_TIER2;
-
-      for (const batch of finalSynthesisBatches) {
-        // REAL-TIME COST CHECK: Before each batch
-        if (maxCostUsd && totalCost >= maxCostUsd) {
-          console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
-          break;
-        }
-
-        // These are single-agent batches, run sequentially
-        const agentName = batch[0];
-        const agent = tier3AgentMap[agentName];
-
-        onProgress?.({
-          currentAgent: agentName,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-
-        let agentResult: AgentResult | null = null;
-
-        // Try up to 2 attempts (initial + 1 retry)
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          try {
-            const result = await agent.run(enrichedContext);
-            agentResult = result;
-            break; // Success, exit retry loop
-          } catch (error) {
-            const errMsg = error instanceof Error ? error.message : "Unknown error";
-            if (attempt === 1) {
-              console.log(`[Orchestrator] ${agentName} failed (attempt ${attempt}), retrying... Error: ${errMsg}`);
-            } else {
-              console.log(`[Orchestrator] ${agentName} failed after ${attempt} attempts: ${errMsg}`);
-              agentResult = {
-                agentName,
-                success: false,
-                executionTimeMs: 0,
-                cost: 0,
-                error: errMsg,
-              };
-            }
-          }
-        }
-
-        if (agentResult) {
-          allResults[agentName] = agentResult;
-          totalCost += agentResult.cost;
-          completedCount++;
-          enrichedContext.previousResults![agentName] = agentResult;
-
-          if (agentResult.success) {
-            stateMachine.recordAgentComplete(agentName, agentResult as AnalysisAgentResult);
-          } else {
-            stateMachine.recordAgentFailed(agentName, agentResult.error ?? "Unknown");
-          }
-          await processAgentResult(dealId, agentName, agentResult);
-          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-          // Thesis-first — apres thesis-reconciler, persister la reconciliation sur
-          // la these initiale (maj verdict + confidence + reconciliationJson + notes)
-          if (
-            agentName === "thesis-reconciler" &&
-            enrichedContext.analysis?.mode !== "post_call_reanalysis"
-          ) {
-            await this.applyThesisReconciliation(enrichedContext, agentResult);
-          }
-
-          onProgress?.({
-            currentAgent: agentName,
-            completedAgents: completedCount,
-            totalAgents: TOTAL_AGENTS,
-            latestResult: agentResult,
-            estimatedCostSoFar: totalCost,
-          });
-        }
-      }
+      ({ totalCost, completedCount } = await this.runTier3PostTier2Batch({
+        maxCostUsd,
+        totalCost,
+        completedCount,
+        tier3AgentMap,
+        enrichedContext,
+        allResults,
+        stateMachine,
+        analysis,
+        dealId,
+        onProgress,
+        TOTAL_AGENTS,
+      }));
 
       // COMPLETE
       await stateMachine.complete();
