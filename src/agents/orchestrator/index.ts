@@ -2214,6 +2214,80 @@ export class AgentOrchestrator {
     }
   }
 
+  private async runSynthesisSetupStep(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    stateMachine: AnalysisStateMachine;
+    enrichedContext: EnrichedAgentContext;
+  }): Promise<{ tier3AgentMap: Awaited<ReturnType<typeof getTier3Agents>> }> {
+    const { deal, dealId, stateMachine, enrichedContext } = params;
+    // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
+    // Run conditions-analyst, contradiction-detector, devils-advocate in PARALLEL
+    // (scenario-modeler retiré du pipeline — doctrine anti-oraculaire)
+    await stateMachine.startSynthesis();
+
+    const tier3AgentMap = await getTier3Agents();
+
+    // Load BA preferences for Tier 3 personalization (does NOT affect Tier 1/2)
+    const baPreferences = await this.loadBAPreferences(deal.userId);
+    enrichedContext.baPreferences = baPreferences;
+
+    // Load DealTerms + DealStructure for conditions-analyst (Tier 3)
+    const [rawDealTerms, rawDealStructure] = await Promise.all([
+      prisma.dealTerms.findUnique({ where: { dealId } }),
+      prisma.dealStructure.findUnique({
+        where: { dealId },
+        include: { tranches: { orderBy: { orderIndex: "asc" } } },
+      }),
+    ]);
+    if (rawDealTerms) {
+      enrichedContext.dealTerms = {
+        valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
+        amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
+        dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
+        instrumentType: rawDealTerms.instrumentType,
+        instrumentDetails: rawDealTerms.instrumentDetails,
+        liquidationPref: rawDealTerms.liquidationPref,
+        antiDilution: rawDealTerms.antiDilution,
+        proRataRights: rawDealTerms.proRataRights,
+        informationRights: rawDealTerms.informationRights,
+        boardSeat: rawDealTerms.boardSeat,
+        founderVesting: rawDealTerms.founderVesting,
+        vestingDurationMonths: rawDealTerms.vestingDurationMonths,
+        vestingCliffMonths: rawDealTerms.vestingCliffMonths,
+        esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
+        dragAlong: rawDealTerms.dragAlong,
+        tagAlong: rawDealTerms.tagAlong,
+        ratchet: rawDealTerms.ratchet,
+        payToPlay: rawDealTerms.payToPlay,
+        milestoneTranches: rawDealTerms.milestoneTranches,
+        nonCompete: rawDealTerms.nonCompete,
+        customConditions: rawDealTerms.customConditions,
+        notes: rawDealTerms.notes,
+      };
+    }
+    if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
+      enrichedContext.dealStructure = {
+        mode: "STRUCTURED",
+        totalInvestment: rawDealStructure.tranches.reduce(
+          (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
+        ),
+        tranches: rawDealStructure.tranches.map(t => ({
+          label: t.label || "Tranche",
+          trancheType: t.trancheType,
+          amount: t.amount != null ? Number(t.amount) : null,
+          valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+          equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+          triggerType: t.triggerType,
+          triggerDetails: t.triggerDetails,
+          status: t.status,
+        })),
+      };
+    }
+    enrichedContext.conditionsAnalystMode = "pipeline";
+    return { tier3AgentMap };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2481,70 +2555,7 @@ export class AgentOrchestrator {
 
       await this.runRedFlagConsolidationStep({ allResults, enrichedContext });
 
-      // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
-      // Run conditions-analyst, contradiction-detector, devils-advocate in PARALLEL
-      // (scenario-modeler retiré du pipeline — doctrine anti-oraculaire)
-      await stateMachine.startSynthesis();
-
-      const tier3AgentMap = await getTier3Agents();
-
-      // Load BA preferences for Tier 3 personalization (does NOT affect Tier 1/2)
-      const baPreferences = await this.loadBAPreferences(deal.userId);
-      enrichedContext.baPreferences = baPreferences;
-
-      // Load DealTerms + DealStructure for conditions-analyst (Tier 3)
-      const [rawDealTerms, rawDealStructure] = await Promise.all([
-        prisma.dealTerms.findUnique({ where: { dealId } }),
-        prisma.dealStructure.findUnique({
-          where: { dealId },
-          include: { tranches: { orderBy: { orderIndex: "asc" } } },
-        }),
-      ]);
-      if (rawDealTerms) {
-        enrichedContext.dealTerms = {
-          valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
-          amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
-          dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
-          instrumentType: rawDealTerms.instrumentType,
-          instrumentDetails: rawDealTerms.instrumentDetails,
-          liquidationPref: rawDealTerms.liquidationPref,
-          antiDilution: rawDealTerms.antiDilution,
-          proRataRights: rawDealTerms.proRataRights,
-          informationRights: rawDealTerms.informationRights,
-          boardSeat: rawDealTerms.boardSeat,
-          founderVesting: rawDealTerms.founderVesting,
-          vestingDurationMonths: rawDealTerms.vestingDurationMonths,
-          vestingCliffMonths: rawDealTerms.vestingCliffMonths,
-          esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
-          dragAlong: rawDealTerms.dragAlong,
-          tagAlong: rawDealTerms.tagAlong,
-          ratchet: rawDealTerms.ratchet,
-          payToPlay: rawDealTerms.payToPlay,
-          milestoneTranches: rawDealTerms.milestoneTranches,
-          nonCompete: rawDealTerms.nonCompete,
-          customConditions: rawDealTerms.customConditions,
-          notes: rawDealTerms.notes,
-        };
-      }
-      if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
-        enrichedContext.dealStructure = {
-          mode: "STRUCTURED",
-          totalInvestment: rawDealStructure.tranches.reduce(
-            (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
-          ),
-          tranches: rawDealStructure.tranches.map(t => ({
-            label: t.label || "Tranche",
-            trancheType: t.trancheType,
-            amount: t.amount != null ? Number(t.amount) : null,
-            valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
-            equityPct: t.equityPct != null ? Number(t.equityPct) : null,
-            triggerType: t.triggerType,
-            triggerDetails: t.triggerDetails,
-            status: t.status,
-          })),
-        };
-      }
-      enrichedContext.conditionsAnalystMode = "pipeline";
+      const { tier3AgentMap } = await this.runSynthesisSetupStep({ deal, dealId, stateMachine, enrichedContext });
 
       // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
       if (!(maxCostUsd && totalCost >= maxCostUsd)) {
