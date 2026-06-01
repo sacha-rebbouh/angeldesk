@@ -375,24 +375,34 @@ export async function persistDebateRecord(
   }
 ): Promise<void> {
   try {
-    await prisma.debateRecord.create({
-      data: {
-        analysisId,
-        contradictionId: debateResult.contradiction.id,
-        topic: debateResult.contradiction.topic,
-        severity: debateResult.contradiction.severity,
-        participants: (debateResult.contradiction.claims as { agentName: string }[]).map(
-          (c) => c.agentName
-        ),
-        claims: debateResult.contradiction.claims as Prisma.InputJsonValue,
-        rounds: debateResult.rounds as Prisma.InputJsonValue,
-        status: debateResult.contradiction.status,
-        resolvedBy: debateResult.resolution.resolvedBy,
-        winner: debateResult.resolution.winner ?? null,
-        resolution: debateResult.resolution.resolution,
-        resolutionConfidence: debateResult.resolution.confidence.score,
-        resolvedAt: new Date(),
-      },
+    // Phase D — précondition replay-safety : create → upsert par contradictionId (@unique).
+    // Dédupe le re-persist du MÊME objet contradiction (retry de step, ou contradiction portée
+    // par le StepState snapshot — cf. blocker #1). NE neutralise PAS une re-détection à ids
+    // régénérés (consensus-engine.ts:922 / score-aggregator.ts:409 = crypto.randomUUID) : la
+    // réutilisation des mêmes ids au replay est garantie par le carry des contradictions dans
+    // le snapshot (étape D ultérieure), pas ici. Ids aléatoires non collisionnants ⇒ upsert ≡
+    // create sur run neuf (branche create à chaque fois).
+    const data: Prisma.DebateRecordUncheckedCreateInput = {
+      analysisId,
+      contradictionId: debateResult.contradiction.id,
+      topic: debateResult.contradiction.topic,
+      severity: debateResult.contradiction.severity,
+      participants: (debateResult.contradiction.claims as { agentName: string }[]).map(
+        (c) => c.agentName
+      ),
+      claims: debateResult.contradiction.claims as Prisma.InputJsonValue,
+      rounds: debateResult.rounds as Prisma.InputJsonValue,
+      status: debateResult.contradiction.status,
+      resolvedBy: debateResult.resolution.resolvedBy,
+      winner: debateResult.resolution.winner ?? null,
+      resolution: debateResult.resolution.resolution,
+      resolutionConfidence: debateResult.resolution.confidence.score,
+      resolvedAt: new Date(),
+    };
+    await prisma.debateRecord.upsert({
+      where: { contradictionId: debateResult.contradiction.id },
+      create: data,
+      update: data,
     });
   } catch (error) {
     logPersistenceError("persistDebateRecord", error, {
