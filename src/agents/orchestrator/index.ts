@@ -1990,6 +1990,65 @@ export class AgentOrchestrator {
     return { totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings, lowConfidenceAgents };
   }
 
+  /**
+   * C.3c — FAIL-FAST post-Tier1, extrait BYTE-INERT de runFullAnalysis.
+   * Si des warnings critiques existent, termine l'analyse tôt (stateMachine.complete +
+   * completeAnalysis + costMonitor.endAnalysis) et renvoie { done: true, result }.
+   * Sinon { done: false } et le pipeline continue. N'inclut PAS le consensus global,
+   * le cost-limit, la cross-validation, les red-flags, ni Tier2/Tier3.
+   */
+  private async runPostTier1FailFast(params: {
+    failFastOnCritical: boolean;
+    collectedWarnings: EarlyWarning[];
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    startTime: number;
+  }): Promise<{ done: true; result: AnalysisResult } | { done: false }> {
+    const { failFastOnCritical, collectedWarnings, stateMachine, analysis, dealId, analysisModeOverride, allResults, totalCost, startTime } = params;
+    // FAIL-FAST: Check for critical warnings after Tier 1
+    if (failFastOnCritical) {
+      const criticalWarnings = collectedWarnings.filter(w => w.severity === "critical");
+      if (criticalWarnings.length > 0) {
+        console.log(`[Orchestrator] FAIL-FAST: ${criticalWarnings.length} critical warning(s) detected`);
+        await stateMachine.complete();
+
+        const summary = `**CRITICAL WARNINGS DETECTED - Analysis stopped early**\n\n${criticalWarnings.map(w => `- ${w.title}: ${w.description}`).join("\n")}`;
+        const totalTimeMs = Date.now() - startTime;
+
+        await completeAnalysis({
+          analysisId: analysis.id,
+          success: true,
+          totalCost,
+          totalTimeMs,
+          summary,
+          results: allResults,
+          mode: analysisModeOverride ?? "full_analysis",
+        });
+
+        await costMonitor.endAnalysis({
+          persistAnalysisSummary: false,
+        });
+
+        return { done: true, result: this.addWarningsToResult({
+          sessionId: analysis.id,
+          dealId,
+          type: "full_analysis",
+          success: true,
+          results: allResults,
+          totalCost,
+          totalTimeMs,
+          summary,
+          tiersExecuted: [...TIERS_EXECUTED],
+        }, collectedWarnings) };
+      }
+    }
+    return { done: false };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2215,43 +2274,18 @@ export class AgentOrchestrator {
         factStoreFormatted,
       }));
 
-      // FAIL-FAST: Check for critical warnings after Tier 1
-      if (failFastOnCritical) {
-        const criticalWarnings = collectedWarnings.filter(w => w.severity === "critical");
-        if (criticalWarnings.length > 0) {
-          console.log(`[Orchestrator] FAIL-FAST: ${criticalWarnings.length} critical warning(s) detected`);
-          await stateMachine.complete();
-
-          const summary = `**CRITICAL WARNINGS DETECTED - Analysis stopped early**\n\n${criticalWarnings.map(w => `- ${w.title}: ${w.description}`).join("\n")}`;
-          const totalTimeMs = Date.now() - startTime;
-
-          await completeAnalysis({
-            analysisId: analysis.id,
-            success: true,
-            totalCost,
-            totalTimeMs,
-            summary,
-            results: allResults,
-            mode: analysisModeOverride ?? "full_analysis",
-          });
-
-          await costMonitor.endAnalysis({
-            persistAnalysisSummary: false,
-          });
-
-          return this.addWarningsToResult({
-            sessionId: analysis.id,
-            dealId,
-            type: "full_analysis",
-            success: true,
-            results: allResults,
-            totalCost,
-            totalTimeMs,
-            summary,
-            tiersExecuted: [...TIERS_EXECUTED],
-          }, collectedWarnings);
-        }
-      }
+      const failFastResult = await this.runPostTier1FailFast({
+        failFastOnCritical,
+        collectedWarnings,
+        stateMachine,
+        analysis,
+        dealId,
+        analysisModeOverride,
+        allResults,
+        totalCost,
+        startTime,
+      });
+      if (failFastResult.done) return failFastResult.result;
 
       // STEP 4: GLOBAL CONSENSUS - Cross-phase contradiction detection
       // (Phases already ran intra-phase consensus, this catches cross-phase contradictions)
