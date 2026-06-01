@@ -1371,8 +1371,11 @@ export async function cleanupOldCheckpoints(
   keepCount: number = 5
 ): Promise<number> {
   try {
+    // Phase D — cleanup LEGACY-only : ne compte/prune QUE les checkpoints legacy. Les
+    // snapshots stepwise (STEPWISE:*) sont gérés séparément ; les mélanger ici prunerait
+    // des checkpoints legacy (ou stepwise) à tort quand les deux familles coexistent.
     const checkpoints = await prisma.analysisCheckpoint.findMany({
-      where: { analysisId },
+      where: { analysisId, state: { not: { startsWith: STEPWISE_STATE_PREFIX } } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: { id: true },
     });

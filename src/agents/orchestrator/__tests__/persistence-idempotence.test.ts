@@ -12,7 +12,7 @@ const prismaMocks = vi.hoisted(() => {
   const prisma = {
     debateRecord: { upsert: vi.fn() },
     scoredFinding: { deleteMany: vi.fn(), createMany: vi.fn() },
-    analysisCheckpoint: { findFirst: vi.fn(), groupBy: vi.fn() },
+    analysisCheckpoint: { findFirst: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
     analysis: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     $executeRawUnsafe: vi.fn(),
     $transaction: vi.fn(),
@@ -26,7 +26,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/services/storage", () => ({ uploadFile: vi.fn() }));
 
-import { persistDebateRecord, persistScoredFindings, loadLatestCheckpoint, findInterruptedAnalyses, createAnalysis } from "../persistence";
+import { persistDebateRecord, persistScoredFindings, loadLatestCheckpoint, findInterruptedAnalyses, createAnalysis, cleanupOldCheckpoints } from "../persistence";
 import type { ScoredFinding } from "@/scoring/types";
 
 const debateResult = {
@@ -249,5 +249,22 @@ describe("createAnalysis — init idempotent par dispatchEventId (Phase D)", () 
     expect(prismaMocks.prisma.analysis.findFirst).toHaveBeenCalledTimes(1); // un seul findFirst = la garde
     const createArg = prismaMocks.prisma.analysis.create.mock.calls[0][0] as { data: { dispatchEventId: string | null } };
     expect(createArg.data.dispatchEventId).toBeNull();
+  });
+});
+
+describe("cleanupOldCheckpoints — legacy-only, exclut STEPWISE:* (Phase D)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMocks.prisma.analysisCheckpoint.findMany.mockResolvedValue([]);
+  });
+
+  it("le findMany de cleanup filtre OUT STEPWISE:* (ne compte/prune que des checkpoints legacy)", async () => {
+    await cleanupOldCheckpoints("analysis_1", 5);
+
+    expect(prismaMocks.prisma.analysisCheckpoint.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { analysisId: "analysis_1", state: { not: { startsWith: "STEPWISE:" } } },
+      })
+    );
   });
 });
