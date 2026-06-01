@@ -2457,6 +2457,56 @@ export class AgentOrchestrator {
     return { totalCost, completedCount };
   }
 
+  private async runTier2ConsensusReflexionStep(params: {
+    sectorExpert: Awaited<ReturnType<typeof getTier2SectorExpert>>;
+    allResults: Record<string, AgentResult>;
+    allFindings: ScoredFinding[];
+    verificationContext: VerificationContext;
+    enrichedContext: EnrichedAgentContext;
+    totalCost: number;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    startTime: number;
+  }): Promise<{ totalCost: number }> {
+    const { sectorExpert, allResults, allFindings, verificationContext, enrichedContext, analysis, startTime } = params;
+    let { totalCost } = params;
+    // STEP 6.5: CONSENSUS + REFLEXION for Tier 2 sector expert
+    if (sectorExpert) {
+      const sectorResult = allResults[sectorExpert.name];
+      if (sectorResult?.success) {
+        const sectorFindings = extractAllFindings({ [sectorExpert.name]: sectorResult }).allFindings;
+
+        // Consensus: check if sector expert contradicts Tier 1 findings
+        if (sectorFindings.length > 0) {
+          const allFindingsWithSector = [...allFindings, ...sectorFindings];
+          console.log(`[Orchestrator] Running post-Tier 2 consensus (${sectorFindings.length} new findings from sector expert)`);
+          const postTier2Debate = await this.runConsensusDebate(
+            analysis.id, allFindingsWithSector, verificationContext, enrichedContext
+          );
+          totalCost += postTier2Debate.totalTokens * 0.00001;
+        }
+
+        // Reflexion: auto-critique if confidence < 60%
+        if (reflexionEngine.needsReflexion(sectorResult as AnalysisAgentResult, sectorFindings, 2)) {
+          console.log(`[Orchestrator] Tier 2 sector expert needs reflexion`);
+          await this.applyReflexion(
+            analysis.id,
+            sectorExpert.name,
+            sectorResult as AnalysisAgentResult,
+            sectorFindings,
+            `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
+            2,
+            verificationContext,
+            allResults,
+            enrichedContext
+          );
+        }
+      }
+    }
+
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+    return { totalCost };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2754,41 +2804,16 @@ export class AgentOrchestrator {
         TOTAL_AGENTS,
       }));
 
-      // STEP 6.5: CONSENSUS + REFLEXION for Tier 2 sector expert
-      if (sectorExpert) {
-        const sectorResult = allResults[sectorExpert.name];
-        if (sectorResult?.success) {
-          const sectorFindings = extractAllFindings({ [sectorExpert.name]: sectorResult }).allFindings;
-
-          // Consensus: check if sector expert contradicts Tier 1 findings
-          if (sectorFindings.length > 0) {
-            const allFindingsWithSector = [...allFindings, ...sectorFindings];
-            console.log(`[Orchestrator] Running post-Tier 2 consensus (${sectorFindings.length} new findings from sector expert)`);
-            const postTier2Debate = await this.runConsensusDebate(
-              analysis.id, allFindingsWithSector, verificationContext, enrichedContext
-            );
-            totalCost += postTier2Debate.totalTokens * 0.00001;
-          }
-
-          // Reflexion: auto-critique if confidence < 60%
-          if (reflexionEngine.needsReflexion(sectorResult as AnalysisAgentResult, sectorFindings, 2)) {
-            console.log(`[Orchestrator] Tier 2 sector expert needs reflexion`);
-            await this.applyReflexion(
-              analysis.id,
-              sectorExpert.name,
-              sectorResult as AnalysisAgentResult,
-              sectorFindings,
-              `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
-              2,
-              verificationContext,
-              allResults,
-              enrichedContext
-            );
-          }
-        }
-      }
-
-      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+      ({ totalCost } = await this.runTier2ConsensusReflexionStep({
+        sectorExpert,
+        allResults,
+        allFindings,
+        verificationContext,
+        enrichedContext,
+        totalCost,
+        analysis,
+        startTime,
+      }));
 
       // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
       // Restore full (unsanitized) results for final synthesis agents.
